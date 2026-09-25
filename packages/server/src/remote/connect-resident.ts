@@ -207,6 +207,34 @@ async function attachResidentWebSocket(
     options.onDidRemoteClose?.({ code });
   };
 
+  // 服务端在 ws open 后立即发送协议 Initialize 帧（可能与 101 握手同包到达）。
+  // wrapWebSocket 的 message 监听在构造时才挂载：若等 open 之后再构造，Initialize
+  // 与监听器挂载之间是 tick 级竞态；帧一旦先到就被丢弃，ChannelClient 因收不到
+  // Initialize 永远不发出任何请求（whenInitialized 无超时），表现为挂载成功但 RPC
+  // 全部挂死。因此必须在等待 open 之前完成 wrap/protocol/client 构造，Initialize
+  // 订阅同样要先于任何 await 挂好（Emitter 零订阅者时 fire 会丢弃事件）。
+  const socket = wrapWebSocket(ws);
+  const protocol = new SocketProtocol(socket);
+  const client = new ChannelClient(protocol);
+  socket.onClose(() => {
+    closed = true;
+    resolveClosed();
+    reportRemoteClose(1000);
+  });
+
+  // Initialize 到达才算协议就绪；超时按挂载失败回退 legacy，而不是静默排队挂死。
+  const initializedPromise = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("resident host protocol initialize timed out"));
+    }, timeoutMs);
+    const disposable = client.onDidInitialize(() => {
+      clearTimeout(timer);
+      disposable.dispose();
+      resolve();
+    });
+  });
+
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       ws.terminate();
@@ -221,15 +249,7 @@ async function attachResidentWebSocket(
       reject(error);
     });
   });
-
-  const socket = wrapWebSocket(ws);
-  socket.onClose(() => {
-    closed = true;
-    resolveClosed();
-    reportRemoteClose(1000);
-  });
-  const protocol = new SocketProtocol(socket);
-  const client = new ChannelClient(protocol);
+  await initializedPromise;
 
   return {
     services: new RemoteServiceAccess(client),
