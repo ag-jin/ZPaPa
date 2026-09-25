@@ -1,0 +1,107 @@
+name: Desktop Dev Build
+
+# dev 专用构建通道:
+#   - 手动触发(workflow_dispatch),产物只上传为 Actions Artifacts;
+#   - 不创建 GitHub Release、不上传 latest*.yml —— 自动更新(electron-updater 的
+#     github provider)只读取 Release 资产,因此 dev 包永远不进入软件更新线路;
+#   - 需要 Release 时走 desktop-release.yml(推 v* 标签)。
+#
+# 触发方式:Actions 页面 → Desktop Dev Build → Run workflow → 选择目标。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "构建目标"
+        type: choice
+        default: mac-arm64
+        options:
+          - mac-arm64
+          - mac-x64
+          - win-x64
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Resolve targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          set -euo pipefail
+          case "${{ inputs.target }}" in
+            all)
+              MATRIX='[{"name":"mac-arm64","runner":"macos-15","bundle-args":"--os mac --arch arm64"},{"name":"mac-x64","runner":"macos-15-intel","bundle-args":"--os mac --arch x64"},{"name":"win-x64","runner":"windows-latest","bundle-args":"--os win --arch x64"}]'
+              ;;
+            mac-arm64)
+              MATRIX='[{"name":"mac-arm64","runner":"macos-15","bundle-args":"--os mac --arch arm64"}]'
+              ;;
+            mac-x64)
+              MATRIX='[{"name":"mac-x64","runner":"macos-15-intel","bundle-args":"--os mac --arch x64"}]'
+              ;;
+            win-x64)
+              MATRIX='[{"name":"win-x64","runner":"windows-latest","bundle-args":"--os win --arch x64"}]'
+              ;;
+            *)
+              echo "unknown target: ${{ inputs.target }}" >&2
+              exit 1
+              ;;
+          esac
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      # 与正式发布一致的产品身份;dev 区别只在分发方式(Artifacts,不进更新通道)。
+      ZCODE_ENV: production
+      ZCODE_SKIP_REMOTE_ASSETS: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bundle desktop installer
+        run: pnpm bundle:desktop -- ${{ matrix.bundle-args }}
+
+      - name: Upload dev artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-desktop-${{ matrix.name }}-${{ github.run_number }}
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.exe
+            packages/desktop/dist/*.exe.blockmap
+          if-no-files-found: error
+          retention-days: 30
