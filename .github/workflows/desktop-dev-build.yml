@@ -126,8 +126,10 @@ jobs:
         run: |
           set -euo pipefail
           # 滚动标签:删除旧的 dev release 与 tag,再以当前提交重建(prerelease)。
-          # tag 删除在 GitHub 侧异步生效,create 可能短暂撞上 "tag already exists",重试兜底。
+          # gh release delete --cleanup-tag 只在 release 尚存时清 tag;release 已删而 tag
+          # 残留时会 no-op,因此必须显式删 git ref。tag 删除异步生效,create 再加重试兜底。
           gh release delete dev --yes --cleanup-tag 2>/dev/null || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/dev" 2>/dev/null || true
           for attempt in 1 2 3 4 5; do
             if gh release create dev installers/* -R "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --prerelease \
@@ -137,8 +139,7 @@ jobs:
             fi
             echo "release create attempt $attempt failed (tag propagation?), retrying in 10s..."
             sleep 10
-            # 重试前确保残留 tag 被清掉(delete 幂等,失败无所谓)。
-            gh release delete dev --yes --cleanup-tag 2>/dev/null || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/dev" 2>/dev/null || true
           done
           echo "failed to publish rolling dev prerelease after 5 attempts" >&2
           exit 1
