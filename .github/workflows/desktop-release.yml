@@ -102,10 +102,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          REPO="${GITHUB_REPOSITORY}"
           TAG="${GITHUB_REF_NAME}"
-          if gh release view "$TAG" --json name > /dev/null 2>&1; then
+          if gh release view "$TAG" -R "$REPO" --json name > /dev/null 2>&1; then
             echo "Release $TAG already exists, uploading with --clobber"
           else
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+            gh release create "$TAG" -R "$REPO" --verify-tag --title "$TAG" --generate-notes
           fi
-          gh release upload "$TAG" installers/* --clobber
+          gh release upload "$TAG" -R "$REPO" installers/* --clobber
