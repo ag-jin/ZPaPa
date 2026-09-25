@@ -2944,9 +2944,20 @@ async function setupRemoteConnection(
   signal?: AbortSignal,
 ): Promise<HostRemoteConnection> {
   // 延迟加载 remote backend，避免 local 模式下因 ssh2 依赖链进入 asar 后崩溃
-  const { createRemoteBackend, connectRemote, pickRemoteRuntimeEnv } =
+  const { createRemoteBackend, connectRemote, connectResidentRemote, pickRemoteRuntimeEnv } =
     await import("@zcode/server/remote");
   const backend = await createRemoteBackend(target);
+  // 远程项目升级：优先挂载对端「常驻会话主机」（SSH 隧道 + 协议协商，零部署动作，
+  // 对端离线/未部署/协议不兼容时返回 null），失败自动回退 legacy stdio 模式。
+  const residentConnection = await connectResidentRemote(backend, {
+    signal,
+    onDidRemoteClose: ({ code }) => {
+      onDidRemoteClose(code);
+    },
+  });
+  if (residentConnection) {
+    return { ...residentConnection, backend };
+  }
   const connection = await connectRemote(backend, {
     ...remoteAssets,
     remoteAssetNetwork,

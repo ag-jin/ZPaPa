@@ -263,4 +263,32 @@ export default defineConfig([
     onSuccess: createDevReadyMarkerHook("scheduler"),
     ...desktopTsupBundleSecurityOptions,
   },
+  {
+    // 常驻会话主机:与 host/scheduler 同构的 utility process,复用 @zcode/services 与
+    // @zcode/server 的 HTTP/WS 面;外部依赖保持 external,与 scheduler 相同的运行时约束。
+    name: "residentHost",
+    entry: { "residentHost/index": "src/residentHost/index.ts" },
+    outDir: "out",
+    format: "esm",
+    platform: "node",
+    target: "node22",
+    external: desktopNodeRuntimeExternals,
+    noExternal: [
+      "@zcode/server",
+      "@zcode/shared",
+      "@zcode/rpc",
+      "@zcode/services",
+      "@zcode/client",
+      "@zcode/provider",
+      "@zcode/provider-node",
+      "@zcode/zcode-cua",
+    ],
+    define: createSharedDefines(),
+    esbuildOptions(options) {
+      applyDesktopTsupEsbuildSecurityOptions(options);
+      options.chunkNames = "residentHost/chunk-[hash]";
+    },
+    onSuccess: createDevReadyMarkerHook("residentHost"),
+    ...desktopTsupBundleSecurityOptions,
+  },
 ]);

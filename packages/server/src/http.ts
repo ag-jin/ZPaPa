@@ -41,7 +41,8 @@ import {
 import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
 import { createHostCapabilityStore } from "./hostCapability.js";
 
-function wrapWebSocket(ws: WebSocket): ISocket {
+/** 供远端常驻主机客户端复用：Node ws → ISocket 包装。 */
+export function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
   const onClose = new Emitter<void>();
   const onEnd = new Emitter<void>();

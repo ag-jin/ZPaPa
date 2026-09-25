@@ -10,6 +10,8 @@ const readyMarkerNames = {
   // scheduler 已成为独立 tsup target，onSuccess 会调用同一 marker 脚本。
   // 旧白名单缺少该 target，导致 production build 在 bundle 成功后仍以 unknown target 失败。
   scheduler: ".scheduler-build-ready",
+  // residentHost 同为独立 tsup target（远程项目升级第 1 期 B 端常驻会话主机）。
+  residentHost: ".residenthost-build-ready",
 };
 
 if (!Object.hasOwn(readyMarkerNames, target)) {

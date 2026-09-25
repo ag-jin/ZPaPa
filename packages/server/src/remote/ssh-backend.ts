@@ -1,7 +1,8 @@
 /* eslint-disable max-lines -- SSH backend 集中维护连接、exec、SFTP 上传和 fallback 进度链路；集中维护以避免拆分引入远端连接回归。 */
 import { Client as SSHClient } from "ssh2";
-import type { ConnectConfig } from "ssh2";
+import type { ClientChannel, ConnectConfig } from "ssh2";
 import { createReadStream } from "node:fs";
+import * as net from "node:net";
 import { posix } from "node:path";
 import { Emitter } from "@zcode/rpc";
 import { resolveZCodeRuntimeEnv } from "@zcode/shared";
@@ -10,6 +11,7 @@ import type {
   RemoteDisconnectEvent,
   RemoteDisconnectReason,
   RemoteEnvironment,
+  RemoteTcpTunnel,
   RemoteUploadOptions,
   StdioStream,
 } from "@zcode/server/remote/backend.js";
@@ -593,6 +595,71 @@ export class SSHBackend implements IRemoteBackend {
   private async resolveRemotePath(remotePath: string): Promise<string> {
     const homeDir = await this.resolveHomeDir();
     return resolvePosixHomePath(remotePath, homeDir);
+  }
+
+  async openTcpTunnel(options: {
+    remoteHost: string;
+    remotePort: number;
+  }): Promise<RemoteTcpTunnel> {
+    this.assertNotDisposed();
+    if (!this.connected) {
+      throw new Error("SSH backend is not connected");
+    }
+    // 本地临时端口上做一个迷你 TCP 转发：每个本地连接对应一次 ssh2 forwardOut。
+    // 只监听 127.0.0.1，不对外暴露；单条 forward 失败只影响该连接。
+    const server = net.createServer();
+    // forwardOut 回调给的是 ssh2 ClientChannel(Duplex),不是 net.Socket;统一按流处理。
+    const sockets = new Set<net.Socket | ClientChannel>();
+    server.on("connection", (localSocket) => {
+      sockets.add(localSocket);
+      this.client.forwardOut(
+        localSocket.remoteAddress ?? "127.0.0.1",
+        localSocket.remotePort ?? 0,
+        options.remoteHost,
+        options.remotePort,
+        (forwardError, remoteChannel) => {
+          if (forwardError || !remoteChannel) {
+            localSocket.destroy(forwardError ?? new Error("forwardOut failed"));
+            return;
+          }
+          const remoteSocket: ClientChannel = remoteChannel;
+          sockets.add(remoteSocket);
+          localSocket.pipe(remoteSocket);
+          remoteSocket.pipe(localSocket);
+          const cleanup = () => {
+            sockets.delete(localSocket);
+            sockets.delete(remoteSocket);
+            localSocket.destroy();
+            remoteSocket.destroy();
+          };
+          localSocket.on("close", cleanup);
+          remoteSocket.on("close", cleanup);
+          localSocket.on("error", cleanup);
+          remoteSocket.on("error", cleanup);
+        },
+      );
+    });
+
+    const localPort = await new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (typeof address === "object" && address) {
+          resolve(address.port);
+          return;
+        }
+        reject(new Error("tcp tunnel listen failed"));
+      });
+    });
+
+    return {
+      localPort,
+      dispose() {
+        for (const socket of sockets) socket.destroy();
+        sockets.clear();
+        server.close();
+      },
+    };
   }
 
   dispose(): void {

@@ -33,3 +33,5 @@ export {
   type WSLDistro,
   parseWSLDistroList,
 } from "./wsl-detect.js";
+
+export { connectResidentRemote, RESIDENT_HOST_STATUS_REMOTE_PATH } from "./connect-resident.js";
