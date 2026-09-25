@@ -145,6 +145,22 @@ pnpm bundle:desktop -- --help
 
 The default target is macOS arm64, and the default output directory is `packages/desktop/dist/`. `--os` accepts `mac`, `win`, or `linux`; `--arch` accepts `x64` or `arm64`. Packaging and signing require the tools and configuration for the target platform.
 
+### Automated release (GitHub Actions)
+
+The repository ships [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml). Pushing a `v*` tag automatically builds and publishes three **unsigned** installers (macOS arm64 / macOS x64 / Windows x64) to a GitHub Release:
+
+```bash
+# 1. Bump the version in the root package.json (the tag must match it; the workflow verifies this)
+# 2. Commit, tag, and push
+git tag v3.14.4
+git push origin main v3.14.4
+```
+
+- Build matrix: `macos-15` (mac arm64), `macos-15-intel` (mac x64, native build), `windows-latest` (win x64); the whole run takes about 25 minutes.
+- Artifacts are named `ZCode-<version>-<platform>-<arch>.<ext>` and target the production backend (`ZCODE_ENV=production`).
+- All artifacts are unsigned: macOS requires the `xattr` quarantine workaround on first launch, and Windows shows a SmartScreen warning. To ship signed builds, inject `ZCODE_ENABLE_MAC_SIGN=1` plus `APPLE_SIGNING_IDENTITY` (mac) or `CSC_LINK` (win) in CI and rebuild.
+- Dry run (build artifacts only, no Release): trigger `workflow_dispatch` from the Actions page; artifacts are kept for 7 days.
+
 ### ZCode CLI distribution
 
 Run `pnpm build:zcode` to build the CLI/TUI, backend, and Web client, collect the TUI native libraries, workers, and runtime dependencies, then assemble the distribution. Running the distribution still requires Node.js; use the version specified in `mise.toml`.

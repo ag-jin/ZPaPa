@@ -157,6 +157,22 @@ pnpm bundle:desktop -- --help
 sudo xattr -rd com.apple.quarantine /Applications/ZCode.app
 ```
 
+### 自动发布（GitHub Actions）
+
+仓库内置 [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)。推送 `v*` 标签即自动构建并发布三个**未签名**安装包（macOS arm64 / macOS x64 / Windows x64）到 GitHub Release：
+
+```bash
+# 1. 更新根 package.json 的 version（tag 必须与之一致，流水线会校验）
+# 2. 提交后打 tag 并推送
+git tag v3.14.4
+git push origin main v3.14.4
+```
+
+- 构建矩阵：`macos-15`（mac arm64）、`macos-15-intel`（mac x64，原生构建）、`windows-latest`（win x64），全程约 25 分钟。
+- 产物命名 `ZCode-<version>-<platform>-<arch>.<ext>`，连接生产后端（`ZCODE_ENV=production`）。
+- 全部产物未签名：macOS 首次打开需按上文 `xattr` 去隔离，Windows 首次运行有 SmartScreen 提示。如需签名分发，需在 CI 注入 `ZCODE_ENABLE_MAC_SIGN=1` + `APPLE_SIGNING_IDENTITY`（mac）或 `CSC_LINK`（win）并重新打包。
+- 试跑（只构建为 Actions 产物、不发布 Release）：在 Actions 页面手动触发 `workflow_dispatch`，产物保留 7 天。
+
 ### ZCode 命令行版
 
 构建入口为 `pnpm build:zcode`。脚本会依次构建 CLI/TUI、后端和 Web，收集 TUI 的原生库、worker 与运行时依赖，再组装发行包；运行发行包仍需要 Node.js，版本以 `mise.toml` 为准。
