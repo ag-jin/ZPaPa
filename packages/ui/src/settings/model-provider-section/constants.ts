@@ -1,12 +1,9 @@
 import {
-  BIGMODEL_PROVIDER_ID,
   buildBigModelApiUrl,
-  buildBigModelCodingPlanPersonalManageUrl,
   BUILTIN_MODEL_PROVIDER_IDS,
   createUuid,
   type OAuthProviderId,
   ZCODE_ENV,
-  ZAI_PROVIDER_ID,
   type BuiltinModelProviderId,
   type UsageQuotaLimit,
   type UsageEntitlementSubscriptionDetail,
@@ -21,9 +18,6 @@ export function generateId(): string {
 
 export const PRESET_SUBSCRIPTION_TIMEOUT_MS = 2 * 60 * 1000;
 export const BIGMODEL_REGISTRATION_URL = buildBigModelApiUrl({ ZCODE_ENV }, "/login");
-const BIGMODEL_CODING_PLAN_PERSONAL_MANAGE_URL = buildBigModelCodingPlanPersonalManageUrl({
-  ZCODE_ENV,
-});
 
 export interface PresetProviderSpec {
   id: BuiltinModelProviderId;
@@ -31,18 +25,9 @@ export interface PresetProviderSpec {
   oauthProviderId?: OAuthProviderId;
 }
 
-export const PRESET_PROVIDER_SPECS: PresetProviderSpec[] = [
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
-    displayName: "Z.ai",
-    oauthProviderId: ZAI_PROVIDER_ID,
-  },
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
-    displayName: "BigModel",
-    oauthProviderId: BIGMODEL_PROVIDER_ID,
-  },
-];
+// 离线裁剪版：Z.ai / BigModel 官方 preset 与 Coding Plan 入口已移除,两张表保持为空。
+// 设置页「智谱」分组因此不再产生任何条目;用户自建 provider 不受影响。
+export const PRESET_PROVIDER_SPECS: PresetProviderSpec[] = [];
 
 export const PRESET_PROVIDER_SPEC_BY_ID = new Map<BuiltinModelProviderId, PresetProviderSpec>(
   PRESET_PROVIDER_SPECS.map((item) => [item.id, item]),
@@ -74,36 +59,8 @@ interface CodingPlanProviderSpec {
   purchaseUrl?: string;
 }
 
-export const CODING_PLAN_PROVIDER_SPECS: CodingPlanProviderSpec[] = [
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
-    oauthProviderId: ZAI_PROVIDER_ID,
-    label: "Z.ai - Coding Plan",
-    providerName: "Z.ai",
-    purchaseUrl: "https://z.ai/manage-apikey/subscription",
-  },
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-    oauthProviderId: ZAI_PROVIDER_ID,
-    label: "Z.ai - Coding Plan",
-    providerName: "Z.ai",
-    purchaseUrl: "https://z.ai/manage-apikey/subscription",
-  },
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-    oauthProviderId: BIGMODEL_PROVIDER_ID,
-    label: "BigModel - Coding Plan",
-    providerName: "BigModel",
-    purchaseUrl: BIGMODEL_CODING_PLAN_PERSONAL_MANAGE_URL,
-  },
-  {
-    id: BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
-    oauthProviderId: BIGMODEL_PROVIDER_ID,
-    label: "BigModel- Coding Plan",
-    providerName: "BigModel",
-    purchaseUrl: BIGMODEL_CODING_PLAN_PERSONAL_MANAGE_URL,
-  },
-];
+// 离线裁剪版：清空官方 Coding Plan 入口表;导航与连接模式条目随之消失。
+export const CODING_PLAN_PROVIDER_SPECS: CodingPlanProviderSpec[] = [];
 
 export interface CodingPlanEntitlementState {
   snapshot: UsageEntitlementSnapshot | null;

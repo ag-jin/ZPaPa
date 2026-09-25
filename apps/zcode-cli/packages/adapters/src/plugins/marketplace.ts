@@ -450,6 +450,12 @@ async function requestMarketplaceJson(
   signal?: AbortSignal,
   timeoutMs = MARKETPLACE_JSON_TIMEOUT_MS,
 ): Promise<unknown> {
+  // 离线裁剪版：拒绝请求 z.ai 家族域名（cdn-zcode.z.ai 等）的市场 manifest，
+  // 覆盖自动刷新、懒加载与安装路径的官方市场抓取；本地内置分片不受影响。
+  const requestHostname = new URL(url).hostname.toLowerCase();
+  if (requestHostname === "z.ai" || requestHostname.endsWith(".z.ai")) {
+    throw new Error(`Marketplace CDN requests are disabled in this offline build: ${url}`);
+  }
   const client = createNodeWebFetchHttpClientAdapter({
     env: process.env,
     maxResponseBytes: MARKETPLACE_JSON_MAX_BYTES,

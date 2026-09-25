@@ -5,18 +5,11 @@ import {
   type AccountProviderConfigSnapshot,
   type AccountProviderStates,
 } from "@zcode/provider";
-import {
-  isBuiltinModelProviderId,
-  resolveRuntimeZCodeEndpointOrigin,
-  ZCODE_VERSION,
-} from "@zcode/shared";
-import { dirname, join } from "node:path";
+import { isBuiltinModelProviderId } from "@zcode/shared";
 import {
   NodeModelSelectionConfigRepository,
   NodeProviderRegistryRuntime,
   resolveNodeProviderRuntimePaths,
-  downloadZCodeBuiltinRelease,
-  resolveZCodeBuiltinClientPlatform,
   ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV,
   type ZCodeBuiltinRefreshEvent,
 } from "@zcode/provider-node";
@@ -63,24 +56,10 @@ export async function startProcessProviderRegistryRuntime(
     ...paths,
     ...(bundledFile
       ? {
+          // 离线裁剪版：只把打包内配置作为 Built-in 基线，不再挂 zcodeBuiltinRemote
+          // 同步器，CLI 不会访问 {endpoint}/api/v1/client/configs 下载云端 provider 配置。
           zcodeBuiltinFilePath: bundledFile,
           zcodeBuiltinActiveFilePath: paths.zcodeBuiltinFilePath,
-          zcodeBuiltinRemote: {
-            controlFilePath: join(
-              dirname(paths.zcodeBuiltinFilePath),
-              "zcode-builtin-refresh.json",
-            ),
-            resolveEndpointKey: () => resolveRuntimeZCodeEndpointOrigin(env),
-            fetchRelease: (endpointOrigin, signal) =>
-              downloadZCodeBuiltinRelease({
-                endpointOrigin,
-                signal,
-                appVersion: ZCODE_VERSION,
-                platform: resolveZCodeBuiltinClientPlatform(),
-                request: options.standalone?.request ?? globalThis.fetch,
-              }),
-            onRefreshResult: options.standalone?.onBuiltinRefreshResult,
-          },
         }
       : {}),
     onZCodeBuiltinRefreshError: options.standalone?.onBuiltinRefreshError,

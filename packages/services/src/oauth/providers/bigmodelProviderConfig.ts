@@ -13,7 +13,8 @@ const BIGMODEL_AUTHORIZE_PATH = "/login";
 const BIGMODEL_OAUTH_PROVIDER_CONFIG: Omit<OAuthProviderRuntimeConfig, "appSecret"> = {
   id: BIGMODEL_PROVIDER_ID,
   displayName: "BigModel",
-  enabled: true,
+  // 离线裁剪版：BigModel OAuth 登录入口默认移除，登录/恢复会话均按未启用处理。
+  enabled: false,
   order: 0,
   authorizeUrl: "https://bigmodel.cn/login",
   tokenUrl: "https://zcode.z.ai/api/v1/oauth/token",

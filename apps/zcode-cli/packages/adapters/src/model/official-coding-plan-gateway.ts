@@ -20,14 +20,8 @@ export interface OfficialCodingPlanGatewayRoute {
 }
 
 export const OFFICIAL_CODING_PLAN_GATEWAY_ROUTES: readonly OfficialCodingPlanGatewayRoute[] = [
-  {
-    providerEndpoint: "https://open.bigmodel.cn/api/anthropic/v1/messages",
-    gatewayPath: "/api/v1/ultra/anthropic/v1/messages",
-  },
-  {
-    providerEndpoint: "https://api.z.ai/api/anthropic/v1/messages",
-    gatewayPath: "/api/v1/ultra-zai/anthropic/v1/messages",
-  },
+  // 离线裁剪版：清空官方端点 → ZCode 平台网关的改写表，模型请求一律直连用户配置的
+  // provider 端点，不再经 zcode.z.ai 网关转发。
 ];
 
 export interface OfficialCodingPlanGatewayDecision {

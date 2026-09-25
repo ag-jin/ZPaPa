@@ -1565,6 +1565,8 @@ const enUS: Record<string, string> = {
   "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
   "update.toast.ready": "v{version} downloaded, restart to install",
   "update.toast.devSkipped": "Updates are disabled in dev builds",
+  "update.toast.openPage":
+    "Opened the download page: {url}. Please install the latest package manually.",
   "update.toast.error": "Update check failed: {error}",
   "forceUpdate.title": "Update ZCode to continue",
   "forceUpdate.description":
@@ -1732,8 +1734,8 @@ const enUS: Record<string, string> = {
   "remote.connectingStepTitle": "Connecting",
   "remote.connectingStepDescription":
     "We are establishing the {method} connection. You can follow the live setup progress here.",
-  "webRemoteControl.trigger": "Mobile remote control",
-  "webRemoteControl.title": "Mobile remote control",
+  "webRemoteControl.trigger": "Remote control",
+  "webRemoteControl.title": "Remote control",
   "webRemoteControl.description": "Control ZCode workspaces through chat bots.",
   "webRemoteControl.botChannel.title": "Use a bot channel",
   "webRemoteControl.botChannel.description": "Connect a chat bot for longer-running mobile access.",

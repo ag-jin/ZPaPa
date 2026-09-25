@@ -13,7 +13,6 @@ import "@zcode/ui/styles.css";
 import { connectViaWebSocket } from "@zcode/client";
 import { WebCallbackPage } from "./auth/WebCallbackPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
-import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
 import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
 import { resolveWebCommunityUrl, resolveWebHelpConfig } from "./communityUrl.js";
 import {
@@ -167,19 +166,8 @@ async function renderConversationSharePage(): Promise<void> {
       shareCode={shareCode}
       client={client}
       getAccessToken={() => getMockToken() ?? webAuthService.getZCodeJwtToken()}
-      onLogin={(provider) => {
-        if (mockMode) {
-          window.sessionStorage.setItem("zcode:share:mock-auth", "owner");
-          window.location.reload();
-          return;
-        }
-        webAuthService.startLogin({
-          provider,
-          appReturnTo: window.location.href,
-          redirectUri: WEB_ZAI_OAUTH_CONFIG.shareRedirectUri,
-          devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG),
-        });
-      }}
+      // 离线裁剪版：分享落地页不再提供 Z.ai/BigModel OAuth 登录入口（不跳转 chat.z.ai /
+      // bigmodel.cn 授权页）；桌面端也不会再发布新的云端分享，落地页仅保留 mock 开发模式。
       onLogout={onLogout}
       locale={routeLocale}
       theme={resolveWebThemePreference("zai-light")}

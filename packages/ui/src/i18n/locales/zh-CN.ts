@@ -1450,6 +1450,7 @@ const zhCN: Record<string, string> = {
   "update.toast.alreadyDownloading": "正在下载新版本（{progress}%）",
   "update.toast.ready": "v{version} 已下载，重启即可安装",
   "update.toast.devSkipped": "开发环境不检查更新",
+  "update.toast.openPage": "已打开下载页面：{url}，请下载最新安装包覆盖安装。",
   "update.toast.error": "检查更新失败：{error}",
   "forceUpdate.title": "需要升级 ZCode 后继续使用",
   "forceUpdate.description":
@@ -1612,8 +1613,8 @@ const zhCN: Record<string, string> = {
   "remote.history.empty": "没有匹配的历史连接",
   "remote.connectingStepTitle": "正在建立连接",
   "remote.connectingStepDescription": "正在建立 {method} 连接，你可以在这里查看实时的连接进度。",
-  "webRemoteControl.trigger": "移动端远程控制",
-  "webRemoteControl.title": "移动端远程控制",
+  "webRemoteControl.trigger": "远程控制",
+  "webRemoteControl.title": "远程控制",
   "webRemoteControl.description": "通过聊天机器人控制 ZCode 工作区。",
   "webRemoteControl.botChannel.title": "使用 Bot Channel",
   "webRemoteControl.botChannel.description": "连接聊天 Bot，适合更长时间的移动端访问。",

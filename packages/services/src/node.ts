@@ -307,7 +307,7 @@ import {
   ConversationShareService,
   conversationShareConnectionScopeFactory,
 } from "./conversation-share/conversationShareService.js";
-import { createLocalConversationShareArtifactSource } from "./conversation-share/conversationShareArtifactSource.js";
+// 分享已在本地禁用;HttpClient 仅保留给文件末尾的公共 re-export,供测试与既有装配引用。
 import { ConversationShareHttpClient } from "./conversation-share/conversationShareHttpClient.js";
 import { IBotsService } from "./bots/bots.js";
 import { IFileWatcherService } from "./fileWatcher/fileWatcher.js";
@@ -372,7 +372,6 @@ import { bindAccountProviderInvalidation } from "./model-provider/accountProvide
 import { AccountProviderApiClient } from "./model-provider/accountProviderApiClient.js";
 import { AccountProviderApiKeyResolver } from "./model-provider/accountProviderApiKeyResolver.js";
 import { createProviderConfigRuntime } from "./model-provider/providerConfigRuntime.js";
-import { fetchZCodeBuiltinRemoteRelease } from "./model-provider/zcodeBuiltinRemoteConfig.js";
 import {
   createProviderRuntimeFromConfigRuntime,
   type ProviderRuntime,
@@ -392,7 +391,6 @@ import {
 import { createProviderProvisioningTarget } from "./model-provider/providerProvisioningTarget.js";
 import { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 import { buildOffPeakModelSelectionView } from "./model-provider/offPeakModelSelectionView.js";
-import { resolveClientConfigPlatform } from "./runtime-tools/clientPlatform.js";
 import {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
@@ -524,7 +522,6 @@ import {
   zcodeProviderAccountAccessSchema,
   ZCODE_VERSION,
   ZCODE_ENV,
-  buildRuntimeZCodeApiUrl,
 } from "@zcode/shared";
 
 // 这些 conversation-share 实现依赖 Node 文件系统；仅通过 @zcode/services/node 暴露，
@@ -1515,28 +1512,10 @@ export function createLocalServices(options: {
     }),
   );
   const providerConfigLog = createServiceLogger("provider-config");
-  const clientConfigPlatform = resolveClientConfigPlatform();
+  // 离线裁剪版：不再传 zcodeBuiltinEnvironment（EndpointScoped source + 远端同步器），
+  // Built-in Provider 配置只读打包内文件，不访问 /api/v1/client/configs，也不建立 60s 周期检查。
   const providerConfigRuntime = createProviderConfigRuntime({
     zcodeBuiltinFilePath: options.zcodeBuiltinProviderConfigFilePath,
-    zcodeBuiltinEnvironment: {
-      environmentConfigRoot: resolveAppConfigDir(),
-      platform: clientConfigPlatform,
-      appVersion: ZCODE_VERSION,
-      resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-      onRefreshResult: (event) => {
-        if (event.result === "updated")
-          providerConfigLog.info(undefined, "ZCode Built-in CDN 配置已更新", event);
-        else providerConfigLog.debug(undefined, "ZCode Built-in 刷新检查", event);
-      },
-      fetchRelease: (endpointOrigin, signal) =>
-        fetchZCodeBuiltinRemoteRelease({
-          apiClient,
-          endpointOrigin,
-          signal,
-          appVersion: ZCODE_VERSION,
-          platform: clientConfigPlatform,
-        }),
-    },
     onZCodeBuiltinRefreshError: (error) => {
       providerConfigLog.warn(undefined, "ZCode Built-in Config 远端刷新失败", { error });
     },
@@ -2404,30 +2383,12 @@ export function createLocalServices(options: {
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
   });
-  const conversationShareClient = new ConversationShareHttpClient({
-    // 分享运行时始终走真实 API；测试/Mock 场景应在 service 单测或 Web fixture 中显式注入，
-    // 不能让开发环境默认生成仅存在于进程内存的 mock-share 链接。
-    apiClient,
-    baseUrl: buildRuntimeZCodeApiUrl(process.env, "/api/v1"),
-    tokenProvider: async (): Promise<string | null> => {
-      const activeProvider = await oauthCredentialRepo.getActiveProvider();
-      if (!activeProvider) {
-        return null;
-      }
-      const tokenSet = await oauthCredentialRepo.loadTokenSet(activeProvider);
-      return tokenSet?.zcodeJwtToken ?? tokenSet?.accessToken ?? null;
-    },
-  });
-  const conversationShareService: IConversationShareServiceType = isDesktopAttachedRemote
-    ? createUnsupportedConversationShareService({
-        message: "Conversation publishing is not available for remote workspaces",
-      })
-    : new ConversationShareService({
-        zcodeAgentService,
-        zcodeSessionService,
-        client: conversationShareClient,
-        artifactSource: createLocalConversationShareArtifactSource(),
-      });
+  // 离线裁剪版：会话分享会把对话内容上传到 ZCode 云端（zcode.z.ai /api/v1/shares/*），
+  // 本版本统一注册 unsupported 服务，本地与远程工作区都不再发布/导入分享。
+  const conversationShareService: IConversationShareServiceType =
+    createUnsupportedConversationShareService({
+      message: "Conversation publishing is disabled in this offline build",
+    });
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];

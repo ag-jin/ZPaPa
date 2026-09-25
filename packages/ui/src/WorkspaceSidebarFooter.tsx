@@ -3,7 +3,6 @@ import type { Locale, UserInfo } from "@zcode/shared";
 import { memo, useCallback, useEffect, useState } from "react";
 import {
   DesktopCommandIds,
-  TID_LOGIN_MENU_ITEM,
   TID_LOGIN_TRIGGER,
   TID_LOGOUT_BUTTON,
   TID_TASK_SETTINGS_BUTTON,
@@ -29,7 +28,6 @@ import {
   PencilRuler,
   Globe,
   Loader2,
-  LogInIcon,
   LogOut,
   Maximize,
   Palette,
@@ -45,11 +43,6 @@ import { useZCodeStore } from "@/store/StoreProvider.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
 import type { Theme } from "@/useTheme.js";
 import { WorkspaceWebRemoteControlTrigger } from "@/WorkspaceWebRemoteControlTrigger.js";
-import {
-  WorkspaceSidebarFooterPlanBadge,
-  WorkspaceSidebarFooterUsageSummaryContent,
-  useWorkspaceSidebarFooterUsageSummaryState,
-} from "@/WorkspaceSidebarFooterUsageSummary.js";
 
 const DESKTOP_ZOOM_MIN_LEVEL = -3;
 const DESKTOP_ZOOM_MAX_LEVEL = 5;
@@ -70,13 +63,14 @@ function getSidebarProfileName(user?: UserInfo | null): string {
 
 function getSidebarProfileBadge(
   user: UserInfo | null | undefined,
-  formatMessage: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
+  _formatMessage: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
 ): string {
   if (user) {
     return getSidebarProfileName(user);
   }
 
-  return formatMessage({ id: "sidebar.profile.notLoggedIn" });
+  // 离线裁剪版：登录入口已移除，未登录时不再显示“连接使用”引导，用中性名称占位。
+  return "ZCode";
 }
 
 function getAvatarFallbackText(user: UserInfo | null | undefined): string {
@@ -90,16 +84,11 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   onLocaleChange,
   onThemeChange,
   onSettingsButtonClick,
-  onUsageClick,
-  onUpgradeClick,
-  onLogin,
   onLogout,
   settingsButtonMode = "settings",
   user,
   workspacePath,
   workspaceIdentity,
-  workspaceRemoteSessionId,
-  activeTaskId,
   isDesktop = false,
   className,
 }: {
@@ -108,10 +97,13 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   onLocaleChange: (value: string) => void;
   onThemeChange: (value: string) => void;
   onSettingsButtonClick?: () => void;
+  // onUsageClick / onUpgradeClick / onLogin 保留在类型上兼容既有调用方；
+  // 离线裁剪版不再渲染用量摘要与登录入口，忽略这些回调。
   onUsageClick?: () => void;
-  onUpgradeClick?: Parameters<
-    typeof WorkspaceSidebarFooterUsageSummaryContent
-  >[0]["onUpgradeClick"];
+  onUpgradeClick?: (
+    providerId: import("@/lib/sidebarUsageCodingPlanProviderPreference.js").SidebarUsageCodingPlanProviderId,
+    funnelContext: import("@/lib/codingPlanFunnelTelemetry.js").CodingPlanFunnelContext,
+  ) => void;
   onLogin?: () => void;
   onLogout?: () => void;
   settingsButtonMode?: "settings" | "back";
@@ -135,11 +127,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const avatarFallbackText = getAvatarFallbackText(user);
   const avatarKey = user?.avatarUrl ?? user?.id ?? "guest";
   const showAuthRestoreLoading = !user && isRestoringOAuthSession;
-  const usageSummaryState = useWorkspaceSidebarFooterUsageSummaryState({
-    enabled: true,
-    workspaceIdentity,
-    workspacePath,
-  });
   const profileContent = (
     <>
       <Avatar key={avatarKey} size="default">
@@ -165,7 +152,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           <span className="min-w-0 truncate text-ui-base font-semibold text-foreground">
             {profileBadge}
           </span>
-          {user ? <WorkspaceSidebarFooterPlanBadge state={usageSummaryState} /> : null}
         </div>
       </div>
     </>
@@ -174,7 +160,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
     settingsButtonMode === "back"
       ? intl.formatMessage({ id: "workspace.backToWorkspace" })
       : intl.formatMessage({ id: "settings.title" });
-  const usageButtonClick = onUsageClick ?? onSettingsButtonClick;
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
   const runDesktopZoomCommand = useCallback(
@@ -343,21 +328,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             ) : null}
-            {/* 升级入口状态不再以菜单开关为生命周期边界。*/}
-            <WorkspaceSidebarFooterUsageSummaryContent
-              state={usageSummaryState}
-              onUsageClick={usageButtonClick}
-              onUpgradeClick={onUpgradeClick}
-            />
-            {onLogin && !user ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onLogin} data-testid={TID_LOGIN_MENU_ITEM}>
-                  <LogInIcon className="size-4" />
-                  {intl.formatMessage({ id: "app.login" })}
-                </DropdownMenuItem>
-              </>
-            ) : null}
+            {/* 离线裁剪版：移除“使用统计/套餐查询”与“连接使用”登录入口。
+                套餐/用量是 ZCode 平台账号能力，离线版不再查询（也就不会再出现“套餐查询失败”）。 */}
             {onLogout ? (
               <>
                 <DropdownMenuSeparator />

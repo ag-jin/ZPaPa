@@ -1,15 +1,11 @@
-import type { ApiClient } from "@zcode/shared";
-import { readApiJson } from "../providers/api/apiJson.js";
-import { ZCODE_CLIENT_SCENES_URL } from "../providers/api/apiEndpoints.js";
 import type { ClientScenesResponse, IClientScenesService } from "./clientScenes.js";
 
-export function createClientScenesService(dependencies: {
-  apiClient: ApiClient;
+export function createClientScenesService(_dependencies: {
+  apiClient: unknown;
 }): IClientScenesService {
   return {
-    list: () =>
-      readApiJson<ClientScenesResponse>(dependencies.apiClient, ZCODE_CLIENT_SCENES_URL, {
-        method: "GET",
-      }),
+    // 离线裁剪版：不再请求 {endpoint}/api/v1/client/scenes（云端场景/推荐语料拉取），
+    // 恒定返回空场景列表，Automations 模板与草稿推荐提示词由本地静态内容兜底。
+    list: async () => ({ code: 0, msg: "offline", data: [] }) as ClientScenesResponse,
   };
 }

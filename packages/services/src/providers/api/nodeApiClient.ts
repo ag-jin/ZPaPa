@@ -27,6 +27,39 @@ function resolveUrl(input: string | URL): string {
   return typeof input === "string" ? input : input.toString();
 }
 
+// 离线裁剪版：平台业务 API 一律拒绝出网。zcode.z.ai / api.z.ai / chat.z.ai / bigmodel.cn /
+// open.bigmodel.cn 及整个 *.z.ai / *.bigmodel.cn 家族都视为"平台不可达"，订阅、配额重置、
+// 灰度配置、反馈后端等残留调用在此收敛为失败；用户自建模型 provider 不经过本客户端，不受影响。
+const OFFLINE_BLOCKED_HOSTNAMES = new Set([
+  "z.ai",
+  "zcode.z.ai",
+  "cdn-zcode.z.ai",
+  "chat.z.ai",
+  "api.z.ai",
+  "bigmodel.cn",
+  "open.bigmodel.cn",
+]);
+const OFFLINE_BLOCKED_HOSTNAME_SUFFIXES = [".z.ai", ".bigmodel.cn"] as const;
+
+function assertOfflinePlatformRequestBlocked(url: string, method: string): void {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    const blocked =
+      OFFLINE_BLOCKED_HOSTNAMES.has(hostname) ||
+      OFFLINE_BLOCKED_HOSTNAME_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
+    if (blocked) {
+      throw new ApiError({
+        message: `Offline build: platform API requests are disabled (${hostname})`,
+        url,
+        method,
+      });
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    // 非法 URL 交给后续 fetch 逻辑按原有语义失败。
+  }
+}
+
 function readHeaderKeys(headers: RequestInit["headers"] | undefined): string[] {
   if (!headers) {
     return [];
@@ -94,6 +127,7 @@ export class NodeApiClient implements ApiClient {
     const requestInput = rewriteZCodeEndpointUrl(input, activeEndpointOrigin);
     const url = resolveUrl(requestInput);
     const method = resolveMethod(init);
+    assertOfflinePlatformRequestBlocked(url, method);
     const timeoutMs = init?.timeoutMs;
     const controller = timeoutMs && timeoutMs > 0 ? new AbortController() : null;
     let didTimeout = false;

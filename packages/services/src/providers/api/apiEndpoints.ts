@@ -1,8 +1,5 @@
-import { buildRuntimeZCodeApiUrl, resolveZaiBusinessBaseUrl } from "@zcode/shared";
+import { resolveZaiBusinessBaseUrl } from "@zcode/shared";
 
-export const ZCODE_CLIENT_SCENES_URL = buildRuntimeZCodeApiUrl(
-  process.env,
-  "/api/v1/client/scenes",
-);
+// 离线裁剪版：/api/v1/client/scenes 场景拉取已离线化，此处不再导出云端 URL。
 
 export const ZAI_API_HOST = resolveZaiBusinessBaseUrl(process.env);

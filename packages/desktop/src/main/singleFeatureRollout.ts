@@ -38,6 +38,10 @@ export interface SingleFeatureRolloutLogger {
 const SINGLE_FEATURE_REQUEST_TIMEOUT_MS = 3_000;
 const SINGLE_FEATURE_CACHE_TTL_MS = 60 * 60 * 1_000;
 
+// 离线裁剪版：禁用 /api/v1/client/configs 灰度旁路请求。refresh 恒定返回初始快照，
+// context-prompt 与 renderer-action-trace 均按各自 defaultValue 生效（fail-close 保持关闭）。
+const SINGLE_FEATURE_ROLOUT_REMOTE_FETCH_DISABLED: boolean = true;
+
 interface CreateSingleFeatureRolloutOptions<T extends SingleFeatureRolloutConfig> {
   /** 解析 /api/v1/client/configs 响应体；null 表示响应无效（按失败处理，沿用旧快照）。 */
   resolveConfig: (payload: unknown) => T | null;
@@ -61,6 +65,10 @@ export function createSingleFeatureRollout<T extends SingleFeatureRolloutConfig>
   const cacheTtlMs = Math.max(options.cacheTtlMs ?? SINGLE_FEATURE_CACHE_TTL_MS, 1);
 
   const refresh = (): Promise<T> => {
+    if (SINGLE_FEATURE_ROLOUT_REMOTE_FETCH_DISABLED) {
+      snapshotExpiresAt = Number.POSITIVE_INFINITY;
+      return Promise.resolve(snapshot);
+    }
     if (Date.now() < snapshotExpiresAt) {
       return Promise.resolve(snapshot);
     }

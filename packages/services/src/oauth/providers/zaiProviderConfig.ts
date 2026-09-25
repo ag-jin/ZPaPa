@@ -15,7 +15,8 @@ import {
 const ZAI_OAUTH_PROVIDER_CONFIG: Omit<OAuthProviderRuntimeConfig, "appSecret"> = {
   id: ZAI_PROVIDER_ID,
   displayName: "Z.ai",
-  enabled: true,
+  // 离线裁剪版：Z.ai OAuth 登录入口默认移除，登录/恢复会话均按未启用处理。
+  enabled: false,
   order: 1,
   // ZAI 当前 OAuth 授权入口使用 /api/oauth 前缀，继续走 /auth/oauth 会打开旧入口。
   authorizeUrl: "https://chat.z.ai/api/oauth/authorize",

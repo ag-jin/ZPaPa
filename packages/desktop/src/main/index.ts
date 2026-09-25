@@ -132,7 +132,6 @@ import { applyAppIcon } from "./desktopWindowChrome.js";
 import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
-import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
 import { createWindowsDesktopTray, updateWindowsDesktopTrayMenu } from "./desktopTray.js";
 import { createWindowsCuaOperationIndicator } from "./windowsCuaOperationIndicator.js";
 import {
@@ -144,6 +143,10 @@ import {
   handleDesktopWindowCloseRequest,
 } from "./desktopWindowLifecycle.js";
 import { resolveZCodeBuiltinProviderConfigFilePath } from "./desktopProviderConfig.js";
+import {
+  spawnResidentHost,
+  type ResidentHostHandle,
+} from "./desktopResidentHost.js";
 import {
   getCredentialsDir,
   isDockerDaemonAvailable,
@@ -635,6 +638,7 @@ const windowsCuaOperationIndicator = createWindowsCuaOperationIndicator({
 
 // 常驻 cron scheduler 进程句柄；app ready 后拉起，退出前销毁。
 let cronScheduler: CronSchedulerHandle | null = null;
+let residentHost: ResidentHostHandle | null = null;
 // host → main 的定时任务派发结果，转交给 scheduler 结算。经模块变量转发以避免 spawn 顺序耦合。
 function forwardCronRunResult(
   result: Parameters<CronSchedulerHandle["handleCronRunResult"]>[0],
@@ -1034,6 +1038,8 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
 
   const cronSchedulerToDispose = cronScheduler;
   cronScheduler = null;
+  const residentHostToDispose = residentHost;
+  residentHost = null;
 
   const hostProcesses = [
     ...new Set([...windowHostProcessMap.values(), ...listDisposingHostProcesses()]),
@@ -1059,6 +1065,13 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
         await cronSchedulerToDispose?.dispose();
       } catch (error) {
         logger.warn(`[app-quit] cron scheduler dispose failed (${reason}):`, error);
+      }
+    })(),
+    (async () => {
+      try {
+        await residentHostToDispose?.dispose();
+      } catch (error) {
+        logger.warn(`[app-quit] resident host dispose failed (${reason}):`, error);
       }
     })(),
     // remote session、attachment 和 transport 都由窗口 Host 持有；这里先清理
@@ -1972,6 +1985,18 @@ app.whenReady().then(async () => {
     } catch (error) {
       logger.error("[cron-scheduler] failed to spawn scheduler process:", error);
     }
+
+    // 常驻会话主机:本机回环监听,供对端设备经 SSH 隧道挂载(远程项目升级第 1 期)。
+    // 与 scheduler 同窗口期启动,等数据库就绪避免抢迁移;状态文件就绪后远端即可发现。
+    try {
+      residentHost = spawnResidentHost({
+        hostProcessLocalEnv,
+        builtinProviderConfigFilePath: resolveZCodeBuiltinProviderConfigFilePath(),
+        logger,
+      });
+    } catch (error) {
+      logger.error("[resident-host] failed to spawn resident host process:", error);
+    }
   });
 
   if (process.platform === "win32") {
@@ -2010,10 +2035,11 @@ app.whenReady().then(async () => {
   logWindowsBundledRuntimeIntegrityDiagnostic();
 
   // 启动自动更新检查（后台执行，不阻塞主界面）
-  // Preview 身份无论连接哪个后端都不自动更新：stable feed 上只分发正式 ZCode 安装包，
-  // 不向 Preview 渠道提供更新。
+  // 离线裁剪版：更新通道改为 GitHub Releases（ag-jin/ZPaPa），不再访问 zcode.z.ai。
+  // Windows 走 electron-updater 自动检查/下载/安装；macOS（未签名）在 autoUpdater 内部
+  // 跳过轮询，菜单「检查更新」直接打开发布页。
   void initAutoUpdater({
-    enabled: ZCODE_PRODUCT_FLAVOR === "production",
+    enabled: true,
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
       await prepareAppQuit("auto-update quitAndInstall", "update-install");
@@ -2248,32 +2274,9 @@ app.whenReady().then(async () => {
   });
   registerDesktopNetworkTelemetry(logger);
 
-  // 本地未打包 dev 构建（app.isPackaged === false）必须跳过远端强制升级 gate。
-  // 原因：force-update gate 只看 ZCODE_ENV === "production"，但 dev 构建（如 dev:desktop:cua
-  // 连真实后端测 computer use）虽指向 production 后端，版本号却滞后于线上 release（feature
-  // 分支不 bump 版本），会被 release minimalVersion 误判为"需强制升级"而启动秒退。force-update
-  // 是面向打包发布客户端的安全门，对未打包 dev 运行时无意义。打包版 app.isPackaged === true，
-  // gate 照常生效，对真实用户零影响。
-  const skipForceUpdateForLocalDevRuntime = !app.isPackaged;
-  const forceUpdateGuardResult =
-    ZCODE_PRODUCT_FLAVOR === "production" && !skipForceUpdateForLocalDevRuntime
-      ? await maybeBlockStartupForForceUpdate({
-          locale: currentApplicationLocale,
-          logger,
-          endpointOrigin: await resolveCurrentZCodeEndpointOrigin(),
-          onBlocked: () => {
-            forceUpdateMainWindowCreationBlocked = true;
-          },
-        })
-      : { blocked: false };
-  if (ZCODE_PRODUCT_FLAVOR !== "production") {
-    logger.info("[force-update] Preview 跳过远端强制升级检查");
-  } else if (skipForceUpdateForLocalDevRuntime) {
-    logger.info("[force-update] 本地 dev 构建（未打包）跳过远端强制升级检查");
-  }
-  if (forceUpdateGuardResult.blocked) {
-    return;
-  }
+  // 离线裁剪版：远端强制升级 gate 会启动即访问 {endpoint}/api/v1/client/configs 并可能
+  // 阻止进入主界面，本版本对打包版与 dev 构建一律跳过，不再产生启动期外呼。
+  logger.info("[force-update] 离线裁剪版跳过远端强制升级检查");
 
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");

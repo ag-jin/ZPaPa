@@ -558,6 +558,15 @@ export async function updateZCodePluginMarketplace(
       }
       continue;
     }
+    // 离线裁剪版：官方市场的 CDN（cdn-zcode.z.ai）已禁用；对仍记录着 z.ai 域名 source 的
+    // 市场跳过刷新并原样返回当前记录，避免商店页自动刷新周期性产生失败诊断。
+    if (knownRecord?.source.source === "url") {
+      const recordHostname = new URL(knownRecord.source.url).hostname.toLowerCase();
+      if (recordHostname === "z.ai" || recordHostname.endsWith(".z.ai")) {
+        updated.push(knownRecord);
+        continue;
+      }
+    }
     updated.push(
       ...(await updateMarketplace({
         marketplace: marketplaceId,
