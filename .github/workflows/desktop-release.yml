@@ -1,0 +1,111 @@
+name: Desktop Release
+
+# 三平台安装包自动构建:
+#   - macOS Apple Silicon (arm64)  → macos-15
+#   - macOS Intel (x64)            → macos-15-intel(原生构建,避免交叉编译把宿主架构
+#                                    的 node-pty electron-rebuild 产物带进安装包)
+#   - Windows x64                  → windows-latest
+#
+# 全部产物均为未签名包:不注入 APPLE_SIGNING_IDENTITY / CSC_* 等任何签名变量,
+# electron-builder 的 mac.identity 保持 null、Windows NSIS 不做时间戳签名。
+# 触发方式:
+#   - 推送 v* 标签:构建 3 个安装包并发布 GitHub Release
+#   - workflow_dispatch:只构建并上传 Actions 构建产物,不发布 Release(用于验证流水线)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mac-arm64
+            runner: macos-15
+            bundle-args: --os mac --arch arm64
+            artifact-glob: packages/desktop/dist/*.dmg
+          - name: mac-x64
+            runner: macos-15-intel
+            bundle-args: --os mac --arch x64
+            artifact-glob: packages/desktop/dist/*.dmg
+          - name: win-x64
+            runner: windows-latest
+            bundle-args: --os win --arch x64
+            artifact-glob: packages/desktop/dist/*.exe
+    env:
+      # 正式产品身份(ZCode)与线上后端;不设置会打出 "ZCode Preview ..._TEST" 测试包
+      ZCODE_ENV: production
+      # 桌面安装包不依赖 mock-cdn 远端资产(SSH/WSL 远端组件由客户端运行时按需下载),
+      # 跳过 node 二进制下载与远端组件打包,显著缩短 CI
+      ZCODE_SKIP_REMOTE_ASSETS: "1"
+      # 明确禁用 macOS 签名身份自动发现,确保产物保持未签名
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bundle desktop installer
+        run: pnpm bundle:desktop -- ${{ matrix.bundle-args }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          path: ${{ matrix.artifact-glob }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          pattern: desktop-*
+          merge-multiple: true
+
+      - name: Create release and upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" --json name > /dev/null 2>&1; then
+            echo "Release $TAG already exists, uploading with --clobber"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" installers/* --clobber
