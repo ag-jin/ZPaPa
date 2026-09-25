@@ -1,10 +1,11 @@
 name: Desktop Dev Build
 
 # dev 专用构建通道:
-#   - 手动触发(workflow_dispatch),产物只上传为 Actions Artifacts;
-#   - 不创建 GitHub Release、不上传 latest*.yml —— 自动更新(electron-updater 的
-#     github provider)只读取 Release 资产,因此 dev 包永远不进入软件更新线路;
-#   - 需要 Release 时走 desktop-release.yml(推 v* 标签)。
+#   - 手动触发(workflow_dispatch),安装包发布到滚动 prerelease 标签 `dev`
+#     (Actions Artifacts 仍保留作备份,但只含安装包本体);
+#   - 不进入软件更新线路的双保险:更新器只读 releases/latest,而 latest 排除
+#     prerelease;且 dev 发布不上传 latest*.yml,任何通道都无法解析为更新。
+#   - 正式发版走 desktop-release.yml(推 v* 标签,含 latest.yml)。
 #
 # 触发方式:Actions 页面 → Desktop Dev Build → Run workflow → 选择目标。
 
@@ -100,8 +101,33 @@ jobs:
           name: dev-desktop-${{ matrix.name }}-${{ github.run_number }}
           path: |
             packages/desktop/dist/*.dmg
-            packages/desktop/dist/*.zip
             packages/desktop/dist/*.exe
-            packages/desktop/dist/*.exe.blockmap
           if-no-files-found: error
           retention-days: 30
+
+  publish-dev:
+    name: Publish dev prerelease
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          pattern: dev-desktop-*
+          merge-multiple: true
+
+      - name: Publish rolling dev prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 滚动标签:删除旧的 dev release 与 tag,再以当前提交重建(prerelease)。
+          gh release delete dev --yes --cleanup-tag 2>/dev/null || true
+          gh release create dev installers/* -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Dev Build" \
+            --notes "手动触发的开发构建。prerelease + 不含 latest*.yml,不会进入自动更新通道。"
