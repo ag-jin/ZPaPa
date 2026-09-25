@@ -15,6 +15,7 @@ import {
 import type { IRemoteBackend, RemoteTcpTunnel } from "./backend.js";
 import type { RemoteConnection } from "./connect.js";
 import { wrapWebSocket } from "../http.js";
+import { assertSupportedRemoteEnvironment } from "@zcode/server/remote/remotePlatformSupport.js";
 
 /** 对端常驻主机状态文件（B 端 desktop main 写入；v1 假定默认数据目录）。 */
 export const RESIDENT_HOST_STATUS_REMOTE_PATH = "~/.zcode/v2/resident-host.json";
@@ -64,6 +65,20 @@ export async function connectResidentRemote(
 
   if (options.signal?.aborted) return null;
   if (!backend.openTcpTunnel) return null;
+
+  // 0) 首连 + 环境探测:readFile/openTcpTunnel 都不负责建立底层连接,
+  //    与 legacy connectRemote 的第一步保持一致(detect 内部会 ensureConnected)。
+  //    远端不是受支持环境(如 win32 原生)时直接回退 legacy 链路。
+  try {
+    const environment = await backend.detect();
+    assertSupportedRemoteEnvironment(environment);
+  } catch (error) {
+    log(
+      "backend detect failed, falling back to legacy:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
 
   // 1) 发现：读对端状态文件。文件不存在/损坏视为"无常驻主机"，直接回退。
   let status: ResidentHostStatusFile | null = null;
