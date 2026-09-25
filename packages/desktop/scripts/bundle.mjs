@@ -708,12 +708,23 @@ async function main() {
     "electron-builder",
     "--config",
     "electron-builder.config.js",
+    // publish 配置已指向 GitHub Releases,但发布动作统一由 CI 的 gh release 上传完成;
+    // 显式 never 避免 CI 打 tag 时 electron-builder 自行上传(无 token 会直接失败)。
+    // latest*.yml 等更新元数据仍会正常生成到 dist,随安装包一起上传。
+    "--publish",
+    "never",
     osBuilderFlagMap[os],
     archBuilderFlagMap[arch],
   ];
 
   console.log(`[bundle] target=${os}/${arch}`);
   console.log(`[bundle] skipPrepare=${skipPrepare} skipBuild=${skipBuild}`);
+
+  // ZCODE_BUILTIN_PROVIDER_CONFIG_FILE 是运行时覆盖项(CLI 会把它注入子进程环境);
+  // 在 ZCode 会话里跑打包时会被继承,导致安装包打进旧缓存的 provider 配置。
+  // 打包必须始终使用仓库 config/provider/zcode-builtin.json,这里从本进程及后续
+  // 构建子进程(pnpm build / electron-builder)中显式剥离。
+  delete process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE;
 
   const buildEnv = {
     ZCODE_TARGET_OS: os,

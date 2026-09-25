@@ -2,12 +2,10 @@
 import type { ISettingService } from "@zcode/services";
 import {
   DEFAULT_LOCALE,
-  DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   desktopMenuMessageIds,
   formatDesktopMenuMessage,
   getDesktopMenuMessage,
   PlatformChannels,
-  resolveRuntimeZCodeEndpointOrigin,
   ZCODE_VERSION,
   type ElectronReleaseChannel,
   type Locale,
@@ -15,15 +13,21 @@ import {
   type UpdateCheckResultPayload,
   type UpdateStatePayload,
 } from "@zcode/shared";
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
 import { logger } from "./logger.js";
-import { getElectronReleasePlatform, ManifestUpdateProvider } from "./manifestUpdateProvider.js";
+import { getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 const { autoUpdater } = pkg;
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
 const AUTO_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+// 更新通道(离线裁剪版):改用 GitHub Releases(ag-jin/ZPaPa)。
+// Windows 走 electron-updater 的 GitHub provider 完整自动更新;macOS 产物未签名,
+// Squirrel 静默安装会被签名校验拒绝,菜单「检查更新」直接打开发布页手动下载。
+const GITHUB_UPDATE_OWNER = "ag-jin";
+const GITHUB_UPDATE_REPO = "ZPaPa";
+const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
 const UPDATE_FEED_URL_ENV = "ZCODE_UPDATE_FEED_URL";
 const UPDATE_FEED_URL_SWITCH = "--zcode-update-feed-url";
 const DEV_AUTO_UPDATE_ENV = "ZCODE_AUTO_UPDATE_DEV";
@@ -751,26 +755,20 @@ async function syncAutoUpdateCheckChannelFromSettings(
   activeAutoUpdateCheckChannel = nextChannel;
 }
 
-function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
-  const manifestUrl = options.updateFeedSource?.url.trim();
+async function applyGitHubUpdateProvider(options: InitAutoUpdaterOptions): Promise<void> {
+  // 离线裁剪版:更新源从 ZCode 平台 manifest({endpoint}/api/v1/releases/electron/manifest)
+  // 切换到 GitHub Releases。Windows 走完整下载安装;macOS 由菜单直接打开发布页(见
+  // checkForUpdateMenuClick),此处仍配置 provider 仅用于版本检查元数据。
   autoUpdater.setFeedURL({
-    provider: "custom",
-    updateProvider: ManifestUpdateProvider,
-    endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-    ...(manifestUrl ? { manifestUrl } : {}),
-    releasePlatform: getElectronReleasePlatform(),
-    deviceMid: options.deviceMid,
-    resolveEndpointOrigin:
-      options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env)),
-    resolveReleaseChannel: async () => {
-      availableUpdateChannel = await resolveUpdateReleaseChannel(options.settingService);
-      return availableUpdateChannel;
-    },
+    provider: "github",
+    owner: GITHUB_UPDATE_OWNER,
+    repo: GITHUB_UPDATE_REPO,
   });
+  // 设置里的 preview 通道映射为 GitHub prerelease;stable 只看正式 Release。
+  autoUpdater.allowPrerelease =
+    (await resolveUpdateReleaseChannel(options.settingService)) === "preview";
   logger.info(
-    manifestUrl
-      ? `[auto-update] service manifest provider applied platform=${getElectronReleasePlatform()} manifestUrl=${redactUpdateFeedUrlForLog(manifestUrl)}`
-      : `[auto-update] service manifest provider applied platform=${getElectronReleasePlatform()}`,
+    `[auto-update] github provider applied platform=${getElectronReleasePlatform()} repo=${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO} prerelease=${autoUpdater.allowPrerelease}`,
   );
 }
 
@@ -1470,6 +1468,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
+  if (process.platform === "darwin") {
+    // macOS 未签名:不配置 updater、不轮询;版本入口是菜单「检查更新」→ 打开发布页。
+    logger.info("[auto-update] darwin: manual check opens GitHub releases page, no polling");
+    return;
+  }
   if (!canUseAutoUpdaterInCurrentRuntime()) return;
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
@@ -1504,7 +1507,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // 这里仅在 Windows 关闭“退出即自动安装”，要求用户显式点更新；其他平台保持原有行为，避免改动既有升级链路。
   autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
   autoUpdater.logger = logger;
-  applyManifestUpdateProvider(options);
+  void applyGitHubUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string) => {
     if (checkForUpdatesInFlight) {
@@ -1846,6 +1849,17 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
 
   if (!targetWindow) {
     logger.warn("[auto-update] manual check: no target window to report to");
+    return;
+  }
+
+  if (process.platform === "darwin") {
+    // 离线裁剪版:macOS 安装包未签名,应用内静默更新不可用;手动检查直接打开 GitHub 发布页。
+    logger.info("[auto-update] darwin manual check: open GitHub releases page");
+    void shell.openExternal(GITHUB_RELEASES_PAGE_URL);
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "open-page",
+      url: GITHUB_RELEASES_PAGE_URL,
+    } satisfies UpdateCheckResultPayload);
     return;
   }
 

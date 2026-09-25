@@ -46,6 +46,10 @@ jobs:
             runner: windows-latest
             bundle-args: --os win --arch x64
             artifact-glob: packages/desktop/dist/*.exe
+            # electron-updater 自动更新需要的元数据与差分块,随安装包一起发布
+            update-glob: |
+              packages/desktop/dist/latest.yml
+              packages/desktop/dist/*.exe.blockmap
     env:
       # 正式产品身份(ZCode)与线上后端;不设置会打出 "ZCode Preview ..._TEST" 测试包
       ZCODE_ENV: production
@@ -91,7 +95,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.name }}
-          path: ${{ matrix.artifact-glob }}
+          path: |
+            ${{ matrix.artifact-glob }}
+            ${{ matrix.update-glob }}
           if-no-files-found: error
           retention-days: 7
 
