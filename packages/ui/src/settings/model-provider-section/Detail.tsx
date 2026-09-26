@@ -27,6 +27,7 @@ import {
 } from "./constants.js";
 import { InlineEditableProviderCard } from "./InlineEditableProviderCard.js";
 import {
+  ModelProviderEmptyStateCard,
   ModelProviderLoadingCard,
   PresetProviderPlaceholderCard,
   CodingPlanStatusPanel,
@@ -391,7 +392,13 @@ export function ModelProviderSectionDetail({
   }, [selectedItemKey]);
 
   if (!selectedNavItem) {
-    return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
+    // 导航为空有两种完全不同的含义,不能用同一个 loading 卡掩盖:
+    // 仍在加载 → loading;加载完毕仍无任何条目(既无内置 preset 也无自定义 provider)
+    // → 空态引导,否则用户看到的是永久转圈,无法判断页面是否可用。
+    if (presetLoading || navigationItems.length > 0) {
+      return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
+    }
+    return <ModelProviderEmptyStateCard />;
   }
 
   if (selectedNavItem.type === "preset") {

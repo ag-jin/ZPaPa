@@ -114,6 +114,27 @@ export function ModelProviderLoadingCard({ loadingLabel }: { loadingLabel: strin
   );
 }
 
+/**
+ * 导航为空时的引导态。
+ *
+ * 左侧导航为空(没有内置 preset、也没有自定义 provider)时，Main 区域的
+ * selectedNavItem 恒为 null；若继续渲染 loading 卡，用户看到的是永久转圈，
+ * 无法判断是"还在加载"还是"根本没有可配置项"。这里明确区分两者：
+ * 仍在加载 → loading；已加载但没有任何供应商 → 空态 + 添加入口提示。
+ */
+export function ModelProviderEmptyStateCard({ messageId = "settings.modelProvider.noProvidersState" }: { messageId?: string }) {
+  const { intl } = useZCodeIntl();
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-dashed border-border bg-surface p-4">
+      <div className="flex items-center gap-2 text-ui-base text-foreground-subtle">
+        <InfoIcon className="size-4" />
+        <span>{intl.formatMessage({ id: messageId })}</span>
+      </div>
+    </div>
+  );
+}
+
 export function PresetProviderPlaceholderCard({
   displayName,
   messageId = "settings.modelProvider.presetEmpty",
