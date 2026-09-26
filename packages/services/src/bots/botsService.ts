@@ -2256,6 +2256,8 @@ export function createBotsService(
 
     const settings = await deps.settingService?.get().catch(() => null);
     for (const entry of settings?.lastWorkspaceSession ?? []) {
+      // 设备条目是"连接入口"，不对应任何 workspace tab，不参与 workspace 映射。
+      if (entry.kind === "remoteDevice") continue;
       const workspace = createWorkspaceRef(
         entry.workspacePath,
         entry.kind === "remote" ? entry.workspaceIdentity : undefined,

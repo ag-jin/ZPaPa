@@ -147,6 +147,11 @@ export function restorePersistedRemoteWorkspaceSessions({
       continue;
     }
 
+    // 设备条目没有 workspacePath：它只是连接入口，不恢复为 workspace tab。
+    // 设备条目由「远程设备」设置区块管理，与 tab 恢复是两条独立路径。
+    if (persistedEntry.kind === "remoteDevice") {
+      continue;
+    }
     const workspaceIdentity = resolveRemoteWorkspaceSessionIdentity(persistedEntry);
     const workspaceKey = workspaceIdentity?.trim() || persistedEntry.workspacePath;
     if (seenRemoteWorkspaceKeys.has(workspaceKey)) {

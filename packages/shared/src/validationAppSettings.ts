@@ -118,6 +118,18 @@ const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
     lastConnectionStatus: z.enum(["connected", "failed"]),
     lastConnectionError: z.string().optional(),
   }),
+  // 设备条目：远程设备投射的**连接入口**，不含会话数据。
+  // 与 remote 条目的区别：没有 workspacePath —— 设备语义是"连整台设备"，
+  // 项目清单连接后从设备实时拉取，不在此处留存。
+  z.object({
+    kind: z.literal("remoteDevice"),
+    target: remoteWorkspaceTargetSchema,
+    lastConnectedAt: z.number().int().nonnegative().optional(),
+    lastConnectionStatus: z.enum(["connected", "failed", "never"]).default("never"),
+    lastConnectionError: z.string().optional(),
+    /** 显示偏好：哪些项目在投射端显示（键为设备上的项目路径，值为是否显示）。 */
+    visibleProjects: z.record(z.string(), z.boolean()).optional(),
+  }),
 ]);
 
 const zcodeEndpointOriginSchema = z.preprocess((value) => {

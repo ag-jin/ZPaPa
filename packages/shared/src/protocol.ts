@@ -4,6 +4,7 @@ import type { ProviderFamilyDomain } from "./model-provider-family.js";
 import type { ProviderFamilyConnectionSelectionSettings } from "./provider-family-connection-selection.js";
 import type { ZCodeProvider } from "./zcode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
+import type { RemoteTarget } from "./remoteTarget.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 
 // ── Domain types ──
@@ -189,9 +190,27 @@ export interface RemoteWorkspaceSessionEntry extends RemoteWorkspaceSessionSnaps
   kind: "remote";
 }
 
+/**
+ * 远程设备条目：远程设备投射的**连接入口**。
+ *
+ * 与 RemoteWorkspaceSessionEntry 的区别：没有 workspacePath —— 设备语义是
+ * "连整台设备"，项目清单连接后从设备实时获取，不在投射端留存。
+ * 这里只保存"怎么连"（target）、连接状态，以及投射端的显示偏好。
+ */
+export interface RemoteDeviceEntry {
+  kind: "remoteDevice";
+  target: RemoteTarget;
+  lastConnectedAt?: number;
+  lastConnectionStatus: "connected" | "failed" | "never";
+  lastConnectionError?: string;
+  /** 显示偏好：设备上哪些项目在投射端显示（键为设备上的项目路径）。 */
+  visibleProjects?: Record<string, boolean>;
+}
+
 export type PersistedWorkspaceSessionEntry =
   | LocalWorkspaceSessionEntry
-  | RemoteWorkspaceSessionEntry;
+  | RemoteWorkspaceSessionEntry
+  | RemoteDeviceEntry;
 
 // ── Process Monitor ──
 
