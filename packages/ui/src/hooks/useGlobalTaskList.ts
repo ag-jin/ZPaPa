@@ -21,6 +21,9 @@ const zeroRevision = () => 0;
 function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]): ZCodeTaskListWorkspaceScope[] {
   const scopes = new Map<string, ZCodeTaskListWorkspaceScope>();
   for (const tab of workspaceTabs) {
+    // 远程项目 tab 必须带 remote identity：host 的 resolveSource 靠它定位远程连接
+    // 并解析出对端 taskService。「用对端自己的键查询」由 host 侧 readSourceTaskIndex
+    // 负责（远程 source 只按 workspacePath 查对端，不透传本端身份）。
     const scope = {
       workspacePath: tab.workspacePath,
       ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),

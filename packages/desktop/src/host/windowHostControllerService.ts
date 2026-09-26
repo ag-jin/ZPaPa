@@ -346,12 +346,25 @@ export function createWindowHostControllerRuntime(options: {
     if (!resolved.taskService || resolved.sourceAvailability !== "online") {
       throw new Error("Controller source 当前不可读取");
     }
-    const request = {
-      workspacePath: resolved.scope.workspacePath,
-      ...(resolved.scope.workspaceIdentity
-        ? { workspaceIdentity: resolved.scope.workspaceIdentity }
-        : {}),
-    };
+    // 远程 source 的会话归属由「对端自己的键」决定，不能用本端身份去查。
+    //
+    // 远端 CLI 以本地视角写会话库：远端 tasks-index 里该项目的键就是纯项目路径，
+    // 而 remote:<kind>:...:path 只是本端为远程工作区起的隔离标签（实测：远端库中
+    // workspace_id 全为空/纯路径，零个 remote: 前缀）。若把本端 identity 透传给
+    // 对端 taskService，对端会按一个它从未写过的键查询，恒返回空 —— 这正是
+    // 「连上了但看不到对方会话」的原因。
+    //
+    // 因此远程 source 只按 workspacePath 查询；本端身份隔离仍由 scope/projection
+    // 的 remoteSessionId 承担，不受影响。
+    const request =
+      resolved.scope.kind === "remote"
+        ? { workspacePath: resolved.scope.workspacePath }
+        : {
+            workspacePath: resolved.scope.workspacePath,
+            ...(resolved.scope.workspaceIdentity
+              ? { workspaceIdentity: resolved.scope.workspaceIdentity }
+              : {}),
+          };
     const [active, pinned, archived] = await Promise.all([
       resolved.taskService.listTasks(request),
       resolved.taskService.listPinnedTasks(request),
@@ -495,12 +508,16 @@ export function createWindowHostControllerRuntime(options: {
               const result = await source.taskService!.listTaskList({
                 ...query,
                 workspaceScopes: [
-                  {
-                    workspacePath: source.scope.workspacePath,
-                    ...(source.scope.workspaceIdentity
-                      ? { workspaceIdentity: source.scope.workspaceIdentity }
-                      : {}),
-                  },
+                  // 与 readSourceTaskIndex 同口径：远程 source 用对端自己的键查询，
+                  // 不透传本端 remote identity（对端从未写过那个键，会恒返回空）。
+                  source.scope.kind === "remote"
+                    ? { workspacePath: source.scope.workspacePath }
+                    : {
+                        workspacePath: source.scope.workspacePath,
+                        ...(source.scope.workspaceIdentity
+                          ? { workspaceIdentity: source.scope.workspaceIdentity }
+                          : {}),
+                      },
                 ],
                 limit: undefined,
               });
