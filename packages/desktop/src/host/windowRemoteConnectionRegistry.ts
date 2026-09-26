@@ -719,6 +719,31 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
       const match = onlineMatches[0] ?? matches[0];
       return match ? toSessionSnapshot(match) : null;
     },
+    /**
+     * 按「被连项目的真实路径」查找远程 logical session，忽略 identity。
+     *
+     * 用途：A 侧展示远端项目会话时，UI 以纯项目路径（远端库的键形态）查询；
+     * 而 findSessionForWorkspace 要求 path + identity 双精确匹配，命不中这类查询。
+     * 同一路径若匹配到多个 logical session（多连接连了同名路径的不同主机），
+     * 返回在线的那一个；仍有歧义时返回 null（宁可不展示，也不能猜错主机）。
+     */
+    findSessionByWorkspacePath(workspacePath: string): WindowRemoteLogicalSessionSnapshot | null {
+      const matches = Array.from(sessionsById.values()).filter(
+        (session) => session.workspacePath === workspacePath,
+      );
+      const onlineMatches = matches.filter(
+        (session) => session.state === "online" && session.sourceAvailability === "online",
+      );
+      if (onlineMatches.length === 1) return toSessionSnapshot(onlineMatches[0]!);
+      if (onlineMatches.length > 1) return null;
+      return matches.length === 1 ? toSessionSnapshot(matches[0]!) : null;
+    },
+    /** 是否存在该路径的已连接远程 session（无论在线与否），用于阻断误落本地。 */
+    hasSessionForWorkspacePath(workspacePath: string): boolean {
+      return Array.from(sessionsById.values()).some(
+        (session) => session.workspacePath === workspacePath,
+      );
+    },
     getStats(): { connectionCount: number; logicalSessionCount: number } {
       return {
         connectionCount: entriesByKey.size,

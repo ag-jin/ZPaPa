@@ -10,7 +10,7 @@ import type {
   ZCodeTaskGroupColor,
 } from "@zcode/services";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
-import { useLocalWorkspaceScopes } from "@/hooks/useLocalWorkspaceScopes.js";
+import { isRemoteProjectTab, useLocalWorkspaceScopes } from "@/hooks/useLocalWorkspaceScopes.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
 import { buildGroupedTaskViewFromSessions } from "@/lib/buildGroupedTaskViewFromSessions.js";
@@ -96,11 +96,28 @@ function isTaskFirstInGroup(
 }
 
 function buildWorkspaceScopes(workspaceTabs: WorkspaceTabState[]) {
-  return workspaceTabs.map((tab) => ({
-    workspacePath: tab.workspacePath,
-    workspaceIdentity: tab.workspaceIdentity,
-    workspacePurpose: tab.workspacePurpose,
-  }));
+  return workspaceTabs.map((tab) => {
+    // 远程项目 tab：查询 scope 用「项目真实路径」且不带 remote identity。
+    //
+    // 远端 CLI 以本地视角写会话库，远端 tasks-index 里该项目的键就是纯路径
+    // （实测：带 remote:ssh identity 查 0 条、纯路径查 8 条）。A 侧要让远端会话
+    // 直接并入列表，就必须用与远端存储一致的键查询；host 的 resolveSource 会按
+    // 路径把这类 scope 回指到已连接的远程项目（不会落到本地同路径项目）。
+    // 注意：这里的 scope 只用于查询展示；会话的创建/续接等写操作仍走带 identity
+    // 的正式链路，身份隔离不受影响。
+    if (isRemoteProjectTab(tab)) {
+      return {
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: undefined,
+        workspacePurpose: tab.workspacePurpose,
+      };
+    }
+    return {
+      workspacePath: tab.workspacePath,
+      workspaceIdentity: tab.workspaceIdentity,
+      workspacePurpose: tab.workspacePurpose,
+    };
+  });
 }
 
 function collectViewWorkspaceScopes(
@@ -589,6 +606,8 @@ export function useGroupedTaskView(params: { workspaceTabs: WorkspaceTabState[] 
   // Renderer 另起 sessions-index join。分组结构/顺序继续走本地 task service，避免能力扩张。
   const localWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs: params.workspaceTabs,
+    // 会话列表需要展示「被连项目的会话」：远程 CLI 以本地视角写库，键就是项目真实路径。
+    includeRemoteProjectTabs: true,
   });
   // scopes 过去 memo 在 tabs 数组身份上。父级重建同值数组就会换掉 refresh 身份，
   // 让「refresh 变化即刷新」的 effect 再跑一轮 setState，进而触发下一次渲染——自激刷新环，

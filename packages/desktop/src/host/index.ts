@@ -1832,8 +1832,40 @@ const windowHostControllerRuntime = createWindowHostControllerRuntime({
         sourceAvailability: "online" as const,
       };
     }
+    // 远程会话可见性：UI 以「被连项目的真实路径、不带 remote identity」查询时，
+    // findSessionForWorkspace 无法命中（它要求 path + identity 双精确匹配），
+    // 而远端库里的会话键正是纯项目路径（远端 CLI 以本地视角写库）。
+    // 此处按路径回指已连接的远程项目，把查询路由到对端 taskService，
+    // 让 A 侧列表直接读到 B 的会话；绝不能落到本地 tasks-index（那会串读本机同路径项目）。
+    const sessionByPath = windowRemoteConnectionRegistry.findSessionByWorkspacePath(scope.workspacePath);
+    if (sessionByPath?.workspacePath && sessionByPath.workspaceIdentity) {
+      const controllerScope = {
+        kind: "remote" as const,
+        remoteSessionId: sessionByPath.remoteSessionId,
+        workspacePath: sessionByPath.workspacePath,
+        workspaceIdentity: sessionByPath.workspaceIdentity,
+      };
+      if (sessionByPath.sourceAvailability !== "online") {
+        return { scope: controllerScope, sourceAvailability: "offline" as const };
+      }
+      const services = windowRemoteConnectionRegistry.resolveScopedServices(controllerScope);
+      return {
+        scope: controllerScope,
+        taskService: services.get(IZCodeTaskService),
+        agentService: services.getOptional(IZCodeAgentService),
+        sourceAvailability: "online" as const,
+      };
+    }
     // 远程 history scope 未连接或已被移除时，绝不能落回本地 tasks-index。
     if (scope.workspaceIdentity && isRemoteWorkspaceIdentity(scope.workspaceIdentity)) {
+      return null;
+    }
+    // 路径命中「已连接的远程项目」却没有 identity 的 scope，同样禁止落回本地：
+    // 这是 A 侧展示远端会话的查询形态，落到本地会读到本机同路径项目（若有）。
+    if (
+      !scope.workspaceIdentity &&
+      windowRemoteConnectionRegistry.hasSessionForWorkspacePath(scope.workspacePath)
+    ) {
       return null;
     }
     const taskService = activeServices?.getOptional(IZCodeTaskService);
