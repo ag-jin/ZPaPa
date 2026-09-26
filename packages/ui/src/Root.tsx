@@ -546,6 +546,7 @@ function RootInner({
     handleCancelRemoteProject,
     handleSelectRemoteProject,
     handleConnectRemote,
+    connectRemoteDevice,
     handleReconnectRemoteWorkspace,
     handleRemoteWorkspaceTabsClosed,
   } = useRemoteWorkspaceHistory({
@@ -959,6 +960,16 @@ function RootInner({
     onCreateTask: handleCreateTask,
     onOpenWorkspace: handleOpenWorkspace,
     allowOpenWorkspace,
+    // 设备级连接：转发给设置页的「远程设备」区块。
+    // 这里做形状适配（services 由 unknown 收窄），避免设置页依赖远程历史模块。
+    remoteDeviceConnect: connectRemoteDevice
+      ? async (target: Parameters<typeof connectRemoteDevice>[0]) => {
+          const result = await connectRemoteDevice(target);
+          return result
+            ? { services: result.services, ...(result.dispose ? { dispose: result.dispose } : {}) }
+            : null;
+        }
+      : undefined,
     onLogin: !user ? handleOpenLoginEntry : undefined,
     onLogout: user ? handleLogout : undefined,
     user,

@@ -281,6 +281,7 @@ export function SettingsPage({
   onCreateTask,
   onOpenWorkspace,
   allowOpenWorkspace = true,
+  remoteDeviceConnect,
   onLogin,
   onLogout,
   user,
@@ -294,6 +295,10 @@ export function SettingsPage({
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenWorkspace?: () => void;
   allowOpenWorkspace?: boolean;
+  /** 设备级连接能力（由 Root 注入）：连上远程设备并取得其服务访问面。 */
+  remoteDeviceConnect?: (
+    target: import("@zcode/shared").RemoteTarget,
+  ) => Promise<{ services: unknown; dispose?: () => void } | null>;
   onLogin?: () => void;
   onLogout?: () => void;
   user?: UserInfo | null;
@@ -1158,15 +1163,18 @@ export function SettingsPage({
     setRemoteDeviceConnectionStatus("connecting");
     setRemoteDeviceConnectionError(undefined);
     try {
-      const result = await remoteDeviceConnect?.({ target });
+      const result = await remoteDeviceConnect?.(target);
       if (!result) {
         setRemoteDeviceConnectionStatus("idle-unavailable");
         return;
       }
-      const access = await createDeviceAccess({
-        zcodeTaskService: result.services.zcodeTaskService,
-        settingService: result.services.settingService,
-      });
+      // 设备访问层只依赖 taskService 与 settingService；这里按契约收窄，
+      // 避免设置页为了类型干净而依赖远程历史的完整 services 类型。
+      const deviceServices = result.services as {
+        zcodeTaskService: Parameters<typeof createDeviceAccess>[0]["zcodeTaskService"];
+        settingService: Parameters<typeof createDeviceAccess>[0]["settingService"];
+      };
+      const access = await createDeviceAccess(deviceServices);
       const [registeredProjects, tasks] = await Promise.all([
         access.access.listRegisteredProjects(),
         access.access.listAllTasks(),

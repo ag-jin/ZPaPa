@@ -1372,6 +1372,39 @@ export function useRemoteWorkspaceHistory({
     [remoteWorkspaceSessions],
   );
 
+  /**
+   * 设备级连接：不指定项目，连上后用其 services 做设备查询。
+   *
+   * 与 workspace 连接的差别：不 bind 工作目录、不建 tab、不写远程历史。
+   * 设备的语义是"连整台设备"，项目清单连接后从设备实时获取（见 CONTEXT.md
+   * 「设备边界」），因此在投射端不留 workspace 痕迹。
+   */
+  const connectRemoteDevice = useCallback(
+    async (target: Parameters<IPlatformService["connectRemote"]>[0]) => {
+      const sessionId = await connectRemoteWorkspaceTarget(target);
+      // 连接成功只表示 main/host 建好 session；renderer 的 MessagePort 可能下一拍
+      // 才注册进 store，因此先等就绪再从 store 读 services。
+      await waitForRemoteWorkspaceSessionReady(sessionId);
+      const session = getRemoteWorkspaceSession(sessionId);
+      if (!session) {
+        throw new Error("远程设备已连接，但未取得其服务访问面");
+      }
+      return {
+        sessionId,
+        services: session.services,
+        dispose: () => {
+          unregisterRemoteWorkspaceSession(sessionId);
+          void platform.disposeRemoteSession(sessionId).catch(() => undefined);
+        },
+      };
+    },
+    [
+      connectRemoteWorkspaceTarget,
+      platform,
+      waitForRemoteWorkspaceSessionReady,
+    ],
+  );
+
   return {
     remoteWorkspaceSessions,
     reconnectingRemoteWorkspaceKeys,
@@ -1385,5 +1418,6 @@ export function useRemoteWorkspaceHistory({
     handleReconnectRemoteWorkspace,
     handleOpenRemoteWorkspaceFromHistory,
     handleRemoteWorkspaceTabsClosed,
+    connectRemoteDevice,
   };
 }
