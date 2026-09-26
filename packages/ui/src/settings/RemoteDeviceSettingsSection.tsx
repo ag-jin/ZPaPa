@@ -253,8 +253,20 @@ export function RemoteDeviceSettingsSection({
       {state.entries.map((entry) => (
         <SettingsRow
           key={entry.key}
-          label={formatProjectableSettingLabel(entry.key)}
-          description={entry.key}
+          // 优先用产品设置页现有的文案：同一个开关在两处叫法必须一致，
+          // 否则用户会以为它们是不同东西。仅有内部开关才回退到键名。
+          label={
+            entry.labelId
+              ? intl.formatMessage({ id: entry.labelId })
+              : formatProjectableSettingLabel(entry.key)
+          }
+          description={
+            entry.descriptionId
+              ? intl.formatMessage({ id: entry.descriptionId })
+              : entry.labelId
+                ? undefined
+                : entry.key
+          }
           control={
             pendingKeys.has(entry.key) ? (
               <LoaderCircle className="size-4 animate-spin text-foreground-subtle" />
