@@ -966,7 +966,11 @@ function RootInner({
       ? async (target: Parameters<typeof connectRemoteDevice>[0]) => {
           const result = await connectRemoteDevice(target);
           return result
-            ? { services: result.services, ...(result.dispose ? { dispose: result.dispose } : {}) }
+            ? {
+                services: result.services,
+                syncProjection: result.syncProjection,
+                ...(result.dispose ? { dispose: result.dispose } : {}),
+              }
             : null;
         }
       : undefined,

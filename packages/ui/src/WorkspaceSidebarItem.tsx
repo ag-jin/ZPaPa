@@ -20,6 +20,7 @@ import {
   InfoIcon,
   ListTree,
   LoaderCircle,
+  MonitorSmartphone,
   RefreshCwIcon,
   MessageCirclePlus,
   XIcon,
@@ -715,7 +716,19 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
       }, 1500);
     });
   }, [remoteWorkspaceError]);
+  // 投射条目：来自远程设备的项目（见 ADR 0001）。
+  const isProjectedWorkspace = Boolean(tab.projection);
+
   const renderWorkspaceIcon = () => {
+    // 投射条目（远程设备上的项目）用独立图标与配色，让用户一眼区分
+    // "这是另一台设备上的项目"与本机项目（见 ADR 0001）。
+    if (isProjectedWorkspace) {
+      return isExpanded ? (
+        <MonitorSmartphone className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+      ) : (
+        <MonitorSmartphone className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+      );
+    }
     // workspace 行之前在 hover/展开时会把目录图标切成箭头，
     // 视觉上会多出一层“树形展开控件”的暗示；当前交互只需要保留项目图标本身，
     // 这样能减少噪音，也避免用户把它理解成独立的箭头开关。

@@ -296,9 +296,12 @@ export function SettingsPage({
   onOpenWorkspace?: () => void;
   allowOpenWorkspace?: boolean;
   /** 设备级连接能力（由 Root 注入）：连上远程设备并取得其服务访问面。 */
-  remoteDeviceConnect?: (
-    target: import("@zcode/shared").RemoteTarget,
-  ) => Promise<{ services: unknown; dispose?: () => void } | null>;
+  remoteDeviceConnect?: (target: import("@zcode/shared").RemoteTarget) => Promise<{
+    services: unknown;
+    /** 把设备项目同步为投射条目（见 ADR 0001）。 */
+    syncProjection?: (projects: ReadonlyArray<{ path: string; sessionCount: number }>) => unknown;
+    dispose?: () => void;
+  } | null>;
   onLogin?: () => void;
   onLogout?: () => void;
   user?: UserInfo | null;
@@ -1179,8 +1182,18 @@ export function SettingsPage({
         access.access.listRegisteredProjects(),
         access.access.listAllTasks(),
       ]);
-      setRemoteDeviceProjects(buildProjectedProjectList({ registeredProjects, tasks }));
+      const projectList = buildProjectedProjectList({ registeredProjects, tasks });
+      setRemoteDeviceProjects(projectList);
       setRemoteDeviceConnectionStatus("connected");
+      // 连接成功后同步投射条目（按显示偏好），使项目出现在侧边栏。
+      const syncProjection = (result as { syncProjection?: (projects: unknown) => unknown })
+        .syncProjection;
+      if (typeof syncProjection === "function") {
+        const visible = remoteDeviceEntry?.visibleProjects;
+        syncProjection(
+          visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
+        );
+      }
       remoteDeviceConnectionRef.current = result;
     } catch (error) {
       setRemoteDeviceConnectionStatus("failed");
