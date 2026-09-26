@@ -18,6 +18,7 @@ export type SettingsSectionId =
   | "hooks"
   | "workspaceFileSearch"
   | "computerUse"
+  | "remoteDevice"
   | "automations"
   | "shortcuts";
 

@@ -1924,32 +1924,35 @@ export function SettingsPage({
                           />
                         ) : null}
                         {/*
-                          远程设备管理：连接入口。不依赖已连接的 workspace ——
-                          用户先在设置页添加设备并发起连接，连上后再读写其设置。
+                          远程设备：连接与管理被投射设备。作为独立设置项，
+                          不依赖已连接的 workspace —— 先添加设备并发起连接，
+                          连上后再读写其设置。
                         */}
-                        {activeSection === "general" ? (
-                          <RemoteDeviceManagementSection
-                            device={remoteDeviceEntry}
-                            connectionStatus={
-                              remoteDeviceConnectionStatus === "idle-unavailable"
-                                ? "never"
-                                : remoteDeviceConnectionStatus
-                            }
-                            {...(remoteDeviceConnectionError
-                              ? { connectionError: remoteDeviceConnectionError }
-                              : {})}
-                            {...(remoteDeviceProjects
-                              ? { connectedProjects: remoteDeviceProjects }
-                              : {})}
-                            {...(remoteDeviceEntry?.visibleProjects
-                              ? { visibleProjects: remoteDeviceEntry.visibleProjects }
-                              : {})}
-                            onSaveDevice={handleSaveRemoteDevice}
-                            onRemoveDevice={handleRemoveRemoteDevice}
-                            onConnect={handleConnectRemoteDevice}
-                            onDisconnect={handleDisconnectRemoteDevice}
-                            onVisibleProjectsChange={handleRemoteDeviceVisibleProjectsChange}
-                          />
+                        {activeSection === "remoteDevice" ? (
+                          <div className="space-y-6">
+                            <RemoteDeviceManagementSection
+                              device={remoteDeviceEntry}
+                              connectionStatus={
+                                remoteDeviceConnectionStatus === "idle-unavailable"
+                                  ? "never"
+                                  : remoteDeviceConnectionStatus
+                              }
+                              {...(remoteDeviceConnectionError
+                                ? { connectionError: remoteDeviceConnectionError }
+                                : {})}
+                              {...(remoteDeviceProjects
+                                ? { connectedProjects: remoteDeviceProjects }
+                                : {})}
+                              {...(remoteDeviceEntry?.visibleProjects
+                                ? { visibleProjects: remoteDeviceEntry.visibleProjects }
+                                : {})}
+                              onSaveDevice={handleSaveRemoteDevice}
+                              onRemoveDevice={handleRemoveRemoteDevice}
+                              onConnect={handleConnectRemoteDevice}
+                              onDisconnect={handleDisconnectRemoteDevice}
+                              onVisibleProjectsChange={handleRemoteDeviceVisibleProjectsChange}
+                            />
+                          </div>
                         ) : null}
                         {/*
                           远程设备设置投射：仅当当前 workspace 是远程工作区时出现。

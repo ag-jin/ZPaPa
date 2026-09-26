@@ -18,6 +18,7 @@ import {
   WandSparkles,
   Keyboard,
   FileSearch,
+  MonitorSmartphone,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -59,6 +60,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "general",
     icon: Settings2,
     titleId: "settings.systemTitle",
+    groupId: "basics",
+  },
+  {
+    // 远程设备：连接与管理被投射设备（见 CONTEXT.md「远程设备投射」）。
+    id: "remoteDevice",
+    icon: MonitorSmartphone,
+    titleId: "settings.remoteDevice.sectionTitle",
     groupId: "basics",
   },
   {

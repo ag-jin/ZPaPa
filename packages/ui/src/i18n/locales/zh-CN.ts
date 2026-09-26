@@ -2576,6 +2576,7 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.catalogProviderEmpty": "未找到供应商",
   "settings.modelProvider.addProviderAction": "添加供应商",
   "settings.remoteDevice.title": "远程设备设置",
+  "settings.remoteDevice.sectionTitle": "远程设备",
   "settings.remoteDevice.description": "直接读写远端设备（{path}）的设置。仅展示可安全投射的字段。",
   "settings.remoteDevice.loading": "正在读取远端设置...",
   "settings.remoteDevice.unavailable": "远端设备不可用",

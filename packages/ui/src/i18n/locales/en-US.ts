@@ -2755,6 +2755,7 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.catalogProviderEmpty": "No providers found",
   "settings.modelProvider.addProviderAction": "Add provider",
   "settings.remoteDevice.title": "Remote device settings",
+  "settings.remoteDevice.sectionTitle": "Remote devices",
   "settings.remoteDevice.description": "Read and change settings on the remote device ({path}). Only safely projectable fields are shown.",
   "settings.remoteDevice.loading": "Loading remote settings...",
   "settings.remoteDevice.unavailable": "Remote device unavailable",
