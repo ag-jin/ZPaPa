@@ -34,6 +34,7 @@ import { logger } from "@/logger.js";
 import {
   computeProjectionSync,
   filterProjectsByVisibility,
+  findOrphanProjectionTabs,
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
@@ -1133,6 +1134,20 @@ export function useRemoteWorkspaceHistory({
           (tab): tab is import("@/store/tabStore.js").WorkspaceTabState =>
             isWorkspaceTab(tab) && tab.remoteSessionId === sessionId,
         );
+
+      // 投射条目归属该 session 时，断开即移除（ADR 0001：投射端不留设备项目痕迹）。
+      // 必须放在 matchedTabs 的早退之前 —— 设备级连接的投射条目虽然带 remoteSessionId，
+      // 但真正承载会话的是它们自己；一旦早退返回，这些条目就再也没人清理，
+      // 且 session 注销后 deviceSessionId 无从反查，会永久留在侧边栏。
+      const projectedTabIds = tabStoreApi
+        .getState()
+        .tabs.filter(isWorkspaceTab)
+        .filter((tab) => tab.projection?.deviceSessionId === sessionId)
+        .map((tab) => tab.id);
+      for (const tabId of projectedTabIds) {
+        tabStoreApi.getState().closeTab(tabId);
+      }
+
       if (matchedTabs.length === 0) {
         unregisterRemoteWorkspaceSession(sessionId);
         return;
@@ -1411,6 +1426,39 @@ export function useRemoteWorkspaceHistory({
       if (!session) {
         throw new Error("远程设备已连接，但未取得其服务访问面");
       }
+      // 同一台设备重连会拿到新的 sessionId，而上一代 session 仍在册
+      // （host 侧不会自动回收）。不在此时清掉的话，它的投射条目既不会被复用、
+      // 也不会被回收 —— 实测连续连接 2 次后出现 20 个投射项（同一批 10 个项目两份）。
+      // 判据：投射条目的 deviceSessionId 已不是当前 session，且**指向同一台设备**。
+      // 用 target 相等来确认是同一台设备，避免误清同时连接的另一台设备的投射。
+      const staleProjectionTabs = tabStoreApi
+        .getState()
+        .tabs.filter(isWorkspaceTab)
+        .filter((tab) => {
+          const owner = tab.projection?.deviceSessionId;
+          if (!owner || owner === sessionId) return false;
+          const ownerSession = getRemoteWorkspaceSession(owner);
+          if (!ownerSession) return true;
+          // 同一台设备的旧代：同 kind 同 host（WSL/Docker 无 host，退回 kind 比较）。
+          const ownerTarget = ownerSession.target;
+          if (!ownerTarget || ownerTarget.kind !== target.kind) return false;
+          if (target.kind === "ssh" && ownerTarget.kind === "ssh") {
+            return ownerTarget.host === target.host && ownerTarget.username === target.username;
+          }
+          return false;
+        });
+      const staleSessionIds = new Set(
+        staleProjectionTabs.map((tab) => tab.projection?.deviceSessionId).filter(Boolean),
+      );
+      for (const tab of staleProjectionTabs) {
+        tabStoreApi.getState().closeTab(tab.id);
+      }
+      for (const staleId of staleSessionIds) {
+        if (staleId) {
+          unregisterRemoteWorkspaceSession(staleId);
+          void platform.disposeRemoteSession(staleId).catch(() => undefined);
+        }
+      }
       return {
         sessionId,
         services: session.services,
@@ -1421,10 +1469,23 @@ export function useRemoteWorkspaceHistory({
          * 不做全量重建（保留用户当前的展开/滚动状态）。
          */
         syncProjection: (deviceProjects: readonly ProjectedProject[]) => {
-          const tabs = tabStoreApi.getState().tabs.filter(isWorkspaceTab);
-          const existingTabs = tabs.filter(
-            (tab) => tab.projection?.deviceSessionId === sessionId,
-          );
+          const tabStore = tabStoreApi.getState();
+          const tabs = tabStore.tabs.filter(isWorkspaceTab);
+          // 先清掉**孤儿**投射条目（其设备 session 已注销）：同一台设备重连会换新的
+          // deviceSessionId，旧条目既不会被复用也不会被移除，dispose 也够不到它们，
+          // 于是每重连一次就多留一组孤儿 tab（实测：2 次连接 → 20 个投射项）。
+          const orphanTabIds = findOrphanProjectionTabs({
+            tabs,
+            currentSessionId: sessionId,
+            isSessionRegistered: (id) => Boolean(getRemoteWorkspaceSession(id)),
+          });
+          for (const tabId of orphanTabIds) {
+            tabStore.closeTab(tabId);
+          }
+          const existingTabs = tabStoreApi
+            .getState()
+            .tabs.filter(isWorkspaceTab)
+            .filter((tab) => tab.projection?.deviceSessionId === sessionId);
           const { toCreate, toRemoveTabIds } = computeProjectionSync({
             deviceSessionId: sessionId,
             deviceProjects,
@@ -1434,12 +1495,14 @@ export function useRemoteWorkspaceHistory({
             tabStoreApi.getState().closeTab(tabId);
           }
           for (const project of toCreate) {
+            // 不设 workspaceIdentity：投射条目是 transient（ADR 0001 决策 2「不绑定工作目录」），
+            // 带 identity 会把它变成"常规远程 workspace"，与 ADR 冲突。
             addTab(project.path, {
               remoteSessionId: sessionId,
               projection: { deviceSessionId: sessionId },
             });
           }
-          return { created: toCreate.length, removed: toRemoveTabIds.length };
+          return { created: toCreate.length, removed: toRemoveTabIds.length + orphanTabIds.length };
         },
         dispose: () => {
           // 断开时移除本设备的全部投射条目：投射端不保留设备项目的痕迹。

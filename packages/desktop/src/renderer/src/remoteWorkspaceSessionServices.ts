@@ -48,5 +48,10 @@ export function buildRemoteWorkspaceSessionServices(
     // 无法读取远端待审 Hook。
     // hooks 读写（loadHooks/saveHooks）与 grantWorkspaceHookTrust 授权都必须打到远端 host。
     hooksService: remoteServices.hooksService,
+    // 设备项目清单走远端：读的是设备自身登记的 recentProjects（供投射用）。
+    // 不能靠上面的 settingService —— 那个按远端 workspace 语义刻意保留本机实现，
+    // 用它读会把 A 自己的 recentProjects 当成设备项目（实测：读到 3 个本机路径，
+    // B 的 10 个项目一个都拿不到）。
+    remoteDeviceProjectsService: remoteServices.remoteDeviceProjectsService,
   };
 }

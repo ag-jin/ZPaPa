@@ -35,6 +35,7 @@ import {
   IMemoryService,
   ISettingsSyncService,
   IPromptAttachmentTransferService,
+  IRemoteDeviceProjectsService,
   type IServiceAccessor,
 } from "@zcode/services";
 import {
@@ -378,6 +379,26 @@ export function createRemoteWorkspaceServiceCollection(params: {
       ISettingsSyncService,
       createSettingsSyncService({ settingService: localSettingService }),
     )
+    // 设备项目清单：投射要读的是**设备自己**登记了哪些项目，而上面的 ISettingService
+    // 按远端 workspace 语义刻意是本机实现（设置/凭据/模型配置必须读写本机）。
+    // 这里用 host 手里的对端原始访问面去读，返回的才是设备的 recentProjects。
+    // 只读、只暴露路径数组，不涉及会话数据（与「投射端不存会话索引」一致）。
+    .register(IRemoteDeviceProjectsService, {
+      listRegisteredProjects: async (): Promise<string[]> => {
+        const settings = await params.connectionServices.settingService.get();
+        const recent = settings.recentProjects ?? [];
+        return recent.filter(
+          (item): item is string => typeof item === "string" && item.length > 0,
+        );
+      },
+      // 设备设置投射的读写也必须打对端：上面的 ISettingService 是本机实现。
+      // 写操作由调用方保证「改前记录 → 写入 → 读回确认」。
+      getSettings: async (): Promise<Record<string, unknown>> =>
+        (await params.connectionServices.settingService.get()) as unknown as Record<string, unknown>,
+      updateSetting: async (key: string, value: unknown): Promise<void> => {
+        await params.connectionServices.settingService.update({ [key]: value });
+      },
+    })
     .register(IPromptAttachmentTransferService, params.promptAttachmentTransferService);
   registerHostApiNetworkTransportForDispose(services, hostApiNetworkTransport);
   registerRemoteProviderProvisioningExecutor(services, remoteProviderProvisioningService);

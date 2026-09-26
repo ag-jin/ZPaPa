@@ -1,4 +1,5 @@
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
+import type { IRemoteDeviceProjectsService } from "./remote/remoteDeviceProjects.js";
 import type { IFileService } from "./file/file.js";
 import type { IMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { IGitService } from "./git/git.js";
@@ -88,4 +89,11 @@ export interface IServiceAccessor {
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
+  /**
+   * 设备项目清单（读设备自身登记的 recentProjects，供远程设备投射用）。
+   *
+   * 可选：只有窗口 Host 为远端 workspace 装配 scoped collection 时提供。
+   * 不能复用 settingService —— 那个按远端 workspace 语义刻意保留本机实现。
+   */
+  readonly remoteDeviceProjectsService?: IRemoteDeviceProjectsService;
 }

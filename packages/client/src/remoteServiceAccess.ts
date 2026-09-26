@@ -39,6 +39,7 @@ import {
   ISettingsSyncService,
   IFeedbackService,
   IRemoteDeviceConfigService,
+  IRemoteDeviceProjectsService,
   IPromptAttachmentTransferService,
   IWindowControllerService,
   type IServiceAccessor,
@@ -94,6 +95,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly feedbackService: IFeedbackService;
   /** 远程设备配置（投射端本地能力，仅 desktop host 提供）。 */
   readonly remoteDeviceConfigService?: IRemoteDeviceConfigService;
+  /** 设备项目清单（读设备自身登记的 recentProjects，供投射用）。 */
+  readonly remoteDeviceProjectsService?: IRemoteDeviceProjectsService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
 
   constructor(channelClient: IChannelClient) {
@@ -222,6 +225,12 @@ export class RemoteServiceAccess implements IServiceAccessor {
     Object.defineProperty(this, "remoteDeviceConfigService", {
       value: ProxyChannel.toService<IRemoteDeviceConfigService>(
         channelClient.getChannel(IRemoteDeviceConfigService.channelName),
+      ),
+      enumerable: false,
+    });
+    Object.defineProperty(this, "remoteDeviceProjectsService", {
+      value: ProxyChannel.toService<IRemoteDeviceProjectsService>(
+        channelClient.getChannel(IRemoteDeviceProjectsService.channelName),
       ),
       enumerable: false,
     });

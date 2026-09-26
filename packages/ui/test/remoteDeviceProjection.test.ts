@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   computeProjectionSync,
   filterProjectsByVisibility,
+  findDeviceSessionId,
+  findOrphanProjectionTabs,
 } from "../src/lib/remoteDeviceProjection.js";
 
 /**
@@ -108,4 +110,82 @@ test("非投射条目（常规 workspace tab）不参与同步", () => {
     ],
   });
   assert.deepEqual(result.toRemoveTabIds, [], "常规 tab 绝不能被投射清理逻辑误删");
+});
+
+/**
+ * 孤儿投射条目：设备重连后，上一代 session 的投射必须被清掉。
+ *
+ * 实测事故：连续连接 2 次后，store 里出现 20 个投射项 —— 同一批 10 个项目
+ * 按两个 deviceSessionId 各存一份。旧条目的 session 已注销，按当前 session
+ * 过滤看不见、dispose 也够不到，于是每次重连都多留一组。
+ */
+test("设备重连后，上一代（session 已注销）的投射条目被识别为孤儿", () => {
+  const orphans = findOrphanProjectionTabs({
+    tabs: [
+      projectionTab("tab-old-1", "/p/one", "dead-session"),
+      projectionTab("tab-old-2", "/p/two", "dead-session"),
+      projectionTab("tab-current", "/p/one", deviceSessionId),
+    ],
+    currentSessionId: deviceSessionId,
+    isSessionRegistered: (id) => id === deviceSessionId,
+  });
+  assert.deepEqual(
+    orphans,
+    ["tab-old-1", "tab-old-2"],
+    "只清掉 session 已注销的旧投射，当前 session 的条目保留",
+  );
+});
+
+test("同时连接的另一台设备的投射不算孤儿", () => {
+  const orphans = findOrphanProjectionTabs({
+    tabs: [
+      projectionTab("tab-other", "/p/x", "device-session-2"),
+      projectionTab("tab-current", "/p/one", deviceSessionId),
+    ],
+    currentSessionId: deviceSessionId,
+    // 另一台设备仍在线，其 session 在册。
+    isSessionRegistered: (id) => id === deviceSessionId || id === "device-session-2",
+  });
+  assert.deepEqual(orphans, [], "在册的其他设备投射不能被误删");
+});
+
+test("常规 workspace tab 永远不算孤儿", () => {
+  const orphans = findOrphanProjectionTabs({
+    tabs: [
+      { id: "tab-local", workspacePath: "/local/project" } as never,
+      projectionTab("tab-current", "/p/one", deviceSessionId),
+    ],
+    currentSessionId: deviceSessionId,
+    isSessionRegistered: () => false,
+  });
+  assert.deepEqual(orphans, [], "没有 projection 标记的 tab 不参与孤儿判定");
+});
+
+/**
+ * 设备卡片的状态必须从在册 session 反推。
+ *
+ * 事故背景：连接成功后设置页会被卸载（连接流程切到工作区），组件内 state 随之丢失。
+ * 若只读 state，重开设置页会显示「未连接」并藏掉「断开」入口，而连接其实还活着。
+ */
+test("按 target 找到在册的设备 session", () => {
+  const sessions = {
+    "sess-a": { sessionId: "sess-a", target: { kind: "ssh", host: "1.1.1.1", username: "u" } },
+    "sess-b": { sessionId: "sess-b", target: { kind: "ssh", host: "100.66.1.2", username: "linguojin" } },
+  };
+  assert.equal(
+    findDeviceSessionId(sessions, { kind: "ssh", host: "100.66.1.2", username: "linguojin" }),
+    "sess-b",
+    "同 host+username 的设备被认作同一台",
+  );
+  assert.equal(
+    findDeviceSessionId(sessions, { kind: "ssh", host: "9.9.9.9", username: "u" }),
+    undefined,
+    "不同主机不匹配",
+  );
+  assert.equal(
+    findDeviceSessionId(sessions, { kind: "ssh", host: "100.66.1.2", username: "other" }),
+    undefined,
+    "同主机不同用户不匹配（是不同账户的设备）",
+  );
+  assert.equal(findDeviceSessionId(sessions, null), undefined, "未配置设备时不匹配");
 });

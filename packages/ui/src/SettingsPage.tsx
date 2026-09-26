@@ -68,6 +68,11 @@ import {
 import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources.js";
 import { RemoteDeviceManagementSection } from "@/settings/RemoteDeviceManagementSection.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
+import { findDeviceSessionId } from "@/lib/remoteDeviceProjection.js";
+import {
+  unregisterRemoteWorkspaceSession,
+  useRemoteWorkspaceSessionStore,
+} from "@/store/remoteWorkspaceSessionStore.js";
 import { RemoteDeviceSettingsSection } from "@/settings/RemoteDeviceSettingsSection.js";
 import { SubagentsSection } from "@/settings/SubagentsSection.js";
 import { AutomationsSection } from "@/settings/AutomationsSection.js";
@@ -87,7 +92,7 @@ import {
   type SettingsBreadcrumbItem,
 } from "@/settings/SettingsHeaderBreadcrumb.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useTabStore, useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import type { Theme } from "@/useTheme.js";
 import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
@@ -1126,6 +1131,52 @@ export function SettingsPage({
     import("@zcode/services").RemoteDeviceConfigRecord | null
   >(null);
 
+  // 设备是否仍有在册 session —— 设备卡片的状态以此为准，而不是组件内 state：
+  // 连接成功后设置页会被卸载（连接流程会把窗口切到工作区），state 随之丢失，
+  // 再打开设置页会错误显示「未连接」并藏掉「断开」入口，而连接其实还活着。
+  // 必须声明在 remoteDeviceEntry 之后（它依赖该值）。
+  const liveDeviceSessionId = useRemoteWorkspaceSessionStore((state) =>
+    findDeviceSessionId(state.sessionsById, remoteDeviceEntry?.target),
+  );
+  // 断开时按 deviceSessionId 清投射条目需要 store api：断开可能发生在设置页
+  // 重新挂载之后（连接成功会切走一次），此时 hook 形态不可用于事件回调外。
+  const tabStoreApiRef = useRef(useTabStoreApi());
+  // 已连接时把项目清单**重新读一次**：连接成功会切走一次设置页，组件内
+  // remoteDeviceProjects 随之丢失，重开后项目勾选列表会空掉（而连接其实还在）。
+  // 走实时读取而不是持久化 —— 投射端不落库任何设备数据（ADR 0001）。
+  const liveDeviceServices = useRemoteWorkspaceSessionStore((state) =>
+    liveDeviceSessionId ? (state.sessionsById[liveDeviceSessionId]?.services ?? null) : null,
+  );
+  useEffect(() => {
+    if (!liveDeviceServices) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const access = await createDeviceAccess({
+          zcodeTaskService: liveDeviceServices.zcodeTaskService,
+          settingService: liveDeviceServices.settingService,
+          ...(liveDeviceServices.remoteDeviceProjectsService
+            ? { remoteDeviceProjectsService: liveDeviceServices.remoteDeviceProjectsService }
+            : {}),
+        });
+        const [registeredProjects, tasks] = await Promise.all([
+          access.access.listRegisteredProjects(),
+          access.access.listAllTasks(),
+        ]);
+        if (!cancelled) {
+          setRemoteDeviceProjects(buildProjectedProjectList({ registeredProjects, tasks }));
+        }
+      } catch (error) {
+        logger.warn("[remoteDevice] 读取设备项目清单失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveDeviceServices]);
+
   useEffect(() => {
     if (!remoteDeviceConfigService) return;
     void remoteDeviceConfigService
@@ -1163,8 +1214,43 @@ export function SettingsPage({
     async (next: Record<string, boolean>) => {
       if (!remoteDeviceEntry) return;
       await writeRemoteDevice({ ...remoteDeviceEntry, visibleProjects: next });
+      if (!remoteDeviceProjects) return;
+      const visible = remoteDeviceProjects.filter((item) => next[item.path] !== false);
+      // 立刻把偏好应用到侧边栏：只存偏好不重算的话，用户关掉一个项目后
+      // 侧边栏仍显示它（要等下次重连才消失），看起来像开关没生效。
+      // 直接操作 tab store，而不是依赖连接回调 —— 设置页可能重新挂载过
+      // （连接成功会切走一次），那时连接 ref 已丢，但投射条目本身仍在 store 里。
+      if (!liveDeviceSessionId) return;
+      const store = tabStoreApiRef.current;
+      const wanted = new Set(visible.map((item) => item.path));
+      for (const tab of store.getState().tabs) {
+        if (
+          isWorkspaceTab(tab) &&
+          tab.projection?.deviceSessionId === liveDeviceSessionId &&
+          !wanted.has(tab.workspacePath)
+        ) {
+          store.getState().closeTab(tab.id);
+        }
+      }
+      // 重新打开被勾选回来的项目（刚才被关掉的那些）。
+      for (const project of visible) {
+        const exists = store
+          .getState()
+          .tabs.some(
+            (tab) =>
+              isWorkspaceTab(tab) &&
+              tab.projection?.deviceSessionId === liveDeviceSessionId &&
+              tab.workspacePath === project.path,
+          );
+        if (!exists) {
+          store.getState().addTab(project.path, {
+            remoteSessionId: liveDeviceSessionId,
+            projection: { deviceSessionId: liveDeviceSessionId },
+          });
+        }
+      }
     },
-    [remoteDeviceEntry, writeRemoteDevice],
+    [liveDeviceSessionId, remoteDeviceEntry, remoteDeviceProjects, writeRemoteDevice],
   );
 
   // 连接/断开：经既有远程连接通路（设备级，不 bind 工作目录）。
@@ -1196,10 +1282,13 @@ export function SettingsPage({
         setRemoteDeviceConnectionError("当前环境不支持远程设备连接");
         return;
       }
-      // 设备访问层只依赖 taskService 与 settingService，按契约收窄。
+      // 设备访问层依赖 taskService 与设备项目清单通道，按契约收窄。
       const deviceServices = result.services as {
         zcodeTaskService: Parameters<typeof createDeviceAccess>[0]["zcodeTaskService"];
         settingService: Parameters<typeof createDeviceAccess>[0]["settingService"];
+        remoteDeviceProjectsService?: Parameters<
+          typeof createDeviceAccess
+        >[0]["remoteDeviceProjectsService"];
       };
       const access = await createDeviceAccess(deviceServices);
       const [registeredProjects, tasks] = await Promise.all([
@@ -1238,8 +1327,24 @@ export function SettingsPage({
     remoteDeviceConnectionRef.current = null;
     setRemoteDeviceProjects(null);
     setRemoteDeviceConnectionStatus("never");
-    if (connection?.dispose) connection.dispose();
-  }, []);
+    if (connection?.dispose) {
+      connection.dispose();
+      return;
+    }
+    // 设置页卸载重开后 ref 已丢，但 session 还活着：按在册 session 释放。
+    // 注意顺序 —— 先把该设备的投射条目清掉再注销 session：注销后按
+    // deviceSessionId 就再也定位不到它们了（会永久留在侧边栏）。
+    if (liveDeviceSessionId) {
+      const store = tabStoreApiRef.current;
+      for (const tab of store.getState().tabs) {
+        if (isWorkspaceTab(tab) && tab.projection?.deviceSessionId === liveDeviceSessionId) {
+          store.getState().closeTab(tab.id);
+        }
+      }
+      unregisterRemoteWorkspaceSession(liveDeviceSessionId);
+      void platform.disposeRemoteSession(liveDeviceSessionId).catch(() => undefined);
+    }
+  }, [liveDeviceSessionId, platform]);
 
   // 远程项目显示选择：只存"哪些项目显示"，不存会话数据（会话每次连接实时投射）。
   const remoteProjectVisibility = sharedSettings?.remoteProjectVisibility;
@@ -1965,9 +2070,13 @@ export function SettingsPage({
                             <RemoteDeviceManagementSection
                               device={remoteDeviceEntry}
                               connectionStatus={
-                                remoteDeviceConnectionStatus === "idle-unavailable"
-                                  ? "never"
-                                  : remoteDeviceConnectionStatus
+                                // 以在册 session 为准：设置页卸载重开后组件内 state 会丢，
+                                // 只信 state 会把活着的连接显示成「未连接」并藏掉「断开」。
+                                liveDeviceSessionId
+                                  ? "connected"
+                                  : remoteDeviceConnectionStatus === "idle-unavailable"
+                                    ? "never"
+                                    : remoteDeviceConnectionStatus
                               }
                               {...(remoteDeviceConnectionError
                                 ? { connectionError: remoteDeviceConnectionError }
@@ -1989,17 +2098,28 @@ export function SettingsPage({
                           </div>
                         ) : null}
                         {/*
-                          远程设备设置投射：仅当当前 workspace 是远程工作区时出现。
+                          远程设备设置投射：设备已连接时出现，直接读改该设备的白名单设置。
                           数据实时从对端读取、不落库；字段白名单见 lib/remoteDeviceSettings.ts。
+
+                          挂在「远程设备」区块里而不是依赖「当前 workspace 是远程」：
+                          投射条目按 ADR 0001 是 transient、不带远端 identity，
+                          因此按 workspace 判定的旧条件对设备级连接永远不成立。
+                          设备设置本来也是"整台设备"的属性，与打开了哪个项目无关。
                         */}
-                        {activeSection === "general" &&
-                        activeWorkspaceIdentity?.startsWith("remote:") &&
-                        activeWorkspaceTab?.remoteSessionId &&
-                        activeWorkspacePath ? (
+                        {activeSection === "remoteDevice" &&
+                        liveDeviceSessionId &&
+                        liveDeviceServices &&
+                        remoteDeviceEntry?.target.kind === "ssh" ? (
                           <RemoteDeviceSettingsSection
-                            workspacePath={activeWorkspacePath}
-                            remoteSessionId={activeWorkspaceTab.remoteSessionId}
-                            workspaceIdentity={activeWorkspaceIdentity}
+                            // 设备级：直接给对端服务面（投射条目按 ADR 0001 不带远端
+                            // identity，靠 workspace 三元组解析不出 session）。
+                            // workspacePath/identity 仅为满足签名，实际不参与解析。
+                            workspacePath={remoteDeviceEntry.target.host}
+                            remoteSessionId={liveDeviceSessionId}
+                            workspaceIdentity=""
+                            services={liveDeviceServices as unknown as Parameters<
+                              typeof RemoteDeviceSettingsSection
+                            >[0]["services"]}
                             projectVisibility={remoteProjectVisibility}
                             onProjectVisibilityChange={handleRemoteProjectVisibilityChange}
                           />

@@ -19,6 +19,7 @@ export {
 export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 export { IRemoteDeviceConfigService } from "./remote/remoteDeviceConfig.js";
 export type { RemoteDeviceConfigRecord } from "./remote/remoteDeviceConfig.js";
+export { IRemoteDeviceProjectsService } from "./remote/remoteDeviceProjects.js";
 export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,

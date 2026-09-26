@@ -921,6 +921,9 @@ function RootInner({
       const access = await createDeviceAccess({
         zcodeTaskService: result.services.zcodeTaskService,
         settingService: result.services.settingService,
+        ...(result.services.remoteDeviceProjectsService
+          ? { remoteDeviceProjectsService: result.services.remoteDeviceProjectsService }
+          : {}),
       });
       const [registeredProjects, tasks] = await Promise.all([
         access.access.listRegisteredProjects(),

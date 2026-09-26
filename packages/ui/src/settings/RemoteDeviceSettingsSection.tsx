@@ -13,6 +13,7 @@
  * - 不缓存、不持久化远端设置值：每次挂载重新读取，符合"投射"语义。
  */
 import { useCallback, useEffect, useState } from "react";
+import type { IServiceAccessor } from "@zcode/services";
 import { LoaderCircle, MonitorSmartphone } from "lucide-react";
 import { Switch } from "@/components/ui/switch.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -33,6 +34,12 @@ interface RemoteDeviceSettingsSectionProps {
   remoteSessionId: string;
   workspaceIdentity: string;
   /**
+   * 已知的对端服务访问面。设备级投射传它 —— 投射条目按 ADR 0001 不带远端
+   * identity，靠 workspace 三元组解析不出 session；这里直接给定 session 的服务面。
+   * 未提供时按 workspace 三元组解析（远程 workspace 的既有用法）。
+   */
+  services?: IServiceAccessor;
+  /**
    * 项目显示选择（键为远端 identity，值为是否显示）。
    * 只保存"选择"，不保存会话数据；由父级写入本地设置实现跨重启保留。
    */
@@ -49,11 +56,18 @@ export function RemoteDeviceSettingsSection({
   workspacePath,
   remoteSessionId,
   workspaceIdentity,
+  services: providedServices,
   projectVisibility,
   onProjectVisibilityChange,
 }: RemoteDeviceSettingsSectionProps) {
   const { intl } = useZCodeIntl();
-  const services = useWorkspaceServices(workspacePath, remoteSessionId, workspaceIdentity);
+  const resolvedServices = useWorkspaceServices(workspacePath, remoteSessionId, workspaceIdentity);
+  // 设备级投射直接给服务面（投射条目没有远端 identity，解析不出来）；
+  // 远程 workspace 场景仍走解析。
+  const services = providedServices ?? resolvedServices;
+  // 设置读写必须走设备通道：services.settingService 在远端 workspace 语义下
+  // 刻意是本机实现，用它读会显示 A 的设置、写会改到 A（已实测）。
+  const deviceSettings = services.remoteDeviceProjectsService;
   const [state, setState] = useState<SectionState>({ status: "loading" });
   // 每个字段的写入中状态，避免同一字段重复提交。
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -63,7 +77,9 @@ export function RemoteDeviceSettingsSection({
 
   const load = useCallback(async () => {
     try {
-      const settings = await services.settingService.get();
+      const settings = deviceSettings
+        ? await deviceSettings.getSettings()
+        : await services.settingService.get();
       setState({ status: "ready", entries: pickProjectableSettings(settings) });
     } catch (error) {
       // 读不到通常是连接已断开：明确告知，不留空列表让用户误以为没有可改项。
@@ -71,7 +87,7 @@ export function RemoteDeviceSettingsSection({
       logger.warn("[remoteDeviceSettings] 读取远端设置失败", { error: message });
       setState({ status: "unavailable", message });
     }
-  }, [services.settingService]);
+  }, [deviceSettings, services.settingService]);
 
   useEffect(() => {
     void load();
@@ -104,17 +120,28 @@ export function RemoteDeviceSettingsSection({
     async (key: string, nextValue: boolean) => {
       setPendingKeys((current) => new Set(current).add(key));
       try {
-        const before = await services.settingService.get();
-        const originalValue = Object.entries(before).find(([k]) => k === key)?.[1];
-        await services.settingService.update({ [key]: nextValue });
-        const after = await services.settingService.get();
-        const actualValue = Object.entries(after).find(([k]) => k === key)?.[1];
+        // 读改写都走设备通道（若可用）：services.settingService 是本机实现，
+        // 用它会把设备设置写到 A 本机（已实测：A 被改、B 未变）。
+        const readAll = async (): Promise<Record<string, unknown>> =>
+          deviceSettings
+            ? await deviceSettings.getSettings()
+            : ((await services.settingService.get()) as unknown as Record<string, unknown>);
+        const before = await readAll();
+        const originalValue = before[key];
+        if (deviceSettings) {
+          await deviceSettings.updateSetting(key, nextValue);
+        } else {
+          await services.settingService.update({ [key]: nextValue });
+        }
+        const after = await readAll();
+        const actualValue = after[key];
         if (actualValue !== nextValue) {
           // 读回不符：不能把 UI 更新成"已生效"，否则用户在两端看到的值不一致。
           logger.warn("[remoteDeviceSettings] 远端写入未生效", {
             key,
             expected: nextValue,
             actual: actualValue,
+            originalValue,
           });
           await load();
           return;
@@ -148,7 +175,7 @@ export function RemoteDeviceSettingsSection({
         });
       }
     },
-    [load, services.settingService],
+    [deviceSettings, load, services.settingService],
   );
 
   const toggleProject = useCallback(

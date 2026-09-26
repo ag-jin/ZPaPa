@@ -38,6 +38,17 @@ export interface DeviceServiceAccess {
       readonly unknown[]
     >;
   };
+  /**
+   * 设备项目清单（读设备自身的 recentProjects）。
+   *
+   * 优先走 `remoteDeviceProjectsService`：它由 host 用对端原始访问面读取，
+   * 拿到的是**设备**登记的项目。回退到 `settingService` 只在旧 host 上发生 ——
+   * 那时读到的其实是本机设置，会把 A 的项目当成设备项目（已在 finding 文档记录）。
+   */
+  readonly remoteDeviceProjectsService?: {
+    listRegisteredProjects(): Promise<string[]>;
+  };
+  /** @deprecated 用 remoteDeviceProjectsService；仅作旧 host 回退。 */
   readonly settingService: {
     get(): Promise<{ recentProjects?: string[] }>;
   };
@@ -80,6 +91,13 @@ export async function createDeviceAccess(
   let enumerationProbed = false;
 
   const listRegisteredProjects = async (): Promise<string[]> => {
+    // 首选设备项目通道：它由 host 用对端原始访问面读取，拿到的是设备自身的
+    // recentProjects。回退到 settingService 只在旧 host 上发生，那时读到的是
+    // 本机设置（A 的项目），属于已知缺陷，保留回退只为不炸旧版本。
+    if (services.remoteDeviceProjectsService) {
+      const projects = await services.remoteDeviceProjectsService.listRegisteredProjects();
+      return projects.filter((item): item is string => typeof item === "string" && item.length > 0);
+    }
     const settings = await services.settingService.get();
     const recent = settings.recentProjects ?? [];
     return recent.filter((item): item is string => typeof item === "string" && item.length > 0);

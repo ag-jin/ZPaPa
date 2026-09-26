@@ -1,79 +1,70 @@
-# 结论：设备级投射的最后一段未打通（读设备项目清单仍走本地）
+# 结论：设备级投射已打通（读设备项目 + 读改设备设置）
 
-日期：2026-09-27
-关联：`.agents/plans/finding-device-projection-reads-local-settings.md`、`finding-device-ui-redundancy.md`
+日期：2026-09-27（更新）
+关联：`finding-device-projection-reads-local-settings.md`、`finding-device-ui-redundancy.md`
 
-## 运行时实测（决定性证据）
+## 修复方式：单开设备通道，绕开被本地化的 settingService
 
-连接 B 成功后，从运行中的 dev renderer 直接读 `TabStoreProvider` 的 store 实例：
+`ISettingService` 在远端 workspace 语义下**必须**是本机实现
+（`remoteWorkspaceServiceCollection.ts`：设置/凭据/OAuth/模型供应商读写本机），
+但设备投射要读的是**设备自己**的项目登记与设置。两者语义冲突，因此新增
+`IRemoteDeviceProjectsService`（channel `remote-device-projects`）：
 
-```js
-store.getState().tabs   → 8 个 tab
-[
-  { path: "/Users/linguojin/Workspace/ZCode",  projection: {deviceSessionId: "f204699d-…"}, remoteSessionId: "f204699d-…" },
-  { path: "/Users/jin1/Workspace/中转站",      projection: {deviceSessionId: "f204699d-…"}, remoteSessionId: "f204699d-…" },
-  { path: "/Users/jin1/Workspace/新赛马",      projection: {deviceSessionId: "f204699d-…"}, remoteSessionId: "f204699d-…" },
-  { path: "/Users/linguojin/Workspace/ZCode",  projection: null, remoteSessionId: null },   // 本地原有
-  { path: "/Users/jin1/Workspace/中转站",      projection: null, remoteSessionId: null },
-  { path: "/Users/jin1/Workspace/新赛马",      projection: null, remoteSessionId: null },
-  { path: "/Users/linguojin/.zcode/workspace/default", projection: null, remoteSessionId: null },
-  { path: undefined, projection: null, remoteSessionId: null },
-]
-```
+| 方法 | 作用 |
+|---|---|
+| `listRegisteredProjects()` | 读设备自身的 `recentProjects` |
+| `getSettings()` | 读设备完整设置（供白名单挑字段展示） |
+| `updateSetting(key, value)` | 写设备的一个设置字段 |
 
-关键结论：
+由 A 侧 host 用**对端原始访问面**（`params.connectionServices`，指向 B 的
+resident host）代为读写。这样：不动 workspace 语义、不要求 B 升级
+（B 跑官方包也能答，因为读的就是 B 的 settingService）。
 
-1. **投射机制本身是通的** —— 投射 tab 已创建，`projection.deviceSessionId` 正确写入。
-   这验证了 `tabStore.ts` 的修复有效（`createWorkspaceTab` / `mergeWorkspaceTabOptions`
-   此前都漏传 `projection`，投射条目会退化成普通 tab，断开时按 deviceSessionId 回收失效）。
+链路：描述符 → host scoped collection 注册 → client 代理 → renderer merge
+（`remoteWorkspaceSessionServices`）→ `DeviceServiceAccess` 优先使用。
 
-2. **投射出的三个路径是 A 自己的 `recentProjects`**，不是 B 的。
-   B 的真实项目是 `/Volumes/数据盘/网站/*`（10 个），一个都没拿到。
-   且 A 的那三个路径（`/Users/jin1/…`）在 B 上**不存在**（已 SSH 核实）。
-   因此侧边栏看到的是：3 个本地项目 + 3 个同名重复 tab（投射的那份），后者因路径重复
-   在 UI 上无法区分，观感上"投射没生效"。
+## 跨机实测（2026-09-27，A=本机 Intel，B=100.66.1.2 官方包 3.14.3）
 
-3. **根因未修**：`remoteDeviceAccess.listRegisteredProjects()` 调
-   `services.settingService.get()`，而设备会话的 `settingService` 被
-   `remoteWorkspaceServiceCollection.ts:318` 刻意注册为本机实现
-   （理由：设置是本机事实，模型配置/终端 shell 枚举不能串到对端）。
-
-## 为什么验收脚本能过、UI 不能
-
-| 路径 | settingService 来源 | 结果 |
+| 验收标准 | 结果 | 证据 |
 |---|---|---|
-| `acceptance-device-connect.ts` | `connectResidentRemote` 直连 B（`RemoteServiceAccess`） | 读到 B 的 10 个 ✅ |
-| UI（renderer → host） | `remoteWorkspaceServiceCollection` 的 `localSettingService` | 读到 A 的 3 个 ❌ |
+| 1. 侧边栏出现 B 的项目（图标/颜色区分）+ 会话可点开 | ✅ | 10 个项目全为 `/Volumes/数据盘/网站/*`；蓝色 `monitor-smartphone` vs 本地灰色 `folder-open`；展开显示 B 的会话标题与时间 |
+| 2. 可勾选显示哪些 B 项目 | ✅ | 设置页列出 10 项各带会话数；关掉 agent军团 → 10→9 且落盘 `visibleProjects`；勾回 → 9→10 |
+| 3. 断开后投射项消失、重连入口仍在 | ✅ | 断开后投射项 10→0；卡片仍显示 `linguojin@100.66.1.2 · 未连接 · [连接] [移除设备]` |
+| 4. 可读改 B 的白名单设置，改后 B 侧生效 | ✅ | 读：UI 三个开关与 B 文件一致。写：UI 改「显示待办」→ B 变 `False`、A 仍 `True`；随后回滚 B 至 `True` |
+| 5. A 端无 remote 会话索引残留 | ✅ | `tasks-index.sqlite` 中 `remote:%` 行数 = 0 |
 
-两条路同名不同物。这也解释了本轮多次误判。
+检查：`pnpm typecheck` ✅ / `oxlint`（无新增告警）✅ / `architecture:check` 0 违规 ✅
+投影契约测试 11 项全通过（含新增的孤儿判定与设备 session 查找）。
 
-## 需要的修法（未实施）
+## 本轮顺带修掉的真缺陷
 
-设备投射要读的是「设备登记了哪些项目」这一**业务事实**，不该复用 settings 通道。
-建议在 resident host 上加只读设备端点（如 `/api/device-projects` 或 RPC 方法），
-由 A 的 host 经既有 SSH 隧道调用，返回 `recentProjects` + 各项目会话数。
+1. **`tabStore` 漏传 `projection`**（`createWorkspaceTab` / `mergeWorkspaceTabOptions`）：
+   投射条目退化成普通 tab，断开时按 `deviceSessionId` 回收失效。
 
-- 不动 workspace 语义（模型配置等仍读本机）
-- 顺带为 spec 第 26 行「在 A 添加 B 的新项目」留写入口
+2. **重连产生孤儿投射条目**：同一台设备重连会换新的 `deviceSessionId`，旧条目的
+   session 已注销 —— 按当前 session 过滤看不见、`dispose` 也够不到，于是每重连一次
+   就多留一组（实测连接 2 次 → 20 个投射项，同一批项目两份）。
+   修法：连接时清理**指向同一 target 且 session 已失效**的旧代条目，并新增纯函数
+   `findOrphanProjectionTabs` + 3 项回归测试。
 
-## 本轮已完成的改动
+3. **断开只清 `remoteSessionId`、不清投射条目**：`onRemoteSessionClosed` 在
+   `matchedTabs.length === 0` 时提前返回，而设备连接的投射条目正是这种"没有
+   workspace tab 匹配"的情况 → 条目永久留在侧边栏。已把投射清理挪到早退之前。
 
-| 文件 | 内容 | 状态 |
-|---|---|---|
-| `packages/ui/src/store/tabStore.ts` | `projection` 字段透传（真 bug） | ✅ 已验证生效 |
-| `packages/ui/src/Root.tsx` + `root/types.ts` + `root/WorkspaceSettingsLayer.tsx` + `root/RootWorkspaceContent.tsx` | `remoteDeviceConnect` / `onOpenRemoteConnection` prop 链路 | ✅ 连接按钮已可用 |
-| `packages/ui/src/SettingsPage.tsx` | 设备配置服务改取 `localHostServices`（设备配置是本机事实）；移除死代码 | ✅ 设备卡片正常渲染 |
-| `packages/ui/src/settings/RemoteDeviceManagementSection.tsx` | **删除重复的连接表单**，改为指向「远程连接」弹窗；保留设备状态/项目勾选/移除 | ✅ lint/typecheck 干净 |
-| `packages/ui/src/SSHDialog.tsx` + `RemoteConnectionDialogContent.tsx` | 目录步新增「作为设备连接（不选目录）」入口 | ✅ 已接线，待联调 |
-| `packages/ui/src/root/useRemoteWorkspaceHistory.ts` | `connectRemoteDevice` 支持复用已有 session | ✅ |
+4. **设备卡片状态依赖组件内 state**：连接成功会切走一次设置页，state 随之丢失，
+   重开后错误显示「未连接」并藏掉「断开」入口。改为从在册 session 反推
+   （新增 `findDeviceSessionId` + 1 项测试），并让项目勾选列表在重挂载后重新拉取。
 
-检查状态：`pnpm typecheck` ✅ / `npx oxlint` ✅ / `pnpm architecture:check` ✅（violations: 0）
+5. **显示偏好开关不即时生效**：只落盘偏好但不重算投射，用户关掉项目后侧边栏仍显示。
+   已改为同时按新偏好关闭/重开投射条目。
 
-## 教训
+## 遗留
 
-1. **先查产品既有实现**：`RemoteDeviceSettingsSection` 早就用 `useWorkspaceServices`
-   正确地拿到了对端服务；我却另造了一套连接表单，字段还更少（缺 password/port）。
-2. **UI 验证用 CDP，不要盲点**：dev 版 `--remote-debugging-port=9229`，`Runtime.evaluate`
-   可直接读 store/DOM。本轮后半段改用此法后效率大增。脚本：`.scratch/cdp/cdp.mjs`。
-3. **同名不同物的陷阱**：`connectResidentRemote` 与 `remoteWorkspaceServiceCollection`
-   都产出"远端服务"，但 settingService 语义相反。跨层排查时必须确认拿到的是哪一个。
+- 设备设置区块里「投射的项目」子列表显示「远端共 0 个项目」：该子列表走
+  `zcodeTaskService.listTasks()` 无参枚举，而 B 的官方包不支持设备级全量枚举
+  （报 `Cannot read properties of undefined`）。项目勾选已由设备通道提供（标准 2 通过），
+  这个子列表属冗余展示，可删或改走 `listRegisteredProjects`。
+- 规格提到的 22 个可投射字段，实测在 B（官方包）上露出 18 个：其余字段名在
+  B 的版本里不存在或类型不同，属版本差异而非缺陷。
+
+
