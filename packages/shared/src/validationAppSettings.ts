@@ -118,18 +118,6 @@ const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
     lastConnectionStatus: z.enum(["connected", "failed"]),
     lastConnectionError: z.string().optional(),
   }),
-  // 设备条目：远程设备投射的**连接入口**，不含会话数据。
-  // 与 remote 条目的区别：没有 workspacePath —— 设备语义是"连整台设备"，
-  // 项目清单连接后从设备实时拉取，不在此处留存。
-  z.object({
-    kind: z.literal("remoteDevice"),
-    target: remoteWorkspaceTargetSchema,
-    lastConnectedAt: z.number().int().nonnegative().optional(),
-    lastConnectionStatus: z.enum(["connected", "failed", "never"]).default("never"),
-    lastConnectionError: z.string().optional(),
-    /** 显示偏好：哪些项目在投射端显示（键为设备上的项目路径，值为是否显示）。 */
-    visibleProjects: z.record(z.string(), z.boolean()).optional(),
-  }),
 ]);
 
 const zcodeEndpointOriginSchema = z.preprocess((value) => {
@@ -478,13 +466,24 @@ const appSettingsObjectSchema = z.object({
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   /**
-   * 远程设备投射：用户选择要显示哪些远端项目（按 workspacePath）。
+   * 远程设备投射：连接入口 + 显示偏好。
    *
-   * 只保存"选择"，不保存会话数据 —— 会话列表每次连接时实时从对端拉取。
-   * 键为远端 identity（remote:<kind>:...:path），值为该项目是否显示。
-   * 用记录而非数组：删除项目和切换显示都保持幂等，且便于按 identity 查。
+   * 独立字段而非复用 lastWorkspaceSession —— 后者是 tab 持久化的专属领地
+   * （tab 变化会全量重写该字段），设备条目放进去会被覆盖掉。
+   * 只保存"怎么连"与"显示什么"，不保存项目清单与会话数据。
    */
-  remoteProjectVisibility: z.record(z.string(), z.boolean()).optional(),
+  remoteDevices: z
+    .array(
+      z.object({
+        target: remoteWorkspaceTargetSchema,
+        lastConnectedAt: z.number().int().nonnegative().optional(),
+        lastConnectionStatus: z.enum(["connected", "failed", "never"]).default("never"),
+        lastConnectionError: z.string().optional(),
+        /** 显示偏好：设备上哪些项目在投射端显示（键为设备上的项目路径）。 */
+        visibleProjects: z.record(z.string(), z.boolean()).optional(),
+      }),
+    )
+    .default([]),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().default(false),
@@ -570,7 +569,17 @@ export const appSettingsPatchSchema = z.object({
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
-  remoteProjectVisibility: z.record(z.string(), z.boolean()).optional(),
+  remoteDevices: z
+    .array(
+      z.object({
+        target: remoteWorkspaceTargetSchema,
+        lastConnectedAt: z.number().int().nonnegative().optional(),
+        lastConnectionStatus: z.enum(["connected", "failed", "never"]).default("never"),
+        lastConnectionError: z.string().optional(),
+        visibleProjects: z.record(z.string(), z.boolean()).optional(),
+      }),
+    )
+    .optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().optional(),

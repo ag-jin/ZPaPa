@@ -1102,27 +1102,24 @@ export function SettingsPage({
   );
 
   // ── 远程设备：连接入口 ──
-  // 设备条目存在 lastWorkspaceSession 里（kind: "remoteDevice"），与 workspace tab
-  // 恢复是两条独立路径（后者会跳过设备条目）。首版只支持一台，取第一条。
-  const remoteDeviceEntry = useMemo(() => {
-    const entries = sharedSettings?.lastWorkspaceSession ?? [];
-    return entries.find((entry) => entry.kind === "remoteDevice") ?? null;
-  }, [sharedSettings?.lastWorkspaceSession]);
+  // 存在独立的 remoteDevices 字段，而不是 lastWorkspaceSession —— 后者是
+  // tab 持久化的专属领地（tab 变化会全量重写该字段），设备配置放进去会被覆盖，
+  // 这正是「保存无效」的成因。首版只支持一台，取第一条。
+  const remoteDeviceEntry = useMemo<import("@zcode/shared").RemoteDeviceConfig | null>(
+    () => sharedSettings?.remoteDevices?.[0] ?? null,
+    [sharedSettings?.remoteDevices],
+  );
 
-  const writeRemoteDeviceEntries = useCallback(
-    (next: import("@zcode/shared").PersistedWorkspaceSessionEntry[]) => {
-      void updateSharedSettings({ lastWorkspaceSession: next });
+  const writeRemoteDevice = useCallback(
+    (next: import("@zcode/shared").RemoteDeviceConfig | null) => {
+      void updateSharedSettings({ remoteDevices: next ? [next] : [] });
     },
     [updateSharedSettings],
   );
 
   const handleSaveRemoteDevice = useCallback(
     (draft: import("@/settings/RemoteDeviceManagementSection.js").RemoteDeviceDraft) => {
-      const entries = (sharedSettings?.lastWorkspaceSession ?? []).filter(
-        (entry) => entry.kind !== "remoteDevice",
-      );
-      const device: import("@zcode/shared").RemoteDeviceEntry = {
-        kind: "remoteDevice",
+      writeRemoteDevice({
         target: {
           kind: "ssh",
           host: draft.host,
@@ -1134,45 +1131,38 @@ export function SettingsPage({
         ...(remoteDeviceEntry?.visibleProjects
           ? { visibleProjects: remoteDeviceEntry.visibleProjects }
           : {}),
-      };
-      writeRemoteDeviceEntries([...entries, device]);
+      });
       setRemoteDeviceConnectionStatus("never");
     },
-    [remoteDeviceEntry, sharedSettings?.lastWorkspaceSession, writeRemoteDeviceEntries],
+    [remoteDeviceEntry, writeRemoteDevice],
   );
 
   const handleRemoveRemoteDevice = useCallback(() => {
-    const entries = (sharedSettings?.lastWorkspaceSession ?? []).filter(
-      (entry) => entry.kind !== "remoteDevice",
-    );
-    writeRemoteDeviceEntries(entries);
-  }, [sharedSettings?.lastWorkspaceSession, writeRemoteDeviceEntries]);
+    writeRemoteDevice(null);
+  }, [writeRemoteDevice]);
 
   const handleRemoteDeviceVisibleProjectsChange = useCallback(
     (next: Record<string, boolean>) => {
-      const entries = (sharedSettings?.lastWorkspaceSession ?? []).map((entry) =>
-        entry.kind === "remoteDevice" ? { ...entry, visibleProjects: next } : entry,
-      );
-      writeRemoteDeviceEntries(entries);
+      if (!remoteDeviceEntry) return;
+      writeRemoteDevice({ ...remoteDeviceEntry, visibleProjects: next });
     },
-    [sharedSettings?.lastWorkspaceSession, writeRemoteDeviceEntries],
+    [remoteDeviceEntry, writeRemoteDevice],
   );
 
-  // 连接/断开：经由现有的远程连接流程（与选目录流程共用同一底层通路）。
-  // 设备级连接不传工作目录 —— 目录不再是连接前提。
+  // 连接/断开：经既有远程连接通路（设备级，不 bind 工作目录）。
   const handleConnectRemoteDevice = useCallback(async () => {
     const target = remoteDeviceEntry?.target;
-    if (!target) return;
+    if (!target || !remoteDeviceConnect) return;
     setRemoteDeviceConnectionStatus("connecting");
     setRemoteDeviceConnectionError(undefined);
     try {
-      const result = await remoteDeviceConnect?.(target);
+      const result = await remoteDeviceConnect(target);
       if (!result) {
-        setRemoteDeviceConnectionStatus("idle-unavailable");
+        setRemoteDeviceConnectionStatus("never");
+        setRemoteDeviceConnectionError("当前环境不支持远程设备连接");
         return;
       }
-      // 设备访问层只依赖 taskService 与 settingService；这里按契约收窄，
-      // 避免设置页为了类型干净而依赖远程历史的完整 services 类型。
+      // 设备访问层只依赖 taskService 与 settingService，按契约收窄。
       const deviceServices = result.services as {
         zcodeTaskService: Parameters<typeof createDeviceAccess>[0]["zcodeTaskService"];
         settingService: Parameters<typeof createDeviceAccess>[0]["settingService"];
@@ -1185,28 +1175,36 @@ export function SettingsPage({
       const projectList = buildProjectedProjectList({ registeredProjects, tasks });
       setRemoteDeviceProjects(projectList);
       setRemoteDeviceConnectionStatus("connected");
-      // 连接成功后同步投射条目（按显示偏好），使项目出现在侧边栏。
-      const syncProjection = (result as { syncProjection?: (projects: unknown) => unknown })
-        .syncProjection;
-      if (typeof syncProjection === "function") {
-        const visible = remoteDeviceEntry?.visibleProjects;
-        syncProjection(
+      // 记录连接成功：让设备卡片在下次打开时反映真实状态。
+      writeRemoteDevice({ ...remoteDeviceEntry, lastConnectionStatus: "connected" });
+      // 同步投射条目（按显示偏好），使项目出现在侧边栏。
+      if (typeof result.syncProjection === "function") {
+        const visible = remoteDeviceEntry.visibleProjects;
+        result.syncProjection(
           visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
         );
       }
       remoteDeviceConnectionRef.current = result;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setRemoteDeviceConnectionStatus("failed");
-      setRemoteDeviceConnectionError(error instanceof Error ? error.message : String(error));
+      setRemoteDeviceConnectionError(message);
+      if (remoteDeviceEntry) {
+        writeRemoteDevice({
+          ...remoteDeviceEntry,
+          lastConnectionStatus: "failed",
+          lastConnectionError: message,
+        });
+      }
     }
-  }, [remoteDeviceConnect, remoteDeviceEntry?.target]);
+  }, [remoteDeviceConnect, remoteDeviceEntry, writeRemoteDevice]);
 
   const handleDisconnectRemoteDevice = useCallback(() => {
     const connection = remoteDeviceConnectionRef.current;
     remoteDeviceConnectionRef.current = null;
     setRemoteDeviceProjects(null);
     setRemoteDeviceConnectionStatus("never");
-    if (connection) void connection.dispose?.();
+    if (connection?.dispose) connection.dispose();
   }, []);
 
   // 远程项目显示选择：只存"哪些项目显示"，不存会话数据（会话每次连接实时投射）。

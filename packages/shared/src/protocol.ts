@@ -191,14 +191,12 @@ export interface RemoteWorkspaceSessionEntry extends RemoteWorkspaceSessionSnaps
 }
 
 /**
- * 远程设备条目：远程设备投射的**连接入口**。
+ * 远程设备配置：投射端的连接入口 + 显示偏好。
  *
- * 与 RemoteWorkspaceSessionEntry 的区别：没有 workspacePath —— 设备语义是
- * "连整台设备"，项目清单连接后从设备实时获取，不在投射端留存。
- * 这里只保存"怎么连"（target）、连接状态，以及投射端的显示偏好。
+ * 独立于 session entries —— 后者是 tab 持久化的专属领地（tab 变化会全量重写），
+ * 设备配置放进去会被覆盖。这里只保存"怎么连"与"显示什么"，不含项目清单与会话数据。
  */
-export interface RemoteDeviceEntry {
-  kind: "remoteDevice";
+export interface RemoteDeviceConfig {
   target: RemoteTarget;
   lastConnectedAt?: number;
   lastConnectionStatus: "connected" | "failed" | "never";
@@ -209,8 +207,7 @@ export interface RemoteDeviceEntry {
 
 export type PersistedWorkspaceSessionEntry =
   | LocalWorkspaceSessionEntry
-  | RemoteWorkspaceSessionEntry
-  | RemoteDeviceEntry;
+  | RemoteWorkspaceSessionEntry;
 
 // ── Process Monitor ──
 
@@ -365,6 +362,8 @@ export interface AppSettings {
   lastActiveTabIndex?: number;
   /** 每个 workspace 的最后活跃 taskId，下次打开自动恢复 */
   lastActiveTaskByWorkspace?: Record<string, string>;
+  /** 远程设备投射：连接入口与显示偏好（见 CONTEXT.md「远程设备投射」）。 */
+  remoteDevices?: RemoteDeviceConfig[];
   /** 远程设备投射：用户选择显示哪些远端项目（键为远端 identity，值为是否显示）。 */
   remoteProjectVisibility?: Record<string, boolean>;
   /** 数据目录的根路径（替代 homedir），默认为 os.homedir()；.zcode/v2 后缀不变 */

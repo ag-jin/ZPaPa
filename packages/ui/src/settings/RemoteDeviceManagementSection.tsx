@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoaderCircle, MonitorSmartphone, Plus, Trash2 } from "lucide-react";
-import type { RemoteDeviceEntry } from "@zcode/shared";
+import type { RemoteDeviceConfig } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Switch } from "@/components/ui/switch.js";
@@ -28,7 +28,7 @@ export interface RemoteDeviceDraft {
 
 interface RemoteDeviceManagementSectionProps {
   /** 已保存的设备（首版只支持一台，取第一条）。 */
-  device?: RemoteDeviceEntry | null;
+  device?: RemoteDeviceConfig | null;
   /** 连接状态：由上层传入（源自连接流程）。 */
   connectionStatus: "never" | "connecting" | "connected" | "failed";
   connectionError?: string;
@@ -43,7 +43,7 @@ interface RemoteDeviceManagementSectionProps {
   onVisibleProjectsChange?: (next: Record<string, boolean>) => void;
 }
 
-function formatTargetSummary(device: RemoteDeviceEntry): string {
+function formatTargetSummary(device: RemoteDeviceConfig): string {
   const target = device.target;
   if (target.kind !== "ssh") return String(target.kind);
   const port = target.port ? `:${target.port}` : "";
