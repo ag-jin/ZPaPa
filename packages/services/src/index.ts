@@ -17,6 +17,8 @@ export {
   type AccountRequestAuthResolver,
 } from "./model-provider/accountRequestAuthService.js";
 export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
+export { IRemoteDeviceConfigService } from "./remote/remoteDeviceConfig.js";
+export type { RemoteDeviceConfigRecord } from "./remote/remoteDeviceConfig.js";
 export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,

@@ -82,6 +82,7 @@ export const ServiceChannels = {
   /** Git checkpoint 服务 */
   GitCheckpoint: "git-checkpoint",
   Setting: "setting",
+  RemoteDeviceConfig: "remote-device-config",
   /** 凭据管理（从 main IPC 迁移到 host RPC） */
   Credential: "credential",
   /** Computer Use Helper macOS 权限服务 */

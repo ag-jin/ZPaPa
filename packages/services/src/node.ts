@@ -290,6 +290,10 @@ import { IGitService } from "./git/git.js";
 import { IGitCheckpointService } from "./git/gitCheckpoint.js";
 import { ISystemService } from "./system/system.js";
 import { ITerminalService } from "./terminal/terminal.js";
+import {
+  IRemoteDeviceConfigService,
+} from "./remote/remoteDeviceConfig.js";
+import { createRemoteDeviceConfigService } from "./remote/remoteDeviceConfigNode.js";
 import { ISettingService } from "./setting/setting.js";
 import { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import { ICredentialService } from "./credential/credential.js";
@@ -2400,6 +2404,15 @@ export function createLocalServices(options: {
     .register(ISystemService, systemService)
     .register(ITerminalService, createTerminalService({ settingService }))
     .register(ISettingService, settingService)
+    // 远程设备配置：独立文件存储，避免与共享的 settings.json 相互覆盖
+    // （旧版本实例写入 settings 时会丢弃不认识的字段）。
+    .register(
+      IRemoteDeviceConfigService,
+      createRemoteDeviceConfigService({
+        configDir: resolveAppConfigDir(),
+        onError: (error) => log.warn("远程设备配置读取失败", { error }),
+      }),
+    )
     .register(IOnboardingRecordService, onboardingRecordService)
     .register(ICredentialService, credentialService)
     .register(IBroadcastService, broadcastService)

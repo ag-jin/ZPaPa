@@ -1,3 +1,4 @@
+import { logger } from "@/logger.js";
 /* oxlint-disable eslint(max-lines) */
 import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
 import {
@@ -1102,24 +1103,49 @@ export function SettingsPage({
   );
 
   // ── 远程设备：连接入口 ──
-  // 存在独立的 remoteDevices 字段，而不是 lastWorkspaceSession —— 后者是
-  // tab 持久化的专属领地（tab 变化会全量重写该字段），设备配置放进去会被覆盖，
-  // 这正是「保存无效」的成因。首版只支持一台，取第一条。
-  const remoteDeviceEntry = useMemo<import("@zcode/shared").RemoteDeviceConfig | null>(
-    () => sharedSettings?.remoteDevices?.[0] ?? null,
-    [sharedSettings?.remoteDevices],
-  );
+  // 存在独立的 remote-devices.json（经 IRemoteDeviceConfigService），
+  // 不用 settings 字段 —— settings.json 是多版本实例共享的，不认识该字段的
+  // 旧版本实例写入时会把它丢弃（实测：并存的官方版每次写设置都会抹掉设备配置）。
+  // desktop host 提供该服务；此处按可选能力收窄（Web 等形态可能不提供）。
+  const remoteDeviceConfigService = (
+    services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
+  ).remoteDeviceConfigService;
+  const [remoteDeviceEntry, setRemoteDeviceEntry] = useState<
+    import("@zcode/services").RemoteDeviceConfigRecord | null
+  >(null);
+
+  useEffect(() => {
+    if (!remoteDeviceConfigService) return;
+    void remoteDeviceConfigService
+      .list()
+      .then((devices: import("@zcode/services").RemoteDeviceConfigRecord[]) =>
+        setRemoteDeviceEntry(devices[0] ?? null),
+      )
+      .catch((error: unknown) => {
+        logger.warn("[remoteDevice] 读取设备配置失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [remoteDeviceConfigService]);
 
   const writeRemoteDevice = useCallback(
-    (next: import("@zcode/shared").RemoteDeviceConfig | null) => {
-      void updateSharedSettings({ remoteDevices: next ? [next] : [] });
+    async (next: import("@zcode/services").RemoteDeviceConfigRecord | null) => {
+      setRemoteDeviceEntry(next);
+      if (!remoteDeviceConfigService) return;
+      try {
+        await remoteDeviceConfigService.save(next ? [next] : []);
+      } catch (error) {
+        logger.warn("[remoteDevice] 保存设备配置失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     },
-    [updateSharedSettings],
+    [remoteDeviceConfigService],
   );
 
   const handleSaveRemoteDevice = useCallback(
-    (draft: import("@/settings/RemoteDeviceManagementSection.js").RemoteDeviceDraft) => {
-      writeRemoteDevice({
+    async (draft: import("@/settings/RemoteDeviceManagementSection.js").RemoteDeviceDraft) => {
+      await writeRemoteDevice({
         target: {
           kind: "ssh",
           host: draft.host,
@@ -1137,14 +1163,14 @@ export function SettingsPage({
     [remoteDeviceEntry, writeRemoteDevice],
   );
 
-  const handleRemoveRemoteDevice = useCallback(() => {
-    writeRemoteDevice(null);
+  const handleRemoveRemoteDevice = useCallback(async () => {
+    await writeRemoteDevice(null);
   }, [writeRemoteDevice]);
 
   const handleRemoteDeviceVisibleProjectsChange = useCallback(
-    (next: Record<string, boolean>) => {
+    async (next: Record<string, boolean>) => {
       if (!remoteDeviceEntry) return;
-      writeRemoteDevice({ ...remoteDeviceEntry, visibleProjects: next });
+      await writeRemoteDevice({ ...remoteDeviceEntry, visibleProjects: next });
     },
     [remoteDeviceEntry, writeRemoteDevice],
   );
