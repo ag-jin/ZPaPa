@@ -63,6 +63,7 @@ import {
   type CodingPlanUsageSource,
 } from "@/settings/usage-stats/CodingPlanUsagePanel.js";
 import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources.js";
+import { RemoteDeviceSettingsSection } from "@/settings/RemoteDeviceSettingsSection.js";
 import { SubagentsSection } from "@/settings/SubagentsSection.js";
 import { AutomationsSection } from "@/settings/AutomationsSection.js";
 import { SegmentPill } from "@/settings/PluginStoreListView.js";
@@ -1781,7 +1782,22 @@ export function SettingsPage({
                               })
                             }
                           />
-                        ) : activeSection === "appearance" ? (
+                        ) : null}
+                        {/*
+                          远程设备设置投射：仅当当前 workspace 是远程工作区时出现。
+                          数据实时从对端读取、不落库；字段白名单见 lib/remoteDeviceSettings.ts。
+                        */}
+                        {activeSection === "general" &&
+                        activeWorkspaceIdentity?.startsWith("remote:") &&
+                        activeWorkspaceTab?.remoteSessionId &&
+                        activeWorkspacePath ? (
+                          <RemoteDeviceSettingsSection
+                            workspacePath={activeWorkspacePath}
+                            remoteSessionId={activeWorkspaceTab.remoteSessionId}
+                            workspaceIdentity={activeWorkspaceIdentity}
+                          />
+                        ) : null}
+                        {activeSection === "appearance" ? (
                           <AppearanceSectionContent
                             codePreviewSettings={codePreviewSettings}
                             setCodePreviewSettings={handleCodePreviewSettingsChange}
