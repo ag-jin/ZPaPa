@@ -24,12 +24,20 @@ import {
 } from "@/lib/remoteDeviceSettings.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { Button } from "@/components/ui/button.js";
+import { FolderIcon } from "lucide-react";
 
 interface RemoteDeviceSettingsSectionProps {
   /** 远程工作区路径（对端机器上的真实路径）。 */
   workspacePath: string;
   remoteSessionId: string;
   workspaceIdentity: string;
+  /**
+   * 项目显示选择（键为远端 identity，值为是否显示）。
+   * 只保存"选择"，不保存会话数据；由父级写入本地设置实现跨重启保留。
+   */
+  projectVisibility?: Readonly<Record<string, boolean>>;
+  onProjectVisibilityChange?: (next: Record<string, boolean>) => void;
 }
 
 type SectionState =
@@ -41,12 +49,17 @@ export function RemoteDeviceSettingsSection({
   workspacePath,
   remoteSessionId,
   workspaceIdentity,
+  projectVisibility,
+  onProjectVisibilityChange,
 }: RemoteDeviceSettingsSectionProps) {
   const { intl } = useZCodeIntl();
   const services = useWorkspaceServices(workspacePath, remoteSessionId, workspaceIdentity);
   const [state, setState] = useState<SectionState>({ status: "loading" });
   // 每个字段的写入中状态，避免同一字段重复提交。
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  // 对端的项目清单（按会话数排序）—— 供用户勾选要投射哪些项目。
+  const [projects, setProjects] = useState<{ path: string; count: number }[]>([]);
+  const [showProjects, setShowProjects] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +76,29 @@ export function RemoteDeviceSettingsSection({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 项目清单从对端 taskIndex 实时枚举（不传 workspacePath = 全量），
+  // 不落库、不缓存：符合"投射"语义，断开后自然消失。
+  const loadProjects = useCallback(async () => {
+    try {
+      const tasks = await services.zcodeTaskService.listTasks();
+      const counts = new Map<string, number>();
+      for (const task of tasks) {
+        const path = task.workspacePath;
+        if (!path) continue;
+        counts.set(path, (counts.get(path) ?? 0) + 1);
+      }
+      const list = [...counts.entries()]
+        .map(([path, count]) => ({ path, count }))
+        .sort((left, right) => right.count - left.count || left.path.localeCompare(right.path));
+      setProjects(list);
+    } catch (error) {
+      logger.warn("[remoteDeviceSettings] 枚举远端项目失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setProjects([]);
+    }
+  }, [services.zcodeTaskService]);
 
   const updateSetting = useCallback(
     async (key: string, nextValue: boolean) => {
@@ -138,6 +174,15 @@ export function RemoteDeviceSettingsSection({
     );
   }
 
+  const toggleProject = useCallback(
+    (projectPath: string, visible: boolean) => {
+      if (!onProjectVisibilityChange) return;
+      const key = `${workspaceIdentity.split(":").slice(0, -1).join(":")}:${projectPath}`;
+      onProjectVisibilityChange({ ...(projectVisibility ?? {}), [key]: visible });
+    },
+    [onProjectVisibilityChange, projectVisibility, workspaceIdentity],
+  );
+
   return (
     <SettingsGroupCard>
       <SettingsRow
@@ -153,6 +198,58 @@ export function RemoteDeviceSettingsSection({
         )}
         control={null}
       />
+      {/* 项目投射范围：由用户勾选显示哪些远端项目；清单实时从对端枚举 */}
+      <SettingsRow
+        label={
+          <span className="flex items-center gap-2">
+            <FolderIcon className="size-4 text-foreground-subtle" />
+            {intl.formatMessage({ id: "settings.remoteDevice.projects" })}
+          </span>
+        }
+        description={intl.formatMessage(
+          { id: "settings.remoteDevice.projectsHint" },
+          { count: projects.length },
+        )}
+        control={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (!showProjects && projects.length === 0) void loadProjects();
+              setShowProjects((current) => !current);
+            }}
+          >
+            {showProjects
+              ? intl.formatMessage({ id: "common.collapse" })
+              : intl.formatMessage({ id: "common.expand" })}
+          </Button>
+        }
+      />
+      {showProjects
+        ? projects.map((project) => {
+            const key = `${workspaceIdentity.split(":").slice(0, -1).join(":")}:${project.path}`;
+            // 缺省视为显示：用户没显式关掉的项目默认投射，避免"连上了却什么都看不到"。
+            const visible = projectVisibility?.[key] !== false;
+            return (
+              <SettingsRow
+                key={project.path}
+                label={project.path}
+                description={intl.formatMessage(
+                  { id: "settings.remoteDevice.projectSessionCount" },
+                  { count: project.count },
+                )}
+                control={
+                  <Switch
+                    checked={visible}
+                    onCheckedChange={(checked) => toggleProject(project.path, checked === true)}
+                    aria-label={project.path}
+                  />
+                }
+              />
+            );
+          })
+        : null}
       {state.entries.map((entry) => (
         <SettingsRow
           key={entry.key}

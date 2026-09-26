@@ -375,9 +375,15 @@ export interface IZCodeTaskService {
     mcpServers?: ZCodeAgentMcpServer[];
   }): Promise<ZCodeTaskMeta>;
 
-  /** 列出 workspace 下所有已持久化的 task */
-  listTasks(params: {
-    workspacePath: string;
+  /**
+   * 列出已持久化的 task。
+   *
+   * 不传 workspacePath 时返回**全部** workspace 的 task —— 远程设备投射需要
+   * 按对端实数据枚举项目清单（实测 B 上 46 条 → 11 个项目），因此该入参可选。
+   * 传了就按该 workspace 过滤（本地会话列表的常规用法）。
+   */
+  listTasks(params?: {
+    workspacePath?: string;
     workspaceIdentity?: string;
   }): Promise<ZCodeTaskMeta[]>;
 

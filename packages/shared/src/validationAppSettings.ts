@@ -465,6 +465,14 @@ const appSettingsObjectSchema = z.object({
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
+  /**
+   * 远程设备投射：用户选择要显示哪些远端项目（按 workspacePath）。
+   *
+   * 只保存"选择"，不保存会话数据 —— 会话列表每次连接时实时从对端拉取。
+   * 键为远端 identity（remote:<kind>:...:path），值为该项目是否显示。
+   * 用记录而非数组：删除项目和切换显示都保持幂等，且便于按 identity 查。
+   */
+  remoteProjectVisibility: z.record(z.string(), z.boolean()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().default(false),
@@ -550,6 +558,7 @@ export const appSettingsPatchSchema = z.object({
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
+  remoteProjectVisibility: z.record(z.string(), z.boolean()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().optional(),

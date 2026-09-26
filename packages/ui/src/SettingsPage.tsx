@@ -1077,6 +1077,14 @@ export function SettingsPage({
     },
     [services.settingService, platform],
   );
+  // 远程项目显示选择：只存"哪些项目显示"，不存会话数据（会话每次连接实时投射）。
+  const remoteProjectVisibility = sharedSettings?.remoteProjectVisibility;
+  const handleRemoteProjectVisibilityChange = useCallback(
+    (next: Record<string, boolean>) => {
+      void updateSharedSettings({ remoteProjectVisibility: next });
+    },
+    [updateSharedSettings],
+  );
   // keep-awake：走 useSettings 统一写盘 + syncAppSettings，和 Automations/创建页入口共享同一状态源。
   const handleKeepAwakeWhileRunningChange = useCallback(
     async (enabled: boolean) => {
@@ -1795,6 +1803,8 @@ export function SettingsPage({
                             workspacePath={activeWorkspacePath}
                             remoteSessionId={activeWorkspaceTab.remoteSessionId}
                             workspaceIdentity={activeWorkspaceIdentity}
+                            projectVisibility={remoteProjectVisibility}
+                            onProjectVisibilityChange={handleRemoteProjectVisibilityChange}
                           />
                         ) : null}
                         {activeSection === "appearance" ? (

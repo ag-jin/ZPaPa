@@ -346,6 +346,8 @@ export interface AppSettings {
   lastActiveTabIndex?: number;
   /** 每个 workspace 的最后活跃 taskId，下次打开自动恢复 */
   lastActiveTaskByWorkspace?: Record<string, string>;
+  /** 远程设备投射：用户选择显示哪些远端项目（键为远端 identity，值为是否显示）。 */
+  remoteProjectVisibility?: Record<string, boolean>;
   /** 数据目录的根路径（替代 homedir），默认为 os.homedir()；.zcode/v2 后缀不变 */
   dataBaseDir?: string;
   /** 自动更新安装完成后，等待首次启动展示的版本说明 */

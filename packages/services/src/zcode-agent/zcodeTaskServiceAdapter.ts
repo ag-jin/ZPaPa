@@ -2331,9 +2331,11 @@ export function createZCodeTaskServiceAdapter(
     },
 
     async listTasks(params): Promise<ZCodeTaskMeta[]> {
+      // 不传 workspacePath 表示按全部 workspace 枚举（远程设备投射需要按对端
+      // 实数据列出项目清单）；listTaskMetas 对缺省 workspacePath 已是全量语义。
       const tasks = await taskIndexRepo.listTaskMetas({
-        workspacePath: params.workspacePath,
-        workspaceIdentity: params.workspaceIdentity,
+        ...(params?.workspacePath ? { workspacePath: params.workspacePath } : {}),
+        ...(params?.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
         provider: GLM_PROVIDER,
         pinned: false,
         archived: false,
