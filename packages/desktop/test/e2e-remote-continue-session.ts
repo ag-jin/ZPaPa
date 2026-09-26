@@ -132,6 +132,19 @@ try {
 }
 
 // 续接第二步：向该会话发送一条 prompt（"继续操作"的最小可验证动作）
+// 隔离护栏：确认目标是本次自建会话，绝不在用户会话上做写操作。
+// （此前误把测试消息写进用户正在运行的会话，见 support/testIsolation.ts）
+const guard = assertTestOwnedTarget({
+  taskId: target.taskId,
+  createdSessionIds,
+  operation: "sendPrompt",
+});
+if (!guard.allowed) {
+  console.error(`❌ ${guard.reason}`);
+  await connection.disposeAndWait({ timeoutMs: 5_000 });
+  process.exit(1);
+}
+
 console.log(`\n=== 续接第三步：发送 prompt ===`);
 const probeText = `[连通性探针 ${new Date().toISOString()}] 请只回复"收到"，不要执行任何工具调用。`;
 try {
