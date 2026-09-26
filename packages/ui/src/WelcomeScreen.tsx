@@ -89,7 +89,9 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
   const loginEntryRequest = useZCodeStore((s) => s.loginEntryRequest);
   const clearLoginEntryRequest = useZCodeStore((s) => s.clearLoginEntryRequest);
   const markLoginEntryAttemptStatus = useZCodeStore((s) => s.markLoginEntryAttemptStatus);
-  const [loginMode, setLoginMode] = useState<"providers" | "apiKey">("providers");
+  // 离线裁剪版:智谱 OAuth 渠道已移除,登录提供方列表恒为空。
+  // 默认直接进入 API Key 配置,不再让用户先看到"没有可用的登录提供方"再手动切换。
+  const [loginMode, setLoginMode] = useState<"providers" | "apiKey">("apiKey");
   const wasActiveRef = useRef(active);
   const consumedLoginRequestRef = useRef<number | null>(null);
   const observedOAuthSuccessSeqRef = useRef(oauthSuccessSeq);

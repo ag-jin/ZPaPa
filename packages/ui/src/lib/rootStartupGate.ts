@@ -41,7 +41,13 @@ export function shouldShowRootStartupLoading(state: RootStartupLoadingVisibility
 }
 
 export function shouldEnableProviderAvailabilityLoginEntryGuard(): boolean {
-  return true;
+  // 离线裁剪版:启动不再要求登录/账号族。
+  //
+  // 原门禁在启动时必须确认账号族与可用 provider,否则弹 WelcomeScreen 要求
+  // 连接 Z.ai / BigModel 账号。裁剪掉 OAuth 与账号体系后该门禁已无输入可得,
+  // 继续开启只会把已有 API provider 的用户也拦在欢迎页。
+  // 模型供应商改由设置页自行配置,启动直接进入工作区。
+  return false;
 }
 
 export function shouldResolveProviderStartupState(state: ProviderStartupResolutionState): boolean {

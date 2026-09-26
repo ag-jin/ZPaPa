@@ -862,7 +862,7 @@ const enUS: Record<string, string> = {
   "welcome.loggingIn": "Logging in...",
   "welcome.loginFailed": "Login failed",
   "login.title": "Welcome to ZCode",
-  "login.description": "Connect your account to start using ZCode",
+  "login.description": "Configure a model provider to start using ZCode",
   "login.oauth.activeProviderHint":
     "Current active provider: {provider}. Signing in again replaces the current identity.",
   "login.oauth.loadingProviders": "Loading account providers...",
