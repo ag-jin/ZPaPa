@@ -1178,7 +1178,23 @@ export function SettingsPage({
   // 连接/断开：经既有远程连接通路（设备级，不 bind 工作目录）。
   const handleConnectRemoteDevice = useCallback(async () => {
     const target = remoteDeviceEntry?.target;
-    if (!target || !remoteDeviceConnect) return;
+    // 连接入口的可观测性：区分"按钮没绑上/服务缺失"与"连接本身失败"。
+    // 没有这行日志时，点击无反应无法判断是哪一类问题。
+    logger.info("[remoteDevice] 连接请求", {
+      hasTarget: Boolean(target),
+      hasConnectCapability: Boolean(remoteDeviceConnect),
+      targetKind: target?.kind ?? null,
+    });
+    if (!target) {
+      setRemoteDeviceConnectionError("尚未配置设备");
+      setRemoteDeviceConnectionStatus("failed");
+      return;
+    }
+    if (!remoteDeviceConnect) {
+      setRemoteDeviceConnectionError("当前环境不支持远程设备连接");
+      setRemoteDeviceConnectionStatus("failed");
+      return;
+    }
     setRemoteDeviceConnectionStatus("connecting");
     setRemoteDeviceConnectionError(undefined);
     try {
