@@ -61,28 +61,12 @@ async function main() {
   const settings = await withTimeout(connection.services.settingService.get(), "setting.get");
   console.log(`[b2a] OK setting.get (locale=${settings?.locale ?? "?"})`);
 
-  const envelope = {
-    schemaVersion: 1,
-    syncId: `b2a-probe-${Date.now()}`,
-    personalConfig: {
-      providerConfigRules: { providerRules: [] },
-      modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
-    },
-    accountSettings: {
-      providerFamilyDomain: null,
-      providerFamilyConnectionSelections: { zai: undefined, bigmodel: undefined },
-    },
-    credentials: [],
-  };
-  try {
-    const result = await withTimeout(
-      connection.services.providerProvisioningTargetService.apply(envelope),
-      "providerProvisioningTarget.apply",
-    );
-    console.log(`[b2a] OK provisioning apply status=${result?.status ?? "?"}`);
-  } catch (error) {
-    console.log(`[b2a] WARN provisioning apply: ${error?.message ?? error}`);
-  }
+  // 只读探测:apply 是写接口,绝不能在连通性探针里调用(会覆盖对端个人配置并删凭据)。
+  const view = await withTimeout(
+    connection.services.providerSettingsService.getView(),
+    "provider-settings.getView",
+  );
+  console.log(`[b2a] OK provider-settings.getView (providers=${view?.providers?.length ?? "?"})`);
 
   await connection.disposeAndWait({ timeoutMs: 5_000 });
   console.log(`[b2a] remote close code=${remoteCloseCode}`);

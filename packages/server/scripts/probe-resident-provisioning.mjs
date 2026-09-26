@@ -60,28 +60,15 @@ console.log("[probe] ✅ resident attached");
 const settings = await withTimeout(connection.services.settingService.get(), "setting.get");
 console.log(`[probe] ✅ setting.get ok (locale=${settings?.locale ?? "?"})`);
 
-const envelope = {
-  schemaVersion: 1,
-  syncId: `probe-${Date.now()}`,
-  personalConfig: {
-    providerConfigRules: { providerRules: [] },
-    modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
-  },
-  accountSettings: {
-    providerFamilyDomain: null,
-    providerFamilyConnectionSelections: { zai: undefined, bigmodel: undefined },
-  },
-  credentials: [],
-};
-try {
-  const result = await withTimeout(
-    connection.services.providerProvisioningTargetService.apply(envelope),
-    "providerProvisioningTarget.apply",
-  );
-  console.log(`[probe] ✅ apply returned: ${JSON.stringify(result)}`);
-} catch (error) {
-  console.log(`[probe] ⚠️ apply error（非挂死即报错）: ${error?.message ?? error}`);
-}
+// 只读探测:不再调用 providerProvisioningTargetService.apply()。
+// apply 是写接口(captureBeforeState + 覆盖 personal config + 删除 allowlist 内凭据),
+// 探针传空 envelope 曾把对端个人 Provider 配置清空、OAuth 凭据删除。
+// 连通往返已由 setting.get 与下面只读的 provider-settings.getView 覆盖。
+const view = await withTimeout(
+  connection.services.providerSettingsService.getView(),
+  "provider-settings.getView",
+);
+console.log(`[probe] ✅ provider-settings.getView ok (providers=${view?.providers?.length ?? "?"})`);
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });
 console.log(`[probe] remote close code=${remoteCloseCode}`);
