@@ -15,6 +15,8 @@ export function WorkspaceSettingsLayer({
   onCreateTask,
   onOpenWorkspace,
   allowOpenWorkspace,
+  remoteDeviceConnect,
+  onOpenRemoteConnection,
   onLogin,
   onLogout,
   user,
@@ -40,6 +42,8 @@ export function WorkspaceSettingsLayer({
             onCreateTask={onCreateTask}
             onOpenWorkspace={onOpenWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
+            remoteDeviceConnect={remoteDeviceConnect}
+            onOpenRemoteConnection={onOpenRemoteConnection}
             onLogin={onLogin}
             onLogout={onLogout}
             user={user}
@@ -56,6 +60,8 @@ export function WorkspaceSettingsLayer({
           onCreateTask={onCreateTask}
           onOpenWorkspace={onOpenWorkspace}
           allowOpenWorkspace={allowOpenWorkspace}
+          remoteDeviceConnect={remoteDeviceConnect}
+          onOpenRemoteConnection={onOpenRemoteConnection}
           onLogin={onLogin}
           onLogout={onLogout}
           user={user}

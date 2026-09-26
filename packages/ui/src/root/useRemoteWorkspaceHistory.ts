@@ -1391,8 +1391,19 @@ export function useRemoteWorkspaceHistory({
    * 「设备边界」），因此在投射端不留 workspace 痕迹。
    */
   const connectRemoteDevice = useCallback(
-    async (target: Parameters<IPlatformService["connectRemote"]>[0]) => {
-      const sessionId = await connectRemoteWorkspaceTarget(target);
+    async (
+      target: Parameters<IPlatformService["connectRemote"]>[0],
+      options?: {
+        /**
+         * 复用已建立的 session（SSH 弹窗「作为设备连接」走这条）。
+         *
+         * 弹窗的目录步此时连接已经建好，再发起一次 connectRemote 会多建一条
+         * SSH 连接并在对端留下多余 session；这里直接复用它给的 sessionId。
+         */
+        existingSessionId?: string;
+      },
+    ) => {
+      const sessionId = options?.existingSessionId ?? (await connectRemoteWorkspaceTarget(target));
       // 连接成功只表示 main/host 建好 session；renderer 的 MessagePort 可能下一拍
       // 才注册进 store，因此先等就绪再从 store 读 services。
       await waitForRemoteWorkspaceSessionReady(sessionId);

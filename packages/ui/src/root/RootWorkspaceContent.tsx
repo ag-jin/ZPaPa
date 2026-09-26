@@ -6,6 +6,7 @@ import { logger } from "@/logger.js";
 import { WorkspaceSettingsLayer } from "@/root/WorkspaceSettingsLayer.js";
 import type { AppProps } from "@/app-shell/types.js";
 import type { RootProps } from "@/root/types.js";
+import type { RemoteDeviceConnect } from "@/root/types.js";
 import type { IFeedbackService, IServiceAccessor } from "@zcode/services";
 import { ConversationTelemetryWorkspaceAttachment } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
 
@@ -37,6 +38,11 @@ interface RootWorkspaceContentProps {
   handleLogout?: () => void;
   onLogin?: () => void;
   user: AppProps["user"];
+  remoteDeviceConnect?: RemoteDeviceConnect;
+  onOpenRemoteConnection?: (preference?: {
+    preferredKind?: import("@zcode/shared").RemoteTarget["kind"];
+    preferredWslDistro?: string;
+  }) => void;
   reconnectingRemoteWorkspaceKeys: AppProps["reconnectingRemoteWorkspaceKeys"];
   remoteWorkspaceErrorByWorkspaceKey: AppProps["remoteWorkspaceErrorByWorkspaceKey"];
   reconnectingRemoteWorkspaceLogsByWorkspaceKey: AppProps["reconnectingRemoteWorkspaceLogsByWorkspaceKey"];
@@ -75,6 +81,8 @@ export function RootWorkspaceContent({
   handleLogout,
   onLogin,
   user,
+  remoteDeviceConnect,
+  onOpenRemoteConnection,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
   reconnectingRemoteWorkspaceLogsByWorkspaceKey,
@@ -196,6 +204,8 @@ export function RootWorkspaceContent({
             onCreateTask={handleCreateTask}
             onOpenWorkspace={handleOpenWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
+            remoteDeviceConnect={remoteDeviceConnect}
+            onOpenRemoteConnection={onOpenRemoteConnection}
             onLogin={onLogin}
             onLogout={handleLogout}
             user={user}

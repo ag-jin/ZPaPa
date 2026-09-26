@@ -1,4 +1,5 @@
 import { logger } from "@/logger.js";
+import type { RemoteDeviceConnect } from "@/root/types.js";
 /* oxlint-disable eslint(max-lines) */
 import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
 import {
@@ -283,6 +284,7 @@ export function SettingsPage({
   onOpenWorkspace,
   allowOpenWorkspace = true,
   remoteDeviceConnect,
+  onOpenRemoteConnection,
   onLogin,
   onLogout,
   user,
@@ -297,12 +299,16 @@ export function SettingsPage({
   onOpenWorkspace?: () => void;
   allowOpenWorkspace?: boolean;
   /** 设备级连接能力（由 Root 注入）：连上远程设备并取得其服务访问面。 */
-  remoteDeviceConnect?: (target: import("@zcode/shared").RemoteTarget) => Promise<{
-    services: unknown;
-    /** 把设备项目同步为投射条目（见 ADR 0001）。 */
-    syncProjection?: (projects: ReadonlyArray<{ path: string; sessionCount: number }>) => unknown;
-    dispose?: () => void;
-  } | null>;
+  remoteDeviceConnect?: RemoteDeviceConnect;
+  /**
+   * 打开「远程连接」弹窗（新增设备时用）。
+   * 连接表单由该弹窗负责 —— SSH 全套字段（含口令/端口）与目录步的「作为设备连接」
+   * 都在那里，设置页不再重复实现一份。
+   */
+  onOpenRemoteConnection?: (preference?: {
+    preferredKind?: import("@zcode/shared").RemoteTarget["kind"];
+    preferredWslDistro?: string;
+  }) => void;
   onLogin?: () => void;
   onLogout?: () => void;
   user?: UserInfo | null;
@@ -1107,8 +1113,14 @@ export function SettingsPage({
   // 不用 settings 字段 —— settings.json 是多版本实例共享的，不认识该字段的
   // 旧版本实例写入时会把它丢弃（实测：并存的官方版每次写设置都会抹掉设备配置）。
   // desktop host 提供该服务；此处按可选能力收窄（Web 等形态可能不提供）。
+  //
+  // 必须取 localHostServices 而非 useServices()：设备配置是本机事实源，
+  // 激活远端 workspace 时 useServices() 指向远端 Host，那里没有该服务
+  // （实测表现：设备记录明明存在，设置页却渲染成「添加设备」空表单）。
   const remoteDeviceConfigService = (
-    services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
+    localHostServices as {
+      remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+    }
   ).remoteDeviceConfigService;
   const [remoteDeviceEntry, setRemoteDeviceEntry] = useState<
     import("@zcode/services").RemoteDeviceConfigRecord | null
@@ -1141,26 +1153,6 @@ export function SettingsPage({
       }
     },
     [remoteDeviceConfigService],
-  );
-
-  const handleSaveRemoteDevice = useCallback(
-    async (draft: import("@/settings/RemoteDeviceManagementSection.js").RemoteDeviceDraft) => {
-      await writeRemoteDevice({
-        target: {
-          kind: "ssh",
-          host: draft.host,
-          ...(draft.port ? { port: draft.port } : {}),
-          username: draft.username,
-          ...(draft.privateKeyPath ? { privateKeyPath: draft.privateKeyPath } : {}),
-        },
-        lastConnectionStatus: remoteDeviceEntry?.lastConnectionStatus ?? "never",
-        ...(remoteDeviceEntry?.visibleProjects
-          ? { visibleProjects: remoteDeviceEntry.visibleProjects }
-          : {}),
-      });
-      setRemoteDeviceConnectionStatus("never");
-    },
-    [remoteDeviceEntry, writeRemoteDevice],
   );
 
   const handleRemoveRemoteDevice = useCallback(async () => {
@@ -1986,11 +1978,13 @@ export function SettingsPage({
                               {...(remoteDeviceEntry?.visibleProjects
                                 ? { visibleProjects: remoteDeviceEntry.visibleProjects }
                                 : {})}
-                              onSaveDevice={handleSaveRemoteDevice}
                               onRemoveDevice={handleRemoveRemoteDevice}
                               onConnect={handleConnectRemoteDevice}
                               onDisconnect={handleDisconnectRemoteDevice}
                               onVisibleProjectsChange={handleRemoteDeviceVisibleProjectsChange}
+                              {...(onOpenRemoteConnection
+                                ? { onOpenRemoteConnection: () => onOpenRemoteConnection() }
+                                : {})}
                             />
                           </div>
                         ) : null}

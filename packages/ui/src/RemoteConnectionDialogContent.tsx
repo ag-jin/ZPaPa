@@ -8,7 +8,7 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@zcode/shared";
-import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL } from "@zcode/shared";
+import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL, TID_REMOTE_CONNECT_AS_DEVICE } from "@zcode/shared";
 import type {
   IMcpSyncService,
   IPluginSyncService,
@@ -21,6 +21,7 @@ import {
   ChevronRightIcon,
   LoaderIcon,
   MonitorCogIcon,
+  MonitorSmartphone,
   ServerIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -337,6 +338,8 @@ export function RemoteConnectionDirectoryStep({
   onSkillsSynced,
   onMcpSynced,
   onPluginsSynced,
+  onConnectAsDevice,
+  connectingAsDevice = false,
 }: {
   services: IServiceAccessor | null;
   remoteTarget?: RemoteTarget | null;
@@ -356,6 +359,12 @@ export function RemoteConnectionDirectoryStep({
   onSkillsSynced?: () => Promise<void> | void;
   onMcpSynced?: () => Promise<void> | void;
   onPluginsSynced?: () => Promise<void> | void;
+  /**
+   * 设备模式入口：不选目录，直接把当前 session 作为「整台设备」接入。
+   * 由 SSHDialog 在其 onConnectAsDevice 存在时注入。
+   */
+  onConnectAsDevice?: () => void;
+  connectingAsDevice?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const [selectedPath, setSelectedPath] = useState("");
@@ -434,33 +443,60 @@ export function RemoteConnectionDirectoryStep({
           />
         </div>
       </div>
-      <div className="flex items-center justify-end gap-3">
-        <Button
-          type="button"
-          variant="secondary"
-          size="lg"
-          className="h-10 min-w-0 px-5"
-          onClick={onBack}
-          disabled={selecting}
-        >
-          {intl.formatMessage({ id: "common.back" })}
-        </Button>
-        <Button
-          type="button"
-          size="lg"
-          className="h-10 min-w-0 px-5"
-          onClick={() => selectedPath && !selecting && onSelect(selectedPath)}
-          disabled={!selectedPath || selecting}
-        >
-          {selecting ? (
-            <>
-              <LoaderIcon className="size-4 animate-spin" />
-              {intl.formatMessage({ id: "common.loading" })}
-            </>
-          ) : (
-            intl.formatMessage({ id: "directoryBrowser.selectDir" })
-          )}
-        </Button>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {onConnectAsDevice ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="lg"
+              className="h-10 min-w-0 px-5"
+              onClick={onConnectAsDevice}
+              disabled={selecting || connectingAsDevice}
+              data-testid={TID_REMOTE_CONNECT_AS_DEVICE}
+            >
+              {connectingAsDevice ? (
+                <>
+                  <LoaderIcon className="size-4 animate-spin" />
+                  {intl.formatMessage({ id: "common.loading" })}
+                </>
+              ) : (
+                <>
+                  <MonitorSmartphone className="size-4" />
+                  {intl.formatMessage({ id: "remote.connectAsDevice" })}
+                </>
+              )}
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            size="lg"
+            className="h-10 min-w-0 px-5"
+            onClick={onBack}
+            disabled={selecting}
+          >
+            {intl.formatMessage({ id: "common.back" })}
+          </Button>
+          <Button
+            type="button"
+            size="lg"
+            className="h-10 min-w-0 px-5"
+            onClick={() => selectedPath && !selecting && onSelect(selectedPath)}
+            disabled={!selectedPath || selecting}
+          >
+            {selecting ? (
+              <>
+                <LoaderIcon className="size-4 animate-spin" />
+                {intl.formatMessage({ id: "common.loading" })}
+              </>
+            ) : (
+              intl.formatMessage({ id: "directoryBrowser.selectDir" })
+            )}
+          </Button>
+        </div>
       </div>
       <RemoteSyncDialogs
         canSyncSkills={canSyncRemoteSkills}

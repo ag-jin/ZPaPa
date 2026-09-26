@@ -62,6 +62,14 @@ interface RemoteConnectionDialogProps {
   onFlowRequestIdChange?: (requestId: string | null) => void;
   preferredKind?: RemoteTarget["kind"];
   preferredWslDistro?: string;
+  /**
+   * 设备模式：目录步额外提供「作为设备连接」入口（不选目录，整机接入）。
+   *
+   * 产品向导在连接成功后写死进入 directory 步（见 lib/remoteConnectionDialogState.ts），
+   * 而设备投射要求「不选目录直接连上对端 zcode」。这里给同一套 SSH 表单加一个出口，
+   * 复用本弹窗的字段/口令/端口，而不是另造一份连接表单。
+   */
+  onConnectAsDevice?: (sessionId: string, target: RemoteTarget) => Promise<void>;
 }
 
 export function RemoteConnectionDialog({
@@ -82,6 +90,7 @@ export function RemoteConnectionDialog({
   onFlowRequestIdChange,
   preferredKind,
   preferredWslDistro,
+  onConnectAsDevice,
 }: RemoteConnectionDialogProps) {
   const { intl } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
@@ -96,6 +105,9 @@ export function RemoteConnectionDialog({
   const [pendingRemoteTarget, setPendingRemoteTarget] = useState<RemoteTarget | null>(null);
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const selectingDirectoryRef = useRef(false);
+  // 设备模式（不选目录）的独立提交中状态，与选目录互不复用，避免按钮状态串台。
+  const [connectingAsDevice, setConnectingAsDevice] = useState(false);
+  const connectingAsDeviceRef = useRef(false);
   const { connectionLogs, resetConnectionLogs } = useRemoteConnectionLogs(connectingRequestId);
   const open = controlledOpen ?? uncontrolledOpen;
   const {
@@ -413,6 +425,39 @@ export function RemoteConnectionDialog({
     ],
   );
 
+  // 设备模式：不选目录，把当前已建立的 SSH session 交给调用方做「设备级接入」。
+  // 与 handleSelectDirectory 的区别只在于不 bind 工作目录 —— 连接本身已经建好，
+  // 所以这里不重新发起 SSH，直接用现成的 sessionId + target。
+  const handleConnectAsDevice = useCallback(async () => {
+    if (!connectedSessionId || !pendingRemoteTarget || connectingAsDeviceRef.current) {
+      return;
+    }
+    connectingAsDeviceRef.current = true;
+    setConnectingAsDevice(true);
+    resetFeedback();
+    try {
+      await onConnectAsDevice?.(connectedSessionId, pendingRemoteTarget);
+      resetConnectionLogs();
+      setCurrentStep("kind");
+      setConnectedSessionId(null);
+      setPendingRemoteTarget(null);
+      updateConnectingRequestId(null);
+      applyOpenState(false);
+    } catch (deviceError) {
+      setError(getErrorMessage(deviceError));
+    } finally {
+      connectingAsDeviceRef.current = false;
+      setConnectingAsDevice(false);
+    }
+  }, [
+    connectedSessionId,
+    onConnectAsDevice,
+    pendingRemoteTarget,
+    resetConnectionLogs,
+    resetFeedback,
+    updateConnectingRequestId,
+  ]);
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
       if (shouldResetRemoteConnectionOnOpen(flowSnapshot)) {
@@ -624,6 +669,14 @@ export function RemoteConnectionDialog({
                       onSkillsSynced={async () => undefined}
                       onMcpSynced={async () => undefined}
                       onPluginsSynced={async () => undefined}
+                      {...(onConnectAsDevice
+                        ? {
+                            onConnectAsDevice: () => {
+                              void handleConnectAsDevice();
+                            },
+                            connectingAsDevice,
+                          }
+                        : {})}
                     />
                   </div>
                 ) : null}

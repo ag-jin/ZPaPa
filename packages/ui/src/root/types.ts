@@ -1,4 +1,4 @@
-import type { IPlatformService, UserInfo } from "@zcode/shared";
+import type { IPlatformService, RemoteTarget, UserInfo } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import type { ReactNode } from "react";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
@@ -40,6 +40,21 @@ export interface RootProps {
   assistantCodeCommentCardsEnabled?: boolean;
 }
 
+/**
+ * 设备级连接能力：由 Root 注入，供设置页「远程设备」区块调用。
+ *
+ * 抽成独立类型是因为它要穿过 Root → RootWorkspaceContent → WorkspaceSettingsLayer
+ * → SettingsPage 四层。此前只在 Root 内直传给 SettingsPage，而设置页实际渲染走的是
+ * WorkspaceSettingsLayer 那条路径，prop 在中间层被丢掉，表现为点击「连接」时报
+ * 「当前环境不支持远程设备连接」（日志里 hasConnectCapability: false）。
+ */
+export type RemoteDeviceConnect = (target: RemoteTarget) => Promise<{
+  services: unknown;
+  /** 把设备项目同步为投射条目（见 ADR 0001）。 */
+  syncProjection?: (projects: ReadonlyArray<{ path: string; sessionCount: number }>) => unknown;
+  dispose?: () => void;
+} | null>;
+
 export interface WorkspaceSettingsLayerProps {
   workspaceScopedServices?: IServiceAccessor;
   isDesktop?: boolean;
@@ -51,6 +66,13 @@ export interface WorkspaceSettingsLayerProps {
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenWorkspace?: () => void;
   allowOpenWorkspace?: RootProps["allowOpenWorkspace"];
+  remoteDeviceConnect?: RemoteDeviceConnect;
+  /**
+   * 打开「远程连接」弹窗（新增远程设备时用）。
+   * 连接表单由该弹窗负责（SSH 全套字段 + 目录步的「作为设备连接」），
+   * 设置页只呈现已连接设备与项目勾选。
+   */
+  onOpenRemoteConnection?: (preference?: { preferredKind?: RemoteTarget["kind"]; preferredWslDistro?: string }) => void;
   onLogin?: () => void;
   onLogout?: () => void;
   user?: UserInfo | null;

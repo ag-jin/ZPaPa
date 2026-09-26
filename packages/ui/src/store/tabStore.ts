@@ -174,6 +174,7 @@ function createWorkspaceTab(
     workspaceIdentity: options?.workspaceIdentity,
     localWorkspacePath: options?.localWorkspacePath,
     workspacePurpose: options?.workspacePurpose,
+    projection: options?.projection,
   };
 }
 
@@ -190,6 +191,9 @@ function mergeWorkspaceTabOptions(
     workspaceIdentity: options?.workspaceIdentity ?? tab.workspaceIdentity,
     localWorkspacePath: options?.localWorkspacePath ?? tab.localWorkspacePath,
     workspacePurpose: options?.workspacePurpose ?? tab.workspacePurpose,
+    // projection 决定该 tab 是否算「远程设备投射条目」，dispose 时按 deviceSessionId
+    // 回收。漏传会让投射条目退化成普通 workspace tab，断开后清不掉。
+    projection: options?.projection ?? tab.projection,
   };
 }
 

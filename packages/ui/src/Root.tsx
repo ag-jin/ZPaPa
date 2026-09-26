@@ -22,6 +22,7 @@ import { SettingsPage } from "@/SettingsPage.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
+import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
 import { readRendererLaunchTimings, shouldReportLaunchToInput } from "@/lib/launchToInputReport.js";
 import { reportUiLaunchToInput } from "@/lib/uiPerfArmsTelemetry.js";
 import { countAllUnreadTasks } from "@/lib/unreadTaskCount.js";
@@ -909,6 +910,32 @@ function RootInner({
     }
   }, []);
 
+  // 设备模式：SSH 弹窗已建好 session，这里把该设备登记为投射来源并完成项目投射。
+  // 复用设置页同一条设备连接通路（connectRemoteDevice + 设备访问层），不新建连接。
+  const handleConnectRemoteAsDevice = useCallback(
+    async (sessionId: string, target: RemoteTarget) => {
+      const result = await connectRemoteDevice(target, { existingSessionId: sessionId });
+      if (!result) {
+        throw new Error(intl.formatMessage({ id: "remote.connectAsDeviceFailed" }));
+      }
+      const access = await createDeviceAccess({
+        zcodeTaskService: result.services.zcodeTaskService,
+        settingService: result.services.settingService,
+      });
+      const [registeredProjects, tasks] = await Promise.all([
+        access.access.listRegisteredProjects(),
+        access.access.listAllTasks(),
+      ]);
+      result.syncProjection(buildProjectedProjectList({ registeredProjects, tasks }));
+      // 登记为可重连的设备入口（只存连接记录，不存会话索引，见 ADR 0001）。
+      const deviceConfigService = (
+        services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
+      ).remoteDeviceConfigService;
+      await deviceConfigService?.save([{ target, lastConnectionStatus: "connected" }]);
+    },
+    [connectRemoteDevice, intl, services],
+  );
+
   const remoteConnectionDialog = allowRemoteWorkspace ? (
     <SSHDialog
       onConnect={handleConnectRemote}
@@ -924,6 +951,7 @@ function RootInner({
       preferredKind={remoteConnectionOpenPreference?.preferredKind}
       preferredWslDistro={remoteConnectionOpenPreference?.preferredWslDistro}
       hideTriggerWhenClosed
+      onConnectAsDevice={handleConnectRemoteAsDevice}
     />
   ) : null;
   const directoryBrowserDialog = directoryBrowserOpen ? (
@@ -972,6 +1000,8 @@ function RootInner({
           }
         : null;
     },
+    // 新增设备时打开「远程连接」弹窗（连接表单由该弹窗负责，设置页不再重复实现）。
+    onOpenRemoteConnection: allowRemoteWorkspace ? handleOpenRemoteConnection : undefined,
     onLogin: !user ? handleOpenLoginEntry : undefined,
     onLogout: user ? handleLogout : undefined,
     user,
@@ -1075,6 +1105,7 @@ function RootInner({
             handleLogout={user ? handleLogout : undefined}
             onLogin={!user ? handleOpenLoginEntry : undefined}
             user={user}
+            remoteDeviceConnect={settingsLayerProps.remoteDeviceConnect}
             reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
             remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
             reconnectingRemoteWorkspaceLogsByWorkspaceKey={
