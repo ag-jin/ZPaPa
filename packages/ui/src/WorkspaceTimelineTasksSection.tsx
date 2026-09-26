@@ -68,6 +68,10 @@ export function WorkspaceTimelineTasksSection({
   const baseServices = useBaseWorkspaceServices();
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
+    // 远程项目 tab 必须纳入：远端 CLI 以本地视角写会话库，远端库里该项目的键
+    // 就是纯项目路径；A 侧要直接展示被连项目的会话，scope 必须带 remote identity
+    // （host 靠它解析对端 taskService），不能在这里被本地过滤掉。
+    includeRemoteProjectTabs: true,
   });
   const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
   const sessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(

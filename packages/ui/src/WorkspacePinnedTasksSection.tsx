@@ -74,6 +74,8 @@ export function WorkspacePinnedTasksSection({
   const baseServices = useBaseWorkspaceServices();
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
+    // 与时间线一致：远程项目 tab 必须纳入，否则被连项目的置顶会话在 A 侧不可见。
+    includeRemoteProjectTabs: true,
   });
   const remoteSessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
     (state) => state.sessionIdByWorkspaceIdentity,
