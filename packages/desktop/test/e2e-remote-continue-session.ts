@@ -49,30 +49,47 @@ console.log("✅ 已挂载 B 的常驻主机");
 
 const agentService = connection.services.zcodeAgentService;
 agentService.onDynamicSessionRuntimePreferencesRequest()((request) => {
-  void agentService.respondSessionRuntimePreferences({
-    requestId: request.requestId,
-    resolution: {
+  // 应答必须 await 并捕获错误：漏应答会让对端 createSession/续接以
+  // 「session/requestRuntimePreferences 超时」失败，而失败原因若被吞掉，
+  // 表现为"调用成功但什么都没发生"。
+  void agentService
+    .respondSessionRuntimePreferences({
+      requestId: request.requestId,
+      resolution: {
       status: "resolved",
-      preferences: {
-        askUserQuestionAutoResolutionEnabled: true,
-        nativeSearchEnhancementsEnabled: true,
-        memoryEnabled: false,
-        modelContextBudgetStrategy: "preflight-v1",
+        preferences: {
+          askUserQuestionAutoResolutionEnabled: true,
+          nativeSearchEnhancementsEnabled: true,
+          memoryEnabled: false,
+          modelContextBudgetStrategy: "preflight-v1",
+        },
       },
-    },
-  });
+    })
+    .then(() => console.log("   [bridge] runtime preferences 已应答"))
+    .catch((error: unknown) => {
+      console.warn(`[t1] 应答 runtime preferences 失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
 });
 
 // 为避免污染用户真实会话，**新建**一个专用测试会话作为续接目标；
 // 验证完即归档，不给用户列表留垃圾。
-console.log("=== 创建专用测试会话（不碰用户既有会话）===");
+// 靶子严格限定为自己新建的一次性会话：
+// 早期版本挑"最近活跃的 completed 会话"，结果打到了用户正在运行的真实会话上，
+// 把测试消息写进了用户历史。绝不重复这个错误。
+console.log("=== 创建专用测试会话（严格隔离，不碰任何既有会话）===");
 const created = await connection.services.zcodeTaskService.createTask({
   workspacePath: projectPath,
   workspaceIdentity: remoteIdentity,
   v4Create: true,
 });
 const target = { taskId: created.taskId, title: created.title, status: "new" };
+if (!target.taskId.startsWith("sess_")) {
+  console.error(`❌ 未取得有效 taskId: ${target.taskId}`);
+  await connection.disposeAndWait({ timeoutMs: 5_000 });
+  process.exit(1);
+}
 console.log(`✅ 已创建测试会话: ${target.taskId}`);
+console.log("   （本次只操作这一个会话，验证后归档，不影响任何既有会话）");
 console.log(`\n=== 选中续接目标 ===`);
 console.log(`  taskId: ${target.taskId}`);
 console.log(`  title:  ${String(target.title).slice(0, 50)}`);

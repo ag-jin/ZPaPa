@@ -464,6 +464,14 @@ export function createZCodeTaskServiceAdapter(
           }),
         });
         assertV4CommandAckOk("sendText", ack, `session=${target.taskId}`);
+        // 记录 ack 状态：accepted 表示已入队；noop/duplicate 表示被接受但不会产生
+        // 新执行（例如内容判定为空、幂等命中）。排查"调用成功但对端无消息"时，
+        // 这行是区分"没送到"与"送到了被判定为 no-op"的唯一依据。
+        logger.info(params.traceId, "ZCode task facade sendText ack", {
+          taskId: target.taskId,
+          ackStatus: ack.status,
+          ...("reason" in ack && ack.reason ? { ackReason: String(ack.reason) } : {}),
+        });
       }
       logger.info(params.traceId, "ZCode task facade sendPrompt ACK", {
         durationMs: Date.now() - startedAt,
