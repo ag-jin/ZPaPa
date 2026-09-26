@@ -1346,14 +1346,9 @@ export function SettingsPage({
     }
   }, [liveDeviceSessionId, platform]);
 
-  // 远程项目显示选择：只存"哪些项目显示"，不存会话数据（会话每次连接实时投射）。
-  const remoteProjectVisibility = sharedSettings?.remoteProjectVisibility;
-  const handleRemoteProjectVisibilityChange = useCallback(
-    (next: Record<string, boolean>) => {
-      void updateSharedSettings({ remoteProjectVisibility: next });
-    },
-    [updateSharedSettings],
-  );
+  // 远程项目的显示选择由「远程设备」区块的设备卡片负责（键为设备上的项目路径，
+  // 落在 remote-devices.json 的 visibleProjects）。这里不再维护一份走 settings 的
+  // 并行偏好 —— 两套键格式不同（旧的是远端 identity 前缀），并存会互相覆盖。
   // keep-awake：走 useSettings 统一写盘 + syncAppSettings，和 Automations/创建页入口共享同一状态源。
   const handleKeepAwakeWhileRunningChange = useCallback(
     async (enabled: boolean) => {
@@ -2120,8 +2115,6 @@ export function SettingsPage({
                             services={liveDeviceServices as unknown as Parameters<
                               typeof RemoteDeviceSettingsSection
                             >[0]["services"]}
-                            projectVisibility={remoteProjectVisibility}
-                            onProjectVisibilityChange={handleRemoteProjectVisibilityChange}
                           />
                         ) : null}
                         {activeSection === "appearance" ? (
