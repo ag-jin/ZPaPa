@@ -7,6 +7,12 @@
  * 断言：① 远端接受该 prompt；② 会话在当前 CLI 运行时里变为可交互（有 run 活动）。
  *
  * 前置：B 的 ZCode 在运行；本机 ~/.ssh/id_ed25519_imac 可登录 B。
+ *
+ * ⚠️ 数据安全：本脚本会**写对端数据**（建会话/resume/sendPrompt）。已知风险：
+ * 带本端 remote identity 的写操作会在对端 tasks-index 留下重复键行
+ * （见 .agents/plans/finding-remote-identity-write-duplication.md）。
+ * 脚本只操作自己新建的专用测试会话，用完请核对对端会话数并清理。
+ * 早期版本曾误改用户既有会话状态，现已改为只用一次性测试会话。
  * 跑法：node --import tsx packages/desktop/test/e2e-remote-continue-session.ts
  */
 import { homedir } from "node:os";
@@ -57,21 +63,38 @@ agentService.onDynamicSessionRuntimePreferencesRequest()((request) => {
   });
 });
 
-// 找一条 B 的既有会话（优先 completed，避免挑到正在跑的）
-const tasks = await connection.services.zcodeTaskService.listTasks({ workspacePath: projectPath });
-console.log(`B 上该项目有 ${tasks.length} 条未归档会话`);
-const target = tasks.find((task) => task.status === "completed") ?? tasks[0];
-if (!target) {
-  console.error("❌ 没有可续接的会话");
-  await connection.disposeAndWait({ timeoutMs: 5_000 });
-  process.exit(1);
-}
+// 为避免污染用户真实会话，**新建**一个专用测试会话作为续接目标；
+// 验证完即归档，不给用户列表留垃圾。
+console.log("=== 创建专用测试会话（不碰用户既有会话）===");
+const created = await connection.services.zcodeTaskService.createTask({
+  workspacePath: projectPath,
+  workspaceIdentity: remoteIdentity,
+  v4Create: true,
+});
+const target = { taskId: created.taskId, title: created.title, status: "new" };
+console.log(`✅ 已创建测试会话: ${target.taskId}`);
 console.log(`\n=== 选中续接目标 ===`);
 console.log(`  taskId: ${target.taskId}`);
 console.log(`  title:  ${String(target.title).slice(0, 50)}`);
 console.log(`  status: ${target.status}`);
 
-// 续接第一步：让对端 CLI 加载该会话。
+// 续接第一步（真实 UI 链路的起点）：订阅会话 —— 触发对端冷恢复。
+// 产品里「点开会话」先 subscribeConversationV4（见 ui/v4/agentConversationTransport.ts:207），
+// 冷恢复完成后才允许输入。跳过订阅直接 sendPrompt 会被接受但不真正执行。
+console.log(`\n=== 续接第一步：subscribeConversationV4（触发冷恢复）===`);
+try {
+  const sub = await connection.services.zcodeAgentService.subscribeConversationV4({
+    workspacePath: projectPath,
+    workspaceIdentity: remoteIdentity,
+    sessionId: target.taskId,
+    visibility: "foreground",
+  });
+  console.log(`✅ 订阅成功: subscriptionId=${sub?.ack?.subscriptionId ?? "?"}`);
+} catch (error) {
+  console.error(`❌ 订阅失败: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+// 续接第二步：让对端 CLI 加载该会话。
 // 直接 sendPrompt 会以 proto.sessionNotFound 失败 —— 会话虽在 tasks-index 与
 // CLI 数据库里（实测 692 条消息），但未出现在当前 CLI 运行时中；resumeTask
 // 才能把它载入运行时（产品里"点开会话→冷恢复"走的就是这条）。
@@ -92,7 +115,7 @@ try {
 }
 
 // 续接第二步：向该会话发送一条 prompt（"继续操作"的最小可验证动作）
-console.log(`\n=== 续接第二步：发送 prompt ===`);
+console.log(`\n=== 续接第三步：发送 prompt ===`);
 const probeText = `[连通性探针 ${new Date().toISOString()}] 请只回复"收到"，不要执行任何工具调用。`;
 try {
   await connection.services.zcodeTaskService.sendPrompt({
@@ -113,6 +136,18 @@ try {
   console.error(`❌ sendPrompt 失败: ${error instanceof Error ? error.message : String(error)}`);
   await connection.disposeAndWait({ timeoutMs: 5_000 });
   process.exit(1);
+}
+
+// 关键检查：resume 后立即查会话详情，确认运行时真的载入了
+console.log("\n=== 校验运行时是否载入该会话 ===");
+try {
+  const detail = await connection.services.zcodeSessionService.getSessionTaskMeta?.({
+    taskId: target.taskId,
+    workspacePath: projectPath,
+  });
+  console.log(`  session 元数据: ${detail ? JSON.stringify(detail).slice(0, 150) : "(空)"}`);
+} catch (error) {
+  console.log(`  查询 session 元数据: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 // 观察会话是否进入运行（说明真的在执行，而不是被静默丢弃）
