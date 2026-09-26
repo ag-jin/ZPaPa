@@ -151,6 +151,15 @@ export function RemoteDeviceSettingsSection({
     [load, services.settingService],
   );
 
+  const toggleProject = useCallback(
+    (projectPath: string, visible: boolean) => {
+      if (!onProjectVisibilityChange) return;
+      const key = `${workspaceIdentity.split(":").slice(0, -1).join(":")}:${projectPath}`;
+      onProjectVisibilityChange({ ...(projectVisibility ?? {}), [key]: visible });
+    },
+    [onProjectVisibilityChange, projectVisibility, workspaceIdentity],
+  );
+
   if (state.status === "loading") {
     return (
       <SettingsGroupCard>
@@ -173,15 +182,6 @@ export function RemoteDeviceSettingsSection({
       </SettingsGroupCard>
     );
   }
-
-  const toggleProject = useCallback(
-    (projectPath: string, visible: boolean) => {
-      if (!onProjectVisibilityChange) return;
-      const key = `${workspaceIdentity.split(":").slice(0, -1).join(":")}:${projectPath}`;
-      onProjectVisibilityChange({ ...(projectVisibility ?? {}), [key]: visible });
-    },
-    [onProjectVisibilityChange, projectVisibility, workspaceIdentity],
-  );
 
   return (
     <SettingsGroupCard>
