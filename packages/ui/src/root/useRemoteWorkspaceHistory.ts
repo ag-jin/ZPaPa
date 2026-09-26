@@ -31,6 +31,11 @@ import {
 } from "@/lib/remoteWorkspaceHistory.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
+import {
+  computeProjectionSync,
+  filterProjectsByVisibility,
+  type ProjectedProject,
+} from "@/lib/remoteDeviceProjection.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
 import {
   buildRemoteWorkspacePersistPatch,
@@ -130,6 +135,8 @@ interface OpenRemoteWorkspaceFromHistoryParams {
       remoteTarget?: Parameters<IPlatformService["connectRemote"]>[0];
       workspaceIdentity?: string;
       localWorkspacePath?: string;
+      /** 远程设备投射标记（见 ADR 0001）。 */
+      projection?: { deviceSessionId: string };
     },
   ) => void;
   commitRemoteWorkspaceSessionMutation: (
@@ -507,6 +514,8 @@ async function selectRemoteWorkspaceProjectFromDialog({
       remoteTarget?: Parameters<IPlatformService["connectRemote"]>[0];
       workspaceIdentity?: string;
       localWorkspacePath?: string;
+      /** 远程设备投射标记（见 ADR 0001）。 */
+      projection?: { deviceSessionId: string };
     },
   ) => void;
   onWorkspaceActivated?: (target: { workspacePath: string; workspaceIdentity: string }) => void;
@@ -647,6 +656,8 @@ export function useRemoteWorkspaceHistory({
       remoteTarget?: Parameters<IPlatformService["connectRemote"]>[0];
       workspaceIdentity?: string;
       localWorkspacePath?: string;
+      /** 远程设备投射标记（见 ADR 0001）。 */
+      projection?: { deviceSessionId: string };
     },
   ) => void;
   onWorkspaceActivated?: (target: { workspacePath: string; workspaceIdentity: string }) => void;
@@ -1392,7 +1403,41 @@ export function useRemoteWorkspaceHistory({
       return {
         sessionId,
         services: session.services,
+        /**
+         * 同步投射条目：把设备上的项目反映为投射端的条目（见 ADR 0001）。
+         *
+         * 投射条目跟随连接生命周期：连接期间存在，断开时由 dispose 清理。
+         * 不做全量重建（保留用户当前的展开/滚动状态）。
+         */
+        syncProjection: (deviceProjects: readonly ProjectedProject[]) => {
+          const tabs = tabStoreApi.getState().tabs.filter(isWorkspaceTab);
+          const existingTabs = tabs.filter(
+            (tab) => tab.projection?.deviceSessionId === sessionId,
+          );
+          const { toCreate, toRemoveTabIds } = computeProjectionSync({
+            deviceSessionId: sessionId,
+            deviceProjects,
+            existingTabs,
+          });
+          for (const tabId of toRemoveTabIds) {
+            tabStoreApi.getState().closeTab(tabId);
+          }
+          for (const project of toCreate) {
+            addTab(project.path, {
+              remoteSessionId: sessionId,
+              projection: { deviceSessionId: sessionId },
+            });
+          }
+          return { created: toCreate.length, removed: toRemoveTabIds.length };
+        },
         dispose: () => {
+          // 断开时移除本设备的全部投射条目：投射端不保留设备项目的痕迹。
+          const tabs = tabStoreApi.getState().tabs.filter(isWorkspaceTab);
+          for (const tab of tabs) {
+            if (tab.projection?.deviceSessionId === sessionId) {
+              tabStoreApi.getState().closeTab(tab.id);
+            }
+          }
           unregisterRemoteWorkspaceSession(sessionId);
           void platform.disposeRemoteSession(sessionId).catch(() => undefined);
         },

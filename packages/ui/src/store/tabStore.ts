@@ -41,6 +41,17 @@ export interface WorkspaceTabState extends TabState {
   workspaceIdentity?: string;
   localWorkspacePath?: string;
   workspacePurpose?: WorkspacePurpose;
+  /**
+   * 远程设备投射条目（见 ADR 0001）：代表被投射设备上的一个项目。
+   *
+   * 与常规远程 tab 的区别：不持久化、不绑定工作目录、生命周期严格跟随连接
+   * —— 连接建立时按显示偏好创建，断开时移除，应用重启后不恢复。
+   * 存在该标记时渲染层需要区分来源（图标/颜色）。
+   */
+  projection?: {
+    /** 被投射设备的连接标识（用于断开时批量清理）。 */
+    deviceSessionId: string;
+  };
 }
 
 export interface WorkspaceTabOptions {
@@ -51,6 +62,8 @@ export interface WorkspaceTabOptions {
   workspaceIdentity?: string;
   localWorkspacePath?: string;
   workspacePurpose?: WorkspacePurpose;
+  /** 远程设备投射标记（见 ADR 0001）。 */
+  projection?: { deviceSessionId: string };
 }
 
 export interface RestorableWorkspaceTab {
