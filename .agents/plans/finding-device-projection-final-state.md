@@ -60,11 +60,18 @@ resident host）代为读写。这样：不动 workspace 语义、不要求 B �
 
 ## 遗留
 
-- 设备设置区块里「投射的项目」子列表显示「远端共 0 个项目」：该子列表走
-  `zcodeTaskService.listTasks()` 无参枚举，而 B 的官方包不支持设备级全量枚举
-  （报 `Cannot read properties of undefined`）。项目勾选已由设备通道提供（标准 2 通过），
-  这个子列表属冗余展示，可删或改走 `listRegisteredProjects`。
-- 规格提到的 22 个可投射字段，实测在 B（官方包）上露出 18 个：其余字段名在
-  B 的版本里不存在或类型不同，属版本差异而非缺陷。
+- 工单 03「设备概览主区」的**独立主区**未做：项目清单与「进入项目」已由侧边栏
+  （蓝色图标 + 展开会话）与设置页设备卡片覆盖，但「添加项目入口」只在卡片上体现；
+  规格要求的独立主区形态待定。
+- 工单 05「浏览 B 的文件系统添加项目」未做：需要设备侧**写**能力（往 B 登记新项目），
+  本轮只做读。设备通道已留扩展位。
+- 工单 06「会话内容按需加载」未做。
+- 工单 07「收敛与清理」部分完成：已删冗余子列表与死代码、沉淀 CDP 工具；
+  但 `finding-remote-identity-write-duplication.md` 的重复键行问题未处理。
+- 可投射字段实测 18 个（规格写 22）：B 的官方包共 24 个布尔字段，其中 6 个被正确排除
+  ——`closeToTrayOnWindows`（Windows 设备本地属性）、`*MigrationInitialized` /
+  `providerFamilyDomainMigrated` / `startPlanRecommendationDismissed` /
+  `settingsSyncFirstRunPromptHandled`（内部标记）。机制正确，数字差异来自 B 的
+  版本字段集与原型期不同。
 
 
