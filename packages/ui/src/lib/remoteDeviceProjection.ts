@@ -99,6 +99,56 @@ export function findOrphanProjectionTabs(params: {
 }
 
 /**
+ * 找出「同路径多余的投射条目」，只保留一个。
+ *
+ * 为什么会重复（实测：用户侧边栏出现 新赛马 ×2）：
+ *   1. 认领断开态条目时按路径建 Map（`disconnectedByPath`），同路径多个只取到最后一个；
+ *   2. `findOrphanProjectionTabs` 按定义跳过**无 remoteSessionId** 的条目
+ *      （那是重连入口，不能当孤儿清掉）；
+ *   3. 于是没被认领的断开态条目落进两条清理规则的空隙，永久留在侧边栏。
+ *
+ * 判据分两种（都只在**本设备**的投射条目内比较，不跨设备）：
+ *   A. 同路径已有活跃条目（有 remoteSessionId）→ 断开态的是残留，清掉；
+ *   B. 同路径有多个断开态条目且无活跃 → 只留一个，其余清掉。
+ *
+ * 为什么不能一律去重：断开态条目是规格 US 4/5/17 要求的重连入口，同路径**必须留一个**。
+ */
+export function findRedundantProjectionTabs(params: {
+  tabs: readonly Pick<
+    WorkspaceTabState,
+    "id" | "workspacePath" | "projection" | "remoteSessionId"
+  >[];
+  deviceSessionId: string;
+}): string[] {
+  const mine = params.tabs.filter(
+    (tab) => tab.projection?.deviceSessionId === params.deviceSessionId,
+  );
+  const byPath = new Map<string, typeof mine>();
+  for (const tab of mine) {
+    const group = byPath.get(tab.workspacePath);
+    if (group) group.push(tab);
+    else byPath.set(tab.workspacePath, [tab]);
+  }
+
+  const redundant: string[] = [];
+  for (const group of byPath.values()) {
+    if (group.length < 2) continue;
+    const live = group.filter((tab) => Boolean(tab.remoteSessionId));
+    if (live.length > 0) {
+      // A：有活跃条目时，所有断开态条目都是残留（活跃条目本身就是这个项目的入口）。
+      for (const tab of group) {
+        if (!tab.remoteSessionId) redundant.push(tab.id);
+      }
+      continue;
+    }
+    // B：全是断开态时留一个。保留最后一个，与认领 Map 的取值一致，
+    // 避免"清掉的那个正好是认领会认领的"这种自相矛盾。
+    for (const tab of group.slice(0, -1)) redundant.push(tab.id);
+  }
+  return redundant;
+}
+
+/**
  * 按显示偏好过滤设备项目。
  *
  * 缺省显示：未在偏好中显式关闭的项目都投射（与设置页勾选的缺省语义一致）——

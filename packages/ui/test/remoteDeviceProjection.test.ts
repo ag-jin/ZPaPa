@@ -5,6 +5,7 @@ import {
   filterProjectsByVisibility,
   findDeviceSessionId,
   findOrphanProjectionTabs,
+  findRedundantProjectionTabs,
 } from "../src/lib/remoteDeviceProjection.js";
 
 /**
@@ -233,4 +234,70 @@ test("同一批里断开态保留、旧代活跃条目回收", () => {
     isSessionRegistered: (id) => id === deviceSessionId,
   });
   assert.deepEqual(orphans, ["tab-stale-active"], "只回收旧代活跃条目，保留重连入口");
+});
+
+// ── 同路径重复条目去重（实测缺陷：用户侧边栏出现「新赛马 ×2」）──────────────
+//
+// 重复的来源是两条清理规则之间的空隙：认领断开态条目时按路径建 Map（同路径
+// 只取到一个），而 findOrphanProjectionTabs 按定义跳过无 remoteSessionId 的
+// 条目（重连入口不能当孤儿清）。同路径的第二个断开态条目因此永久残留。
+
+test("同路径已有活跃条目时，残留的断开态条目被清掉", () => {
+  const redundant = findRedundantProjectionTabs({
+    tabs: [
+      projectionTab("tab-live", "/p/one"),
+      disconnectedProjectionTab("tab-stale", "/p/one"),
+    ],
+    deviceSessionId,
+  });
+  assert.deepEqual(
+    redundant,
+    ["tab-stale"],
+    "已连接条目本身就是该项目的入口，断开态残件必须清掉",
+  );
+});
+
+test("同路径全是断开态时只留一个（保留重连入口）", () => {
+  const redundant = findRedundantProjectionTabs({
+    tabs: [
+      disconnectedProjectionTab("tab-a", "/p/one"),
+      disconnectedProjectionTab("tab-b", "/p/one"),
+    ],
+    deviceSessionId,
+  });
+  assert.deepEqual(redundant, ["tab-a"], "断开态必须留一个 —— 它是规格 US 4/5/17 的重连入口");
+});
+
+test("不同路径各一个时不误判为重复", () => {
+  const redundant = findRedundantProjectionTabs({
+    tabs: [
+      projectionTab("tab-1", "/p/one"),
+      projectionTab("tab-2", "/p/two"),
+      disconnectedProjectionTab("tab-3", "/p/three"),
+    ],
+    deviceSessionId,
+  });
+  assert.deepEqual(redundant, [], "路径不同不是重复");
+});
+
+test("不触碰其他设备的同路径条目", () => {
+  const redundant = findRedundantProjectionTabs({
+    tabs: [
+      projectionTab("tab-mine", "/p/one"),
+      disconnectedProjectionTab("tab-other", "/p/one", "other-device"),
+    ],
+    deviceSessionId,
+  });
+  assert.deepEqual(redundant, [], "另一台设备在同一路径有项目是合法的，不能跨设备去重");
+});
+
+test("常规 workspace tab 不参与去重", () => {
+  const redundant = findRedundantProjectionTabs({
+    tabs: [
+      { id: "tab-local", workspacePath: "/p/one" },
+      projectionTab("tab-proj", "/p/one"),
+    ],
+    deviceSessionId,
+  });
+  assert.deepEqual(redundant, [], "没有 projection 标记的普通项目不该被去重逻辑删除");
 });

@@ -37,8 +37,8 @@ import {
 } from "@/lib/remoteDeviceAccess.js";
 import {
   computeProjectionSync,
-  filterProjectsByVisibility,
   findOrphanProjectionTabs,
+  findRedundantProjectionTabs,
   markProjectionTabsDisconnected,
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
@@ -1537,6 +1537,16 @@ export function useRemoteWorkspaceHistory({
             isSessionRegistered: (id) => Boolean(getRemoteWorkspaceSession(id)),
           });
           for (const tabId of orphanTabIds) {
+            tabStore.closeTab(tabId);
+          }
+          // 同路径重复条目去重：认领按路径建 Map（同路径只取到一个），而孤儿判定按
+          // 定义跳过断开态条目，落进两条规则空隙的重复条目会永久留在侧边栏
+          // （实测：用户侧边栏出现「新赛马 ×2」，一个断开态、一个已连接）。
+          const redundantTabIds = findRedundantProjectionTabs({
+            tabs: tabStoreApi.getState().tabs.filter(isWorkspaceTab),
+            deviceSessionId: sessionId,
+          });
+          for (const tabId of redundantTabIds) {
             tabStore.closeTab(tabId);
           }
           const existingTabs = tabStoreApi
