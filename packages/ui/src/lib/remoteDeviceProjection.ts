@@ -98,54 +98,107 @@ export function findOrphanProjectionTabs(params: {
   return orphans;
 }
 
+/** 判定两台设备是否同一台（与 findDeviceSessionId 同口径：SSH 比 host+username）。 */
+export function isSameDeviceTarget(
+  left: { kind: string; host?: string; username?: string } | undefined,
+  right: { kind: string; host?: string; username?: string } | undefined,
+): boolean {
+  if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind !== "ssh") return true;
+  return left.host === right.host && left.username === right.username;
+}
+
 /**
- * 找出「同路径多余的投射条目」，只保留一个。
+ * 找出「应关闭的投射条目」—— 一台设备只保留一代。
  *
- * 为什么会重复（实测：用户侧边栏出现 新赛马 ×2）：
- *   1. 认领断开态条目时按路径建 Map（`disconnectedByPath`），同路径多个只取到最后一个；
- *   2. `findOrphanProjectionTabs` 按定义跳过**无 remoteSessionId** 的条目
- *      （那是重连入口，不能当孤儿清掉）；
- *   3. 于是没被认领的断开态条目落进两条清理规则的空隙，永久留在侧边栏。
+ * 为什么不变量是「一台设备一代」：投射条目的生命周期严格跟随连接（ADR 0001），
+ * 每次连接产生一个新的 deviceSessionId。若旧代不被清掉，用户每连一次侧边栏就
+ * 多出一整套项目（实测：正式版出现 3 代共存 —— 同一台设备的 `6aba478d`、
+ * `97bc8b6e`、`9f9c3f17` 各带「新赛马 + 中转站」，共 6 条 + 1 条陈旧断开态）。
  *
- * 判据分两种（都只在**本设备**的投射条目内比较，不跨设备）：
- *   A. 同路径已有活跃条目（有 remoteSessionId）→ 断开态的是残留，清掉；
- *   B. 同路径有多个断开态条目且无活跃 → 只留一个，其余清掉。
+ * 为什么不能只按 deviceSessionId 去重：那是"同一代内的重复"。跨代残留的每一条
+ * 都属于**另一个** deviceSessionId，在本代视角里根本看不见（实测第一版修复就
+ * 栽在这里：只解决了同代同路径重复，用户那边仍在"每连接一次就增加"）。
  *
- * 为什么不能一律去重：断开态条目是规格 US 4/5/17 要求的重连入口，同路径**必须留一个**。
+ * 判据（按 tab 自带的 remoteTarget 分组，不依赖 session 注册表 —— 旧代的 session
+ * 可能仍被登记着，靠"session 是否注销"判不出过期）：
+ *   1. 属于本设备、但 deviceSessionId 不是当前代 → 关掉（跨代残留）；
+ *   2. 当前代内同路径多条 → 留一条，其余关掉（认领按路径建 Map 只取到一个，
+ *      另一条会落进"既不被认领也不被孤儿清理"的空隙）。
+ *
+ * 保留规则：同路径优先留「活跃条目」（有 remoteSessionId）；全是断开态时留一条 ——
+ * 断开态是规格 US 4/5/17 要求的重连入口，不能全清掉。
+ *
+ * 缺少 remoteTarget 的条目（更早版本创建的）不参与本设备的判定，回退给
+ * findOrphanProjectionTabs 按 session 注销与否处理：保守，不会误删。
  */
-export function findRedundantProjectionTabs(params: {
+export function findProjectionTabsToClose(params: {
   tabs: readonly Pick<
     WorkspaceTabState,
-    "id" | "workspacePath" | "projection" | "remoteSessionId"
+    "id" | "workspacePath" | "projection" | "remoteSessionId" | "remoteTarget"
   >[];
+  /** 当前代（本次连接 / 同步对应的 session）。 */
   deviceSessionId: string;
+  /** 当前设备目标；缺省时退化为只处理当前代内部的重复。 */
+  target?: { kind: string; host?: string; username?: string };
 }): string[] {
   const mine = params.tabs.filter(
-    (tab) => tab.projection?.deviceSessionId === params.deviceSessionId,
+    (tab) =>
+      tab.projection != null &&
+      (params.target
+        ? isSameDeviceTarget(tab.remoteTarget, params.target)
+        : tab.projection.deviceSessionId === params.deviceSessionId),
   );
-  const byPath = new Map<string, typeof mine>();
+  const currentGeneration: typeof mine = [];
+  const staleGenerations: typeof mine = [];
   for (const tab of mine) {
-    const group = byPath.get(tab.workspacePath);
-    if (group) group.push(tab);
-    else byPath.set(tab.workspacePath, [tab]);
+    if (tab.projection?.deviceSessionId !== params.deviceSessionId) staleGenerations.push(tab);
+    else currentGeneration.push(tab);
   }
 
-  const redundant: string[] = [];
-  for (const group of byPath.values()) {
+  // 当前代内同路径去重：有活跃条目时断开态是残件；全是断开态时留一条。
+  const toClose: string[] = [];
+  const currentByPath = new Map<string, typeof currentGeneration>();
+  for (const tab of currentGeneration) {
+    const group = currentByPath.get(tab.workspacePath);
+    if (group) group.push(tab);
+    else currentByPath.set(tab.workspacePath, [tab]);
+  }
+  for (const group of currentByPath.values()) {
     if (group.length < 2) continue;
     const live = group.filter((tab) => Boolean(tab.remoteSessionId));
     if (live.length > 0) {
-      // A：有活跃条目时，所有断开态条目都是残留（活跃条目本身就是这个项目的入口）。
       for (const tab of group) {
-        if (!tab.remoteSessionId) redundant.push(tab.id);
+        if (!tab.remoteSessionId) toClose.push(tab.id);
       }
       continue;
     }
-    // B：全是断开态时留一个。保留最后一个，与认领 Map 的取值一致，
-    // 避免"清掉的那个正好是认领会认领的"这种自相矛盾。
-    for (const tab of group.slice(0, -1)) redundant.push(tab.id);
+    // 全是断开态：留第一个，其余是重复。
+    for (const tab of group.slice(1)) toClose.push(tab.id);
   }
-  return redundant;
+
+  // 跨代残留：关掉 —— 但要保证**每个项目仍留一个入口**。
+  //
+  // 不能一律清光旧代：设备当前完全断开时（当前代没有条目），旧代条目是用户
+  // 唯一的重连入口，清光会让侧边栏彻底空掉（规格 US 4/5/17 要求断开后仍能点
+  // 条目重连）。因此按路径保留"当前代没有覆盖到的"那个路径的第一条旧代条目。
+  const coveredPaths = new Set(currentGeneration.map((tab) => tab.workspacePath));
+  const staleByPath = new Map<string, typeof staleGenerations>();
+  for (const tab of staleGenerations) {
+    const group = staleByPath.get(tab.workspacePath);
+    if (group) group.push(tab);
+    else staleByPath.set(tab.workspacePath, [tab]);
+  }
+  for (const [path, group] of staleByPath) {
+    // 当前代已覆盖该项目 → 旧代全是残留，全关。
+    if (coveredPaths.has(path)) {
+      for (const tab of group) toClose.push(tab.id);
+      continue;
+    }
+    // 当前代没有该项目 → 留一条作入口，其余是重复代。
+    for (const tab of group.slice(1)) toClose.push(tab.id);
+  }
+  return toClose;
 }
 
 /**

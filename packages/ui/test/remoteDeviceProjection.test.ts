@@ -5,7 +5,7 @@ import {
   filterProjectsByVisibility,
   findDeviceSessionId,
   findOrphanProjectionTabs,
-  findRedundantProjectionTabs,
+  findProjectionTabsToClose,
 } from "../src/lib/remoteDeviceProjection.js";
 
 /**
@@ -236,68 +236,149 @@ test("同一批里断开态保留、旧代活跃条目回收", () => {
   assert.deepEqual(orphans, ["tab-stale-active"], "只回收旧代活跃条目，保留重连入口");
 });
 
-// ── 同路径重复条目去重（实测缺陷：用户侧边栏出现「新赛马 ×2」）──────────────
-//
-// 重复的来源是两条清理规则之间的空隙：认领断开态条目时按路径建 Map（同路径
-// 只取到一个），而 findOrphanProjectionTabs 按定义跳过无 remoteSessionId 的
-// 条目（重连入口不能当孤儿清）。同路径的第二个断开态条目因此永久残留。
 
-test("同路径已有活跃条目时，残留的断开态条目被清掉", () => {
-  const redundant = findRedundantProjectionTabs({
+// ── 一台设备一代：跨代残留与当代重复（实测缺陷：正式版 3 代共存）────────────
+//
+// 每连接一次产生新的 deviceSessionId。旧代不被清掉时，用户每连一次侧边栏就多
+// 一整套项目 —— 实测正式版同一设备有 3 代（6aba478d / 97bc8b6e / 9f9c3f17），
+// 各带「新赛马 + 中转站」。旧代的每一条都属于**另一个** deviceSessionId，
+// 在本代视角里根本看不见，所以只做"当代内去重"不足以修复。
+
+const deviceTarget = { kind: "ssh" as const, host: "100.66.1.2", username: "linguojin" };
+const otherDeviceTarget = { kind: "ssh" as const, host: "10.0.0.9", username: "linguojin" };
+
+/** 带 remoteTarget 的投射条目（跨代判定靠它，不靠 session 注册表）。 */
+function targetedProjectionTab(
+  id: string,
+  path: string,
+  gen: string,
+  target: { kind: "ssh"; host: string; username: string },
+  live = true,
+) {
+  return {
+    id,
+    workspacePath: path,
+    remoteTarget: target,
+    projection: { deviceSessionId: gen },
+    ...(live ? { remoteSessionId: gen } : {}),
+  };
+}
+
+test("跨代残留被清掉：只保留当前代", () => {
+  const toClose = findProjectionTabsToClose({
     tabs: [
-      projectionTab("tab-live", "/p/one"),
-      disconnectedProjectionTab("tab-stale", "/p/one"),
+      targetedProjectionTab("tab-old-1", "/p/one", "gen-old", deviceTarget),
+      targetedProjectionTab("tab-old-2", "/p/two", "gen-old", deviceTarget),
+      targetedProjectionTab("tab-cur-1", "/p/one", "gen-cur", deviceTarget),
+      targetedProjectionTab("tab-cur-2", "/p/two", "gen-cur", deviceTarget),
     ],
-    deviceSessionId,
+    deviceSessionId: "gen-cur",
+    target: deviceTarget,
   });
   assert.deepEqual(
-    redundant,
-    ["tab-stale"],
-    "已连接条目本身就是该项目的入口，断开态残件必须清掉",
+    toClose.sort(),
+    ["tab-old-1", "tab-old-2"],
+    "旧代的两条必须清掉 —— 否则用户每连一次就多一整套项目",
   );
 });
 
-test("同路径全是断开态时只留一个（保留重连入口）", () => {
-  const redundant = findRedundantProjectionTabs({
+test("当代内同路径重复只留活跃的那条", () => {
+  const toClose = findProjectionTabsToClose({
     tabs: [
-      disconnectedProjectionTab("tab-a", "/p/one"),
-      disconnectedProjectionTab("tab-b", "/p/one"),
+      targetedProjectionTab("tab-live", "/p/one", "gen-cur", deviceTarget, true),
+      targetedProjectionTab("tab-stale", "/p/one", "gen-cur", deviceTarget, false),
     ],
-    deviceSessionId,
+    deviceSessionId: "gen-cur",
+    target: deviceTarget,
   });
-  assert.deepEqual(redundant, ["tab-a"], "断开态必须留一个 —— 它是规格 US 4/5/17 的重连入口");
+  assert.deepEqual(toClose, ["tab-stale"], "活跃条目本身就是项目入口，断开态残件清掉");
 });
 
-test("不同路径各一个时不误判为重复", () => {
-  const redundant = findRedundantProjectionTabs({
+test("当代内全是断开态时留一条（重连入口不能全清）", () => {
+  const toClose = findProjectionTabsToClose({
     tabs: [
-      projectionTab("tab-1", "/p/one"),
-      projectionTab("tab-2", "/p/two"),
-      disconnectedProjectionTab("tab-3", "/p/three"),
+      targetedProjectionTab("tab-a", "/p/one", "gen-cur", deviceTarget, false),
+      targetedProjectionTab("tab-b", "/p/one", "gen-cur", deviceTarget, false),
     ],
-    deviceSessionId,
+    deviceSessionId: "gen-cur",
+    target: deviceTarget,
   });
-  assert.deepEqual(redundant, [], "路径不同不是重复");
+  assert.equal(toClose.length, 1, "断开态必须留一条作为重连入口");
 });
 
-test("不触碰其他设备的同路径条目", () => {
-  const redundant = findRedundantProjectionTabs({
+test("另一台设备的一代不受影响", () => {
+  const toClose = findProjectionTabsToClose({
     tabs: [
-      projectionTab("tab-mine", "/p/one"),
-      disconnectedProjectionTab("tab-other", "/p/one", "other-device"),
+      targetedProjectionTab("tab-mine", "/p/one", "gen-cur", deviceTarget),
+      targetedProjectionTab("tab-other", "/p/one", "gen-other", otherDeviceTarget),
+      targetedProjectionTab("tab-other2", "/p/two", "gen-other", otherDeviceTarget),
     ],
-    deviceSessionId,
+    deviceSessionId: "gen-cur",
+    target: deviceTarget,
   });
-  assert.deepEqual(redundant, [], "另一台设备在同一路径有项目是合法的，不能跨设备去重");
+  assert.deepEqual(toClose, [], "不同 host 是不同的设备，各自保留一代");
 });
 
-test("常规 workspace tab 不参与去重", () => {
-  const redundant = findRedundantProjectionTabs({
+test("常规项目与无 projection 标记的 tab 不参与", () => {
+  const toClose = findProjectionTabsToClose({
     tabs: [
       { id: "tab-local", workspacePath: "/p/one" },
-      projectionTab("tab-proj", "/p/one"),
+      { id: "tab-local2", workspacePath: "/p/one", remoteTarget: deviceTarget },
+      targetedProjectionTab("tab-proj", "/p/one", "gen-cur", deviceTarget),
     ],
-    deviceSessionId,
+    deviceSessionId: "gen-cur",
+    target: deviceTarget,
   });
-  assert.deepEqual(redundant, [], "没有 projection 标记的普通项目不该被去重逻辑删除");
+  assert.deepEqual(toClose, [], "没有 projection 标记的都不是投射条目");
+});
+
+test("无 target 时退化为只处理当代（保守，不误删）", () => {
+  const toClose = findProjectionTabsToClose({
+    tabs: [
+      targetedProjectionTab("tab-old", "/p/one", "gen-old", deviceTarget),
+      targetedProjectionTab("tab-cur", "/p/one", "gen-cur", deviceTarget),
+    ],
+    deviceSessionId: "gen-cur",
+  });
+  assert.deepEqual(toClose, [], "判定不出设备归属时不跨代清理，交给孤儿逻辑兜底");
+});
+
+test("设备全断开、多代残留时每项目仍留一条重连入口", () => {
+  // 关键边界：不能把旧代一律清光 —— 断开时旧代条目是用户唯一的重连入口
+  // （规格 US 4/5/17），清光会让侧边栏彻底空掉。
+  const toClose = findProjectionTabsToClose({
+    tabs: [
+      targetedProjectionTab("d1", "/p/one", "g1", deviceTarget, false),
+      targetedProjectionTab("d2", "/p/one", "g2", deviceTarget, false),
+      targetedProjectionTab("d3", "/p/two", "g1", deviceTarget, false),
+      targetedProjectionTab("d4", "/p/two", "g2", deviceTarget, false),
+    ],
+    deviceSessionId: "gen-none",
+    target: deviceTarget,
+  });
+  assert.deepEqual(toClose.sort(), ["d2", "d4"], "每个项目各留一条；多余代清掉");
+});
+
+test("实测数据：同一设备 3 代共存收敛为每项目一条", () => {
+  // 这组是 2026-09-27 从用户正式版用 CDP 抓到的真实数据。
+  const live = [
+    targetedProjectionTab("70985380", "/vol/新赛马", "9f9c3f17", deviceTarget),
+    targetedProjectionTab("fcb35eff", "/vol/中转站", "9f9c3f17", deviceTarget),
+    targetedProjectionTab("e8480b6c", "/vol/中转站", "97bc8b6e", deviceTarget),
+    targetedProjectionTab("af709838", "/vol/新赛马", "97bc8b6e", deviceTarget),
+    targetedProjectionTab("36f60a2f", "/vol/新赛马", "6aba478d", deviceTarget),
+    targetedProjectionTab("9fe571da", "/vol/中转站", "6aba478d", deviceTarget),
+    targetedProjectionTab("aaa66c56", "/vol/电商技能", "83b40811", deviceTarget, false),
+  ];
+  const toClose = findProjectionTabsToClose({
+    tabs: live,
+    deviceSessionId: "9f9c3f17",
+    target: deviceTarget,
+  });
+  const keep = live.filter((t) => !toClose.includes(t.id));
+  assert.deepEqual(
+    keep.map((t) => t.id).sort(),
+    ["70985380", "aaa66c56", "fcb35eff"],
+    "当前代两条 + 未覆盖项目的入口一条",
+  );
 });

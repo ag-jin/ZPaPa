@@ -38,7 +38,7 @@ import {
 import {
   computeProjectionSync,
   findOrphanProjectionTabs,
-  findRedundantProjectionTabs,
+  findProjectionTabsToClose,
   markProjectionTabsDisconnected,
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
@@ -1539,12 +1539,15 @@ export function useRemoteWorkspaceHistory({
           for (const tabId of orphanTabIds) {
             tabStore.closeTab(tabId);
           }
-          // 同路径重复条目去重：认领按路径建 Map（同路径只取到一个），而孤儿判定按
-          // 定义跳过断开态条目，落进两条规则空隙的重复条目会永久留在侧边栏
-          // （实测：用户侧边栏出现「新赛马 ×2」，一个断开态、一个已连接）。
-          const redundantTabIds = findRedundantProjectionTabs({
+          // 一台设备只保留一代投射条目：跨代残留 + 当代同路径重复都在这里关掉。
+          // 为什么必须跨代清理：旧代的每一条都属于**另一个** deviceSessionId，
+          // 在本代视角看不见；不变量"一台设备一代"不成立时，用户每连一次侧边栏
+          // 就多一整套项目（实测正式版 3 代共存：同一设备的 6aba478d / 97bc8b6e /
+          // 9f9c3f17 各带「新赛马 + 中转站」）。
+          const redundantTabIds = findProjectionTabsToClose({
             tabs: tabStoreApi.getState().tabs.filter(isWorkspaceTab),
             deviceSessionId: sessionId,
+            target,
           });
           for (const tabId of redundantTabIds) {
             tabStore.closeTab(tabId);
