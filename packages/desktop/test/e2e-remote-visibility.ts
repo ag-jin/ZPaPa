@@ -51,7 +51,7 @@ const runtime = createWindowHostControllerRuntime({
     let n = 0;
     return () => `e2e-${++n}`;
   })(),
-  resolveSource: (scope) => {
+  resolveSource: (scope: { workspaceIdentity?: string }) => {
     if (scope.workspaceIdentity !== remoteIdentity) return null;
     return {
       scope: {

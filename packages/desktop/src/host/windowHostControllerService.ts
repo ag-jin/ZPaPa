@@ -67,11 +67,28 @@ function compareItems(
   return rightAt - leftAt || left.taskId.localeCompare(right.taskId);
 }
 
-function mutationParams(address: WindowHostTaskAddress) {
+/**
+ * 构造发给 taskService 的写操作参数。
+ *
+ * 远程 source 必须剥离本端 identity —— 与读路径（readSourceTaskIndex）对称：
+ * `remote:<kind>:...:path` 只是本端为远程工作区起的隔离标签，对端从未写过这个键。
+ * 透传给对端 taskService 会让它按一个不属于自己的键落库，产生一条永远不该存在的
+ * 重复行（见 .agents/plans/finding-remote-identity-write-duplication.md；实测对端库
+ * 中曾有 2 条带本端 identity 的探针会话行）。用户视角的表现是同一会话在设备列表
+ * 里出现两次。
+ *
+ * 剥离只作用于"发给对端的参数"：对端返回的条目仍由 normalizeTaskMeta 按 scope
+ * 重新贴上本端 identity，UI 侧的身份语义不受影响。
+ */
+function mutationParams(
+  address: WindowHostTaskAddress,
+  scope: WindowHostControllerSourceScope,
+) {
+  const workspaceIdentity = scope.kind === "remote" ? undefined : address.workspaceIdentity;
   return {
     taskId: address.taskId,
     workspacePath: address.workspacePath,
-    ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
+    ...(workspaceIdentity ? { workspaceIdentity } : {}),
   };
 }
 
@@ -256,7 +273,7 @@ export function createWindowHostControllerRuntime(options: {
       );
     }
     const service = current.taskService;
-    const base = mutationParams(address);
+    const base = mutationParams(address, current.scope);
     switch (mutation.kind) {
       case "pin":
         await service.setTaskPinned({ ...base, pinned: mutation.pinned });

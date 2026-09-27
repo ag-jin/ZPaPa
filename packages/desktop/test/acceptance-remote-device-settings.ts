@@ -66,7 +66,7 @@ for (const entry of entries) console.log(`  ☑ ${entry.key} = ${entry.value}`);
 // ── V2：远程写入 → 读回确认 → 回滚 ──
 console.log("\n=== V2：远程写入验证（写入 → 读回 → 回滚）===");
 const targetKey = "messageStreamShowReasoning";
-const originalValue = entries.find((e) => e.key === targetKey)?.value;
+const originalValue = entries.find((e: { key: string }) => e.key === targetKey)?.value;
 if (originalValue === undefined) {
   console.error(`❌ 目标字段 ${targetKey} 不在可投射列表里`);
   await connection.disposeAndWait({ timeoutMs: 5_000 });
@@ -89,7 +89,7 @@ console.log(`  回滚 ${originalValue} → 读回 ${afterRollback} ${rollbackOk 
 
 // ── V3：被排除字段确实不可见 ──
 console.log("\n=== V3：敏感/本地字段不暴露 ===");
-const projectableKeys = new Set(entries.map((e) => e.key));
+const projectableKeys = new Set(entries.map((e: { key: string }) => e.key));
 const leaked = excluded.filter(([k]) => projectableKeys.has(k));
 console.log(`被排除字段泄漏进可投射列表: ${leaked.length === 0 ? "0 个 ✅" : `${leaked.length} 个 ❌`}`);
 

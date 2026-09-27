@@ -37,7 +37,7 @@ const { pickProjectableSettings } = await tsImport(
   import.meta.url,
 );
 
-const failures = [];
+const failures: string[] = [];
 function check(label: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "✅" : "❌"} ${label}${detail ? `（${detail}）` : ""}`);
   if (!ok) failures.push(label);
@@ -64,7 +64,7 @@ const deviceChannel = {
   listRegisteredProjects: async (): Promise<string[]> => {
     const settings = await conn.services.settingService.get();
     const recent = settings.recentProjects ?? [];
-    return recent.filter((item): item is string => typeof item === "string" && item.length > 0);
+    return recent.filter((item: unknown): item is string => typeof item === "string" && item.length > 0);
   },
   getSettings: async (): Promise<Record<string, unknown>> =>
     (await conn.services.settingService.get()) as unknown as Record<string, unknown>,
@@ -94,7 +94,7 @@ const localSettings = (await conn.services.settingService.get()).recentProjects 
 check("设备项目清单非空", registered.length > 0, `${registered.length} 个`);
 check(
   "读到的项目来自设备（含对端路径）",
-  registered.some((p) => !localSettings.includes(p) || p.startsWith("/Volumes/")),
+  registered.some((p: string) => !localSettings.includes(p) || p.startsWith("/Volumes/")),
   registered[0] ?? "—",
 );
 
@@ -106,11 +106,11 @@ const settings = await deviceChannel.getSettings();
 const entries = pickProjectableSettings(settings);
 console.log(`\n── 设备设置投射（白名单）──`);
 console.log(`   可投射字段: ${entries.length} 个`);
-console.log(`   示例: ${entries.slice(0, 5).map((e) => e.key).join(", ")}\n`);
+console.log(`   示例: ${entries.slice(0, 5).map((e: { key: string }) => e.key).join(", ")}\n`);
 check("可读到设备设置白名单字段", entries.length > 0, `${entries.length} 个`);
 check(
   "敏感字段未被投射",
-  !entries.some((e) => /token|credential|secret|password/i.test(e.key)),
+  !entries.some((e: { key: string }) => /token|credential|secret|password/i.test(e.key)),
 );
 
 // ── 3) 设备设置写：记录原值 → 写 → 读回 → 回滚（只碰一个显示类布尔）────────────

@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 只为类型检查：脚本由 tsx 直接跑（node --import tsx），不产出编译结果。
+    // 因此关掉 composite/declaration 等构建相关开关，也允许 .ts 扩展名导入。
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    // vite/client 提供 `import.meta.env` 的标准声明。主工程靠 include src 拿到
+    // test-actions.ts 里的 declare global，而本工程只含 test，需要显式引入。
+    "types": ["node", "vite/client"],
+    // 与 ui 包同一套解析规则：包内导入必须能落到真实文件路径。
+    "lib": ["es2025", "dom", "dom.iterable"],
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["test"],
+  "references": [
+    { "path": "../provider" },
+    { "path": "../shared" },
+    { "path": "../services" },
+    { "path": "../rpc" }
+  ]
+}

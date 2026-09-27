@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 只为类型检查：脚本由 tsx 直接跑（node --import tsx），不产出编译结果。
+    // 因此关掉 composite/declaration 等构建相关开关，也允许 .ts 扩展名导入。
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["test"]
+}

@@ -35,12 +35,14 @@ test("tab 持久化只写 lastWorkspaceSession 与 lastActiveTabIndex", () => {
 
 test("模拟覆盖场景：设备配置在独立字段时不受 tab 重写影响", () => {
   // 设备配置与 tab 载荷是两个独立字段，合并写入时互不干扰。
-  const settings: Record<string, unknown> = {
+  // 用非字面量对象承载设备配置，避免 TS 把 spread 结果的键集收窄成已知字段
+  // （那会让 merged.remoteDevices 的访问被判为不存在，尽管运行时确有该字段）。
+  const deviceConfig: Record<string, unknown> = {
     remoteDevices: [{ target: { kind: "ssh", host: "h", username: "u" } }],
-    lastWorkspaceSession: [],
   };
+  const settings: Record<string, unknown> = { ...deviceConfig, lastWorkspaceSession: [] };
   const patch = buildTabPersistPatch([{ workspacePath: "/local/a" }]);
-  const merged = { ...settings, ...patch };
+  const merged: Record<string, unknown> = { ...settings, ...patch };
   assert.equal(
     Array.isArray(merged.remoteDevices) && merged.remoteDevices.length,
     1,

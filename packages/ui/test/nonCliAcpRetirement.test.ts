@@ -65,8 +65,10 @@ test("current question results work while Claude ACP text is no longer interpret
 });
 
 test("ZCode subagent identity wins over retired Codex nicknames", () => {
+  // TaskChatToolCall 的 id 字段名是 toolId（不是 id）：写成 id 会被类型检查拒绝，
+  // 而运行时因被测函数只读 title/input 而静默通过。
   const tool = {
-    id: "tool-example",
+    toolId: "tool-example",
     kind: "Agent",
     title: "Agent",
     status: "completed" as const,

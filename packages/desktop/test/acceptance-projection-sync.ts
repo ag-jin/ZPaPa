@@ -34,7 +34,7 @@ console.log(`首次同步: 创建 ${first.toCreate.length} / 移除 ${first.toRe
 const ok1 = first.toCreate.length === allProjects.length;
 
 // 2) 模拟"已创建"后重复同步：应零变更(不重建)
-const existingTabs = first.toCreate.map((p, i) => ({ id: `tab-${i}`, workspacePath: p.path, projection: { deviceSessionId } }));
+const existingTabs = first.toCreate.map((p: { path: string }, i: number) => ({ id: `tab-${i}`, workspacePath: p.path, projection: { deviceSessionId } }));
 const second = computeProjectionSync({ deviceSessionId, deviceProjects: allProjects, existingTabs });
 console.log(`重复同步: 创建 ${second.toCreate.length} / 移除 ${second.toRemoveTabIds.length}`);
 const ok2 = second.toCreate.length === 0 && second.toRemoveTabIds.length === 0;

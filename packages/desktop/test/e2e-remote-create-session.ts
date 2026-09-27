@@ -10,11 +10,15 @@
  * 「Client request timed out: session/requestRuntimePreferences」失败。
  *
  * 跑法：node --import tsx packages/desktop/test/e2e-remote-create-session.ts
+ *
+ * ⚠️ 数据安全：本脚本会在 B 上**新建**一个会话（写对端数据）。它只操作自己刚建的
+ * 那一个，验证完立即归档，不碰任何既有会话；护栏见 support/testIsolation.ts。
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { assertTestOwnedTarget } from "./support/testIsolation.js";
 
 const repoRoot = "/Users/linguojin/Workspace/ZCode/ZPaPa";
 const projectPath = "/Volumes/数据盘/网站/新赛马";
@@ -46,7 +50,7 @@ console.log("✅ 已挂载 B 的常驻主机");
 // 缺少这一步 → createSession 以 requestRuntimePreferences 超时失败。
 const agentService = connection.services.zcodeAgentService;
 let bridgedCount = 0;
-agentService.onDynamicSessionRuntimePreferencesRequest()((request) => {
+agentService.onDynamicSessionRuntimePreferencesRequest()((request: { requestId: string; scope?: string }) => {
   bridgedCount += 1;
   console.log(`   [bridge] 应答 runtime preferences 请求 #${bridgedCount}（scope=${request.scope}）`);
   // 结构必须与 host bridge 一致（见 host/remoteWorkspaceServiceCollection.ts）：
@@ -87,9 +91,46 @@ try {
 const after = await connection.services.zcodeTaskService.listTasks({ workspacePath: projectPath });
 console.log(`\n[after] B 上该项目现有 ${after.length} 条未归档会话（基线 ${before.length}）`);
 const createdTaskId = created?.taskId ?? created?.sessionId;
+let visible = false;
 if (createdTaskId) {
-  const visible = after.some((task) => task.taskId === createdTaskId);
+  visible = after.some((task: { taskId: string }) => task.taskId === createdTaskId);
   console.log(`新会话 ${createdTaskId} ${visible ? "✅ 已出现在 B 的列表里" : "❌ 未出现在 B 的列表里"}`);
+}
+
+// 护栏：只允许操作本次自建的会话。创建前无从预知 id，因此按「刚刚新建的这一个」
+// 收窄 —— 绝不按启发式挑选既有会话（见 support/testIsolation.ts 的血泪注释）。
+const guard = assertTestOwnedTarget({
+  taskId: createdTaskId ?? "",
+  createdSessionIds: new Set(createdTaskId ? [createdTaskId] : []),
+  operation: "cleanup(archiveTask)",
+});
+
+// 清理：本脚本只在 B 上建了一个会话，验证完必须归档，否则每跑一次就在用户的设备上
+// 留一条空会话。归档而非删除：内容仍在，误判时可恢复。
+if (guard.allowed && createdTaskId) {
+  console.log("\n=== 清理：归档本次测试会话 ===");
+  try {
+    await connection.services.zcodeTaskService.archiveTask({
+      taskId: createdTaskId,
+      workspacePath: projectPath,
+    });
+    const afterArchive = await connection.services.zcodeTaskService.listTasks({
+      workspacePath: projectPath,
+    });
+    const stillVisible = afterArchive.some((task: { taskId: string }) => task.taskId === createdTaskId);
+    console.log(
+      stillVisible
+        ? `⚠️ 归档后仍在默认列表（基数应回到 ${before.length}）`
+        : `✅ 已归档，会话数回到 ${afterArchive.length}（基线 ${before.length}）`,
+    );
+  } catch (error) {
+    console.error(
+      `⚠️ 归档失败（请在 B 上手动清理 ${createdTaskId}）: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+} else if (createdTaskId) {
+  console.error(`❌ 清理被隔离护栏拒绝: ${guard.reason}`);
 }
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });

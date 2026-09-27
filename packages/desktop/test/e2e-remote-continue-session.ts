@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { assertTestOwnedTarget, buildTestSessionTitle } from "./support/testIsolation.js";
 
 const repoRoot = "/Users/linguojin/Workspace/ZCode/ZPaPa";
 const projectPath = "/Volumes/数据盘/网站/新赛马";
@@ -48,7 +49,7 @@ if (!connection) {
 console.log("✅ 已挂载 B 的常驻主机");
 
 const agentService = connection.services.zcodeAgentService;
-agentService.onDynamicSessionRuntimePreferencesRequest()((request) => {
+agentService.onDynamicSessionRuntimePreferencesRequest()((request: { requestId: string }) => {
   // 应答必须 await 并捕获错误：漏应答会让对端 createSession/续接以
   // 「session/requestRuntimePreferences 超时」失败，而失败原因若被吞掉，
   // 表现为"调用成功但什么都没发生"。
@@ -88,8 +89,27 @@ if (!target.taskId.startsWith("sess_")) {
   await connection.disposeAndWait({ timeoutMs: 5_000 });
   process.exit(1);
 }
+// 本次运行自建的会话 id 集合。护栏只认这个集合 —— 绝不按"最近活跃""状态为
+// completed"这类启发式挑选目标，那些正是此前误碰用户会话的原因。
+const createdSessionIds = new Set<string>([target.taskId]);
 console.log(`✅ 已创建测试会话: ${target.taskId}`);
 console.log("   （本次只操作这一个会话，验证后归档，不影响任何既有会话）");
+
+// 打上可识别标题：对端库里这条会话一眼能看出是测试产物，便于用户审计与事后清理。
+// 标题前缀由 support/testIsolation.ts 统一约定（zpapa-test-），命名失败不影响验证。
+const testTitle = buildTestSessionTitle("continue-session");
+try {
+  await connection.services.zcodeTaskService.renameTask({
+    taskId: target.taskId,
+    workspacePath: projectPath,
+    title: testTitle,
+  });
+  console.log(`   已标记测试标题: ${testTitle}`);
+} catch (error) {
+  console.warn(
+    `   ⚠️ 标记测试标题失败（不影响验证）: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
 console.log(`\n=== 选中续接目标 ===`);
 console.log(`  taskId: ${target.taskId}`);
 console.log(`  title:  ${String(target.title).slice(0, 50)}`);
@@ -187,7 +207,7 @@ for (let i = 0; i < 10; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   const current = (
     await connection.services.zcodeTaskService.listTasks({ workspacePath: projectPath })
-  ).find((task) => task.taskId === target.taskId);
+  ).find((task: { taskId: string }) => task.taskId === target.taskId);
   const status = current?.status ?? "?";
   console.log(`  [${i + 1}/10] status=${status}`);
   if (status === "running" || status === "interaction") {
@@ -200,5 +220,31 @@ console.log(
     ? "✅ 会话已进入运行态 —— 续接确实在 B 上执行"
     : "⚠️ 未观察到运行态（可能已快速完成，或 LLM 调用较慢）",
 );
+
+// 清理：归档本次自建的专用测试会话，不给用户列表留垃圾。
+// 用对端自己的键（不带本端 identity）—— 带上本端 identity 会让对端按一个它从未
+// 写过的键落库，产生重复行（见 .agents/plans/finding-remote-identity-write-duplication.md）。
+// 归档不是删除：内容仍在，用户可在归档列表里找到，误判时也可恢复。
+console.log("\n=== 清理：归档本次测试会话 ===");
+try {
+  await connection.services.zcodeTaskService.archiveTask({
+    taskId: target.taskId,
+    workspacePath: projectPath,
+  });
+  const afterArchive = await connection.services.zcodeTaskService.listTasks({
+    workspacePath: projectPath,
+  });
+  const stillVisible = afterArchive.some((task: { taskId: string }) => task.taskId === target.taskId);
+  console.log(
+    stillVisible
+      ? "⚠️ 归档后仍出现在默认列表（对端行为可能不同）"
+      : `✅ 已归档 ${target.taskId}，不再出现在默认列表`,
+  );
+} catch (error) {
+  console.error(
+    `⚠️ 归档失败（测试结论不受影响，但请在 B 上手动清理 ${target.taskId}）: ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+  );
+}
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });

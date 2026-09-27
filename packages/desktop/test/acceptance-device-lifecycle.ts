@@ -10,7 +10,6 @@
  *
  * 跑法：node --import tsx packages/desktop/test/acceptance-device-lifecycle.ts
  */
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -84,7 +83,7 @@ const syncResult = computeProjectionSync({
 console.log(`4) 投射: 应创建 ${syncResult.toCreate.length} 个条目（偏好过滤后 ${visible.length}/${allProjects.length}）`);
 
 // 5) 重复同步应零变更
-const existingTabs = syncResult.toCreate.map((project, index) => ({
+const existingTabs = syncResult.toCreate.map((project: { path: string }, index: number) => ({
   id: `t-${index}`,
   workspacePath: project.path,
   projection: { deviceSessionId },

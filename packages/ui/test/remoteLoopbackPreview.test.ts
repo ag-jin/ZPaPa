@@ -16,13 +16,23 @@ import {
 const remote = { isRemoteWorkspace: true };
 const local = { isRemoteWorkspace: false };
 
+/**
+ * 取判定结果的远端端口，非隧道判定返回 null。
+ *
+ * 判别联合上直接读 `.remotePort` 会退化成 "两边都是 undefined 也算相等"，
+ * 断言永远为真 —— 必须先按 kind 收窄，取不到就是判定错了。
+ */
+function tunnelPort(target: ReturnType<typeof resolveRemoteLoopbackTarget>): number | null {
+  return target.kind === "remote-loopback" ? target.remotePort : null;
+}
+
 test("远程项目里的 127.0.0.1 需要隧道，并取到端口", () => {
   const result = resolveRemoteLoopbackTarget(
     "http://127.0.0.1:8901/aming-replica-6scenes.v2.html",
     remote,
   );
   assert.equal(result.kind, "remote-loopback");
-  assert.equal(result.remotePort, 8901, "端口取自 URL");
+  assert.equal(tunnelPort(result), 8901, "端口取自 URL");
 });
 
 test("本地项目里的回环不走隧道（服务就在本机）", () => {
@@ -41,7 +51,7 @@ test("localhost 与 IPv6 回环同样识别", () => {
   ]) {
     const result = resolveRemoteLoopbackTarget(url, remote);
     assert.equal(result.kind, "remote-loopback", `${url} 应识别为回环`);
-    assert.equal(result.remotePort, 3000, `${url} 端口应为 3000`);
+    assert.equal(tunnelPort(result), 3000, `${url} 端口应为 3000`);
   }
 });
 
@@ -61,8 +71,8 @@ test("非回环地址不走隧道（真实主机名/IP 本就该直连）", () =
 });
 
 test("未写端口时按协议默认端口", () => {
-  assert.equal(resolveRemoteLoopbackTarget("http://127.0.0.1/", remote).remotePort, 80);
-  assert.equal(resolveRemoteLoopbackTarget("https://127.0.0.1/", remote).remotePort, 443);
+  assert.equal(tunnelPort(resolveRemoteLoopbackTarget("http://127.0.0.1/", remote)), 80);
+  assert.equal(tunnelPort(resolveRemoteLoopbackTarget("https://127.0.0.1/", remote)), 443);
 });
 
 test("非 http(s) 协议不处理", () => {
