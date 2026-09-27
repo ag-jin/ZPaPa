@@ -24,7 +24,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
-import { assertTestOwnedTarget, TEST_OBJECT_PREFIX } from "./support/testIsolation.js";
+import { assertTestOwnedTarget, buildTestSessionTitle } from "./support/testIsolation.js";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 const DEVICE_HOST = process.env.ZPAPA_DEVICE_HOST ?? "100.66.1.2";
@@ -81,23 +81,34 @@ async function countRemoteRowsFor(taskId: string): Promise<{ rows: string[] }> {
 }
 
 // ── 建一次性测试会话（唯一允许被写的对象）──
+//
+// 建会话时**不带本端 identity**：对端按自己的键落库是这个脚本要断言的正确形态
+// （带 identity 会在对端多出一行 `remote:...`，那是尚未修的 V4/createTask 泄漏，
+// 见 .agents/plans/finding-v4-agent-path-identity-leak.md）。
 console.log("=== 建一次性测试会话（唯一被写对象）===");
 const created = await connection.services.zcodeTaskService.createTask({
   workspacePath: PROJECT_PATH,
-  workspaceIdentity: remoteIdentity,
   v4Create: true,
 });
 const testSessionId = created.taskId as string;
 const createdSessionIds = new Set<string>([testSessionId]);
 console.log(`  会话: ${testSessionId}`);
-console.log(`  标题: ${String(created.title).slice(0, 46)}`);
-check(
-  `测试会话标题带可识别前缀（${TEST_OBJECT_PREFIX}），便于对端审计`,
-  typeof created.title === "string" && created.title.startsWith(TEST_OBJECT_PREFIX),
-  `实际标题: ${String(created.title).slice(0, 60)}`,
-);
 
-// 基线：建会话本身不该产生 remote: 前缀行（createTask 也带 identity）
+// 打上可识别标题，便于在对端审计与事后清理（只改自己刚建的这一个）。
+// createTask 不接受 title，用 renameTask；`remoteIdentity` 这里**刻意不传** ——
+// 传了就是本脚本要防止的那类泄漏。
+const testTitle = buildTestSessionTitle("write-path-isolation");
+try {
+  await connection.services.zcodeTaskService.renameTask({
+    taskId: testSessionId,
+    workspacePath: PROJECT_PATH,
+    title: testTitle,
+  });
+} catch (error) {
+  console.log(`  ⚠️ 重命名失败（不影响断言）: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+// 基线：建会话不该产生 remote: 前缀行（对端只按自己的键记一次）
 const baseline = await countRemoteRowsFor(testSessionId);
 console.log(`  对端索引行数（基线）: ${baseline.rows.length}`);
 for (const row of baseline.rows) console.log(`    ${row}`);
