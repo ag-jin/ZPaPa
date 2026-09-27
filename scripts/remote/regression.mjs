@@ -138,6 +138,13 @@ const SUITES = [
   },
   {
     layer: 2,
+    id: "device-topology",
+    title: "设备侧 host/runtime 拓扑体检（双 host 分裂检测）",
+    cwd: ".",
+    file: "packages/desktop/test/acceptance-device-topology.ts",
+  },
+  {
+    layer: 2,
     id: "visibility-cross",
     title: "远程会话可见性（host Controller 全链路）",
     cwd: ".",
