@@ -84,7 +84,7 @@ async function countRemoteRowsFor(taskId: string): Promise<{ rows: string[] }> {
 //
 // 建会话时**不带本端 identity**：对端按自己的键落库是这个脚本要断言的正确形态
 // （带 identity 会在对端多出一行 `remote:...`，那是尚未修的 V4/createTask 泄漏，
-// 见 .agents/plans/finding-v4-agent-path-identity-leak.md）。
+// 见 .agents/plans/finding-cross-machine-identity-write-verification.md）。
 console.log("=== 建一次性测试会话（唯一被写对象）===");
 const created = await connection.services.zcodeTaskService.createTask({
   workspacePath: PROJECT_PATH,

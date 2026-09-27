@@ -73,6 +73,9 @@
   按用户约束「涉及对端写操作需显式确认」，未擅自实现。见工单 05。
 - **V4 agent 路径仍会透传本端 identity**（`remoteWorkspaceServiceCollection.ts:325`
   原样注册对端 agentService）。已记录在
-  `.agents/plans/finding-v4-agent-path-identity-leak.md`：影响是 B 的列表在会话
-  存活期间会多出一个 `remote:...` 命名的项目分组（B 自己的同步器会清掉）。
-  改动涉及 V4 会话建立核心参数，值得独立一轮 + 层 3 验证。
+  `.agents/plans/finding-cross-machine-identity-write-verification.md`：
+  实测到的 2 条泄漏行已定位为**测试脚本**的写法（`createTask` 传了 identity），
+  不是产品 UI 路径；脚本已修（层 3 改为不传并实测通过）。
+  产品 V4 路径是否泄漏**尚无证据**（对端对 `remote:` 前缀本就 fail-closed，
+  且远程 identity 进 workspace ref 是跨 workspace 分屏的设计语义）。
+  判定需要一次对端写验证，属需用户显式同意的操作。
