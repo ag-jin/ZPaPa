@@ -15,6 +15,17 @@ export function isAutomationCreateLimitError(error: unknown): boolean {
   return message.includes(AUTOMATION_CREATE_LIMIT_ERROR_CODE);
 }
 
+/**
+ * 绑定会话正在执行：定时派发不投递（既不排队也不插队），等会话空闲后重投；
+ * 用户显式「立即运行」不等待，直接以本码失败提示稍后重试。
+ */
+export const AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE = "AUTOMATION_BOUND_SESSION_BUSY";
+
+export function isAutomationBoundSessionBusyError(error: unknown): boolean {
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  return message.includes(AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE);
+}
+
 /** 整条 automation 的生命周期。 */
 export type ZCodeAutomationLifecycleStatus = "active" | "completed" | "failed" | "paused";
 

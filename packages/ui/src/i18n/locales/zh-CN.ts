@@ -4519,6 +4519,8 @@ const zhCN: Record<string, string> = {
   "chat.statusPanel.todoWaitingFold": "待处理 {count} 项",
   "chat.statusPanel.terminals": "终端",
   "chat.statusPanel.agents": "智能体",
+  // 会话右侧面板的定时任务区块：只列绑定到本会话的 automation，可快捷暂停/继续。
+  "chat.statusPanel.automations": "定时任务",
   // Workflows 分区：与 Terminals / Agents 并列的
   // 第三类实时活动。行内的状态词与步数复用 chat.toolCall.workflow.* 那一组，不另造词汇。
   "chat.statusPanel.workflows": "工作流",
@@ -6193,6 +6195,7 @@ const zhCN: Record<string, string> = {
   "automations.runNow": "立即运行",
   "automations.runNowQueued": "已触发，即将运行",
   "automations.runNowAlreadyRunning": "上一条正在运行中，请稍后再试",
+  "automations.runNowBoundSessionBusy": "目标会话正在执行，等它空闲后再试",
   "automations.runNowFailed": "触发运行失败",
   "automations.error.create": "创建失败，请重试",
   "automations.error.createLimit":

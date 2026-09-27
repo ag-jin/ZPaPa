@@ -18,7 +18,8 @@ export interface CronRunResultPayload {
   taskId?: string;
   sessionId?: string;
   error?: string;
-  failureKind?: "transient" | "permanent";
+  /** deferred=目标绑定会话正在执行：等待空闲后重投，不计入 transient 重试预算。 */
+  failureKind?: "transient" | "permanent" | "deferred";
 }
 
 /** host → main 的闲时任务派发结果（与 cron 消息独立）。 */

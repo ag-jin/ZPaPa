@@ -862,6 +862,7 @@ export const hostFeedbackLogArchiveRequestResponseSchema = z.object({
 });
 
 // host → main：定时任务派发结果。ok=已成功创建 session 且 prompt 已发出。
+// deferred=目标绑定会话正在执行，等待空闲后重投（新增第三态：不计重试预算，见 automationRepo.deferDispatch）。
 export const hostCronRunResultResponseSchema = z.object({
   type: z.literal("cron-run-result"),
   runId: nonEmptyStringSchema,
@@ -869,7 +870,7 @@ export const hostCronRunResultResponseSchema = z.object({
   taskId: z.string().optional(),
   sessionId: z.string().optional(),
   error: z.string().optional(),
-  failureKind: z.enum(["transient", "permanent"]).optional(),
+  failureKind: z.enum(["transient", "permanent", "deferred"]).optional(),
 });
 
 // host → main：闲时任务派发结果。ok=session 已确保存在且 prompt 已发出；迟到结果用 offPeakTaskId 兜底结算。

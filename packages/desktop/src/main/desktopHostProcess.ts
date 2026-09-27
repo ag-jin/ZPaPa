@@ -212,7 +212,7 @@ export function spawnHostProcess(
       taskId?: string;
       sessionId?: string;
       error?: string;
-      failureKind?: "transient" | "permanent";
+      failureKind?: "transient" | "permanent" | "deferred";
     }) => void;
     /** host → main：闲时任务派发结果，转交给 scheduler 结算（与 cron 独立）。 */
     onOffPeakRunResult?: (result: {

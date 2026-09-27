@@ -38,6 +38,12 @@ type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 export const DISPATCH_RETRY_BASE_MS = 30_000;
 export const DISPATCH_RETRY_CAP_MS = 15 * 60_000;
 export const DISPATCH_MAX_ATTEMPTS = 5;
+/**
+ * 等待型重投的固定间隔：目标绑定会话在执行，等它空闲再投。
+ * 比 transient 首次退避更短（用户就在看这个会话，会话一停就该提醒），
+ * 且不随次数放大——等待无上限，指数退避会让长任务的提醒越等越久。
+ */
+export const DEFERRED_RETRY_MS = 30_000;
 /** 认领超时回收：running=1 超过该时长仍未结算，视为持有者已崩溃，允许重新认领。 */
 export const CLAIM_STALE_MS = 10 * 60_000;
 
@@ -1046,6 +1052,35 @@ export class AutomationRepo {
       error: options.error,
       now,
     });
+  }
+
+  /**
+   * 等待型重投：目标绑定会话正在执行，本轮不投递也不失败。
+   *
+   * 与 transient 的关键差别是**不消耗重试预算**：dispatch_attempts 保持不变，
+   * 因此等待没有次数上限，长任务结束后提醒仍会到达（transient 达 5 次即放弃本轮，
+   * 会把"会话忙"这种正常等待误判成派发失败而丢提醒）。
+   *
+   * next_run_at 同样保持不变：scheduler 以它作为稳定 runId 的 scheduledAt，
+   * 复用同一条 automation_runs 台账；等真正投递成功后由 markDispatched 统一前推，
+   * 因此等待期间错过的多个周期收敛为一次执行。
+   *
+   * 不写 last_error：这是"等一等"，不是失败，设置页不应显示失败徽标。
+   */
+  async deferDispatch(automationId: string, options: { deferredAt: number }): Promise<void> {
+    await this.ensureReady();
+    this.getDatabase()
+      .prepare(
+        `UPDATE automations
+        SET dispatch_status = 'idle', retry_at = @retry_at,
+            running = 0, claimed_at = NULL, updated_at = @now
+        WHERE automation_id = @id`,
+      )
+      .run({
+        id: automationId,
+        retry_at: options.deferredAt + DEFERRED_RETRY_MS,
+        now: options.deferredAt,
+      });
   }
 
   /** 关机/退出时释放认领：清 running、保留 next_run_at，不记失败不推进。 */

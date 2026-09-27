@@ -4819,6 +4819,8 @@ const enUS: Record<string, string> = {
   "chat.statusPanel.todoWaitingFold": "{count} waiting",
   "chat.statusPanel.terminals": "Terminals",
   "chat.statusPanel.agents": "Agents",
+  // Session-scoped scheduled tasks: bound automations with inline pause/resume.
+  "chat.statusPanel.automations": "Scheduled tasks",
   "chat.statusPanel.workflows": "Workflows",
   "chat.statusPanel.runningStatusValue": "{count} in background",
   "chat.statusPanel.runningStatusValuePlural": "{count} in background",
@@ -6505,6 +6507,7 @@ const enUS: Record<string, string> = {
   "automations.runNow": "Run now",
   "automations.runNowQueued": "Triggered — starting soon",
   "automations.runNowAlreadyRunning": "A run is already in progress",
+  "automations.runNowBoundSessionBusy": "The bound session is running. Try again once it is idle.",
   "automations.runNowFailed": "Could not trigger run",
   "automations.error.create": "Could not create the task. Try again.",
   "automations.error.createLimit":

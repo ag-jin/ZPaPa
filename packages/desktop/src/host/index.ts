@@ -71,6 +71,10 @@ import {
   resolveOffPeakDispatchKind,
 } from "./offPeakDispatchPlan.js";
 import {
+  BoundSessionBusyError,
+  createBoundSessionExecutingProbe,
+} from "./boundSessionBusyGate.js";
+import {
   HostMessageTypes,
   HostResponseTypes,
   ZCODE_VERSION,
@@ -898,6 +902,23 @@ async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
   const workspaceKey = resolveWorkspaceKey(request);
   const trigger = request.runId.includes(":manual:") ? "manual" : "schedule";
   const scheduledAt = parseCronRunScheduledAt(request.runId, request.automationId);
+  // 绑定会话正在执行时不得投递：既不排队也不插队，交由调度器等待空闲后重投。
+  // 必须在 resumeTask / applyCronRunConfigToExistingTask 之前——setMode 没有活跃 turn
+  // 检查，先写配置再撞忙会把用户会话悄悄改成任务的权限模式（off-peak 的同款教训）。
+  if (request.targetTaskId) {
+    const agentService = targetServices.getOptional(IZCodeAgentService);
+    if (agentService) {
+      const executing = await createBoundSessionExecutingProbe({
+        agentService,
+        logWarn: (message, error) => logger.warn(message, error),
+      })({
+        sessionId: request.targetTaskId,
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+      });
+      if (executing) throw new BoundSessionBusyError(request.targetTaskId);
+    }
+  }
   try {
     const task = request.targetTaskId
       ? { taskId: request.targetTaskId }
@@ -2437,7 +2458,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           runId: msg.runId,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
-          failureKind: "transient",
+          // 绑定会话正在执行 ⇒ deferred：等待型重投，不消耗调度器的重试预算，
+          // 避免长任务期间提醒被 transient 上限（5 次）判死而丢弃。
+          failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
         });
       }
     })();

@@ -17,7 +17,12 @@ function statusFromZCodeSession(
   return undefined;
 }
 
-function hasBlockingActiveSnapshotRuntime(snapshot: ZCodeSessionStateSnapshot): boolean {
+/**
+ * 会话当前是否存在真实阻塞运行态（正在执行一轮 turn / 等待权限 / 有在跑的工具调用）。
+ * 这是仓库唯一的「会话忙」判据：任务状态派生与定时任务的空闲门控都必须读它，
+ * 不能各自另立一套（否则同一会话在两处会有不同结论）。
+ */
+export function hasBlockingActiveSnapshotRuntime(snapshot: ZCodeSessionStateSnapshot): boolean {
   if (snapshot.runtime.activeTurnId || snapshot.runtime.activeTurnKind) {
     return true;
   }

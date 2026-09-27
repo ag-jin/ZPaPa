@@ -100,6 +100,7 @@ import {
   buildConversationGoalIterationSummaries,
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
+import { SessionAutomationsStatusSection } from "@/v4/SessionAutomationsStatusSection.js";
 
 interface ConversationStatusPanelProps {
   workspacePath: string;
@@ -2054,6 +2055,22 @@ function ConversationStatusPanelImpl({
                 onOpenSubagentDirectory={onOpenSubagentDirectory}
               />
             ) : null}
+            {/* 绑定到本会话的定时任务：面板自身在无绑定时返回 null，因此这里无需额外开门条件。
+                separated 只需看前面是否有区块渲染过——本区块渲染即代表后面还有内容。 */}
+            <SessionAutomationsStatusSection
+              sessionId={parentSessionId ?? rootSessionId}
+              workspacePath={workspacePath}
+              workspaceIdentity={workspaceIdentity}
+              separated={
+                canRenderGit ||
+                canRenderGoal ||
+                canRenderSessionPlans ||
+                canRenderPlan ||
+                canRenderTerminals ||
+                canRenderWorkflows ||
+                canRenderAgents
+              }
+            />
           </div>
         ) : null}
         <div

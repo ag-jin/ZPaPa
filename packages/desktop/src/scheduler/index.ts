@@ -22,6 +22,7 @@ import {
   type ZCodeOffPeakTask,
 } from "@zcode/shared";
 import type { MainToSchedulerMessage, SchedulerToMainMessage } from "./schedulerProtocol.js";
+import { isMissedTriggerWindow } from "./misfireDecision.js";
 import { settleManualClaimForDispatchResult } from "./manualClaimRelease.js";
 import { settleOffPeakDispatchResult } from "./offPeakDispatchSettlement.js";
 import {
@@ -133,11 +134,15 @@ async function handleClaimed(automation: ZCodeAutomation, now: number): Promise<
     workspacePath: automation.workspacePath,
     workspaceIdentity: automation.workspaceIdentity,
   });
-  const isRetry = automation.dispatchAttempts > 0;
-
-  // misfire：首轮（非重试）且计划触发时间已远早于 now → 认定错过窗口，跳过不补跑。
-  const missed =
-    !isRetry && automation.nextRunAt != null && automation.nextRunAt <= now - MISFIRE_GRACE_MS;
+  // misfire：计划触发时间已远早于 now 且本轮未被接受 → 认定错过窗口，跳过不补跑。
+  // 等待重投（retry_at 非空，含等待绑定会话空闲的 deferred）不算错过，见 misfireDecision。
+  const missed = isMissedTriggerWindow({
+    nextRunAt: automation.nextRunAt,
+    retryAt: automation.retryAt,
+    dispatchAttempts: automation.dispatchAttempts,
+    now,
+    graceMs: MISFIRE_GRACE_MS,
+  });
   if (missed) {
     // 纯一次性任务（如 delayMinutes 落成的 minute scheduleRule）错过窗口后，
     // 通用重算会给出 anchorAt + k*interval 的下一周期，让“只跑一次”的提醒在后续周期
@@ -303,6 +308,22 @@ async function settleDispatchResult(
     return;
   }
 
+  const kind = msg.failureKind ?? "transient";
+  if (trigger !== "manual" && kind === "deferred") {
+    // 等待型重投：目标绑定会话正在执行。既不投递也不判失败，保持 next_run_at 与重试预算
+    // 不变，等会话空闲后由下一轮 tick 按 retry_at 重新认领同一条 run。
+    //
+    // 必须放在 markRunDispatch 之前：那次写入会把 run 记成 failed_to_dispatch，
+    // 而运行历史把该状态显示为「失败」——等待不是失败，台账应保持 claimed（进行中）。
+    // manual run 不进入等待队列（用户要的是立刻执行）：下面按失败结算。
+    await repo.deferDispatch(automationId, { deferredAt: now });
+    log(
+      "info",
+      `defer automation dispatch (bound session busy) automation=${automationId} runId=${msg.runId}`,
+    );
+    return;
+  }
+
   await repo.markRunDispatch({
     runId: msg.runId,
     dispatchStatus: "failed_to_dispatch",
@@ -312,7 +333,6 @@ async function settleDispatchResult(
     await settleManualClaim(false);
     return;
   }
-  const kind = msg.failureKind ?? "transient";
   await repo.markDispatchFailed(automationId, {
     failedAt: now,
     error: msg.error ?? "dispatch failed",

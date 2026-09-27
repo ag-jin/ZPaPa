@@ -4,6 +4,7 @@ import {
   AUTOMATION_CREATE_LIMIT,
   AUTOMATION_CREATE_LIMIT_ERROR_CODE,
   isAutomationCreateLimitError,
+  isAutomationBoundSessionBusyError,
   type ZCodeAutomation,
   type ZCodeAutomationRun,
   type ZCodeAutomationScheduleRule,
@@ -22,7 +23,7 @@ export interface AutomationRunsEntry {
   error?: string;
 }
 
-export type AutomationRunNowResult = "queued" | "duplicate" | "failed";
+export type AutomationRunNowResult = "queued" | "duplicate" | "failed" | "boundSessionBusy";
 
 export interface CreateAutomationInput {
   title: string;
@@ -442,6 +443,12 @@ export const useAutomationManagementStore = create<AutomationManagementState>((s
       });
       return "queued";
     } catch (error) {
+      // 绑定会话正在执行：manual run 刻意不进入等待队列（用户要的是立刻执行），
+      // 单独分类以便提示"稍后重试"而不是笼统的失败。
+      if (isAutomationBoundSessionBusyError(error)) {
+        logger.warn("[automations] runNow blocked by busy bound session", { automationId });
+        return "boundSessionBusy";
+      }
       logger.error("[automations] runNow failed", {
         automationId,
         error: toMessage(error),
