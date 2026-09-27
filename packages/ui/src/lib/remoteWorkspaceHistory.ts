@@ -406,6 +406,15 @@ export function buildPersistedWorkspaceSessionEntries(
       return entries;
     }
 
+    // 设备投射条目（含断开态）绝不持久化：它们代表**另一台设备**上的项目，
+    // 写进 lastWorkspaceSession 就等于投射端留存了设备项目痕迹，违反 ADR 0001
+    // 决策 1 与「只保留连接入口」。断开态尤其危险 —— 它没有 remoteSessionId，
+    // 若不显式拦下会掉进下面的 local 分支被当成"本机项目"写盘，下次启动凭空
+    // 多出若干指向对端路径的本地条目。重连入口由 remote-devices.json 承担。
+    if (tab.projection) {
+      return entries;
+    }
+
     if (hasRemoteWorkspaceIdentity(tab)) {
       const workspaceKey = buildWorkspaceSessionKey(tab);
       const remoteEntry = remoteSessionsByWorkspaceKey.get(workspaceKey);

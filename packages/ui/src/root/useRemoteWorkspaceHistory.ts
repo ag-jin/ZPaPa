@@ -32,9 +32,14 @@ import {
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
 import {
+  buildProjectedProjectList,
+  createDeviceAccess,
+} from "@/lib/remoteDeviceAccess.js";
+import {
   computeProjectionSync,
   filterProjectsByVisibility,
   findOrphanProjectionTabs,
+  markProjectionTabsDisconnected,
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
@@ -1059,8 +1064,36 @@ export function useRemoteWorkspaceHistory({
     [canUseRemoteWorkspace, connectRemoteWorkspaceTarget],
   );
 
+  // reconnectRemoteDevice 的 ref：它在本 hook 里声明得更晚（设备级通路依赖较多），
+  // 而侧边栏重连需要复用它（投射条目不进 lastWorkspaceSession，走不了按 key 重连）。
+  const reconnectRemoteDeviceRef = useRef<(
+    target: Parameters<IPlatformService["connectRemote"]>[0],
+  ) => Promise<unknown>>(null);
+
   const handleReconnectRemoteWorkspace = useCallback(
     async (workspaceKey: string, options?: ReconnectRemoteWorkspaceOptions) => {
+      // 设备投射条目优先：它们是 transient，**不在** lastWorkspaceSession 里
+      // （ADR 0001 决策 1），按 key 查 session 必然查不到。但它们带着设备的
+      // remoteTarget —— 点击即重连整台设备（规格 US 4：不用去设置页翻找）。
+      const projectedTab = tabStoreApi
+        .getState()
+        .tabs.filter(isWorkspaceTab)
+        .find(
+          (tab) =>
+            buildWorkspaceSessionKey(tab) === workspaceKey &&
+            tab.projection != null &&
+            tab.remoteTarget != null,
+        );
+      if (projectedTab?.remoteTarget) {
+        // 设备投射条目是 transient，**不在** lastWorkspaceSession 里（ADR 0001
+        // 决策 1），按 key 查 session 必然查不到。它们带着设备的 remoteTarget ——
+        // 点击即重连整台设备（规格 US 4：不用去设置页翻找）。
+        // 走 reconnectRemoteDevice（连接 + 重新投射项目清单）；它在本 hook 里
+        // 声明得更晚，经 ref 调用避免 TDZ。
+        await reconnectRemoteDeviceRef.current?.(projectedTab.remoteTarget);
+        return;
+      }
+
       await reconnectRemoteWorkspaceByKey({
         workspaceKey,
         canUseRemoteWorkspace,
@@ -1135,18 +1168,11 @@ export function useRemoteWorkspaceHistory({
             isWorkspaceTab(tab) && tab.remoteSessionId === sessionId,
         );
 
-      // 投射条目归属该 session 时，断开即移除（ADR 0001：投射端不留设备项目痕迹）。
-      // 必须放在 matchedTabs 的早退之前 —— 设备级连接的投射条目虽然带 remoteSessionId，
-      // 但真正承载会话的是它们自己；一旦早退返回，这些条目就再也没人清理，
-      // 且 session 注销后 deviceSessionId 无从反查，会永久留在侧边栏。
-      const projectedTabIds = tabStoreApi
-        .getState()
-        .tabs.filter(isWorkspaceTab)
-        .filter((tab) => tab.projection?.deviceSessionId === sessionId)
-        .map((tab) => tab.id);
-      for (const tabId of projectedTabIds) {
-        tabStoreApi.getState().closeTab(tabId);
-      }
+      // session 关闭时把投射条目**降级为断开态**（灰显供重连，规格 US 4/5/17），
+      // 而不是删除 —— 删除会让用户彻底失去入口，只能回设置页翻找。
+      // 必须放在 matchedTabs 的早退之前：设备连接的投射条目虽然带 remoteSessionId，
+      // 但它们不走任何 workspace tab 的常规关闭路径，早退后就再没人处理。
+      markProjectionTabsDisconnected(tabStoreApi, sessionId);
 
       if (matchedTabs.length === 0) {
         unregisterRemoteWorkspaceSession(sessionId);
@@ -1426,17 +1452,20 @@ export function useRemoteWorkspaceHistory({
       if (!session) {
         throw new Error("远程设备已连接，但未取得其服务访问面");
       }
-      // 同一台设备重连会拿到新的 sessionId，而上一代 session 仍在册
-      // （host 侧不会自动回收）。不在此时清掉的话，它的投射条目既不会被复用、
-      // 也不会被回收 —— 实测连续连接 2 次后出现 20 个投射项（同一批 10 个项目两份）。
-      // 判据：投射条目的 deviceSessionId 已不是当前 session，且**指向同一台设备**。
-      // 用 target 相等来确认是同一台设备，避免误清同时连接的另一台设备的投射。
+      // 同一台设备的**上一代活跃**投射要清掉：重连会换新的 sessionId，旧代条目
+      // 若留着会与新代并存（实测连接 2 次出现 20 个投射项，同一批项目两份），
+      // 且其 session 已注销、dispose 也够不到。
+      //
+      // 但**断开态**条目（remoteSessionId 为空）必须保留 —— 它们是侧边栏的
+      // 重连入口（规格 US 4/5/17），syncProjection 会把它们升回连接态。
       const staleProjectionTabs = tabStoreApi
         .getState()
         .tabs.filter(isWorkspaceTab)
         .filter((tab) => {
           const owner = tab.projection?.deviceSessionId;
           if (!owner || owner === sessionId) return false;
+          // 断开态：保留，等 syncProjection 复用。
+          if (!tab.remoteSessionId) return false;
           const ownerSession = getRemoteWorkspaceSession(owner);
           if (!ownerSession) return true;
           // 同一台设备的旧代：同 kind 同 host（WSL/Docker 无 host，退回 kind 比较）。
@@ -1471,11 +1500,39 @@ export function useRemoteWorkspaceHistory({
         syncProjection: (deviceProjects: readonly ProjectedProject[]) => {
           const tabStore = tabStoreApi.getState();
           const tabs = tabStore.tabs.filter(isWorkspaceTab);
-          // 先清掉**孤儿**投射条目（其设备 session 已注销）：同一台设备重连会换新的
-          // deviceSessionId，旧条目既不会被复用也不会被移除，dispose 也够不到它们，
-          // 于是每重连一次就多留一组孤儿 tab（实测：2 次连接 → 20 个投射项）。
+          // 复用断开态的投射条目而不是关掉重建：断开后条目仍在侧边栏（灰显供
+          // 重连，规格 US 4/5/17），重连时应把它们**升回连接态**，这样用户的
+          // 展开态与列表位置不变，也不会闪一下消失再出现。
+          // 判据用 projection 存在 + 路径匹配 + 当前无 session（断开态）。
+          const disconnectedByPath = new Map(
+            tabs
+              .filter((tab) => tab.projection != null && !tab.remoteSessionId)
+              .map((tab) => [tab.workspacePath, tab] as const),
+          );
+          const adoptedTabIds = new Set<string>();
+          for (const project of deviceProjects) {
+            const reusable = disconnectedByPath.get(project.path);
+            if (reusable) {
+              adoptedTabIds.add(reusable.id);
+            }
+          }
+          if (adoptedTabIds.size > 0) {
+            tabStoreApi.setState((state) => ({
+              tabs: state.tabs.map((tab) =>
+                adoptedTabIds.has(tab.id) && isWorkspaceTab(tab)
+                  ? {
+                      ...tab,
+                      remoteSessionId: sessionId,
+                      remoteTarget: target,
+                      projection: { deviceSessionId: sessionId },
+                    }
+                  : tab,
+              ),
+            }));
+          }
+          // 其余已失效的旧代条目（设备已无该项目或不可见）照旧清掉。
           const orphanTabIds = findOrphanProjectionTabs({
-            tabs,
+            tabs: tabStoreApi.getState().tabs.filter(isWorkspaceTab),
             currentSessionId: sessionId,
             isSessionRegistered: (id) => Boolean(getRemoteWorkspaceSession(id)),
           });
@@ -1486,6 +1543,10 @@ export function useRemoteWorkspaceHistory({
             .getState()
             .tabs.filter(isWorkspaceTab)
             .filter((tab) => tab.projection?.deviceSessionId === sessionId);
+          // 差异比较要用**完整期望清单**（含刚认领的），不能只传 stillToCreate:
+          // 认领后的条目已在 existingTabs 里，若期望清单缺了它们，computeProjectionSync
+          // 会判定"设备已无该项目"而把它们移除 —— 实测表现为重连后条目全没
+          // （日志 adopted:3 紧接 removed:3、remainingProjections:0）。
           const { toCreate, toRemoveTabIds } = computeProjectionSync({
             deviceSessionId: sessionId,
             deviceProjects,
@@ -1495,23 +1556,39 @@ export function useRemoteWorkspaceHistory({
             tabStoreApi.getState().closeTab(tabId);
           }
           for (const project of toCreate) {
-            // 不设 workspaceIdentity：投射条目是 transient（ADR 0001 决策 2「不绑定工作目录」），
-            // 带 identity 会把它变成"常规远程 workspace"，与 ADR 冲突。
+            // 带 remoteTarget：断开降级后条目要靠它被识别为 remote workspace
+            // （见 WorkspaceSidebarItem 的 isRemoteWorkspace 判定），从而显示
+            // 灰显与重连入口（规格 US 4/5/17）。仍不设 workspaceIdentity ——
+            // 投射条目是 transient、不绑定工作目录（ADR 0001 决策 2）。
             addTab(project.path, {
               remoteSessionId: sessionId,
+              remoteTarget: target,
               projection: { deviceSessionId: sessionId },
             });
           }
-          return { created: toCreate.length, removed: toRemoveTabIds.length + orphanTabIds.length };
+          logger.info("[remoteDevice] 投射同步完成", {
+            incoming: deviceProjects.length,
+            adopted: adoptedTabIds.size,
+            created: toCreate.length,
+            removed: toRemoveTabIds.length,
+            orphans: orphanTabIds.length,
+            remainingProjections: tabStoreApi
+              .getState()
+              .tabs.filter(isWorkspaceTab)
+              .filter((tab) => tab.projection != null).length,
+          });
+          return {
+            created: toCreate.length,
+            adopted: adoptedTabIds.size,
+            removed: toRemoveTabIds.length + orphanTabIds.length,
+          };
         },
         dispose: () => {
-          // 断开时移除本设备的全部投射条目：投射端不保留设备项目的痕迹。
-          const tabs = tabStoreApi.getState().tabs.filter(isWorkspaceTab);
-          for (const tab of tabs) {
-            if (tab.projection?.deviceSessionId === sessionId) {
-              tabStoreApi.getState().closeTab(tab.id);
-            }
-          }
+          // 断开时把投射条目降级为「断开态」而不是删除：规格 User Story 4/5/17
+          // 要求断开后仍能看到设备条目（灰显）并点击重连，不必回设置页翻找。
+          // 降级 = 清掉 remoteSessionId（产品既有的断连态渲染据此判定），
+          // 保留 projection.deviceSessionId 作为"这是设备投射条目"的稳定标记。
+          markProjectionTabsDisconnected(tabStoreApi, sessionId);
           unregisterRemoteWorkspaceSession(sessionId);
           void platform.disposeRemoteSession(sessionId).catch(() => undefined);
         },
@@ -1523,6 +1600,74 @@ export function useRemoteWorkspaceHistory({
       waitForRemoteWorkspaceSessionReady,
     ],
   );
+
+  /** 读设备配置里的项目显示偏好（键为设备上的项目路径）。 */
+  const readDeviceVisibleProjects = useCallback(async () => {
+    const deviceConfigService = (
+      services as {
+        remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+      }
+    ).remoteDeviceConfigService;
+    if (!deviceConfigService) return undefined;
+    try {
+      const devices = await deviceConfigService.list();
+      return devices[0]?.visibleProjects;
+    } catch {
+      return undefined;
+    }
+  }, [services]);
+
+  /**
+   * 重连设备并重新投射项目清单（侧边栏点断开态条目走这条）。
+   *
+   * 与 connectRemoteDevice 的区别：那个只建连接，调用方自己决定怎么用；
+   * 这里是「用户点了重连」的完整动作 —— 连接 + 读设备项目 + 按显示偏好投射。
+   * 漏掉投射这步会表现为"点了重连，条目全没了"（连接建立了但侧边栏空无一物）。
+   */
+  const reconnectRemoteDevice = useCallback(
+    async (target: Parameters<IPlatformService["connectRemote"]>[0]) => {
+      const result = await connectRemoteDevice(target);
+      if (!result?.syncProjection) return result;
+      try {
+        // 必须带 remoteDeviceProjectsService：只传 services 时 settingService
+        // 落到本机实现（远端 workspace 语义刻意如此），会读到 **A 自己的**
+        // recentProjects，把本地项目当成设备项目投射出来
+        // （实测踩到：重连后侧边栏冒出 /Users/... 的本机路径）。
+        const deviceProjectsService = (
+          result.services as {
+            remoteDeviceProjectsService?: Parameters<
+              typeof createDeviceAccess
+            >[0]["remoteDeviceProjectsService"];
+          }
+        ).remoteDeviceProjectsService;
+        const access = await createDeviceAccess({
+          zcodeTaskService: result.services.zcodeTaskService,
+          settingService: result.services.settingService,
+          ...(deviceProjectsService ? { remoteDeviceProjectsService: deviceProjectsService } : {}),
+        });
+        const [registeredProjects, tasks] = await Promise.all([
+          access.access.listRegisteredProjects(),
+          access.access.listAllTasks(),
+        ]);
+        const projectList = buildProjectedProjectList({ registeredProjects, tasks });
+        // 尊重用户的显示偏好：被关掉的项目不重新投射。偏好存在设备配置里
+        // （remote-devices.json 的 visibleProjects），这里实时读一次 ——
+        // 重连发生在设置页之外（侧边栏），拿不到那边的组件 state。
+        const visible = await readDeviceVisibleProjects();
+        result.syncProjection(
+          visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
+        );
+      } catch (error) {
+        logger.warn("[remoteDevice] 重连后投射清单失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return result;
+    },
+    [connectRemoteDevice, readDeviceVisibleProjects],
+  );
+
+  reconnectRemoteDeviceRef.current = reconnectRemoteDevice;
 
   return {
     remoteWorkspaceSessions,

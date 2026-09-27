@@ -49,7 +49,13 @@ export interface WorkspaceTabState extends TabState {
    * 存在该标记时渲染层需要区分来源（图标/颜色）。
    */
   projection?: {
-    /** 被投射设备的连接标识（用于断开时批量清理）。 */
+    /**
+     * 被投射设备的连接标识（用于识别同代条目、批量清理）。
+     *
+     * 断开后**保留原值**（指向已注销的 session）—— 它是"这条目属于设备投射"
+     * 的稳定标记，也是重连时找回这批条目的线索。是否断开由 `remoteSessionId`
+     * 缺失判定，与产品既有断连态渲染口径一致（见 WorkspaceSidebarItem）。
+     */
     deviceSessionId: string;
   };
 }

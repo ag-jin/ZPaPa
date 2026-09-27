@@ -17,6 +17,18 @@ import {
 const deviceSessionId = "device-session-1";
 
 function projectionTab(id: string, path: string, deviceId = deviceSessionId) {
+  // remoteSessionId 非空 = 「上一代活跃条目」（会被回收）；
+  // 为空 = 「断开态条目」（保留作重连入口，规格 US 4/5/17）。
+  return {
+    id,
+    workspacePath: path,
+    remoteSessionId: deviceId,
+    projection: { deviceSessionId: deviceId },
+  };
+}
+
+/** 断开态条目：已降级为侧边栏的重连入口。 */
+function disconnectedProjectionTab(id: string, path: string, deviceId = deviceSessionId) {
   return { id, workspacePath: path, projection: { deviceSessionId: deviceId } };
 }
 
@@ -119,7 +131,7 @@ test("非投射条目（常规 workspace tab）不参与同步", () => {
  * 按两个 deviceSessionId 各存一份。旧条目的 session 已注销，按当前 session
  * 过滤看不见、dispose 也够不到，于是每次重连都多留一组。
  */
-test("设备重连后，上一代（session 已注销）的投射条目被识别为孤儿", () => {
+test("设备重连后，上一代**活跃**（session 已注销）的投射条目被识别为孤儿", () => {
   const orphans = findOrphanProjectionTabs({
     tabs: [
       projectionTab("tab-old-1", "/p/one", "dead-session"),
@@ -188,4 +200,37 @@ test("按 target 找到在册的设备 session", () => {
     "同主机不同用户不匹配（是不同账户的设备）",
   );
   assert.equal(findDeviceSessionId(sessions, null), undefined, "未配置设备时不匹配");
+});
+
+
+/**
+ * 断开态条目必须被保留 —— 它们是侧边栏的重连入口（规格 US 4/5/17）。
+ *
+ * 事故背景：点重连后侧边栏条目全没了。原因是孤儿判定只看 deviceSessionId
+ * 是否在册，而断开态条目的 session 必然已注销 —— 于是重连时把它们当旧代清掉，
+ * 新代又还没建，出现"重连后空无一物"。
+ */
+test("断开态投射条目不算孤儿（它们是重连入口）", () => {
+  const orphans = findOrphanProjectionTabs({
+    tabs: [
+      disconnectedProjectionTab("tab-disconnected-1", "/p/one", "dead-session"),
+      disconnectedProjectionTab("tab-disconnected-2", "/p/two", "dead-session"),
+    ],
+    currentSessionId: deviceSessionId,
+    // 两个旧 session 都不在册 —— 但断开态条目不该因此被清掉。
+    isSessionRegistered: (id) => id === deviceSessionId,
+  });
+  assert.deepEqual(orphans, [], "断开态条目必须保留供用户点击重连");
+});
+
+test("同一批里断开态保留、旧代活跃条目回收", () => {
+  const orphans = findOrphanProjectionTabs({
+    tabs: [
+      projectionTab("tab-stale-active", "/p/one", "dead-session"),
+      disconnectedProjectionTab("tab-disconnected", "/p/two", "dead-session"),
+    ],
+    currentSessionId: deviceSessionId,
+    isSessionRegistered: (id) => id === deviceSessionId,
+  });
+  assert.deepEqual(orphans, ["tab-stale-active"], "只回收旧代活跃条目，保留重连入口");
 });

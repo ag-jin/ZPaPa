@@ -68,7 +68,10 @@ import {
 import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources.js";
 import { RemoteDeviceManagementSection } from "@/settings/RemoteDeviceManagementSection.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
-import { findDeviceSessionId } from "@/lib/remoteDeviceProjection.js";
+import {
+  findDeviceSessionId,
+  markProjectionTabsDisconnected,
+} from "@/lib/remoteDeviceProjection.js";
 import {
   unregisterRemoteWorkspaceSession,
   useRemoteWorkspaceSessionStore,
@@ -1332,15 +1335,10 @@ export function SettingsPage({
       return;
     }
     // 设置页卸载重开后 ref 已丢，但 session 还活着：按在册 session 释放。
-    // 注意顺序 —— 先把该设备的投射条目清掉再注销 session：注销后按
-    // deviceSessionId 就再也定位不到它们了（会永久留在侧边栏）。
+    // 投射条目降级为断开态（灰显供重连，见规格 US 4/5/17），不删除 ——
+    // 删除会让用户断开后彻底失去入口，只能回设置页翻找。
     if (liveDeviceSessionId) {
-      const store = tabStoreApiRef.current;
-      for (const tab of store.getState().tabs) {
-        if (isWorkspaceTab(tab) && tab.projection?.deviceSessionId === liveDeviceSessionId) {
-          store.getState().closeTab(tab.id);
-        }
-      }
+      markProjectionTabsDisconnected(tabStoreApiRef.current, liveDeviceSessionId);
       unregisterRemoteWorkspaceSession(liveDeviceSessionId);
       void platform.disposeRemoteSession(liveDeviceSessionId).catch(() => undefined);
     }

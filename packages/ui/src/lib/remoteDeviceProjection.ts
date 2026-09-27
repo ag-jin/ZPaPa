@@ -8,7 +8,14 @@
  * 投射条目是内存态。若走持久化，就必须在断开/重连/异常退出时维护清理，
  * 状态一致性成本高且容易残留过期项目。
  */
-import type { WorkspaceTabState } from "@/store/tabStore.js";
+import type { WindowTabState, WorkspaceTabState } from "@/store/tabStore.js";
+
+/** tab 是否为 workspace 条目（与 store 的 isWorkspaceTab 同义）。
+ * 本地内联而不从 store 引入运行时值：本模块是纯函数、被单测直接 import，
+ * 引入 store 会连带整套 store 依赖，单测环境解析不了 "@/..." 别名。 */
+function isWorkspaceTab(tab: WindowTabState): tab is WorkspaceTabState {
+  return tab.kind === "workspace";
+}
 
 export interface ProjectedProject {
   readonly path: string;
@@ -72,7 +79,7 @@ export function computeProjectionSync(params: {
  */
 export function findOrphanProjectionTabs(params: {
   /** 投射端当前全部 workspace tab。 */
-  tabs: readonly Pick<WorkspaceTabState, "id" | "projection">[];
+  tabs: readonly Pick<WorkspaceTabState, "id" | "projection" | "remoteSessionId">[];
   /** 本次同步对应的 session（它自己的条目不算孤儿）。 */
   currentSessionId: string;
   /** 判定某个 session 是否仍在册。 */
@@ -82,6 +89,10 @@ export function findOrphanProjectionTabs(params: {
   for (const tab of params.tabs) {
     const owner = tab.projection?.deviceSessionId;
     if (!owner || owner === params.currentSessionId) continue;
+    // 断开态条目不是孤儿：它已被降级为侧边栏的重连入口（规格 US 4/5/17），
+    // 其 owner session 当然已注销 —— 正是靠这一条与"上一代活跃条目"区分开。
+    // 不认识这点会把重连入口连同旧代一起清掉（实测：点重连后条目全没了）。
+    if (!tab.remoteSessionId) continue;
     if (!params.isSessionRegistered(owner)) orphans.push(tab.id);
   }
   return orphans;
@@ -132,4 +143,41 @@ export function findDeviceSessionId(
     return session.sessionId;
   }
   return undefined;
+}
+
+/**
+ * 断开时把设备投射条目降级为「断开态」，而不是删除。
+ *
+ * 规格 User Story 4/5/17：断开后仍要能看到设备条目（灰显）并**点击重连**，
+ * 不必回设置页翻找。产品既有的断连态渲染以「是 remote workspace 但
+ * remoteSessionId 为空」判定（见 WorkspaceSidebarItem），因此降级 = 清掉
+ * remoteSessionId，保留 projection 标记（重连时靠它找回这批条目）。
+ *
+ * 注意：不删除也不新建 tab —— 保留条目让用户的展开态与位置不变。
+ */
+export function markProjectionTabsDisconnected(
+  store: TabStoreApiLike,
+  deviceSessionId: string,
+): number {
+  const matched = store.getState().tabs.filter(
+    (tab) => isWorkspaceTab(tab) && tab.projection?.deviceSessionId === deviceSessionId,
+  );
+  if (matched.length === 0) return 0;
+  const ids = new Set(matched.map((tab) => tab.id));
+  store.setState((state) => ({
+    tabs: state.tabs.map((tab) =>
+      ids.has(tab.id) && isWorkspaceTab(tab) ? { ...tab, remoteSessionId: undefined } : tab,
+    ),
+  }));
+  return matched.length;
+}
+
+/**
+ * 只取本模块需要的 store 面，便于纯函数测试替身。
+ *
+ * 结构类型而非 import TabStore：避免 lib 层依赖 store 的完整实现面。
+ */
+interface TabStoreApiLike {
+  getState(): { tabs: WindowTabState[] };
+  setState(updater: (state: { tabs: WindowTabState[] }) => { tabs: WindowTabState[] }): void;
 }
