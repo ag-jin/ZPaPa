@@ -6,7 +6,7 @@
 
 **Blocked by:** 02（设备级连接）
 
-**Status:** 进行中（判定层已完成并测试；host 接线待做）
+**Status:** 实现完成（六层链路已打通，隧道经实测可取到对端回环页面）
 
 ## 背景
 
@@ -26,13 +26,13 @@ A 的当前 workspace 是 B 的项目时，会话里跑起来的预览服务（d
 
 ## 验收
 
-- [ ] 在 B 的项目里打开 `http://127.0.0.1:<port>/...` 自动经隧道加载
-- [ ] 地址栏仍显示原 URL（用户视角地址不变）
-- [ ] 同一端口复用隧道（不每次新建）；不同端口各自独立
-- [ ] 本地项目里访问回环**不受影响**（仍打本机）
-- [ ] 连接断开时隧道随之清理，不残留监听
-- [ ] 隧道建立失败时给出明确提示（而非静默空白页）
-- [x] 只有远程 workspace 才启用 —— `resolveRemoteLoopbackTarget` 已实现并测试；非 SSH 形态按能力探测退化待接线时验证
+- [x] 在 B 的项目里打开 `http://127.0.0.1:<port>/...` 自动经隧道加载 —— 判定层（`resolveRemoteLoopbackTarget`）在归一化后拦截、经 `resolveLoopbackUrl` 换隧道地址；宿主链路经 acceptance-loopback-tunnel.ts 实测（A 本地端口 → B 回环，HTTP 200 / 12.5MB）
+- [x] 地址栏仍显示原 URL —— `onUrlChange`/`setAddressValue` 传归一化后的原 URL，只有实际 `loadURL` 用隧道地址
+- [x] 同端口复用 —— Controller 按 `workspaceKey\0remotePort` 缓存（`loopbackTunnels`），命中即返回既有 localPort
+- [x] 本地项目不受影响 —— 用 `useWorkspaceServicesResolution().isRemoteTarget` 判定；非远程时 resolver 直接返回原 URL
+- [x] 随 attachment 生命周期清理 —— 隧道存在 Controller 私有 Map，`dispose()` 统一释放（ssh-backend 侧 `server.close()` + 断开已建转发）
+- [x] 失败给出明确提示 —— resolver 抛错后由 `openUrl` 的既有加载失败路径呈现；同时 warn 日志带 remotePort 与原因
+- [x] 只有远程 workspace 才启用；非 SSH 形态按能力探测退化 —— `capabilities?.openTcpTunnel` 缺失时宿主 `openTunnel` 返回 null，Controller 抛「对端不支持回环隧道」
 
 ## 设计要点
 

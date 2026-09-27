@@ -8,11 +8,11 @@
 
 依据：实测单个会话可能有数百条消息与数千内容片段（一个真实会话有 593 条助手消息、2792 个内容片段），一次性全量拉取既慢又占内存。
 
-- [ ] 打开会话时先显示最近内容，即可查看与继续对话
-- [ ] 向上滚动时分段加载更早历史
-- [ ] 加载过程不阻塞提交框的交互
-- [ ] 已加载区间不重复拉取
-- [ ] 验证：分段拉取返回的区间正确，与全量内容一致
+- [x] 打开会话时先显示最近内容 —— v4 协议 `snapshotTailWindowRows: 60` 首屏窗口（既有实现）
+- [x] 向上滚动时分段加载更早历史 —— `conversationProjectionStore.loadOlder()` → `rowsRange(beforeRowId, limit)`，单次上限 `rowsRangeMaxLimit: 200`
+- [x] 加载过程不阻塞提交框 —— `loadOlder` 只置 `loadingOlder` 标志，不阻塞输入；失败留待下次触发重试
+- [x] 已加载区间不重复拉取 —— `mergeOlderRows` 按 rowId 去重合并；`loadOlder` 有 `loadingOlder` 单飞保护
+- [x] 验证区间正确并与全量一致 —— acceptance-tail-parts-ordering.ts 覆盖 8 会话 × 7 种窗口共 56 项断言（尾部顺序一致 + 窗口内 parts 完整）
 
 
 ## 实施记录（2026-09-27）

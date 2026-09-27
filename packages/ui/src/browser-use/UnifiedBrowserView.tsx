@@ -63,6 +63,7 @@ export function UnifiedBrowserView({
   workspaceIdentity,
   workspaceKey,
   remoteSessionId,
+  resolveLoopbackUrl,
   sessionId,
   residencyGeneration,
   browserUseOperationUntil,
@@ -101,6 +102,15 @@ export function UnifiedBrowserView({
   /** browser-use tab 创建时冻结的身份 scope；存在时优先于当前 workspace ambient props。 */
   workspaceKey?: string;
   remoteSessionId?: string;
+  /**
+   * 远程回环预览的隧道解析（工单 08）。
+   *
+   * 传入时：目标 URL 指向回环（127.0.0.1 / localhost / ::1）会先请宿主要为该端口
+   * 开隧道，再加载隧道地址 —— 用户不必手工把 127.0.0.1 换成对端 IP（预览服务
+   * 常只 bind 回环，换 IP 也不通）。由持有 windowControllerService 的上层注入；
+   * 不传或返回原 URL 时行为与改动前一致。
+   */
+  resolveLoopbackUrl?: (url: string) => Promise<string>;
   /** tab 创建时冻结的对话归属；不得用 dom-ready 到达时的 active task 回填。 */
   sessionId?: string;
   residencyGeneration?: number;
@@ -775,11 +785,30 @@ export function UnifiedBrowserView({
         return;
       }
 
+      // 远程回环预览（工单 08）：目标若是回环地址而当前 tab 属于远程 workspace，
+      // 先请宿主开隧道并改用隧道地址加载。放在归一化之后、去重与加载之前 ——
+      // 下游（去重比较、地址栏、loadURL）必须都基于实际要加载的地址，
+      // 否则会出现"地址栏显示原 URL 但去重拿隧道地址比较"这类错配。
+      let loadUrl = nextUrl;
+      if (resolveLoopbackUrl) {
+        try {
+          // 地址栏仍显示用户输入的原 URL（onUrlChange 传 nextUrl），只有实际加载
+          // 走隧道地址 —— 用户视角地址不变，符合"对用户透明"的预期。
+          loadUrl = await resolveLoopbackUrl(nextUrl);
+        } catch (error) {
+          // 隧道建不起来（对端非 SSH / 连接已断）时不要静默失败：继续用原地址尝试，
+          // 由既有的加载失败路径给出可见的错误，用户至少知道发生了什么。
+          logger.warn("[UnifiedBrowserView] 回环隧道解析失败，按原地址加载", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       // 外部请求若只能排队给尚未就绪的 guest，必须等 dom-ready 真正接管 loadURL 后再回执；
       // 地址栏/恢复导航没有上游消费确认，不需要等待该生命周期信号。
       const navigationTakenOver =
         source === "request" && (!webview || !browserState.isReady)
-          ? waitForGuestNavigationTakeover(nextUrl)
+          ? waitForGuestNavigationTakeover(loadUrl)
           : null;
 
       // launch-failed 后 isReady=false，只把地址栏 URL 写进 pendingUrl 不够：
@@ -788,7 +817,7 @@ export function UnifiedBrowserView({
         lastRestorableUrlRef.current = nextUrl;
         onUrlChange?.(nextUrl);
         const rebuilt = await rebuildBrowserGuest(
-          nextUrl,
+          loadUrl,
           source === "request" ? "external-navigation" : "address-navigation",
         );
         if (!rebuilt) completePendingGuestNavigation();
@@ -798,8 +827,8 @@ export function UnifiedBrowserView({
 
       // 去重：外部 request 与 restore 可能同拍给出同一 URL，连续 loadURL 会触发 ERR_ABORTED(-3)。
       if (
-        nextUrl === lastRequestedUrlRef.current &&
-        (pendingUrlRef.current === nextUrl || browserState.isLoading)
+        loadUrl === lastRequestedUrlRef.current &&
+        (pendingUrlRef.current === loadUrl || browserState.isLoading)
       ) {
         setAddressValue(displayBrowserUrl(nextUrl));
         setHasNavigated(true);
@@ -812,10 +841,10 @@ export function UnifiedBrowserView({
       lastRestorableUrlRef.current = nextUrl;
       onUrlChange?.(nextUrl);
       setBrowserState((prev) => ({ ...prev, errorMessage: null, loadErrorCode: null }));
-      lastRequestedUrlRef.current = nextUrl;
+      lastRequestedUrlRef.current = loadUrl;
 
       if (!webview || !browserState.isReady) {
-        pendingUrlRef.current = nextUrl;
+        pendingUrlRef.current = loadUrl;
         if (navigationTakenOver) await navigationTakenOver;
         return;
       }
@@ -840,6 +869,7 @@ export function UnifiedBrowserView({
       intl,
       onUrlChange,
       rebuildBrowserGuest,
+      resolveLoopbackUrl,
       waitForGuestNavigationTakeover,
       webview,
     ],
