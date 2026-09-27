@@ -137,6 +137,16 @@ function liveStatusFromMeta(meta: ZCodeTaskMeta): WindowHostControllerTaskRow["l
 export function createWindowHostControllerRuntime(options: {
   createId: () => string;
   resolveSource: (scope: ZCodeTaskListWorkspaceScope) => ResolvedWindowHostControllerSource | null;
+  /**
+   * 为远程 workspace 开一条到对端回环端口的隧道（工单 08）。
+   *
+   * 与 resolveSource 同构：Controller 不持有 backend，只按 scope 向宿主要能力；
+   * 未提供或对端不支持时返回 null，调用方据此退化。
+   */
+  openTunnel?: (
+    scope: ZCodeTaskListWorkspaceScope,
+    remotePort: number,
+  ) => Promise<{ localPort: number; dispose(): void } | null>;
   onSourceError?: (
     scope: WindowHostControllerSourceScope,
     operation: "refresh" | "search",
@@ -149,6 +159,13 @@ export function createWindowHostControllerRuntime(options: {
   const sourceTaskServices = new Map<string, IZCodeTaskService>();
   const sourceSnapshotTaskServices = new Map<string, IZCodeTaskService>();
   const sourceEventSubscriptions = new Map<string, { dispose(): void }>();
+  /**
+   * 回环预览隧道缓存（工单 08），键 = `workspaceKey\0remotePort`。
+   *
+   * 复用理由：浏览器刷新/跳转同端口页面是常态，每次重新 forwardOut 既慢又会在
+   * 对端留下多余转发连接。随 attachment 存活，dispose 时统一释放。
+   */
+  const loopbackTunnels = new Map<string, { localPort: number; dispose(): void }>();
   const sourceRefreshFlights = new Map<
     string,
     { taskService: IZCodeTaskService; promise: Promise<void> }
@@ -605,6 +622,29 @@ export function createWindowHostControllerRuntime(options: {
     const subscriptions = new Map<string, { dispose(): void }>();
     return {
       listTaskList,
+      /**
+       * 回环预览隧道（工单 08）：按「scope + 对端端口」缓存复用。
+       *
+       * 复用而不是每次新建的理由：用户在内嵌浏览器里刷新/跳转同一端口的页面是常态，
+       * 每次重新 forwardOut 既慢又会在对端留下多条转发连接。scope 变了（换 workspace）
+       * 视为不同设备/项目上下文，各自独立建隧道。
+       */
+      async openRemoteLoopbackTunnel({ scope, remotePort }) {
+        if (!options.openTunnel) {
+          throw new Error("当前环境不支持远程回环隧道");
+        }
+        const key = `${scope.workspaceIdentity?.trim() || scope.workspacePath}\0${remotePort}`;
+        const existing = loopbackTunnels.get(key);
+        if (existing) {
+          return { localPort: existing.localPort };
+        }
+        const tunnel = await options.openTunnel(scope, remotePort);
+        if (!tunnel) {
+          throw new Error("对端不支持回环隧道（非 SSH 连接）");
+        }
+        loopbackTunnels.set(key, tunnel);
+        return { localPort: tunnel.localPort };
+      },
       async deleteArchivedTasks({ address, taskIds }) {
         if (taskIds.length === 0) {
           return { deletedTaskIds: [], skippedTaskIds: [], failedTaskIds: [] };

@@ -160,6 +160,20 @@ interface HostRemoteConnectionCapabilities {
   remoteMediaPreviewFactory?: (
     scope: Extract<WindowHostAttachmentScope, { kind: "remote" }>,
   ) => RemoteMediaPreviewProxy;
+  /**
+   * 在 A 开一条本地 TCP 隧道，转发到对端回环端口（工单 08）。
+   *
+   * 用途：远程项目里跑起来的预览服务监听在对端回环，A 的内嵌浏览器直接访问
+   * 127.0.0.1 会打到本机。Controller 通过此能力按需建隧道，把对端端口映射到
+   * A 的本地临时端口。
+   *
+   * 只在 SSH backend 提供（`openTcpTunnel` 是可选方法）；WSL/Docker 未实现时
+   * 保持 undefined，调用方按能力探测退化。
+   */
+  openTcpTunnel?: (options: {
+    remoteHost: string;
+    remotePort: number;
+  }) => Promise<{ localPort: number; dispose(): void }>;
 }
 
 let activeRemoteMediaRequests = 0;
@@ -1738,6 +1752,15 @@ async function createWindowRemoteConnectionHandle(params: {
         ? {
             browserRecordingUploader: connection.backend,
             ...(remoteMediaPreviewFactory ? { remoteMediaPreviewFactory } : {}),
+            // 回环预览隧道（工单 08）：把对端 backend 的 openTcpTunnel 透给
+            // Controller。绑定 this 到 backend —— 该方法内部访问 this.client，
+            // 拆出来裸调会丢上下文。
+            ...(connection.backend.openTcpTunnel
+              ? {
+                  openTcpTunnel: (options: { remoteHost: string; remotePort: number }) =>
+                    connection.backend.openTcpTunnel!(options),
+                }
+              : {}),
           }
         : {},
     onDidClose(listener) {
@@ -1850,6 +1873,33 @@ const windowHostControllerRuntime = createWindowHostControllerRuntime({
       agentService: activeServices?.getOptional(IZCodeAgentService),
       sourceAvailability: "online" as const,
     };
+  },
+  /**
+   * 回环预览隧道（工单 08）：把宿主手里对端 backend 的 forwardOut 能力，
+   * 按 scope 暴露给 Controller。
+   *
+   * 只对已连接的远端 scope 生效；本地 scope 或对端不支持（非 SSH）时返回 null，
+   * Controller 据此抛错让调用方退化 —— 不静默返回一个假的本地端口。
+   */
+  openTunnel: async (scope, remotePort) => {
+    const remoteSession = windowRemoteConnectionRegistry.findSessionForWorkspace(scope);
+    if (!remoteSession?.workspacePath || !remoteSession.workspaceIdentity) {
+      return null;
+    }
+    const controllerScope = {
+      kind: "remote" as const,
+      remoteSessionId: remoteSession.remoteSessionId,
+      workspacePath: remoteSession.workspacePath,
+      workspaceIdentity: remoteSession.workspaceIdentity,
+    };
+    const capabilities =
+      windowRemoteConnectionRegistry.resolveScopedCapabilities(controllerScope);
+    if (!capabilities?.openTcpTunnel) {
+      return null;
+    }
+    // 隧道固定转发到对端回环：预览/开发服务几乎都只 bind 127.0.0.1，
+    // 允许调用方指定 remoteHost 会变成任意地址探测面，不必要。
+    return capabilities.openTcpTunnel({ remoteHost: "127.0.0.1", remotePort });
   },
 });
 

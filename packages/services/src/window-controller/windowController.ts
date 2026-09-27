@@ -14,6 +14,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { createServiceDescriptor } from "../descriptors.js";
 import type { ZCodeArchivedTaskDeletionResult } from "#src/session/zcodeTaskService.js";
+import type { ZCodeTaskListWorkspaceScope } from "#src/session/zcodeTaskListTypes.js";
 import type {
   ZCodeTaskListItem,
   ZCodeTaskListQuery,
@@ -63,6 +64,20 @@ export interface IWindowControllerService {
   subscribeControllerV4(params: ControllerSubscribeParams): Promise<ControllerSubscribeResult>;
   resyncControllerV4(params: ControllerResyncParams): Promise<ControllerResyncResult>;
   unsubscribeControllerV4(params: ControllerUnsubscribeParams): Promise<void>;
+  /**
+   * 为远程 workspace 的对端回环端口开一条本地隧道（工单 08）。
+   *
+   * 场景：在 B 的项目里跑起来的预览服务监听 B 的回环（如 127.0.0.1:8901），
+   * A 的内嵌浏览器直接访问该地址会打到 A 本机。调用此方法把对端端口映射到
+   * A 的本地临时端口，浏览器改访问隧道地址即可（地址栏仍显示原 URL）。
+   *
+   * 端口按 scope + remotePort 缓存复用：同端口重复调用返回同一条隧道。
+   * 对端不支持（非 SSH backend）时抛错，调用方据此退化。
+   */
+  openRemoteLoopbackTunnel(params: {
+    scope: ZCodeTaskListWorkspaceScope;
+    remotePort: number;
+  }): Promise<{ localPort: number }>;
   onDynamicControllerFrame(): Event<WindowHostControllerFrame>;
 }
 

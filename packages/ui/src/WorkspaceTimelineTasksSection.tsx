@@ -298,6 +298,63 @@ export function WorkspaceTimelineTasksSection({
     }
   }, [taskSortBy, visibleTaskLimit, workspaceServiceLookup, workspaceTabs]);
 
+  /**
+   * 订阅被投射设备的会话列表变更，收到即刷新。
+   *
+   * 没有这段时：投射列表只在「排序/limit/workspace 变化」时重新拉取，设备那边
+   * 新开会话或更新消息都不会传导过来 —— 实测表现为 A 侧时间戳长期停在首次投射
+   * 的时刻（B 端实际已更新到最新）。本地项目靠 `taskListVersion` 版本号触发重查，
+   * 投射项目没有那条链路，必须走设备侧的事件订阅。
+   */
+  useEffect(() => {
+    const remoteTabs = workspaceTabs.filter(
+      (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
+    );
+    if (remoteTabs.length === 0) {
+      return;
+    }
+
+    const disposables: Array<{ dispose(): void }> = [];
+    for (const tab of remoteTabs) {
+      const workspaceServices = workspaceServiceLookup.get(
+        buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+      );
+      const taskService = workspaceServices?.services.zcodeTaskService;
+      if (!workspaceServices?.isRemoteWorkspace || !taskService) {
+        continue;
+      }
+      const remoteWorkspaceKey = buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity);
+      const disposable = taskService.onDynamicWorkspaceEvent({
+        workspacePath: tab.workspacePath,
+        ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+      })((event) => {
+        if (event.type !== "workspace_task_list_changed") {
+          return;
+        }
+        // 事件可能来自其它 workspace（同一 connection 上的多项目订阅），按 key 收敛。
+        if (buildTaskWorkspaceKey(event.workspacePath, event.workspaceIdentity) !== remoteWorkspaceKey) {
+          return;
+        }
+        void useRemoteTimelineTaskStore.getState().refreshWorkspace({
+          workspacePath: tab.workspacePath,
+          ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+          zcodeTaskService: taskService,
+          sortBy: taskSortBy,
+          limit: visibleTaskLimit,
+        });
+      });
+      if (disposable) {
+        disposables.push(disposable);
+      }
+    }
+
+    return () => {
+      for (const disposable of disposables) {
+        disposable.dispose();
+      }
+    };
+  }, [taskSortBy, visibleTaskLimit, workspaceServiceLookup, workspaceTabs]);
+
   const handleCancelArchiveConfirm = useCallback(() => {
     setPendingArchiveItemKey(null);
   }, []);
