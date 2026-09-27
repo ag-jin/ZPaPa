@@ -44,41 +44,71 @@ ZCode (pid 41003, B 的桌面 UI 主进程)
 三个进程都打开同一份 `/Users/linguojin/.zcode/cli/db/db.sqlite`（含 -shm/-wal），
 即共享数据层但**各自持有独立的 agent 运行时**。
 
-## 为什么表现为"停在原地"
+## 为什么表现为"停在原地"（经用户两次修正后定稿）
 
-`zcodeTaskIndexSyncer` 的 `workspace_task_list_changed` 事件是**进程内 emitter**
-（实测 `taskIndexRepo` 不 watch 文件变化）。因此：
+**不是"视图不刷新"，而是"运行时各自持有独立的内存会话状态，且互不可见"。**
 
-- 常驻主机侧 runtime 跑出的进度 → 写进共享 db.sqlite，但 `workspace_task_list_changed`
-  只在常驻主机进程内广播 → **B 本机 UI 收不到**（它监听的是 41020 那个 host 的事件）。
-- 反之，B 本机 UI 侧 runtime 的进度，A 的投射也看不到（A 挂的是 41028 常驻主机）。
+用户的关键修正：**"B 端 UI 可以在原本的进度继续，不会包含 A 端执行的记录。"**
+这否定了"数据一致、只是列表没刷新"的初判 —— 若是那样，B 继续执行时会带上 A 的记录。
 
-于是：数据其实写进了同一个库，但**列表刷新事件被进程边界隔断**，两边各自显示自己那份
-内存快照 → 用户看到"一端跑了、另一端停在原地"。
+代码层面的决定性证据（三处）：
+
+1. **会话运行时是每进程一份内存 Map**
+   `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts:260`
+   ```ts
+   sessions: new Map<string, ZCodeProtocolSessionRecord>(),
+   ```
+   两个 host 是两个进程 → 两个独立的 `context.sessions`。
+
+2. **resume 命中内存 record 就早退，不重读库**
+   `server-operations.ts:1427-1431`
+   ```ts
+   const existing = context.sessions.get(params.sessionId);
+   if (existing) {
+     return { record: existing };   // ← 命中即返回，不查 sessionStore
+   }
+   let session = await getPersistedSession(context, params.sessionId);
+   ```
+   即：只有当会话**没被本进程载入过**时才从库读（冷恢复）；
+   已经在跑的会话，后续轮次全部基于本进程内存态。
+
+3. **事件账本也是内存态**
+   `server.ts:240` → `createInMemorySessionEventStore()`。
+   对话上下文由该 eventStore 组装，因此看不到别的进程写进库的新消息。
+
+**结论**：两个 host 各自持有一份独立的会话运行态。A 通过常驻主机跑出的轮次写进了
+共享库，但 B 本机 host 的内存 record 里没有这些消息，且因第 2 条**永不重读库** →
+B 继续执行时从它自己的旧进度往下走，两边进度永久分叉。
+
+这解释了用户的完整观察：B 能从原进度继续、且不含 A 的记录、两端进度不一致。
+
+## 为什么刷新事件不是主因（对初判的修正）
+
+`workspace_task_list_changed` 确实是进程内 Emitter（`taskIndexRepo` 不 watch 文件），
+但它只影响"列表何时重画"。真正的分裂在**运行态本身**——即使把刷新补上，
+B 的 runtime 内存里仍然没有 A 写的消息，下一轮生成还是会基于旧上下文。
+所以修法 2（跨进程刷新通知）只是必要不充分。
 
 ## 与既有设计的关系
 
-这不是投射功能引入的 bug，而是**两个 host 并存**这个事实的必然结果：
+这不是投射功能引入的 bug，而是**两个 host 并存 + 运行态内存化**的必然结果：
 
 - B 的桌面 UI 走 `zcode-host-local-1`（main 进程的子 host）。
 - 常驻主机（`resident-host`）是独立 utility process，供远程挂载用。
 
-两者本应互不干扰（各自的 workspace runtime 池），但**数据层是共享的**，
-而刷新通知不是 —— 中间缺一层"跨进程的列表变更广播"。
+单机单 host 时这没问题（每个会话只有一个 runtime，内存态就是权威）。
+一旦同一台机器上有两个 host 触及同一份会话库，"谁是权威运行态"就没有答案了。
 
 ## 候选修法（需用户/架构决策）
 
-1. **常驻主机与本地 host 合一**：B 的桌面 UI 也挂常驻主机，撤销 `zcode-host-local-1`。
-   最彻底，但改动面大（UI 的连接生命周期、host 选举、常驻主机故障时的降级）。
-2. **补跨进程刷新通知**：让写方在 `db.sqlite` 上留下变更标记（如 WAL 之外的
-   revision 行），两个 host 各自轮询/监听该标记并触发本地 `workspace_task_list_changed`。
-   改动小、风险低，但引入轮询延迟。
-3. **同一 workspace 只允许一个 runtime**：在共享数据层加租约（lease），
-   第二个 host 发现已有活跃 runtime 就不重复拉起。
-   能同时解决"重复 runtime 占内存"与"进度分裂"，但要处理租约过期与崩溃回收。
-
-倾向 **2 + 3**：2 解决"UI 不刷新"这个用户可见症状，3 解决"同项目多 runtime"这个资源与
-一致性问题。1 是长期正解但需要更大的重构窗口。
+1. **常驻主机与本地 host 合一**（B 的 UI 也挂常驻主机，撤销 `zcode-host-local-1`）
+   —— 唯一能让"运行态权威唯一"的方案，因为内存态天然无法跨进程共享。
+   改动面大（UI 连接生命周期、host 选举、常驻主机故障降级）。
+2. **跨进程刷新通知**（共享库加 revision 标记，各 host 监听并触发本地事件）
+   —— 只治"列表不重画"这个表层症状，**不治运行态分叉**。必须与 1 或 3 同做。
+3. **同一 workspace 只允许一个 runtime**（共享库加租约，第二个 host 复用/让路）
+   —— 能避免"同项目多 runtime"，但**跨机场景下 A 仍可能落到另一个 runtime**，
+   除非租约覆盖"会话级"而非"项目级"。
 
 ## 未验证的部分 → 已验证
 
