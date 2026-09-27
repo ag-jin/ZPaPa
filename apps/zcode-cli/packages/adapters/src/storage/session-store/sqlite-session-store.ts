@@ -643,7 +643,10 @@ export class SqliteSessionStore
     return messageRepository.messageWithParts(this.db, input);
   }
 
-  async messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]> {
+  async messages(input: {
+    sessionID: SessionId;
+    tailPartLimit?: number;
+  }): Promise<MessageWithParts[]> {
     return messageRepository.messages(this.db, input);
   }
 

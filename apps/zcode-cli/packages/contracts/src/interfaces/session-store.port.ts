@@ -1125,7 +1125,23 @@ export interface SessionStorePort {
     sessionID: SessionId;
     messageID: MessageId;
   }): Promise<MessageWithParts | null>;
-  messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]>;
+  /**
+   * 读取会话消息（含 parts）。
+   *
+   * `tailPartLimit` 可选：**只给最近 N 条消息装配 parts**，更早的返回空 parts。
+   *
+   * 注意语义边界：裁的是 parts 不是 messages。调用方（session snapshot）随后要跑
+   * rewind 分支投影，那一步必须看到完整消息序列才能正确判定回退分支；而 parts
+   * 没有这个约束 —— 窗口内齐备即可渲染，更早内容由 rows/range 分页补。
+   *
+   * 长会话首屏的主要成本就在 parts（实测 3137 条消息 / 14556 块 parts，
+   * parts 占 209ms・87%），限到尾部窗口可降 98%。
+   * 不传时保持全量语义（fork / 标题推导等确实需要全量 parts）。
+   */
+  messages(input: {
+    sessionID: SessionId;
+    tailPartLimit?: number;
+  }): Promise<MessageWithParts[]>;
   saveSessionEntry?(input: SessionEntryInfo): Promise<void>;
   sessionEntries?(input: {
     sessionID: SessionId;

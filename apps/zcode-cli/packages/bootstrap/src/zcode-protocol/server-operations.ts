@@ -3549,7 +3549,14 @@ async function snapshotWithDiagnostics(
     measureSnapshotPhase("eventSeq", () =>
       getProtocolEventSeq(context, record, record.deliveryKind),
     ),
-    measureSnapshotPhase("persistedMessages", () => readSessionMessages(context, record)),
+    // 只给尾部窗口装配 parts：调用方随后按 messageLimit 裁剪消息，更早的 parts
+    // 根本不会进首屏（由 rows/range 分页补）。全量 parts 是长会话首屏的主要成本。
+    // 传 messageLimit 与裁剪窗口同源，避免两处阈值漂移。
+    measureSnapshotPhase("persistedMessages", () =>
+      readSessionMessages(context, record, {
+        tailPartLimit: options.messageLimit,
+      }),
+    ),
     knownSession === undefined
       ? measureSnapshotPhase("persistedSession", () =>
           getPersistedSession(context, record.app.sessionId),
@@ -3770,10 +3777,12 @@ function limitMessages<T>(messages: T[], limit?: number): T[] {
 async function readSessionMessages(
   context: ZCodeProtocolAgentServerContext,
   record: ZCodeProtocolSessionRecord,
+  options: { tailPartLimit?: number } = {},
 ) {
   if (!context.deps.sessionStore) return [];
   return await context.deps.sessionStore.messages({
     sessionID: record.app.sessionId as SessionId,
+    ...(options.tailPartLimit !== undefined ? { tailPartLimit: options.tailPartLimit } : {}),
   });
 }
 
