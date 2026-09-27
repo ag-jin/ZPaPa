@@ -28,6 +28,17 @@ function buildTimelineItemKey(workspacePath: string, taskId: string, workspaceId
   return `${buildTaskWorkspaceKey(workspacePath, workspaceIdentity)}:${taskId}`;
 }
 
+/**
+ * 投射列表的轮询间隔。
+ *
+ * 设备侧的外部写入（独立 CLI 进程直接写 sqlite）不会经连接目标 host 广播事件，
+ * 因此事件订阅必然漏掉这类变化，需要低频轮询兜底。60s 是「用户几乎无感、
+ * 又能在切回来后看到最新」的折中；窗口不可见时完全不跑。
+ */
+const REMOTE_PROJECTION_POLL_INTERVAL_MS = 60_000;
+/** 重新聚焦时的最小刷新间隔：比轮询更积极，但避免频繁切换窗口造成抖动。 */
+const REMOTE_PROJECTION_FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000;
+
 interface TimelineTaskItemHandlers {
   onSelectTask: (taskId: string) => void;
   onArchiveTaskInline: (event: ReactMouseEvent, taskId: string) => void;
@@ -141,6 +152,7 @@ export function WorkspaceTimelineTasksSection({
     total: localTotal,
     hasMore: localHasMore,
     loading: localLoading,
+    refresh: refreshGlobalTaskList,
   } = useGlobalTaskList({
     kind: "timeline",
     workspaceTabs: scopedWorkspaceTabs,
@@ -271,14 +283,23 @@ export function WorkspaceTimelineTasksSection({
     });
   }, [remoteItems.length, scopedWorkspaceTabs, workspaceTabs]);
 
-  useEffect(() => {
+  /**
+   * 刷新所有已连接的投射项目。
+   *
+   * 抽成回调供三处复用：依赖变化、设备事件、轮询兜底。三处必须打同一份参数，
+   * 否则 sortBy/limit 漂移会让列表在刷新后跳回不同的排序或条数。
+   */
+  const refreshProjectedWorkspaces = useCallback(() => {
     const remoteTabs = workspaceTabs.filter(
       (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
     );
     if (remoteTabs.length === 0) {
       return;
     }
-
+    // 侧边栏的投射项目主要走 useGlobalTaskList（远程 scope 由 host 路由），
+    // 必须调它的 refresh —— 带 manualRefreshSerial 才会绕过缓存重查。
+    // 只调 remoteTimelineTaskStore 无效（那个 store 只服务少数补充场景，实测为空）。
+    void refreshGlobalTaskList();
     for (const tab of remoteTabs) {
       const workspaceServices = workspaceServiceLookup.get(
         buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
@@ -296,7 +317,75 @@ export function WorkspaceTimelineTasksSection({
         limit: visibleTaskLimit,
       });
     }
-  }, [taskSortBy, visibleTaskLimit, workspaceServiceLookup, workspaceTabs]);
+  }, [
+    refreshGlobalTaskList,
+    taskSortBy,
+    visibleTaskLimit,
+    workspaceServiceLookup,
+    workspaceTabs,
+  ]);
+
+  useEffect(() => {
+    const remoteTabs = workspaceTabs.filter(
+      (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
+    );
+    if (remoteTabs.length === 0) {
+      return;
+    }
+    refreshProjectedWorkspaces();
+  }, [refreshProjectedWorkspaces, workspaceTabs]);
+
+  /**
+   * 轮询兜底：设备侧**外部写入**不会产生事件，必须定时重拉。
+   *
+   * 为什么订阅不够（实测发现）：`workspace_task_list_changed` 只由连接目标 host
+   * 的 indexSyncer 在**自己经手数据**时广播。而设备上往往同时跑着独立的 CLI
+   * 进程（用户的终端会话），它们直接写同一个 sqlite —— host 不感知，也就不会广播。
+   * 于是 A 侧订阅收不到任何通知，列表长期停在首次投射的快照（实测：B 端已更新到
+   * 15:13，A 侧仍显示 3 小时前）。
+   *
+   * 频率取舍：窗口不可见时完全不跑（省 SSH 往返与对端负载）；可见时 60s 一次；
+   * 重新聚焦时若距上次超过 30s 立即补一次（用户切回来最关心是否最新）。
+   */
+  useEffect(() => {
+    const remoteTabs = workspaceTabs.filter(
+      (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
+    );
+    if (remoteTabs.length === 0) {
+      return;
+    }
+
+    let lastRefreshedAt = Date.now();
+    const refreshIfStale = (minIntervalMs: number) => {
+      if (Date.now() - lastRefreshedAt < minIntervalMs) {
+        return;
+      }
+      lastRefreshedAt = Date.now();
+      refreshProjectedWorkspaces();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshIfStale(REMOTE_PROJECTION_FOCUS_REFRESH_MIN_INTERVAL_MS);
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      refreshIfStale(REMOTE_PROJECTION_POLL_INTERVAL_MS);
+    }, REMOTE_PROJECTION_POLL_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+    };
+  }, [refreshProjectedWorkspaces, workspaceTabs]);
 
   /**
    * 订阅被投射设备的会话列表变更，收到即刷新。
