@@ -6,7 +6,7 @@
 
 **Blocked by:** 02（设备级连接）
 
-**Status:** ready-for-agent
+**Status:** 进行中（判定层已完成并测试；host 接线待做）
 
 ## 背景
 
@@ -32,7 +32,7 @@ A 的当前 workspace 是 B 的项目时，会话里跑起来的预览服务（d
 - [ ] 本地项目里访问回环**不受影响**（仍打本机）
 - [ ] 连接断开时隧道随之清理，不残留监听
 - [ ] 隧道建立失败时给出明确提示（而非静默空白页）
-- [ ] 只有远程 workspace 才启用；非 SSH 形态（WSL/Docker）按能力探测退化
+- [x] 只有远程 workspace 才启用 —— `resolveRemoteLoopbackTarget` 已实现并测试；非 SSH 形态按能力探测退化待接线时验证
 
 ## 设计要点
 
