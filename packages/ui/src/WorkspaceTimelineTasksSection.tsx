@@ -29,15 +29,16 @@ function buildTimelineItemKey(workspacePath: string, taskId: string, workspaceId
 }
 
 /**
- * 投射列表的轮询间隔。
+ * 外部写入的轮询兜底间隔。
  *
- * 设备侧的外部写入（独立 CLI 进程直接写 sqlite）不会经连接目标 host 广播事件，
- * 因此事件订阅必然漏掉这类变化，需要低频轮询兜底。60s 是「用户几乎无感、
- * 又能在切回来后看到最新」的折中；窗口不可见时完全不跑。
+ * 数据层（sqlite）可能被**本进程之外**的写方改动：远程投射时是设备侧独立 CLI，
+ * 同机上则是并存的另一个 host（桌面 UI host 与常驻主机各写同一份库）。
+ * 这类写入不产生本进程事件，事件订阅必然漏掉，需要低频轮询兜底。
+ * 60s 是「用户几乎无感、又能在切回来后看到最新」的折中；窗口不可见时完全不跑。
  */
-const REMOTE_PROJECTION_POLL_INTERVAL_MS = 60_000;
+const EXTERNAL_WRITE_POLL_INTERVAL_MS = 60_000;
 /** 重新聚焦时的最小刷新间隔：比轮询更积极，但避免频繁切换窗口造成抖动。 */
-const REMOTE_PROJECTION_FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000;
+const EXTERNAL_WRITE_FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000;
 
 interface TimelineTaskItemHandlers {
   onSelectTask: (taskId: string) => void;
@@ -284,21 +285,23 @@ export function WorkspaceTimelineTasksSection({
   }, [remoteItems.length, scopedWorkspaceTabs, workspaceTabs]);
 
   /**
-   * 刷新所有已连接的投射项目。
+   * 刷新列表。
    *
    * 抽成回调供三处复用：依赖变化、设备事件、轮询兜底。三处必须打同一份参数，
    * 否则 sortBy/limit 漂移会让列表在刷新后跳回不同的排序或条数。
+   *
+   * 名字与方法体覆盖"本地 + 远程"两类：本地项目同样可能有**外部写入**
+   * （同机并存另一个 host 在写同一个 sqlite —— 见下方轮询注释），
+   * 因此不能只刷远程 tab。
    */
   const refreshProjectedWorkspaces = useCallback(() => {
     const remoteTabs = workspaceTabs.filter(
       (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
     );
-    if (remoteTabs.length === 0) {
-      return;
-    }
     // 侧边栏的投射项目主要走 useGlobalTaskList（远程 scope 由 host 路由），
     // 必须调它的 refresh —— 带 manualRefreshSerial 才会绕过缓存重查。
     // 只调 remoteTimelineTaskStore 无效（那个 store 只服务少数补充场景，实测为空）。
+    // 该 refresh 天然覆盖全部 workspaceTabs（含本地项目），正好满足本地兜底需求。
     void refreshGlobalTaskList();
     for (const tab of remoteTabs) {
       const workspaceServices = workspaceServiceLookup.get(
@@ -336,25 +339,25 @@ export function WorkspaceTimelineTasksSection({
   }, [refreshProjectedWorkspaces, workspaceTabs]);
 
   /**
-   * 轮询兜底：设备侧**外部写入**不会产生事件，必须定时重拉。
+   * 轮询兜底：**外部写入**不会产生事件，必须定时重拉。
    *
-   * 为什么订阅不够（实测发现）：`workspace_task_list_changed` 只由连接目标 host
-   * 的 indexSyncer 在**自己经手数据**时广播。而设备上往往同时跑着独立的 CLI
-   * 进程（用户的终端会话），它们直接写同一个 sqlite —— host 不感知，也就不会广播。
-   * 于是 A 侧订阅收不到任何通知，列表长期停在首次投射的快照（实测：B 端已更新到
-   * 15:13，A 侧仍显示 3 小时前）。
+   * 为什么订阅不够（实测发现）：`workspace_task_list_changed` 只由本进程内的
+   * indexSyncer 在**自己经手数据**时广播（进程内 Emitter）。而数据层是共享的
+   * sqlite，同机上并存的另一个 host 进程（桌面 UI host 与常驻主机）各自直接写它
+   * —— 写方不广播，读方收不到。于是：
+   *   - 远程端（A）：设备侧的更新收不到 → 列表长期停在首次投射的快照
+   *     （实测：B 端已更新到 15:13，A 侧仍显示 3 小时前）。
+   *   - 本机端（B）：常驻主机侧（远程操作）的更新同样收不到 → 本机 UI 停在原地。
+   *
+   * 这就是「两端进度不一致」的完整机制。注意列表查询本身（listTasks）读的是
+   * sqlite，数据一直是新鲜的 —— 缺的只是"何时去重查"这一拍。
+   *
+   * 因此轮询**不能只覆盖远程 tab**：本地项目同样会有外部写入（同机另一个 host）。
    *
    * 频率取舍：窗口不可见时完全不跑（省 SSH 往返与对端负载）；可见时 60s 一次；
    * 重新聚焦时若距上次超过 30s 立即补一次（用户切回来最关心是否最新）。
    */
   useEffect(() => {
-    const remoteTabs = workspaceTabs.filter(
-      (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
-    );
-    if (remoteTabs.length === 0) {
-      return;
-    }
-
     let lastRefreshedAt = Date.now();
     const refreshIfStale = (minIntervalMs: number) => {
       if (Date.now() - lastRefreshedAt < minIntervalMs) {
@@ -366,7 +369,7 @@ export function WorkspaceTimelineTasksSection({
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        refreshIfStale(REMOTE_PROJECTION_FOCUS_REFRESH_MIN_INTERVAL_MS);
+        refreshIfStale(EXTERNAL_WRITE_FOCUS_REFRESH_MIN_INTERVAL_MS);
       }
     };
 
@@ -374,8 +377,8 @@ export function WorkspaceTimelineTasksSection({
       if (document.visibilityState !== "visible") {
         return;
       }
-      refreshIfStale(REMOTE_PROJECTION_POLL_INTERVAL_MS);
-    }, REMOTE_PROJECTION_POLL_INTERVAL_MS);
+      refreshIfStale(EXTERNAL_WRITE_POLL_INTERVAL_MS);
+    }, EXTERNAL_WRITE_POLL_INTERVAL_MS);
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleVisibilityChange);
@@ -385,7 +388,7 @@ export function WorkspaceTimelineTasksSection({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleVisibilityChange);
     };
-  }, [refreshProjectedWorkspaces, workspaceTabs]);
+  }, [refreshProjectedWorkspaces]);
 
   /**
    * 订阅被投射设备的会话列表变更，收到即刷新。
