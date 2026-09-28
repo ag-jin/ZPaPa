@@ -86,8 +86,24 @@ ZCode.app (main)
   且在「窗口 host 兼常驻」方案下**不需要** —— 两个角色的能力差异已由 `clientMode` 覆盖。
 - **保留双 host 但补跨进程刷新通知**：只治列表不重画，不治运行态分叉。
 
-## 后续
+## 后续：CUA 隔离已核实无需改动
 
-CUA 在远程连接下的行为需单独确认：A 通过远程挂载看到的 workspace，
-不应把 B 的物理桌面状态投影到 A 的屏幕（这是 `desktop-attached-remote` 原本要挡的语义）。
-本 ADR 实施后，该隔离需由**连接级**判定承担，不再由 host 级模式承担。
+实施前担心：A 经远程挂载后，B 的 CUA（电脑控制）状态会投影到 A 的屏幕
+（`desktop-attached-remote` 原本要挡的语义），因此需把隔离从 host 级改为连接级。
+
+**实测核实后该担心不成立**，隔离由三道彼此独立的机制保证，与本 ADR 无关：
+
+1. **CUA 状态走 `parentPort` 私线，不过 RPC 面**
+   `channels.ts:610` 注释原文「host → main：Windows desktop-local CUA turn 的
+   操作提示状态」；发送方式是 `parentPort.postMessage`。A 经 `/ws/host` 挂载
+   拿到的是 `services`（RPC 面），`parentPort` 不在其中 —— A 挂不到。
+2. **CUA 状态不进 V4 协议**：`shared/zcode-protocol-v4/` 下无任何相关字段。
+3. **平台限制**：该 reporter 仅在 Windows 启用
+   （`process.platform === "win32" ? cuaOperationStateReporter : undefined`）。
+
+因此**不需要**把 `serviceAuthorityMode` 改为连接级判定。B 的窗口 host 保持
+`desktop-local`，CUA 功能完整保留 —— 这正是选择本方向而非"UI 去连常驻主机"的
+关键理由之一。
+
+> 若将来把 CUA 状态改成经 RPC 推送（例如让远程端显示对端的电脑操作进度），
+> 则**必须**同时引入连接级隔离，否则会违反上述语义。届时应更新本 ADR。
