@@ -1986,16 +1986,25 @@ app.whenReady().then(async () => {
       logger.error("[cron-scheduler] failed to spawn scheduler process:", error);
     }
 
-    // 常驻会话主机:本机回环监听,供对端设备经 SSH 隧道挂载(远程项目升级第 1 期)。
-    // 与 scheduler 同窗口期启动,等数据库就绪避免抢迁移;状态文件就绪后远端即可发现。
-    try {
-      residentHost = spawnResidentHost({
-        hostProcessLocalEnv,
-        builtinProviderConfigFilePath: resolveZCodeBuiltinProviderConfigFilePath(),
-        logger,
-      });
-    } catch (error) {
-      logger.error("[resident-host] failed to spawn resident host process:", error);
+    // 常驻主机不再单独 fork：窗口 host 自身已额外暴露回环监听与发现文件
+    // （见 host/residentExposure.ts，ADR 0003）。独立 fork 会让设备上并存
+    // **两份运行时**，而会话运行态是进程内内存态 —— 投射端与本机 UI 各自的
+    // 进度互不可见，表现为两端会话长期不同步。
+    //
+    // 仅无窗口/特殊部署场景才需要独立常驻主机，
+    // 由 ZCODE_RESIDENT_HOST_FORCE_STANDALONE=1 显式开启。
+    if (process.env.ZCODE_RESIDENT_HOST_FORCE_STANDALONE?.trim() === "1") {
+      try {
+        residentHost = spawnResidentHost({
+          hostProcessLocalEnv,
+          builtinProviderConfigFilePath: resolveZCodeBuiltinProviderConfigFilePath(),
+          logger,
+        });
+      } catch (error) {
+        logger.error("[resident-host] failed to spawn resident host process:", error);
+      }
+    } else {
+      logger.info("[resident-host] standalone fork skipped: window host exposes itself");
     }
   });
 

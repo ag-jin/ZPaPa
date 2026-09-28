@@ -138,6 +138,13 @@ const SUITES = [
   },
   {
     layer: 2,
+    id: "resident-exposure",
+    title: "设备暴露面可挂载（单一运行时的前提，ADR 0003）",
+    cwd: ".",
+    file: "packages/desktop/test/acceptance-resident-exposure.ts",
+  },
+  {
+    layer: 2,
     id: "device-topology",
     title: "设备侧 host/runtime 拓扑体检（双 host 分裂检测）",
     cwd: ".",

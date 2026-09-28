@@ -103,6 +103,7 @@ import {
   parseHostIncomingMessageEvent,
   rejectUnavailableAttachedServicePort,
 } from "./hostMessagePortGuard.js";
+import { disposeResidentExposure, exposeAsResidentHost } from "./residentExposure.js";
 // remote backend 相关模块延迟加载：ssh2 的 CJS 依赖链（asn1 等）在 asar 打包后路径断裂，
 // 静态 import 会导致 local 模式的 host process 也崩溃。
 // 改为动态 import，仅 remote 模式时才加载。
@@ -2215,6 +2216,9 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     stopHostNetworkTelemetry();
     hostSelfResourceTelemetry.stop();
     disposeLocalResourceTelemetry();
+    // 先撤掉对外挂载与发现文件：本 host 即将退出，投射端应立刻看到"设备离线"，
+    // 而不是继续连一个已死的端口。
+    disposeResidentExposure();
     disposeAttachedServicePorts();
     windowHostControllerRuntime.dispose();
     for (const key of Array.from(cronRunSubscriptions.keys())) {
@@ -2970,6 +2974,15 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         wireLocalResourceTelemetry(services);
         hasDisposedHostResources = false;
         disposeHostResourcesInFlight = null;
+        // 把本 host 额外暴露为可远程挂载的常驻主机（ADR 0003）：投射端经 SSH 隧道
+        // 挂载后与 B 的桌面 UI **共用这一份运行时**，避免两端会话进度分叉。
+        // 只监听回环临时端口；失败仅使远程挂载不可用，不影响本机功能。
+        void exposeAsResidentHost({
+          services,
+          log: (message) => logger.info(`[resident-exposure] ${message}`),
+          warn: (message, error) =>
+            logger.warn(`[resident-exposure] ${message}`, error instanceof Error ? error : undefined),
+        });
         const agentWarmupTargets =
           msg.agentWarmupTargets && msg.agentWarmupTargets.length > 0
             ? msg.agentWarmupTargets
