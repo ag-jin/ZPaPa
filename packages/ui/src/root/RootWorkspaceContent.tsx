@@ -39,10 +39,20 @@ interface RootWorkspaceContentProps {
   onLogin?: () => void;
   user: AppProps["user"];
   remoteDeviceConnect?: RemoteDeviceConnect;
-  onOpenRemoteConnection?: (preference?: {
-    preferredKind?: import("@zcode/shared").RemoteTarget["kind"];
-    preferredWslDistro?: string;
-  }) => void;
+  /**
+   * 打开「远程连接」弹窗的回调。
+   *
+   * 必填（不是 `?`）：设置页「远程设备」区块在未配置设备时靠它渲染添加入口，
+   * 调用方漏传会让按钮**静默消失** —— 曾有提交只在此声明、忘了在 Root 的调用处
+   * 传（97c011a），表现为用户在该区块看到一句提示、但没有任何可点的入口。
+   * 改为必填后，这类遗漏会在编译期暴露；允许显式传 `undefined` 表示本端不提供。
+   */
+  onOpenRemoteConnection:
+    | ((preference?: {
+        preferredKind?: import("@zcode/shared").RemoteTarget["kind"];
+        preferredWslDistro?: string;
+      }) => void)
+    | undefined;
   reconnectingRemoteWorkspaceKeys: AppProps["reconnectingRemoteWorkspaceKeys"];
   remoteWorkspaceErrorByWorkspaceKey: AppProps["remoteWorkspaceErrorByWorkspaceKey"];
   reconnectingRemoteWorkspaceLogsByWorkspaceKey: AppProps["reconnectingRemoteWorkspaceLogsByWorkspaceKey"];

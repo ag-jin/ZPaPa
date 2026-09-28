@@ -1109,6 +1109,10 @@ function RootInner({
             onLogin={!user ? handleOpenLoginEntry : undefined}
             user={user}
             remoteDeviceConnect={settingsLayerProps.remoteDeviceConnect}
+            // 设置页「远程设备」在未配置设备时靠这个回调渲染「打开远程连接」按钮。
+            // 漏传会让按钮静默消失（渲染条件 `onOpenRemoteConnection ? <Button/> : null`），
+            // 表现为用户在该区块看不到任何添加设备的入口。
+            onOpenRemoteConnection={settingsLayerProps.onOpenRemoteConnection}
             reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
             remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
             reconnectingRemoteWorkspaceLogsByWorkspaceKey={
