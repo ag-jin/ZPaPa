@@ -94,6 +94,7 @@ export function WorkspaceFileTree({
   temporaryExternalDirectory = false,
   canOpenLocalFileManager = false,
   activePreviewPath,
+  closeLabel,
   onClose,
   onOpenBrowserUrl,
   onOpenPreview,
@@ -618,7 +619,7 @@ export function WorkspaceFileTree({
         >
           <ArrowLeft className="size-4 shrink-0" />
           <span className="min-w-0 truncate">
-            {intl.formatMessage({ id: "workspaceFileTree.backToTasks" })}
+            {closeLabel ?? intl.formatMessage({ id: "workspaceFileTree.backToTasks" })}
           </span>
         </Button>
       </div>

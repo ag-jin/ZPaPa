@@ -329,6 +329,8 @@ import { ISubagentsService } from "./subagents/subagents.js";
 import { ICommandsService } from "./commands/commands.js";
 import { IHooksService } from "./hooks/hooks.js";
 import { IMemoryService } from "./memory/memory.js";
+import { IWikiService } from "./wiki/wiki.js";
+import { createWikiService } from "./wiki/wikiService.js";
 import { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import { IFeedbackService } from "./feedback/feedback.js";
 import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -2382,6 +2384,48 @@ export function createLocalServices(options: {
   const fileService = createFileService({
     workspaceFileSearchFilter: options?.workspaceFileSearchFilter,
   });
+  // Wiki 生成与 Git 提交消息同源：都走 zcodeAgentService.generateWorkspaceText，
+  // 模型选择读同一个 Host View 的 preferredSelection。
+  const wikiService = createWikiService({
+    fileService,
+    // 只读提交图，用于统计「上次生成 wiki 后积压了多少提交」
+    gitService,
+    currentModelProvider: {
+      async readCurrentModel() {
+        return (await providerRuntime.modelSelection.getView()).preferredSelection ?? null;
+      },
+    },
+    textGenerator: {
+      async generateText(params) {
+        return await zcodeAgentService.generateWorkspaceText({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          selection: params.selection,
+          prompt: params.prompt,
+          querySource: params.querySource,
+          ...(params.maxOutputTokens ? { maxOutputTokens: params.maxOutputTokens } : {}),
+          ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.requestTimeoutMs ? { requestTimeoutMs: params.requestTimeoutMs } : {}),
+        });
+      },
+    },
+    // 定时自动更新：每个项目按自己的频率与时刻排期，到点对各自做增量生成。
+    // 已知 workspace 清单取「最近项目」——调度器需要它才能把配置键
+    // 反解成可读写的路径；不在清单里的项目会被跳过（项目已被移除）。
+    autoUpdate: {
+      readSettings: async () => (await settingService.get()).wikiSettings,
+      listKnownTargets: async () =>
+        (await settingService.get()).recentProjects.map((workspacePath) => ({ workspacePath })),
+      recordRun: async (workspaceKey, at) => {
+        const settings = await settingService.get();
+        const wikiSettings = settings.wikiSettings ?? {};
+        const projects = { ...(wikiSettings.projects ?? {}) };
+        projects[workspaceKey] = { ...(projects[workspaceKey] ?? {}), lastAutoUpdateAt: at };
+        await settingService.update({ wikiSettings: { ...wikiSettings, projects } });
+      },
+    },
+    logger: createServiceLogger("wiki"),
+  });
   const mediaPreviewService = createMediaPreviewService({
     fileService,
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
@@ -2560,6 +2604,7 @@ export function createLocalServices(options: {
       }),
     )
     .register(IMemoryService, createMemoryService())
+    .register(IWikiService, wikiService)
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,

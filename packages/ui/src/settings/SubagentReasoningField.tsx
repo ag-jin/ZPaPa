@@ -16,12 +16,15 @@ export function SubagentReasoningField({
   labelVisibilityClassName,
   onValueCommit,
   state,
+  contentSide = "top",
 }: {
   disabled: boolean;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
   labelVisibilityClassName: string;
   onValueCommit: (value: string) => void;
   state: SubagentReasoningFieldState;
+  /** 弹层方向；设置页正文里应向下展开。 */
+  contentSide?: "top" | "bottom" | "left" | "right";
 }) {
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -67,6 +70,7 @@ export function SubagentReasoningField({
       intl={intl}
       option={state.option}
       provider={ZCODE_AGENT_PROVIDER}
+      contentSide={contentSide}
       onCurrentValueCommit={onValueCommit}
       showInvalidCurrentValue
       disabled={!interactive}

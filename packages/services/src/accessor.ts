@@ -34,6 +34,7 @@ import type { ISubagentsService } from "./subagents/subagents.js";
 import type { ICommandsService } from "./commands/commands.js";
 import type { IHooksService } from "./hooks/hooks.js";
 import type { IMemoryService } from "./memory/memory.js";
+import type { IWikiService } from "./wiki/wiki.js";
 import type { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import type { IFeedbackService } from "./feedback/feedback.js";
 import type { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -86,6 +87,8 @@ export interface IServiceAccessor {
   readonly commandsService: ICommandsService;
   readonly hooksService: IHooksService;
   readonly memoryService: IMemoryService;
+  /** 项目知识库（wiki）：产物落 <workspace>/wiki/，生成走本机模型调用。 */
+  readonly wikiService: IWikiService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;

@@ -12,6 +12,7 @@ import {
   AlarmClock,
   Anchor,
   Brain,
+  BookOpen,
   Blocks,
   Globe2,
   Cable,
@@ -85,6 +86,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "memory",
     icon: Brain,
     titleId: "settings.memory",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "wiki",
+    icon: BookOpen,
+    titleId: "wiki.title",
     groupId: "agentCapabilities",
   },
   {

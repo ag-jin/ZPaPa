@@ -6,6 +6,7 @@ import type { ZCodeProvider } from "./zcode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { RemoteTarget } from "./remoteTarget.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
+import type { ModelSelection } from "./model-selection.js";
 
 // ── Domain types ──
 
@@ -250,6 +251,97 @@ export interface ResourceUsageSnapshot {
   processes: ResourceUsageProcess[];
 }
 
+/**
+ * wiki 自动更新频率。
+ *
+ * 只给三档：文档级更新不需要更细的粒度，给更多选项只会让用户纠结。
+ */
+export type WikiAutoUpdateFrequency = "daily" | "every2days" | "weekly";
+
+/**
+ * 单个项目的知识库（wiki）配置。
+ *
+ * 配置按项目存（键为 workspaceKey），而不是全局一份：
+ * 不同项目可以有不同的生成模型、更新频率与开关，
+ * 改一个项目的配置不影响其他项目。
+ *
+ * 定时更新由 host 侧调度器按「频率 + 时刻 + 锚点」推进，
+ * 不存 cron —— 频率是有限枚举，直接存语义字段比反解 cron 更不容易出错。
+ */
+export interface WikiProjectSettings {
+  /** 是否启用该项目的定时自动更新。默认关闭。 */
+  autoUpdateEnabled?: boolean;
+  /**
+   * 自动更新频率。wiki 是文档级更新，不需要分钟级频率，
+   * 因此只提供 每天 / 每 2 天 / 每周 三档；缺省按每天。
+   */
+  autoUpdateFrequency?: WikiAutoUpdateFrequency;
+  /** 触发时刻（本地时间），0-23 时 / 0-59 分。缺省 03:00。 */
+  autoUpdateHour?: number;
+  autoUpdateMinute?: number;
+  /**
+   * 首次排期的锚点时间戳。改频率或时间时刷新。
+   * 「每 2 天」按此锚点推进日历天，避免用 `*\/2` cron 在月末出现「31 号→1 号只隔 1 天」。
+   */
+  autoUpdateAnchorAt?: number;
+  /**
+   * 定时生成使用的模型。**与手动生成的 modelSelection 分开**：
+   * 定时任务在无人值守时跑，应当用用户明确指定的模型，
+   * 而不是随「当前会话切到哪个模型」而变。缺省时回退当前默认模型。
+   */
+  autoUpdateModelSelection?: ModelSelection;
+  /**
+   * 手动生成的推理档位。
+   *
+   * **独立于模型存储**，而不是塞进 modelSelection.options：跟随默认模型时
+   * 用户同样需要能选推理强度，而那时没有具体 modelSelection 可挂。
+   * 模型与档位是两个正交选择，分开存才不会出现「选了默认模型就没法设档位」。
+   */
+  reasoningLevel?: string;
+  /** 定时生成的推理档位。与 reasoningLevel 同理，独立于模型。 */
+  autoUpdateReasoningLevel?: string;
+  /** 该项目上次自动更新的时间戳。 */
+  lastAutoUpdateAt?: number;
+  /** 手动生成时选定的模型。缺省时跟随当前默认模型。 */
+  modelSelection?: ModelSelection;
+  /** 生成时是否让模型插入 mermaid 图表。缺省开启。 */
+  generateDiagrams?: boolean;
+  /** 生成语言。 */
+  language?: string;
+  /** 单次请求输出预算。 */
+  maxOutputTokens?: number;
+}
+
+/**
+ * 项目知识库（wiki）的全局配置。
+ *
+ * 只放两类东西：新项目的默认值，以及按项目的配置表。
+ * 单个项目的具体配置都在 projects 里，互不影响。
+ */
+export interface WikiSettings {
+  /**
+   * 各项目的配置，键为 workspaceKey（workspaceIdentity || workspacePath）。
+   * 只存被改过的项目；未出现的项目按默认值行为（关闭定时、跟随默认模型）。
+   */
+  projects?: Record<string, WikiProjectSettings>;
+  /** 新项目的生成语言默认值（仅作为未配置项目的兜底）。 */
+  defaultLanguage?: string;
+  /** @deprecated 旧的全局频率模型；仅为读历史设置保留。 */
+  autoUpdateFrequency?: WikiAutoUpdateFrequency;
+  /** @deprecated 旧的全局配置；读取时迁移到 projects。 */
+  autoUpdateHour?: number;
+  autoUpdateMinute?: number;
+  autoUpdateAnchorAt?: number;
+  autoUpdateEnabled?: boolean;
+  autoUpdateModelSelection?: ModelSelection;
+  modelSelection?: ModelSelection;
+  generateDiagrams?: boolean;
+  language?: string;
+  maxOutputTokens?: number;
+  /** @deprecated 旧结构：键为 workspaceKey 的全局更新时间表。 */
+  lastAutoUpdateAt?: Record<string, number>;
+}
+
 export interface AppSettings {
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */
   startPlanRecommendationDismissed?: boolean;
@@ -339,6 +431,11 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
+  /**
+   * 项目知识库（wiki）配置：生成选项与定时自动更新。
+   * 产物落 `<workspace>/wiki/`。
+   */
+  wikiSettings?: WikiSettings;
   onboardingOccupation?:
     | "office"
     | "developer"

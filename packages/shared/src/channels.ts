@@ -150,6 +150,8 @@ export const ServiceChannels = {
   OffPeakTask: "off-peak-task",
   /** Onboarding 完成记录服务（本地持久化，后续上传服务器） */
   OnboardingRecord: "onboarding-record",
+  /** 项目知识库（wiki）生成与读取服务 */
+  Wiki: "wiki",
 } as const;
 
 export type ServiceChannelName = (typeof ServiceChannels)[keyof typeof ServiceChannels];

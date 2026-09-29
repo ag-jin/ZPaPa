@@ -220,6 +220,36 @@ export {
 } from "./memory/memory.js";
 export type { ProjectMemoryFileSummary, ProjectMemoryWorkspaceSummary } from "./memory/memory.js";
 
+// Wiki service — IWikiService is both a type (interface) and value (descriptor).
+// 产物契约与渲染树构建是纯类型/纯函数，可从根入口安全导出；
+// 生成器与文件落盘依赖 node:*，只能从 @zcode/services/node 引入。
+export { IWikiService, WIKI_SUPPORTED_LANGUAGES } from "./wiki/wiki.js";
+export {
+  buildWikiRenderTree,
+  countWikiPageNodes,
+  flattenWikiPageNodes,
+  isWikiTaskInProgress,
+} from "./wiki/wikiTypes.js";
+export type {
+  WikiCatalogNode,
+  WikiGenerateRequest,
+  WikiGenerateResult,
+  WikiGenerationOptions,
+  WikiGenerationProgress,
+  WikiPage,
+  WikiPageSource,
+  WikiProjectContext,
+  WikiProjectStatus,
+  WikiRenderNode,
+  WikiSummary,
+  WikiTaskPhase,
+  WikiTaskState,
+} from "./wiki/wikiTypes.js";
+// 注意：不要从根入口导出 wikiStore / wikiGenerator 等依赖 node:* 的模块 ——
+// 即使只写 `export type`，打包器仍会把模块拉进 renderer 图。实测后果是页面
+// 停在启动壳、无报错浮层、无 pending 请求，极难定位。
+// 需要这些能力的调用方从 @zcode/services/node 或直接相对路径引入。
+
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)

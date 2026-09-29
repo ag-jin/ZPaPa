@@ -36,6 +36,7 @@ import {
   ICommandsService,
   IHooksService,
   IMemoryService,
+  IWikiService,
   ISettingsSyncService,
   IFeedbackService,
   IRemoteDeviceConfigService,
@@ -91,6 +92,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly commandsService: ICommandsService;
   readonly hooksService: IHooksService;
   readonly memoryService: IMemoryService;
+  /** 项目知识库（wiki）：生成、读取与进度订阅。 */
+  readonly wikiService: IWikiService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   /** 远程设备配置（投射端本地能力，仅 desktop host 提供）。 */
@@ -215,6 +218,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.memoryService = ProxyChannel.toService<IMemoryService>(
       channelClient.getChannel(IMemoryService.channelName),
+    );
+    this.wikiService = ProxyChannel.toService<IWikiService>(
+      channelClient.getChannel(IWikiService.channelName),
     );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),

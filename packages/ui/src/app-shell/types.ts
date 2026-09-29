@@ -26,6 +26,7 @@ import type {
   OpenScopedWorkflowActorSessionSideTabRequest,
   OpenScopedWorkflowArtifactSideTabRequest,
   OpenScopedWorkflowWorkspaceSideTabRequest,
+  OpenFileTreeSidePaneRequest,
   WorkspaceSidePaneState,
 } from "@/lib/workspaceSidePane.js";
 import type { TreemappingSidePaneTab } from "@/lib/workspaceSidePane.js";
@@ -237,6 +238,10 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenTreemapping: (source?: TreemappingSidePaneTab["source"]) => void;
   handleOpenWhiteboard: () => void;
   handleOpenDeveloperTools: () => void;
+  /** 打开项目知识库（wiki）面板。 */
+  handleOpenWiki: () => void;
+  /** 打开(或聚焦)文件树面板；带 request 时按请求的 workspace 作用域与 revealPath 定位。 */
+  handleOpenFileTree: (request?: OpenFileTreeSidePaneRequest) => void;
   handleOpenTerminalTab: () => void;
   handleToggleGit: () => void;
   handleOpenGitReview: (sourceId?: GitChangeSourceId) => void;

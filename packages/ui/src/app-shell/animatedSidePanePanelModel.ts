@@ -1,11 +1,13 @@
 const MIN_PREVIEW_PANE_HEAVY_CONTENT_VISIBLE_INLINE_SIZE_PX = 96;
 
 export type OpenTabLauncherItemId =
+  | "file-tree"
   | "selection-side-conversation"
   | "review"
   | "terminal"
   | "browser"
-  | "developer-tools";
+  | "developer-tools"
+  | "wiki";
 
 export function resolveOpenTabLauncherItemIds({
   developerToolsEnabled,
@@ -20,6 +22,10 @@ export function resolveOpenTabLauncherItemIds({
 }): OpenTabLauncherItemId[] {
   const itemIds: OpenTabLauncherItemId[] = [];
 
+  // 文件树排在「辅助对话」之前：它是布局类入口（看这个项目有什么），
+  // 与具体对话无关，和辅助对话这种对话级入口不是同一层级。
+  itemIds.push("file-tree");
+
   if (canOpenSelectionSideConversation) {
     itemIds.push("selection-side-conversation");
   }
@@ -33,6 +39,10 @@ export function resolveOpenTabLauncherItemIds({
   if (supportsEmbeddedBrowser) {
     itemIds.push("browser");
   }
+
+  // wiki 是 workspace 级产物面板，紧跟在浏览器下方；任何 workspace 都能打开
+  // （没有产物时面板内引导生成）。
+  itemIds.push("wiki");
 
   if (developerToolsEnabled) {
     itemIds.push("developer-tools");

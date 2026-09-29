@@ -85,6 +85,42 @@ export interface DeveloperToolsSidePaneTab {
   openedAt?: number;
 }
 
+/**
+ * 项目知识库（wiki）面板。
+ *
+ * workspace 级而不是对话级：产物落在 <workspace>/wiki/，与具体会话无关，
+ * 换对话时不应卸载（参照 git / developer-tools 的 workspace-global 语义）。
+ */
+export interface WikiSidePaneTab {
+  id: "wiki";
+  type: "wiki";
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+}
+
+/**
+ * 文件树面板（右侧）。
+ *
+ * 原本只在左侧栏有入口（覆盖式滑出）。挪到右侧后：
+ * 「查看文件」入口与「在树中定位文件」（Git 面板、聊天里点文件路径）
+ * 都走这一个 tab —— 定位靠 revealPath，每次请求都重建 tab 状态。
+ */
+export interface FileTreeSidePaneTab {
+  id: "file-tree";
+  type: "file-tree";
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+  workspacePath: string;
+  workspaceName?: string | null;
+  workspaceIdentity?: string | null;
+  workspaceRemoteSessionId?: string | null;
+  /** 需要在树中展开并选中的路径。 */
+  revealPath?: string | null;
+  temporaryExternalDirectory?: boolean;
+}
+
 export interface TerminalSidePaneTab {
   id: string;
   type: "terminal";
@@ -522,6 +558,8 @@ export type WorkspaceSidePaneTab =
   | WhiteboardSidePaneTab
   | ModelTrajectorySidePaneTab
   | DeveloperToolsSidePaneTab
+  | WikiSidePaneTab
+  | FileTreeSidePaneTab
   | TerminalSidePaneTab
   | BrowserUseSidePaneTab
   | SubagentSessionSidePaneTab
@@ -670,6 +708,49 @@ function createDeveloperToolsSidePaneTab(): DeveloperToolsSidePaneTab {
     type: "developer-tools",
     openedAt: Date.now(),
   };
+}
+
+export function activateWikiSidePane(
+  current: WorkspaceSidePaneState | null,
+): WorkspaceSidePaneState {
+  return activateSidePaneTab(current, { id: "wiki", type: "wiki", openedAt: Date.now() });
+}
+
+export interface OpenFileTreeSidePaneRequest {
+  workspacePath: string;
+  workspaceName?: string;
+  workspaceIdentity?: string;
+  workspaceRemoteSessionId?: string;
+  /** 需要在树中展开并选中的路径。 */
+  revealPath?: string;
+  /** 目标目录不在已打开项目里（聊天里点外部目录）：不回退到当前 workspace 的 host。 */
+  temporaryExternalDirectory?: boolean;
+}
+
+export function openFileTreeSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: OpenFileTreeSidePaneRequest,
+): WorkspaceSidePaneState {
+  // 固定 id：文件树是单例面板，重复打开只更新目标，不堆叠 tab。
+  // 定位请求每次重建整个 tab，确保 revealPath 变化能被 pane 感知。
+  const next: FileTreeSidePaneTab = {
+    id: "file-tree",
+    type: "file-tree",
+    openedAt: Date.now(),
+    workspacePath: options.workspacePath,
+    ...(options.workspaceName ? { workspaceName: options.workspaceName } : {}),
+    ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
+    ...(options.workspaceRemoteSessionId
+      ? { workspaceRemoteSessionId: options.workspaceRemoteSessionId }
+      : {}),
+    ...(options.revealPath ? { revealPath: options.revealPath } : {}),
+    ...(options.temporaryExternalDirectory ? { temporaryExternalDirectory: true } : {}),
+  };
+  const withoutExisting = (current?.tabs ?? []).filter((tab) => tab.type !== "file-tree");
+  return activateSidePaneTab(
+    current ? { ...current, tabs: withoutExisting } : current,
+    next,
+  );
 }
 
 function createTerminalSidePaneTab(options: {
@@ -1055,6 +1136,8 @@ const WORKSPACE_GLOBAL_SIDE_PANE_TAB_TYPES = new Set<WorkspaceSidePaneTab["type"
   "git",
   "developer-tools",
   "treemapping",
+  "wiki",
+  "file-tree",
 ]);
 
 function isWorkspaceGlobalSidePaneTab(tab: WorkspaceSidePaneTab): boolean {

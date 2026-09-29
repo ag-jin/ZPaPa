@@ -69,3 +69,7 @@ packages/desktop/.e2e-artifacts/
 packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
 .zcode-runtime/
+
+# 项目知识库（wiki）产物：按项目落在 <workspace>/.wiki/，是可再生的生成物，
+# 不应进入版本库（需要共享时由使用者自行决定是否强制添加）。
+.wiki/

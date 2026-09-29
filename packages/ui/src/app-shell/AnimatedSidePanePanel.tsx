@@ -27,8 +27,10 @@ import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
 import { GitPane } from "@/GitPane.js";
 import { TreemappingPane } from "@/TreemappingPane.js";
 import { WhiteboardPane } from "@/WhiteboardPane.js";
+import { WikiPane } from "@/WikiPane.js";
 import { ModelTrajectoryPane } from "@/ModelTrajectoryPane.js";
 import { DeveloperToolsPane } from "@/DeveloperToolsPane.js";
+import { FileTreeSidePane } from "@/app-shell/FileTreeSidePane.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -91,8 +93,10 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
+  BookOpenIcon,
   FileDiffIcon,
   GlobeIcon,
+  ListTreeIcon,
   MessageSquareTextIcon,
   PlusIcon,
   SquareTerminalIcon,
@@ -313,6 +317,8 @@ export function AnimatedSidePanePanel({
   onOpenBrowserTab,
   onOpenWhiteboard: _onOpenWhiteboard,
   onOpenDeveloperTools,
+  onOpenWiki,
+  onOpenFileTree,
   onOpenTerminalTab,
   onOpenReviewTab,
   onOpenSelectionSideConversation,
@@ -378,6 +384,9 @@ export function AnimatedSidePanePanel({
   onOpenBrowserTab: () => void;
   onOpenWhiteboard: () => void;
   onOpenDeveloperTools: () => void;
+  onOpenWiki: () => void;
+  /** 「查看文件」入口：打开(或聚焦)workspace 文件树 tab。 */
+  onOpenFileTree: () => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
   onOpenSelectionSideConversation: () => void;
@@ -427,6 +436,21 @@ export function AnimatedSidePanePanel({
   const visibleActiveTabId = visibleTabs.some((tab) => tab.id === activeTabId)
     ? activeTabId
     : (visibleTabs.at(-1)?.id ?? "");
+  /**
+   * 最近一次被预览的文件，供文件树在打开时滚到它。
+   *
+   * 左栏时代这个值直接来自宿主的活动 tab；现在代码预览与文件树在同一个面板里，
+   * 「活动 tab」在树自己成为活动 tab 时就不再是代码预览了。这里记住最后一次
+   * 处于活动状态的 code-viewer 路径，语义与迁移前一致：切到文件树时定位到刚看过的文件。
+   */
+  const [lastPreviewedFilePath, setLastPreviewedFilePath] = useState<string | null>(null);
+  useEffect(() => {
+    const activeTab = tabs.find((tab) => tab.id === activeTabId);
+    if (activeTab?.type !== "code-viewer") {
+      return;
+    }
+    setLastPreviewedFilePath(activeTab.source.path ?? null);
+  }, [activeTabId, tabs]);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const tabsScrollViewportRef = useRef<HTMLDivElement | null>(null);
   const tabsScrollContentRef = useRef<HTMLDivElement | null>(null);
@@ -696,6 +720,16 @@ export function AnimatedSidePanePanel({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
+        {/* 与空态入口列表同一顺序：文件树（布局类入口）排在辅助对话之前。 */}
+        <DropdownMenuItem
+          data-side-pane-add-item="file-tree"
+          onSelect={() => {
+            onOpenFileTree();
+          }}
+        >
+          <ListTreeIcon className="size-4" />
+          <span>{intl.formatMessage({ id: "workspaceSidebar.showFileTree" })}</span>
+        </DropdownMenuItem>
         {canOpenSelectionSideConversation ? (
           <DropdownMenuItem
             data-side-pane-add-item="selection-side-conversation"
@@ -746,6 +780,15 @@ export function AnimatedSidePanePanel({
             <span>{intl.formatMessage({ id: "browser.title" })}</span>
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem
+          data-side-pane-add-item="wiki"
+          onSelect={() => {
+            onOpenWiki();
+          }}
+        >
+          <BookOpenIcon className="size-4" />
+          <span>{intl.formatMessage({ id: "wiki.title" })}</span>
+        </DropdownMenuItem>
         {developerToolsEnabled ? (
           <DropdownMenuItem
             data-side-pane-add-item="developer-tools"
@@ -790,6 +833,18 @@ export function AnimatedSidePanePanel({
       label: intl.formatMessage({ id: "developerTools.title" }),
       icon: BugIcon,
       onOpen: onOpenDeveloperTools,
+    },
+    wiki: {
+      id: "wiki",
+      label: intl.formatMessage({ id: "wiki.title" }),
+      icon: BookOpenIcon,
+      onOpen: onOpenWiki,
+    },
+    "file-tree": {
+      id: "file-tree",
+      label: intl.formatMessage({ id: "workspaceSidebar.showFileTree" }),
+      icon: ListTreeIcon,
+      onOpen: onOpenFileTree,
     },
   };
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
@@ -885,6 +940,8 @@ export function AnimatedSidePanePanel({
         developerToolsTitle: intl.formatMessage({
           id: "developerTools.title",
         }),
+        wikiTitle: intl.formatMessage({ id: "wiki.title" }),
+        fileTreeTitle: intl.formatMessage({ id: "workspaceSidebar.showFileTree" }),
         terminalTitle: intl.formatMessage({ id: "terminal.title" }),
         subagentTypeLabel: intl.formatMessage({ id: "sidePane.subagent" }),
         subagentDirectoryTitle: intl.formatMessage({
@@ -1236,6 +1293,15 @@ export function AnimatedSidePanePanel({
                             workspaceIdentity={workspaceIdentity}
                             boardId={tab.boardId}
                           />
+                        ) : tab.type === "wiki" ? (
+                          <WikiPane
+                            // 面板是 workspace 级的，切仓库时不卸载会留下上一个仓库的
+                            // 选中页与展开状态（已展开的集合非空，新仓库的顶层就再也不会展开）。
+                            key={`wiki:${workspaceIdentity ?? workspaceAbsPath}`}
+                            workspacePath={workspaceAbsPath}
+                            workspaceIdentity={workspaceIdentity}
+                            remoteSessionId={workspaceRemoteSessionId}
+                          />
                         ) : tab.type === "model-trajectory" ? (
                           <ModelTrajectoryPane
                             taskId={tab.taskId}
@@ -1253,6 +1319,17 @@ export function AnimatedSidePanePanel({
                               enabled={isVisible && tab.id === visibleActiveTabId}
                             />
                           </ServiceProvider>
+                        ) : tab.type === "file-tree" ? (
+                          // 文件树 tab 自带 workspace 作用域（可以不是宿主当前 workspace），
+                          // 面板只负责把 tab 上的目标原样交给树；关闭由树自身的返回按钮发起。
+                          <FileTreeSidePane
+                            tab={tab}
+                            canOpenLocalFileManager={Boolean(isDesktop)}
+                            activePreviewPath={lastPreviewedFilePath}
+                            onClose={() => onCloseTab(tab.id)}
+                            onOpenBrowserUrl={onOpenBrowserUrl}
+                            onOpenCodeViewer={onOpenCodeViewer}
+                          />
                         ) : tab.type === "terminal" ? (
                           <SidePaneTerminalPane
                             services={services}

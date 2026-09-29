@@ -6,6 +6,7 @@ import {
   BotIcon,
   BotMessageSquareIcon,
   BugIcon,
+  BookOpenIcon,
   FileCode2Icon,
   FileDiffIcon,
   MapIcon,
@@ -328,6 +329,15 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <BugIcon className="size-3.5" />;
   }
 
+  if (tab.type === "wiki") {
+    return <BookOpenIcon className="size-3.5" />;
+  }
+
+  // 与左栏原「查看文件」按钮同一枚图标：入口换了位置，字形不该跟着换。
+  if (tab.type === "file-tree") {
+    return <ListTreeIcon className="size-3.5" />;
+  }
+
   if (tab.type === "terminal" || tab.type === "bash-output") {
     return <SquareTerminalIcon className="size-3.5" />;
   }
@@ -545,6 +555,17 @@ export function getSidePaneTabTitle(
   // 用页面标题（agent 导航后由 getState 回填），缺省复用 browser.title 文案。
   if (tab.type === "browser-use") {
     return tab.title?.trim() || formatMessage({ id: "browser.title" });
+  }
+
+  // wiki tab 无 source（同 browser-use），若不拦截会 fallthrough 到下方
+  // `tab.source.title` 读 undefined.title 崩溃。
+  if (tab.type === "wiki") {
+    return formatMessage({ id: "wiki.title" });
+  }
+
+  // file-tree tab 同样无 source；标题固定为入口文案（workspace 名在面板内部显示）。
+  if (tab.type === "file-tree") {
+    return formatMessage({ id: "workspaceSidebar.showFileTree" });
   }
 
   return tab.source.title || formatMessage({ id: "codeViewer.title" });

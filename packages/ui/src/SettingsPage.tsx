@@ -18,6 +18,7 @@ import type {
   Locale,
   UsageEntitlementSnapshot,
   UserInfo,
+  WikiSettings,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
 import {
@@ -84,6 +85,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { WikiSettingsSection } from "@/settings/WikiSettingsSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
@@ -706,6 +708,36 @@ export function SettingsPage({
     return [...names];
   }, [sharedSettings?.recentProjects, workspaceTabs]);
   const memoryEnabled = sharedSettings?.memoryEnabled === true;
+  /**
+   * wiki 设置页可选项目：以 recentProjects 为准（与「最近项目」一致），
+   * 打开中但尚未持久化的 workspace 补在后面，避免刚打开的项目选不到。
+   */
+  const wikiWorkspaceOptions = useMemo(() => {
+    const options = new Map<
+      string,
+      { workspacePath: string; workspaceIdentity?: string; label: string }
+    >();
+    const push = (workspacePath: string, label?: string, workspaceIdentity?: string) => {
+      if (!workspacePath || options.has(workspacePath)) return;
+      options.set(workspacePath, {
+        workspacePath,
+        label: label?.trim() || getPathLeaf(workspacePath).trim() || workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      });
+    };
+    for (const path of sharedSettings?.recentProjects ?? []) push(path);
+    for (const tab of workspaceTabs) {
+      push(tab.workspacePath, tab.label, tab.workspaceIdentity ?? undefined);
+    }
+    return [...options.values()];
+  }, [sharedSettings?.recentProjects, workspaceTabs]);
+  const wikiSettings = sharedSettings?.wikiSettings ?? {};
+  const handleWikiSettingsChange = useCallback(
+    async (patch: Partial<WikiSettings>) => {
+      await updateSharedSettings({ wikiSettings: { ...wikiSettings, ...patch } });
+    },
+    [updateSharedSettings, wikiSettings],
+  );
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
@@ -2166,6 +2198,12 @@ export function SettingsPage({
                               workspaceDisplayNames={memoryWorkspaceDisplayNames}
                             />
                           </ServiceProvider>
+                        ) : activeSection === "wiki" ? (
+                          <WikiSettingsSection
+                            settings={wikiSettings}
+                            onChange={handleWikiSettingsChange}
+                            workspaceOptions={wikiWorkspaceOptions}
+                          />
                         ) : activeSection === "plugin" ? (
                           <PluginsSection
                             key={`plugin:${settingsSectionNavigationVersion}`}

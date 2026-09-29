@@ -417,6 +417,57 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
   return migrated;
 }
 
+/**
+ * wiki 项目配置的校验。
+ *
+ * 必须显式登记在 patch schema 里：设置写入走白名单校验，未登记的字段会被
+ * zod 静默剥掉 —— 表现为「点保存没反应/值回弹」，且不报错。
+ */
+const wikiModelSelectionSchema = z
+  .object({
+    providerId: z.string().trim().min(1),
+    modelId: z.string().trim().min(1),
+    options: z.object({ reasoningLevel: z.string().trim().min(1).optional() }).strict().optional(),
+  })
+  .strict();
+
+const wikiProjectSettingsSchema = z
+  .object({
+    autoUpdateEnabled: z.boolean().optional(),
+    autoUpdateFrequency: z.enum(["daily", "every2days", "weekly"]).optional(),
+    autoUpdateHour: z.number().int().min(0).max(23).optional(),
+    autoUpdateMinute: z.number().int().min(0).max(59).optional(),
+    autoUpdateAnchorAt: z.number().int().nonnegative().optional(),
+    autoUpdateModelSelection: wikiModelSelectionSchema.optional(),
+    autoUpdateReasoningLevel: z.string().trim().min(1).optional(),
+    lastAutoUpdateAt: z.number().int().nonnegative().optional(),
+    modelSelection: wikiModelSelectionSchema.optional(),
+    reasoningLevel: z.string().trim().min(1).optional(),
+    generateDiagrams: z.boolean().optional(),
+    language: z.string().trim().min(1).optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+  })
+  .strict();
+
+const wikiSettingsSchema = z
+  .object({
+    projects: z.record(z.string(), wikiProjectSettingsSchema).optional(),
+    defaultLanguage: z.string().trim().min(1).optional(),
+    // 下面这些是旧的全局字段，仅为读历史设置保留
+    autoUpdateFrequency: z.enum(["daily", "every2days", "weekly"]).optional(),
+    autoUpdateHour: z.number().int().min(0).max(23).optional(),
+    autoUpdateMinute: z.number().int().min(0).max(59).optional(),
+    autoUpdateAnchorAt: z.number().int().nonnegative().optional(),
+    autoUpdateEnabled: z.boolean().optional(),
+    autoUpdateModelSelection: wikiModelSelectionSchema.optional(),
+    modelSelection: wikiModelSelectionSchema.optional(),
+    generateDiagrams: z.boolean().optional(),
+    language: z.string().trim().min(1).optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    lastAutoUpdateAt: z.record(z.string(), z.number().int().nonnegative()).optional(),
+  })
+  .strict();
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -491,7 +542,9 @@ const appSettingsObjectSchema = z.object({
   skippedElectronUpdateVersions: skippedElectronUpdateVersionsSchema,
   settingsSyncFirstRunPromptHandled: z.boolean().optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  wikiSettings: wikiSettingsSchema.optional(),
 });
+
 
 export const appSettingsSchema = z.preprocess(
   (value) =>
@@ -508,6 +561,7 @@ export const appSettingsSchema = z.preprocess(
     ),
   appSettingsObjectSchema,
 );
+
 
 export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
@@ -589,4 +643,7 @@ export const appSettingsPatchSchema = z.object({
     .optional(),
   settingsSyncFirstRunPromptHandled: z.boolean().optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  wikiSettings: wikiSettingsSchema.optional(),
 });
+
+

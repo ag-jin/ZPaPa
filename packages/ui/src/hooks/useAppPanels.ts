@@ -34,6 +34,9 @@ import {
   openWorkflowWorkspaceSidePane,
   openWorkflowArtifactSidePane,
   activateDeveloperToolsSidePane,
+  activateWikiSidePane,
+  openFileTreeSidePane,
+  type OpenFileTreeSidePaneRequest,
   openBrowserSidePane,
   openOrActivateBrowserSidePaneByUrl,
   findBrowserSidePaneTabByUrl,
@@ -785,6 +788,68 @@ export function useAppPanels(options: {
       return next;
     });
   }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath]);
+
+  const handleOpenWiki = useCallback(() => {
+    revealSidePaneForCurrentOwner();
+    commitOpenedSidePaneState((current) => {
+      const next = activateWikiSidePane(current);
+      logger.info(
+        `[App] 打开右侧面板 mode=wiki workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
+      );
+      return next;
+    });
+  }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath]);
+
+  /**
+   * 打开(或聚焦)文件树面板，并按需要定位到某个路径。
+   *
+   * 三条链路共用它：右栏的「查看文件」入口（不带 revealPath）、Git 面板的
+   * 「在文件树中显示」、以及聊天里点文件路径 / 打开外部目录。文件树是单例 tab，
+   * 所以**每次都重建 tab 状态**——revealPath 从 A 换到 B 时，若沿用旧 tab 对象，
+   * 面板拿到的 props 不变，树就不会重新展开定位。
+   */
+  const handleOpenFileTree = useCallback(
+    (request?: OpenFileTreeSidePaneRequest) => {
+      // 缺省目标是当前 workspace；显式带 workspacePath 的请求（任务列表里其他项目、
+      // 聊天里的外部目录）按请求携带的作用域打开，不能回落到宿主。
+      const targetWorkspacePath = request?.workspacePath?.trim() || workspaceAbsPath;
+      const requestWorkspaceIdentity = request?.workspaceIdentity?.trim();
+      const requestRemoteSessionId = request?.workspaceRemoteSessionId?.trim();
+      // 请求没带作用域时才用宿主身份兜底。显式跨 workspace 的请求（另一个已打开项目、
+      // 或纯本地外部目录）必须只信自己带的，否则远程身份会泄漏到本地路径上，
+      // 读文件会走错 host。
+      const workspaceIdentityForTab =
+        requestWorkspaceIdentity ||
+        (targetWorkspacePath === workspaceAbsPath ? workspaceIdentity : undefined);
+      const remoteSessionIdForTab =
+        requestRemoteSessionId ||
+        (targetWorkspacePath === workspaceAbsPath ? workspaceRemoteSessionId : undefined);
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) => {
+        const next = openFileTreeSidePane(current, {
+          workspacePath: targetWorkspacePath,
+          ...(request?.workspaceName ? { workspaceName: request.workspaceName } : {}),
+          ...(workspaceIdentityForTab ? { workspaceIdentity: workspaceIdentityForTab } : {}),
+          ...(remoteSessionIdForTab ? { workspaceRemoteSessionId: remoteSessionIdForTab } : {}),
+          ...(request?.revealPath ? { revealPath: request.revealPath } : {}),
+          ...(request?.temporaryExternalDirectory
+            ? { temporaryExternalDirectory: true }
+            : {}),
+        });
+        logger.info(
+          `[App] 打开右侧面板 mode=file-tree workspace=${targetWorkspacePath} reveal=${request?.revealPath ? "yes" : "no"} tabs=${next.tabs.length}`,
+        );
+        return next;
+      });
+    },
+    [
+      commitOpenedSidePaneState,
+      revealSidePaneForCurrentOwner,
+      workspaceAbsPath,
+      workspaceIdentity,
+      workspaceRemoteSessionId,
+    ],
+  );
 
   const handleOpenTerminalTab = useCallback(() => {
     if (isOfficeMode) return;
@@ -1587,6 +1652,8 @@ export function useAppPanels(options: {
     handleOpenTreemapping,
     handleOpenWhiteboard,
     handleOpenDeveloperTools,
+    handleOpenWiki,
+    handleOpenFileTree,
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
     handleOpenSubagentSession,

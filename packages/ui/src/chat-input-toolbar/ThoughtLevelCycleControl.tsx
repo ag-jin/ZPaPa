@@ -37,6 +37,8 @@ export function ThoughtLevelCycleControl({
   showInvalidCurrentValue = false,
   restoreFocusSelector = '[data-testid="chat-input"]',
   shortcutLabel,
+  /** 弹层方向。composer 位于屏幕底部因此默认向上；设置页表单应向下以免遮挡上方字段。 */
+  contentSide = "top",
   triggerClassName,
   triggerRef,
   open,
@@ -57,6 +59,7 @@ export function ThoughtLevelCycleControl({
   showInvalidCurrentValue?: boolean;
   restoreFocusSelector?: string | null;
   shortcutLabel?: string;
+  contentSide?: "top" | "bottom" | "left" | "right";
   triggerClassName?: string;
   triggerRef: RefObject<HTMLSpanElement | null>;
   open?: boolean;
@@ -304,7 +307,7 @@ export function ThoughtLevelCycleControl({
         </ControlHintTooltip>
         <SelectContent
           position="popper"
-          side="top"
+          side={contentSide}
           align="start"
           sideOffset={4}
           collisionPadding={8}

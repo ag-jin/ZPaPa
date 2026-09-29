@@ -26,6 +26,9 @@ export type {
   RemoteWorkspaceSessionEntry,
   PersistedWorkspaceSessionEntry,
   RemoteDeviceConfig,
+  WikiSettings,
+  WikiProjectSettings,
+  WikiAutoUpdateFrequency,
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
