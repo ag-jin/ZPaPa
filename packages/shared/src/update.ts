@@ -24,7 +24,7 @@ export type UpdateCheckResultPayload =
   | { kind: "already-downloading"; version: string; progress: string }
   | { kind: "ready"; version: string }
   | { kind: "dev-skipped" }
-  /** 平台不支持应用内安装(如未签名的 macOS),已代用户打开外部下载页面。 */
+  /** 当前构建不支持应用内安装(如取不到代码签名 DR 的 macOS),已代用户打开外部下载页面。 */
   | { kind: "open-page"; url: string }
   | { kind: "error"; message: string };
 

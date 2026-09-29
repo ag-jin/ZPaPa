@@ -2045,8 +2045,8 @@ app.whenReady().then(async () => {
 
   // 启动自动更新检查（后台执行，不阻塞主界面）
   // 离线裁剪版：更新通道改为 GitHub Releases（ag-jin/ZPaPa），不再访问 zcode.z.ai。
-  // Windows 走 electron-updater 自动检查/下载/安装；macOS（未签名）在 autoUpdater 内部
-  // 跳过轮询，菜单「检查更新」直接打开发布页。
+  // Windows 与 macOS 都走 electron-updater 自动检查/下载/安装；macOS 在打包侧带
+  // ad-hoc 签名 + identifier 型 DR 以支持应用内更新，运行期探测不到 DR 时回退到发布页。
   void initAutoUpdater({
     enabled: true,
     onBeforeQuitAndInstall: async () => {

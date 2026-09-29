@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Electron Builder config keeps related packaging hooks together so build order stays explicit. */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -84,6 +84,45 @@ const macSigningIdentity =
   rawMacSigningIdentity?.replace(/^Developer ID Application:\s*/, "") ?? null;
 const shouldEnableMacSigning =
   process.env.ZCODE_ENABLE_MAC_SIGN === "1" && Boolean(macSigningIdentity);
+
+/**
+ * macOS 的 designated requirement（DR）文件路径。
+ *
+ * 为什么需要（2026-09-29 实测）：Squirrel.Mac 初始化时要取当前应用的
+ * `SecCodeCopyDesignatedRequirement`；**完全未签名**的应用取不到，原生
+ * `autoUpdater.setFeedURL()` 直接抛 `Could not get code signature for running application`
+ * —— 未签名包连更新器都起不来，与「安装时被拒」是两回事。
+ *
+ * ad-hoc 签名（`identity: "-"`）能取到 DR，但**不显式指定时 codesign 会自动生成
+ * `designated => cdhash H"..."`**，把要求钉死在当前代码哈希上；Squirrel 用旧版 DR 校验
+ * 新下载的包时哈希必然不同，于是每次更新都在 staging 阶段失败（仓库里既有的
+ * `SQRLUpdaterErrorDomain code=2` 分支即由此而来）。
+ *
+ * 因此这里显式给出 **identifier 型** DR：只要 bundle identifier 不变，跨版本校验恒定通过
+ * （已实测两版同 identifier 的 ad-hoc 包互相验证成功）。
+ * 文件由本配置在打包前按当前产品身份生成 —— identifier 必须与上面的 `appId` 一致，
+ * 而 appId 随身份变化（production=dev.zcode.app / preview=dev.zcode.app.preview）。
+ *
+ * 作用域（2026-09-30 实测）：DR 只能落在**顶层 app bundle** 上。
+ * app-builder-lib 会把 mac.requirements 无条件应用到每个待签文件，而嵌套代码各有自己的
+ * identifier（Squirrel.framework=com.github.Squirrel、Electron Framework=com.github.Electron.framework、
+ * Mantle=org.mantle.Mantle、Helper=dev.zcode.app.helper）；一旦对它们也套用本 DR，
+ * 嵌套代码就无法满足自己的 DR，osx-sign 签完后内置的 `codesign --verify --deep --strict`
+ * 会立即失败（"nested code is modified or invalid"）并中断构建。限制方式见下方 mac.sign 钩子。
+ */
+const macRequirementsFile = "requirements.mac.txt";
+export function writeMacRequirementsFile() {
+  const path = resolve(import.meta.dirname, "build", macRequirementsFile);
+  mkdirSync(dirname(path), { recursive: true });
+  // 必须是完整的 `designated => <requirement>` 形式。
+  // 实测：只写 `identifier "..."` 会被 codesign 拒绝
+  // （"invalid or corrupted code requirement(s) / unexpected token: identifier"），
+  // 因为该文件是**要求表达式**语法，不是 `codesign -d -r-` 的展示格式的裸子句。
+  writeFileSync(path, `designated => identifier "${desktopProductIdentity.appId}"\n`, "utf8");
+  return macRequirementsFile;
+}
+writeMacRequirementsFile();
+
 const workspaceRoot = resolve(import.meta.dirname, "../..");
 const desktopPackageRoot = import.meta.dirname;
 const runtimeModuleLookupRoots = [
@@ -107,6 +146,57 @@ const asarCliPath = resolve(
   "bin",
   "asar.js",
 );
+
+/**
+ * app-builder-lib 的 mac 签名入口（含 electron-builder 自带的 3 次重试）。
+ * mac.sign 钩子复用它，只把 requirements 收窄到顶层 app —— 原因见 writeMacRequirementsFile 注释。
+ * 延迟到钩子调用时再加载：win/linux 构建不需要 app-builder-lib 的 mac 签名模块。
+ * 依赖 electron-builder 的内部路径，与既有的 NSIS 模板补丁（app-builder-lib/templates/nsis/...）
+ * 属同一性质；electron-builder 版本已由 desktop devDependencies 固定为 ^26.8.1。
+ */
+function resolveMacCodeSign() {
+  return requireFromConfig("app-builder-lib/out/codeSign/macCodeSign.js");
+}
+
+/**
+ * 顶层 app 的签名（custom sign 钩子）。
+ *
+ * 为什么不直接用 mac.requirements：app-builder-lib 的 getOptionsForFile() 会把该 DR
+ * 无条件套给**每个**待签文件（macPackager.js:379-391，requirements 无路径判断），
+ * 而嵌套代码各有自己的 identifier（Squirrel=com.github.Squirrel、
+ * Electron Framework=com.github.Electron.framework、Helper=dev.zcode.app.helper 等）。
+ * 实测（2026-09-30）：套用后 osx-sign 结尾内置的 `codesign --verify --deep --strict`
+ * 立即报 "nested code is modified or invalid"，CI 的 mac 签名步骤会直接中断；
+ * 即便跳过该 verify，Squirrel 的 kSecCSCheckNestedCode 也会拒绝这样的包。
+ *
+ * 修复方式：走 electron-builder 的 mac.sign 钩子，其余参数原样交给 app-builder-lib
+ * 的签名入口（含其内置重试），只把 requirements 精确加到顶层 bundle 上。
+ * 实测该形态：顶层 DR = `designated => identifier "<appId>"`，嵌套保留各自默认 DR，
+ * `--deep --strict` 与 Squirrel 同款跨版本校验（kSecCSCheckNestedCode |
+ * kSecCSStrictValidate | kSecCSCheckAllArchitectures）均通过。
+ */
+async function signMacAppWithTopLevelRequirement(opts) {
+  const macCodeSign = resolveMacCodeSign();
+  const appBundlePath = opts.app;
+  const requirementsPath = resolve(desktopPackageRoot, "build", macRequirementsFile);
+  const inheritedOptionsForFile = opts.optionsForFile;
+  await macCodeSign.sign({
+    ...opts,
+    optionsForFile: (filePath) => {
+      // 展开继承选项时不做 `?? {}` 兜底：展开 undefined 本就是空操作，
+      // oxlint 的 no-useless-fallback-in-spread 会拒绝多余的空对象兜底。
+      const perFileOptions = { ...inheritedOptionsForFile?.(filePath) };
+      // 嵌套代码必须保留各自默认 DR：显式移除任何继承来的 requirements，
+      // 避免将来有人在 mac 配置里重新加上 requirements 时又把嵌套签坏。
+      delete perFileOptions.requirements;
+      if (filePath === appBundlePath) {
+        perFileOptions.requirements = requirementsPath;
+      }
+      return perFileOptions;
+    },
+  });
+}
+
 const REQUIRED_ASAR_RUNTIME_MODULES = [
   "module-details-from-path",
   "@opentelemetry/api-logs",
@@ -670,7 +760,23 @@ export default {
     // z-code 之前只有本地未签名打包配置，CI 即使注入了证书变量，
     // electron-builder 也不会自动切到 hardened runtime / entitlement 这套发布参数。
     // 这里显式收拢到环境开关，保证本地开发不被签名配置绑死，CI 发布时再按需打开。
-    identity: shouldEnableMacSigning ? macSigningIdentity : null,
+    //
+    // 无证书时用 ad-hoc（"-"）而不是 null（完全跳过签名）：
+    // Squirrel.Mac 需要应用有 designated requirement，完全未签名时连
+    // `autoUpdater.setFeedURL()` 都抛 `Could not get code signature for running application`
+    // —— 未签名包无法自动更新（2026-09-29 实测）。ad-hoc 签名零成本且能取到 DR。
+    // 注意 x64 与 arm64 的差别：Electron 官方二进制自带的 ad-hoc 签名只在 arm64 上保留，
+    // x64 产物是完全未签名的，因此这里必须显式给出 identity，不能依赖 Electron 预置签名
+    // （否则 x64 包依旧无法自动更新，且 identifier 会是 Electron 而非本应用身份）。
+    identity: shouldEnableMacSigning ? macSigningIdentity : "-",
+    // 显式 identifier 型 DR，覆盖 ad-hoc 默认生成的 cdhash DR（后者跨版本必然校验失败）。
+    // 真签名（Developer ID）时同样给上，保证两种形态的 DR 语义一致。
+    //
+    // 注意这里**不能**直接用 mac.requirements：app-builder-lib 会把该 DR 无条件套给每个
+    // 待签文件，嵌套代码（Squirrel / Electron Framework / Helper）各有自己的 identifier，
+    // 套用后会签坏并让 osx-sign 内置的 --verify --deep --strict 直接失败（2026-09-30 实测）。
+    // 因此改由 mac.sign 钩子把 DR 精确加到顶层 bundle 上，见 signMacAppWithTopLevelRequirement。
+    sign: signMacAppWithTopLevelRequirement,
     // macOS 产物采用“build 阶段签名 + 独立公证阶段”的两段式流水线。
     // 如果这里不显式关闭 electron-builder 内置 notarize，它会在 build 阶段读取 Apple 凭据后直接尝试公证，
     // 并强制要求 APPLE_APP_SPECIFIC_PASSWORD，导致 build 还没产出 DMG 就提前失败。

@@ -6,8 +6,9 @@ name: Desktop Release
 #                                    的 node-pty electron-rebuild 产物带进安装包)
 #   - Windows x64                  → windows-latest
 #
-# 全部产物均为未签名包:不注入 APPLE_SIGNING_IDENTITY / CSC_* 等任何签名变量,
-# electron-builder 的 mac.identity 保持 null、Windows NSIS 不做时间戳签名。
+# 签名形态:不注入 APPLE_SIGNING_IDENTITY / CSC_* 等证书变量,Windows NSIS 不做时间戳签名。
+# mac 由 electron-builder.config.js 统一给出 identity:无证书时用 ad-hoc("-"),
+# 让产物带 designated requirement 从而支持应用内自动更新;有证书时走 Developer ID。
 # 触发方式:
 #   - 推送 v* 标签:构建 3 个安装包并发布 GitHub Release
 #   - workflow_dispatch:只构建并上传 Actions 构建产物,不发布 Release(用于验证流水线)
@@ -38,14 +39,31 @@ jobs:
             runner: macos-15
             bundle-args: --os mac --arch arm64
             artifact-glob: packages/desktop/dist/*.dmg
+            # mac 应用内自动更新需要 zip + 更新清单：electron-updater 的 MacUpdater
+            # 只认 zip（找不到就抛 ERR_UPDATER_ZIP_FILE_NOT_FOUND），dmg 不能用于自动更新。
+            # 清单以 arch 后缀命名上传，供 release job 合并（两个架构都产出同名
+            # latest-mac.yml，直接上传会互相覆盖）。
+            update-glob: |
+              packages/desktop/dist/*-mac-arm64.zip
+              packages/desktop/dist/*-mac-arm64.zip.blockmap
+            manifest-glob: packages/desktop/dist/latest-mac.yml
+            manifest-artifact-name: mac-manifest-arm64
           - name: mac-x64
             runner: macos-15-intel
             bundle-args: --os mac --arch x64
             artifact-glob: packages/desktop/dist/*.dmg
+            update-glob: |
+              packages/desktop/dist/*-mac-x64.zip
+              packages/desktop/dist/*-mac-x64.zip.blockmap
+            manifest-glob: packages/desktop/dist/latest-mac.yml
+            manifest-artifact-name: mac-manifest-x64
           - name: win-x64
             runner: windows-latest
             bundle-args: --os win --arch x64
             artifact-glob: packages/desktop/dist/*.exe
+            # 显式置空：mac 的清单上传步骤以 `matrix.manifest-glob != ''` 为条件，
+            # 缺字段时的隐式类型转换不直观，这里写死空串让跳过条件无歧义。
+            manifest-glob: ""
             # electron-updater 自动更新需要的元数据与差分块,随安装包一起发布
             update-glob: |
               packages/desktop/dist/latest.yml
@@ -56,7 +74,9 @@ jobs:
       # 桌面安装包不依赖 mock-cdn 远端资产(SSH/WSL 远端组件由客户端运行时按需下载),
       # 跳过 node 二进制下载与远端组件打包,显著缩短 CI
       ZCODE_SKIP_REMOTE_ASSETS: "1"
-      # 明确禁用 macOS 签名身份自动发现,确保产物保持未签名
+      # 禁用 macOS 签名身份的 keychain 自动发现,避免 CI 机器上恰好存在的证书被意外选中。
+      # 注意:这不影响 mac.identity 的显式取值 —— electron-builder 对 identity === "-"
+      # 走独立分支(macPackager.sign 里的 qualifier === "-"),不经过自动发现,ad-hoc 签名照常执行。
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Check out
@@ -101,6 +121,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # mac 的更新清单需要两个架构合并后才能发布，这里先按架构单独留存。
+      # 两个 job 产出的清单同名（latest-mac.yml），不能并进上面的 artifact
+      # （后者在 release job 里 merge-multiple 合并，会再覆盖一次）。
+      - name: Upload mac update manifest
+        if: matrix.manifest-glob != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.manifest-artifact-name }}
+          path: ${{ matrix.manifest-glob }}
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -108,12 +140,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # 合并 mac 更新清单要用仓库里的 scripts/merge-mac-update-manifests.mjs，
+      # 因此这里必须 checkout（该脚本刻意不依赖任何 npm 包，无需 pnpm install）。
+      - name: Check out
+        uses: actions/checkout@v4
+
       - name: Download all installers
         uses: actions/download-artifact@v4
         with:
           path: installers
           pattern: desktop-*
           merge-multiple: true
+
+      # mac 的两个架构各产出一份同名 latest-mac.yml，必须合并成一份含两条 files[]
+      # 的清单后再发布，否则后上传的会覆盖先上传的，另一个架构永远收不到更新。
+      - name: Download mac update manifests
+        uses: actions/download-artifact@v4
+        with:
+          path: mac-manifests
+          pattern: mac-manifest-*
+
+      - name: Merge mac update manifests
+        run: |
+          set -euo pipefail
+          node scripts/merge-mac-update-manifests.mjs \
+            mac-manifests/mac-manifest-arm64/latest-mac.yml \
+            mac-manifests/mac-manifest-x64/latest-mac.yml \
+            installers/latest-mac.yml
 
       - name: Create release and upload installers
         env:

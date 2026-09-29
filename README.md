@@ -159,7 +159,7 @@ sudo xattr -rd com.apple.quarantine /Applications/ZCode.app
 
 ### 自动发布（GitHub Actions）
 
-仓库内置 [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)。推送 `v*` 标签即自动构建并发布三个**未签名**安装包（macOS arm64 / macOS x64 / Windows x64）到 GitHub Release：
+仓库内置 [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml)。推送 `v*` 标签即自动构建并发布三个安装包（macOS arm64 / macOS x64 / Windows x64）到 GitHub Release：
 
 ```bash
 # 1. 更新根 package.json 的 version（tag 必须与之一致，流水线会校验）
@@ -170,8 +170,15 @@ git push origin main v3.14.4
 
 - 构建矩阵：`macos-15`（mac arm64）、`macos-15-intel`（mac x64，原生构建）、`windows-latest`（win x64），全程约 25 分钟。
 - 产物命名 `ZCode-<version>-<platform>-<arch>.<ext>`，连接生产后端（`ZCODE_ENV=production`）。
-- 全部产物未签名：macOS 首次打开需按上文 `xattr` 去隔离，Windows 首次运行有 SmartScreen 提示。如需签名分发，需在 CI 注入 `ZCODE_ENABLE_MAC_SIGN=1` + `APPLE_SIGNING_IDENTITY`（mac）或 `CSC_LINK`（win）并重新打包。
+- 未注入证书时，macOS 产物使用 **ad-hoc 签名**（`identity: "-"` + 显式 identifier 型 designated requirement）。这不等于"已签名分发"：macOS 首次打开仍需按上文 `xattr` 去隔离；但它让**应用内自动更新**可用。如需正式签名分发，在 CI 注入 `ZCODE_ENABLE_MAC_SIGN=1` + `APPLE_SIGNING_IDENTITY`（mac）或 `CSC_LINK`（win）后重新打包。
+- Windows 首次运行仍有 SmartScreen 提示（未做时间戳签名）。
 - 试跑（只构建为 Actions 产物、不发布 Release）：在 Actions 页面手动触发 `workflow_dispatch`，产物保留 7 天。
+
+### 应用内自动更新
+
+三个平台都走 GitHub Releases（`ag-jin/ZPaPa`）的应用内更新：启动时自动检查、每小时轮询，下载完成后可从菜单「重启以更新」安装。macOS 依赖 ad-hoc 签名带来的 designated requirement（见上节）；若某个构建形态取不到 DR，应用会自动降级为「检查更新」直接打开发布页，不会出现点了没反应。
+
+> 过渡约束：`3.16.1` 及更早的 macOS 包**完全未签名**，连更新器都无法初始化，因此存量 mac 用户需要**手动安装一次**带 ad-hoc 签名的新版本，才能进入自动更新通道。
 
 ### ZCode 命令行版
 

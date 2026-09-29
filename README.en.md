@@ -147,7 +147,7 @@ The default target is macOS arm64, and the default output directory is `packages
 
 ### Automated release (GitHub Actions)
 
-The repository ships [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml). Pushing a `v*` tag automatically builds and publishes three **unsigned** installers (macOS arm64 / macOS x64 / Windows x64) to a GitHub Release:
+The repository ships [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml). Pushing a `v*` tag automatically builds and publishes three installers (macOS arm64 / macOS x64 / Windows x64) to a GitHub Release:
 
 ```bash
 # 1. Bump the version in the root package.json (the tag must match it; the workflow verifies this)
@@ -158,8 +158,15 @@ git push origin main v3.14.4
 
 - Build matrix: `macos-15` (mac arm64), `macos-15-intel` (mac x64, native build), `windows-latest` (win x64); the whole run takes about 25 minutes.
 - Artifacts are named `ZCode-<version>-<platform>-<arch>.<ext>` and target the production backend (`ZCODE_ENV=production`).
-- All artifacts are unsigned: macOS requires the `xattr` quarantine workaround on first launch, and Windows shows a SmartScreen warning. To ship signed builds, inject `ZCODE_ENABLE_MAC_SIGN=1` plus `APPLE_SIGNING_IDENTITY` (mac) or `CSC_LINK` (win) in CI and rebuild.
+- Without a signing certificate, macOS artifacts use an **ad-hoc signature** (`identity: "-"` plus an explicit identifier-type designated requirement). This is not "signed distribution": macOS still needs the `xattr` quarantine workaround on first launch. It does, however, make **in-app auto-update** work. To ship properly signed builds, inject `ZCODE_ENABLE_MAC_SIGN=1` plus `APPLE_SIGNING_IDENTITY` (mac) or `CSC_LINK` (win) in CI and rebuild.
+- Windows still shows a SmartScreen warning on first run (no timestamp signature).
 - Dry run (build artifacts only, no Release): trigger `workflow_dispatch` from the Actions page; artifacts are kept for 7 days.
+
+### In-app auto-update
+
+All three platforms update in-app from GitHub Releases (`ag-jin/ZPaPa`): a check on startup, an hourly poll, and a "Restart to update" menu entry once the download finishes. macOS relies on the designated requirement provided by the ad-hoc signature (see above); if a build shape cannot obtain a DR, the app falls back to opening the releases page from "Check for Updates" instead of silently doing nothing.
+
+> Transition constraint: macOS packages up to and including `3.16.1` are **completely unsigned**, so the updater cannot even initialize. Existing macOS users must **install the new (ad-hoc signed) build manually once** to enter the auto-update channel.
 
 ### ZCode CLI distribution
 

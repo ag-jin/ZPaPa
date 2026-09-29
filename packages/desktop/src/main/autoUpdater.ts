@@ -14,7 +14,9 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
+import { execFile } from "node:child_process";
 import pkg, { CancellationToken } from "electron-updater";
+import { parseMacDesignatedRequirement, resolveMacAppBundlePath, shouldUseInAppAutoUpdate } from "./autoUpdatePolicy.js";
 import semver from "semver";
 import { logger } from "./logger.js";
 import { getElectronReleasePlatform } from "./manifestUpdateProvider.js";
@@ -23,8 +25,13 @@ const { autoUpdater } = pkg;
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
 const AUTO_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 // 更新通道(离线裁剪版):改用 GitHub Releases(ag-jin/ZPaPa)。
-// Windows 走 electron-updater 的 GitHub provider 完整自动更新;macOS 产物未签名,
-// Squirrel 静默安装会被签名校验拒绝,菜单「检查更新」直接打开发布页手动下载。
+// Windows 与 macOS 都走 electron-updater 的 GitHub provider 完整自动更新。
+// （旧注释称「macOS 未签名 → Squirrel 静默安装会被签名校验拒绝」，2026-09-29 实测更精确：
+//  完全未签名时 Squirrel **连初始化都做不到**（取不到 designated requirement，
+//  原生 setFeedURL 抛 "Could not get code signature for running application"）；
+//  打包侧因此总是给 identity —— 有证书用 Developer ID，无证书用 ad-hoc + 显式
+//  identifier 型 DR，见 electron-builder.config.js 的 writeMacRequirementsFile。
+//  运行期判定见 autoUpdatePolicy.ts。）
 const GITHUB_UPDATE_OWNER = "ag-jin";
 const GITHUB_UPDATE_REPO = "ZPaPa";
 const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
@@ -64,6 +71,12 @@ let autoUpdaterSettingService: SettingServiceLike | undefined;
 // （占位 feed、autoDownload 默认值）。任何漏改成按身份判断的入口若仍调用手动检查，
 // 都会对占位 feed 发真实请求。这里记住“本 flavor 已禁用”，让手动检查在模块内部 fail-closed。
 let autoUpdaterDisabledForProductFlavor = false;
+/**
+ * 本次运行是否支持**应用内**更新（下载 + 安装）。由 initAutoUpdater 按运行期事实设置，
+ * 供 checkForUpdateMenuClick 决定「进状态机」还是「打开发布页」。
+ * 默认 false：初始化之前的不确定态不谎称支持。
+ */
+let inAppAutoUpdateAvailable = false;
 
 type SettingServiceLike = Pick<ISettingService, "get" | "update">;
 
@@ -153,6 +166,34 @@ function isDevAutoUpdateEnabled(): boolean {
     isTruthyRuntimeFlag(process.env[DEV_AUTO_UPDATE_ENV]) ||
     readCommandLineSwitchValue(DEV_AUTO_UPDATE_SWITCH) !== null
   );
+}
+
+/**
+ * 应用是否带 designated requirement（DR）—— 即 Squirrel.Mac 能否初始化。
+ * 判定逻辑在 autoUpdatePolicy.ts（纯函数、可单测），这里只负责执行 codesign。
+ */
+async function probeMacCodeSignature(appBundlePath: string): Promise<boolean> {
+  return new Promise<boolean>((resolveProbe) => {
+    execFile(
+      "codesign",
+      ["-d", "-r-", appBundlePath],
+      { encoding: "utf8", timeout: 5_000 },
+      (error, stdout, stderr) => {
+        if (error && typeof (error as { code?: unknown }).code === "string" && !stdout && !stderr) {
+          // 命令本身不可用（无 codesign / 超时）：保守判定为「不支持应用内更新」，
+          // 让用户走发布页下载，而不是停在一个注定失败的下载流程里。
+          logger.warn(`[auto-update] mac code signature probe failed: ${String(error.message)}`);
+          resolveProbe(false);
+          return;
+        }
+        const code =
+          error && typeof (error as { code?: unknown }).code === "number"
+            ? (error as { code: number }).code
+            : 0;
+        resolveProbe(parseMacDesignatedRequirement(code, stdout ?? "", stderr ?? ""));
+      },
+    );
+  });
 }
 
 function canUseAutoUpdaterInCurrentRuntime(): boolean {
@@ -1468,12 +1509,24 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
-  if (process.platform === "darwin") {
-    // macOS 未签名:不配置 updater、不轮询;版本入口是菜单「检查更新」→ 打开发布页。
-    logger.info("[auto-update] darwin: manual check opens GitHub releases page, no polling");
-    return;
-  }
   if (!canUseAutoUpdaterInCurrentRuntime()) return;
+
+  // 应用内更新不可用时（例如未签名/异常构建），入口必须回退到打开发布页，
+  // 而不是「点了没反应」。该标志在 checkForUpdateMenuClick 里被消费。
+  // darwin 需要问代码签名（Squirrel 能否初始化），故这一步是异步的。
+  inAppAutoUpdateAvailable = shouldUseInAppAutoUpdate({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    devAutoUpdateEnabled: isDevAutoUpdateEnabled(),
+    ...(process.platform === "darwin" && app.isPackaged
+      ? { macHasDesignatedRequirement: await probeMacCodeSignature(resolveMacAppBundlePath(process.execPath)) }
+      : {}),
+  });
+  if (!inAppAutoUpdateAvailable) {
+    logger.warn(
+      "[auto-update] in-app update unavailable; manual check will open the releases page instead",
+    );
+  }
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
   if (options.locale) {
@@ -1852,17 +1905,6 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     return;
   }
 
-  if (process.platform === "darwin") {
-    // 离线裁剪版:macOS 安装包未签名,应用内静默更新不可用;手动检查直接打开 GitHub 发布页。
-    logger.info("[auto-update] darwin manual check: open GitHub releases page");
-    void shell.openExternal(GITHUB_RELEASES_PAGE_URL);
-    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
-      kind: "open-page",
-      url: GITHUB_RELEASES_PAGE_URL,
-    } satisfies UpdateCheckResultPayload);
-    return;
-  }
-
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info("[auto-update] skip manual check: not packaged");
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
@@ -1873,9 +1915,23 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
 
   if (autoUpdaterDisabledForProductFlavor) {
     // 入口本应已按产品身份隐藏；这里是最后一道闸，不让未初始化的 updater 实例向占位 feed 发请求。
+    // 必须排在「回退打开发布页」之前：Preview 身份连发布页都不该引导 —— 那里是生产产物，
+    // 本 flavor 的正规行为是 fail-closed 地回 dev-skipped。
     logger.info("[auto-update] skip manual check: updater disabled for this product flavor");
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "dev-skipped",
+    } satisfies UpdateCheckResultPayload);
+    return;
+  }
+
+  if (!inAppAutoUpdateAvailable) {
+    // 已打包但判定不支持应用内更新（例如未签名/异常构建）。不能静默留在状态机里 ——
+    // 那会让用户点了「检查更新」没有任何反应。打开发布页是这类环境的正规出口。
+    logger.warn("[auto-update] in-app update unavailable: open releases page instead");
+    void shell.openExternal(GITHUB_RELEASES_PAGE_URL);
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "open-page",
+      url: GITHUB_RELEASES_PAGE_URL,
     } satisfies UpdateCheckResultPayload);
     return;
   }
