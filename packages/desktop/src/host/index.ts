@@ -44,6 +44,9 @@ import {
   IZCodeTaskService,
   IZCodeSessionService,
   ICuaPipSessionService,
+  IProviderProvisioningTargetService,
+  createUntrustedProviderProvisioningTarget,
+  isProviderProvisioningTrustedClientMode,
   createZCodeAgentConnectionScope,
   type ZCodeAgentV4ClientMode,
   collectServiceMemoryDiagnostics,
@@ -2113,6 +2116,19 @@ function exposeServicesOnMessagePort(
         clientMode,
         connectionScope?.service,
       ),
+    );
+  }
+  // Provisioning 携带跨 Environment 凭据，只允许受信 Desktop Host 使用。
+  // 本 host 暴露多个 attachment：桌面 UI / 投射端挂载是 desktop-continuous，
+  // 手机与 Web 远控是 web-remote-replayable。与 server HTTP 面（http.ts 的同一道门控）
+  // 共用同一份判定，非受信连接即使知道频道名也只能拿到抛错的桩。
+  if (
+    !isProviderProvisioningTrustedClientMode(clientMode) &&
+    services.getOptional(IProviderProvisioningTargetService)
+  ) {
+    overrides.set(
+      IProviderProvisioningTargetService.channelName,
+      createUntrustedProviderProvisioningTarget(),
     );
   }
   services.exposeOnChannelServer(server, overrides);

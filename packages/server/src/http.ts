@@ -25,6 +25,8 @@ import {
   ITerminalService,
   IBotsService,
   IProviderProvisioningTargetService,
+  createUntrustedProviderProvisioningTarget,
+  isProviderProvisioningTrustedClientMode,
 } from "@zcode/services";
 import {
   botProviders,
@@ -109,14 +111,13 @@ function setupChannelServer(
   // Provisioning 携带跨 Environment 凭据，只允许 Desktop trusted host 使用；普通 Web
   // remote/replayable 客户端即使知道频道名，也不能获得 target 写入接口。
   if (
-    clientMode !== "desktop-continuous" &&
+    !isProviderProvisioningTrustedClientMode(clientMode) &&
     services.getOptional(IProviderProvisioningTargetService)
   ) {
-    overrides.set(IProviderProvisioningTargetService.channelName, {
-      apply: async () => {
-        throw new Error("Provider Provisioning 仅支持受信 Desktop Host");
-      },
-    });
+    overrides.set(
+      IProviderProvisioningTargetService.channelName,
+      createUntrustedProviderProvisioningTarget(),
+    );
   }
   services.exposeOnChannelServer(server, overrides);
   socket.onClose(() => {

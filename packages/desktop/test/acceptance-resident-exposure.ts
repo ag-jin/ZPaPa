@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { ServiceChannels } from "@zcode/shared";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 const DEVICE_HOST = process.env.ZPAPA_DEVICE_HOST ?? "100.66.1.2";
@@ -166,6 +167,8 @@ knownDefect(
 console.log("\n=== T3：经 SSH 隧道挂载（只读）===");
 let mountedOk = false;
 let sampleInfo = "";
+/** provider-provisioning-target 的只读探测结论（见 T5）。 */
+let provisioningChannel = "unknown";
 try {
   const { createRemoteBackend } = await tsImport(
     pathToFileURL(join(repoRoot, "packages/server/src/remote/create-backend.ts")).href,
@@ -191,6 +194,25 @@ try {
     const tasks = await connection.services.zcodeTaskService.listTasks({});
     mountedOk = true;
     sampleInfo = `对端会话 ${tasks.length} 条（服务面可用）`;
+
+    // T5：挂载面必须提供 provider-provisioning-target。缺它时挂载本身成功、会话也查得到，
+    // 但 initialSync 屏障 fail-closed，整个 remote workspace 建不起来（2026-09-29 实测：
+    // 设备侧 Unknown channel → A 侧「Provider Provisioning 首次同步失败」）。
+    // 只读探测：调不存在的方法名 —— 有路由回 "Method not found"，无路由则 1000ms 超时。
+    // 刻意不调 apply()：那是写接口（空 envelope 会清空对端个人配置与凭据）。
+    try {
+      const channel = connection.client.getChannel(ServiceChannels.ProviderProvisioningTarget);
+      await channel.call("__probe_no_such_method__", []);
+      provisioningChannel = "unexpected-success";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      provisioningChannel = message.includes("Method not found")
+        ? "present"
+        : message.includes("timed out")
+          ? "missing"
+          : `other: ${message.slice(0, 80)}`;
+    }
+
     await connection.disposeAndWait({ timeoutMs: 5_000 });
   } else {
     sampleInfo = "connectResidentRemote 返回 null（未发现可挂载的常驻主机）";
@@ -199,6 +221,16 @@ try {
   sampleInfo = error instanceof Error ? error.message.slice(0, 140) : String(error);
 }
 check("经 SSH 隧道挂载成功", mountedOk, sampleInfo);
+check(
+  "挂载面提供 provider-provisioning-target（首次同步屏障的前提）",
+  provisioningChannel === "present",
+  provisioningChannel === "present"
+    ? "有路由（Method not found 即证明频道已注册）"
+    : provisioningChannel === "missing"
+      ? "频道缺失 —— remote workspace 的首次同步屏障会失败，表现为「首次同步失败 (failed)」。\n" +
+        "     若设备仍是旧版本，需先升级设备到含本修复的构建。"
+      : provisioningChannel,
+);
 
 console.log("\n=== 结论 ===");
 if (failures === 0) {

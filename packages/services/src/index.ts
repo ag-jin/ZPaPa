@@ -16,7 +16,13 @@ export {
   type AccountRequestAuthMaterial,
   type AccountRequestAuthResolver,
 } from "./model-provider/accountRequestAuthService.js";
-export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
+export {
+  IProviderProvisioningTargetService,
+  PROVIDER_PROVISIONING_TRUSTED_CLIENT_MODE,
+  PROVIDER_PROVISIONING_UNTRUSTED_ERROR_MESSAGE,
+  createUntrustedProviderProvisioningTarget,
+  isProviderProvisioningTrustedClientMode,
+} from "./model-provider/providerProvisioning.js";
 export { IRemoteDeviceConfigService } from "./remote/remoteDeviceConfig.js";
 export type { RemoteDeviceConfigRecord } from "./remote/remoteDeviceConfig.js";
 export { IRemoteDeviceProjectsService } from "./remote/remoteDeviceProjects.js";

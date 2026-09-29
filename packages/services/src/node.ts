@@ -751,6 +751,32 @@ export function shouldEnableCuaOperationStateReporter(opts: {
   return opts.hasReporter && opts.serviceAuthorityMode === "desktop-local";
 }
 
+/**
+ * 是否在当前 Environment 注册 Provider Provisioning target。
+ *
+ * 判定依据是「这个 Environment 会不会被投射端挂载」，而不是它是不是 remote：
+ * - `desktop-attached-remote`：SSH/WSL/Docker 上的远端 host，本就被挂载；
+ * - `desktop-local`：窗口 host **兼作**可远程挂载的常驻主机（ADR 0003）。它仍报
+ *   desktop-local（B 的 UI 需要 CUA 等物理桌面能力），但挂载面必须提供 target ——
+ *   否则投射端挂载后的「首次同步」屏障（fail-closed）必然失败，报
+ *   Provider Provisioning 首次同步失败 (failed)，而挂载传输层本身是成功的，
+ *   表现为「连得上但整个远程工作区建不起来」。曾因只认 remote 而漏掉这一支。
+ * - `standalone-server`：由调用方按是否配置认证显式开启，不在此默认放开。
+ *
+ * 注册不等于对外可写：桌面 MessagePort 面与 Web HTTP 面都按连接级 clientMode
+ * 把非受信连接的该频道替换为拒绝写入的桩（见 isProviderProvisioningTrustedClientMode）。
+ */
+export function shouldRegisterProviderProvisioningTarget(opts: {
+  serviceAuthorityMode?: ServiceAuthorityMode;
+  providerProvisioningTargetEnabled?: boolean;
+}): boolean {
+  return (
+    opts.providerProvisioningTargetEnabled === true ||
+    opts.serviceAuthorityMode === "desktop-attached-remote" ||
+    opts.serviceAuthorityMode === "desktop-local"
+  );
+}
+
 export async function runCuaScreenCaptureReadinessProbe(
   host: Pick<CuaHelperHost, "queryScreenCaptureProbe">,
   screenRecording: "granted" | "denied" | "unknown",
@@ -2639,7 +2665,12 @@ export function createLocalServices(options: {
   services
     .register(IProviderSettingsService, providerRuntime.providerSettings)
     .register(IModelSelectionService, providerRuntime.modelSelection);
-  if (isDesktopAttachedRemote || options.providerProvisioningTargetEnabled === true) {
+  if (
+    shouldRegisterProviderProvisioningTarget({
+      serviceAuthorityMode: options.serviceAuthorityMode,
+      providerProvisioningTargetEnabled: options.providerProvisioningTargetEnabled,
+    })
+  ) {
     services.register(
       IProviderProvisioningTargetService,
       createProviderProvisioningTarget({

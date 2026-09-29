@@ -99,6 +99,13 @@ const SUITES = [
     cwd: ".",
     file: "packages/desktop/test/acceptance-tail-parts-ordering.ts",
   },
+  {
+    layer: 1,
+    id: "provisioning-channel",
+    title: "挂载面提供 provisioning target（首次同步屏障的前提）",
+    cwd: ".",
+    file: "packages/desktop/test/providerProvisioningChannel.test.ts",
+  },
 
   // ── 层 2：跨机只读（需 B 在线）──
   {

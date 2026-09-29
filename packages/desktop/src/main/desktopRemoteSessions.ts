@@ -607,6 +607,14 @@ export function createRemoteWorkspaceSessionManager(options: {
         };
         if (parsed.data.status !== "applied" && parsed.data.status !== "already-applied") {
           if (pending.trigger === "environment-online") {
+            // 首次同步是发布屏障，失败会让整个 remote workspace 建不起来。这里按与下方
+            // 相同的脱敏口径补一条可定位的状态事实：此前该分支只 reject 不记录，
+            // 主日志里只剩「首次同步失败 (failed)」，无从判断是凭据被拒、Registry 不支持，
+            // 还是挂载面根本没有该 capability（channel 缺失走的是超时 → failed）。
+            options.logger.warn(
+              "[provider-provisioning] Environment sync failed, blocking remote workspace",
+              logContext,
+            );
             pending.reject(new Error(`Provider Provisioning 首次同步失败 (${parsed.data.status})`));
             return;
           }
