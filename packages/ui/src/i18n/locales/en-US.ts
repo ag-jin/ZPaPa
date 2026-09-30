@@ -2779,6 +2779,9 @@ const enUS: Record<string, string> = {
   "settings.remoteDevice.status.connecting": "Connecting…",
   "settings.remoteDevice.status.connected": "Connected",
   "settings.remoteDevice.status.failed": "Connection failed",
+  "settings.remoteDevice.allProjectsHidden": "No projects are currently shown",
+  "settings.remoteDevice.allProjectsHiddenHint":
+    "The device stays connected — re-enable projects with the switches above.",
   "settings.modelProvider.templatePickerTitle": "Add provider",
   "settings.modelProvider.templateGroup.zhipu": "Zhipu",
   "settings.modelProvider.templateGroup.other": "Other",

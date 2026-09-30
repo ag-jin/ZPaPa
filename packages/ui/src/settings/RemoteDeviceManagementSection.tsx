@@ -45,6 +45,21 @@ function formatTargetSummary(device: RemoteDeviceConfig): string {
   return `${target.username}@${target.host}${port}`;
 }
 
+/**
+ * 设备条目的主标题。
+ *
+ * 为什么要与 `formatTargetSummary` 分开：只显示 `user@host:port` 时，用户看到的
+ * 就是「一串 SSH 地址」，认不出这是哪台设备、上面有什么 —— 用户实测反馈
+ * 「项目全关后设备条目变成一个 ssh 端口」。这里优先用可读身份（SSH 配置别名，
+ * 否则主机名），把裸地址降为副标题。
+ */
+function formatDeviceTitle(device: RemoteDeviceConfig): string {
+  const target = device.target;
+  if (target.kind !== "ssh") return String(target.kind);
+  const alias = target.sshConfigAlias?.trim();
+  return alias || target.host;
+}
+
 export function RemoteDeviceManagementSection({
   device,
   connectionStatus,
@@ -111,13 +126,13 @@ export function RemoteDeviceManagementSection({
         label={
           <span className="flex items-center gap-2">
             <MonitorSmartphone className="size-4 text-foreground-subtle" />
-            {formatTargetSummary(device)}
+            {formatDeviceTitle(device)}
           </span>
         }
         description={
           connectionStatus === "failed" && connectionError
             ? `${statusLabel} · ${connectionError}`
-            : statusLabel
+            : `${statusLabel} · ${formatTargetSummary(device)}`
         }
         control={
           <div className="flex items-center gap-2">
@@ -172,6 +187,21 @@ export function RemoteDeviceManagementSection({
             />
           ))}
         </>
+      ) : null}
+
+      {/* 项目全部关闭时的提示。
+          原先此处什么都不渲染：用户把项目逐个关掉后，卡片上只剩设备名与状态，
+          看起来像"设备没东西了"，也找不到怎么恢复（实测反馈"变成一个 ssh 端口"）。
+          设备连接仍在（连接归设备所有），这里明确说明并指向开关。 */}
+      {connectionStatus === "connected" &&
+      connectedProjects &&
+      connectedProjects.length > 0 &&
+      connectedProjects.every((project) => visibleProjects?.[project.path] === false) ? (
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.remoteDevice.allProjectsHidden" })}
+          description={intl.formatMessage({ id: "settings.remoteDevice.allProjectsHiddenHint" })}
+          control={null}
+        />
       ) : null}
 
       <SettingsRow

@@ -2600,6 +2600,9 @@ const zhCN: Record<string, string> = {
   "settings.remoteDevice.status.connecting": "正在连接…",
   "settings.remoteDevice.status.connected": "已连接",
   "settings.remoteDevice.status.failed": "连接失败",
+  "settings.remoteDevice.allProjectsHidden": "当前没有显示任何项目",
+  "settings.remoteDevice.allProjectsHiddenHint":
+    "设备仍保持连接，可在上方开关重新勾选要显示的项目。",
   "settings.modelProvider.templatePickerTitle": "添加供应商",
   "settings.modelProvider.templateGroup.zhipu": "智谱",
   "settings.modelProvider.templateGroup.other": "其他",
