@@ -20,6 +20,11 @@
  * 注意 `connectResidentRemote` 本身**不会**因此返回 null —— 挂载在传输层是成功的，
  * 失败发生在之后的 initialSync 屏障。所以「挂得上」不代表这条通过，必须直接探测 channel。
  *
+ * 2026-09-30 补充：模型/供应商配置同步已**取消**（`isProviderProvisioningSyncEnabled()`
+ * 恒为 false，目标端只回 already-applied、不写任何配置）。但 channel **必须继续注册** ——
+ * 旧版本对端仍在推送，channel 消失会让它们的发布屏障超时失败，连接整个建不起来。
+ * 所以下面的探测逻辑一字不改，只是目标端不再落盘。
+ *
  * ## 判据（只读）
  *
  * 刻意不调写接口 `providerProvisioningTargetService.apply()` —— 它是写接口
@@ -331,9 +336,14 @@ test("端到端：桌面挂载的首次同步屏障放行（用户可见症状�
   const host = await startLoopbackHost("desktop-local");
   try {
     const status = await host.syncOnce();
-    assert.ok(
-      status === "applied" || status === "already-applied",
-      `首次同步应放行，实际 status=${status}。失败即为用户看到的「Provider Provisioning 首次同步失败」`,
+    // 一条断言同时锁两件事：屏障放行 + 取消后不写配置。这里走的是**真通道上的真实 target**，
+    // 能兜住「单测里 target 被换成桩」的情形。
+    //   failed / unsupported → 用户看到的「Provider Provisioning 首次同步失败」（连接建不起来）
+    //   applied             → 模型配置同步又被打开了，那是整份覆盖对端配置的事故入口
+    assert.equal(
+      status,
+      "already-applied",
+      `期望「屏障放行且未写配置」，实际 status=${status}`,
     );
   } finally {
     await host.dispose();

@@ -130,6 +130,13 @@ const SUITES = [
     cwd: ".",
     file: "packages/desktop/test/providerProvisioningChannel.test.ts",
   },
+  {
+    layer: 1,
+    id: "provisioning-sync-cancelled",
+    title: "模型配置同步保持取消（目标端零依赖触碰、发起端零推送）",
+    cwd: ".",
+    file: "packages/desktop/test/providerProvisioningSyncCancelled.test.ts",
+  },
 
   // ── 层 2：跨机只读（需 B 在线）──
   {

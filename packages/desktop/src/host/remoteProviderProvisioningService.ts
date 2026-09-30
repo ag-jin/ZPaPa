@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { ProviderProvisioningResult } from "@zcode/shared";
+import {
+  isProviderProvisioningSyncEnabled,
+  PROVIDER_PROVISIONING_SYNC_DISABLED_REASON,
+  type ProviderProvisioningResult,
+} from "@zcode/shared";
 import type { IProviderProvisioningTargetService, IServiceAccessor } from "@zcode/services";
 import {
   getProviderProvisioningSource,
@@ -33,6 +37,12 @@ function createRemoteProviderProvisioningExecutor(options: {
 }): RemoteProviderProvisioningExecutor {
   const syncLocalToRemote = async (): Promise<ProviderProvisioningResult> => {
     const syncId = randomUUID();
+    if (!isProviderProvisioningSyncEnabled()) {
+      // 取消后连本端 Source 都不读：不读就不会把凭据放上链路，对端更不会被写。
+      // 返回 already-applied（而非 unsupported）是为了让旧版本对端的发布屏障放行，
+      // 见 @zcode/shared 中 isProviderProvisioningSyncEnabled 的注释。
+      return syncDisabledResult(syncId);
+    }
     if (!options.source || !options.target) {
       return unsupportedResult(syncId, "Local/Remote Provider Provisioning capability 不可用");
     }
@@ -76,6 +86,17 @@ function unsupportedResult(syncId: string, errorMessage: string): ProviderProvis
     personalProviderCount: 0,
     credentialCount: 0,
     errorMessage,
+    rolledBack: false,
+  };
+}
+
+function syncDisabledResult(syncId: string): ProviderProvisioningResult {
+  return {
+    syncId,
+    status: "already-applied",
+    personalProviderCount: 0,
+    credentialCount: 0,
+    errorMessage: PROVIDER_PROVISIONING_SYNC_DISABLED_REASON,
     rolledBack: false,
   };
 }

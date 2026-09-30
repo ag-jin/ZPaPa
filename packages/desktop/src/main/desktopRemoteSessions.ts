@@ -10,7 +10,9 @@ import {
   HostResponseTypes,
   hostResponseMessageSchema,
   InternalChannels,
+  isProviderProvisioningSyncEnabled,
   PlatformChannels,
+  PROVIDER_PROVISIONING_SYNC_DISABLED_REASON,
   resolveWorkspaceKey,
   type RemoteTarget,
   type ProviderProvisioningTrigger,
@@ -621,6 +623,13 @@ export function createRemoteWorkspaceSessionManager(options: {
           // Target 错误可能来自任意远端实现并携带请求材料；过渡期只记录可定位的状态事实，
           // 不转抄不可证明已脱敏的自由文本，避免 Provisioning 日志成为凭据泄露入口。
           options.logger.warn("[provider-provisioning] Environment sync did not apply", logContext);
+        } else if (!isProviderProvisioningSyncEnabled()) {
+          // 每次连接都会走到 already-applied，不单独区分会让日志长期报
+          // 「Environment sync completed」，把「其实什么都没同步」这个事实掩盖掉。
+          options.logger.info(
+            `[provider-provisioning] ${PROVIDER_PROVISIONING_SYNC_DISABLED_REASON}，跳过 Environment sync`,
+            logContext,
+          );
         } else {
           options.logger.info("[provider-provisioning] Environment sync completed", logContext);
         }

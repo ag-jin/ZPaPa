@@ -10,6 +10,8 @@ import {
   providerProvisioningEnvelopeSchema,
   providerProvisioningResultSchema,
   isProviderProvisioningAccountCredentialKey,
+  isProviderProvisioningSyncEnabled,
+  PROVIDER_PROVISIONING_SYNC_DISABLED_REASON,
   type ProviderProvisioningEnvelope,
   type ProviderProvisioningResult,
 } from "@zcode/shared";
@@ -54,6 +56,21 @@ export function createProviderProvisioningTarget(
 ): IProviderProvisioningTargetService {
   return {
     async apply(input: ProviderProvisioningEnvelope): Promise<ProviderProvisioningResult> {
+      if (!isProviderProvisioningSyncEnabled()) {
+        // 同步已取消。这里是挡住「旧版本对端仍在推送」的唯一一道闸：必须在任何
+        // 副作用之前返回 —— 不解析（坏信封不该把对端连接打成失败）、不加文件锁、
+        // 不启动 ProviderRuntime、不读也不写 Personal 配置与凭据。
+        // 回 already-applied 而非失败：旧版本把首次同步成功当 remote workspace 的
+        // 发布屏障，见 @zcode/shared 中 isProviderProvisioningSyncEnabled 的注释。
+        return {
+          syncId: readSyncId(input),
+          status: "already-applied",
+          personalProviderCount: 0,
+          credentialCount: 0,
+          errorMessage: PROVIDER_PROVISIONING_SYNC_DISABLED_REASON,
+          rolledBack: false,
+        } satisfies ProviderProvisioningResult;
+      }
       const envelope = providerProvisioningEnvelopeSchema.parse(input);
       return withFileLock(options.stateFilePath, async () => {
         const previousState = await readStateFile(options.stateFilePath);
@@ -365,4 +382,13 @@ function isFileNotFound(error: unknown): boolean {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 同步取消时也要回一个合法 syncId（结果 schema 要求非空），但不做任何校验副作用。 */
+function readSyncId(input: unknown): string {
+  const candidate =
+    typeof input === "object" && input !== null
+      ? (input as { syncId?: unknown }).syncId
+      : undefined;
+  return typeof candidate === "string" && candidate.trim() ? candidate : "sync-disabled";
 }
