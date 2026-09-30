@@ -348,3 +348,42 @@ export function markProjectHidden<T extends DeviceRecordPatch>(
     visibleProjects: { ...current.visibleProjects, [projectPath]: false },
   });
 }
+
+/**
+ * 只移除目标设备的记录，保留其它设备。
+ *
+ * 为什么不能用 `save([])`：那是"清空列表"语义。设备记录按列表存（CONTEXT.md
+ * 「Single Device Scope」明确「数据结构按列表存，将来增设备不需重构」），
+ * 列表里可能不止一条；移除一台时清空会把别台的连接入口与显示偏好一并删掉。
+ *
+ * 纯函数，便于单测锁定「移除只作用于目标台」。
+ */
+export function removeDeviceRecord<T extends DeviceRecordPatch>(
+  devices: readonly T[],
+  target: DeviceRecordPatch["target"],
+): T[] {
+  return devices.filter((device) => !isSameDeviceTarget(device.target, target));
+}
+
+/**
+ * 找出属于某台设备的**全部**投射条目（含断开态），用于"移除设备"时清场。
+ *
+ * 为什么不能只按 `projection.deviceSessionId === 当前 sessionId` 找：
+ * 断开后条目被降级（remoteSessionId 已清），此时关闭事件里的 sessionId 已失效，
+ * 按 sessionId 找不到它们 —— 残留的灰显条目其 remoteTarget 指向一台已被移除的设备，
+ * 点击重连把一个不存在的设备又连回来。
+ *
+ * 判据用 remoteTarget（断开态仍保留），覆盖连接态与断开态两种条目。
+ */
+export function findProjectionTabsForDevice(
+  tabs: readonly WindowTabState[],
+  target: { kind: string; host?: string; username?: string } | undefined,
+): WorkspaceTabState[] {
+  if (!target) return [];
+  return tabs.filter(
+    (tab): tab is WorkspaceTabState =>
+      isWorkspaceTab(tab) &&
+      tab.projection != null &&
+      isSameDeviceTarget(tab.remoteTarget, target),
+  );
+}

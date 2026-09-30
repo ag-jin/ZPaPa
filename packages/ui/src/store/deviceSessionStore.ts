@@ -74,7 +74,14 @@ export const useDeviceSessionStore = create<DeviceSessionState>()((set) => ({
       if (previous && previous.sessionId !== session.sessionId) {
         previous.dispose?.(new Error("设备会话已被新一代连接替代"));
       }
-      return { sessionsByDeviceKey: { ...state.sessionsByDeviceKey, [key]: session } };
+      // 单设备范围（CONTEXT.md「Single Device Scope」）：同时只连接一台被投射设备。
+      // 连第二台时先终结其它设备的会话 —— 否则旧会话既不断开也无处管理
+      // （设置页只暴露一台设备），成为无人回收的泄漏连接。
+      for (const [otherKey, otherSession] of Object.entries(state.sessionsByDeviceKey)) {
+        if (otherKey === key) continue;
+        otherSession.dispose?.(new Error("已切换到另一台设备"));
+      }
+      return { sessionsByDeviceKey: { [key]: session } };
     }),
 
   removeDeviceSession: (target) =>

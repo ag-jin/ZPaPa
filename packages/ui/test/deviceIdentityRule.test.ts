@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isSameDeviceTarget } from "../src/lib/remoteDeviceProjection.js";
-import { deviceKey } from "../src/store/deviceSessionStore.js";
+import { deviceKey, useDeviceSessionStore } from "../src/store/deviceSessionStore.js";
 
 /**
  * 「同一台设备」判定必须全仓一套规则（2026-09-30 复查发现的缺陷）。
@@ -17,6 +17,8 @@ import { deviceKey } from "../src/store/deviceSessionStore.js";
 // `as const` 让 kind 保持字面量类型 "ssh"；否则会被推宽成 string，
 // 无法赋给 RemoteTarget 的判别联合。
 const target = { kind: "ssh", host: "100.66.1.2", username: "linguojin" } as const;
+/** 另一台设备，用于验证「切换设备」与「同一设备重连」的区别。 */
+const otherDevice = { kind: "ssh", host: "100.66.1.9", username: "linguojin" } as const;
 
 test("deviceKey：同 host + 同 username 即同一台设备（与 isSameDeviceTarget 同口径）", () => {
   assert.equal(deviceKey(target), "ssh:linguojin@100.66.1.2");
@@ -54,4 +56,66 @@ test("deviceKey：非 ssh 目标按 kind 归并（首版设备仅支持 SSH）",
   assert.equal(deviceKey({ kind: "wsl" } as never), "wsl:default");
   assert.equal(deviceKey(null), null);
   assert.equal(deviceKey(undefined), null);
+});
+
+/**
+ * 单设备范围（CONTEXT.md「Single Device Scope」）：同时只连一台被投射设备。
+ *
+ * 缺陷经过（穷举场景 S10）：连上 A 后连 B，`setDeviceSession` 只是按 key 追加，
+ * A 的会话既不断开也无处管理（设置页只暴露一台设备）—— 成为无人回收的泄漏连接。
+ */
+
+test("连第二台设备时终结第一台的会话（单设备范围）", () => {
+  const store = useDeviceSessionStore;
+  const disposedA: string[] = [];
+  store.setState({ sessionsByDeviceKey: {} });
+
+  store.getState().setDeviceSession({
+    target,
+    sessionId: "sess-A",
+    services: {} as never,
+    dispose: () => disposedA.push("A"),
+  });
+  assert.deepEqual(Object.keys(store.getState().sessionsByDeviceKey), ["ssh:linguojin@100.66.1.2"]);
+
+  store.getState().setDeviceSession({
+    target: otherDevice,
+    sessionId: "sess-B",
+    services: {} as never,
+    dispose: () => disposedA.push("B"),
+  });
+
+  assert.deepEqual(disposedA, ["A"], "切到 B 时先终结 A —— 否则泄漏一条无人管理的连接");
+  assert.deepEqual(
+    Object.keys(store.getState().sessionsByDeviceKey),
+    ["ssh:linguojin@100.66.1.9"],
+    "只保留当前设备",
+  );
+  store.setState({ sessionsByDeviceKey: {} });
+});
+
+test("同一设备重连：终结旧代，保留新代（不误判为切设备）", () => {
+  const store = useDeviceSessionStore;
+  const disposed: string[] = [];
+  store.setState({ sessionsByDeviceKey: {} });
+
+  store.getState().setDeviceSession({
+    target,
+    sessionId: "sess-old",
+    services: {} as never,
+    dispose: () => disposed.push("old"),
+  });
+  store.getState().setDeviceSession({
+    target,
+    sessionId: "sess-new",
+    services: {} as never,
+    dispose: () => disposed.push("new"),
+  });
+
+  assert.deepEqual(disposed, ["old"], "旧代被终结，新代保留");
+  assert.equal(
+    store.getState().sessionsByDeviceKey["ssh:linguojin@100.66.1.2"]?.sessionId,
+    "sess-new",
+  );
+  store.setState({ sessionsByDeviceKey: {} });
 });

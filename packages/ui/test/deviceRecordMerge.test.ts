@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markProjectHidden, mergeDeviceRecord } from "../src/lib/remoteDeviceProjection.js";
+import {
+  findProjectionTabsForDevice,
+  markProjectHidden,
+  mergeDeviceRecord,
+  removeDeviceRecord,
+} from "../src/lib/remoteDeviceProjection.js";
 
 /**
  * 设备记录合并写的不变量（2026-09-30 实测缺陷）。
@@ -155,4 +160,86 @@ test("markProjectHidden：设备不在记录里时不伪造条目", () => {
   const existing: DeviceRecord[] = [];
   const next = markProjectHidden<DeviceRecord>(existing, target, "/vol/新赛马");
   assert.equal(next.length, 0, "不改动记录");
+});
+
+/**
+ * removeDeviceRecord：移除只作用于目标设备。
+ *
+ * 缺陷经过（穷举场景 S9）：移除设备走 `save([])` —— 那是"清空列表"语义。
+ * 设备记录按列表存（CONTEXT.md「Single Device Scope」明确"数据结构按列表存，
+ * 将来增设备不需重构"），列表可能有别台；清空会把别台的连接入口与显示偏好一并删掉。
+ */
+
+test("移除设备：只删目标台，保留其它台", () => {
+  const other = { kind: "ssh", host: "100.66.1.9", username: "linguojin" };
+  const existing: DeviceRecord[] = [
+    { target, lastConnectionStatus: "connected", visibleProjects: { "/vol/新赛马": false } },
+    { target: other, lastConnectionStatus: "never" },
+  ];
+  const next = removeDeviceRecord(existing, target);
+
+  assert.equal(next.length, 1, "只删一台");
+  assert.equal(next[0]?.target.host, "100.66.1.9", "保留的是另一台");
+  assert.deepEqual(
+    next[0]?.visibleProjects,
+    undefined,
+    "别台的偏好不受影响（本例别台本就为空）",
+  );
+});
+
+test("移除设备：目标不存在时列表不变", () => {
+  const existing: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
+  const next = removeDeviceRecord(existing, { kind: "ssh", host: "10.0.0.1", username: "x" });
+  assert.equal(next.length, 1, "没有匹配项就不删任何东西");
+});
+
+/**
+ * findProjectionTabsForDevice：按 remoteTarget 找条目，覆盖**断开态**。
+ *
+ * 缺陷经过（穷举场景 S8）：移除设备时按 `projection.deviceSessionId === 当前 sessionId`
+ * 找条目，但断开态的条目 `remoteSessionId` 已被清空、会话也早没了 ——
+ * 按 sessionId 找不到它们。残留的灰显条目其 remoteTarget 指向一台已被移除的设备，
+ * 点重连会把设备又连回来。
+ */
+
+function projectionTab(
+  id: string,
+  path: string,
+  remoteTarget?: { kind: string; host?: string; username?: string },
+  sessionId?: string,
+) {
+  return {
+    kind: "workspace" as const,
+    id,
+    label: path,
+    workspacePath: path,
+    ...(sessionId ? { remoteSessionId: sessionId } : {}),
+    ...(remoteTarget ? { remoteTarget } : {}),
+    projection: { deviceSessionId: sessionId ?? "stale-session" },
+  };
+}
+
+test("找设备条目：覆盖连接态与断开态", () => {
+  const tabs = [
+    // 连接态：有 remoteSessionId
+    projectionTab("t1", "/vol/新赛马", target, "sess-A"),
+    // 断开态：remoteSessionId 已清（降级），但仍带 remoteTarget
+    projectionTab("t2", "/vol/中转站", target),
+    // 另一台设备
+    projectionTab("t3", "/vol/别的", { kind: "ssh", host: "100.66.1.9", username: "linguojin" }),
+    // 本机项目：无 projection，不该被清
+    { kind: "workspace" as const, id: "t4", label: "local", workspacePath: "/Users/me/code" },
+  ];
+  const found = findProjectionTabsForDevice(tabs as never, target);
+
+  assert.deepEqual(
+    found.map((tab) => tab.id).sort(),
+    ["t1", "t2"],
+    "连接态与断开态都要找到；别台与本机项目不动",
+  );
+});
+
+test("找设备条目：target 缺失时返回空（不做危险的全量匹配）", () => {
+  const tabs = [projectionTab("t1", "/vol/新赛马", target, "sess-A")];
+  assert.deepEqual(findProjectionTabsForDevice(tabs as never, undefined), []);
 });

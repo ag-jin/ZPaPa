@@ -70,8 +70,10 @@ import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources
 import { RemoteDeviceManagementSection } from "@/settings/RemoteDeviceManagementSection.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
 import {
+  findProjectionTabsForDevice,
   markProjectionTabsDisconnected,
   mergeDeviceRecord,
+  removeDeviceRecord,
 } from "@/lib/remoteDeviceProjection.js";
 import { closeDeviceSession, deviceKey, useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import {
@@ -1252,6 +1254,28 @@ export function SettingsPage({
     [remoteDeviceConfigService],
   );
 
+  /**
+   * 整表写入（用于移除设备时保留下其它设备）。
+   *
+   * 与 `writeRemoteDevice` 的区别：那个是"更新一台"（合并），这个是"替换整个列表"。
+   * 移除必须走整表写 —— 需要保留列表中其它设备，而单台更新的合并语义做不到删除。
+   * 组件内展示的当前设备取列表首条（与读取路径 devices[0] 同口径）。
+   */
+  const writeRemoteDeviceList = useCallback(
+    async (next: readonly import("@zcode/services").RemoteDeviceConfigRecord[]) => {
+      setRemoteDeviceEntry(next[0] ?? null);
+      if (!remoteDeviceConfigService) return;
+      try {
+        await remoteDeviceConfigService.save(next);
+      } catch (error) {
+        logger.warn("[remoteDevice] 保存设备列表失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    [remoteDeviceConfigService],
+  );
+
   const handleRemoveRemoteDevice = useCallback(async () => {
     // 移除设备必须先收尾连接与投射：只删设备记录会留下"无主的连接"
     // （session 还在、投射条目还在，但没有任何入口能管理或断开它）。
@@ -1267,17 +1291,31 @@ export function SettingsPage({
     }
     if (sessionId) {
       unregisterRemoteWorkspaceSession(sessionId);
-      const tabStore = tabStoreApiRef.current;
-      for (const tab of tabStore.getState().tabs) {
-        if (tab.kind === "workspace" && tab.projection?.deviceSessionId === sessionId) {
-          tabStore.getState().closeTab(tab.id);
-        }
-      }
+    }
+    // 按 **remoteTarget** 清投射条目，而不是按 sessionId。
+    // 断开态的条目已被降级（remoteSessionId 清空），但 remoteTarget 仍在 ——
+    // 那是"移除后仍指向一台不存在的设备"的残留灰显条目，点重连会把设备又连回来。
+    const tabStore = tabStoreApiRef.current;
+    for (const tab of findProjectionTabsForDevice(tabStore.getState().tabs, target)) {
+      tabStore.getState().closeTab(tab.id);
     }
     setRemoteDeviceProjects(null);
     setRemoteDeviceConnectionStatus("never");
-    await writeRemoteDevice(null);
-  }, [liveDeviceSessionId, platform, remoteDeviceEntry, writeRemoteDevice]);
+    // 只移除本台，不用 save([]) —— 那是清空列表，会连带删掉别台的入口与显示偏好。
+    if (target) {
+      const existing = (await remoteDeviceConfigService?.list()) ?? [];
+      await writeRemoteDeviceList(removeDeviceRecord(existing, target));
+    } else {
+      await writeRemoteDevice(null);
+    }
+  }, [
+    liveDeviceSessionId,
+    platform,
+    remoteDeviceConfigService,
+    remoteDeviceEntry,
+    writeRemoteDevice,
+    writeRemoteDeviceList,
+  ]);
 
   const handleRemoteDeviceVisibleProjectsChange = useCallback(
     async (next: Record<string, boolean>) => {
