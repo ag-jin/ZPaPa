@@ -70,16 +70,19 @@ import { buildPersonalCodingPlanUsageSource } from "@/lib/codingPlanUsageSources
 import { RemoteDeviceManagementSection } from "@/settings/RemoteDeviceManagementSection.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
 import {
+  findDeviceRecord,
   findProjectionTabsForDevice,
   markProjectionTabsDisconnected,
   mergeDeviceRecord,
   removeDeviceRecord,
 } from "@/lib/remoteDeviceProjection.js";
-import { closeDeviceSession, deviceKey, useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import {
-  unregisterRemoteWorkspaceSession,
-  useRemoteWorkspaceSessionStore,
-} from "@/store/remoteWorkspaceSessionStore.js";
+  closeDeviceSession,
+  deviceKey,
+  getLiveDeviceTarget,
+  useDeviceSessionStore,
+} from "@/store/deviceSessionStore.js";
+import { unregisterRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.js";
 import { RemoteDeviceSettingsSection } from "@/settings/RemoteDeviceSettingsSection.js";
 import { SubagentsSection } from "@/settings/SubagentsSection.js";
 import { AutomationsSection } from "@/settings/AutomationsSection.js";
@@ -1219,10 +1222,13 @@ export function SettingsPage({
 
   useEffect(() => {
     if (!remoteDeviceConfigService) return;
+    const liveTarget = getLiveDeviceTarget();
     void remoteDeviceConfigService
       .list()
       .then((devices: import("@zcode/services").RemoteDeviceConfigRecord[]) =>
-        setRemoteDeviceEntry(devices[0] ?? null),
+        // 优先显示**实际连着**的那台：记录按列表存，固定取首条时若连的是第二台，
+        // 卡片会显示别台并因其无会话而判为「未连接」，「断开」入口也被藏掉。
+        setRemoteDeviceEntry(findDeviceRecord(devices, liveTarget) ?? devices[0] ?? null),
       )
       .catch((error: unknown) => {
         logger.warn("[remoteDevice] 读取设备配置失败", {

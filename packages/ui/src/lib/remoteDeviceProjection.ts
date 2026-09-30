@@ -323,6 +323,24 @@ export function mergeDeviceRecord<T extends DeviceRecordPatch>(
 }
 
 /**
+ * 按 target 找出那台设备的记录。
+ *
+ * **不要用 `devices[0]` 代替**：记录按列表存（CONTEXT.md「Single Device Scope」
+ * 明确"数据结构按列表存，将来增设备不需重构"），取首条会命中**别台** ——
+ * 例如侧栏重连列表里的第二台时读到第一台的显示偏好，于是本台该隐藏的被投出来、
+ * 该显示的被过滤掉。
+ *
+ * 纯函数，便于单测锁定「按台定位而不是取首条」。
+ */
+export function findDeviceRecord<T extends DeviceRecordPatch>(
+  devices: readonly T[],
+  target: DeviceRecordPatch["target"] | undefined,
+): T | undefined {
+  if (!target) return undefined;
+  return devices.find((device) => isSameDeviceTarget(device.target, target));
+}
+
+/**
  * 计算「把某项目标记为不显示」后的设备记录。
  *
  * 场景：用户在侧栏直接关掉一个投射条目。若不回写偏好，下次重连时

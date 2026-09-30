@@ -102,6 +102,21 @@ export function getDeviceSession(target: RemoteTarget | null | undefined): Devic
 }
 
 /**
+ * 当前**实际连着**的那台设备的 target（没连返回 undefined）。
+ *
+ * 用于选取"该显示哪台设备"：设备记录按列表存（CONTEXT.md「Single Device Scope」
+ * 明确"数据结构按列表存，将来增设备不需重构"），而设置页原先固定取 `devices[0]`。
+ * 列表里有多台时，若实际连接的不是首条，卡片会显示**别台**并因其无会话而判为
+ * 「未连接」—— 与事实不符，且「断开」入口被藏掉。
+ *
+ * 单设备范围下至多一条，取首条即可。
+ */
+export function getLiveDeviceTarget(): RemoteTarget | undefined {
+  const sessions = Object.values(useDeviceSessionStore.getState().sessionsByDeviceKey);
+  return sessions[0]?.target;
+}
+
+/**
  * 关闭并移除某台设备的会话。
  *
  * 断开是**显式动作**（用户点断开、或设备被移除）：与「关 tab」彻底分开 ——

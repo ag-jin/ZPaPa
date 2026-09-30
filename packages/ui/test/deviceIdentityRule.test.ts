@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isSameDeviceTarget } from "../src/lib/remoteDeviceProjection.js";
-import { deviceKey, useDeviceSessionStore } from "../src/store/deviceSessionStore.js";
+import {
+  deviceKey,
+  getLiveDeviceTarget,
+  useDeviceSessionStore,
+} from "../src/store/deviceSessionStore.js";
 
 /**
  * 「同一台设备」判定必须全仓一套规则（2026-09-30 复查发现的缺陷）。
@@ -118,4 +122,30 @@ test("同一设备重连：终结旧代，保留新代（不误判为切设备�
     "sess-new",
   );
   store.setState({ sessionsByDeviceKey: {} });
+});
+
+/**
+ * getLiveDeviceTarget：设置页据此选取"该显示哪台"。
+ *
+ * 缺陷经过（穷举场景 S16）：设置页固定取 `devices[0]`。记录按列表存，
+ * 实际连的是第二台时，卡片会显示第一台、并因其无会话而判为「未连接」，
+ * 「断开」入口也被藏掉 —— 与事实不符。
+ */
+
+test("取当前连接设备：有会话时返回其 target", () => {
+  const store = useDeviceSessionStore;
+  store.setState({ sessionsByDeviceKey: {} });
+  store.getState().setDeviceSession({
+    target: otherDevice,
+    sessionId: "sess-B",
+    services: {} as never,
+  });
+
+  assert.deepEqual(getLiveDeviceTarget(), otherDevice, "返回实际连着的那台");
+  store.setState({ sessionsByDeviceKey: {} });
+});
+
+test("取当前连接设备：无会话时返回 undefined", () => {
+  useDeviceSessionStore.setState({ sessionsByDeviceKey: {} });
+  assert.equal(getLiveDeviceTarget(), undefined);
 });

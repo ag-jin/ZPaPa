@@ -37,6 +37,7 @@ import {
 } from "@/lib/remoteDeviceAccess.js";
 import {
   computeProjectionSync,
+  findDeviceRecord,
   findOrphanProjectionTabs,
   findProjectionTabsToClose,
   markProjectionTabsDisconnected,
@@ -1638,21 +1639,31 @@ export function useRemoteWorkspaceHistory({
     ],
   );
 
-  /** 读设备配置里的项目显示偏好（键为设备上的项目路径）。 */
-  const readDeviceVisibleProjects = useCallback(async () => {
-    const deviceConfigService = (
-      services as {
-        remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+  /**
+   * 读设备配置里的项目显示偏好（键为设备上的项目路径）。
+   *
+   * **必须按 target 定位那一台**，不能用 `devices[0]`：记录按列表存
+   * （CONTEXT.md「Single Device Scope」明确"数据结构按列表存，将来增设备不需重构"），
+   * 从侧栏重连的可能是列表里的任意一台 —— 取首条会读到**别台**的显示偏好，
+   * 于是被隐藏的项目在本台被投出来、或本台该显示的被过滤掉。
+   */
+  const readDeviceVisibleProjects = useCallback(
+    async (target: Parameters<IPlatformService["connectRemote"]>[0]) => {
+      const deviceConfigService = (
+        services as {
+          remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+        }
+      ).remoteDeviceConfigService;
+      if (!deviceConfigService) return undefined;
+      try {
+        const devices = await deviceConfigService.list();
+        return findDeviceRecord(devices, target)?.visibleProjects;
+      } catch {
+        return undefined;
       }
-    ).remoteDeviceConfigService;
-    if (!deviceConfigService) return undefined;
-    try {
-      const devices = await deviceConfigService.list();
-      return devices[0]?.visibleProjects;
-    } catch {
-      return undefined;
-    }
-  }, [services]);
+    },
+    [services],
+  );
 
   /**
    * 重连设备并重新投射项目清单（侧边栏点断开态条目走这条）。
@@ -1690,7 +1701,7 @@ export function useRemoteWorkspaceHistory({
         // 尊重用户的显示偏好：被关掉的项目不重新投射。偏好存在设备配置里
         // （remote-devices.json 的 visibleProjects），这里实时读一次 ——
         // 重连发生在设置页之外（侧边栏），拿不到那边的组件 state。
-        const visible = await readDeviceVisibleProjects();
+        const visible = await readDeviceVisibleProjects(target);
         result.syncProjection(
           visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
         );

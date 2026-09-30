@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  findDeviceRecord,
   findProjectionTabsForDevice,
   markProjectHidden,
   mergeDeviceRecord,
@@ -242,4 +243,40 @@ test("找设备条目：覆盖连接态与断开态", () => {
 test("找设备条目：target 缺失时返回空（不做危险的全量匹配）", () => {
   const tabs = [projectionTab("t1", "/vol/新赛马", target, "sess-A")];
   assert.deepEqual(findProjectionTabsForDevice(tabs as never, undefined), []);
+});
+
+/**
+ * findDeviceRecord：按台定位，而不是取 devices[0]。
+ *
+ * 缺陷经过（穷举场景 S15）：侧栏重连读显示偏好时写死 `devices[0]?.visibleProjects`。
+ * 记录按列表存，从侧栏重连的可能是列表里的**第二台** —— 取首条会读到别台的偏好，
+ * 于是本台该隐藏的项目被投出来、该显示的被过滤掉。
+ */
+
+test("找设备记录：列表有多台时按 target 命中目标台", () => {
+  const other = { kind: "ssh", host: "100.66.1.9", username: "linguojin" };
+  const devices: DeviceRecord[] = [
+    { target, lastConnectionStatus: "connected", visibleProjects: { "/vol/A": false } },
+    { target: other, lastConnectionStatus: "connected", visibleProjects: { "/vol/B": false } },
+  ];
+
+  assert.deepEqual(
+    findDeviceRecord(devices, other)?.visibleProjects,
+    { "/vol/B": false },
+    "命中第二台的偏好，而不是首台",
+  );
+  assert.deepEqual(
+    findDeviceRecord(devices, target)?.visibleProjects,
+    { "/vol/A": false },
+    "命中第一台",
+  );
+});
+
+test("找设备记录：目标不在列表时返回 undefined（不误取他台）", () => {
+  const devices: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
+  assert.equal(
+    findDeviceRecord(devices, { kind: "ssh", host: "10.0.0.1", username: "x" }),
+    undefined,
+  );
+  assert.equal(findDeviceRecord(devices, undefined), undefined);
 });
