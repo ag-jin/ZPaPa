@@ -49,6 +49,22 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "tab-lifecycle-decoupling",
+    title: "关投射 tab 不断连（连接归设备所有）",
+    cwd: "packages/ui",
+    file: "test/remoteTabLifecycleDecoupling.test.ts",
+    usesTsconfigPaths: true,
+  },
+  {
+    layer: 1,
+    id: "device-record-merge",
+    title: "设备记录合并写不丢 visibleProjects",
+    cwd: "packages/ui",
+    file: "test/deviceRecordMerge.test.ts",
+    usesTsconfigPaths: true,
+  },
+  {
+    layer: 1,
     id: "device-access",
     title: "设备访问与项目清单并集（工单 02/03）",
     cwd: "packages/ui",

@@ -23,6 +23,8 @@ import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDia
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
+import { mergeDeviceRecord } from "@/lib/remoteDeviceProjection.js";
+import { useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import { readRendererLaunchTimings, shouldReportLaunchToInput } from "@/lib/launchToInputReport.js";
 import { reportUiLaunchToInput } from "@/lib/uiPerfArmsTelemetry.js";
 import { countAllUnreadTasks } from "@/lib/unreadTaskCount.js";
@@ -934,7 +936,26 @@ function RootInner({
       const deviceConfigService = (
         services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
       ).remoteDeviceConfigService;
-      await deviceConfigService?.save([{ target, lastConnectionStatus: "connected" }]);
+      if (deviceConfigService) {
+        // 合并写：整体覆盖会把既有 visibleProjects（项目显示偏好）抹掉，
+        // 设备记录退化成只剩 SSH 目标（实测缺陷）。
+        const existing = await deviceConfigService.list();
+        await deviceConfigService.save(
+          mergeDeviceRecord(existing, {
+            target,
+            lastConnectedAt: Date.now(),
+            lastConnectionStatus: "connected",
+          }),
+        );
+      }
+      // 连接归设备所有：登记到设备会话 store，使连接不随投射 tab 存亡。
+      // 关掉最后一个项目不应断连 —— 本次重设计的核心不变量。
+      useDeviceSessionStore.getState().setDeviceSession({
+        target,
+        sessionId: result.sessionId,
+        services: result.services,
+        ...(result.dispose ? { dispose: result.dispose } : {}),
+      });
     },
     [connectRemoteDevice, intl, services],
   );
@@ -997,6 +1018,9 @@ function RootInner({
       const result = await connectRemoteDevice(target);
       return result
         ? {
+            // sessionId 必须透传：设置页要把连接登记进 deviceSessionStore
+            // （连接归设备所有），缺了它就只能退回"由组件持有连接"的旧形态。
+            sessionId: result.sessionId,
             services: result.services,
             syncProjection: result.syncProjection,
             ...(result.dispose ? { dispose: result.dispose } : {}),

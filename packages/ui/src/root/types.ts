@@ -49,6 +49,8 @@ export interface RootProps {
  * 「当前环境不支持远程设备连接」（日志里 hasConnectCapability: false）。
  */
 export type RemoteDeviceConnect = (target: RemoteTarget) => Promise<{
+  /** 设备级会话 id：设置页据此把连接登记进 deviceSessionStore（连接归设备所有）。 */
+  sessionId: string;
   services: unknown;
   /** 把设备项目同步为投射条目（见 ADR 0001）。 */
   syncProjection?: (projects: ReadonlyArray<{ path: string; sessionCount: number }>) => unknown;

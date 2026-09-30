@@ -284,3 +284,39 @@ interface TabStoreApiLike {
   getState(): { tabs: WindowTabState[] };
   setState(updater: (state: { tabs: WindowTabState[] }) => { tabs: WindowTabState[] }): void;
 }
+
+/** 设备记录里与本模块相关的字段（结构类型，避免 lib 依赖 services 包）。 */
+export interface DeviceRecordPatch {
+  readonly target: { kind: string; host?: string; username?: string; port?: number };
+  readonly lastConnectedAt?: number;
+  readonly lastConnectionStatus?: "connected" | "failed" | "never";
+  readonly lastConnectionError?: string;
+}
+
+/**
+ * 把一次设备状态更新**合并**进已有设备记录，而不是整体覆盖。
+ *
+ * 为什么必须合并（2026-09-30 实测缺陷）：原先两处写入都是整体覆盖 ——
+ * 登记设备时 `save([{ target, lastConnectionStatus }])`、状态更新时
+ * `save([next])`。任何一次写入都会把用户先前设置的 `visibleProjects`
+ * （哪些项目在投射端显示）抹掉，最终设备记录退化成只剩 SSH 目标，
+ * 用户"关掉项目后设备条目变成一个 ssh 端口"。
+ *
+ * 合并规则：
+ * - 目标相同（同 kind，SSH 比 host + username）视为同一台设备，保留其既有字段；
+ * - patch 显式给出的字段覆盖旧值，未给出的保持不动；
+ * - 目标不同则视为新增设备（首版单设备，但数据结构按列表存）。
+ *
+ * 纯函数：不读文件、不碰 store，便于单测锁定「合并不丢字段」这条不变量。
+ */
+export function mergeDeviceRecord<T extends DeviceRecordPatch>(
+  devices: readonly T[],
+  patch: DeviceRecordPatch,
+): T[] {
+  const index = devices.findIndex((device) => isSameDeviceTarget(device.target, patch.target));
+  if (index < 0) {
+    return [...devices, patch as T];
+  }
+  const merged = { ...devices[index], ...patch } as T;
+  return devices.map((device, i) => (i === index ? merged : device));
+}

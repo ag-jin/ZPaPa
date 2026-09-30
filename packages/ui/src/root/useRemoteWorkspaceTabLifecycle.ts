@@ -1,6 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { IPlatformService } from "@zcode/shared";
 import { logger } from "@/logger.js";
+import {
+  collectClosedRemoteWorkspaceKeys,
+  collectClosedRemoteWorkspaceSessionIds,
+  collectSessionsToDisposeOnTabRemoval,
+  remoteWorkspaceKey,
+} from "@/root/remoteWorkspaceTabLifecycleDecision.js";
+import { useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import {
   bindRemoteWorkspaceIdentity,
   bindRemoteWorkspacePath,
@@ -9,58 +16,6 @@ import {
   unregisterRemoteWorkspaceSession,
 } from "@/store/remoteWorkspaceSessionStore.js";
 import { isWorkspaceTab, type WindowTabState, type WorkspaceTabState } from "@/store/tabStore.js";
-
-function remoteWorkspaceKey(tab: WorkspaceTabState): string | null {
-  if (!tab.workspaceIdentity?.trim() && !tab.remoteSessionId && !tab.remoteTarget) {
-    return null;
-  }
-
-  return tab.workspaceIdentity?.trim() || tab.workspacePath;
-}
-
-function collectClosedRemoteWorkspaceKeys(
-  previousWorkspaceTabs: WorkspaceTabState[],
-  nextWorkspaceTabs: WorkspaceTabState[],
-): string[] {
-  const nextRemoteWorkspaceKeys = new Set(
-    nextWorkspaceTabs.flatMap((tab) => {
-      const workspaceKey = remoteWorkspaceKey(tab);
-      return workspaceKey ? [workspaceKey] : [];
-    }),
-  );
-  const closedRemoteWorkspaceKeys = new Set<string>();
-
-  for (const previousTab of previousWorkspaceTabs) {
-    const workspaceKey = remoteWorkspaceKey(previousTab);
-    if (!workspaceKey || nextRemoteWorkspaceKeys.has(workspaceKey)) {
-      continue;
-    }
-    closedRemoteWorkspaceKeys.add(workspaceKey);
-  }
-
-  return [...closedRemoteWorkspaceKeys];
-}
-
-function collectClosedRemoteWorkspaceSessionIds(
-  previousWorkspaceTabs: WorkspaceTabState[],
-  nextWorkspaceTabs: WorkspaceTabState[],
-  rememberedSessionIdsByWorkspaceKey: ReadonlyMap<string, string>,
-): string[] {
-  const previousLiveSessionIds = new Set(
-    previousWorkspaceTabs
-      .map((tab) => tab.remoteSessionId)
-      .filter((sessionId): sessionId is string => Boolean(sessionId)),
-  );
-
-  return collectClosedRemoteWorkspaceKeys(previousWorkspaceTabs, nextWorkspaceTabs).flatMap(
-    (workspaceKey) => {
-      const sessionId = rememberedSessionIdsByWorkspaceKey.get(workspaceKey);
-      // 仍带 remoteSessionId 的 tab 会由本 hook 下方的正常移除流程释放，
-      // 这里只补释放“先断连、后清掉 tab 字段”的 session，避免重复 dispose。
-      return sessionId && !previousLiveSessionIds.has(sessionId) ? [sessionId] : [];
-    },
-  );
-}
 
 export function useRemoteWorkspaceTabLifecycle({
   tabs,
@@ -76,17 +31,34 @@ export function useRemoteWorkspaceTabLifecycle({
   const previousWorkspaceTabsRef = useRef<WindowTabState[]>([]);
   const rememberedSessionIdsByWorkspaceKeyRef = useRef<Map<string, string>>(new Map());
 
+  /**
+   * 该 sessionId 是否属于设备级连接（连接归设备所有，不随 tab 存亡）。
+   *
+   * 用「会话是否登记在设备 store 里」判定，而不是看 tab 上有没有 projection 标记：
+   * 投射 tab 可能处于断开态（remoteSessionId 已清），而普通远程 tab 也可能带
+   * projection 之外的来源。以连接的真实归属为准，判据唯一。
+   */
+  const isDeviceOwnedSessionId = useCallback(
+    (sessionId: string) =>
+      Object.values(useDeviceSessionStore.getState().sessionsByDeviceKey).some(
+        (session) => session.sessionId === sessionId,
+      ),
+    [],
+  );
+
   useEffect(() => {
     const previousWorkspaceTabs = previousWorkspaceTabsRef.current.filter(isWorkspaceTab);
     const nextWorkspaceTabs = tabs.filter(isWorkspaceTab);
     const closedRemoteWorkspaceKeys = collectClosedRemoteWorkspaceKeys(
       previousWorkspaceTabs,
       nextWorkspaceTabs,
+      isDeviceOwnedSessionId,
     );
     const closedRemoteSessionIds = collectClosedRemoteWorkspaceSessionIds(
       previousWorkspaceTabs,
       nextWorkspaceTabs,
       rememberedSessionIdsByWorkspaceKeyRef.current,
+      isDeviceOwnedSessionId,
     );
     if (closedRemoteWorkspaceKeys.length > 0) {
       onRemoteWorkspaceTabsClosed?.(closedRemoteWorkspaceKeys);
@@ -114,12 +86,6 @@ export function useRemoteWorkspaceTabLifecycle({
         }
       })();
     }
-
-    const nextRemoteSessionIds = new Set(
-      nextWorkspaceTabs
-        .map((tab) => tab.remoteSessionId)
-        .filter((sessionId): sessionId is string => Boolean(sessionId)),
-    );
 
     for (const previousTab of previousWorkspaceTabs) {
       const stillExists = nextWorkspaceTabs.some((nextTab) => nextTab.id === previousTab.id);
@@ -164,14 +130,31 @@ export function useRemoteWorkspaceTabLifecycle({
       }
     }
 
-    const disposedSessionIds = new Set<string>();
+    // 应自动释放的 session：判定收在 remoteWorkspaceTabLifecycleDecision（纯函数、可单测）。
+    // 设备级会话在这里被排除 —— 那是本次重设计的核心不变量：一台设备的所有项目
+    // 投射 tab 共享同一个 remoteSessionId，若照旧 dispose，用户关掉最后一个项目
+    // 就会断掉整条 SSH 连接，设备条目退化成裸 user@host:port 且无法重连（用户实测）。
+    const disposedSessionIds = new Set(
+      collectSessionsToDisposeOnTabRemoval(
+        previousWorkspaceTabs,
+        nextWorkspaceTabs,
+        isDeviceOwnedSessionId,
+      ),
+    );
     for (const previousTab of previousWorkspaceTabs) {
       const sessionId = previousTab.remoteSessionId;
-      if (!sessionId || nextRemoteSessionIds.has(sessionId) || disposedSessionIds.has(sessionId)) {
+      if (!sessionId || !disposedSessionIds.has(sessionId)) {
         continue;
       }
-
-      disposedSessionIds.add(sessionId);
+      if (isDeviceOwnedSessionId(sessionId)) {
+        logger.info("[Root] 设备级会话不随投射 tab 释放，保留连接", {
+          workspacePath: previousTab.workspacePath,
+          sessionId,
+        });
+        continue;
+      }
+      // 同一 session 可能对应多个已关闭 tab，只释放一次。
+      disposedSessionIds.delete(sessionId);
       const workspacePath = previousTab.workspacePath;
       void (async () => {
         try {
