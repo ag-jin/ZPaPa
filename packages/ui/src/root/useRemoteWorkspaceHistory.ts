@@ -43,6 +43,7 @@ import {
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
+import { useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import {
   buildRemoteWorkspacePersistPatch,
   restorePersistedRemoteWorkspaceSessions,
@@ -1488,7 +1489,7 @@ export function useRemoteWorkspaceHistory({
           void platform.disposeRemoteSession(staleId).catch(() => undefined);
         }
       }
-      return {
+      const deviceConnection = {
         sessionId,
         services: session.services,
         /**
@@ -1606,6 +1607,21 @@ export function useRemoteWorkspaceHistory({
           void platform.disposeRemoteSession(sessionId).catch(() => undefined);
         },
       };
+
+      // 连接归设备所有：在**唯一建连入口**登记，三条入口（弹窗「作为设备连接」、
+      // 设置页「连接」、侧栏断开态条目重连）都经这里，因此不会漏登记。
+      //
+      // 漏登记的后果（实测确认）：该会话不被 isDeviceOwnedSessionId 认作设备级，
+      // 于是关掉最后一个投射 tab 时仍会被 dispose —— 原缺陷从"侧栏重连"这条路径
+      // 完整复现；同时设置页会显示「未连接」并藏掉「断开」入口。
+      useDeviceSessionStore.getState().setDeviceSession({
+        target,
+        sessionId,
+        services: session.services,
+        dispose: deviceConnection.dispose,
+      });
+
+      return deviceConnection;
     },
     [
       connectRemoteWorkspaceTarget,

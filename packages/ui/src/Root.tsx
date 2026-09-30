@@ -24,7 +24,6 @@ import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
 import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
 import { mergeDeviceRecord } from "@/lib/remoteDeviceProjection.js";
-import { useDeviceSessionStore } from "@/store/deviceSessionStore.js";
 import { readRendererLaunchTimings, shouldReportLaunchToInput } from "@/lib/launchToInputReport.js";
 import { reportUiLaunchToInput } from "@/lib/uiPerfArmsTelemetry.js";
 import { countAllUnreadTasks } from "@/lib/unreadTaskCount.js";
@@ -948,14 +947,8 @@ function RootInner({
           }),
         );
       }
-      // 连接归设备所有：登记到设备会话 store，使连接不随投射 tab 存亡。
-      // 关掉最后一个项目不应断连 —— 本次重设计的核心不变量。
-      useDeviceSessionStore.getState().setDeviceSession({
-        target,
-        sessionId: result.sessionId,
-        services: result.services,
-        ...(result.dispose ? { dispose: result.dispose } : {}),
-      });
+      // 设备会话登记已收进 connectRemoteDevice（唯一建连入口），此处不再重复登记 ——
+      // 两处登记会让「谁负责登记」含糊，漏掉任一条入口都会让连接不被认作设备级。
     },
     [connectRemoteDevice, intl, services],
   );

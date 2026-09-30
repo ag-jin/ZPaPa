@@ -77,6 +77,7 @@ import { refreshSharedSkillStoreForWorkspace } from "@/lib/skillStoreRefresh.js"
 import { refreshWorkspacePluginCapabilitiesAfterRemoteSync } from "@/lib/remotePluginSyncRefresh.js";
 import { useMcpStore } from "@/store/mcpStore.js";
 import { releaseWorkspaceRuntimeAfterProjectRemoval } from "@/lib/workspaceRuntimeRelease.js";
+import { markProjectHidden } from "@/lib/remoteDeviceProjection.js";
 import {
   hasRunningWorkspaceChat,
   scanWindowsReservedDeviceNameFiles,
@@ -361,6 +362,37 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     }
 
     closeTab(tab.id);
+    // 用户关掉投射条目 = 不想再看到该项目：回写设备记录的显示偏好。
+    //
+    // 只在**用户手势**上写（本回调由侧栏移除菜单触发）。程序化关闭不走这里 ——
+    // 换连接时的旧代清理、投射同步的移除都不代表用户意愿，写进去会把项目永久隐藏
+    // （例如重连时旧代被清、新代本该重新投出的项目会被误判为"用户已关掉"）。
+    //
+    // 不回写的后果（实测）：关掉的条目下次重连又被 syncProjection 按旧偏好投回来，
+    // 用户看到"关不掉的条目"；而设置页开关本就写这份偏好，两条路径必须一致。
+    if (tab.projection && tab.remoteTarget) {
+      const deviceConfigService = (
+        baseServices as {
+          remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+        }
+      ).remoteDeviceConfigService;
+      if (deviceConfigService) {
+        void (async () => {
+          try {
+            const devices = await deviceConfigService.list();
+            await deviceConfigService.save(
+              markProjectHidden(devices, tab.remoteTarget!, tab.workspacePath),
+            );
+          } catch (error) {
+            // 偏好写失败不应阻断关闭本身：条目已关，用户可再点一次或去设置页调整。
+            logger.warn("[WorkspaceSidebarItem] 回写设备项目显示偏好失败", {
+              workspacePath: tab.workspacePath,
+              error,
+            });
+          }
+        })();
+      }
+    }
     releaseWorkspaceRuntimeAfterProjectRemoval({
       tab: {
         workspacePath: tab.workspacePath,

@@ -291,6 +291,7 @@ export interface DeviceRecordPatch {
   readonly lastConnectedAt?: number;
   readonly lastConnectionStatus?: "connected" | "failed" | "never";
   readonly lastConnectionError?: string;
+  readonly visibleProjects?: Record<string, boolean>;
 }
 
 /**
@@ -319,4 +320,31 @@ export function mergeDeviceRecord<T extends DeviceRecordPatch>(
   }
   const merged = { ...devices[index], ...patch } as T;
   return devices.map((device, i) => (i === index ? merged : device));
+}
+
+/**
+ * 计算「把某项目标记为不显示」后的设备记录。
+ *
+ * 场景：用户在侧栏直接关掉一个投射条目。若不回写偏好，下次重连时
+ * syncProjection 仍按旧偏好把它投回来 —— 用户关掉的条目自己又出现了。
+ * 设置页的开关本来就会写这个偏好，侧栏关闭走同一份事实，两条路径才一致。
+ *
+ * 只在**用户手势**上调用（侧栏移除菜单）：程序化关闭（换连接的旧代清理、
+ * 同步投射的移除）不代表用户不想看，写进去会把项目永久隐藏。
+ *
+ * 纯函数，便于单测锁定「关掉即持久不显示」。
+ */
+export function markProjectHidden<T extends DeviceRecordPatch>(
+  devices: readonly T[],
+  target: DeviceRecordPatch["target"],
+  projectPath: string,
+): T[] {
+  const index = devices.findIndex((device) => isSameDeviceTarget(device.target, target));
+  if (index < 0) return [...devices];
+  const current = devices[index] as DeviceRecordPatch;
+  return mergeDeviceRecord(devices, {
+    target,
+    // 展开 undefined 本就是空操作，无需 `?? {}` 兜底（oxlint 会拒绝多余兜底）。
+    visibleProjects: { ...current.visibleProjects, [projectPath]: false },
+  });
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeDeviceRecord } from "../src/lib/remoteDeviceProjection.js";
+import { markProjectHidden, mergeDeviceRecord } from "../src/lib/remoteDeviceProjection.js";
 
 /**
  * 设备记录合并写的不变量（2026-09-30 实测缺陷）。
@@ -104,4 +104,55 @@ test("合并写：同 host 不同 username 视为不同设备（与同机判定�
     lastConnectionStatus: "never" as const,
   });
   assert.equal(merged.length, 2, "不同用户是不同设备条目");
+});
+
+/**
+ * markProjectHidden：用户关掉投射条目 → 持久为「不显示」。
+ *
+ * 缺陷经过（实测）：侧栏直接关掉投射条目时只关 tab、不回写显示偏好，
+ * 下次重连 syncProjection 又按旧偏好把它投回来 —— 用户看到"关不掉的条目"。
+ * 设置页开关本就写这份偏好，两条路径必须一致。
+ */
+
+test("markProjectHidden：关掉的项目持久为不显示，其它项目与字段不受影响", () => {
+  const existing = [
+    {
+      target,
+      lastConnectionStatus: "connected" as const,
+      visibleProjects: { "/vol/新赛马": true },
+    },
+  ];
+  const next = markProjectHidden<DeviceRecord>(existing, target, "/vol/中转站");
+
+  assert.deepEqual(
+    next[0]?.visibleProjects,
+    { "/vol/新赛马": true, "/vol/中转站": false },
+    "只新增被关掉的项目为 false，既有偏好不动",
+  );
+  assert.equal(next[0]?.lastConnectionStatus, "connected", "其它字段保留");
+  assert.equal(next.length, 1, "不新增设备条目");
+});
+
+test("markProjectHidden：已有偏好时覆盖该项为 false", () => {
+  const existing = [
+    {
+      target,
+      lastConnectionStatus: "connected" as const,
+      visibleProjects: { "/vol/新赛马": true, "/vol/中转站": true } as Record<string, boolean>,
+    },
+  ];
+  const next = markProjectHidden<DeviceRecord>(existing, target, "/vol/新赛马");
+  assert.deepEqual(
+    next[0]?.visibleProjects,
+    { "/vol/新赛马": false, "/vol/中转站": true },
+    "只改目标项目",
+  );
+});
+
+test("markProjectHidden：设备不在记录里时不伪造条目", () => {
+  // 找不到设备就别写 —— 凭空造一条只有 visibleProjects 的记录会让设备卡片
+  // 出现一个没有 target 的幽灵条目。
+  const existing: DeviceRecord[] = [];
+  const next = markProjectHidden<DeviceRecord>(existing, target, "/vol/新赛马");
+  assert.equal(next.length, 0, "不改动记录");
 });

@@ -1253,8 +1253,31 @@ export function SettingsPage({
   );
 
   const handleRemoveRemoteDevice = useCallback(async () => {
+    // 移除设备必须先收尾连接与投射：只删设备记录会留下"无主的连接"
+    // （session 还在、投射条目还在，但没有任何入口能管理或断开它）。
+    //
+    // 与「断开」的区别：断开按规格 US 4/5/17 保留灰显条目供重连；
+    // 移除是把设备整个删掉，那些条目已无处可重连，必须一并清掉。
+    const target = remoteDeviceEntry?.target;
+    const sessionId = liveDeviceSessionId;
+    if (target) {
+      closeDeviceSession(target);
+    } else if (sessionId) {
+      void platform.disposeRemoteSession(sessionId).catch(() => undefined);
+    }
+    if (sessionId) {
+      unregisterRemoteWorkspaceSession(sessionId);
+      const tabStore = tabStoreApiRef.current;
+      for (const tab of tabStore.getState().tabs) {
+        if (tab.kind === "workspace" && tab.projection?.deviceSessionId === sessionId) {
+          tabStore.getState().closeTab(tab.id);
+        }
+      }
+    }
+    setRemoteDeviceProjects(null);
+    setRemoteDeviceConnectionStatus("never");
     await writeRemoteDevice(null);
-  }, [writeRemoteDevice]);
+  }, [liveDeviceSessionId, platform, remoteDeviceEntry, writeRemoteDevice]);
 
   const handleRemoteDeviceVisibleProjectsChange = useCallback(
     async (next: Record<string, boolean>) => {
@@ -1353,16 +1376,8 @@ export function SettingsPage({
           visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
         );
       }
-      // 连接归设备所有：登记到设备会话 store，使连接不随投射 tab 存亡，
-      // 也不随设置页卸载丢失（原先存在组件 ref 里，卸载即丢）。
-      // remoteDeviceConnect 的 services 在类型上是 unknown（跨层形状适配），
-      // 而上面已用它做过 createDeviceAccess，此处按 IServiceAccessor 收窄。
-      useDeviceSessionStore.getState().setDeviceSession({
-        target: remoteDeviceEntry.target,
-        sessionId: result.sessionId,
-        services: result.services as import("@zcode/services").IServiceAccessor,
-        ...(result.dispose ? { dispose: result.dispose } : {}),
-      });
+      // 设备会话登记已收进 connectRemoteDevice（唯一建连入口），此处不再重复登记：
+      // 漏登记会让该会话不被认作设备级，关掉最后一个投射 tab 时仍会被 dispose。
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRemoteDeviceConnectionStatus("failed");
