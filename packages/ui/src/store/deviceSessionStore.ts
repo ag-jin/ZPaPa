@@ -42,22 +42,23 @@ interface DeviceSessionState {
   sessionsByDeviceKey: Record<string, DeviceSession>;
   setDeviceSession: (session: DeviceSession) => void;
   removeDeviceSession: (target: RemoteTarget) => void;
-  clearDeviceSessions: () => void;
 }
 
 /**
  * 设备身份键。
  *
- * 口径与 `remoteDeviceProjection.ts` 的 `isSameDeviceTarget` / `findDeviceSessionId`
- * 保持一致（SSH 比 host + username）—— 两套「同机」规则不一致会让同一台设备在不同
- * 代码路径下得出不同结论（历史上 findDeviceSessionId 与投射清理各判一次，已踩过）。
- * 这里额外带上 port：同一 host 的不同端口是不同接入点。
+ * **必须与 `remoteDeviceProjection.ts` 的 `isSameDeviceTarget` 完全同口径**
+ * （SSH 比 host + username，不比较 port）。
+ *
+ * 曾经这里额外带上 port，与记录层的 `isSameDeviceTarget`（不比较 port）不一致：
+ * 同一 host 换端口接入时，记录层按"同一台设备"合并、会话层却按两台各存一份，
+ * 旧会话条目从此无人回收（`setDeviceSession` 只在同键时才终结旧会话）。
+ * 「同机」判定必须全仓一套规则，否则两条路径必然对同一事实得出不同结论。
  */
 export function deviceKey(target: RemoteTarget | null | undefined): string | null {
   if (!target) return null;
   if (target.kind !== "ssh") return `${target.kind}:default`;
-  const port = target.port ?? 22;
-  return `ssh:${target.username}@${target.host}:${port}`;
+  return `ssh:${target.username}@${target.host}`;
 }
 
 export const useDeviceSessionStore = create<DeviceSessionState>()((set) => ({
@@ -84,13 +85,6 @@ export const useDeviceSessionStore = create<DeviceSessionState>()((set) => ({
       delete next[key];
       return { sessionsByDeviceKey: next };
     }),
-
-  clearDeviceSessions: () =>
-    set((state) =>
-      Object.keys(state.sessionsByDeviceKey).length === 0
-        ? state
-        : { sessionsByDeviceKey: {} },
-    ),
 }));
 
 /** 读取某台设备的会话（未连接返回 null）。 */
@@ -110,4 +104,29 @@ export function closeDeviceSession(target: RemoteTarget): void {
   const session = getDeviceSession(target);
   useDeviceSessionStore.getState().removeDeviceSession(target);
   session?.dispose?.();
+}
+
+/**
+ * 按 sessionId 移除登记（不调用 dispose）。
+ *
+ * 用于**远端自行断开**：会话已经死了，此时只能按 sessionId 定位 ——
+ * 而事件里没有 target，无法走 removeDeviceSession。
+ *
+ * 不在这里 dispose：调用方（会话关闭处理器）已在走自己的降级与清理流程，
+ * 再 dispose 一次会对同一 session 重复释放。
+ *
+ * 不清理的后果（实测确认）：设备 store 里留着死会话 → 设置页按
+ * `liveDeviceSessionId` 判断连接态，会一直显示「已连接」并给出「断开」按钮，
+ * 而实际连接早已不存在；用户点断开只是对一条死会话再释放一次。
+ */
+export function removeDeviceSessionBySessionId(sessionId: string): void {
+  useDeviceSessionStore.setState((state) => {
+    const entry = Object.entries(state.sessionsByDeviceKey).find(
+      ([, session]) => session.sessionId === sessionId,
+    );
+    if (!entry) return state;
+    const next = { ...state.sessionsByDeviceKey };
+    delete next[entry[0]];
+    return { sessionsByDeviceKey: next };
+  });
 }

@@ -1314,6 +1314,11 @@ export function SettingsPage({
         if (!exists) {
           store.getState().addTab(project.path, {
             remoteSessionId: liveDeviceSessionId,
+            // remoteTarget 必须带上：断开时 markProjectionTabsDisconnected 会清掉
+            // remoteSessionId，而投射条目不设 workspaceIdentity（ADR 0001），
+            // 三者全空会让该条目被渲染判定为**本机项目**，同时侧栏重连也找不到它
+            // （重连按 `projection != null && remoteTarget != null` 匹配）。
+            remoteTarget: remoteDeviceEntry.target,
             projection: { deviceSessionId: liveDeviceSessionId },
           });
         }

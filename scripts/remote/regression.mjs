@@ -65,6 +65,14 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "device-identity-rule",
+    title: "设备身份口径全仓一致（deviceKey 与 isSameDeviceTarget 同判）",
+    cwd: "packages/ui",
+    file: "test/deviceIdentityRule.test.ts",
+    usesTsconfigPaths: true,
+  },
+  {
+    layer: 1,
     id: "device-access",
     title: "设备访问与项目清单并集（工单 02/03）",
     cwd: "packages/ui",

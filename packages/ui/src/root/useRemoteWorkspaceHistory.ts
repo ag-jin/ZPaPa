@@ -43,7 +43,10 @@ import {
   type ProjectedProject,
 } from "@/lib/remoteDeviceProjection.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
-import { useDeviceSessionStore } from "@/store/deviceSessionStore.js";
+import {
+  removeDeviceSessionBySessionId,
+  useDeviceSessionStore,
+} from "@/store/deviceSessionStore.js";
 import {
   buildRemoteWorkspacePersistPatch,
   restorePersistedRemoteWorkspaceSessions,
@@ -1174,6 +1177,11 @@ export function useRemoteWorkspaceHistory({
       // 必须放在 matchedTabs 的早退之前：设备连接的投射条目虽然带 remoteSessionId，
       // 但它们不走任何 workspace tab 的常规关闭路径，早退后就再没人处理。
       markProjectionTabsDisconnected(tabStoreApi, sessionId);
+
+      // 设备 store 同样要清：远端自行退出时这条会话已经死了，但登记还在。
+      // 设置页按 `liveDeviceSessionId` 判断连接态，不清会一直显示「已连接」
+      // 并给出「断开」按钮，而实际连接早已不存在。
+      removeDeviceSessionBySessionId(sessionId);
 
       if (matchedTabs.length === 0) {
         unregisterRemoteWorkspaceSession(sessionId);
