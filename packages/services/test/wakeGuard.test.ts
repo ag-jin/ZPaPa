@@ -117,9 +117,10 @@ test("矩阵：manual=true × 五条规则（豁免三条闸，不豁免两条�
   );
 });
 
-// manual 的**补集方向**：三条闸同时命中 + 两条去重同时命中时，manual=true 必须仍然 fire
-// （豁免是「全部三条」，不是「其中一条」；一旦有一格漏豁免，人手动跑就会被自己设的闸拦住）。
-test("manual=true 且五条规则全部命中时仍然放行", () => {
+// manual 的**补集方向**之一：三道闸同时命中时必须全部豁免、仍然放行
+// （豁免是「整块三条」，不是「其中一条」；只要少豁免一条，人手动跑就会被自己设的闸拦住）。
+// 注意本条**只置三道闸**、去重两条保持 false，所以期望是 fire；「五条全中」是下一条。
+test("manual=true 时三道闸同时命中仍放行", () => {
   assert.deepEqual(
     decideWake({
       ...base,
@@ -130,6 +131,61 @@ test("manual=true 且五条规则全部命中时仍然放行", () => {
     }),
     { action: "fire" },
   );
+});
+
+/* 真正的「manual=true × 五条规则全部命中」：三道闸被豁免，去重两条**不被豁免**，
+   所以结论必须落到 skip。这一步是本条存在的全部意义——
+   「豁免恰好三条」的补集方向不能靠「三道闸单测 + 两条去重单测」拼出来：
+   两者各自绿，仍然可以是「manual 时跳过整块判定」（那时五条全中会错报 fire）。
+   上一轮的教训（闭集清单有方向性盲区）这次藏在测试**名字**里，故把它连同期望一起钉死。 */
+test("manual=true × 五条规则全部命中时落到 acknowledged（豁免不含去重）", () => {
+  assert.deepEqual(
+    decideWake({
+      ...base,
+      manual: true,
+      rule: ruleWith(9999, 20),
+      recentFireCount: 9999,
+      chainRepeatCount: 9999,
+      hasPendingSameEvent: true,
+      allInputsFromSelf: true,
+    }),
+    { action: "skip", reason: "acknowledged" },
+  );
+});
+
+/* 闸 × 去重 的**十字矩阵**（2 路径 × 3 闸 × 2 去重 = 12 格，逐格断言）。
+   铺满的理由：清单式覆盖是分头验的——「manual 豁免了哪三条」「闸都压得住去重吗」——
+   而分头验的绿**推不出**交叉格的绿。12 格里每一格都要求实现同时做对两件事
+   （manual 分支放不放行 × 去重到底报哪个 reason），是发现「闸与去重串了」最直接的一张网。 */
+test("闸 × 去重 十字矩阵：manual=false 报闸，manual=true 落到去重", () => {
+  const gates = [
+    { name: "max_fires", input: { rule: ruleWith(9999, 20) } },
+    { name: "rate", input: { recentFireCount: 9999 } },
+    { name: "loop", input: { chainRepeatCount: 9999 } },
+  ] as const;
+  const dedups = [
+    { name: "merged", input: { hasPendingSameEvent: true } },
+    { name: "acknowledged", input: { allInputsFromSelf: true } },
+  ] as const;
+
+  for (const gate of gates) {
+    for (const dedup of dedups) {
+      const cell = { ...base, ...gate.input, ...dedup.input };
+      const where = `${gate.name}×${dedup.name}`;
+      // 非人发起：闸先于去重 → 报闸。
+      assert.deepEqual(
+        decideWake({ ...cell, manual: false }),
+        { action: "pause", reason: gate.name },
+        `manual=false ${where} 应报闸`,
+      );
+      // 人发起：闸被豁免 → 落到去重（去重是语义去重，不随发起者变化）。
+      assert.deepEqual(
+        decideWake({ ...cell, manual: true }),
+        { action: "skip", reason: dedup.name },
+        `manual=true ${where} 应落到去重`,
+      );
+    }
+  }
 });
 
 // maxFires 边界：未设 → 默认 20（brief 要求用 WAKE_DEFAULT_MAX_FIRES 兜底，不得就地写 20）。
