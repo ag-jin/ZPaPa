@@ -10,7 +10,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { teamAgentSchema, type TeamAgent, type TeamAgentInput } from "@zcode/shared";
 
 /* 协作智能体定义的存储：**实验命名空间** <ws>/.zcode/squad/agents，与现有 subagent 的
@@ -31,7 +31,37 @@ export function resolveSquadAgentRoot(workspacePath: string): string {
 
 const DEFINITION_FILE_SUFFIX = ".json";
 
+/**
+ * 把 id 限死为**单一路径段**，否则 `../evil` 这类 id 会逃出实验命名空间
+ * （写到 `<ws>/.zcode/evil.json`，即 squad 之外）。spec §17 把这条登记为
+ * 「任何调用方开始传 id 之前必修」，与 squadStorage 同款拦截（同一份数据可能在
+ * Windows 上被读，故 `\\` 一并拒绝；`basename("..")` 返回 `".."` 本身，故 `.` / `..` 必须显式列出）。
+ *
+ * **响亮失败**：非法 id 抛错，不静默改名、不写到别处——静默兜底会让调用方拿不到
+ * 「我传错了 id」这个事实，而这正是记忆 key 与定义文件名分叉的起点。
+ */
+function assertSinglePathSegment(id: string): void {
+  const illegal =
+    id.length === 0 ||
+    id === "." ||
+    id === ".." ||
+    id.includes("/") ||
+    id.includes("\\") ||
+    basename(id) !== id;
+  if (illegal) {
+    throw new Error(
+      `非法的协作智能体 id「${id}」：id 必须是单一路径段（不得为空、"."、".." 或含路径分隔符）`,
+    );
+  }
+}
+
+/**
+ * 定义文件的**唯一收口**：写（writeTeamAgent）、读（readTeamAgent）、删（deleteTeamAgent）、
+ * 以及列目录（listTeamAgents 由文件名派生 id 后走 readTeamAgent）全部经过这里，
+ * 所以校验只放在这一处就覆盖了全部读写路径。
+ */
 function definitionPath(root: string, id: string): string {
+  assertSinglePathSegment(id);
   return join(root, `${id}${DEFINITION_FILE_SUFFIX}`);
 }
 
@@ -137,7 +167,8 @@ export function listTeamAgents(root: string): TeamAgent[] {
         agents.push(agent);
       }
     } catch {
-      // 坏文件跳过：宁可少一个智能体，也不让整份列表崩（用户可从文件系统手工修）。
+      // 坏文件跳过（含文件名不是合法 id 段的情况，如 `..json` 派生出 `"."`）：
+      // 宁可少一个智能体，也不让整份列表崩（用户可从文件系统手工修）。
       continue;
     }
   }

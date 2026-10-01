@@ -17,6 +17,13 @@ const SKIPPED_DIR_NAMES = new Set([
   "node_modules", ".git", "dist", "build", "out", "target", "vendor",
   ".next", ".nuxt", ".cache", "coverage", "__pycache__", ".venv", "venv",
   ".idea", ".vscode",
+  /* spec §13 C10 的工作区产物目录排除清单（**扫描半边**）：新增产物目录在此登记，
+     与仓库根 `.gitignore` 里同名的那段同步维护（那边的注释是「唯一登记处」的说明）。
+     `.worktree/` 里是整份仓库的副本（`<repoRoot>/.worktree/<工作项>-<队员>/`），不挡会
+     把 N 份副本当源码吃进清单、并让 manifestHash 每次都变；`.zcode/` 覆盖 squad /
+     agent-memory 等全部实验命名空间产物。两者都**不**依赖 includeHidden 过滤——
+     见下面 isWikiArtifactDir 处「不同实现处理不一致」的理由。 */
+  ".worktree", ".zcode",
 ]);
 
 const MAX_SCAN_ENTRIES = 40_000;
