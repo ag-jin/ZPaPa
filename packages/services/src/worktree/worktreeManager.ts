@@ -76,13 +76,21 @@ function parseWorktreeListPorcelain(stdout: string): WorktreeEntry[] {
   return entries;
 }
 
-/** 目录被外部删掉的残骸在 git 里仍是登记的 worktree，但它已经没有工作面可言。 */
+/**
+ * 目录被外部删掉的残骸在 git 里仍是登记的 worktree，但它已经没有工作面可言。
+ * **只有 ENOENT 才算「不存在」**：EACCES / EPERM / ELOOP 说明路径本身可能活得好好的
+ * （比如 `.worktree/` 某一层不可穿越）。把它们一并当成「不存在」，活着的工作树会被静默
+ * 从 list() 里抹掉：队员数少 1、这个工作面也永远进不了 Task 3 的清理视野，且零信号。
+ */
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }
 

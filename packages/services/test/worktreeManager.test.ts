@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { GitCommandError, createGitRunner } from "../src/worktree/gitRunner.js";
@@ -152,6 +152,34 @@ test("目录消失的残骸不算队员，prune 后 git 侧也收敛", async () 
   await m.prune();
   const raw = await git(["worktree", "list", "--porcelain"], { cwd: root });
   assert.equal(raw.stdout.includes("wi1-a"), false);
+});
+
+// 上一条的反面：只有 ENOENT 才算残骸。别的 fs 错误（EACCES/EPERM/ELOOP）说明路径可能活得好好的，
+// 若也当成「不存在」，活着的工作树会被静默抹掉 —— 队员数少 1 且零信号。
+// 这里用自指符号链接确定性地造 ELOOP：不依赖 uid（以 root 跑测试时 chmod 000 根本不拦人，
+// 那种用例会永远绿，等于没测）。
+test("访问工作树路径报非 ENOENT 错误时，list 抛错而不是静默少一项", async () => {
+  const root = await makeRepo();
+  const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
+  const { path } = await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
+  await rm(path, { recursive: true, force: true });
+  symlinkSync("wi1-a", path);
+
+  const error = await m.list().then(
+    () => null,
+    (e: unknown) => e as { code?: string },
+  );
+  assert.equal(error?.code, "ELOOP");
+});
+
+// 夹具必须服从 opts.cwd：git 的行为随 cwd 变，夹具若写死自己造的那个仓库，
+// createWorktreeManager 传进来的 repoRoot 就会被静默忽略 —— 命令跑在别的仓库上却不报错。
+test("realGit 真的跑在 opts.cwd 指的仓库里", async () => {
+  const repoA = await makeRepo();
+  const repoB = await makeRepo();
+  const result = await realGit(repoA)(["rev-parse", "--show-toplevel"], { cwd: repoB });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout.trim(), realpathSync(repoB));
 });
 
 // git 没装或 PATH 不对时没有 stderr；不把 spawn 错误本身带上，上层只会看到

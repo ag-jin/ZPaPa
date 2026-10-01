@@ -28,11 +28,14 @@ export async function makeRepo(): Promise<string> {
  * 返回真实执行 git 的 runner：失败时把 code/stdout/stderr 一并返回，**不抛**。
  * 必须走真进程而不是打桩：要断言的正是「git 自己会把什么文案、什么退出码放出来」
  * （`not a valid object name`、`is not a working tree` 都是 git 的产物，打桩只会自证）。
+ *
+ * cwd 以 `opts.cwd` 为准，`root` 只是缺省：git 的行为随 cwd 变，夹具若写死自己造的那个
+ * 仓库，调用方传进来的目录会被静默忽略 —— 命令跑在别的仓库上却一路不报错。
  */
 export function realGit(root: string): GitRunner {
-  return async (args) => {
+  return async (args, opts) => {
     try {
-      const { stdout, stderr } = await run("git", args, { cwd: root });
+      const { stdout, stderr } = await run("git", args, { cwd: opts.cwd || root });
       return { code: 0, stdout, stderr };
     } catch (e) {
       const err = e as { code?: number; stdout?: string; stderr?: string };
