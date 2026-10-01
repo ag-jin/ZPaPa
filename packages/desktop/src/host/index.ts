@@ -73,7 +73,7 @@ import {
   type OffPeakRequestAuthBuilder,
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
-import { decideSquadDispatch, isSquadDispatchDisabledError } from "./squadDispatch.js";
+import { decideSquadDispatch, isSquadDispatchDisabledError, watchMemberRunSettlement } from "./squadDispatch.js";
 import {
   assertBoundSessionDispatchable,
   resolveOffPeakDispatchKind,
@@ -2585,6 +2585,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     if (databaseStartup?.coordinator.snapshot.phase !== "ready") {
       parentPort.postMessage({
         type: HostResponseTypes.SquadWakeResult,
+        ruleId: msg.ruleId,
         runId: msg.eventKey,
         ok: false,
         error: "Local database startup is not ready",
@@ -2594,10 +2595,16 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     }
     void (async () => {
       const eventKey = msg.eventKey;
-      /** 确定性失败（重试不会自愈）的回执：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。 */
+      /* 本分支是否**已经**在台账里开出队员行：派发中途失败时（如 createTask / 发 prompt 抛），
+         那一行会留在 `open`，而它对应的可能就是一棵已经建好的工作树 —— 必须留痕（见外层 catch）。
+         声明在 try 之外：catch 要读它。 */
+      let memberRunOpened = false;
+      /** 确定性失败（重试不会自愈）的回执：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。
+          每条回执都带 `ruleId`：调度器按 `(ruleId, eventKey)` 找那条「已请求未结算」的重投记录。 */
       const failPermanent = (error: string): void => {
         parentPort.postMessage({
           type: HostResponseTypes.SquadWakeResult,
+          ruleId: msg.ruleId,
           runId: eventKey,
           ok: false,
           error,
@@ -2641,7 +2648,19 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           workItem.assignee.type === "squad"
             ? (snapshot.squads.find((candidate) => candidate.id === workItem.assignee.id) ?? null)
             : null;
-        const events = planDispatch({ workItem, squad, trigger: "rule", ruleId: msg.ruleId });
+        let events: ReturnType<typeof planDispatch>;
+        try {
+          events = planDispatch({ workItem, squad, trigger: "rule", ruleId: msg.ruleId });
+        } catch (error) {
+          /* `planDispatch` 的输入契约违例（工作项形状/小队定义不对）是**数据**问题：
+             重投同一条事实会再次撞上同一个违例 —— 按 transient 退避是空转，按 permanent 收口并留痕。
+             （只有「数据被改好」才会自愈，而那时是一条新的事实、新的 eventKey。） */
+          logger.error(`[squad] planDispatch contract violation rule=${msg.ruleId}`, error);
+          failPermanent(
+            `planDispatch contract violation: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return;
+        }
         const enqueued = events.find((event) => event.kind === "run.enqueued");
         if (enqueued?.kind !== "run.enqueued") {
           /* 没有 run（inbox.notified：指派给人 / 小队不存在 / 已归档 / 已停用）⇒ **skip 不是失败**。
@@ -2651,7 +2670,12 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             `[squad] wake skipped rule=${msg.ruleId} workItem=${msg.workItemId}` +
               ` reason=${skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event"}`,
           );
-          parentPort.postMessage({ type: HostResponseTypes.SquadWakeResult, runId: eventKey, ok: true });
+          parentPort.postMessage({
+            type: HostResponseTypes.SquadWakeResult,
+            ruleId: msg.ruleId,
+            runId: eventKey,
+            ok: true,
+          });
           return;
         }
 
@@ -2670,6 +2694,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               agentId: enqueued.agentId,
               isLeaderTask: false,
             });
+            memberRunOpened = true;
           } catch (error) {
             // 开树失败是**确定性**失败（分支残枝 / base 不存在 / 目录冲突 ⇒ 重试撞「已存在」），
             // 按 permanent 回执，别让调度器按 transient 一直空转重试。
@@ -2734,12 +2759,24 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           logger.info(
             `[squad] wake skipped rule=${msg.ruleId} workItem=${msg.workItemId} reason=${decision.reason}`,
           );
-          parentPort.postMessage({ type: HostResponseTypes.SquadWakeResult, runId: eventKey, ok: true });
+          parentPort.postMessage({
+            type: HostResponseTypes.SquadWakeResult,
+            ruleId: msg.ruleId,
+            runId: eventKey,
+            ok: true,
+          });
           return;
         }
 
         const zcodeTaskService = targetServices.getOptional(IZCodeTaskService);
-        if (!zcodeTaskService) throw new Error("ZCode task service is not initialized.");
+        if (!zcodeTaskService) {
+          /* 任务服务未注册是**确定性**状态（服务注册表在进程生命周期内不会长出这个服务），
+             按 transient 退避只会一直空转 —— 与 cron 路径不同：那边是「写配置/会话失败」类的未知错误，
+             这里是「环境缺件」。响亮 + permanent，别让这次唤醒在退避里转圈。 */
+          logger.error("[squad] ZCode task service is not initialized; squad wake dropped");
+          failPermanent("ZCode task service is not initialized.");
+          return;
+        }
         // 幂等键的稳定一半当 trace：同一 eventKey 的重投落回同一个 trace，不会变成两次「新执行」。
         const traceId = eventKey as TraceId;
         const task = boundSessionId
@@ -2764,6 +2801,20 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           workspacePath: sessionWorkspacePath,
           ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
         });
+        /* run 的终态收口（**闭环的最后一环**）：只有队员 run 有台账行，故只对它订阅 ——
+           队长 run 没有 `squad_runs` 行（服务面没有写入口，见报告 Important-C），
+           对它调 completeMemberRun 会撞「台账里没有 runId」的响亮错误。 */
+        if (kind === "member") {
+          watchMemberRunSettlement({
+            runId: eventKey,
+            traceId,
+            subscribe: (listener) => zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)(listener),
+            // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
+            completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
+            logInfo: (message) => logger.info(message),
+            logError: (message, error) => logger.error(message, error),
+          });
+        }
         await zcodeTaskService.sendPrompt({
           taskId: task.taskId,
           traceId,
@@ -2774,7 +2825,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
            冻结的服务面（`ISquadRuntimeService`）没有「记录队长 run」的写入口，而 `openMemberRun`
            会连工作树一起开（队长不建树，机械半明文），所以在派发桥这一侧无路可写。
            不在此处自己 INSERT：那会绕过运行生命周期、成为台账的第二个写者（唯一写者/台账口径不变）。
-           于是 `getSnapshot().runs` 现阶段只显示队员 run；建议 P2c 给服务面补 recordLeaderRun。 */
+           于是 `getSnapshot().runs` 现阶段只显示队员 run；建议 P2c 给服务面补 recordLeaderRun。
+           （队员 run 的**终态收口**已由上面的 `watchMemberRunSettlement` 接上：成功 ⇒ completeMemberRun
+           把台账推到 `produced`；这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」。） */
         logger.info(
           `[squad] wake dispatched rule=${msg.ruleId} workItem=${msg.workItemId} kind=${kind}` +
             ` eventKey=${eventKey} task=${task.taskId}` +
@@ -2782,14 +2835,28 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         );
         parentPort.postMessage({
           type: HostResponseTypes.SquadWakeResult,
+          ruleId: msg.ruleId,
           runId: eventKey,
           ok: true,
           taskId: task.taskId,
           sessionId: task.taskId,
         });
       } catch (error) {
+        /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
+           回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
+           刚开出的队员行会停在 `open`（没有终态可订阅，收口那一步根本没跑到）。
+           静默停在 open 会让它永远算「活跃」：工作树与分支不会被回收，而没人知道为什么。
+           服务面没有 failed/discard 出口，故此处只留响亮留痕（报告里登记为 P2c 的后续项）。 */
+        if (memberRunOpened) {
+          logger.error(
+            `[squad] member run 停在 open：派发中途失败 runId=${eventKey} rule=${msg.ruleId}` +
+              "（服务面无 failed/discard 出口，工作树与分支不会被回收）",
+            error,
+          );
+        }
         parentPort.postMessage({
           type: HostResponseTypes.SquadWakeResult,
+          ruleId: msg.ruleId,
           runId: eventKey,
           ok: false,
           error: error instanceof Error ? error.message : String(error),

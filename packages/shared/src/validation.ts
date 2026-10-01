@@ -904,8 +904,14 @@ export const hostOffPeakRunResultResponseSchema = z.object({
 // host → main：小队唤醒派发结果。runId 是幂等键里的 eventKey（调度器侧唯一稳定的那一半）。
 // failureKind 语义：deferred=绑定会话正在执行（等待型重投）；permanent=门禁关闭 / 运行时未注册 /
 // 队员开树失败这类**重试不会自愈**的确定性失败；transient=库未就绪等可重试状态。
+//
+// `ruleId` **必填**：调度器用它 + eventKey 定位「已请求未结算」的重投记录（eventKey 里没有 ruleId，
+// 同一工作项上的两条规则可以算出同一个 key）。做成可选会让「少带这一维」变成**静默错键**——
+// 重投表按 eventKey 单独匹配，一次回执会把另一条规则的重投记录一并撤掉。缺字段在此被拒（响亮）
+// 好过在调度器里按错误的键匹配。
 export const hostSquadWakeResultResponseSchema = z.object({
   type: z.literal("squad-wake-result"),
+  ruleId: nonEmptyStringSchema,
   runId: nonEmptyStringSchema,
   ok: z.boolean(),
   taskId: z.string().optional(),

@@ -293,3 +293,156 @@ test("排期族缺名义时刻 ⇒ 抛", async () => {
   });
   await assert.rejects(() => tick.run(2000), /名义时刻/);
 });
+
+// now 恰好落在网格点上（1000 + 3*60000 = 181000）⇒ 必须推进到**下一格** 241000。
+// 用 `ceil((now-nominal)/step)` 会算出 steps=3 ⇒ 返回 now 自己，与「严格晚于 now」矛盾：
+// 那一格要多留一拍才发现到点，且下一格的 eventKey 会指回刚刚 fire 过的名义时刻。
+test("every 族：now 恰落在网格点上 ⇒ 推进到下一格（严格晚于 now）", async () => {
+  const advanced: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({
+    listReady: () => [
+      rule({ kind: "every", mode: "continuous", intervalSeconds: 60, nextFireAt: 1000 }),
+    ],
+    advance: (r) => {
+      advanced.push(r);
+    },
+    postRequest: () => {},
+  });
+  await tick.run(181_000);
+  assert.equal(advanced[0]?.nextFireAt, 241_000, "推进结果必须严格晚于 now，且仍在同一网格上");
+});
+
+/* ── 已请求未结算的**重投**（Important-A）──
+
+   `fire()` 是 advance-before-post（先 CAS 推进再发请求），所以请求一发出，那一格就再也推不出来
+   （`list_ready` 不会回头给）。若瞬时结果（本机没有 host / 转发失败 / 库未就绪）只打日志就丢弃，
+   这次唤醒**静默消失** —— 而邻居的 cron / off-peak 都有退避重投。下面钉住这张重投表的行为：
+   重投的是**同一条**请求（同一个 eventKey ⇒ §3.9 幂等键不变），并区分「瞬时/等待」（重投）
+   与「确定性失败」（放弃不空转）。 */
+
+test("瞬时失败 ⇒ 退避到期后重投**同一条**请求（同一 eventKey），且不每轮都发", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: ReturnType<typeof rule>[] = [rule()];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(2000);
+  assert.equal(posts.length, 1);
+  // 规则已被 CAS 推进：本轮之后它不再出现在 listReady 里（那一格再也推不出来）。
+  ready.length = 0;
+
+  const outcome = tick.settle(
+    { ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "transient", error: "no local host available" },
+    2000,
+  );
+  assert.deepEqual(outcome, {
+    kind: "retry",
+    attempts: 1,
+    retryInMs: 30_000,
+    failureKind: "transient",
+    error: "no local host available",
+  });
+
+  // 退避未到 ⇒ 不重投。
+  await tick.run(31_999);
+  assert.equal(posts.length, 1, "退避期内不得重投");
+
+  // 退避到期 ⇒ 重投同一条请求。
+  await tick.run(32_000);
+  assert.equal(posts.length, 2, "退避到期必须重投（否则这次唤醒被静默吞掉）");
+  assert.deepEqual(posts[1], posts[0], "重投的必须是同一条请求：同一个 eventKey，幂等键不变");
+
+  // 发出去之后要等下一次回执再排期，不能每轮 tick 都发一遍。
+  await tick.run(32_001);
+  assert.equal(posts.length, 2);
+});
+
+test("等待型（deferred：绑定会话忙）也重投，且标成 deferred", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: ReturnType<typeof rule>[] = [rule()];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(2000);
+  ready.length = 0;
+  const outcome = tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "deferred" }, 2000);
+  assert.equal(outcome.kind, "retry");
+  assert.ok(outcome.kind === "retry" && outcome.failureKind === "deferred");
+  await tick.run(32_000);
+  assert.equal(posts.length, 2);
+});
+
+// 确定性失败（门禁关闭 / 运行时未注册 / 开树失败）：重试不会自愈 ⇒ 撤下记录，不按 transient 空转。
+test("确定性失败（permanent）⇒ 放弃重投，撤下记录", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: ReturnType<typeof rule>[] = [rule()];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(2000);
+  ready.length = 0;
+  const outcome = tick.settle(
+    { ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "permanent", error: "门禁关闭" },
+    2000,
+  );
+  assert.deepEqual(outcome, { kind: "abandoned", error: "门禁关闭" });
+  await tick.run(999_999);
+  assert.equal(posts.length, 1, "permanent 不该重投");
+});
+
+test("成功回执 ⇒ 结算并撤下重投记录", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: ReturnType<typeof rule>[] = [rule()];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(2000);
+  ready.length = 0;
+  assert.deepEqual(tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: true }, 2000), {
+    kind: "settled",
+  });
+  await tick.run(999_999);
+  assert.equal(posts.length, 1);
+});
+
+// 迟到的回执（重启后 / 从未发出）不当成失败，更不能拿它去重投一条来路不明的请求。
+test("找不到对应记录的迟到回执 ⇒ unknown（只留痕，不重投）", () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({ listReady: () => [], advance: () => {}, postRequest: (r) => posts.push(r) });
+  assert.deepEqual(
+    tick.settle({ ruleId: "w1", eventKey: "e:id:squad:wi_x:1:0", ok: false, failureKind: "transient" }, 2000),
+    { kind: "unknown" },
+  );
+  assert.equal(posts.length, 0);
+});
+
+// 重投表按 `(ruleId, eventKey)` 分账：eventKey 里**没有** ruleId，同一工作项上的两条规则
+// 可以算出同一个 key —— 只按 eventKey 匹配的话，一条回执会把另一条规则的重投记录一并撤掉。
+test("同一工作项上两条规则算出同一个 eventKey 时，重投记录互不干扰", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: ReturnType<typeof rule>[] = [rule({ id: "w1" }), rule({ id: "w2" })];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(2000);
+  assert.equal(posts.length, 2);
+  assert.equal(new Set(posts.map((post) => post.eventKey)).size, 1, "同一事实 ⇒ 同一个 key");
+  ready.length = 0;
+
+  // w1 结算成功；w2 瞬时失败。
+  tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: true }, 2000);
+  tick.settle({ ruleId: "w2", eventKey: EVENT_KEY, ok: false, failureKind: "transient" }, 2000);
+  await tick.run(32_000);
+  assert.equal(posts.length, 3, "w2 的重投不能被 w1 的成功回执撤掉");
+  assert.equal(posts[2]?.ruleId, "w2");
+});

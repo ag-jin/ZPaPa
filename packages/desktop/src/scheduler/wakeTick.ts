@@ -22,6 +22,14 @@ export const WAKE_TICK_LIMIT = 100;
    本层只提供窗口内的**计数**。 */
 const WAKE_RATE_WINDOW_MS = 60 * 60_000;
 
+/* 派发失败后的重投退避：与 off-peak 派发**逐项同形**（首重投 30s、每次翻倍、上限 15 分钟）。
+   为什么不另立一套：邻居那条路已经把「瞬时失败要退避、确定性失败不空转」的取舍论证过了，
+   两套参数会让同一类失败在两条路上有不同节奏，排查时先要确认差异来自实现还是参数。
+   「无可用本地 host」「转发失败」「库未就绪」都是**瞬时**的：真机上它会在用户开窗口后自愈，
+   所以必须重投 —— 不重投就等于这次唤醒被静默吞掉（规则已被 CAS 推进，那一格再也推不出来）。 */
+const WAKE_DISPATCH_RETRY_BASE_MS = 30_000;
+const WAKE_DISPATCH_RETRY_CAP_MS = 15 * 60_000;
+
 /** 事件的 source 维度（spec §5.7.1：两个来源的不同事实永不撞键）。规则唤醒的事实源固定是「小队调度」。 */
 const WAKE_EVENT_SOURCE = "squad";
 
@@ -43,6 +51,36 @@ export type WakeAdvancePatch = {
   nextFireAt?: number | null;
   pausedReason?: WakePauseReason;
 };
+
+/** main → 本层的派发结果。`(ruleId, eventKey)` 是重投表的键 —— 少任何一维都会把两条规则的
+    重投记录并成一条（`eventKey` 里没有 ruleId，同一工作项上两条规则可以算出同一个 key）。 */
+export type WakeDispatchResult = {
+  ruleId: string;
+  eventKey: string;
+  ok: boolean;
+  failureKind?: "transient" | "permanent" | "deferred";
+  error?: string;
+};
+
+/**
+ * `settle` 的结论（由调度器入口翻成日志 —— 判定留在这里，措辞留在那一处）。
+ *
+ * - `settled`：派发成功，撤下重投记录。
+ * - `abandoned`：确定性失败（门禁关闭 / 运行时未注册 / 队员开树失败）：重试不会自愈，**不**重投。
+ * - `retry`：瞬时失败或等待型（绑定会话忙），已排定下一次重投。
+ * - `unknown`：`(ruleId, eventKey)` 不在重投表里（重启后的迟到回执 / 从未发出）：只留痕。
+ */
+export type WakeSettlementOutcome =
+  | { kind: "settled" }
+  | { kind: "abandoned"; error?: string }
+  | {
+      kind: "retry";
+      attempts: number;
+      retryInMs: number;
+      failureKind: "transient" | "deferred";
+      error?: string;
+    }
+  | { kind: "unknown" };
 
 /**
  * **推进后的**规则快照（交给 `advance`）。
@@ -83,7 +121,12 @@ export type WakeTickDeps = {
   decide?: (input: Parameters<typeof decideWake>[0]) => ReturnType<typeof decideWake>;
 };
 
-export type WakeTick = { run: (now: number) => Promise<void> };
+export type WakeTick = {
+  /** 一轮 tick：先重投到期的那批，再处理本轮到点的规则。 */
+  run: (now: number) => Promise<void>;
+  /** 结算一条派发结果（main 侧回执）。返回结论，由调度器入口决定怎么留痕。 */
+  settle: (result: WakeDispatchResult, now: number) => WakeSettlementOutcome;
+};
 
 /** `eventKey` 的**唯一**构造入口（spec §5.7.1）：任何地方都不得就地拼串。 */
 export function buildWakeEventKey(rule: WakeRule): string {
@@ -140,7 +183,8 @@ export function nominalInstant(rule: WakeRule): number {
  *
  * `once` ⇒ null（不再到点：`listReady` 只取 `next_fire_at IS NOT NULL`，置空即终态）。
  * `continuous` ⇒ 推进到网格上的下一格，**网格锚点不动**：
- *   - `every`：`nominal + k*interval`（k ≥ 1 且严格晚于 now）。用整数倍步进而不是「按 now 对齐」，
+ *   - `every`：`nominal + k*interval`（k ≥ 1 且**严格晚于 now**；now 恰好落在网格点上时取下一格，
+ *     不返回 now 自己 —— 见下面步长计算的注释）。用整数倍步进而不是「按 now 对齐」，
  *     两件事同时成立：① 网格不漂移（重算永远落在同一串时刻上，eventKey 可复现）；
  *     ② 休眠/关机错过的窗口**不补跑**（顺延到下一格，与 automations 的 misfire-skip 同义）。
  *   - `cron`：表达式在 `now` 之后的下一次命中。cron 的**网格就是它命中的那些时刻**，
@@ -162,7 +206,12 @@ export function nextFireAtAfter(rule: WakeRule, now: number): number | null {
       }
       const stepMs = intervalSeconds * 1_000;
       const nominal = nominalInstant(rule);
-      const steps = Math.max(1, Math.ceil((now - nominal) / stepMs));
+      /* 严格晚于 now 的**同一网格点**：`floor(...) + 1` 而不是 `ceil(...)`。
+         用 `ceil` 时 now 恰好落在网格点上（now = nominal + k*step）会算出 `now` 自己，
+         与「推进到下一格」矛盾：那一格要多留一拍才发现到点，而且下一格的 eventKey 会指向
+         刚刚 fire 过的名义时刻。`Math.max(1, …)` 只兜 now < nominal 这种不该出现的输入
+         （生产路径上 listReady 只取 `next_fire_at <= now`），保证步数恒 ≥ 1。 */
+      const steps = Math.max(1, Math.floor((now - nominal) / stepMs) + 1);
       return nominal + steps * stepMs;
     }
     case "cron": {
@@ -195,6 +244,15 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
       为什么不落一张窗口表：本阶段只为让闸**真的会停**，而窗口的语义（滑过即自解）必须保住——
       单调递增的进程内计数会在人重新启用规则后立刻再暂停一次，与 §5.5「rate 等窗口滑过去就自解」矛盾。 */
   const firesByRule = new Map<string, number[]>();
+  /* **已请求但未结算**的唤醒：`(ruleId, eventKey)` → 重投上下文。
+     为什么必须有这张表：`fire()` 是 advance-before-post（先 CAS 推进、再发请求，顺序有理由），
+     所以**一旦发出请求，那一格就再也推不出来了**（next_fire_at 已经前进，listReady 不会再给）。
+     若瞬时结果（本机没有 host / 转发失败 / 库未就绪）就此丢弃，这次唤醒就永远消失 ——
+     而邻居两条路（cron / off-peak）都有退避重投。本表把「已请求未结算」记下来，按退避重投**同一条**
+     请求（同一个 `(ruleId, eventKey)`，正是 §3.9 幂等键要的「同一格重投算同一件事」）。
+     进程内（与 off-peak 的退避表同形）：调度器重启即丢，那一格由重启后的规则排期接管，不假装能补。 */
+  const pending = new Map<string, { request: WakeDispatchRequest; attempts: number; retryAt: number | null }>();
+  const pendingKey = (ruleId: string, eventKey: string): string => `${ruleId}\u0000${eventKey}`;
 
   const recentFireCount = (ruleId: string, now: number): number => {
     const fires = firesByRule.get(ruleId) ?? [];
@@ -229,7 +287,7 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
           "派发目标由工作项给出（wake_rules 没有 workspace 列），解析不到就不能派发",
       );
     }
-    deps.postRequest({
+    const request: WakeDispatchRequest = {
       ruleId: rule.id,
       workItemId: rule.workItemId,
       revision: rule.revision,
@@ -239,11 +297,26 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
       ...(workspace?.workspaceIdentity !== undefined
         ? { workspaceIdentity: workspace.workspaceIdentity }
         : {}),
-    });
+    };
+    deps.postRequest(request);
+    // 请求已经发出 ⇒ 记进重投表（还没有到期重投：retryAt=null，等回执说失败才排期）。
+    pending.set(pendingKey(rule.id, eventKey), { request, attempts: 0, retryAt: null });
+  };
+
+  /** 重投到期的那些（退避已过）：它们的规则早被 CAS 推进过，所以**不会**出现在本轮 listReady 里。 */
+  const repostDue = (now: number): void => {
+    for (const [key, entry] of pending) {
+      if (entry.retryAt === null || entry.retryAt > now) continue;
+      // 先清 retryAt 再发：发出去到收到回执之间若又跑一轮 tick，不该把同一条重复发第二遍。
+      pending.set(key, { ...entry, retryAt: null });
+      deps.postRequest(entry.request);
+    }
   };
 
   return {
     async run(now) {
+      // 先重投到期的那批（它们不在 listReady 结果里：规则已被 CAS 推进）。
+      repostDue(now);
       // 规则之间的处理顺序由 repo 的 ORDER BY 保证（next_fire_at, id），本层不再排序。
       for (const rule of deps.listReady(now, WAKE_TICK_LIMIT)) {
         const eventKey = buildWakeEventKey(rule);
@@ -273,6 +346,40 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
 
         fire(rule, eventKey, factKey, now);
       }
+    },
+
+    settle(result, now) {
+      const key = pendingKey(result.ruleId, result.eventKey);
+      const entry = pending.get(key);
+      if (!entry) {
+        // 迟到的回执（重启后 / 从未发出）：只留痕，不当成失败，更不重投一条来路不明的请求。
+        return { kind: "unknown" };
+      }
+      if (result.ok) {
+        pending.delete(key);
+        return { kind: "settled" };
+      }
+      if (result.failureKind !== "permanent") {
+        // 瞬时失败与等待型（绑定会话忙）都重投：两者都会自愈（用户开窗口 / 会话跑完）。
+        // 未标 failureKind 的失败按 transient 处理（与 cron 的 `msg.failureKind ?? "transient"` 同口径）。
+        // 重投的是**同一条**请求 ⇒ 同一个 `(ruleId, eventKey)`（§3.9：同一格重投算同一件事）。
+        const attempts = entry.attempts + 1;
+        const backoff = Math.min(
+          WAKE_DISPATCH_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+          WAKE_DISPATCH_RETRY_CAP_MS,
+        );
+        pending.set(key, { ...entry, attempts, retryAt: now + backoff });
+        return {
+          kind: "retry",
+          attempts,
+          retryInMs: backoff,
+          failureKind: result.failureKind === "deferred" ? "deferred" : "transient",
+          ...(result.error !== undefined ? { error: result.error } : {}),
+        };
+      }
+      // permanent：门禁关闭 / 运行时未注册 / 队员开树失败 —— 重试不会自愈，撤下记录不再空转。
+      pending.delete(key);
+      return { kind: "abandoned", ...(result.error !== undefined ? { error: result.error } : {}) };
     },
   };
 }

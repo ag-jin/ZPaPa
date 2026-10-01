@@ -32,8 +32,10 @@ export interface OffPeakRunResultPayload {
   failureKind?: "transient" | "permanent";
 }
 
-/** host → main 的小队唤醒派发结果（`runId` 是幂等键里的 eventKey）。 */
+/** host → main 的小队唤醒派发结果（`runId` 是幂等键里的 eventKey；`ruleId` 与它一起定位重投记录）。 */
 export interface SquadWakeResultPayload {
+  /** 哪条规则到点了：调度器按 `(ruleId, eventKey)` 找那条「已请求未结算」的重投记录（eventKey 里没有 ruleId）。 */
+  ruleId: string;
   runId: string;
   ok: boolean;
   taskId?: string;
@@ -61,7 +63,7 @@ export interface CronSchedulerHandle {
   handleCronRunResult: (result: CronRunResultPayload) => void;
   /** host 回报闲时任务派发结果时调用，转交给 scheduler 结算。 */
   handleOffPeakRunResult: (result: OffPeakRunResultPayload) => void;
-  /** host 回报小队唤醒派发结果时调用，转交给 scheduler 留痕（scheduler 没有该路的台账）。 */
+  /** host 回报小队唤醒派发结果时调用，转交给 scheduler 结算（重投记录在 scheduler 侧）。 */
   handleSquadWakeResult: (result: SquadWakeResultPayload) => void;
   /** manual run 落库后立即唤醒 scheduler，不等待下一次轮询。 */
   wake: (automationId: string) => void;
@@ -174,6 +176,7 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
         // 与 cron 同理：进入 disposing 后继续派发会把新 run 交给正在关闭的 Host。
         postToScheduler({
           type: "squad-wake-dispatch-result",
+          ruleId: msg.ruleId,
           runId: msg.eventKey,
           ok: false,
           failureKind: "transient",
@@ -183,9 +186,12 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
       }
       const host = deps.resolveDispatchHost();
       if (!host) {
-        // 无可用本地 host（无窗口/未就绪）：transient 回执（调度器下轮重投）。
+        // 无可用本地 host（无窗口/未就绪）：transient 回执。调度器按下轮 tick 的退避重投
+        // **同一条请求**（同一个 eventKey）—— 不重投就等于这次唤醒被静默吞掉，
+        // 因为规则在 fire 时已被 CAS 推进，那一格再也不会出现在 listReady 里。
         postToScheduler({
           type: "squad-wake-dispatch-result",
+          ruleId: msg.ruleId,
           runId: msg.eventKey,
           ok: false,
           failureKind: "transient",
@@ -207,6 +213,7 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
         deps.logger.warn("[cron-scheduler] forward SquadWake to host failed:", error);
         postToScheduler({
           type: "squad-wake-dispatch-result",
+          ruleId: msg.ruleId,
           runId: msg.eventKey,
           ok: false,
           failureKind: "transient",

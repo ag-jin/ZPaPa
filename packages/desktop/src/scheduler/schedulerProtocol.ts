@@ -86,9 +86,12 @@ export type MainToSchedulerMessage =
       failureKind?: "transient" | "permanent";
     }
   | {
-      // 唤醒规则派发结果。`runId` 用幂等键里的 eventKey（调度器唯一稳定的那一半）。
+      // 唤醒规则派发结果。`runId` 用幂等键里的 eventKey（调度器唯一稳定的那一半）；
+      // `ruleId` 是重投表的另一半键 —— eventKey 里**没有** ruleId（同一工作项上的两条规则可以算出
+      // 同一个 eventKey），只有 (ruleId, eventKey) 才定位得回「哪次派发」。
       // deferred=绑定会话正在执行（等待型重投）；permanent=门禁关闭 / 运行时未注册 / 开树失败。
       type: "squad-wake-dispatch-result";
+      ruleId: string;
       runId: string;
       ok: boolean;
       taskId?: string;

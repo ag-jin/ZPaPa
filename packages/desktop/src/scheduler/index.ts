@@ -520,14 +520,46 @@ parentPort?.on("message", (event: Electron.MessageEvent) => {
     return;
   }
   if (msg.type === "squad-wake-dispatch-result") {
-    // 唤醒派发的回执只用于留痕：规则早已按 CAS 推进过，台账（squad_runs）由 host 侧写。
-    // 门禁关闭（permanent）与开树失败都是**确定性**结论，不该像 transient 那样期待自愈，
-    // 所以按 warn 落一条带 failureKind 的日志 —— 静默丢弃会让「到点了但什么都没发生」无从排查。
-    log(
-      msg.ok ? "info" : "warn",
-      `squad wake dispatch ${msg.ok ? "ok" : "failed"} eventKey=${msg.runId}` +
-        ` failureKind=${msg.failureKind ?? "-"}${msg.error ? ` error=${msg.error}` : ""}`,
+    /* 唤醒派发的回执结算：**这块必须真的重投**。规则在本轮 fire 时已被 CAS 推进
+       （advance-before-post），所以「本机没有 host」「转发失败」「库未就绪」这些瞬时结果若只打一条日志，
+       那一格就再也推不出来 —— 这次唤醒被静默吞掉，而邻居的 cron / off-peak 都有退避重投。
+       判定（重投 / 放弃 / 迟到）在 `wakeTick.settle` 里，这里只按结论留痕：
+       permanent（门禁关闭 / 运行时未注册 / 开树失败）是确定性状态，重试不会自愈，故**不**重投，
+       但必须留 warn —— 静默丢弃会让「到点了但什么都没发生」无从排查。 */
+    const outcome = wakeTick.settle(
+      {
+        ruleId: msg.ruleId,
+        // 协议里这一维叫 runId（与 cron 消息同名），在唤醒这条路上它就是幂等键里的 eventKey。
+        eventKey: msg.runId,
+        ok: msg.ok,
+        ...(msg.failureKind !== undefined ? { failureKind: msg.failureKind } : {}),
+        ...(msg.error !== undefined ? { error: msg.error } : {}),
+      },
+      Date.now(),
     );
+    const label = `eventKey=${msg.runId} rule=${msg.ruleId}`;
+    switch (outcome.kind) {
+      case "settled":
+        log("info", `squad wake dispatch ok ${label}`);
+        break;
+      case "retry":
+        log(
+          "warn",
+          `squad wake dispatch failed (${outcome.failureKind}) ${label} attempts=${outcome.attempts}` +
+            ` retryIn=${outcome.retryInMs}ms: ${outcome.error ?? "-"}`,
+        );
+        break;
+      case "abandoned":
+        log(
+          "warn",
+          `squad wake dispatch abandoned (permanent) ${label}: ${outcome.error ?? "-"}`,
+        );
+        break;
+      case "unknown":
+        // 迟到回执（重启后 / 从未发出）：留痕即可，不能拿它去重投一条来路不明的请求。
+        log("warn", `squad wake dispatch result without pending request ${label}`);
+        break;
+    }
     return;
   }
   if (msg.type === "offpeak-dispatch-result") {

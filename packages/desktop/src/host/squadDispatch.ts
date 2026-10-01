@@ -85,3 +85,66 @@ export function isSquadDispatchDisabledError(error: unknown): boolean {
     (error as { code?: unknown }).code === SQUAD_DISPATCH_DISABLED_CODE
   );
 }
+
+/**
+ * 一次 task 输入轮次的终态（`IZCodeTaskService.onDynamicTaskTerminalOutcome` 的结构子集）。
+ * 只取收口需要的字段：`inputId` 认「是不是本次派发」，`outcome` 判有没有产出。
+ */
+export type SquadMemberRunTerminalOutcome = {
+  inputId?: string;
+  outcome: "succeeded" | "failed" | "stopped";
+  error?: string;
+};
+
+/**
+ * 队员 run 的**终态收口**（照 `trackCronRunOutcome` 的形态：订阅该 task 的终态 → 按 inputId 认本次派发）。
+ *
+ * 为什么必须有这一步：`openMemberRun` 写下的台账行只有经 `completeMemberRun` 才会从 `open` 前进到
+ * `produced`（产出入账）。没有它，每条队员 run 都**永远停在 open**、永远算「活跃」
+ * （`SquadRunRepo.listActive`），于是工作树与分支永远不被回收，而且没人能从台账看出它早就跑完了。
+ * 冻结面把 `completeMemberRun` 的调用者写明是「host 派发桥」——就是这里。
+ *
+ * 失败/中止**不得**冒充产出：`completeMemberRun` 会把 run 置 `produced` 并把工作项推到 `in_review`，
+ * 那等于凭空宣布「队员交了东西」。服务面目前没有 `failed`/`discard` 出口，所以那一行的归宿只能是
+ * **响亮留痕**（台账仍为 open，报告里登记为 P2c 的阻塞式后续项）——静默停在 open 才是真正要避免的。
+ *
+ * 依赖全部注入（订阅出口 / 收口动作 / 日志）：本函数因此能在没有 Electron、没有 sqlite 的进程里
+ * 被直接驱动 —— 「run 真的从 open 走到产出入账」这一格必须由**实体状态**断言，而不是读源码相信。
+ */
+export function watchMemberRunSettlement(params: {
+  /** 幂等键里稳定的那一半（`eventKey`），也是台账行的 runId。 */
+  runId: string;
+  /** 本次派发用的 trace（= sendPrompt 的 traceId）：只认这一轮，别轮的终态不算本次 run 的产出。 */
+  traceId: string;
+  subscribe: (listener: (outcome: SquadMemberRunTerminalOutcome) => void) => { dispose(): void };
+  /** `ISquadRuntimeService.completeMemberRun` 的绑定形态（已绑定 target）。 */
+  completeMemberRun: (runId: string) => Promise<void>;
+  logInfo: (message: string) => void;
+  logError: (message: string, error?: unknown) => void;
+}): void {
+  try {
+    params.subscribe((outcome) => {
+      // inputId 缺失或不是本轮 ⇒ 不是这次派发的终态（用户插话、上一轮残留），跳过。
+      if (outcome.inputId !== params.traceId) return;
+      if (outcome.outcome !== "succeeded") {
+        params.logError(
+          `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId} 的台账行仍为 open` +
+            "（服务面没有 failed/discard 出口，P2c 需补）—— 该 run 的工作树与分支不会被回收",
+          outcome.error,
+        );
+        return;
+      }
+      void params.completeMemberRun(params.runId).then(
+        () => params.logInfo(`[squad] member run 产出入账：runId=${params.runId} ⇒ produced`),
+        (error) =>
+          params.logError(
+            `[squad] member run 终态入账失败：runId=${params.runId} 停在 open（台账需人工/后续任务处置）`,
+            error,
+          ),
+      );
+    });
+  } catch (error) {
+    // 订阅本身失败也要响亮：没有订阅就没有收口，run 会停在 open。
+    params.logError(`[squad] member run 终态订阅失败：runId=${params.runId} 的收口会丢失`, error);
+  }
+}

@@ -223,8 +223,9 @@ export function spawnHostProcess(
       error?: string;
       failureKind?: "transient" | "permanent";
     }) => void;
-    /** host → main：小队唤醒派发结果，转交给 scheduler（`runId` 是幂等键里的 eventKey）。 */
+    /** host → main：小队唤醒派发结果，转交给 scheduler（`runId` 是幂等键里的 eventKey，`ruleId` 是重投表的另一半键）。 */
     onSquadWakeResult?: (result: {
+      ruleId: string;
       runId: string;
       ok: boolean;
       taskId?: string;
@@ -546,6 +547,7 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.SquadWakeResult) {
       dependencies.onSquadWakeResult?.({
+        ruleId: result.data.ruleId,
         runId: result.data.runId,
         ok: result.data.ok,
         taskId: result.data.taskId,
