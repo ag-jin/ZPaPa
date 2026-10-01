@@ -470,8 +470,10 @@ for (const trigger of ["user", "leader", "rule"] as const) {
 }
 
 /* trigger=rule 却不指名规则 → 抛错（不许留空串静默通过）：spec §3.9 的幂等键含 ruleId，
-   空串会让「所有规则」看起来是同一条规则，而这种接线缺陷一路都不会报错。 */
-test("trigger=rule 但 ruleId 缺失或空串：抛错", () => {
+   空串会让「所有规则」看起来是同一条规则，而这种接线缺陷一路都不会报错。
+   纯空白也算未填（与本分支 Task 1 的「空白 = 未填」口径一致）：只拒 `""` 会让 `" "` 带着
+   「有 id」的假象一路通过，幂等键里就留下一枚空白 id。 */
+test("trigger=rule 但 ruleId 缺失、空串或纯空白：抛错", () => {
   const base = {
     workItem: wi({ type: "agent", id: "ta_x" }),
     squad: null,
@@ -479,6 +481,20 @@ test("trigger=rule 但 ruleId 缺失或空串：抛错", () => {
   } as const;
   assert.throws(() => planDispatch({ ...base }), /ruleId/);
   assert.throws(() => planDispatch({ ...base, ruleId: "" }), /ruleId/);
+  assert.throws(() => planDispatch({ ...base, ruleId: " " }), /ruleId/);
+});
+
+// 补集方向：非空白的 ruleId 必须放行（不能把闸收得连合法 id 都拒），且原样带上（不做 trim 改写）。
+test("trigger=rule 且 ruleId 为非空白：放行，事件原样带 id", () => {
+  const events = planDispatch({
+    workItem: wi({ type: "agent", id: "ta_x" }),
+    squad: null,
+    trigger: "rule",
+    ruleId: " wr_1 ",
+  });
+  const fired = events.find((e) => e.kind === "wake.rule_fired");
+  assert.ok(fired && fired.kind === "wake.rule_fired");
+  assert.equal(fired.ruleId, " wr_1 ");
 });
 
 // 补集方向：user / leader 触发**不**需要 ruleId，不许误伤（九格矩阵的 user/leader 两列本来就不传 id）。

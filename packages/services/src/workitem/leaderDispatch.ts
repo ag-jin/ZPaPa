@@ -38,7 +38,7 @@ export function planDispatch(input: {
   trigger: "user" | "leader" | "rule";
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
-     缺失或空串一律抛错，见下面的 if 分支。 */
+     缺失、空串、或**纯空白**一律抛错，见下面的 if 分支。 */
   ruleId?: string;
 }): DispatchEvent[] {
   const { workItem, squad, trigger } = input;
@@ -49,8 +49,10 @@ export function planDispatch(input: {
   if (trigger === "rule") {
     /* 规则触发却不指名规则 → **响亮失败**：spec §3.9 的幂等键是 `(workItemId, ruleId, revision, eventKey)`，
        留个空串就等于把「哪条规则」这一维抹掉——两条不同规则的派发会被当成同一件事，
-       而且这种接线缺陷会一路静默通过（没有任何一步会报错）。 */
-    if (input.ruleId === undefined || input.ruleId === "") {
+       而且这种接线缺陷会一路静默通过（没有任何一步会报错）。
+       判空用 `trim()`：与本分支既有口径一致（Task 1 的 `isBlankInstruction`「**空白 = 未填**」）——
+       `" "` 同样是没填 id，只拒 `""` 会让纯空白串带着「有 id」的假象一路通过。 */
+    if (input.ruleId === undefined || input.ruleId.trim() === "") {
       throw new Error(
         "trigger=rule 但没有给出规则 id（ruleId）：规则触发必须能指名是哪条规则，否则 spec §3.9 的幂等键退化",
       );
