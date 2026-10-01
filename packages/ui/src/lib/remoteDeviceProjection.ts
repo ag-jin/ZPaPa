@@ -341,6 +341,35 @@ export function findDeviceRecord<T extends DeviceRecordPatch>(
 }
 
 /**
+ * 计算「把某项目的显示偏好设为 visible」后的设备记录列表。
+ *
+ * 为什么签名是「一次一个项目 + 目标值」而不是「整份 map」：设置页开关原先交回一整份
+ * `Record<path, boolean>`，而那份 map 是**渲染期快照**拼出来的 —— 连拨两个开关时，
+ * 前一次点击的 setState 还没重渲染，第二次点击仍以旧快照为底，前一次就被整份覆盖丢掉。
+ * 传意图（哪个项目、什么值）才能让写入方以**仓里最新的一份**为底做读-改-写。
+ *
+ * 与 `markProjectHidden` 的关系：那个是「关掉」的单向语义（侧栏移除菜单），
+ * 这个覆盖双向；`markProjectHidden` 直接复用本函数，两条路径共用同一份合并语义。
+ *
+ * 纯函数：不读文件、不碰 store，便于单测锁定「连续多次写入不互相丢」。
+ */
+export function setProjectVisibility<T extends DeviceRecordPatch>(
+  devices: readonly T[],
+  target: DeviceRecordPatch["target"],
+  projectPath: string,
+  visible: boolean,
+): T[] {
+  const index = devices.findIndex((device) => isSameDeviceTarget(device.target, target));
+  if (index < 0) return [...devices];
+  const current = devices[index] as DeviceRecordPatch;
+  return mergeDeviceRecord(devices, {
+    target,
+    // 展开 undefined 本就是空操作，无需 `?? {}` 兜底（oxlint 会拒绝多余兜底）。
+    visibleProjects: { ...current.visibleProjects, [projectPath]: visible },
+  });
+}
+
+/**
  * 计算「把某项目标记为不显示」后的设备记录。
  *
  * 场景：用户在侧栏直接关掉一个投射条目。若不回写偏好，下次重连时
@@ -357,14 +386,7 @@ export function markProjectHidden<T extends DeviceRecordPatch>(
   target: DeviceRecordPatch["target"],
   projectPath: string,
 ): T[] {
-  const index = devices.findIndex((device) => isSameDeviceTarget(device.target, target));
-  if (index < 0) return [...devices];
-  const current = devices[index] as DeviceRecordPatch;
-  return mergeDeviceRecord(devices, {
-    target,
-    // 展开 undefined 本就是空操作，无需 `?? {}` 兜底（oxlint 会拒绝多余兜底）。
-    visibleProjects: { ...current.visibleProjects, [projectPath]: false },
-  });
+  return setProjectVisibility(devices, target, projectPath, false);
 }
 
 /**

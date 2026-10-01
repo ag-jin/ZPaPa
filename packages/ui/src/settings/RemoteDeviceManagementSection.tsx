@@ -33,7 +33,14 @@ interface RemoteDeviceManagementSectionProps {
   onDisconnect: () => Promise<void> | void;
   /** 显示偏好：设备上哪些项目在投射端显示。 */
   visibleProjects?: Readonly<Record<string, boolean>>;
-  onVisibleProjectsChange?: (next: Record<string, boolean>) => void;
+  /**
+   * 拨动某个项目的显示开关。
+   *
+   * 交回的是**意图**（哪个项目、什么值），不是整份 map：整份 map 只能由渲染期快照
+   * 拼出，连拨两个开关时前一次会被后一次的快照覆盖丢掉。写入方以仓里最新的一份为底
+   * 合并，才能保证每次拨动都留存。
+   */
+  onToggleProjectVisibility?: (projectPath: string, visible: boolean) => void;
   /** 打开「远程连接」弹窗（新增设备时用；表单由该弹窗负责）。 */
   onOpenRemoteConnection?: () => void;
 }
@@ -69,7 +76,7 @@ export function RemoteDeviceManagementSection({
   onConnect,
   onDisconnect,
   visibleProjects,
-  onVisibleProjectsChange,
+  onToggleProjectVisibility,
   onOpenRemoteConnection,
 }: RemoteDeviceManagementSectionProps) {
   const { intl } = useZCodeIntl();
@@ -89,10 +96,11 @@ export function RemoteDeviceManagementSection({
 
   const toggleProject = useCallback(
     (projectPath: string, visible: boolean) => {
-      if (!onVisibleProjectsChange) return;
-      onVisibleProjectsChange({ ...visibleProjects, [projectPath]: visible });
+      // 只转达意图：不在这里拼整份 map —— 这份组件持有的 visibleProjects 是渲染期
+      // 快照，连拨两个开关时用它作底会把前一次覆盖丢掉（实测缺陷）。
+      onToggleProjectVisibility?.(projectPath, visible);
     },
-    [onVisibleProjectsChange, visibleProjects],
+    [onToggleProjectVisibility],
   );
 
   // 未配置设备：不在这里填表单（连接字段由「远程连接」弹窗负责），只给入口。

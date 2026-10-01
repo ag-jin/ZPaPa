@@ -6,6 +6,7 @@ import {
   markProjectHidden,
   mergeDeviceRecord,
   removeDeviceRecord,
+  setProjectVisibility,
 } from "../src/lib/remoteDeviceProjection.js";
 
 /**
@@ -279,4 +280,84 @@ test("找设备记录：目标不在列表时返回 undefined（不误取他台�
     undefined,
   );
   assert.equal(findDeviceRecord(devices, undefined), undefined);
+});
+
+/**
+ * 显示偏好开关的丢更新缺陷（2026-09-30 代码级确认，未在 dev 实测复现）。
+ *
+ * 缺陷经过：设置页开关交回的是**一整份** `Record<path, boolean>`，而那份 map 由
+ * `{ ...visibleProjects, [path]: visible }` 用**渲染期快照**拼出。连拨两个开关时，
+ * 前一次点击的 setState 还没重渲染，第二次点击仍以旧快照为底 —— 前一次被整份覆盖丢掉。
+ * 父组件写入时又用渲染期快照的 `remoteDeviceEntry` 整份回写，是同一类错的第二处。
+ *
+ * 修法是把契约从「交一份整 map」改成「交意图」：写入方以**仓里最新的一份**为底做
+ * 读-改-写。下面第一条锁定修好的行为，第二条反证旧写法为什么必丢（保留它，
+ * 是为了让"为什么契约是 (path, visible) 而不是 (map)"这件事留在代码里）。
+ */
+test("显示偏好：连拨两个开关都留存（读-改-写基于最新一份）", () => {
+  let stored: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
+  const toggle = (projectPath: string, visible: boolean) => {
+    // 每次都重新读当前值作底 —— 与父组件 list() → setProjectVisibility → save 同构。
+    stored = setProjectVisibility(stored, target, projectPath, visible);
+  };
+
+  toggle("/vol/新赛马", false);
+  toggle("/vol/中转站", false);
+
+  assert.deepEqual(
+    findDeviceRecord(stored, target)?.visibleProjects,
+    { "/vol/新赛马": false, "/vol/中转站": false },
+    "第一次拨动不能被第二次的底稿覆盖掉 —— 被丢掉的正是这一条",
+  );
+});
+
+test("反证：拿渲染期快照整份回写会丢掉前一次拨动", () => {
+  let stored: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
+  /** 旧写法：用渲染期快照拼整份 map 再整份写入。 */
+  const writeFromSnapshot = (
+    snapshot: Record<string, boolean>,
+    patch: Record<string, boolean>,
+  ) => {
+    stored = mergeDeviceRecord(stored, {
+      target,
+      visibleProjects: { ...snapshot, ...patch },
+    });
+  };
+
+  const snapshot: Record<string, boolean> = {}; // 组件手里那份还没更新的快照
+  writeFromSnapshot(snapshot, { "/vol/新赛马": false });
+  writeFromSnapshot(snapshot, { "/vol/中转站": false });
+
+  assert.deepEqual(
+    findDeviceRecord(stored, target)?.visibleProjects,
+    { "/vol/中转站": false },
+    "快照式整份回写把第一次拨动丢了；此断言存在是为了说明契约为何改成「交意图」",
+  );
+});
+
+test("显示偏好：只改目标台，列表里其它设备的记录不动", () => {
+  const other = { kind: "ssh", host: "100.66.1.9", username: "linguojin" };
+  const devices: DeviceRecord[] = [
+    { target, lastConnectionStatus: "connected", visibleProjects: { "/vol/A": false } },
+    { target: other, lastConnectionStatus: "connected", visibleProjects: { "/vol/B": false } },
+  ];
+
+  const next = setProjectVisibility(devices, other, "/vol/B", true);
+
+  assert.deepEqual(
+    findDeviceRecord(next, other)?.visibleProjects,
+    { "/vol/B": true },
+    "目标台按意图写入",
+  );
+  assert.deepEqual(
+    findDeviceRecord(next, target)?.visibleProjects,
+    { "/vol/A": false },
+    "别台的显示偏好必须原样保留",
+  );
+});
+
+test("显示偏好：目标台不在列表时不改动列表", () => {
+  const other = { kind: "ssh", host: "100.66.1.9", username: "linguojin" };
+  const devices: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
+  assert.deepEqual(setProjectVisibility(devices, other, "/vol/A", false), devices);
 });

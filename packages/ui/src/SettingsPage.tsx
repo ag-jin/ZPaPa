@@ -75,6 +75,7 @@ import {
   markProjectionTabsDisconnected,
   mergeDeviceRecord,
   removeDeviceRecord,
+  setProjectVisibility,
 } from "@/lib/remoteDeviceProjection.js";
 import {
   closeDeviceSession,
@@ -1268,8 +1269,15 @@ export function SettingsPage({
    * 组件内展示的当前设备取列表首条（与读取路径 devices[0] 同口径）。
    */
   const writeRemoteDeviceList = useCallback(
-    async (next: readonly import("@zcode/services").RemoteDeviceConfigRecord[]) => {
-      setRemoteDeviceEntry(next[0] ?? null);
+    async (
+      next: readonly import("@zcode/services").RemoteDeviceConfigRecord[],
+      displayTarget?: import("@zcode/services").RemoteDeviceConfigRecord["target"],
+    ) => {
+      // 展示哪一台：默认取列表首条（与读取路径同口径）；按台写入时必须按 target 定位，
+      // 否则会出现「改的是这台、卡片显示的是那台」—— 记录按列表存，取首条会命中别台。
+      setRemoteDeviceEntry(
+        (displayTarget ? findDeviceRecord(next, displayTarget) : next[0]) ?? null,
+      );
       if (!remoteDeviceConfigService) return;
       try {
         await remoteDeviceConfigService.save(next);
@@ -1323,17 +1331,28 @@ export function SettingsPage({
     writeRemoteDeviceList,
   ]);
 
-  const handleRemoteDeviceVisibleProjectsChange = useCallback(
-    async (next: Record<string, boolean>) => {
-      if (!remoteDeviceEntry) return;
-      await writeRemoteDevice({ ...remoteDeviceEntry, visibleProjects: next });
-      if (!remoteDeviceProjects) return;
-      const visible = remoteDeviceProjects.filter((item) => next[item.path] !== false);
+  const handleRemoteDeviceProjectVisibilityChange = useCallback(
+    async (projectPath: string, shouldShow: boolean) => {
+      const target = remoteDeviceEntry?.target ?? getLiveDeviceTarget();
+      // 服务不可用时不写：这时 list() 读不到东西，凭空拿一份空列表去整表写会把
+      // 设备卡片清空 —— 开关点不动也好过卡片消失。
+      if (!target || !remoteDeviceConfigService) return;
+      // 读-改-写全部基于**仓里最新的一份**，而不是渲染期快照：连拨开关时上一次点击
+      // 还没回写，用快照作底会把前一次整份覆盖掉（实测：快速连拨只生效最后一次）。
+      const existing = await remoteDeviceConfigService.list();
+      const nextList = setProjectVisibility(existing, target, projectPath, shouldShow);
+      const record = findDeviceRecord(nextList, target);
+      // 列表里没有被登记的这台（record 缺失）时不要写：没有可改的对象，
+      // 写下去只会把卡片清空。
+      if (!record) return;
+      await writeRemoteDeviceList(nextList, target);
+      const visibleProjects = record.visibleProjects ?? {};
+      if (!remoteDeviceProjects || !liveDeviceSessionId) return;
+      const visible = remoteDeviceProjects.filter((item) => visibleProjects[item.path] !== false);
       // 立刻把偏好应用到侧边栏：只存偏好不重算的话，用户关掉一个项目后
       // 侧边栏仍显示它（要等下次重连才消失），看起来像开关没生效。
       // 直接操作 tab store，而不是依赖连接回调 —— 设置页可能重新挂载过
       // （连接成功会切走一次），那时连接 ref 已丢，但投射条目本身仍在 store 里。
-      if (!liveDeviceSessionId) return;
       const store = tabStoreApiRef.current;
       const wanted = new Set(visible.map((item) => item.path));
       for (const tab of store.getState().tabs) {
@@ -1362,13 +1381,19 @@ export function SettingsPage({
             // remoteSessionId，而投射条目不设 workspaceIdentity（ADR 0001），
             // 三者全空会让该条目被渲染判定为**本机项目**，同时侧栏重连也找不到它
             // （重连按 `projection != null && remoteTarget != null` 匹配）。
-            remoteTarget: remoteDeviceEntry.target,
+            remoteTarget: target,
             projection: { deviceSessionId: liveDeviceSessionId },
           });
         }
       }
     },
-    [liveDeviceSessionId, remoteDeviceEntry, remoteDeviceProjects, writeRemoteDevice],
+    [
+      liveDeviceSessionId,
+      remoteDeviceConfigService,
+      remoteDeviceEntry,
+      remoteDeviceProjects,
+      writeRemoteDeviceList,
+    ],
   );
 
   // 连接/断开：经既有远程连接通路（设备级，不 bind 工作目录）。
@@ -2202,7 +2227,9 @@ export function SettingsPage({
                               onRemoveDevice={handleRemoveRemoteDevice}
                               onConnect={handleConnectRemoteDevice}
                               onDisconnect={handleDisconnectRemoteDevice}
-                              onVisibleProjectsChange={handleRemoteDeviceVisibleProjectsChange}
+                              onToggleProjectVisibility={
+                                handleRemoteDeviceProjectVisibilityChange
+                              }
                               {...(onOpenRemoteConnection
                                 ? { onOpenRemoteConnection: () => onOpenRemoteConnection() }
                                 : {})}
