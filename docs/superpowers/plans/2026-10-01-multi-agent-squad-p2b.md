@@ -124,6 +124,8 @@
 | `packages/ui/src/**`（含 i18n locales） | — | — | — | **改** | — | — |
 | `packages/ui/test/experimentsSquadEntry.test.ts` | — | — | — | **建** | — | — |
 | **`packages/client/**`（renderer 侧服务访问的最小**加法**）**（2026-10-01 补：C 路 BLOCKED 后由 controller 扩权——原计划**没有**任何任务拥有它，而 `IServiceAccessor` 无 `get`、renderer 实现逐字段建代理、未列出的服务取不到且无兜底）** | — | — | — | **改** | — | — |
+| **`apps/zcode-cli/packages/bootstrap/src/app/{types.ts,create-app.ts}`**（纯追加 +3/+1，否则端口到不了 core）**（2026-10-01 补：D 路实施时发现 brief 的 Owns 漏了这两处）** | — | — | — | — | **改** | — |
+| **`packages/services/src/zcode-agent/zcodeAgentService.ts`**（新增三个 `squad/*` 的 `client.onRequest` 分支）**（2026-10-01 补：D 路 Step 0 查明——Host 侧应答面在 **services** 而非 desktop，`packages/desktop/src/host/**` 零协议 handler；且依赖方向 desktop→services，services 无法消费 desktop handler ⇒ 计划原先设想的 `desktop/src/host/squadProtocolMethods.ts` 会是**无人能接线的死文件**，故 D **不建**它，改由 Wave 2 落在此处）** | — | — | — | — | — | **改** |
 | `packages/contracts/src/**`（工具 schema + `SquadPort`） | — | — | — | — | **改** | — |
 | `packages/shared/src/zcode-protocol/**`（新 method + 结果 schema） | — | — | — | — | **改** | — |
 | `apps/zcode-cli/packages/core/src/{tool/**,runtime/**,runtime.ts}` | — | — | — | — | **改** | — |
