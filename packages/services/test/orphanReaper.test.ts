@@ -458,14 +458,17 @@ test("绝不碰集成分支：不在活跃集合里、也没有工作树的集�
   assert.deepEqual(out.reclaimedBranches, [member], "只有队员残枝进了视野");
 });
 
-// 第一遍（工作树那一遍）也守同一条边界：上面的用例只覆盖第二遍的形状，抓不到这条。
-test("第一遍也守集成分支边界：.worktree/ 下的集成分支工作树不被回收，且计入 kept", async () => {
+// 第一遍（工作树那一遍）也守集成分支边界 —— 但**守它的是命名空间闸**，不是一条单独的
+// `INTEGRATION_NAMESPACE` 判断（那条曾被写成显式保护臂，但它被命名空间闸遮蔽、**永不可达**，
+// 已删除：留一条不可达的臂只会让这条用例**因另一个理由通过**）。本用例现在验证的就是它真正的理由：
+// 集成分支 `squad/integration/**` 不在 `MEMBER_NAMESPACE` 里 ⇒ 命名空间闸整项挡下 ⇒ 计入 `kept`。
+test("第一遍由命名空间闸保护集成分支：.worktree/ 下的集成分支工作树整项进 kept（不碰树、不删分支）", async () => {
   const f = await fixture();
   const integration = planBranches({ workItemSlug: "wi1", agentSlug: "a" }).integration;
   const dirName = "wi1-int";
   // 将来可能出现的形状：某调用方在 `.worktree/` 下给**集成分支**挂了工作树。今天 ensureIntegration
-  // 只跑 git branch、不建工作树，所以**不可达**；但一旦如此，第一遍会无条件把「本根下任何工作树」
-  // 当孤儿摘掉 —— 那会删掉整批未合并的集成分支（而现有边界测试只覆盖第二遍，抓不到）。
+  // 只跑 git branch、不建工作树，所以这一格当前不可达；但一旦如此，若第一遍的归属判据只是「在本根下」，
+  // 它会无条件把「本根下任何工作树」当孤儿摘掉 —— 那会删掉整批未合并的集成分支。
   await f.manager.add({ branch: integration, base: "main", dirName });
 
   const out = await f.reaper().reap({ activeBranches: [] });
@@ -474,9 +477,9 @@ test("第一遍也守集成分支边界：.worktree/ 下的集成分支工作树
   assert.equal(await branchExists(f, integration), true, "集成分支绝不能被第一遍删掉");
   assert.deepEqual(out.reclaimedBranches, [], "第一遍不该删任何分支");
   assert.deepEqual(out.reclaimed, [], "第一遍不该回收任何工作树");
-  // 语义选择：命中即**整项计入 `kept`**（连工作树一起原样不动，而不是「摘树留分支」）。
+  // 语义选择：命中命名空间闸即**整项计入 `kept`**（连工作树一起原样不动，而不是「摘树留分支」）。
   // 理由：树里可能有未提交的集成成果，摘它就是丢活；而 `kept` 的既有语义正是「本流程看见了、
-  // 但决定原样不动」，与「活跃分支对应的工作树」同类，故沿用而不另开一个桶。
+  // 但决定原样不动」，与「活跃分支对应的工作树」「命名空间外来的分支」同类，故沿用而不另开一个桶。
   assert.deepEqual(out.kept, [dirName]);
   assert.equal(existsSync(worktreePath(f, dirName)), true, "集成分支的工作树也原样不动");
 });

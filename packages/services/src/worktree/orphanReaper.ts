@@ -1,5 +1,5 @@
 import { basename, dirname } from "node:path";
-import { INTEGRATION_NAMESPACE, MEMBER_NAMESPACE } from "./branchNaming.js";
+import { MEMBER_NAMESPACE } from "./branchNaming.js";
 import { canonicalPath, resolveWorktreeRoot, type WorktreeManager } from "./worktreeManager.js";
 
 export type ReapInput = {
@@ -24,14 +24,15 @@ export type ReapOutcome = {
   /** 被回收的工作树 dirName（「有工作树」的那种孤儿形状）。 */
   reclaimed: string[];
   /**
-   * 被保留的**工作树** dirName。**三类来源**，共同点是「本流程看见了、但决定一个字节不动」：
+   * 被保留的**工作树** dirName。共同点是「本流程看见了、但决定一个字节不动」，两类来源：
    * 1. 分支仍在 `activeBranches` 里（队员的活在跑 / 还没合完）；
-   * 2. 命中了集成分支边界（`squad/integration/**`，承载整批未合并的成果，不归 reap 管）；
-   * 3. **命名空间外来的分支**（2026-10-01 B‑0 新增）：树落在 `<repoRoot>/.worktree/` 下，
-   *    但它的分支不属于 `squad/member/**`（用户自己 `git worktree add` 的、别的功能复用该目录的），
-   *    或压根没有分支（detached）。没有命名空间就证明不了归属 ⇒ 不碰。
+   * 2. **分支不在 `MEMBER_NAMESPACE` 里**（2026-10-01 B‑0 的命名空间闸），其中又含两小类：
+   *    ① 集成分支（`squad/integration/**`，承载整批未合并的成果，不归 reap 管 —— 由 Task 3 的
+   *       `discardIntegration` 在整批合回主分支之后删）；
+   *    ② 命名空间外来的分支（用户自己 `git worktree add` 的、别的功能复用该目录的），
+   *       或压根没有分支（detached）。没有命名空间就证明不了归属 ⇒ 不碰。
    *
-   * 第 3 类不是「静默跳过」：它在这份返回结构里**可见**。这一点是刻意的 —— 覆盖「放在我们的
+   * 第 2 类不是「静默跳过」：它在这份返回结构里**可见**。这一点是刻意的 —— 覆盖「放在我们的
    * 目录里」与「属于我们」之间的缝时，最容易写出的错法是「不碰、也不说」，于是下次有人
    * 排查「启动回收什么都没干」时无从下手。不变式的完整表述见 `reap` 的 doc 注释。
    */
@@ -128,13 +129,12 @@ export function isSamePath(
  *    **但「在本根下」只说明「放在我们的目录里」，不说明「属于我们」**：还需要分支命名空间那一闸，
  *    见 `reap` 的归属不变式（B‑0，2026-10-01）。
  * 2. **不碰 `squad/integration/**`**。集成分支承载整批未合并的成果，删它就是丢活；它由 Task 3 的
- *    `discardIntegration` 在**整批合回主分支之后**负责删除。这条边界**两遍都要守**，
- *    且两遍的判据都是**命名空间**：分支那一遍只枚举 `MEMBER_NAMESPACE`（该命名空间之外根本不进视野），
- *    工作树那一遍由命名空间闸整项跳过（`squad/integration/**` 不在 `MEMBER_NAMESPACE` 里，故被闸挡住）。
- *    `INTEGRATION_NAMESPACE` 那条显式判断**保留**：它如今被命名空间闸遮蔽（不可达），但它把
- *    「集成分支承载整批未合并的成果」这条理由单独钉在自己的测试上 —— 将来有人放宽/重排命名空间闸，
- *    这条仍会在 `kept` 语义上响（与 `BRANCH_TAKEN` 保留一条死臂同一取舍：显式写上一条本就该成立的
- *    事实，比只靠另一条闸的副作用更耐改）。两个命名空间都取自 `branchNaming.ts` 一处定义。
+ *    `discardIntegration` 在**整批合回主分支之后**负责删除。这条边界**两遍都守**，且**两遍的判据
+ *    是同一份命名空间**：分支那一遍只枚举 `MEMBER_NAMESPACE`（该命名空间之外根本不进视野），
+ *    工作树那一遍由命名空间闸整项跳过 —— 集成分支不在 `MEMBER_NAMESPACE` 里，故被闸挡住、整项进 `kept`。
+ *    **只有这一处判据**：曾经在这里另加过一条 `INTEGRATION_NAMESPACE` 显式判断，但它被命名空间闸
+ *    遮蔽、**永不可达**（只会让「第一遍守集成分支边界」这条用例因另一个理由通过），已删除。
+ *    命名空间取自 `branchNaming.ts` 一处定义。
  * 3. **不做串行锁**（调用方约束）：reap 会动 git 的登记与分支，只能靠接线点序列化。
  *
  * 调用方约束：`deleteBranch` 的三参实现要由调用方**绑定**成单参
@@ -207,18 +207,10 @@ export function createOrphanReaper(deps: {
           kept.push(dirName);
           continue;
         }
-        // 集成分支边界（与分支那一遍同一条边界，brief 裁定 2）：集成分支承载整批未合并的成果，
-        // 由 Task 3 的 discardIntegration 在整批合回主分支之后删。今天 `ensureIntegration` 只跑
-        // `git branch`、从不建工作树，所以第一遍走不到这里；但将来若有调用方在 `.worktree/` 下给
-        // 集成分支挂了工作树，第一遍会无条件把它当孤儿删掉 —— 那是丢整批未合并的活。
-        // 命中即**整项跳过并计入 `kept`**：不摘它的树（树里可能有未提交的集成成果），更不删它的分支。
-        // 计入 `kept` 而非新增一个桶：`kept` 的语义就是「本流程看见了、但决定原样不动」。
-        if (entry.branch !== null && entry.branch.startsWith(INTEGRATION_NAMESPACE)) {
-          kept.push(dirName);
-          continue;
-        }
-        // 分支在活跃集合里 ⇒ 保留。detached（branch 为 null）不可能是活跃分支，
-        // 它也不算「队员」：下面按孤儿处理，但不会拿 null 去删分支。
+        // 分支在活跃集合里 ⇒ 保留。detached（branch 为 null）已在上面那道命名空间闸被挡下并计入 kept。
+        // 集成分支（`squad/integration/**`）同样被上面那道闸整项挡住（它不在 `MEMBER_NAMESPACE` 里），
+        // 于是一并落入 `kept` —— **没有**第二道「集成分支」显式判断：它会被命名空间闸遮蔽、永不可达，
+        // 留一条不可达的保护臂只会让「第一遍守集成分支边界」这条用例**因另一个理由通过**（名不副实）。
         if (entry.branch !== null && active.has(entry.branch)) {
           kept.push(dirName);
           continue;

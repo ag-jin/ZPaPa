@@ -1,4 +1,4 @@
-import { resolveWorkspaceKey } from "@zcode/shared";
+import { isTerminalWorkItemStatus, resolveWorkspaceKey, type WorkItemStatusKey } from "@zcode/shared";
 import { planBranches } from "../worktree/branchNaming.js";
 import { ensureGitRunSucceeded } from "../worktree/gitRunner.js";
 import { deleteBranch } from "../worktree/integrationMerge.js";
@@ -23,6 +23,47 @@ import { slugForId } from "./slug.js";
    3. **不发明「活跃」口径**：哪些工作树还该活着一律走 `SquadRunRepo.listActive`（硬约束 1），
       本层只做「这一批该合哪些、该抛哪些」的判定。 */
 
+/* **同仓库内串行**：以**仓库根**（`boundWorkspace.path`）为键的进程内串行队列。
+ *
+ * 为什么需要：合并的实现是「检出目标分支 → git merge」，而**整个仓库只有一份主工作树的 HEAD**
+ * ——所有 git 动作的 cwd 都是 `runtime.boundWorkspace.path`。争用这个 HEAD 的是**同一个仓库**，
+ * 与「哪一批 / 哪个父项」无关。`integrationMerge.ts` 的 doc 已写明「本模块不做锁、串行是调用方
+ * 约束」，这里就是那个调用方，必须兜住。
+ *
+ * 为什么键是**仓库**而不是**父项**（2026-10-01 复审修正）：按父项分键时，两个**不同父项**的批次
+ * 各走各的链、并发去 checkout/merge **同一个 HEAD** —— 一条链的 `git checkout` 会把另一条刚检出的
+ * 分支挪走、`merge --abort` 会把对方正在进行的合并一起回滚（spec §6.3 要求「串行合并（一次一个）」）。
+ * git 拦不住这种**同进程内**的竞态（它只看到两次正常的 checkout），所以只能由本层串行。
+ *
+ * 键选 `boundWorkspace.path`（仓库根）而不是 `workspaceKey` 的理由：真正被争用的是**那棵主工作树**，
+ * 所有 git 命令的 cwd 就是它；`workspaceKey` 是 C14 口径（identity 非空白时优先），同一个仓库可能
+ * 因 identity 不同而算出不同的 key，而资源仍是同一个——key 必须命名**资源**，而不是命名**身份**。
+ *
+ * 为什么放在**模块级**而不是工厂闭包里：runtime 是「按目标现构、不缓存」的，同一仓库在同一进程里
+ * 可能同时存在多个 orchestrator 实例；队列若挂在实例上，跨实例的同仓库竞态照样发生（复审点名的正是
+ * 「同进程内的竞态」）。
+ *
+ * **本队列仍只是进程内的**：两个进程同时收尾同一仓库时没有共享锁可拿（那需要文件锁 / 数据库锁，
+ * 属另一层），那种情形靠 git 自己的失败响亮报错，不靠本层假装自己是分布式锁。 */
+const repoChains = new Map<string, Promise<void>>();
+
+function serializeOnRepo<T>(repoRoot: string, task: () => Promise<T>): Promise<T> {
+  const previous = repoChains.get(repoRoot) ?? Promise.resolve();
+  const current = previous.then(task);
+  // 队列里存「不会 reject」的那一份：一次失败不该毒化后续调用（否则后续调用会继承一个 rejected
+  // 前驱，`then(task)` 直接跳过 task，调用方拿到上一个错误 —— 一个与它无关的失败）。
+  const settled = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  repoChains.set(repoRoot, settled);
+  void settled.then(() => {
+    // 链尾清账：不留永久增长的 Map（每个仓库一条，收尾完成后即删）。
+    if (repoChains.get(repoRoot) === settled) repoChains.delete(repoRoot);
+  });
+  return current;
+}
+
 export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadBatchOrchestrator {
   const { runtime } = deps;
   const { workItemRepo, workItemService, squadRunRepo, lifecycle, integrationMerger, baseBranch } = runtime;
@@ -44,30 +85,97 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
     }
   }
 
-  /* **内存串行队列**（同一个父项一条链）。
-     为什么需要：合并的实现是「检出集成分支 → git merge」，而主工作树的 HEAD 只有一份 —— 同批两次
-     `advanceAfterChildrenDone` 并发进来会互相踩（检出被对方挪走、`merge --abort` 把对方的合并一起回滚）。
-     `integrationMerge.ts` 的 doc 已写明「本模块不做锁、串行是调用方约束」，这里就是那个调用方，
-     所以本层必须兜住。
-     **本层不做跨进程锁**（也不该做）：两个进程同时收尾同一批时，正确性靠 git 自己的失败
-     （第二次 `merge` / `branch -D` 会在 git 侧响亮报错），而不是靠本层假装自己是分布式锁。 */
-  const chains = new Map<string, Promise<void>>();
+  /* **内存串行队列**（同一个**仓库**一条链，见文件顶 `repoChains` 的说明）。
+     同一 runtime 绑定的仓库根就是唯一被争用的资源：两批（不论父项是否相同）并发收尾会互踩主工作树
+     的 HEAD，所以这里用**仓库根**而不是父项做键。 */
+  const serializeRepo = <T>(task: () => Promise<T>): Promise<T> =>
+    serializeOnRepo(runtime.boundWorkspace.path, task);
 
-  function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const previous = chains.get(key) ?? Promise.resolve();
-    const current = previous.then(task);
-    // 队列里存「不会 reject」的那一份：一次失败不该毒化后续调用（否则后续调用会继承一个 rejected
-    // 前驱，`then(task)` 直接跳过 task，调用方拿到上一个错误 —— 一个与它无关的失败）。
-    const settled = current.then(
-      () => undefined,
-      () => undefined,
-    );
-    chains.set(key, settled);
-    void settled.then(() => {
-      // 链尾清账：不留永久增长的 Map（每个父项一条，收尾完成后即删）。
-      if (chains.get(key) === settled) chains.delete(key);
-    });
-    return current;
+  /**
+   * 读父项的**当时**状态；取不到（不存在或已归档）就响亮抛。
+   *
+   * 为什么不能静默当成某个默认状态：CAS 的前置必须来自**当时的真实值**。猜一个前置（例如写死
+   * `in_review`）会在父项实际停在别处时让 CAS 永远不命中，而 §5.7.5 的「未命中即丢弃」会把那次
+   * 结算吞掉 —— 用户既看不到 `done`，也看不到冲突的 `blocked`（复审：冲突「没有任何可观察的东西」）。
+   */
+  function requireParentStatus(parentWorkItemId: string): WorkItemStatusKey {
+    const parent = workItemRepo.get(parentWorkItemId);
+    if (!parent) {
+      throw new Error(
+        `父工作项不存在或已归档：${parentWorkItemId}。批次收尾需要一个可写的父项；` +
+          "静默按某个默认状态处理会让后续 CAS 永远不命中，批与工作项状态就此分叉而无人知道。",
+      );
+    }
+    return parent.status;
+  }
+
+  /**
+   * 父项流转的**唯一**写法（spec §5.7.2「父项状态由工作项服务按条件推进」+ §5.7.5 CAS）。
+   *
+   * 为什么前置不再写死 `in_review`：那是**前置假设**，不是**当时事实**。父项停在 `todo`/`in_progress`
+   * 时，写死的前置会让 CAS 静默未命中（正是复审 Important-1）。故这里**先读当时状态**、拿它作 CAS
+   * 前置；未命中（读到写之间被人改了）**响亮抛**，绝不再落回「丢弃不报错而无人知道」。
+   *
+   * 终态纪律：已是目标态 ⇒ 幂等返回（不重复发事件）；已是**另一个**终态 ⇒ 抛（不得把 `cancelled`
+   * 覆盖成 `done` 这类跨终态改写，那会掩盖「这条批是被谁、按什么顺序结算的」）。
+   */
+  function transitionParent(parentWorkItemId: string, next: WorkItemStatusKey, what: string): void {
+    const current = requireParentStatus(parentWorkItemId);
+    if (current === next) return;
+    if (isTerminalWorkItemStatus(current)) {
+      throw new Error(
+        `父项 ${parentWorkItemId} 已是终态「${current}」，不能再推进到「${next}」（${what}）：` +
+          "跨终态改写会掩盖这条批的结算次序，故拒绝。",
+      );
+    }
+    if (!workItemService.transition(parentWorkItemId, next, current)) {
+      throw new Error(
+        `父项 ${parentWorkItemId} 的「${what}」CAS 未命中：读到前置「${current}」、目标「${next}」，` +
+          "但写入时该行已不是读到的那样（并发改动）。静默丢弃会让这次结算消失得无影无踪，故响亮抛出。",
+      );
+    }
+  }
+
+  /**
+   * 把父项推进到 `in_review` —— 批次收尾的**前置条件**（spec §5.7.2）。
+   *
+   * 为什么必须有这一步：编排器自身四处父项流转（`done` / `blocked`×2 / 空批 `done`）都要求父项正
+   * 处于 `in_review`；而全仓**没有别的路径**把**父项**推到 `in_review`（机械半的 `completeMemberRun`
+   * 推的是**子项**，`squadRunLifecycle.ts:188`）。缺了这一步，接线后父项停在 `todo`/`in_progress`
+   * ⇒ 四次 CAS 全部静默未命中 ⇒ 用户既看不到 `done`，也看不到冲突的 `blocked` 信号。
+   *
+   * 返回 `false` ⇒ 父项已是终态、且本批确实已结算干净 ⇒ 调用方**直接返回**（幂等重放 / 用户已取消），
+   * 不再触碰 git。父项终态但批里仍有未结算的队员 run 时**抛**（见实现里的理由）。
+   */
+  function establishParentInReview(
+    parentWorkItemId: string,
+    runs: readonly SquadRunRecord[],
+  ): boolean {
+    const status = requireParentStatus(parentWorkItemId);
+    if (status === "in_review") return true;
+
+    if (isTerminalWorkItemStatus(status)) {
+      /* 父项已终态 = 这条批**已经被结算过**。两种来路都**不得**再动 git：
+         (a) 本方法上一次成功收尾（父项 `done`、集成分支已删、队员 run 全 `discarded`）⇒ 幂等重放；
+         (b) 用户走 `discardBatch` 取消整批（父项 `cancelled`、成果已全抛）⇒ 再合并就是**复活被取消的活**。
+         判据是「批里还有没有未结算的 run」：还有 ⇒ 有人在批未结算时把父项标了终态（契约违例），
+         既不静默返回（那份活会永远没人管）、也不照常合并（跨过一条已关闭的工作项）⇒ **响亮抛**。 */
+      const unsettled = runs.filter((record) => record.status !== "discarded");
+      if (unsettled.length > 0) {
+        throw new Error(
+          `父项 ${parentWorkItemId} 已是终态「${status}」，但本批仍有未结算的队员 run` +
+            `（${unsettled.map((record) => `${record.runId}=${record.status}`).join(" / ")}）：` +
+            "有人在批结算前把父项标成了终态。静默返回会让这些产出永远没人管，故响亮抛出。",
+        );
+      }
+      return false;
+    }
+
+    // `todo` / `in_progress` / `blocked`：按 §5.7.2 由工作项服务推进到 `in_review`（本层不直写 repo）。
+    // `blocked` 也一并推进：它多半是本方法上一次冲突留下的，而这次收尾要么把它送进 `done`、
+    // 要么再判一次冲突重新置 `blocked` —— 留着一个不会再被推进的 `blocked` 只会让批卡死。
+    transitionParent(parentWorkItemId, "in_review", "子项全终态 ⇒ 父项进入待验收");
+    return true;
   }
 
   /**
@@ -147,10 +255,14 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
    *
    * 次序与理由：
    * 1. 子项没全终态 → **直接返回**（不做半批：一个还没产出的队员会被无声跳过，而主分支已经落了一半的活）；
-   * 2. 逐个队员**串行**合并（`reviewMemberRun(approved)` 是「合一个队员进集成分支」的**唯一实现**，
+   * 2. **先做纯校验**（只读、零副作用）：`open` 的队员 run、多工作项（一批一条集成分支）都在这里
+   *    响亮拒绝 —— 违约形状必须在碰 git 与写工作项**之前**拒绝，否则一次注定失败的调用会留下
+   *    「父项被推进了、批却没结算」的半程状态；
+   * 3. **前置条件**（spec §5.7.2）：把父项推进到 `in_review`，之后本方法四处父项流转的 CAS 才成立；
+   * 4. 逐个队员**串行**合并（`reviewMemberRun(approved)` 是「合一个队员进集成分支」的**唯一实现**，
    *    本层不重写一份 `ensureIntegration + mergeMember + setStatus`）；
-   * 3. 任一次冲突 → 父项 `blocked`（CAS 写）+ 停手（后面的成员不再合，主分支一个字节不动）；
-   * 4. 全通过 → `finalize`（整批一次性合回主分支）→ 抛弃已 merged 的队员 → 删集成分支 → 父项 `done`。
+   * 5. 任一次冲突 → 父项 `blocked`（CAS 写）+ 停手（后面的成员不再合，主分支一个字节不动）；
+   * 6. 全通过 → `finalize`（整批一次性合回主分支）→ 抛弃已 merged 的队员 → 删集成分支 → 父项 `done`。
    */
   async function advanceAfterChildrenDone(input: {
     workspaceKey: string;
@@ -161,7 +273,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
     // 本层只消费它，不在这里再判一次（两处判据迟早分叉，而分叉的表现就是「批永远收不了尾」）。
     if (!workItemRepo.areAllChildrenTerminal(input.parentWorkItemId)) return;
 
-    await serialize(input.parentWorkItemId, async () => {
+    await serializeRepo(async () => {
       const runs = memberRuns(input.parentWorkItemId);
 
       /* `open` 的队员 run 与「子项全部终态」自相矛盾：要么队员还没上报完成（子项不该是终态），
@@ -176,23 +288,32 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         );
       }
 
-      /* 本批没有任何队员产出（例如子项都在派单前被取消）：没有可落地的成果。
-         不调 `finalize`（集成分支压根不存在，那会报「分支不存在」），直接把父项按「批已结算」收口。
-         为什么是 `done` 而不是 `cancelled`：「父项该不该被放弃」是另一个语义（谁有权判定计划被放弃），
-         不由本层从子项 category 反推 —— 那会把一个策略决定藏进收尾路径。 */
-      if (runs.length === 0) {
-        workItemService.transition(input.parentWorkItemId, "done", "in_review");
-        return;
-      }
-
-      const integration = integrationBranch(runs);
+      /* 集成分支名（纯计算，不动 git）。多工作项在这里**响亮拒绝**（`integrationBranch` 内部），
+         且发生在任何 git 动作与工作项写入之前 —— 「一批只能落到一条集成分支」这条契约的零副作用拒绝。 */
+      const integration = runs.length === 0 ? null : integrationBranch(runs);
       const pending = runs.filter((record) => record.status === "produced");
 
       /* 幂等重放闸：本批没有待合队员、且集成分支已经不在（上一次收尾把它删了）⇒ 已经收过尾，空转返回。
          为什么必须有它：`child_completed` 是**事件驱动**的（host 订阅后转发），同一事实重复投递
          （重连 / 重复挂订阅 / 调用方重试）会让本方法被同一批调用两次；第二次若照旧走 `finalize`，
-         会拿到「集成分支不存在」而抛 —— 把一次幂等重放变成一次响亮失败，与 §5.7.5 的幂等口径相反。 */
-      if (pending.length === 0 && !(await branchExists(integration))) return;
+         会拿到「集成分支不存在」而抛 —— 把一次幂等重放变成一次响亮失败，与 §5.7.5 的幂等口径相反。
+         纯读（branchExists 只问 ref），故放在写工作项之前。 */
+      if (integration !== null && pending.length === 0 && !(await branchExists(integration))) return;
+
+      /* **前置条件**（spec §5.7.2）：父项推进到 `in_review`。这一步必须在任何父项流转**之前**，
+         否则写死的前置 `in_review` 会因父项实际停在 `todo`/`in_progress` 而**静默未命中**。
+         返回 false ⇒ 父项已终态且本批已结算干净（幂等重放 / 已被取消）⇒ 直接返回，一个字节不动。 */
+      if (!establishParentInReview(input.parentWorkItemId, runs)) return;
+
+      /* 本批没有任何队员产出（例如子项都在派单前被取消）：`integration` 为 null ⇔ 本批无队员 run
+         （`integrationBranch` 只在有 run 时才有名字）—— 没有可落地的成果。
+         不调 `finalize`（集成分支压根不存在，那会报「分支不存在」），直接把父项按「批已结算」收口。
+         为什么是 `done` 而不是 `cancelled`：「父项该不该被放弃」是另一个语义（谁有权判定计划被放弃），
+         不由本层从子项 category 反推 —— 那会把一个策略决定藏进收尾路径。 */
+      if (integration === null) {
+        transitionParent(input.parentWorkItemId, "done", "空批收口（无队员产出）");
+        return;
+      }
 
       /* **串行合并**（一次一个，次序 = createdAt 升序）。合并目标与判定都在
          `lifecycle.reviewMemberRun` 里（唯一的「合一个队员」实现）：
@@ -207,8 +328,8 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
              P2b 里「进 Inbox」的机械形态就是这条 `blocked` 变迁本身：它经 `workItemService.transition`
              发 `workitem.status_changed{to:"blocked"}`（工作项事件的**唯一**出口），人据此看到「这条卡住了」。
              （完整 Inbox 语义——已读 / 归档 / 严重级 / 订阅者——明属 P2c，见计划「明确不在本计划」表。）
-             CAS 未命中（父项不在 `in_review`）时**丢弃且不报错**（§5.7.5）：改状态的权力在 CAS 上。 */
-          workItemService.transition(input.parentWorkItemId, "blocked", "in_review");
+             前置从**当时状态**读（`transitionParent`），不是写死 `in_review`。 */
+          transitionParent(input.parentWorkItemId, "blocked", "集成分支冲突（队员合并）");
           return; // 立即停手：后面的成员不再合，主分支一个字节都没动
         }
 
@@ -223,7 +344,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       if (!landed.ok) {
         if (landed.reason === "conflict") {
           // 与逐队员冲突同一处置：父项 blocked + 停手（`finalize` 内部已把主工作树回滚到合并前）。
-          workItemService.transition(input.parentWorkItemId, "blocked", "in_review");
+          transitionParent(input.parentWorkItemId, "blocked", "集成分支冲突（整批合回）");
           return;
         }
         // 集成分支 / base 分支不存在：既不是「冲突」也不是「本批没成果」，属环境或次序被破坏。
@@ -243,7 +364,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       // 集成分支的删除**只在整批合回主分支之后**（§6.3）：`discardIntegration` 内部会验证
       // 「集成是 target 的祖先」，所以它自己就是那道闸，本层不重复判定。
       await integrationMerger.discardIntegration({ integration, target: baseBranch });
-      workItemService.transition(input.parentWorkItemId, "done", "in_review");
+      transitionParent(input.parentWorkItemId, "done", "整批合回主分支");
     });
   }
 
@@ -256,11 +377,18 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
    *    （它的树与分支都在，正是要收的东西）。已 `discarded` 的跳过（无树无枝）。
    * 3. 集成分支**允许多条**：这里只删不合并，删两条不会造成「部分成果落在主分支」，
    *    所以不做 `integrationBranch` 的「一批一条」那条限制，而是逐条（存在才删、直接 `-D`）。
+   *
+   * ——调用方义务（P2b 唯一未加闸的集成分支删除点，必须遵守）——
+   * 本方法是全仓**唯一**用 `deleteBranch` 直删集成分支的地方（`discardIntegration` 的那道
+   * 「集成必须是 target 的祖先」闸在这里被**刻意绕过**，理由见下）。因此它**只可用于用户显式发起的
+   * 「整批取消」**：调用方必须是用户取消动作的直达路径，且**同一次调用里连队员分支一起丢弃**
+   * （本方法就是这么做的）。**不得**从任何自动路径（看门狗 / 崩溃恢复 / 定时回收 / 派发重试）调用它 ——
+   * 那些路径要清集成分支时必须走 `discardIntegration`（它的祖先闸正是防「丢掉未落地成果」的那道）。
    */
   async function discardBatch(input: { workspaceKey: string; parentWorkItemId: string }): Promise<void> {
     assertOwnWorkspace(input.workspaceKey);
 
-    await serialize(input.parentWorkItemId, async () => {
+    await serializeRepo(async () => {
       const runs = memberRuns(input.parentWorkItemId);
 
       for (const record of runs) {
@@ -291,7 +419,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         }
       }
 
-      workItemService.transition(input.parentWorkItemId, "cancelled", "in_review");
+      transitionParent(input.parentWorkItemId, "cancelled", "整批放弃（用户取消）");
     });
   }
 

@@ -170,9 +170,14 @@ test("cancelled 子项也算终态（用 category 判定，不是键名比较）
 
 // 三件事必须同时成立：父项 blocked（CAS 写 + 经工作项服务发事件 = P2b 的 Inbox 信号）、
 // 集成分支保留（未落地的整批成果还在）、主分支一个字节不动。
+//
+// 本用例的父项**刻意从 `in_progress` 起步**（不是 `in_review`）：这正是接线后的真实形状 ——
+// 没有任何别的路径把**父项**推到 `in_review`（机械半推的是子项）。它同时钉住 Important-1 的两件事：
+// ① 收尾**先**把父项推进到 `in_review`（事件一的 `to`），② 冲突再把它置 `blocked`（事件二）——
+// 两条都是**经唯一事件出口发出的真实变迁**，于是「父项确实变成 blocked 且那条事件确实发出」可断言。
 test("冲突 ⇒ 父项 blocked、集成分支保留、主分支不动、立即停手", async () => {
   const f = await setup();
-  const { parent, childId } = await batchWithOneChild(f);
+  const { parent, childId } = await batchWithOneChild(f, { parentStatus: "in_progress" });
   await produce(f, { runId: "r-a", childId, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
   await new Promise((resolve) => setTimeout(resolve, 2)); // 让 createdAt 严格递增：串行次序可预期
   await produce(f, { runId: "r-b", childId, parentId: parent.id, agentId: "ta-b", file: "a.txt", content: "B\n" });
@@ -185,11 +190,16 @@ test("冲突 ⇒ 父项 blocked、集成分支保留、主分支不动、立即�
 
   await f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id });
 
+  // 实体状态断言：读库，不是读返回值。
   assert.equal(itemStatus(f, parent.id), "blocked");
   assert.deepEqual(
     events.filter((e) => e.kind === "workitem.status_changed" && e.id === parent.id),
-    [{ kind: "workitem.status_changed", id: parent.id, from: "in_review", to: "blocked" }],
-    "blocked 的变迁必须经工作项服务的唯一出口发出来（P2b 的 Inbox 信号）",
+    [
+      // ① 子项全终态 ⇒ 父项被（经唯一写者）推进到 in_review —— 接线后父项停在 in_progress 也能收尾。
+      { kind: "workitem.status_changed", id: parent.id, from: "in_progress", to: "in_review" },
+      // ② 冲突 ⇒ 父项置 blocked，且这条变迁**确实**经工作项服务的唯一出口发出（P2b 的 Inbox 信号）。
+      { kind: "workitem.status_changed", id: parent.id, from: "in_review", to: "blocked" },
+    ],
   );
   const integration = `squad/integration/${slugOf(f, childId)}`;
   assert.equal(await branchExists(f, integration), true, "集成分支必须保留（未落地的整批成果还在）");
@@ -328,23 +338,49 @@ test("同一批重复收尾（幂等重放）：第二次空转，不因集成�
   assert.equal(itemStatus(f, parent.id), "done");
 });
 
-test("父项不在 in_review 时 CAS 未命中：丢弃、不报错（spec §5.7.5），主分支仍不动", async () => {
+// 【Important-1 ②】父项**不在 in_review** 时，收尾先把它推进到 in_review，再按结果落到 done。
+// 这条替换了旧的「父项不在 in_review ⇒ CAS 未命中、丢弃不报错」用例：那个口径正是复审点名的缺陷
+// （父项停在 in_progress ⇒ 用户看不到 done）。现在前置由**当时状态**读出，于是收尾真的落地。
+test("父项停在 in_progress：收尾先推进到 in_review，再落到 done（读库断言）", async () => {
   const f = await setup();
   const { parent, childId } = await batchWithOneChild(f, { parentStatus: "in_progress" });
   await produce(f, { runId: "r-a", childId, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
-  await new Promise((resolve) => setTimeout(resolve, 2));
-  await produce(f, { runId: "r-b", childId, parentId: parent.id, agentId: "ta-b", file: "a.txt", content: "B\n" });
   f.runtime.workItemService.transition(childId, "done", "in_review");
+  const events: WorkItemEvent[] = [];
+  f.runtime.subscribeWorkItemEvents((event) => events.push(event));
 
-  await assert.doesNotReject(
+  await f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id });
+
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "整批通过 ⇒ 成果已在主分支");
+  assert.equal(itemStatus(f, parent.id), "done", "父项确实变成 done（读库，不是读返回字符串）");
+  assert.deepEqual(
+    events.filter((e) => e.kind === "workitem.status_changed" && e.id === parent.id),
+    [
+      { kind: "workitem.status_changed", id: parent.id, from: "in_progress", to: "in_review" },
+      { kind: "workitem.status_changed", id: parent.id, from: "in_review", to: "done" },
+    ],
+    "两条父项变迁都真实发生：先推进到 in_review，再落到 done",
+  );
+});
+
+// 【Important-1 的「不得静默继续」】父项已是终态、但批里仍有未结算的队员产出（有人在批结算前把
+// 父项标了终态）⇒ **响亮抛**：既不能静默返回（那份活会永远没人管），也不能照常合并（跨过一条已关闭
+// 的工作项）。这是「静默未命中不再可能」这条要求的反面证据。
+test("父项已是终态但批未结算 ⇒ 响亮抛（不静默、也不跨终态合并）", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  await produce(f, { runId: "r-a", childId, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
+  f.runtime.workItemService.transition(childId, "done", "in_review");
+  // 有人抢先把父项收口成 done，而队员 r-a 还停在 produced（没合、没抛）。
+  f.runtime.workItemService.transition(parent.id, "done", "in_review");
+
+  await assert.rejects(
     f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /已是终态/,
   );
 
-  // 冲突已经发生（r-a 合入、r-b 冲突），但父项的期望前置 `in_review` 与实际 `in_progress` 不符 ⇒ CAS 未命中，
-  // 按 §5.7.5「丢弃不报错」：父项**保持原状态**。这不是无声漏判，而是规范明文要求的幂等口径
-  // （改状态的权力在 CAS 上，不在本层）。
-  assert.equal(itemStatus(f, parent.id), "in_progress");
-  assert.equal(await readMainFile(f, "a.txt"), "1\n", "主分支仍不动");
+  assert.equal(runStatus(f, "r-a"), "produced", "产出仍在，等人处理");
+  assert.equal(await readMainFile(f, "a.txt"), "1\n", "一个字节都不许动");
 });
 
 // ── discardBatch：整批放弃（用户取消）────────────────────────────────────────
@@ -394,6 +430,172 @@ test("整批放弃：集成分支已存在（有队员合过）时也把它删�
 
   assert.equal(await branchExists(f, integration), false);
   assert.equal(itemStatus(f, parent.id), "cancelled");
+});
+
+// 四个父项流转里 `cancelled` 同样不能写死前置：用户可以在批进行到一半（父项停在 in_progress）时
+// 整体放弃。旧实现写死 `expect="in_review"` ⇒ 这里会 CAS 未命中、静默丢弃 ⇒ 树与分支都收了、父项却
+// 还显示进行中（正是复审 Important-1 的四条之一）。
+test("整批放弃：父项停在 in_progress 也能被取消（读库断言，不静默未命中）", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f, { parentStatus: "in_progress" });
+  await produce(f, { runId: "r-a", childId, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
+  assert.equal(itemStatus(f, parent.id), "in_progress", "夹具前提：父项尚未进入 in_review");
+
+  await f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id });
+
+  assert.equal(itemStatus(f, parent.id), "cancelled", "父项确实变成 cancelled（不是停在 in_progress）");
+  assert.equal(runStatus(f, "r-a"), "discarded");
+});
+
+// ── 契约本体：一批只能落到一条集成分支（Important-2）──────────────────────────
+//
+// 这是化解「一个工作项一个批次」这条机制的**契约本体**（`integrationBranch` 的「多工作项 ⇒ 响亮拒绝」）：
+// 队员分属两个工作项时会有两条集成分支，而 `finalize` 只能落一条 —— 先落的那条会让「整批可整体放弃」
+// 当场失效（部分成果已在主分支上、且回不去）。所以这种形状**响亮拒绝**，且拒绝必须发生在**任何副作用
+// 之前**（不碰 git、不写工作项），否则一次注定失败的调用会留下半程状态。
+// controller 裁定：机制 = **一个工作项 = 一个批次**，多工作项输入**响亮拒绝是正确行为**（实现不改行为）。
+test("多工作项 ⇒ 响亮拒绝，且零副作用（无 git 动作、无状态写入）", async () => {
+  const f = await setup();
+  const parent = createItem(f, { id: "wi-p", title: "计划", assignee: { type: "squad", id: "sq1" } });
+  // 两个**不同 workItemId** 的子项各由一名队员产出 ⇒ 若照常收尾会算出两条集成分支。
+  const c1 = "wi-c1";
+  const c2 = "wi-c2";
+  createItem(f, { id: c1, title: "子任务一", parentId: parent.id, assignee: { type: "agent", id: "ta-a" } });
+  createItem(f, { id: c2, title: "子任务二", parentId: parent.id, assignee: { type: "agent", id: "ta-b" } });
+  f.runtime.workItemService.transition(c1, "in_progress", "todo");
+  f.runtime.workItemService.transition(c2, "in_progress", "todo");
+  f.runtime.workItemService.transition(parent.id, "in_review", "todo");
+  const a = await produce(f, { runId: "r-a", childId: c1, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
+  const b = await produce(f, { runId: "r-b", childId: c2, parentId: parent.id, agentId: "ta-b", file: "b.txt", content: "B\n" });
+  f.runtime.workItemService.transition(c1, "done", "in_review");
+  f.runtime.workItemService.transition(c2, "done", "in_review");
+
+  // 「无 git 动作」的机器化证据：把编排器自己那条 git 通道换成计数器（任何 git 调用都会被记下）。
+  const realGit = f.runtime.git;
+  let gitCalls = 0;
+  f.runtime.git = (args, opts) => {
+    gitCalls += 1;
+    return realGit(args, opts);
+  };
+
+  await assert.rejects(
+    f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /一批只能落到一条集成分支/,
+  );
+
+  // 零副作用：没有 git 动作、没有工作项写入、两条集成分支都没被建出来、队员成果原样在位。
+  assert.equal(gitCalls, 0, "违约形状必须在碰 git 之前就被拒掉");
+  assert.equal(itemStatus(f, parent.id), "in_review", "父项不被推进（拒绝发生在写工作项之前）");
+  assert.equal(runStatus(f, "r-a"), "produced");
+  assert.equal(runStatus(f, "r-b"), "produced");
+  assert.equal(await branchExists(f, `squad/integration/${slugOf(f, c1)}`), false, "不建集成分支");
+  assert.equal(await branchExists(f, `squad/integration/${slugOf(f, c2)}`), false, "不建集成分支");
+  assert.equal(await branchExists(f, a.branch), true);
+  assert.equal(await branchExists(f, b.branch), true);
+  assert.equal(await readMainFile(f, "a.txt"), "1\n", "主分支一个字节都不动");
+});
+
+// ── 串行化的键 = 仓库（Important-3）────────────────────────────────────────────
+//
+// spec §6.3 要求「串行合并（一次一个）」，而合并的实现是「检出 → merge」，**整个仓库只有一份主工作树
+// 的 HEAD** —— 争用它的是**同一个仓库**，与「哪一批 / 哪个父项」无关。旧实现按 `parentWorkItemId` 分链，
+// 于是两个**不同父项**的批次会并发去 checkout/merge 同一个 HEAD（一条链的 checkout 挪走另一条刚检出的
+// 分支、merge --abort 一起回滚对方），而 git 拦不住这种**同进程内**的竞态。
+//
+// 顺序断言：把**两条链共用的**「合一个队员」入口（`lifecycle.reviewMemberRun`）挡住第一次调用，
+// 若真的按仓库串行，第二条链在第一条结束前**一个合并入口都不该进**。
+test("两个不同父项的批次在同一仓库上不并发（按仓库串行）", async () => {
+  const f = await setup();
+  // 两个批：各自的父项 + 一个子项 + 一名队员产出（不同文件，两个批互不冲突）。
+  const p1 = createItem(f, { id: "wi-p1", title: "计划一", assignee: { type: "squad", id: "sq1" } });
+  const p2 = createItem(f, { id: "wi-p2", title: "计划二", assignee: { type: "squad", id: "sq1" } });
+  createItem(f, { id: "wi-c1", title: "子一", parentId: p1.id, assignee: { type: "agent", id: "ta-a" } });
+  createItem(f, { id: "wi-c2", title: "子二", parentId: p2.id, assignee: { type: "agent", id: "ta-b" } });
+  for (const [child, parent] of [["wi-c1", p1], ["wi-c2", p2]] as const) {
+    f.runtime.workItemService.transition(child, "in_progress", "todo");
+    f.runtime.workItemService.transition(parent.id, "in_review", "todo");
+  }
+  await produce(f, { runId: "r-a", childId: "wi-c1", parentId: p1.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
+  await produce(f, { runId: "r-b", childId: "wi-c2", parentId: p2.id, agentId: "ta-b", file: "b.txt", content: "B\n" });
+  f.runtime.workItemService.transition("wi-c1", "done", "in_review");
+  f.runtime.workItemService.transition("wi-c2", "done", "in_review");
+
+  // 挡住**第一次**合并入口：它属于第一条链。
+  const realReview = f.runtime.lifecycle.reviewMemberRun.bind(f.runtime.lifecycle);
+  const entered: string[] = [];
+  let releaseFirst!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let heldOnce = false;
+  f.runtime.lifecycle.reviewMemberRun = async (input) => {
+    entered.push(input.runId);
+    if (!heldOnce) {
+      heldOnce = true;
+      await held;
+    }
+    return realReview(input);
+  };
+
+  const first = f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: p1.id });
+  const second = f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: p2.id });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  // 第一条链还卡在合并入口里：第二条链**不得**进入任何合并（这正是「同仓库串行」的可观察事实）。
+  assert.deepEqual(entered, ["r-a"], "第一条链未结束时，第二条链不得开始合并（真正按仓库串行）");
+
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(entered, ["r-a", "r-b"], "第一条链结束后第二条链才接上");
+  assert.equal(itemStatus(f, p1.id), "done");
+  assert.equal(itemStatus(f, p2.id), "done");
+});
+
+// ── 全 rejected：幂等空转（Minor，此前只有「由代码保证」）──────────────────────
+//
+// 一个批里所有队员都被打回（`rejected`）时：没有待合队员（`rejected` 不是 `produced`）、集成分支
+// 也从未建出 ⇒ 收尾走幂等闸空转：不 finalize、不抛弃、不动主分支、也不推进父项（父项停在
+// `in_review`，等工作被修复后重新审核）。这条把「由代码保证」变成真断言。
+test("全 rejected：幂等空转（不 finalize、不抛弃、父项停在 in_review）", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  const rejected = await produce(f, { runId: "r-a", childId, parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
+  await f.runtime.lifecycle.reviewMemberRun({ runId: "r-a", verdict: "rejected" });
+  f.runtime.workItemService.transition(childId, "done", "in_review");
+
+  await assert.doesNotReject(
+    f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id }),
+  );
+
+  assert.equal(runStatus(f, "r-a"), "rejected", "打回的队员一个字节不动（等修复后重新审核）");
+  assert.equal(await branchExists(f, rejected.branch), true, "工作树与分支存活到合并（S5）");
+  assert.equal(await branchExists(f, `squad/integration/${slugOf(f, childId)}`), false, "集成分支不该被建出");
+  assert.equal(itemStatus(f, parent.id), "in_review", "父项停在 in_review（没有可结算的成果）");
+  assert.equal(await readMainFile(f, "a.txt"), "1\n", "主分支一个字节都不动");
+});
+
+// 【空批收口】子项全终态、但本批没有任何队员 run（例如子项在派单前就被取消）：没有可落地的成果，
+// 不 finalize（集成分支压根不存在），父项按「批已结算」收口为 done。父项**从 in_progress 起步**：
+// 这正是四个静默未命中点之一的「空批 done」——若前置写死，这里也会静默不动。
+test("空批（子项全终态但无队员 run）：父项先推进到 in_review 再收口为 done", async () => {
+  const f = await setup();
+  const parent = createItem(f, { id: "wi-p", title: "计划", assignee: { type: "squad", id: "sq1" } });
+  createItem(f, { id: "wi-c", title: "派单前被取消的子任务", parentId: parent.id, assignee: { type: "agent", id: "ta-a" } });
+  f.runtime.workItemService.transition("wi-c", "cancelled", "todo");
+  f.runtime.workItemService.transition(parent.id, "in_progress", "todo");
+  const events: WorkItemEvent[] = [];
+  f.runtime.subscribeWorkItemEvents((event) => events.push(event));
+
+  await f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id });
+
+  assert.equal(itemStatus(f, parent.id), "done", "空批按「批已结算」收口（读库断言）");
+  assert.deepEqual(
+    events.filter((e) => e.kind === "workitem.status_changed" && e.id === parent.id),
+    [
+      { kind: "workitem.status_changed", id: parent.id, from: "in_progress", to: "in_review" },
+      { kind: "workitem.status_changed", id: parent.id, from: "in_review", to: "done" },
+    ],
+  );
+  assert.deepEqual((await f.runtime.worktreeManager.list()).filter((e) => e.branch !== null), []);
 });
 
 // ── 穷举矩阵的空缺格：每一格都要有结论（有测试 / 由代码保证 / 不适用）────────────
@@ -535,17 +737,23 @@ test("finalize 冲突：父项 blocked、主分支停在自己的提交、集成
 });
 
 // 【base 分支不存在】既不是冲突，也不是「本批没成果」：不谎报 done、也不误导人去解冲突 ⇒ 响亮抛出。
+//
+// 本用例同时是 Important-1 ① 的证据：父项**从 `in_progress` 起步**，一次注定失败的 finalize 把
+// 「父项已被推进到 in_review」这一瞬**留在库里**，于是可以**读库断言**（而不是读某条返回字符串）。
 test("finalize 时 base 分支不存在 ⇒ 响亮抛出（不谎报 done、不冒充冲突）", async () => {
   const f = await setup({ baseBranch: "topic" });
   await gitAt(f.repoRoot)(["branch", "topic", "main"]);
   const parent = createItem(f, { id: "wi-p", title: "计划", assignee: { type: "squad", id: "sq1" } });
   createItem(f, { id: "wi-c", title: "子任务", parentId: parent.id, assignee: { type: "agent", id: "ta-a" } });
   f.runtime.workItemService.transition("wi-c", "in_progress", "todo");
-  f.runtime.workItemService.transition(parent.id, "in_review", "todo");
+  // 父项停在 in_progress（不是 in_review）：接线后的真实形状 —— 没有别的路径把父项推到 in_review。
+  f.runtime.workItemService.transition(parent.id, "in_progress", "todo");
   await produce(f, { runId: "r-a", childId: "wi-c", parentId: parent.id, agentId: "ta-a", file: "a.txt", content: "A\n" });
   // 先经审查把队员合掉：集成分支在这一刻从 base（topic）派生出来，之后的收尾只差 finalize。
   await f.runtime.lifecycle.reviewMemberRun({ runId: "r-a", verdict: "approved" });
   f.runtime.workItemService.transition("wi-c", "done", "in_review");
+  const events: WorkItemEvent[] = [];
+  f.runtime.subscribeWorkItemEvents((event) => events.push(event));
   // 抹掉 base：主工作树此刻停在集成分支上（队员刚合），所以能删掉 topic。
   const deleted = await gitAt(f.repoRoot)(["branch", "-D", "topic"]);
   assert.equal(deleted.code, 0, deleted.stderr);
@@ -554,7 +762,13 @@ test("finalize 时 base 分支不存在 ⇒ 响亮抛出（不谎报 done、不�
     f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id }),
     /不是冲突/,
   );
-  assert.equal(itemStatus(f, parent.id), "in_review", "父项不动（不谎报 done）");
+  // 读库断言：父项确实被推进到了 in_review（不是读返回值、也不是「应该会」）—— 这一步若缺失，
+  // finalize 的四条父项流转都会静默未命中（复审 Important-1）。同时那条变迁事件也真实发出。
+  assert.equal(itemStatus(f, parent.id), "in_review", "父项已被推进到 in_review（不谎报 done）");
+  assert.deepEqual(
+    events.filter((e) => e.kind === "workitem.status_changed" && e.id === parent.id),
+    [{ kind: "workitem.status_changed", id: parent.id, from: "in_progress", to: "in_review" }],
+  );
 });
 
 // ── workspace 绑定（确认 3）：异己 key 响亮拒绝，绝不在另一个 workspace 上动手 ──
