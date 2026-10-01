@@ -41,11 +41,13 @@ spec 隐含但各任务测试**容易漏掉**的输入/失败模式（每条都�
 ### Task 1: git 执行封装 + worktree 管理器
 
 **Files:**
+
 - Create: `packages/services/src/worktree/gitRunner.ts`、`packages/services/src/worktree/worktreeManager.ts`
 - Create: `packages/services/test/helpers/gitFixture.ts`（**共享测试夹具**：`makeRepo()` 造临时 git 仓库、`realGit(root)` 返回真实的 `GitRunner`。Task 3、4 复用，避免各写一份）
 - Test: `packages/services/test/worktreeManager.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type GitRunResult = { code: number; stdout: string; stderr: string }`
   - `type GitRunner = (args: string[], opts: { cwd: string }) => Promise<GitRunResult>`
@@ -132,6 +134,7 @@ Expected: FAIL（模块不存在）
 `gitRunner.ts`：`createGitRunner()` 用 `node:child_process` 的 `execFile("git", args, { cwd })`，**不抛**、统一返回 `{code, stdout, stderr}`；仅当 `code !== 0` 时由调用方决定是否抛。
 
 `worktreeManager.ts`：
+
 - `add`：`git worktree add -b <branch> <path> <base>`；`code !== 0` 时**抛带 stderr 的错误**（让上层能读到 `branch-in-other-worktree` 这类原因）。
 - `list`：`git worktree list --porcelain`，解析 `worktree <path>` / `branch refs/heads/<name>`。
 - `remove`：`git worktree remove --force <path>`（force 是因为队员可能留了未提交改动，而这是**抛弃语义**）。
@@ -146,6 +149,7 @@ Expected: PASS（4 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §6.1–6.4、§13 C10）：
+
 - 目录是否固定在 `<repoRoot>/.worktree/`？
 - `list` 解析的分支名是否与 `add` 写入的一致？
 - 失败时**是否把 stderr 带出**（上层需要据此分因）？
@@ -173,10 +177,12 @@ git commit -m "feat(worktree): git 执行封装与工作树管理器（add/remov
 ### Task 2: 分支命名与派生（禁止同分支双挂）
 
 **Files:**
+
 - Create: `packages/services/src/worktree/branchNaming.ts`
 - Test: `packages/services/test/branchNaming.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1 的 `WorktreeManager`
 - Produces:
   - `type BranchPlan = { integration: string; member: string }`
@@ -249,6 +255,7 @@ Expected: PASS（3 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §6.4）：
+
 - 「每队员独立分支」是否真的保证（两个队员调用同一 `plan` 会不会撞）？
 - slug 是否真的能挡住路径逃逸与非法 ref？
 
@@ -271,10 +278,12 @@ git commit -m "feat(worktree): 分支命名与派生（每队员独立分支 + s
 ### Task 3: 串行合并到集成分支
 
 **Files:**
+
 - Create: `packages/services/src/worktree/integrationMerge.ts`
 - Test: `packages/services/test/integrationMerge.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type MergeOutcome = { ok: true; branch: string } | { ok: false; reason: "conflict" | "branch_missing"; detail: string }`
   - `createIntegrationMerger(deps: { git: GitRunner; repoRoot: string; base: string }): { ensureIntegration(branch: string): Promise<void>; mergeMember(input: { integration: string; member: string }): Promise<MergeOutcome>; finalize(input: { integration: string; target: string }): Promise<MergeOutcome>; discardMember(input: { branch: string; dirName: string }): Promise<void> }`
@@ -295,7 +304,10 @@ test("无冲突时合入集成分支", async () => {
   const root = await makeRepo();
   // 建集成分支 + 一个改了不同文件的队员分支
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  const out = await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/a" });
+  const out = await merger.mergeMember({
+    integration: "squad/integration/wi1",
+    member: "squad/member/wi1/a",
+  });
   assert.equal(out.ok, true);
 });
 
@@ -303,7 +315,10 @@ test("无冲突时合入集成分支", async () => {
 test("冲突时返回 { ok:false, reason:'conflict' } 且不抛", async () => {
   const root = await makeRepo();
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  const out = await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/conflict" });
+  const out = await merger.mergeMember({
+    integration: "squad/integration/wi1",
+    member: "squad/member/wi1/conflict",
+  });
   assert.equal(out.ok, false);
   assert.equal(out.ok === false && out.reason, "conflict");
 });
@@ -312,7 +327,10 @@ test("冲突时返回 { ok:false, reason:'conflict' } 且不抛", async () => {
 test("冲突后集成分支不留半合并状态", async () => {
   const root = await makeRepo();
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/conflict" });
+  await merger.mergeMember({
+    integration: "squad/integration/wi1",
+    member: "squad/member/wi1/conflict",
+  });
   const status = await realGit(root)(["status", "--porcelain"]);
   assert.equal(status.stdout.trim(), "");
 });
@@ -328,6 +346,7 @@ Expected: FAIL（模块不存在）
 - [ ] **Step 3: 最小实现**
 
 `mergeMember`：
+
 1. 校验 `integration` 与 `member` 都存在（否则 `{ok:false, reason:"branch_missing"}`）——**集成分支缺失时先调 `ensureIntegration`**（或直接返回 `branch_missing`，二选一，写清并在测试里固定）；
 2. 在**仓库主工作树**上 `git checkout <integration>`；
 3. `git merge --no-ff <member>`；`code !== 0` → **`git merge --abort`** 回滚，返回 `{ok:false, reason:"conflict", detail: stderr}`；
@@ -345,6 +364,7 @@ Expected: PASS（3 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §6.3）：
+
 - 合并目标是**集成分支**吗？整批通过后才合主分支（`finalize` 与 `mergeMember` 是否分开）？
 - 冲突时**是否 abort**（spec 要求不留半合并状态）？
 - 「串行」这条约束**有没有在注释里写明**（本模块不做锁，靠调用方）？
@@ -369,10 +389,12 @@ git commit -m "feat(worktree): 串行合并到集成分支（冲突不抛 + abor
 ### Task 4: 孤儿回收（清理是重派发的正确性前置）
 
 **Files:**
+
 - Create: `packages/services/src/worktree/orphanReaper.ts`
 - Test: `packages/services/test/orphanReaper.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1 的 `WorktreeManager`；Task 2 的 `MEMBER_NAMESPACE`；Task 3 的 `resolveWorktreeRoot` 与 `deleteBranch`
 - Produces:
   - `type ReapInput = { activeBranches: readonly string[] }`
@@ -414,9 +436,12 @@ test("回收后同一分支可重新建工作树", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
   await m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" });
-  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
-    .reap({ activeBranches: [] });
-  await assert.doesNotReject(m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" }));
+  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches }).reap({
+    activeBranches: [],
+  });
+  await assert.doesNotReject(
+    m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" }),
+  );
   assert.equal((await m.list()).length, 1);
 });
 
@@ -425,8 +450,9 @@ test("回收后孤儿分支确实不存在了", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
   await m.add({ branch: "squad/member/wi1/orphan", base: "main", dirName: "wi1-orphan" });
-  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
-    .reap({ activeBranches: [] });
+  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches }).reap({
+    activeBranches: [],
+  });
   const branches = await realGit(root)(["branch", "--list", "squad/member/wi1/orphan"]);
   assert.equal(branches.stdout.trim(), "");
 });
@@ -436,8 +462,12 @@ test("活跃分支对应的工作树被保留", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
   await m.add({ branch: "squad/member/wi1/review", base: "main", dirName: "wi1-review" });
-  const out = await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
-    .reap({ activeBranches: ["squad/member/wi1/review"] });
+  const out = await createOrphanReaper({
+    manager: m,
+    repoRoot: root,
+    deleteBranch,
+    listBranches,
+  }).reap({ activeBranches: ["squad/member/wi1/review"] });
   assert.deepEqual(out.kept, ["wi1-review"]);
 });
 
@@ -446,7 +476,12 @@ test("分支残枝（有分支、无工作树）也被回收", async () => {
   const root = await makeRepo();
   const git = realGit(root);
   await git(["branch", "squad/member/wi1/residue", "main"]); // 只建分支，不挂树
-  const reaper = createOrphanReaper({ manager: createWorktreeManager({ git, repoRoot: root }), repoRoot: root, deleteBranch, listBranches });
+  const reaper = createOrphanReaper({
+    manager: createWorktreeManager({ git, repoRoot: root }),
+    repoRoot: root,
+    deleteBranch,
+    listBranches,
+  });
   await reaper.reap({ activeBranches: [] });
   assert.equal((await git(["branch", "--list", "squad/member/wi1/residue"])).stdout.trim(), "");
 });
@@ -456,9 +491,16 @@ test("集成分支不被回收（归 discardIntegration 管）", async () => {
   const root = await makeRepo();
   const git = realGit(root);
   await git(["branch", "squad/integration/wi1", "main"]);
-  await createOrphanReaper({ manager: createWorktreeManager({ git, repoRoot: root }), repoRoot: root, deleteBranch: (b) => deleteBranch(git, root, b), listBranches: (p) => listBranches(git, p) })
-    .reap({ activeBranches: [] });
-  assert.equal((await git(["branch", "--list", "squad/integration/wi1"])).stdout.trim(), "squad/integration/wi1");
+  await createOrphanReaper({
+    manager: createWorktreeManager({ git, repoRoot: root }),
+    repoRoot: root,
+    deleteBranch: (b) => deleteBranch(git, root, b),
+    listBranches: (p) => listBranches(git, p),
+  }).reap({ activeBranches: [] });
+  assert.equal(
+    (await git(["branch", "--list", "squad/integration/wi1"])).stdout.trim(),
+    "squad/integration/wi1",
+  );
 });
 
 // 【必须补】外来工作树：不抛、不碰、进 foreign。
@@ -487,12 +529,14 @@ git commit -m "feat(worktree): 孤儿回收（活跃集合外的回收 + 同分�
 ### Task 5: 排除清单集中维护 + 关闭 P1 的路径逃逸隐患
 
 **Files:**
+
 - Modify: 仓库根 `.gitignore`（加 `/.worktree/`）
 - Modify: 扫描排除处（与 `.zcode/` 同处，spec §13 C10 要求**集中一处维护**）
 - Modify: `packages/services/src/teams/teamAgentStorage.ts`（`definitionPath` 加单路径段校验）
 - Test: `packages/services/test/teamAgentStorage.test.ts`（补 `..` / `/` / 空串用例）
 
 **Interfaces:**
+
 - Consumes: Task 1 的 `resolveWorktreeRoot`
 
 - [ ] **Step 1: 写失败测试**
@@ -502,7 +546,17 @@ git commit -m "feat(worktree): 孤儿回收（活跃集合外的回收 + 同分�
 test("writeTeamAgent 拒绝路径逃逸的 id", () => {
   const root = mkdtempSync(join(tmpdir(), "ws-"));
   for (const bad of ["../evil", "a/b", "", ".."]) {
-    assert.throws(() => writeTeamAgent(root, { id: bad, name: "x", systemPrompt: "s", memoryScope: "project", enabled: true }), /id/);
+    assert.throws(
+      () =>
+        writeTeamAgent(root, {
+          id: bad,
+          name: "x",
+          systemPrompt: "s",
+          memoryScope: "project",
+          enabled: true,
+        }),
+      /id/,
+    );
   }
 });
 
@@ -526,6 +580,7 @@ Expected: FAIL（当前 `../evil` 会被接受 → 测试红）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §13 C10、§17）：
+
 - 排除清单是否**集中一处**（还是散在两处）？
 - P1 登记的 `definitionPath` 隐患是否**真的闭合**（读写两侧都过闸）？
 - `.worktree/` 是否**同时**进了 gitignore 与扫描排除？
@@ -543,6 +598,7 @@ git commit -m "feat(worktree): 排除清单集中登记 + 关闭 teamAgentStorag
 ## 计划的自我审查（Self-Review）
 
 **1. Spec 覆盖**（spec §15 P2 的「工作树隔离与合并」部分）：
+
 - 工作树建/合/抛 → Task 1、2、3
 - 集成分支 → Task 3
 - 孤儿清理 → Task 4
