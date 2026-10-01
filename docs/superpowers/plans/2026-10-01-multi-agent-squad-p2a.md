@@ -180,6 +180,8 @@ git commit -m "feat(worktree): git 执行封装与工作树管理器（add/remov
 - Produces:
   - `type BranchPlan = { integration: string; member: string }`
   - `planBranches(input: { workItemSlug: string; agentSlug: string }): BranchPlan`
+    - **命名必须 D/F 安全**（P2a T3 实测发现）：git 分支是文件系统 ref，**`squad/<wi>` 与 `squad/<wi>/<agent>` 不可能共存**（D/F 冲突，`cannot lock ref`）。故**从第二段起就分叉**：集成分支 `squad/integration/<wi>`、队员分支 `squad/member/<wi>/<agent>`。**任何用路径层级命名的 ref 都受此约束。**
+  - `assertNamespaceDisjoint(): void` —— **守卫测试用**的常量断言：`squad/` 之后的第一段在两个命名空间里**不相交**（`integration` vs `member`），从而**构造上**排除 D/F 冲突。
   - `createBranchAllocator(deps: { manager: WorktreeManager }): { allocate(plan: BranchPlan, base: string): Promise<{ memberPath: string }> }`
   - `assertSafeSlug(slug: string): void`（拒空、`/`、`..`、非 `[a-z0-9-]`）
 
@@ -190,11 +192,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { assertSafeSlug, planBranches } from "../src/worktree/branchNaming.js";
 
-test("分支命名：集成分支 + 队员分支", () => {
+test("分支命名：集成分支 + 队员分支（D/F 安全：第二段即分叉）", () => {
   assert.deepEqual(planBranches({ workItemSlug: "wi-42", agentSlug: "ta-x" }), {
-    integration: "squad/wi-42",
-    member: "squad/wi-42/ta-x",
+    integration: "squad/integration/wi-42",
+    member: "squad/member/wi-42/ta-x",
   });
+});
+
+// 守卫：两个命名空间必须在 squad/ 之后的第一段就分叉，否则会出现「一个是另一个的前缀」
+// 从而 D/F 冲突——git 里 squad/x 与 squad/x/y 不可共存（实测 cannot lock ref）。
+test("集成分支与队员分支不构成前缀关系（任意 slug 都不会撞）", () => {
+  for (const wi of ["a", "member", "integration", "x-y"]) {
+    const p = planBranches({ workItemSlug: wi, agentSlug: "a" });
+    assert.equal(p.integration.startsWith(`${p.member}/`), false);
+    assert.equal(p.member.startsWith(`${p.integration}/`), false);
+  }
+});
+
+// 关键反例：若把集成分支写成 squad/<wi>，当 wi 恰为 "member" 时会与队员分支 squad/member/... 撞。
+test("slug 取 member/integration 这类敏感值时仍不冲突", () => {
+  const p = planBranches({ workItemSlug: "member", agentSlug: "integration" });
+  assert.equal(p.integration, "squad/integration/member");
+  assert.equal(p.member, "squad/member/member/integration");
 });
 
 // slug 直接进分支名与目录名，必须限制在安全字符集内，否则可构造出路径逃逸或非法 ref。
