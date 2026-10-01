@@ -32,6 +32,17 @@ export interface OffPeakRunResultPayload {
   failureKind?: "transient" | "permanent";
 }
 
+/** host → main 的小队唤醒派发结果（`runId` 是幂等键里的 eventKey）。 */
+export interface SquadWakeResultPayload {
+  runId: string;
+  ok: boolean;
+  taskId?: string;
+  sessionId?: string;
+  error?: string;
+  /** deferred=绑定会话正在执行；permanent=门禁关闭 / 运行时未注册 / 开树失败（重试不会自愈）。 */
+  failureKind?: "transient" | "permanent" | "deferred";
+}
+
 interface CronSchedulerDeps {
   hostProcessLocalEnv: Record<string, string>;
   logger: {
@@ -50,6 +61,8 @@ export interface CronSchedulerHandle {
   handleCronRunResult: (result: CronRunResultPayload) => void;
   /** host 回报闲时任务派发结果时调用，转交给 scheduler 结算。 */
   handleOffPeakRunResult: (result: OffPeakRunResultPayload) => void;
+  /** host 回报小队唤醒派发结果时调用，转交给 scheduler 留痕（scheduler 没有该路的台账）。 */
+  handleSquadWakeResult: (result: SquadWakeResultPayload) => void;
   /** manual run 落库后立即唤醒 scheduler，不等待下一次轮询。 */
   wake: (automationId: string) => void;
   /** app 退出前优雅收尾（通知 scheduler 释放认领 + 关库，兜底强杀）。 */
@@ -154,6 +167,55 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
       return;
     }
 
+    if (msg.type === "squad-wake-dispatch-request") {
+      // 唤醒规则的到点派发：与 cron 同形，只是消息**薄**（只有「哪条规则到点了」）——
+      // 派给谁 / 简报 / 开树全在 host 侧一处规划（调度器不读小队定义）。
+      if (isDisposing) {
+        // 与 cron 同理：进入 disposing 后继续派发会把新 run 交给正在关闭的 Host。
+        postToScheduler({
+          type: "squad-wake-dispatch-result",
+          runId: msg.eventKey,
+          ok: false,
+          failureKind: "transient",
+          error: "app is shutting down",
+        });
+        return;
+      }
+      const host = deps.resolveDispatchHost();
+      if (!host) {
+        // 无可用本地 host（无窗口/未就绪）：transient 回执（调度器下轮重投）。
+        postToScheduler({
+          type: "squad-wake-dispatch-result",
+          runId: msg.eventKey,
+          ok: false,
+          failureKind: "transient",
+          error: "no local host available",
+        });
+        return;
+      }
+      try {
+        host.postMessage({
+          type: HostMessageTypes.SquadWake,
+          ruleId: msg.ruleId,
+          workItemId: msg.workItemId,
+          revision: msg.revision,
+          eventKey: msg.eventKey,
+          workspacePath: msg.workspacePath,
+          workspaceIdentity: msg.workspaceIdentity,
+        });
+      } catch (error) {
+        deps.logger.warn("[cron-scheduler] forward SquadWake to host failed:", error);
+        postToScheduler({
+          type: "squad-wake-dispatch-result",
+          runId: msg.eventKey,
+          ok: false,
+          failureKind: "transient",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+
     if (msg.type === "offpeak-dispatch-request") {
       const host = deps.resolveDispatchHost();
       if (!host) {
@@ -204,6 +266,9 @@ export function spawnCronScheduler(deps: CronSchedulerDeps): CronSchedulerHandle
     },
     handleOffPeakRunResult(result) {
       postToScheduler({ type: "offpeak-dispatch-result", ...result });
+    },
+    handleSquadWakeResult(result) {
+      postToScheduler({ type: "squad-wake-dispatch-result", ...result });
     },
     wake(automationId) {
       if (isDisposing) return;
