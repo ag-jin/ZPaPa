@@ -45,3 +45,32 @@ test("最小视图文案两语齐全", () => {
     assert.ok(enUS[key], `en-US 缺少 ${key}`);
   }
 });
+
+// 上面那份清单是**起步时**的十个键；视图落地后文案会继续长。逐条补清单必然漏，
+// 所以再加一道**命名空间级**对照：`settings.experiments.` 下的键在两侧必须完全一致。
+test("实验分区文案在命名空间级别两语齐平", () => {
+  const prefix = "settings.experiments.";
+  const keysWithPrefix = (locale: Record<string, string>) =>
+    Object.keys(locale).filter((key) => key.startsWith(prefix));
+  const zhKeys = new Set(keysWithPrefix(zhCN));
+  const enKeys = new Set(keysWithPrefix(enUS));
+
+  for (const key of zhKeys) assert.ok(enKeys.has(key), `en-US 缺少 ${key}`);
+  for (const key of enKeys) assert.ok(zhKeys.has(key), `zh-CN 缺少 ${key}`);
+
+  // 前缀写错时上面两条会退化成空断言（0 == 0 也算通过）。钉一个下限，让「一条都没比到」变红。
+  assert.ok(zhKeys.size > 20, `settings.experiments.* 只比到 ${zhKeys.size} 条，前缀可能写错了`);
+});
+
+// 占位符也要成对：只译一侧或写错占位符名，用户会直接看到原始 `{count}`。
+test("实验分区文案的占位符两语一致", () => {
+  const placeholdersOf = (value: string) =>
+    [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
+  for (const key of Object.keys(zhCN).filter((k) => k.startsWith("settings.experiments."))) {
+    const zhValue = zhCN[key];
+    const enValue = enUS[key];
+    assert.ok(zhValue, `zh-CN 缺少 ${key}`);
+    assert.ok(enValue, `en-US 缺少 ${key}`);
+    assert.deepEqual(placeholdersOf(enValue), placeholdersOf(zhValue), `${key} 的占位符不一致`);
+  }
+});

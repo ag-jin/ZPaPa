@@ -5,6 +5,8 @@ import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { SquadMinimalView } from "@/settings/squadEntry/SquadMinimalView.js";
+import { squadEntryVisible } from "@/settings/squadEntry/squadEntryVisibility.js";
 
 /**
  * 「实验功能」分区：所有实验开关的统一去处。
@@ -36,21 +38,28 @@ export function ExperimentsSection() {
   };
 
   return (
-    <SettingsGroupCard>
-      <SettingsRow
-        label={intl.formatMessage({ id: "settings.experiments.squadToggle.label" })}
-        description={intl.formatMessage({ id: "settings.experiments.squadToggle.description" })}
-        control={
-          <Switch
-            checked={settings?.experimentalAgentSquadsEnabled === true}
-            disabled={saving || !settings}
-            onCheckedChange={(checked) => {
-              void setAgentSquadsEnabled(checked);
-            }}
-            aria-label={intl.formatMessage({ id: "settings.experiments.squadToggle.label" })}
-          />
-        }
-      />
-    </SettingsGroupCard>
+    <>
+      <SettingsGroupCard>
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.experiments.squadToggle.label" })}
+          description={intl.formatMessage({ id: "settings.experiments.squadToggle.description" })}
+          control={
+            <Switch
+              checked={settings?.experimentalAgentSquadsEnabled === true}
+              disabled={saving || !settings}
+              onCheckedChange={(checked) => {
+                void setAgentSquadsEnabled(checked);
+              }}
+              aria-label={intl.formatMessage({ id: "settings.experiments.squadToggle.label" })}
+            />
+          }
+        />
+      </SettingsGroupCard>
+      {/* 关闭实验 ⇒ 整块入口消失（spec §12 / §16 S8），不是置灰、不是报错页。
+          判据是纯函数 squadEntryVisible（settings 还在加载时给 null ⇒ 同样不显示，
+          避免加载期先闪一下入口再消失）。这只是**呈现**：真正的门禁是服务层单点
+          ISquadRuntimeService.assertDispatchEnabled，两者互不依赖。 */}
+      {squadEntryVisible(settings) ? <SquadMinimalView /> : null}
+    </>
   );
 }
