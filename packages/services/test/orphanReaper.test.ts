@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { planBranches } from "../src/worktree/branchNaming.js";
 import {
   createOrphanReaper,
+  isSamePath,
   type ReapInput,
   type ReapOutcome,
 } from "../src/worktree/orphanReaper.js";
@@ -105,6 +106,34 @@ async function assertFullyReclaimed(f: Fixture, dirName: string, branch: string)
   assert.equal(existsSync(worktreePath(f, dirName)), false, `${dirName} 的目录应已删除`);
   assert.equal(await branchExists(f, branch), false, `${branch} 应已删除`);
 }
+
+// ── 裁定 1：归属比较必须跨平台（分隔符 / 大小写），且在 macOS 上可测 ──────────────
+
+test("同一路径判定跨平台：Windows 的分隔符/大小写差异算同一条路径，POSIX 语义不变", () => {
+  // 在 macOS 上用 `path.win32` 造 Windows 形态的输入：`fs.realpath`/`join` 产出 `C:\a\.worktree`，
+  // 而 git-for-Windows 的 porcelain 惯用 `C:/a/.worktree`。严格 `!==` 会把自家工作树全判成外来树
+  // ⇒ reap 在 Windows 上静默什么都不做。这里钉住「分隔符/大小写差异被判为同一路径」。
+  const fromFs = win32.join("C:\\a", ".worktree"); // "C:\a\.worktree"
+  assert.equal(isSamePath(fromFs, "C:/a/.worktree", "win32"), true, "分隔符差异：同一路径");
+  assert.equal(
+    isSamePath("C:/A/.worktree", "c:/a/.worktree", "win32"),
+    true,
+    "大小写差异：Windows 不区分大小写，同一路径",
+  );
+  // POSIX 断言：证明既有行为未变 —— 两侧都是 `/`，且**区分**大小写（折叠会把两棵不同的树误判成同一棵）。
+  assert.equal(isSamePath("/repo/.worktree", "/repo/.worktree"), true, "POSIX：同一路径");
+  assert.equal(
+    isSamePath("/repo/.worktree", "/repo/.workTree"),
+    false,
+    "POSIX：区分大小写 ⇒ 不同路径",
+  );
+  // 分隔符的规范化只在 win32 上发生（否则会把 POSIX 里合法的含 `\` 文件名改写掉）。
+  assert.equal(
+    isSamePath("/repo\\.worktree", "/repo/.worktree"),
+    false,
+    "POSIX：反斜杠不是分隔符，原样比较",
+  );
+});
 
 // ── brief Step 1 的四条（夹具名派生，断言体逐字保留）────────────────────────────
 
@@ -385,6 +414,29 @@ test("绝不碰集成分支：不在活跃集合里、也没有工作树的集�
   // 把传给 listBranches 的前缀误写成会命中它的值（如 `squad/`），这条就会变红（变异验证 (b)）。
   assert.equal(await branchExists(f, integration), true, "集成分支绝不能被回收");
   assert.deepEqual(out.reclaimedBranches, [member], "只有队员残枝进了视野");
+});
+
+// 第一遍（工作树那一遍）也守同一条边界：上面的用例只覆盖第二遍的形状，抓不到这条。
+test("第一遍也守集成分支边界：.worktree/ 下的集成分支工作树不被回收，且计入 kept", async () => {
+  const f = await fixture();
+  const integration = planBranches({ workItemSlug: "wi1", agentSlug: "a" }).integration;
+  const dirName = "wi1-int";
+  // 将来可能出现的形状：某调用方在 `.worktree/` 下给**集成分支**挂了工作树。今天 ensureIntegration
+  // 只跑 git branch、不建工作树，所以**不可达**；但一旦如此，第一遍会无条件把「本根下任何工作树」
+  // 当孤儿摘掉 —— 那会删掉整批未合并的集成分支（而现有边界测试只覆盖第二遍，抓不到）。
+  await f.manager.add({ branch: integration, base: "main", dirName });
+
+  const out = await f.reaper().reap({ activeBranches: [] });
+
+  // 核心不可协商：集成分支**绝不能被删**（它承载整批未合并的成果，归 Task 3 的 discardIntegration 管）。
+  assert.equal(await branchExists(f, integration), true, "集成分支绝不能被第一遍删掉");
+  assert.deepEqual(out.reclaimedBranches, [], "第一遍不该删任何分支");
+  assert.deepEqual(out.reclaimed, [], "第一遍不该回收任何工作树");
+  // 语义选择：命中即**整项计入 `kept`**（连工作树一起原样不动，而不是「摘树留分支」）。
+  // 理由：树里可能有未提交的集成成果，摘它就是丢活；而 `kept` 的既有语义正是「本流程看见了、
+  // 但决定原样不动」，与「活跃分支对应的工作树」同类，故沿用而不另开一个桶。
+  assert.deepEqual(out.kept, [dirName]);
+  assert.equal(existsSync(worktreePath(f, dirName)), true, "集成分支的工作树也原样不动");
 });
 
 test("外来工作树检出的队员分支不被删，「未被存活工作树检出」这个判据承重", async () => {

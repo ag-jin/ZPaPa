@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { basename, dirname } from "node:path";
-import { MEMBER_NAMESPACE } from "./branchNaming.js";
+import { INTEGRATION_NAMESPACE, MEMBER_NAMESPACE } from "./branchNaming.js";
 import { resolveWorktreeRoot, type WorktreeManager } from "./worktreeManager.js";
 
 export type ReapInput = { activeBranches: readonly string[] };
@@ -8,7 +8,10 @@ export type ReapInput = { activeBranches: readonly string[] };
 export type ReapOutcome = {
   /** 被回收的工作树 dirName（「有工作树」的那种孤儿形状）。 */
   reclaimed: string[];
-  /** 被保留的工作树 dirName：分支仍在 `activeBranches` 里，一个字节都不动。 */
+  /**
+   * 被保留的**工作树** dirName：要么分支仍在 `activeBranches` 里（队员的活在跑/没合完），
+   * 要么命中了集成分支边界（`squad/integration/**`，不归 reap 管）—— 两种情况都一个字节不动。
+   */
   kept: string[];
   /**
    * 工作树**存在、但不属于本流程**（不在 `<repoRoot>/.worktree/` 下）—— 按设计不动，只报出来。
@@ -49,6 +52,44 @@ async function canonicalPath(path: string): Promise<string> {
 }
 
 /**
+ * 把路径统一成「可比较的形态」，**只**用于归属比较，绝不用于任何文件系统操作。
+ *
+ * 为什么必须有这一层（而不是直接 `===`）：归属比较的两侧来路不同 —— 一侧是 git 报出的路径，
+ * 一侧是本地 `fs.realpath` / `path.join` 拼出来的路径。在 Windows 上二者的**写法可以不同**：
+ * `fs.realpath` / `join` 产出 `C:\…\.worktree`，而 git-for-Windows 的 porcelain 惯用 `C:/…/.worktree`；
+ * 文件系统又不区分大小写（`C:\A` 与 `c:\a` 是同一目录）。严格 `!==` 会把**我们自己的每一个工作树**
+ * 都判成外来树 ⇒ reap 在 Windows 上**静默什么都不做**（还顺带把自家树报进 `foreign`，更具误导性）。
+ * Windows 是发布目标之一，所以这不是洁癖：把正当情况变成永久失效，正是本模块要消灭的失败类。
+ *
+ * 两条规则与取舍：
+ * 1. **分隔符**：`\` 与 `/` 在 Windows 上都合法、且会被 git 与 fs 交替产出，统一成 `/` 才能比较。
+ * 2. **大小写**：只在 **win32** 上折叠。POSIX 区分大小写（`/A` 与 `/a` 是两个不同目录），
+ *    折叠会把两棵**不同**的树误判成同一棵 —— 那是**误删**方向，比漏删更危险。所以按平台语义处理。
+ *
+ * POSIX 分支**原样返回**：这保证既有（macOS/Linux）行为一字节不变。
+ */
+function normalizeForCompare(p: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") {
+    return p;
+  }
+  return p.replaceAll("\\", "/").toLowerCase();
+}
+
+/**
+ * 「这两条路径指的是同一处吗」：**两侧都**过 `normalizeForCompare` 再比，绝不直接 `!==`。
+ *
+ * 导出是为了让测试能在 macOS 上传 `platform: "win32"` 喂 Windows 形态的输入，
+ * 从而在本机证明「分隔符/大小写差异被判为同一路径」（见 orphanReaper.test.ts）。
+ */
+export function isSamePath(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return normalizeForCompare(a, platform) === normalizeForCompare(b, platform);
+}
+
+/**
  * 孤儿回收：把「不在活跃集合里」的工作树**连它的分支**一起收掉，再收掉「有分支、无工作树」的残枝。
  *
  * 为什么它值得单独一层：**清理是重派发的正确性前置**（spec §6.4；spec §6.6 把它列为启动时必须
@@ -66,7 +107,9 @@ async function canonicalPath(path: string): Promise<string> {
  *    与我们无关），启动回收就会**永久整体失败** ⇒ 孤儿永远清不掉 ⇒ 后续重派发反而撞「分支已存在」。
  *    把一个无关情况变成回收器的永久故障，代价远大于「静默」。
  * 2. **不碰 `squad/integration/**`**。集成分支承载整批未合并的成果，删它就是丢活；它由 Task 3 的
- *    `discardIntegration` 在**整批合回主分支之后**负责删除。命名空间取自 `MEMBER_NAMESPACE` 一处定义。
+ *    `discardIntegration` 在**整批合回主分支之后**负责删除。这条边界**两遍都要守**：分支那一遍靠
+ *    `MEMBER_NAMESPACE`（超集之外根本不枚举），工作树那一遍靠 `INTEGRATION_NAMESPACE` 显式跳过。
+ *    两个命名空间都取自 `branchNaming.ts` 一处定义。
  * 3. **不做串行锁**（调用方约束）：reap 会动 git 的登记与分支，只能靠接线点序列化。
  *
  * 调用方约束：`deleteBranch` 的三参实现要由调用方**绑定**成单参
@@ -101,11 +144,23 @@ export function createOrphanReaper(deps: {
         // 归属按**根**判：只有 `<repoRoot>/.worktree/<dirName>` 是本流程的树。
         // 不按路径形状猜（`basename(dirname(p)) === ".worktree"`）：形状相同的目录可能属于
         // 别的仓库；按根判才不会把别人的树认成自己的。
-        if (dirname(entry.path) !== ourRoot) {
+        // 比较用 `isSamePath` 而不是 `!==`：两侧来路不同（git 报出的 vs realpath 拼的），
+        // Windows 上分隔符/大小写写法可以不同，直接 `!==` 会把自家树全判成外来（见 normalizeForCompare）。
+        if (!isSamePath(dirname(entry.path), ourRoot)) {
           foreign.push(entry.path);
           continue;
         }
         const dirName = basename(entry.path);
+        // 集成分支边界（与分支那一遍同一条边界，brief 裁定 2）：集成分支承载整批未合并的成果，
+        // 由 Task 3 的 discardIntegration 在整批合回主分支之后删。今天 `ensureIntegration` 只跑
+        // `git branch`、从不建工作树，所以第一遍走不到这里；但将来若有调用方在 `.worktree/` 下给
+        // 集成分支挂了工作树，第一遍会无条件把它当孤儿删掉 —— 那是丢整批未合并的活。
+        // 命中即**整项跳过并计入 `kept`**：不摘它的树（树里可能有未提交的集成成果），更不删它的分支。
+        // 计入 `kept` 而非新增一个桶：`kept` 的语义就是「本流程看见了、但决定原样不动」。
+        if (entry.branch !== null && entry.branch.startsWith(INTEGRATION_NAMESPACE)) {
+          kept.push(dirName);
+          continue;
+        }
         // 分支在活跃集合里 ⇒ 保留。detached（branch 为 null）不可能是活跃分支，
         // 它也不算「队员」：下面按孤儿处理，但不会拿 null 去删分支。
         if (entry.branch !== null && active.has(entry.branch)) {
