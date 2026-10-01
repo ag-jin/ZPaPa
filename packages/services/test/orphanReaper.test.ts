@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { planBranches } from "../src/worktree/branchNaming.js";
-import { createOrphanReaper } from "../src/worktree/orphanReaper.js";
+import {
+  createOrphanReaper,
+  type ReapInput,
+  type ReapOutcome,
+} from "../src/worktree/orphanReaper.js";
 import { deleteBranch } from "../src/worktree/integrationMerge.js";
 import { createWorktreeManager, type WorktreeManager } from "../src/worktree/worktreeManager.js";
 import { makeRepo, realGit } from "./helpers/gitFixture.js";
@@ -23,23 +27,51 @@ const DIR_REVIEW = "wi1-review";
 const DIR_ORPHAN = "wi1-orphan";
 const WORKTREE_ROOT = ".worktree";
 
+type ReaperOverrides = {
+  deleteBranch?: (branch: string) => Promise<void>;
+  listBranches?: (prefix: string) => Promise<string[]>;
+};
+
 type Fixture = {
   root: string;
   git: Git;
   manager: WorktreeManager;
-  /** 与生产同形的注入：把 Task 3 的三参 deleteBranch 绑定成单参。 */
-  reaper: (overrides?: { deleteBranch?: (branch: string) => Promise<void> }) => {
-    reap(input: { activeBranches: readonly string[] }): Promise<{
-      reclaimed: string[];
-      kept: string[];
-    }>;
+  /** 与生产同形的注入：把 Task 3 的三参 deleteBranch 绑定成单参；分支枚举器走真 git。 */
+  reaper: (overrides?: ReaperOverrides) => {
+    reap(input: ReapInput): Promise<ReapOutcome>;
   };
 };
+
+/**
+ * 真 git 的分支枚举器（生产 deps 契约就是这个形状）：按**分支名前缀**列出短名。
+ * 用 `for-each-ref refs/heads/<prefix>` 而不是 `branch --list <glob>`：前缀是 ref 名的真实前缀，
+ * 没有通配符语义可以走偏（实测 `branch --list 'squad/*'` 的 `*` 会跨 `/`，把两个命名空间一起捞进来）。
+ * 必须真的问 git 而不是按目录名猜：本模块要看见的恰恰是**没有工作树**的分支，
+ * 只有 git 自己知道有哪些 ref。
+ */
+function realListBranches(git: Git, root: string): (prefix: string) => Promise<string[]> {
+  return async (prefix) => {
+    const result = await git(
+      ["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}`],
+      {
+        cwd: root,
+      },
+    );
+    if (result.code !== 0) {
+      throw new Error(`git for-each-ref 失败 (exit ${result.code}): ${result.stderr.trim()}`);
+    }
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  };
+}
 
 async function fixture(): Promise<Fixture> {
   const root = await makeRepo();
   const git = realGit(root);
   const manager = createWorktreeManager({ git, repoRoot: root });
+  const listBranches = realListBranches(git, root);
   return {
     root,
     git,
@@ -47,7 +79,9 @@ async function fixture(): Promise<Fixture> {
     reaper: (overrides) =>
       createOrphanReaper({
         manager,
+        repoRoot: root,
         deleteBranch: overrides?.deleteBranch ?? ((branch) => deleteBranch(git, root, branch)),
+        listBranches: overrides?.listBranches ?? listBranches,
       }),
   };
 }
@@ -85,6 +119,8 @@ test("回收不在活跃集合里的工作树", async () => {
   await assertFullyReclaimed(f, DIR_B, memberBranch("b"));
   assert.equal(existsSync(worktreePath(f, DIR_A)), true);
   assert.equal(await branchExists(f, memberBranch("a")), true);
+  // 分支那一遍（枚举命名空间）不该把已经收掉的分支再「收」一次：它不在了，就什么都不该报告。
+  assert.deepEqual(out.reclaimedBranches, [memberBranch("b")]);
 });
 
 // 这条是「清理是正确性前置」的机器化证明：回收后同一分支必须能重新建。
@@ -162,6 +198,8 @@ test("activeBranches 含全部：一个都不动（分支与工作树都在）",
   assert.equal(existsSync(worktreePath(f, DIR_B)), true);
   assert.equal(await branchExists(f, memberBranch("b")), true);
   assert.equal((await f.manager.list()).length, 2);
+  // 第二遍（枚举命名空间）也不该碰活跃分支：它在活跃集合里，一个都不删。
+  assert.deepEqual(out.reclaimedBranches, []);
 });
 
 test("activeBranches 里是不存在的/非法的分支名：不误伤，孤儿照回收", async () => {
@@ -193,8 +231,8 @@ test("回收是幂等的：连跑两次，第二次没有可回收项", async ()
 
   const second = await f.reaper().reap({ activeBranches: [] });
   // 幂等要求「第二次为空」而不是「第二次不报错」：残留的可回收项意味着第一次没收干净
-  // （或 list() 里混进了刚要崩掉的东西）。
-  assert.deepEqual(second, { reclaimed: [], kept: [] });
+  // （或 list() / 分支枚举里混进了刚要崩掉的东西）。
+  assert.deepEqual(second, { reclaimed: [], kept: [], foreign: [], reclaimedBranches: [] });
 });
 
 // ── 不得回收主工作树（Task 1 的 list 已排除；这里核实这条前提真的成立）──────────
@@ -259,7 +297,7 @@ test(".worktree/ 根下不属于任何工作树的散落文件与散落目录，
 
   const out = await f.reaper().reap({ activeBranches: [] });
 
-  // reap 的视野是 git 报出的工作树（list()），根下的散落文件/目录不在其中——没有「顺手清目录」这回事。
+  // reap 的视野是 git 报出的工作树（list()）与 git 报出的分支，不是「目录内容」——没有「顺手清目录」这回事。
   assert.deepEqual(out.reclaimed, [DIR_A]);
   assert.equal(existsSync(strayPath), true);
   assert.equal(existsSync(looseDir), true);
@@ -287,13 +325,12 @@ test("detached 工作树（branch 为 null）：摘掉工作树，但不拿 null
   assert.equal(existsSync(worktreePath(f, "det")), false);
 });
 
-// ── 矩阵外：非本流程建的工作树（挂在本流程目录之外）────────────────────────────
+// ── 判定 1：外来工作树 —— 不抛、不碰、要可见 ───────────────────────────────────
 
-test("挂在 .worktree/ 之外的工作树：响亮拒绝，且不动任何东西", async () => {
+test("外来工作树（不在 <repoRoot>/.worktree/ 下）：不抛、不碰，且进 foreign 可见", async () => {
   const f = await fixture();
   await addWorktree(f, "a", DIR_A);
-  // 故意取名排在 .worktree/ **之后**（git 按路径排序列出工作树）：于是「先动一个再发现不合法」
-  // 这种实现会真的先摘掉 wi1-a，下面的零副作用断言才咬得住。
+  // 用户自己在仓库里建的工作树：完全正当，与本流程无关。
   const outside = join(f.root, "zzz-outside");
   await f.git(["worktree", "add", "-q", "-b", "user/own-branch", outside, "main"], {
     cwd: f.root,
@@ -305,44 +342,106 @@ test("挂在 .worktree/ 之外的工作树：响亮拒绝，且不动任何东�
     "夹具前提：本流程的工作树排在外部工作树之前",
   );
 
-  // dirName 是从 git 报出的路径反推的，而 remove() 只会去 .worktree/<dirName> 找 ——
-  // 别处的工作树反推出的名字会指向 .worktree/ 下的**另一个**目录，那就成了摘错树、删错分支。
-  // 所以这里必须响亮拒绝，而不是「拼一把」：拒绝发生在任何 remove/deleteBranch 之前。
-  await assert.rejects(f.reaper().reap({ activeBranches: [] }), /\.worktree/);
+  // 归属按**根**判：不在 <repoRoot>/.worktree/ 下的都不是本流程的树。
+  // 以前这里是「响亮拒绝」，代价是：用户只要自己建过一个工作树，启动回收就**永久整体失败**，
+  // 孤儿永远清不掉，后续重派发反而撞「分支已存在」。现在改为**跳过 + 报出来**（不抛）。
+  const out = await f.reaper().reap({ activeBranches: [] });
 
+  // 跳过不等于隐形：外来的树要出现在 foreign 里（值是 git 报出的路径，与它在 list() 里的形态一致）。
+  assert.deepEqual(
+    out.foreign,
+    [realpathSync(outside)],
+    "外来的树必须出现在 foreign 里（跳过必须可见）",
+  );
+  // 它不混进任何一个「本流程」的桶：既没被回收，也不是我们保留的。
+  assert.deepEqual(out.reclaimed, [DIR_A], "外来项不阻断本流程的回收");
+  assert.deepEqual(out.kept, [], "外来项不是「我们保留的」，不能混进 kept");
+  // 外部工作树与它的分支、它的内容原封不动。
   assert.equal(existsSync(outside), true);
+  assert.equal(existsSync(join(outside, "a.txt")), true);
   assert.equal(await branchExists(f, "user/own-branch"), true);
-  assert.equal(existsSync(worktreePath(f, DIR_A)), true);
-  assert.equal(await branchExists(f, memberBranch("a")), true);
+  // 本流程的树照常回收干净。
+  await assertFullyReclaimed(f, DIR_A, memberBranch("a"));
 
   rmSync(outside, { recursive: true, force: true });
 });
 
-// ── 矩阵外：只有分支、没有工作树的残枝（第二种「视野之外」的形状）──────────────
+// ── 判定 2 的边界：集成分支绝不能被「分支那一遍」误伤 ───────────────────────────
 
-test("记录：分支残枝（无工作树）也在视野之外，重派发仍会撞「分支已存在」", async () => {
+test("绝不碰集成分支：不在活跃集合里、也没有工作树的集成分支，reap 后必须还在", async () => {
   const f = await fixture();
-  // 残枝的真实成因（Task 1/3 都实测过）：`worktree add` 先建分支、后失败（目标目录非空），
-  // 于是留下一条**没有工作树**的分支 —— 它不出现在 `worktree list` 里，reap 的视野是工作树。
+  const integration = planBranches({ workItemSlug: "wi1", agentSlug: "a" }).integration;
+  const member = memberBranch("a");
+  // 同形状的对照：一条集成分支 + 一条队员残枝，都不在活跃集合里、都没有工作树。
+  // 两者的唯一差别只在命名空间的第二段（integration / member），所以这条用例钉住的正是那条边界。
+  await f.git(["branch", integration, "main"], { cwd: f.root });
+  await f.git(["branch", member, "main"], { cwd: f.root });
+  assert.equal(await branchExists(f, integration), true, "夹具前提：集成分支已建出");
+
+  const out = await f.reaper().reap({ activeBranches: [] });
+
+  // 集成分支承载整批未合并的成果，删它就是丢活；它由 Task 3 的 discardIntegration 在整批合回
+  // 主分支之后删除，不在本模块的命名空间里。这条边界只由 MEMBER_NAMESPACE **一处**保证：
+  // 把传给 listBranches 的前缀误写成会命中它的值（如 `squad/`），这条就会变红（变异验证 (b)）。
+  assert.equal(await branchExists(f, integration), true, "集成分支绝不能被回收");
+  assert.deepEqual(out.reclaimedBranches, [member], "只有队员残枝进了视野");
+});
+
+test("外来工作树检出的队员分支不被删，「未被存活工作树检出」这个判据承重", async () => {
+  const f = await fixture();
+  const member = memberBranch("b");
+  const outside = join(f.root, "zzz-outside");
+  await f.git(["branch", member, "main"], { cwd: f.root });
+  await f.git(["worktree", "add", "-q", outside, member], { cwd: f.root });
+
+  const out = await f.reaper().reap({ activeBranches: [] });
+
+  // 这条分支「不在活跃集合里」，但它正被一棵**存活**的工作树检出（那棵是外来的树，按设计不动）。
+  // 删它就是把别人手里的活抽走，git 也会拒绝（`Cannot delete branch '…' checked out at '…'`）——
+  // 所以「未被任何存活工作树检出」这个判据必须真的承重，而不是一句注释。
+  assert.deepEqual(out.foreign, [realpathSync(outside)]);
+  assert.equal(await branchExists(f, member), true, "被存活工作树检出的分支必须保留");
+  assert.deepEqual(out.reclaimedBranches, []);
+
+  rmSync(outside, { recursive: true, force: true });
+});
+
+// ── 判定 2：分支残枝进视野（以前是「记录：…」，缺口已补 ⇒ 现在是真断言）──────────
+
+test("分支残枝（有分支、无工作树）进视野：reap 后分支消失，同一分支可重新 add", async () => {
+  const f = await fixture();
+  // 残枝的真实成因（Task 1/3 都实测过）：`worktree add` **先建分支、后因目标路径已存在而失败**，
+  // 于是留下一条没有工作树的分支 —— 它不在 `worktree list` 里，`prune()` 也不删分支，
+  // 所以只做工作树那一遍就永远看不见它。
   mkdirSync(worktreePath(f, DIR_ORPHAN), { recursive: true });
   writeFileSync(join(worktreePath(f, DIR_ORPHAN), "占用.txt"), "x\n");
   await assert.rejects(
     f.manager.add({ branch: memberBranch("orphan"), base: "main", dirName: DIR_ORPHAN }),
     /already exists/i,
-    "夹具前提：add 失败但分支已被建出来",
+    "夹具前提：add 失败，但分支已经被建出来了",
   );
-  assert.equal(await branchExists(f, memberBranch("orphan")), true);
+  assert.equal(await branchExists(f, memberBranch("orphan")), true, "夹具前提：残枝确实留下了分支");
 
   const out = await f.reaper().reap({ activeBranches: [] });
 
-  // 视野之外 ⇒ 不回收。这条同样钉住缺口（变红 ⇔ 已补上）：reap 只按工作树枚举，
-  // 而「只有分支」的孤儿恰恰没有工作树可枚举 —— 补法见 Task 4 报告（按命名空间枚举分支）。
-  assert.deepEqual(out, { reclaimed: [], kept: [] });
-  assert.equal(await branchExists(f, memberBranch("orphan")), true);
+  // 这条用例以前叫「记录：分支残枝…也在视野之外」，注释写的是「变红 ⇔ 缺口已补」。
+  // 缺口已补 ⇒ 现在是真的断言：残枝的分支确实被回收了。
+  assert.equal(await branchExists(f, memberBranch("orphan")), false, "残枝的分支必须被回收");
+  // 残枝没有工作树 ⇒ 不进 reclaimed；被删的是分支 ⇒ 进 reclaimedBranches。
+  assert.deepEqual(out.reclaimed, []);
+  assert.deepEqual(out.reclaimedBranches, [memberBranch("orphan")]);
+
+  // 「清理是正确性前置」的机器化证明：回收后**同一分支**必须能重新 add。
+  // 先清掉那个占位目录 —— 它**不是工作树**，reap 按设计不碰它（视野是 git 报出的工作树与分支，
+  // 不是目录内容）；它是这次 add 失败的原因，不是 reap 的清理对象。
+  rmSync(worktreePath(f, DIR_ORPHAN), { recursive: true, force: true });
+  await assert.doesNotReject(
+    f.manager.add({ branch: memberBranch("orphan"), base: "main", dirName: DIR_ORPHAN }),
+  );
+  assert.equal((await f.manager.list()).length, 1);
 });
 
-// ── 矩阵外：目录被外部删掉的残骸（已知缺口的可执行记录）────────────────────────
-test("记录：目录已被外部删掉的残骸不在视野内，它的分支会留下（重派发仍会撞）", async () => {
+test("残骸（git 登记着、目录被外部删掉）的分支也进视野：prune 后由分支那一遍收掉", async () => {
   const f = await fixture();
   await addWorktree(f, "orphan", DIR_ORPHAN);
   // 残骸的真实成因：工作面被外部删掉（用户手删 / 临时目录清理），git 侧仍登记着它。
@@ -350,21 +449,22 @@ test("记录：目录已被外部删掉的残骸不在视野内，它的分支�
 
   const out = await f.reaper().reap({ activeBranches: [] });
 
-  // Task 1 的 list() 契约：目录不存在的残骸不算队员（不算进「队员数」），所以 reap 看不到它。
-  assert.deepEqual(out, { reclaimed: [], kept: [] });
-  // reap 末尾的 prune 真的跑了：git 侧不再登记这条残骸（否则每次启动都会反复列出同一个幽灵）。
+  // 这条用例以前也叫「记录：…」（「变红 ⇔ 缺口已补」）⇒ 缺口已补，翻转成真断言。
+  assert.deepEqual(out.reclaimed, []); // 目录没了，没有工作树可摘
+  assert.deepEqual(out.reclaimedBranches, [memberBranch("orphan")]);
+  assert.equal(await branchExists(f, memberBranch("orphan")), false, "残骸的分支必须被回收");
+  // prune 真的跑了、而且跑在分支那一遍**之前**：git 仍登记着残骸时，它认为残骸正检出着这条分支，
+  // `git branch -D` 会被拒（实测 `Cannot delete branch '…' checked out at '…'`）。
+  // 所以这条 porcelain 断言同时钉住「prune 有跑」与「prune 在两遍之间」。
   const porcelain = await f.git(["worktree", "list", "--porcelain"], { cwd: f.root });
   assert.equal(
     porcelain.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length,
     1,
+    "git 侧不再登记这条残骸",
   );
-  // 而 prune 只清 git 的登记项、**不删分支**：分支仍在 ⇒ 重派发会撞
-  // 「a branch named '…' already exists」。这条用例把该缺口钉成可执行证据：
-  // 它变红 ⇔ 缺口已被补上（例如 reap 改成先按命名空间枚举分支、再按 activeBranches 判定）。
-  assert.equal(await branchExists(f, memberBranch("orphan")), true);
-  await assert.rejects(
+  // 同一分支可重新 add：残骸这条路上分支名同样不再被占。
+  await assert.doesNotReject(
     f.manager.add({ branch: memberBranch("orphan"), base: "main", dirName: DIR_ORPHAN }),
-    /already exists/,
   );
 });
 
@@ -385,5 +485,23 @@ test("删分支失败时 reap 抛出，不把「只摘了工作树」当成回�
       })
       .reap({ activeBranches: [] }),
     /git branch -D 失败/,
+  );
+});
+
+test("分支枚举失败时 reap 抛出，不把「残枝那一半没做」当成回收成功", async () => {
+  const f = await fixture();
+  await addWorktree(f, "a", DIR_A);
+
+  // 第二遍依赖注入的枚举器：它失败就意味着残枝这一半完全没做。吞掉它 = 调用方看到「回收成功」，
+  // 而残枝还在占着分支名 —— 与「删分支失败要响」同一条道理（fail-fast，不改成「尽量多回收 + 汇总」）。
+  await assert.rejects(
+    f
+      .reaper({
+        listBranches: async () => {
+          throw new Error("git for-each-ref 失败");
+        },
+      })
+      .reap({ activeBranches: [] }),
+    /for-each-ref 失败/,
   );
 });

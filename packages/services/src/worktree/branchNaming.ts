@@ -14,7 +14,8 @@ export type BranchPlan = { integration: string; member: string };
    代价是分支名更长一点；换来的是「集成 + 多个队员」这套命名在 git 里真的能共存。 */
 const SQUAD_PREFIX = "squad/";
 const INTEGRATION_NAMESPACE = `${SQUAD_PREFIX}integration/`;
-const MEMBER_NAMESPACE = `${SQUAD_PREFIX}member/`;
+/** 导出给 Task 4 的孤儿回收：它要按命名空间枚举分支（分支那一遍），而命名空间只能有这一处定义。 */
+export const MEMBER_NAMESPACE = `${SQUAD_PREFIX}member/`;
 
 /**
  * slug 会同时进分支名与目录名，所以它是**进 git 与进文件系统的共同输入**：
