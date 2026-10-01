@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { GitCommandError, createGitRunner } from "../src/worktree/gitRunner.js";
-import { createWorktreeManager, resolveWorktreeRoot } from "../src/worktree/worktreeManager.js";
+import {
+  canonicalPath,
+  createWorktreeManager,
+  resolveWorktreeRoot,
+} from "../src/worktree/worktreeManager.js";
 import { makeRepo, realGit } from "./helpers/gitFixture.js";
 
 // 工作树必须落在 <repoRoot>/.worktree 下：它是集中排除清单里的一项，位置写死才便于一处维护。
@@ -166,6 +170,30 @@ test("访问工作树路径报非 ENOENT 错误时，list 抛错而不是静默�
   symlinkSync("wi1-a", path);
 
   const error = await m.list().then(
+    () => null,
+    (e: unknown) => e as { code?: string },
+  );
+  assert.equal(error?.code, "ELOOP");
+});
+
+// canonicalPath 的错误处理必须与 pathExists 同族（只有 ENOENT 算「不存在」）：
+// (a) 路径还不存在是合法情形 —— `orphanReaper` 一次都没建过工作树时要靠它拿到原串继续比较，
+//     退回原路径、不能抛；否则「根本没有工作树」会被错算成故障。
+test("canonicalPath 对不存在的路径退回原路径（ENOENT 合法）", async () => {
+  const root = await makeRepo();
+  const missing = join(root, "no-such-anywhere");
+  assert.equal(await canonicalPath(missing), missing);
+});
+
+// (b) 非 ENOENT 的错误必须**响亮抛出**，不能静默退化。静默退回原串在归属判定上是危险的：
+// orphanReaper 拿 canonicalPath(repoRoot) 当自家根，realpath 因 EACCES/ELOOP 失败而退回原串时，
+// macOS 的 /var ↔ /private/var 形态差异会把自家每个工作树都判成外来树 ⇒ reap 静默空转（还报成功）。
+// 这里照 pathExists 用例的手法用**自指符号链接**确定性地造 ELOOP（不依赖 uid）。
+test("canonicalPath 对非 ENOENT 错误原样抛出（ELOOP）", async () => {
+  const root = await makeRepo();
+  const path = join(root, "self-loop");
+  symlinkSync("self-loop", path);
+  const error = await canonicalPath(path).then(
     () => null,
     (e: unknown) => e as { code?: string },
   );

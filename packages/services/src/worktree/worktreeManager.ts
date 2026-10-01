@@ -120,14 +120,26 @@ async function pathExists(path: string): Promise<boolean> {
  * （`resolveWorktreeRoot` / `resolveWorktreePath` 都在此），而两个消费者的 import 边早已存在
  * （`orphanReaper` 已经从这里取 `resolveWorktreeRoot`），不新增模块、也不新增依赖边。
  *
- * 语义刻意保持「失败即原样返回」：它只用于**比较**，不用于任何文件系统操作 ——
- * 路径不存在时返回原串，后续比较最多是「不等」，不会造成破坏。
+ * 错误处理与同族政策对齐（**只有 ENOENT 才算「不存在」**，见上面的 `pathExists`）：
+ * 1. **ENOENT ⇒ 原样返回**。这是合法的「还不存在」情形（一次都没建过工作树时 `.worktree` 不在），
+ *    调用方依赖它拿到原串继续比较。
+ * 2. **其它错误 ⇒ 原样抛出**（响亮失败）。EACCES / EPERM / ELOOP 说明路径本身可能活得好好的，
+ *    静默退回原串在归属判定上是危险的：`orphanReaper` 拿 `canonicalPath(repoRoot)` 当自家根，
+ *    realpath 失败退回原串时，macOS 上的 `/var` ↔ `/private/var` 形态差异会把**我们自己的每一个
+ *    工作树**全判成外来树 ⇒ reap **静默空转**（什么都不做、还报成功）。这正是本模块要消灭的失败类，
+ *    只是换了一条触发路径（与 `pathExists` 同族），所以两条都按同一规矩办。
+ *
+ * 它只用于**比较**，不用于任何文件系统操作 —— 所以「抛出」不会在只读路径上造成破坏，只是把
+ * 静默的误判变成一个可见的错误。
  */
 export async function canonicalPath(path: string): Promise<string> {
   try {
     return await realpath(path);
-  } catch {
-    return path;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") {
+      return path;
+    }
+    throw error;
   }
 }
 

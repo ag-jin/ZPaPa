@@ -88,6 +88,9 @@ function normalizeForCompare(p: string, platform: ComparePlatform = process.plat
  *
  * 导出是为了让测试能在 macOS 上传 `"win32"` / `"posix"` 喂不同平台形态的输入，
  * 从而在本机钉住两侧语义（见 orphanReaper.test.ts）。
+ *
+ * @param platform **只有 `"win32"` 会走大小写折叠分支**；其余取值（含测试用的 `"posix"`）一律按
+ *   POSIX 语义原样比较。
  */
 export function isSamePath(
   a: string,
