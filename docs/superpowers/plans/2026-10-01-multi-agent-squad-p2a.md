@@ -375,15 +375,21 @@ git commit -m "feat(worktree): 串行合并到集成分支（冲突不抛 + abor
 - Consumes: Task 1 的 `WorktreeManager`；Task 2 的 `MEMBER_NAMESPACE`；Task 3 的 `resolveWorktreeRoot` 与 `deleteBranch`
 - Produces:
   - `type ReapInput = { activeBranches: readonly string[] }`
-  - `type ReapOutcome = { reclaimed: string[]; kept: string[]; foreign: string[] }`
-    - `foreign` = 「存在于本仓库、但**不属于本流程**」的工作树（例如用户自己 `git worktree add` 的）。**按设计不动它们**，但**必须报出来**——把「静默跳过」变成「可见跳过」。（实现若取了同义的别的字段名，以代码为准并在报告中说明。）
+  - `type ReapOutcome = { reclaimed: string[]; kept: string[]; foreign: string[]; reclaimedBranches: string[] }`
+    - `foreign` = 「存在于本仓库、但**不属于本流程**」的工作树（例如用户自己 `git worktree add` 的）。**按设计不动它们**，但**必须报出来**——把「静默跳过」变成「可见跳过」。值为 git 报出的 **path**。
+    - `reclaimedBranches`（2026-10-01 **controller 批准**，T4 复审判定为「必要而非扩接口」）：被回收的**分支名**。理由：**分支残枝没有工作树**，进不了 `reclaimed`（那是 `dirName` 语义）；**不报出来就是静默删除**，与「响亮失败 / 不得静默删除」冲突。把它混进 `reclaimed`/`kept` 会污染两者的既有语义。
+    - **两个字段都必须有测试钉住**（含幂等用例对整份 outcome 做 `deepStrictEqual`）。
   - `createOrphanReaper(deps: { manager: WorktreeManager; repoRoot: string; deleteBranch: (branch: string) => Promise<void>; listBranches: (prefix: string) => Promise<string[]> }): { reap(input: ReapInput): Promise<ReapOutcome> }`
+    - **四个 dep 全部必填**。`deleteBranch` 做成可选 = 让「忘注入」退化为**静默只删工作树不删分支**，正是本任务要消灭的半拉子清理。
+  - **归属比较必须对分隔符（及 Windows 大小写）不敏感**（2026-10-01 T4 复审发现，Important）：POSIX 两侧都是 `/`；但 Windows 上 `fs.realpath`/`join` 产出 `C:\…\.worktree` 而 git-for-Windows 的 porcelain 惯用 `C:/…/.worktree` ⇒ 严格 `!==` 会把**我们自己的每个工作树都判成外来**，reap 在 **Windows 上静默什么都不做**。**这正是裁定 1 要消灭的失败类**（把正当情况变成永久失效），而 Windows 是发布目标之一。⇒ 两侧比较前各自规范化（分隔符；并按平台语义处理大小写），**用一个可测的小助手**实现，**测试须用 `path.win32` 的输入证明分隔符/大小写差异被判为同一路径**（这样在 macOS 上也能测）。
   - **`reap` 必须连分支一起回收**（不只是工作树）：回收后**该分支必须能重新 `add` 成功**。否则「清理是正确性前置」只做了一半——孤儿分支同样会占住分支名，让重派发撞上「分支已存在」。
   - **归属按「根」判，不按路径形状猜**：只认 `<repoRoot>/.worktree/<dirName>`（用 `resolveWorktreeRoot(repoRoot)`，**不得再写第二处 `.worktree` 字面量**）。**遇到不属于本流程的工作树 → 不抛、不碰、进 `foreign`**。
     - **为什么不抛**（2026-10-01 裁定）：抛错会让「用户仓库里存在他自己的 worktree」变成**启动回收的永久故障**——孤儿永远清不掉，反而让重派发撞 `branch already exists`。而这本是一个完全正当、与我们无关的情况。spec §6.6 把回收列为**启动时**必须完成的恢复步骤，这条路径不能因无关原因长期失败。
   - **分支残枝必须进视野**（2026-10-01 裁定）：`worktree add` **先建分支、后因目标目录非空失败**（Task 1/3 实测），留下**有分支、无工作树**的孤儿——它不在 `worktree list` 里，`prune()` 也不删分支。这是本模块存在的**主要理由**（doc 注释第一句「清理是重派发的正确性前置」就是冲它说的）。⇒ **在工作树那一遍之后**，枚举 `squad/member/**` 分支，删掉**既不在 `activeBranches` 里、也未被任何存活工作树检出**的那些。
     - 顺序不可颠倒：先摘树（第一遍），再判「未被检出」（第二遍）。
-    - **绝不触碰 `squad/integration/**`**：集成分支承载整批未合并成果，删它就是丢活；它由 Task 3 的 `discardIntegration` 在**整批合回主分支之后**删。此边界须有测试钉住。
+    - **`prune()` 夹在两遍之间**（2026-10-01 修正，原写「末尾」）：**残骸的幽灵登记会让 git 拒绝删除它的分支**（`Cannot delete branch … checked out at`），故必须 prune 掉幽灵登记后，分支那一遍才删得动。复审视为此推理**经实测成立**且不会少清理（存活判据由 `manager.list()` 重算，prune 只改 git 登记、不改哪些分支被存活工作树持有）。
+    - **绝不触碰 `squad/integration/**`**：集成分支承载整批未合并成果，删它就是丢活；它由 Task 3 的 `discardIntegration` 在**整批合回主分支之后**删。此边界须有**同形状对照**测试钉住（两边都是「有分支、无工作树、不在活跃集合」，断言 integration 存活而 member 残枝被收）。
+      - **两遍都要守这条边界**（2026-10-01 复审提出）：第二遍的枚举已按 `MEMBER_NAMESPACE` 限定，但**第一遍会无条件删掉「本根下任何工作树」的分支**。今天不可达（Task 3 的 `ensureIntegration` 只跑 `git branch`，从不建工作树），但将来若有调用方在 `.worktree/` 下给集成分支挂了工作树，第一遍会删掉整批未合并的集成分支，**而边界测试抓不到**。⇒ 第一遍也加 `INTEGRATION_NAMESPACE` 保护（不删 + 计入 `kept`），并补测试。
   - `deleteBranch` 由 deps 注入（与 `discardMember` 共用同一实现，避免两处各写一遍 `git branch -D`）。
 
 - [ ] **Step 1: 写失败测试**
