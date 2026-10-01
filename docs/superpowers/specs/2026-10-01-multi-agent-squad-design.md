@@ -107,7 +107,17 @@
 | `instructions` | 队长指令（8 槽位，见 §5.4） |
 | `enabled` / `archivedAt?` | 状态 |
 
-**指派语义**：工作项的 `assignee` 可为 `user | agent | squad`。指派给 squad 时，解析出 `leaderAgentId`，为该队长排一次**队长角色 run**（打 `is_leader_task` + `squad_id` 标记），并注入队长简报（花名册 + 操作协议 + `instructions`）。
+**指派语义**：工作项的 `assignee` 可为 `user | agent | squad`。指派给 squad 时，解析出 `leaderAgentId`，为该队长排一次**队长角色 run**（打 `is_leader_task` + `squad_id` 标记），并注入队长简报。
+
+**队长简报（`SquadBriefing`）由三段构成**（2026-10-01 定；P1 曾只落两段，`protocol` 缺失）：
+
+| 段 | 来源 | 内容 |
+|---|---|---|
+| `roster` | 系统生成 | 花名册：队长与队员、各自角色与能力 |
+| `protocol` | **系统生成（非用户可写）** | **操作协议**：三道闸（`max_fires` / `rate` / `loop`）与判定次序、`stopCondition` 与 `maxRounds` 语义、派单只产出子项与派发事件**不改父项状态**、**串行**合并到集成分支、**整批通过才合回主分支**、冲突解不了 → `blocked` + 进 Inbox、审查未通过前工作树**存活**、合并后才抛弃 |
+| `instructions` | 用户填写 | 8 槽位，见 §5.4 |
+
+**为什么 `protocol` 必须独立、不得并入 `instructions`**：它恰是「**机制**」那一半，而 `instructions` 是用户意图那一半。并进去等于把机制交还给用户去写——用户没写就等于**队长不知道规则却照跑**，且**不报错**。这正是「看起来没问题」的形态。（合于「我们只提供机制，怎么用由用户定」。）
 
 ### 3.4 WorkItem（工作项）
 
@@ -315,6 +325,34 @@
 5. **状态推进幂等**：每次流转携带期望前置状态（**CAS**）；不匹配则丢弃并记事件，**不报错**。
 6. **关闭实验开关**：停止**新**派发；**不中断**进行中的 run；入口隐藏、数据保留。
 
+#### 5.7.1 `eventKey` 构造规则（接线前必须闭合；2026-10-01 已定）
+
+§3.9 注入的幂等键是 `(workItemId, ruleId, revision, eventKey)`，而 `eventKey` **如何构造**此前一直未定义。这是最危险的一类留白：不定义，接线方会就地拼串，**重复投递的事件会静默重复触发**——不报错、看起来正常。
+
+**唯一构造器**：`computeEventKey(rule, fact)`，随域模型一起从 `shared` 导出。调度器与 Repo **都调它**，**不得各自拼串**。
+
+**两个族，前缀不同**（于是「事件触发的第 N 次」与「排期的第 N 次」永不撞键）：
+
+**(A) 事件族（`kind: "event"`）**：`eventKey = "e:" + identity`，`identity` 按**优先级**取第一条可用者：
+
+1. `"id:" + source + ":" + externalId` —— 事件自带的**稳定 id**（如 GitHub `X-GitHub-Delivery`、`event.id`）。**首选**。
+2. `"fp:" + source + ":" + eventType + ":" + sha256(stableStringify(payload))` —— 无稳定 id 时，退用**完整 payload 的规范化指纹**。
+
+- **既无 id、payload 又不可规范化 → 抛**（不 fire）。不可去重的事件每次重投都会重复触发且**不报错**，属「看起来没问题」形态，必须响亮失败。
+- 指纹用**完整 payload**（不是 `filters` 子集）：唯其如此，两个**仅时间戳不同**的事件才会算出不同 key。
+- `stableStringify` 必须钉死：对象键按码点升序、数组保序、数字最简形式、字符串 JSON 转义；并排除**易变字段**（`deliveryAttempt`、投递时刻等）。**易变字段清单是同处声明的常量**，不得在调用点就地过滤。
+
+**(B) 排期族（`at` | `every` | `cron`）**：`eventKey = "t:" + scheduledFor`，`scheduledFor` 是本次**应当触发的名义时刻**（epoch ms 整数），**不是**调度器发现它的墙钟时刻。
+
+- 重启后重算 `nextFireAt`（§6.6 第 3 项「漏掉的周期合并成一次」）、misfire 补发、同一次名义时刻被 tick 反复捞到——三种情形都必须算出**同一个 key**，去重才成立。
+- 名义时刻必须落在**调度网格**上，因而**确定**、不依赖运行时刻：`at` 即 `at` 本身；`every` 由 `intervalSeconds` 与一个**钉死的 epoch 锚点**对齐；`cron` 由表达式与 `timezone` 定义。**锚点必须写进契约**（否则重启后换锚点，同一格算出不同 key，去重失效且静默）。
+
+**`filters` / `eventTypes` 不参与 `eventKey`。** 它们判「**是否匹配**」，不判「**是哪一个**」。把 `filters` 拼进 key，会让规则作者改一下过滤器就换掉一把去重键 → **历史去重记录全部失效**（同一事实被重新处理一次）。**这是本条最重要的一句。**
+
+**与 `revision` 的关系**：`eventKey` 里**不含** `revision`（它已是四元组的独立一项）。规则被编辑 → `revision` 变 → 四元组整体变 → 历史去重**刻意不复用**（规则换了口径，同一事件值得再处理一次）。
+
+**与去重三元组的关系**：§5.5 的去重键是 `(ruleId, revision, eventKey)`，**不含 `workItemId`**——去重按**规则**维度；同一 `ruleId` 不跨工作项，故二者等价。但**落痕时四元组仍带 `workItemId`**（可读性与按工作项审计）。
+
 ---
 
 ## 6. 隔离与执行
@@ -335,12 +373,15 @@
 
 **准确规则**：worktree 活到「该队员这次工作**被合并**为止」——**审查被拒时必须存活到合并**，不能提前删。
 
+**⚠️ 接线契约（本层库不做，由调用方保证）**：回收器 `reap` 的「活跃」判据**完全由入参 `activeBranches` 决定**。该入参**必须包含所有未合并的队员分支——包括被打回待修复的**；回收只针对**已合并 / 已放弃**的。若接线方用「当前有没有在跑的 run」当口径，被打回待修的队员工作树会在**下次启动被静默回收**（上面那条「审查被拒必须存活」就落空了），且回收过程**不报错**。（2026-10-01 P2a 整支终审发现；已同步登记进 §17 表。）
+
 ### 6.3 合并（决策 A / B）
 
-- **目标**：**集成分支** `squad/<工作项>`；整批过了再一次性合回主分支（主分支干净、整批可整体放弃）。
+- **目标**：**集成分支 `squad/integration/<工作项>`**；整批过了再一次性合回主分支（主分支干净、整批可整体放弃）。
+- **⚠️ 分支命名必须避开 git 的 D/F 冲突**（P2a 实测发现，2026-10-01）：git 分支是文件系统 ref，**`squad/<工作项>` 与 `squad/<工作项>/<队员>` 不可能共存**（前者是文件、后者要求它是目录）。故两个命名空间**从第二段起就分叉**：集成分支 `squad/integration/<工作项>`、队员分支 `squad/member/<工作项>/<队员>`。**任何用路径层级命名的 ref 都受此约束。**
 - **串行**合并（一次一个），避免竞态。
 - **失败**：留分支 + 进 Inbox + 标 `blocked`。
-- **合并后分支**：**删除**（队员分支与集成分支都删）；留痕靠工作项交付物 / diff 记录。
+- **合并后分支**：**删除**（队员分支与集成分支都删；集成分支在整批合回主分支之后删）；留痕靠工作项交付物 / diff 记录。
 
 ### 6.4 工作树约束
 
@@ -489,7 +530,9 @@
 | C13 | 设置分区 | 按既有 4 处套路 + locale |
 | C14 | 工作区键 | 遵从 `workspaceIdentity?.trim() \|\| workspacePath` |
 
-**排除清单（集中维护，同时驱动 gitignore 与扫描排除）**：`.worktree/` · `.zcode/agent-memory/` · `.zcode/squad/`。
+**排除清单（集中维护，同时驱动 gitignore 与扫描排除）**：`.worktree/` · `.zcode/agent-memory/` · `.zcode/agent-memory-local/` · `.zcode/squad/`。
+**代码侧唯一来源**：`packages/services/src/workspaceProductDirs.ts` 的 `WORKSPACE_PRODUCT_DIRS`（`wikiScan` 与测试均从它派生；仓库根 `.gitignore` 由测试逐条断言包含它——**改常量不改 `.gitignore` 必红**）。
+**⚠️ 该清单对「任意用户 workspace」只有一半生效**（只改了 ZCode 自身仓库的 `.gitignore`），另一半见 §17 表「用户 workspace 侧排除清单半边失效」。
 
 ---
 
@@ -551,7 +594,7 @@
 给定一条 `continuous` 唤醒规则且队长持续派单；当 run 次数达到 `maxFires`（默认 20）或一小时达到 12 次；那么该规则被暂停并记录 `pausedReason`，且**用户手动「现在就跑」不受此限制**。
 
 **S4 · 合并与抛弃**
-给定 2 名队员各自分支完成；当队长审查通过并合并；那么先合入 `squad/<工作项>`，整批通过后合回主分支；随后工作树与分支**均被删除**；孤儿 worktree 在下次启动时被清理。
+给定 2 名队员各自分支完成；当队长审查通过并合并；那么先合入 `squad/integration/<工作项>`，整批通过后合回主分支；随后工作树与分支**均被删除**；孤儿 worktree 在下次启动时被清理。
 
 **S5 · 审查被拒不提前删**
 给定某队员产出被审查打回；那么该队员的工作树**保持存活**直至修复并合并。
@@ -623,12 +666,15 @@
 | `pausedReason` 与 `enabled` 的一致性（暂停了但 enabled 仍真等） | 无约束 | **P2（未闭合）** |
 | `fireCount > maxFires`、`once` 且 `fireCount > 0` 等一致性 | 无约束 | **P2（未闭合）** |
 | `Squad.enabled === false` **不参与派发** | **P1 终审修复波已修**：`leaderDispatch` 把它与 `archivedAt` 同等处理（不发 run、只通知），且 reason 文案与「已归档」区分 | **已闭合** |
-| 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | P2 接线简报时补（或明确并入 instructions） |
+| 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | **已定（2026-10-01）**：见 **§3.3**——简报定为**三段** `roster` / `protocol` / `instructions`；`protocol` 是**系统生成的机制段（非用户可写）**，不得并入用户可写的 `instructions`。**实现由 P2b 接线任务承载**（不在 SDD 循环外改 P1 代码）。 |
 | `wakeRuleRepo` 读回值可能**枚举外**（`rowToWakeRule` 对 `kind`/`mode`/`pausedReason`/`onTimeout` 用 `as` 强转，读回无再校验） | **P1 终审修复波已对齐**：读回时对枚举列校验，非法值**抛错**（与 §5「响亮失败优于静默跳过」的裁定一致）；「故意不进 barrel」的注释保留 | **已闭合** |
 | `casAdvance` 返回单一 `false`，**不区分**「被 revision fencing 拒绝」与「规则已删」 | 接线方无从记录原因 | P2 需回读比对 revision 判因 |
-| `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | §3.9 的 `(workItemId, ruleId, revision, eventKey)` 里 `eventKey` 如何由 `filters`/`eventTypes` 构造，P1 未定义 | P2 接线前必须定义 |
+| `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | **2026-10-01 已定**：见 **§5.7.1**（事件族用稳定 id 或完整 payload 指纹、排期族用名义时刻网格；`filters`/`eventTypes` **不参与** key） | **已闭合（契约已定，实现留待接线）** |
 | 归档小队 → **工作项指派与排班转交队长** | 需按 assignee 查工作项，属工作项查询层 | P2（`squadService.ts` 有 `TODO(P2)`） |
 | **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（终审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属**发布期动作**；表行而非逻辑边界，缺行只跳过、不会假红） |
+| **用户 workspace 侧排除清单半边失效**（P2a T5 复审发现，2026-10-01） | C10 的清单要求同时驱动「gitignore」与「扫描排除」。但 P2a 改的是 **ZCode 自己这个仓库的 `.gitignore`**——对**任意用户 workspace** 无效；扫描那半靠 `wikiScan.ts`（全局生效），file-search 半则依赖「workspace 首次搜索时按 `.gitignore` 拷贝生成 `.zcodeignore`」，而**无 `.gitignore` 的 workspace** 与**已存在旧 `.zcodeignore` 的 workspace** 都拿不到这三条，走「从零创建」时取的是 `BUILTIN_IGNORE_LINES`（`workspaceFileIgnore.ts:47`，**确认未含** C10 清单）。后果：`.worktree/` 里 N 份仓库副本被索引/搜索吃进、`manifestHash` 漂移——**不报错**。 | **P2b 接线任务显式承接决策**：是否把 C10 清单并入 `BUILTIN_IGNORE_LINES`（P0 曾裁定不动它，但那是在「不知道它是不依赖 workspace 状态的**唯一可靠半边**」时做的，需重判），或另设不依赖 `.gitignore` 的程序化排除。**不得只留在任务报告的 concern 里。** |
+| `.zcode/agent-memory-local/` 未进排除清单 | local scope 记忆写在此（`apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts:30`），会弄脏 `git status`；C10 字面只点名 `agent-memory`（无 `-local`）。§13 设计意图（「定义与**记忆**的目录都必须进排除清单」）覆盖它。 | **已闭合**（P2a T5 修复轮，2026-10-01）：随「代码侧唯一来源」常量一并登记，见 §13 C10 清单（现 4 条）。 |
+| **`activeBranches` 的语义是「未合并也算活跃」**（P2a 整支终审发现，2026-10-01） | `reap` 会把「不在 `activeBranches`、也未被存活工作树检出」的队员分支**连树带枝回收**。§6.2 承诺「审查被拒必须存活到合并」、§6.4/§6.6 承诺「启动回收是重派发前置」——**两者同时成立，只靠调用方把「已产出但未合并」也算进 `activeBranches`**。若接线方用「有没有在跑的 run」当口径，**被打回待修的队员工作树会在下次启动被静默清掉**（S5 场景失效），且本层测试原理上覆盖不到这条缝。 | **接线契约**：`activeBranches` **必须包含所有未合并的队员分支**（含被打回待修的）；回收只针对**已合并/已放弃**的。已写入 `ReapInput.activeBranches` 的 doc 注释；**P2b 接线时按此实现**。 |
 
 ---
 

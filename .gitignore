@@ -70,11 +70,36 @@ packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
 .zcode-runtime/
 
+# ===== 工作区产物目录排除清单（spec §13 C10：**集中一处维护**）=====
+# 代码侧的唯一来源是 packages/services/src/workspaceProductDirs.ts 的
+# `WORKSPACE_PRODUCT_DIRS`（wiki 扫描从它派生；一致性由
+# packages/services/test/workspaceProductDirExclusions.test.ts 锁住——改了常量却不改本段，
+# 那个测试会红）。所以「新增一个产物目录」的标准动作只有两处：
+#   ① 在 `WORKSPACE_PRODUCT_DIRS` 加一条（唯一来源）；
+#   ② 在本段加一条同名目录规则（强制同步，由测试强制）。
+# 本段同时驱动两半：
+#   ① 版本控制：git 按本段忽略（oxfmt / prettier 的默认 --ignore-path 也读本文件）；
+#   ② 扫描排除：workspace 首次搜索时按本文件**拷贝**生成 .zcodeignore，本段每一条
+#      都会成为文件搜索的排除规则（见 packages/services/src/file/workspaceFileIgnore.ts）。
+# 清单与 spec §13 C10 逐字一致：`.worktree/` · `.zcode/agent-memory/` · `.zcode/squad/`；
+# `.zcode/agent-memory-local/`（§13 设计意图：定义与记忆的目录都进清单）与
+# `.wiki/`（既有的同类产物目录）一并登记在同一段里。
+
 # 协作智能体（小队实验）产物：智能体定义落在 <workspace>/.zcode/squad/（含 agents/ 子目录），
 # 与现有 subagent 的 <workspace>/.zcode/agents 分离、可整块删除，属本地运行产物不入库。
-# 这里是本仓库既有的唯一忽略/排除处（oxfmt 也读 .gitignore），spec §13 C10 的产物目录排除清单
-# 暂未集中成单独文件，故新目录一律加在此处。
 .zcode/squad/
+
+# 协作智能体的 project scope 记忆：<workspace>/.zcode/agent-memory/<稳定 id>/
+# （apps/zcode-cli 的 persistent-memory.ts），与定义同属本地运行产物，不入库。
+.zcode/agent-memory/
+
+# 协作智能体的 local scope 记忆：<workspace>/.zcode/agent-memory-local/<稳定 id>/
+# （同一处 persistent-memory.ts 在 scope=local 时写这里；C10 未点名但同属记忆目录）。
+.zcode/agent-memory-local/
+
+# 工作树产物：<repoRoot>/.worktree/<工作项>-<队员>/ 是整份仓库的副本（P2a 的隔离目录），
+# 可再生。注意上面既有的 `.worktrees/` 是复数、不是本目录。
+/.worktree/
 
 # 项目知识库（wiki）产物：按项目落在 <workspace>/.wiki/，是可再生的生成物，
 # 不应进入版本库（需要共享时由使用者自行决定是否强制添加）。

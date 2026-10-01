@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
 import type { IFileService } from "../file/file.js";
+import { WORKSPACE_PRODUCT_TOP_LEVEL_NAMES } from "../workspaceProductDirs.js";
 import { WIKI_DIR_RELATIVE_PATH } from "./wikiStore.js";
 
 /** 可遍历的源码文件扩展名 → 语言标签。用于 languageStats 与选材。 */
@@ -13,10 +14,18 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
 };
 
 /** 这些目录一律跳过：既不是项目源码，也让清单变得不可读。 */
-const SKIPPED_DIR_NAMES = new Set([
+const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set([
   "node_modules", ".git", "dist", "build", "out", "target", "vendor",
   ".next", ".nuxt", ".cache", "coverage", "__pycache__", ".venv", "venv",
   ".idea", ".vscode",
+  /* spec §13 C10 的工作区产物目录排除清单（**扫描半边**）：**不在这里手写**，改为从
+     代码侧唯一来源 `packages/services/src/workspaceProductDirs.ts` 的
+     `WORKSPACE_PRODUCT_DIRS` 派生（去重后的顶层目录名）。清单本体与「新增产物目录在此登记」
+     的说明见仓库根 `.gitignore` 的同名段——加了清单却没同步那边，一致性测试会红。
+     `.worktree/` 里是整份仓库的副本，不挡会把 N 份副本当源码吃进清单、并让 manifestHash
+     每次都变；`.zcode/` 覆盖 squad / agent-memory / agent-memory-local 等全部实验命名空间产物。
+     两者都**不**依赖 includeHidden 过滤——见下面 isWikiArtifactDir 处「不同实现处理不一致」的理由。 */
+  ...WORKSPACE_PRODUCT_TOP_LEVEL_NAMES,
 ]);
 
 const MAX_SCAN_ENTRIES = 40_000;
