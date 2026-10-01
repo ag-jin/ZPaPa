@@ -136,7 +136,7 @@ Expected: FAIL（模块不存在）
 
 - [ ] **Step 3: 最小实现**
 
-按 P0 的 `packages/shared/src/work-item.ts` 风格写：`squadSchema` 用 `.strict()`；`instructions` 用 `z.record(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`（键限定在 8 槽位内）；`members` 用 `z.array(z.object({ agentId: z.string().min(1), role: z.string().optional() })).min(1)`——**不设名册上限**（spec 只限「并行队员 ≤ 6」，那是并发约束、由派发侧管，不是名册规模，见 spec §3.10）。
+按 P0 的 `packages/shared/src/work-item.ts` 风格写：`squadSchema` 用 `.strict()`；`instructions` 用 **`z.partialRecord(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`**（键限定在 8 槽位内、**允许缺键**——zod 4 的 `z.record(z.enum)` 是穷尽语义，会要求 8 键全给）；`members` 用 `z.array(z.object({ agentId: z.string().min(1), role: z.string().optional() })).min(1)`——**不设名册上限**（spec 只限「并行队员 ≤ 6」，那是并发约束、由派发侧管，不是名册规模，见 spec §3.10）。
 
 `validateSquad` 返回 `problems: string[]`（中文、可读），逐条：
 1. `leaderAgentId` 必须出现在 `members` 的 `agentId` 中；
