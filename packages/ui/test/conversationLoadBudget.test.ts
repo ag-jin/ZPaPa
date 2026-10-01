@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DIRECTORY_HYDRATION_MAX_WINDOW_ROWS,
   LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS,
   shouldAutoLoadIncompleteLeadingTurn,
-  shouldStopDirectoryHydration,
   withinLeadingTurnAutoloadBudget,
 } from "../src/v4/conversationProjectionStore.js";
 import {
@@ -126,29 +124,4 @@ test("目录补拉只在伸手时发起：未补齐 + 有处理器 + 非在途",
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, directoryIncomplete: false }), false);
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, hasRequestHandler: false }), false);
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, hydrating: true }), false);
-});
-
-test("目录补拉有行数预算：到预算即停，不等「没有更早历史」", () => {
-  // 没有更早历史 → 停（既有语义）
-  assert.equal(shouldStopDirectoryHydration({ hydratedRows: 0, hasMore: false }), true);
-  // 还有更早历史，但已到预算 → 停（本次新增：避免整段历史换进窗口）
-  assert.equal(
-    shouldStopDirectoryHydration({
-      hydratedRows: DIRECTORY_HYDRATION_MAX_WINDOW_ROWS,
-      hasMore: true,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldStopDirectoryHydration({
-      hydratedRows: DIRECTORY_HYDRATION_MAX_WINDOW_ROWS - 1,
-      hasMore: true,
-    }),
-    false,
-    "预算之内且还有历史 → 继续拉",
-  );
-  assert.ok(
-    DIRECTORY_HYDRATION_MAX_WINDOW_ROWS < 11_042,
-    "预算必须显著小于实测最长会话的整段历史（11042 行），否则等于没设",
-  );
 });

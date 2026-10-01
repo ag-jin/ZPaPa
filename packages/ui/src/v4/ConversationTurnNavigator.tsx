@@ -193,7 +193,8 @@ function ConversationTurnNavigatorImpl({
         ref={railScrollRef}
         // 只声明 overflow-y-auto 时，浏览器会把 overflow-x 计算为 auto；
         // hover 山峰横向放大后便可能触发横向滚动条，因此 rail 必须只开放纵向滚动。
-        className="!scrollbar-hide pointer-events-auto absolute left-3 top-1/2 max-h-[calc(100%-6rem)] w-9 -translate-y-1/2 overflow-x-hidden overflow-y-auto py-1"
+        // 盒高按规格取会话高度的 75%（居中），更长的目录在盒内滚动。
+        className="!scrollbar-hide pointer-events-auto absolute left-3 top-1/2 max-h-[75%] w-9 -translate-y-1/2 overflow-x-hidden overflow-y-auto py-1"
         onPointerEnter={scheduleDirectoryRequest}
         onPointerLeave={() => {
           setInteractionItemIndex(undefined);
