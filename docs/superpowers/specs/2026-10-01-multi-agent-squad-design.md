@@ -83,7 +83,7 @@
 | 字段 | 说明 |
 |---|---|
 | `id` | **稳定 id**（记忆 key 用它，不用名字） |
-| `name` / `description` / `color` | 身份；`color` 取自 `SUBAGENT_COLORS` 九色板（按实例序号分配，**不编码状态**） |
+| `name` / `description` / `color` | 身份；`color` 取自 `SUBAGENT_COLORS` 调色板（**共 8 色**：yellow/red/orange/green/cyan/blue/purple/pink；按实例序号分配，**不编码状态**） |
 | `systemPrompt` / `instructions` | 行为 |
 | `skills[]` | 技能，多对多挂载，可逐个禁用 |
 | `modelSelection` | 复用 `ModelSelection`（providerId / modelId / reasoningLevel）——**每个智能体可用不同模型** |
