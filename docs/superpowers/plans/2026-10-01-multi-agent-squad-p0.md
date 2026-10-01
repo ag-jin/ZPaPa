@@ -20,6 +20,8 @@
 - **实验开关默认 `false`**；关闭时**停止新功能、不销毁数据、不影响**现有 subagent / automation。
 - **排除清单集中一处维护**：`.worktree/` · `.zcode/agent-memory/` · `.zcode/squad/`，同时驱动 gitignore 与扫描排除。
 - 测试文件位置 `packages/<pkg>/test/*.test.ts`；运行 `pnpm exec tsx --test <file>`。
+  **`packages/ui` 例外**：ui 源码大量使用 `@/` 别名，必须带上包内 tsconfig，否则报 `ERR_MODULE_NOT_FOUND: @/...`：
+  `pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test <file>`（已实测：既有 ui 测试 6 passed）。
 - 每个任务结束必须通过 `pnpm typecheck` 与 `pnpm lint`。
 - 状态、时序、唯一所有者相关代码必须带**中文注释说明为什么**。
 
@@ -151,7 +153,7 @@ test("实验分区在设置配置里注册", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `pnpm exec tsx --test packages/ui/test/settingsExperimentsSection.test.ts`
+Run: `pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/settingsExperimentsSection.test.ts`
 Expected: FAIL（类型上 `"experiments"` 不是 `SettingsSectionId`；运行时配置里没有该分区）
 
 - [ ] **Step 3: 最小实现**
@@ -194,7 +196,7 @@ Expected: FAIL（类型上 `"experiments"` 不是 `SettingsSectionId`；运行�
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `pnpm exec tsx --test packages/ui/test/settingsExperimentsSection.test.ts`
+Run: `pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/settingsExperimentsSection.test.ts`
 Expected: PASS（2 passed）
 
 - [ ] **Step 5: 逆推审查**
