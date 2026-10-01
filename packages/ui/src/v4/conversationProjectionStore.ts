@@ -263,12 +263,13 @@ export const LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS = 240;
 /**
  * rail 目录的自动预载行数。
  *
- * 目录补拉的结果是整窗换一次快照，而窗口越大，切进该会话时重建这批数据越贵
- * （2026-10-01 实测：窗口 240 行点击阻塞 215ms；11042 行 4.3~7.6s——DOM 里其实只挂
- * 20 行，贵的是整窗数据模型进 React 那一遭）。所以自动预载只给 rail 垫一段，
- * 让左侧导航一进去就有内容可看；用户真的去用 rail 时才补到完整目录（不设上限）。
+ * 目录补拉的结果是整窗换一次快照，而「把这些行搬进 renderer」本身就是主线程上的一整段
+ * 同步工作：2026-10-01 实测补全 11042 行时 RPC 端口派发 55 页耗时 ~1.0s、V8/GC ~0.9s、
+ * React 提交 ~0.5s（DOM 里其实只挂 20 行，虚拟化是好的）；一次落地在静置相位实测
+ * 749ms（700 行档）/4460ms（整段历史）。所以自动预载只垫一小段，让 rail 一进去有几条
+ * 可看；用户真的去用 rail 时才补到完整目录（不设上限，那才是他明确要目录的时刻）。
  */
-export const RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS = 1_000;
+export const RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS = 600;
 
 /** 目录补拉是否该停：没有更早历史，或已到预载预算（maxRows = null 表示不设上限）。 */
 export function shouldStopDirectoryHydration(input: {
