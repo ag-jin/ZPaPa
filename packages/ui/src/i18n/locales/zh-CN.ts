@@ -4061,6 +4061,9 @@ const zhCN: Record<string, string> = {
   "settings.hooks.review.reason.host_unavailable": "当前连接不支持审核此 Hook",
   "settings.hooks.review.reason.rejected": "操作被拒绝",
   "settings.hooks.title": "钩子",
+  "settings.experiments.title": "实验功能",
+  "settings.experiments.squadToggle.label": "多智能体小队",
+  "settings.experiments.squadToggle.description": "启用协作智能体、小队与工作树隔离",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",
