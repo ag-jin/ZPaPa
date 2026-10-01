@@ -340,9 +340,38 @@ test(".worktree/ 根下不属于任何工作树的散落文件与散落目录，
   assert.equal(existsSync(looseDir), true);
 });
 
-// ── 矩阵外：detached 工作树（Task 1 的 list 会给出 branch === null）────────────
+// detached 工作树的用例随 B‑0 移到下面的「归属判据 = 分支命名空间」一节（语义已变）。
 
-test("detached 工作树（branch 为 null）：摘掉工作树，但不拿 null 去删分支", async () => {
+// ── B‑0（2026-10-01 修正）：归属判据 = 分支命名空间，不是路径 ──────────────────
+//
+// 非小队命名空间的工作树落在 `.worktree/` 下：树在、分支在，且不进 reclaimed / reclaimedBranches。
+// 真实成因：用户自己 `git worktree add .worktree/x feat/dev-sandbox`，或开发工作树被误放进去。
+// 第一遍若按路径判归属，它的分支永远不在 activeBranches 里 ⇒ 判据恒为真 ⇒ 被静默吃掉。
+// 这条用例是「放在我的目录里 ≠ 属于我」这条不变式的机器化证明。
+test("命名空间外的工作树不被回收，但可见（进 kept）", async () => {
+  const f = await fixture();
+  // 用户自己的分支（非 squad/ 命名空间）挂在我们产品的运行时目录下：位置像我们的，归属不是。
+  // `add` 恒带 `-b`（它自己派生分支），所以这里不先建分支 —— 否则会撞「a branch named … already exists」。
+  await f.manager.add({ branch: "feat/dev-sandbox", base: "main", dirName: "dev-sandbox" });
+
+  const out = await f.reaper().reap({ activeBranches: [] });
+
+  assert.deepEqual(out.reclaimed, []);
+  assert.deepEqual(out.reclaimedBranches, []);
+  assert.ok(out.kept.includes("dev-sandbox"));
+  assert.deepEqual(out.foreign, [], "它在我们的根下，所以不是 foreign；但也不归我们管");
+  // 实体状态：树与分支都还在（断言返回值不够 —— 实现可能嘴上说 kept 手上却删了）。
+  assert.ok((await f.manager.list()).some((e) => e.branch === "feat/dev-sandbox"));
+  // `branch --list` 对被工作树检出的非当前分支会加 `+ ` 前缀，所以按存在性断言而不是逐字比对。
+  assert.equal(await branchExists(f, "feat/dev-sandbox"), true);
+
+  rmSync(worktreePath(f, "dev-sandbox"), { recursive: true, force: true });
+});
+
+// 同一条不变式的第二个入口：**detached**（没有分支）的工作树同样不能证明归属。
+// 我们自己的树恒由 `worktree add -b` 建出（必有分支），所以「没有分支」只可能是别人的或残骸——
+// 两种都不能碰。这条用例 2026-10-01 随 B‑0 改变了语义（此前被当孤儿摘掉），见其断言里的说明。
+test("detached 工作树（branch 为 null）：不能证明归属 ⇒ 不碰、计入 kept", async () => {
   const f = await fixture();
   await f.git(["worktree", "add", "--detach", worktreePath(f, "det"), "main"], { cwd: f.root });
   const deleted: string[] = [];
@@ -356,10 +385,15 @@ test("detached 工作树（branch 为 null）：摘掉工作树，但不拿 null
     })
     .reap({ activeBranches: [] });
 
-  assert.deepEqual(out.reclaimed, ["det"]);
-  // 没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」这种假动作。
-  assert.deepEqual(deleted, []);
-  assert.equal(existsSync(worktreePath(f, "det")), false);
+  // 语义变更（B‑0）：以前「摘掉工作树、不删分支」；现在**整项不碰**——
+  // 没有分支就没有命名空间，没有命名空间就无法证明它属于我们（不变式：归属判据是分支命名空间）。
+  // 代价是这类树会一直留在 `.worktree/` 下；但它每轮都出现在 `kept` 里（可见），不是静默。
+  assert.deepEqual(out.reclaimed, []);
+  assert.deepEqual(out.kept, ["det"]);
+  assert.deepEqual(deleted, [], "没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」");
+  assert.equal(existsSync(worktreePath(f, "det")), true, "摘不了归属就一个字节都不动");
+
+  rmSync(worktreePath(f, "det"), { recursive: true, force: true });
 });
 
 // ── 判定 1：外来工作树 —— 不抛、不碰、要可见 ───────────────────────────────────
@@ -424,14 +458,17 @@ test("绝不碰集成分支：不在活跃集合里、也没有工作树的集�
   assert.deepEqual(out.reclaimedBranches, [member], "只有队员残枝进了视野");
 });
 
-// 第一遍（工作树那一遍）也守同一条边界：上面的用例只覆盖第二遍的形状，抓不到这条。
-test("第一遍也守集成分支边界：.worktree/ 下的集成分支工作树不被回收，且计入 kept", async () => {
+// 第一遍（工作树那一遍）也守集成分支边界 —— 但**守它的是命名空间闸**，不是一条单独的
+// `INTEGRATION_NAMESPACE` 判断（那条曾被写成显式保护臂，但它被命名空间闸遮蔽、**永不可达**，
+// 已删除：留一条不可达的臂只会让这条用例**因另一个理由通过**）。本用例现在验证的就是它真正的理由：
+// 集成分支 `squad/integration/**` 不在 `MEMBER_NAMESPACE` 里 ⇒ 命名空间闸整项挡下 ⇒ 计入 `kept`。
+test("第一遍由命名空间闸保护集成分支：.worktree/ 下的集成分支工作树整项进 kept（不碰树、不删分支）", async () => {
   const f = await fixture();
   const integration = planBranches({ workItemSlug: "wi1", agentSlug: "a" }).integration;
   const dirName = "wi1-int";
   // 将来可能出现的形状：某调用方在 `.worktree/` 下给**集成分支**挂了工作树。今天 ensureIntegration
-  // 只跑 git branch、不建工作树，所以**不可达**；但一旦如此，第一遍会无条件把「本根下任何工作树」
-  // 当孤儿摘掉 —— 那会删掉整批未合并的集成分支（而现有边界测试只覆盖第二遍，抓不到）。
+  // 只跑 git branch、不建工作树，所以这一格当前不可达；但一旦如此，若第一遍的归属判据只是「在本根下」，
+  // 它会无条件把「本根下任何工作树」当孤儿摘掉 —— 那会删掉整批未合并的集成分支。
   await f.manager.add({ branch: integration, base: "main", dirName });
 
   const out = await f.reaper().reap({ activeBranches: [] });
@@ -440,9 +477,9 @@ test("第一遍也守集成分支边界：.worktree/ 下的集成分支工作树
   assert.equal(await branchExists(f, integration), true, "集成分支绝不能被第一遍删掉");
   assert.deepEqual(out.reclaimedBranches, [], "第一遍不该删任何分支");
   assert.deepEqual(out.reclaimed, [], "第一遍不该回收任何工作树");
-  // 语义选择：命中即**整项计入 `kept`**（连工作树一起原样不动，而不是「摘树留分支」）。
+  // 语义选择：命中命名空间闸即**整项计入 `kept`**（连工作树一起原样不动，而不是「摘树留分支」）。
   // 理由：树里可能有未提交的集成成果，摘它就是丢活；而 `kept` 的既有语义正是「本流程看见了、
-  // 但决定原样不动」，与「活跃分支对应的工作树」同类，故沿用而不另开一个桶。
+  // 但决定原样不动」，与「活跃分支对应的工作树」「命名空间外来的分支」同类，故沿用而不另开一个桶。
   assert.deepEqual(out.kept, [dirName]);
   assert.equal(existsSync(worktreePath(f, dirName)), true, "集成分支的工作树也原样不动");
 });
