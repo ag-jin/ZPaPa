@@ -372,23 +372,32 @@ git commit -m "feat(worktree): 串行合并到集成分支（冲突不抛 + abor
 - Test: `packages/services/test/orphanReaper.test.ts`
 
 **Interfaces:**
-- Consumes: Task 1 的 `WorktreeManager`
+- Consumes: Task 1 的 `WorktreeManager`；Task 2 的 `MEMBER_NAMESPACE`；Task 3 的 `resolveWorktreeRoot` 与 `deleteBranch`
 - Produces:
   - `type ReapInput = { activeBranches: readonly string[] }`
-  - `createOrphanReaper(deps: { manager: WorktreeManager; deleteBranch: (branch: string) => Promise<void> }): { reap(input: ReapInput): Promise<{ reclaimed: string[]; kept: string[] }> }`
+  - `type ReapOutcome = { reclaimed: string[]; kept: string[]; foreign: string[] }`
+    - `foreign` = 「存在于本仓库、但**不属于本流程**」的工作树（例如用户自己 `git worktree add` 的）。**按设计不动它们**，但**必须报出来**——把「静默跳过」变成「可见跳过」。（实现若取了同义的别的字段名，以代码为准并在报告中说明。）
+  - `createOrphanReaper(deps: { manager: WorktreeManager; repoRoot: string; deleteBranch: (branch: string) => Promise<void>; listBranches: (prefix: string) => Promise<string[]> }): { reap(input: ReapInput): Promise<ReapOutcome> }`
   - **`reap` 必须连分支一起回收**（不只是工作树）：回收后**该分支必须能重新 `add` 成功**。否则「清理是正确性前置」只做了一半——孤儿分支同样会占住分支名，让重派发撞上「分支已存在」。
+  - **归属按「根」判，不按路径形状猜**：只认 `<repoRoot>/.worktree/<dirName>`（用 `resolveWorktreeRoot(repoRoot)`，**不得再写第二处 `.worktree` 字面量**）。**遇到不属于本流程的工作树 → 不抛、不碰、进 `foreign`**。
+    - **为什么不抛**（2026-10-01 裁定）：抛错会让「用户仓库里存在他自己的 worktree」变成**启动回收的永久故障**——孤儿永远清不掉，反而让重派发撞 `branch already exists`。而这本是一个完全正当、与我们无关的情况。spec §6.6 把回收列为**启动时**必须完成的恢复步骤，这条路径不能因无关原因长期失败。
+  - **分支残枝必须进视野**（2026-10-01 裁定）：`worktree add` **先建分支、后因目标目录非空失败**（Task 1/3 实测），留下**有分支、无工作树**的孤儿——它不在 `worktree list` 里，`prune()` 也不删分支。这是本模块存在的**主要理由**（doc 注释第一句「清理是重派发的正确性前置」就是冲它说的）。⇒ **在工作树那一遍之后**，枚举 `squad/member/**` 分支，删掉**既不在 `activeBranches` 里、也未被任何存活工作树检出**的那些。
+    - 顺序不可颠倒：先摘树（第一遍），再判「未被检出」（第二遍）。
+    - **绝不触碰 `squad/integration/**`**：集成分支承载整批未合并成果，删它就是丢活；它由 Task 3 的 `discardIntegration` 在**整批合回主分支之后**删。此边界须有测试钉住。
   - `deleteBranch` 由 deps 注入（与 `discardMember` 共用同一实现，避免两处各写一遍 `git branch -D`）。
 
 - [ ] **Step 1: 写失败测试**
+
+> 下列样例为**意图示意**；`deps` 以 Interfaces 为准（`repoRoot` / `deleteBranch` / `listBranches` 均为必填，`deleteBranch` 需**绑定**成单参）。分支名用 Task 2 的 D/F 安全命名（`squad/member/<wi>/<agent>`）。
 
 ```ts
 test("回收不在活跃集合里的工作树", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
-  await m.add({ branch: "squad/wi1/b", base: "main", dirName: "wi1-b" });
-  const reaper = createOrphanReaper({ manager: m });
-  const out = await reaper.reap({ activeBranches: ["squad/wi1/a"] });
+  await m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" });
+  await m.add({ branch: "squad/member/wi1/b", base: "main", dirName: "wi1-b" });
+  const reaper = createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches });
+  const out = await reaper.reap({ activeBranches: ["squad/member/wi1/a"] });
   assert.deepEqual(out.reclaimed, ["wi1-b"]);
   assert.deepEqual(out.kept, ["wi1-a"]);
 });
@@ -397,9 +406,10 @@ test("回收不在活跃集合里的工作树", async () => {
 test("回收后同一分支可重新建工作树", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
-  await createOrphanReaper({ manager: m, deleteBranch }).reap({ activeBranches: [] });
-  await assert.doesNotReject(m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" }));
+  await m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" });
+  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
+    .reap({ activeBranches: [] });
+  await assert.doesNotReject(m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" }));
   assert.equal((await m.list()).length, 1);
 });
 
@@ -407,9 +417,10 @@ test("回收后同一分支可重新建工作树", async () => {
 test("回收后孤儿分支确实不存在了", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/orphan", base: "main", dirName: "wi1-orphan" });
-  await createOrphanReaper({ manager: m, deleteBranch }).reap({ activeBranches: [] });
-  const branches = await realGit(root)(["branch", "--list", "squad/wi1/orphan"]);
+  await m.add({ branch: "squad/member/wi1/orphan", base: "main", dirName: "wi1-orphan" });
+  await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
+    .reap({ activeBranches: [] });
+  const branches = await realGit(root)(["branch", "--list", "squad/member/wi1/orphan"]);
   assert.equal(branches.stdout.trim(), "");
 });
 
@@ -417,9 +428,36 @@ test("回收后孤儿分支确实不存在了", async () => {
 test("活跃分支对应的工作树被保留", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/review", base: "main", dirName: "wi1-review" });
-  const out = await createOrphanReaper({ manager: m }).reap({ activeBranches: ["squad/wi1/review"] });
+  await m.add({ branch: "squad/member/wi1/review", base: "main", dirName: "wi1-review" });
+  const out = await createOrphanReaper({ manager: m, repoRoot: root, deleteBranch, listBranches })
+    .reap({ activeBranches: ["squad/member/wi1/review"] });
   assert.deepEqual(out.kept, ["wi1-review"]);
+});
+
+// 【必须补】分支残枝：有分支、无工作树（真实成因：git worktree add 先建分支后失败）。
+test("分支残枝（有分支、无工作树）也被回收", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  await git(["branch", "squad/member/wi1/residue", "main"]); // 只建分支，不挂树
+  const reaper = createOrphanReaper({ manager: createWorktreeManager({ git, repoRoot: root }), repoRoot: root, deleteBranch, listBranches });
+  await reaper.reap({ activeBranches: [] });
+  assert.equal((await git(["branch", "--list", "squad/member/wi1/residue"])).stdout.trim(), "");
+});
+
+// 【必须补】集成分支不在 reap 视野内：它承载整批未合并成果，删它就是丢活。
+test("集成分支不被回收（归 discardIntegration 管）", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  await git(["branch", "squad/integration/wi1", "main"]);
+  await createOrphanReaper({ manager: createWorktreeManager({ git, repoRoot: root }), repoRoot: root, deleteBranch: (b) => deleteBranch(git, root, b), listBranches: (p) => listBranches(git, p) })
+    .reap({ activeBranches: [] });
+  assert.equal((await git(["branch", "--list", "squad/integration/wi1"])).stdout.trim(), "squad/integration/wi1");
+});
+
+// 【必须补】外来工作树：不抛、不碰、进 foreign。
+test("非本流程的工作树不被回收，但被报为 foreign", async () => {
+  // 夹具：在仓库根下建一个用户自己的工作树（不在 .worktree/ 里），断言 reap 不抛、
+  // 该工作树与其分支原封不动、且出现在 out.foreign 中。
 });
 ```
 
