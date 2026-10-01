@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { computeEventKey } from "@zcode/shared";
 
@@ -202,4 +203,36 @@ test("排期族：scheduledFor 非整数毫秒 ⇒ 抛", () => {
   const rule = { id: "w1", workItemId: "wi", kind: "every", intervalSeconds: 60 } as never;
   assert.throws(() => computeEventKey(rule, { scheduledFor: 1000.5 }), /eventKey/);
   assert.throws(() => computeEventKey(rule, {}), /eventKey/);
+});
+
+/* 指纹族的输出必须**逐字**等于「真实 SHA-256 的结果拼成的 key」。
+
+   为什么需要这一条（而上面的用例组不够）：本文件此前全篇只比较 key 之间的相等/不等，
+   **任何确定性函数都能通过** —— 手写 SHA-256 改坏了填充或轮常量也不会红，而表现是
+   「同一事实重投算出不同 key」⇒ 去重静默失效。这里把生产路径（`computeEventKey` →
+   `stableStringify` → `sha256Hex`）拉到 `node:crypto` 面前比：
+   直接在实现上逐字节对照的用例见 `packages/shared/test/wakeRuleSha256.test.ts`，
+   这一条则钉住「生产装配出来的串确实是那一个」。
+   期望的规范化串是**字面写死**的（不调用被测的 `stableStringify`），
+   于是键序与摘要两件事同时被外部标准对照，而不是自证。 */
+test("指纹族输出与 node:crypto 的 SHA-256 逐字一致（外部对照）", () => {
+  const rule = { id: "w1", workItemId: "wi", kind: "event" } as never;
+  const sha = (input: string): string => createHash("sha256").update(input, "utf8").digest("hex");
+
+  // ① 字符串 payload：`stableStringify(str)` 就是 `JSON.stringify(str)`（含引号与转义）。
+  //    用多字节输入，顺带证明走的是 UTF-8 字节而不是 `String.length`。
+  const text = "含多字节 UTF-8：中文·🚀";
+  assert.equal(
+    computeEventKey(rule, { source: "gh", eventType: "e", payload: text }),
+    `e:fp:gh:e:${sha(JSON.stringify(text))}`,
+  );
+
+  // ② 对象 payload：期望的规范化串**字面写死**（`{b,a}` 必须按码点升序变成 `{"a":…,"b":…}`）。
+  assert.equal(
+    computeEventKey(rule, { source: "gh", eventType: "e", payload: { b: { c: 2 }, a: 1 } }),
+    `e:fp:gh:e:${sha('{"a":1,"b":{"c":2}}')}`,
+  );
+
+  // ③ 无 payload 按 `null` 归一：也必须与外部摘要一致（不是「凑一个看起来对的串」）。
+  assert.equal(computeEventKey(rule, { source: "gh", eventType: "e" }), `e:fp:gh:e:${sha("null")}`);
 });

@@ -90,15 +90,21 @@ export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService
 /**
  * 服务实现。依赖全部由组合根注入（本文件不得 import node 侧的值）。
  *
- * 关于「读开关」的纪律（确认 2）：门禁的判据**只有** `runtime.assertDispatchEnabled` 一处；
- * 这里注入的 `readExperimentEnabled` **只服务 `getSnapshot().enabled`**（UI 呈现用），
- * 它就算读到相反的值也不构成门禁。反过来，`assertDispatchEnabled` / `createWorkItem` /
- * `openMemberRun` 三处都调**同一个** runtime 方法，所以「改一处漏一处」在结构上不成立。
+ * 关于「读开关」的纪律（确认 2）：服务侧**唯一**的判据是下面的私有 `assertEnabled()`；
+ * `assertDispatchEnabled` / `createWorkItem` / `openMemberRun` 三个入口都调它，没有第二处判断。
+ * 它读的就是组合根注入的 `readExperimentEnabled`（node.ts 里是门禁用的那份同步快照）。
+ * 同一个 `readExperimentEnabled` 也被 `getSnapshot().enabled` 用于 UI 呈现 —— 那是**同一份值**的
+ * 第二个用途，不是第二个判据：呈现读到相反的值既不会放行、也不会拦截任何派发。
+ * `SquadRuntime.assertDispatchEnabled`（冻结签名）是 host 走「规则 tick」入口的形态，
+ * 它读的是组合根注入给 runtime 的**同一个闭包**（两处同源 ⇒ 不可能漂移）。
  */
 export function createSquadRuntimeService(deps: {
   /** 按目标现构 runtime（裁定 4 + 确认 3：不缓存、不取首个）。 */
   createRuntime: (target: SquadWorkspaceTarget) => Promise<SquadRuntime>;
-  /** 只读呈现用（UI 据此隐藏 / 禁用入口）。**不是门禁**，门禁是 runtime.assertDispatchEnabled。 */
+  /**
+   * 读实验开关：**门禁（服务侧唯一判据）与 UI 呈现共用这一份结论**。
+   * 组合根注入的是门禁用的那份同步快照，故它与注入给 runtime 的是同一份值。
+   */
   readExperimentEnabled: () => Promise<boolean>;
   /**
    * 归档 + 指派转交（组合逻辑在 `squadRuntime.ts`：它要用 workItemRepo，而描述符这一侧必须浏览器安全，
@@ -113,10 +119,30 @@ export function createSquadRuntimeService(deps: {
       workspaceIdentity: runtime.boundWorkspace.identity,
     });
 
+  /**
+   * 门禁的**唯一判据**（spec §5.7.6 / 确认 2）。三个入口（`assertDispatchEnabled` 自身、
+   * `createWorkItem`、`openMemberRun`）都调**这一个**函数。
+   *
+   * 为什么在这里读注入的开关、而不是「先建 runtime 再问 runtime」：门禁要回答的问题是
+   * 「现在允不允许新派发」，它与目标 workspace 是不是一个**可用的 git 仓库**无关。
+   * 先建 runtime 会先跑 `git symbolic-ref` 解析 base 分支（构造期解析、失败即抛），
+   * 于是在**非 git 目标**上关闭开关时，调用方拿到的是「base 分支解析失败」而不是**门禁结论** ——
+   * 上层据错误码分流（`SQUAD_DISPATCH_DISABLED_CODE`）就分不出来，界面上会显示成 workspace 坏了。
+   * 判据的值只有一处来源：组合根注入的 `readExperimentEnabled`（node.ts 里就是门禁用的那份
+   * `squadsEnabled` 同步快照，与注入给 runtime 的是**同一个**闭包 ⇒ 两处不可能漂移）。
+   * `SquadRuntime.assertDispatchEnabled`（冻结签名）仍是 host 走「规则 tick」那条入口的形态，
+   * 它读的是同一个来源；本函数是服务侧三个入口的形态。
+   */
+  const assertEnabled = async (): Promise<void> => {
+    if ((await deps.readExperimentEnabled()) !== true) {
+      throw new SquadDispatchDisabledError();
+    }
+  };
+
   return {
-    async assertDispatchEnabled(target) {
-      // 唯一判据的转发：判定逻辑在 runtime 里，这里不再读任何设置。
-      await (await deps.createRuntime(target)).assertDispatchEnabled();
+    async assertDispatchEnabled(_target) {
+      // 只答门禁问题：**不构造 runtime**（也就不依赖 git 解析），只读设置、只抛错。
+      await assertEnabled();
     },
 
     async getSnapshot(target) {
@@ -139,9 +165,10 @@ export function createSquadRuntimeService(deps: {
     },
 
     async createWorkItem(target, input) {
+      // 入口② 的闸：**先**判门禁（用的是服务侧唯一判据，不需要先建 runtime），再建项。
+      // 「拦在入口而不是半路」：半路拦会留下一条已入队的工作项，看上去像是派发成功了一半。
+      await assertEnabled();
       const runtime = await deps.createRuntime(target);
-      // 入口② 的闸：**先**判门禁，再建项（拦在入口，不是拦在半路——半路拦会留下一条已入队的工作项）。
-      await runtime.assertDispatchEnabled();
       // workspace 列取自 runtime 的绑定值而不是入参 target：runtime 才是「为哪个 workspace 而构造」的权威。
       return runtime.workItemService.create({
         workspaceIdentity: runtime.boundWorkspace.identity,
@@ -154,9 +181,9 @@ export function createSquadRuntimeService(deps: {
     },
 
     async openMemberRun(target, input) {
+      // 入口①（队员段）与入口③ 共用的这一道闸（与上面、与 assertDispatchEnabled 是同一个函数）。
+      await assertEnabled();
       const runtime = await deps.createRuntime(target);
-      // 入口①（队员段）与入口③ 共用的这一道闸。
-      await runtime.assertDispatchEnabled();
       return runtime.lifecycle.openMemberRun(input);
     },
 

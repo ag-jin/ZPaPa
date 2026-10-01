@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,7 @@ import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrati
 import {
   SquadDispatchDisabledError,
   createSquadRuntimeService,
+  type SquadWorkspaceTarget,
 } from "../src/workitem/squadRuntimeService.js";
 import {
   archiveSquadAndTransfer,
@@ -16,6 +17,7 @@ import {
   renderLeaderBriefingPrompt,
 } from "../src/workitem/squadRuntime.js";
 import { slugForId } from "../src/workitem/slug.js";
+import type { WorkItemEvent } from "../src/workitem/workItemService.js";
 import { makeRepo } from "./helpers/gitFixture.js";
 
 /* 组合根装配 + 冻结契约的机器化证明（recon.md C6：这些零件出厂即「零生产调用方」，本文件是第一个调用方）。
@@ -513,6 +515,151 @@ test("reviewMemberRun 未知 runId ⇒ 抛", async () => {
   );
 });
 
+// `branch_missing`：队员分支在审查前消失（被外部清理、残枝丢失）⇒ 必须给出**可区分**的 reason，
+// 而不是被归成 conflict（上层据此决定「重开一棵」还是「当冲突处理」，混在一起就分不出来）。
+// 删掉队员分支后即在本层的 ReviewOutcome 里可达，不需要 Wave 1 的编排。
+test("reviewMemberRun approved：队员分支不存在 ⇒ reason=branch_missing", async () => {
+  const { repoRoot, runtime } = await setup();
+  const opened = await runtime.lifecycle.openMemberRun({
+    runId: "r-gone",
+    workItemId: "wi-gone",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-g",
+    isLeaderTask: false,
+  });
+  await runtime.lifecycle.completeMemberRun({ runId: "r-gone" });
+  // 先摘工作树、后删分支（顺序契约见 deleteBranch 注释：还挂着工作树的分支 git 不让删）。
+  await runtime.worktreeManager.remove(opened.worktreePath.split("/").at(-1)!);
+  const deleted = await runtime.git(["branch", "-D", opened.branch], { cwd: repoRoot });
+  assert.equal(deleted.code, 0, deleted.stderr);
+
+  const outcome = await runtime.lifecycle.reviewMemberRun({ runId: "r-gone", verdict: "approved" });
+  assert.ok(outcome.ok === false, "队员分支不存在必须 ok:false（不能报成功）");
+  assert.equal(outcome.reason, "branch_missing");
+  assert.ok(outcome.detail.includes(opened.branch), `detail 应点名缺失的分支：${outcome.detail}`);
+  // 分支不存在时**不准**把台账推进成 merged（否则收尾层会以为这批已经落地）。
+  assert.equal(runtime.squadRunRepo.get("r-gone")?.status, "produced");
+});
+
+/* approved 的**真冲突**分支：两名队员各自从 base 开分支、各改**同一文件的同一行**，
+   串行 approve 进**同一个集成分支**（集成分支按 workItemSlug 派生 ⇒ 同一 workItemId 即同一条）。
+
+   为什么必须用真 git 构造而不是打桩：冲突的判据是 git 自己给的（`merge` 的退出码 + MERGE_HEAD），
+   打桩只会验证「我们以为自己会怎么处理」。三条不变量：
+   ① `mergeMember` 返回 `{ ok:false, reason:"conflict" }`（`reviewMemberRun` 原样透出）；
+   ② 台账**保持 `produced`**（不得因冲突被推进）；
+   ③ **不写工作项 `status`**（`blocked` + Inbox 属 Wave 2 的批次层，本层不许写）。 */
+test("reviewMemberRun approved 真冲突 ⇒ conflict，台账仍 produced，且不写工作项状态", async () => {
+  const { repoRoot, runtime } = await setup();
+  // 同一个工作项 ⇒ 同一个集成分支（planBranches 的 integration 只由 workItemSlug 派生）。
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "conflict",
+    assignee: { type: "agent", id: "ta-a" },
+  });
+  assert.equal(runtime.workItemService.transition(item.id, "in_progress", "todo"), true);
+
+  const memberA = await runtime.lifecycle.openMemberRun({
+    runId: "r-cf-a",
+    workItemId: item.id,
+    parentWorkItemId: "wi-p",
+    agentId: "ta-a",
+    isLeaderTask: false,
+  });
+  const memberB = await runtime.lifecycle.openMemberRun({
+    runId: "r-cf-b",
+    workItemId: item.id,
+    parentWorkItemId: "wi-p",
+    agentId: "ta-b",
+    isLeaderTask: false,
+  });
+
+  // 两人改**同一文件的同一行**，各自提交到自己的队员分支。
+  writeFileSync(join(memberA.worktreePath, "shared.txt"), "A\n");
+  writeFileSync(join(memberB.worktreePath, "shared.txt"), "B\n");
+  for (const [worktree, message] of [
+    [memberA.worktreePath, "A"],
+    [memberB.worktreePath, "B"],
+  ] as const) {
+    const added = await runtime.git(["add", "shared.txt"], { cwd: worktree });
+    assert.equal(added.code, 0, added.stderr);
+    const committed = await runtime.git(["commit", "-m", message], { cwd: worktree });
+    assert.equal(committed.code, 0, committed.stderr);
+  }
+
+  // **串行**：A 先并入（集成分支在此刻从 base 派生），B 随后必然冲突。
+  await runtime.lifecycle.completeMemberRun({ runId: "r-cf-a" });
+  assert.deepEqual(
+    await runtime.lifecycle.reviewMemberRun({ runId: "r-cf-a", verdict: "approved" }),
+    {
+      ok: true,
+      merged: true,
+    },
+  );
+  await runtime.lifecycle.completeMemberRun({ runId: "r-cf-b" });
+  const conflict = await runtime.lifecycle.reviewMemberRun({
+    runId: "r-cf-b",
+    verdict: "approved",
+  });
+
+  // ① 结局是**真冲突**（reason 恰为 conflict，而不是别的失败被归成冲突），并带 git 原文供归因。
+  assert.ok(conflict.ok === false, "approved 的冲突必须走 ok:false 分支");
+  assert.equal(conflict.reason, "conflict");
+  assert.ok(conflict.detail.length > 0, "冲突必须带 git 原文（否则上层无从归因）");
+  // 在 merger 层再证一次：同一位置、同一判定来源（`mergeMember` 直接给出 conflict）。
+  const direct = await runtime.integrationMerger.mergeMember({
+    integration: `squad/integration/${slugForId(item.id)}`,
+    member: memberB.branch,
+  });
+  assert.ok(direct.ok === false);
+  assert.equal(direct.reason, "conflict");
+
+  // ② 台账保持 produced（冲突既不推进、也不回退状态）。
+  assert.equal(runtime.squadRunRepo.get("r-cf-b")?.status, "produced");
+  // ③ 不写工作项 status（仍是 in_review，没有被写成 blocked）。
+  assert.equal(runtime.workItemRepo.get(item.id)?.status, "in_review");
+});
+
+// 工作项事件的**唯一出口**（`subscribeWorkItemEvents`）：订阅 → transition ⇒ 收到 status_changed；
+// 取消后不再收到。这条出口此前只有「一个 Set + delete」三行保证，没有任何直接用例
+// （Wave 1 A 才是第一个真实订阅者），于是「转发断了一根线」不会有任何信号。
+test("subscribeWorkItemEvents：多订阅者都收到，取消者不再收到，dispose 清空", async () => {
+  const { repoRoot, runtime } = await setup();
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "t",
+    assignee: { type: "agent", id: "ta-a" },
+  });
+  const first: WorkItemEvent[] = [];
+  const second: WorkItemEvent[] = [];
+  const offFirst = runtime.subscribeWorkItemEvents((event) => first.push(event));
+  const offSecond = runtime.subscribeWorkItemEvents((event) => second.push(event));
+
+  assert.equal(runtime.workItemService.transition(item.id, "in_progress", "todo"), true);
+  assert.deepEqual(first, [
+    { kind: "workitem.status_changed", id: item.id, from: "todo", to: "in_progress" },
+  ]);
+  assert.deepEqual(second, first, "两个订阅者都应收到同一个事件");
+
+  offSecond();
+  assert.equal(runtime.workItemService.transition(item.id, "in_review", "in_progress"), true);
+  assert.equal(first.length, 2);
+  assert.equal(second.length, 1, "取消订阅后不得再收到事件");
+
+  offFirst();
+  assert.equal(runtime.workItemService.transition(item.id, "done", "in_review"), true);
+  assert.equal(first.length, 2, "两个订阅都取消后无人再收到");
+
+  // dispose 清空本域自持的订阅表（它不关 db —— 连接归组合根）。
+  const afterDispose: WorkItemEvent[] = [];
+  runtime.subscribeWorkItemEvents((event) => afterDispose.push(event));
+  runtime.dispose();
+  assert.equal(runtime.workItemService.transition(item.id, "closed", "done"), true);
+  assert.equal(afterDispose.length, 0, "dispose 之后订阅表应为空");
+});
+
 // 抛弃：摘树 + 删分支 + 置 discarded，且不再算活跃（否则下次启动会对着一条已抛弃的分支空转）。
 test("discardMemberRun ⇒ 摘树删分支并置 discarded", async () => {
   const { runtime } = await setup();
@@ -560,10 +707,18 @@ test("渲染出的队长 prompt 含三段标题", () => {
 // 静默按传入值操作 = 在另一个 workspace 上读写（用户看到的是「我明明没建过」）。
 test("runtime 拒绝异己 workspaceKey（带两侧的值）", async () => {
   const { runtime } = await setup(); // setup 绑定的是 "ws"
-  await assert.rejects(() => runtime.lifecycle.computeActiveBranches("another-ws"), /ws/);
+  // 断言**两侧的值**都被点到名。只 match `/ws/` 是弱断言：收到的 `another-ws` 里也含 "ws"，
+  // 于是「错误里只说了收到什么、没说绑定什么」也能通过，等于没验证「带两侧的值」。
+  const error = await runtime.lifecycle.computeActiveBranches("another-ws").then(
+    () => null,
+    (caught: unknown) => caught,
+  );
+  assert.ok(error instanceof Error, "异己 workspaceKey 必须响亮抛错");
+  assert.match(error.message, /本方绑定「ws」/);
+  assert.match(error.message, /收到「another-ws」/);
   await assert.rejects(
     () => runtime.lifecycle.reapStartupOrphans({ workspaceKey: "another-ws" }),
-    /another-ws/,
+    /收到「another-ws」/,
   );
 });
 
@@ -585,6 +740,70 @@ test("开关关闭 ⇒ assertDispatchEnabled 抛 SquadDispatchDisabledError", as
 test("开关打开 ⇒ assertDispatchEnabled 放行（补集方向）", async () => {
   const { runtime } = await setup();
   await runtime.assertDispatchEnabled();
+});
+
+/* 门禁判定**不依赖 git 解析**（复审 Minor 14 的裁定）：门禁回答的是「现在允不允许新派发」，
+   与目标 workspace 是不是一个可用的 git 仓库无关。先前实现是「先建 runtime 再问它」，
+   而 runtime 构造期要跑 `git symbolic-ref`（失败即抛）⇒ 在**非 git 目标**上关闭开关时，
+   调用方拿到的是「base 分支解析失败」而不是门禁结论，上层按错误码分流就分不出来
+   （界面会把「实验关了」显示成「workspace 坏了」）。
+
+   补集方向一起写上（免得把「门禁前置」误读成「非 git 目标也能派发」）：开关**打开**且目标不是 git 仓库时
+   仍然抛 base 分支错误 —— 真正去建工作项/开工作树本来就需要一个可用的 workspace。 */
+test("非 git 目标 + 开关关闭 ⇒ 得到门禁错误（而非 base 分支错误）", async () => {
+  const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
+  const db = await makeMemoryDb();
+  const noRepo: SquadWorkspaceTarget = { path: plain, identity: "plain" };
+  // 工厂**真的去建 runtime**（会跑 git 解析）：若门禁在构造之后判，关闭场景会先抛 base 分支错误。
+  const makeService = (enabled: boolean) =>
+    createSquadRuntimeService({
+      createRuntime: (t) =>
+        createSquadRuntime({
+          db,
+          workspacePath: t.path,
+          workspaceIdentity: t.identity,
+          readExperimentEnabled: () => enabled,
+        }),
+      readExperimentEnabled: async () => enabled,
+      archiveSquadAndTransfer: async () => {},
+    });
+
+  const off = makeService(false);
+  const error = await off.assertDispatchEnabled(noRepo).then(
+    () => null,
+    (caught: unknown) => caught,
+  );
+  assert.ok(error instanceof SquadDispatchDisabledError, `应给门禁错误，实际：${String(error)}`);
+  assert.equal(error.code, "squad_dispatch_disabled");
+  // 补集方向①：开关**打开**时，门禁在非 git 目标上**放行**（它压根不碰 git）——
+  // 这一格与下面那格合起来才说明「门禁前置」不是「把非 git 目标也放过去派发」。
+  await makeService(true).assertDispatchEnabled(noRepo);
+  // 补集方向②：真正需要 workspace 的操作（建工作项）在开关打开时仍抛 base 分支错误 ——
+  // 说明「base 分支错误」并没有消失，它只是**不再冒充门禁结论**。
+  await assert.rejects(
+    () =>
+      makeService(true).createWorkItem(noRepo, {
+        title: "t",
+        assignee: { type: "agent", id: "ta-a" },
+      }),
+    /base 分支/,
+  );
+  // 两个入口在开关关闭时**在构造 runtime 之前**过闸（同一判据）⇒ 非 git 目标上拿到门禁错误。
+  await assert.rejects(
+    () => off.createWorkItem(noRepo, { title: "t", assignee: { type: "agent", id: "ta-a" } }),
+    (caught: unknown) => caught instanceof SquadDispatchDisabledError,
+  );
+  await assert.rejects(
+    () =>
+      off.openMemberRun(noRepo, {
+        runId: "r-x",
+        workItemId: "wi-x",
+        parentWorkItemId: "wi-p",
+        agentId: "ta-a",
+        isLeaderTask: false,
+      }),
+    (caught: unknown) => caught instanceof SquadDispatchDisabledError,
+  );
 });
 
 // 确认 2：**三个入口共用同一判据**。至少覆盖「界面触发」与「规则 tick」两条：
@@ -706,20 +925,38 @@ test("每个方法都带着调用方的 target 进 createRuntime（无隐式默�
   const repoRoot = await makeRepo();
   const db = await makeMemoryDb();
   const seen: string[] = [];
+  // 这一个工厂是**所有**方法（含 archiveSquadAndTransfer）的 runtime 来路。
+  // 先前这里把这条闭包写成 `archiveSquadAndTransfer(runtime, id)`，而 `runtime` 不在作用域内：
+  // 闭包从不被调用 ⇒ 测试全绿，一旦真走到就是 `ReferenceError`。修法不是删掉它（那会让
+  // 「每个方法都带 target」这条断言漏掉归档这一格），而是让它**真的被走到**（见下面的 assert.rejects）。
+  const runtimeFor = async (t: { path: string; identity: string }) => {
+    seen.push(`${t.path}|${t.identity}`);
+    return createSquadRuntime({
+      db,
+      workspacePath: repoRoot,
+      workspaceIdentity: t.identity,
+      readExperimentEnabled: () => true,
+    });
+  };
   const svc = createSquadRuntimeService({
-    createRuntime: async (t) => {
-      seen.push(`${t.path}|${t.identity}`);
-      return createSquadRuntime({
-        db,
-        workspacePath: repoRoot,
-        workspaceIdentity: t.identity,
-        readExperimentEnabled: () => true,
-      });
-    },
+    createRuntime: runtimeFor,
     readExperimentEnabled: async () => true,
-    archiveSquadAndTransfer: async (_target, id) => archiveSquadAndTransfer(runtime, id),
+    archiveSquadAndTransfer: async (t, id) => archiveSquadAndTransfer(await runtimeFor(t), id),
   });
-  await svc.assertDispatchEnabled(target("alpha"));
+  // 两格需要 runtime 的方法：各自带着**调用方传的** target 进工厂（不是某个全局默认值）。
+  await svc.getSnapshot(target("alpha"));
   await svc.getSnapshot(target("beta"));
   assert.deepEqual(seen, ["/tmp/alpha|alpha", "/tmp/beta|beta"]);
+  // `assertDispatchEnabled` 是**有意**不建 runtime 的那一格（门禁不依赖 git 解析，见「非 git 目标…」用例），
+  // 所以它不出现在 `seen` 里 —— 这条断言把那件事也钉住，免得有人「顺手」把它改回去。
+  await svc.assertDispatchEnabled(target("zeta"));
+  assert.deepEqual(seen, ["/tmp/alpha|alpha", "/tmp/beta|beta"]);
+  // 归档一个**不存在**的小队：组合函数抛「小队不存在」，错误里带着刚传进去的 id。
+  // 这条断言的作用不是测归档（另有专门文件），而是把那格闭包**跑到**：
+  // 它证明 runtime 是按调用方的 target 现构的（`seen` 随之增长，且用到了 t.identity）。
+  await assert.rejects(
+    () => svc.archiveSquadAndTransfer(target("gamma"), "sq-missing"),
+    /sq-missing/,
+  );
+  assert.deepEqual(seen, ["/tmp/alpha|alpha", "/tmp/beta|beta", "/tmp/gamma|gamma"]);
 });

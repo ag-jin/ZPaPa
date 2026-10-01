@@ -2511,10 +2511,13 @@ export function createLocalServices(options: {
      路径上不该变成一条异步 IO 链（每处 `await get()` 会让「谁来判」重新散开成多份判据），
      故在组合根维护一份**单点刷新**的同步快照：
 
-     - 初值 `false`（**关**）：读设置是异步的，第一次读回来之前一律按「关」处理——门禁宁可保守，
-       也不要因为「还没读出来」而放行一次派发；
+     - 初值 `false`（**关**）：读设置是异步的，第一次读回来之前一律按「关」处理。
+       **首次加载失败也停在「关」**（初值就是 false）⇒ 这一格是 fail-closed；
      - 之后**只**由 `settingService` 的变更事件刷新，刷新点只有这一处；
-     - 读失败**不静默吞**：记 warn 并保持上一次结论（保守值），表现为「派发被拒」而不是「照旧派发」。
+     - 此后**刷新失败保留上一次结论**（不是「一律收敛到 false」）：这是**刻意**的，不叫「保守值」——
+       设置读取的偶发抖动不该把在途实验整批误关（关掉会停新派发、且不改在途 run，用户看到的是「功能忽然没了」）。
+       代价如实写明：上一次为 `true` 时，刷新失败期间是 **fail-open**（继续按开处理），直到下一次刷新成功。
+       取舍是「抖动静默按开」对「抖动误关在途实验」——选前者，因为后者是用户可见的行为突变。
 
      为什么不是「每个入口各自 `await settingService.get()`」：那正是三份判据的形状（改一处漏一处），
      也正是「关掉实验照旧派发」的成因（recon.md B4 现状）。 */
@@ -2526,7 +2529,7 @@ export function createLocalServices(options: {
         squadsEnabled = settings.experimentalAgentSquadsEnabled === true;
       },
       (error: unknown) => {
-        squadRuntimeLog.warn("读取实验开关失败：保持上一次结论（保守）", { error });
+        squadRuntimeLog.warn("读取实验开关失败：保留上一次结论（不因抖动误关在途实验）", { error });
       },
     );
   };
@@ -2556,9 +2559,10 @@ export function createLocalServices(options: {
   };
   const squadRuntimeService = createSquadRuntimeService({
     createRuntime: createSquadRuntimeFor,
-    // 只读呈现用（UI 据此隐藏 / 禁用入口）；门禁本体在 runtime.assertDispatchEnabled。
-    readExperimentEnabled: async () =>
-      (await settingService.get()).experimentalAgentSquadsEnabled === true,
+    // 呈现与门禁**共用同一份快照**（就是上面那个 `squadsEnabled` 变量）：不再各自 `await settingService.get()`，
+    // 两次独立读取会互相漂移（呈现说「开」而门禁说「关」），表现为「入口看得见、点了没反应」。
+    // 门禁本体在服务侧的唯一判据（读的也是这份值）。
+    readExperimentEnabled: async () => squadsEnabled,
     // 归档转交的组合在 squadRuntime.ts（它要用 workItemRepo，而描述符那一侧必须浏览器安全）。
     archiveSquadAndTransfer: async (target, id) => {
       await archiveSquadAndTransfer(await createSquadRuntimeFor(target), id);

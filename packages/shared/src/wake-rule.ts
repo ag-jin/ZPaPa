@@ -362,7 +362,15 @@ function rotateRight(value: number, bits: number): number {
   return ((value >>> bits) | (value << (32 - bits))) >>> 0;
 }
 
-function sha256Hex(input: string): string {
+/* **导出仅供测试**（不是给生产用的 API，也不是给任何安全用途的）：
+   这 70 行密码学实现若没有一份**外部对照**，将来改坏填充或某个轮常量时，仓内没有任何用例会变红
+   （`computeEventKey` 的用例只比较 key 之间的相等/不等 —— 任何确定性函数都能通过）。
+   但走 `computeEventKey` 的指纹族**无法**喂进空串与任意字节长度（先过 `stableStringify`，
+   其输出恒非空、且形状受限），所以「空串 / 块边界 55·56·63·64 字节」这些向量在那里不可达。
+   故把实现本身导出，让测试直接与 `node:crypto` 逐例比对（见 `packages/shared/test/wakeRuleSha256.test.ts`
+   与 `packages/services/test/eventKey.test.ts` 的指纹族交叉比对）。
+   它已在生产路径上被 `computeEventKey` 使用（唯一调用点），导出不改变任何行为。 */
+export function sha256Hex(input: string): string {
   const data = new TextEncoder().encode(input);
   const bitLength = data.length * 8;
   // 填充：`1` 位 + `0` 位到 56 (mod 64) + 64 位大端长度。
