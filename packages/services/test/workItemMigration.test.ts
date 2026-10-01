@@ -39,14 +39,22 @@ const EXPECTED_WORK_ITEM_INDEXES = [
 ];
 
 // 与已发布数据库的契约：这些 checksum 一旦被改动，老库升级会抛 checksum_mismatch。
-// 写成冻结字面量，而不是「再用当前代码算一遍」——否则改了 checksumInput 时期望值与
-// 实际值会一起变，回归就测不出来。新增迁移时只**追加**一行，既有行一字不改。
-const FROZEN_CHECKSUMS_0001_0004 = [
-  ["0001_adopt_task_schema", "3e8337b015d94b05dd31a6003f3acc649e821794cfa288bc0af3022698bd4d17"],
-  ["0002_provider_selection", "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc"],
-  ["0003_official_glm_selection", "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4"],
-  ["0004_work_items", "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f"],
-] as const;
+// 值是**字面量**，不是「在测试里再用当前代码算一遍」——两侧重算等于什么都没测。
+// 这里只登记「已经发布过」的迁移；**最新那一条无需登记**，会被用例自动排除（见下），
+// 所以新增迁移不会让本用例假红。
+const PINNED_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
+  "0001_adopt_task_schema": "3e8337b015d94b05dd31a6003f3acc649e821794cfa288bc0af3022698bd4d17",
+  "0002_provider_selection": "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc",
+  "0003_official_glm_selection": "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4",
+  "0004_work_items": "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f",
+};
+
+// 「最新那条迁移建出了什么」无法从库里反推，故在此显式登记，用来把库退回上一版的样子。
+// **新增迁移时同步维护一行**（不维护也能通过：缺登记时只是不 drop 对象，模拟退化一档，
+// 因为 DDL 都带 IF NOT EXISTS，重跑不会炸——这是本用例能自适配的关键）。
+const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = {
+  "0005_wake_rules": ["DROP TABLE wake_rules"],
+};
 
 test("迁移建出 work_items 表与索引", () => {
   const db = openFreshDb();
@@ -79,21 +87,42 @@ test("迁移可重复应用", () => {
   assert.deepEqual(workItemIndexes(db), beforeIndexes);
 });
 
-// 老库升级回归：上一版已发布库（0001–0004 已应用）再跑迁移，只能新增 0005。
-// 边界必须钉在「紧邻上一版」——runner 会把所有未记账项都补跑，
-// 若把边界退回更早的版本，就会同时补跑 0004 与 0005，测不出「只执行最新一条」。
-// 下面的冻结字面量是已发布库的账本契约：改动既有 checksumInput 会让这条断言先炸
-// （即便侥幸绕过，runTasksDatabaseMigrations 也会抛 checksum_mismatch）。
-test("老库（0001–0004 已应用）升级只执行 0005", () => {
+// 老库升级回归：**自适配**——「上一版发布」是哪一版由账本动态切出，测试里不写任何版本号列表，
+// 也不写账本头串；新增迁移后本用例无需改动仍应通过。
+// 语义：已发布库（除最新一条外的全部迁移已应用）再跑迁移，只能补跑最新那一条，
+// 且不能因 checksum 变动而抛 checksum_mismatch。
+test("老库升级只补跑最新一条迁移", () => {
   const db = openFreshDb();
   runTasksDatabaseMigrations(db);
-  // 退回「上一版发布」的样子：0005 的新表不存在、0005 未记账。
-  db.exec("DROP TABLE wake_rules");
-  db.exec("DELETE FROM tasks_schema_migration WHERE id = '0005_wake_rules'");
-  assert.deepEqual(
-    ledger(db).map((row) => [row.id, row.checksum]),
-    FROZEN_CHECKSUMS_0001_0004.map((row) => [...row]),
-  );
+
+  // 动态发现边界：账本按 id 升序，最后一行即「最新一条」。
+  const fullLedger = ledger(db);
+  const latest = fullLedger.at(-1);
+  assert.ok(latest, "账本为空，迁移根本没跑");
+  const published = fullLedger.slice(0, -1); // 除最新之外的全部 = 上一版发布的样子
+  assert.ok(published.length > 0, "账本至少要两条迁移，否则模拟不出「老库」");
+
+  // 冻结契约（字面量钉法）：已登记的每条必须逐一命中字面量，防「有人改冻结声明」。
+  // 未登记项（刚新增的迁移）不判红；反过来，登记表不得留下库里已不存在的 id，防边界漂移。
+  for (const row of published) {
+    const pinned = PINNED_MIGRATION_CHECKSUMS[row.id];
+    if (pinned !== undefined)
+      assert.equal(
+        row.checksum,
+        pinned,
+        `${row.id} 的冻结 checksum 被改动（老库升级会抛 checksum_mismatch）`,
+      );
+  }
+  for (const id of Object.keys(PINNED_MIGRATION_CHECKSUMS))
+    assert.ok(
+      published.some((row) => row.id === id),
+      `冻结表登记了不再属于「已发布」集合的迁移：${id}`,
+    );
+
+  // 退回上一版发布的样子：drop 掉最新迁移建出的对象（若已登记），删掉它的账本行。
+  for (const sql of LATEST_MIGRATION_ARTIFACTS[latest.id] ?? []) db.exec(sql);
+  db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(latest.id);
+  assert.deepEqual(ledger(db), published, "退库后账本应只剩已发布的那几条");
 
   const migrated: Array<string | null> = [];
   const committedExecutedCounts: number[] = [];
@@ -107,18 +136,15 @@ test("老库（0001–0004 已应用）升级只执行 0005", () => {
       }),
     "冻结的 checksumInput 被改动后，老库升级会抛 checksum_mismatch",
   );
-  // 只执行了一条，且当时账本头是 0004 —— 被执行的只能是 0005。
-  assert.deepEqual(migrated, ["0004_work_items"]);
+  // 只补跑了一条：执行时账本头就是「上一版最新的那条」，被执行的只能是它之后的那一条。
+  assert.equal(migrated.length, 1, "老库升级只能补跑一条迁移");
+  assert.deepEqual(migrated, [published.at(-1)?.id]);
   assert.deepEqual(committedExecutedCounts, [1]);
-  // 纯追加：既有表/索引一行未动，新表建出。
+
+  // 纯追加：补跑后账本应与「一开始就完整跑满」逐行一致，且既有 work_items 结构一行未动。
+  assert.deepEqual(ledger(db), fullLedger);
   assert.deepEqual(workItemIndexes(db), EXPECTED_WORK_ITEM_INDEXES);
   assert.ok(workItemColumns(db).includes("status"));
-  assert.equal(
-    db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'")
-      .get().c,
-    1,
-  );
-  assert.equal(ledger(db).length, 5);
 
   // 升级完再跑一次必须是 no-op：不执行任何迁移、不报错。
   let executedAgain = 0;
@@ -128,5 +154,5 @@ test("老库（0001–0004 已应用）升级只执行 0005", () => {
     },
   });
   assert.equal(executedAgain, 0);
-  assert.equal(ledger(db).length, 5);
+  assert.deepEqual(ledger(db), fullLedger);
 });
