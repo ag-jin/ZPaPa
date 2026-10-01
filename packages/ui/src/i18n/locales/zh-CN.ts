@@ -4064,6 +4064,7 @@ const zhCN: Record<string, string> = {
   "settings.experiments.title": "实验功能",
   "settings.experiments.squadToggle.label": "多智能体小队",
   "settings.experiments.squadToggle.description": "启用协作智能体、小队与工作树隔离",
+  "settings.experiments.saveFailed": "保存失败，请重试",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",

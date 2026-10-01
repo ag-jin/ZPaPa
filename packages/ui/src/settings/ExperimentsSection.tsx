@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch.js";
+import { toast } from "@/components/ui/toast.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
@@ -21,11 +22,14 @@ export function ExperimentsSection() {
     try {
       await update({ experimentalAgentSquadsEnabled: enabled });
     } catch (error) {
-      // 不额外弹 toast：开关的 checked 取自共享 settings 快照，写入失败后 update() 内部的
-      // refresh 会把开关回落到服务端真实值，用户能直接看到这次修改没有生效。
+      // 这里没有乐观更新：Switch 的 checked 直接取自共享 settings 快照，而
+      // useSettings().update 是先写 settingService、成功后才 refresh —— 写失败时
+      // refresh 不执行，快照不变，开关就停在原值。失败因此对用户完全不可见，
+      // 必须显式提示，不能只记日志。
       logger.warn("[ExperimentsSection] 更新多智能体小队实验开关失败", {
         error: error instanceof Error ? error.message : String(error),
       });
+      toast(intl.formatMessage({ id: "settings.experiments.saveFailed" }));
     } finally {
       setSaving(false);
     }
