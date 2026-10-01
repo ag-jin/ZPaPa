@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   SQUAD_INSTRUCTION_SLOTS,
-  SQUAD_MAX_MEMBERS,
   SQUAD_REQUIRED_INSTRUCTION_SLOTS,
   squadSchema,
   validateSquad,
@@ -69,10 +68,6 @@ test("strict：未知字段被拒（如 hostBinding）", () => {
   assert.equal(squadSchema.safeParse({ ...base, hostBinding: "h1" }).success, false);
 });
 
-test("成员上限是 12", () => {
-  assert.equal(SQUAD_MAX_MEMBERS, 12);
-});
-
 test("继承既有字段可选性：description 可选、archivedAt 可选", () => {
   const parsed = squadSchema.parse(base);
   assert.equal(parsed.description, undefined);
@@ -122,13 +117,14 @@ test("只有队长一人的成员名单通过校验", () => {
   assert.deepEqual(validateSquad(squad), { ok: true });
 });
 
-// 成员数边界：12 收，13 拒。上限只写常量而不验边界，改 .max(12) 不会有人报错。
-test("成员上限边界：12 个通过、13 个被 schema 拒绝", () => {
+// 名册**不设上限**：spec §3.10 的「单小队并行队员 ≤ 6」是并发约束（由派发侧管），不是名册规模。
+// 若这里凭空加 .max，会拒绝合法的大名单——12 与 13 都必须通过。
+test("名册不设上限：12 人与 13 人都通过", () => {
   const makeMembers = (count: number) =>
     Array.from({ length: count }, (_, i) => ({ agentId: i === 0 ? "ta_lead" : `ta_${i}` }));
 
   assert.equal(squadSchema.safeParse({ ...base, members: makeMembers(12) }).success, true);
-  assert.equal(squadSchema.safeParse({ ...base, members: makeMembers(13) }).success, false);
+  assert.equal(squadSchema.safeParse({ ...base, members: makeMembers(13) }).success, true);
 });
 
 // 空成员名单被 schema 拒（min 1）：无人的小队没有被派单的承载者。

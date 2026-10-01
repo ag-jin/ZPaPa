@@ -21,10 +21,6 @@ export type SquadInstructionSlot = (typeof SQUAD_INSTRUCTION_SLOTS)[number];
     队长没有终止条件时只有两种坏结局：早早停工等人催，或没完没了地派单直到撞上 `maxFires`（spec §5.4 末段）。 */
 export const SQUAD_REQUIRED_INSTRUCTION_SLOTS = ["stopCondition", "maxRounds"] as const;
 
-/** 单支小队**名册**上限。取值来自任务书（12），不是 spec 明文——spec §3.10 的「单小队并行队员 ≤ 6」
-    是**并发**上限（同时跑几个），不是名册上限（能登记几个），两者不可混用。 */
-export const SQUAD_MAX_MEMBERS = 12;
-
 /** 成员条目：`agentId` 必须非空（空 id 的队员无法被派单，也认不出是谁）；`role` 是自由标签，可省。 */
 export const squadMemberSchema = z.object({
   agentId: z.string().min(1),
@@ -48,7 +44,9 @@ export const squadSchema = z
     name: z.string(),
     description: z.string().optional(),
     leaderAgentId: z.string().min(1),
-    members: z.array(squadMemberSchema).min(1).max(SQUAD_MAX_MEMBERS),
+    /** 只要求非空名册，**不设名册上限**：spec §3.10 的「单小队并行队员 ≤ 6」是**并发**约束
+        （一次同时跑几个），由派发侧执行，不是名册规模。在这里凭空加一条上限会拒绝合法的大名单。 */
+    members: z.array(squadMemberSchema).min(1),
     instructions: squadInstructionsSchema,
     enabled: z.boolean(),
     /** 归档时间戳（毫秒）：归档而非硬删，花名册与指令都不丢。 */
