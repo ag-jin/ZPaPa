@@ -3,6 +3,7 @@ import createConventionalCommitsPreset from "conventional-changelog-conventional
 export const RELEASE_CHANGELOG_TYPES = [
   { type: "feat", section: "Features" },
   { type: "fix", section: "Bug Fixes" },
+  { type: "perf", section: "Performance" },
   { type: "chore", section: "Chores" },
   { type: "docs", section: "Documentation" },
   { type: "refactor", section: "Refactorings" },
