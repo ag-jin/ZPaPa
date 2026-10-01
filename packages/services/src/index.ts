@@ -348,3 +348,34 @@ export type {
   FeedbackTicketType,
 } from "@zcode/shared";
 export { IClientConfigService } from "./client-config/clientConfig.js";
+
+/* ---------------- 小队运行时（workitem 域） ----------------
+   这里只能出**浏览器安全**的东西：描述符（renderer 要经它取数）、错误类、纯类型，
+   以及 `createSquadRunRepo`（它只 `import type` node:sqlite，不形成运行时依赖）。
+   实现（`createSquadRuntime` / `createSquadRuntimeService`）依赖 node 侧 git 与工作树，
+   只能从 `@zcode/services/node` 取；`slugForId` 依赖 node:crypto，同样只在 node 入口。 */
+export {
+  ISquadRuntimeService,
+  SQUAD_DISPATCH_DISABLED_CODE,
+  SquadDispatchDisabledError,
+} from "./workitem/squadRuntimeService.js";
+/** 与描述符同名的接口类型换个名字导出：UI 侧要能单独引用**类型**（`ISquadRuntimeService` 这个名字
+    在本入口已经是值），与 IZCodeTaskService 等既有约定的处理方式一致。 */
+export type {
+  ISquadRuntimeService as ISquadRuntimeServiceShape,
+  CreateWorkItemRequest,
+  SquadSnapshot,
+  SquadWorkspaceTarget,
+} from "./workitem/squadRuntimeService.js";
+// 方法的入参/出参类型也要可命名：Wave 1 的 host 与 UI 要用它们构造调用，
+// 只能从接口签名里「结构性」拿到是没法写代码的。
+export type {
+  MemberRunRequest,
+  OpenMemberRunResult,
+  ReviewOutcome,
+} from "./workitem/squadRunLifecycle.js";
+export type { ReapOutcome } from "./worktree/orphanReaper.js";
+export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
+export type { SquadRunRecord, SquadRunRepo, SquadRunStatus } from "./workitem/squadRunRepo.js";
+// `eventKey` 的唯一构造器（spec §5.7.1）：全仓只此一处，调度器与 Repo 都调它。
+export { computeEventKey } from "@zcode/shared";

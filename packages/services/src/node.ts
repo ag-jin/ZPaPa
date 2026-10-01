@@ -283,6 +283,37 @@ export {
   isValidCronExpr,
 } from "./session/automationCron.js";
 
+/* ---------------- 小队域（workitem / teams / worktree）从 node 入口可达 ----------------
+   为什么这些必须从这里出去：desktop 只能经 `@zcode/services/node` 与 `.` 两个入口取东西
+   （见 packages/services/package.json#exports），而 workitem/ 域此前**零桌面侧消费**（recon.md C6）。
+   Wave 1 A 的调度器进程要**自己**建 tasks-index 连接（与 AutomationRepo / OffPeakTaskRepo 同法）
+   并跑判定，故 repo 与判定函数也必须可达。
+
+   刻意**不**从 `packages/services/src/index.ts` 出这些：那个入口被 renderer 直接解析，
+   只要有一条运行时依赖触达 `node:*` 就会让整包在挂载前失败（browserSafeRootEntry.test.ts 守这条）。
+   故依赖 `node:crypto`（slug）或 node 侧 git/工作树实现的都只从本文件出；
+   浏览器安全的描述符、错误类、纯类型与 `createSquadRunRepo`（只 `import type` node:sqlite）走根入口。 */
+export {
+  archiveSquadAndTransfer,
+  createSquadRuntime,
+  renderLeaderBriefingPrompt,
+} from "./workitem/squadRuntime.js";
+export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
+export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+export { decideWake } from "./workitem/wakeGuard.js";
+export { LEADER_PROTOCOL_TEXT, planDispatch } from "./workitem/leaderDispatch.js";
+// 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
+export { slugForId } from "./workitem/slug.js";
+export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+export type { WorkItemEvent, WorkItemService } from "./workitem/workItemService.js";
+export type { WorkItemRepo } from "./workitem/workItemRepo.js";
+export type {
+  SquadBatchOrchestrator,
+  SquadRuntime,
+  SquadRuntimeDeps,
+} from "./workitem/squadContracts.js";
+export type { SquadRunLifecycle } from "./workitem/squadRunLifecycle.js";
+
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
 import { IMediaPreviewService } from "./media-preview/mediaPreview.js";
@@ -356,6 +387,14 @@ import { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAda
 import { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 import { createZCodeTaskIndexSyncer } from "./zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
+// 小队运行时（Wave 0b）：装配在本文件的 createLocalServices 里，门禁读数只有一处（同步快照）。
+import {
+  ISquadRuntimeService,
+  createSquadRuntimeService,
+  type SquadWorkspaceTarget,
+} from "./workitem/squadRuntimeService.js";
+import { archiveSquadAndTransfer, createSquadRuntime } from "./workitem/squadRuntime.js";
+import type { SquadRuntime } from "./workitem/squadContracts.js";
 import { createBotsService } from "./bots/botsService.js";
 import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge.js";
 import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
@@ -2466,6 +2505,66 @@ export function createLocalServices(options: {
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];
+
+  /* ---------------- 小队运行时（Wave 0b 的装配点） ----------------
+     门禁的**唯一读取口**（spec §5.7.6 / 确认 2）：`ISettingService` 只有异步 `get()`，而门禁判定在派发
+     路径上不该变成一条异步 IO 链（每处 `await get()` 会让「谁来判」重新散开成多份判据），
+     故在组合根维护一份**单点刷新**的同步快照：
+
+     - 初值 `false`（**关**）：读设置是异步的，第一次读回来之前一律按「关」处理——门禁宁可保守，
+       也不要因为「还没读出来」而放行一次派发；
+     - 之后**只**由 `settingService` 的变更事件刷新，刷新点只有这一处；
+     - 读失败**不静默吞**：记 warn 并保持上一次结论（保守值），表现为「派发被拒」而不是「照旧派发」。
+
+     为什么不是「每个入口各自 `await settingService.get()`」：那正是三份判据的形状（改一处漏一处），
+     也正是「关掉实验照旧派发」的成因（recon.md B4 现状）。 */
+  let squadsEnabled = false;
+  const squadRuntimeLog = createServiceLogger("squad-runtime");
+  const refreshSquadsEnabled = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        squadsEnabled = settings.experimentalAgentSquadsEnabled === true;
+      },
+      (error: unknown) => {
+        squadRuntimeLog.warn("读取实验开关失败：保持上一次结论（保守）", { error });
+      },
+    );
+  };
+  refreshSquadsEnabled();
+  settingService.onDidUpdate(() => {
+    refreshSquadsEnabled();
+  });
+
+  /* 小队 runtime **不做长期单例、不缓存**（确认 3）：每个使用点带着自己的**目标 workspace** 进来，
+     这里为它现构一个 runtime，方法返回后不再保留它。
+
+     为什么选「不缓存」：缓存要回答「什么时候失效」——workspace 切换、会话迁移、设置变更都会让它变陈旧，
+     而陈旧的表现是**在错的 workspace 上读写**（用户看到「我明明没建过」）。不缓存 ⇒ 无陈旧、无失效逻辑。
+     代价：每次操作多一次构造（含一次 `git symbolic-ref` 子进程）。若这一步实测成为热路径，
+     再改成按 `workspaceKey` 缓存**并显式登记失效面**（并在任务报告里写明依据）——
+     但**任何时候都不得**退化成「取首个 workspace」。 */
+  const createSquadRuntimeFor = async (target: SquadWorkspaceTarget): Promise<SquadRuntime> => {
+    // tasks-index 连接由本组合根统一持有；`ensureReady()` 之后再取，拿到的才是走过迁移与回填的那一条。
+    await taskIndexRepo.ensureReady();
+    return createSquadRuntime({
+      db: taskIndexRepo.openSharedDatabase(), // 与 taskIndexRepo 是**同一条**连接（recon.md F3）
+      workspacePath: target.path,
+      workspaceIdentity: target.identity,
+      // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
+      readExperimentEnabled: () => squadsEnabled,
+    });
+  };
+  const squadRuntimeService = createSquadRuntimeService({
+    createRuntime: createSquadRuntimeFor,
+    // 只读呈现用（UI 据此隐藏 / 禁用入口）；门禁本体在 runtime.assertDispatchEnabled。
+    readExperimentEnabled: async () =>
+      (await settingService.get()).experimentalAgentSquadsEnabled === true,
+    // 归档转交的组合在 squadRuntime.ts（它要用 workItemRepo，而描述符那一侧必须浏览器安全）。
+    archiveSquadAndTransfer: async (target, id) => {
+      await archiveSquadAndTransfer(await createSquadRuntimeFor(target), id);
+    },
+  });
+
   const services = new ServiceCollection()
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
@@ -2664,7 +2763,9 @@ export function createLocalServices(options: {
   providerProvisioningTriggerDisposers.set(services, providerProvisioningDisposers);
   services
     .register(IProviderSettingsService, providerRuntime.providerSettings)
-    .register(IModelSelectionService, providerRuntime.modelSelection);
+    .register(IModelSelectionService, providerRuntime.modelSelection)
+    // 小队运行时：UI / host / 工具三处都经它取数或触发派发，门禁判据只有 runtime 里那一处。
+    .register(ISquadRuntimeService, squadRuntimeService);
   if (
     shouldRegisterProviderProvisioningTarget({
       serviceAuthorityMode: options.serviceAuthorityMode,

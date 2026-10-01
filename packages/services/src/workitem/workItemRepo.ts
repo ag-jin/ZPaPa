@@ -27,8 +27,21 @@ export interface WorkItemRepo {
   insert(item: WorkItem): void;
   get(id: string): WorkItem | null;
   listChildren(parentId: string): WorkItem[];
+  /** 本 workspace 的全部在用工作项（不含归档）**：最小视图快照与「这批子项都完事了吗」的取数口。 */
+  listByWorkspace(workspaceKey: string): WorkItem[];
+  /** 指派对象反查（归档转交用，spec §3.10/S10）：`assignee = (type, id)` 且未归档。 */
+  listByAssignee(type: WorkItem["assignee"]["type"], id: string): WorkItem[];
   /** CAS：仅当前状态等于 expect 且未归档时写入，命中恰一行才返回 true。 */
   updateStatus(id: string, next: WorkItemStatusKey, expect: WorkItemStatusKey): boolean;
+  /**
+   * 改写**指派**（归档转交：小队归档 → 指派转交队长，spec §3.10/S10）。
+   *
+   * 它不是「唯一写者」那条约束的例外：唯一写者管的是工作项 **`status`**
+   * （只有 `workItemService.transition` 能写），指派是另一个字段。这里仍保持 CAS 式的
+   * 「恰命中一行才算成功」：未命中说明该行已被归档或 id 算错，静默 no-op 会让调用方
+   * 以为「转交完成了」而库里仍指着旧对象。
+   */
+  updateAssignee(id: string, assignee: WorkItem["assignee"]): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
   areAllChildrenTerminal(parentId: string): boolean;
 }
@@ -97,6 +110,41 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
         )
         .all(parentId) as unknown as WorkItemRow[];
       return rows.map(rowToWorkItem);
+    },
+
+    // 与 listChildren 同一条排序口径（position → created_at → id）：同一批项的呈现次序
+    // 不随存储顺序漂移，否则 UI 每次刷新都可能换序，看起来像「有人在动数据」。
+    listByWorkspace(workspaceKey) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM work_items WHERE workspace_key = ? AND archived_at IS NULL
+          ORDER BY position ASC, created_at ASC, id ASC`,
+        )
+        .all(workspaceKey) as unknown as WorkItemRow[];
+      return rows.map(rowToWorkItem);
+    },
+
+    // 按 (type, id) 两个字段一起过滤：只按 id 会把「同名的另一类指派」也捞进来
+    // （例如某个智能体与某个小队恰好共用 id），转交就会改到不该改的项上。
+    listByAssignee(type, id) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM work_items WHERE assignee_type = ? AND assignee_id = ? AND archived_at IS NULL
+          ORDER BY position ASC, created_at ASC, id ASC`,
+        )
+        .all(type, id) as unknown as WorkItemRow[];
+      return rows.map(rowToWorkItem);
+    },
+
+    // 单条条件更新并校验 changes：与 updateStatus 同一口径（先读后写会与并发派发竞态，
+    // 也会把「这一行已经不存在了」伪装成一次成功的改写）。
+    updateAssignee(id, assignee) {
+      const result = db
+        .prepare(
+          "UPDATE work_items SET assignee_type=?, assignee_id=?, updated_at=? WHERE id=? AND archived_at IS NULL",
+        )
+        .run(assignee.type, assignee.id, Date.now(), id);
+      return result.changes === 1;
     },
 
     // CAS 必须是单条条件更新并校验 changes：先读后写会与并发派发竞态。

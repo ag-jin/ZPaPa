@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planDispatch } from "../src/workitem/leaderDispatch.js";
+import { LEADER_PROTOCOL_TEXT, planDispatch } from "../src/workitem/leaderDispatch.js";
 
 /* 队长派发的契约（spec §3.3 指派语义 / §5.1 三路输入一处写入 / §5.7.2 队长不改父项状态）。
    分三层覆盖：
@@ -204,12 +204,15 @@ for (const cell of MATRIX) {
 
     if (cell.run) {
       // 整条事件的**完整形状**：多带一个字段（如普通 run 夹带简报）也会在这里失败。
+      // 简报是**三段**（spec §3.3）：roster / protocol / instructions。
+      // `protocol` 是系统生成的机制段，其内容不随 squad fixture 变（故直接用常量对表）。
       const expectedBriefing =
         cell.assigneeType === "squad"
           ? {
               squadId: "sq_1",
               leaderAgentId: "ta_lead",
               roster: [{ agentId: "ta_lead", role: "leader" }, { agentId: "ta_a" }],
+              protocol: LEADER_PROTOCOL_TEXT,
               instructions: { stopCondition: "全部 done 即收工", maxRounds: "5" },
             }
           : undefined;
