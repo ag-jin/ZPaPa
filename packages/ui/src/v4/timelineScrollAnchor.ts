@@ -62,6 +62,32 @@ export function resolveFollowingAfterScroll(input: {
 }
 
 /**
+ * scroll 来源细化：把「保护窗内没有登记意图、其实是用户上滚」的事件改判为 user。
+ *
+ * 内容/测高 commit 会开一个 LAYOUT_SCROLL_GUARD_MS 保护窗，把窗口内的无意图 scroll
+ * 当成布局补偿。但用户上滚可能恰好落在保护窗里（流式输出期间每一帧都在续窗），
+ * 那条路径不会取消 pending restore，回放就在下一个 commit 上把位置又落回去——
+ * 用户看到「拉到上面又被弹回来」。
+ *
+ * 判据只用回放本身不可能做的事：回放只会把 scrollTop 钳到内容边界，因此相对
+ * 「已账目」位置明显回退（且不是本组件同帧写入）只可能来自用户输入。
+ * 没有待落回放时不改判，保护窗语义原样保留。
+ */
+export function refineTimelineScrollSource(input: {
+  source: TimelineScrollEventSource;
+  scrollTop: number;
+  lastObservedScrollTop: number;
+  programmaticScroll: boolean;
+  restorePending: boolean;
+  epsilonPx?: number;
+}): TimelineScrollEventSource {
+  if (input.source !== "layout") return input.source;
+  if (!input.restorePending || input.programmaticScroll) return input.source;
+  const epsilon = input.epsilonPx ?? UNOBSERVED_SCROLL_EPSILON_PX;
+  return input.scrollTop < input.lastObservedScrollTop - epsilon ? "user" : input.source;
+}
+
+/**
  * 内容变化（新行追加 / 流式 delta 撑高 / 动态测高修正）后的动作：
  * 跟随中 → 贴底；已解除 → 保持阅读位置（绝不拉回）。
  */
@@ -75,17 +101,22 @@ export function anchorActionAfterContentChange(
 /**
  * virtualizer 动态测高后的滚动补偿裁决。
  * 宽度 resize 会让多条消息在相邻帧分批测高；此时逐条补偿 scrollTop 会形成可见抖动。
+ *
+ * 「前插行的估计高度被实测高度替换」是同一机制的二次修正：视口上方那一行变高（或变矮）
+ * 后必须把差量补进 scrollTop，否则用户正在读的行会被推移。恢复回放期间这项补偿要抑制
+ * （回放拥有坐标系），但用户已经上滚接管之后不能继续抑制——那时它是锚点唯一的保护。
  */
 export function shouldAdjustVirtualizerForItemSizeChange(input: {
   following: boolean;
   suppressAdjustment: boolean;
+  /** 用户已上滚接管阅读位置（回放已让位）：抑制必须解除。 */
+  userOwnsScroll?: boolean;
   contentWidthChanging: boolean;
   itemEnd: number;
   scrollTop: number;
 }): boolean {
-  if (input.suppressAdjustment || input.following || input.contentWidthChanging) {
-    return false;
-  }
+  if (input.following || input.contentWidthChanging) return false;
+  if (input.suppressAdjustment && input.userOwnsScroll !== true) return false;
   return input.itemEnd <= input.scrollTop;
 }
 
@@ -192,11 +223,22 @@ export function initialFollowing(): boolean {
 // prepend commit 里新行只有估计高度，后续 ResizeObserver 修正走 virtualizer
 // 的常规 shift 逻辑，不再经此函数。
 
-export interface PrependVirtualAnchor {
+export interface PrependAnchorFrame {
   key: string;
   /** 锚点 measurement 起点相对视口顶部的偏移。 */
   offsetTop: number;
   start: number;
+}
+
+export interface PrependVirtualAnchor extends PrependAnchorFrame {
+  /**
+   * 采集瞬间的虚拟列表总高度。
+   *
+   * 锚点行被虚拟化卸载、拿不到当帧 measurement 时，只能按「已存起点 + 总高度增量」
+   * 推算它的新起点；增量必须以采集瞬间为基准，否则会把采集到本帧之间其它行的
+   * 测高修正（估计高度改实测高度）重复计入平移量——实测首帧会偏 ~145px。
+   */
+  totalSize: number;
 }
 
 /**
@@ -207,8 +249,8 @@ export interface PrependVirtualAnchor {
  * 保存的视口偏移计算绝对目标，再减实时 scrollTop，才能稳定恢复原阅读位置。
  */
 export function prependVirtualAnchorAdjustment(
-  previous: PrependVirtualAnchor,
-  next: PrependVirtualAnchor,
+  previous: PrependAnchorFrame,
+  next: PrependAnchorFrame,
   currentScrollTop: number,
 ): number | null {
   if (previous.key !== next.key) return null;
@@ -246,6 +288,74 @@ export function prependScrollAdjustment(input: PrependAnchorInput): number | nul
   return delta > 0 ? delta : null;
 }
 
+/**
+ * 前插平移的完整裁决（三段缺口都在这里补齐）。
+ *
+ * `prependScrollAdjustment` 的 rowId 增量只在「上一帧有行可比」时成立，遇到
+ * 首帧、以及「触发瞬间到本帧之间 scrollTop 被恢复布局/虚拟化改写过」就不够用：
+ * 增量会把中间位移重复计入，而且虚拟化把锚点行卸载后连 measurement 都查不到。
+ * 这里统一按绝对目标恢复：目标 = 锚点行新起点 − 触发瞬间保存的视口偏移，
+ * 平移量 = 目标 − 当前 scrollTop。
+ *
+ * 首帧（上一帧窗口为空）没有 rowId 可比，且总高度增量等于整段新内容高度，
+ * 拿它当平移量会把人推走；只有本帧已经量到锚点行起点时才能按绝对目标恢复。
+ */
+export interface PrependViewportInput {
+  /** 上一 commit 的窗口首行 rowId（null = 尚无行）。 */
+  prevFirstRowId: number | null;
+  /** 本 commit 的窗口首行 rowId（null = 行被清空）。 */
+  nextFirstRowId: number | null;
+  /** 上一 commit 的虚拟列表总高度。 */
+  prevTotalSize: number;
+  /** 本 commit 的虚拟列表总高度。 */
+  nextTotalSize: number;
+  /** 本 commit 读到的实时 scrollTop。 */
+  currentScrollTop: number;
+  /** 触发 loadOlder 瞬间保存的锚点；null = 这一帧不是用户滚动触发的前插。 */
+  anchor: PrependVirtualAnchor | null;
+  /** 锚点行在本 commit 的 measurement 起点；null = 已被虚拟化卸载。 */
+  anchorNextStart: number | null;
+  /** 待落回放是否拥有本 commit 的坐标系（true = 禁止平移，回放自己会落）。 */
+  restoreOwnsAnchor: boolean;
+}
+
+export function resolvePrependViewportAdjustment(input: PrependViewportInput): number | null {
+  if (input.restoreOwnsAnchor) return null;
+  if (input.nextFirstRowId === null) return null;
+
+  const rowIdPrepend =
+    input.prevFirstRowId !== null && input.nextFirstRowId < input.prevFirstRowId;
+  const firstFramePrepend = input.prevFirstRowId === null;
+  if (!rowIdPrepend && !firstFramePrepend) return null;
+
+  const anchor = input.anchor;
+  if (anchor) {
+    const growth = input.nextTotalSize - anchor.totalSize;
+    const nextStart =
+      input.anchorNextStart ??
+      // 锚点行已被虚拟化卸载：前插只把总高度撑高，用采集瞬间的起点加增量还原
+      // 它的新起点。首帧没有可用增量（等于整段新内容高度），只能走实测起点。
+      (rowIdPrepend && growth > 0 ? anchor.start + growth : null);
+    if (nextStart !== null) {
+      const absolute = prependVirtualAnchorAdjustment(
+        anchor,
+        { key: anchor.key, offsetTop: anchor.offsetTop, start: nextStart },
+        input.currentScrollTop,
+      );
+      if (absolute !== null) return absolute;
+    }
+  }
+
+  // 无锚点（或锚点行无法定位）时退化为总高度增量；首帧没有这个退化路径。
+  if (!rowIdPrepend) return null;
+  return prependScrollAdjustment({
+    prevFirstRowId: input.prevFirstRowId,
+    nextFirstRowId: input.nextFirstRowId,
+    prevTotalSize: input.prevTotalSize,
+    nextTotalSize: input.nextTotalSize,
+  });
+}
+
 /** 顶部触发阈值：距顶小于该距离视为「到顶」，自动拉取更早一窗。 */
 const LOAD_OLDER_TRIGGER_PX = 64;
 
@@ -271,4 +381,22 @@ export function shouldTriggerLoadOlder(input: {
     !input.loadingOlder &&
     input.scrollTop <= (input.triggerPx ?? LOAD_OLDER_TRIGGER_PX)
   );
+}
+
+/**
+ * 预取来源门：只有真实用户滚动可以触发 loadOlder。
+ *
+ * 程序化回放与布局补偿不是用户意图。允许它们补页会形成级联：恢复把位置钳在窗口顶部
+ * → 预取补一窗 → 下一个 commit 又把位置钳回顶部 → 再预取，一路补到没有更早历史为止，
+ * 把整段历史拉进窗口（实测最长的会话从 60 行涨到 11042 行，见会话按需加载回归用例）。
+ */
+export function shouldTriggerLoadOlderFromScroll(input: {
+  source: TimelineScrollEventSource;
+  scrollTop: number;
+  canLoadOlder: boolean;
+  loadingOlder: boolean;
+  triggerPx?: number;
+}): boolean {
+  if (input.source !== "user") return false;
+  return shouldTriggerLoadOlder(input);
 }

@@ -152,6 +152,14 @@ const SUITES = [
     cwd: ".",
     file: "packages/desktop/test/providerProvisioningSyncCancelled.test.ts",
   },
+  {
+    layer: 1,
+    id: "timeline-scroll-anchor",
+    title: "会话按需加载的位置不变式（预取来源门/回放取消/前插平移三段）",
+    cwd: "packages/ui",
+    file: "test/timelineScrollAnchor.test.ts",
+    usesTsconfigPaths: true,
+  },
 
   // ── 层 2：跨机只读（需 B 在线）──
   {

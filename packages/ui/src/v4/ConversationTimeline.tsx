@@ -73,13 +73,13 @@ import {
   historyPrefetchTriggerPx,
   initialFollowing,
   isAtBottom,
-  prependScrollAdjustment,
-  prependVirtualAnchorAdjustment,
   reconcileFollowingForContentAnchor,
+  refineTimelineScrollSource,
   resolveFollowingAfterScroll,
+  resolvePrependViewportAdjustment,
   shouldAdjustVirtualizerForItemSizeChange,
   shouldShowBackToBottom,
-  shouldTriggerLoadOlder,
+  shouldTriggerLoadOlderFromScroll,
   timelineKeyboardScrollIntent,
   timelineTouchScrollIntent,
   timelineWheelScrollIntent,
@@ -734,6 +734,9 @@ function ConversationTimelineImpl({
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
     return shouldAdjustVirtualizerForItemSizeChange({
       suppressAdjustment: suppressVirtualizerAdjustmentDuringRestoreRef.current,
+      // 用户已经上滚接管阅读位置之后，恢复保护窗必须停止抑制：那时「前插行的估计
+      // 高度改成实测高度」的补偿是锚点唯一的保护，抑制它会让锚点漂走。
+      userOwnsScroll: userAdjustedScrollSinceRestoreRef.current,
       following: followingRef.current,
       contentWidthChanging: isContentWidthChanging(),
       itemEnd: item.end,
@@ -1187,16 +1190,26 @@ function ConversationTimelineImpl({
       programmaticScrollFrameRef.current !== null &&
       Math.abs(element.scrollTop - lastObservedScrollTopRef.current) < 1;
     const userScrollIntent = getActiveUserScrollIntent();
+    const restorePending = pendingDetachedScrollRestoreRef.current !== null;
     // 用户输入优先；其余 scroll 若落在内容/测高 guard 内视为布局补偿，guard 外的
     // 未分类事件继续按真实用户滚动处理，兼容原生滚动条和辅助技术。
-    const scrollSource =
-      userScrollIntent !== "none"
-        ? "user"
-        : programmaticScroll
-          ? "programmatic"
-          : Date.now() <= layoutScrollGuardUntilRef.current
-            ? "layout"
-            : "user";
+    // guard 内的「无意图上滚」再经回放判据细化：待落回放只会把位置钳到内容边界，
+    // 相对已账目位置明显回退只可能是用户输入；把它当布局补偿吞掉，回放就会在下一个
+    // commit 上再落一次（用户上滚被弹回）。
+    const scrollSource = refineTimelineScrollSource({
+      source:
+        userScrollIntent !== "none"
+          ? "user"
+          : programmaticScroll
+            ? "programmatic"
+            : Date.now() <= layoutScrollGuardUntilRef.current
+              ? "layout"
+              : "user",
+      scrollTop: element.scrollTop,
+      lastObservedScrollTop: lastObservedScrollTopRef.current,
+      programmaticScroll,
+      restorePending,
+    });
     // virtualizer 的原生 offset observer 会先于 React onScroll 入账；到这里即可确认它
     // 已看见恢复后的真实 scrollTop。用户滚动也应立即结束保护窗，把滚动权交还用户。
     if (scrollSource !== "layout") {
@@ -1221,10 +1234,13 @@ function ConversationTimelineImpl({
     }
     // 只在 64px 顶边才补页时，用户会先撞到窗口边界再看到内容跳入；提前两个
     // 视口预取，让桌面和手机 Web 共用的 renderer 在用户抵达边界前完成补页。
+    // 来源门：程序化回放与布局补偿不得补页——它们不是用户意图，而恢复把位置钳在
+    // 窗口顶部时补页会级联到「没有更早历史」，把整段历史都拉进窗口。
     const loadOlder = loadOlderRef.current;
     const triggerPx = historyPrefetchTriggerPx(element.clientHeight);
     if (
-      shouldTriggerLoadOlder({
+      shouldTriggerLoadOlderFromScroll({
+        source: scrollSource,
         scrollTop: element.scrollTop,
         canLoadOlder: loadOlder.canLoadOlder,
         loadingOlder: loadOlder.loadingOlder,
@@ -1243,6 +1259,7 @@ function ConversationTimelineImpl({
               key: anchorUnit.key,
               offsetTop: anchorMeasurement.start - element.scrollTop,
               start: anchorMeasurement.start,
+              totalSize: virtualizer.getTotalSize(),
             }
           : null;
       logger.debug("[v4-timeline] 接近历史窗口顶部，自动预取更早行", {
@@ -1504,6 +1521,12 @@ function ConversationTimelineImpl({
     if (rowCount === 0 || !pendingRestore || pendingRestore.key !== scrollMemoryKey) {
       return;
     }
+    if (userAdjustedScrollSinceRestoreRef.current) {
+      // 用户已经动过位置：回放整体让位。首次落地与下一帧的测高校正是同一判据，
+      // 并且把它清掉——后续任何 commit 都不得再把回放的临时落点写回去。
+      pendingDetachedScrollRestoreRef.current = null;
+      return;
+    }
 
     // session scope 往往先于 rows 订阅完成；只在 scope commit 和下一帧
     // 恢复会把历史 scrollTop 钳成 0。首批内容到达后重新落地，并再等一帧校正测高。
@@ -1563,38 +1586,33 @@ function ConversationTimelineImpl({
     const pendingRestoreOwnsAnchor = pendingRestore?.key === scrollMemoryKey;
     const didPrepend =
       prev.firstRowId !== null && nextFirstRowId !== null && nextFirstRowId < prev.firstRowId;
-    let viewportAdjustment: number | null = null;
-    if (didPrepend && !pendingRestoreOwnsAnchor && scrollRef.current) {
-      const previousVirtualAnchor = pendingPrependVirtualAnchorRef.current;
-      const nextAnchorMeasurement = previousVirtualAnchor
-        ? virtualizer.measurementsCache.find(
-            (measurement) => measurement.key === previousVirtualAnchor.key,
-          )
-        : undefined;
-      if (previousVirtualAnchor && nextAnchorMeasurement) {
-        viewportAdjustment = prependVirtualAnchorAdjustment(
-          previousVirtualAnchor,
-          {
-            key: previousVirtualAnchor.key,
-            offsetTop: previousVirtualAnchor.offsetTop,
-            start: nextAnchorMeasurement.start,
-          },
-          scrollRef.current.scrollTop,
-        );
-      }
+    const element = scrollRef.current;
+    const anchor = pendingPrependVirtualAnchorRef.current;
+    // 三段缺口统一在这里裁决：首帧（无 rowId 可比）按当帧实测起点算绝对目标；
+    // 锚点行被虚拟化卸载时用触发瞬间保存的起点加总高度增量还原；有锚点时一律
+    // 按绝对目标恢复，避免把触发到本帧之间的中间位移重复计入。平移必须在绘制前
+    // 与本帧的测高修正合并提交，否则用户会看到两次位移。
+    const adjustment = resolvePrependViewportAdjustment({
+      prevFirstRowId: prev.firstRowId,
+      nextFirstRowId,
+      prevTotalSize: prev.totalSize,
+      nextTotalSize,
+      currentScrollTop: element?.scrollTop ?? 0,
+      anchor,
+      anchorNextStart: anchor
+        ? (virtualizer.measurementsCache.find(
+            (measurement) => measurement.key === anchor.key,
+          )?.start ?? null)
+        : null,
+      restoreOwnsAnchor: pendingRestoreOwnsAnchor,
+    });
+    // 锚点只服务它被采集后遇到的第一帧前插：消费掉，避免过期锚点落到后续无关的前插上
+    // （例如宽屏目录的一次性补拉）算出一个错的绝对目标。中间的流式/测高 commit 不消费，
+    // 否则补页结果还没到，锚点就被清掉了。
+    if (didPrepend || (anchor !== null && prev.firstRowId === null)) {
+      pendingPrependVirtualAnchorRef.current = null;
     }
-    if (didPrepend) pendingPrependVirtualAnchorRef.current = null;
-    const adjustment = pendingRestoreOwnsAnchor
-      ? null
-      : (viewportAdjustment ??
-        prependScrollAdjustment({
-          prevFirstRowId: prev.firstRowId,
-          nextFirstRowId,
-          prevTotalSize: prev.totalSize,
-          nextTotalSize,
-        }));
-    if (adjustment !== null && scrollRef.current) {
-      const element = scrollRef.current;
+    if (adjustment !== null && element) {
       markLayoutScrollGuard();
       element.scrollTop += adjustment;
       // 程序化平移同样入账，避免被下方贴底对账误读为「未观察滚动」。
