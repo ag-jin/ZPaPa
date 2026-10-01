@@ -2245,8 +2245,9 @@ export function SettingsPage({
                           </div>
                         ) : null}
                         {/*
-                          远程设备设置投射：设备已连接时出现，直接读改该设备的白名单设置。
-                          数据实时从对端读取、不落库；字段白名单见 lib/remoteDeviceSettings.ts。
+                          远程设备设置投射：设备已连接时出现，直接读改该设备的可投射设置
+                          （排除法/黑名单，非白名单）。
+                          数据实时从对端读取、不落库；字段黑名单见 lib/remoteDeviceSettings.ts。
 
                           挂在「远程设备」区块里而不是依赖「当前 workspace 是远程」：
                           投射条目按 ADR 0001 是 transient、不带远端 identity，
