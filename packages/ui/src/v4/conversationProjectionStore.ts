@@ -260,6 +260,26 @@ export function shouldAutoLoadIncompleteLeadingTurn(
  */
 export const LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS = 240;
 
+/**
+ * rail 目录的自动预载行数。
+ *
+ * 目录补拉的结果是整窗换一次快照，而窗口越大，切进该会话时重建这批数据越贵
+ * （2026-10-01 实测：窗口 240 行点击阻塞 215ms；11042 行 4.3~7.6s——DOM 里其实只挂
+ * 20 行，贵的是整窗数据模型进 React 那一遭）。所以自动预载只给 rail 垫一段，
+ * 让左侧导航一进去就有内容可看；用户真的去用 rail 时才补到完整目录（不设上限）。
+ */
+export const RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS = 1_000;
+
+/** 目录补拉是否该停：没有更早历史，或已到预载预算（maxRows = null 表示不设上限）。 */
+export function shouldStopDirectoryHydration(input: {
+  hydratedRows: number;
+  hasMore: boolean;
+  maxRows: number | null;
+}): boolean {
+  if (!input.hasMore) return true;
+  return input.maxRows !== null && input.hydratedRows >= input.maxRows;
+}
+
 /** 当前窗口是否还在首 turn 自动补窗的预算内。 */
 export function withinLeadingTurnAutoloadBudget(snapshot: ConversationSnapshot | null): boolean {
   if (!snapshot) return false;
@@ -1051,7 +1071,13 @@ export class ConversationProjectionStore {
    * 已加载的几十轮。这里按协议上限分页读取，但等全部页成功后只换一次 snapshot，
    * 避免每 200 行重建一次 timeline render units 与两个 virtualizer。
    */
-  async loadAllOlder(): Promise<ConversationTurnNavigatorHydrationResult> {
+  async loadAllOlder(options?: {
+    /**
+     * 只补到（含尾窗）这么多行为止，用于「先给 rail 预载一段」；
+     * 省略 = 补到没有更早历史。按预算停下的那一次不记终态，后续仍可显式补全。
+     */
+    maxWindowRows?: number;
+  }): Promise<ConversationTurnNavigatorHydrationResult> {
     const stale = (logEpoch = this.state.snapshot?.logEpoch ?? "unknown") => ({
       status: "stale" as const,
       logEpoch,
@@ -1086,6 +1112,10 @@ export class ConversationProjectionStore {
       totalRows: snapshot.rows.totalCount,
     });
 
+    const maxRows = options?.maxWindowRows ?? null;
+    const initialWindowRows = snapshot.rows.window.length;
+    let hydratedRows = initialWindowRows;
+    let stoppedByBudget = false;
     try {
       while (true) {
         const result = await this.transport.rowsRange({
@@ -1122,7 +1152,19 @@ export class ConversationProjectionStore {
         }
         pages.push(older);
         beforeRowId = nextBeforeRowId;
-        if (!result.hasMore) break;
+        hydratedRows += older.length;
+        if (shouldStopDirectoryHydration({ hydratedRows, hasMore: result.hasMore, maxRows })) {
+          stoppedByBudget = result.hasMore;
+          if (stoppedByBudget) {
+            logger.debug("[v4-store] 目录预载达到预算，停在完整目录之前", {
+              hydratedRows,
+              maxRows,
+              sessionId,
+              windowRows: initialWindowRows,
+            });
+          }
+          break;
+        }
       }
 
       const current = this.state.snapshot;
@@ -1188,7 +1230,8 @@ export class ConversationProjectionStore {
         logEpoch: initialLogEpoch,
         directoryRevision,
       };
-      this.turnNavigatorHydrationTerminal = result;
+      // 按预算停在半路不算终态：用户之后显式要求补全时必须还能继续。
+      if (!stoppedByBudget) this.turnNavigatorHydrationTerminal = result;
       return result;
     } catch (error) {
       logger.warn(

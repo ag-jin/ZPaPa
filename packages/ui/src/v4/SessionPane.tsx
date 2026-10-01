@@ -3627,14 +3627,17 @@ export function SessionPane({
     return lease?.store.loadOlder();
   }, [lease]);
 
-  const handleLoadAllOlder = useCallback(() => {
-    return lease
-      ? lease.store.loadAllOlder()
-      : Promise.resolve({
-          status: "stale" as const,
-          logEpoch: snapshot?.logEpoch ?? "unknown",
-        });
-  }, [lease, snapshot?.logEpoch]);
+  const handleLoadAllOlder = useCallback(
+    (options?: { maxWindowRows?: number }) => {
+      return lease
+        ? lease.store.loadAllOlder(options)
+        : Promise.resolve({
+            status: "stale" as const,
+            logEpoch: snapshot?.logEpoch ?? "unknown",
+          });
+    },
+    [lease, snapshot?.logEpoch],
+  );
 
   useEffect(() => {
     if (!shareActive || !sessionId || !hasOlderRows(snapshot)) return;

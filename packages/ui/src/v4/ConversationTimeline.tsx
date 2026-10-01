@@ -58,6 +58,7 @@ import {
   DEFAULT_ROW_HEIGHT_ESTIMATE_PX,
   TimelineRowHeightCache,
 } from "@/v4/timelineRowHeightCache.js";
+import { RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS } from "@/v4/conversationProjectionStore.js";
 import {
   readChatSessionScrollMemoryState,
   resolveChatSessionScrollRestoreTop,
@@ -102,6 +103,8 @@ const USER_SCROLL_INTENT_TTL_MS = 1200;
 const LAYOUT_SCROLL_GUARD_MS = 250;
 const CONTENT_WIDTH_RESIZE_SETTLE_MS = 120;
 const SCROLL_MEMORY_RESTORE_TOLERANCE_PX = 1;
+/** 目录预载延时：让首屏先落定，再去做这件会占主线程的事。 */
+const TURN_NAVIGATOR_DIRECTORY_PRELOAD_DELAY_MS = 1_500;
 
 function scheduleMicrotask(callback: () => void): void {
   // 部分 WebView/最小 DOM 运行时没有 window.queueMicrotask；调度能力应从
@@ -278,8 +281,13 @@ interface ConversationTimelineProps {
   loadingOlder?: boolean;
   /** 拉取更早一窗历史（接近顶部时自动预取）。 */
   onLoadOlder?: () => Promise<void> | void;
-  /** 宽屏问题目录挂载后一次补齐当前有效分支的全部历史。 */
-  onLoadAllOlder?: () => Promise<ConversationTurnNavigatorHydrationResult>;
+  /**
+   * 宽屏问题目录补拉。带 maxWindowRows 时只补到该预算（首次自动预载用），
+   * 省略则补到没有更早历史（用户显式要完整目录时用）。
+   */
+  onLoadAllOlder?: (options?: {
+    maxWindowRows?: number;
+  }) => Promise<ConversationTurnNavigatorHydrationResult>;
   /**
    * 问题导航目录失效代际（store turnNavigatorDirectoryRevision）。
    * real-user query 增删后终态必须失效重探测；组件 hydration key
@@ -616,9 +624,11 @@ function ConversationTimelineImpl({
   // 实测宽窗口下这一次落地会把 11042 行一次性换进快照，冻结主线程 2.1s；切换会话时
   // 同步提交甚至阻塞 ~4.5s（用户感知为「切过去要等一会」）。目录只服务左侧问题导航，
   // 用户真正伸手去用 rail 时才补，等待落在明确意图之后。
-  const [directoryHydrationRequested, setDirectoryHydrationRequested] = useState(false);
+  const [directoryHydrationMode, setDirectoryHydrationMode] = useState<"idle" | "preload" | "full">(
+    "idle",
+  );
   const requestTurnNavigatorDirectory = useCallback(() => {
-    setDirectoryHydrationRequested(true);
+    setDirectoryHydrationMode("full");
   }, []);
   const directoryHydrationAvailable = shouldHydrateConversationTurnNavigatorDirectory({
     canLoadOlder,
@@ -627,8 +637,22 @@ function ConversationTimelineImpl({
     loadingOlder: false,
   });
 
+  // 预载：窗口稳定后自动补一小段，让 rail 一进去就有内容可看（碰 rail 再补全）。
+  // 预载有行数预算：窗口越大，切进本会话重建这批数据越贵（实测 240 行 215ms /
+  // 11042 行 4.3~7.6s），所以自动的这部分必须封顶。
   useEffect(() => {
-    if (!directoryHydrationRequested) return;
+    if (directoryHydrationMode !== "idle" || !directoryHydrationAvailable) return;
+    const timer = window.setTimeout(() => {
+      // 用户已经在读/滚：预载要换一次窗口（实测 ~0.8s 主线程），别在这时候插进去。
+      // rail 仍可伸手补齐（那是用户明确要目录的时刻）。
+      if (userAdjustedScrollSinceRestoreRef.current) return;
+      setDirectoryHydrationMode((mode) => (mode === "idle" ? "preload" : mode));
+    }, TURN_NAVIGATOR_DIRECTORY_PRELOAD_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [directoryHydrationAvailable, directoryHydrationMode]);
+
+  useEffect(() => {
+    if (directoryHydrationMode === "idle") return;
     if (
       !shouldHydrateConversationTurnNavigatorDirectory({
         canLoadOlder,
@@ -642,7 +666,8 @@ function ConversationTimelineImpl({
     // terminal key 必须与 store turnNavigatorDirectoryRevision 同步。
     // 仅用 sessionKey + logEpoch 时，real-user query 增删不换 epoch，
     // 组件层 terminal 永久拦截，store 即使失效缓存也无法重新探测。
-    const hydrationKey = `${sessionKey}:${rowContext.logEpoch ?? "unknown"}:${turnNavigatorDirectoryRevision}`;
+    // 模式进 key：预载的终态不能挡住之后显式补全（两者各算一次尝试）。
+    const hydrationKey = `${sessionKey}:${rowContext.logEpoch ?? "unknown"}:${turnNavigatorDirectoryRevision}:${directoryHydrationMode}`;
     const attempt = turnNavigatorHydrationAttemptRef.current;
     if (attempt.key !== hydrationKey) {
       if (attempt.retryTimer !== null) window.clearTimeout(attempt.retryTimer);
@@ -661,7 +686,11 @@ function ConversationTimelineImpl({
       sessionKey,
       totalRows: totalCount,
     });
-    void onLoadAllOlder().then((result) => {
+    void onLoadAllOlder(
+      directoryHydrationMode === "preload"
+        ? { maxWindowRows: RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS }
+        : undefined,
+    ).then((result) => {
       if (attempt.key !== hydrationKey) return;
       if (result.status === "hydrated" || result.status === "not-enough-queries") {
         attempt.status = "terminal";
@@ -689,7 +718,7 @@ function ConversationTimelineImpl({
     });
   }, [
     canLoadOlder,
-    directoryHydrationRequested,
+    directoryHydrationMode,
     loadingOlder,
     onLoadAllOlder,
     rowContext.logEpoch,
@@ -1480,8 +1509,8 @@ function ConversationTimelineImpl({
     suppressVirtualizerAdjustmentDuringRestoreRef.current = true;
     virtualizer.measure();
     userAdjustedScrollSinceRestoreRef.current = false;
-    // 目录补拉是「每个会话一次」的用户意图：换会话要重新伸手，不能沿用上一个会话的授权。
-    setDirectoryHydrationRequested(false);
+    // 目录预热是「每个会话一次」：换会话回到 idle（预载会重新计时，显式补全要重新伸手）。
+    setDirectoryHydrationMode("idle");
 
     const restoredState = readChatSessionScrollMemoryState(scrollMemoryKey);
     const pendingRestoreWait = resolvePendingScrollMemoryRestoreWait(
@@ -1748,7 +1777,7 @@ function ConversationTimelineImpl({
           isHydratingDirectory={loadingOlder}
           // 目录还没补齐时 rail 也要在（哪怕当前窗口一条 query 都还没加载），
           // 用户伸手碰一下 rail 才发起补拉。
-          directoryIncomplete={directoryHydrationAvailable && !directoryHydrationRequested}
+          directoryIncomplete={directoryHydrationAvailable && directoryHydrationMode !== "full"}
           onRequestDirectory={requestTurnNavigatorDirectory}
           scrollOffsetPx={virtualizer.scrollOffset ?? turnNavigatorViewport.scrollOffsetPx}
           viewportHeightPx={

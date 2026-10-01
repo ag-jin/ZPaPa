@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS,
+  RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS,
   shouldAutoLoadIncompleteLeadingTurn,
+  shouldStopDirectoryHydration,
   withinLeadingTurnAutoloadBudget,
 } from "../src/v4/conversationProjectionStore.js";
 import {
@@ -124,4 +126,43 @@ test("目录补拉只在伸手时发起：未补齐 + 有处理器 + 非在途",
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, directoryIncomplete: false }), false);
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, hasRequestHandler: false }), false);
   assert.equal(shouldRequestTurnNavigatorDirectory({ ...base, hydrating: true }), false);
+});
+
+test("rail 目录预载有行数预算，显式补全不设上限", () => {
+  assert.equal(
+    shouldStopDirectoryHydration({
+      hydratedRows: 500,
+      hasMore: true,
+      maxRows: RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS,
+    }),
+    false,
+    "预算内且还有更早历史 → 继续预载",
+  );
+  assert.equal(
+    shouldStopDirectoryHydration({
+      hydratedRows: RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS,
+      hasMore: true,
+      maxRows: RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS,
+    }),
+    true,
+    "到预载预算 → 停（rail 只垫一段）",
+  );
+  assert.equal(
+    shouldStopDirectoryHydration({
+      hydratedRows: 12,
+      hasMore: false,
+      maxRows: RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS,
+    }),
+    true,
+    "没有更早历史 → 停",
+  );
+  assert.equal(
+    shouldStopDirectoryHydration({ hydratedRows: 99_999, hasMore: true, maxRows: null }),
+    false,
+    "显式补全（maxRows = null）不设上限，列全",
+  );
+  assert.ok(
+    RAIL_DIRECTORY_PRELOAD_WINDOW_ROWS >= LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS * 2,
+    "预载预算要明显大于首 turn 预算，否则 rail 预载没有意义",
+  );
 });
