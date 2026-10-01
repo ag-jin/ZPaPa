@@ -58,8 +58,7 @@ spec 隐含但各任务测试**容易漏掉**的输入/失败模式（每条都�
   - `SQUAD_INSTRUCTION_SLOTS = ["goal","breakdown","dispatch","independence","acceptance","stopCondition","reporting","maxRounds"] as const`
   - `type SquadInstructionSlot = (typeof SQUAD_INSTRUCTION_SLOTS)[number]`
   - `SQUAD_REQUIRED_INSTRUCTION_SLOTS = ["stopCondition","maxRounds"] as const`
-  - `SQUAD_MAX_MEMBERS = 12`
-  - `squadSchema`（**strict**）、`type Squad`
+  - `squadSchema`（**strict**）、`type Squad`（`instructions` 用 **`z.partialRecord(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`**：键限定在 8 槽位内、**允许缺键**——zod 4 的 `z.record(z.enum)` 是穷尽语义会要求 8 键全给，与「缺槽位由 `validateSquad` 拦」的设计冲突）
   - `validateSquad(squad): { ok: true } | { ok: false; problems: string[] }`
 
 - [ ] **Step 1: 写失败测试**
@@ -68,7 +67,7 @@ spec 隐含但各任务测试**容易漏掉**的输入/失败模式（每条都�
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  SQUAD_INSTRUCTION_SLOTS, SQUAD_MAX_MEMBERS, SQUAD_REQUIRED_INSTRUCTION_SLOTS,
+  SQUAD_INSTRUCTION_SLOTS, SQUAD_REQUIRED_INSTRUCTION_SLOTS,
   squadSchema, validateSquad,
 } from "../src/squad.js";
 
@@ -123,10 +122,6 @@ test("strict：未知字段被拒（如 hostBinding）", () => {
   assert.equal(squadSchema.safeParse({ ...base, hostBinding: "h1" }).success, false);
 });
 
-test("成员上限是 12", () => {
-  assert.equal(SQUAD_MAX_MEMBERS, 12);
-});
-
 test("继承既有字段可选性：description 可选、archivedAt 可选", () => {
   const parsed = squadSchema.parse(base);
   assert.equal(parsed.description, undefined);
@@ -141,7 +136,7 @@ Expected: FAIL（模块不存在）
 
 - [ ] **Step 3: 最小实现**
 
-按 P0 的 `packages/shared/src/work-item.ts` 风格写：`squadSchema` 用 `.strict()`；`instructions` 用 `z.record(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`（键限定在 8 槽位内）；`members` 用 `z.array(z.object({ agentId: z.string().min(1), role: z.string().optional() })).min(1).max(SQUAD_MAX_MEMBERS)`。
+按 P0 的 `packages/shared/src/work-item.ts` 风格写：`squadSchema` 用 `.strict()`；`instructions` 用 `z.record(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`（键限定在 8 槽位内）；`members` 用 `z.array(z.object({ agentId: z.string().min(1), role: z.string().optional() })).min(1)`——**不设名册上限**（spec 只限「并行队员 ≤ 6」，那是并发约束、由派发侧管，不是名册规模，见 spec §3.10）。
 
 `validateSquad` 返回 `problems: string[]`（中文、可读），逐条：
 1. `leaderAgentId` 必须出现在 `members` 的 `agentId` 中；
