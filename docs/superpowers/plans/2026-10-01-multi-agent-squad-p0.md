@@ -120,6 +120,7 @@ git commit -m "feat(squad): 新增多智能体小队实验开关（默认关闭�
 **Files:**
 - Modify: `packages/ui/src/lib/settingsNavigation.ts`（`SettingsSectionId` 联合、`isSettingsSectionId`、**不要**加进 `HIDDEN_SETTINGS_SECTIONS`）
 - Modify: `packages/ui/src/settings/settingsPageConfig.ts`（`BASE_SETTINGS_SECTIONS` 加一项）
+- Create: `packages/ui/src/settings/ExperimentsSection.tsx`
 - Modify: `packages/ui/src/SettingsPage.tsx`（渲染分支）
 - Modify: `packages/ui/src/i18n/locales/zh-CN.ts`、`packages/ui/src/i18n/locales/en-US.ts`
 - Test: `packages/ui/test/settingsExperimentsSection.test.ts`
@@ -451,7 +452,7 @@ export const WORK_ITEM_SCHEMA = `
 `;
 ```
 
-`migrations.ts`：**照抄相邻迁移项的包装形状**（冻结列声明 + 版本/checksum 机制），追加一项执行 `WORK_ITEM_SCHEMA`。
+`migrations.ts`：从 `schema-v1.js` **追加导入** `WORK_ITEM_SCHEMA`（该文件已按同样方式导入其他 schema），并**照抄相邻迁移项的包装形状**（冻结列声明 + 版本/checksum 机制），追加一项执行 `WORK_ITEM_SCHEMA`。
 **关键**：新表**不**并入既有 `columns` 冻结列表之外的任何结构变更；**不重命名、不删除**既有列。
 `assignee_type` 不建外键（与既有热表做法一致，靠应用层校验）。
 
@@ -614,7 +615,7 @@ git commit -m "feat(squad): 工作项 Repo（CRUD + 父树聚合 + CAS 流转）
 - Consumes: `WorkItemRepo`（Task 5）、`isTerminalWorkItemStatus` / 限额（Task 3）
 - Produces:
   - `createWorkItemService(deps: { repo: WorkItemRepo; emit: (event: WorkItemEvent) => void }): WorkItemService`
-  - `WorkItemService.create(input): WorkItem`（校验父存在、非环、深度 ≤ 5、子项 ≤ 50）
+  - `WorkItemService.create(input: { workspaceIdentity: string; workspacePath: string; title: string; body?: string; parentId?: string; stage?: number; assignee: { type: "user" | "agent" | "squad"; id: string }; id?: string }): WorkItem`（`id` 可选，便于测试与幂等；校验父存在、非环、深度 ≤ 5、子项 ≤ 50）
   - `WorkItemService.transition(id, next, expect): boolean`（唯一写 status 的入口）
   - `type WorkItemEvent = { kind: "workitem.status_changed"; id: string; from: WorkItemStatusKey; to: WorkItemStatusKey } | { kind: "workitem.child_completed"; parentId: string }`
 
@@ -719,7 +720,7 @@ git commit -m "feat(squad): 工作项服务（唯一写者 + 环/深度/配额�
 
 **Interfaces:**
 - Produces:
-  - `teamAgentSchema`（zod）与 `type TeamAgent`，字段含 `id`（稳定 id）、`name`、`description`、`color?`、`systemPrompt`、`skills: string[]`、`modelSelection?`、`tools?`、`disallowedTools?`、`permissionMode?`、`memoryScope: "user" | "project" | "local"`、`enabled`、`provenance?`
+  - `teamAgentSchema`（zod，**strict**）与 `type TeamAgent`，字段含 `id`（稳定 id）、`name`、`description`、`color?`、`systemPrompt`、`skills: string[]`、`modelSelection?`、`tools?`、`disallowedTools?`、`permissionMode?`、`memoryScope: "user" | "project" | "local"`、`enabled`、`archivedAt?`、`provenance?`
   - `resolveSquadAgentRoot(workspacePath: string): string` → `<workspacePath>/.zcode/squad/agents`
   - `readTeamAgent(root, id)` / `writeTeamAgent(root, agent)` / `listTeamAgents(root)` / `deleteTeamAgent(root, id)`
 
@@ -738,12 +739,13 @@ test("teamAgent 必须有非空稳定 id", () => {
   assert.equal(bad.success, false);
 });
 
-test("不绑 host：schema 不声明 hostBinding 字段", () => {
-  const parsed = teamAgentSchema.parse({
+// strict schema：多余字段直接拒绝——这是「不绑 host」的机器化证明（决策 E）。
+test("strict schema 拒绝 hostBinding 等未知字段", () => {
+  const parsed = teamAgentSchema.safeParse({
     id: "ta_1", name: "a", systemPrompt: "s", memoryScope: "project", enabled: true,
     hostBinding: "h1", // 多余字段
   });
-  assert.equal("hostBinding" in parsed, false);
+  assert.equal(parsed.success, false);
 });
 ```
 
@@ -784,7 +786,7 @@ Expected: FAIL（模块不存在）
 
 - [ ] **Step 3: 最小实现**
 
-`team-agent.ts`：用 zod `.strict()` 定义（**多余字段即拒**，从而 `hostBinding` 会被拒——这与 `hostBinding in parsed === false` 一致）。
+`team-agent.ts`：用 zod **`.strict()`** 定义（多余字段即拒，从而 `hostBinding` 之类会被 `safeParse` 判失败）；schema 内包含可选的 `archivedAt: z.number().int().nonnegative().optional()`。
 
 `teamAgentStorage.ts`：每个智能体一个文件 `<root>/<id>.json`（`JSON.stringify` + 原子写：先写 `.tmp` 再 `rename`）。`listTeamAgents` 只读 `*.json` 并跳过无法解析的文件（坏文件不应让整个列表崩）。
 
@@ -817,6 +819,8 @@ git commit -m "feat(squad): 协作智能体域模型与实验命名空间存储"
 - Produces:
   - `createTeamAgentService(deps: { root: string }): TeamAgentService`
   - `TeamAgentService.create(input): TeamAgent`
+  - `TeamAgentService.get(id: string): TeamAgent | null`
+  - `TeamAgentService.list(): TeamAgent[]`
   - `TeamAgentService.prefillFrom(agent: AgentSummary): Partial<TeamAgent>`（**拷贝**字段；不建立引用）
   - `TeamAgentService.archive(id): void`（归档而非硬删）
   - `TeamAgentService.setEnabled(id, enabled): void`
