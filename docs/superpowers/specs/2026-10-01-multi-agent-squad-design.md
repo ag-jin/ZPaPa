@@ -315,6 +315,34 @@
 5. **状态推进幂等**：每次流转携带期望前置状态（**CAS**）；不匹配则丢弃并记事件，**不报错**。
 6. **关闭实验开关**：停止**新**派发；**不中断**进行中的 run；入口隐藏、数据保留。
 
+#### 5.7.1 `eventKey` 构造规则（接线前必须闭合；2026-10-01 已定）
+
+§3.9 注入的幂等键是 `(workItemId, ruleId, revision, eventKey)`，而 `eventKey` **如何构造**此前一直未定义。这是最危险的一类留白：不定义，接线方会就地拼串，**重复投递的事件会静默重复触发**——不报错、看起来正常。
+
+**唯一构造器**：`computeEventKey(rule, fact)`，随域模型一起从 `shared` 导出。调度器与 Repo **都调它**，**不得各自拼串**。
+
+**两个族，前缀不同**（于是「事件触发的第 N 次」与「排期的第 N 次」永不撞键）：
+
+**(A) 事件族（`kind: "event"`）**：`eventKey = "e:" + identity`，`identity` 按**优先级**取第一条可用者：
+
+1. `"id:" + source + ":" + externalId` —— 事件自带的**稳定 id**（如 GitHub `X-GitHub-Delivery`、`event.id`）。**首选**。
+2. `"fp:" + source + ":" + eventType + ":" + sha256(stableStringify(payload))` —— 无稳定 id 时，退用**完整 payload 的规范化指纹**。
+
+- **既无 id、payload 又不可规范化 → 抛**（不 fire）。不可去重的事件每次重投都会重复触发且**不报错**，属「看起来没问题」形态，必须响亮失败。
+- 指纹用**完整 payload**（不是 `filters` 子集）：唯其如此，两个**仅时间戳不同**的事件才会算出不同 key。
+- `stableStringify` 必须钉死：对象键按码点升序、数组保序、数字最简形式、字符串 JSON 转义；并排除**易变字段**（`deliveryAttempt`、投递时刻等）。**易变字段清单是同处声明的常量**，不得在调用点就地过滤。
+
+**(B) 排期族（`at` | `every` | `cron`）**：`eventKey = "t:" + scheduledFor`，`scheduledFor` 是本次**应当触发的名义时刻**（epoch ms 整数），**不是**调度器发现它的墙钟时刻。
+
+- 重启后重算 `nextFireAt`（§6.6 第 3 项「漏掉的周期合并成一次」）、misfire 补发、同一次名义时刻被 tick 反复捞到——三种情形都必须算出**同一个 key**，去重才成立。
+- 名义时刻必须落在**调度网格**上，因而**确定**、不依赖运行时刻：`at` 即 `at` 本身；`every` 由 `intervalSeconds` 与一个**钉死的 epoch 锚点**对齐；`cron` 由表达式与 `timezone` 定义。**锚点必须写进契约**（否则重启后换锚点，同一格算出不同 key，去重失效且静默）。
+
+**`filters` / `eventTypes` 不参与 `eventKey`。** 它们判「**是否匹配**」，不判「**是哪一个**」。把 `filters` 拼进 key，会让规则作者改一下过滤器就换掉一把去重键 → **历史去重记录全部失效**（同一事实被重新处理一次）。**这是本条最重要的一句。**
+
+**与 `revision` 的关系**：`eventKey` 里**不含** `revision`（它已是四元组的独立一项）。规则被编辑 → `revision` 变 → 四元组整体变 → 历史去重**刻意不复用**（规则换了口径，同一事件值得再处理一次）。
+
+**与去重三元组的关系**：§5.5 的去重键是 `(ruleId, revision, eventKey)`，**不含 `workItemId`**——去重按**规则**维度；同一 `ruleId` 不跨工作项，故二者等价。但**落痕时四元组仍带 `workItemId`**（可读性与按工作项审计）。
+
 ---
 
 ## 6. 隔离与执行
@@ -334,8 +362,6 @@
 ```
 
 **准确规则**：worktree 活到「该队员这次工作**被合并**为止」——**审查被拒时必须存活到合并**，不能提前删。
-
-### 6.3 合并（决策 A / B）
 
 ### 6.3 合并（决策 A / B）
 
@@ -629,7 +655,7 @@
 | 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | P2 接线简报时补（或明确并入 instructions） |
 | `wakeRuleRepo` 读回值可能**枚举外**（`rowToWakeRule` 对 `kind`/`mode`/`pausedReason`/`onTimeout` 用 `as` 强转，读回无再校验） | **P1 终审修复波已对齐**：读回时对枚举列校验，非法值**抛错**（与 §5「响亮失败优于静默跳过」的裁定一致）；「故意不进 barrel」的注释保留 | **已闭合** |
 | `casAdvance` 返回单一 `false`，**不区分**「被 revision fencing 拒绝」与「规则已删」 | 接线方无从记录原因 | P2 需回读比对 revision 判因 |
-| `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | §3.9 的 `(workItemId, ruleId, revision, eventKey)` 里 `eventKey` 如何由 `filters`/`eventTypes` 构造，P1 未定义 | P2 接线前必须定义 |
+| `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | **2026-10-01 已定**：见 **§5.7.1**（事件族用稳定 id 或完整 payload 指纹、排期族用名义时刻网格；`filters`/`eventTypes` **不参与** key） | **已闭合（契约已定，实现留待接线）** |
 | 归档小队 → **工作项指派与排班转交队长** | 需按 assignee 查工作项，属工作项查询层 | P2（`squadService.ts` 有 `TODO(P2)`） |
 | **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（终审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属**发布期动作**；表行而非逻辑边界，缺行只跳过、不会假红） |
 

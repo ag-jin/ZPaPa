@@ -181,7 +181,8 @@ git commit -m "feat(worktree): git 执行封装与工作树管理器（add/remov
   - `type BranchPlan = { integration: string; member: string }`
   - `planBranches(input: { workItemSlug: string; agentSlug: string }): BranchPlan`
     - **命名必须 D/F 安全**（P2a T3 实测发现）：git 分支是文件系统 ref，**`squad/<wi>` 与 `squad/<wi>/<agent>` 不可能共存**（D/F 冲突，`cannot lock ref`）。故**从第二段起就分叉**：集成分支 `squad/integration/<wi>`、队员分支 `squad/member/<wi>/<agent>`。**任何用路径层级命名的 ref 都受此约束。**
-  - `assertNamespaceDisjoint(): void` —— **守卫测试用**的常量断言：`squad/` 之后的第一段在两个命名空间里**不相交**（`integration` vs `member`），从而**构造上**排除 D/F 冲突。
+  - `INTEGRATION_NAMESPACE = "squad/integration/"` 与 `MEMBER_NAMESPACE = "squad/member/"` —— **两个命名空间常量**（T2 修复轮的落地形态）。**构造性守卫**：两常量互为**非前缀**（`integration` vs `member`），故任一构件都不可能成为另一构件的 `x/` 祖先 ⇒ D/F 冲突**构造排除**，无需事后调 git 探测。守卫由**两条测试**承担（36 组 slug 全排列互不为前缀 + 敏感值反例 `wi:"member"`），外加一条**真实 git 共存用例**（同仓库同时建两分支并各自 `worktree add`）。
+    - 计划原先列出的 `assertNamespaceDisjoint(): void` **不再产出**：「名字不相交」是**常量取值即定**的静态事实，另立一个运行时函数只是把同一件事再说一遍，还给调用方留一个「以为它真会检查点什么」的空壳。守卫改由测试表达。
   - `createBranchAllocator(deps: { manager: WorktreeManager }): { allocate(plan: BranchPlan, base: string): Promise<{ memberPath: string }> }`
   - `assertSafeSlug(slug: string): void`（拒空、`/`、`..`、非 `[a-z0-9-]`）
 
