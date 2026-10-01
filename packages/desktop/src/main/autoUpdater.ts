@@ -798,8 +798,10 @@ async function syncAutoUpdateCheckChannelFromSettings(
 
 async function applyGitHubUpdateProvider(options: InitAutoUpdaterOptions): Promise<void> {
   // 离线裁剪版:更新源从 ZCode 平台 manifest({endpoint}/api/v1/releases/electron/manifest)
-  // 切换到 GitHub Releases。Windows 走完整下载安装;macOS 由菜单直接打开发布页(见
-  // checkForUpdateMenuClick),此处仍配置 provider 仅用于版本检查元数据。
+  // 切换到 GitHub Releases。**Windows 与 macOS 都走 electron-updater 完整自动更新**
+  // （mac 自 398fc33 起支持；这里配的 provider 就是它的更新源，不只是版本检查元数据）。
+  // 只有 DR 探测失败（未签名包，Squirrel 起不来）时 macOS 才退化为打开发布页 ——
+  // 分支在 checkForUpdateMenuClick 里消费 inAppAutoUpdateAvailable，判定见 autoUpdatePolicy。
   autoUpdater.setFeedURL({
     provider: "github",
     owner: GITHUB_UPDATE_OWNER,
