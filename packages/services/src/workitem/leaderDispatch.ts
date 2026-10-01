@@ -15,8 +15,39 @@ export type SquadBriefing = {
   squadId: string;
   leaderAgentId: string;
   roster: { agentId: string; role?: string }[];
+  /** **系统生成**的机制段（spec §3.3）：内容与用户指令无关，见 `LEADER_PROTOCOL_TEXT`。 */
+  protocol: string;
   instructions: Record<string, string>;
 };
+
+/**
+ * 操作协议：简报的**机制**那一半（spec §3.3）。**系统生成、非用户可写**。
+ *
+ * 为什么必须是独立一段、不能并进 `instructions`（spec §3.3 末段）：`instructions` 是**用户意图**
+ * 那一半，机制交还给用户去写，没写就等于「队长不知道规则却照跑」——而且**不报错**，
+ * 表现只是「它自顾自地跑，规矩和产品语义对不上」。
+ *
+ * 逐项对应 spec §3.3 的 protocol 行与 §5.5 / §5.7 / §6.2 / §6.3：
+ * 三道闸与判定次序、stopCondition 与 maxRounds 语义、派单不改父项状态、
+ * 串行合并到集成分支、整批通过才合回主分支、解不了冲突 → blocked + 进 Inbox、
+ * 审查未通过前工作树存活、合并后才抛弃。
+ * 文案做成常量而不是拼在 `buildBriefing` 里：它是**契约面**（Wave 1 的渲染器、测试与将来的
+ * 本地化都要对表），散在函数体里会随改动漂移而没人发现。
+ */
+export const LEADER_PROTOCOL_TEXT = [
+  "你是本小队的队长。以下规则由系统给定，不由用户指令覆盖：",
+  "",
+  "1. 三道闸与判定次序（防失控，硬规则）：派发前先判 `max_fires`，再判 `rate`（一小时内 run 次数），",
+  "   最后判 `loop`（run 链中同一规则重复出现）；三道闸都过了才判去重。顺序不可调换。",
+  "2. 收手条件与轮次上限：用户给的 `stopCondition` 决定何时继续 / 收工 / 叫人，`maxRounds` 是",
+  "   最多派几轮。两者与 `max_fires` 呼应，撞上任何一条都停下来并进 Inbox 汇报，不要自己放宽。",
+  "3. 派单只产出**子工作项与派发事件**，**不得改父项状态**：父项由工作项服务按条件推进。",
+  "4. 合并是**串行**的：一次只合一个队员进集成分支，不要并发合并。",
+  "5. 队员的成果先合到集成分支，**整批通过才合回主分支**；中途不得直接改主分支。",
+  "6. 集成分支上解不了的冲突：把工作项置 `blocked` 并进 **Inbox** 交给用户，不要自行丢弃或强推。",
+  "7. 审查未通过的队员分支：其工作树必须**存活**到合并为止，不得提前清理。",
+  "8. 工作树与分支在**合并后**才抛弃；未合并就删 = 丢掉一个队员的活。",
+].join("\n");
 
 /** 派发事件：`run.enqueued` 起一次运行；`inbox.notified` 是**跳过**（进 Inbox 等人处理）；
     `wake.rule_fired` 是规则触发的留痕（幂等键 `(workItemId, ruleId, revision, eventKey)` 的一半，§3.9）。 */
@@ -149,10 +180,10 @@ function notify(workItemId: string, reason: string): DispatchEvent {
 }
 
 /**
- * 队长简报。当前只有 **花名册 + 8 槽位 `instructions`** 两部分——
- * spec §3.3 描述的是「花名册 + 操作协议 + `instructions`」，但**「操作协议」这一件还没有实现**，
- * 属 P2（spec §17 已登记为待补：接线简报时补，或明确并入 `instructions`）。
- * 这里如实写明「暂缺操作协议」，免得读注释的人以为简报已经带了协议。
+ * 队长简报（spec §3.3，**三段**）：花名册 + 操作协议 + 8 槽位 `instructions`。
+ *
+ * `protocol` 是系统生成的机制段（`LEADER_PROTOCOL_TEXT`），**不取自用户可写的 `instructions`**：
+ * 两者一个是机制、一个是用户意图，并起来等于把机制交还给用户去写（spec §3.3 末段）。
  * 花名册与指令都做浅拷贝——派发出去的是**此刻的快照**：§3.10 说小队成员变更不影响已派发且
  * 进行中的 run，若这里直接把 `squad.members` 交出去，之后任何就地修改都会连带改掉已派发 run 的简报，
  * 快照语义就没了（而「以派发那一刻的花名册为准」正是队员变更规则的立足点）。
@@ -165,6 +196,7 @@ function buildBriefing(squad: Squad): SquadBriefing {
     squadId: squad.id,
     leaderAgentId: squad.leaderAgentId,
     roster: squad.members.map((member) => ({ ...member })),
+    protocol: LEADER_PROTOCOL_TEXT,
     instructions: { ...squad.instructions },
   };
 }
