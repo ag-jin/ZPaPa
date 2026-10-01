@@ -5,6 +5,7 @@ import {
   AUTOMATION_SCHEMA,
   OFF_PEAK_SCHEMA,
   TASK_INDEX_SCHEMA,
+  WAKE_RULE_SCHEMA,
   WORK_ITEM_SCHEMA,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
@@ -69,6 +70,10 @@ const definitions = [
     id: "0004_work_items",
     checksumInput: [WORK_ITEM_SCHEMA],
   },
+  {
+    id: "0005_wake_rules",
+    checksumInput: [WAKE_RULE_SCHEMA],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -119,6 +124,7 @@ export function runTasksDatabaseMigrations(
       if (migration.id === "0001_adopt_task_schema") adoptSchema(db);
       else if (migration.id === "0002_provider_selection") importLegacyAutomationSelections(db);
       else if (migration.id === "0004_work_items") db.exec(WORK_ITEM_SCHEMA);
+      else if (migration.id === "0005_wake_rules") db.exec(WAKE_RULE_SCHEMA);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

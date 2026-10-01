@@ -38,13 +38,14 @@ const EXPECTED_WORK_ITEM_INDEXES = [
   "idx_work_items_workspace",
 ];
 
-// 与已发布数据库的契约：这三条 checksum 一旦被改动，老库升级会抛 checksum_mismatch。
+// 与已发布数据库的契约：这些 checksum 一旦被改动，老库升级会抛 checksum_mismatch。
 // 写成冻结字面量，而不是「再用当前代码算一遍」——否则改了 checksumInput 时期望值与
-// 实际值会一起变，回归就测不出来。
-const FROZEN_CHECKSUMS_0001_0003 = [
+// 实际值会一起变，回归就测不出来。新增迁移时只**追加**一行，既有行一字不改。
+const FROZEN_CHECKSUMS_0001_0004 = [
   ["0001_adopt_task_schema", "3e8337b015d94b05dd31a6003f3acc649e821794cfa288bc0af3022698bd4d17"],
   ["0002_provider_selection", "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc"],
   ["0003_official_glm_selection", "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4"],
+  ["0004_work_items", "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f"],
 ] as const;
 
 test("迁移建出 work_items 表与索引", () => {
@@ -78,18 +79,20 @@ test("迁移可重复应用", () => {
   assert.deepEqual(workItemIndexes(db), beforeIndexes);
 });
 
-// 老库升级回归：0001–0003 已应用、0004 未应用的库再跑迁移，只能新增 0004。
+// 老库升级回归：上一版已发布库（0001–0004 已应用）再跑迁移，只能新增 0005。
+// 边界必须钉在「紧邻上一版」——runner 会把所有未记账项都补跑，
+// 若把边界退回更早的版本，就会同时补跑 0004 与 0005，测不出「只执行最新一条」。
 // 下面的冻结字面量是已发布库的账本契约：改动既有 checksumInput 会让这条断言先炸
 // （即便侥幸绕过，runTasksDatabaseMigrations 也会抛 checksum_mismatch）。
-test("老库（0001–0003 已应用）升级只执行 0004", () => {
+test("老库（0001–0004 已应用）升级只执行 0005", () => {
   const db = openFreshDb();
   runTasksDatabaseMigrations(db);
-  // 退回「上一版发布」的样子：新表不存在、0004 未记账。
-  db.exec("DROP TABLE work_items");
-  db.exec("DELETE FROM tasks_schema_migration WHERE id = '0004_work_items'");
+  // 退回「上一版发布」的样子：0005 的新表不存在、0005 未记账。
+  db.exec("DROP TABLE wake_rules");
+  db.exec("DELETE FROM tasks_schema_migration WHERE id = '0005_wake_rules'");
   assert.deepEqual(
     ledger(db).map((row) => [row.id, row.checksum]),
-    FROZEN_CHECKSUMS_0001_0003.map((row) => [...row]),
+    FROZEN_CHECKSUMS_0001_0004.map((row) => [...row]),
   );
 
   const migrated: Array<string | null> = [];
@@ -104,12 +107,18 @@ test("老库（0001–0003 已应用）升级只执行 0004", () => {
       }),
     "冻结的 checksumInput 被改动后，老库升级会抛 checksum_mismatch",
   );
-  // 只执行了一条，且当时账本头是 0003 —— 被执行的只能是 0004。
-  assert.deepEqual(migrated, ["0003_official_glm_selection"]);
+  // 只执行了一条，且当时账本头是 0004 —— 被执行的只能是 0005。
+  assert.deepEqual(migrated, ["0004_work_items"]);
   assert.deepEqual(committedExecutedCounts, [1]);
+  // 纯追加：既有表/索引一行未动，新表建出。
   assert.deepEqual(workItemIndexes(db), EXPECTED_WORK_ITEM_INDEXES);
   assert.ok(workItemColumns(db).includes("status"));
-  assert.equal(ledger(db).length, 4);
+  assert.equal(
+    db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'")
+      .get().c,
+    1,
+  );
+  assert.equal(ledger(db).length, 5);
 
   // 升级完再跑一次必须是 no-op：不执行任何迁移、不报错。
   let executedAgain = 0;
@@ -119,5 +128,5 @@ test("老库（0001–0003 已应用）升级只执行 0004", () => {
     },
   });
   assert.equal(executedAgain, 0);
-  assert.equal(ledger(db).length, 4);
+  assert.equal(ledger(db).length, 5);
 });

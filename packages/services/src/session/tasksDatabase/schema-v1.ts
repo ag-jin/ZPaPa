@@ -214,3 +214,37 @@ export const WORK_ITEM_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_work_items_workspace
     ON work_items(workspace_key, updated_at DESC);
 `;
+
+// 0005 追加：唤醒规则表。同样只新增。列与 WakeRule 域模型**逐字段对齐**（见 @zcode/shared
+// wakeRuleSchema）：少一列不会报错，只会在落盘/读回时静默丢字段，故两者必须同步增删。
+// condition/filters/eventTypes 是结构化值，域模型没有固定形状（spec §3.5 未枚举），
+// 故按文本 JSON 存取而不是拆列——拆列会把未枚举的参数当未知列拒掉。
+export const WAKE_RULE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS wake_rules (
+    id               TEXT PRIMARY KEY,
+    work_item_id     TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    mode             TEXT NOT NULL,
+    at               INTEGER,
+    interval_seconds INTEGER,
+    cron_expression  TEXT,
+    timezone         TEXT,
+    condition        TEXT,
+    event_types      TEXT,
+    filters          TEXT,
+    next_fire_at     INTEGER,
+    max_fires        INTEGER,
+    fire_count       INTEGER NOT NULL DEFAULT 0,
+    paused_reason    TEXT,
+    expires_at       INTEGER,
+    on_timeout       TEXT,
+    revision         INTEGER NOT NULL DEFAULT 0,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_wake_rules_ready
+    ON wake_rules(next_fire_at) WHERE enabled=1 AND next_fire_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_wake_rules_work_item
+    ON wake_rules(work_item_id);
+`;
