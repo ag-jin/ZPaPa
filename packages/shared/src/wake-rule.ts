@@ -138,15 +138,23 @@ export function validateWakeRule(rule: WakeRule): WakeRuleValidationResult {
 
   // 2. event 不得携带任何调度字段：event 由事实驱动，排班字段永远不会被读取，
   //    配了等于静默死配置（还会让人以为「这个 event 规则会定时跑」）。
+  //    字段集合必须与 spec §3.5 的「调度字段」一行**逐字对齐**：那里把 `timezone` 与
+  //    `nextFireAt` 并列，**`timezone` 也是调度字段**，只查 at/intervalSeconds/cronExpression
+  //    三项会让 `{kind:"event", timezone:"Asia/Shanghai"}` 零告警落盘——正是本类缺口要拦的死配置。
+  //    注意 `timezone` **只对 event 禁**：三种排班 kind（at/every/cron）都要它来确定触发时刻的时区，
+  //    故它不进互斥⑦（互斥⑦管的是 at/intervalSeconds/cronExpression 三者在 kind 间的互斥）。
   if (rule.kind === "event") {
     const schedulingFields: Array<[keyof WakeRule, unknown]> = [
       ["at", rule.at],
       ["intervalSeconds", rule.intervalSeconds],
       ["cronExpression", rule.cronExpression],
+      ["timezone", rule.timezone],
     ];
     for (const [field, value] of schedulingFields) {
       if (value !== undefined) {
-        problems.push(`kind「event」不得携带调度字段「${field}」：event 由事实驱动，该字段不会被读取`);
+        problems.push(
+          `kind「event」不得携带调度字段「${field}」：event 由事实驱动，该字段不会被读取`,
+        );
       }
     }
   }
@@ -184,7 +192,9 @@ export function validateWakeRule(rule: WakeRule): WakeRuleValidationResult {
   // 6. 三种调度 kind 各自必须带上自己的字段。缺字段的规则会被调度器一直跳过，
   //    但「一直跳过」在界面上表现为「规则不生效」，不说清缺哪个字段就无从排查。
   if (rule.kind === "at" && rule.at === undefined) {
-    problems.push(`kind「at」必须带「at」（绝对时间点）：缺了就不知道何时触发，规则会被调度器一直跳过`);
+    problems.push(
+      `kind「at」必须带「at」（绝对时间点）：缺了就不知道何时触发，规则会被调度器一直跳过`,
+    );
   }
   if (rule.kind === "every" && rule.intervalSeconds === undefined) {
     problems.push(`kind「every」必须带「intervalSeconds」（间隔秒数）：缺了就没有周期`);

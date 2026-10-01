@@ -40,6 +40,32 @@ test("event 带 cronExpression 被拒", () => {
   assert.ok(problems({ kind: "event", cronExpression: "* * * * *" }).length > 0);
 });
 
+// 互斥②的第四项：`timezone` 与 at/intervalSeconds/cronExpression 同属 spec §3.5 的「调度字段」。
+// 此前只查前 3 项，`{kind:"event", timezone:"Asia/Shanghai"}` 会 ok:true——一条零告警落盘的死配置。
+// 断言点名字段（不是「数组非空」）：报错必须告诉人「就是 timezone 这一项不该出现在 event 上」。
+test("互斥②：event 带 timezone 被拒且点名字段", () => {
+  assert.ok(
+    problems({ kind: "event", timezone: "Asia/Shanghai" }).some((p) => p.includes("timezone")),
+    "event + timezone 应被互斥② 点名 timezone",
+  );
+});
+// 补集方向：`timezone` **只对 event 禁**——三种排班 kind 都要它来确定触发时刻的时区，必须仍合法。
+// （只测「event 被拒」会漏掉「顺手把 timezone 也塞进互斥⑦」这个过度拦截的错误。）
+test("互斥②补集：at/every/cron 带 timezone 仍合法", () => {
+  assert.deepEqual(
+    problems({ kind: "at", mode: "once", at: 1, timezone: "Asia/Shanghai" }),
+    [],
+  );
+  assert.deepEqual(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, timezone: "Asia/Shanghai" }),
+    [],
+  );
+  assert.deepEqual(
+    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", timezone: "Asia/Shanghai" }),
+    [],
+  );
+});
+
 // condition 只允许挂在 event 上。
 test("every 带 condition 被拒", () => {
   assert.ok(
@@ -329,6 +355,8 @@ test("默认值：fireCount=0、revision=0、enabled=true", () => {
 });
 
 // 逆推 spec §3.5：整张字段表都要能被 schema 认识（含 filters/expiresAt/onTimeout/revision/pausedReason）。
+// 注意 **`timezone` 不出现在 event 规则上**：§3.5 把它列进「调度字段」，而互斥② 禁止 event 携带任何
+// 调度字段（见「互斥②：event 带 timezone 被拒」）。故 `timezone` 由排班类规则承载（见紧随其后的用例）。
 test("§3.5 字段齐：全字段 event 规则通过 schema 与校验", () => {
   const rule = wakeRuleSchema.parse({
     id: "w_full",
@@ -339,7 +367,6 @@ test("§3.5 字段齐：全字段 event 规则通过 schema 与校验", () => {
     filters: { label: "bug" },
     eventTypes: ["work_item.updated"],
     nextFireAt: 1_700_000_000_000,
-    timezone: "Asia/Shanghai",
     maxFires: 20,
     fireCount: 3,
     pausedReason: "rate",
@@ -358,7 +385,6 @@ test("§3.5 字段齐：全字段 event 规则通过 schema 与校验", () => {
     "filters",
     "eventTypes",
     "nextFireAt",
-    "timezone",
     "maxFires",
     "fireCount",
     "pausedReason",
@@ -369,6 +395,21 @@ test("§3.5 字段齐：全字段 event 规则通过 schema 与校验", () => {
   ]) {
     assert.ok(key in rule, `§3.5 字段「${key}」未被 schema 认识`);
   }
+});
+
+// `timezone` 是 §3.5 的调度字段之一，schema 必须认识它（否则排班规则无从表达时区）；
+// 这里用排班类规则确认它不会被 schema 丢弃，且互斥② 不会误伤（event 才禁 timezone）。
+test("timezone 被 schema 认识（承载在排班类规则上，非 event）", () => {
+  const rule = wakeRuleSchema.parse({
+    id: "w_tz",
+    workItemId: "wi_1",
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    timezone: "Asia/Shanghai",
+  });
+  assert.equal(rule.timezone, "Asia/Shanghai");
+  assert.deepEqual(validateWakeRule(rule), { ok: true });
 });
 
 // 三个调度字段都要被 schema 认识（缺一即整类规则无法落盘）：三种 kind 各解析一次。
