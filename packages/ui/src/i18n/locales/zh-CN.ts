@@ -4065,6 +4065,17 @@ const zhCN: Record<string, string> = {
   "settings.experiments.squadToggle.label": "多智能体小队",
   "settings.experiments.squadToggle.description": "启用协作智能体、小队与工作树隔离",
   "settings.experiments.saveFailed": "保存失败，请重试",
+  "settings.experiments.squad.viewTitle": "多智能体小队（最小入口）",
+  "settings.experiments.squad.teamAgents": "协作智能体",
+  "settings.experiments.squad.squads": "小队",
+  "settings.experiments.squad.workItems": "工作项",
+  "settings.experiments.squad.createTeamAgent": "新建协作智能体",
+  "settings.experiments.squad.createSquad": "新建小队",
+  "settings.experiments.squad.createWorkItem": "新建工作项",
+  "settings.experiments.squad.review.approve": "通过",
+  "settings.experiments.squad.review.reject": "打回",
+  "settings.experiments.squad.loopHint":
+    "本阶段的操作路径：先建队长与队员两个协作智能体 → 建一支小队 → 建父工作项并指派给该小队 → 队长被唤醒后用它自己的工具建子项并派给队员 → 每个队员在各自的工作树里执行 → 你在这里「通过」或「打回」 → 整批合并后工作树与分支被抛弃。「汇报」与「请求审查」两个工具、以及审查 agent 属 P2c，本阶段还没有。",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",

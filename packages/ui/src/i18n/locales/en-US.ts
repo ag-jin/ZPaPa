@@ -4343,6 +4343,17 @@ const enUS: Record<string, string> = {
   "settings.experiments.squadToggle.description":
     "Enable collaborative agents, squads, and worktree isolation",
   "settings.experiments.saveFailed": "Could not save. Please try again.",
+  "settings.experiments.squad.viewTitle": "Multi-agent squads (minimal entry)",
+  "settings.experiments.squad.teamAgents": "Collaborative agents",
+  "settings.experiments.squad.squads": "Squads",
+  "settings.experiments.squad.workItems": "Work items",
+  "settings.experiments.squad.createTeamAgent": "New collaborative agent",
+  "settings.experiments.squad.createSquad": "New squad",
+  "settings.experiments.squad.createWorkItem": "New work item",
+  "settings.experiments.squad.review.approve": "Approve",
+  "settings.experiments.squad.review.reject": "Reject",
+  "settings.experiments.squad.loopHint":
+    "This stage's path: create a leader and a member collaborative agent → create a squad → create a parent work item and assign it to that squad → the leader wakes and uses its own tools to create sub-items and dispatch them to members → each member runs in its own worktree → approve or reject here → once the whole batch merges, the worktrees and branches are discarded. The “report” and “request review” tools, and the reviewer agent, arrive in P2c and are not available yet.",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",
