@@ -100,6 +100,21 @@ export function planDispatch(input: {
         );
         break;
       }
+      /* 已停用（`enabled: false`）与已归档是 spec §3.3 并列的**两条状态**，必须一样处理：
+         两者都是「这个小队现在不接新派发」，只判 archivedAt 会让停用形同虚设——用户以为停用了，
+         队长仍被唤醒派单（`WakeRule.enabled` 被 `listReady` 真实消费，两实体口径不能不对称）。
+         reason 文案**必须与「已归档」区分**：归档是长期退出（花名册还在但不再使用），停用是可随时
+         重新打开的临时开关，让接线方与用户一眼能分辨该去「取消归档」还是「重新启用」。
+         次序上归档先判：两者同时命中时报「已归档」（更强的终态结论），不掩盖既有语义。 */
+      if (squad.enabled === false) {
+        events.push(
+          notify(
+            workItem.id,
+            "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发",
+          ),
+        );
+        break;
+      }
       events.push({
         kind: "run.enqueued",
         workItemId: workItem.id,

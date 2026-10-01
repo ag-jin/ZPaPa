@@ -239,14 +239,20 @@ for (const cell of MATRIX) {
 
 // ---------- 3. 矩阵之外的维度 ----------
 
-/* squad 三态 × 触发源三态（矩阵只覆盖了「正常」那一行）。
-   缺失与已归档都走 skip：**绝不**把 squad.id 当普通 agentId 起一次 run。 */
-for (const situation of ["缺失", "已归档"] as const) {
+/* squad 四态 × 触发源三态（矩阵只覆盖了「正常」那一行）。
+   缺失 / 已归档 / 已停用都走 skip：**绝不**把 squad.id 当普通 agentId 起一次 run。
+   `enabled:false` 与 `archivedAt` 是 spec §3.3 并列的两条状态，必须同等对待（否则停用的小队照旧被派单）。 */
+const SQUAD_SITUATIONS = {
+  缺失: null,
+  已归档: { ...squad, archivedAt: 1 },
+  停用: { ...squad, enabled: false },
+} as const;
+for (const situation of Object.keys(SQUAD_SITUATIONS) as (keyof typeof SQUAD_SITUATIONS)[]) {
   for (const trigger of ["user", "leader", "rule"] as const) {
     test(`squad ${situation} × trigger=${trigger}：只通知，不降级成普通 agent run`, () => {
       const events = planDispatch({
         workItem: wi({ type: "squad", id: "sq_1" }),
-        squad: situation === "缺失" ? null : ({ ...squad, archivedAt: 1 } as never),
+        squad: SQUAD_SITUATIONS[situation] as never,
         trigger,
         ...(trigger === "rule" ? { ruleId: RULE_ID } : {}),
       });
@@ -260,14 +266,52 @@ for (const situation of ["缺失", "已归档"] as const) {
   }
 }
 
-// 三种 skip 成因（人 / 小队缺失 / 小队已归档）的理由必须各说各的：一句通用的「跳过」让人无法处置。
-test("三种 skip 成因的 reason 互不相同且非空", () => {
+/* 补集方向：`enabled: true` 不得被停用闸误伤（否则整支小队再也派不出单）。
+   显式写 `enabled: true`（而非依赖 fixture 默认）才能钉住「闸判的是 `=== false` 而非 falsy」。 */
+test("squad enabled:true 正常派发（停用闸不误伤）", () => {
+  const events = planDispatch({
+    workItem: wi({ type: "squad", id: "sq_1" }),
+    squad: { ...squad, enabled: true } as never,
+    trigger: "user",
+  });
+  const run = events.find((e) => e.kind === "run.enqueued");
+  assert.ok(run && run.kind === "run.enqueued" && run.isLeaderTask === true);
+  assert.equal(events.filter((e) => e.kind === "inbox.notified").length, 0);
+});
+
+/* 已归档与已停用的 reason 必须**各说各的**：归档是长期退出、停用是可重开的开关，
+   接线方与用户要能分辨该去「取消归档」还是「重新启用」，否则两种状态在界面上长得一样。 */
+test("已归档与已停用的 reason 不同，且都点出各自状态", () => {
+  const reasonOf = (s: unknown) => {
+    const events = planDispatch({
+      workItem: wi({ type: "squad", id: "sq_1" }),
+      squad: s as never,
+      trigger: "user",
+    });
+    const inbox = events.find((e) => e.kind === "inbox.notified");
+    assert.ok(inbox && inbox.kind === "inbox.notified");
+    return inbox.reason;
+  };
+  const archived = reasonOf({ ...squad, archivedAt: 1 });
+  const disabled = reasonOf({ ...squad, enabled: false });
+  assert.notEqual(archived, disabled);
+  assert.ok(archived.includes("归档"), `归档原因应含「归档」：${archived}`);
+  assert.ok(disabled.includes("停用"), `停用原因应含「停用」：${disabled}`);
+});
+
+// 四种 skip 成因（人 / 小队缺失 / 小队已归档 / 小队已停用）的理由必须各说各的：一句通用的「跳过」让人无法处置。
+test("四种 skip 成因的 reason 互不相同且非空", () => {
   const reasons = [
     planDispatch({ workItem: wi({ type: "user", id: "u1" }), squad: null, trigger: "user" }),
     planDispatch({ workItem: wi({ type: "squad", id: "sq_1" }), squad: null, trigger: "user" }),
     planDispatch({
       workItem: wi({ type: "squad", id: "sq_1" }),
       squad: { ...squad, archivedAt: 1 } as never,
+      trigger: "user",
+    }),
+    planDispatch({
+      workItem: wi({ type: "squad", id: "sq_1" }),
+      squad: { ...squad, enabled: false } as never,
       trigger: "user",
     }),
   ].map((events) => {
