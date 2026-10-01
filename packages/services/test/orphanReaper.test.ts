@@ -340,9 +340,38 @@ test(".worktree/ 根下不属于任何工作树的散落文件与散落目录，
   assert.equal(existsSync(looseDir), true);
 });
 
-// ── 矩阵外：detached 工作树（Task 1 的 list 会给出 branch === null）────────────
+// detached 工作树的用例随 B‑0 移到下面的「归属判据 = 分支命名空间」一节（语义已变）。
 
-test("detached 工作树（branch 为 null）：摘掉工作树，但不拿 null 去删分支", async () => {
+// ── B‑0（2026-10-01 修正）：归属判据 = 分支命名空间，不是路径 ──────────────────
+//
+// 非小队命名空间的工作树落在 `.worktree/` 下：树在、分支在，且不进 reclaimed / reclaimedBranches。
+// 真实成因：用户自己 `git worktree add .worktree/x feat/dev-sandbox`，或开发工作树被误放进去。
+// 第一遍若按路径判归属，它的分支永远不在 activeBranches 里 ⇒ 判据恒为真 ⇒ 被静默吃掉。
+// 这条用例是「放在我的目录里 ≠ 属于我」这条不变式的机器化证明。
+test("命名空间外的工作树不被回收，但可见（进 kept）", async () => {
+  const f = await fixture();
+  // 用户自己的分支（非 squad/ 命名空间）挂在我们产品的运行时目录下：位置像我们的，归属不是。
+  // `add` 恒带 `-b`（它自己派生分支），所以这里不先建分支 —— 否则会撞「a branch named … already exists」。
+  await f.manager.add({ branch: "feat/dev-sandbox", base: "main", dirName: "dev-sandbox" });
+
+  const out = await f.reaper().reap({ activeBranches: [] });
+
+  assert.deepEqual(out.reclaimed, []);
+  assert.deepEqual(out.reclaimedBranches, []);
+  assert.ok(out.kept.includes("dev-sandbox"));
+  assert.deepEqual(out.foreign, [], "它在我们的根下，所以不是 foreign；但也不归我们管");
+  // 实体状态：树与分支都还在（断言返回值不够 —— 实现可能嘴上说 kept 手上却删了）。
+  assert.ok((await f.manager.list()).some((e) => e.branch === "feat/dev-sandbox"));
+  // `branch --list` 对被工作树检出的非当前分支会加 `+ ` 前缀，所以按存在性断言而不是逐字比对。
+  assert.equal(await branchExists(f, "feat/dev-sandbox"), true);
+
+  rmSync(worktreePath(f, "dev-sandbox"), { recursive: true, force: true });
+});
+
+// 同一条不变式的第二个入口：**detached**（没有分支）的工作树同样不能证明归属。
+// 我们自己的树恒由 `worktree add -b` 建出（必有分支），所以「没有分支」只可能是别人的或残骸——
+// 两种都不能碰。这条用例 2026-10-01 随 B‑0 改变了语义（此前被当孤儿摘掉），见其断言里的说明。
+test("detached 工作树（branch 为 null）：不能证明归属 ⇒ 不碰、计入 kept", async () => {
   const f = await fixture();
   await f.git(["worktree", "add", "--detach", worktreePath(f, "det"), "main"], { cwd: f.root });
   const deleted: string[] = [];
@@ -356,10 +385,15 @@ test("detached 工作树（branch 为 null）：摘掉工作树，但不拿 null
     })
     .reap({ activeBranches: [] });
 
-  assert.deepEqual(out.reclaimed, ["det"]);
-  // 没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」这种假动作。
-  assert.deepEqual(deleted, []);
-  assert.equal(existsSync(worktreePath(f, "det")), false);
+  // 语义变更（B‑0）：以前「摘掉工作树、不删分支」；现在**整项不碰**——
+  // 没有分支就没有命名空间，没有命名空间就无法证明它属于我们（不变式：归属判据是分支命名空间）。
+  // 代价是这类树会一直留在 `.worktree/` 下；但它每轮都出现在 `kept` 里（可见），不是静默。
+  assert.deepEqual(out.reclaimed, []);
+  assert.deepEqual(out.kept, ["det"]);
+  assert.deepEqual(deleted, [], "没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」");
+  assert.equal(existsSync(worktreePath(f, "det")), true, "摘不了归属就一个字节都不动");
+
+  rmSync(worktreePath(f, "det"), { recursive: true, force: true });
 });
 
 // ── 判定 1：外来工作树 —— 不抛、不碰、要可见 ───────────────────────────────────

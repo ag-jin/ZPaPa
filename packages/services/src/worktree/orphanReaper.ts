@@ -24,8 +24,16 @@ export type ReapOutcome = {
   /** 被回收的工作树 dirName（「有工作树」的那种孤儿形状）。 */
   reclaimed: string[];
   /**
-   * 被保留的**工作树** dirName：要么分支仍在 `activeBranches` 里（队员的活在跑/没合完），
-   * 要么命中了集成分支边界（`squad/integration/**`，不归 reap 管）—— 两种情况都一个字节不动。
+   * 被保留的**工作树** dirName。**三类来源**，共同点是「本流程看见了、但决定一个字节不动」：
+   * 1. 分支仍在 `activeBranches` 里（队员的活在跑 / 还没合完）；
+   * 2. 命中了集成分支边界（`squad/integration/**`，承载整批未合并的成果，不归 reap 管）；
+   * 3. **命名空间外来的分支**（2026-10-01 B‑0 新增）：树落在 `<repoRoot>/.worktree/` 下，
+   *    但它的分支不属于 `squad/member/**`（用户自己 `git worktree add` 的、别的功能复用该目录的），
+   *    或压根没有分支（detached）。没有命名空间就证明不了归属 ⇒ 不碰。
+   *
+   * 第 3 类不是「静默跳过」：它在这份返回结构里**可见**。这一点是刻意的 —— 覆盖「放在我们的
+   * 目录里」与「属于我们」之间的缝时，最容易写出的错法是「不碰、也不说」，于是下次有人
+   * 排查「启动回收什么都没干」时无从下手。不变式的完整表述见 `reap` 的 doc 注释。
    */
   kept: string[];
   /**
@@ -112,15 +120,21 @@ export function isSamePath(
  * 判据只有一处来源，就不会出现「探测说在跑、清单说没在跑」两套真相。
  *
  * 三件事刻意**不做**（都是安全边界，不是省事）：
- * 1. **不碰外来工作树**。归属按**根**判（`dirname(path) === <repoRoot>/.worktree`），不按路径形状猜，
+ * 1. **不碰外来工作树**。归属先按**根**判（`dirname(path) === <repoRoot>/.worktree`），不按路径形状猜，
  *    也不按 basename 去 `.worktree/` 下硬拼 —— 撞名时那会摘错树、删错分支。外来项只进 `foreign`。
  *    为什么不改成「响亮拒绝」：只要用户自己在仓库里 `git worktree add` 过一个工作树（完全正当、
  *    与我们无关），启动回收就会**永久整体失败** ⇒ 孤儿永远清不掉 ⇒ 后续重派发反而撞「分支已存在」。
  *    把一个无关情况变成回收器的永久故障，代价远大于「静默」。
+ *    **但「在本根下」只说明「放在我们的目录里」，不说明「属于我们」**：还需要分支命名空间那一闸，
+ *    见 `reap` 的归属不变式（B‑0，2026-10-01）。
  * 2. **不碰 `squad/integration/**`**。集成分支承载整批未合并的成果，删它就是丢活；它由 Task 3 的
- *    `discardIntegration` 在**整批合回主分支之后**负责删除。这条边界**两遍都要守**：分支那一遍靠
- *    `MEMBER_NAMESPACE`（超集之外根本不枚举），工作树那一遍靠 `INTEGRATION_NAMESPACE` 显式跳过。
- *    两个命名空间都取自 `branchNaming.ts` 一处定义。
+ *    `discardIntegration` 在**整批合回主分支之后**负责删除。这条边界**两遍都要守**，
+ *    且两遍的判据都是**命名空间**：分支那一遍只枚举 `MEMBER_NAMESPACE`（该命名空间之外根本不进视野），
+ *    工作树那一遍由命名空间闸整项跳过（`squad/integration/**` 不在 `MEMBER_NAMESPACE` 里，故被闸挡住）。
+ *    `INTEGRATION_NAMESPACE` 那条显式判断**保留**：它如今被命名空间闸遮蔽（不可达），但它把
+ *    「集成分支承载整批未合并的成果」这条理由单独钉在自己的测试上 —— 将来有人放宽/重排命名空间闸，
+ *    这条仍会在 `kept` 语义上响（与 `BRANCH_TAKEN` 保留一条死臂同一取舍：显式写上一条本就该成立的
+ *    事实，比只靠另一条闸的副作用更耐改）。两个命名空间都取自 `branchNaming.ts` 一处定义。
  * 3. **不做串行锁**（调用方约束）：reap 会动 git 的登记与分支，只能靠接线点序列化。
  *
  * 调用方约束：`deleteBranch` 的三参实现要由调用方**绑定**成单参
@@ -139,6 +153,23 @@ export function createOrphanReaper(deps: {
   const { manager, repoRoot, deleteBranch, listBranches } = deps;
 
   return {
+    /**
+     * 回收一遍：把「**属于本流程**、又不在活跃集合里」的工作树连分支收掉，再收掉同样的残枝。
+     *
+     * ——回收器的归属不变式（2026-10-01 修正，P2a 遗留语义）——
+     *
+     * **归属判据 = 分支命名空间，不是路径。**
+     * `dirname(path) === <repoRoot>/.worktree` 只说明「**放在我们的目录里**」，
+     * **不说明**「**属于我们**」：用户在同一个目录里放过自己的工作树（`git worktree add`）、
+     * 或将来别的功能复用该目录，都会落进这个判据里，而它们的判据「分支不在 `activeBranches`」
+     * **恒为真**（`activeBranches` 是产品运行台账，外围分支永远不在里面）⇒ 会被当成孤儿收掉。
+     * 故本模块**两遍都按 `MEMBER_NAMESPACE` 限域**，集成分支仍保护不删，**命名空间外的一律不碰**，
+     * 且必须落进 `kept` / `foreign` 可报告通道（**不得静默**）。
+     * 任何把「在不在我们的目录里」当成「属不属于我们」的改写都是回归。
+     *
+     * 为什么写在这里而不是只写在实现里：行为会被下一个作者照自己的理解改回去（P2a 就是这么只给
+     * 第一遍补了 `INTEGRATION_NAMESPACE` 一个前缀）；不变式写在契约注释里，改动时才会先撞上它。
+     */
     async reap({ activeBranches }) {
       const active = new Set(activeBranches);
       // 用 canonicalPath(repoRoot) 再拼，而不是 realpath 拼好的工作树根：后者要求 `.worktree`
@@ -164,6 +195,18 @@ export function createOrphanReaper(deps: {
           continue;
         }
         const dirName = basename(entry.path);
+        /* **第二道闸：分支不属于小队命名空间的一律不动**，计入 `kept`（B‑0，2026-10-01）。
+           为什么不能只看「在不在我们的目录里」：那是**路径代理**，而 `activeBranches` 是产品运行台账，
+           任何非小队工作树的分支都不在里面 ⇒ 那条判据对它们恒为真、把它们全部当孤儿（连树带枝收掉，
+           且不报错）。用户自己 `git worktree add`、将来别的功能复用 `.worktree/`，都会撞上这一格。
+           `entry.branch === null`（detached）同样**不碰**：没有分支就没有命名空间，无法证明它属于我们
+           （我们自己的树恒由 `add -b` 建出，必有分支 ⇒ 没分支的树只可能是别人的或残骸）。
+           代价是这类树会一直留在 `.worktree/` 下并每轮出现在 `kept` 里（可见，不静默）；换来的是
+           「绝不误删不属于我们的东西」——误删方向不可逆，留下方向只要看得见就能人工收。 */
+        if (entry.branch === null || !entry.branch.startsWith(MEMBER_NAMESPACE)) {
+          kept.push(dirName);
+          continue;
+        }
         // 集成分支边界（与分支那一遍同一条边界，brief 裁定 2）：集成分支承载整批未合并的成果，
         // 由 Task 3 的 discardIntegration 在整批合回主分支之后删。今天 `ensureIntegration` 只跑
         // `git branch`、从不建工作树，所以第一遍走不到这里；但将来若有调用方在 `.worktree/` 下给
