@@ -190,3 +190,92 @@ test("迁移可重复应用（同一库跑两次）", () => {
     1,
   );
 });
+
+/* ===== 读边界的契约违例：枚举列出现写入路径之外的值 → 读回**抛错**，不许静默带出 =====
+   与 leaderDispatch 对未知 assignee.type 的裁定一致（宁可响亮失败，也不静默跳过）。
+   用**直接 SQL**写入绕过 repo 的写路径，模拟手改库 / 跨版本残留 / 漏走 schema 的写入。 */
+
+/** 绕过 repo.insert 直接把一行塞进表：只给必填列，枚举列由调用方指定（可能非法）。 */
+function rawInsert(
+  db: DatabaseSync,
+  row: { id: string; kind: string; mode: string; pausedReason?: string; onTimeout?: string },
+) {
+  db.prepare(
+    `INSERT INTO wake_rules (
+       id, work_item_id, kind, mode, paused_reason, on_timeout, fire_count, revision, enabled, created_at, updated_at
+     ) VALUES (?, 'wi_1', ?, ?, ?, ?, 0, 0, 1, 0, 0)`,
+  ).run(row.id, row.kind, row.mode, row.pausedReason ?? null, row.onTimeout ?? null);
+}
+
+// kind 是调度器的 switch 依据：枚举外值会让 switch 走到无分支（既不跑也不响），故读回必须抛错且点名 kind。
+test("枚举外的 kind：读回抛错（点名 kind），不静默返回", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_kind", kind: "sometimes", mode: "once" });
+  assert.throws(() => repo.get("bad_kind"), /kind/);
+});
+
+// listReady 是调度器扫表入口，走同一条 rowToWakeRule：非法 kind 的行哪怕「到点且启用」也必须抛，而不是被派发。
+test("枚举外的 kind：listReady 扫到也抛错（调度器入口同样响亮失败）", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_kind_due", kind: "sometimes", mode: "once" });
+  db.prepare("UPDATE wake_rules SET next_fire_at = 1 WHERE id = 'bad_kind_due'").run();
+  assert.throws(() => repo.listReady(10_000, 10), /kind/);
+});
+
+// mode / paused_reason / on_timeout 三个枚举列同样校验（逐个测，不是抽一个代表：
+// 每列各写一次校验，只测 kind 会漏掉另三列漏写校验）。
+test("枚举外的 mode：读回抛错，点名列名", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_mode", kind: "event", mode: "forever" });
+  assert.throws(() => repo.get("bad_mode"), /mode/);
+});
+test("枚举外的 paused_reason：读回抛错，点名列名", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_pause", kind: "event", mode: "once", pausedReason: "whatever" });
+  assert.throws(() => repo.get("bad_pause"), /paused_reason/);
+});
+test("枚举外的 on_timeout：读回抛错，点名列名", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_timeout", kind: "event", mode: "once", onTimeout: "explode" });
+  assert.throws(() => repo.get("bad_timeout"), /on_timeout/);
+});
+
+// 非法值不得被「写回时顺手修好」：抛错后表里那一行必须原样还在（读校验不产生副作用）。
+test("读回抛错不写回：非法行仍在表中原样未动", () => {
+  const { db, repo } = setup();
+  rawInsert(db, { id: "bad_kind", kind: "sometimes", mode: "once" });
+  assert.throws(() => repo.get("bad_kind"));
+  assert.equal(
+    (db.prepare("SELECT kind FROM wake_rules WHERE id = 'bad_kind'").get() as { kind: string }).kind,
+    "sometimes",
+  );
+});
+
+// 补集方向：合法的全部枚举值（4 kind × 2 mode、3 pausedReason、2 onTimeout）都不得被读校验误伤。
+test("合法枚举值读回不受影响（读校验不误伤正常行）", () => {
+  const { db, repo } = setup();
+  let index = 0;
+  for (const kind of ["event", "at", "every", "cron"]) {
+    for (const mode of ["once", "continuous"]) {
+      const id = `ok_${index++}`;
+      rawInsert(db, { id, kind, mode });
+      const read = repo.get(id);
+      assert.equal(read?.kind, kind);
+      assert.equal(read?.mode, mode);
+    }
+  }
+  for (const pausedReason of ["max_fires", "rate", "loop"]) {
+    const id = `ok_p_${pausedReason}`;
+    rawInsert(db, { id, kind: "event", mode: "once", pausedReason });
+    assert.equal(repo.get(id)?.pausedReason, pausedReason);
+  }
+  for (const onTimeout of ["end", "wake"]) {
+    const id = `ok_t_${onTimeout}`;
+    rawInsert(db, { id, kind: "event", mode: "once", onTimeout });
+    assert.equal(repo.get(id)?.onTimeout, onTimeout);
+  }
+  // 可空枚举列留 NULL → undefined（与既有「NULL 折回 undefined」口径一致，不能因为加了校验就变成抛错）。
+  rawInsert(db, { id: "ok_null", kind: "event", mode: "once" });
+  assert.equal(repo.get("ok_null")?.pausedReason, undefined);
+  assert.equal(repo.get("ok_null")?.onTimeout, undefined);
+});

@@ -1,5 +1,12 @@
-import type { WakeRule } from "@zcode/shared";
+import {
+  WAKE_ON_TIMEOUTS,
+  WAKE_PAUSE_REASONS,
+  WAKE_RULE_KINDS,
+  WAKE_RULE_MODES,
+  type WakeRule,
+} from "@zcode/shared";
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 
 /* 唤醒规则仓库：wake_rules 表的读写。刻意不进 packages/services/src/index.ts——
    调度器（Task 5）才是唯一消费方，导出 Repo 会让调用方绕过调度决策直接改规则状态。 */
@@ -25,14 +32,43 @@ interface WakeRuleRow {
   enabled: number;
 }
 
+/* 4 个枚举列的读回校验器。集合直接取自 shared 的常量（Task 3），两侧共用一处定义——
+   若这里各写一份字面量，改枚举时只会改一边，读回校验与域模型就会悄悄对不上。 */
+const kindColumn = z.enum(WAKE_RULE_KINDS);
+const modeColumn = z.enum(WAKE_RULE_MODES);
+const pausedReasonColumn = z.enum(WAKE_PAUSE_REASONS);
+const onTimeoutColumn = z.enum(WAKE_ON_TIMEOUTS);
+
+/* DB 读边界的**契约违例断言**（与 `leaderDispatch` 的 default 分支同一裁定：宁可响亮失败，
+   也不静默跳过）。枚举列若出现写入路径之外的值——手改库、跨版本残留、或将来某处漏走 schema 的写入——
+   调度器的 `switch (rule.kind)` 会走到**无分支**：既不跑也不响，用户看到的是「这条规则不生效」，
+   而真正的成因（数据坏了）被完全隐藏。写路径已由 schema 保证合法，这里只拦「绕过 schema 落进库」的行，
+   所以非法值一律抛错并点名**表.列 + 实际值**，让人能直接去查那一行。
+   注意：这里**不是**在给正常路径加容错分支，而是把契约钉死——与 leaderDispatch 对未知 assignee.type 抛错的理由一致。 */
+function enumColumn<T extends string>(
+  schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } },
+  value: unknown,
+  column: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `wake_rules.${column} 的值「${String(value)}」不在允许集合内（契约违例）：` +
+        "该列只允许由 schema 写入，出现枚举外的值说明这一行绕过了 schema，请检查数据库",
+    );
+  }
+  return parsed.data;
+}
+
 // 可空列统一折回 undefined（而不是 null）：WakeRule 的可选字段语义是「未设置」，
 // 回传 null 会让调用方多做一层判空，也把「列存了 NULL」误当成「设成了 null」。
 function rowToWakeRule(row: WakeRuleRow): WakeRule {
   return {
     id: row.id,
     workItemId: row.work_item_id,
-    kind: row.kind as WakeRule["kind"],
-    mode: row.mode as WakeRule["mode"],
+    // 4 个枚举列经校验读回（不再 `as` 强转）：非法值抛错而不是带进调度器（见 enumColumn 说明）。
+    kind: enumColumn(kindColumn, row.kind, "kind"),
+    mode: enumColumn(modeColumn, row.mode, "mode"),
     at: row.at ?? undefined,
     intervalSeconds: row.interval_seconds ?? undefined,
     cronExpression: row.cron_expression ?? undefined,
@@ -43,9 +79,15 @@ function rowToWakeRule(row: WakeRuleRow): WakeRule {
     nextFireAt: row.next_fire_at ?? undefined,
     maxFires: row.max_fires ?? undefined,
     fireCount: row.fire_count,
-    pausedReason: (row.paused_reason ?? undefined) as WakeRule["pausedReason"],
+    pausedReason:
+      row.paused_reason === null
+        ? undefined
+        : enumColumn(pausedReasonColumn, row.paused_reason, "paused_reason"),
     expiresAt: row.expires_at ?? undefined,
-    onTimeout: (row.on_timeout ?? undefined) as WakeRule["onTimeout"],
+    onTimeout:
+      row.on_timeout === null
+        ? undefined
+        : enumColumn(onTimeoutColumn, row.on_timeout, "on_timeout"),
     revision: row.revision,
     enabled: row.enabled === 1,
   };
@@ -141,9 +183,7 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
 
     listByWorkItem(workItemId) {
       const rows = db
-        .prepare(
-          "SELECT * FROM wake_rules WHERE work_item_id = ? ORDER BY created_at ASC, id ASC",
-        )
+        .prepare("SELECT * FROM wake_rules WHERE work_item_id = ? ORDER BY created_at ASC, id ASC")
         .all(workItemId) as unknown as WakeRuleRow[];
       return rows.map(rowToWakeRule);
     },
