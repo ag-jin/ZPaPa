@@ -223,6 +223,16 @@ export function spawnHostProcess(
       error?: string;
       failureKind?: "transient" | "permanent";
     }) => void;
+    /** host → main：小队唤醒派发结果，转交给 scheduler（`runId` 是幂等键里的 eventKey，`ruleId` 是重投表的另一半键）。 */
+    onSquadWakeResult?: (result: {
+      ruleId: string;
+      runId: string;
+      ok: boolean;
+      taskId?: string;
+      sessionId?: string;
+      error?: string;
+      failureKind?: "transient" | "permanent" | "deferred";
+    }) => void;
     /** host 中 manual run 落库后请求 main 立即唤醒 scheduler。 */
     onCronSchedulerWakeRequested?: (automationId: string) => void;
     /** host 中闲时任务翻 schedulable 后请求 main 立即唤醒 scheduler。 */
@@ -528,6 +538,19 @@ export function spawnHostProcess(
         offPeakTaskId: result.data.offPeakTaskId,
         ok: result.data.ok,
         conversationId: result.data.conversationId,
+        sessionId: result.data.sessionId,
+        error: result.data.error,
+        failureKind: result.data.failureKind,
+      });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.SquadWakeResult) {
+      dependencies.onSquadWakeResult?.({
+        ruleId: result.data.ruleId,
+        runId: result.data.runId,
+        ok: result.data.ok,
+        taskId: result.data.taskId,
         sessionId: result.data.sessionId,
         error: result.data.error,
         failureKind: result.data.failureKind,

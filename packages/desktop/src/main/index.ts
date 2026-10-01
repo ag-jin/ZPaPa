@@ -650,6 +650,14 @@ function forwardOffPeakRunResult(
 ): void {
   cronScheduler?.handleOffPeakRunResult(result);
 }
+// 小队唤醒的回执：**必须接线**。上一版漏了这一个转发（计划没把 main/index.ts 列进改动面），
+// 于是 host 的六处 SquadWakeResult 经 schema 校验后在 main 被**丢掉** ——
+// 调度器等不到结算，那次唤醒就成了「到点了但什么都没发生」，且日志里没有任何线索。
+function forwardSquadWakeResult(
+  result: Parameters<CronSchedulerHandle["handleSquadWakeResult"]>[0],
+): void {
+  cronScheduler?.handleSquadWakeResult(result);
+}
 function wakeCronScheduler(automationId: string): void {
   cronScheduler?.wake(automationId);
 }
@@ -1743,6 +1751,7 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           },
           onCronRunResult: forwardCronRunResult,
           onOffPeakRunResult: forwardOffPeakRunResult,
+          onSquadWakeResult: forwardSquadWakeResult,
           onCronSchedulerWakeRequested: wakeCronScheduler,
           onOffPeakSchedulerWakeRequested: wakeOffPeakScheduler,
           authorizeLocalMediaPreviewPath: localMediaPreviewPathRegistry.authorize,
