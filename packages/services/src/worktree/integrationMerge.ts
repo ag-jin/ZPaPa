@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { assertSafeSlug } from "./branchNaming.js";
 import { ensureGitRunSucceeded, type GitRunner } from "./gitRunner.js";
 import { createWorktreeManager } from "./worktreeManager.js";
@@ -180,11 +181,26 @@ export function createIntegrationMerger(deps: { git: GitRunner; repoRoot: string
       // 队员便永久停在「分支已存在」上（正是「清理是正确性前置」的反面）。
       // 按**分支**判而不是按路径判：Task 1 报出的 path 是 realpath 后的形态，拿自己拼的路径去比会假阴性。
       const live = await manager.list();
-      if (live.some((entry) => entry.branch === input.branch)) {
+      const holder = live.find((entry) => entry.branch === input.branch);
+      if (holder) {
+        // 判定用 `branch`、动作却用调用方给的 `dirName` —— 二者**必须先互相校验**（终审 Important-1）。
+        // 不成对时（例如 `{ branch: "squad/member/wi1/a", dirName: "wi1-b" }`）：`live.some(...)` 为真，
+        // 于是 `worktree remove --force` **先静默强删了 B 的工作树**（B 未提交的成果一起没），
+        // 随后 `branch -D` 才因 A 仍被检出而响亮抛错 —— 净效果是「先毁掉无辜的树，再报一个与真实原因
+        // 无关的错」。旧注释「dirName 传错 git 会在 branch -D 这里响亮拒绝」**不成立**：破坏发生在它之前。
+        // 取「持有该分支的那一项」的目录名来比，而不是改用 holder 的名字去纠正调用方 ——
+        // 那会把调用方的错误藏起来（它以为删了 A、其实动了 B），错误只在更晚更远的地方现形。
+        const holderDirName = basename(holder.path);
+        if (holderDirName !== input.dirName) {
+          throw new Error(
+            `discardMember 拒绝执行：分支 ${input.branch} 挂在 ${JSON.stringify(holderDirName)}（${holder.path}）下，` +
+              `而调用方给的 dirName 是 ${JSON.stringify(input.dirName)}。` +
+              `按 dirName 摘树会 --force 删掉另一个队员的工作树（未提交成果一起没），故拒绝。`,
+          );
+        }
         await manager.remove(input.dirName);
       }
       // `-D` 而不是 `-d`：被抛弃的队员分支通常**未合并**，`-d` 会拒绝，留下一个「删不掉」的死角。
-      // 分支若仍被某个工作树检出处（dirName 传错等），git 会在这里响亮拒绝 —— 不会静默成功。
       // 走独立导出的 deleteBranch（与 Task 4 注入的是同一份实现），顺序契约见它的注释。
       await deleteBranch(git, repoRoot, input.branch);
     },

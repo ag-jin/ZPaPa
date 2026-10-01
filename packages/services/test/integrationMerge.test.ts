@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { planBranches } from "../src/worktree/branchNaming.js";
+import { memberDirName, planBranches } from "../src/worktree/branchNaming.js";
 import { createIntegrationMerger, deleteBranch } from "../src/worktree/integrationMerge.js";
 import { GitCommandError } from "../src/worktree/gitRunner.js";
 import { createWorktreeManager, resolveWorktreeRoot } from "../src/worktree/worktreeManager.js";
@@ -23,8 +23,11 @@ const INTEGRATION = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" }).in
 const MEMBER_OK = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" }).member;
 const MEMBER_B = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "b" }).member;
 const MEMBER_CONFLICT = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "conflict" }).member;
-/** 目录名仍是扁平的 `<工作项>-<队员>`（规划层未变，见 branchNaming.ts / planBranches 的注释）。 */
-const DIR_NAME = `${WORK_ITEM}-a`;
+/** 目录名与分支**同源**（`memberDirName`）：`discardMember` 的入参是 `{ branch, dirName }`
+    一对，夹具若在这里手拼 `<工作项>-<队员>`，就等于替「两者的配对」再写一处拼法 ——
+    而配对不成立正是终审 Important-1 的形状（判定按分支、动作按目录名，先毁他人工件）。 */
+const DIR_NAME = memberDirName(planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" }));
+const DIR_B = memberDirName(planBranches({ workItemSlug: WORK_ITEM, agentSlug: "b" }));
 
 async function must(git: Git, root: string, args: string[]): Promise<string> {
   const result = await git(args, { cwd: root });
@@ -350,6 +353,34 @@ test("discardMember 消化「分支残枝」（无工作树）", async () => {
   // 同分支换个干净目录即可重挂（那堆散落文件不是本层的清理对象，Task 4 的 prune 管工作树）。
   await assert.doesNotReject(manager.add({ branch: MEMBER_OK, base: "main", dirName: "wi1-a2" }));
   assert.equal((await manager.list()).length, 1);
+});
+
+/* 终审 Important-1：`discardMember` 的**判定用 `branch`，动作却用调用方给的 `dirName`**，
+   二者此前从不互相校验。不成对时（把 B 的目录名配 A 的分支喂进来）：`live.some(e => e.branch === A)`
+   为真 ⇒ `worktree remove --force` **先静默强删了 B 的工作树**（B 未提交的成果一起没），
+   随后 `branch -D A` 才因 A 仍被检出而响亮抛错 —— 净效果是「先毁掉无辜的树、再报一个与真实原因
+   无关的错」。旧注释断言「dirName 传错时 git 会在 branch -D 那里响亮拒绝」**不成立**：破坏在它之前。
+   现在必须在 remove **之前**断言「持有该分支的那一项的目录名 === 入参 dirName」，不一致即抛。 */
+test("discardMember：dirName 与 branch 不成对 → 抛，且两棵树、两个分支都原样还在", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  const manager = createWorktreeManager({ git, repoRoot: root });
+  const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
+  const a = await manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME });
+  const b = await manager.add({ branch: MEMBER_B, base: "main", dirName: DIR_B });
+  // B 的未提交成果：旧实现会连树带它一起强删（--force），这正是「静默毁掉他人工件」。
+  writeFileSync(join(b.path, "b-wip.txt"), "b 还没提交的活\n");
+
+  // 不成对：分支是 A 的，目录名是 B 的。
+  await assert.rejects(merger.discardMember({ branch: MEMBER_OK, dirName: DIR_B }), /dirName/);
+
+  // 只断「抛了」远远不够 —— 破坏发生在抛之前，所以这里断的是**实体状态**。
+  assert.equal(existsSync(a.path), true, "A 的工作树必须还在");
+  assert.equal(existsSync(b.path), true, "B 的工作树绝不能被这次错配的调用删掉");
+  assert.equal(readFileSync(join(b.path, "b-wip.txt"), "utf8"), "b 还没提交的活\n");
+  assert.equal(await branchExists(git, root, MEMBER_OK), true, "A 的分支必须还在");
+  assert.equal(await branchExists(git, root, MEMBER_B), true, "B 的分支必须还在");
+  assert.equal((await manager.list()).length, 2);
 });
 
 // integration 同源于 workItemSlug，Task 2 只校验了 member（审查指出的口径不一致）；

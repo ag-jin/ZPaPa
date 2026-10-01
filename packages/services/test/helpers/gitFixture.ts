@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { GitRunner } from "../../src/worktree/gitRunner.js";
+import { createGitRunner, type GitRunner } from "../../src/worktree/gitRunner.js";
 
 /* 工作树相关测试的共享夹具。
    放在 test/helpers/ 而不是各测试文件里各写一份：造仓库的样板一旦分叉，
@@ -25,7 +25,13 @@ export async function makeRepo(): Promise<string> {
 }
 
 /**
- * 返回真实执行 git 的 runner：失败时把 code/stdout/stderr 一并返回，**不抛**。
+ * 返回真实执行 git 的 runner：**委托生产实现 `createGitRunner()`**，本夹具只补一个 cwd 缺省值。
+ *
+ * 为什么必须委托（终审 M5）：这里以前把「execFile 失败也归一成 `{code, stdout, stderr}`、不抛」
+ * 自己抄了一遍 ⇒ 所有 worktree 测试验证的是**夹具版 runner**，与生产 runner 之间没有任何编译期
+ * 关联，可以静默漂移（生产侧补了 `windowsHide`、或给 spawn 失败兜底 stderr 时，夹具永远学不到，
+ * 于是「测试全绿」并不代表生产那条路径被覆盖）。委托之后，「夹具测出来的行为」就是生产的行为。
+ *
  * 必须走真进程而不是打桩：要断言的正是「git 自己会把什么文案、什么退出码放出来」
  * （`not a valid object name`、`is not a working tree` 都是 git 的产物，打桩只会自证）。
  *
@@ -33,13 +39,6 @@ export async function makeRepo(): Promise<string> {
  * 仓库，调用方传进来的目录会被静默忽略 —— 命令跑在别的仓库上却一路不报错。
  */
 export function realGit(root: string): GitRunner {
-  return async (args, opts) => {
-    try {
-      const { stdout, stderr } = await run("git", args, { cwd: opts.cwd || root });
-      return { code: 0, stdout, stderr };
-    } catch (e) {
-      const err = e as { code?: number; stdout?: string; stderr?: string };
-      return { code: err.code ?? 1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
-    }
-  };
+  const git = createGitRunner();
+  return (args, opts) => git(args, { cwd: opts.cwd || root });
 }

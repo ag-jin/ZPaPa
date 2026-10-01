@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, win32 } from "node:path";
-import { planBranches } from "../src/worktree/branchNaming.js";
+import { memberDirName, planBranches } from "../src/worktree/branchNaming.js";
 import {
   createOrphanReaper,
   isSamePath,
@@ -22,10 +22,15 @@ type Git = ReturnType<typeof realGit>;
 const memberBranch = (agentSlug: string): string =>
   planBranches({ workItemSlug: "wi1", agentSlug }).member;
 
-const DIR_A = "wi1-a";
-const DIR_B = "wi1-b";
-const DIR_REVIEW = "wi1-review";
-const DIR_ORPHAN = "wi1-orphan";
+/** 目录名与分支**同源**（`memberDirName`），不再手拼 `<wi>-<agent>`：手拼就是在夹具里再造一处
+    「配对」的拼法，而配对不成立正是终审 Important-1 的形状（判定按分支、动作按目录名）。 */
+const memberDir = (agentSlug: string): string =>
+  memberDirName(planBranches({ workItemSlug: "wi1", agentSlug }));
+
+const DIR_A = memberDir("a");
+const DIR_B = memberDir("b");
+const DIR_REVIEW = memberDir("review");
+const DIR_ORPHAN = memberDir("orphan");
 const WORKTREE_ROOT = ".worktree";
 
 type ReaperOverrides = {
@@ -121,15 +126,18 @@ test("同一路径判定跨平台：Windows 的分隔符/大小写差异算同�
     "大小写差异：Windows 不区分大小写，同一路径",
   );
   // POSIX 断言：证明既有行为未变 —— 两侧都是 `/`，且**区分**大小写（折叠会把两棵不同的树误判成同一棵）。
-  assert.equal(isSamePath("/repo/.worktree", "/repo/.worktree"), true, "POSIX：同一路径");
+  // 这三条**显式传 `"posix"`**：不传就会用默认的 `process.platform`，在 Windows runner 上默认是 win32
+  // （届时大小写被折叠、`\` 被当分隔符），两条「不等」断言会因平台而非代码而红 —— 而 Windows 是
+  // 我们的构建目标之一，不能留一条只在 macOS 上成立的断言。
+  assert.equal(isSamePath("/repo/.worktree", "/repo/.worktree", "posix"), true, "POSIX：同一路径");
   assert.equal(
-    isSamePath("/repo/.worktree", "/repo/.workTree"),
+    isSamePath("/repo/.worktree", "/repo/.workTree", "posix"),
     false,
     "POSIX：区分大小写 ⇒ 不同路径",
   );
   // 分隔符的规范化只在 win32 上发生（否则会把 POSIX 里合法的含 `\` 文件名改写掉）。
   assert.equal(
-    isSamePath("/repo\\.worktree", "/repo/.worktree"),
+    isSamePath("/repo\\.worktree", "/repo/.worktree", "posix"),
     false,
     "POSIX：反斜杠不是分隔符，原样比较",
   );

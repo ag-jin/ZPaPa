@@ -14,12 +14,25 @@ export interface WorktreeManager {
 }
 
 /**
+ * 工作树目录名。**这是 `.worktree` 这个字面量在全仓的唯一来源**（终审 M8）：
+ * 它在两处被需要 —— ①工作树的落点（下面的 `resolveWorktreeRoot`）；②spec §13 C10 的
+ * 「工作区产物目录排除清单」（`workspaceProductDirs.ts` 的 `WORKSPACE_PRODUCT_DIRS`，
+ * 它同时驱动 `.gitignore` 与扫描排除，故必须跟着改名走）。清单项必须是**裸名**
+ * （相对路径、不含首尾 `/`，见那边的注释），所以两边共用的只能是这个目录名，而不是拼好的绝对路径。
+ *
+ * 为什么不在清单里重写一遍字面量：两处各自写 `".worktree"` 时没有任何编译期关联 ——
+ * 这里改了名，清单与 `.gitignore` 会**静默**漏掉新目录（工作树于是被当成源码、被 git 看见）。
+ * 由清单 import 本常量后，改名会引起 `.gitignore` 一致性测试立刻变红，改一处就够。
+ */
+export const WORKTREE_DIR_NAME = ".worktree";
+
+/**
  * 队员工作树都落在 `<repoRoot>/.worktree/`。
  * 位置写死而不是由调用方指定：这个目录要作为**一项**进集中排除清单（否则主工作树会把
  * 队员的工作面看成未跟踪目录），只有一处定义才能保证清单与实现不会各说各话。
  */
 export function resolveWorktreeRoot(repoRoot: string): string {
-  return join(repoRoot, ".worktree");
+  return join(repoRoot, WORKTREE_DIR_NAME);
 }
 
 /**
@@ -94,8 +107,23 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/** git 报出的工作树路径是 realpath 后的值，构造出来的路径不一定是同一形态。 */
-async function canonicalPath(path: string): Promise<string> {
+/**
+ * 归一化路径形态：git 报出的工作树路径是 **realpath 后**的值，而本仓库拼出来的路径不一定是同一形态。
+ *
+ * 为什么必须有它（而不是「看着一样就当相等」）：macOS 上 `/var` 是 `/private/var` 的符号链接，
+ * `mkdtempSync(tmpdir())` 给的是前者、git 报的是后者；不归一，`add()` 返回的 path 与 `list()` 报出的
+ * path 就「看着一样却不相等」。孤儿回收那边更狠：它拿 `dirname(list 里的 path)` 与自家根比较，
+ * 不归一就会把**自家的工作树**全判成外来树 —— 于是回收对自家工作树整体失灵，而它一声不响。
+ *
+ * **本函数是全模块唯一的一份**（终审 M4 抽公共）：`orphanReaper` 此前另抄了一份同体实现。
+ * 放在这里而不是单开一个小模块：工作树根与工作树路径的规则本来就归 `WorktreeManager` 这层
+ * （`resolveWorktreeRoot` / `resolveWorktreePath` 都在此），而两个消费者的 import 边早已存在
+ * （`orphanReaper` 已经从这里取 `resolveWorktreeRoot`），不新增模块、也不新增依赖边。
+ *
+ * 语义刻意保持「失败即原样返回」：它只用于**比较**，不用于任何文件系统操作 ——
+ * 路径不存在时返回原串，后续比较最多是「不等」，不会造成破坏。
+ */
+export async function canonicalPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch {

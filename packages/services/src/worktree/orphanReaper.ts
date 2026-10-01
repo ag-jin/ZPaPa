@@ -1,9 +1,24 @@
-import { realpath } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { INTEGRATION_NAMESPACE, MEMBER_NAMESPACE } from "./branchNaming.js";
-import { resolveWorktreeRoot, type WorktreeManager } from "./worktreeManager.js";
+import { canonicalPath, resolveWorktreeRoot, type WorktreeManager } from "./worktreeManager.js";
 
-export type ReapInput = { activeBranches: readonly string[] };
+export type ReapInput = {
+  /**
+   * **必须包含所有「未合并」的队员分支 —— 包括被打回待修复的那些。**
+   *
+   * 这是接线方对本模块的唯一输入口径，**契约在这里、不在调用点**：本模块不探测「这个队员是不是
+   * 还在跑」，给什么就认什么。若接线方按「有没有在跑的 run」当口径，被打回待修（run 已结束、
+   * 分支还没合）的队员工作树会在下次启动**被静默回收** —— spec §6.2「审查被拒绝时工作树必须
+   * 存活到合并」的承诺当场落空，而本层测试原理上覆盖不到这条缝（缝在接线方的口径里）。
+   *
+   * 为什么必须是这样：这正是 §6.2 与 §6.4/§6.6 能同时成立的前提。§6.2 要求被拒的工作树活到
+   * 合并；§6.4/§6.6 又要求**启动时**完成回收。只有把「未合并」也算进活跃集合，回收才只针对
+   * **已合并 / 已放弃**的分支，两条要求才不会互相打架。反过来说：凡是不在活跃集合里、
+   * 又没有存活工作树检出的队员分支，都会被当作孤儿收掉（连分支一起）—— 所以少报一条
+   * 未合并的分支 = 丢掉一个队员的活。
+   */
+  activeBranches: readonly string[];
+};
 
 export type ReapOutcome = {
   /** 被回收的工作树 dirName（「有工作树」的那种孤儿形状）。 */
@@ -36,20 +51,13 @@ export type ReapOutcome = {
 };
 
 /**
- * 「`.worktree` 在哪」只有 `resolveWorktreeRoot` 一处定义 —— 本模块不再自带第二处字面量。
- *
- * 两侧都要归一化。git 报出的工作树路径是 realpath 后的形态（macOS 上 `/var` 是 `/private/var`
- * 的符号链接，`mkdtemp(tmpdir())` 给的是前者、git 报的是后者），而 `repoRoot` 是调用方给的原样字符串。
- * 不归一化就会把**自家的**工作树误判成外来树：于是回收对自家工作树整体失灵，而它一声不响
- * （`foreign` 里多一项看起来完全正常）—— 比误删更安静的那种错。
+ * 归属比较只区分「win32」与「非 win32」两种语义。`NodeJS.Platform` 里没有 `"posix"` 这个取值，
+ * 所以这里显式把它作为一个**语义名**加进来（`"posix"` ≡「非 win32」分支）：测试要在**任意**平台上
+ * 钉住「POSIX 语义不变」，就不能只传 `NodeJS.Platform` 里的某个具体平台（在 Windows runner 上
+ * 传 `"linux"` 也过得去，但那把断言的意图藏进了一个具体平台名里）。**纯类型放宽、零行为变化**：
+ * `"posix"` 与 `"linux"` / `"darwin"` 走同一条 `return p` 分支。
  */
-async function canonicalPath(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    return path;
-  }
-}
+type ComparePlatform = NodeJS.Platform | "posix";
 
 /**
  * 把路径统一成「可比较的形态」，**只**用于归属比较，绝不用于任何文件系统操作。
@@ -68,7 +76,7 @@ async function canonicalPath(path: string): Promise<string> {
  *
  * POSIX 分支**原样返回**：这保证既有（macOS/Linux）行为一字节不变。
  */
-function normalizeForCompare(p: string, platform: NodeJS.Platform = process.platform): string {
+function normalizeForCompare(p: string, platform: ComparePlatform = process.platform): string {
   if (platform !== "win32") {
     return p;
   }
@@ -78,13 +86,13 @@ function normalizeForCompare(p: string, platform: NodeJS.Platform = process.plat
 /**
  * 「这两条路径指的是同一处吗」：**两侧都**过 `normalizeForCompare` 再比，绝不直接 `!==`。
  *
- * 导出是为了让测试能在 macOS 上传 `platform: "win32"` 喂 Windows 形态的输入，
- * 从而在本机证明「分隔符/大小写差异被判为同一路径」（见 orphanReaper.test.ts）。
+ * 导出是为了让测试能在 macOS 上传 `"win32"` / `"posix"` 喂不同平台形态的输入，
+ * 从而在本机钉住两侧语义（见 orphanReaper.test.ts）。
  */
 export function isSamePath(
   a: string,
   b: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: ComparePlatform = process.platform,
 ): boolean {
   return normalizeForCompare(a, platform) === normalizeForCompare(b, platform);
 }
@@ -132,6 +140,8 @@ export function createOrphanReaper(deps: {
       const active = new Set(activeBranches);
       // 用 canonicalPath(repoRoot) 再拼，而不是 realpath 拼好的工作树根：后者要求 `.worktree`
       // 已经存在（一次都没建过工作树时它不在），那会把「根本没有工作树」错算成「根路径不同」。
+      // canonicalPath 从 worktreeManager 取（两侧共用同一份实现，终审 M4）—— 不归一化会把自家树
+      // 全判成外来树、回收静默空转，理由见它的 doc 注释。
       const ourRoot = resolveWorktreeRoot(await canonicalPath(repoRoot));
       const live = await manager.list();
 

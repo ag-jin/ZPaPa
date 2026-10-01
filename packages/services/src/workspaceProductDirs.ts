@@ -1,3 +1,5 @@
+import { WORKTREE_DIR_NAME } from "./worktree/worktreeManager.js";
+
 /* spec §13 C10 的「工作区产物目录排除清单」在**代码侧的唯一定义**。
  *
  * C10 要求这份清单「集中一处维护」，且同时驱动「gitignore」与「扫描排除」两半。
@@ -15,8 +17,12 @@
  */
 export const WORKSPACE_PRODUCT_DIRS = [
   /* 工作树产物：<repoRoot>/.worktree/<工作项>-<队员>/ 是整份仓库的副本（P2a 的隔离目录），
-     可再生。不挡会把 N 份副本当源码吃进 wiki 清单、并让 manifestHash 每次都变。 */
-  ".worktree",
+     可再生。不挡会把 N 份副本当源码吃进 wiki 清单、并让 manifestHash 每次都变。
+     目录名**从工作树模块取**（`WORKTREE_DIR_NAME`），不在这里重写 `".worktree"` 字面量：
+     否则那边改名时清单会静默漏掉新目录（终审 M8）。之所以只能共用**裸名**、不能共用拼好的
+     绝对路径：清单项的定义是「相对 workspace 根、不含首尾 `/`」（见文末注释），
+     绝对路径进不了本清单，也无法与 `.gitignore` 规则逐条比对。 */
+  WORKTREE_DIR_NAME,
   /* 协作智能体（小队实验）产物：定义落在 <workspace>/.zcode/squad/（含 agents/ 子目录），
      与现有 subagent 的 <workspace>/.zcode/agents 分离、可整块删除。 */
   ".zcode/squad",

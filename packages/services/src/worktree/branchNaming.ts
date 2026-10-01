@@ -105,11 +105,37 @@ function slugsFromPlan(plan: BranchPlan): { workItemSlug: string; agentSlug: str
  * `a branch named 'x' already exists` 覆盖面比「被工作树占用」更宽：ref 存在就够了，
  * 哪怕没有任何工作树持有它（实测：add 因目标目录非空失败时，git 已经先把分支建出来了，
  * 于是留下一条**无工作树的残枝**，下次再挂就是这条文案）。
+ *
+ * 后半臂 `is already checked out at` 在本模块**不可达**（死臂，保留只为一次认下 git 的同义文案）：
+ * `add` 恒带 `-b`，而带 `-b` 时「分支已被另一工作树检出」git 报的是上面那条
+ * `a branch named '…' already exists`（实测，见 worktreeManager.test.ts 的双挂用例），
+ * 该文案只在**不带 `-b`** 的 `worktree add` 上出现。别为它找用例 —— 找不到。
  */
 const BRANCH_TAKEN = /a branch named '.+' already exists|is already checked out at/;
 
 function isBranchTakenError(error: unknown): error is GitCommandError {
   return error instanceof GitCommandError && BRANCH_TAKEN.test(`${error.stderr}\n${error.stdout}`);
+}
+
+/**
+ * 工作树目录名 = **扁平的** `<workItemSlug>-<agentSlug>`。这是本文件对外的第二个命名产物，
+ * 同样只有这一处定义。
+ *
+ * 为什么必须收成一处的（P2a 终审 M7）：目录名是**跨文件的隐式契约** —— 建树的 `allocate` 拼它，
+ * 抛弃树/分支的 `discardMember({ branch, dirName })` 也拼它。两处各自手拼时，任何一处改了拼法
+ * （或调用方随手写一个「看起来对」的 dirName），就会造出「判定按分支、动作按目录名」不成对的调用，
+ * 而那正是终审 Important-1 的形状：先静默强删另一个队员的工作树，再报一个与真实原因无关的错。
+ * 让双方都从这里取，「目录名与分支同源」在构造上成立。
+ *
+ * 不回退成 `wi1/attempt-a` 这类层级名：`WorktreeManager.add` 明确拒绝含 `/` 的 dirName
+ * （`.worktree/` 只放一层，才能作为**一项**进集中排除清单），层级命名在这里编不出来，也不该编。
+ *
+ * 入参收 `plan` 而不是两个散 slug：目录名必须与分支**同源于同一个 plan**，
+ * 由 `slugsFromPlan` 一并保证「两个字段是一对、形状正确」，调用方没有自由拼装的余地。
+ */
+export function memberDirName(plan: BranchPlan): string {
+  const { workItemSlug, agentSlug } = slugsFromPlan(plan);
+  return `${workItemSlug}-${agentSlug}`;
 }
 
 export function createBranchAllocator(deps: { manager: WorktreeManager }): {
@@ -128,10 +154,9 @@ export function createBranchAllocator(deps: { manager: WorktreeManager }): {
       assertSafeSlug(workItemSlug);
       assertSafeSlug(agentSlug);
 
-      // 目录名用扁平的 `<workItemSlug>-<agentSlug>`，不是 `wi1/attempt-a`：
-      // Task 1 的 add 明确拒绝含 `/` 的 dirName（.worktree/ 只放一层，才能作为**一项**
-      // 进集中排除清单），层级命名在这里编不出来，也不该编。
-      const dirName = `${workItemSlug}-${agentSlug}`;
+      // 目录名不在这里手拼（正是终审 M7 要消灭的第二处定义），改从唯一来源取。
+      // 它内部会再过一次 slugsFromPlan —— 与上面同样是「读同一个 plan」，不是两套判断。
+      const dirName = memberDirName(plan);
 
       try {
         const { path } = await manager.add({ branch: plan.member, base, dirName });

@@ -79,13 +79,27 @@ test("仓库根 .gitignore 登记了全部产物目录，并驱动文件搜索�
 });
 
 /**
+ * 本测试实际用到的 `IFileService` 子集：`scanWikiWorkspace` 只调这三样（readdir / stat / readTextFile）。
+ *
+ * 为什么不写 `as unknown as IFileService`（终审 M9）：那个断言把**整个对象字面量**的类型检查
+ * 一次抹掉 —— 方法名写错、返回形状漏字段、把 readdir 写成同步，都要等运行期才发现；`IFileService`
+ * 将来变了，这里也不会报错。收窄成显式子集后，这三样的形状在本地 `tsc` 里是**被检查**的
+ * （「缺方法 / 形状不对」当场可见）；调用点剩下的那个 `as IFileService` 只承担「本夹具是刻意的
+ * 最小实现、其余方法本测试从不调用」这一句声明，不再兜住类型错误。
+ *
+ * 结构性备注（本轮**登记不改**）：`packages/services/tsconfig.json` 的 include 只有 `src`，
+ * 测试目录不在任何 typecheck 门内 ⇒ 这份「本地 tsc 可见」目前要有人真的单独跑 tsc 才生效。
+ */
+type WikiScanFileService = Pick<IFileService, "readdir" | "stat" | "readTextFile">;
+
+/**
  * 最小 IFileService：读真实临时目录做路径行为，不用桩假装 fs。
  * **刻意不实现 includeHidden 过滤**——wikiScan 的注释写明「不同 IFileService 实现对隐藏项的
  * 处理不一致，产物目录必须显式排除」，这里就是那个场景：隐藏项被返回时，显式排除必须自己挡住。
  */
-function realFsFileService(root: string): IFileService {
+function realFsFileService(root: string): WikiScanFileService {
   return {
-    async readdir(params: { path: string }) {
+    async readdir(params) {
       const relativeDir = params.path === "." ? "" : params.path;
       const absoluteDir = relativeDir ? join(root, relativeDir) : root;
       return readdirSync(absoluteDir, { withFileTypes: true }).map((entry) => ({
@@ -94,7 +108,7 @@ function realFsFileService(root: string): IFileService {
         type: entry.isDirectory() ? ("directory" as const) : ("file" as const),
       }));
     },
-    async stat(params: { path: string }) {
+    async stat(params) {
       const stats = statSync(join(root, params.path));
       return {
         path: params.path,
@@ -103,7 +117,7 @@ function realFsFileService(root: string): IFileService {
         mtimeMs: stats.mtimeMs,
       };
     },
-    async readTextFile(params: { path: string }) {
+    async readTextFile(params) {
       const content = readFileSync(join(root, params.path), "utf8");
       return {
         path: params.path,
@@ -115,7 +129,7 @@ function realFsFileService(root: string): IFileService {
         isBinary: false,
       };
     },
-  } as unknown as IFileService;
+  };
 }
 
 test("wiki 扫描（服务端扫描半边）跳过产物目录，不把工作树与命名空间当源码", async () => {
@@ -136,7 +150,9 @@ test("wiki 扫描（服务端扫描半边）跳过产物目录，不把工作树
 
   const scan = await scanWikiWorkspace({
     workspacePath: root,
-    fileService: realFsFileService(root),
+    // 唯一一次收窄断言：本夹具刻意只实现 scanWikiWorkspace 会用到的那三样（类型在上面的
+    // WikiScanFileService 里被逐项检查），其余 IFileService 方法走不到。
+    fileService: realFsFileService(root) as IFileService,
   });
   assert.deepEqual(
     scan.files.map((file) => file.path),

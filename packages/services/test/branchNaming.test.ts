@@ -6,6 +6,7 @@ import { GitCommandError } from "../src/worktree/gitRunner.js";
 import {
   assertSafeSlug,
   createBranchAllocator,
+  memberDirName,
   planBranches,
 } from "../src/worktree/branchNaming.js";
 import { createWorktreeManager, resolveWorktreeRoot } from "../src/worktree/worktreeManager.js";
@@ -84,6 +85,17 @@ test("assertSafeSlug 接受合法 slug", () => {
 test("assertSafeSlug 边界：首字符不能是连字符，尾字符可以", () => {
   for (const bad of ["-a", "-", "--", "squad/wi"]) assert.throws(() => assertSafeSlug(bad), /slug/);
   for (const ok of ["a-", "0", "z9-9z"]) assert.doesNotThrow(() => assertSafeSlug(ok));
+});
+
+/* 目录名与分支**同源于同一个 plan**（终审 M7）：它是 `allocate`（建树）与 `discardMember`
+   （拆树）之间的隐式跨文件契约，此前两处各自手拼 —— 而「认定用分支、动作用目录名」不成对
+   正是终审 Important-1 的形状。这里钉住两条：扁平（单一路段）且由 plan 的两个 slug 拼出。 */
+test("memberDirName：扁平单段，且与 plan 的两个 slug 同源", () => {
+  const plan = planBranches({ workItemSlug: "wi-42", agentSlug: "ta-x" });
+  assert.equal(memberDirName(plan), "wi-42-ta-x");
+  // 单段是前提：多段会被 WorktreeManager.add 拒（.worktree/ 只放一层），
+  // 而 Important-1 的成对校验拿 `basename` 与它比 —— 含分隔符会让那个比较失去意义。
+  assert.equal(memberDirName(plan).includes("/"), false);
 });
 
 test("allocate 建出队员工作树：分支为队员分支、目录名扁平", async () => {
