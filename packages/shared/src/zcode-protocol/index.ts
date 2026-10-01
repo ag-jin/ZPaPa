@@ -3560,6 +3560,50 @@ export const zcodeOffPeakListResultSchema = z
   .strict();
 export type ZCodeOffPeakListProtocolResult = z.infer<typeof zcodeOffPeakListResultSchema>;
 
+// ---- Squad（协作小队）队长派单协议 ----
+// 与 automation / off-peak 兄弟并列的独立域（禁止互相复用标记/表）。三件事对应 SquadPort 的三条通路：
+// create-child-work-item / assign-work-item / list-roster。workspace 由 host 从当前 session 注入，不进协议参数。
+//
+// **本域刻意没有「写工作项状态」的方法**：派发由服务层消费事件后经唯一写者流转（spec §4.3 / §5.1）。
+// 协议面若长出 status 字段，队长就有了绕过唯一写者的通路——那是本域最容易被顺手破坏的一处。
+export const zcodeSquadCreateChildWorkItemParamsSchema = z
+  .object({
+    parentId: nonEmptyString,
+    title: nonEmptyString,
+    body: nonEmptyString.optional(),
+    assigneeAgentId: nonEmptyString,
+  })
+  .strict();
+export type ZCodeSquadCreateChildWorkItemProtocolParams = z.infer<
+  typeof zcodeSquadCreateChildWorkItemParamsSchema
+>;
+export const zcodeSquadCreateChildWorkItemResultSchema = z
+  .object({ workItemId: nonEmptyString })
+  .strict();
+export type ZCodeSquadCreateChildWorkItemProtocolResult = z.infer<
+  typeof zcodeSquadCreateChildWorkItemResultSchema
+>;
+
+export const zcodeSquadAssignWorkItemParamsSchema = z
+  .object({ workItemId: nonEmptyString, agentId: nonEmptyString })
+  .strict();
+export type ZCodeSquadAssignWorkItemProtocolParams = z.infer<
+  typeof zcodeSquadAssignWorkItemParamsSchema
+>;
+export const zcodeSquadAssignWorkItemResultSchema = z.object({ dispatched: z.boolean() }).strict();
+export type ZCodeSquadAssignWorkItemProtocolResult = z.infer<
+  typeof zcodeSquadAssignWorkItemResultSchema
+>;
+
+export const zcodeSquadRosterMemberSchema = z.object({ agentId: nonEmptyString }).strict();
+export type ZCodeSquadRosterMember = z.infer<typeof zcodeSquadRosterMemberSchema>;
+export const zcodeSquadListRosterParamsSchema = z.object({}).strict();
+export type ZCodeSquadListRosterProtocolParams = z.infer<typeof zcodeSquadListRosterParamsSchema>;
+export const zcodeSquadListRosterResultSchema = z
+  .object({ leaderAgentId: nonEmptyString, members: z.array(zcodeSquadRosterMemberSchema) })
+  .strict();
+export type ZCodeSquadListRosterProtocolResult = z.infer<typeof zcodeSquadListRosterResultSchema>;
+
 export const zcodeProtocolMethods = {
   runtimeCapabilities: "runtime/capabilities",
   computerUseOperationEvent: "computer-use/operation-event",
@@ -3649,6 +3693,12 @@ export const zcodeProtocolMethods = {
   // Off-Peak 会话内创建：与 automation 兄弟并列的独立方法族。
   offPeakCreate: "offPeak/create",
   offPeakList: "offPeak/list",
+  // 协作小队的队长派单：与 automation / off-peak 兄弟并列的独立方法族。
+  // 只增常量不配 `context.requestClient` 的实现在 bootstrap（squad-port.ts）⇒ 请求根本不会发出；
+  // 只发请求而 host 侧没有对应分支 ⇒ -32601（响亮，非静默）。两侧都要落。
+  squadCreateChildWorkItem: "squad/create-child-work-item",
+  squadAssignWorkItem: "squad/assign-work-item",
+  squadListRoster: "squad/list-roster",
   // @deprecated：host 消费已清零（zcodeAgentService 改走 v4/usage/stats）。
   // 仅剩 CLI server 的 wire 兼容 case；随旧词整体删除时一并移除。
   usageStats: "usage/stats",

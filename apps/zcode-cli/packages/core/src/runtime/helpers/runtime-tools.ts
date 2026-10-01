@@ -31,6 +31,18 @@ const EMPTY_RUNTIME_HOOK_CONFIG = {
   timeoutMs: 60_000,
 } as const;
 
+/**
+ * 队长派单工具（SquadCreateChildWorkItem / SquadAssignWorkItem）的注册门。
+ *
+ * **判据只有「端口在场」一条**：与 automation 同形（`Boolean(deps.automationPort)`）。这里刻意
+ * **不读** `experimentalAgentSquadsEnabled`——门禁的唯一判据在服务层（spec §5.7.6 / §16 S8），
+ * 工具侧再判一遍就有了第二份判据（recon.md B4 记的现状正是「开关写了却没人读」）。实验关闭时
+ * 工具仍会经端口发出请求，由服务层抛 `SquadDispatchDisabledError` 回到模型（原样带回）。
+ */
+export function includeSquadTools(deps: { squadPort?: AgentRuntimeDeps["squadPort"] }): boolean {
+  return Boolean(deps.squadPort);
+}
+
 export function initializeRuntimeTooling(
   runtime: AgentRuntimeInternal,
   deps: AgentRuntimeDeps,
@@ -65,6 +77,9 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
     includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
+    // 队长派单：端口在场即注册（门禁不在工具侧，见 includeSquadTools 的注释）；
+    // 与 automation 同规则不给 subagent 子会话——子代理不该再往下派单。
+    includeSquad: includeSquadTools(deps) && runtime.config.taskType !== "subagent_child",
     // offPeakPort 只在 host 下发 offPeakToolEnabled 时注入（灰度/远程门在 host 端），
     // 端口存在即代表曝光允许；subagent 子会话与 automation 同规则不暴露。
     includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
@@ -190,6 +205,7 @@ function createRuntimeToolExecutor(
     artifactStore: deps.artifactStore,
     automationPort: deps.automationPort,
     offPeakPort: deps.offPeakPort,
+    squadPort: deps.squadPort,
     sessionStore: deps.sessionStore,
     sessionModePort: createRuntimeSessionModePort(runtime),
     workflowPort: deps.workflowPort,

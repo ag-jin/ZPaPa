@@ -20,6 +20,8 @@ export * from "./dynamic-workflow-snippet.port.js";
 // `subagent_model` 解析都从这里拿「有哪些模型」。
 export * from "./model-catalog.port.js";
 export * from "./automation.port.js";
+// 队长派单端口。不变式写在文件头：**只**有建子项 / 发派发事件 / 只读花名册，不得有写状态方法。
+export * from "./squad.port.js";
 export * from "./mcp.port.js";
 export * from "./browser-control.port.js";
 export * from "./shared.js";
