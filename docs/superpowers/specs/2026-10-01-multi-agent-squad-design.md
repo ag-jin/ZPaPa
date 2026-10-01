@@ -668,6 +668,8 @@
 | `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | **2026-10-01 已定**：见 **§5.7.1**（事件族用稳定 id 或完整 payload 指纹、排期族用名义时刻网格；`filters`/`eventTypes` **不参与** key） | **已闭合（契约已定，实现留待接线）** |
 | 归档小队 → **工作项指派与排班转交队长** | 需按 assignee 查工作项，属工作项查询层 | P2（`squadService.ts` 有 `TODO(P2)`） |
 | **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（终审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属**发布期动作**；表行而非逻辑边界，缺行只跳过、不会假红） |
+| **用户 workspace 侧排除清单半边失效**（P2a T5 复审发现，2026-10-01） | C10 的清单要求同时驱动「gitignore」与「扫描排除」。但 P2a 改的是 **ZCode 自己这个仓库的 `.gitignore`**——对**任意用户 workspace** 无效；扫描那半靠 `wikiScan.ts`（全局生效），file-search 半则依赖「workspace 首次搜索时按 `.gitignore` 拷贝生成 `.zcodeignore`」，而**无 `.gitignore` 的 workspace** 与**已存在旧 `.zcodeignore` 的 workspace** 都拿不到这三条，走「从零创建」时取的是 `BUILTIN_IGNORE_LINES`（`workspaceFileIgnore.ts:47`，**确认未含** C10 清单）。后果：`.worktree/` 里 N 份仓库副本被索引/搜索吃进、`manifestHash` 漂移——**不报错**。 | **P2b 接线任务显式承接决策**：是否把 C10 清单并入 `BUILTIN_IGNORE_LINES`（P0 曾裁定不动它，但那是在「不知道它是不依赖 workspace 状态的**唯一可靠半边**」时做的，需重判），或另设不依赖 `.gitignore` 的程序化排除。**不得只留在任务报告的 concern 里。** |
+| `.zcode/agent-memory-local/` 未进排除清单 | local scope 记忆写在此（`apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts:30`），会弄脏 `git status`；C10 字面只点名 `agent-memory`（无 `-local`）。§13 设计意图（「定义与**记忆**的目录都必须进排除清单」）覆盖它。 | **P2a T5 修复轮一并覆盖**（随「代码侧唯一来源」常量登记）。 |
 
 ---
 
