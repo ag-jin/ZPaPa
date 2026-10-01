@@ -248,6 +248,43 @@ export function shouldAutoLoadIncompleteLeadingTurn(
 }
 
 /**
+ * 首 turn 自动补窗的行数预算。
+ *
+ * 逐窗补拉只为让首屏那一轮带上 header。但一轮可能是巨型 turn（实测最长的会话里一个
+ * turn 横跨一万多行），没有预算就会一路补到「没有更早历史」——2026-10-01 实测：窄窗口
+ * 下 181 次补拉、跨度 96.7 秒，期间主线程往返延迟 p50 360ms（每落一窗都要重排当前挂载
+ * 的巨型 turn）；宽窗口下则是一次性把 11042 行搬进窗口，冻结主线程 2.1s。
+ *
+ * 超出预算即停：首屏允许显示被截断的首轮（与引入该特性之前的行为一致），用户继续上滚
+ * 仍会按需补窗，位置不变式由时间线侧保证。
+ */
+export const LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS = 240;
+
+/** 当前窗口是否还在首 turn 自动补窗的预算内。 */
+export function withinLeadingTurnAutoloadBudget(snapshot: ConversationSnapshot | null): boolean {
+  if (!snapshot) return false;
+  return snapshot.rows.window.length < LEADING_TURN_AUTOLOAD_MAX_WINDOW_ROWS;
+}
+
+/**
+ * 完整问题目录补拉的行数预算。
+ *
+ * 目录补拉的结果是一次性换整个窗口，而这批行会长期留在该会话的 store 里：2026-10-01
+ * 实测 11042 行落地时冻结主线程 2.1s，此后每次切回该会话都要重新渲染这批行（同步提交
+ * ~3.5s）。目录只服务 rail 的导航，取一个够用且说得清的上限：更早的轮次会在用户继续
+ * 上滚时按需补进来，rail 随之增长。
+ */
+export const DIRECTORY_HYDRATION_MAX_WINDOW_ROWS = 1_600;
+
+/** 目录补拉是否该停：没有更早历史，或已到行数预算。 */
+export function shouldStopDirectoryHydration(input: {
+  hydratedRows: number;
+  hasMore: boolean;
+}): boolean {
+  return !input.hasMore || input.hydratedRows >= DIRECTORY_HYDRATION_MAX_WINDOW_ROWS;
+}
+
+/**
  * rows/range 结果并入本地窗口（合并规范）：按 rowId 键控、只收
  * 窗口首行之前的行、去重后前插；顺序键 = rowId 升序（全序保证）。
  * 返回 null 表示无可并入行（窗口无变化，调用方不换引用）。
@@ -1068,6 +1105,7 @@ export class ConversationProjectionStore {
     });
 
     try {
+      let hydratedRows = 0;
       while (true) {
         const result = await this.transport.rowsRange({
           sessionId,
@@ -1103,7 +1141,17 @@ export class ConversationProjectionStore {
         }
         pages.push(older);
         beforeRowId = nextBeforeRowId;
-        if (!result.hasMore) break;
+        hydratedRows += older.length;
+        if (shouldStopDirectoryHydration({ hydratedRows, hasMore: result.hasMore })) {
+          if (result.hasMore) {
+            logger.debug("[v4-store] 完整问题目录达到行数预算，停止补拉", {
+              hydratedRows,
+              windowRows: snapshot.rows.window.length,
+              sessionId,
+            });
+          }
+          break;
+        }
       }
 
       const current = this.state.snapshot;

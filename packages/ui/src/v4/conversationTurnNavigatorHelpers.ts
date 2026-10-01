@@ -88,6 +88,30 @@ export function shouldHydrateConversationTurnNavigatorDirectory(params: {
   );
 }
 
+/**
+ * rail 是否显形。
+ *
+ * 目录未补齐时即使当前窗口一条可导航 query 都没有，rail 也要显形——它是用户
+ * 「伸手补齐完整目录」的唯一入口。冷开不再自动补目录（实测宽窗口下补齐=一次性把
+ * 11042 行换进快照，冻结主线程 2.1s；切换会话时同步提交阻塞 ~4.5s），所以这个入口
+ * 必须在。
+ */
+export function shouldRenderConversationTurnNavigatorRail(params: {
+  itemCount: number;
+  directoryIncomplete: boolean;
+}): boolean {
+  return params.itemCount >= 2 || params.directoryIncomplete;
+}
+
+/** 伸手用 rail（悬停停留 / 键盘聚焦）时是否该发起目录补拉。 */
+export function shouldRequestTurnNavigatorDirectory(params: {
+  directoryIncomplete: boolean;
+  hasRequestHandler: boolean;
+  hydrating: boolean;
+}): boolean {
+  return params.directoryIncomplete && params.hasRequestHandler && !params.hydrating;
+}
+
 export function resolveConversationTurnNavigatorHydrationRetryDelayMs(
   failedAttemptCount: number,
 ): number | null {

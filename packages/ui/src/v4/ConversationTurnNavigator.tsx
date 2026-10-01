@@ -14,6 +14,8 @@ import {
   resolveConversationTurnNavigatorActiveUnitIndex,
   resolveConversationTurnNavigatorBarVisualState,
   resolveConversationTurnNavigatorVisualFocusItemIndex,
+  shouldRenderConversationTurnNavigatorRail,
+  shouldRequestTurnNavigatorDirectory,
   type ConversationTurnNavigatorVirtualItem,
 } from "@/v4/conversationTurnNavigatorHelpers.js";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
@@ -25,8 +27,21 @@ interface ConversationTurnNavigatorProps {
   virtualItems: readonly ConversationTurnNavigatorVirtualItem[];
   activeQueryRowId?: number;
   isHydratingDirectory?: boolean;
+  /**
+   * 目录尚未补齐（还能拉更早历史）。rail 在只有零星几条 query 时也要显形，
+   * 否则用户没有可伸手的入口去补齐完整目录。
+   */
+  directoryIncomplete?: boolean;
+  /** 用户伸手用 rail（悬停/键盘聚焦）时请求补齐完整目录；冷开不再自动补。 */
+  onRequestDirectory?: () => void;
   onJumpToQuery: (target: { unitIndex: number; rowId: number }, behavior: ScrollBehavior) => void;
 }
+
+/**
+ * rail 上的补齐意图判定窗口：指针停在 rail 上这么久才算「要用目录」，
+ * 顺手划过去不触发（补一次要把整段历史搬进窗口，代价按秒计）。
+ */
+const DIRECTORY_REQUEST_LINGER_MS = 260;
 
 function usePrefersReducedMotion() {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -52,6 +67,8 @@ function ConversationTurnNavigatorImpl({
   virtualItems,
   activeQueryRowId,
   isHydratingDirectory = false,
+  directoryIncomplete = false,
+  onRequestDirectory,
   onJumpToQuery,
 }: ConversationTurnNavigatorProps) {
   const { intl } = useZCodeIntl();
@@ -130,7 +147,36 @@ function ConversationTurnNavigatorImpl({
     });
   }, [activeItemIndex, items.length, railVirtualizer]);
 
-  if (items.length < 2) {
+  // 补齐目录只在用户伸手时发生：指针在 rail 上停留、或键盘把焦点移到某个 query 上。
+  const directoryRequestTimerRef = useRef<number | null>(null);
+  const cancelDirectoryRequest = useCallback(() => {
+    if (directoryRequestTimerRef.current === null) return;
+    window.clearTimeout(directoryRequestTimerRef.current);
+    directoryRequestTimerRef.current = null;
+  }, []);
+  const scheduleDirectoryRequest = useCallback(() => {
+    const request = onRequestDirectory;
+    if (
+      !request ||
+      !shouldRequestTurnNavigatorDirectory({
+        directoryIncomplete,
+        hasRequestHandler: true,
+        hydrating: isHydratingDirectory,
+      })
+    ) {
+      return;
+    }
+    if (directoryRequestTimerRef.current !== null) return;
+    directoryRequestTimerRef.current = window.setTimeout(() => {
+      directoryRequestTimerRef.current = null;
+      request();
+    }, DIRECTORY_REQUEST_LINGER_MS);
+  }, [directoryIncomplete, isHydratingDirectory, onRequestDirectory]);
+  useEffect(() => cancelDirectoryRequest, [cancelDirectoryRequest]);
+
+  if (
+    !shouldRenderConversationTurnNavigatorRail({ itemCount: items.length, directoryIncomplete })
+  ) {
     return null;
   }
 
@@ -148,105 +194,119 @@ function ConversationTurnNavigatorImpl({
         // 只声明 overflow-y-auto 时，浏览器会把 overflow-x 计算为 auto；
         // hover 山峰横向放大后便可能触发横向滚动条，因此 rail 必须只开放纵向滚动。
         className="!scrollbar-hide pointer-events-auto absolute left-3 top-1/2 max-h-[calc(100%-6rem)] w-9 -translate-y-1/2 overflow-x-hidden overflow-y-auto py-1"
-        onPointerLeave={() => setInteractionItemIndex(undefined)}
+        onPointerEnter={scheduleDirectoryRequest}
+        onPointerLeave={() => {
+          setInteractionItemIndex(undefined);
+          cancelDirectoryRequest();
+        }}
         onScroll={() => setInteractionItemIndex(undefined)}
       >
-        <div className="relative w-9" style={{ height: `${railVirtualizer.getTotalSize()}px` }}>
-          {virtualRows.map((virtualRow) => {
-            const itemIndex = virtualRow.index;
-            const item = items[itemIndex];
-            if (!item) return null;
-            const active = itemIndex === activeItemIndex;
-            const visualState = resolveConversationTurnNavigatorBarVisualState({
-              itemIndex,
-              visualFocusItemIndex,
-            });
-            const showScrollActiveColor = visualFocusItemIndex === undefined && active;
-            return (
-              <div
-                key={item.key}
-                className="absolute left-0 top-0 h-2.5 w-9"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                <HoverCard closeDelay={80} openDelay={120}>
-                  <HoverCardTrigger asChild>
-                    <button
-                      type="button"
-                      aria-current={active ? "location" : undefined}
-                      aria-label={intl.formatMessage(
-                        { id: "chat.turnNavigator.jumpToQuery" },
-                        { index: String(itemIndex + 1) },
-                      )}
-                      aria-posinset={itemIndex + 1}
-                      aria-setsize={items.length}
-                      data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
-                      data-item-index={itemIndex}
-                      data-unit-index={item.unitIndex}
-                      data-turn-id={item.turnId}
-                      data-query-row-id={item.rowId}
-                      data-active={active ? "true" : "false"}
-                      data-running={item.isRunning ? "true" : "false"}
-                      data-visual-color-tone={visualState.colorTone}
-                      data-visual-scale={String(visualState.scaleX)}
-                      data-visual-tone={visualState.tone}
-                      onBlur={() => setInteractionItemIndex(undefined)}
-                      onClick={() =>
-                        onJumpToQuery(
-                          { unitIndex: item.unitIndex, rowId: item.rowId },
-                          prefersReducedMotion ? "auto" : "smooth",
-                        )
-                      }
-                      onFocus={() => setInteractionItemIndex(itemIndex)}
-                      onPointerEnter={() => setInteractionItemIndex(itemIndex)}
-                      onPointerLeave={() => setInteractionItemIndex(undefined)}
-                      className="flex h-2.5 w-9 items-center justify-start rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                    >
-                      <span
-                        className={cn(
-                          "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
-                          visualState.colorTone === "focus" && "bg-foreground",
-                          visualState.colorTone === "muted" &&
-                            (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+        {items.length < 2 ? (
+          // 目录未补齐、当前窗口又没有可导航轮次：给 rail 留一个可悬停的落点，
+          // 让「伸手补齐目录」这个动作有地方发生。
+          <div aria-hidden="true" className="mt-1 h-16 w-9 rounded-sm bg-foreground-subtlest/25" />
+        ) : (
+          <div className="relative w-9" style={{ height: `${railVirtualizer.getTotalSize()}px` }}>
+            {virtualRows.map((virtualRow) => {
+              const itemIndex = virtualRow.index;
+              const item = items[itemIndex];
+              if (!item) return null;
+              const active = itemIndex === activeItemIndex;
+              const visualState = resolveConversationTurnNavigatorBarVisualState({
+                itemIndex,
+                visualFocusItemIndex,
+              });
+              const showScrollActiveColor = visualFocusItemIndex === undefined && active;
+              return (
+                <div
+                  key={item.key}
+                  className="absolute left-0 top-0 h-2.5 w-9"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <HoverCard closeDelay={80} openDelay={120}>
+                    <HoverCardTrigger asChild>
+                      <button
+                        type="button"
+                        aria-current={active ? "location" : undefined}
+                        aria-label={intl.formatMessage(
+                          { id: "chat.turnNavigator.jumpToQuery" },
+                          { index: String(itemIndex + 1) },
                         )}
-                        style={{
-                          opacity: showScrollActiveColor
-                            ? 0.9
-                            : item.isRunning
-                              ? Math.max(visualState.opacity, 0.72)
-                              : visualState.opacity,
-                          transform: `scaleX(${visualState.scaleX})`,
+                        aria-posinset={itemIndex + 1}
+                        aria-setsize={items.length}
+                        data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
+                        data-item-index={itemIndex}
+                        data-unit-index={item.unitIndex}
+                        data-turn-id={item.turnId}
+                        data-query-row-id={item.rowId}
+                        data-active={active ? "true" : "false"}
+                        data-running={item.isRunning ? "true" : "false"}
+                        data-visual-color-tone={visualState.colorTone}
+                        data-visual-scale={String(visualState.scaleX)}
+                        data-visual-tone={visualState.tone}
+                        onBlur={() => setInteractionItemIndex(undefined)}
+                        onClick={() =>
+                          onJumpToQuery(
+                            { unitIndex: item.unitIndex, rowId: item.rowId },
+                            prefersReducedMotion ? "auto" : "smooth",
+                          )
+                        }
+                        onFocus={() => {
+                          setInteractionItemIndex(itemIndex);
+                          // 键盘移到某条 query 上是明确意图，不必等悬停延时。
+                          if (directoryIncomplete) onRequestDirectory?.();
                         }}
-                      />
-                    </button>
-                  </HoverCardTrigger>
-                  <HoverCardContent
-                    align="start"
-                    side="right"
-                    sideOffset={8}
-                    data-testid={testId(TID_V4_TURN_NAVIGATOR_TOOLTIP, item.key)}
-                    className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
-                  >
-                    <div className="space-y-2">
-                      <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
-                        {item.userPreview}
-                      </p>
-                      <p
-                        className={cn(
-                          "line-clamp-3 whitespace-pre-line text-ui-base leading-5",
-                          item.assistantPreviewKind === "text"
-                            ? "text-popover-foreground/80"
-                            : "text-foreground-subtle",
-                        )}
+                        onPointerEnter={() => setInteractionItemIndex(itemIndex)}
+                        onPointerLeave={() => setInteractionItemIndex(undefined)}
+                        className="flex h-2.5 w-9 items-center justify-start rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                       >
-                        {item.assistantPreview}
-                      </p>
-                    </div>
-                  </HoverCardContent>
-                </HoverCard>
-              </div>
-            );
-          })}
-        </div>
+                        <span
+                          className={cn(
+                            "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
+                            visualState.colorTone === "focus" && "bg-foreground",
+                            visualState.colorTone === "muted" &&
+                              (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+                          )}
+                          style={{
+                            opacity: showScrollActiveColor
+                              ? 0.9
+                              : item.isRunning
+                                ? Math.max(visualState.opacity, 0.72)
+                                : visualState.opacity,
+                            transform: `scaleX(${visualState.scaleX})`,
+                          }}
+                        />
+                      </button>
+                    </HoverCardTrigger>
+                    <HoverCardContent
+                      align="start"
+                      side="right"
+                      sideOffset={8}
+                      data-testid={testId(TID_V4_TURN_NAVIGATOR_TOOLTIP, item.key)}
+                      className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
+                    >
+                      <div className="space-y-2">
+                        <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
+                          {item.userPreview}
+                        </p>
+                        <p
+                          className={cn(
+                            "line-clamp-3 whitespace-pre-line text-ui-base leading-5",
+                            item.assistantPreviewKind === "text"
+                              ? "text-popover-foreground/80"
+                              : "text-foreground-subtle",
+                          )}
+                        >
+                          {item.assistantPreview}
+                        </p>
+                      </div>
+                    </HoverCardContent>
+                  </HoverCard>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </nav>
   );

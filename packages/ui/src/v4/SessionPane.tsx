@@ -184,6 +184,7 @@ import {
 import {
   hasOlderRows,
   shouldAutoLoadIncompleteLeadingTurn,
+  withinLeadingTurnAutoloadBudget,
 } from "@/v4/conversationProjectionStore.js";
 import type {
   ConversationFileChangesRequestOptions,
@@ -3650,7 +3651,10 @@ export function SessionPane({
     if (
       !sessionId ||
       !lease?.store ||
-      !shouldAutoLoadIncompleteLeadingTurn(snapshot, state.loadingOlder)
+      !shouldAutoLoadIncompleteLeadingTurn(snapshot, state.loadingOlder) ||
+      // 只在预算内继续：巨型 turn 不追到底，否则会把整段历史搬进渲染窗口
+      // （实测窄窗口 181 次补拉 / 96.7 秒，主线程全程被重排占着）。
+      !withinLeadingTurnAutoloadBudget(snapshot)
     ) {
       return;
     }
@@ -3663,11 +3667,12 @@ export function SessionPane({
     // snapshotTailWindowRows 按 row 截尾，可能把一个长 turn 的 header/user
     // 留在窗口外。旧 UI 只在 scroll 事件到达顶边时 loadOlder；内容不足一屏或 scrollTop
     // 已经为 0 时不会再产生事件，于是只渲染 assistant，必须先下滚再上滚。检测到首 turn
-    // 缺 header 后立即逐窗补齐；cursor 去重避免空 range 或失败时 effect 自旋。
+    // 缺 header 后逐窗补齐；cursor 去重避免空 range 或失败时 effect 自旋。
     logger.debug("[v4-pane] 冷快照首 turn 不完整，自动补拉更早行", {
       firstRowId,
       sessionId,
       turnId: snapshot?.rows.window[0]?.turnId,
+      windowRows: snapshot?.rows.window.length,
     });
     void lease.store.loadOlder();
   }, [lease, sessionId, snapshot, state.loadingOlder, state.subscriptionId]);

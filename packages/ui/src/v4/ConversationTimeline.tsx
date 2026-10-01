@@ -612,7 +612,23 @@ function ConversationTimelineImpl({
     return () => window.removeEventListener("resize", readWidth);
   }, []);
 
+  // 完整问题目录改成「按需」：冷开/切进长会话时不再自动把整段历史搬进渲染窗口。
+  // 实测宽窗口下这一次落地会把 11042 行一次性换进快照，冻结主线程 2.1s；切换会话时
+  // 同步提交甚至阻塞 ~4.5s（用户感知为「切过去要等一会」）。目录只服务左侧问题导航，
+  // 用户真正伸手去用 rail 时才补，等待落在明确意图之后。
+  const [directoryHydrationRequested, setDirectoryHydrationRequested] = useState(false);
+  const requestTurnNavigatorDirectory = useCallback(() => {
+    setDirectoryHydrationRequested(true);
+  }, []);
+  const directoryHydrationAvailable = shouldHydrateConversationTurnNavigatorDirectory({
+    canLoadOlder,
+    containerWidthPx: turnNavigatorContainerWidthPx,
+    hasLoadHandler: Boolean(onLoadAllOlder),
+    loadingOlder: false,
+  });
+
   useEffect(() => {
+    if (!directoryHydrationRequested) return;
     if (
       !shouldHydrateConversationTurnNavigatorDirectory({
         canLoadOlder,
@@ -673,6 +689,7 @@ function ConversationTimelineImpl({
     });
   }, [
     canLoadOlder,
+    directoryHydrationRequested,
     loadingOlder,
     onLoadAllOlder,
     rowContext.logEpoch,
@@ -1463,6 +1480,8 @@ function ConversationTimelineImpl({
     suppressVirtualizerAdjustmentDuringRestoreRef.current = true;
     virtualizer.measure();
     userAdjustedScrollSinceRestoreRef.current = false;
+    // 目录补拉是「每个会话一次」的用户意图：换会话要重新伸手，不能沿用上一个会话的授权。
+    setDirectoryHydrationRequested(false);
 
     const restoredState = readChatSessionScrollMemoryState(scrollMemoryKey);
     const pendingRestoreWait = resolvePendingScrollMemoryRestoreWait(
@@ -1600,9 +1619,8 @@ function ConversationTimelineImpl({
       currentScrollTop: element?.scrollTop ?? 0,
       anchor,
       anchorNextStart: anchor
-        ? (virtualizer.measurementsCache.find(
-            (measurement) => measurement.key === anchor.key,
-          )?.start ?? null)
+        ? (virtualizer.measurementsCache.find((measurement) => measurement.key === anchor.key)
+            ?.start ?? null)
         : null,
       restoreOwnsAnchor: pendingRestoreOwnsAnchor,
     });
@@ -1728,6 +1746,10 @@ function ConversationTimelineImpl({
         <ConversationTurnNavigator
           renderUnits={renderUnits}
           isHydratingDirectory={loadingOlder}
+          // 目录还没补齐时 rail 也要在（哪怕当前窗口一条 query 都还没加载），
+          // 用户伸手碰一下 rail 才发起补拉。
+          directoryIncomplete={directoryHydrationAvailable && !directoryHydrationRequested}
+          onRequestDirectory={requestTurnNavigatorDirectory}
           scrollOffsetPx={virtualizer.scrollOffset ?? turnNavigatorViewport.scrollOffsetPx}
           viewportHeightPx={
             virtualizer.scrollRect?.height ?? turnNavigatorViewport.viewportHeightPx

@@ -160,6 +160,14 @@ const SUITES = [
     file: "test/timelineScrollAnchor.test.ts",
     usesTsconfigPaths: true,
   },
+  {
+    layer: 1,
+    id: "conversation-load-budget",
+    title: "长会话打开/切换的加载预算（首 turn 补窗上限 + 目录按需）",
+    cwd: "packages/ui",
+    file: "test/conversationLoadBudget.test.ts",
+    usesTsconfigPaths: true,
+  },
 
   // ── 层 2：跨机只读（需 B 在线）──
   {
