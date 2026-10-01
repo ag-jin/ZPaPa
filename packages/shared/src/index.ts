@@ -314,3 +314,4 @@ export { redactFeedbackText } from "./feedbackPrivacy.js";
 export * from "./work-item.js";
 export * from "./team-agent.js";
 export * from "./squad.js";
+export * from "./wake-rule.js";
