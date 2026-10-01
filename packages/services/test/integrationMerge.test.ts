@@ -3,27 +3,28 @@ import test from "node:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { planBranches } from "../src/worktree/branchNaming.js";
-import { createIntegrationMerger } from "../src/worktree/integrationMerge.js";
+import { createIntegrationMerger, deleteBranch } from "../src/worktree/integrationMerge.js";
 import { GitCommandError } from "../src/worktree/gitRunner.js";
 import { createWorktreeManager, resolveWorktreeRoot } from "../src/worktree/worktreeManager.js";
 import { makeRepo, realGit } from "./helpers/gitFixture.js";
 
 type Git = ReturnType<typeof realGit>;
 
-/* 分支名常量集中在这一处。
-   **队员分支名与 brief 的字面写法（`squad/wi1/a`）不同，这是被 git 逼的，不是笔误**：
-   `refs/heads/squad/wi1` 是一个**文件**，而 `refs/heads/squad/wi1/a` 需要同名的**目录** ——
-   git 的 ref 存储不允许这种「文件/目录」共存（D/F 冲突）。实测（git 2.39.2）：
-     `git branch squad/wi1 main` 之后再 `git branch squad/wi1/a main`
-       → fatal: cannot lock ref 'refs/heads/squad/wi1/a': 'refs/heads/squad/wi1' exists; cannot create ...
-     反序（先子后父）同样失败；`git update-ref` 绕过不了；`git pack-refs --all` 后也绕不过。
-   ⇒ spec §6.3 的集成分支 `squad/<工作项>` 与计划的队员分支 `squad/<工作项>/<队员>` **不能同时存在**，
-   本文件最后一条用例把这个事实钉成可执行证据。集成分支沿用 spec 的字面名，队员分支在夹具里改用扁平名；
-   命名怎么裁由上层定（见 task-3-report.md），裁定后只改这三行。 */
-const INTEGRATION = "squad/wi1";
-const MEMBER_OK = "squad/wi1-a";
-const MEMBER_B = "squad/wi1-b";
-const MEMBER_CONFLICT = "squad/wi1-conflict";
+/* 夹具用的分支名**派生自 planBranches**，不写字面量：这份夹具曾有整整一轮「名字对不上计划」
+   —— 旧命名对（集成分支 `squad/<工作项>` + 队员分支 `squad/<工作项>/<队员>`）在 git 里
+   结构性不可共存（`refs/heads/squad/wi1` 是**文件**，`squad/wi1/a` 要它是**目录**，D/F 冲突，
+   `cannot lock ref`），spec §6.3 遂改为**从第二段起分叉**的新命名对：
+     集成分支 `squad/integration/<工作项>`、队员分支 `squad/member/<工作项>/<队员>`
+   （见 branchNaming.ts 的注释：两个命名空间第一段就分开，冲突在构造上不存在）。
+   派生 + 最后一条用例的字面断言一起做「对账」：命名再改，夹具与哨兵会自动跟着走，
+   不会像上次那样留下一个已经过时的夹具而测试还是绿的。 */
+const WORK_ITEM = "wi1";
+const INTEGRATION = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" }).integration;
+const MEMBER_OK = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" }).member;
+const MEMBER_B = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "b" }).member;
+const MEMBER_CONFLICT = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "conflict" }).member;
+/** 目录名仍是扁平的 `<工作项>-<队员>`（规划层未变，见 branchNaming.ts / planBranches 的注释）。 */
+const DIR_NAME = `${WORK_ITEM}-a`;
 
 async function must(git: Git, root: string, args: string[]): Promise<string> {
   const result = await git(args, { cwd: root });
@@ -302,21 +303,21 @@ test("discardMember：先摘工作树再删分支，之后同一分支可重新�
   const git = realGit(root);
   const manager = createWorktreeManager({ git, repoRoot: root });
   const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
-  const { path } = await manager.add({ branch: MEMBER_OK, base: "main", dirName: "wi1-a" });
+  const { path } = await manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME });
   // 让这条分支**带上未合并的提交**（被抛弃的队员就是这个形状）：分支若还停在 base 上，
   // `branch -d` 也能删掉，就分不出 `-D` 与 `-d` —— 被抛弃的活白干时删不掉才是真实风险。
   writeFileSync(join(path, "b.txt"), "unmerged work\n");
   await must(git, path, ["add", "-A"]);
   await must(git, path, ["commit", "-qm", "unmerged work"]);
 
-  await merger.discardMember({ branch: MEMBER_OK, dirName: "wi1-a" });
+  await merger.discardMember({ branch: MEMBER_OK, dirName: DIR_NAME });
 
   assert.deepEqual(await manager.list(), []);
   assert.equal(await branchExists(git, root, MEMBER_OK), false);
   assert.equal(existsSync(path), false);
 
   // 「清理是正确性前置」的机器化证明：不删分支的话，重新派发会撞上「分支已存在」（Task 2 实测）。
-  await assert.doesNotReject(manager.add({ branch: MEMBER_OK, base: "main", dirName: "wi1-a" }));
+  await assert.doesNotReject(manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME }));
   assert.equal((await manager.list()).length, 1);
 });
 
@@ -329,10 +330,10 @@ test("discardMember 消化「分支残枝」（无工作树）", async () => {
   const manager = createWorktreeManager({ git, repoRoot: root });
   const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
   // 用真实成因造残枝：目标目录非空 ⇒ add 先建分支、后失败。
-  const busy = join(resolveWorktreeRoot(root), "wi1-a");
+  const busy = join(resolveWorktreeRoot(root), DIR_NAME);
   mkdirSync(busy, { recursive: true });
   writeFileSync(join(busy, "occupied.txt"), "x\n");
-  await assert.rejects(manager.add({ branch: MEMBER_OK, base: "main", dirName: "wi1-a" }));
+  await assert.rejects(manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME }));
   assert.equal(await branchExists(git, root, MEMBER_OK), true);
   assert.deepEqual(await manager.list(), []);
   // 残枝上也放一次未合并的提交：与上一条同理，分支停在 base 时分不出 `-D` 与 `-d`。
@@ -343,7 +344,7 @@ test("discardMember 消化「分支残枝」（无工作树）", async () => {
   await must(git, root, ["commit", "-qm", "unmerged work"]);
   await must(git, root, ["checkout", "-q", "main"]);
 
-  await merger.discardMember({ branch: MEMBER_OK, dirName: "wi1-a" });
+  await merger.discardMember({ branch: MEMBER_OK, dirName: DIR_NAME });
 
   assert.equal(await branchExists(git, root, MEMBER_OK), false);
   // 同分支换个干净目录即可重挂（那堆散落文件不是本层的清理对象，Task 4 的 prune 管工作树）。
@@ -358,10 +359,10 @@ test("不安全的 integration / 分支名在碰 git 之前就被拒（与 membe
   const git = realGit(root);
   const manager = createWorktreeManager({ git, repoRoot: root });
   const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
-  await manager.add({ branch: MEMBER_OK, base: "main", dirName: "wi1-a" });
+  await manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME });
   const head = await currentBranch(git, root);
 
-  for (const bad of ["../evil", "squad/../evil", "squad/wi1/../x", "-e", ""]) {
+  for (const bad of ["../evil", "squad/../evil", "squad/integration/../x", "-e", ""]) {
     await assert.rejects(merger.ensureIntegration(bad), /Invalid slug/);
     await assert.rejects(
       merger.mergeMember({ integration: bad, member: MEMBER_OK }),
@@ -372,9 +373,21 @@ test("不安全的 integration / 分支名在碰 git 之前就被拒（与 membe
       /Invalid slug/,
     );
     await assert.rejects(merger.finalize({ integration: bad, target: "main" }), /Invalid slug/);
+    // discardIntegration 同源于 integration：删分支这一步同样要在碰 git 之前就拒掉非法名字。
+    await assert.rejects(
+      merger.discardIntegration({ integration: bad, target: "main" }),
+      /Invalid slug/,
+    );
   }
   await assert.rejects(
-    merger.discardMember({ branch: "../evil", dirName: "wi1-a" }),
+    merger.discardMember({ branch: "../evil", dirName: DIR_NAME }),
+    /Invalid slug/,
+  );
+
+  // 「违规即抛，不静默降级」的精确一格：integration 非法 **且** 队员分支不存在时，
+  // 若把 integration 的校验放在「队员分支存在吗」之后，早退的 branch_missing 会把非法名字吞掉。
+  await assert.rejects(
+    merger.mergeMember({ integration: "../evil", member: "squad/member/wi1/nobody" }),
     /Invalid slug/,
   );
 
@@ -386,24 +399,135 @@ test("不安全的 integration / 分支名在碰 git 之前就被拒（与 membe
   assert.equal(refs.includes("-e"), false);
 });
 
-/* 这条不测我们的模块，而是把**计划自身的命名缺陷**钉成可执行证据（见本文件顶部常量注释）：
-   spec §6.3 的集成分支 `squad/<工作项>`，与计划的队员分支 `squad/<工作项>/<队员>`，
-   互为 ref 路径的「文件/目录」—— git 不允许共存。
-   若这条用例**变红**，说明命名已经改了（好事）：请把本文件的常量注释与夹具名一并更新，不要只把它删掉。 */
-test("计划的分支命名对（集成分支 + 挂在其下的队员分支）在 git 里不可共存", async () => {
-  const plan = planBranches({ workItemSlug: "wi1", agentSlug: "a" });
+// `deleteBranch` 是独立导出的删分支出口，供 Task 4 的看门人注入复用（T4 brief 明写「不得要求
+// Task 4 自己重写一份 git branch -D」），而不是藏在 discardMember 内部。
+test("deleteBranch：已存在的分支删得掉", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  await commitOnBranch(git, root, MEMBER_OK, { "b.txt": "work\n" });
 
-  const repoA = await makeRepo();
-  const gitA = realGit(repoA);
-  assert.equal((await gitA(["branch", plan.integration, "main"], { cwd: repoA })).code, 0);
-  const child = await gitA(["branch", plan.member, "main"], { cwd: repoA });
-  assert.notEqual(child.code, 0);
-  assert.match(child.stderr, /cannot lock ref/);
+  await deleteBranch(git, root, MEMBER_OK);
 
-  const repoB = await makeRepo();
-  const gitB = realGit(repoB);
-  assert.equal((await gitB(["branch", plan.member, "main"], { cwd: repoB })).code, 0);
-  const parent = await gitB(["branch", plan.integration, "main"], { cwd: repoB });
-  assert.notEqual(parent.code, 0);
-  assert.match(parent.stderr, /cannot lock ref/);
+  assert.equal(await branchExists(git, root, MEMBER_OK), false);
+});
+
+// 删一个**不存在**的分支：抛（`GitCommandError`，git 原文 `branch 'x' not found`），不是幂等成功。
+// 理由：本模块的立身之本是「清理是正确性前置」，而「删一个不存在的分支」只可能来自重复清理
+// （上一个清理点漏了状态）或删错了对象 —— 两者都要有人看见。幂等成功会把「它本来就不在」
+// 伪装成「我成功清掉了它」，与 Task 1 `remove()` 对不存在项响亮失败同一取舍。
+test("deleteBranch：分支不存在时响亮失败（不是幂等成功）", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+
+  const error = await deleteBranch(git, root, MEMBER_OK).then(
+    () => null,
+    (e: unknown) => e as GitCommandError,
+  );
+
+  assert.ok(error instanceof GitCommandError);
+  assert.match(`${error.stderr}${error.stdout}`, /not found/);
+});
+
+// 与主模块同一道闸门：Task 4 注入这份实现，等于注入一个会进 git 子命令的出口，
+// 非法名字必须在碰 git 之前就被拒，不能成为一条不设防的旁路。
+test("deleteBranch：非法分支名在碰 git 之前就被拒", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+
+  await assert.rejects(deleteBranch(git, root, "../evil"), /Invalid slug/);
+  await assert.rejects(deleteBranch(git, root, ""), /Invalid slug/);
+});
+
+// 顺序契约的另一半：分支还挂在某个工作树上时 `git branch -D` 会被 git 拒绝 —— 这正是
+// `discardMember` 「先 worktree remove、后 branch -D」不可颠倒的原因，也是本函数不替调用方
+// 摘工作树、而把顺序留在调用点的证据（它只拿到分支名，不知道 dirName）。
+test("deleteBranch：分支仍被工作树检出时被 git 拒绝（「先摘树」的理由）", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  const manager = createWorktreeManager({ git, repoRoot: root });
+  await manager.add({ branch: MEMBER_OK, base: "main", dirName: DIR_NAME });
+
+  await assert.rejects(deleteBranch(git, root, MEMBER_OK));
+
+  assert.equal(await branchExists(git, root, MEMBER_OK), true);
+});
+
+// 集成分支的删除**只在整批合回主分支之后**（spec §6.3「合并后分支删（队员分支与集成分支都删）」）。
+// 未合回就删 = 整批队员的成果静默蒸发，所以「没合回」必须抛，而不是删了再说。
+test("discardIntegration：未合回 target 就删 → 抛，且集成分支仍在", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
+  // 集成分支上放一个**不在 main 上**的提交：模拟「整批还躺在集成分支上、没合回主分支」。
+  await commitOnBranch(git, root, INTEGRATION, { "b.txt": "batch\n" });
+
+  await assert.rejects(
+    merger.discardIntegration({ integration: INTEGRATION, target: "main" }),
+    /尚未合回/,
+  );
+  // 「拒绝」必须是真的没删：一次失败的清理若把成果带走了，比不清理更糟。
+  assert.equal(await branchExists(git, root, INTEGRATION), true);
+});
+
+test("discardIntegration：合回 target 后可删", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  await commitOnBranch(git, root, MEMBER_OK, { "b.txt": "member\n" });
+  const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
+  await merger.mergeMember({ integration: INTEGRATION, member: MEMBER_OK });
+  // 走真实主线：finalize 把整批合回 main（这一步是本用例的前置，不是被检验对象）。
+  assert.equal((await merger.finalize({ integration: INTEGRATION, target: "main" })).ok, true);
+
+  await merger.discardIntegration({ integration: INTEGRATION, target: "main" });
+
+  assert.equal(await branchExists(git, root, INTEGRATION), false);
+  // 删掉的是**分支**，不是活：成果已经在主分支上。
+  assert.equal(await must(git, root, ["show", "main:b.txt"]), "member\n");
+});
+
+// 「不存在就没得删」与「target 不存在」都要响亮：前者是状态错误（没人建过集成分支），
+// 后者是参数错误。两者都不该静默成功 —— 静默成功会让调用方以为「集成分支已清理」。
+test("discardIntegration：集成分支 / target 不存在都抛，且不留副作用", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  const merger = createIntegrationMerger({ git, repoRoot: root, base: "main" });
+
+  await assert.rejects(
+    merger.discardIntegration({ integration: INTEGRATION, target: "main" }),
+    /集成分支不存在/,
+  );
+
+  await merger.ensureIntegration(INTEGRATION);
+  await assert.rejects(
+    merger.discardIntegration({ integration: INTEGRATION, target: "no-such-target" }),
+    /target 不存在/,
+  );
+  assert.equal(await branchExists(git, root, INTEGRATION), true);
+});
+
+/* 这条是**唯一直接验证 D/F 排除**的用例，必须有它：`planBranches` 给出的集成分支与队员分支
+   要在同一个仓库里真的同时存在（各自还能挂上工作树）。spec §6.3 的旧命名对
+   （集成分支 `squad/<工作项>` + 队员分支 `squad/<工作项>/<队员>`）在 ref 层互为「文件 vs 目录」，
+   git 结构性拒绝（`cannot lock ref`）；新命名从 `squad/` 之后第一段就分叉，冲突在构造上不存在。
+   将来任何人把命名改回父子形状、或让两个命名空间在第一段相交，这条会**立刻变红** ——
+   而不是等到接线时撞上 git 的 `cannot lock ref` 才发现。 */
+test("集成分支与队员分支在 git 里可共存（旧命名对不可，故改用此对）", async () => {
+  // 对账：夹具名虽派生自 planBranches，这里仍把命名对钉成**字面量** ——
+  // 命名若再改，这条会先红，提醒把本文件的夹具注释与名字一起更新（上一轮就是这样漏的）。
+  const plan = planBranches({ workItemSlug: WORK_ITEM, agentSlug: "a" });
+  assert.equal(plan.integration, "squad/integration/wi1");
+  assert.equal(plan.member, "squad/member/wi1/a");
+
+  const root = await makeRepo();
+  const git = realGit(root);
+  const manager = createWorktreeManager({ git, repoRoot: root });
+  // 两条分支各自挂上工作树 —— 这正是 P2a 主线要到达的状态（集成 + 队员同时在世）。
+  await assert.doesNotReject(
+    manager.add({ branch: plan.integration, base: "main", dirName: "wi1-integration" }),
+  );
+  await assert.doesNotReject(manager.add({ branch: plan.member, base: "main", dirName: DIR_NAME }));
+
+  assert.equal(await branchExists(git, root, plan.integration), true);
+  assert.equal(await branchExists(git, root, plan.member), true);
+  assert.equal((await manager.list()).length, 2);
 });

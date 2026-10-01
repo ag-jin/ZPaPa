@@ -28,11 +28,45 @@ function assertSafeBranch(branch: string): void {
   }
 }
 
+/**
+ * 删分支的**唯一实现**，独立导出是为了给 Task 4 的孤儿回收注入复用
+ * （`reap` 要连分支一起收，见 T4 brief；两处各写一遍 `git branch -D` 迟早会分叉）。
+ *
+ * 它只是「抛弃语义」的**第二半**：`git worktree add` 会先把分支建出来，所以还挂着工作树的
+ * 分支必须**先**摘工作树、**后**调本函数（顺序颠倒会被 git 拒：`Cannot delete branch 'x'
+ * checked out at '...'`）。这道顺序契约写在调用点上，本函数不替调用方摘工作树 ——
+ * 它也摘不了：它只拿到分支名，不知道 dirName。
+ *
+ * **删不存在的分支 = 抛**（`GitCommandError`，git 原文 `branch 'x' not found`），不是幂等成功。
+ * 理由：本模块的立身之本是「清理是正确性前置」，而「删一个不存在的分支」只有两种来路 ——
+ * 重复清理（上一个清理点漏了状态）或删错了对象，两者都是要有人看见的状态错误。
+ * 幂等成功会把「它本来就不在」伪装成「我成功清掉了它」，与 Task 1 `remove()` 对不存在项
+ * 响亮失败的取舍一致。T4 的 `reap` 只删它刚从 `list()` 里看见的分支，那里出现 not found
+ * 说明世界在它脚下变了，同样该响。
+ */
+export async function deleteBranch(
+  git: GitRunner,
+  repoRoot: string,
+  branch: string,
+): Promise<void> {
+  // 与队员/集成分支同一道闸门（assertSafeBranch → assertSafeSlug）：空段、`..`、绝对路径的
+  // 前导空段、前导短横线、字符集之外的形态都在**进 git 之前**被拒。
+  // `refs/heads/x` 这类 ref **全名**不在闸门里（`refs`、`heads` 都是合法段），但那里也不静默、
+  // 更不会误删：实测 `git branch -D refs/heads/main` → exit 1 `branch 'refs/heads/main' not found`，
+  // 同名短分支 main 完好 —— 是响亮失败，故不为此另写一条规则（闸门与 member 保持字面同一份）。
+  assertSafeBranch(branch);
+  ensureGitRunSucceeded(
+    `git branch -D ${branch}`,
+    await git(["branch", "-D", branch], { cwd: repoRoot }),
+  );
+}
+
 export function createIntegrationMerger(deps: { git: GitRunner; repoRoot: string; base: string }): {
   ensureIntegration(branch: string): Promise<void>;
   mergeMember(input: { integration: string; member: string }): Promise<MergeOutcome>;
   finalize(input: { integration: string; target: string }): Promise<MergeOutcome>;
   discardMember(input: { branch: string; dirName: string }): Promise<void>;
+  discardIntegration(input: { integration: string; target: string }): Promise<void>;
 } {
   const { git, repoRoot, base } = deps;
   // 摘工作树复用 Task 1 的 WorktreeManager：dirName 的越界闸门与 `--force`（抛弃语义）都已在那边定好，
@@ -99,6 +133,11 @@ export function createIntegrationMerger(deps: { git: GitRunner; repoRoot: string
     ensureIntegration,
 
     async mergeMember(input) {
+      // 两个名字都先过闸门，且**在任何 git 动作之前**：integration 与 member 同源于工作项 slug，
+      // 没有理由只夹 member（审查指出的口径不一致）。放在最前面而不是等 ensureIntegration 里再校验，
+      // 是因为「校验」本身不是动作、不产生痕迹，而放在后面会留一个口子：member 不存在 ⇒ 早退
+      // branch_missing ⇒ 一个**非法**的 integration 被静默降级成「分支不存在」，正是要避免的形状。
+      assertSafeBranch(input.integration);
       assertSafeBranch(input.member);
       // 先判队员分支在不在：不让一次**注定失败**的调用留下痕迹（不建集成分支、不挪检出）。
       if (!(await branchExists(input.member))) {
@@ -146,7 +185,39 @@ export function createIntegrationMerger(deps: { git: GitRunner; repoRoot: string
       }
       // `-D` 而不是 `-d`：被抛弃的队员分支通常**未合并**，`-d` 会拒绝，留下一个「删不掉」的死角。
       // 分支若仍被某个工作树检出处（dirName 传错等），git 会在这里响亮拒绝 —— 不会静默成功。
-      await run(`git branch -D ${input.branch}`, ["branch", "-D", input.branch]);
+      // 走独立导出的 deleteBranch（与 Task 4 注入的是同一份实现），顺序契约见它的注释。
+      await deleteBranch(git, repoRoot, input.branch);
+    },
+
+    async discardIntegration(input) {
+      assertSafeBranch(input.integration);
+      // 集成分支的删除**只在整批合回主分支之后**（spec §6.3「合并后分支删」：队员分支与集成分支都删）。
+      // 「合回」是删除的前置条件，不是可以糊过去的细节：一个还没落地的集成分支被删掉 = 整批队员的
+      // 成果静默蒸发。所以这里不自己找路回滚、也不删，只**验证**并响亮拒绝。
+      if (!(await branchExists(input.integration))) {
+        throw new Error(`集成分支不存在，无法删除: ${input.integration}`);
+      }
+      // target 是仓库主分支，与 finalize 同口径：不用 slug 闸门夹它（`release/1.0` 这类合法名不该被挡）。
+      // 但先确认存在，既挡住把 `--abort` 之类前导短横线当分支名喂进 git 参数，也让下面的报错归因清楚。
+      if (!(await branchExists(input.target))) {
+        throw new Error(`target 不存在: ${input.target}`);
+      }
+      // 判据用**显式祖先关系** `merge-base --is-ancestor <integration> <target>`：
+      // 成立 ⇔ 集成分支的每个提交都已在 target 上 ⇔ 整批确实落回主分支了。不用 `branch -d` 的
+      // 「已合并」检查 —— 它看的是当前 HEAD，而本模块刚刚 promise 过「合并会挪走 HEAD」，
+      // 拿一个会漂的指针去决定「能不能删」，正是安静丢掉成果的形状。
+      const ancestor = await git(["merge-base", "--is-ancestor", input.integration, input.target], {
+        cwd: repoRoot,
+      });
+      if (ancestor.code !== 0) {
+        throw new Error(
+          `集成分支尚未合回 ${input.target}，拒绝删除（否则会丢掉未落地的成果）: ${input.integration}${
+            ancestor.stderr.trim() ? ` — git: ${ancestor.stderr.trim()}` : ""
+          }`,
+        );
+      }
+      // 校验全部通过才动手；顺序与 discardMember 一致（先无分支挂着的活工作树，这里常态就是没有）。
+      await deleteBranch(git, repoRoot, input.integration);
     },
   };
 }
