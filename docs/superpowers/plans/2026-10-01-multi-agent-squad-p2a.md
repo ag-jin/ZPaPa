@@ -15,8 +15,9 @@
 ## Global Constraints
 
 - **工作树目录固定**：`<repoRoot>/.worktree/`。**必须同时**进 `.gitignore` 与扫描排除（spec §13 C10）——否则 git status 脏、搜索会遍历 N 份仓库副本。
-- **每队员一个独立分支**：git **不允许两个 worktree 检出同一分支**（`branch-in-other-worktree`）。分支名 `squad/<workItemSlug>/<agentSlug>`，全部从**同一 base** 派生。
-- **合并目标 = 集成分支** `squad/<workItemSlug>`；整批通过后再合回主分支（spec §6.3）。
+- **每队员一个独立分支**：git **不允许两个 worktree 检出同一分支**（`branch-in-other-worktree`）。分支名 `squad/member/<workItemSlug>/<agentSlug>`，全部从**同一 base** 派生。
+- **合并目标 = 集成分支** `squad/integration/<workItemSlug>`；整批通过后再合回主分支（spec §6.3）。
+  - **⚠️ 命名必须 D/F 安全**（T3 实测推翻原设计）：`squad/<wi>` 与 `squad/<wi>/<agent>` 在 git 里**不可共存**（ref D/F 冲突，`cannot lock ref`）。两个命名空间**从 `squad/` 后第一段就分叉**：集成分支 `squad/integration/<wi>`、队员分支 `squad/member/<wi>/<agent>`。**任何用路径层级命名的 ref 都受此约束。**
 - **合并串行**（一次一个）；**冲突不抛**，返回结构化结果（由上层置工作项 `blocked` + 通知）。
 - **worktree 活到「被合并」为止**：审查被拒时**必须存活**，不得提前删（spec §6.2）。
 - **清理是正确性前置**：孤儿 worktree 会**占住分支**，下次同分支再建会失败 → 必须有回收。
@@ -97,17 +98,17 @@ test("resolveWorktreeRoot 落在仓库根的 .worktree", () => {
 test("add 建出工作树并可被 list 看见", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
+  await m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" });
   const list = await m.list();
   assert.equal(list.length, 1);
   assert.ok(list[0].path.includes(join(".worktree", "wi1-a")));
-  assert.equal(list[0].branch, "squad/wi1/a");
+  assert.equal(list[0].branch, "squad/member/wi1/a");
 });
 
 test("remove 后 list 为空", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
-  await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
+  await m.add({ branch: "squad/member/wi1/a", base: "main", dirName: "wi1-a" });
   await m.remove("wi1-a");
   assert.equal((await m.list()).length, 0);
 });
@@ -294,7 +295,7 @@ test("无冲突时合入集成分支", async () => {
   const root = await makeRepo();
   // 建集成分支 + 一个改了不同文件的队员分支
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  const out = await merger.mergeMember({ integration: "squad/wi1", member: "squad/wi1/a" });
+  const out = await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/a" });
   assert.equal(out.ok, true);
 });
 
@@ -302,7 +303,7 @@ test("无冲突时合入集成分支", async () => {
 test("冲突时返回 { ok:false, reason:'conflict' } 且不抛", async () => {
   const root = await makeRepo();
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  const out = await merger.mergeMember({ integration: "squad/wi1", member: "squad/wi1/conflict" });
+  const out = await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/conflict" });
   assert.equal(out.ok, false);
   assert.equal(out.ok === false && out.reason, "conflict");
 });
@@ -311,13 +312,13 @@ test("冲突时返回 { ok:false, reason:'conflict' } 且不抛", async () => {
 test("冲突后集成分支不留半合并状态", async () => {
   const root = await makeRepo();
   const merger = createIntegrationMerger({ git: realGit(root), repoRoot: root });
-  await merger.mergeMember({ integration: "squad/wi1", member: "squad/wi1/conflict" });
+  await merger.mergeMember({ integration: "squad/integration/wi1", member: "squad/member/wi1/conflict" });
   const status = await realGit(root)(["status", "--porcelain"]);
   assert.equal(status.stdout.trim(), "");
 });
 ```
 
-（夹具需在测试内真实构造：集成分支 `squad/wi1` 从 `main` 出，两个队员分支分别改**同一文件的同一行**以造冲突、改**不同文件**以造成功。）
+（夹具需在测试内真实构造：集成分支 `squad/integration/wi1` 从 `main` 出，两个队员分支分别改**同一文件的同一行**以造冲突、改**不同文件**以造成功。）
 
 - [ ] **Step 2: 跑测试确认失败**
 

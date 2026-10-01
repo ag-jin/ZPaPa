@@ -373,6 +373,8 @@
 
 **准确规则**：worktree 活到「该队员这次工作**被合并**为止」——**审查被拒时必须存活到合并**，不能提前删。
 
+**⚠️ 接线契约（本层库不做，由调用方保证）**：回收器 `reap` 的「活跃」判据**完全由入参 `activeBranches` 决定**。该入参**必须包含所有未合并的队员分支——包括被打回待修复的**；回收只针对**已合并 / 已放弃**的。若接线方用「当前有没有在跑的 run」当口径，被打回待修的队员工作树会在**下次启动被静默回收**（上面那条「审查被拒必须存活」就落空了），且回收过程**不报错**。（2026-10-01 P2a 整支终审发现；已同步登记进 §17 表。）
+
 ### 6.3 合并（决策 A / B）
 
 - **目标**：**集成分支 `squad/integration/<工作项>`**；整批过了再一次性合回主分支（主分支干净、整批可整体放弃）。
@@ -528,7 +530,9 @@
 | C13 | 设置分区 | 按既有 4 处套路 + locale |
 | C14 | 工作区键 | 遵从 `workspaceIdentity?.trim() \|\| workspacePath` |
 
-**排除清单（集中维护，同时驱动 gitignore 与扫描排除）**：`.worktree/` · `.zcode/agent-memory/` · `.zcode/squad/`。
+**排除清单（集中维护，同时驱动 gitignore 与扫描排除）**：`.worktree/` · `.zcode/agent-memory/` · `.zcode/agent-memory-local/` · `.zcode/squad/`。
+**代码侧唯一来源**：`packages/services/src/workspaceProductDirs.ts` 的 `WORKSPACE_PRODUCT_DIRS`（`wikiScan` 与测试均从它派生；仓库根 `.gitignore` 由测试逐条断言包含它——**改常量不改 `.gitignore` 必红**）。
+**⚠️ 该清单对「任意用户 workspace」只有一半生效**（只改了 ZCode 自身仓库的 `.gitignore`），另一半见 §17 表「用户 workspace 侧排除清单半边失效」。
 
 ---
 
@@ -590,7 +594,7 @@
 给定一条 `continuous` 唤醒规则且队长持续派单；当 run 次数达到 `maxFires`（默认 20）或一小时达到 12 次；那么该规则被暂停并记录 `pausedReason`，且**用户手动「现在就跑」不受此限制**。
 
 **S4 · 合并与抛弃**
-给定 2 名队员各自分支完成；当队长审查通过并合并；那么先合入 `squad/<工作项>`，整批通过后合回主分支；随后工作树与分支**均被删除**；孤儿 worktree 在下次启动时被清理。
+给定 2 名队员各自分支完成；当队长审查通过并合并；那么先合入 `squad/integration/<工作项>`，整批通过后合回主分支；随后工作树与分支**均被删除**；孤儿 worktree 在下次启动时被清理。
 
 **S5 · 审查被拒不提前删**
 给定某队员产出被审查打回；那么该队员的工作树**保持存活**直至修复并合并。
@@ -669,7 +673,8 @@
 | 归档小队 → **工作项指派与排班转交队长** | 需按 assignee 查工作项，属工作项查询层 | P2（`squadService.ts` 有 `TODO(P2)`） |
 | **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（终审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属**发布期动作**；表行而非逻辑边界，缺行只跳过、不会假红） |
 | **用户 workspace 侧排除清单半边失效**（P2a T5 复审发现，2026-10-01） | C10 的清单要求同时驱动「gitignore」与「扫描排除」。但 P2a 改的是 **ZCode 自己这个仓库的 `.gitignore`**——对**任意用户 workspace** 无效；扫描那半靠 `wikiScan.ts`（全局生效），file-search 半则依赖「workspace 首次搜索时按 `.gitignore` 拷贝生成 `.zcodeignore`」，而**无 `.gitignore` 的 workspace** 与**已存在旧 `.zcodeignore` 的 workspace** 都拿不到这三条，走「从零创建」时取的是 `BUILTIN_IGNORE_LINES`（`workspaceFileIgnore.ts:47`，**确认未含** C10 清单）。后果：`.worktree/` 里 N 份仓库副本被索引/搜索吃进、`manifestHash` 漂移——**不报错**。 | **P2b 接线任务显式承接决策**：是否把 C10 清单并入 `BUILTIN_IGNORE_LINES`（P0 曾裁定不动它，但那是在「不知道它是不依赖 workspace 状态的**唯一可靠半边**」时做的，需重判），或另设不依赖 `.gitignore` 的程序化排除。**不得只留在任务报告的 concern 里。** |
-| `.zcode/agent-memory-local/` 未进排除清单 | local scope 记忆写在此（`apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts:30`），会弄脏 `git status`；C10 字面只点名 `agent-memory`（无 `-local`）。§13 设计意图（「定义与**记忆**的目录都必须进排除清单」）覆盖它。 | **P2a T5 修复轮一并覆盖**（随「代码侧唯一来源」常量登记）。 |
+| `.zcode/agent-memory-local/` 未进排除清单 | local scope 记忆写在此（`apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts:30`），会弄脏 `git status`；C10 字面只点名 `agent-memory`（无 `-local`）。§13 设计意图（「定义与**记忆**的目录都必须进排除清单」）覆盖它。 | **已闭合**（P2a T5 修复轮，2026-10-01）：随「代码侧唯一来源」常量一并登记，见 §13 C10 清单（现 4 条）。 |
+| **`activeBranches` 的语义是「未合并也算活跃」**（P2a 整支终审发现，2026-10-01） | `reap` 会把「不在 `activeBranches`、也未被存活工作树检出」的队员分支**连树带枝回收**。§6.2 承诺「审查被拒必须存活到合并」、§6.4/§6.6 承诺「启动回收是重派发前置」——**两者同时成立，只靠调用方把「已产出但未合并」也算进 `activeBranches`**。若接线方用「有没有在跑的 run」当口径，**被打回待修的队员工作树会在下次启动被静默清掉**（S5 场景失效），且本层测试原理上覆盖不到这条缝。 | **接线契约**：`activeBranches` **必须包含所有未合并的队员分支**（含被打回待修的）；回收只针对**已合并/已放弃**的。已写入 `ReapInput.activeBranches` 的 doc 注释；**P2b 接线时按此实现**。 |
 
 ---
 
