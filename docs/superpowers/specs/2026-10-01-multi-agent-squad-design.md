@@ -296,6 +296,8 @@
 | `merge` | 同工作项重复触发**合并成一次 run**（唯一键 `(ruleId, revision, eventKey)`） |
 | 自我承认短路 | 输入全来自目标 agent 自身 → 只消费，不启动新 run |
 
+**判定次序（实现契约）**：先判三道闸（`max_fires` → `rate` → `loop`），再判去重，去重内**先 `acknowledged` 后 `merged`**。**人发起（`manual`）只豁免三道闸，不豁免去重**——去重是「同一事实只处理一次」，与谁发起无关。
+
 ### 5.6 automation 与唤醒规则的分工（决策 C5）
 
 - **automation**：管「**无工作项**的定时任务」（保留原样）。
@@ -606,6 +608,27 @@
 | 与现有 subagent 混淆 | 两套 agent 概念 | 三重隔离 + 术语固化 + 目录处徽标区分 |
 
 **开放问题**：无（设计层已无遗留待决项）。
+
+### P1 故意留白（需在接线前闭合）
+
+实现 P1 时**有意未做**、且**必须在开始接线（P2 写路径 / UI）之前闭合**的几处。留白的共同风险是「闸门返回 ok 而语义本身矛盾」——一旦写路径以 `ok` 为保存条件，会**零告警落盘死配置**，属最难事后发现的形态：
+
+| 留白 | 现状 | 闭合点（**P1 结束时仍未闭合**） |
+|---|---|---|
+| 唤醒规则的**跨 kind 调度字段混装**（如 `every` 同时带 `cronExpression`）与**非 event 携带 `eventTypes`/`filters`** | P1 修复轮已补互斥 ⑦⑧ 拒之 | **已闭合** |
+| `event` 携带 `timezone`（互斥② 自称「不得携带任何调度字段」却只查 3/4） | **P1 终审修复波已补互斥并加测试**（`event` + `timezone` → 拒；非 event 携带 `timezone` 合法） | **已闭合** |
+| `nextFireAt` 未做 kind 约束 | 任何 kind 都能带 | **P2 调度器（未闭合）** |
+| `timezone` 只校非空，不校 IANA 合法性 | 非法时区名可通过 | **P2 调度器（未闭合）** |
+| `expiresAt` / `at` 已过去仍 `ok:true` | 域模型无时钟（校验必须是确定纯函数） | **P2 调度器（未闭合）** |
+| `pausedReason` 与 `enabled` 的一致性（暂停了但 enabled 仍真等） | 无约束 | **P2（未闭合）** |
+| `fireCount > maxFires`、`once` 且 `fireCount > 0` 等一致性 | 无约束 | **P2（未闭合）** |
+| `Squad.enabled === false` **不参与派发** | **P1 终审修复波已修**：`leaderDispatch` 把它与 `archivedAt` 同等处理（不发 run、只通知），且 reason 文案与「已归档」区分 | **已闭合** |
+| 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | P2 接线简报时补（或明确并入 instructions） |
+| `wakeRuleRepo` 读回值可能**枚举外**（`rowToWakeRule` 对 `kind`/`mode`/`pausedReason`/`onTimeout` 用 `as` 强转，读回无再校验） | **P1 终审修复波已对齐**：读回时对枚举列校验，非法值**抛错**（与 §5「响亮失败优于静默跳过」的裁定一致）；「故意不进 barrel」的注释保留 | **已闭合** |
+| `casAdvance` 返回单一 `false`，**不区分**「被 revision fencing 拒绝」与「规则已删」 | 接线方无从记录原因 | P2 需回读比对 revision 判因 |
+| `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | §3.9 的 `(workItemId, ruleId, revision, eventKey)` 里 `eventKey` 如何由 `filters`/`eventTypes` 构造，P1 未定义 | P2 接线前必须定义 |
+| 归档小队 → **工作项指派与排班转交队长** | 需按 assignee 查工作项，属工作项查询层 | P2（`squadService.ts` 有 `TODO(P2)`） |
+| **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（终审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属**发布期动作**；表行而非逻辑边界，缺行只跳过、不会假红） |
 
 ---
 
