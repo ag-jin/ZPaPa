@@ -311,3 +311,5 @@ export * from "./clientConfig.js";
 export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
+export * from "./work-item.js";
+export * from "./team-agent.js";

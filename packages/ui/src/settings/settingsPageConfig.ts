@@ -20,6 +20,7 @@ import {
   Keyboard,
   FileSearch,
   MonitorSmartphone,
+  FlaskConical,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -170,6 +171,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     icon: BarChart3,
     titleId: "settings.usageTitle",
     groupId: "dataAndStats",
+  },
+  {
+    // 实验功能：所有实验开关的统一去处。走运行期 appSettings 开关，不做编译期隐藏。
+    id: "experiments",
+    icon: FlaskConical,
+    titleId: "settings.experiments.title",
+    groupId: "basics",
   },
 ];
 
