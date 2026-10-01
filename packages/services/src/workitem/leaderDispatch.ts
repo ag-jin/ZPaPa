@@ -37,8 +37,8 @@ export function planDispatch(input: {
   squad: Squad | null;
   trigger: "user" | "leader" | "rule";
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
-     事件必须带上它；无 id 时留空串、**不凭空编一个**——真实 id 由调度器接线时给出（spec §3.9
-     的幂等键要用它区分不同规则，空串会让两条规则的派发看起来是同一件事）。 */
+     事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
+     缺失或空串一律抛错，见下面的 if 分支。 */
   ruleId?: string;
 }): DispatchEvent[] {
   const { workItem, squad, trigger } = input;
@@ -47,8 +47,20 @@ export function planDispatch(input: {
   /* 触发源只留痕、不参与解析：痕迹放在结论**之前**，消费方按序读到的是因果顺序
      （先「某条规则到点了」，再「派发结论是什么」）。 */
   if (trigger === "rule") {
-    events.push({ kind: "wake.rule_fired", workItemId: workItem.id, ruleId: input.ruleId ?? "" });
+    /* 规则触发却不指名规则 → **响亮失败**：spec §3.9 的幂等键是 `(workItemId, ruleId, revision, eventKey)`，
+       留个空串就等于把「哪条规则」这一维抹掉——两条不同规则的派发会被当成同一件事，
+       而且这种接线缺陷会一路静默通过（没有任何一步会报错）。 */
+    if (input.ruleId === undefined || input.ruleId === "") {
+      throw new Error(
+        "trigger=rule 但没有给出规则 id（ruleId）：规则触发必须能指名是哪条规则，否则 spec §3.9 的幂等键退化",
+      );
+    }
+    events.push({ kind: "wake.rule_fired", workItemId: workItem.id, ruleId: input.ruleId });
   }
+
+  /* 原始值另存一份，只为下面 default 的错误信息：进了 switch 之后 `assignee.type` 会被收窄成
+     `never`（三条腿已穷尽），在 default 里再读它就取不到原值了。 */
+  const rawType: string = workItem.assignee.type;
 
   switch (workItem.assignee.type) {
     /* 指派给人：人不排队——没有 run 可起，进 Inbox 等人自己动手。 */
@@ -98,12 +110,19 @@ export function planDispatch(input: {
       });
       break;
     }
-  }
 
-  /* 没有 default 分支：`assignee.type` 是 P0 的枚举，三条腿已穷尽，TS 能证明走不到第四种。
-     前提是入库数据可信——注意 workItemRepo 读库时对 assignee_type 是 `as` 强转、不做运行时校验，
-     手改过库的行理论上能带来第四个值，落到这里就会既不跑也不响。这里不加兜底是因为正确修法在读库侧
-     （补运行时校验），在派发器里再长一条腿只是把问题挪个地方（AGENTS.md：不不断增加兜底分支）。 */
+    /* 契约违例的**断言**，不是兜底分支。`assignee.type` 由 `workItemSchema` 限定为三态，上面三条腿已穷尽
+       （TS 能证明只有 `never` 能走到这里）；能走到这一行，说明有数据绕过了 schema 写入——`workItemRepo`
+       读库时对 `assignee_type` 是 `as` 强转、不做运行时校验，手改过库的行就能带来第四个值。
+       此时**响亮失败**远好过静默跳过：静默的话用户看到的是「指派了但什么都没发生」，而抛错直接指出
+       「是这条数据坏了」。AGENTS.md 禁的是「不断增加兜底分支」（新增容错路径）；对契约违例抛错恰恰相反，
+       它是在把契约钉死，不是在容忍偏差。 */
+    default:
+      throw new Error(
+        `未知的指派类型「${String(rawType)}」：assignee.type 只允许 user/agent/squad，` +
+          "出现第四个值说明这条工作项绕过了 workItemSchema 写入，请检查数据库中该行",
+      );
+  }
 
   return events;
 }

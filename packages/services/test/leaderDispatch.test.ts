@@ -32,6 +32,8 @@ const squad = {
   instructions: { stopCondition: "全部 done 即收工", maxRounds: "5" },
   enabled: true,
 } as never;
+/* 规则 id：`trigger === "rule"` 时必须给出（缺了或空串会抛错，见 §4 的两条新契约）。 */
+const RULE_ID = "wr_1";
 
 // ---------- 1. brief 的关键用例 ----------
 
@@ -84,6 +86,7 @@ test("squad 已归档：不发起 run", () => {
     workItem: wi({ type: "squad", id: "sq_1" }),
     squad: { ...squad, archivedAt: 1 } as never,
     trigger: "rule",
+    ruleId: RULE_ID,
   });
   assert.equal(
     events.some((e) => e.kind === "run.enqueued"),
@@ -97,6 +100,7 @@ test("rule 触发 squad：同样产出队长角色 run", () => {
     workItem: wi({ type: "squad", id: "sq_1" }),
     squad,
     trigger: "rule",
+    ruleId: RULE_ID,
   });
   const run = events.find((e) => e.kind === "run.enqueued");
   assert.ok(run && run.kind === "run.enqueued" && run.isLeaderTask === true);
@@ -108,6 +112,7 @@ test("rule 触发附加 wake.rule_fired，user 触发不附加", () => {
     workItem: wi({ type: "agent", id: "ta_x" }),
     squad: null,
     trigger: "rule",
+    ruleId: RULE_ID,
   });
   assert.ok(withRule.some((e) => e.kind === "wake.rule_fired"));
   const withUser = planDispatch({
@@ -127,6 +132,7 @@ test("assignee=squad 但 squad 为 null：不发 run，只通知", () => {
     workItem: wi({ type: "squad", id: "sq_1" }),
     squad: null,
     trigger: "rule",
+    ruleId: RULE_ID,
   });
   assert.equal(
     events.some((e) => e.kind === "run.enqueued"),
@@ -186,6 +192,8 @@ for (const cell of MATRIX) {
       workItem: wi(assigneeOf(cell.assigneeType)),
       squad,
       trigger: cell.trigger,
+      // rule 列必须给出规则 id（缺失或空串会抛错）；user / leader 列不给——它们与规则无关。
+      ...(cell.trigger === "rule" ? { ruleId: RULE_ID } : {}),
     });
     const runs = events.filter((e) => e.kind === "run.enqueued");
     const inbox = events.filter((e) => e.kind === "inbox.notified");
@@ -240,6 +248,7 @@ for (const situation of ["缺失", "已归档"] as const) {
         workItem: wi({ type: "squad", id: "sq_1" }),
         squad: situation === "缺失" ? null : ({ ...squad, archivedAt: 1 } as never),
         trigger,
+        ...(trigger === "rule" ? { ruleId: RULE_ID } : {}),
       });
       assert.equal(events.filter((e) => e.kind === "run.enqueued").length, 0);
       assert.equal(events.filter((e) => e.kind === "inbox.notified").length, 1);
@@ -383,14 +392,65 @@ test("纯函数：深冻结入参后仍可派发，两次调用结果一致", ()
     workItem: frozenItem,
     squad: frozenSquad,
     trigger: "rule",
-    ruleId: "wr_1",
+    ruleId: RULE_ID,
   });
   const second = planDispatch({
     workItem: frozenItem,
     squad: frozenSquad,
     trigger: "rule",
-    ruleId: "wr_1",
+    ruleId: RULE_ID,
   });
   assert.deepEqual(first, second);
   assert.equal(first.filter((e) => e.kind === "run.enqueued").length, 1);
+});
+
+// ---------- 4. 契约违例与接线缺陷：响亮失败，不许静默无动作 ----------
+
+/* `assignee.type` 由 `workItemSchema` 限定为三态，但 `workItemRepo` 读库是 `as` 强转、不做运行时校验，
+   手改过库的行能带来第四个值。这种行**不能**既不跑也不响（用户看到的是「指派了但什么都没发生」），
+   所以三态 × 三个触发源都抛：未知类型与触发源无关，也不许被规则路径吞掉。
+   （rule 触发要同时给出 ruleId，否则先撞上 ruleId 的断言，测不到类型断言。） */
+for (const trigger of ["user", "leader", "rule"] as const) {
+  test(`未知 assignee.type × trigger=${trigger}：抛错（契约违例的断言）`, () => {
+    assert.throws(
+      () =>
+        planDispatch({
+          workItem: wi({ type: "robot", id: "r1" }),
+          squad: null,
+          trigger,
+          ...(trigger === "rule" ? { ruleId: RULE_ID } : {}),
+        }),
+      /未知的指派类型「robot」/,
+    );
+  });
+}
+
+/* trigger=rule 却不指名规则 → 抛错（不许留空串静默通过）：spec §3.9 的幂等键含 ruleId，
+   空串会让「所有规则」看起来是同一条规则，而这种接线缺陷一路都不会报错。 */
+test("trigger=rule 但 ruleId 缺失或空串：抛错", () => {
+  const base = {
+    workItem: wi({ type: "agent", id: "ta_x" }),
+    squad: null,
+    trigger: "rule",
+  } as const;
+  assert.throws(() => planDispatch({ ...base }), /ruleId/);
+  assert.throws(() => planDispatch({ ...base, ruleId: "" }), /ruleId/);
+});
+
+// 补集方向：user / leader 触发**不**需要 ruleId，不许误伤（九格矩阵的 user/leader 两列本来就不传 id）。
+test("user / leader 触发不需要 ruleId：不抛错", () => {
+  for (const trigger of ["user", "leader"] as const) {
+    assert.doesNotThrow(() =>
+      planDispatch({ workItem: wi({ type: "agent", id: "ta_x" }), squad: null, trigger }),
+    );
+  }
+});
+
+/* 两条新断言可能同时命中（rule 触发 + 缺 ruleId + 类型是未知值）：先报**接线缺陷**。
+   理由是它当场就能修（调用方补一个 id），而坏数据怎么修还没定；次序写死，免得靠猜。 */
+test("ruleId 缺失与未知类型同时命中：先报 ruleId（接线缺陷优先）", () => {
+  assert.throws(
+    () => planDispatch({ workItem: wi({ type: "robot", id: "r1" }), squad: null, trigger: "rule" }),
+    /ruleId/,
+  );
 });
