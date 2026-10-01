@@ -118,6 +118,13 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "dynamic-workflow-mode-env",
+    title: "工作流灰度落值（打包档位必须写「开」，否则整块能力静默消失）",
+    cwd: "packages/desktop",
+    file: "test/dynamicWorkflowModeHostEnv.test.ts",
+  },
+  {
+    layer: 1,
     id: "tail-parts-ordering",
     title: "会话尾部窗口的 parts 截断不变量（按需加载）",
     cwd: ".",

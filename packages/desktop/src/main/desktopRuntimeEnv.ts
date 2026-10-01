@@ -20,11 +20,11 @@ import {
   resolveZaiBusinessBaseUrl,
   resolveZaiOAuthClientId,
   resolveZaiOAuthOrigin,
-  normalizeDynamicWorkflowMode,
   readZCodeAgentTelemetryEnv,
   sanitizeZCodeRuntimeEnv,
   type ZCodeRuntimeEnv,
 } from "@zcode/shared";
+import { resolveDynamicWorkflowModeHostEnv } from "./dynamicWorkflowModeHostEnv.js";
 import { resolvePlatformKeyForPackagedApp } from "../../scripts/target-platform.mjs";
 import {
   getAppConfigDir,
@@ -439,31 +439,6 @@ function resolveWindowsAppInstallDirForDataBaseDirGuard(
   return win32.dirname(trimmedResourcesPath);
 }
 
-/**
- * Dynamic Workflow 灰度的本地覆盖按构建档位分三层
- *
- *   - 未打包 dev：透传 shell 里的合法取值，方便手工切档；非法值直接丢弃而不是转发给 Host，
- *     Host 因此不必再判一次来源；
- *   - 打包 preview：固定写入 `alwaysOn`，忽略 shell，preview 用户始终拥有该功能；
- *   - 打包 production：不写入，且继承值必须被删除，否则本机环境变量就能自行打开灰度。
- * Main 是唯一决策者：对这个键只有「写」和「删」两种动作，绝不原样透传，
- * Host 端的 resolveDynamicWorkflowClientConfig 才能无条件相信读到的值。
- */
-function resolveDynamicWorkflowModeHostEnv(options: {
-  inheritedValue: string | undefined;
-  isPackaged: boolean;
-  isPreview: boolean;
-}): Record<string, string> {
-  if (!options.isPackaged) {
-    const mode = normalizeDynamicWorkflowMode(options.inheritedValue);
-    return mode ? { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: mode } : {};
-  }
-  if (options.isPreview) {
-    return { [ZCODE_DYNAMIC_WORKFLOW_MODE_ENV]: "alwaysOn" };
-  }
-  return {};
-}
-
 export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>) {
   const glmBinaryPath = resolveBundledGlmBinaryPath();
   const larkCliBinaryPath = resolveBundledLarkCliBinaryPath();
@@ -529,10 +504,10 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
   const dynamicWorkflowModeHostEnv = resolveDynamicWorkflowModeHostEnv({
     inheritedValue: rawInheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV],
     isPackaged: packagedDesktop,
-    isPreview: isPreviewPackagedRuntime,
   });
-  // 三层里有两层不写这个键，空对象无法覆盖 inheritedEnv，所以先无条件删掉继承值再按决策 spread 回去。
-  // 少了这一行，production 包和 dev 的非法取值都会原样穿透到 Host。
+  // dev 的非法取值不会落进决策对象，空对象又无法覆盖 inheritedEnv，
+  // 所以先无条件删掉继承值再按决策 spread 回去 —— 少了这一行，本机环境变量就能自行打开灰度。
+  // 判定与分档理由见 dynamicWorkflowModeHostEnv.ts。
   delete inheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
 
   return {
