@@ -116,13 +116,14 @@
 | `packages/desktop/src/main/desktopCronScheduler.ts` | — | **改** | — | — | — | — |
 | `packages/desktop/src/main/desktopHostProcess.ts`（结果分支） | — | **改** | — | — | — | — |
 | `packages/shared/src/channels.ts` / `validation.ts`（新增消息） | — | **改** | — | — | — | — |
-| `packages/desktop/src/host/index.ts`（唤醒 / 派发分支 + **后端门禁**） | — | **改** | — | — | — | **改**（启动回收 + 最终收口） |
+| `packages/desktop/src/host/index.ts`（唤醒 / 派发分支；**门禁已改为服务层单点，host 只按结论行事**） | — | **改** | — | — | — | **改**（启动回收 + 最终收口） |
 | `packages/desktop/test/{schedulerWakeTick,schedulerWiring,hostSquadDispatch}.test.ts` | — | **建** | — | — | — | — |
 | `packages/services/src/workitem/squadOrchestrator.ts`（新） | — | — | **建** | — | — | — |
 | `packages/services/src/worktree/orphanReaper.ts` + `orphanReaper.test.ts` | — | — | **改** | — | — | — |
 | `packages/services/test/{squadOrchestrator.batch,workspaceFileIgnoreProductDirs}.test.ts` | — | — | **建** | — | — | — |
 | `packages/ui/src/**`（含 i18n locales） | — | — | — | **改** | — | — |
 | `packages/ui/test/experimentsSquadEntry.test.ts` | — | — | — | **建** | — | — |
+| **`packages/client/**`（renderer 侧服务访问的最小**加法**）**（2026-10-01 补：C 路 BLOCKED 后由 controller 扩权——原计划**没有**任何任务拥有它，而 `IServiceAccessor` 无 `get`、renderer 实现逐字段建代理、未列出的服务取不到且无兜底）** | — | — | — | **改** | — | — |
 | `packages/contracts/src/**`（工具 schema + `SquadPort`） | — | — | — | — | **改** | — |
 | `packages/shared/src/zcode-protocol/**`（新 method + 结果 schema） | — | — | — | — | **改** | — |
 | `apps/zcode-cli/packages/core/src/{tool/**,runtime/**,runtime.ts}` | — | — | — | — | **改** | — |
@@ -193,7 +194,7 @@ spec 隐含、但各任务测试**最容易漏掉**的输入 / 失败模式。�
 2. **启动回收吃掉待修 / 外来工作树**：`activeBranches` 漏掉「已产出未合并」⇒ 待修工作树被静默回收（S5 失效）；**非小队命名空间**的工作树落进 `.worktree/` ⇒ 被当孤儿收掉（Task 4 B‑0、Task 2）。
 3. **`eventKey` 就地拼串**：重复投递的事件**静默重复触发**。必须证明「同一事实重投两次只 fire 一次」且「`filters` 改动不改变 key」（Task 2 落构造器、Task 3 A 用）。
 4. **只写在 dev 生效**：新调度逻辑若挂在非 fork 入口上 ⇒ 生产**静默不跑**（`schedulerModulePath` 基于 `import.meta.dirname`，recon.md F4）。**必须有一条静态可检的测试**（Task 3 A）。
-5. **开关只是 UI 装饰**：后端不读 `experimentalAgentSquadsEnabled` ⇒ 关掉实验照旧派发（recon.md B4）。**门禁在服务层单点**（`ISquadRuntimeService.assertDispatchEnabled`，**唯一的开关读取点**），三个入口（规则 tick / 界面手动触发 / 队长工具）**共用同一判据**。必须有的测试：**开关关闭时三个入口都被拦**（至少覆盖「界面触发」与「规则 tick」两条）+ **在途 run 不被中断**（spec §5.7.6 / §16 S14）；另加一条**静态守卫**：`experimentalAgentSquadsEnabled` **不得出现在 `packages/desktop/src/**`**（出现即说明有人把判据复制到了 host）。落点：T2（判据本体 + 四条测试）、T3（host 只按结论行事）、T7（静态守卫复核）。
+5. **开关只是 UI 装饰**：后端不读 `experimentalAgentSquadsEnabled` ⇒ 关掉实验照旧派发（recon.md B4）。**门禁在服务层单点**（`ISquadRuntimeService.assertDispatchEnabled`，**唯一的开关读取点**），三个入口（规则 tick / 界面手动触发 / 队长工具）**共用同一判据**。必须有的测试：**开关关闭时三个入口都被拦**（至少覆盖「界面触发」与「规则 tick」两条）+ **在途 run 不被中断**（spec §5.7 第 6 项 / §16 S14）；另加一条**静态守卫**：`experimentalAgentSquadsEnabled` **不得出现在 `packages/desktop/src/**`**（出现即说明有人把判据复制到了 host）。落点：T2（判据本体 + 四条测试）、T3（host 只按结论行事）、T7（静态守卫复核）。
 6. **另开一条 tasks-index 连接**：`createWorkItemRepo`/`createWakeRuleRepo` 要注入 `DatabaseSync`，若自己 `new DatabaseSync(path)` 就绕过了 `isTasksStorageMigrated`/prepared，**静默读写到不同库状态**（recon.md F3）。必须断言与 `taskIndexRepo` **同一实例**（Task 1）。
 
 ---
@@ -524,7 +525,7 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       /** 显式覆盖 base 分支；省略时由本层 `git symbolic-ref --short HEAD` 解析——失败**抛**，不猜 "main"。 */
       baseBranch?: string;
       /**
-       * 实验开关的**唯一读取口**（spec §5.7.6 门禁）。由组合根注入（读 `appSettings`），
+       * 实验开关的**唯一读取口**（spec §5.7 第 6 项 门禁）。由组合根注入（读 `appSettings`），
        * runtime 只在这里读一次并把结论交给 `assertDispatchEnabled` —— **分支/工具/UI 都不读**。
        */
       readExperimentEnabled: () => boolean;
@@ -541,7 +542,7 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       /** 绑定的 workspace 身份（裁定 4 + 确认 3）：runtime **为某一个目标 workspace 而构造**，
        *  内部所有访问都只用它；任何来自外部的异己 workspaceKey 一律抛。 */
       boundWorkspace: { path: string; identity: string };
-      /** 门禁的唯一实现（spec §5.7.6）：关闭即抛 SquadDispatchDisabledError；**不中断在途 run**。 */
+      /** 门禁的唯一实现（spec §5.7 第 6 项）：关闭即抛 SquadDispatchDisabledError；**不中断在途 run**。 */
       assertDispatchEnabled(): Promise<void>;
       lifecycle: SquadRunLifecycle;
       /** 工作项事件的**唯一**出口。新增订阅者只准挂在这里，不得去读 repo 轮询。 */
@@ -573,7 +574,7 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
 
     export interface ISquadRuntimeService {
       /**
-       * **门禁的唯一判据**（spec §5.7.6 / §12 / §16 S8 S14）。
+       * **门禁的唯一判据**（spec §5.7 第 6 项 / §12 / §16 S8 S14）。
        *
        * 为什么判据必须落在**服务层单点**、而不是 host 的派发路径或 UI：门禁有**三个入口** ——
        * ① 规则 tick 自动派发、② 用户在最小界面手动触发、③ 队长的派单工具（Wave 1 D）。
@@ -582,7 +583,7 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
        * 故判据只有这一处实现，三个入口都调它（① 由 host 在 dispatch 前调；②③ 因为要起新 run，
        * 在下面 createWorkItem / openMemberRun 的**入口**内部调**同一个** assertDispatchEnabled）。
        *
-       * 语义（spec §5.7.6）：关闭 ⇒ **拒绝这一次新派发**（抛 SquadDispatchDisabledError）；
+       * 语义（spec §5.7 第 6 项）：关闭 ⇒ **拒绝这一次新派发**（抛 SquadDispatchDisabledError）；
        * **不中断在途 run** —— 本方法只读设置、只抛错：不取消、不关会话、不改任何 `squad_runs` 行。
        */
       assertDispatchEnabled(target: SquadWorkspaceTarget): Promise<void>;
@@ -982,7 +983,7 @@ Expected: FAIL（`LEADER_PROTOCOL_TEXT` / `computeEventKey` / `createSquadRuntim
        db: taskIndexRepo.openSharedDatabase(), // 与 taskIndexRepo 是**同一条**连接（recon.md F3）
        workspacePath: target.path,
        workspaceIdentity: target.identity,
-       // 门禁的**唯一读取口**：整个 desktop 侧没有第二处读这个字段（spec §5.7.6）。
+       // 门禁的**唯一读取口**：整个 desktop 侧没有第二处读这个字段（spec §5.7 第 6 项）。
        readExperimentEnabled: () => settingService.getSync?.().experimentalAgentSquadsEnabled === true,
      });
    };
@@ -1041,7 +1042,7 @@ test("开关关闭 ⇒ 界面触发（createWorkItem）与规则 tick 都被拦"
   );
 });
 
-// 确认 2：**在途 run 不中断** —— 这是 spec §5.7.6 与 §16 S14 明文要求的那一半。
+// 确认 2：**在途 run 不中断** —— 这是 spec §5.7 第 6 项 与 §16 S14 明文要求的那一半。
 // 关掉开关后：已有的 open run 台账与工作树**一个字节不动**，且不发出任何取消。
 test("开关关闭 ⇒ 在途 run 不被中断", async () => {
   const { runtime, svc, setEnabled } = await controllableSetup();
@@ -1403,7 +1404,7 @@ Expected: FAIL（模块 / 分支不存在）
    - `databaseStartup?.coordinator.snapshot.phase !== "ready"` → 回 `{ ok:false, failureKind:"transient" }`（照抄既有）。
    - **门禁不在这里实现（确认 2）**：判据是**服务层单点**（`ISquadRuntimeService.assertDispatchEnabled`，Task 2）。本分支只**调它**并把结论翻成回执：
      ```ts
-     // 门禁：判据在服务层单点（spec §5.7.6 的三个入口共用一处判据）。
+     // 门禁：判据在服务层单点（spec §5.7 第 6 项 的三个入口共用一处判据）。
      // 这里**不读 appSettings** —— 读一次就多一份判据，改一处漏一处，正是「关掉实验照旧派发」的形态。
      try {
        await squadRuntime.assertDispatchEnabled({ path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" });
@@ -1451,12 +1452,12 @@ Expected: 全 PASS
 
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
-**① 逆推**（spec §5.5 / §5.7 / §5.7.1 / §5.7.6 / §6.1 / §12；recon.md A1 A2 A3、B4 B5、F4、缺口 #6 #7 #11）：
+**① 逆推**（spec §5.5 / §5.7 / §5.7.1 / §5.7 第 6 项 / §6.1 / §12；recon.md A1 A2 A3、B4 B5、F4、缺口 #6 #7 #11）：
 
 - recon.md 缺口 #6「把 `WakeRuleRepo.listReady` 接进调度器 tick」是否真接上，且**复用同一个 20 s tick**（没有新增第二套定时器）？
 - recon.md 缺口 #7 的派发桥是否复用 `createTask`/`resumeTask` + `sendPrompt` 最小路径（不另造一套会话创建）？
 - 硬约束 1：忙检查**是否**用的是 `createBoundSessionExecutingProbe`？有没有第二条弱路径混进来？
-- §5.7.6 / 确认 2：本分支是否**只调服务层门禁、不自己读开关**？是否没有任何一处去 `closeTask`/`cancel`（在途 run 不中断）？`failureKind` 是否用了 `"permanent"`（关闭是确定性状态，不该按 transient 空转退避）？
+- §5.7 第 6 项 / 确认 2：本分支是否**只调服务层门禁、不自己读开关**？是否没有任何一处去 `closeTask`/`cancel`（在途 run 不中断）？`failureKind` 是否用了 `"permanent"`（关闭是确定性状态，不该按 transient 空转退避）？
 - §5.5 的判定次序是否**由 `decideWake` 唯一决定**（本层没有自己再判一遍闸）？
 - §5.7.1：`eventKey` 是否**只**由 `computeEventKey` 产出（全文 grep 无第二处拼串）？
 - recon.md F4 的 dev/prod 检查是否**由测试承重**（不是注释承诺）？
@@ -1782,7 +1783,7 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import { squadEntryVisible } from "../src/settings/squadEntry/squadEntryVisibility.js";
 
-// spec §5.7.6 / §16 S8：关闭实验 ⇒ 入口**整体消失**（不是灰掉、不是报错页）。
+// spec §5.7 第 6 项 / §16 S8：关闭实验 ⇒ 入口**整体消失**（不是灰掉、不是报错页）。
 test("开关关闭时入口不可见", () => {
   assert.equal(squadEntryVisible({ experimentalAgentSquadsEnabled: false }), false);
   assert.equal(squadEntryVisible({}), false);
@@ -1837,13 +1838,13 @@ Expected: 全 PASS
 
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
-**① 逆推**（spec §11.1 / §11.3 / §11.4 / §12 / §16 S8 S9 / §5.7.6）：
+**① 逆推**（spec §11.1 / §11.3 / §11.4 / §12 / §16 S8 S9 / §5.7 第 6 项）：
 
 - §12 / §16 S8：关闭实验时入口是否**整体消失**（不是置灰、不是报错），且**不影响**现有 subagent / automation 的任何界面？
 - §16 S9 / 决策 C8：本视图是否**不参与远程投射**（**不得**把 squad 设置加进 `isProjectableSetting`，`packages/ui/src/lib/remoteDeviceSettings.ts:41` 的 `/^experimental/i` 拦截**必须保持**）？
 - §11.3：字号 / 圆角 / 语义色三条是否守住（不得出现 `text-sm`、原生 `#hex`）？
 - §11.4：文案是否**两语齐全**、布局**不依赖截断**？
-- **本任务不做后端门禁**（裁定 2：门禁整条属 Task 3 A）。确认本任务**没有**触碰 `packages/desktop/**` 或 `packages/services/**`；确认 UI 的隐藏**不被**当成安全边界（spec §5.7.6 要求的是停止新派发，由 A 在 host 落）。
+- **本任务不做后端门禁**（裁定 2：门禁整条属 Task 3 A）。确认本任务**没有**触碰 `packages/desktop/**` 或 `packages/services/**`；确认 UI 的隐藏**不被**当成安全边界（spec §5.7 第 6 项 要求的是停止新派发，由 A 在 host 落）。
 
 **② 穷举**：
 
@@ -2295,7 +2296,7 @@ export function resolveSquadWorkspaceBinding(
 
 （`reapStartupOrphans` 在 `ISquadRuntimeService` 上的入参：**不传 workspaceKey**，由服务内部用绑定的 workspace —— 让调用方没有机会传错 workspace。）
 
-**（3e）单点门禁复核（只复核，不改）**（确认 2）：判据是**服务层单点** `ISquadRuntimeService.assertDispatchEnabled`；本任务确认三件事——① `packages/desktop/src/**` **一处都不读**该开关（静态守卫，Step 1 已有）；② host 只调 `assertDispatchEnabled` 并按 `SQUAD_DISPATCH_DISABLED_CODE` 翻译成 `failureKind: "permanent"`；③ **没有任何一处**去取消进行中的 run（spec §5.7.6 的后半句）。任一条不成立 ⇒ **回对应任务（Task 2 / Task 3）单开修复轮**，不在本任务就地补（否则判据会变成第二、第三份）。
+**（3e）单点门禁复核（只复核，不改）**（确认 2）：判据是**服务层单点** `ISquadRuntimeService.assertDispatchEnabled`；本任务确认三件事——① `packages/desktop/src/**` **一处都不读**该开关（静态守卫，Step 1 已有）；② host 只调 `assertDispatchEnabled` 并按 `SQUAD_DISPATCH_DISABLED_CODE` 翻译成 `failureKind: "permanent"`；③ **没有任何一处**去取消进行中的 run（spec §5.7 第 6 项 的后半句）。任一条不成立 ⇒ **回对应任务（Task 2 / Task 3）单开修复轮**，不在本任务就地补（否则判据会变成第二、第三份）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -2317,11 +2318,11 @@ Expected: 全绿；输出**干净**（零 `console.log`、零 stray warning、�
 
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
-**① 逆推**（spec §5.7.3 / §5.7.6 / §6.4 / §6.6 / §11.4 / §16 S4 S15）：
+**① 逆推**（spec §5.7.3 / §5.7 第 6 项 / §6.4 / §6.6 / §11.4 / §16 S4 S15）：
 
 - recon.md 缺口 #1–#11 是否**逐条**有落点（对照 recon 的清单逐项打勾，**缺一条就是没落地**）？
 - 启动回收是否（a）在 database ready 之后（b）异步（c）best-effort 且**响亮**（warn 带原文）？
-- §5.7.6：关闭实验是否只停新派发、进行中的 run 一个字节不动？
+- §5.7 第 6 项：关闭实验是否只停新派发、进行中的 run 一个字节不动？
 - 订阅是否**只挂一次**（重复挂 = 同一次事件被处理两遍 = 第二次 merge 撞「分支不存在」）？
 - 全仓 grep：`git branch -D`、`.worktree` 字面量、`schedulerModulePath` 是否有**第二处**？（P2a 的终审纪律）
 
@@ -2380,7 +2381,7 @@ git commit -m "feat(squad): 热点收口（启动回收调用点 + 批次编排�
 | §5.7.1 `eventKey` 唯一构造器与两族 | Task 2（`computeEventKey`，实现 + 穷举测试），Task 3（tick 消费） |
 | §5.7.3 `children_done` 用 **category** | Task 4 B‑2（`areAllChildrenTerminal`） |
 | §5.7.4 串行合并 / 整批才合回 / 冲突 → `blocked` + Inbox | Task 4 B‑2，Task 2（`reviewMemberRun`） |
-| §5.7.6 关闭实验 = 停新派发、不中断进行中的 run | Task 2（**门禁单点 `assertDispatchEnabled` + 三入口共判 + 在途不中断**，确认 2）、Task 3（host 只调门禁）、Task 5（视图隐藏=呈现）、Task 7（静态守卫复核） |
+| §5.7 第 6 项 关闭实验 = 停新派发、不中断进行中的 run | Task 2（**门禁单点 `assertDispatchEnabled` + 三入口共判 + 在途不中断**，确认 2）、Task 3（host 只调门禁）、Task 5（视图隐藏=呈现）、Task 7（静态守卫复核） |
 | §6.1 工作树是**本次运行**的属性 | Task 2（`openMemberRun` 在 host 侧按 `isLeaderTask` 决定）、Task 3 |
 | §6.2 审查被拒**不提前删** | Task 2（`reviewMemberRun` rejected 分支）、Task 4 B‑2（S5 用例） |
 | §6.3 集成分支 / D/F 安全命名 | Task 2（`slugForId` + `planBranches`）、Task 4 B‑2（`finalize` + 两条分支都删） |
