@@ -53,6 +53,9 @@ function appendZCodeAgentIndexedProviderFilter(
 }
 type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 
+/** tasks-index 的 sqlite 句柄类型。导出是为了让同进程其它域能声明「我要的就是这条连接」。 */
+export type TasksIndexDatabase = DatabaseSyncInstance;
+
 interface TaskIndexRow {
   workspace_key: string;
   workspace_path: string;
@@ -641,6 +644,21 @@ export class TaskIndexRepo {
       database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  /**
+   * 把本 repo 持有的 tasks-index 连接**原样**交给同进程的其它域（work_items / wake_rules / squad_runs）。
+   *
+   * 为什么必须是**同一条**连接、而不是让调用方自己 `new DatabaseSync(getTasksIndexDatabasePath())`：
+   * 本连接在 `initialize()` 里经历过 `isTasksStorageMigrated` / `isTasksStoragePrepared` 判定、
+   * 四条 PRAGMA 设定与存量回填。另开一条连接会**跳过全部这些**，于是两个域读写到
+   * **不同的库状态**（迁移没跑到、回填没做），而且**不报错**（recon.md F3）。
+   *
+   * 未初始化就抛（`getDatabase()` 在 `db == null` 时即抛）：静默返回 null 或懒建一条新连接，
+   * 都会把上面那个失败变成「看起来正常」。
+   */
+  openSharedDatabase(): TasksIndexDatabase {
+    return this.getDatabase();
   }
 
   private getDatabase(): DatabaseSyncInstance {

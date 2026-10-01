@@ -47,13 +47,16 @@ const PINNED_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
   "0002_provider_selection": "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc",
   "0003_official_glm_selection": "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4",
   "0004_work_items": "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f",
+  "0005_wake_rules": "a2308d0724eae27813d92b5c8742a2de9aad68c5c6429601312483a0bd21b618",
 };
 
 // 「最新那条迁移建出了什么」无法从库里反推，故在此显式登记，用来把库退回上一版的样子。
 // **新增迁移时同步维护一行**（不维护也能通过：缺登记时只是不 drop 对象，模拟退化一档，
 // 因为 DDL 都带 IF NOT EXISTS，重跑不会炸——这是本用例能自适配的关键）。
+// 登记行按迁移累加，但用例只读当前最新 id 的那一行（旧行留着是为了让历史痕迹可读，不参与断言）。
 const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = {
   "0005_wake_rules": ["DROP TABLE wake_rules"],
+  "0006_squad_runs": ["DROP TABLE squad_runs"],
 };
 
 test("迁移建出 work_items 表与索引", () => {
