@@ -169,6 +169,9 @@ export function listTeamAgents(root: string): TeamAgent[] {
     } catch {
       // 坏文件跳过（含文件名不是合法 id 段的情况，如 `..json` 派生出 `"."`）：
       // 宁可少一个智能体，也不让整份列表崩（用户可从文件系统手工修）。
+      // 边界（复审点明）：这个 silent skip **只针对盘上（文件名派生的）畸形 id**，
+      // **不针对调用方传参**——调用方把非法 id 直接传给 readTeamAgent / deleteTeamAgent 时，
+      // 闸门照常抛错，不会被这里的 catch 吞掉（那是「响亮失败」，与全局约定一致）。
       continue;
     }
   }
