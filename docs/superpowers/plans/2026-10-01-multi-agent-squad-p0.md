@@ -722,7 +722,7 @@ git commit -m "feat(squad): 工作项服务（唯一写者 + 环/深度/配额�
 
 **Interfaces:**
 - Produces:
-  - `teamAgentSchema`（zod，**strict**）与 `type TeamAgent`，字段含 `id`（稳定 id）、`name`、`description`、`color?`、`systemPrompt`、`skills: string[]`、`modelSelection?`、`tools?`、`disallowedTools?`、`permissionMode?`、`memoryScope: "user" | "project" | "local"`、`enabled`、`archivedAt?`、`provenance?`
+  - `teamAgentSchema`（zod，**strict**）与 `type TeamAgent`，字段含 `id`（稳定 id）、`name`、`description?`、`color?`、`systemPrompt`、`skills: string[]`、`modelSelection?`、`tools?`、`disallowedTools?`、`permissionMode?`、`memoryScope: "user" | "project" | "local"`、`enabled`、`archivedAt?`、`provenance?`
   - `resolveSquadAgentRoot(workspacePath: string): string` → `<workspacePath>/.zcode/squad/agents`
   - `readTeamAgent(root, id)` / `writeTeamAgent(root, agent)` / `listTeamAgents(root)` / `deleteTeamAgent(root, id)`
 
