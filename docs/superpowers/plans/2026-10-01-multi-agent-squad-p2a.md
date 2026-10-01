@@ -256,7 +256,9 @@ git commit -m "feat(worktree): 分支命名与派生（每队员独立分支 + s
 **Interfaces:**
 - Produces:
   - `type MergeOutcome = { ok: true; branch: string } | { ok: false; reason: "conflict" | "branch_missing"; detail: string }`
-  - `createIntegrationMerger(deps: { git: GitRunner; repoRoot: string; base: string }): { ensureIntegration(branch: string): Promise<void>; mergeMember(input: { integration: string; member: string }): Promise<MergeOutcome>; finalize(input: { integration: string; target: string }): Promise<MergeOutcome> }`
+  - `createIntegrationMerger(deps: { git: GitRunner; repoRoot: string; base: string }): { ensureIntegration(branch: string): Promise<void>; mergeMember(input: { integration: string; member: string }): Promise<MergeOutcome>; finalize(input: { integration: string; target: string }): Promise<MergeOutcome>; discardMember(input: { branch: string; dirName: string }): Promise<void> }`
+  - **`discardMember` = 抛弃语义的落点**（spec §6.3「合并后分支删（队员分支与集成分支都删）」）：先 `git worktree remove --force`，**再 `git branch -D <member>`**。顺序不可颠倒——工作树还挂着时删分支会失败。
+  - **为什么必须有人删分支**（Task 2 实测发现的真空）：`git worktree add` **失败时会先建出分支再失败**，留下无工作树的分支残枝；而 Task 1 的 `remove()` 只删工作树。**若无人删分支，该队员会永久卡在「分支已存在」**——这正是「清理是正确性前置」的反面。测试必须锁死：`discardMember` 之后，**同一分支可重新 `add` 成功**。
   - **`base` 由工厂 deps 显式给出**（集成分支从它派生），不靠「调用方在别处给」——否则「集成分支不存在时怎么办」没有答案。
   - `ensureIntegration(branch)`：集成分支不存在则从 `base` 创建；已存在则幂等返回。`mergeMember` 前必须先调它（或由内部隐式调用，二选一并写清楚）。
 
@@ -353,7 +355,9 @@ git commit -m "feat(worktree): 串行合并到集成分支（冲突不抛 + abor
 - Consumes: Task 1 的 `WorktreeManager`
 - Produces:
   - `type ReapInput = { activeBranches: readonly string[] }`
-  - `createOrphanReaper(deps: { manager: WorktreeManager }): { reap(input: ReapInput): Promise<{ reclaimed: string[]; kept: string[] }> }`
+  - `createOrphanReaper(deps: { manager: WorktreeManager; deleteBranch: (branch: string) => Promise<void> }): { reap(input: ReapInput): Promise<{ reclaimed: string[]; kept: string[] }> }`
+  - **`reap` 必须连分支一起回收**（不只是工作树）：回收后**该分支必须能重新 `add` 成功**。否则「清理是正确性前置」只做了一半——孤儿分支同样会占住分支名，让重派发撞上「分支已存在」。
+  - `deleteBranch` 由 deps 注入（与 `discardMember` 共用同一实现，避免两处各写一遍 `git branch -D`）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -374,9 +378,19 @@ test("回收后同一分支可重新建工作树", async () => {
   const root = await makeRepo();
   const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
   await m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" });
-  await createOrphanReaper({ manager: m }).reap({ activeBranches: [] });
+  await createOrphanReaper({ manager: m, deleteBranch }).reap({ activeBranches: [] });
   await assert.doesNotReject(m.add({ branch: "squad/wi1/a", base: "main", dirName: "wi1-a" }));
   assert.equal((await m.list()).length, 1);
+});
+
+// 只回收工作树而留下分支残枝，会让重派发撞上「分支已存在」——所以 reap 必须连分支一起收。
+test("回收后孤儿分支确实不存在了", async () => {
+  const root = await makeRepo();
+  const m = createWorktreeManager({ git: realGit(root), repoRoot: root });
+  await m.add({ branch: "squad/wi1/orphan", base: "main", dirName: "wi1-orphan" });
+  await createOrphanReaper({ manager: m, deleteBranch }).reap({ activeBranches: [] });
+  const branches = await realGit(root)(["branch", "--list", "squad/wi1/orphan"]);
+  assert.equal(branches.stdout.trim(), "");
 });
 
 // 未合并（仍在活跃集合里）的工作树绝不能被回收：否则队员的活白干。
