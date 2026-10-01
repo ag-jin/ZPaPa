@@ -43,6 +43,8 @@ import {
   IRemoteDeviceProjectsService,
   IPromptAttachmentTransferService,
   IWindowControllerService,
+  ISquadRuntimeService,
+  type ISquadRuntimeServiceShape,
   type IServiceAccessor,
 } from "@zcode/services";
 
@@ -101,6 +103,24 @@ export class RemoteServiceAccess implements IServiceAccessor {
   /** 设备项目清单（读设备自身登记的 recentProjects，供投射用）。 */
   readonly remoteDeviceProjectsService?: IRemoteDeviceProjectsService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
+
+  /**
+   * 小队运行时（实验功能，spec §11.1「名册在设置」/ §16 S8）。
+   *
+   * **为什么是可选**：它不是所有 host 都注册的服务面，且既有测试 double / 非 desktop host
+   * 未必提供；声明为可选才不会把这条新服务变成所有实现的必填项（那正是本轮要避免的连锁改动）。
+   * 取不到时**由消费方响亮报错**（`packages/ui/src/settings/squadEntry/squadRuntimeAccess.ts`
+   * 的 `resolveSquadRuntimeService`），不在这里静默兜底成 undefined —— 静默兜底会让界面
+   * 一片空白而分不清「没有数据」与「服务没接上」。
+   *
+   * **为什么用 defineProperty 且 enumerable: false**：与 `remoteDeviceConfigService` /
+   * `remoteDeviceProjectsService` 同一套路。远端 workspace 的 accessor 是
+   * `{...baseServices, ...}` 展开组装的（`desktop/src/renderer/src/remoteWorkspaceSessionServices.ts`），
+   * enumerable 的话本机 host 的小队服务会被**悄悄带进远端 workspace**，
+   * 于是拿着远端路径去问本机 host —— 正是该文件反复警告的「把远端路径发给本机 host」形态。
+   * 不可枚举 ⇒ 直接属性读仍然有效，但不会随展开泄漏到另一个 host 的 scope。
+   */
+  readonly squadRuntimeService?: ISquadRuntimeServiceShape;
 
   constructor(channelClient: IChannelClient) {
     this.fileService = ProxyChannel.toService<IFileService>(
@@ -243,5 +263,15 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.promptAttachmentTransferService = ProxyChannel.toService<IPromptAttachmentTransferService>(
       channelClient.getChannel(IPromptAttachmentTransferService.channelName),
     );
+    // 小队运行时：host 侧 `ServiceCollection.register(ISquadRuntimeService, …)` 已把 channel
+    // `squad-runtime` 暴露在线路上，这里补上 renderer 侧的代理映射 —— 缺这一行时 UI 拿不到该服务
+    // （accessor 是逐字段建代理的具体类，没有按 channelName 动态解析的兜底）。
+    // 老 host 没有这个 channel 时，方法调用会走 RPC 失败（不是静默 undefined）。
+    Object.defineProperty(this, "squadRuntimeService", {
+      value: ProxyChannel.toService<ISquadRuntimeServiceShape>(
+        channelClient.getChannel(ISquadRuntimeService.channelName),
+      ),
+      enumerable: false,
+    });
   }
 }
