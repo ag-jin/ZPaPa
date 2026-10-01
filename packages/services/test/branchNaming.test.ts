@@ -13,9 +13,59 @@ import { makeRepo, realGit } from "./helpers/gitFixture.js";
 
 test("分支命名：集成分支 + 队员分支", () => {
   assert.deepEqual(planBranches({ workItemSlug: "wi-42", agentSlug: "ta-x" }), {
-    integration: "squad/wi-42",
-    member: "squad/wi-42/ta-x",
+    integration: "squad/integration/wi-42",
+    member: "squad/member/wi-42/ta-x",
   });
+});
+
+/* 守卫 ①：两个名字**互不为前缀**。
+   git 的分支是文件系统里的 ref：`refs/heads/squad/wi1` 是文件、`refs/heads/squad/wi1/a`
+   要求它是目录 —— 一段不能既是文件又是目录（D/F 冲突，git 报 cannot lock ref）。
+   只要两个名字在**任何** slug 下都不构成 `x/` 前缀关系，这条冲突就不可能发生。 */
+test("守卫：任意 slug 下两个分支名互不为前缀（构造上排除 D/F 冲突）", () => {
+  // 含命名空间关键字自身、含互相嵌套的形状，以及长的、带连字符的常规值。
+  const slugs = ["a", "wi-42", "member", "integration", "member-integration", "x".repeat(60)];
+  for (const workItemSlug of slugs) {
+    for (const agentSlug of slugs) {
+      const plan = planBranches({ workItemSlug, agentSlug });
+      const context = JSON.stringify(plan);
+      assert.notEqual(plan.integration, plan.member, context);
+      assert.equal(plan.integration.startsWith(`${plan.member}/`), false, context);
+      assert.equal(plan.member.startsWith(`${plan.integration}/`), false, context);
+    }
+  }
+});
+
+/* 守卫 ②：敏感值反例 —— slug 恰好取命名空间关键字。
+   旧命名（`squad/<wi>` 与 `squad/<wi>/<agent>`）在这里是真的会撞：wi 叫 `member` 时
+   集成分支就是 `squad/member`，正好是队员命名空间那一层，会被队员分支吃成目录。
+   第一段分叉之后再拿这两个词当 slug，两个名字仍各自留在自己的命名空间里，互不影响。 */
+test("守卫：slug 取值撞上命名空间关键字时不冲突", () => {
+  const cases = [
+    // 集成分支 `squad/integration/member` 与队员分支 `squad/member/member/integration`
+    {
+      input: { workItemSlug: "member", agentSlug: "integration" },
+      expected: {
+        integration: "squad/integration/member",
+        member: "squad/member/member/integration",
+      },
+    },
+    // 反过来：关键字在工作项位 / 队员位各对调一次
+    {
+      input: { workItemSlug: "integration", agentSlug: "member" },
+      expected: {
+        integration: "squad/integration/integration",
+        member: "squad/member/integration/member",
+      },
+    },
+  ];
+  for (const { input, expected } of cases) {
+    const plan = planBranches(input);
+    assert.deepEqual(plan, expected);
+    assert.notEqual(plan.integration, plan.member);
+    assert.equal(plan.integration.startsWith(`${plan.member}/`), false);
+    assert.equal(plan.member.startsWith(`${plan.integration}/`), false);
+  }
 });
 
 // slug 直接进分支名与目录名，必须限制在安全字符集内，否则可构造出路径逃逸或非法 ref。
@@ -49,7 +99,7 @@ test("allocate 建出队员工作树：分支为队员分支、目录名扁平",
   const list = await manager.list();
   assert.equal(list.length, 1);
   assert.equal(memberPath, list[0]!.path);
-  assert.equal(list[0]!.branch, "squad/wi-42/ta-x");
+  assert.equal(list[0]!.branch, "squad/member/wi-42/ta-x");
   // 扁平：目录名是 `<workItemSlug>-<agentSlug>`，不是 `wi-42/ta-x` 的层级。
   // 层级写法会被 add 直接拒（.worktree/ 只放一层，才能作为一项进集中排除清单）。
   assert.ok(memberPath.endsWith(join(".worktree", "wi-42-ta-x")));
@@ -70,7 +120,7 @@ test("同 base 并行：分支不同的两名队员都成功", async () => {
 
   assert.notEqual(x.memberPath, y.memberPath);
   const branches = (await manager.list()).map((entry) => entry.branch).sort();
-  assert.deepEqual(branches, ["squad/wi-42/ta-x", "squad/wi-42/ta-y"]);
+  assert.deepEqual(branches, ["squad/member/wi-42/ta-x", "squad/member/wi-42/ta-y"]);
 });
 
 // 同分支双挂由 git 拒绝，但 git 的原文（`a branch named 'x' already exists`）
@@ -98,7 +148,7 @@ test("同分支双挂：第二次可读失败，恰好一份工作面存活", as
   // 失败的那次不能动到已挂上的工作面，也不能多留一个目录。
   const list = await manager.list();
   assert.equal(list.length, 1);
-  assert.equal(list[0]!.branch, "squad/wi-42/ta-x");
+  assert.equal(list[0]!.branch, "squad/member/wi-42/ta-x");
   assert.deepEqual(readdirSync(resolveWorktreeRoot(root)), ["wi-42-ta-x"]);
 });
 
@@ -172,7 +222,7 @@ test("扁平目录名撞车（分支不同）：按路径冲突失败，不误�
   // 撞车不能把先挂上的那个工作面弄坏。
   const list = await manager.list();
   assert.equal(list.length, 1);
-  assert.equal(list[0]!.branch, "squad/wi-42/ta-x");
+  assert.equal(list[0]!.branch, "squad/member/wi-42/ta-x");
 });
 
 // 有 ref、没有工作树的**残枝**（实测：add 因目录非空失败时 git 已先建出该分支）同样会让 add 失败。
@@ -208,19 +258,58 @@ test("allocate 在挂载前挡住逃逸 slug，仓库零改动", async () => {
   const allocator = createBranchAllocator({ manager });
 
   const escapes = [
-    // 工作项 slug 为 `..`：member 会拼成 squad/../<agent>，放行就能把工作树挪出 .worktree/。
+    // 工作项 slug 为 `..`：member 会拼成 squad/member/../<agent>，放行就能把工作树挪出 .worktree/。
     planBranches({ workItemSlug: "..", agentSlug: "ta-x" }),
     planBranches({ workItemSlug: "wi-42", agentSlug: ".." }),
     // 三段式分支：不是 planBranches 造得出来的形状，得响亮失败而不是猜出个目录名来。
     planBranches({ workItemSlug: "wi-42", agentSlug: "../evil" }),
     planBranches({ workItemSlug: "wi-42", agentSlug: "ta-x/../.." }),
+    // 手工拼的 plan（两个字段不是一对）：integration 不是这一对 slug 该有的名字，
+    // 放行会让集成分支落到别处 —— 挂错目录是小事，「合并到别的分支」是静默的灾难。
+    { integration: "squad/integration/OTHER", member: "squad/member/wi-42/ta-x" },
+    // 旧命名（`squad/<wi>` 会与队员命名空间撞成 D/F）不再被接受：要响亮失败，不能悄悄照挂。
+    { integration: "squad/wi-42", member: "squad/member/wi-42/ta-x" },
+    { integration: "squad/member/wi-42", member: "squad/member/wi-42/ta-x" },
+    { integration: "squad/integration/../x", member: "squad/member/wi-42/ta-x" },
   ];
   for (const plan of escapes) {
-    await assert.rejects(allocator.allocate(plan, "main"), /slug/);
+    await assert.rejects(allocator.allocate(plan, "main"), /slug/, JSON.stringify(plan));
   }
 
   assert.equal(existsSync(resolveWorktreeRoot(root)), false);
   assert.deepEqual(await manager.list(), []);
+});
+
+/* 命名分叉的理由本身要能被**真实 git** 验证：集成分支与队员分支必须能在同一个仓库里共存，
+   而且两个方向都要成立（先集成后队员、先队员后集成）。
+   旧的 `squad/<wi>` + `squad/<wi>/<agent>` 在 ref 层正好是「文件 vs 目录」，
+   git 会拒绝后建的那个（cannot lock ref）—— 这条用例在旧命名下必红，见 fix 报告的变异验证。 */
+test("集成分支与队员分支在同一仓库共存：两个方向都不撞 D/F", async () => {
+  const root = await makeRepo();
+  const git = realGit(root);
+  const manager = createWorktreeManager({ git, repoRoot: root });
+  const allocator = createBranchAllocator({ manager });
+
+  // 方向一：先建集成，再挂队员
+  const first = planBranches({ workItemSlug: "wi-42", agentSlug: "ta-x" });
+  const integrationFirst = await git(["branch", first.integration, "main"], { cwd: root });
+  assert.equal(integrationFirst.code, 0, integrationFirst.stderr);
+  await allocator.allocate(first, "main");
+
+  // 方向二：先挂队员（顺便验证「一个集成 + 多个队员」的形状），再建集成
+  const second = planBranches({ workItemSlug: "wi-77", agentSlug: "ta-y" });
+  await allocator.allocate(second, "main");
+  const integrationSecond = await git(["branch", second.integration, "main"], { cwd: root });
+  assert.equal(integrationSecond.code, 0, integrationSecond.stderr);
+
+  const refs = await git(["branch", "--list", "--format=%(refname:short)"], { cwd: root });
+  assert.deepEqual(refs.stdout.trim().split("\n").sort(), [
+    "main",
+    "squad/integration/wi-42",
+    "squad/integration/wi-77",
+    "squad/member/wi-42/ta-x",
+    "squad/member/wi-77/ta-y",
+  ]);
 });
 
 // 长度不设上限：它是文件系统的约束，不是「安全字符集」这道闸门的职责。
@@ -240,6 +329,6 @@ test("超长 slug 原样使用：不截断、不额外设限", async () => {
   const list = await manager.list();
   assert.equal(list.length, 1);
   assert.equal(memberPath, list[0]!.path);
-  assert.equal(list[0]!.branch, `squad/${workItemSlug}/${agentSlug}`);
+  assert.equal(list[0]!.branch, `squad/member/${workItemSlug}/${agentSlug}`);
   assert.equal(realpathSync(memberPath).endsWith(`${workItemSlug}-${agentSlug}`), true);
 });
