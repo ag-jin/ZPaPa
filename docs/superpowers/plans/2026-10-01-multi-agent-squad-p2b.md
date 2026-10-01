@@ -2103,6 +2103,23 @@ git commit -m "feat(squad): 队长派单工具（建子工作项 / 派给队员�
 
 ### Task 7: 热点收口（启动回收调用点 + 最终接线 + 单点门禁复核）（Wave 2，串行）
 
+> **⚠️ Wave 2 追加范围（2026-10-02，由 Wave 1 四路复审逼出，**均为必做**）**
+>
+> 原 T7 只写「热点收口」。四路实现与复审暴露了六项必须在此收口的事，逐条有来源：
+>
+> 1. **三个 `squad/*` 协议分支落到 `packages/services/src/zcode-agent/zcodeAgentService.ts` 的 `client.onRequest` if 链**（D 路 Step 0 查明：Host 侧应答面在此、**不在 desktop**；`packages/desktop/src/host/**` 零协议 handler；依赖方向 desktop→services ⇒ 计划原设想的 `desktop/src/host/squadProtocolMethods.ts` 会是**无人能接线的死文件**，故 D 未建）。**在此之前，队长的两个派单工具可见但每次调用返回 `-32601`**（响亮失败）。⇒ **这是「队长自主派单」能跑通的唯一前置。**
+> 2. **重投表无界 + 回执不来的条目永不撤下**（A 路复审新发现，Minor）：`wakeTick.ts` 的 `pending: Map<(ruleId,eventKey),…>` 仅在 `ok`/`permanent` 时删除；持续「本机无 host」时每个网格点新增一条**永不删除**的记录；请求已发出但回执始终不来的条目 `retryAt` 恒 null ⇒ **既不重投也不清理，该次唤醒静默消失**。off-peak 的同形表按任务 id **有界**，本表按 `eventKey` **无界** ⇒ 「同形」不成立。⇒ 加 TTL/尝试上限/淘汰。
+> 3. **订阅句柄未释放**（A 路复审新发现，Minor）：`squadDispatch.ts` 的 `params.subscribe(...)` 返回值（`{dispose()}`）未保存也未释放；cron 侧会存进 `cronRunSubscriptions` 并在终态后 dispose ⇒ **每次派发新增一个永不解绑的监听器**。
+> 4. **失败 run 仍停在 `open`**（A 路顾虑③，复审确认「本层不可闭合」）：冻结服务面**无 failed/discard 出口** ⇒ `open ∈ SQUAD_RUN_ACTIVE_STATUSES` ⇒ 记录留在 `listActive` ⇒ **其工作树/分支永不被回收**。⇒ 需在服务面**加法式**补出口（不得自行 INSERT/直写）。
+> 5. **队长 run 在台账里没有行**（A 路顾虑①）：冻结面无写入口、`openMemberRun` 传 `isLeaderTask:true` 会开树 ⇒ §5.7(1)「队长 run 进行中时重复指派合并为一次」与 `getSnapshot().runs` **部分架空**。⇒ 需**加法式**补 `recordLeaderRun`（**不得**自行 INSERT，避免台账第二个写者）。
+> 6. **区分「单独安排的智能体」与「队员」**（A 路顾虑④）：`planDispatch` 目前无区分字段 ⇒ **非队长 run 一律开树**，与 §6.1「单独安排的智能体**直接在工作区改**」有出入；代价：**孤立分支永不合并、也永不被回收**。⇒ 需在派发事件上加 squad/batch 标记，或由调用方按来源分流。
+> 7. **启动回收调用点**（原 T7 内容）＋ **批次收尾/审查的驱动接线**（谁在 `child_completed` 后调用 `advanceAfterChildrenDone`、谁触发 finalize）。
+>
+> **⚠️ 一处口径更正（A 路复审指出，我的表述曾偏乐观）**：`completeMemberRun` 闭合的是「**台账不再停在 `open`、工作项进入 `in_review`**」，**不是**「`activeBranches` 收缩」——`produced` **仍在**活跃集（`SQUAD_RUN_ACTIVE_STATUSES` 含 `produced`），这是 §6.2 的设计（**产出后要活到合并**）。分支真正离开活跃集要等 **`merged`**（本任务的批次收尾）。⇒ **「工作树永不被回收」这条不是一处就能关掉的，它的另一半在本任务。**
+>
+> **⚠️ 一处契约收窄要通知受影响方**：A 路把 `ruleId` 加为 `HostResponseTypes.SquadWakeResult` 响应的**必填**字段（因为 `eventKey` 不含 ruleId，只按它匹配会静默错键）。该消息是本期 Produces、**Wave 2 会消费** ⇒ 按**新形**写。
+
+
 > 工作树：`.worktrees/p2b-collect`，分支 `feat/p2b-collect`。**从 A / B / C / D 四条分支合并后的顶端起**（Wave 1 全部 review-clean 之后）。
 > 本任务的存在理由：A / B / C 并行时**都不准碰** `packages/services/src/node.ts`，而「把 B 的批次编排挂上事件流」「把启动回收挂上 host 启动」恰恰落在 `node.ts` 与 `host/index.ts` 上——**这两处必须在没人并行的时候做**。
 
