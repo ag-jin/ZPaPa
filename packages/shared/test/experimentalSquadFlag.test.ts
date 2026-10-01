@@ -13,8 +13,10 @@ test("实验开关可被显式打开", () => {
   assert.equal(parsed.experimentalAgentSquadsEnabled, true);
 });
 
-// patch 少一处就会写入被拒，表现为「拨开关没反应」——这是本项目踩过的坑。
-test("patch 接受实验开关", () => {
+// patch 少一处就会静默剥离该字段，表现为「拨开关没反应」——必须断言键在解析后存活，
+// 否则裸 z.object 会剥离未知键，让 success 永远为 true。
+test("patch 接受实验开关（键必须在解析后存活）", () => {
   const parsed = appSettingsPatchSchema.safeParse({ experimentalAgentSquadsEnabled: true });
   assert.equal(parsed.success, true);
+  assert.equal(parsed.success ? parsed.data.experimentalAgentSquadsEnabled : undefined, true);
 });
