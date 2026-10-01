@@ -50,7 +50,14 @@ export function decideWake(input: {
   hasPendingSameEvent: boolean;
   allInputsFromSelf: boolean;
 }): WakeDecision {
-  const { rule, manual, recentFireCount, chainRepeatCount, hasPendingSameEvent, allInputsFromSelf } = input;
+  const {
+    rule,
+    manual,
+    recentFireCount,
+    chainRepeatCount,
+    hasPendingSameEvent,
+    allInputsFromSelf,
+  } = input;
 
   if (!manual) {
     /* `?? WAKE_DEFAULT_MAX_FIRES` 而不是就地写 20：默认值是产品语义（spec §5.5），
