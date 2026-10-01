@@ -296,6 +296,8 @@
 | `merge` | 同工作项重复触发**合并成一次 run**（唯一键 `(ruleId, revision, eventKey)`） |
 | 自我承认短路 | 输入全来自目标 agent 自身 → 只消费，不启动新 run |
 
+**判定次序（实现契约）**：先判三道闸（`max_fires` → `rate` → `loop`），再判去重，去重内**先 `acknowledged` 后 `merged`**。**人发起（`manual`）只豁免三道闸，不豁免去重**——去重是「同一事实只处理一次」，与谁发起无关。
+
 ### 5.6 automation 与唤醒规则的分工（决策 C5）
 
 - **automation**：管「**无工作项**的定时任务」（保留原样）。
@@ -619,6 +621,7 @@
 | `expiresAt` / `at` 已过去仍 `ok:true` | 域模型无时钟（校验必须是确定纯函数） | T4/T5 调度侧 |
 | `pausedReason` 与 `enabled` 的一致性（暂停了但 enabled 仍真等） | 无约束 | T5 |
 | `fireCount > maxFires`、`once` 且 `fireCount > 0` 等一致性 | 无约束 | T5 |
+| **迁移的冻结 checksum 登记** | `workItemMigration.test.ts` 的 `PINNED_MIGRATION_CHECKSUMS` 只登记**已发布且已登记**的迁移；**新发布的迁移若忘了登记一行**，此后改动它的冻结声明**不会被任何测试拦住**（复审确认「咬不到」） | **每次发布新迁移时同步登记一行**（属发布期动作；表行而非逻辑边界，缺行只跳过、不会假红） |
 
 ---
 
