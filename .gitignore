@@ -70,6 +70,12 @@ packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
 .zcode-runtime/
 
+# 协作智能体（小队实验）产物：智能体定义落在 <workspace>/.zcode/squad/（含 agents/ 子目录），
+# 与现有 subagent 的 <workspace>/.zcode/agents 分离、可整块删除，属本地运行产物不入库。
+# 这里是本仓库既有的唯一忽略/排除处（oxfmt 也读 .gitignore），spec §13 C10 的产物目录排除清单
+# 暂未集中成单独文件，故新目录一律加在此处。
+.zcode/squad/
+
 # 项目知识库（wiki）产物：按项目落在 <workspace>/.wiki/，是可再生的生成物，
 # 不应进入版本库（需要共享时由使用者自行决定是否强制添加）。
 .wiki/
