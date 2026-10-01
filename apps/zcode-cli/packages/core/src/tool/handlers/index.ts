@@ -69,6 +69,11 @@ import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
 // import { workflowToolEntry } from "./workflow.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
+import {
+  squadAssignWorkItemToolEntry,
+  squadCreateChildWorkItemToolEntry,
+  squadToolNames,
+} from "./squad.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
 // 统一隐藏 Glob/Grep，并通过 Bash find/grep 接管搜索。
@@ -91,6 +96,9 @@ export const builtInTools: ToolEntry[] = [
   cronDeleteToolEntry,
   offPeakCreateToolEntry,
   offPeakListToolEntry,
+  // 队长派单工具集（spec §14）：注册门是 includeSquad（端口在场），门禁在服务层单点。
+  squadCreateChildWorkItemToolEntry,
+  squadAssignWorkItemToolEntry,
   enterPlanModeToolEntry,
   exitPlanModeToolEntry,
   askUserQuestionToolEntry,
@@ -143,6 +151,9 @@ export const builtInTools: ToolEntry[] = [
  * `ListModels` 也在列：它唯一的用途是给一次 run 挑 `subagent_model`，没有 CreateWorkflow 可填时留着它只会把模型引向不存在的工具。
  * 旧的 `Workflow` 工具（`/expert` 脚本通道）是另一个功能，**不在**这份名单里。
  */
+/** 队长派单工具名集合：唯一来源是 handlers/squad.ts 的 squadToolNames（避免名单两处各写一份）。 */
+const SQUAD_TOOL_NAMES: ReadonlySet<string> = new Set(squadToolNames);
+
 const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
   CREATE_WORKFLOW_TOOL_NAME,
   AMEND_WORKFLOW_TOOL_NAME,
@@ -174,6 +185,8 @@ interface RegisterBuiltInToolsOptions {
   includeAutomation?: boolean;
   /** Off-Peak 会话内创建工具面；由 host 的 offPeakToolEnabled flag（灰度/远程门）驱动。 */
   includeOffPeak?: boolean;
+  /** 队长派单工具面（建子工作项 / 派给队员）；端口在场即注册，实验开关不在这里判。 */
+  includeSquad?: boolean;
   /**
    * 动态工作流灰度门。**只有显式 false
    * 才下架** DYNAMIC_WORKFLOW_TOOL_NAMES：缺席代表调用方不参与灰度（TUI、headless、
@@ -251,6 +264,9 @@ export function registerBuiltInTools(
       (entry.metadata.name === "OffPeakCreate" || entry.metadata.name === "OffPeakList") &&
       options.includeOffPeak !== true
     ) {
+      continue;
+    }
+    if (SQUAD_TOOL_NAMES.has(entry.metadata.name) && options.includeSquad !== true) {
       continue;
     }
     if (

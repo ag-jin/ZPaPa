@@ -32,6 +32,7 @@ import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type {
   AutomationPort,
+  SquadPort,
   OffPeakPort,
   BackgroundTaskCancelResult,
   CollaborationMode,
@@ -181,6 +182,8 @@ export interface ZCodeAppOptions {
   onWorkflowEvent?: (event: WorkflowEvent) => void | Promise<void>;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 队长派单端口（建子工作项 / 派给队员）；存在即为两个 squad 工具的注册门。 */
+  squadPort?: SquadPort;
   /** 首次真实用户执行或 cold-resume fallback 时解析一次，之后由 app 生命周期缓存。 */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;
   /** Trusted embedder policy; workspace/project files cannot populate this field. */

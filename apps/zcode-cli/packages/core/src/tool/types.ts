@@ -6,6 +6,7 @@ import type {
   ExecutionShellSelection,
   AutomationPort,
   OffPeakPort,
+  SquadPort,
   EmbeddedSearchBackend,
   ExecutionPort,
   BrowserControlPort,
@@ -167,6 +168,8 @@ export interface ToolExecutionContext {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 队长派单端口（建子工作项 / 派给队员）；缺席则两个 squad 工具不注册（见 runtime-tools.ts）。 */
+  squadPort?: SquadPort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;

@@ -72,6 +72,7 @@ import type {
   ExecutionShellSelection,
   AutomationPort,
   OffPeakPort,
+  SquadPort,
   FileSystemPort,
   HttpClientPort,
   ImageProcessorPort,
@@ -367,6 +368,8 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  /** 队长派单端口（建子工作项 / 派给队员）；存在即为两个 squad 工具的注册门。 */
+  squadPort?: SquadPort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;
   logger?: Logger;
