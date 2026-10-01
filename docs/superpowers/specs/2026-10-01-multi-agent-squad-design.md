@@ -107,7 +107,17 @@
 | `instructions` | 队长指令（8 槽位，见 §5.4） |
 | `enabled` / `archivedAt?` | 状态 |
 
-**指派语义**：工作项的 `assignee` 可为 `user | agent | squad`。指派给 squad 时，解析出 `leaderAgentId`，为该队长排一次**队长角色 run**（打 `is_leader_task` + `squad_id` 标记），并注入队长简报（花名册 + 操作协议 + `instructions`）。
+**指派语义**：工作项的 `assignee` 可为 `user | agent | squad`。指派给 squad 时，解析出 `leaderAgentId`，为该队长排一次**队长角色 run**（打 `is_leader_task` + `squad_id` 标记），并注入队长简报。
+
+**队长简报（`SquadBriefing`）由三段构成**（2026-10-01 定；P1 曾只落两段，`protocol` 缺失）：
+
+| 段 | 来源 | 内容 |
+|---|---|---|
+| `roster` | 系统生成 | 花名册：队长与队员、各自角色与能力 |
+| `protocol` | **系统生成（非用户可写）** | **操作协议**：三道闸（`max_fires` / `rate` / `loop`）与判定次序、`stopCondition` 与 `maxRounds` 语义、派单只产出子项与派发事件**不改父项状态**、**串行**合并到集成分支、**整批通过才合回主分支**、冲突解不了 → `blocked` + 进 Inbox、审查未通过前工作树**存活**、合并后才抛弃 |
+| `instructions` | 用户填写 | 8 槽位，见 §5.4 |
+
+**为什么 `protocol` 必须独立、不得并入 `instructions`**：它恰是「**机制**」那一半，而 `instructions` 是用户意图那一半。并进去等于把机制交还给用户去写——用户没写就等于**队长不知道规则却照跑**，且**不报错**。这正是「看起来没问题」的形态。（合于「我们只提供机制，怎么用由用户定」。）
 
 ### 3.4 WorkItem（工作项）
 
@@ -652,7 +662,7 @@
 | `pausedReason` 与 `enabled` 的一致性（暂停了但 enabled 仍真等） | 无约束 | **P2（未闭合）** |
 | `fireCount > maxFires`、`once` 且 `fireCount > 0` 等一致性 | 无约束 | **P2（未闭合）** |
 | `Squad.enabled === false` **不参与派发** | **P1 终审修复波已修**：`leaderDispatch` 把它与 `archivedAt` 同等处理（不发 run、只通知），且 reason 文案与「已归档」区分 | **已闭合** |
-| 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | P2 接线简报时补（或明确并入 instructions） |
+| 队长简报缺 spec §3.3 的**「操作协议」** | `SquadBriefing` 只有 roster + instructions | **已定（2026-10-01）**：见 **§3.3**——简报定为**三段** `roster` / `protocol` / `instructions`；`protocol` 是**系统生成的机制段（非用户可写）**，不得并入用户可写的 `instructions`。**实现由 P2b 接线任务承载**（不在 SDD 循环外改 P1 代码）。 |
 | `wakeRuleRepo` 读回值可能**枚举外**（`rowToWakeRule` 对 `kind`/`mode`/`pausedReason`/`onTimeout` 用 `as` 强转，读回无再校验） | **P1 终审修复波已对齐**：读回时对枚举列校验，非法值**抛错**（与 §5「响亮失败优于静默跳过」的裁定一致）；「故意不进 barrel」的注释保留 | **已闭合** |
 | `casAdvance` 返回单一 `false`，**不区分**「被 revision fencing 拒绝」与「规则已删」 | 接线方无从记录原因 | P2 需回读比对 revision 判因 |
 | `filters` 折算成**幂等键**中 `eventKey` 的**构造规则** | **2026-10-01 已定**：见 **§5.7.1**（事件族用稳定 id 或完整 payload 指纹、排期族用名义时刻网格；`filters`/`eventTypes` **不参与** key） | **已闭合（契约已定，实现留待接线）** |
