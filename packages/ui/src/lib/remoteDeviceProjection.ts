@@ -216,6 +216,22 @@ export function filterProjectsByVisibility(
 }
 
 /**
+ * 项目的显示名：取路径最后一段（`/Volumes/数据盘/网站/新赛马` → `新赛马`）。
+ *
+ * 设置页的项目清单原先直接拿 path 当主标题，一列看过去全是
+ * `/Volumes/数据盘/网站/...` 前缀，真正有区别的那一段被挤在行尾 —— 用户实测反馈
+ * 「现在是使用项目地址做项目名」。显示名与路径分开：名字做标题、路径做副标题。
+ *
+ * 与 `tabStore` 的 `labelFromPath`（tab 标签）同口径：都按"最后一段"取，
+ * 都兼容 Windows 反斜杠 —— 同一台设备上的路径可能是 Windows 形态。
+ * 取不出段时原样返回（根路径 `/`、空串），不伪造名字。
+ */
+export function projectDisplayName(projectPath: string): string {
+  const segments = projectPath.replace(/\\/g, "/").split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? projectPath;
+}
+
+/**
  * 在在册 session 里找出属于指定设备的那个（设备卡片据此显示真实连接状态）。
  *
  * 为什么不能只看组件内 state：连接成功后设置页会被卸载（连接流程切到工作区），

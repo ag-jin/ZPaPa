@@ -6,6 +6,7 @@ import {
   findDeviceSessionId,
   findOrphanProjectionTabs,
   findProjectionTabsToClose,
+  projectDisplayName,
 } from "../src/lib/remoteDeviceProjection.js";
 
 /**
@@ -381,4 +382,27 @@ test("实测数据：同一设备 3 代共存收敛为每项目一条", () => {
     ["70985380", "aaa66c56", "fcb35eff"],
     "当前代两条 + 未覆盖项目的入口一条",
   );
+});
+
+/**
+ * 项目显示名的契约（用户实测反馈：「现在是使用项目地址做项目名」）。
+ *
+ * 设置页项目清单原先直接拿 path 当主标题，一列看过去全是
+ * `/Volumes/数据盘/网站/...` 前缀，真正有区别的那一段被挤在行尾。现在名字做标题、
+ * 路径做副标题 —— 名字怎么取就是这条测试锁的东西。
+ */
+test("项目显示名：取路径最后一段", () => {
+  assert.equal(projectDisplayName("/Volumes/数据盘/网站/新赛马"), "新赛马");
+  assert.equal(projectDisplayName("/Users/linguojin/Workspace/ZCode"), "ZCode");
+  assert.equal(projectDisplayName("/remote/proj/"), "proj", "尾斜杠不改变名字");
+});
+
+test("项目显示名：兼容 Windows 反斜杠（同一台设备上可能是 Windows 路径）", () => {
+  assert.equal(projectDisplayName("C:\\Users\\jin\\Workspace\\中转站"), "中转站");
+  assert.equal(projectDisplayName("C:/Users/jin/proj"), "proj");
+});
+
+test("项目显示名：取不出段时原样返回，不伪造名字", () => {
+  assert.equal(projectDisplayName("/"), "/");
+  assert.equal(projectDisplayName(""), "");
 });

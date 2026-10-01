@@ -2763,7 +2763,7 @@ const enUS: Record<string, string> = {
   "settings.remoteDevice.unavailable": "Remote device unavailable",
   "settings.remoteDevice.projects": "Projected projects",
   "settings.remoteDevice.projectsHint": "{count} projects on the remote device; choose which to show.",
-  "settings.remoteDevice.projectSessionCount": "{count} sessions",
+  "settings.remoteDevice.projectDescription": "{path} · {count} sessions",
   "settings.remoteDevice.addHint": "Pick a device via Remote connection; then choose which projects to show here.",
   "settings.remoteDevice.openConnectionDialog": "Open remote connection",
   "settings.remoteDevice.field.host": "Host",

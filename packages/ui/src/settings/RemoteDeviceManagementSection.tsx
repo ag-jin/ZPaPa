@@ -18,6 +18,7 @@ import type { RemoteDeviceConfig } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Switch } from "@/components/ui/switch.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { projectDisplayName } from "@/lib/remoteDeviceProjection.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 
 interface RemoteDeviceManagementSectionProps {
@@ -179,10 +180,12 @@ export function RemoteDeviceManagementSection({
           {connectedProjects.map((project) => (
             <SettingsRow
               key={project.path}
-              label={project.path}
+              // 标题用项目名、副标题放完整路径：原先直接把 path 当标题，一列看过去
+              // 全是 `/Volumes/数据盘/网站/...` 前缀，真正有区别的那一段被挤在行尾。
+              label={projectDisplayName(project.path)}
               description={intl.formatMessage(
-                { id: "settings.remoteDevice.projectSessionCount" },
-                { count: project.sessionCount },
+                { id: "settings.remoteDevice.projectDescription" },
+                { path: project.path, count: project.sessionCount },
               )}
               control={
                 <Switch

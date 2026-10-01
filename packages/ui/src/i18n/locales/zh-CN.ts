@@ -2584,7 +2584,7 @@ const zhCN: Record<string, string> = {
   "settings.remoteDevice.unavailable": "远端设备不可用",
   "settings.remoteDevice.projects": "投射的项目",
   "settings.remoteDevice.projectsHint": "远端共 {count} 个项目，可勾选要显示哪些。",
-  "settings.remoteDevice.projectSessionCount": "{count} 条会话",
+  "settings.remoteDevice.projectDescription": "{path} · {count} 条会话",
   "settings.remoteDevice.addHint": "通过「远程连接」选择设备；连上后在此选择要显示哪些项目。",
   "settings.remoteDevice.openConnectionDialog": "打开远程连接",
   "settings.remoteDevice.field.host": "主机地址",
