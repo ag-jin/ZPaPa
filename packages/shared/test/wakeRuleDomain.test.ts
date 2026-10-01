@@ -146,19 +146,69 @@ test("condition 四种类型：event 上全部合法，非 event 上一律被拒
   }
 });
 
-// eventTypes/filters × {event, 非 event}：互斥清单封顶 6 条、且 spec §3.5 未按 kind 限制它们。
-// 故意**不**把「非 event 带 eventTypes/filters」列为互斥——它们在非 event 上是不被调度器读取的死配置，
-// 收紧会超出本任务清单并可能拒掉合法规则。用测试钉住这个「故意放行」，免得后来者当成漏检随手补一条。
-test("eventTypes/filters 两种 kind 都只受形状约束（本清单不设 kind 互斥）", () => {
-  assert.deepEqual(problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }), []);
+// 互斥⑦：调度字段不得跨 kind 混装。只测「本 kind 的字段必须带」（互斥⑥）会漏掉相反方向——
+// `every` 同时带 intervalSeconds 与 cronExpression、`at` 带 intervalSeconds、`cron` 带 at
+// 这类混装此前一律 ok:true。断言钉到具体文案：报的是「哪个字段不该出现」，不是「数组非空」。
+test("互斥⑦：每种 kind 只准带自己的调度字段，混装被拒且点名字段", () => {
+  // 三个真实混装组合（穷举抓到的那三条）
+  const mixed = [
+    { over: { kind: "every", mode: "continuous", intervalSeconds: 60, cronExpression: "0 9 * * *" }, field: "cronExpression" },
+    { over: { kind: "at", mode: "once", at: 1, intervalSeconds: 60 }, field: "intervalSeconds" },
+    { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1 }, field: "at" },
+    // 第三种混装：every 带 at
+    { over: { kind: "every", mode: "continuous", intervalSeconds: 60, at: 1 }, field: "at" },
+    // 三个字段一起上：cron 只该有 cronExpression，另两个都要点名
+    { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1, intervalSeconds: 60 }, field: "at" },
+  ] as const;
+
+  for (const { over, field } of mixed) {
+    const found = problems(over);
+    assert.ok(
+      found.some((p) => p.includes(`调度字段「${field}」`)),
+      `${over.kind} 携带「${field}」应被互斥⑦点名，实际：${JSON.stringify(found)}`,
+    );
+  }
+
+  // 合法面：每种 kind 只带自己的那一个，必须零问题（互斥⑦不能误伤正常配置）
   assert.deepEqual(
-    problems({
-      kind: "every",
-      mode: "continuous",
-      intervalSeconds: 60,
-      eventTypes: ["work_item.updated"],
-      filters: { label: "bug" },
-    }),
+    problems({ kind: "at", mode: "once", at: 1 }),
+    [],
+  );
+  assert.deepEqual(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60 }),
+    [],
+  );
+  assert.deepEqual(
+    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" }),
+    [],
+  );
+});
+
+// 互斥⑧：eventTypes/filters 与 condition 同构，只对 event 有调度意义。
+// 三种非 event 各测一遍（不是抽一个代表：kind 分支是逐个写的，只测一种会漏掉另两种的 if 写错）。
+test("互斥⑧：eventTypes/filters 在三种非 event 上都被拒，event 上合法", () => {
+  const nonEvent = [
+    { kind: "at", mode: "once", at: 1 },
+    { kind: "every", mode: "continuous", intervalSeconds: 60 },
+    { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" },
+  ] as const;
+
+  for (const base of nonEvent) {
+    const withTypes = problems({ ...base, eventTypes: ["work_item.updated"] });
+    assert.ok(
+      withTypes.some((p) => p.includes("eventTypes")),
+      `${base.kind} 带 eventTypes 应被互斥⑧点名，实际：${JSON.stringify(withTypes)}`,
+    );
+    const withFilters = problems({ ...base, filters: { label: "bug" } });
+    assert.ok(
+      withFilters.some((p) => p.includes("filters")),
+      `${base.kind} 带 filters 应被互斥⑧点名，实际：${JSON.stringify(withFilters)}`,
+    );
+  }
+
+  // event 上两者都合法（唯一消费它们的地方），否则订阅规则无从表达
+  assert.deepEqual(
+    problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }),
     [],
   );
 });
@@ -377,4 +427,58 @@ test("pausedReason 只认三条防失控原因", () => {
     assert.equal(wakeRuleSchema.safeParse({ ...base, pausedReason: reason }).success, true);
   }
   assert.equal(wakeRuleSchema.safeParse({ ...base, pausedReason: "whatever" }).success, false);
+});
+
+/* ---------- schema 层结构非法值（此前只由类型系统兜住，没有测试钉住） ---------- */
+
+// 枚举值的非法项必须由 schema 拒：zod 的 enum 一旦被改成 z.string()，这些格子只剩类型系统兜着，
+// 而类型是可以被 `as` 绕过的——落盘侧（T4）拿到的是运行期值，只有 schema 拦得住。
+test("枚举非法值被 schema 拒：kind、mode、condition.type", () => {
+  const base = { id: "w1", workItemId: "wi_1" };
+  assert.equal(
+    wakeRuleSchema.safeParse({ ...base, kind: "sometimes", mode: "once" }).success,
+    false,
+  );
+  assert.equal(
+    wakeRuleSchema.safeParse({ ...base, kind: "event", mode: "forever" }).success,
+    false,
+  );
+  assert.equal(
+    wakeRuleSchema.safeParse({
+      ...base,
+      kind: "event",
+      mode: "once",
+      condition: { type: "no_such_condition" },
+    }).success,
+    false,
+  );
+});
+
+// id / workItemId 必须非空：空 id 的规则无法被引用与去重（唯一键含 ruleId），
+// 空 workItemId 则等于挂在「没有工作项」上，唤醒谁都说不清。
+test("id / workItemId 空串被 schema 拒", () => {
+  assert.equal(
+    wakeRuleSchema.safeParse({ id: "", workItemId: "wi_1", kind: "event", mode: "once" }).success,
+    false,
+  );
+  assert.equal(
+    wakeRuleSchema.safeParse({ id: "w1", workItemId: "", kind: "event", mode: "once" }).success,
+    false,
+  );
+});
+
+// maxFires 必须是整数：`.int()` 是形状约束，而 1..1000 是互斥④的语义约束——
+// 两者分层，非整数（如 0.5）在 schema 层就断掉，不会流到「越界多少」的中文提示里。
+test("maxFires 非整数被 schema 拒", () => {
+  assert.equal(
+    wakeRuleSchema.safeParse({
+      id: "w1",
+      workItemId: "wi_1",
+      kind: "every",
+      mode: "continuous",
+      intervalSeconds: 60,
+      maxFires: 1.5,
+    }).success,
+    false,
+  );
 });

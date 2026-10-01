@@ -76,7 +76,7 @@ export const wakeRuleSchema = z
     /** 时区：空白时区无意义（无法解析成偏移），故非空；未给则由调度器取默认时区。 */
     timezone: z.string().min(1).optional(),
     condition: wakeConditionSchema.optional(),
-    /** 订阅的事件类型白名单（仅对 `kind: "event"` 有调度意义）。 */
+    /** 订阅的事件类型白名单（仅对 `kind: "event"` 有调度意义；非 event 携带由互斥⑧拒绝）。 */
     eventTypes: z.array(z.string().min(1)).optional(),
     /** 事件过滤器：键值对随事件源而异，spec 未枚举，故不预设形状，只要求是 JSON 对象。 */
     filters: z.record(z.string(), z.unknown()).optional(),
@@ -103,6 +103,16 @@ export type WakeRule = z.infer<typeof wakeRuleSchema>;
 
 /** 校验结论：`ok:true` 之外只给中文可读的 `problems`，让 UI 直接把「哪里不行」说给人听。 */
 export type WakeRuleValidationResult = { ok: true } | { ok: false; problems: string[] };
+
+/* TODO(P2)：本阶段（P1）**故意留白**、只在域模型层无法判定的几处，集中登记在此，避免被当成漏检：
+   1. `nextFireAt` 的 kind 约束：event 规则当前也允许带 `nextFireAt`（互斥清单未列，且 T4 的
+      部分索引建在 `next_fire_at` 上，不排除「event 也参与排期扫描」的合法用法）。
+   2. `timezone` 的 IANA 合法性：只校验非空（域模型不引入 tz 数据库依赖），非法时区名会留到调度器运行时才炸。
+   3. `at` / `expiresAt` 已过去：需要与「当前时间」比较，而校验必须是确定的纯函数（同一 rule 任何时候结果一致），
+      故域模型不做时间判定，由调度器（T5）按入参 `now` 判。
+   4. `pausedReason` / `enabled` / `fireCount` **三者相互的一致性**（如 `fireCount >= maxFires` 就该带
+      `pausedReason`、`fireCount > maxFires`、`once` 却 `fireCount > 0`、已带 `pausedReason` 但 `enabled` 仍为真）：
+      属于防失控判定与状态机语义（T5 `decideWake`），域模型不重复实现。 */
 
 /**
  * 唤醒规则的**互斥校验**（schema 管形状，这里管关系）。
@@ -181,6 +191,44 @@ export function validateWakeRule(rule: WakeRule): WakeRuleValidationResult {
   }
   if (rule.kind === "cron" && rule.cronExpression === undefined) {
     problems.push(`kind「cron」必须带「cronExpression」（cron 表达式）：缺了就没有排班表达式`);
+  }
+
+  // 7. 调度字段不得跨 kind 混装：每种 kind 只认自己那一个调度字段。
+  //    ② 只禁止 event 带调度字段、⑥ 只要求「本 kind 的字段必须带」，两条合起来仍留下盲区：
+  //    `every` 同时带 intervalSeconds 与 cronExpression、`at` 带 intervalSeconds、`cron` 带 at
+  //    这类**混装**会被无条件放行。两条调度口径同时存在时调度器只能任选其一，
+  //    另一条就成了永不生效的死配置，且零告警——这正是本域模型要拦的「静默自相矛盾」。
+  const ownSchedulingField: Partial<Record<WakeRuleKind, keyof WakeRule>> = {
+    at: "at",
+    every: "intervalSeconds",
+    cron: "cronExpression",
+  };
+  const ownField = ownSchedulingField[rule.kind];
+  if (ownField !== undefined) {
+    for (const field of ["at", "intervalSeconds", "cronExpression"] as const) {
+      if (field !== ownField && rule[field] !== undefined) {
+        problems.push(
+          `kind「${rule.kind}」不得携带调度字段「${field}」：本 kind 只认「${ownField}」，两种调度口径并存时「${field}」永不生效`,
+        );
+      }
+    }
+  }
+
+  // 8. `eventTypes`/`filters` 与 `condition` 同构，只对 event 有调度意义（互斥③针对 condition，
+  //    此条针对这两个订阅字段）：非 event 上它们不被任何调度路径读取，留着会让人以为
+  //    「这条排班规则还会筛事件」，把实际行为理解错。
+  if (rule.kind !== "event") {
+    const eventOnlyFields: Array<[keyof WakeRule, unknown]> = [
+      ["eventTypes", rule.eventTypes],
+      ["filters", rule.filters],
+    ];
+    for (const [field, value] of eventOnlyFields) {
+      if (value !== undefined) {
+        problems.push(
+          `kind「${rule.kind}」不得携带「${field}」：只有 kind「event」才消费事件订阅字段`,
+        );
+      }
+    }
   }
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
