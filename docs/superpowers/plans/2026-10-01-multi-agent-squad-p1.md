@@ -684,7 +684,8 @@ git commit -m "feat(squad): 防失控与派发决策（人发起豁免 + 闸先�
 - Test: `packages/services/test/leaderDispatch.test.ts`
 
 **Interfaces:**
-- Consumes: P0 的 `WorkItem` / `isTerminalWorkItemStatus`；Task 1 的 `Squad`
+- Consumes: P0 的 `WorkItem`（`assignee` 三态联合类型）；Task 1 的 `Squad`
+  - **裁定（P1 终审）**：本任务**不消费** `isTerminalWorkItemStatus`——「终态闸」不在派发解析里，归派发入口 / 工作项服务（P2 决定）。计划早前把它列为 Consumes 与「全阶段复用」是**契约漂移**，已删。
 - Produces:
   - `type DispatchEvent = { kind: "run.enqueued"; workItemId: string; agentId: string; isLeaderTask: boolean; squadId?: string; briefing?: SquadBriefing } | { kind: "inbox.notified"; workItemId: string; reason: string } | { kind: "wake.rule_fired"; workItemId: string; ruleId: string }`
   - `type SquadBriefing = { squadId: string; leaderAgentId: string; roster: { agentId: string; role?: string }[]; instructions: Record<string, string> }`
