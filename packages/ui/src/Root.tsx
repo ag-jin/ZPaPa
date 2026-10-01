@@ -930,7 +930,12 @@ function RootInner({
         access.access.listRegisteredProjects(),
         access.access.listAllTasks(),
       ]);
-      result.syncProjection(buildProjectedProjectList({ registeredProjects, tasks }));
+      result.syncProjection(buildProjectedProjectList({ registeredProjects, tasks }), {
+        // 「作为设备连接」是「整机接入、不绑目录」的选择，不是"打开某个项目"：
+        // 投射条目放进侧边栏即可，不抢焦点。抢了会把用户甩进某个项目
+        // （设置页也被卸载），从设置页连着调这台设备时每次都断。
+        keepFocus: true,
+      });
       // 登记为可重连的设备入口（只存连接记录，不存会话索引，见 ADR 0001）。
       const deviceConfigService = (
         services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }

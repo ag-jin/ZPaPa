@@ -1507,7 +1507,10 @@ export function useRemoteWorkspaceHistory({
          * 投射条目跟随连接生命周期：连接期间存在，断开时由 dispose 清理。
          * 不做全量重建（保留用户当前的展开/滚动状态）。
          */
-        syncProjection: (deviceProjects: readonly ProjectedProject[]) => {
+        syncProjection: (
+          deviceProjects: readonly ProjectedProject[],
+          options?: { keepFocus?: boolean },
+        ) => {
           const tabStore = tabStoreApi.getState();
           const tabs = tabStore.tabs.filter(isWorkspaceTab);
           // 复用断开态的投射条目而不是关掉重建：断开后条目仍在侧边栏（灰显供
@@ -1578,12 +1581,19 @@ export function useRemoteWorkspaceHistory({
           for (const tabId of toRemoveTabIds) {
             tabStoreApi.getState().closeTab(tabId);
           }
+          // keepFocus：从设置页发起连接时只把条目放进侧边栏，不激活。
+          // addTab 会把 activeTabId 指到新条目上 —— 设置页是窗口内的一个 tab，
+          // 一激活就被卸载，用户每连一次都被甩进某个项目，没法连着调这个功能。
+          // ensureWorkspaceTab 是同一套匹配/插入逻辑，只是不抢焦点（见 tabStore）。
+          const createProjectionTab = options?.keepFocus
+            ? tabStoreApi.getState().ensureWorkspaceTab
+            : addTab;
           for (const project of toCreate) {
             // 带 remoteTarget：断开降级后条目要靠它被识别为 remote workspace
             // （见 WorkspaceSidebarItem 的 isRemoteWorkspace 判定），从而显示
             // 灰显与重连入口（规格 US 4/5/17）。仍不设 workspaceIdentity ——
             // 投射条目是 transient、不绑定工作目录（ADR 0001 决策 2）。
-            addTab(project.path, {
+            createProjectionTab(project.path, {
               remoteSessionId: sessionId,
               remoteTarget: target,
               projection: { deviceSessionId: sessionId },

@@ -52,8 +52,17 @@ export type RemoteDeviceConnect = (target: RemoteTarget) => Promise<{
   /** 设备级会话 id：设置页据此把连接登记进 deviceSessionStore（连接归设备所有）。 */
   sessionId: string;
   services: unknown;
-  /** 把设备项目同步为投射条目（见 ADR 0001）。 */
-  syncProjection?: (projects: ReadonlyArray<{ path: string; sessionCount: number }>) => unknown;
+  /**
+   * 把设备项目同步为投射条目（见 ADR 0001）。
+   *
+   * `keepFocus`：只把投射条目放进侧边栏，**不抢走当前焦点**（不激活）
+   * —— 从设置页发起连接时用，否则每连一次都会被甩进某个项目、
+   * 设置页被卸载，用户没法连着调这个功能。缺省仍是激活（侧栏重连的既有语义）。
+   */
+  syncProjection?: (
+    projects: ReadonlyArray<{ path: string; sessionCount: number }>,
+    options?: { keepFocus?: boolean },
+  ) => unknown;
   dispose?: () => void;
 } | null>;
 

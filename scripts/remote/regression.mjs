@@ -132,6 +132,14 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "projection-keep-focus",
+    title: "从设置页连接不抢焦点（条目进侧栏，设置页不被卸载）",
+    cwd: "packages/ui",
+    file: "test/projectionKeepFocus.test.ts",
+    usesTsconfigPaths: true,
+  },
+  {
+    layer: 1,
     id: "provisioning-sync-cancelled",
     title: "模型配置同步保持取消（目标端零依赖触碰、发起端零推送）",
     cwd: ".",

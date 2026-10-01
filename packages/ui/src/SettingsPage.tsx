@@ -1375,7 +1375,10 @@ export function SettingsPage({
               tab.workspacePath === project.path,
           );
         if (!exists) {
-          store.getState().addTab(project.path, {
+          // 用 ensureWorkspaceTab 而不是 addTab：开关的语义是「这个项目在投射端显示」，
+          // 不是「现在就打开它」。addTab 会激活新条目，于是用户在设置页拨一个开关
+          // 就被甩进那个项目、设置页被卸载 —— 连着调这个功能时同样连不成串。
+          store.getState().ensureWorkspaceTab(project.path, {
             remoteSessionId: liveDeviceSessionId,
             // remoteTarget 必须带上：断开时 markProjectionTabsDisconnected 会清掉
             // remoteSessionId，而投射条目不设 workspaceIdentity（ADR 0001），
@@ -1448,6 +1451,10 @@ export function SettingsPage({
         const visible = remoteDeviceEntry.visibleProjects;
         result.syncProjection(
           visible ? projectList.filter((item) => visible[item.path] !== false) : projectList,
+          // 从设置页连接就不离开设置页：用户是在这里配置/调试这台设备，
+          // 一激活投射条目就会把设置页卸载掉（它是窗口内的一个 tab），
+          // 每连一次被甩进一个项目，连不成串。
+          { keepFocus: true },
         );
       }
       // 设备会话登记已收进 connectRemoteDevice（唯一建连入口），此处不再重复登记：
