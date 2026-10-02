@@ -113,7 +113,7 @@ async function makeHarness(options?: { subscribeResident?: boolean }) {
           const enqueued = events.find((event) => event.kind === "run.enqueued");
           if (enqueued?.kind !== "run.enqueued") return; // skip 不是失败（进 Inbox）
           /* 只有**队员**先开树（spec §6.1 的隔离承诺落点）：台账行与工作树都从这里出现。
-             **单独安排的智能体**在这一格**什么都不做** —— 它直接在工作区改（没有工作树、没有合并那一步）。 */
+           **单独安排的智能体**在这一格**什么都不做** —— 它直接在工作区改（没有工作树、没有合并那一步）。 */
           if (enqueued.runClass !== "member") return;
           await squadRuntimeService.openMemberRun(requestTarget, {
             runId: `assign-run-${item.id}-${enqueued.agentId}`,

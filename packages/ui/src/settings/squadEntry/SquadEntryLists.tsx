@@ -88,11 +88,17 @@ export function SquadWorkItemList({
       {workItems.map((workItem) => {
         const assigneeName = resolveAssigneeName(snapshot, workItem.assignee);
         return (
-          <li key={workItem.id} className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}>
-            <span className="min-w-0 break-words text-ui-base text-foreground">{workItem.title}</span>
+          <li
+            key={workItem.id}
+            className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}
+          >
+            <span className="min-w-0 break-words text-ui-base text-foreground">
+              {workItem.title}
+            </span>
             <span className="shrink-0 text-ui-xs text-foreground-subtle">
               {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
-              {assigneeName ?? intl.formatMessage({ id: "settings.experiments.squad.assignee.user" })}
+              {assigneeName ??
+                intl.formatMessage({ id: "settings.experiments.squad.assignee.user" })}
             </span>
           </li>
         );
@@ -114,9 +120,14 @@ export function SquadRunList({
   return (
     <ul className={LIST_CLASSNAME}>
       {runs.map((run) => (
-        <li key={run.runId} className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}>
+        <li
+          key={run.runId}
+          className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}
+        >
           <span className="flex min-w-0 flex-col gap-1">
-            <span className="break-all text-ui-base text-foreground">{run.branch ?? run.runId}</span>
+            <span className="break-all text-ui-base text-foreground">
+              {run.branch ?? run.runId}
+            </span>
             <span className="text-ui-xs text-foreground-subtle">
               {intl.formatMessage({ id: squadRunStatusMessageId(run.status) })}
               {run.isLeaderTask

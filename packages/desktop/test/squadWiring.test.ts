@@ -165,11 +165,7 @@ test("host 调服务层门禁并按稳定 code 翻译成 permanent", () => {
 test("队员 run 的终态订阅在派发失败路径上也会解绑", () => {
   const branch = squadDispatchBridgeSource();
   // ① 句柄真的被持有：订阅处的返回值进了 host 级登记表（否则解绑无从谈起）。
-  assert.match(
-    branch,
-    /squadRunSubscriptions\.set\(/,
-    "订阅句柄没有被持有（会残留到进程退出）",
-  );
+  assert.match(branch, /squadRunSubscriptions\.set\(/, "订阅句柄没有被持有（会残留到进程退出）");
   // ② 失败路径（catch）里解绑 —— 这条是并行那一路报的残留的**正面修复**。
   assert.match(
     branch,
@@ -344,11 +340,7 @@ test("派发桥按 runClass 三类分流，单独安排不开工作树、不登�
   );
   // ⑤ 单独安排**没有台账行 ⇒ 不得订阅一个「按 runId 动台账」的终态收口**：
   //    整块收口必须被 `ledgerAction !== "none"` 挡住（否则终态到达时去动一行不存在的 run，响亮抛）。
-  assert.match(
-    branch,
-    /if \(ledgerAction !== "none"\) \{/,
-    "没有台账行的那一类不得订阅终态收口",
-  );
+  assert.match(branch, /if \(ledgerAction !== "none"\) \{/, "没有台账行的那一类不得订阅终态收口");
 });
 
 /* 「派发时的事实」与「类别**声明**」必须**一起**进规划：类别不再由父项的有无**推断** ——

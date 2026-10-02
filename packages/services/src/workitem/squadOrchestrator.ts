@@ -1,4 +1,8 @@
-import { isTerminalWorkItemStatus, resolveWorkspaceKey, type WorkItemStatusKey } from "@zcode/shared";
+import {
+  isTerminalWorkItemStatus,
+  resolveWorkspaceKey,
+  type WorkItemStatusKey,
+} from "@zcode/shared";
 import { planBranches } from "../worktree/branchNaming.js";
 import { ensureGitRunSucceeded } from "../worktree/gitRunner.js";
 import { deleteBranch } from "../worktree/integrationMerge.js";
@@ -66,7 +70,8 @@ function serializeOnRepo<T>(repoRoot: string, task: () => Promise<T>): Promise<T
 
 export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadBatchOrchestrator {
   const { runtime } = deps;
-  const { workItemRepo, workItemService, squadRunRepo, lifecycle, integrationMerger, baseBranch } = runtime;
+  const { workItemRepo, workItemService, squadRunRepo, lifecycle, integrationMerger, baseBranch } =
+    runtime;
 
   /* 本 runtime 绑定的 `workspace_key`（C14 口径，与生命周期/快照同一处算法），以及异己 key 的**响亮拒绝**。
      为什么必须拒绝而不是「按传入值操作」：本层会用这个 key 判归属、也会按它去动 git；在**另一个**
@@ -298,7 +303,8 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          （重连 / 重复挂订阅 / 调用方重试）会让本方法被同一批调用两次；第二次若照旧走 `finalize`，
          会拿到「集成分支不存在」而抛 —— 把一次幂等重放变成一次响亮失败，与 §5.7.5 的幂等口径相反。
          纯读（branchExists 只问 ref），故放在写工作项之前。 */
-      if (integration !== null && pending.length === 0 && !(await branchExists(integration))) return;
+      if (integration !== null && pending.length === 0 && !(await branchExists(integration)))
+        return;
 
       /* **前置条件**（spec §5.7.2）：父项推进到 `in_review`。这一步必须在任何父项流转**之前**，
          否则写死的前置 `in_review` 会因父项实际停在 `todo`/`in_progress` 而**静默未命中**。
@@ -320,7 +326,10 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          - `produced` → 合进集成分支；首次合并时集成分支**从 base 隐式派生**；
          - 冲突 → 台账保持 `produced`（本层不许回退它），由下面的分支决定父项处置。 */
       for (const record of pending) {
-        const outcome = await lifecycle.reviewMemberRun({ runId: record.runId, verdict: "approved" });
+        const outcome = await lifecycle.reviewMemberRun({
+          runId: record.runId,
+          verdict: "approved",
+        });
         if (outcome.ok) continue;
 
         if (outcome.reason === "conflict") {
@@ -385,7 +394,10 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
    * （本方法就是这么做的）。**不得**从任何自动路径（看门狗 / 崩溃恢复 / 定时回收 / 派发重试）调用它 ——
    * 那些路径要清集成分支时必须走 `discardIntegration`（它的祖先闸正是防「丢掉未落地成果」的那道）。
    */
-  async function discardBatch(input: { workspaceKey: string; parentWorkItemId: string }): Promise<void> {
+  async function discardBatch(input: {
+    workspaceKey: string;
+    parentWorkItemId: string;
+  }): Promise<void> {
     assertOwnWorkspace(input.workspaceKey);
 
     await serializeRepo(async () => {

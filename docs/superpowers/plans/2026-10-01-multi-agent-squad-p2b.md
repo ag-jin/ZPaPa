@@ -32,19 +32,19 @@
 
 ### 明确**不在**本计划（留给 P2c）
 
-| 不属于 P2b | 归属 |
-|---|---|
-| 工作项级**交付物**（Deliverable） | P2c |
-| **成本 / 用量按 run 记账** | P2c |
-| **GitHub PR 集成**（自动关联 / 快照 / merge 驱动状态） | P2c |
-| **完整父子树 UI**（递归树、拖拽排序、分阶段） | P2c |
-| **评论 / 活动时间线**（评论即触发） | P2c |
-| **Inbox 完整语义**（已读 / 归档 / 严重级 / 订阅者） | P2c |
-| **渠道**（只读通知推送） | P2c |
-| **AI 建 agent 向导**（§2.1 第 17 项） | P2c |
-| **多设备联动 / host 绑定**（决策 E） | 不做（单机） |
-| **§14 的后两个协作工具**（汇报 / 请求审查） | P2c —— 前两个（建子工作项 / 派给队员）**在本期**，见 Task 6（D） |
-| **多 workspace 支持**（本期单 workspace；误用**响亮**） | P2c —— 见下面「已知代价」 |
+| 不属于 P2b                                              | 归属                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------- |
+| 工作项级**交付物**（Deliverable）                       | P2c                                                              |
+| **成本 / 用量按 run 记账**                              | P2c                                                              |
+| **GitHub PR 集成**（自动关联 / 快照 / merge 驱动状态）  | P2c                                                              |
+| **完整父子树 UI**（递归树、拖拽排序、分阶段）           | P2c                                                              |
+| **评论 / 活动时间线**（评论即触发）                     | P2c                                                              |
+| **Inbox 完整语义**（已读 / 归档 / 严重级 / 订阅者）     | P2c                                                              |
+| **渠道**（只读通知推送）                                | P2c                                                              |
+| **AI 建 agent 向导**（§2.1 第 17 项）                   | P2c                                                              |
+| **多设备联动 / host 绑定**（决策 E）                    | 不做（单机）                                                     |
+| **§14 的后两个协作工具**（汇报 / 请求审查）             | P2c —— 前两个（建子工作项 / 派给队员）**在本期**，见 Task 6（D） |
+| **多 workspace 支持**（本期单 workspace；误用**响亮**） | P2c —— 见下面「已知代价」                                        |
 
 ### 已知代价（必须写在计划里，不得只留在任务报告的 concern 里）
 
@@ -58,14 +58,14 @@
 
 - **开发工作树一律放仓库根的 `.worktrees/`（复数）**，与**产品运行时产物 `.worktree/`（单数）分开**：
 
-| 工作树 | 分支（**扁平后缀**） | 用途 |
-|---|---|---|
-| `.worktrees/p2b-spine` | `feat/p2b-spine` | Wave 0 脊 |
-| `.worktrees/p2b-scheduler` | `feat/p2b-scheduler` | Wave 1 A |
-| `.worktrees/p2b-orchestrator` | `feat/p2b-orchestrator` | Wave 1 B |
-| `.worktrees/p2b-entry` | `feat/p2b-entry` | Wave 1 C |
-| `.worktrees/p2b-tools` | `feat/p2b-tools` | Wave 1 D |
-| `.worktrees/p2b-collect` | `feat/p2b-collect` | Wave 2 收口 |
+| 工作树                        | 分支（**扁平后缀**）    | 用途        |
+| ----------------------------- | ----------------------- | ----------- |
+| `.worktrees/p2b-spine`        | `feat/p2b-spine`        | Wave 0 脊   |
+| `.worktrees/p2b-scheduler`    | `feat/p2b-scheduler`    | Wave 1 A    |
+| `.worktrees/p2b-orchestrator` | `feat/p2b-orchestrator` | Wave 1 B    |
+| `.worktrees/p2b-entry`        | `feat/p2b-entry`        | Wave 1 C    |
+| `.worktrees/p2b-tools`        | `feat/p2b-tools`        | Wave 1 D    |
+| `.worktrees/p2b-collect`      | `feat/p2b-collect`      | Wave 2 收口 |
 
 - **分支名必须是扁平后缀**（`feat/p2b-spine`），**不得**写成 `feat/p2b/spine`：`refs/heads/feat/p2b` 与 `refs/heads/feat/p2b/spine` **在 git 里不可共存**（D/F 冲突），这是 P2a 用七条实测钉下的事实（spec §6.3 ⚠️）。
 - **两个目录分开是约定**（开发产物 vs 产品运行时的运行产物，各自不混进对方的视野）。**但它不是**下面那条不变量被修正的理由——理由与目录布局**无关**，见 Global Constraints 第 4 条：
@@ -85,7 +85,7 @@
 - **Wave 1 —— 并行（四路）**（**执行者之间文件集必须不相交**；在 `feat/p2b-spine` 顶端各起一支）
   - **A｜唤醒调度 + 派发桥**（**热点拥有者**）：拥有 `packages/desktop/src/scheduler/**`、`packages/desktop/src/main/desktopCronScheduler.ts`、`packages/desktop/src/main/desktopHostProcess.ts` 的派发结果分支、`packages/shared/src/channels.ts` 与 `packages/shared/src/validation.ts` 的**新增消息类型**，以及 `packages/desktop/src/host/index.ts` 的**唤醒 / 派发分支**。
   - **B｜工作树编排与产物卫生**：拥有 `packages/services/src/workitem/squadOrchestrator.ts`（新）及其测试，**`packages/services/src/worktree/orphanReaper.ts` 与 `packages/services/src/worktree/orphanReaper.test.ts`（回收器命名空间限域修正，P2a 遗留语义）**，以及 `packages/services/src/file/workspaceFileIgnore.ts`（硬约束 3：C10 清单并入 `BUILTIN_IGNORE_LINES`）与对应测试。**不得改 `node.ts` / `host`**。
-  - **C｜最小入口 UI**：拥有 `packages/ui/src/**`（设置「实验功能」分区内的小队 / 工作项最小视图、i18n 两语）与 UI 测试。**不得改 `node.ts` / `host` / `services/**`**。**交付物只有 UI**（开关关闭 ⇒ 入口隐藏 / 不可用）；**后端门禁不属 C**——它整条属 A（A 拥有派发路径，判在那里最不需要跨人交接）。**C 不产出任何后端 patch 文本。**
+  - **C｜最小入口 UI**：拥有 `packages/ui/src/**`（设置「实验功能」分区内的小队 / 工作项最小视图、i18n 两语）与 UI 测试。**不得改 `node.ts` / `host` / `services/**`**。**交付物只有 UI**（开关关闭 ⇒ 入口隐藏 / 不可用）；**后端门禁不属 C**——它整条属 A（A 拥有派发路径，判在那里最不需要跨人交接）。**C 不产出任何后端 patch 文本。\*\*
   - **D｜队长派单工具集**：拥有 `packages/contracts/src/**`（两个工具的 input/output schema + `SquadPort` 类型）、`packages/shared/src/zcode-protocol/**`（新 method 常量与结果 schema）、`apps/zcode-cli/**`（工具定义、可见性门控、executor 透传、bootstrap 侧 port 实现与注入点）与 D 自己的测试。**不得改** `node.ts` / `host` / `services/src/**` / `ui/**` / `scheduler/**`（**Host 侧若确实需要新增一个 protocol handler，见 D 的 Step 0：那是「新增独立文件 + Wave 2 追加一行注册」，D 本人不得改 A 的文件**）。
 - **Wave 2 —— 串行（热点收口）**
   执行者：`.worktrees/p2b-collect` / `feat/p2b-collect`（从 A / B / C / D 合并后的顶端起）。
@@ -94,45 +94,45 @@
 
 ### 文件所有权矩阵（证明同一 Wave 内无交集）
 
-| 文件 / glob | Wave 0 | Wave 1 A | Wave 1 B | Wave 1 C | Wave 1 D | Wave 2 |
-|---|---|---|---|---|---|---|
-| `packages/services/src/node.ts` | **改** | — | — | — | — | — |
-| `packages/services/src/index.ts` | **改** | — | — | — | — | — |
-| `packages/services/src/session/taskIndexRepo.ts` | **改** | — | — | — | — | — |
-| `packages/services/src/session/tasksDatabase/{schema-v1,migrations}.ts` | **改** | — | — | — | — | — |
-| `packages/services/src/workitem/squadRunRepo.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/squadRuntime.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/squadRuntimeService.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/squadRunLifecycle.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/squadContracts.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/slug.ts`（新） | **建** | — | — | — | — | — |
-| `packages/services/src/workitem/leaderDispatch.ts` | **改**（三段简报） | — | — | — | — | — |
-| `packages/services/src/workitem/workItemRepo.ts` | **改**（`listByAssignee`） | — | — | — | — | — |
-| `packages/services/src/teams/squadService.ts` | **改**（归档转交，#9） | — | — | — | — | — |
-| `packages/services/src/file/workspaceFileIgnore.ts` | — | — | **改**（B‑1，硬约束 3） | — | — | — |
-| `packages/shared/src/wake-rule.ts`（`computeEventKey`） | **改** | — | — | — | — | — |
-| `packages/services/test/{squadRunRepo,migration,taskIndexSharedDatabase,squadRuntime,squadBriefing,eventKey,squadArchiveTransfer}.test.ts` | **建/改** | — | — | — | — | — |
-| `packages/desktop/src/scheduler/**` | — | **改** | — | — | — | — |
-| `packages/desktop/src/main/desktopCronScheduler.ts` | — | **改** | — | — | — | — |
-| `packages/desktop/src/main/desktopHostProcess.ts`（结果分支） | — | **改** | — | — | — | — |
-| `packages/shared/src/channels.ts` / `validation.ts`（新增消息） | — | **改** | — | — | — | — |
-| `packages/desktop/src/host/index.ts`（唤醒 / 派发分支；**门禁已改为服务层单点，host 只按结论行事**） | — | **改** | — | — | — | **改**（启动回收 + 最终收口） |
-| `packages/desktop/test/{schedulerWakeTick,schedulerWiring,hostSquadDispatch}.test.ts` | — | **建** | — | — | — | — |
-| `packages/services/src/workitem/squadOrchestrator.ts`（新） | — | — | **建** | — | — | — |
-| `packages/services/src/worktree/orphanReaper.ts` + `orphanReaper.test.ts` | — | — | **改** | — | — | — |
-| `packages/services/test/{squadOrchestrator.batch,workspaceFileIgnoreProductDirs}.test.ts` | — | — | **建** | — | — | — |
-| `packages/ui/src/**`（含 i18n locales） | — | — | — | **改** | — | — |
-| `packages/ui/test/experimentsSquadEntry.test.ts` | — | — | — | **建** | — | — |
-| **`packages/client/**`（renderer 侧服务访问的最小**加法**）**（2026-10-01 补：C 路 BLOCKED 后由 controller 扩权——原计划**没有**任何任务拥有它，而 `IServiceAccessor` 无 `get`、renderer 实现逐字段建代理、未列出的服务取不到且无兜底）** | — | — | — | **改** | — | — |
-| **`apps/zcode-cli/packages/bootstrap/src/app/{types.ts,create-app.ts}`**（纯追加 +3/+1，否则端口到不了 core）**（2026-10-01 补：D 路实施时发现 brief 的 Owns 漏了这两处）** | — | — | — | — | **改** | — |
-| **`packages/services/src/zcode-agent/zcodeAgentService.ts`**（新增三个 `squad/*` 的 `client.onRequest` 分支）**（2026-10-01 补：D 路 Step 0 查明——Host 侧应答面在 **services** 而非 desktop，`packages/desktop/src/host/**` 零协议 handler；且依赖方向 desktop→services，services 无法消费 desktop handler ⇒ 计划原先设想的 `desktop/src/host/squadProtocolMethods.ts` 会是**无人能接线的死文件**，故 D **不建**它，改由 Wave 2 落在此处）** | — | — | — | — | — | **改** |
-| `packages/contracts/src/**`（工具 schema + `SquadPort`） | — | — | — | — | **改** | — |
-| `packages/shared/src/zcode-protocol/**`（新 method + 结果 schema） | — | — | — | — | **改** | — |
-| `apps/zcode-cli/packages/core/src/{tool/**,runtime/**,runtime.ts}` | — | — | — | — | **改** | — |
-| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/{squad-port.ts,server-operations.ts}` | — | — | — | — | **建/改** | — |
-| `apps/zcode-cli/**/test/**`（D 的测试） | — | — | — | — | **建** | — |
-| `packages/desktop/src/host/squadProtocolMethods.ts`（**仅当 D 的 Step 0 判定需要**） | — | — | — | — | **建** | **改**（注册一行） |
-| `packages/desktop/test/squadWiring.test.ts` | — | — | — | — | — | **建** |
+| 文件 / glob                                                                                                                                                                                                                                                                                                                                                                                                                                  | Wave 0                     | Wave 1 A | Wave 1 B                | Wave 1 C | Wave 1 D  | Wave 2                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------- | ----------------------- | -------- | --------- | ----------------------------- |
+| `packages/services/src/node.ts`                                                                                                                                                                                                                                                                                                                                                                                                              | **改**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/index.ts`                                                                                                                                                                                                                                                                                                                                                                                                             | **改**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/session/taskIndexRepo.ts`                                                                                                                                                                                                                                                                                                                                                                                             | **改**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/session/tasksDatabase/{schema-v1,migrations}.ts`                                                                                                                                                                                                                                                                                                                                                                      | **改**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadRunRepo.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                       | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadRuntime.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                       | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadRuntimeService.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadRunLifecycle.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                  | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadContracts.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                     | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/slug.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                               | **建**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/leaderDispatch.ts`                                                                                                                                                                                                                                                                                                                                                                                           | **改**（三段简报）         | —        | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/workItemRepo.ts`                                                                                                                                                                                                                                                                                                                                                                                             | **改**（`listByAssignee`） | —        | —                       | —        | —         | —                             |
+| `packages/services/src/teams/squadService.ts`                                                                                                                                                                                                                                                                                                                                                                                                | **改**（归档转交，#9）     | —        | —                       | —        | —         | —                             |
+| `packages/services/src/file/workspaceFileIgnore.ts`                                                                                                                                                                                                                                                                                                                                                                                          | —                          | —        | **改**（B‑1，硬约束 3） | —        | —         | —                             |
+| `packages/shared/src/wake-rule.ts`（`computeEventKey`）                                                                                                                                                                                                                                                                                                                                                                                      | **改**                     | —        | —                       | —        | —         | —                             |
+| `packages/services/test/{squadRunRepo,migration,taskIndexSharedDatabase,squadRuntime,squadBriefing,eventKey,squadArchiveTransfer}.test.ts`                                                                                                                                                                                                                                                                                                   | **建/改**                  | —        | —                       | —        | —         | —                             |
+| `packages/desktop/src/scheduler/**`                                                                                                                                                                                                                                                                                                                                                                                                          | —                          | **改**   | —                       | —        | —         | —                             |
+| `packages/desktop/src/main/desktopCronScheduler.ts`                                                                                                                                                                                                                                                                                                                                                                                          | —                          | **改**   | —                       | —        | —         | —                             |
+| `packages/desktop/src/main/desktopHostProcess.ts`（结果分支）                                                                                                                                                                                                                                                                                                                                                                                | —                          | **改**   | —                       | —        | —         | —                             |
+| `packages/shared/src/channels.ts` / `validation.ts`（新增消息）                                                                                                                                                                                                                                                                                                                                                                              | —                          | **改**   | —                       | —        | —         | —                             |
+| `packages/desktop/src/host/index.ts`（唤醒 / 派发分支；**门禁已改为服务层单点，host 只按结论行事**）                                                                                                                                                                                                                                                                                                                                         | —                          | **改**   | —                       | —        | —         | **改**（启动回收 + 最终收口） |
+| `packages/desktop/test/{schedulerWakeTick,schedulerWiring,hostSquadDispatch}.test.ts`                                                                                                                                                                                                                                                                                                                                                        | —                          | **建**   | —                       | —        | —         | —                             |
+| `packages/services/src/workitem/squadOrchestrator.ts`（新）                                                                                                                                                                                                                                                                                                                                                                                  | —                          | —        | **建**                  | —        | —         | —                             |
+| `packages/services/src/worktree/orphanReaper.ts` + `orphanReaper.test.ts`                                                                                                                                                                                                                                                                                                                                                                    | —                          | —        | **改**                  | —        | —         | —                             |
+| `packages/services/test/{squadOrchestrator.batch,workspaceFileIgnoreProductDirs}.test.ts`                                                                                                                                                                                                                                                                                                                                                    | —                          | —        | **建**                  | —        | —         | —                             |
+| `packages/ui/src/**`（含 i18n locales）                                                                                                                                                                                                                                                                                                                                                                                                      | —                          | —        | —                       | **改**   | —         | —                             |
+| `packages/ui/test/experimentsSquadEntry.test.ts`                                                                                                                                                                                                                                                                                                                                                                                             | —                          | —        | —                       | **建**   | —         | —                             |
+| **`packages/client/**`（renderer 侧服务访问的最小**加法**）**（2026-10-01 补：C 路 BLOCKED 后由 controller 扩权——原计划**没有**任何任务拥有它，而 `IServiceAccessor`无`get`、renderer 实现逐字段建代理、未列出的服务取不到且无兜底）\*\*                                                                                                                                                                                                     | —                          | —        | —                       | **改**   | —         | —                             |
+| **`apps/zcode-cli/packages/bootstrap/src/app/{types.ts,create-app.ts}`**（纯追加 +3/+1，否则端口到不了 core）**（2026-10-01 补：D 路实施时发现 brief 的 Owns 漏了这两处）**                                                                                                                                                                                                                                                                  | —                          | —        | —                       | —        | **改**    | —                             |
+| **`packages/services/src/zcode-agent/zcodeAgentService.ts`**（新增三个 `squad/*` 的 `client.onRequest` 分支）**（2026-10-01 补：D 路 Step 0 查明——Host 侧应答面在 **services** 而非 desktop，`packages/desktop/src/host/**`零协议 handler；且依赖方向 desktop→services，services 无法消费 desktop handler ⇒ 计划原先设想的`desktop/src/host/squadProtocolMethods.ts` 会是**无人能接线的死文件**，故 D **不建**它，改由 Wave 2 落在此处）\*\* | —                          | —        | —                       | —        | —         | **改**                        |
+| `packages/contracts/src/**`（工具 schema + `SquadPort`）                                                                                                                                                                                                                                                                                                                                                                                     | —                          | —        | —                       | —        | **改**    | —                             |
+| `packages/shared/src/zcode-protocol/**`（新 method + 结果 schema）                                                                                                                                                                                                                                                                                                                                                                           | —                          | —        | —                       | —        | **改**    | —                             |
+| `apps/zcode-cli/packages/core/src/{tool/**,runtime/**,runtime.ts}`                                                                                                                                                                                                                                                                                                                                                                           | —                          | —        | —                       | —        | **改**    | —                             |
+| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/{squad-port.ts,server-operations.ts}`                                                                                                                                                                                                                                                                                                                                                  | —                          | —        | —                       | —        | **建/改** | —                             |
+| `apps/zcode-cli/**/test/**`（D 的测试）                                                                                                                                                                                                                                                                                                                                                                                                      | —                          | —        | —                       | —        | **建**    | —                             |
+| `packages/desktop/src/host/squadProtocolMethods.ts`（**仅当 D 的 Step 0 判定需要**）                                                                                                                                                                                                                                                                                                                                                         | —                          | —        | —                       | —        | **建**    | **改**（注册一行）            |
+| `packages/desktop/test/squadWiring.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                  | —                          | —        | —                       | —        | —         | **建**                        |
 
 **同 Wave 内两两不相交**：Wave 1 **四列**的文件集**零重叠**（A = `desktop/{scheduler,main,host}` + `shared/{channels,validation}.ts`；B = `services/src/{workitem/squadOrchestrator,worktree/orphanReaper*,file/workspaceFileIgnore}` + 其测试；C = `ui/**`；D = `packages/contracts/**` + `shared/zcode-protocol/**` + `apps/zcode-cli/**` + 自己的测试）。两处**跨 Wave 的同文件**已显式标注：`host/index.ts`（A 与 Wave 2，**不同 Wave，串行**）、`node.ts`（仅 Wave 0）。
 **跨执行者的交接只有一处，且是「注册一行」而不是「抄一段逻辑」**：若 D 的 Step 0 判定 Host 侧必须新增 protocol handler，则 D **新增独立文件** `packages/desktop/src/host/squadProtocolMethods.ts`，**由 Wave 2 在该 host 的方法表里追加一行注册**（文本见 Task 7）；D **不碰** A 的 `host/index.ts`。除这一行外，**本计划没有任何「A 的文件由 B/C/D 代写」的安排**。
@@ -141,17 +141,17 @@
 
 > 冻结 = 签名先定死，Wave 1 三方**按此写代码**；真实类型与现有代码逐字一致（下方每条都标了来源 `file:line`）。
 
-| # | 冻结项 | 归属任务 | 消费者 |
-|---|---|---|---|
-| F1 | `createSquadRuntime(deps): Promise<SquadRuntime>` + `SquadRuntime` | T2 | A（取工具）、B、Wave 2 |
-| F2 | `ISquadRuntimeService` 描述符与接口（**门禁唯一判据** `assertDispatchEnabled` + `getSnapshot`/`createTeamAgent`/`createSquad`/`createWorkItem`/`openMemberRun`/`completeMemberRun`/`reviewMemberRun`/`reapStartupOrphans`/`archiveSquadAndTransfer`，**每个方法第一个参数都是 `SquadWorkspaceTarget`**） | T2 | C（UI 唯一入口）、A（host 调门禁 + 取 runtime）、D（工具经 Host 落到本服务） |
-| F3 | `createSquadRunRepo(db): SquadRunRepo` + `SquadRunRecord` / `SquadRunStatus` | T1 | A（活跃口径）、B |
-| F4 | `slugForId(id): string`（单路径段、确定性） | T2 | B（`planBranches` 的两个 slug 都由它派生） |
-| F5 | `SquadBriefing` **三段** `roster` / `protocol` / `instructions` | T2 | A（渲染成 prompt） |
-| F6 | `computeEventKey(rule, fact): string`（shared 唯一构造器） | T2 | A（tick 去重）、T2（指派落规则） |
-| F7 | **值**：`createRunLifecycle`（T2 落**机械半**：`openMemberRun`/`completeMemberRun`/`computeActiveBranches`/`reapStartupOrphans`/`reviewMemberRun`/`discardMemberRun`）。**类型**：`SquadBatchOrchestrator`（T2 在 `squadContracts.ts` **只声明类型**；`createSquadOrchestrator` 的**值**由 **B 在 T4 落**） | T2 + T4 | A（队员 run 开树）、Wave 2（装配） |
-| F8 | P0/P1/P2a 既有签名**不改**：`createWorkItemRepo(db)`（`workItemRepo.ts:54`）、`createWakeRuleRepo(db)`（`wakeRuleRepo.ts:117`）、`createWorkItemService({repo, emit})`（`workItemService.ts:37`）、`createSquadService({root, teamAgentRoot})`（`squadService.ts:71`）、`createTeamAgentService({root})`（`teamAgentService.ts:64`）、`createWorktreeManager({git, repoRoot})`（`worktreeManager.ts:146`）、`createBranchAllocator({manager})`（`branchNaming.ts:141`）、`createIntegrationMerger({git, repoRoot, base})`（`integrationMerge.ts:65`）、`createOrphanReaper({manager, repoRoot, deleteBranch, listBranches})`（`orphanReaper.ts:133`）、`planBranches/assertSafeSlug/memberDirName`、`planDispatch({workItem, squad, trigger, ruleId?})`（`leaderDispatch.ts:35`）、`decideWake(...)`（`wakeGuard.ts:45`）、`deleteBranch(git, repoRoot, branch)`（`integrationMerge.ts:48`）、`resolveWorktreeRoot(repoRoot)`（`worktreeManager.ts:34`） | — | A/B/C **只消费，不改签名** |
-| F9 | host 侧新增消息常量与 schema：`HostMessageTypes.SquadWake = "squad-wake"`、`HostResponseTypes.SquadWakeResult = "squad-wake-result"`、`hostSquadWakeMessageSchema`（**薄消息**：只带 `ruleId` / `workItemId` / `revision` / `eventKey`；规划留在 host 侧一处做） | **A** 定义（T3），W2 消费 | Wave 2 |
+| #   | 冻结项                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 归属任务                  | 消费者                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| F1  | `createSquadRuntime(deps): Promise<SquadRuntime>` + `SquadRuntime`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | T2                        | A（取工具）、B、Wave 2                                                       |
+| F2  | `ISquadRuntimeService` 描述符与接口（**门禁唯一判据** `assertDispatchEnabled` + `getSnapshot`/`createTeamAgent`/`createSquad`/`createWorkItem`/`openMemberRun`/`completeMemberRun`/`reviewMemberRun`/`reapStartupOrphans`/`archiveSquadAndTransfer`，**每个方法第一个参数都是 `SquadWorkspaceTarget`**）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | T2                        | C（UI 唯一入口）、A（host 调门禁 + 取 runtime）、D（工具经 Host 落到本服务） |
+| F3  | `createSquadRunRepo(db): SquadRunRepo` + `SquadRunRecord` / `SquadRunStatus`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | T1                        | A（活跃口径）、B                                                             |
+| F4  | `slugForId(id): string`（单路径段、确定性）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | T2                        | B（`planBranches` 的两个 slug 都由它派生）                                   |
+| F5  | `SquadBriefing` **三段** `roster` / `protocol` / `instructions`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | T2                        | A（渲染成 prompt）                                                           |
+| F6  | `computeEventKey(rule, fact): string`（shared 唯一构造器）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | T2                        | A（tick 去重）、T2（指派落规则）                                             |
+| F7  | **值**：`createRunLifecycle`（T2 落**机械半**：`openMemberRun`/`completeMemberRun`/`computeActiveBranches`/`reapStartupOrphans`/`reviewMemberRun`/`discardMemberRun`）。**类型**：`SquadBatchOrchestrator`（T2 在 `squadContracts.ts` **只声明类型**；`createSquadOrchestrator` 的**值**由 **B 在 T4 落**）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | T2 + T4                   | A（队员 run 开树）、Wave 2（装配）                                           |
+| F8  | P0/P1/P2a 既有签名**不改**：`createWorkItemRepo(db)`（`workItemRepo.ts:54`）、`createWakeRuleRepo(db)`（`wakeRuleRepo.ts:117`）、`createWorkItemService({repo, emit})`（`workItemService.ts:37`）、`createSquadService({root, teamAgentRoot})`（`squadService.ts:71`）、`createTeamAgentService({root})`（`teamAgentService.ts:64`）、`createWorktreeManager({git, repoRoot})`（`worktreeManager.ts:146`）、`createBranchAllocator({manager})`（`branchNaming.ts:141`）、`createIntegrationMerger({git, repoRoot, base})`（`integrationMerge.ts:65`）、`createOrphanReaper({manager, repoRoot, deleteBranch, listBranches})`（`orphanReaper.ts:133`）、`planBranches/assertSafeSlug/memberDirName`、`planDispatch({workItem, squad, trigger, ruleId?})`（`leaderDispatch.ts:35`）、`decideWake(...)`（`wakeGuard.ts:45`）、`deleteBranch(git, repoRoot, branch)`（`integrationMerge.ts:48`）、`resolveWorktreeRoot(repoRoot)`（`worktreeManager.ts:34`） | —                         | A/B/C **只消费，不改签名**                                                   |
+| F9  | host 侧新增消息常量与 schema：`HostMessageTypes.SquadWake = "squad-wake"`、`HostResponseTypes.SquadWakeResult = "squad-wake-result"`、`hostSquadWakeMessageSchema`（**薄消息**：只带 `ruleId` / `workItemId` / `revision` / `eventKey`；规划留在 host 侧一处做）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | **A** 定义（T3），W2 消费 | Wave 2                                                                       |
 
 ---
 
@@ -182,7 +182,7 @@
   - services / shared / desktop：`pnpm exec tsx --test packages/<pkg>/test/<file>.test.ts`
   - **ui 例外（必须带包内 tsconfig，否则 `@/` 别名解析失败）**：`pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/<file>.test.ts`
   - `node:test` + `node:assert/strict`；**测试输出必须干净**（零 `console.log`、零 stray warning、无 `.only` / `skip`）。
-- **注释用中文说明**为什么**（不是说明做了什么）。
+- **注释用中文说明**为什么\*\*（不是说明做了什么）。
 - **⚠️ 测试门缺口（2026-10-02 实测踩到）**：仓库的 `verify:pre-push` **只跑 `lint` + `architecture:check`，不跑任何测试**。⇒ 每个任务**提交前必须跑它所在包的「全量」测试**（`pnpm exec tsx --test packages/<pkg>/test/*.test.ts`；ui 包另加 `--tsconfig packages/ui/tsconfig.json`），**不能只跑自己改的那几个测试文件**。否则「改了 A 文件、撞红 B 文件的既有守卫」不会被任何本地门发现。（实例：Wave 2 卫生一路删掉 `scheduler/index.ts` 的 `listReady` 预判，撞红 `schedulerWiring.test.ts:35`，而它自报的「45/45 绿」只覆盖自己那两个文件。）
 - 每个任务结束必须通过 `pnpm typecheck` 与 `pnpm lint`（`pnpm run verify:pre-push` = `lint` + `architecture:check --changed`）——**但注意上一条：pre-push 不含测试**。
 - **不得改动**：`docs/superpowers/specs/**`、`docs/superpowers/plans/2026-10-01-multi-agent-squad-p{0,1,2a}.md`、`.superpowers/sdd/2026-10-01-multi-agent-squad-p2a/**`。
@@ -197,7 +197,7 @@ spec 隐含、但各任务测试**最容易漏掉**的输入 / 失败模式。�
 2. **启动回收吃掉待修 / 外来工作树**：`activeBranches` 漏掉「已产出未合并」⇒ 待修工作树被静默回收（S5 失效）；**非小队命名空间**的工作树落进 `.worktree/` ⇒ 被当孤儿收掉（Task 4 B‑0、Task 2）。
 3. **`eventKey` 就地拼串**：重复投递的事件**静默重复触发**。必须证明「同一事实重投两次只 fire 一次」且「`filters` 改动不改变 key」（Task 2 落构造器、Task 3 A 用）。
 4. **只写在 dev 生效**：新调度逻辑若挂在非 fork 入口上 ⇒ 生产**静默不跑**（`schedulerModulePath` 基于 `import.meta.dirname`，recon.md F4）。**必须有一条静态可检的测试**（Task 3 A）。
-5. **开关只是 UI 装饰**：后端不读 `experimentalAgentSquadsEnabled` ⇒ 关掉实验照旧派发（recon.md B4）。**门禁在服务层单点**（`ISquadRuntimeService.assertDispatchEnabled`，**唯一的开关读取点**），三个入口（规则 tick / 界面手动触发 / 队长工具）**共用同一判据**。必须有的测试：**开关关闭时三个入口都被拦**（至少覆盖「界面触发」与「规则 tick」两条）+ **在途 run 不被中断**（spec §5.7 第 6 项 / §16 S14）；另加一条**静态守卫**：`experimentalAgentSquadsEnabled` **不得出现在 `packages/desktop/src/**`**（出现即说明有人把判据复制到了 host）。落点：T2（判据本体 + 四条测试）、T3（host 只按结论行事）、T7（静态守卫复核）。
+5. **开关只是 UI 装饰**：后端不读 `experimentalAgentSquadsEnabled` ⇒ 关掉实验照旧派发（recon.md B4）。**门禁在服务层单点**（`ISquadRuntimeService.assertDispatchEnabled`，**唯一的开关读取点**），三个入口（规则 tick / 界面手动触发 / 队长工具）**共用同一判据**。必须有的测试：**开关关闭时三个入口都被拦**（至少覆盖「界面触发」与「规则 tick」两条）+ **在途 run 不被中断**（spec §5.7 第 6 项 / §16 S14）；另加一条**静态守卫**：`experimentalAgentSquadsEnabled` **不得出现在 `packages/desktop/src/**`\*\*（出现即说明有人把判据复制到了 host）。落点：T2（判据本体 + 四条测试）、T3（host 只按结论行事）、T7（静态守卫复核）。
 6. **另开一条 tasks-index 连接**：`createWorkItemRepo`/`createWakeRuleRepo` 要注入 `DatabaseSync`，若自己 `new DatabaseSync(path)` 就绕过了 `isTasksStorageMigrated`/prepared，**静默读写到不同库状态**（recon.md F3）。必须断言与 `taskIndexRepo` **同一实例**（Task 1）。
 
 ---
@@ -294,7 +294,10 @@ test("listActive 只取未合并的三个状态，且按 workspace 隔离", () =
   repo.insert(row({ runId: "r-discarded", status: "discarded" }));
   repo.insert(row({ runId: "r-other-ws", status: "open", workspaceKey: "ws2" }));
   assert.deepEqual(
-    repo.listActive("ws").map((r) => r.runId).sort(),
+    repo
+      .listActive("ws")
+      .map((r) => r.runId)
+      .sort(),
     ["r-open", "r-produced", "r-rejected"],
   );
 });
@@ -314,7 +317,13 @@ test("listByParent 取整批（含已收尾的）", () => {
   repo.insert(row({ runId: "r1" }));
   repo.insert(row({ runId: "r2", status: "merged" }));
   repo.insert(row({ runId: "r3", parentWorkItemId: "wi-other", workItemId: "wi-x" }));
-  assert.deepEqual(repo.listByParent("wi-parent").map((r) => r.runId).sort(), ["r1", "r2"]);
+  assert.deepEqual(
+    repo
+      .listByParent("wi-parent")
+      .map((r) => r.runId)
+      .sort(),
+    ["r1", "r2"],
+  );
 });
 
 // 读回枚举列必须响亮失败：P1 的 wakeRuleRepo 已就此定过调（读回非法值抛，不静默按默认值处理）。
@@ -470,16 +479,16 @@ Expected: 全 PASS（迁移登记改完后 `workItemMigration` 仍绿）
 
 **② 穷举**（先列全集，再逐格给结论）：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| `SquadRunStatus` | open / produced / rejected / merged / discarded | |
-| `listActive` 过滤 | 5 状态 × {本 workspace, 别的 workspace} | |
-| `listActive` 的 `branch` | 非 null / **null（队长 run 无工作树）** | |
-| `setStatus` | 合法状态 / 非法状态 / 未知 runId / 带 patch / 不带 patch | |
-| `get` | 存在 / 不存在 / 枚举列被写坏 | |
-| 迁移 | 新库 / 老库升级（只补跑 0006）/ 同库重跑 / checksum 冻结 | |
-| `openSharedDatabase` | 已初始化 / 未初始化 | |
-| 表列 | 与 `SquadRunRecord` **逐字段**对齐（少一列不会报错，只在落盘/读回时静默丢字段） | |
+| 枚举空间                 | 全集                                                                            | 处理 / 覆盖 |
+| ------------------------ | ------------------------------------------------------------------------------- | ----------- |
+| `SquadRunStatus`         | open / produced / rejected / merged / discarded                                 |             |
+| `listActive` 过滤        | 5 状态 × {本 workspace, 别的 workspace}                                         |             |
+| `listActive` 的 `branch` | 非 null / **null（队长 run 无工作树）**                                         |             |
+| `setStatus`              | 合法状态 / 非法状态 / 未知 runId / 带 patch / 不带 patch                        |             |
+| `get`                    | 存在 / 不存在 / 枚举列被写坏                                                    |             |
+| 迁移                     | 新库 / 老库升级（只补跑 0006）/ 同库重跑 / checksum 冻结                        |             |
+| `openSharedDatabase`     | 已初始化 / 未初始化                                                             |             |
+| 表列                     | 与 `SquadRunRecord` **逐字段**对齐（少一列不会报错，只在落盘/读回时静默丢字段） |             |
 
 逐格写「有测试 / 由类型或 SQL 保证 / 不适用 + 理由」。**空缺先补。**
 
@@ -534,9 +543,14 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       readExperimentEnabled: () => boolean;
     };
     export type SquadRuntime = {
-      workItemRepo: WorkItemRepo; wakeRuleRepo: WakeRuleRepo; squadRunRepo: SquadRunRepo;
-      workItemService: WorkItemService; teamAgentService: TeamAgentService; squadService: SquadService;
-      git: GitRunner; worktreeManager: WorktreeManager;
+      workItemRepo: WorkItemRepo;
+      wakeRuleRepo: WakeRuleRepo;
+      squadRunRepo: SquadRunRepo;
+      workItemService: WorkItemService;
+      teamAgentService: TeamAgentService;
+      squadService: SquadService;
+      git: GitRunner;
+      worktreeManager: WorktreeManager;
       /** base 分支（由 HEAD 解析或 deps 显式给出，**不猜 "main"**）。整批 finalize 的目标就是它。 */
       baseBranch: string;
       branchAllocator: ReturnType<typeof createBranchAllocator>;
@@ -555,22 +569,31 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
     };
     ```
   - `ISquadRuntimeService`（**浏览器安全的描述符**，与同名 interface 同处一个文件；UI 只经它取数）
+
     ```ts
     export type SquadWorkspaceTarget = { path: string; identity: string };
     export type SquadSnapshot = {
       /** **只读呈现用**（UI 据此隐藏 / 禁用入口）——**它不是门禁**；门禁是下面的 assertDispatchEnabled。 */
-      enabled: boolean; teamAgents: TeamAgent[]; squads: Squad[];
-      workItems: WorkItem[]; runs: SquadRunRecord[];
+      enabled: boolean;
+      teamAgents: TeamAgent[];
+      squads: Squad[];
+      workItems: WorkItem[];
+      runs: SquadRunRecord[];
     };
     export type CreateWorkItemRequest = {
-      title: string; body?: string; parentId?: string; assignee: WorkItem["assignee"];
+      title: string;
+      body?: string;
+      parentId?: string;
+      assignee: WorkItem["assignee"];
     };
     /** 稳定错误码：跨 RPC 传到上层后按码分流（照 AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE 的做法）。 */
     export const SQUAD_DISPATCH_DISABLED_CODE = "squad_dispatch_disabled";
     export class SquadDispatchDisabledError extends Error {
       readonly code = SQUAD_DISPATCH_DISABLED_CODE;
       constructor() {
-        super(`[${SQUAD_DISPATCH_DISABLED_CODE}] 实验功能已关闭：停止新派发（进行中的 run 不受影响）`);
+        super(
+          `[${SQUAD_DISPATCH_DISABLED_CODE}] 实验功能已关闭：停止新派发（进行中的 run 不受影响）`,
+        );
         this.name = "SquadDispatchDisabledError";
       }
     }
@@ -592,12 +615,18 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       assertDispatchEnabled(target: SquadWorkspaceTarget): Promise<void>;
       /** UI 的唯一取数口（含只读的 `enabled` 供呈现用）。 */
       getSnapshot(target: SquadWorkspaceTarget): Promise<SquadSnapshot>;
-      createTeamAgent(target: SquadWorkspaceTarget, input: CreateTeamAgentInput): Promise<TeamAgent>;
+      createTeamAgent(
+        target: SquadWorkspaceTarget,
+        input: CreateTeamAgentInput,
+      ): Promise<TeamAgent>;
       createSquad(target: SquadWorkspaceTarget, input: CreateSquadInput): Promise<Squad>;
       /** 指派即入队 ⇒ **入口过门禁**（入口② 走这条）。 */
       createWorkItem(target: SquadWorkspaceTarget, input: CreateWorkItemRequest): Promise<WorkItem>;
       /** 起新 run ⇒ **入口过门禁**（入口① 的队员段与入口③ 都汇到这里）。 */
-      openMemberRun(target: SquadWorkspaceTarget, input: MemberRunRequest): Promise<OpenMemberRunResult>;
+      openMemberRun(
+        target: SquadWorkspaceTarget,
+        input: MemberRunRequest,
+      ): Promise<OpenMemberRunResult>;
       /** run 终态（host 派发桥调用）。**不过门禁**：收尾在途 run 不属「新派发」。 */
       completeMemberRun(target: SquadWorkspaceTarget, input: { runId: string }): Promise<void>;
       /** 审查裁决（最小视图按钮调用）。**不过门禁**：审查既有产出的动作不产生新派发。 */
@@ -610,21 +639,29 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       /** 归档小队 + 指派转交队长（#9，spec §3.10/S10）。**先转交后归档**。 */
       archiveSquadAndTransfer(target: SquadWorkspaceTarget, id: string): Promise<void>;
     }
-    export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
+    export const ISquadRuntimeService =
+      createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
     ```
+
     > **门禁的判据在哪一行**（供 A/C/D 三方对表，三方都**不得**自己读 `experimentalAgentSquadsEnabled`）：
     > 判据是 `createSquadRuntimeService` 里的一个私有 `isEnabled()`；`assertDispatchEnabled` 是它的唯一对外形态，
     > `createWorkItem` / `openMemberRun` 在入口调**同一个** `assertDispatchEnabled`。**全仓 grep
     > `experimentalAgentSquadsEnabled` 的合法落点只有两处**：服务层判据（本处）+ UI 的**呈现**判断
     > （Task 5 的 `squadEntryVisible`，只影响显隐，不构成门禁）。`packages/desktop/src/**` 里**一处都不许有**。
+
   - `SquadRunLifecycle`（`squadRunLifecycle.ts`，**机械半**，Wave 0 完整实现）
     ```ts
     export type MemberRunRequest = {
-      runId: string; workItemId: string; parentWorkItemId: string; agentId: string; isLeaderTask: boolean;
+      runId: string;
+      workItemId: string;
+      parentWorkItemId: string;
+      agentId: string;
+      isLeaderTask: boolean;
     };
     export type OpenMemberRunResult = { branch: string; worktreePath: string };
     export type ReviewOutcome =
-      | { ok: true; merged: true } | { ok: true; merged: false; kept: true }
+      | { ok: true; merged: true }
+      | { ok: true; merged: false; kept: true }
       | { ok: false; reason: "conflict" | "branch_missing"; detail: string };
     export interface SquadRunLifecycle {
       openMemberRun(request: MemberRunRequest): Promise<OpenMemberRunResult>;
@@ -632,7 +669,10 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
       /** 硬约束 2 的**唯一**口径来源：未合并的队员分支（含被打回待修的）。 */
       computeActiveBranches(workspaceKey: string): Promise<string[]>;
       reapStartupOrphans(input: { workspaceKey: string }): Promise<ReapOutcome>;
-      reviewMemberRun(input: { runId: string; verdict: "approved" | "rejected" }): Promise<ReviewOutcome>;
+      reviewMemberRun(input: {
+        runId: string;
+        verdict: "approved" | "rejected";
+      }): Promise<ReviewOutcome>;
       discardMemberRun(input: { runId: string }): Promise<void>;
     }
     /**
@@ -641,7 +681,9 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
      * 最后拼成 runtime）。
      */
     export function createRunLifecycle(deps: {
-      squadRunRepo: SquadRunRepo; workItemService: WorkItemService; baseBranch: string;
+      squadRunRepo: SquadRunRepo;
+      workItemService: WorkItemService;
+      baseBranch: string;
       branchAllocator: ReturnType<typeof createBranchAllocator>;
       integrationMerger: ReturnType<typeof createIntegrationMerger>;
       orphanReaper: ReturnType<typeof createOrphanReaper>;
@@ -651,7 +693,10 @@ git commit -m "feat(squad): tasks-index 共享连接 accessor + squad_runs 运�
     ```ts
     export interface SquadBatchOrchestrator {
       /** 子项全部终态（category ∈ {done, closed}）后：整批 finalize → 逐个抛弃 → 收尾。 */
-      advanceAfterChildrenDone(input: { workspaceKey: string; parentWorkItemId: string }): Promise<void>;
+      advanceAfterChildrenDone(input: {
+        workspaceKey: string;
+        parentWorkItemId: string;
+      }): Promise<void>;
       discardBatch(input: { workspaceKey: string; parentWorkItemId: string }): Promise<void>;
     }
     ```
@@ -685,13 +730,24 @@ import test from "node:test";
 import { planDispatch, LEADER_PROTOCOL_TEXT } from "../src/workitem/leaderDispatch.js";
 
 const squad = {
-  id: "sq_1", name: "网关组", leaderAgentId: "ta_lead",
+  id: "sq_1",
+  name: "网关组",
+  leaderAgentId: "ta_lead",
   members: [{ agentId: "ta_lead", role: "leader" }, { agentId: "ta_a" }],
-  instructions: { stopCondition: "子项全 done 即收工", maxRounds: "5" }, enabled: true,
+  instructions: { stopCondition: "子项全 done 即收工", maxRounds: "5" },
+  enabled: true,
 } as never;
 const wi = {
-  id: "wi_1", workspaceIdentity: "ws", workspacePath: "/tmp/ws", title: "t", body: "",
-  status: "todo", assignee: { type: "squad", id: "sq_1" }, labels: [], properties: {}, position: 0,
+  id: "wi_1",
+  workspaceIdentity: "ws",
+  workspacePath: "/tmp/ws",
+  title: "t",
+  body: "",
+  status: "todo",
+  assignee: { type: "squad", id: "sq_1" },
+  labels: [],
+  properties: {},
+  position: 0,
 } as never;
 
 // spec §3.3：简报是**三段**。P1 只落了两段（roster + instructions），protocol 缺失——
@@ -732,8 +788,18 @@ import { computeEventKey } from "@zcode/shared";
 // spec §5.7.1：事件族优先用事件自带的**稳定 id**；同一事实重投两次必须算出同一个 key，
 // 否则「同一事实只处理一次」这条去重（§5.5 merged）根本不存在。
 test("事件族：有稳定 id 时用 id，且重投同 id 得同 key", () => {
-  const rule = { id: "w1", workItemId: "wi", kind: "event", eventTypes: ["issue.assigned"] } as never;
-  const fact = { source: "github", externalId: "delivery-1", eventType: "issue.assigned", payload: { a: 1 } };
+  const rule = {
+    id: "w1",
+    workItemId: "wi",
+    kind: "event",
+    eventTypes: ["issue.assigned"],
+  } as never;
+  const fact = {
+    source: "github",
+    externalId: "delivery-1",
+    eventType: "issue.assigned",
+    payload: { a: 1 },
+  };
   assert.equal(computeEventKey(rule, fact), computeEventKey(rule, fact));
   assert.match(computeEventKey(rule, fact), /^e:id:github:delivery-1$/);
 });
@@ -742,7 +808,10 @@ test("事件族：有稳定 id 时用 id，且重投同 id 得同 key", () => {
 // 拼进去会让规则作者改一下过滤器就换掉一把去重键 ⇒ 历史去重记录全部失效（同一事实被重新处理一次）。
 test("改 filters / eventTypes 不改变 key", () => {
   const fact = { source: "gh", externalId: "d-9", eventType: "issue.assigned", payload: {} };
-  const a = computeEventKey({ id: "w1", workItemId: "wi", kind: "event", eventTypes: ["x"] } as never, fact);
+  const a = computeEventKey(
+    { id: "w1", workItemId: "wi", kind: "event", eventTypes: ["x"] } as never,
+    fact,
+  );
   const b = computeEventKey(
     { id: "w1", workItemId: "wi2", kind: "event", eventTypes: ["y"], filters: { a: 2 } } as never,
     fact,
@@ -773,7 +842,10 @@ test("不可去重的事件抛错", () => {
   const rule = { id: "w1", workItemId: "wi", kind: "event" } as never;
   const cyclic: Record<string, unknown> = {};
   cyclic.self = cyclic;
-  assert.throws(() => computeEventKey(rule, { source: "gh", eventType: "e", payload: cyclic }), /eventKey/);
+  assert.throws(
+    () => computeEventKey(rule, { source: "gh", eventType: "e", payload: cyclic }),
+    /eventKey/,
+  );
 });
 
 // 排期族：名义时刻（**不是**发现它的墙钟时刻）进 key，故重启重算 / misfire 补发 / tick 反复捞到
@@ -781,7 +853,10 @@ test("不可去重的事件抛错", () => {
 test("排期族用名义时刻，前缀与事件族不同", () => {
   const rule = { id: "w1", workItemId: "wi", kind: "every", intervalSeconds: 60 } as never;
   assert.equal(computeEventKey(rule, { scheduledFor: 1000 }), "t:1000");
-  assert.notEqual(computeEventKey(rule, { scheduledFor: 1000 }), computeEventKey(rule, { scheduledFor: 1060 }));
+  assert.notEqual(
+    computeEventKey(rule, { scheduledFor: 1000 }),
+    computeEventKey(rule, { scheduledFor: 1060 }),
+  );
 });
 ```
 
@@ -825,8 +900,11 @@ test("装配后 repo / service / 工具都在，且 base 分支来自真实 HEAD
 test("openMemberRun 先落台账再建树", async () => {
   const { repoRoot, runtime } = await setup();
   const out = await runtime.lifecycle.openMemberRun({
-    runId: "run-1", workItemId: "wi-c", parentWorkItemId: "wi-p",
-    agentId: "ta-a", isLeaderTask: false,
+    runId: "run-1",
+    workItemId: "wi-c",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-a",
+    isLeaderTask: false,
   });
   const row = runtime.squadRunRepo.get("run-1")!;
   assert.equal(row.status, "open");
@@ -841,22 +919,34 @@ test("openMemberRun 先落台账再建树", async () => {
 test("computeActiveBranches 覆盖 open / produced / rejected，且不含已合并", async () => {
   const { runtime } = await setup();
   const a = await runtime.lifecycle.openMemberRun({
-    runId: "r-a", workItemId: "wi-a", parentWorkItemId: "wi-p", agentId: "ta-a", isLeaderTask: false,
+    runId: "r-a",
+    workItemId: "wi-a",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-a",
+    isLeaderTask: false,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "r-b", workItemId: "wi-b", parentWorkItemId: "wi-p", agentId: "ta-b", isLeaderTask: false,
+    runId: "r-b",
+    workItemId: "wi-b",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-b",
+    isLeaderTask: false,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "r-c", workItemId: "wi-c", parentWorkItemId: "wi-p", agentId: "ta-c", isLeaderTask: false,
+    runId: "r-c",
+    workItemId: "wi-c",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-c",
+    isLeaderTask: false,
   });
   await runtime.lifecycle.completeMemberRun({ runId: "r-b" }); // → produced
   await runtime.lifecycle.reviewMemberRun({ runId: "r-c", verdict: "rejected" }); // → rejected
   runtime.squadRunRepo.setStatus("r-a", "merged");
   const active = (await runtime.lifecycle.computeActiveBranches("ws")).sort();
-  assert.deepEqual(active, [
-    runtime.squadRunRepo.get("r-b")!.branch,
-    runtime.squadRunRepo.get("r-c")!.branch,
-  ].sort());
+  assert.deepEqual(
+    active,
+    [runtime.squadRunRepo.get("r-b")!.branch, runtime.squadRunRepo.get("r-c")!.branch].sort(),
+  );
   assert.equal(active.includes(a.branch), false);
 });
 
@@ -868,7 +958,11 @@ test("重启后 computeActiveBranches 仍然正确（台账持久）", async () 
   const mk = () => createSquadRuntime({ db, workspacePath: repoRoot, workspaceIdentity: "ws" });
   const first = await mk();
   await first.lifecycle.openMemberRun({
-    runId: "r-p", workItemId: "wi-p2", parentWorkItemId: "wi-p", agentId: "ta-p", isLeaderTask: false,
+    runId: "r-p",
+    workItemId: "wi-p2",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-p",
+    isLeaderTask: false,
   });
   const restart = await mk();
   assert.equal((await restart.lifecycle.computeActiveBranches("ws")).length, 1);
@@ -879,10 +973,18 @@ test("重启后 computeActiveBranches 仍然正确（台账持久）", async () 
 test("reapStartupOrphans 只收活跃集合外的树", async () => {
   const { runtime } = await setup();
   const kept = await runtime.lifecycle.openMemberRun({
-    runId: "r-keep", workItemId: "wi-k", parentWorkItemId: "wi-p", agentId: "ta-k", isLeaderTask: false,
+    runId: "r-keep",
+    workItemId: "wi-k",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-k",
+    isLeaderTask: false,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "r-drop", workItemId: "wi-d", parentWorkItemId: "wi-p", agentId: "ta-d", isLeaderTask: false,
+    runId: "r-drop",
+    workItemId: "wi-d",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-d",
+    isLeaderTask: false,
   });
   const dropDir = runtime.squadRunRepo.get("r-drop")!.dirName!;
   runtime.squadRunRepo.setStatus("r-drop", "merged"); // 已合并 ⇒ 不再活跃
@@ -894,7 +996,8 @@ test("reapStartupOrphans 只收活跃集合外的树", async () => {
 // 三段简报的渲染：host 派发桥把 briefing 变成 prompt，三段都必须到场且各带标题。
 test("渲染出的队长 prompt 含三段标题", async () => {
   const prompt = renderLeaderBriefingPrompt({
-    squadId: "sq_1", leaderAgentId: "ta_lead",
+    squadId: "sq_1",
+    leaderAgentId: "ta_lead",
     roster: [{ agentId: "ta_lead", role: "leader" }, { agentId: "ta_a" }],
     protocol: "PROTOCOL-BODY",
     instructions: { stopCondition: "s", maxRounds: "1" },
@@ -926,17 +1029,25 @@ test("archive 把该小队的指派转交队长", async () => {
   runTasksDatabaseMigrations(db);
   const runtime = await createSquadRuntime({ db, workspacePath: ws, workspaceIdentity: "ws" });
   const leader = runtime.teamAgentService.create({
-    name: "L", systemPrompt: "s", memoryScope: "project",
+    name: "L",
+    systemPrompt: "s",
+    memoryScope: "project",
   });
   const member = runtime.teamAgentService.create({
-    name: "M", systemPrompt: "s", memoryScope: "project",
+    name: "M",
+    systemPrompt: "s",
+    memoryScope: "project",
   });
   const squad = runtime.squadService.create({
-    name: "sq", leaderAgentId: leader.id, members: [member.id],
+    name: "sq",
+    leaderAgentId: leader.id,
+    members: [member.id],
     instructions: { stopCondition: "s", maxRounds: "1" },
   });
   const item = runtime.workItemService.create({
-    workspaceIdentity: "ws", workspacePath: ws, title: "t",
+    workspaceIdentity: "ws",
+    workspacePath: ws,
+    title: "t",
     assignee: { type: "squad", id: squad.id },
   });
   runtime.squadService.archive(squad.id);
@@ -972,6 +1083,7 @@ Expected: FAIL（`LEADER_PROTOCOL_TEXT` / `computeEventKey` / `createSquadRuntim
    - `discardMemberRun`：`integrationMerger.discardMember({ branch, dirName })` 后 `setStatus("discarded")`。
 8. **`squadRuntimeService.ts`**：`ISquadRuntimeService` 描述符 + 接口（**浏览器安全**：只 import `@zcode/shared` 的类型与 `@zcode/services` 的 `createServiceDescriptor`/`CreateSquadInput` 类型，**不得** import `node:*`）；`createSquadRuntimeService(deps): ISquadRuntimeService` 放**同文件但只被 node.ts 引用**的导出里也可以——**采用后者**，理由：描述符必须浏览器可达，实现只需 node 侧可达，两者同一文件但实现函数的依赖由调用方注入，故不引入 `node:*` 静态依赖。
 9. **`node.ts`**：在 `createServiceCollection(...)` 内（`services` 集合构造之后、`sqliteReposToClose.push(taskIndexRepo)`（`:2704`）之前）注册服务。**确认 3：runtime 按目标 workspace 现构、用完即弃（不缓存）**：
+
    ```ts
    // 小队 runtime **不做长期单例、不缓存**：每个使用点带着自己的**目标 workspace** 进来，
    // 这里为它现构一个 runtime，方法返回后不再保留它。
@@ -987,7 +1099,8 @@ Expected: FAIL（`LEADER_PROTOCOL_TEXT` / `computeEventKey` / `createSquadRuntim
        workspacePath: target.path,
        workspaceIdentity: target.identity,
        // 门禁的**唯一读取口**：整个 desktop 侧没有第二处读这个字段（spec §5.7 第 6 项）。
-       readExperimentEnabled: () => settingService.getSync?.().experimentalAgentSquadsEnabled === true,
+       readExperimentEnabled: () =>
+         settingService.getSync?.().experimentalAgentSquadsEnabled === true,
      });
    };
    services.register(
@@ -1000,6 +1113,7 @@ Expected: FAIL（`LEADER_PROTOCOL_TEXT` / `computeEventKey` / `createSquadRuntim
      }),
    );
    ```
+
    > `readExperimentEnabled` 在 runtime 侧是**同步**的（`assertDispatchEnabled` 不该变成异步 IO 链）；若 `ISettingService` 只提供异步 `get()`，则在**组合根**里维护一份由 `settingService` 变更事件刷新的同步快照（`let squadsEnabled = false; settingService.onDidChange(() => …)`），**快照的刷新点只有这一处**。若实现时发现该同步快照不可得，**停下来报 `NEEDS_CONTEXT` 并说明**，不要改成「每个入口各自 `await settingService.get()`」——那会退回成三份判据。
 
    workspace 的来路：本阶段用 `resolveStorageRoots`（`packages/services/src/storage/adapters/rootsResolver.ts:11`，`node.ts:205` 已导出）不可行——它给的是**存储根**不是会话 workspace。故改为从 `options` 新增可选入参 `squadWorkspace?: { path: string; identity: string }`，由 desktop host 在 `createServiceCollection` 调用点传入。
@@ -1020,10 +1134,7 @@ const target = (identity: string) => ({ path: `/tmp/${identity}`, identity });
 // 静默按传入值操作 = 在另一个 workspace 上读写（用户看到的是「我明明没建过」）。
 test("runtime 拒绝异己 workspaceKey（带两侧的值）", async () => {
   const { runtime } = await setup(); // setup 绑定的是 "ws"
-  await assert.rejects(
-    () => runtime.lifecycle.computeActiveBranches("another-ws"),
-    /ws/,
-  );
+  await assert.rejects(() => runtime.lifecycle.computeActiveBranches("another-ws"), /ws/);
 });
 
 // 确认 2：**门禁的唯一判据**。关闭 ⇒ 抛**稳定 code**（供上层按码分流，不靠文案）。
@@ -1050,7 +1161,11 @@ test("开关关闭 ⇒ 界面触发（createWorkItem）与规则 tick 都被拦"
 test("开关关闭 ⇒ 在途 run 不被中断", async () => {
   const { runtime, svc, setEnabled } = await controllableSetup();
   const opened = await runtime.lifecycle.openMemberRun({
-    runId: "r-live", workItemId: "wi-l", parentWorkItemId: "wi-p", agentId: "ta-l", isLeaderTask: false,
+    runId: "r-live",
+    workItemId: "wi-l",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-l",
+    isLeaderTask: false,
   });
   setEnabled(false);
   await assert.rejects(() => svc.assertDispatchEnabled(target("ws")), /squad_dispatch_disabled/);
@@ -1065,19 +1180,25 @@ test("开关关闭 ⇒ 在途 run 不被中断", async () => {
 // 候选 > 1 时**拒绝并报告候选清单**，不得隐式取首个。
 test("多个候选 workspace ⇒ 抛且列出候选", async () => {
   assert.throws(
-    () => resolveSquadWorkspaceBinding([{ path: "/a", identity: "a" }, { path: "/b", identity: "b" }]),
+    () =>
+      resolveSquadWorkspaceBinding([
+        { path: "/a", identity: "a" },
+        { path: "/b", identity: "b" },
+      ]),
     /a[\s\S]*b/,
   );
 });
 test("唯一候选 ⇒ 用它", () => {
   assert.deepEqual(resolveSquadWorkspaceBinding([{ path: "/a", identity: "a" }]), {
-    path: "/a", identity: "a",
+    path: "/a",
+    identity: "a",
   });
 });
 test("无候选 ⇒ 抛（未绑定）", () => {
   assert.throws(() => resolveSquadWorkspaceBinding([]), /未绑定/);
 });
 ```
+
 10. **`index.ts`**：追加 `export { ISquadRuntimeService } from "./workitem/squadRuntimeService.js"; export type { ISquadRuntimeService as ISquadRuntimeServiceShape, SquadSnapshot, CreateWorkItemRequest } from "./workitem/squadRuntimeService.js";` 与 `export { computeEventKey } from "@zcode/shared";`（若 shared 已在 index.ts 里透传则跳过）以及 `slugForId`、`createSquadRunRepo` 及 `SquadRunRecord`/`SquadRunStatus`/`SquadRunRepo` 类型。
 11. **`node.ts`** 追加导出（desktop 只能经 `@zcode/services/node` 与 `.` 两个入口取东西，见 `packages/services/package.json#exports`）：
 
@@ -1091,7 +1212,11 @@ export { planDispatch } from "./workitem/leaderDispatch.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
 export type { WorkItemEvent, WorkItemService } from "./workitem/workItemService.js";
 export type { WorkItemRepo } from "./workitem/workItemRepo.js";
-export type { SquadRuntime, SquadBatchOrchestrator, SquadRunLifecycle } from "./workitem/squadContracts.js";
+export type {
+  SquadRuntime,
+  SquadBatchOrchestrator,
+  SquadRunLifecycle,
+} from "./workitem/squadContracts.js";
 ```
 
 （`squadContracts.ts` 只含**类型**，`SquadRuntime` 的**值**由第一条给出。）
@@ -1120,19 +1245,19 @@ Expected: 全 PASS
 
 **② 穷举**（先列全集，再逐格给结论）：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| 简报段 | roster / protocol / instructions | |
-| `instructions` 槽位 | 8 个全给 / 只给 2 个必填 / 空 | |
-| `computeEventKey` 族 | event（有 id / 无 id 可用指纹 / 两者皆无）/ at / every / cron | |
-| payload 形态 | 嵌套对象 / 数组 / 数字 / 字符串 / `null` / 循环引用 / 只差时间戳 / 只差易变字段 | |
-| 规则字段变动 | 改 `filters` / 改 `eventTypes` / 改 `workItemId` / 改 `revision` | |
-| `openMemberRun` | 首次 / 同 runId 重复 / 分支已存在（残枝）/ base 不存在 / 目录已存在 | |
-| `completeMemberRun` | runId 存在 / 不存在 / 已是终态 | |
-| `reviewMemberRun` | approved 成功 / approved 冲突 / rejected / 未知 runId | |
-| `reapStartupOrphans` | 活跃集合空 / 含全部 / 含部分 / 含不存在的分支 | |
-| 装配 | workspace 已绑定 / 未绑定（必须抛）/ 实验开关 on / off | |
-| `archive` 转交 | 该小队有工作项 / 没有 / 多个 | |
+| 枚举空间             | 全集                                                                            | 处理 / 覆盖 |
+| -------------------- | ------------------------------------------------------------------------------- | ----------- |
+| 简报段               | roster / protocol / instructions                                                |             |
+| `instructions` 槽位  | 8 个全给 / 只给 2 个必填 / 空                                                   |             |
+| `computeEventKey` 族 | event（有 id / 无 id 可用指纹 / 两者皆无）/ at / every / cron                   |             |
+| payload 形态         | 嵌套对象 / 数组 / 数字 / 字符串 / `null` / 循环引用 / 只差时间戳 / 只差易变字段 |             |
+| 规则字段变动         | 改 `filters` / 改 `eventTypes` / 改 `workItemId` / 改 `revision`                |             |
+| `openMemberRun`      | 首次 / 同 runId 重复 / 分支已存在（残枝）/ base 不存在 / 目录已存在             |             |
+| `completeMemberRun`  | runId 存在 / 不存在 / 已是终态                                                  |             |
+| `reviewMemberRun`    | approved 成功 / approved 冲突 / rejected / 未知 runId                           |             |
+| `reapStartupOrphans` | 活跃集合空 / 含全部 / 含部分 / 含不存在的分支                                   |             |
+| 装配                 | workspace 已绑定 / 未绑定（必须抛）/ 实验开关 on / off                          |             |
+| `archive` 转交       | 该小队有工作项 / 没有 / 多个                                                    |             |
 
 逐格写「有测试 / 由代码或类型保证（哪一行）/ 不适用 + 理由」。**空缺先补。**
 
@@ -1218,10 +1343,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWakeTick } from "../src/scheduler/wakeTick.js";
 
-const rule = (over = {}) => ({
-  id: "w1", workItemId: "wi_1", kind: "event", mode: "once",
-  fireCount: 0, revision: 3, enabled: true, nextFireAt: 1000, ...over,
-} as never);
+const rule = (over = {}) =>
+  ({
+    id: "w1",
+    workItemId: "wi_1",
+    kind: "event",
+    mode: "once",
+    fireCount: 0,
+    revision: 3,
+    enabled: true,
+    nextFireAt: 1000,
+    ...over,
+  }) as never;
 
 test("到点且决定 fire ⇒ 发出派发请求，eventKey 带四元组里的两维", async () => {
   const posts: unknown[] = [];
@@ -1288,13 +1421,20 @@ const desktopSrc = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 // 生产包里**根本不会执行**——而且不报错。故把「唤醒 tick 必须挂在被 fork 的那个入口上」钉成断言。
 test("唤醒 tick 挂在被 fork 的 scheduler 入口上", () => {
   const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
-  assert.match(entry, /createWakeTick/, "scheduler 入口必须引用并启动 createWakeTick，否则生产静默不跑");
+  assert.match(
+    entry,
+    /createWakeTick/,
+    "scheduler 入口必须引用并启动 createWakeTick，否则生产静默不跑",
+  );
   assert.match(entry, /wakeTick\.run\(/, "scheduler 入口必须真的调用 wakeTick.run(...)");
 });
 
 test("fork 的模块路径指向 scheduler 入口（不是别的目录）", () => {
   const env = readFileSync(join(desktopSrc, "main/desktopRuntimeEnv.ts"), "utf8");
-  assert.match(env, /schedulerModulePath = join\(import\.meta\.dirname, "\.\.\/scheduler\/index\.js"\)/);
+  assert.match(
+    env,
+    /schedulerModulePath = join\(import\.meta\.dirname, "\.\.\/scheduler\/index\.js"\)/,
+  );
 });
 ```
 
@@ -1310,25 +1450,35 @@ import { decideSquadDispatch } from "../src/host/squadDispatch.js";
 const base = {
   // 门禁结论**由服务层给出**（本函数不读开关）：dispatchEnabled 是「服务层说可以派发」这一事实，
   // 名称刻意不叫 enabled —— 免得下一个人以为可以在这里自己读 appSettings。
-  dispatchEnabled: true, databaseReady: true, busy: false, kind: "leader" as const,
-  briefingPrompt: "P", memberPrompt: "P", worktree: undefined,
+  dispatchEnabled: true,
+  databaseReady: true,
+  busy: false,
+  kind: "leader" as const,
+  briefingPrompt: "P",
+  memberPrompt: "P",
+  worktree: undefined,
 };
 
 test("服务层说门禁关 ⇒ skip，不派发", () => {
   assert.deepEqual(decideSquadDispatch({ ...base, dispatchEnabled: false }), {
-    action: "skip", reason: "disabled_by_service",
+    action: "skip",
+    reason: "disabled_by_service",
   });
 });
 
 test("数据库未就绪 ⇒ skip", () => {
   assert.deepEqual(decideSquadDispatch({ ...base, databaseReady: false }), {
-    action: "skip", reason: "not_ready",
+    action: "skip",
+    reason: "not_ready",
   });
 });
 
 // 硬约束 1：绑定会话忙 ⇒ **deferred**（等待型重投），不是失败、也不排队堆积。
 test("绑定会话忙 ⇒ defer", () => {
-  assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), { action: "defer", reason: "bound_session_busy" });
+  assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), {
+    action: "defer",
+    reason: "bound_session_busy",
+  });
 });
 
 test("开关开、库就绪、不忙 ⇒ dispatch 并带上 prompt", () => {
@@ -1346,7 +1496,10 @@ test("队员 run 缺 worktree ⇒ 响亮失败，不派发", () => {
 // 硬约束 1 的机器化守卫：小队派发这一支必须用**强探测**，
 // 不得照抄 off-peak 的投影判据（残留 running 行会让派发被永久卡死）。
 test("小队派发分支用的是强探测，不是 off-peak 的投影判据", () => {
-  const src = readFileSync(join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"), "utf8");
+  const src = readFileSync(
+    join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"),
+    "utf8",
+  );
   const start = src.indexOf("HostMessageTypes.SquadWake");
   assert.ok(start >= 0, "host 里没有 SquadWake 分支");
   const branch = src.slice(start, start + 6000);
@@ -1358,21 +1511,35 @@ test("小队派发分支用的是强探测，不是 off-peak 的投影判据", (
 // desktop 侧任何一处读这个字段，都意味着判据被复制成了第二份 —— 而三份判据正是
 // 「改一处漏一处 ⇒ 关掉实验照旧派发」的形态。
 test("desktop 侧任何文件都不读 experimentalAgentSquadsEnabled", () => {
-  const desktopSrc = join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "..", "..", "..",
-    "packages", "desktop", "src");
+  const desktopSrc = join(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src"),
+    "..",
+    "..",
+    "..",
+    "packages",
+    "desktop",
+    "src",
+  );
   // 递归遍历 desktop/src，任何一个文件出现该字段即红。
   const hits: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name) && readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")) {
+      else if (
+        /\.tsx?$/.test(entry.name) &&
+        readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")
+      ) {
         hits.push(full);
       }
     }
   };
   walk(desktopSrc);
-  assert.deepEqual(hits, [], `门禁判据只能有一处（服务层）；desktop 侧不应读取该字段：${hits.join(", ")}`);
+  assert.deepEqual(
+    hits,
+    [],
+    `门禁判据只能有一处（服务层）；desktop 侧不应读取该字段：${hits.join(", ")}`,
+  );
 });
 ```
 
@@ -1410,7 +1577,10 @@ Expected: FAIL（模块 / 分支不存在）
      // 门禁：判据在服务层单点（spec §5.7 第 6 项 的三个入口共用一处判据）。
      // 这里**不读 appSettings** —— 读一次就多一份判据，改一处漏一处，正是「关掉实验照旧派发」的形态。
      try {
-       await squadRuntime.assertDispatchEnabled({ path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" });
+       await squadRuntime.assertDispatchEnabled({
+         path: msg.workspacePath,
+         identity: msg.workspaceIdentity ?? "",
+       });
      } catch (error) {
        if (isSquadDispatchDisabledError(error)) {
          parentPort.postMessage({
@@ -1468,18 +1638,18 @@ Expected: 全 PASS
 
 **② 穷举**（先列全集，再逐格给结论）：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| tick 决策 | fire / skip(merged) / skip(acknowledged) / pause(max_fires) / pause(rate) / pause(loop) | |
-| 规则 kind | event / at / every / cron | |
-| 规则 mode | once（fire 后 `nextFireAt=null`）/ continuous（推进 `nextFireAt`） | |
-| `listReady` 结果 | 空 / 1 条 / 超过 limit | |
-| 派发入口 | 库未就绪 / 无可用 host / host 转发失败 / 门禁关闭 / 运行时未注册 | |
-| 会话路径 | 无 `targetTaskId`（新建）/ 有（resume）/ resume 失败 | |
-| 忙检查 | 不忙 / 忙（强探测）/ 探测抛错（`runtimePolicy:"existing-only"` ⇒ 判不忙） | |
-| run 类型 | 队长（无工作树）/ 队员（必须先开树）/ 队员开树失败 | |
-| 消息面 | schema 进了并集 / 常量加了但没进并集（**必须能咬红**） | |
-| 模块挂点 | 挂在 `scheduler/index.ts`（对）/ 挂在 `main/`（错，测试须咬红） | |
+| 枚举空间         | 全集                                                                                    | 处理 / 覆盖 |
+| ---------------- | --------------------------------------------------------------------------------------- | ----------- |
+| tick 决策        | fire / skip(merged) / skip(acknowledged) / pause(max_fires) / pause(rate) / pause(loop) |             |
+| 规则 kind        | event / at / every / cron                                                               |             |
+| 规则 mode        | once（fire 后 `nextFireAt=null`）/ continuous（推进 `nextFireAt`）                      |             |
+| `listReady` 结果 | 空 / 1 条 / 超过 limit                                                                  |             |
+| 派发入口         | 库未就绪 / 无可用 host / host 转发失败 / 门禁关闭 / 运行时未注册                        |             |
+| 会话路径         | 无 `targetTaskId`（新建）/ 有（resume）/ resume 失败                                    |             |
+| 忙检查           | 不忙 / 忙（强探测）/ 探测抛错（`runtimePolicy:"existing-only"` ⇒ 判不忙）               |             |
+| run 类型         | 队长（无工作树）/ 队员（必须先开树）/ 队员开树失败                                      |             |
+| 消息面           | schema 进了并集 / 常量加了但没进并集（**必须能咬红**）                                  |             |
+| 模块挂点         | 挂在 `scheduler/index.ts`（对）/ 挂在 `main/`（错，测试须咬红）                         |             |
 
 逐格写「有测试 / 由类型或代码保证（哪一行）/ 不适用 + 理由」。**空缺先补。**
 
@@ -1555,7 +1725,10 @@ test("命名空间外的工作树不被回收，但可见（进 kept）", async 
   assert.ok(out.kept.includes("dev-sandbox"));
   // 实体状态：树与分支都还在（断言返回值不够——实现可能嘴上说 kept 手上却删了）
   assert.ok((await m.list()).some((e) => e.branch === "feat/dev-sandbox"));
-  assert.equal((await git(["branch", "--list", "feat/dev-sandbox"])).stdout.trim(), "feat/dev-sandbox");
+  assert.equal(
+    (await git(["branch", "--list", "feat/dev-sandbox"])).stdout.trim(),
+    "feat/dev-sandbox",
+  );
 });
 ```
 
@@ -1569,15 +1742,15 @@ Expected: FAIL（当前第一遍会把它当孤儿收掉：`reclaimed` 非空、
 在 `reap` 的第一遍里，把「归属」之外**再加一道命名空间闸**（顺序：先判不属于本根 → `foreign`；再判分支非小队命名空间 → `kept`；再判集成分支 → `kept`；剩下才是候选孤儿）：
 
 ```ts
-      // 第二道闸：**分支不属于小队命名空间**的一律不动，计入 `kept`。
-      // 为什么不能只看「在不在我们的目录里」：那是**路径代理**，而 activeBranches 是产品运行台账，
-      // 任何非小队工作树的分支都不在里面 ⇒ 那条判据对它们恒为真、把它们全部当孤儿。
-      // 用户自己 `git worktree add`、将来别的功能复用 .worktree/，都会撞上这一格。
-      // `entry.branch === null`（detached）同样**不碰**：没有分支就无法证明它属于我们。
-      if (entry.branch === null || !entry.branch.startsWith(MEMBER_NAMESPACE)) {
-        kept.push(dirName);
-        continue;
-      }
+// 第二道闸：**分支不属于小队命名空间**的一律不动，计入 `kept`。
+// 为什么不能只看「在不在我们的目录里」：那是**路径代理**，而 activeBranches 是产品运行台账，
+// 任何非小队工作树的分支都不在里面 ⇒ 那条判据对它们恒为真、把它们全部当孤儿。
+// 用户自己 `git worktree add`、将来别的功能复用 .worktree/，都会撞上这一格。
+// `entry.branch === null`（detached）同样**不碰**：没有分支就无法证明它属于我们。
+if (entry.branch === null || !entry.branch.startsWith(MEMBER_NAMESPACE)) {
+  kept.push(dirName);
+  continue;
+}
 ```
 
 并把 `ReapOutcome.kept` 的 doc 注释扩一类（第三类来源：**命名空间外的分支**），说明这是**可见的跳过**而不是静默。
@@ -1619,13 +1792,13 @@ Expected: PASS（既有 23 条 + 新 1 条）
 
 **② 穷举**：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| 工作树位置 | 本根下 / 本根外 | |
-| 分支前缀 | `squad/member/` / `squad/integration/` / 别的（`feat/*`、`main`）/ `null`（detached） | |
-| 活跃集合 | 含它 / 不含它 | |
-| 组合 | 位置 × 前缀 × 活跃 = 全排列 | |
-| 报告通道 | `reclaimed` / `kept` / `foreign` / `reclaimedBranches` —— **每一项都必须落进恰好一个桶** | |
+| 枚举空间   | 全集                                                                                     | 处理 / 覆盖 |
+| ---------- | ---------------------------------------------------------------------------------------- | ----------- |
+| 工作树位置 | 本根下 / 本根外                                                                          |             |
+| 分支前缀   | `squad/member/` / `squad/integration/` / 别的（`feat/*`、`main`）/ `null`（detached）    |             |
+| 活跃集合   | 含它 / 不含它                                                                            |             |
+| 组合       | 位置 × 前缀 × 活跃 = 全排列                                                              |             |
+| 报告通道   | `reclaimed` / `kept` / `foreign` / `reclaimedBranches` —— **每一项都必须落进恰好一个桶** |             |
 
 逐格写结论。**空缺先补。**
 
@@ -1687,22 +1860,34 @@ Run: `pnpm exec tsx --test packages/services/test/workspaceProductDirExclusions.
 
 ```ts
 // packages/services/test/squadOrchestrator.batch.test.ts
-test("子项未全部终态 ⇒ 不 finalize（不做半批合并）", async () => { /* … */ });
+test("子项未全部终态 ⇒ 不 finalize（不做半批合并）", async () => {
+  /* … */
+});
 
 // §5.7.3 的判据是 **category**，不是键名：`cancelled` 是 closed 类，与 done 一样算终态。
-test("cancelled 子项也算终态（用 category 判定）", async () => { /* … */ });
+test("cancelled 子项也算终态（用 category 判定）", async () => {
+  /* … */
+});
 
 // §5.7.4 / §16 S17：集成分支冲突 ⇒ 不得提前合回主分支，且父项置 blocked + 进 Inbox。
-test("冲突 ⇒ 父项 blocked、集成分支保留、主分支不动", async () => { /* … */ });
+test("冲突 ⇒ 父项 blocked、集成分支保留、主分支不动", async () => {
+  /* … */
+});
 
 // §6.3：整批通过后，**队员分支与集成分支都删**，成果留在 base 上。
-test("整批通过 ⇒ finalize 后两条分支都不存在，成果在 base", async () => { /* … */ });
+test("整批通过 ⇒ finalize 后两条分支都不存在，成果在 base", async () => {
+  /* … */
+});
 
 // spec §16 S5：被打回待修的工作树在 batch 收尾时**也不得**被删（它还没合）。
-test("被打回待修的队员不进 finalize 的抛弃集合", async () => { /* … */ });
+test("被打回待修的队员不进 finalize 的抛弃集合", async () => {
+  /* … */
+});
 
 // §6.2：串行合并 —— 两个队员**先后**合，第二个能看见第一个的成果（不是各自从 base 重放）。
-test("串行合并：第二个队员的合并基于第一个的成果", async () => { /* … */ });
+test("串行合并：第二个队员的合并基于第一个的成果", async () => {
+  /* … */
+});
 ```
 
 - [ ] **Step B‑2.2 / B‑2.3 / B‑2.4**
@@ -1731,14 +1916,14 @@ test("串行合并：第二个队员的合并基于第一个的成果", async ()
 
 **② 穷举**：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| 子项状态组合 | 全 done / 全 cancelled / mixed done+cancelled / 含 in_review / 含 blocked / 无子项 | |
-| 队员 run 状态 | 全 merged / 部分 merged / 含 rejected（被打回）/ 含 produced（没审） | |
-| 合并结果 | 全成功 / 第 1 个就冲突 / 第 2 个冲突（第 1 个的成果是否**已保留**在集成分支） | |
-| finalize | 成功 / 冲突 / base 分支不存在 | |
-| 抛弃 | 已 merged（可抛）/ rejected（**batch 放弃时才抛**）/ 树已不存在 | |
-| 并发 | 同父项两次调用 / 不同父项并行 | |
+| 枚举空间      | 全集                                                                               | 处理 / 覆盖 |
+| ------------- | ---------------------------------------------------------------------------------- | ----------- |
+| 子项状态组合  | 全 done / 全 cancelled / mixed done+cancelled / 含 in_review / 含 blocked / 无子项 |             |
+| 队员 run 状态 | 全 merged / 部分 merged / 含 rejected（被打回）/ 含 produced（没审）               |             |
+| 合并结果      | 全成功 / 第 1 个就冲突 / 第 2 个冲突（第 1 个的成果是否**已保留**在集成分支）      |             |
+| finalize      | 成功 / 冲突 / base 分支不存在                                                      |             |
+| 抛弃          | 已 merged（可抛）/ rejected（**batch 放弃时才抛**）/ 树已不存在                    |             |
+| 并发          | 同父项两次调用 / 不同父项并行                                                      |             |
 
 逐格写结论。**空缺先补。**
 
@@ -1851,15 +2036,15 @@ Expected: 全 PASS
 
 **② 穷举**：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| 开关 | 未设置 / false / true | |
-| `settings` 快照 | `null`（加载中）/ `{}` / 完整 | |
-| 数据面 | 无小队 / 无工作项 / 都有 / 只有 run | |
-| 审查动作 | approve（成功）/ approve（冲突）/ reject / 网络失败 | |
-| 关闭实验 | 视图消失 / 后端拒绝新派发 / **进行中的 run 不中断** | |
-| 投射 | 远程设备投射开启时本视图不出现 | |
-| i18n | zh-CN / en-US 两语齐全 / 长文案不截断 | |
+| 枚举空间        | 全集                                                | 处理 / 覆盖 |
+| --------------- | --------------------------------------------------- | ----------- |
+| 开关            | 未设置 / false / true                               |             |
+| `settings` 快照 | `null`（加载中）/ `{}` / 完整                       |             |
+| 数据面          | 无小队 / 无工作项 / 都有 / 只有 run                 |             |
+| 审查动作        | approve（成功）/ approve（冲突）/ reject / 网络失败 |             |
+| 关闭实验        | 视图消失 / 后端拒绝新派发 / **进行中的 run 不中断** |             |
+| 投射            | 远程设备投射开启时本视图不出现                      |             |
+| i18n            | zh-CN / en-US 两语齐全 / 长文案不截断               |             |
 
 逐格写结论。**空缺先补。**
 
@@ -1922,13 +2107,13 @@ git commit -m "feat(squad): 实验分区最小入口视图（三段闭环 + 审�
 **Step 0 必须查清、且必须写进报告的一件事**：**「Host 侧谁答这个新的 protocol method？」**
 `"automation/create"` 这个字符串在**全仓只出现在** `packages/shared/src/zcode-protocol/index.ts:3644` 的常量表里；`packages/desktop/src/**` 里**没有任何手写 handler**（`packages/desktop/out/host/index.js` 里出现该字符串来自**打包依赖**）。⇒ Host 侧的服务方是**生成式或通用桥**，还是某个包里手写的 method 表？
 
-- 若查到**通用/生成式桥**（Host 侧无需手写 handler）⇒ **D 不需要碰 `packages/desktop/**`**（最省事，也最可能的干净结果）。
+- 若查到**通用/生成式桥**（Host 侧无需手写 handler）⇒ **D 不需要碰 `packages/desktop/**`\*\*（最省事，也最可能的干净结果）。
 - 若查到**必须手写 handler** ⇒ D **新增独立文件** `packages/desktop/src/host/squadProtocolMethods.ts`（不在 A 的任何文件里），**方法表注册那一行由 Task 7（Wave 2）追加**（文本见 Task 7 Step 3）；D **本人不得改 `host/index.ts`**。
 - **若两种都查不到** ⇒ **停下来报 `NEEDS_CONTEXT`**，把已查过的路径与结论写进报告。**不得**自己发明一套新 RPC / 新通道——那会把本期变成「顺便造一条新通道」。
 
 - [ ] **Step 1: 写失败测试**
 
-**先做一条 smoke（此前无先例：`apps/zcode-cli/**` 零测试、无 test 脚本）**：
+**先做一条 smoke（此前无先例：`apps/zcode-cli/**` 零测试、无 test 脚本）\*\*：
 
 ```ts
 // apps/zcode-cli/packages/core/test/squadTools.test.ts （第一步只有这一条）
@@ -1979,7 +2164,11 @@ function fakePort() {
 test("未注入 squadPort ⇒ 抛 ConfigurationError，不静默返回", async () => {
   const tools = createSquadTools({ squadPort: undefined });
   await assert.rejects(
-    () => tools.createChildWorkItem.handler({ parentId: "wi-p", title: "t", assigneeAgentId: "ta-a" }, {} as never),
+    () =>
+      tools.createChildWorkItem.handler(
+        { parentId: "wi-p", title: "t", assigneeAgentId: "ta-a" },
+        {} as never,
+      ),
     /squadPort|ConfigurationError/,
   );
 });
@@ -2010,7 +2199,11 @@ test("派给队员：只经 port 发派发事件", async () => {
 test("SquadPort 不得暴露任何写工作项状态的方法", () => {
   const { port } = fakePort();
   for (const forbidden of ["transition", "setStatus", "updateStatus", "forceStatus"]) {
-    assert.equal(forbidden in port, false, `SquadPort 不得暴露 ${forbidden}（唯一写者是 workItemService）`);
+    assert.equal(
+      forbidden in port,
+      false,
+      `SquadPort 不得暴露 ${forbidden}（唯一写者是 workItemService）`,
+    );
   }
 });
 
@@ -2076,16 +2269,16 @@ Expected: 全 PASS
 
 **② 穷举**（先列全集，再逐格给结论）：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| port | 已注入 / 未注入 / 注入但方法抛错 | |
-| `createChildWorkItem` | 带父项 / 不带父项 / 父项不存在 / 父项已归档 | |
-| `assignWorkItem` | 队员在花名册 / 不在 / 花名册读不到 / 工作项不存在 | |
-| 工具可见性 | 实验开 / 实验关（⇒ 服务层抛 `SquadDispatchDisabledError`，工具**原样带回去**）/ port 缺 | |
-| protocol | 方法名加了且进了 schema 映射 / **只加常量不进口**（必须能咬红）| |
-| Host 侧 | 通用桥 / 手写 handler / 都没有（⇒ NEEDS_CONTEXT） | |
-| 唯一写者 | port 无写状态方法 / 有（变异必须咬红） | |
-| 重名 | 与 `Agent`/`SendMessage`/`CronCreate` 不重名 | |
+| 枚举空间              | 全集                                                                                    | 处理 / 覆盖 |
+| --------------------- | --------------------------------------------------------------------------------------- | ----------- |
+| port                  | 已注入 / 未注入 / 注入但方法抛错                                                        |             |
+| `createChildWorkItem` | 带父项 / 不带父项 / 父项不存在 / 父项已归档                                             |             |
+| `assignWorkItem`      | 队员在花名册 / 不在 / 花名册读不到 / 工作项不存在                                       |             |
+| 工具可见性            | 实验开 / 实验关（⇒ 服务层抛 `SquadDispatchDisabledError`，工具**原样带回去**）/ port 缺 |             |
+| protocol              | 方法名加了且进了 schema 映射 / **只加常量不进口**（必须能咬红）                         |             |
+| Host 侧               | 通用桥 / 手写 handler / 都没有（⇒ NEEDS_CONTEXT）                                       |             |
+| 唯一写者              | port 无写状态方法 / 有（变异必须咬红）                                                  |             |
+| 重名                  | 与 `Agent`/`SendMessage`/`CronCreate` 不重名                                            |             |
 
 逐格写「有测试 / 由类型或代码保证（哪一行）/ 不适用 + 理由」。**空缺先补。**
 
@@ -2119,7 +2312,6 @@ git commit -m "feat(squad): 队长派单工具（建子工作项 / 派给队员�
 > **⚠️ 一处口径更正（A 路复审指出，我的表述曾偏乐观）**：`completeMemberRun` 闭合的是「**台账不再停在 `open`、工作项进入 `in_review`**」，**不是**「`activeBranches` 收缩」——`produced` **仍在**活跃集（`SQUAD_RUN_ACTIVE_STATUSES` 含 `produced`），这是 §6.2 的设计（**产出后要活到合并**）。分支真正离开活跃集要等 **`merged`**（本任务的批次收尾）。⇒ **「工作树永不被回收」这条不是一处就能关掉的，它的另一半在本任务。**
 >
 > **⚠️ 一处契约收窄要通知受影响方**：A 路把 `ruleId` 加为 `HostResponseTypes.SquadWakeResult` 响应的**必填**字段（因为 `eventKey` 不含 ruleId，只按它匹配会静默错键）。该消息是本期 Produces、**Wave 2 会消费** ⇒ 按**新形**写。
-
 
 > 工作树：`.worktrees/p2b-collect`，分支 `feat/p2b-collect`。**从 A / B / C / D 四条分支合并后的顶端起**（Wave 1 全部 review-clean 之后）。
 > 本任务的存在理由：A / B / C 并行时**都不准碰** `packages/services/src/node.ts`，而「把 B 的批次编排挂上事件流」「把启动回收挂上 host 启动」恰恰落在 `node.ts` 与 `host/index.ts` 上——**这两处必须在没人并行的时候做**。
@@ -2174,7 +2366,10 @@ test("批次编排挂在 runtime 的事件出口上", () => {
 // B 的工厂若没被 re-export，host 就够不到它——而编译期不会报错（host 侧是 getOptional 式取用）。
 test("node.ts re-export 了 B 的编排工厂", () => {
   const node = read("packages/services/src/node.ts");
-  assert.match(node, /export \{ createSquadOrchestrator \} from "\.\/workitem\/squadOrchestrator\.js";/);
+  assert.match(
+    node,
+    /export \{ createSquadOrchestrator \} from "\.\/workitem\/squadOrchestrator\.js";/,
+  );
 });
 
 // 确认 2（**单点门禁**）：判据只有服务层一处，desktop 侧**一处都不许有**。
@@ -2185,7 +2380,10 @@ test("desktop 侧不读开关（门禁判据在服务层）", () => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name) && readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")) {
+      else if (
+        /\.tsx?$/.test(entry.name) &&
+        readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")
+      ) {
         hits.push(full);
       }
     }
@@ -2226,34 +2424,35 @@ export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 **（3b）`node.ts` 追加块二 —— 装配（放在 `getSquadRuntime` 定义之后、`services.register(ISquadRuntimeService, …)` 之前或紧邻）：**
 
 ```ts
-   // 批次编排的挂点：**唯一**的事件出口是 runtime.subscribeWorkItemEvents（没有第二处轮询）。
-   // 订阅必须在 runtime 第一次建好之后挂一次，故这里包在同一个懒 Promise 里；
-   // 重复挂会让同一次 child_completed 被处理两遍（两次 merge 同一分支 ⇒ 第二次撞「分支不存在」）。
-   const squadLog = createServiceLogger("squad-runtime");
-   let squadBatchWired = false;
-   const getSquadRuntimeWithBatch = async (): Promise<SquadRuntime> => {
-     const runtime = await getSquadRuntime();
-     if (!squadBatchWired) {
-       squadBatchWired = true;
-       const orchestrator = createSquadOrchestrator({ runtime });
-       runtime.subscribeWorkItemEvents((event) => {
-         // spec §5.7.3：子项**全部** category ∈ {done, closed} 才触发；判据在编排层内部
-         // （areAllChildrenTerminal），此处只做转发，不在这里再判一次（两处判据迟早分叉）。
-         if (event.kind !== "workitem.child_completed") return;
-         void orchestrator
-           .advanceAfterChildrenDone({
-             // 用 runtime 的**绑定**身份，不用事件里的值：绑定是本期唯一被校验过的 workspace 口径。
-             workspaceKey: runtime.boundWorkspace.identity,
-             parentWorkItemId: event.parentId,
-           })
-           .catch((error) =>
-             squadLog.error("小队批次收尾失败", { parentWorkItemId: event.parentId, error }),
-           );
-       });
-     }
-     return runtime;
-   };
+// 批次编排的挂点：**唯一**的事件出口是 runtime.subscribeWorkItemEvents（没有第二处轮询）。
+// 订阅必须在 runtime 第一次建好之后挂一次，故这里包在同一个懒 Promise 里；
+// 重复挂会让同一次 child_completed 被处理两遍（两次 merge 同一分支 ⇒ 第二次撞「分支不存在」）。
+const squadLog = createServiceLogger("squad-runtime");
+let squadBatchWired = false;
+const getSquadRuntimeWithBatch = async (): Promise<SquadRuntime> => {
+  const runtime = await getSquadRuntime();
+  if (!squadBatchWired) {
+    squadBatchWired = true;
+    const orchestrator = createSquadOrchestrator({ runtime });
+    runtime.subscribeWorkItemEvents((event) => {
+      // spec §5.7.3：子项**全部** category ∈ {done, closed} 才触发；判据在编排层内部
+      // （areAllChildrenTerminal），此处只做转发，不在这里再判一次（两处判据迟早分叉）。
+      if (event.kind !== "workitem.child_completed") return;
+      void orchestrator
+        .advanceAfterChildrenDone({
+          // 用 runtime 的**绑定**身份，不用事件里的值：绑定是本期唯一被校验过的 workspace 口径。
+          workspaceKey: runtime.boundWorkspace.identity,
+          parentWorkItemId: event.parentId,
+        })
+        .catch((error) =>
+          squadLog.error("小队批次收尾失败", { parentWorkItemId: event.parentId, error }),
+        );
+    });
+  }
+  return runtime;
+};
 ```
+
 （`getSquadRuntime` 仍由 Task 2 定义；本任务新增的是**带批次装配**的那层包装，`ISquadRuntimeService` 的注册仍走 `getSquadRuntime`，避免「只是为了取数就把批次层建起来」。）
 
 **（3c）`node.ts` 的 workspace 绑定（裁定 4：**不许静默取第一个**）**：实现 `resolveSquadWorkspaceBinding(candidates)`（放 `packages/desktop/src/host/` 或与调用点同处的独立小文件，**不进 `host/index.ts`**），语义逐条固定：
@@ -2278,6 +2477,7 @@ export function resolveSquadWorkspaceBinding(
   return { ...candidates[0]! };
 }
 ```
+
 并把结果传给 `createServiceCollection` 的 `squadWorkspace` 入参（Task 2 step 9 的形状）；**未绑定 ⇒ `ISquadRuntimeService` 的每个方法抛**（Task 2 已落，本任务只接线）。三条路径各有测试（`packages/desktop/test/squadWorkspaceBinding.test.ts`，用例见 Task 2 Step 3b-2）。
 
 **（3f）D 的 protocol handler 注册（**仅当 Task 6 的 Step 0 判定「Host 侧必须手写 handler」**）**：在 `host/index.ts` 的方法表里追加**一行**注册：
@@ -2288,30 +2488,31 @@ export function resolveSquadWorkspaceBinding(
    // 避免两个执行者同时改 host/index.ts。
    ...squadProtocolMethods,
 ```
+
 若 Step 0 的结论是「走通用/生成式桥」，则 **3f 整条跳过**，并在报告里写明依据（哪个包/哪个函数承的桥）。
 
 **（3d）`host/index.ts` 追加 —— 启动回收调用点：**
 
 ```ts
-  // 启动回收（spec §6.4 / §6.6）：**必须**在 database startup ready 之后、且**异步**不阻塞 UI。
-  // 为什么必须做：孤儿工作树会**占住分支**，下次同分支再建会失败 —— 清理是重派发的正确性前置。
-  // 为什么异步：它要起 git 子进程（worktree list / prune / branch -D），同步跑会顶住启动。
-  // 失败只记日志、不阻断启动（best-effort），但**不得静默吞掉**：warn 带原文。
-  void (async () => {
-    try {
-      const squadRuntime = services.getOptional(ISquadRuntimeService);
-      if (!squadRuntime) return;
-      const outcome = await squadRuntime.reapStartupOrphans();
-      logger.info("squad startup reap done", {
-        reclaimed: outcome.reclaimed.length,
-        reclaimedBranches: outcome.reclaimedBranches.length,
-        kept: outcome.kept.length,
-        foreign: outcome.foreign.length,
-      });
-    } catch (error) {
-      logger.warn("squad startup reap failed", error);
-    }
-  })();
+// 启动回收（spec §6.4 / §6.6）：**必须**在 database startup ready 之后、且**异步**不阻塞 UI。
+// 为什么必须做：孤儿工作树会**占住分支**，下次同分支再建会失败 —— 清理是重派发的正确性前置。
+// 为什么异步：它要起 git 子进程（worktree list / prune / branch -D），同步跑会顶住启动。
+// 失败只记日志、不阻断启动（best-effort），但**不得静默吞掉**：warn 带原文。
+void (async () => {
+  try {
+    const squadRuntime = services.getOptional(ISquadRuntimeService);
+    if (!squadRuntime) return;
+    const outcome = await squadRuntime.reapStartupOrphans();
+    logger.info("squad startup reap done", {
+      reclaimed: outcome.reclaimed.length,
+      reclaimedBranches: outcome.reclaimedBranches.length,
+      kept: outcome.kept.length,
+      foreign: outcome.foreign.length,
+    });
+  } catch (error) {
+    logger.warn("squad startup reap failed", error);
+  }
+})();
 ```
 
 （`reapStartupOrphans` 在 `ISquadRuntimeService` 上的入参：**不传 workspaceKey**，由服务内部用绑定的 workspace —— 让调用方没有机会传错 workspace。）
@@ -2348,14 +2549,14 @@ Expected: 全绿；输出**干净**（零 `console.log`、零 stray warning、�
 
 **② 穷举**：
 
-| 枚举空间 | 全集 | 处理 / 覆盖 |
-|---|---|---|
-| 启动状态 | 库就绪 / 未就绪 / 无 runtime / reap 抛错 | |
-| 事件 | `workitem.status_changed` / `workitem.child_completed` / 其它 | |
-| 子项状态 | 全终态 / 部分终态（**不得**触发收尾） | |
-| 门禁 | 开 / 关 / 读设置失败 | |
-| 装配顺序 | runtime 已建 / 未建（懒建路径） | |
-| 重复挂载 | 首次 / 二次（必须只挂一次） | |
+| 枚举空间 | 全集                                                          | 处理 / 覆盖 |
+| -------- | ------------------------------------------------------------- | ----------- |
+| 启动状态 | 库就绪 / 未就绪 / 无 runtime / reap 抛错                      |             |
+| 事件     | `workitem.status_changed` / `workitem.child_completed` / 其它 |             |
+| 子项状态 | 全终态 / 部分终态（**不得**触发收尾）                         |             |
+| 门禁     | 开 / 关 / 读设置失败                                          |             |
+| 装配顺序 | runtime 已建 / 未建（懒建路径）                               |             |
+| 重复挂载 | 首次 / 二次（必须只挂一次）                                   |             |
 
 逐格写结论。**空缺先补。**
 
@@ -2395,22 +2596,22 @@ git commit -m "feat(squad): 热点收口（启动回收调用点 + 批次编排�
 
 **1. Spec 覆盖**
 
-| spec 位置 | 落点 |
-|---|---|
-| §3.3 队长简报**三段**（含系统生成的 `protocol`） | Task 2（`leaderDispatch.ts` + `LEADER_PROTOCOL_TEXT` + 渲染），Task 3 用在派发桥 |
-| §5.7.1 `eventKey` 唯一构造器与两族 | Task 2（`computeEventKey`，实现 + 穷举测试），Task 3（tick 消费） |
-| §5.7.3 `children_done` 用 **category** | Task 4 B‑2（`areAllChildrenTerminal`） |
-| §5.7.4 串行合并 / 整批才合回 / 冲突 → `blocked` + Inbox | Task 4 B‑2，Task 2（`reviewMemberRun`） |
-| §5.7 第 6 项 关闭实验 = 停新派发、不中断进行中的 run | Task 2（**门禁单点 `assertDispatchEnabled` + 三入口共判 + 在途不中断**，确认 2）、Task 3（host 只调门禁）、Task 5（视图隐藏=呈现）、Task 7（静态守卫复核） |
-| §6.1 工作树是**本次运行**的属性 | Task 2（`openMemberRun` 在 host 侧按 `isLeaderTask` 决定）、Task 3 |
-| §6.2 审查被拒**不提前删** | Task 2（`reviewMemberRun` rejected 分支）、Task 4 B‑2（S5 用例） |
-| §6.3 集成分支 / D/F 安全命名 | Task 2（`slugForId` + `planBranches`）、Task 4 B‑2（`finalize` + 两条分支都删） |
-| §6.4 / §6.6 启动回收是**重派发正确性前置** | Task 2（`reapStartupOrphans`）、Task 4 B‑0（命名空间限域）、Task 7（调用点） |
-| §13 C10 排除清单集中一处 + 同时驱动两半 | Task 4 B‑1（并入 `BUILTIN_IGNORE_LINES`，从唯一来源派生） |
-| §17 表：`activeBranches` 语义 / 用户侧排除半边失效 / 三段简报 / 迁移冻结登记 | 硬约束 2（Task 2）、硬约束 3（Task 4 B‑1）、§3.3（Task 2）、Task 1 Step 3b |
-| §16 S1 / S4 / S5 / S8 / S9 / S10 / S13 / S15 / S17 | S1 → **Task 6（D 的两个工具）** + Task 3（队长被唤醒）；S4/S5/S17 → Task 4；S8/S9 → Task 5；S10 → Task 2（#9）；S13 → Task 2（`once` 幂等 + `eventKey`）；S15 → Task 2/7 |
-| §14 工具集（**前两个**：建子工作项 / 派给队员） | **Task 6（D）**；后两个（汇报 / 请求审查）留 P2c |
-| recon.md 缺口总表 11 项 | #1→T1；#2→T2；#3→T2+T5；#4→T3+T6；#5→T5；#6→T3；#7→T3；#8→T2+T4；#9→T2；#10→T1；#11→T3 |
+| spec 位置                                                                    | 落点                                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| §3.3 队长简报**三段**（含系统生成的 `protocol`）                             | Task 2（`leaderDispatch.ts` + `LEADER_PROTOCOL_TEXT` + 渲染），Task 3 用在派发桥                                                                                         |
+| §5.7.1 `eventKey` 唯一构造器与两族                                           | Task 2（`computeEventKey`，实现 + 穷举测试），Task 3（tick 消费）                                                                                                        |
+| §5.7.3 `children_done` 用 **category**                                       | Task 4 B‑2（`areAllChildrenTerminal`）                                                                                                                                   |
+| §5.7.4 串行合并 / 整批才合回 / 冲突 → `blocked` + Inbox                      | Task 4 B‑2，Task 2（`reviewMemberRun`）                                                                                                                                  |
+| §5.7 第 6 项 关闭实验 = 停新派发、不中断进行中的 run                         | Task 2（**门禁单点 `assertDispatchEnabled` + 三入口共判 + 在途不中断**，确认 2）、Task 3（host 只调门禁）、Task 5（视图隐藏=呈现）、Task 7（静态守卫复核）               |
+| §6.1 工作树是**本次运行**的属性                                              | Task 2（`openMemberRun` 在 host 侧按 `isLeaderTask` 决定）、Task 3                                                                                                       |
+| §6.2 审查被拒**不提前删**                                                    | Task 2（`reviewMemberRun` rejected 分支）、Task 4 B‑2（S5 用例）                                                                                                         |
+| §6.3 集成分支 / D/F 安全命名                                                 | Task 2（`slugForId` + `planBranches`）、Task 4 B‑2（`finalize` + 两条分支都删）                                                                                          |
+| §6.4 / §6.6 启动回收是**重派发正确性前置**                                   | Task 2（`reapStartupOrphans`）、Task 4 B‑0（命名空间限域）、Task 7（调用点）                                                                                             |
+| §13 C10 排除清单集中一处 + 同时驱动两半                                      | Task 4 B‑1（并入 `BUILTIN_IGNORE_LINES`，从唯一来源派生）                                                                                                                |
+| §17 表：`activeBranches` 语义 / 用户侧排除半边失效 / 三段简报 / 迁移冻结登记 | 硬约束 2（Task 2）、硬约束 3（Task 4 B‑1）、§3.3（Task 2）、Task 1 Step 3b                                                                                               |
+| §16 S1 / S4 / S5 / S8 / S9 / S10 / S13 / S15 / S17                           | S1 → **Task 6（D 的两个工具）** + Task 3（队长被唤醒）；S4/S5/S17 → Task 4；S8/S9 → Task 5；S10 → Task 2（#9）；S13 → Task 2（`once` 幂等 + `eventKey`）；S15 → Task 2/7 |
+| §14 工具集（**前两个**：建子工作项 / 派给队员）                              | **Task 6（D）**；后两个（汇报 / 请求审查）留 P2c                                                                                                                         |
+| recon.md 缺口总表 11 项                                                      | #1→T1；#2→T2；#3→T2+T5；#4→T3+T6；#5→T5；#6→T3；#7→T3；#8→T2+T4；#9→T2；#10→T1；#11→T3                                                                                   |
 
 **未覆盖项 → 明确属哪一期**：交付物、成本记账、GitHub PR 集成、完整父子树 UI、评论 / 活动时间线、Inbox 完整语义、渠道、AI 建 agent 向导、**§14 四个协作工具**（⇒ P2c）；多设备 / host 绑定（⇒ 不做）。见「范围」一节的表，**没有一项是漏掉而不是裁掉的**。
 
@@ -2449,6 +2650,3 @@ Task 1 Step 3b 里那次「临时写 `"0"` 取真实 checksum」是**取值的�
 4. **workspace：按目标现构、不缓存、不静默取首个（确认 3 + 裁定 4）。** runtime **不是长期单例** —— `ISquadRuntimeService` 的**每个方法第一个参数都是 `SquadWorkspaceTarget`**，服务层为该目标现构 runtime、用完即弃（对齐 F1 的 `createSquadRuntime(deps)`）。**理由已写进计划**：缓存要回答「什么时候失效」，而陈旧的表现是**在错的 workspace 上读写**；不缓存 ⇒ **无陈旧、无失效逻辑**。`runtime.boundWorkspace` 记该目标，**内部遇到异己 workspaceKey 一律抛**（带两侧值）；调用方给不出唯一目标时**拒绝并报告候选清单**（`resolveSquadWorkspaceBinding`：0 个 ⇒ 抛，> 1 个 ⇒ 抛并列出候选）。**若实现发现构造含重活**（例如构造 repo 会跑迁移），改按 `workspaceKey` 缓存**并显式登记失效面**，在报告里说明——**不得**静默退化。测试：Task 2 Step 3b-2（异己 workspaceKey / 门禁四条）+ Task 7 `squadWorkspaceBinding.test.ts`（三条）。
 
 **仍留给 P2c 的代价（不是遗漏，是裁掉了）**：多 workspace；§14 的「汇报 / 请求审查」两个工具与审查 agent（本期审查由最小视图按钮触发）；交付物 / 成本记账 / PR 集成 / 完整父子树 UI / 评论与活动时间线 / Inbox 完整语义 / 渠道 / AI 建 agent 向导；多设备与 host 绑定（不做）。
-
-
-

@@ -1,4 +1,8 @@
-import type { IServiceAccessor, ISquadRuntimeServiceShape, SquadWorkspaceTarget } from "@zcode/services";
+import type {
+  IServiceAccessor,
+  ISquadRuntimeServiceShape,
+  SquadWorkspaceTarget,
+} from "@zcode/services";
 
 /* 小队运行时在 UI 侧的**取数通路**。
 

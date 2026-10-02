@@ -17,13 +17,20 @@ const desktopSrc = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 // 生产包里**根本不会执行**——而且不报错。故把「唤醒 tick 必须挂在被 fork 的那个入口上」钉成断言。
 test("唤醒 tick 挂在被 fork 的 scheduler 入口上", () => {
   const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
-  assert.match(entry, /createWakeTick/, "scheduler 入口必须引用并启动 createWakeTick，否则生产静默不跑");
+  assert.match(
+    entry,
+    /createWakeTick/,
+    "scheduler 入口必须引用并启动 createWakeTick，否则生产静默不跑",
+  );
   assert.match(entry, /wakeTick\.run\(/, "scheduler 入口必须真的调用 wakeTick.run(...)");
 });
 
 test("fork 的模块路径指向 scheduler 入口（不是别的目录）", () => {
   const env = readFileSync(join(desktopSrc, "main/desktopRuntimeEnv.ts"), "utf8");
-  assert.match(env, /schedulerModulePath = join\(import\.meta\.dirname, "\.\.\/scheduler\/index\.js"\)/);
+  assert.match(
+    env,
+    /schedulerModulePath = join\(import\.meta\.dirname, "\.\.\/scheduler\/index\.js"\)/,
+  );
 });
 
 // recon.md 缺口 #6：唤醒规则必须接进**既有的 20 秒 tick**，不得新增第二套定时器——
@@ -64,7 +71,11 @@ test("唤醒规则每轮无条件跑 wakeTick.run（不得回到 listReady 预�
   // 逐行判 run 所在语句不得自带条件，避免「守住了常量、却把门控换个写法又溜回来」。
   const runLine = entry.slice(entry.lastIndexOf("\n", at) + 1, entry.indexOf("\n", at));
   assert.match(runLine, /await wakeTick\.run\(now\)/, "run 必须是被 await 的直接调用");
-  assert.doesNotMatch(runLine, /\bif\s*\(/, "run 不得被条件门控（预判为空即跳过会让重投/淘汰整段失效）");
+  assert.doesNotMatch(
+    runLine,
+    /\bif\s*\(/,
+    "run 不得被条件门控（预判为空即跳过会让重投/淘汰整段失效）",
+  );
 });
 
 // 唤醒规则是**同一个库的另一条连接**：与 repo / offPeakRepo 并列，各自 close，
@@ -74,7 +85,11 @@ test("唤醒规则每轮无条件跑 wakeTick.run（不得回到 listReady 预�
 test("dispose 各自 close 唤醒规则的连接", () => {
   const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
   assert.match(entry, /wakeDb\?\.close\(\)/);
-  assert.doesNotMatch(entry, /wakeRuleRepo\.close\(\)/, "WakeRuleRepo 没有 close：句柄由调度器侧关闭");
+  assert.doesNotMatch(
+    entry,
+    /wakeRuleRepo\.close\(\)/,
+    "WakeRuleRepo 没有 close：句柄由调度器侧关闭",
+  );
 });
 
 // 派发请求要经 main 转发到 host：常量与 schema 必须**两头都加**（常量 + 入口并集），
@@ -90,12 +105,20 @@ test("SquadWake 常量与 schema 都进了入口并集", () => {
     validation.indexOf("export const hostIncomingMessageSchema = z.discriminatedUnion"),
     validation.indexOf("export const hostRemoteWorkspaceConnectedResponseSchema"),
   );
-  assert.match(incoming, /hostSquadWakeMessageSchema/, "main → host 的并集必须收 hostSquadWakeMessageSchema");
+  assert.match(
+    incoming,
+    /hostSquadWakeMessageSchema/,
+    "main → host 的并集必须收 hostSquadWakeMessageSchema",
+  );
   const outgoing = validation.slice(
     validation.indexOf("export const hostResponseMessageSchema = z.discriminatedUnion"),
     validation.indexOf("export const zcodeTaskPersistStatusSchema"),
   );
-  assert.match(outgoing, /hostSquadWakeResultResponseSchema/, "host → main 的并集必须收 hostSquadWakeResultResponseSchema");
+  assert.match(
+    outgoing,
+    /hostSquadWakeResultResponseSchema/,
+    "host → main 的并集必须收 hostSquadWakeResultResponseSchema",
+  );
 });
 
 /* ── Important-B：唤醒回执必须**真的走到** scheduler ──

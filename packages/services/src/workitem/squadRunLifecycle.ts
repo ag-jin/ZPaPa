@@ -69,9 +69,7 @@ export function hasInProgressLeaderRun(
   activeRuns: readonly SquadRunRecord[],
   workItemId: string,
 ): boolean {
-  return activeRuns.some(
-    (record) => record.workItemId === workItemId && record.isLeaderTask,
-  );
+  return activeRuns.some((record) => record.workItemId === workItemId && record.isLeaderTask);
 }
 
 export interface SquadRunLifecycle {

@@ -26,25 +26,36 @@ import {
 const base = {
   // 门禁结论**由服务层给出**（本函数不读开关）：dispatchEnabled 是「服务层说可以派发」这一事实，
   // 名称刻意不叫 enabled —— 免得下一个人以为可以在这里自己读一次 appSettings。
-  dispatchEnabled: true, databaseReady: true, busy: false, kind: "leader" as const,
-  briefingPrompt: "P", memberPrompt: "P", standalonePrompt: "P", worktree: undefined,
+  dispatchEnabled: true,
+  databaseReady: true,
+  busy: false,
+  kind: "leader" as const,
+  briefingPrompt: "P",
+  memberPrompt: "P",
+  standalonePrompt: "P",
+  worktree: undefined,
 };
 
 test("服务层说门禁关 ⇒ skip，不派发", () => {
   assert.deepEqual(decideSquadDispatch({ ...base, dispatchEnabled: false }), {
-    action: "skip", reason: "disabled_by_service",
+    action: "skip",
+    reason: "disabled_by_service",
   });
 });
 
 test("数据库未就绪 ⇒ skip", () => {
   assert.deepEqual(decideSquadDispatch({ ...base, databaseReady: false }), {
-    action: "skip", reason: "not_ready",
+    action: "skip",
+    reason: "not_ready",
   });
 });
 
 // 硬约束 1：绑定会话忙 ⇒ **deferred**（等待型重投），不是失败、也不排队堆积。
 test("绑定会话忙 ⇒ defer", () => {
-  assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), { action: "defer", reason: "bound_session_busy" });
+  assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), {
+    action: "defer",
+    reason: "bound_session_busy",
+  });
 });
 
 test("开关开、库就绪、不忙 ⇒ dispatch 并带上 prompt", () => {
@@ -62,7 +73,10 @@ test("队员 run 缺 worktree ⇒ 响亮失败，不派发", () => {
 // 硬约束 1 的机器化守卫：小队派发这一支必须用**强探测**，
 // 不得照抄 off-peak 的投影判据（残留 running 行会让派发被永久卡死）。
 test("小队派发分支用的是强探测，不是 off-peak 的投影判据", () => {
-  const src = readFileSync(join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"), "utf8");
+  const src = readFileSync(
+    join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"),
+    "utf8",
+  );
   /* 2026-10-02 第 2 轮裁定把实现体抽成 `runSquadDispatch`（规则到点与队长派单**两条入口共用**），
      故这里按**结构边界**取区域（从函数签名到消息处理器之间），不再用固定字节窗口：窗口是脆的
      （原来的 6000 在 Wave 2 的追加后只剩 46 字符余量），而这条断言的本意是「派发路径用强探测」，
@@ -80,21 +94,35 @@ test("小队派发分支用的是强探测，不是 off-peak 的投影判据", (
 // desktop 侧任何一处读这个字段，都意味着判据被复制成了第二份 —— 而三份判据正是
 // 「改一处漏一处 ⇒ 关掉实验照旧派发」的形态。
 test("desktop 侧任何文件都不读 experimentalAgentSquadsEnabled", () => {
-  const desktopSrc = join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "..", "..", "..",
-    "packages", "desktop", "src");
+  const desktopSrc = join(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src"),
+    "..",
+    "..",
+    "..",
+    "packages",
+    "desktop",
+    "src",
+  );
   // 递归遍历 desktop/src，任何一个文件出现该字段即红。
   const hits: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name) && readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")) {
+      else if (
+        /\.tsx?$/.test(entry.name) &&
+        readFileSync(full, "utf8").includes("experimentalAgentSquadsEnabled")
+      ) {
         hits.push(full);
       }
     }
   };
   walk(desktopSrc);
-  assert.deepEqual(hits, [], `门禁判据只能有一处（服务层）；desktop 侧不应读取该字段：${hits.join(", ")}`);
+  assert.deepEqual(
+    hits,
+    [],
+    `门禁判据只能有一处（服务层）；desktop 侧不应读取该字段：${hits.join(", ")}`,
+  );
 });
 
 /* ── 本任务补齐的矩阵格 ── */
@@ -120,7 +148,8 @@ test("队员 run 有工作树 ⇒ dispatch，prompt 用队员文案、workspace 
   });
   assert.equal(out.action, "dispatch");
   assert.ok(out.action === "dispatch" && out.prompt === "M");
-  if (out.action === "dispatch") assert.equal(out.workspacePath, "/repo/.worktree/a", "队员在独立工作树里干活");
+  if (out.action === "dispatch")
+    assert.equal(out.workspacePath, "/repo/.worktree/a", "队员在独立工作树里干活");
 });
 
 /* ── 单独安排的智能体（spec §6.1）：直接在工作区改 ──
@@ -205,8 +234,7 @@ test("投影是 running（残留 turn 边界）但 runtime 未在执行 ⇒ 强�
 test("runtime 真在执行 ⇒ 强探测判忙 ⇒ defer", async () => {
   const probe = createBoundSessionExecutingProbe({
     agentService: {
-      readSession: async () =>
-        ({ runtime: { activeTurnId: "turn-1" }, projection: {} }) as never,
+      readSession: async () => ({ runtime: { activeTurnId: "turn-1" }, projection: {} }) as never,
     },
     logWarn: () => {},
   });
@@ -230,10 +258,10 @@ test("判定次序：not_ready ＞ disabled ＞ 队员缺树 ＞ busy ＞ dispat
     { action: "skip", reason: "disabled_by_service" },
   );
   // 队员缺树比忙更严重：忙只是「等一会」，缺树说明这次派发的配置错了（会改主工作区）。
-  assert.deepEqual(
-    decideSquadDispatch({ ...base, busy: true, kind: "member" }),
-    { action: "fail", reason: "member_run_requires_worktree" },
-  );
+  assert.deepEqual(decideSquadDispatch({ ...base, busy: true, kind: "member" }), {
+    action: "fail",
+    reason: "member_run_requires_worktree",
+  });
   assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), {
     action: "defer",
     reason: "bound_session_busy",
@@ -313,7 +341,8 @@ test("队员 run 的终态收口：真实台账行从 open 走到产出入账（
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    completeMemberRun: (settledRunId) =>
+      runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
     logInfo: (message) => logs.push(message),
     logError: (message) => logs.push(message),
   });
@@ -357,7 +386,8 @@ test("终态收口只认本次派发那一轮（inputId 不匹配 ⇒ 不结算�
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    completeMemberRun: (settledRunId) =>
+      runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: () => {},
   });
@@ -390,7 +420,8 @@ test("终态是 failed/stopped ⇒ 不入账（仍是 open），但必须响亮�
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    completeMemberRun: (settledRunId) =>
+      runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: (message) => errors.push(message),
   });
@@ -439,7 +470,8 @@ test("终态到达 ⇒ 释放订阅句柄（成功后不再累积监听器；别
         },
       };
     },
-    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    completeMemberRun: (settledRunId) =>
+      runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: () => {},
   });
@@ -478,7 +510,8 @@ test("终态是 failed/stopped（放弃收口）⇒ 同样释放订阅句柄", a
         },
       };
     },
-    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    completeMemberRun: (settledRunId) =>
+      runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: () => {},
   });
@@ -582,7 +615,8 @@ test("队长 run 的终态收口：真实台账行从 open 走到终态（merged
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    completeLeaderRun: (settledRunId) =>
+      runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
     logInfo: (message) => logs.push(message),
     logError: (message) => logs.push(message),
   });
@@ -624,7 +658,8 @@ test("队长 run 终态只认本次派发那一轮（inputId 不匹配 ⇒ 不�
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    completeLeaderRun: (settledRunId) =>
+      runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: () => {},
   });
@@ -650,7 +685,8 @@ test("队长 run 终态是 failed/stopped ⇒ 不入账（仍是 open），但�
       terminal = listener;
       return { dispose: () => {} };
     },
-    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    completeLeaderRun: (settledRunId) =>
+      runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: (message) => errors.push(message),
   });
@@ -679,7 +715,8 @@ test("队长 run 终态到达 ⇒ 释放订阅句柄（终态后不累积监听�
         },
       };
     },
-    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    completeLeaderRun: (settledRunId) =>
+      runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
     logInfo: () => {},
     logError: () => {},
   });

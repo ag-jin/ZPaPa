@@ -103,8 +103,21 @@ function snapshotWith(
   };
 }
 
-const anAgent = { id: "a1", name: "张三", systemPrompt: "", memoryScope: "project", enabled: true } as TeamAgent;
-const aSquad = { id: "s1", name: "第 1 小队", leaderAgentId: "a1", members: [{ agentId: "a1" }], instructions: {}, enabled: true } as Squad;
+const anAgent = {
+  id: "a1",
+  name: "张三",
+  systemPrompt: "",
+  memoryScope: "project",
+  enabled: true,
+} as TeamAgent;
+const aSquad = {
+  id: "s1",
+  name: "第 1 小队",
+  leaderAgentId: "a1",
+  members: [{ agentId: "a1" }],
+  instructions: {},
+  enabled: true,
+} as Squad;
 const aWorkItem = {
   id: "w1",
   workspaceIdentity: "id",
@@ -117,7 +130,21 @@ const aWorkItem = {
   properties: {},
   position: 0,
 } as WorkItem;
-const aRun = { runId: "r1", workspaceKey: "id", workspacePath: "/w/a", workItemId: "w1", parentWorkItemId: "w1", agentId: "a1", isLeaderTask: false, branch: "squad/member/r1", dirName: "r1", status: "produced", sessionId: null, createdAt: 1, updatedAt: 1 } as SquadRunRecord;
+const aRun = {
+  runId: "r1",
+  workspaceKey: "id",
+  workspacePath: "/w/a",
+  workItemId: "w1",
+  parentWorkItemId: "w1",
+  agentId: "a1",
+  isLeaderTask: false,
+  branch: "squad/member/r1",
+  dirName: "r1",
+  status: "produced",
+  sessionId: null,
+  createdAt: 1,
+  updatedAt: 1,
+} as SquadRunRecord;
 
 test("数据面：一段都没有时四段全为空", () => {
   const state = squadEntrySectionState(snapshotWith({}));
@@ -181,10 +208,14 @@ test("指派选项：归档或停用的智能体/小队不进候选", () => {
     snapshotWith({
       teamAgents: [
         anAgent,
-        { ...anAgent, id: "a2", name: "已归档" , archivedAt: 1 },
+        { ...anAgent, id: "a2", name: "已归档", archivedAt: 1 },
         { ...anAgent, id: "a3", name: "已停用", enabled: false },
       ],
-      squads: [aSquad, { ...aSquad, id: "s2", archivedAt: 1 }, { ...aSquad, id: "s3", enabled: false }],
+      squads: [
+        aSquad,
+        { ...aSquad, id: "s2", archivedAt: 1 },
+        { ...aSquad, id: "s3", enabled: false },
+      ],
     }),
   );
   assert.deepEqual(
@@ -260,7 +291,10 @@ test("错误提示：门禁拒绝按稳定码翻译成「实验已关闭」", ()
     messageId: "settings.experiments.squad.dispatchDisabled",
   });
   const codeOnly = Object.assign(new Error("boom"), { code: SQUAD_DISPATCH_DISABLED_CODE });
-  assert.equal(squadEntryErrorFeedback(codeOnly).messageId, "settings.experiments.squad.dispatchDisabled");
+  assert.equal(
+    squadEntryErrorFeedback(codeOnly).messageId,
+    "settings.experiments.squad.dispatchDisabled",
+  );
 });
 
 // 网络失败 / 未知错误：一律响亮，且**带上原始细节**，不吞错。

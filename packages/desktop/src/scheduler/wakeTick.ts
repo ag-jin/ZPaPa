@@ -327,7 +327,9 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
     // （崩溃/重启后同一格会被再判一次 fire）。
     handledFacts.add(factKey);
     firesByRule.set(rule.id, [...(firesByRule.get(rule.id) ?? []), now]);
-    deps.advance(advanced(rule, { fireCount: rule.fireCount + 1, nextFireAt: nextFireAtAfter(rule, now) }));
+    deps.advance(
+      advanced(rule, { fireCount: rule.fireCount + 1, nextFireAt: nextFireAtAfter(rule, now) }),
+    );
     const workspace = deps.resolveWorkspace?.(rule) ?? null;
     // 提供了 resolver 却解析不到工作项 ⇒ **抛**（没有目标地址的派发比不派发更糟）：
     // 消息会在入口被 schema 丢掉，用户看到的是「到点了但什么都没发生」。
@@ -351,7 +353,12 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
     deps.postRequest(request);
     // 请求已经发出 ⇒ 记进重投表（还没有到期重投：retryAt=null，等回执说失败才排期）。
     // postedAt 是 TTL 起点（这次就是「首次发出」）。
-    pending.set(pendingKey(rule.id, eventKey), { request, attempts: 0, retryAt: null, postedAt: now });
+    pending.set(pendingKey(rule.id, eventKey), {
+      request,
+      attempts: 0,
+      retryAt: null,
+      postedAt: now,
+    });
   };
 
   /**

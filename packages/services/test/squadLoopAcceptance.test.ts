@@ -12,7 +12,11 @@ import {
   type SquadDispatchRequest,
 } from "../src/workitem/squadDispatchRequests.js";
 import { createSquadOrchestrator } from "../src/workitem/squadOrchestrator.js";
-import { createSquadRuntimeService, type ISquadRuntimeService, type SquadWorkspaceTarget } from "../src/workitem/squadRuntimeService.js";
+import {
+  createSquadRuntimeService,
+  type ISquadRuntimeService,
+  type SquadWorkspaceTarget,
+} from "../src/workitem/squadRuntimeService.js";
 import { archiveSquadAndTransfer, createSquadRuntime } from "../src/workitem/squadRuntime.js";
 import { slugForId } from "../src/workitem/slug.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
@@ -139,7 +143,13 @@ async function runBridgeDispatch(
   const ledgerAction = ledgerActionForRunClass(kind);
   /* runId 取稳定量（生产取幂等键 `eventKey`）：同一 (工作项, 智能体) 的重复派发会撞台账主键 —— 与生产同形。 */
   const runId = `bridge-${item.id}-${enqueued.agentId}`;
-  records.push({ workItemId: item.id, agentId: enqueued.agentId, runClass: kind, ledgerAction, runId });
+  records.push({
+    workItemId: item.id,
+    agentId: enqueued.agentId,
+    runClass: kind,
+    ledgerAction,
+    runId,
+  });
   if (ledgerAction === "open_member_run") {
     await service.openMemberRun(target, {
       runId,
@@ -325,8 +335,11 @@ async function readRunStatus(f: Fixture, runId: string): Promise<string> {
 async function branchExists(f: Fixture, branch: string): Promise<boolean> {
   const runtime = await f.runtime();
   return (
-    (await runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], { cwd: f.repoRoot }))
-      .code === 0
+    (
+      await runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
+        cwd: f.repoRoot,
+      })
+    ).code === 0
   );
 }
 
@@ -342,7 +355,11 @@ async function readMainFile(f: Fixture, file: string): Promise<string> {
 
 /** 本仓库 `refs/heads/` 下的短分支名（排序）：用来断言「一个分支都没建 / 只多出预期那些」。 */
 async function localBranches(f: Fixture): Promise<string[]> {
-  const result = await gitAt(f.repoRoot)(["for-each-ref", "--format=%(refname:short)", "refs/heads/"]);
+  const result = await gitAt(f.repoRoot)([
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads/",
+  ]);
   assert.equal(result.code, 0, result.stderr);
   return result.stdout
     .split("\n")
@@ -374,7 +391,14 @@ function planOf(workItemId: string, agentId: string) {
 /** 队员：开树 → 在树里提交一个文件 → 上报完成（run produced、子项按机械半的 CAS 结果推进）。 */
 async function produce(
   f: Fixture,
-  input: { runId: string; childId: string; parentId: string; agentId: string; file: string; content: string },
+  input: {
+    runId: string;
+    childId: string;
+    parentId: string;
+    agentId: string;
+    file: string;
+    content: string;
+  },
 ): Promise<{ branch: string; worktreePath: string }> {
   const opened = await f.service.openMemberRun(f.target, {
     runId: input.runId,
@@ -385,7 +409,10 @@ async function produce(
   });
   writeFileSync(join(opened.worktreePath, input.file), input.content);
   const git = gitAt(opened.worktreePath);
-  for (const args of [["add", "-A"], ["commit", "-qm", `${input.agentId} work`]]) {
+  for (const args of [
+    ["add", "-A"],
+    ["commit", "-qm", `${input.agentId} work`],
+  ]) {
     const result = await git(args);
     assert.equal(result.code, 0, `${args.join(" ")} 失败: ${result.stderr}`);
   }
@@ -410,15 +437,14 @@ test("闭环S1+S2：建小队落盘、建项指派给小队、指派只发派发
   // ① 小队定义落到 <ws>/.zcode/squad/squads（读磁盘目录），成员含队长。
   const squadsDir = join(f.repoRoot, ".zcode", "squad", "squads");
   assert.deepEqual(readdirSync(squadsDir), [`${squad.id}.json`], "小队定义必须落盘到命名空间目录");
-  assert.equal(
-    squad.members[0]?.agentId,
-    leader.id,
-    "队长必须被并入 members 且置于首位",
-  );
+  assert.equal(squad.members[0]?.agentId, leader.id, "队长必须被并入 members 且置于首位");
   assert.equal(squad.members[0]?.role, "leader");
   // getSnapshot 能读到（UI 的唯一取数口）。
   const snapshot = await f.service.getSnapshot(f.target);
-  assert.ok(snapshot.squads.some((s) => s.id === squad.id), "getSnapshot 必须能读到小队");
+  assert.ok(
+    snapshot.squads.some((s) => s.id === squad.id),
+    "getSnapshot 必须能读到小队",
+  );
   assert.equal(snapshot.enabled, true);
 
   // ② 建父项（指派给**小队**）+ 子项；形状正确。
@@ -437,7 +463,10 @@ test("闭环S1+S2：建小队落盘、建项指派给小队、指派只发派发
 
   // ② 指派 = 改负责人（读库）+ 发派发事件（经唯一出口 + 常驻 hub），**不直接开 run**。
   const rowsBefore = runtime.squadRunRepo.listByParent(parent.id).length;
-  const result = await f.service.assignWorkItem(f.target, { workItemId: child.id, agentId: memberA.id });
+  const result = await f.service.assignWorkItem(f.target, {
+    workItemId: child.id,
+    agentId: memberA.id,
+  });
   assert.deepEqual(result, { assigned: true });
   const reread = (await f.runtime()).workItemRepo.get(child.id);
   assert.deepEqual(
@@ -504,7 +533,10 @@ test("闭环S3：两名队员各开一条分支/一棵工作树，分支名互�
   const root = resolveWorktreeRoot(await canonicalPath(f.repoRoot));
   assert.equal(a.worktreePath, join(root, memberDirName(planOf(child.id, memberA.id))));
   assert.equal(b.worktreePath, join(root, memberDirName(planOf(child.id, memberB.id))));
-  assert.ok(existsSync(a.worktreePath) && existsSync(b.worktreePath), "两棵工作树目录都必须在磁盘上");
+  assert.ok(
+    existsSync(a.worktreePath) && existsSync(b.worktreePath),
+    "两棵工作树目录都必须在磁盘上",
+  );
   assert.equal(
     basename(a.worktreePath),
     `${slugForId(child.id)}-${slugForId(memberA.id)}`,
@@ -512,10 +544,7 @@ test("闭环S3：两名队员各开一条分支/一棵工作树，分支名互�
   );
   // 台账两条、各绑自己的分支。
   const runRecords = (await f.runtime()).squadRunRepo.listByParent(parent.id);
-  assert.deepEqual(
-    runRecords.map((r) => r.branch).sort(),
-    [a.branch, b.branch].sort(),
-  );
+  assert.deepEqual(runRecords.map((r) => r.branch).sort(), [a.branch, b.branch].sort());
 });
 
 // 步骤 ④：审查通过 ⇒ 队员分支合进**集成分支**、主分支一个字节不动、子项 → done；打回 ⇒ 树存活、台账不推进。
@@ -584,7 +613,10 @@ test("闭环S4：审查通过只合集成分支（主分支不动）且子项 do
   assert.equal(itemStatus(runtime, parent.id), "todo", "子项没全终态 ⇒ 父项不动");
 
   // —— rejected：工作树存活、台账停在 rejected（不推进到 merged/discarded）——
-  const rejectedOutcome = await f.service.reviewMemberRun(f.target, { runId: "r-b", verdict: "rejected" });
+  const rejectedOutcome = await f.service.reviewMemberRun(f.target, {
+    runId: "r-b",
+    verdict: "rejected",
+  });
   assert.deepEqual(rejectedOutcome, { ok: true, merged: false, kept: true });
   assert.equal(await readRunStatus(f, "r-b"), "rejected");
   assert.equal(await branchExists(f, b.branch), true, "打回待修的分支必须存活到合并");
@@ -658,7 +690,10 @@ test("闭环S5+S6：批次收尾合回主分支（父项 done）→ 抛弃干净
   }
   assert.equal(existsSync(a.worktreePath), false, "抛弃后工作树目录必须消失");
   assert.equal(existsSync(b.worktreePath), false);
-  assert.deepEqual((await runtime.worktreeManager.list()).filter((e) => e.branch !== null), []);
+  assert.deepEqual(
+    (await runtime.worktreeManager.list()).filter((e) => e.branch !== null),
+    [],
+  );
 
   // ⑥ 清理是正确性前置：同一 (workItem, agent) 的分支名可**重新 add**（清理不彻底时这里会撞「分支已存在」）。
   const reopened = await f.service.openMemberRun(f.target, {
@@ -707,7 +742,11 @@ test("A. 审查判定=rejected：不建集成分支、子项不终态、树/分�
 
   assert.deepEqual(outcome, { ok: true, merged: false, kept: true });
   assert.equal(await readRunStatus(f, "r-a"), "rejected", "台账不推进（停在 rejected）");
-  assert.equal(await branchExists(f, planOf(child.id, memberA.id).integration), false, "打回不建集成分支");
+  assert.equal(
+    await branchExists(f, planOf(child.id, memberA.id).integration),
+    false,
+    "打回不建集成分支",
+  );
   assert.equal(itemStatus(runtime, child.id), "in_review", "被打回的子项不进终态");
   assert.equal(await branchExists(f, a.branch), true);
   assert.ok(existsSync(a.worktreePath));
@@ -1013,7 +1052,10 @@ test("F. 空批（无队员）⇒ 父项收口 done；activeBranches 严格由 l
   await f.drain();
 
   assert.equal(itemStatus(runtime, parent.id), "done", "空批按「批已结算」收口（读库）");
-  assert.deepEqual((await runtime.worktreeManager.list()).filter((e) => e.branch !== null), []);
+  assert.deepEqual(
+    (await runtime.worktreeManager.list()).filter((e) => e.branch !== null),
+    [],
+  );
   assert.equal(await mainSha(f), shaBefore, "空批不动主分支");
 
   // activeBranches 的唯一口径 = listActive（含 open / produced / rejected，**不含** merged / discarded）。
@@ -1057,7 +1099,11 @@ test("F. 空批（无队员）⇒ 父项收口 done；activeBranches 严格由 l
       .filter((branch): branch is string => branch !== null && branch !== "");
   const derived = await activeOf();
   const computed = await (await f2.runtime()).lifecycle.computeActiveBranches(WS);
-  assert.deepEqual([...computed].sort(), [...derived].sort(), "activeBranches 必须严格由 listActive 派生");
+  assert.deepEqual(
+    [...computed].sort(),
+    [...derived].sort(),
+    "activeBranches 必须严格由 listActive 派生",
+  );
   assert.ok(computed.includes(openRun.branch), "open 的分支在活跃集里");
   assert.ok(
     computed.includes(planOf("wi-c", memberB.id).member),
@@ -1108,7 +1154,10 @@ test("C'. failMemberRun 只接受 open：rejected / produced 一律响亮拒绝"
     "rejected 说明产出被判待修，当失败丢弃会丢掉队员的活",
   );
   await assert.rejects(f.service.failMemberRun(f.target, { runId: "nope", reason: "x" }), /nope/);
-  await assert.rejects(f.service.failMemberRun(f.target, { runId: "r-prod", reason: "  " }), /原因/);
+  await assert.rejects(
+    f.service.failMemberRun(f.target, { runId: "r-prod", reason: "  " }),
+    /原因/,
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1137,7 +1186,11 @@ test("缺陷1 修复：空批（无 run 台账行）+ 崩溃窗口 ⇒ 重驱收
   // 崩溃窗口态：唯一子项被取消（子项全终态）⇒ 空批；但没有事件驱动在本进程里跑。
   runtime.workItemService.transition("wi-c", "cancelled", "todo");
   // 先钉住前置：此刻确实**没有任何** run 台账行 —— 否则本用例证明的不是「空批」那条路径。
-  assert.equal(runtime.squadRunRepo.listByParent(parent.id).length, 0, "空批必须没有任何 run 台账行");
+  assert.equal(
+    runtime.squadRunRepo.listByParent(parent.id).length,
+    0,
+    "空批必须没有任何 run 台账行",
+  );
   assert.equal(itemStatus(runtime, parent.id), "todo", "崩溃窗口态：父项尚未被推进");
   const shaBefore = await mainSha(f);
 
@@ -1355,10 +1408,17 @@ test("缺陷2. 整批放弃机制成立，但未接到服务面/组合根（无�
   assert.equal(itemStatus(runtime, parent.id), "cancelled");
   assert.equal(await readRunStatus(f, "r-a"), "discarded");
   assert.equal(await readRunStatus(f, "r-b"), "discarded");
-  assert.equal(await branchExists(f, a.branch), false, "整批放弃 ⇒ 队员分支（含 produced / rejected）都删");
+  assert.equal(
+    await branchExists(f, a.branch),
+    false,
+    "整批放弃 ⇒ 队员分支（含 produced / rejected）都删",
+  );
   assert.equal(await branchExists(f, b.branch), false);
   assert.equal(existsSync(a.worktreePath), false);
-  assert.ok((await branchExists(f, planOf(child.id, memberA.id).integration)) === false, "集成分支也不留");
+  assert.ok(
+    (await branchExists(f, planOf(child.id, memberA.id).integration)) === false,
+    "集成分支也不留",
+  );
   assert.equal(await mainSha(f), shaBefore, "整批放弃 ⇒ 主分支一个字节都没动过");
 });
 
@@ -1467,7 +1527,10 @@ test("G2. 队长行走失败出口 ⇒ discarded；跨终态响亮抛；complete
     workItemId: parent.id,
     agentId: squad.leaderAgentId,
   });
-  assert.equal(hasInProgressLeaderRun((await f.service.getSnapshot(f.target)).runs, parent.id), true);
+  assert.equal(
+    hasInProgressLeaderRun((await f.service.getSnapshot(f.target)).runs, parent.id),
+    true,
+  );
   await f.service.failMemberRun(f.target, { runId: "r-lead-fail", reason: "队长会话终态=failed" });
   assert.equal((await requireRun(f, "r-lead-fail")).status, "discarded");
   assert.equal(
@@ -1475,7 +1538,11 @@ test("G2. 队长行走失败出口 ⇒ discarded；跨终态响亮抛；complete
     false,
     "失败收口后「进行中」必须为假（否则判据恒真）",
   );
-  assert.equal((await runtime.squadRunRepo.listByWorkItem(parent.id)).length, 1, "行仍可查（留痕不丢）");
+  assert.equal(
+    (await runtime.squadRunRepo.listByWorkItem(parent.id)).length,
+    1,
+    "行仍可查（留痕不丢）",
+  );
 
   // 跨终态：已按失败收口的 run 不得被改写成「成功」（会掩盖它当初为什么没跑完）。
   await f.service.recordLeaderRun(f.target, {
@@ -1503,7 +1570,11 @@ test("G2. 队长行走失败出口 ⇒ discarded；跨终态响亮抛；complete
     () => f.service.completeLeaderRun(f.target, { runId: "r-member-for-leader-guard" }),
     /不是队长 run/,
   );
-  assert.equal((await requireRun(f, "r-member-for-leader-guard")).status, "open", "队员行不得被改写");
+  assert.equal(
+    (await requireRun(f, "r-member-for-leader-guard")).status,
+    "open",
+    "队员行不得被改写",
+  );
   assert.ok(await branchExists(f, memberRun.branch), "队员分支仍在");
   // 未命中 runId ⇒ 响亮抛（静默 no-op 会让调用方以为收口成功）。
   await assert.rejects(
@@ -1588,7 +1659,7 @@ test("H. 三类分流：队员（树+分支+台账）/ 队长（只台账）/ �
 
   // 单独安排实体状态：**三无** —— 无台账行、无分支、无工作树（§6.1「没有合并那一步」）。
   assert.deepEqual(
-    (await runtime.squadRunRepo.listByWorkItem(solo.id)),
+    await runtime.squadRunRepo.listByWorkItem(solo.id),
     [],
     "单独安排的智能体不得有台账行（台账是小队台账）",
   );
@@ -1687,10 +1758,7 @@ test("I. 声明 member 却给不出父项证据：派发桥响亮失败，且不
   assert.equal((await runtime.worktreeManager.list()).length, treesBefore, "不得建工作树");
   assert.deepEqual(await localBranches(f), branchesBefore, "不得建分支");
   // 负责人确实改了（指派这一半已成立）—— 响亮失败只针对「派发」这一半，不是整条指派回滚。
-  assert.deepEqual(
-    runtime.workItemRepo.get("wi-arch-c")?.assignee,
-    { type: "agent", id: "ta-x" },
-  );
+  assert.deepEqual(runtime.workItemRepo.get("wi-arch-c")?.assignee, { type: "agent", id: "ta-x" });
 });
 
 // ── J：空批恢复（spec §6.2 崩溃窗口）—— 无 run 行的空批也能被重驱收尾；主分支不动；连跑两次幂等 ──
@@ -1725,7 +1793,11 @@ test("J. 空批恢复（无 run 行）：重驱 ⇒ 父项 done、主分支内�
 
   const first = await f.service.replayUnfinalizedBatches(f.target);
   assert.deepEqual(first.failures, []);
-  assert.deepEqual(first.replayed, [parent.id], "无 run 行的空批必须进入重驱视野（含「父项指派给小队」证据）");
+  assert.deepEqual(
+    first.replayed,
+    [parent.id],
+    "无 run 行的空批必须进入重驱视野（含「父项指派给小队」证据）",
+  );
   assert.equal(itemStatus(runtime, parent.id), "done", "重驱后父项确实到终态（读库）");
   assert.equal(await mainSha(f), shaBefore, "空批无成果可合 ⇒ 主分支一个字节不动");
   assert.equal(await readMainFile(f, "a.txt"), fileBefore, "主分支内容逐字节不变");

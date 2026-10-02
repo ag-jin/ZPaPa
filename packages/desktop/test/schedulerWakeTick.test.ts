@@ -218,7 +218,9 @@ test("every 族：名义时刻是持久化的 nextFireAt（网格锚点），推
 test("every 族：重启后重读持久化的排期点，名义时刻不变（不按 now 重新对齐）", async () => {
   const advanced: Array<{ nextFireAt?: number | null }> = [];
   const beforeRestart = createWakeTick({
-    listReady: () => [rule({ kind: "every", mode: "continuous", intervalSeconds: 60, nextFireAt: 1000 })],
+    listReady: () => [
+      rule({ kind: "every", mode: "continuous", intervalSeconds: 60, nextFireAt: 1000 }),
+    ],
     advance: (r) => {
       advanced.push(r);
     },
@@ -291,7 +293,9 @@ test("resolver 解析不到规则所属工作项 ⇒ 抛（响亮失败，不发
 // 否则同一格每次都会算出不同 key（正是 §5.7.1 要防的「去重静默失效」）。
 test("排期族缺名义时刻 ⇒ 抛", async () => {
   const tick = createWakeTick({
-    listReady: () => [rule({ kind: "every", mode: "continuous", intervalSeconds: 60, nextFireAt: undefined })],
+    listReady: () => [
+      rule({ kind: "every", mode: "continuous", intervalSeconds: 60, nextFireAt: undefined }),
+    ],
     advance: () => {},
     postRequest: () => {},
   });
@@ -338,7 +342,13 @@ test("瞬时失败 ⇒ 退避到期后重投**同一条**请求（同一 eventKe
   ready.length = 0;
 
   const outcome = tick.settle(
-    { ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "transient", error: "no local host available" },
+    {
+      ruleId: "w1",
+      eventKey: EVENT_KEY,
+      ok: false,
+      failureKind: "transient",
+      error: "no local host available",
+    },
     2000,
   );
   assert.deepEqual(outcome, {
@@ -373,7 +383,10 @@ test("等待型（deferred：绑定会话忙）也重投，且标成 deferred", 
   });
   await tick.run(2000);
   ready.length = 0;
-  const outcome = tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "deferred" }, 2000);
+  const outcome = tick.settle(
+    { ruleId: "w1", eventKey: EVENT_KEY, ok: false, failureKind: "deferred" },
+    2000,
+  );
   assert.equal(outcome.kind, "retry");
   assert.ok(outcome.kind === "retry" && outcome.failureKind === "deferred");
   await tick.run(32_000);
@@ -420,9 +433,16 @@ test("成功回执 ⇒ 结算并撤下重投记录", async () => {
 // 迟到的回执（重启后 / 从未发出）不当成失败，更不能拿它去重投一条来路不明的请求。
 test("找不到对应记录的迟到回执 ⇒ unknown（只留痕，不重投）", () => {
   const posts: Array<Record<string, unknown>> = [];
-  const tick = createWakeTick({ listReady: () => [], advance: () => {}, postRequest: (r) => posts.push(r) });
+  const tick = createWakeTick({
+    listReady: () => [],
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
   assert.deepEqual(
-    tick.settle({ ruleId: "w1", eventKey: "e:id:squad:wi_x:1:0", ok: false, failureKind: "transient" }, 2000),
+    tick.settle(
+      { ruleId: "w1", eventKey: "e:id:squad:wi_x:1:0", ok: false, failureKind: "transient" },
+      2000,
+    ),
     { kind: "unknown" },
   );
   assert.equal(posts.length, 0);
@@ -531,7 +551,10 @@ test("请求已发出但回执始终不来 ⇒ 到 TTL 被淘汰并交入口留�
   );
   // 实体状态断言：表里已经没有它（迟到的回执只能得到 unknown）。
   assert.deepEqual(
-    tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: true }, firedAt + WAKE_DISPATCH_PENDING_TTL_MS),
+    tick.settle(
+      { ruleId: "w1", eventKey: EVENT_KEY, ok: true },
+      firedAt + WAKE_DISPATCH_PENDING_TTL_MS,
+    ),
     { kind: "unknown" },
     "淘汰后该条目必须已从重投表移除",
   );

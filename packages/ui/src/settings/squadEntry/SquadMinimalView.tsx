@@ -8,12 +8,13 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
+import { SquadDialog, TeamAgentDialog, WorkItemDialog } from "./SquadCreateDialogs.js";
 import {
-  SquadDialog,
-  TeamAgentDialog,
-  WorkItemDialog,
-} from "./SquadCreateDialogs.js";
-import { SquadList, SquadRunList, SquadTeamAgentList, SquadWorkItemList } from "./SquadEntryLists.js";
+  SquadList,
+  SquadRunList,
+  SquadTeamAgentList,
+  SquadWorkItemList,
+} from "./SquadEntryLists.js";
 import {
   SQUAD_RUNTIME_SERVICE_UNAVAILABLE_CODE,
   resolveSquadRuntimeService,
