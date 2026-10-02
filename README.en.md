@@ -162,6 +162,26 @@ git push origin main v3.14.4
 - Windows still shows a SmartScreen warning on first run (no timestamp signature).
 - Dry run (build artifacts only, no Release): trigger `workflow_dispatch` from the Actions page; artifacts are kept for 7 days.
 
+### Preview channel
+
+For users who want new features early. With **Settings ▸ General ▸ "Receive preview updates early"** enabled the app only receives **preview** builds; disabled, it follows the stable cadence only. **Toggling takes effect immediately — no restart required.**
+
+Publishing a preview:
+
+```bash
+# 1. Set the root package.json version to a prerelease form (e.g. 3.16.4-preview.1)
+# 2. Commit, then tag and push
+git tag v3.16.4-preview.1
+git push origin main v3.16.4-preview.1
+```
+
+- The workflow detects `-preview` in the tag and marks the Release as a **Pre-release** (**not Latest**), so **users with the preview toggle off are never offered it**. Artifacts are identical in shape to a stable release: the same 10 assets, including the update manifests `latest-mac.yml` (both architectures merged) and `latest.yml`.
+- **Two disciplines** (violating either fails silently rather than erroring):
+  1. **The prerelease identifier must be exactly `preview`.** The updater selects releases and locates manifests by the tag's prerelease identifier; using `rc`/`beta` breaks both the selection filter and the manifest fallback, presenting as "the toggle is on but no preview ever arrives".
+  2. **A preview version must not outrank the next stable version.** Because `X.Y.Z-preview.N < X.Y.Z`, preview users are automatically moved back to stable once it ships. Reversed (shipping `3.17.0-preview.1`, then releasing `3.16.4` as stable) strands preview users on the preview build.
+- Acceptance: after pushing the tag, confirm the Release carries the **Pre-release badge**, is **not Latest**, and includes `latest-mac.yml`; then open `https://github.com/ag-jin/ZPaPa/releases/latest` and confirm it **still points at the stable release**.
+- Note: **already-installed stable builds (`3.16.3` and earlier) do not honour the toggle** — switching channel at runtime only exists from `3.16.4-preview.1` onward. Entering the preview channel the first time requires **installing a preview build manually once**.
+
 ### In-app auto-update
 
 All three platforms update in-app from GitHub Releases (`ag-jin/ZPaPa`): a check on startup, an hourly poll, and a "Restart to update" menu entry once the download finishes. macOS relies on the designated requirement provided by the ad-hoc signature (see above); if a build shape cannot obtain a DR, the app falls back to opening the releases page from "Check for Updates" instead of silently doing nothing.
