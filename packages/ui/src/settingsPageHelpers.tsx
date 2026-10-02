@@ -1,8 +1,11 @@
 /* oxlint-disable eslint(max-lines) -- settings helper 聚合多个设置分组；终端、网络与自动归档多侧能力暂时超过行数限制。 */
 import type {
+  ElectronReleaseChannel,
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
   LocalePreference,
+  UpdateStatePayload,
+  UpdateUpToDateNotice,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
 import {
@@ -32,6 +35,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { ProactiveSuggestionsSetting } from "@/settings/ProactiveSuggestionsSetting.js";
 import { normalizeInterfaceMode, type InterfaceMode } from "@/lib/interfaceMode.js";
+import { deriveUpdateChannelSettingsView } from "@/updateStatusModel.js";
 import {
   createSettingsPageConfig,
   resolveSettingsSectionForPlatform,
@@ -44,6 +48,53 @@ export { createSettingsPageConfig, resolveSettingsSectionForPlatform };
 
 const TASK_AUTO_ARCHIVE_DAY_OPTIONS = [3, 7, 14, 30] as const;
 const ZCODE_INTERACTION_BEHAVIOR_OPTIONS: readonly ZCodeInteractionBehavior[] = ["queue", "guide"];
+
+/**
+ * 订阅 main 的自动更新状态，取出「已应用通道」与「回不到正式版」的事实（T3 ①）。
+ *
+ * 为什么不在 renderer 里自己推导：开关值只是用户的**选择**；实际生效的通道、
+ * 以及「最新正式版号是否已追上当前预览版」只有 main 知道（见 autoUpdater 的
+ * buildUpToDateNotice，它用 semver 判定）。renderer 复刻一套版本比较只会引入分歧。
+ * 订阅必须在卸载时释放，否则设置页反复挂载会叠加监听。
+ */
+function useUpdateChannelStatus(platform: IPlatformService | undefined): {
+  appliedChannel: ElectronReleaseChannel | null;
+  upToDateNotice: UpdateUpToDateNotice | null;
+} {
+  const [state, setState] = useState<{
+    appliedChannel: ElectronReleaseChannel | null;
+    upToDateNotice: UpdateUpToDateNotice | null;
+  }>({ appliedChannel: null, upToDateNotice: null });
+
+  useEffect(() => {
+    if (!platform?.getUpdateState && !platform?.onUpdateStateChanged) {
+      return;
+    }
+
+    let disposed = false;
+    const apply = (payload: UpdateStatePayload) => {
+      if (disposed) {
+        return;
+      }
+      setState((previous) => ({
+        // 失败收敛出来的 idle 不带通道；保留上一次已知通道，避免标签闪回默认值。
+        appliedChannel:
+          payload.kind === "idle" ? (payload.channel ?? previous.appliedChannel) : previous.appliedChannel,
+        // notice 只在「已确认无更新」的 idle 上有效；离开 idle 必须清掉，否则会残留一条过时解释。
+        upToDateNotice: payload.kind === "idle" ? (payload.upToDateNotice ?? null) : null,
+      }));
+    };
+
+    void platform.getUpdateState?.().then(apply, () => {});
+    const dispose = platform.onUpdateStateChanged?.(apply);
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [platform]);
+
+  return state;
+}
 
 export function GeneralSectionContent({
   localePreference,
@@ -69,6 +120,7 @@ export function GeneralSectionContent({
   isDesktop,
   isWindowsDesktop,
   showIntegratedTerminalShell = false,
+  platform,
   setLocalePreference,
   setNotificationEnabled,
   setNotificationSoundEnabled,
@@ -173,6 +225,14 @@ export function GeneralSectionContent({
 }) {
   const { intl } = useZCodeIntl();
   const hasServices = Boolean(useOptionalServices());
+  // T3 ①：把「当前拿到的是哪条通道」接到设置页，并在「装了预览版 + 关掉开关 + 正式版号更低」
+  // 时报出原因，而不是让用户以为一切正常。
+  const updateChannelStatus = useUpdateChannelStatus(platform);
+  const updateChannelView = deriveUpdateChannelSettingsView({
+    appliedChannel: updateChannelStatus.appliedChannel,
+    receivePreviewUpdates,
+    upToDateNotice: updateChannelStatus.upToDateNotice,
+  });
   // 部分 SSR 单测会用精简 props 直接渲染本组件，新增终端设置项后旧 helper 未必同步传值。
   // 这里把运行时缺省值兜到“继承系统 profile”，避免 undefined.trim() 把无关测试打断。
   const [localTerminalFontFamily, setLocalTerminalFontFamily] = useState(terminalFontFamily);
@@ -579,6 +639,31 @@ export function GeneralSectionContent({
               description={intl.formatMessage({
                 id: "settings.receivePreviewUpdatesDescription",
               })}
+              detail={
+                <div className="space-y-1">
+                  <div className="text-ui-xs text-foreground-subtle">
+                    {intl.formatMessage({
+                      id: `settings.updateChannel.current.${updateChannelView.channel}`,
+                    })}
+                  </div>
+                  {updateChannelView.stableCatchUpPending ? (
+                    // 「关掉开关后是否真的回到正式版」必须说清：此时正式版号还没追上来，
+                    // 不允许降级使得应用暂时停在预览版。只显示「已是最新」会掩盖这件事。
+                    <div
+                      data-testid="settings-update-channel-stable-catch-up-pending"
+                      className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-ui-xs text-warning"
+                    >
+                      {intl.formatMessage(
+                        { id: "settings.updateChannel.stableCatchUpPending" },
+                        {
+                          version: updateChannelView.currentVersion ?? "",
+                          latestVersion: updateChannelView.latestChannelVersion ?? "",
+                        },
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              }
               control={
                 <Switch
                   aria-label={intl.formatMessage({ id: "settings.receivePreviewUpdates" })}

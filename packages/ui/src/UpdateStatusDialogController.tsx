@@ -62,6 +62,9 @@ export function UpdateStatusDialogController({
     progressValue,
     releaseNotesPayload: updateReleaseNotesPayload,
     skippableVersion,
+    // T3 ①：updateChannel 是 deriveUpdateStatusViewModel 已有字段，此前无消费点 ⇒ 用户看不出
+    // 自己在哪条通道。这里取出来交给弹窗渲染通道徽标。
+    updateChannel,
   } = renderedUpdateStatusViewModel;
   const localizedUpdateReleaseNotes = getLocalizedUpdateReleaseNotes(
     updateReleaseNotesPayload,
@@ -302,6 +305,7 @@ export function UpdateStatusDialogController({
       releaseDateLabel={releaseDateLabel}
       showOverlay={showOverlay}
       skippableVersion={skippableVersion}
+      updateChannel={updateChannel}
     />
   );
 }

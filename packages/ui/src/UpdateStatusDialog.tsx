@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Progress } from "@/components/ui/progress.js";
+import type { ElectronReleaseChannel } from "@zcode/shared";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import type { UpdateStatusDialogPhase } from "@/updateStatusModel.js";
 
@@ -39,6 +40,7 @@ export function UpdateStatusDialog({
   releaseDateLabel,
   showOverlay = true,
   skippableVersion,
+  updateChannel,
 }: {
   displayVersion: string;
   edgeToEdge?: boolean;
@@ -60,6 +62,8 @@ export function UpdateStatusDialog({
   releaseDateLabel: string | null;
   showOverlay?: boolean;
   skippableVersion: string | null;
+  /** 本次更新的来源通道；用于让用户看清自己拿到的是预览版还是正式版（T3 ①）。 */
+  updateChannel?: ElectronReleaseChannel;
 }) {
   const isBeforeDownload = phase === "before-download";
   const isDownloading = phase === "downloading";
@@ -117,10 +121,24 @@ export function UpdateStatusDialog({
             ) : (
               <DialogTitle className={titleClassName}>{titleContent}</DialogTitle>
             )}
-            {releaseDateLabel ? (
-              <div className="inline-flex max-w-full items-center gap-1 text-ui-xs font-normal leading-4 text-foreground-subtle">
-                <CalendarDays className="size-3 shrink-0" aria-hidden="true" />
-                <span className="truncate">{releaseDateLabel}</span>
+            {releaseDateLabel || updateChannel ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                {updateChannel ? (
+                  // T3 ①：把「本次更新来自哪条通道」显式标出来。此前 updateChannel 只算不用，
+                  // 用户看不出自己拿到的是预览版还是正式版。
+                  <span
+                    data-testid="update-status-channel-badge"
+                    className="rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground-subtle"
+                  >
+                    {intl.formatMessage({ id: `updateDialog.channel.${updateChannel}` })}
+                  </span>
+                ) : null}
+                {releaseDateLabel ? (
+                  <div className="inline-flex max-w-full items-center gap-1 text-ui-xs font-normal leading-4 text-foreground-subtle">
+                    <CalendarDays className="size-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{releaseDateLabel}</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

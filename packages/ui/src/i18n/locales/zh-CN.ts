@@ -1444,7 +1444,11 @@ const zhCN: Record<string, string> = {
   "updateDialog.restartToUpdate": "重启以更新",
   "updateDialog.skipVersion": "跳过此版本",
   "updateDialog.later": "稍后",
+  "updateDialog.channel.stable": "正式版",
+  "updateDialog.channel.preview": "预览版",
   "update.toast.upToDate": "已是最新版本 v{version}",
+  "update.toast.stableCatchUpPending":
+    "当前为预览版 v{version}，最新正式版 v{latestVersion} 号更低，暂时无法回到正式版；正式版追上后会自动升级。",
   "update.toast.available": "发现新版本 v{version}",
   "update.toast.downloading": "正在下载新版本 v{version}",
   "update.toast.alreadyDownloading": "正在下载新版本（{progress}%）",
@@ -2075,6 +2079,10 @@ const zhCN: Record<string, string> = {
   "settings.receivePreviewUpdates": "接受提前收到预览版更新",
   "settings.receivePreviewUpdatesDescription":
     "开启后将最快、提前体验新功能和改进版本，关闭后将随着版本发布节奏获得版本推送更新。",
+  "settings.updateChannel.current.stable": "当前更新通道：正式版",
+  "settings.updateChannel.current.preview": "当前更新通道：预览版",
+  "settings.updateChannel.stableCatchUpPending":
+    "当前安装的是预览版 v{version}，而最新正式版 v{latestVersion} 号更低，暂时无法自动回到正式版；需要等正式版追上方可。",
   "settings.autoDownloadAndInstallUpdates": "自动下载并安装更新",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "开启后检测到更新会自动开始下载；下载完成后，如有任务正在运行，重启更新前仍会要求确认。",
