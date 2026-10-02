@@ -10,7 +10,12 @@ import type { CreateSquadInput } from "../teams/squadService.js";
 import type { CreateTeamAgentInput } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
-import type { MemberRunRequest, OpenMemberRunResult, ReviewOutcome } from "./squadRunLifecycle.js";
+import type {
+  LeaderRunRequest,
+  MemberRunRequest,
+  OpenMemberRunResult,
+  ReviewOutcome,
+} from "./squadRunLifecycle.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
@@ -93,6 +98,33 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: MemberRunRequest,
   ): Promise<OpenMemberRunResult>;
+  /**
+   * 登记一次**队长 run**（**加法**，P2b 余项）：**只登记，不执行** —— 不开工作树、不改工作项状态。
+   *
+   * 缺口与后果：此前 `ISquadRuntimeService` 上没有队长 run 的写入口，而 `openMemberRun` 传
+   * `isLeaderTask: true` 会**照样开树**（那是给队员用的）⇒ 队长 run **完全不进台账**。后果是
+   * spec §5.7(1)「队长 run **进行中**时的重复指派合并为同一次」**没有判据**（无记录 ⇒ 无从判
+   * 「进行中」），且 `getSnapshot().runs` 永远看不见队长 run。
+   *
+   * 三条纪律（与冻结面既有形态一致）：
+   * 1. **唯一写者不变**：实现只经 `runtime.lifecycle.recordLeaderRun`（其内部只调
+   *    `squadRunRepo.insert`），调用方不得自己 INSERT（那会成为台账的第二个写者）。
+   * 2. **不越权**：不建工作树（队长在目标工作区执行，spec §6.1/§6.2）、不写工作项 `status`
+   *    （§5.7(2) 队长 run 不改父项状态）—— 见 `SquadRunLifecycle.recordLeaderRun`。
+   * 3. **不过门禁**：本方法**只登记一次已经通过门禁、即将发出的 run**，自身不开始任何派发。
+   *    门禁的唯一判据仍是 `assertDispatchEnabled`（这里不新增第二处判据）。此处**不**再判一次
+   *    也是**有意的**：切换开关与登记之间若恰好翻转，再判一次会把一条**已经在跑**的 run 挡在
+   *    台账外（「在跑但无记录」比「多一行记录」更坏 —— 后者至少能被看见）。
+   *
+   * **可区分**：队长行 `is_leader_task=1`、`branch=null`、`dir_name=null`。用 `is_leader_task`
+   * 作身份标记（`branch` 是「有没有可操作的分支」的**操作性**判据，二者不可互替 —— 见
+   * `squadOrchestrator.memberRuns` 的注释）。
+   *
+   * **「进行中」的读法**（给**重复指派合并**用，spec §5.7(1)）：`getSnapshot().runs`
+   * （= `listActive`，已含队长行、已排除终态）里按 `workItemId` + `isLeaderTask` 过滤，
+   * 命中即「该工作项有进行中的队长 run」⇒ 重复指派应合并而不是新起一次。
+   */
+  recordLeaderRun(target: SquadWorkspaceTarget, input: LeaderRunRequest): Promise<void>;
   /** run 终态（host 派发桥调用）。**不过门禁**：收尾在途 run 不属「新派发」。 */
   completeMemberRun(target: SquadWorkspaceTarget, input: { runId: string }): Promise<void>;
   /**
@@ -339,6 +371,15 @@ export function createSquadRuntimeService(deps: {
       await assertEnabled();
       const runtime = await deps.createRuntime(target);
       return runtime.lifecycle.openMemberRun(input);
+    },
+
+    /**
+     * 队长 run 的登记：**只登记不执行**（门禁理由见接口注释第 3 条 —— 本方法不过门禁）。
+     * 委托给 `lifecycle.recordLeaderRun`：台账的写入口只有生命周期这一处，服务面不做第二份拼装。
+     */
+    async recordLeaderRun(target, input) {
+      const runtime = await deps.createRuntime(target);
+      await runtime.lifecycle.recordLeaderRun(input);
     },
 
     // 以下三个**不过门禁**：收尾 / 审查 / 回收都不是「新派发」。

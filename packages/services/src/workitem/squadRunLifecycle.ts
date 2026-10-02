@@ -30,6 +30,21 @@ export type MemberRunRequest = {
 
 export type OpenMemberRunResult = { branch: string; worktreePath: string };
 
+/**
+ * 队长 run 的**登记**入参（`recordLeaderRun`）。
+ *
+ * 为什么它比 `MemberRunRequest` 少一个 `isLeaderTask`：本请求只可能是队长 run（方法名即语义），
+ * 传一个恒为 `true` 的布尔列反而是「可被传错」的口子（传 `false` 就会写出一行自称队员、
+ * 却没有工作树的台账）。`param parentWorkItemId` 可选：台账的 `parent_work_item_id` 是 NOT NULL 列，
+ * 缺省取 `workItemId` 自身——与队员 run「无父项」时的既有口径一致（`workItem.parentId ?? workItem.id`）。
+ */
+export type LeaderRunRequest = {
+  runId: string;
+  workItemId: string;
+  agentId: string;
+  parentWorkItemId?: string;
+};
+
 export type ReviewOutcome =
   | { ok: true; merged: true }
   | { ok: true; merged: false; kept: true }
@@ -37,6 +52,28 @@ export type ReviewOutcome =
 
 export interface SquadRunLifecycle {
   openMemberRun(request: MemberRunRequest): Promise<OpenMemberRunResult>;
+  /**
+   * **只登记**一次队长 run 的台账行：**不建工作树、不碰 git、不改工作项状态**。
+   *
+   * 为什么必须有它（补上「队长 run 完全不进台账」这个缺口）：
+   * spec §5.7(1) 要求「队长 run **进行中**时的重复指派**合并**为同一次（不排队堆积）」——
+   * 「进行中」这件事**没有记录就无从判定**；同理 `getSnapshot().runs` 也永远看不见队长 run
+   * （「谁在被唤醒」这一格失真）。而队长 run 不能借道 `openMemberRun`：那会连工作树一起开
+   * （机械半明文如此），而队长直接在目标工作区执行（spec §6.1/§6.2）。
+   *
+   * 与 `openMemberRun` 的关系：两者是**同一张台账的同一写者**（都只经 `squadRunRepo.insert`），
+   * 差别只在「队长不派生分支计划」⇒ `is_leader_task=1`、`branch=null`、`dir_name=null`。
+   * 队长行因此对 `computeActiveBranches` **零贡献**（它按 `branch !== null` 投影），
+   * 回收器也看不见它（它认的是工作树与分支）—— 既有的活跃集合口径与回收行为都不动。
+   *
+   * 「进行中」的读法（给重复指派合并用）：`getSnapshot().runs`（= `listActive`，已含队长行且
+   * 已排除终态）里按 `workItemId` + `isLeaderTask` 过滤，存在即「该工作项有进行中的队长 run」。
+   *
+   * 幂等口径与 `openMemberRun` 一致：同 `runId` 重复登记 ⇒ 台账**主键冲突响亮抛**
+   * （静默复用旧行会让两次 run 的成果落进同一个身份里；`runId` 取幂等键 `eventKey`，
+   * 故「同一事实重投」本就不该产生第二条 run）。
+   */
+  recordLeaderRun(request: LeaderRunRequest): Promise<void>;
   completeMemberRun(input: { runId: string }): Promise<void>;
   /** 硬约束 2 的**唯一**口径来源：未合并的队员分支（含被打回待修的）。 */
   computeActiveBranches(workspaceKey: string): Promise<string[]>;
@@ -197,6 +234,32 @@ export function createRunLifecycle(deps: {
       // 那是「这条 run 已经开过」的事实，不该被下面的失败抹掉（台账没有删除路径，也不该有）。
       const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
       return { branch: plan.member, worktreePath: memberPath };
+    },
+
+    async recordLeaderRun(request) {
+      /* **只登记**（见接口注释）：这里**没有** `branchAllocator` / `planBranches` 的任何调用，
+         也没有 `workItemService` / `squadRunRepo.setStatus` 的任何调用 —— 队长 run 不建树、
+         不改工作项状态、不改运行状态。它写下的行与队员行同在一张表、同一个写者，只在
+         `is_leader_task` / `branch` / `dir_name` 三列上可区分。
+         刻意**不**复用 `openMemberRun` 再「事后清掉树」：那会先建一棵树再删，中间任何一步失败
+         都会留下一棵无主工作树（而这次 run 本不该有树）。 */
+      const now = Date.now();
+      squadRunRepo.insert({
+        runId: request.runId,
+        workspaceKey: boundWorkspaceKey,
+        workspacePath: deps.boundWorkspace.path,
+        workItemId: request.workItemId,
+        // 缺省取自身：与队员 run「无父项」时的既有口径一致（见 `LeaderRunRequest` 注释）。
+        parentWorkItemId: request.parentWorkItemId ?? request.workItemId,
+        agentId: request.agentId,
+        isLeaderTask: true,
+        branch: null,
+        dirName: null,
+        status: "open",
+        sessionId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
     },
 
     async completeMemberRun({ runId }) {

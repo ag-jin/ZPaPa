@@ -275,3 +275,32 @@ test("规则与人发起共用 runSquadDispatch（只差 trigger），且不写�
     "指派不得要求先写一条唤醒规则（人发起豁免三道闸）",
   );
 });
+
+/* ---- P2b 余项：队长 run 的台账写入口（spec §5.7(1)：没有记录就无从判「进行中」）---- */
+
+// 派发桥必须**真的**为队长 run 登记台账行（服务面新增的 `recordLeaderRun`，**只登记不执行**）。
+// 这条是**接线守卫**：`runSquadDispatch` 未导出、无法在测试里直接驱动（导入 host/index.ts 会牵起
+// Electron 侧效应），漏接的表现是「队长 run 依旧不进台账 ⇒ §5.7(1) 的合并判据恒为假、
+// `getSnapshot().runs` 也看不见队长 run」，且**没有任何报错**（recon.md C6 的原形态）。
+test("派发桥为队长 run 登记台账行（recordLeaderRun，落在队长那一支）", () => {
+  const branch = squadDispatchBridgeSource();
+  // ① 真的调了服务面的 recordLeaderRun，且带上本次派发的身份（`runId` = `eventKey`，幂等键的稳定一半）。
+  assert.match(
+    branch,
+    /squadRuntime\.recordLeaderRun\(target, \{[\s\S]{0,200}?runId: eventKey/,
+    "队长 run 未登记台账行 —— §5.7(1) 的「进行中」判据与 getSnapshot().runs 都会继续架空",
+  );
+  // ② 必须落在**队长**那一支：形如 `if (kind === "member") { … } else { … recordLeaderRun … }`。
+  //    落错支的后果非对称：写进队员支会漏登记；让队长走 openMemberRun 会给它**开一棵树**（§6.1 落空）。
+  assert.match(
+    branch,
+    /if \(kind === "member"\) \{[\s\S]*?\}\s*else\s*\{[\s\S]{0,900}?recordLeaderRun\(target, \{/,
+    "recordLeaderRun 必须在「非队员」（队长）分支里调用",
+  );
+  // ③ 队长那一支**不得**碰 openMemberRun：openMemberRun 只该有一处调用（队员支）。
+  assert.equal(
+    (branch.match(/openMemberRun\(/g) ?? []).length,
+    1,
+    "openMemberRun 只该有一处调用（队员支）——队长走它会给队长开树",
+  );
+});

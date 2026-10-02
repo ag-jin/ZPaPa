@@ -960,3 +960,127 @@ test("每个方法都带着调用方的 target 进 createRuntime（无隐式默�
   );
   assert.deepEqual(seen, ["/tmp/alpha|alpha", "/tmp/beta|beta", "/tmp/gamma|gamma"]);
 });
+
+/* ---------- 5. 队长 run 的台账写入口（spec §5.7(1)：可查到、可判「进行中」；**只登记不执行**） ----------
+
+   缺口背景：此前服务面没有队长 run 的写入口，而 `openMemberRun` 传 `isLeaderTask: true`
+   **照样开树**（那是给队员用的）⇒ 队长 run 完全不进台账。后果是 §5.7(1)「队长 run **进行中**时
+   重复指派合并为同一次」**没有判据**（无记录 ⇒ 无从判「进行中」），且 `getSnapshot().runs`
+   永远看不见队长 run。下面四条把「登记了什么 / 不影响什么 / 怎么判进行中 / 重复怎么办」逐格钉住。 */
+
+// ① 只登记一行：无工作树、branch/dirName 为 null、isLeaderTask=true、status=open、sessionId=null；
+//    且**不改工作项状态**（§5.7(2) 队长 run 不改父项状态）—— 这正是它与 openMemberRun 的区别
+//    （后者会开树 + 派生分支 + 之后由 completeMemberRun 推工作项）。
+test("recordLeaderRun 只登记一行：无工作树，且不动工作项状态", async () => {
+  const { repoRoot, runtime } = await setup();
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "队长 run 的目标项",
+    assignee: { type: "user", id: "u1" },
+  });
+  const statusBefore = runtime.workItemRepo.get(item.id)!.status;
+  const treesBefore = (await runtime.worktreeManager.list()).length;
+
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lead-1",
+    workItemId: item.id,
+    agentId: "ta-lead",
+  });
+
+  const row = runtime.squadRunRepo.get("r-lead-1")!;
+  assert.equal(row.isLeaderTask, true); // 与队员行可区分的**身份**判据
+  assert.equal(row.branch, null); // 无工作树 ⇒ 无分支
+  assert.equal(row.dirName, null);
+  assert.equal(row.status, "open");
+  assert.equal(row.sessionId, null);
+  assert.equal(row.agentId, "ta-lead");
+  assert.equal(row.workItemId, item.id);
+  assert.equal(row.parentWorkItemId, item.id); // 缺省取自身（与队员「无父项」同口径）
+  assert.equal(row.workspaceKey, "ws");
+  assert.equal(row.workspacePath, repoRoot);
+  // 只登记不执行：一棵树都没开；工作项状态一个字节不动。
+  assert.equal((await runtime.worktreeManager.list()).length, treesBefore, "队长 run 不得开工作树");
+  assert.equal(runtime.workItemRepo.get(item.id)!.status, statusBefore, "队长 run 不改工作项状态");
+});
+
+// ② 区分 + 零污染：队长行对 activeBranches **零贡献**，回收器视它如无物（行为与「没有队长行」一致）；
+//    同父项的队员行不受任何影响（回归）。
+test("队长行对 activeBranches 零贡献；回收器视它如无物；队员行不受影响", async () => {
+  const { runtime } = await setup();
+  const member = await runtime.lifecycle.openMemberRun({
+    runId: "r-mem",
+    workItemId: "wi-mem",
+    parentWorkItemId: "wi-parent",
+    agentId: "ta-mem",
+    isLeaderTask: false,
+  });
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lead-2",
+    workItemId: "wi-lead",
+    parentWorkItemId: "wi-parent", // 与队员行同一个父项
+    agentId: "ta-lead",
+  });
+
+  // 队员行不受影响（回归）：它的 branch 照旧、仍在活跃集合里。
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches("ws"), [member.branch]);
+  // 同父项两行都在台账里，但只有队员行有分支 —— 这正是 orchestrator `memberRuns` 的判据：
+  // 本层要的是「有没有可操作的分支」这件事实，不是「谁发起的」这个身份。
+  const siblings = runtime.squadRunRepo.listByParent("wi-parent");
+  assert.equal(siblings.length, 2);
+  assert.deepEqual(
+    siblings.filter((record) => record.branch !== null).map((record) => record.runId),
+    ["r-mem"],
+  );
+  // 回收：队员树被保住（在活跃集合里），队长行不产生任何待回收物 ⇒ 结果与「只有队员行」一致。
+  const reaped = await runtime.lifecycle.reapStartupOrphans({ workspaceKey: "ws" });
+  assert.ok(reaped.kept.includes(member.worktreePath.split("/").at(-1)!));
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches("ws"), [member.branch]);
+});
+
+// ③ 可见 + 「进行中」读法：队长行进 `listActive` ⇒ `getSnapshot().runs` 里看得见；
+//    读法 = 在 `runs` 里按 `workItemId` + `isLeaderTask` 过滤（`listActive` 已排除终态）。
+//    终态（这里用失败出口把它置 discarded）⇒ 判定随之变假：判据是**活的**，不是恒真。
+test("getSnapshot().runs 可见队长行；按 workItemId+isLeaderTask 即「进行中」读法", async () => {
+  const { runtime, svc } = await controllableSetup();
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: runtime.boundWorkspace.path,
+    title: "t",
+    assignee: { type: "user", id: "u1" },
+  });
+  await svc.recordLeaderRun(target("ws"), {
+    runId: "r-lead-3",
+    workItemId: item.id,
+    agentId: "ta-lead",
+  });
+
+  const snapshot = await svc.getSnapshot(target("ws"));
+  assert.ok(
+    snapshot.runs.some((record) => record.runId === "r-lead-3" && record.isLeaderTask),
+    "getSnapshot().runs 必须看得见队长 run（此前只显示队员 run）",
+  );
+  // 读法的落点（spec §5.7(1)，给**重复指派合并**用）：该工作项有没有**未终态**的队长行。
+  const inProgress = (runs: typeof snapshot.runs): boolean =>
+    runs.some((record) => record.workItemId === item.id && record.isLeaderTask);
+  assert.equal(inProgress(snapshot.runs), true, "登记后即「进行中」");
+
+  // 终态（失败出口把该 run 移出活跃集）⇒ 同一读法必须变假。
+  await svc.failMemberRun(target("ws"), { runId: "r-lead-3", reason: "测试：模拟失败出口" });
+  const after = await svc.getSnapshot(target("ws"));
+  assert.equal(
+    inProgress(after.runs),
+    false,
+    "离开活跃集后「进行中」必须为假（否则判据恒真、重复指派被永久合并）",
+  );
+});
+
+// ④ 重复登记同 runId ⇒ **响亮抛**（与 openMemberRun 同口径，不静默复用旧行）：
+//    静默复用会让两次 run 的成果落进同一个身份里。
+test("recordLeaderRun 同 runId 重复 ⇒ 抛", async () => {
+  const { runtime } = await setup();
+  const request = { runId: "r-lead-dup", workItemId: "wi-ld", agentId: "ta-lead" };
+  await runtime.lifecycle.recordLeaderRun(request);
+  await assert.rejects(() => runtime.lifecycle.recordLeaderRun(request), /UNIQUE|run_id/);
+  assert.equal(runtime.squadRunRepo.listByWorkItem("wi-ld").length, 1);
+});
