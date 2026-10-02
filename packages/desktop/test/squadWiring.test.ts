@@ -351,19 +351,33 @@ test("派发桥按 runClass 三类分流，单独安排不开工作树、不登�
   );
 });
 
-// 「派发时的事实」必须真的被传给规划：类别由**本项的父项**判（父项被指派给小队 ⇒ 队员）。
-// 漏传的表现是「所有 agent 指派都被判成单独安排」⇒ 队员**丢失工作树隔离**（直接改主工作区）且不报错。
-test("派发桥把父项事实传给 planDispatch（类别判据的来源）", () => {
+/* 「派发时的事实」与「类别**声明**」必须**一起**进规划：类别不再由父项的有无**推断** ——
+   那条推断把「调用方漏传父项」与「本项确实不在批次里」合并成同一个 `standalone`，前者是接线缺陷
+   却被静默当成后者 ⇒ 队员**直接改主工作区**（§6.1 的隔离承诺静默落空，且不报错）。
+   三件事都要在：① 父项从**同一份快照**取；② 类别用**服务层的唯一策略** `declaredRunClassFor` 声明
+   （本层不另写一份推导）；③ 声明与事实都进 `planDispatch`（缺一或矛盾即响亮抛，见 `resolveAgentRunClass`）。 */
+test("派发桥把父项事实与类别声明一起传给 planDispatch（声明 + 校验）", () => {
   const branch = squadDispatchBridgeSource();
   assert.match(
     branch,
     /const parentWorkItem = workItem\.parentId[\s\S]{0,200}?snapshot\.workItems\.find/,
-    "父项必须从**同一份快照**取（判据只有 planDispatch 一处，本层不自己判类别）",
+    "父项必须从**同一份快照**取（快照按 workspace 过滤、且不含归档行）",
   );
   assert.match(
     branch,
-    /planDispatch\(\{[\s\S]{0,400}?parentWorkItem,/,
-    "父项事实必须传给 planDispatch，否则队员会被误判成单独安排（丢掉工作树隔离）",
+    /declaredRunClassFor\(\{[\s\S]{0,140}?parentId: workItem\.parentId,[\s\S]{0,90}?parent: parentWorkItem/,
+    "类别必须**声明**（经服务层唯一策略 declaredRunClassFor），不得在派发桥另写一份推导",
+  );
+  assert.match(
+    branch,
+    /planDispatch\(\{[\s\S]{0,200}?parentWorkItem,[\s\S]{0,300}?runClass: declaredRunClass/,
+    "父项事实与类别声明必须一起传给 planDispatch —— 漏传父项曾经会静默落成 standalone（队员丢隔离）",
+  );
+  // 反向：不得再出现「按父项有无推断类别」的旧写法（本轮修掉的那条静默缺省）。
+  assert.doesNotMatch(
+    branch,
+    /isSquadBatchChild\(/,
+    '类别推断不得回到派发桥（旧写法是 isSquadBatchChild(...) ? "member" : "standalone"）',
   );
 });
 

@@ -307,9 +307,16 @@ export type { SquadDispatchRequest } from "./workitem/squadDispatchRequests.js";
 export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
 export { decideWake } from "./workitem/wakeGuard.js";
-export { LEADER_PROTOCOL_TEXT, planDispatch } from "./workitem/leaderDispatch.js";
+export {
+  LEADER_PROTOCOL_TEXT,
+  planDispatch,
+  declaredRunClassFor,
+} from "./workitem/leaderDispatch.js";
 // 派发类别（队长 / 队员 / 单独安排）：host 派发桥按它分流，故类型要与 `planDispatch` 同源出（加法）。
 export type { RunClass } from "./workitem/leaderDispatch.js";
+// 类别**声明**的取值：调用方（host 派发桥）按 `declaredRunClassFor` 算出它再传给 `planDispatch`；
+// 声明值的类型与规划同源出，避免调用方就地抄一份联合（抄一份改了那边忘了这边不会有编译错）。
+export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";

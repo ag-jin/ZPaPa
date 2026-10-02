@@ -68,10 +68,12 @@ import {
   OffPeakModelUnavailableError,
   OffPeakPermanentDispatchError,
   planDispatch,
+  declaredRunClassFor,
   renderLeaderBriefingPrompt,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
   type SquadDispatchRequest,
+  type DeclaredRunClass,
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import {
@@ -2689,27 +2691,49 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       workItem.assignee.type === "squad"
         ? (snapshot.squads.find((candidate) => candidate.id === workItem.assignee.id) ?? null)
         : null;
-    /* **派发时的事实**（spec §6.1/§6.2）：本项的父项 —— 用来判「这是不是小队批次里的队员任务」
-       （父项被指派给小队 ⇒ 队员 ⇒ 开工作树；否则是**单独安排的智能体** ⇒ 直接在工作区改）。
-       从**同一份快照**取（`snapshot.workItems` 已按 workspace 过滤）：拿不到就是拿不到（`null`），
-       由 `planDispatch` 按「没有在批次里的证据」处理 —— 本层不自己判类别（判据只有 `planDispatch` 一处）。 */
+    /* **派发时的事实**（spec §6.1/§6.2）：本项的父项 —— 它是**校验**类别的证据（读取父项**只**为把它
+       交给 `planDispatch`，本层不自己下结论）。从**同一份快照**取（`snapshot.workItems` 已按 workspace
+       过滤、且**不含归档行**）：查不到就是 `null`，而「查不到」**不等于**「不在批次里」—— 这一格的处置
+       由 `declaredRunClassFor` + `planDispatch` 共同给出（见下）。 */
     const parentWorkItem = workItem.parentId
       ? (snapshot.workItems.find((candidate) => candidate.id === workItem.parentId) ?? null)
       : null;
+    /* 类别**声明**（复审判词的修法）：类别不再由 `planDispatch` 从「有没有父项」去**推断** —— 那样的
+       推断里，「调用方漏传父项」与「本项确实不在批次里」得到同一个结果（`standalone`），于是队员会被
+       静默降级成「直接在主工作区改」、丢掉 §6.1 的工作树隔离，且不报错。现在由本层**声明**它派的是
+       哪一类，`planDispatch` 拿 `parentWorkItem` **校验**；二者缺一或矛盾都**响亮抛**（permanent）。
+       声明什么由 `declaredRunClassFor`（服务层导出的**唯一**策略，不在本层另写一份推导）算：
+         · 顶层项（无 `parentId`）⇒ standalone；
+         · 父项被指派给小队 ⇒ member（§6.4 开独立工作树）；
+         · 父项在、负责人不是小队（普通父子层级，或批次归档后父项被转交给队长的残局）⇒ standalone；
+         · `parentId` 在、父项却查不到 ⇒ 声明 member ⇒ `planDispatch` 响亮拒绝（无法证明它不在批次里，
+           按 standalone 放行就是静默丢隔离；不猜、交给人处置）。
+       只对 `agent` 指派传：`user` / `squad` 的类别由负责人类型本身唯一决定（人不排队 / 小队即队长），
+       `runClass` 在那两支里没有信息量，传了反而误导读者。 */
+    const declaredRunClass: DeclaredRunClass | undefined =
+      workItem.assignee.type === "agent"
+        ? declaredRunClassFor({ parentId: workItem.parentId, parent: parentWorkItem })
+        : undefined;
     let events: ReturnType<typeof planDispatch>;
     try {
       events = planDispatch({
         workItem,
         squad,
         parentWorkItem,
+        ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
         trigger: msg.trigger,
         ...(ruleId !== undefined ? { ruleId } : {}),
       });
     } catch (error) {
-      /* `planDispatch` 的输入契约违例（工作项形状/小队定义不对）是**数据**问题：
-         重投同一条事实会再次撞上同一个违例 —— 按 transient 退避是空转，按 permanent 收口并留痕。
-         （只有「数据被改好」才会自愈，而那时是一条新的事实、新的 eventKey。） */
-      logger.error(`[squad] planDispatch contract violation ${triggerLabel}`, error);
+      /* `planDispatch` 的输入契约违例（工作项形状 / 小队定义不对 / **类别声明与父项事实对不上**）是
+         **数据或接线**问题：重投同一条事实会再次撞上同一个违例 —— 按 transient 退避是空转，按 permanent
+         收口并留痕。（只有「数据被改好 / 声明改对」才会自愈，而那时是一条新的事实、新的 eventKey。）
+         这里**不得**降级成任何默认类别：本条 catch 保护的正是「漏传 / 传错 ⇒ 静默按单独安排放行」
+         （那会让队员直接改主工作区、丢掉 §6.1 的隔离，且不报错）。 */
+      logger.error(
+        `[squad] planDispatch contract violation ${triggerLabel} workItem=${msg.workItemId}`,
+        error,
+      );
       return failPermanent(
         `planDispatch contract violation: ${error instanceof Error ? error.message : String(error)}`,
       );
