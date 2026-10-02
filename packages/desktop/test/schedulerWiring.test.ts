@@ -32,7 +32,39 @@ test("唤醒规则复用同一个 20s tick，没有第二套定时器", () => {
   const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
   const intervals = entry.match(/setInterval\(/g) ?? [];
   assert.equal(intervals.length, 1, "只允许唯一的 20s tick 定时器（pollTimer）");
-  assert.match(entry, /requireWakeRuleRepo\(\)\.listReady\(now, WAKE_TICK_LIMIT\)/, "tick 内必须按 limit 扫到点规则");
+  /* 「tick 内必须按 limit 扫到点规则」这条不变式仍然要守，只是**落点**从入口搬到了 `wakeTick.ts`：
+     扫描（`listReady` 的 SQL LIMIT）随判定逻辑一起下沉，入口只负责每轮把它接上
+     （见下面那条「每轮无条件跑 run」的接线守卫）。断言因此改为钉**新的真实形状** ——
+     不删守卫（不变式还在），只把它钉在逻辑真正所在的文件上。 */
+  const wakeTick = readFileSync(join(desktopSrc, "scheduler/wakeTick.ts"), "utf8");
+  assert.match(
+    wakeTick,
+    /deps\.listReady\(now, WAKE_TICK_LIMIT\)/,
+    "到点扫描必须按 WAKE_TICK_LIMIT 限幅（一次数据库异常不该拖住整个 tick）",
+  );
+});
+
+/* 唤醒规则必须**每轮无条件**跑 `wakeTick.run` —— 这是本次修复在生产中生效的关键：
+   `fire()` 是 advance-before-post，已 fire 的规则 `next_fire_at` 已前进到未来 ⇒ 安静期里
+   `listReady` 恒为空。若像基线那样「入口先按 limit 预扫一遍，为空就跳过 run」，则安静期的
+   **重投与 TTL 淘汰整段永不执行**（一条 once 规则的瞬时失败会静默丢失）。所以钉住两件事：
+   ① run 被直接 `await` 调用；② 入口里没有那层预判门控 —— 门控的**签名**就是入口直接用
+   `WAKE_TICK_LIMIT` 常量去 listReady（扫描下沉后，入口只把 `limit` 变量透传给注入的 dep）。 */
+test("唤醒规则每轮无条件跑 wakeTick.run（不得回到 listReady 预判门控）", () => {
+  const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
+  const call = "wakeTick.run(now)";
+  const at = entry.indexOf(call);
+  assert.ok(at > 0, "tick 内必须每轮调用 wakeTick.run(now)（不是靠 listReady 预判之后才调）");
+  assert.doesNotMatch(
+    entry,
+    /WAKE_TICK_LIMIT/,
+    "入口不得再按 WAKE_TICK_LIMIT 预扫：那层预判（为空即跳过 run）会让安静期的重投 / TTL 淘汰永不执行",
+  );
+  // 门控的另一种形态：把 run 包在条件里（`if (...) { await wakeTick.run(now); }`）。
+  // 逐行判 run 所在语句不得自带条件，避免「守住了常量、却把门控换个写法又溜回来」。
+  const runLine = entry.slice(entry.lastIndexOf("\n", at) + 1, entry.indexOf("\n", at));
+  assert.match(runLine, /await wakeTick\.run\(now\)/, "run 必须是被 await 的直接调用");
+  assert.doesNotMatch(runLine, /\bif\s*\(/, "run 不得被条件门控（预判为空即跳过会让重投/淘汰整段失效）");
 });
 
 // 唤醒规则是**同一个库的另一条连接**：与 repo / offPeakRepo 并列，各自 close，
