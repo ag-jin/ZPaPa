@@ -952,14 +952,14 @@ test("C'. failMemberRun 只接受 open：rejected / produced 一律响亮拒绝"
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 逆推里「必须为真」但**实测不成立**的两格（如实报，比「通过」更值钱）
+// 逆推里被验收点名的两格缺陷：缺陷 1 已**修复**（下条用例守住），缺陷 2 仍**未接线**（如实报）
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// 缺陷 1（崩溃窗口对**空批**不覆盖）：`replayUnfinalizedBatches` 的枚举判据是「台账里有本批的 run 行」
-// （`squadRuntimeService.ts:430`，刻意的取舍：否则会把普通父项也当批收口）。于是「空批（无队员 run）」
-// 在**没有事件驱动**的启动态下**不会被重驱** —— 若进程死在「取消唯一子项」与「child_completed 转发器
-// 跑完」之间，重启后父项永远停在 todo，且没有任何路径会再收它。
-test("缺陷1. 空批 + 崩溃窗口：replayUnfinalizedBatches 不重驱（无 run 台账行）⇒ 父项滞留 todo", async () => {
+// 缺陷 1 修复（崩溃窗口对**空批**的覆盖）：`replayUnfinalizedBatches` 的枚举判据**不再只依赖 run 台账行**
+// —— 补上「父项被指派给小队」这条**并列证据**（`squadRuntimeService.ts` 枚举处）。于是「空批（无队员 run）」
+// 在**没有事件驱动**的启动态下也会被重驱收尾：若进程死在「取消唯一子项」与「`child_completed` 转发器
+// 跑完收尾」之间，重启后父项不再滞留 `todo`（此前无任何恢复路径会收它）。
+test("缺陷1 修复：空批（无 run 台账行）+ 崩溃窗口 ⇒ 重驱收尾（父项 done），重复重驱幂等", async () => {
   const f = await setup({ forwardChildCompleted: false });
   const { squad } = await makeSquad(f);
   const runtime = await f.runtime();
@@ -974,18 +974,175 @@ test("缺陷1. 空批 + 崩溃窗口：replayUnfinalizedBatches 不重驱（无 
     parentId: parent.id,
     assignee: { type: "squad", id: squad.id },
   });
-  // 唯一子项被取消（子项全终态），但没有事件驱动在本进程里跑（模拟崩溃窗口）。
+  // 崩溃窗口态：唯一子项被取消（子项全终态）⇒ 空批；但没有事件驱动在本进程里跑。
   runtime.workItemService.transition("wi-c", "cancelled", "todo");
+  // 先钉住前置：此刻确实**没有任何** run 台账行 —— 否则本用例证明的不是「空批」那条路径。
+  assert.equal(runtime.squadRunRepo.listByParent(parent.id).length, 0, "空批必须没有任何 run 台账行");
+  assert.equal(itemStatus(runtime, parent.id), "todo", "崩溃窗口态：父项尚未被推进");
+  const shaBefore = await mainSha(f);
+
+  // 重驱：空批**必须**被发现并收尾（读库；这是缺陷 1 的判据）。
+  const first = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(first.failures, []);
+  assert.deepEqual(first.replayed, [parent.id], "无 run 行的空批必须进入重驱视野");
+  assert.equal(itemStatus(runtime, parent.id), "done", "重驱后父项确实到终态（读库）");
+  // 空批没有可落地的成果：不动 git、不建树。
+  assert.equal(await mainSha(f), shaBefore, "空批收尾不动主分支（无成果可合）");
+  assert.deepEqual(
+    (await runtime.worktreeManager.list()).filter((entry) => entry.branch !== null),
+    [],
+    "空批收尾不建任何工作树",
+  );
+  // 两条父项变迁事件真实发出（与事件驱动路径同形），证明走的是同一个唯一写者出口。
+  assert.deepEqual(parentStatusEvents(f, parent.id), [
+    { kind: "workitem.status_changed", id: parent.id, from: "todo", to: "in_review" },
+    { kind: "workitem.status_changed", id: parent.id, from: "in_review", to: "done" },
+  ]);
+
+  // 幂等：重复重驱不再动它（父项已终态 ⇒ 枚举处直接跳过），也不重复发事件 / 重复推进。
+  const eventsAfterFirst = parentStatusEvents(f, parent.id).length;
+  const second = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(second.replayed, [], "已结算的批不再被重驱");
+  assert.deepEqual(second.failures, []);
+  assert.equal(itemStatus(runtime, parent.id), "done");
+  assert.equal(
+    parentStatusEvents(f, parent.id).length,
+    eventsAfterFirst,
+    "重复重驱不得再发父项变迁事件（幂等）",
+  );
+  assert.equal(await mainSha(f), shaBefore);
+});
+
+// 重驱发现判据的**穷举表**（同一崩溃窗口态里放四种形状，一次跑清）：
+//  ② 有 run 行的未 finalize 批次（回归：原有视野不得丢）；
+//  ① 空批（无 run 行）—— 缺陷 1 修法纳入的新格子；
+//  ③/④ 重复重驱幂等 + 已 finalize 的批不被重驱（不误伤、不重复合并）。
+test("重驱穷举：有 run 行的未 finalize 批仍被发现（回归）+ 空批被收尾 + 重复重驱无副作用", async () => {
+  const f = await setup({ forwardChildCompleted: false });
+  const { squad, memberA, memberB } = await makeSquad(f);
+  const runtime = await f.runtime();
+
+  // —— 批 P1：有 run 台账行、子项已全终态，但没跑过收尾（崩溃窗口）——
+  const p1 = createItem(runtime, f, {
+    id: "wi-p1",
+    title: "有产出批",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const c1 = createItem(runtime, f, {
+    id: "wi-c1",
+    title: "子一",
+    parentId: p1.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  runtime.workItemService.transition(c1.id, "in_progress", "todo");
+  const a = await produce(f, {
+    runId: "r-a",
+    childId: c1.id,
+    parentId: p1.id,
+    agentId: memberA.id,
+    file: "a1.txt",
+    content: "A1\n",
+  });
+  const b = await produce(f, {
+    runId: "r-b",
+    childId: c1.id,
+    parentId: p1.id,
+    agentId: memberB.id,
+    file: "b1.txt",
+    content: "B1\n",
+  });
+  const integration = planOf(c1.id, memberA.id).integration;
+  await f.service.reviewMemberRun(f.target, { runId: "r-a", verdict: "approved" });
+  await f.service.reviewMemberRun(f.target, { runId: "r-b", verdict: "approved" });
+  assert.equal(itemStatus(runtime, c1.id), "done");
+  assert.equal(itemStatus(runtime, p1.id), "todo", "崩溃窗口态：P1 尚未被推进");
+
+  // —— 批 P2：空批（无任何 run 台账行），子项在派单前被取消 ——
+  const p2 = createItem(runtime, f, {
+    id: "wi-p2",
+    title: "空批",
+    assignee: { type: "squad", id: squad.id },
+  });
+  createItem(runtime, f, {
+    id: "wi-c2",
+    title: "空批子项",
+    parentId: p2.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  runtime.workItemService.transition("wi-c2", "cancelled", "todo");
+  assert.equal(runtime.squadRunRepo.listByParent(p2.id).length, 0, "P2 是空批：零 run 行");
+
+  // —— 第一次重驱：两条批都必须被看见 ——
+  const first = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(first.failures, []);
+  assert.deepEqual(
+    [...first.replayed].sort(),
+    ["wi-p1", "wi-p2"],
+    "有 run 行的批（回归）与空批（缺陷 1 修法）都必须进入重驱视野",
+  );
+  // P1：整批合回主分支、父项 done、队员/集成分支与工作树全清。
+  assert.equal(itemStatus(runtime, p1.id), "done", "有 run 行的批重驱后父项 done");
+  assert.equal(await readMainFile(f, "a1.txt"), "A1\n");
+  assert.equal(await readMainFile(f, "b1.txt"), "B1\n");
+  assert.equal(await readRunStatus(f, "r-a"), "discarded");
+  assert.equal(await readRunStatus(f, "r-b"), "discarded");
+  for (const branch of [a.branch, b.branch, integration]) {
+    assert.equal(await branchExists(f, branch), false, `${branch} 收尾后必须删掉`);
+  }
+  assert.equal(existsSync(a.worktreePath), false);
+  // P2：空批按「批已结算」收口 done，一个字节都不动 git。
+  assert.equal(itemStatus(runtime, p2.id), "done", "空批重驱后父项 done");
+
+  // —— 第二次重驱：两条批都已终态 ⇒ 全空（幂等：不重复合并 / 不重复推进；也已 finalize 不被误伤）——
+  const shaAfterFirst = await mainSha(f);
+  const second = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(second.replayed, [], "已 finalize 的批（含空批）不再被重驱");
+  assert.deepEqual(second.failures, []);
+  assert.equal(await mainSha(f), shaAfterFirst, "重复重驱不得再动主分支（幂等）");
+  assert.equal(itemStatus(runtime, p1.id), "done");
+  assert.equal(itemStatus(runtime, p2.id), "done");
+});
+
+// 「重驱失败**可见**」（要求 1 的响亮格）：子项已全终态、但队员 run 仍停在 `open`（完成上报丢失的残局）
+// —— 收尾会（正确地）拒绝半批。重驱**不得静默**：该批进 `failures`（逐条带原文），父项**不**被推进
+// （「永远不动」不等于「合法丢弃」—— 滞留必须可见，不能悄悄 done）。host 侧对每条 failure 记 error。
+test("重驱失败响亮：子项全终态但队员 run 停在 open ⇒ failures 逐条带原文、父项不静默推进", async () => {
+  const f = await setup({ forwardChildCompleted: false });
+  const { squad, memberA } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const child = createItem(runtime, f, {
+    id: "wi-c",
+    title: "子任务",
+    parentId: parent.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  // 开了 run（台账停在 open），但**完成上报丢失**；子项却被直接标了终态 ⇒ 状态自相矛盾（半批的形状）。
+  await f.service.openMemberRun(f.target, {
+    runId: "r-open",
+    workItemId: child.id,
+    parentWorkItemId: parent.id,
+    agentId: memberA.id,
+    isLeaderTask: false,
+  });
+  runtime.workItemService.transition(child.id, "done", "todo");
+  assert.equal(runtime.squadRunRepo.listByParent(parent.id).length, 1, "本批只有一条 open 的 run");
 
   const replay = await f.service.replayUnfinalizedBatches(f.target);
-
-  // 事实（缺陷证据）：重驱**看不见**这个空批 —— 无 run 台账行 ⇒ 直接跳过。
-  assert.deepEqual(replay.replayed, [], "无 run 台账行的空批不在重驱视野内");
-  assert.deepEqual(replay.failures, []);
+  assert.deepEqual(replay.replayed, [], "半批（队员 run 停在 open）不得被收尾");
+  assert.equal(replay.failures.length, 1, "失败必须逐条可见（不静默吞掉）");
+  assert.equal(replay.failures[0]?.parentWorkItemId, parent.id);
+  const error = replay.failures[0]?.error;
+  assert.ok(error instanceof Error, "失败必须带**原文**（原错误对象），交调用方记日志");
+  assert.match(error.message, /open/, "原文必须指出是哪条 run 卡在 open");
   assert.equal(
     itemStatus(runtime, parent.id),
     "todo",
-    "缺陷：空批在崩溃窗口下滞留 todo，没有任何恢复路径会收它（结论如实记录，不放宽实现）",
+    "重驱失败 ⇒ 父项**不**被静默推进（滞留可见，不是悄悄 done）",
   );
 });
 

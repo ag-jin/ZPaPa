@@ -199,6 +199,10 @@ export interface ISquadRuntimeService {
    * 再跑一次 `advanceAfterChildrenDone`。**幂等**（沿用编排层的 CAS / 前置读当时状态 / 重放闸）；
    * **响亮**（失败逐条留在返回值里，由调用方记日志）。不实现「重发 `child_completed`」——
    * 事件在崩溃后不会再有人重放，所以恢复动作必须是**幂等的重驱**而不是重放事件。
+   *
+   * **发现判据不得只依赖 run 台账行**（缺陷 1 的修法）：空批（无任何队员 run）在台账里没有行，
+   * 只按行找会**永远看不见它** —— 父项永久滞留 `todo`。故枚举用两条并列证据：run 台账行
+   * （有产出过的批）**或**父项被指派给小队（批次根；覆盖空批）。见实现内的详注。
    */
   replayUnfinalizedBatches(target: SquadWorkspaceTarget): Promise<BatchReplayOutcome>;
   /** 启动回收（host 启动路径调用，spec §6.4/§6.6）。**不过门禁**：清理是恢复步骤，不是新派发。 */
@@ -497,11 +501,23 @@ export function createSquadRuntimeService(deps: {
       const orchestrator = deps.createOrchestrator({ runtime });
       const replayed: string[] = [];
       const failures: Array<{ parentWorkItemId: string; error: unknown }> = [];
-      /* 枚举「可能有未收尾批次」的父项：判据是**台账里有本批的 run 行**（`listByParent` 非空），
-         而不是「父项有子项」—— 普通父项的子项全终态时 `areAllChildrenTerminal` 也为真，那不是批，
-         收尾它会把一个无关的父项直接推到 `done`（跨过它自己的验收）。 */
+      /* 枚举「可能有未收尾批次」的父项 —— 判据**不得只依赖 run 台账行**（缺陷 1 的修法）。
+         两条并列的「这是一条小队批次的根」证据，命中**任意一条**即纳入重驱：
+         (a) 台账里有本批的 run 行（`listByParent` 非空）：有队员产出过的批（**原有视野**，回归保持）；
+         (b) 本项被**指派给小队**（`assignee.type === "squad"`）：小队批次的根 —— **空批没有任何 run 行**
+             （例如唯一子项在派单前被取消）。只按 (a) 找会永远看不见它：进程死在「子项转终态」与
+             「`child_completed` 转发器跑完收尾」之间时，重启后父项**永久**停在 `todo`，
+             没有任何路径会再收它（不是报错，是**永远不动**）。
+         为什么 (b) 用「被指派给小队」而不是「父项有子项」：全仓对「本项在一支小队批次里」的判据正是
+         「父项负责人是小队」（`leaderDispatch.isSquadBatchChild`）。「子项全终态」对一个**普通父项**
+         同样为真，但收尾它会把一个无关的父项跨过自己的验收直接推到 `done` —— 必须用小队指派把它排除。
+         （普通父项只靠 `child_completed` 事件的**驱动**才会被收尾；它是事件驱动、要求「有子项**本进程内**
+         转过终态」，而重驱是**状态扫描**，会捞到历史遗留的全终态普通父项 —— 二者的差别正在这里。）
+         为什么不给空批补一条**假 run 行**：那是伪造事实，会污染 `listActive` / 活跃分支口径与回收判据
+         （一条从不存在的 run 被当成真的在跑）。缺证据时补的是**发现判据**，不是**编造台账**。 */
       for (const item of runtime.workItemRepo.listByWorkspace(workspaceKey)) {
-        if (runtime.squadRunRepo.listByParent(item.id).length === 0) continue;
+        const hasRunRows = runtime.squadRunRepo.listByParent(item.id).length > 0;
+        if (!hasRunRows && item.assignee.type !== "squad") continue;
         // 已终态 = 已结算（`done`）或已被用户取消（`cancelled`）⇒ 幂等重放应直接跳过，不动 git。
         if (isTerminalWorkItemStatus(item.status)) continue;
         // 子项没全终态 ⇒ 半批，收尾会（正确地）拒绝：这里不重驱，等下一次 `child_completed`。
