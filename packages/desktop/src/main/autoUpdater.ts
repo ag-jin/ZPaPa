@@ -61,7 +61,10 @@ let downloadingUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let downloadingUpdateChannel: ElectronReleaseChannel | null = null;
 let downloadCancellationToken: CancellationToken | null = null;
 let readyUpdateChannel: ElectronReleaseChannel | null = null;
-let pendingManifestReleaseChannelRefresh: ElectronReleaseChannel | null = null;
+// 检查在飞时拨开关只记下待应用通道；等 check 收口后由 completeAutoUpdateCheck 调回
+// refreshAutoUpdaterReleaseChannel 真正应用（旧名 pendingManifestReleaseChannelRefresh
+// 来自已废弃的平台 manifest 通道，语义已改成「待应用通道」）。
+let pendingReleaseChannelRefresh: ElectronReleaseChannel | null = null;
 let onBeforeQuitAndInstall: (() => void | Promise<void>) | undefined;
 const acknowledgedPostUpdateReleaseNotesVersions = new Set<string>();
 const cancelledDownloadTokens = new WeakSet<CancellationToken>();
@@ -310,12 +313,12 @@ function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
 
-  const pendingChannel = pendingManifestReleaseChannelRefresh;
+  const pendingChannel = pendingReleaseChannelRefresh;
   if (!pendingChannel) {
     return;
   }
 
-  pendingManifestReleaseChannelRefresh = null;
+  pendingReleaseChannelRefresh = null;
   refreshAutoUpdaterReleaseChannel(
     pendingChannel === "preview",
     `${reason} pending release channel refresh`,
@@ -796,7 +799,35 @@ async function syncAutoUpdateCheckChannelFromSettings(
   activeAutoUpdateCheckChannel = nextChannel;
 }
 
-async function applyGitHubUpdateProvider(options: InitAutoUpdaterOptions): Promise<void> {
+/**
+ * 把「通道」应用到 electron-updater 的取清单配置上。
+ *
+ * **初始化和拨开关两条路径都必须调它，且都在 `checkForUpdates()` 之前调** ——
+ * 只改设置或只清缓存都不足以让开关生效（见下）。
+ *
+ * ⚠️ `allowPrerelease` 与 `channel` 必须**成对**切换，单独改任一个都会弄坏一条通道：
+ *
+ * - **预览** ⇒ `allowPrerelease=true` + `channel="preview"`。
+ *   只置 `allowPrerelease=true` 时，GitHubProvider 在 `channel` 与版本 prerelease 段
+ *   都为 null 的前提下会取 atom feed 的**第一条且完全不筛**（GitHubProvider.js:53-56）。
+ *   仓库里 `dev` 滚动预发布每次 delete+recreate、时间最新 ⇒ 极可能就是第一条 ⇒ 去它上面
+ *   要 `latest*.yml`，而它刻意不传 ⇒ 回退仍落在同一 tag ⇒ 抛
+ *   `ERR_UPDATER_CHANNEL_FILE_NOT_FOUND`，**预览通道整体坏掉**。
+ *   置 `channel="preview"` 后，选择循环（GitHubProvider.js:58-82）按「tag 的 prerelease
+ *   标识 === 当前通道」筛选，`dev`（`semver.prerelease("dev")` 为 null）被跳过。
+ *   注意：标识必须恰为 `preview`，文件名与标识字符串绑定（事实 1 的回退前提）。
+ *
+ * - **稳定** ⇒ `allowPrerelease=false` + `channel=null`（`channel` getter 为
+ *   `updater.channel || options.channel`，置 null 即回默认 `latest*.yml`）。
+ *   若残留 `channel="preview"`，GitHubProvider 的 else 分支会去**正式版** Release 上要
+ *   `preview-mac.yml` ⇒ 404，且此时**不许回退** ⇒ **把稳定通道弄坏**。
+ *
+ * `setFeedURL` 一并放这里：它重建 provider（`clientPromise`），与通道配置同批生效，
+ * 避免 feed 与通道来自不同批次的错配。
+ * 附注：electron-updater 的 `channel` setter 会顺手把 `allowDowngrade` 置 true，
+ * 这是它与「切到更低通道」配套的既有行为；版本序语义归 T3，本任务不改它。
+ */
+function applyAutoUpdaterReleaseChannelConfig(channel: ElectronReleaseChannel): void {
   // 离线裁剪版:更新源从 ZCode 平台 manifest({endpoint}/api/v1/releases/electron/manifest)
   // 切换到 GitHub Releases。**Windows 与 macOS 都走 electron-updater 完整自动更新**
   // （mac 自 398fc33 起支持；这里配的 provider 就是它的更新源，不只是版本检查元数据）。
@@ -807,12 +838,18 @@ async function applyGitHubUpdateProvider(options: InitAutoUpdaterOptions): Promi
     owner: GITHUB_UPDATE_OWNER,
     repo: GITHUB_UPDATE_REPO,
   });
-  // 设置里的 preview 通道映射为 GitHub prerelease;stable 只看正式 Release。
-  autoUpdater.allowPrerelease =
-    (await resolveUpdateReleaseChannel(options.settingService)) === "preview";
+  const isPreview = channel === "preview";
+  autoUpdater.allowPrerelease = isPreview;
+  autoUpdater.channel = isPreview ? "preview" : null;
   logger.info(
-    `[auto-update] github provider applied platform=${getElectronReleasePlatform()} repo=${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO} prerelease=${autoUpdater.allowPrerelease}`,
+    `[auto-update] release channel applied platform=${getElectronReleasePlatform()} repo=${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO} channel=${channel} prerelease=${isPreview}`,
   );
+}
+
+async function applyGitHubUpdateProvider(options: InitAutoUpdaterOptions): Promise<void> {
+  // 冷启动：先从设置解析通道，再统一应用。await 由 initAutoUpdater 保证 —— 通道必须先于
+  // 首次 checkForUpdates 落地，否则首次检查仍用默认值（stable、不看 prerelease），开关形同虚设。
+  applyAutoUpdaterReleaseChannelConfig(await resolveUpdateReleaseChannel(options.settingService));
 }
 
 function pickFallbackReleaseNotesMarkdown(
@@ -1223,6 +1260,39 @@ async function clearSkippedUpdateVersionForManualCheck(
   }
 }
 
+/**
+ * 切换通道时清掉「按通道分键」的跳过版本记录。
+ *
+ * 理由：`skippedElectronUpdateVersions` 按 `stable | preview` 分键（validationAppSettings.ts）。
+ * 不清就会把**旧通道**里被跳过的版本带到**新通道**上继续压制 —— 用户在预览通道跳过过
+ * `3.17.0-preview.1`，切回稳定后同一串版本仍会被当成「已跳过」，表现为切换后莫名收不到更新。
+ * 通道切换等于重新关注版本流，故两个键一起清。
+ */
+function clearSkippedUpdateVersionsForChannelSwitch(reason: string): void {
+  const settingService = autoUpdaterSettingService;
+  if (!settingService) {
+    return;
+  }
+
+  void (async () => {
+    try {
+      const settings = await settingService.get();
+      const skippedVersions = settings.skippedElectronUpdateVersions;
+      if (!skippedVersions || Object.keys(skippedVersions).length === 0) {
+        return;
+      }
+
+      await settingService.update({ skippedElectronUpdateVersions: {} });
+      logger.info(`[auto-update] cleared skipped update versions on channel switch (${reason})`);
+    } catch (error) {
+      logger.warn(
+        `[auto-update] clear skipped update versions on channel switch (${reason}) failed:`,
+        error,
+      );
+    }
+  })();
+}
+
 function downloadAvailableUpdate(reason = "renderer") {
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
@@ -1409,8 +1479,9 @@ export function refreshAutoUpdaterReleaseChannel(
   if (checkForUpdatesInFlight) {
     // 用户可能在启动检查尚未完成时切换 preview 开关。
     // 不能立刻改 availableUpdateChannel，否则旧请求返回时会把旧通道的版本标成新通道；
-    // 这里只记录待刷新通道，等当前 check 收口后再重新请求 manifest。
-    pendingManifestReleaseChannelRefresh = nextChannel;
+    // 这里只记录待应用通道，等当前 check 收口后由 completeAutoUpdateCheck 调回本函数 ——
+    // 届时会**真正应用通道**（重设 allowPrerelease/channel + 清通道缓存），而不是只重跑一次 check。
+    pendingReleaseChannelRefresh = nextChannel;
     logger.info(
       `[auto-update] defer ${reason}: check already in flight, next channel=${nextChannel}`,
     );
@@ -1423,11 +1494,18 @@ export function refreshAutoUpdaterReleaseChannel(
     return;
   }
 
-  logger.info(
-    `[auto-update] ${reason}: refresh manifest channel ${currentChannel} -> ${nextChannel}`,
-  );
+  logger.info(`[auto-update] ${reason}: apply release channel ${currentChannel} -> ${nextChannel}`);
+  // 拨开关立即生效的关键：成对重设 electron-updater 的通道配置（见
+  // applyAutoUpdaterReleaseChannelConfig 的成因说明），再清掉通道相关缓存。
+  applyAutoUpdaterReleaseChannelConfig(nextChannel);
+  // availableUpdateChannel 必须跟着走：它既是「当前应期待的通道」，也被
+  // shouldIgnoreStaleAvailableUpdate 当作基准，让在途的旧通道结果被丢弃。
   availableUpdateChannel = nextChannel;
   clearAvailableUpdateState();
+  // 旧通道下已准备好的更新、以及按通道分键的跳过记录，都不属于新通道 ——
+  // 不清就会把旧通道的版本标成新通道的版本（`refreshAutoUpdaterReleaseChannel` 注释承诺过、但此前没做）。
+  clearReadyUpdateState();
+  clearSkippedUpdateVersionsForChannelSwitch(reason);
   setAutoUpdaterMenuState({ kind: "checking", enabled: false });
   const checkId = beginAutoUpdateCheck();
   autoUpdater
@@ -1521,7 +1599,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     isPackaged: app.isPackaged,
     devAutoUpdateEnabled: isDevAutoUpdateEnabled(),
     ...(process.platform === "darwin" && app.isPackaged
-      ? { macHasDesignatedRequirement: await probeMacCodeSignature(resolveMacAppBundlePath(process.execPath)) }
+      ? {
+          macHasDesignatedRequirement: await probeMacCodeSignature(
+            resolveMacAppBundlePath(process.execPath),
+          ),
+        }
       : {}),
   });
   if (!inAppAutoUpdateAvailable) {
@@ -1544,7 +1626,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
-  pendingManifestReleaseChannelRefresh = null;
+  pendingReleaseChannelRefresh = null;
   devAutoUpdateVersionOverride = null;
   availableUpdateChannel = "stable";
   clearAvailableUpdateState();
@@ -1562,7 +1644,9 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // 这里仅在 Windows 关闭“退出即自动安装”，要求用户显式点更新；其他平台保持原有行为，避免改动既有升级链路。
   autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
   autoUpdater.logger = logger;
-  void applyGitHubUpdateProvider(options);
+  // 必须先 await 完通道配置再注册/触发检查：否则首次 checkForUpdates 可能与
+  // resolveUpdateReleaseChannel 的读取竞态，用默认 stable 值发请求（拨开关前的旧缺陷形态）。
+  await applyGitHubUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string) => {
     if (checkForUpdatesInFlight) {
