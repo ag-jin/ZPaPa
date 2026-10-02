@@ -4,6 +4,7 @@ import * as nodeModule from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { PlatformChannels } from "@zcode/shared";
 
 /**
  * T2 的证据（验收本体见 docs/superpowers/plans/2026-10-02-preview-update-channel.md 第四、五节）。
@@ -11,11 +12,13 @@ import { fileURLToPath } from "node:url";
  * 要拦的缺陷都是「静态可见 + 拨了不生效」这一类：
  *  - 开关拨了，`allowPrerelease`/`channel` 没重设 ⇒ 界面变了、过滤没变，须重启（缺口 A）；
  *  - 切通道清缓存漏项 ⇒ 旧通道版本被标成新通道；
- *  - 冷启动 provider 未 await 完就检查 ⇒ 首次检查用默认值。
+ *  - 冷启动 provider 未 await 完就检查 ⇒ 首次检查用默认值；
+ *  - 在「检查在飞 / 下载中 / 已下载待安装」时拨开关被**静默早退吞掉**（T2b 缺口）：
+ *    不得什么都不做就当成功，必须记下待应用通道并在阻塞解除后真正应用。
  *
  * 因为 autoUpdater.ts 顶层 import electron 具名导出（纯 Node 下 `electron` 只解析成路径字符串），
  * 直接 import 会失败。这里按仓库既有做法用 `module.registerHooks`（同步钩子，无需额外 CLI flag）
- * 就地替换 electron / electron-updater / logger / manifestUpdateProvider，从而能对
+ * 就地替换 electron / electron-updater / logger，从而能对
  * **真实的 autoUpdater.ts 行为**做断言，而不只是读源码文本。
  * 另有一小组源码接线守卫（与 schedulerWiring.test.ts 同源），用于钉住无法从外部观测的
  * 模块内私有缓存（readyUpdateVersion / availableUpdateChannel）。
@@ -41,7 +44,8 @@ type FakeUpdater = {
   channel: string | null;
   setFeedURL: (options: unknown) => void;
   checkForUpdates: () => Promise<unknown>;
-  on: (...args: unknown[]) => void;
+  downloadUpdate: () => Promise<unknown>;
+  on: (event: string, listener: (payload: unknown) => void) => void;
   autoDownload?: boolean;
   autoInstallOnAppQuit?: boolean;
   logger?: unknown;
@@ -50,6 +54,9 @@ type FakeUpdater = {
 // 「下一次 checkForUpdates 挂起」开关：用来复现「检查在飞时拨开关」。
 let pendingCheckMode = false;
 let resolvePendingCheck: (() => void) | null = null;
+
+// 事件监听器：initAutoUpdater 通过 on() 注册，用例通过 emit() 推进状态机。
+const eventListeners = new Map<string, Array<(payload: unknown) => void>>();
 
 const fakeUpdater: FakeUpdater = {
   _allowPrerelease: false,
@@ -81,10 +88,22 @@ const fakeUpdater: FakeUpdater = {
     }
     return Promise.resolve(null);
   },
-  on() {
-    // initAutoUpdater 注册事件监听；本文件的用例不 emit 事件。
+  downloadUpdate() {
+    calls.push("downloadUpdate");
+    // 故意保持挂起：真实下载要等 download-progress/update-downloaded 事件推动状态，
+    // 若这里 resolve，downloadAvailableUpdate 的 .finally 会清掉 downloadCancellationToken，
+    // 后续 download-progress 事件会被当成「陈旧进度」丢弃，测不到下载态。
+    return new Promise<void>(() => {});
+  },
+  on(event: string, listener: (payload: unknown) => void) {
+    const listeners = eventListeners.get(event) ?? [];
+    listeners.push(listener);
+    eventListeners.set(event, listeners);
   },
 };
+
+/** IPC handler：入口与真实运行一致（下载/取消都由真实 IPC 通道触发，而非直接调私有函数）。 */
+const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 const electronStub = {
   app: {
@@ -100,7 +119,9 @@ const electronStub = {
     getFocusedWindow: () => null,
   },
   ipcMain: {
-    handle() {},
+    handle(channel: string, handler: (...args: unknown[]) => unknown) {
+      ipcHandlers.set(channel, handler);
+    },
     on() {},
   },
   Menu: { getApplicationMenu: () => null, buildFromTemplate: () => ({}) },
@@ -126,13 +147,14 @@ export default stub;
 `,
   "stub:electron-updater": `
 export default globalThis.__zcodeFakeUpdaterModule;
-export class CancellationToken {}
+export class CancellationToken {
+  cancelled = false;
+  cancel() { this.cancelled = true; }
+  dispose() {}
+}
 `,
   "stub:logger": `
 export const logger = { info() {}, warn() {}, error() {}, debug() {} };
-`,
-  "stub:manifest": `
-export function getElectronReleasePlatform() { return "mac"; }
 `,
 };
 
@@ -146,9 +168,6 @@ nodeModule.registerHooks({
     }
     if (specifier === "./logger.js") {
       return { url: "stub:logger", shortCircuit: true };
-    }
-    if (specifier === "./manifestUpdateProvider.js") {
-      return { url: "stub:manifest", shortCircuit: true };
     }
     return nextResolve(specifier, context);
   },
@@ -167,12 +186,28 @@ const autoUpdaterModulePromise = import("../src/main/autoUpdater.ts");
 
 const flush = () => new Promise<void>((resolveFlush) => setImmediate(resolveFlush));
 
+/** 推一条 electron-updater 事件，驱动真实状态机（与主进程运行期同一条路径）。 */
+function emit(event: string, payload?: unknown): void {
+  for (const listener of eventListeners.get(event) ?? []) {
+    listener(payload);
+  }
+}
+
+function invokeIpc(channel: string): unknown {
+  const handler = ipcHandlers.get(channel);
+  assert.ok(handler, `未注册 IPC handler：${channel}`);
+  return handler();
+}
+
 function resetFake(): void {
   fakeUpdater._allowPrerelease = false;
   fakeUpdater._channel = null;
   pendingCheckMode = false;
   resolvePendingCheck = null;
   calls.length = 0;
+  // 监听器/handler 属于「上一次 initAutoUpdater」，清掉避免跨用例重复触发。
+  eventListeners.clear();
+  ipcHandlers.clear();
 }
 
 function createSettingService(
@@ -404,4 +439,114 @@ test("接线守卫｜冷启动 await 通道配置早于 startup 检查", () => {
   assert.equal(source.includes("void applyGitHubUpdateProvider"), false);
   assert.ok(startupIndex >= 0, "找不到 startup 检查触发点");
   assert.ok(applyIndex < startupIndex, "通道配置必须在 startup 检查之前完成");
+});
+
+/* --------------- 事情一：阻塞态下拨开关不得被静默吞掉 --------------- */
+
+test("S1(2)｜下载中拨开关：记待应用通道（不改通道、不打断下载），取消下载后真正应用", async () => {
+  const { initAutoUpdater, refreshAutoUpdaterReleaseChannel, getAutoUpdaterState } =
+    await autoUpdaterModulePromise;
+  resetFake();
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: false }) as never,
+  });
+  await flush();
+
+  // 经真实事件 + 真实 IPC 入口驱动到「下载中」，不直接调私有函数。
+  emit("update-available", { version: "3.20.0", files: [{ url: "x.zip", sha512: "h" }] });
+  await flush();
+  invokeIpc(PlatformChannels.DownloadUpdate);
+  emit("download-progress", { percent: 10, transferred: 1, total: 10, bytesPerSecond: 1 });
+  await flush();
+  assert.equal(getAutoUpdaterState().kind, "download-progress", "前置：应处于「下载中」");
+
+  refreshAutoUpdaterReleaseChannel(true, "test toggle on while downloading");
+  await flush();
+  assert.equal(fakeUpdater.allowPrerelease, false, "下载中不得立刻改通道（会抽走在途下载的产物）");
+  assert.equal(fakeUpdater.channel, null);
+  assert.equal(
+    getAutoUpdaterState().kind,
+    "download-progress",
+    "下载中拨开关不得把下载打断（旧实现静默早退，也同时吞掉了这次拨动）",
+  );
+
+  // 取消下载是真实恢复路径：状态离开阻塞态 ⇒ 待应用通道必须真正落地。
+  invokeIpc(PlatformChannels.CancelUpdateDownload);
+  await flush();
+  assert.equal(
+    fakeUpdater.allowPrerelease,
+    true,
+    "阻塞解除后必须应用待处理通道（恢复静默早退 ⇒ 这里必红）",
+  );
+  assert.equal(fakeUpdater.channel, "preview");
+});
+
+test("S1(2)｜已下载待安装时拨开关：记待应用通道，就绪被放弃后真正应用", async () => {
+  const { initAutoUpdater, refreshAutoUpdaterReleaseChannel, getAutoUpdaterState } =
+    await autoUpdaterModulePromise;
+  resetFake();
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: false }) as never,
+  });
+  await flush();
+
+  emit("update-downloaded", { version: "3.21.0" });
+  await flush();
+  assert.equal(getAutoUpdaterState().kind, "update-downloaded", "前置：应处于「已就绪」");
+
+  refreshAutoUpdaterReleaseChannel(true, "test toggle on while ready");
+  await flush();
+  assert.equal(fakeUpdater.channel, null, "已就绪时不得立刻改通道（会丢弃已下载的安装包）");
+  assert.equal(
+    getAutoUpdaterState().kind,
+    "update-downloaded",
+    "就绪态拨开关不得被打断",
+  );
+
+  // 就绪被放弃（staging / 安装失败）是真实恢复路径 ⇒ 待应用通道必须落地。
+  emit("error", new Error("staging failed"));
+  await flush();
+  assert.equal(
+    fakeUpdater.allowPrerelease,
+    true,
+    "就绪被放弃后必须应用待处理通道（恢复静默早退 ⇒ 这里必红）",
+  );
+  assert.equal(fakeUpdater.channel, "preview");
+});
+
+test("接线守卫｜待应用通道有唯一落地入口，且状态收口点会尝试落地", () => {
+  const source = readFileSync(autoUpdaterSourcePath, "utf8");
+
+  // 落地入口唯一：三处阻塞态判定收敛在一个函数里，避免某条恢复路径漏判。
+  assert.equal(
+    (source.match(/function isReleaseChannelChangeBlocked\(/g) ?? []).length,
+    1,
+    "阻塞判定必须唯一",
+  );
+  assert.equal(
+    (source.match(/function tryApplyPendingReleaseChannelRefresh\(/g) ?? []).length,
+    1,
+    "落地入口必须唯一",
+  );
+
+  // 状态收口点（menuState 变更的唯一出口）会尝试落地 —— 否则「下载中/已就绪」的 pending
+  // 只能靠某一条具体恢复分支去清，漏一条就是静默吞掉。
+  const stateBlock = readTopLevelBlock(source, "function setAutoUpdaterMenuState(");
+  assert.match(stateBlock, /tryApplyPendingReleaseChannelRefresh\(/);
+  // refresh 在阻塞时只记 pending、不得再出现旧的静默早退日志。
+  const refreshBlock = readTopLevelBlock(
+    source,
+    "export function refreshAutoUpdaterReleaseChannel(",
+  );
+  assert.match(refreshBlock, /pendingReleaseChannelRefresh = nextChannel/);
+  assert.doesNotMatch(refreshBlock, /skip .*state=\$\{menuState\.kind\}/);
+});
+
+test("接线守卫｜未签名 mac 的「打开发布页」回退随当前通道指向", () => {
+  const source = readFileSync(autoUpdaterSourcePath, "utf8");
+
+  // 旧的固定 /releases/latest 会把预览用户送到正式版页，必须消失。
+  assert.doesNotMatch(source, /GITHUB_RELEASES_PAGE_URL/, "固定发布页常量必须删除");
+  const fallbackBlock = readTopLevelBlock(source, "export function checkForUpdateMenuClick(");
+  assert.match(fallbackBlock, /getGitHubReleasesPageUrl\(\)/, "回退必须走随通道选择的 URL helper");
 });

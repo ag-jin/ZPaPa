@@ -16,10 +16,15 @@ import {
 import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import { execFile } from "node:child_process";
 import pkg, { CancellationToken } from "electron-updater";
-import { parseMacDesignatedRequirement, resolveMacAppBundlePath, shouldUseInAppAutoUpdate } from "./autoUpdatePolicy.js";
+import {
+  getElectronReleasePlatform,
+  parseMacDesignatedRequirement,
+  resolveGitHubReleasesPageUrl,
+  resolveMacAppBundlePath,
+  shouldUseInAppAutoUpdate,
+} from "./autoUpdatePolicy.js";
 import semver from "semver";
 import { logger } from "./logger.js";
-import { getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 const { autoUpdater } = pkg;
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -34,7 +39,6 @@ const AUTO_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 //  运行期判定见 autoUpdatePolicy.ts。）
 const GITHUB_UPDATE_OWNER = "ag-jin";
 const GITHUB_UPDATE_REPO = "ZPaPa";
-const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
 const UPDATE_FEED_URL_ENV = "ZCODE_UPDATE_FEED_URL";
 const UPDATE_FEED_URL_SWITCH = "--zcode-update-feed-url";
 const DEV_AUTO_UPDATE_ENV = "ZCODE_AUTO_UPDATE_DEV";
@@ -61,9 +65,10 @@ let downloadingUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let downloadingUpdateChannel: ElectronReleaseChannel | null = null;
 let downloadCancellationToken: CancellationToken | null = null;
 let readyUpdateChannel: ElectronReleaseChannel | null = null;
-// 检查在飞时拨开关只记下待应用通道；等 check 收口后由 completeAutoUpdateCheck 调回
-// refreshAutoUpdaterReleaseChannel 真正应用（旧名 pendingManifestReleaseChannelRefresh
-// 来自已废弃的平台 manifest 通道，语义已改成「待应用通道」）。
+// 拨开关时若通道**此刻不能安全落地**（检查在飞 / 正在下载 / 已下载待安装），只记下待应用
+// 通道，绝不静默丢弃这次拨动：等阻塞解除后由 tryApplyPendingReleaseChannelRefresh 真正应用
+// （重设 allowPrerelease/channel + 清通道缓存）。判定与落地见 isReleaseChannelChangeBlocked
+// 与 tryApplyPendingReleaseChannelRefresh 的注释。
 let pendingReleaseChannelRefresh: ElectronReleaseChannel | null = null;
 let onBeforeQuitAndInstall: (() => void | Promise<void>) | undefined;
 const acknowledgedPostUpdateReleaseNotesVersions = new Set<string>();
@@ -303,6 +308,46 @@ function beginAutoUpdateCheck(): number {
   return activeAutoUpdateCheckId;
 }
 
+/**
+ * 通道变更此刻是否被阻塞 —— 三种状态下不能立刻把新通道写进 electron-updater：
+ *
+ * - **检查在飞**：旧请求返回时会把旧通道的版本标成新通道（见 refreshAutoUpdaterReleaseChannel）。
+ * - **下载中**：在途下载的产物属于**旧通道**，此刻重设 allowPrerelease/channel 并清缓存，
+ *   等于把用户正在下载的东西从脚下抽走。
+ * - **已下载待安装**：已就绪的安装包同理属于旧通道，不该因为一次拨动就被丢弃。
+ *
+ * 三种情况一律「记下待应用通道、等解除后再应用」，故统一收敛到这一个判定里 ——
+ * 分散写会让某条恢复路径漏判，表现成拨了开关却永远不生效（静默吞掉）。
+ */
+function isReleaseChannelChangeBlocked(): boolean {
+  return (
+    checkForUpdatesInFlight ||
+    menuState.kind === "download-progress" ||
+    menuState.kind === "update-downloaded"
+  );
+}
+
+/**
+ * 把「待应用通道」真正落地 —— **唯一落地入口**。
+ *
+ * 仍在阻塞态时保留 pending，交由下一次状态收敛再试；因此拨动只会**延后**到安全时刻
+ * （检查收口、下载失败/取消/被跳过、就绪态被安装或放弃），绝不会被静默吞掉。
+ * 返回是否本轮真的应用了，便于日志与测试区分「延后」与「落地」。
+ */
+function tryApplyPendingReleaseChannelRefresh(reason: string): boolean {
+  const pendingChannel = pendingReleaseChannelRefresh;
+  if (!pendingChannel || isReleaseChannelChangeBlocked()) {
+    return false;
+  }
+
+  pendingReleaseChannelRefresh = null;
+  refreshAutoUpdaterReleaseChannel(
+    pendingChannel === "preview",
+    `${reason} pending release channel refresh`,
+  );
+  return true;
+}
+
 function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
   if (checkId !== null && activeAutoUpdateCheckId !== checkId) {
     return;
@@ -313,16 +358,8 @@ function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
 
-  const pendingChannel = pendingReleaseChannelRefresh;
-  if (!pendingChannel) {
-    return;
-  }
-
-  pendingReleaseChannelRefresh = null;
-  refreshAutoUpdaterReleaseChannel(
-    pendingChannel === "preview",
-    `${reason} pending release channel refresh`,
-  );
+  // 检查收口是一个落地时机；但若此刻正在下载/已就绪，pending 会被保留到那一态解除。
+  tryApplyPendingReleaseChannelRefresh(reason);
 }
 
 function finishAutoUpdateCheck(reason: string, checkId: number | null): void {
@@ -621,6 +658,11 @@ function setAutoUpdaterMenuState(nextState: AutoUpdaterMenuState) {
   for (const listener of autoUpdaterStateListeners) {
     listener(menuState);
   }
+
+  // 单一收口点：状态每离开「下载中 / 已就绪」一次，就尝试把拨开关时记下的待应用通道落地。
+  // 放在这里而不是逐条恢复分支里，是为了不漏任何一条恢复路径（下载失败、取消、跳过、
+  // 就绪被放弃…）—— 漏一条就等于静默吞掉一次拨动。阻塞中（含检查在飞）时本调用是无害 no-op。
+  tryApplyPendingReleaseChannelRefresh("menu state settled");
 }
 
 function findLiveWindowByWebContentsId(webContentsId: number | null) {
@@ -793,8 +835,9 @@ async function syncAutoUpdateCheckChannelFromSettings(
       `[auto-update] ${reason}: check channel ${availableUpdateChannel} -> ${nextChannel}`,
     );
   }
-  // 服务端 manifest provider 会在 checkForUpdates 内部读取 preview 设置。
-  // 如果 begin 阶段仍用默认 stable 作为 expected channel，冷启动 preview 结果会被误判为 stale。
+  // 通道已由 applyAutoUpdaterReleaseChannelConfig 在 check 之前落到 electron-updater 上；
+  // 这里再把簿记的 expected channel 对齐到设置值 —— 若 begin 阶段仍用默认 stable 作为
+  // expected channel，冷启动的 preview 结果会被 shouldIgnoreStaleAvailableUpdate 误判成 stale。
   availableUpdateChannel = nextChannel;
   activeAutoUpdateCheckChannel = nextChannel;
 }
@@ -1471,19 +1514,15 @@ export function refreshAutoUpdaterReleaseChannel(
     return;
   }
 
-  if (menuState.kind === "download-progress" || menuState.kind === "update-downloaded") {
-    logger.info(`[auto-update] skip ${reason}: state=${menuState.kind} channel=${nextChannel}`);
-    return;
-  }
-
-  if (checkForUpdatesInFlight) {
-    // 用户可能在启动检查尚未完成时切换 preview 开关。
-    // 不能立刻改 availableUpdateChannel，否则旧请求返回时会把旧通道的版本标成新通道；
-    // 这里只记录待应用通道，等当前 check 收口后由 completeAutoUpdateCheck 调回本函数 ——
-    // 届时会**真正应用通道**（重设 allowPrerelease/channel + 清通道缓存），而不是只重跑一次 check。
+  if (isReleaseChannelChangeBlocked()) {
+    // 用户可能在**启动检查尚未完成**、**正在下载**或**已下载待安装**时切换 preview 开关。
+    // 此刻不能安全落地（原因见 isReleaseChannelChangeBlocked），但**不能静默丢弃**这次拨动 ——
+    // 那会让界面开关变了、通道却永远不换，与「开启后将最快体验」的当下时态矛盾。
+    // 这里只记录待应用通道，等阻塞解除后由 tryApplyPendingReleaseChannelRefresh 真正应用
+    // （重设 allowPrerelease/channel + 清通道缓存），而不是只重跑一次 check。
     pendingReleaseChannelRefresh = nextChannel;
     logger.info(
-      `[auto-update] defer ${reason}: check already in flight, next channel=${nextChannel}`,
+      `[auto-update] defer ${reason}: state=${menuState.kind} inFlight=${checkForUpdatesInFlight}, next channel=${nextChannel}`,
     );
     return;
   }
@@ -1976,6 +2015,22 @@ export function requestForceAutoUpdate(
   };
 }
 
+/**
+ * 「打开发布页」回退该指向的 URL —— 随**当前已应用**通道走。
+ *
+ * 判据取 `autoUpdater.allowPrerelease`（applyAutoUpdaterReleaseChannelConfig 刚写下的真值），
+ * 而不是 `availableUpdateChannel`：后者是菜单/状态簿记，冷启动首次 check 落地前仍是初始
+ * `"stable"`，会让预览用户也被送到正式版页（页面选择本身的成因见 autoUpdatePolicy 的
+ * resolveGitHubReleasesPageUrl 注释）。
+ */
+function getGitHubReleasesPageUrl(): string {
+  return resolveGitHubReleasesPageUrl(
+    GITHUB_UPDATE_OWNER,
+    GITHUB_UPDATE_REPO,
+    autoUpdater.allowPrerelease ? "preview" : "stable",
+  );
+}
+
 export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
   logger.info("[auto-update] user clicked Check for Updates");
 
@@ -2013,11 +2068,13 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
   if (!inAppAutoUpdateAvailable) {
     // 已打包但判定不支持应用内更新（例如未签名/异常构建）。不能静默留在状态机里 ——
     // 那会让用户点了「检查更新」没有任何反应。打开发布页是这类环境的正规出口。
-    logger.warn("[auto-update] in-app update unavailable: open releases page instead");
-    void shell.openExternal(GITHUB_RELEASES_PAGE_URL);
+    // 页面随当前通道选（预览用户必须看得到 prerelease），理由见 getGitHubReleasesPageUrl。
+    const releasesPageUrl = getGitHubReleasesPageUrl();
+    logger.warn(`[auto-update] in-app update unavailable: open releases page ${releasesPageUrl}`);
+    void shell.openExternal(releasesPageUrl);
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "open-page",
-      url: GITHUB_RELEASES_PAGE_URL,
+      url: releasesPageUrl,
     } satisfies UpdateCheckResultPayload);
     return;
   }
