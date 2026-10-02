@@ -49,6 +49,21 @@ export const LEADER_PROTOCOL_TEXT = [
   "8. 工作树与分支在**合并后**才抛弃；未合并就删 = 丢掉一个队员的活。",
 ].join("\n");
 
+/**
+ * 一次 run 的**类别**（spec §6.1「是否开工作树是**本次运行**的属性」的三分）：
+ *
+ * · `leader`     —— 队长 run：在**目标工作区**执行（不开工作树）；仍需一条台账行（§5.7(1) 判「进行中」）。
+ * · `member`     —— 小队**队员** run：开**独立工作树 + 独立分支**（§6.4），登记台账行，产出活到合并（§6.2）。
+ * · `standalone` —— **单独安排的智能体**（不在任何小队里）：**直接在工作区改** —— 不开工作树、不开分支、
+ *                   **没有合并那一步**（§6.1）⇒ 也就没有孤儿要回收。
+ *
+ * 为什么必须是**显式字段**、而不是让消费者去猜（复审判词）：派发结果里唯一带 `squadId` 的是队长，
+ * 其余两类此前**没有任何可分辨的字段** —— 于是消费者只能按「非队长 ⇒ 开树」处理，把单独安排的智能体
+ * 也塞进了一条分支。那条分支**永不合并、也永不被回收**（`activeBranches` 只覆盖小队命名空间），
+ * 而且全程**不报错**。用 `squadId` 的有无代替判别就是一条隐式契约：谁一改就漂移，故这里写成**必填**。
+ */
+export type RunClass = "leader" | "member" | "standalone";
+
 /** 派发事件：`run.enqueued` 起一次运行；`inbox.notified` 是**跳过**（进 Inbox 等人处理）；
     `wake.rule_fired` 是规则触发的留痕（幂等键 `(workItemId, ruleId, revision, eventKey)` 的一半，§3.9）。 */
 export type DispatchEvent =
@@ -56,7 +71,10 @@ export type DispatchEvent =
       kind: "run.enqueued";
       workItemId: string;
       agentId: string;
+      /** 历史字段，机械半与既有消费者仍读它；与 `runClass` 恒等（`=== "leader"`）。**新增不替换**。 */
       isLeaderTask: boolean;
+      /** 本次 run 的**类别**（见 `RunClass`）：消费者据此分流，**不得**再靠 `squadId` 的有无去猜。 */
+      runClass: RunClass;
       squadId?: string;
       briefing?: SquadBriefing;
     }
@@ -66,6 +84,19 @@ export type DispatchEvent =
 export function planDispatch(input: {
   workItem: WorkItem;
   squad: Squad | null;
+  /**
+   * **派发时的事实**（加法，spec §6.1/§6.2）：本工作项的**父项**。用来判「这是不是一支小队批次里的
+   * 队员任务」——队长用 `squad.createChildWorkItem` 建出的子项**总是挂在「指派给小队的那条父项」之下**
+   * （工具的 modelInstructions 明文要求「Always pass the parent work item id you were given」）。
+   *
+   * 为什么判别必须来自这个事实、而不是触发来源：§5.5 让「队长派单」与「人手动触发」走**同一条**
+   * 派发路径（`trigger: "user"`）⇒ 来源分不出「队员」与「单独安排」；而「本项在不在小队批次里」是
+   * **工作项自身的事实**，与谁触发无关（规则触发一条队员子项时它仍是队员 ⇒ 必须开树）。
+   *
+   * 省略 / `null`（没给 / 本来就没有父项）= **没有「在批次里」的证据** ⇒ 判 `standalone`
+   * （方向性理由见 `isSquadBatchChild`）。既有调用方不传时编译与行为都不变（**加法**）。
+   */
+  parentWorkItem?: WorkItem | null;
   trigger: "user" | "leader" | "rule";
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
@@ -101,14 +132,19 @@ export function planDispatch(input: {
       events.push(notify(workItem.id, "工作项指派给人：不排队起 run，进 Inbox 等人处理"));
       break;
 
-    /* 显式指派单个智能体：起一次普通 run。不挂队长标记、也不夹带花名册简报——
-       否则接到简报的普通智能体会以为自己该去派单。 */
+    /* 显式指派单个智能体（spec §5.6 `@` ≠ 指派）。这里要分**两类**，判别来自**派发时的事实**
+       （spec §6.2：是否开工作树是**本次运行**的属性），不能事后猜：
+        · 本项**在小队批次里**（父项被指派给小队 ⇒ 它是队长派给队员的子任务）⇒ `member`：
+          开独立工作树 + 独立分支（§6.4），产出活到合并（§6.2）；
+        · 否则是**单独安排的智能体** ⇒ `standalone`：**直接在工作区改**，没有工作树 / 合并那一步（§6.1）。
+       两类都**不挂队长标记、不夹带花名册简报** —— 否则接到简报的普通智能体会以为自己该去派单。 */
     case "agent":
       events.push({
         kind: "run.enqueued",
         workItemId: workItem.id,
         agentId: workItem.assignee.id,
         isLeaderTask: false,
+        runClass: isSquadBatchChild(input.parentWorkItem) ? "member" : "standalone",
       });
       break;
 
@@ -153,6 +189,7 @@ export function planDispatch(input: {
         workItemId: workItem.id,
         agentId: squad.leaderAgentId,
         isLeaderTask: true,
+        runClass: "leader",
         squadId: squad.id,
         briefing: buildBriefing(squad),
       });
@@ -177,6 +214,23 @@ export function planDispatch(input: {
 
 function notify(workItemId: string, reason: string): DispatchEvent {
   return { kind: "inbox.notified", workItemId, reason };
+}
+
+/**
+ * 本工作项是不是**一支小队批次里的队员任务**（`runClass` 取 `member` 的**唯一**判据）：
+ * 父项被指派给小队。
+ *
+ * 为什么是「父项负责人」而不是别的：队长派活的方式是 `squad.createChildWorkItem`（挂一条**子项**在
+ * 指派给小队的那条父项之下，再 `squad.assignWorkItem` 指给某位队员），所以「队员的任务」= 一条
+ * `parentId` 指向**小队项**的工作项。这条判据只读**派发那一刻的工作项事实**（§6.2：开不开工作树是
+ * 「本次运行」的属性），与触发来源、与队员是谁都无关 —— 换个触发源（规则 / 人 / 队长）不会改变结论。
+ *
+ * 方向性（为什么「查不到父项」判 `false` 而不是 `true`）：判 `false` 的后果是「按 §6.1 单独安排放行：
+ * 会话照发、只是不开树」，最坏是少一层隔离；判 `true` 的后果是**凭空开一棵没人会合并、也没人会回收的
+ * 树**（这正是本次要修的缺陷：孤立分支 + 工作树永久堆积，且不报错）。两者都错时，前者可恢复、后者不可。
+ */
+function isSquadBatchChild(parent: WorkItem | null | undefined): boolean {
+  return parent != null && parent.assignee.type === "squad";
 }
 
 /**

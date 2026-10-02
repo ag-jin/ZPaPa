@@ -290,11 +290,12 @@ test("派发桥为队长 run 登记台账行（recordLeaderRun，落在队长那
     /squadRuntime\.recordLeaderRun\(target, \{[\s\S]{0,200}?runId: eventKey/,
     "队长 run 未登记台账行 —— §5.7(1) 的「进行中」判据与 getSnapshot().runs 都会继续架空",
   );
-  // ② 必须落在**队长**那一支：形如 `if (kind === "member") { … } else { … recordLeaderRun … }`。
+  // ② 必须落在**队长**那一支：形如 `if (ledgerAction === "open_member_run") { … }
+  //    else if (ledgerAction === "record_leader_run") { … recordLeaderRun … }`。
   //    落错支的后果非对称：写进队员支会漏登记；让队长走 openMemberRun 会给它**开一棵树**（§6.1 落空）。
   assert.match(
     branch,
-    /if \(kind === "member"\) \{[\s\S]*?\}\s*else\s*\{[\s\S]{0,900}?recordLeaderRun\(target, \{/,
+    /if \(ledgerAction === "open_member_run"\) \{[\s\S]*?\}\s*else if \(ledgerAction === "record_leader_run"\) \{[\s\S]{0,900}?recordLeaderRun\(target, \{/,
     "recordLeaderRun 必须在「非队员」（队长）分支里调用",
   );
   // ③ 队长那一支**不得**碰 openMemberRun：openMemberRun 只该有一处调用（队员支）。
@@ -302,6 +303,67 @@ test("派发桥为队长 run 登记台账行（recordLeaderRun，落在队长那
     (branch.match(/openMemberRun\(/g) ?? []).length,
     1,
     "openMemberRun 只该有一处调用（队员支）——队长走它会给队长开树",
+  );
+});
+
+/* ---- P2b 余项（单独安排 vs 队员，spec §6.1）：派发桥必须**按类别分流** ----
+
+   缺陷（复审确认）：`planDispatch` 的非队长结果此前**没有可分辨字段**（唯一带 `squadId` 的是队长）
+   ⇒ 派发桥只能写「非队长 ⇒ 开树」，于是**单独安排的智能体**也被开了一棵树 —— 那条分支**永不合并、
+   也永不被回收**（`activeBranches` 只覆盖小队命名空间），且不报错。修法有两半，都必须接线：
+   ① 类别取自 `planDispatch` 的显式判别字段 `runClass`（不得再用 `isLeaderTask` 二分去猜）；
+   ② 开树/台账那一格按类别**查表**（`ledgerActionForRunClass`），`standalone` **两者都不做**。
+   这里是**接线守卫**：`runSquadDispatch` 未导出、无法在测试里直接驱动（导入 host/index.ts 会牵起
+   Electron 侧效应），漏接的表现正是「单独安排照旧被开树」，而**没有任何报错**（recon.md C6 的原形态）。 */
+test("派发桥按 runClass 三类分流，单独安排不开工作树、不登记台账", () => {
+  const branch = squadDispatchBridgeSource();
+  // ① 类别取自 `planDispatch` 的判别字段（不是靠 isLeaderTask / squadId 猜）。
+  assert.match(
+    branch,
+    /const kind: SquadDispatchKind = enqueued\.runClass;/,
+    "类别必须来自 runClass（显式判别字段）",
+  );
+  assert.doesNotMatch(
+    branch,
+    /enqueued\.isLeaderTask \?/,
+    "不得再用 isLeaderTask 二分 —— 那正是「单独安排被当成队员开树」的形态",
+  );
+  // ② 分流经**唯一一处**查表：类别的动作只有 `ledgerActionForRunClass` 一处定义。
+  assert.match(branch, /ledgerActionForRunClass\(kind\)/, "开树/台账那一格必须按类别查表");
+  // ③ 开树只发生在队员支：`openMemberRun(` 全桥**恰好一处**（standalone 若也开树，这里会变成 2）。
+  assert.equal(
+    (branch.match(/openMemberRun\(/g) ?? []).length,
+    1,
+    "openMemberRun 只该有一处调用（队员支）——单独安排走它就会被塞进一条永不合并的分支",
+  );
+  // ④ 单独安排不得登记台账行：`recordLeaderRun(` 同样恰好一处（队长支）。
+  assert.equal(
+    (branch.match(/recordLeaderRun\(/g) ?? []).length,
+    1,
+    "recordLeaderRun 只该有一处调用（队长支）——单独安排不在小队里，台账行无从收口",
+  );
+  // ⑤ 单独安排**没有台账行 ⇒ 不得订阅一个「按 runId 动台账」的终态收口**：
+  //    整块收口必须被 `ledgerAction !== "none"` 挡住（否则终态到达时去动一行不存在的 run，响亮抛）。
+  assert.match(
+    branch,
+    /if \(ledgerAction !== "none"\) \{/,
+    "没有台账行的那一类不得订阅终态收口",
+  );
+});
+
+// 「派发时的事实」必须真的被传给规划：类别由**本项的父项**判（父项被指派给小队 ⇒ 队员）。
+// 漏传的表现是「所有 agent 指派都被判成单独安排」⇒ 队员**丢失工作树隔离**（直接改主工作区）且不报错。
+test("派发桥把父项事实传给 planDispatch（类别判据的来源）", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /const parentWorkItem = workItem\.parentId[\s\S]{0,200}?snapshot\.workItems\.find/,
+    "父项必须从**同一份快照**取（判据只有 planDispatch 一处，本层不自己判类别）",
+  );
+  assert.match(
+    branch,
+    /planDispatch\(\{[\s\S]{0,400}?parentWorkItem,/,
+    "父项事实必须传给 planDispatch，否则队员会被误判成单独安排（丢掉工作树隔离）",
   );
 });
 

@@ -53,7 +53,7 @@ test("指派 squad：产出队长角色 run（带标记与花名册简报）", (
   assert.equal(run.briefing?.instructions.stopCondition, "全部 done 即收工");
 });
 
-test("指派单个 agent：产出普通 run（isLeaderTask=false、无 squadId）", () => {
+test("指派单个 agent：产出普通 run（isLeaderTask=false、无 squadId、类别=单独安排）", () => {
   const events = planDispatch({
     workItem: wi({ type: "agent", id: "ta_x" }),
     squad: null,
@@ -64,6 +64,61 @@ test("指派单个 agent：产出普通 run（isLeaderTask=false、无 squadId�
   assert.equal(run.agentId, "ta_x");
   assert.equal(run.isLeaderTask, false);
   assert.equal(run.squadId, undefined);
+  // 显式判别字段（复审判词：不得让消费者靠 squadId 的有无去猜）：没有父项 = 不在小队批次里 ⇒ 单独安排。
+  assert.equal(run.runClass, "standalone");
+});
+
+/* 队员与单独安排的**唯一**分界（spec §6.1/§6.4）：本项的**父项被指派给小队**（队长用
+   `squad.createChildWorkItem` 建的子项就挂在「指派给小队的那条父项」之下）。
+   判别来自**派发时的事实**（§6.2：开不开工作树是本次运行的属性），与触发源无关。 */
+test("指派 agent 且父项被指派给小队 ⇒ 类别=队员（同样不挂队长标记）", () => {
+  const events = planDispatch({
+    workItem: { ...wi({ type: "agent", id: "ta_a" }), parentId: "wi_parent" } as never,
+    squad: null,
+    parentWorkItem: wi({ type: "squad", id: "sq_1" }),
+    trigger: "user",
+  });
+  const run = events.find((e) => e.kind === "run.enqueued");
+  assert.ok(run && run.kind === "run.enqueued");
+  assert.equal(run.runClass, "member");
+  assert.equal(run.isLeaderTask, false, "队员 run 不挂队长标记（挂上会被当成该去派单的队长）");
+  assert.equal(run.squadId, undefined, "队员的 squadId 仍不设：类别由 runClass 显式表达");
+});
+
+/* 补集方向：父项**不是**小队（例如被指派给某个 agent / 人）⇒ 不是队员，按 §6.1 单独安排。 */
+test("父项不是小队 ⇒ 类别=单独安排（不凭空判成队员）", () => {
+  for (const parentType of ["agent", "user"] as const) {
+    const events = planDispatch({
+      workItem: { ...wi({ type: "agent", id: "ta_a" }), parentId: "wi_parent" } as never,
+      squad: null,
+      parentWorkItem: wi({ type: parentType, id: parentType === "agent" ? "ta_p" : "u_p" }),
+      trigger: "user",
+    });
+    const run = events.find((e) => e.kind === "run.enqueued");
+    assert.ok(run && run.kind === "run.enqueued");
+    assert.equal(run.runClass, "standalone", `父项=${parentType} 时不得判成队员`);
+  }
+});
+
+// 契约一致性：`isLeaderTask` 是保留的历史字段，必须与 `runClass` 恒等（`=== "leader"`）——
+// 两者一旦漂移，读旧字段的消费者与读新字段的消费者会对同一次派发得出不同结论，且不报错。
+test("isLeaderTask 与 runClass 恒等（两个字段不得漂移）", () => {
+  const cases = [
+    { assignee: { type: "agent", id: "ta_x" }, parent: null },
+    { assignee: { type: "agent", id: "ta_a" }, parent: wi({ type: "squad", id: "sq_1" }) },
+    { assignee: { type: "squad", id: "sq_1" }, parent: null },
+  ];
+  for (const cell of cases) {
+    const events = planDispatch({
+      workItem: wi(cell.assignee),
+      squad,
+      parentWorkItem: cell.parent,
+      trigger: "user",
+    });
+    const run = events.find((e) => e.kind === "run.enqueued");
+    assert.ok(run && run.kind === "run.enqueued");
+    assert.equal(run.isLeaderTask, run.runClass === "leader");
+  }
 });
 
 // 指派给人：不排队，只发 Inbox 通知。
@@ -151,31 +206,49 @@ type Trigger = "user" | "leader" | "rule";
 const MATRIX: {
   assigneeType: AssigneeType;
   trigger: Trigger;
-  run: { agentId: string; isLeaderTask: boolean; squadId?: string } | null;
+  run: {
+    agentId: string;
+    isLeaderTask: boolean;
+    runClass: "leader" | "member" | "standalone";
+    squadId?: string;
+  } | null;
 }[] = [
   // assignee=user：人不排队（无 run 可起），三格都只进 Inbox。
   { assigneeType: "user", trigger: "user", run: null },
   { assigneeType: "user", trigger: "leader", run: null },
   { assigneeType: "user", trigger: "rule", run: null },
-  // assignee=agent：三格都起同一形态的普通 run，不因触发源而变队长。
-  { assigneeType: "agent", trigger: "user", run: { agentId: "ta_x", isLeaderTask: false } },
-  { assigneeType: "agent", trigger: "leader", run: { agentId: "ta_x", isLeaderTask: false } },
-  { assigneeType: "agent", trigger: "rule", run: { agentId: "ta_x", isLeaderTask: false } },
+  // assignee=agent（本矩阵不传父项 ⇒ 没有「在批次里」的证据）：三格都是**单独安排**，
+  // 不因触发源变队长、也不因触发源变队员（类别是运行属性，只由父项事实决定）。
+  {
+    assigneeType: "agent",
+    trigger: "user",
+    run: { agentId: "ta_x", isLeaderTask: false, runClass: "standalone" },
+  },
+  {
+    assigneeType: "agent",
+    trigger: "leader",
+    run: { agentId: "ta_x", isLeaderTask: false, runClass: "standalone" },
+  },
+  {
+    assigneeType: "agent",
+    trigger: "rule",
+    run: { agentId: "ta_x", isLeaderTask: false, runClass: "standalone" },
+  },
   // assignee=squad：三格都解析出队长、带标记与简报——规则触发**不是**例外。
   {
     assigneeType: "squad",
     trigger: "user",
-    run: { agentId: "ta_lead", isLeaderTask: true, squadId: "sq_1" },
+    run: { agentId: "ta_lead", isLeaderTask: true, runClass: "leader", squadId: "sq_1" },
   },
   {
     assigneeType: "squad",
     trigger: "leader",
-    run: { agentId: "ta_lead", isLeaderTask: true, squadId: "sq_1" },
+    run: { agentId: "ta_lead", isLeaderTask: true, runClass: "leader", squadId: "sq_1" },
   },
   {
     assigneeType: "squad",
     trigger: "rule",
-    run: { agentId: "ta_lead", isLeaderTask: true, squadId: "sq_1" },
+    run: { agentId: "ta_lead", isLeaderTask: true, runClass: "leader", squadId: "sq_1" },
   },
 ];
 
@@ -221,6 +294,8 @@ for (const cell of MATRIX) {
         workItemId: "wi_1",
         agentId: cell.run.agentId,
         isLeaderTask: cell.run.isLeaderTask,
+        // **判别字段逐格写出**（不是从 isLeaderTask 推导）：加它的目的就是让消费者不必去猜类别。
+        runClass: cell.run.runClass,
         ...(cell.run.squadId === undefined ? {} : { squadId: cell.run.squadId }),
         ...(expectedBriefing === undefined ? {} : { briefing: expectedBriefing }),
       });

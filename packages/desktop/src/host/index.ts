@@ -77,8 +77,10 @@ import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import {
   decideSquadDispatch,
   isSquadDispatchDisabledError,
+  ledgerActionForRunClass,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
+  type SquadDispatchKind,
   type SquadMemberRunTerminalOutcome,
 } from "./squadDispatch.js";
 import { resolveSquadWorkspaceBinding } from "./squadWorkspaceBinding.js";
@@ -773,6 +775,24 @@ function buildMemberRunPrompt(workItem: WorkItem): string {
     `# ${workItem.title}`,
     workItem.body.trim() === "" ? "" : workItem.body,
     "你的工作树是独立的，请只在其中工作（不要改主工作区）；完成后请把结论汇报到本工作项。",
+  ]
+    .filter((section) => section !== "")
+    .join("\n\n");
+}
+
+/**
+ * **单独安排的智能体** run 的 prompt（spec §6.1）：工作项标题 + 正文 + 一句「直接改工作区」的说明。
+ *
+ * 为什么**不能**复用 `buildMemberRunPrompt`：那一段写着「你的工作树是独立的……**不要改主工作区**」，
+ * 而单独安排的智能体**恰好相反** —— 它就在主工作区里干活（没有工作树、没有合并那一步，§6.1）。
+ * 把队员那段发给它，等于让一个没有独立工作区的智能体去找一棵并不存在的工作树：表现是「它不在
+ * 指定位置改文件」或「改完说找不到」，而两边都不报错。故文案必须按类别分开发。
+ */
+function buildStandaloneRunPrompt(workItem: WorkItem): string {
+  return [
+    `# ${workItem.title}`,
+    workItem.body.trim() === "" ? "" : workItem.body,
+    "本次任务没有独立工作树：请直接在工作区里完成（没有合并那一步）；完成后请把结论汇报到本工作项。",
   ]
     .filter((section) => section !== "")
     .join("\n\n");
@@ -2593,7 +2613,7 @@ type SquadDispatchReport = {
   taskId?: string;
   sessionId?: string;
   /** 本次派发的 run 种类：**只进日志**，不上线（线上契约里没有这一维）。 */
-  kind?: "leader" | "member";
+  kind?: SquadDispatchKind;
 };
 
 /**
@@ -2669,11 +2689,19 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       workItem.assignee.type === "squad"
         ? (snapshot.squads.find((candidate) => candidate.id === workItem.assignee.id) ?? null)
         : null;
+    /* **派发时的事实**（spec §6.1/§6.2）：本项的父项 —— 用来判「这是不是小队批次里的队员任务」
+       （父项被指派给小队 ⇒ 队员 ⇒ 开工作树；否则是**单独安排的智能体** ⇒ 直接在工作区改）。
+       从**同一份快照**取（`snapshot.workItems` 已按 workspace 过滤）：拿不到就是拿不到（`null`），
+       由 `planDispatch` 按「没有在批次里的证据」处理 —— 本层不自己判类别（判据只有 `planDispatch` 一处）。 */
+    const parentWorkItem = workItem.parentId
+      ? (snapshot.workItems.find((candidate) => candidate.id === workItem.parentId) ?? null)
+      : null;
     let events: ReturnType<typeof planDispatch>;
     try {
       events = planDispatch({
         workItem,
         squad,
+        parentWorkItem,
         trigger: msg.trigger,
         ...(ruleId !== undefined ? { ruleId } : {}),
       });
@@ -2698,14 +2726,18 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       return { ok: true };
     }
 
-    const kind = enqueued.isLeaderTask ? "leader" : "member";
-    /* 队员 run **先开树**（spec §6.1 的隔离承诺落点）：会话的 workspace 就是那棵工作树。
-       ⚠️ 队长 run **绝不**走这里：`openMemberRun` 对 `isLeaderTask: true` 一样会开树
-       （机械半如此规定，且有用例钉住），而队长直接在目标工作区执行（spec §6.2）。
-       所以分叉必须发生在**调用点**，不能指望被调方替我分叉。
-       队长那一支走 `recordLeaderRun`：**只登记台账行**、不建树（见下）。 */
+    const kind: SquadDispatchKind = enqueued.runClass;
+    /* 台账 / 开树这一格按**类别**分流（`runClass` 是 `planDispatch` 给的显式判别字段）。为什么必须是
+       显式三分类、不能靠 `isLeaderTask` 二分：那样**单独安排的智能体**（不在小队里的 agent，
+       spec §6.1）会落进「非队长 ⇒ 开树」那条腿 —— 于是它也被塞进一条分支，而那条分支
+       **永不合并、也永不被回收**（`activeBranches` 口径只覆盖小队命名空间），全程不报错。
+       三类的动作由 `ledgerActionForRunClass` 一处查表（纯函数，可直接断言）：
+         · 队员 ⇒ 开工作树 + 登记台账行（会话落在树里）；
+         · 队长 ⇒ **只登记台账行**、**不开树**（§6.1/§6.2，队长在目标工作区执行）；
+         · 单独安排 ⇒ **两者都不做**：直接在工作区改（§6.1）——没有工作树、没有分支、也没有台账行。 */
     let worktree: OpenMemberRunResult | undefined;
-    if (kind === "member") {
+    const ledgerAction = ledgerActionForRunClass(kind);
+    if (ledgerAction === "open_member_run") {
       try {
         worktree = await squadRuntime.openMemberRun(target, {
           runId: eventKey,
@@ -2720,7 +2752,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         // 按 permanent 回执，别让调度器按 transient 一直空转重试。
         return failPermanent(error instanceof Error ? error.message : String(error));
       }
-    } else {
+    } else if (ledgerAction === "record_leader_run") {
       /* 队长 run 的**台账行**（spec §5.7(1)）：没有它就无法判「进行中」，`getSnapshot().runs`
          也看不见队长 run（「谁在被唤醒」这一格失真）。`recordLeaderRun` **只登记不执行** ——
          不开工作树（队长在目标工作区执行，spec §6.1/§6.2）、不改工作项状态（§5.7(2)）。
@@ -2740,6 +2772,12 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         return failPermanent(error instanceof Error ? error.message : String(error));
       }
     }
+    /* 单独安排（`ledgerAction === "none"`）刻意**什么都不做**，但**不是**「跳过这次派发」：
+       §6.1 要的是「直接在工作区改」，所以下面的会话照发（落在 `msg.workspacePath`）。
+       不给它台账行的理由见 `ledgerActionForRunClass` 的注释（台账是小队台账；它无分支 ⇒ 对
+       `activeBranches` 零贡献；且它没有 merge/review 那一步，`completeMemberRun` 会把工作项推
+       `in_review`（不存在的审查步骤），`completeLeaderRun` 又只收队长行 ⇒ 有行反而没有合法出口，
+       只会把行永久留在 `open`（`listActive` 永不收缩，正是本项目一路在消灭的那种僵尸行）。 */
     const sessionWorkspacePath = worktree?.worktreePath ?? msg.workspacePath;
 
     /* 忙检查（硬约束 1）：**强探测** —— 读的是 Agent runtime 快照，不是 tasks-index 的投影
@@ -2779,6 +2817,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       kind,
       briefingPrompt: enqueued.briefing ? renderLeaderBriefingPrompt(enqueued.briefing) : "",
       memberPrompt: buildMemberRunPrompt(workItem),
+      standalonePrompt: buildStandaloneRunPrompt(workItem),
       worktree,
     });
     if (decision.action === "defer") {
@@ -2849,22 +2888,26 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       workspacePath: sessionWorkspacePath,
       ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
     });
-    /* run 的终态收口（**闭环的最后一环**）：**队员与队长都订阅** —— 两者都是**真实会话**，终态落在
-       同一条既有出口上（`onDynamicTaskTerminalOutcome` + `outcome.inputId === traceId`）。
+    /* run 的终态收口（**闭环的最后一环**）：**有台账的那两类（队员与队长）都订阅** —— 它们都是
+       **真实会话**，终态落在同一条既有出口上（`onDynamicTaskTerminalOutcome` + `outcome.inputId === traceId`）。
        差别只在「成功入账」那一格：
          · 队员 ⇒ `completeMemberRun`（产出入账 + 工作项推 `in_review`）；
          · 队长 ⇒ `completeLeaderRun`（**只把台账行移到终态**，不碰工作项 —— spec §5.7(2)
            「队长 run 不改父项状态」，套上 `completeMemberRun` 会写坏父项）。
-       不订阅队长的后果就是旧缺口重演：成功的队长行长驻 `open` ⇒ §5.7(1)「进行中」**永真**。 */
-    {
+       不订阅队长的后果就是旧缺口重演：成功的队长行长驻 `open` ⇒ §5.7(1)「进行中」**永真**。
+       **单独安排的智能体不订阅**：它**没有台账行**（见 `ledgerActionForRunClass` 的理由），
+       `completeMemberRun` / `failMemberRun` 都是「按 runId 动台账」的动作 —— 没有行可动，订阅只会
+       在终态到达时去碰一行不存在的 run（`requireRun` 响亮抛）。它的会话照发（上面的 sendPrompt
+       与 best-effort 完成通知都照旧），只是**没有台账可收口**。 */
+    if (ledgerAction !== "none") {
       /* 订阅句柄**必须留一手**（照 cron 侧 `cronRunSubscriptions`）：这里订阅的是「这个 run 的终态」，
          而派发中途抛错时那个回调可能永远不来 ⇒ 句柄无主就残留到进程退出（本文件末尾的 catch 会解绑）。
          同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。 */
       const subscriptionKey = cronRunSubscriptionKey(task.taskId, traceId);
       disposeSquadRunSubscription(subscriptionKey);
       runSubscriptionKey = subscriptionKey;
-      /** 本次派发的 run 种类标签：只用于日志与失败原因文案（队员 / 队长）。 */
-      const runLabel = kind === "leader" ? "队长" : "队员";
+      /** 本次派发的 run 类别标签：只用于日志与失败原因文案。三类各说各的，方便人按类别排查。 */
+      const runLabel = kind === "leader" ? "队长" : kind === "member" ? "队员" : "单独安排";
       /* 句柄从**本处**发起订阅的返回值接住（`watch*RunSettlement` 自己不持有它，我们不去改那个文件）：
          接住之后既有成功终态的解绑，也有失败路径的解绑。**两种 run 共用这一个闭包** —— 终态规则
          （认轮 / 解绑 / 失败出口）一模一样，只有「成功入账」按 kind 分叉（见下面的两个 watch* 调用）。 */
@@ -2914,7 +2957,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           logInfo: (message) => logger.info(message),
           logError: (message, error) => logger.error(message, error),
         });
-      } else {
+      } else if (kind === "leader") {
         /* 队长 run 的成功入账：`completeLeaderRun` **只把台账行移到终态**（不碰工作项 — §5.7(2)）。
            它与队员共用上面的订阅闭包 ⇒ 队长 run 的终态（成功 / 失败 / 中止）真的被写回。 */
         watchLeaderRunSettlement({
@@ -2933,10 +2976,12 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       content: decision.prompt,
       clientMode: "desktop-continuous",
     });
-    /* 两条 run 的台账行都已在上面分叉里写好（队员 `openMemberRun` / 队长 `recordLeaderRun`），
-       且**两条 run 的终态收口都接上了**：队员 ⇒ `completeMemberRun`（台账推到 `produced`，
-       这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」）；队长 ⇒ `completeLeaderRun`
-       （台账推到终态 `merged`，不碰工作项）。失败/中止两条都走 `failMemberRun` 移出活跃集。 */
+    /* 三条路径都落在了各自该落的地方（`ledgerActionForRunClass` 一处查表）：
+         · 队员 ⇒ 台账行已写（`openMemberRun`）+ 终态收口接上（`completeMemberRun` 推到 `produced`，
+           这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」）；
+         · 队长 ⇒ 台账行已写（`recordLeaderRun`）+ 收口接上（`completeLeaderRun` 推到终态 `merged`，不碰工作项）；
+         · 单独安排 ⇒ **没有台账行**、也没有收口（无行可收）—— 但会话照发、直接落在目标工作区（§6.1）。
+       失败/中止只有前两类走 `failMemberRun` 移出活跃集（第三类没有行可移）。 */
     logger.info(
       `[squad] dispatch completed ${triggerLabel} workItem=${msg.workItemId} kind=${kind}` +
         ` eventKey=${eventKey} task=${task.taskId}`,
@@ -2947,7 +2992,8 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
        刚登记的 run 行会停在 `open`（没有终态可订阅，收口那一步根本没跑到）。
        静默停在 open 会让它永远算「活跃」：队员的工作树与分支不会被回收；队长行虽无树，但留在活跃集
-       会让 §5.7(1) 的「进行中」**永真**（重复指派被永远合并）—— 两种都必须留痕，没人知道为什么。 */
+       会让 §5.7(1) 的「进行中」**永真**（重复指派被永远合并）—— 两种都必须留痕，没人知道为什么。
+       **单独安排不在这一格里**（`ledgerRowRegistered` 恒为 false）：它没有台账行，无从「停在 open」。 */
     /* **失败 run 的出口**（裁定 Important-3）：只要台账里真有这一行（队员 `openMemberRun` / 队长
        `recordLeaderRun` 都已落行）就把它**移出活跃集**，别让它永远停在 open。
        为什么先读一次快照再决定：行不存在时 `failMemberRun` 会**响亮抛**（未命中不得静默），

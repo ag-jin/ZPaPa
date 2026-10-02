@@ -308,6 +308,8 @@ export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
 export { decideWake } from "./workitem/wakeGuard.js";
 export { LEADER_PROTOCOL_TEXT, planDispatch } from "./workitem/leaderDispatch.js";
+// 派发类别（队长 / 队员 / 单独安排）：host 派发桥按它分流，故类型要与 `planDispatch` 同源出（加法）。
+export type { RunClass } from "./workitem/leaderDispatch.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";

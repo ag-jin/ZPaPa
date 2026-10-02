@@ -96,10 +96,21 @@ async function makeHarness(options?: { subscribeResident?: boolean }) {
             item.assignee.type === "squad"
               ? (snapshot.squads.find((candidate) => candidate.id === item.assignee.id) ?? null)
               : null;
-          const events = planDispatch({ workItem: item, squad, trigger: "user" });
+          // **派发时的事实**（与 host 派发桥同）：本项的父项 —— 类别（队员 / 单独安排）由它判。
+          const parent = item.parentId
+            ? (snapshot.workItems.find((candidate) => candidate.id === item.parentId) ?? null)
+            : null;
+          const events = planDispatch({
+            workItem: item,
+            squad,
+            parentWorkItem: parent,
+            trigger: "user",
+          });
           const enqueued = events.find((event) => event.kind === "run.enqueued");
           if (enqueued?.kind !== "run.enqueued") return; // skip 不是失败（进 Inbox）
-          // 队员 run **先开树**（spec §6.1 的隔离承诺落点）：台账行与工作树都从这里出现。
+          /* 只有**队员**先开树（spec §6.1 的隔离承诺落点）：台账行与工作树都从这里出现。
+             **单独安排的智能体**在这一格**什么都不做** —— 它直接在工作区改（没有工作树、没有合并那一步）。 */
+          if (enqueued.runClass !== "member") return;
           await squadRuntimeService.openMemberRun(requestTarget, {
             runId: `assign-run-${item.id}-${enqueued.agentId}`,
             workItemId: item.id,
@@ -127,6 +138,14 @@ async function makeHarness(options?: { subscribeResident?: boolean }) {
     parentId: parent.id,
     assignee: { type: "squad", id: "sq-1" },
   });
+  /* **单独安排**的对照项（spec §6.1）：顶层工作项、**没有父项** ⇒ 不在任何小队批次里。
+     指派它不会开树、不会产生台账行 —— 这正是复审判词点名的那一类。 */
+  const solo = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "单独安排的任务",
+    assignee: { type: "agent", id: "ta-solo" },
+  });
 
   return {
     runtime,
@@ -134,6 +153,7 @@ async function makeHarness(options?: { subscribeResident?: boolean }) {
     failures,
     parent,
     child,
+    solo,
     /** 等常驻侧那条异步链跑完（hub 是同步扇出，执行体是异步的），返回本次收到的请求数。 */
     settle: async () => {
       await Promise.all(dispatched);
@@ -199,6 +219,34 @@ test("常驻侧订一次 hub ⇒ 指派驱动出 run（台账行 + 工作树，�
   assert.equal(worktrees.length, 1, "队员 run 必须先开树（spec §6.1 的隔离承诺）");
   assert.match(worktrees[0]?.branch ?? "", /squad\/member\//, "工作树落在队员分支命名空间");
   assert.ok(existsSync(worktrees[0]!.path), "工作树目录必须真的在磁盘上");
+});
+
+// ③ **单独安排的智能体**（spec §6.1，复审判词点名的那一类）：顶层、无父项 ⇒ 不在小队批次里。
+// 指派它仍要**驱动一次真实派发**（事件发了、常驻侧也接了），但**不开工作树、不登记台账行** ——
+// 这正是本次修掉的缺陷（旧写法「非队长 ⇒ 开树」会给它开一条**永不合并、也永不被回收**的分支）。
+test("单独安排的智能体：指派驱动派发，但不开工作树、不产生台账行", async () => {
+  const { runtime, handlers, failures, solo, settle } = await makeHarness({
+    subscribeResident: true,
+  });
+
+  const result = await handlers.assignWorkItem(target("ws"), {
+    workItemId: solo.id,
+    agentId: "ta-solo",
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(failures, [], "常驻侧执行体不得抛错");
+  assert.equal(await settle(), 1, "指派仍要驱动一次派发（会话照发，只是没有工作树）");
+
+  // ① 负责人改了（读库）。
+  assert.deepEqual(runtime.workItemRepo.get(solo.id)?.assignee, { type: "agent", id: "ta-solo" });
+  // ② **没有台账行**（读库实体状态）：它不在任何小队里，台账也无从收口。
+  assert.deepEqual(
+    runtime.squadRunRepo.listByWorkItem(solo.id),
+    [],
+    "单独安排的智能体不得产生任何 run 台账行",
+  );
+  // ③ **没有工作树**（读 git 的工作树列表）：§6.1「直接在工作区改，没有合并那一步」。
+  assert.deepEqual(await runtime.worktreeManager.list(), [], "单独安排的智能体不得建工作树");
 });
 
 // 补集方向：hub 只承载**派发请求**。工作项状态变迁不进常驻订阅者 —— 否则每一次状态推进都会被

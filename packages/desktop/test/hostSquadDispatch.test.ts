@@ -17,6 +17,7 @@ import { createBoundSessionExecutingProbe } from "../src/host/boundSessionBusyGa
 import {
   decideSquadDispatch,
   isSquadDispatchDisabledError,
+  ledgerActionForRunClass,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
   type SquadMemberRunTerminalOutcome,
@@ -24,9 +25,9 @@ import {
 
 const base = {
   // 门禁结论**由服务层给出**（本函数不读开关）：dispatchEnabled 是「服务层说可以派发」这一事实，
-  // 名称刻意不叫 enabled —— 免得下一个人以为可以在这里自己读 appSettings。
+  // 名称刻意不叫 enabled —— 免得下一个人以为可以在这里自己读一次 appSettings。
   dispatchEnabled: true, databaseReady: true, busy: false, kind: "leader" as const,
-  briefingPrompt: "P", memberPrompt: "P", worktree: undefined,
+  briefingPrompt: "P", memberPrompt: "P", standalonePrompt: "P", worktree: undefined,
 };
 
 test("服务层说门禁关 ⇒ skip，不派发", () => {
@@ -120,6 +121,47 @@ test("队员 run 有工作树 ⇒ dispatch，prompt 用队员文案、workspace 
   assert.equal(out.action, "dispatch");
   assert.ok(out.action === "dispatch" && out.prompt === "M");
   if (out.action === "dispatch") assert.equal(out.workspacePath, "/repo/.worktree/a", "队员在独立工作树里干活");
+});
+
+/* ── 单独安排的智能体（spec §6.1）：直接在工作区改 ──
+
+   三件事一起钉：① 它**没有**工作树也必须派发（不得落进「队员缺树 ⇒ fail」那一格）；
+   ② 会话 workspace 是 undefined（由调用点用消息里的 workspace = 目标工作区，不是工作树）；
+   ③ prompt 用**单独安排**的文案（不是队员那段「不要改主工作区」——那对它是反的）。
+   去掉 `ledgerActionForRunClass` 里 standalone 那一支（退回「一律开树」）会让 ① 的输入变得不可构造，
+   而下面的 `ledgerActionForRunClass("standalone") === "none"` 会直接红。 */
+test("单独安排的智能体：无工作树 ⇒ 仍 dispatch，workspace 用目标工作区、prompt 用单独安排文案", () => {
+  const out = decideSquadDispatch({
+    ...base,
+    kind: "standalone",
+    memberPrompt: "M",
+    standalonePrompt: "S",
+  });
+  assert.equal(out.action, "dispatch", "单独安排没有工作树是**正确形状**（§6.1），不得判成失败");
+  assert.ok(out.action === "dispatch" && out.prompt === "S", "必须是单独安排的文案");
+  if (out.action === "dispatch") {
+    assert.equal(out.workspacePath, undefined, "没有工作树 ⇒ 会话落在消息里的目标工作区（§6.1）");
+  }
+});
+
+// 台账动作按类别查表：这是「非队长 ⇒ 开树」那个缺陷的**唯一**落点，故逐格钉死。
+test("台账动作按类别分流：队员开树 / 队长只登记 / 单独安排两者都不做", () => {
+  assert.equal(ledgerActionForRunClass("member"), "open_member_run");
+  assert.equal(ledgerActionForRunClass("leader"), "record_leader_run");
+  assert.equal(
+    ledgerActionForRunClass("standalone"),
+    "none",
+    "单独安排不得开工作树、也不得登记台账行（§6.1：没有合并那一步，也就没有工作树/孤儿问题）",
+  );
+});
+
+// 补集方向：判定次序里「队员缺树 ⇒ fail」只对 `member` 生效，不得误伤另外两类
+//（队长与单独安排**本来就没有**工作树，把这条判据套上去会把正确的派发判成失败）。
+test("缺树 fail 只对队员生效：队长与单独安排缺树都不 fail", () => {
+  for (const kind of ["leader", "standalone"] as const) {
+    const out = decideSquadDispatch({ ...base, kind });
+    assert.equal(out.action, "dispatch", `${kind} 缺树是正确形状，不得判 fail`);
+  }
 });
 
 test("队长 run 不携带工作树（session workspace 由调用点用消息里的 workspace）", () => {

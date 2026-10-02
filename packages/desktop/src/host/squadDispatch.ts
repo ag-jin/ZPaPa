@@ -1,4 +1,5 @@
 import { SQUAD_DISPATCH_DISABLED_CODE, type OpenMemberRunResult } from "@zcode/services";
+import type { RunClass } from "@zcode/services/node";
 
 /* 小队派发的**决策**（spec §5.7.6 门禁 / §6.1 隔离承诺 / 硬约束 1 忙检查）。
 
@@ -11,7 +12,40 @@ import { SQUAD_DISPATCH_DISABLED_CODE, type OpenMemberRunResult } from "@zcode/s
    入参刻意不叫 `enabled`，免得下一个人以为可以在这里自己读一次 appSettings——
    读第二遍就多一份判据，改一处漏一处正是「关掉实验照旧派发」的形态。 */
 
-export type SquadDispatchKind = "leader" | "member";
+/**
+ * run 的类别 —— **直接取自** `planDispatch` 的显式判别字段 `runClass`（加法的单一来源）。
+ *
+ * 为什么是别名而不是就地再写一个联合：类别是**规划**（`planDispatch`）的结论，派发桥只做搬运；
+ * 在这里抄一份三值联合，改了那边忘了这边**不会有任何编译错**，表现的正是本次要消灭的
+ * 「两类 run 长得一样」形态。名字保留 `SquadDispatchKind` 只为不动既有调用点的读法。
+ */
+export type SquadDispatchKind = RunClass;
+
+/**
+ * 台账动作（**类别的函数**）：派发桥在「开树 / 登记台账」这一格要做什么。
+ *
+ * 为什么把它抽成纯函数而不是散在 host 的 `if` 链里：这是本次缺陷的落点 ——
+ * 旧写法是「非队长 ⇒ `openMemberRun`」，于是**单独安排的智能体也开了一棵树**（§6.1 落空、
+ * 孤立分支永不合并也永不回收，且不报错）。抽成一个按 `runClass` 查表的纯函数后，
+ * 「standalone ⇒ 无台账动作」变成一条**可直接断言的值**（不必起 Electron / 真实 git）。
+ */
+export type SquadLedgerAction = "open_member_run" | "record_leader_run" | "none";
+
+export function ledgerActionForRunClass(runClass: SquadDispatchKind): SquadLedgerAction {
+  switch (runClass) {
+    // 队员：开工作树（`openMemberRun` 内含 `isLeaderTask: false`）+ 登记台账行 —— 既有路径不变。
+    case "member":
+      return "open_member_run";
+    // 队长：只登记台账行（§5.7(1) 判「进行中」），**不开树** —— 既有路径不变。
+    case "leader":
+      return "record_leader_run";
+    // 单独安排的智能体：**不开工作树、不开分支、不登记台账**（§6.1）。
+    // 台账是**小队**运行台账，而它不在任何小队里；且它无分支 ⇒ 对 `activeBranches` 零贡献，
+    // 台账存在的理由（被回收的口径 / 产出活到合并）对它一样都不成立。会话照发（见 host 派发桥）。
+    case "standalone":
+      return "none";
+  }
+}
 
 export type SquadDispatchDecision =
   | {
@@ -20,8 +54,8 @@ export type SquadDispatchDecision =
       prompt: string;
       /**
        * 会话要落在哪个 workspace：队员 run 是**工作树**（spec §6.1 的隔离承诺落点），
-       * 队长 run 是 undefined——它直接在目标工作区执行，而目标工作区在派发消息里，
-       * 本函数不持有它（由调用点回填）。
+       * 队长 run 与单独安排的智能体是 undefined——它们直接在目标工作区执行，
+       * 而目标工作区在派发消息里，本函数不持有它（由调用点回填）。
        */
       workspacePath?: string;
     }
@@ -35,9 +69,11 @@ export type SquadDispatchDecision =
  * 1. `!databaseReady` → skip(`not_ready`)：库没就绪时任何写入都会失败，这是最基础的前提。
  * 2. `!dispatchEnabled` → skip(`disabled_by_service`)：服务层说门禁关了。**skip 不是失败**
  *    （spec §3.9 `dispatch_skipped` 不进失败率），关掉实验是确定性状态，不该计进失败。
- * 3. 队员 run 没有工作树 → fail：没有工作树就派发，等于让队员直接改**主工作区**——
+ * 3. **队员** run 没有工作树 → fail：没有工作树就派发，等于让队员直接改**主工作区**——
  *    spec §6.1 的隔离承诺当场落空，而且不报错。这是最该响亮的一条，所以排在忙检查**之前**
  *    （忙是「等一会」，缺树是「这次派发的配置错了」，后者更严重）。
+ *    **只对 `member` 判**：队长与**单独安排的智能体**本来就**没有**工作树（§6.1/§6.2，
+ *    `worktree === undefined` 是它们的正确形状），把这条判据套到它们身上会把正确的派发判成失败。
  * 4. `busy` → defer：绑定会话正在执行（**强探测**的结论，见 host 分支）。等待型重投：
  *    既不投递也不判失败（与 cron 的 deferred 同义），避免长任务期间唤醒被重试预算判死。
  * 5. 否则 → dispatch。
@@ -51,9 +87,11 @@ export function decideSquadDispatch(input: {
   kind: SquadDispatchKind;
   /** 队长 run 的 prompt（三段简报渲染出来的）。 */
   briefingPrompt: string;
-  /** 队员 run 的 prompt（工作项标题+正文+汇报要求）。 */
+  /** 队员 run 的 prompt（工作项标题+正文+**工作树**要求）。 */
   memberPrompt: string;
-  /** 队员 run 先开树的结果；队长 run 恒为 undefined（队长不建树）。 */
+  /** 单独安排的智能体 run 的 prompt（工作项标题+正文+**直接在工作区改**的要求，§6.1）。 */
+  standalonePrompt: string;
+  /** 队员 run 先开树的结果；队长与单独安排的智能体恒为 undefined（这两类不建树）。 */
   worktree: OpenMemberRunResult | undefined;
 }): SquadDispatchDecision {
   if (!input.databaseReady) return { action: "skip", reason: "not_ready" };
@@ -65,7 +103,15 @@ export function decideSquadDispatch(input: {
   return {
     action: "dispatch",
     kind: input.kind,
-    prompt: input.kind === "leader" ? input.briefingPrompt : input.memberPrompt,
+    /* prompt 按类别选：只有队长拿到三段简报；队员与单独安排的智能体都拿工作项的 prompt，
+       但两者的**工作方式要求不同**（队员在独立工作树里干活、单独安排的智能体直接改工作区），
+       故是两个不同的串 —— 混用会把「不要改主工作区」发给一个本就该改主工作区的智能体。 */
+    prompt:
+      input.kind === "leader"
+        ? input.briefingPrompt
+        : input.kind === "member"
+          ? input.memberPrompt
+          : input.standalonePrompt,
     ...(input.worktree !== undefined ? { workspacePath: input.worktree.worktreePath } : {}),
   };
 }
