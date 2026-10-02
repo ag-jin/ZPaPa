@@ -17,6 +17,21 @@ import { archiveSquadAndTransfer, createSquadRuntime } from "../src/workitem/squ
 import { slugForId } from "../src/workitem/slug.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import type { WorkItemEvent } from "../src/workitem/workItemService.js";
+import {
+  declaredRunClassFor,
+  planDispatch,
+  type RunClass,
+} from "../src/workitem/leaderDispatch.js";
+import { hasInProgressLeaderRun } from "../src/workitem/squadRunLifecycle.js";
+/* 派发桥的**台账动作查表**（host 侧唯一实现）：验收要断言的正是「哪一类该开树 / 该登记 / 什么都不做」。
+   这里**直接调生产实现**而不是在本文件重抄一份 switch —— 抄一份就等于给判据造了第二个定义，
+   改了 desktop 那边忘了这里不会有任何编译错，而这正是本次要消灭的「两类 run 长得一样」形态。
+   跨包 import 只发生在本测试文件里（`packages/services/src` 不依赖 desktop，架构检查只扫 src 根），
+   而 `squadDispatch.ts` 是纯模块（只 import 类型与 `@zcode/services`），无模块级副作用（已实测）。 */
+import {
+  ledgerActionForRunClass,
+  type SquadLedgerAction,
+} from "../../desktop/src/host/squadDispatch.js";
 import { makeRepo, realGit } from "./helpers/gitFixture.js";
 
 /* Wave 3 端到端验收：闭环「建小队 → 建工作项指派给小队 → 队员各开工作树 → 审查 → 合并 → 抛弃」。
@@ -55,7 +70,93 @@ type Harness = {
   runtime: () => Promise<SquadRuntime>;
   /** 把事件驱动的那条批次收尾链跑到所有 promise 落定。 */
   drain: () => Promise<void>;
+  /** 派发桥（host `runSquadDispatch` 决策段的最小同形副本）：类别分流与台账动作逐条留痕。 */
+  bridge: {
+    records: BridgeRecord[];
+    /** 常驻侧执行体的异常（响亮拒绝那一格必须非空）。 */
+    failures: unknown[];
+    /** 直接驱动一次派发（= 调度器那条入口，与人发起入口共用同一个决策段）。 */
+    dispatch: (workItemId: string, agentId?: string) => Promise<void>;
+  };
+  /** 把常驻侧（hub 订阅）那条异步链跑到落定。 */
+  drainBridge: () => Promise<void>;
 };
+
+/** 派发桥一次决策的留痕：**类别**（`planDispatch` 的结论）与**台账动作**（谁开树 / 谁登记 / 谁不动）。 */
+type BridgeRecord = {
+  workItemId: string;
+  agentId: string;
+  runClass: RunClass;
+  ledgerAction: SquadLedgerAction;
+  runId: string;
+};
+
+/**
+ * 派发桥的**决策段**（host `runSquadDispatch` 的最小同形副本，与 `squadAssignDispatch.test.ts` 同款）。
+ *
+ * 为什么验收要自带这一段：Wave 3 之后新增的「三类分流」发生在 host 派发桥里
+ * （`packages/desktop/src/host/index.ts` 的 `runSquadDispatch`），而它所在模块有模块级副作用
+ * （`process.title` / repo 构造 / 定时器），import 会让测试进程不结束（仓内已实测）。
+ * 故只搬**决策段**：本函数不自己判类别（交给 `planDispatch` + `declaredRunClassFor`），
+ * 也不自己决定台账动作（交给生产函数 `ledgerActionForRunClass`）—— 两条判据都仍只有生产实现那一份。
+ *
+ * 台账动作与 `runSquadDispatch` 逐格同形：
+ *   · `open_member_run` ⇒ `openMemberRun`（开树 + 登记台账）；
+ *   · `record_leader_run` ⇒ `recordLeaderRun`（**只登记**，不开树）；
+ *   · `none`（单独安排）⇒ **什么都不做**，但**不是跳过派发** —— 会话照发（落在目标工作区）。
+ */
+async function runBridgeDispatch(
+  service: ISquadRuntimeService,
+  target: SquadWorkspaceTarget,
+  request: SquadDispatchRequest,
+  records: BridgeRecord[],
+): Promise<void> {
+  const snapshot = await service.getSnapshot(target);
+  const item = snapshot.workItems.find((candidate) => candidate.id === request.workItemId);
+  if (!item) throw new Error(`工作项不存在：${request.workItemId}`);
+  const squad =
+    item.assignee.type === "squad"
+      ? (snapshot.squads.find((candidate) => candidate.id === item.assignee.id) ?? null)
+      : null;
+  // 派发时的**事实**（父项）：查不到（归档 / 删除 / 跨 workspace）就是 null —— 与 host 派发桥同源。
+  const parent = item.parentId
+    ? (snapshot.workItems.find((candidate) => candidate.id === item.parentId) ?? null)
+    : null;
+  const declared =
+    item.assignee.type === "agent"
+      ? declaredRunClassFor({ parentId: item.parentId, parent })
+      : undefined;
+  const events = planDispatch({
+    workItem: item,
+    squad,
+    parentWorkItem: parent,
+    ...(declared !== undefined ? { runClass: declared } : {}),
+    trigger: "user",
+  });
+  const enqueued = events.find((event) => event.kind === "run.enqueued");
+  if (enqueued?.kind !== "run.enqueued") return; // inbox.notified（指派给人 / 小队不可用）不是失败
+  const kind = enqueued.runClass;
+  const ledgerAction = ledgerActionForRunClass(kind);
+  /* runId 取稳定量（生产取幂等键 `eventKey`）：同一 (工作项, 智能体) 的重复派发会撞台账主键 —— 与生产同形。 */
+  const runId = `bridge-${item.id}-${enqueued.agentId}`;
+  records.push({ workItemId: item.id, agentId: enqueued.agentId, runClass: kind, ledgerAction, runId });
+  if (ledgerAction === "open_member_run") {
+    await service.openMemberRun(target, {
+      runId,
+      workItemId: item.id,
+      parentWorkItemId: item.parentId ?? item.id,
+      agentId: enqueued.agentId,
+      isLeaderTask: false,
+    });
+  } else if (ledgerAction === "record_leader_run") {
+    await service.recordLeaderRun(target, {
+      runId,
+      workItemId: item.id,
+      parentWorkItemId: item.parentId ?? item.id,
+      agentId: enqueued.agentId,
+    });
+  }
+}
 
 /**
  * 装配与组合根同形。
@@ -64,7 +165,9 @@ type Harness = {
  * 没有它，「子项终态 ⇒ children_done ⇒ 批次收尾」这条链**断在接线处**，闭环不成立。
  * 崩溃窗口用例（E）刻意关掉它：那样构造出的正是「子项全终态但批次未 finalize 的启动态」。
  */
-async function setup(options: { forwardChildCompleted?: boolean } = {}): Promise<Harness> {
+async function setup(
+  options: { forwardChildCompleted?: boolean; residentBridge?: boolean } = {},
+): Promise<Harness> {
   const repoRoot = await makeRepo();
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
@@ -116,6 +219,34 @@ async function setup(options: { forwardChildCompleted?: boolean } = {}): Promise
     logWarn: () => {},
   });
 
+  /* 派发桥的最小同形副本：`dispatch` 直接驱动一次（= 调度器那条入口）；`residentBridge` 打开时
+     hub 上的每条派发请求（= 人发起那条入口，经服务面 `assignWorkItem` 发出）也转给它。
+     两条入口汇进同一段决策 —— 与生产 `runSquadDispatch` 的两路入口同形。 */
+  const bridgeRecords: BridgeRecord[] = [];
+  const bridgeFailures: unknown[] = [];
+  const bridgeChain: Promise<void>[] = [];
+  const bridge: Harness["bridge"] = {
+    records: bridgeRecords,
+    failures: bridgeFailures,
+    dispatch: async (workItemId, agentId = "") => {
+      await runBridgeDispatch(
+        service,
+        target,
+        { workItemId, agentId, workspacePath: repoRoot, workspaceIdentity: WS },
+        bridgeRecords,
+      );
+    },
+  };
+  if (options.residentBridge === true) {
+    hub.subscribe((request) => {
+      bridgeChain.push(
+        runBridgeDispatch(service, target, request, bridgeRecords).catch((error: unknown) => {
+          bridgeFailures.push(error);
+        }),
+      );
+    });
+  }
+
   return {
     repoRoot,
     db,
@@ -124,13 +255,16 @@ async function setup(options: { forwardChildCompleted?: boolean } = {}): Promise
     dispatched,
     events,
     chainErrors,
+    bridge,
     runtime: () => createRuntime(target),
     drain: async () => {
       while (chain.length > 0) await chain.shift()!;
     },
+    drainBridge: async () => {
+      while (bridgeChain.length > 0) await bridgeChain.shift()!;
+    },
   };
 }
-
 type Fixture = Harness;
 
 // ── 建面：小队 / 智能体 / 工作项（全部经**服务面**，即 UI 与协议 handler 的唯一入口）──
@@ -204,6 +338,32 @@ async function readMainFile(f: Fixture, file: string): Promise<string> {
   const result = await gitAt(f.repoRoot)(["show", `main:${file}`]);
   assert.equal(result.code, 0, `main:${file} 应当存在: ${result.stderr}`);
   return result.stdout;
+}
+
+/** 本仓库 `refs/heads/` 下的短分支名（排序）：用来断言「一个分支都没建 / 只多出预期那些」。 */
+async function localBranches(f: Fixture): Promise<string[]> {
+  const result = await gitAt(f.repoRoot)(["for-each-ref", "--format=%(refname:short)", "refs/heads/"]);
+  assert.equal(result.code, 0, result.stderr);
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .sort();
+}
+
+/** 带分支的工作树条目（= 队员 run 的产物；队长行与单独安排都没有工作面）。 */
+async function worktreeBranches(f: Fixture): Promise<string[]> {
+  return (await (await f.runtime()).worktreeManager.list())
+    .filter((entry) => entry.branch !== null)
+    .map((entry) => entry.branch as string)
+    .sort();
+}
+
+/** 读一条 run 台账行（缺失即断言失败）。 */
+async function requireRun(f: Fixture, runId: string) {
+  const record = (await f.runtime()).squadRunRepo.get(runId);
+  assert.ok(record, `run ${runId} 必须存在于台账`);
+  return record;
 }
 
 /** 集成分支 / 队员分支 / 目录名都从**生产实现的命名来源**取，测试里不重算命名规则。 */
@@ -1200,4 +1360,388 @@ test("缺陷2. 整批放弃机制成立，但未接到服务面/组合根（无�
   assert.equal(existsSync(a.worktreePath), false);
   assert.ok((await branchExists(f, planOf(child.id, memberA.id).integration)) === false, "集成分支也不留");
   assert.equal(await mainSha(f), shaBefore, "整批放弃 ⇒ 主分支一个字节都没动过");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 第三篇：Wave 3 **之后**新增/改变的路径（队长台账 / 三类分流 / 单独安排 / 响亮拒绝 / 空批恢复）
+//
+// 验收方式 = **逆推 + 穷举**：每条先写「由 spec 哪一条，因此**必须**观察到什么」，再落到
+// 实体状态断言（读 sqlite / 读 git ref / 读工作树目录 / 读主分支内容），不看返回字符串。
+// 逐格穷举表（{队长 / 队员 / 单独安排} × {工作树 / 分支 / 台账行 / 活动集贡献 / 终态收口}）
+// 与「由代码或类型保证」的格子，见 `.superpowers/sdd/2026-10-01-multi-agent-squad-p2b/task-acceptance-extension-report.md`。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── G：队长路径（spec §5.7(1) 队长在跑的判定、§6.1/§6.2 不开隔离、§5.7(2) 不改父项状态）──
+//
+// 逆推：§5.7(1) 要求「队长 run **进行中**时的重复指派合并为同一次」⇒ 因此**必须**有可判「进行中」的
+// 记录 ⇒ 队长 run 必须**登记**一行台账；而 §6.1/§6.2 说队长在目标工作区执行 ⇒ 因此那行**必须**
+// branch 为空、且**必须**零工作树；§5.7(1) 又说终态后不得再算「进行中」⇒ 因此收口后同一读法**必须**为假。
+test("G. 队长 run：登记一行（branch 为空）+ 零工作树；hasInProgressLeaderRun 真 → 收口后假", async () => {
+  const f = await setup();
+  const { squad } = await makeSquad(f);
+  const runtime = await f.runtime();
+  // 队长的唤醒入口 = 一条**指派给小队**的工作项被派发（spec §3.3：由小队指派驱动）。
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const statusBefore = itemStatus(runtime, parent.id);
+  const branchesBefore = await localBranches(f);
+  const treesBefore = (await runtime.worktreeManager.list()).length;
+
+  // 经派发桥的决策段（与 host `runSquadDispatch` 同形）：planDispatch 判类别 ⇒ 台账动作查表 ⇒ 登记。
+  await f.bridge.dispatch(parent.id);
+
+  // 类别判别 + 台账动作（穷举表的「队长」行）：runClass=leader ⇒ record_leader_run。
+  assert.deepEqual(
+    f.bridge.records.map((record) => [record.runClass, record.ledgerAction]),
+    [["leader", "record_leader_run"]],
+  );
+  const runId = f.bridge.records[0]!.runId;
+
+  // §5.7(1) ⇒ 因此必须观察到：台账里有一条**队长行**（「进行中」的唯一记录）。
+  const row = await requireRun(f, runId);
+  assert.equal(row.isLeaderTask, true, "队长行以 is_leader_task 作身份标记（与队员行可区分）");
+  assert.equal(row.branch, null, "队长 run 不开工作树 ⇒ branch 必须为空");
+  assert.equal(row.dirName, null);
+  assert.equal(row.status, "open");
+  assert.equal(row.workItemId, parent.id);
+  assert.equal(row.parentWorkItemId, parent.id, "无父项时缺省取自身（与队员 run 同口径）");
+
+  // §6.1/§6.2 ⇒ 因此必须观察到：**零工作树、零新分支**（队长在目标工作区执行）。
+  assert.deepEqual(await localBranches(f), branchesBefore, "队长 run 不得建任何分支");
+  assert.equal((await runtime.worktreeManager.list()).length, treesBefore, "队长 run 不得建工作树");
+
+  // §5.7(1) 的读法（唯一实现 hasInProgressLeaderRun，按 listActive 投影）：登记后「进行中」为真。
+  const activeSnapshot = await f.service.getSnapshot(f.target);
+  assert.ok(
+    activeSnapshot.runs.some((record) => record.runId === runId),
+    "getSnapshot().runs 必须看得见队长 run",
+  );
+  assert.equal(hasInProgressLeaderRun(activeSnapshot.runs, parent.id), true, "登记后即「进行中」");
+  // §6.2 ⇒ 队长行对 activeBranches 零贡献（按 branch !== null 投影）。
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches(WS), [], "队长行对活跃分支零贡献");
+  // §5.7(2) ⇒ 队长 run 不改工作项状态。
+  assert.equal(itemStatus(runtime, parent.id), statusBefore, "§5.7(2)：队长 run 不改父项状态");
+
+  // ── 成功终态收口（completeLeaderRun）：队长没有队员那一步 review/merge，跑完即收口到终态 ──
+  await f.service.completeLeaderRun(f.target, { runId });
+  assert.equal((await requireRun(f, runId)).status, "merged", "队长 run 成功 ⇒ 终态");
+  const afterSnapshot = await f.service.getSnapshot(f.target);
+  assert.equal(
+    hasInProgressLeaderRun(afterSnapshot.runs, parent.id),
+    false,
+    "终态之后「进行中」必须为假 —— 否则该工作项的后续指派被永久合并（spec §5.7(1)）",
+  );
+  assert.equal(
+    afterSnapshot.runs.some((record) => record.runId === runId),
+    false,
+    "终态的队长行必须离开活跃集",
+  );
+  assert.equal(itemStatus(runtime, parent.id), statusBefore, "§5.7(2)：收口也不改父项状态");
+  assert.deepEqual(await localBranches(f), branchesBefore, "收口后依然零分支");
+  assert.equal((await runtime.worktreeManager.list()).length, treesBefore, "收口后依然零工作树");
+
+  // 幂等：同一条「成功」事实重投不报错、也不再动任何东西（终态事件重放 / 双路径）。
+  await f.service.completeLeaderRun(f.target, { runId });
+  assert.equal((await requireRun(f, runId)).status, "merged");
+});
+
+// ── G2：队长行的**失败出口**与**只收队长行**（spec §6.2 终态不得影响工作树 / 未命中响亮）──
+test("G2. 队长行走失败出口 ⇒ discarded；跨终态响亮抛；completeLeaderRun 只收队长行", async () => {
+  const f = await setup();
+  const { squad, memberA } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const statusBefore = itemStatus(runtime, parent.id);
+  const treesBefore = (await runtime.worktreeManager.list()).length;
+
+  // 失败/中止 ⇒ 有归宿：离开活跃集（discarded），且行仍可查（台账没有删除路径）。
+  await f.service.recordLeaderRun(f.target, {
+    runId: "r-lead-fail",
+    workItemId: parent.id,
+    agentId: squad.leaderAgentId,
+  });
+  assert.equal(hasInProgressLeaderRun((await f.service.getSnapshot(f.target)).runs, parent.id), true);
+  await f.service.failMemberRun(f.target, { runId: "r-lead-fail", reason: "队长会话终态=failed" });
+  assert.equal((await requireRun(f, "r-lead-fail")).status, "discarded");
+  assert.equal(
+    hasInProgressLeaderRun((await f.service.getSnapshot(f.target)).runs, parent.id),
+    false,
+    "失败收口后「进行中」必须为假（否则判据恒真）",
+  );
+  assert.equal((await runtime.squadRunRepo.listByWorkItem(parent.id)).length, 1, "行仍可查（留痕不丢）");
+
+  // 跨终态：已按失败收口的 run 不得被改写成「成功」（会掩盖它当初为什么没跑完）。
+  await f.service.recordLeaderRun(f.target, {
+    runId: "r-lead-cross",
+    workItemId: parent.id,
+    agentId: squad.leaderAgentId,
+  });
+  await f.service.failMemberRun(f.target, { runId: "r-lead-cross", reason: "先失败" });
+  await assert.rejects(
+    () => f.service.completeLeaderRun(f.target, { runId: "r-lead-cross" }),
+    /不是 open|跨终态/,
+  );
+  assert.equal((await requireRun(f, "r-lead-cross")).status, "discarded", "跨终态改写被拒且不落盘");
+
+  // 只收队长行：对**队员行**调用 completeLeaderRun ⇒ 响亮抛，且队员行一个字节不动。
+  // 防的是最坏形态：把一条从未合并的队员分支置 merged，编排器随后连树带枝当「已合并」丢弃。
+  const memberRun = await f.service.openMemberRun(f.target, {
+    runId: "r-member-for-leader-guard",
+    workItemId: parent.id,
+    parentWorkItemId: parent.id,
+    agentId: memberA.id,
+    isLeaderTask: false,
+  });
+  await assert.rejects(
+    () => f.service.completeLeaderRun(f.target, { runId: "r-member-for-leader-guard" }),
+    /不是队长 run/,
+  );
+  assert.equal((await requireRun(f, "r-member-for-leader-guard")).status, "open", "队员行不得被改写");
+  assert.ok(await branchExists(f, memberRun.branch), "队员分支仍在");
+  // 未命中 runId ⇒ 响亮抛（静默 no-op 会让调用方以为收口成功）。
+  await assert.rejects(
+    () => f.service.completeLeaderRun(f.target, { runId: "no-such-run" }),
+    /没有 runId/,
+  );
+  // 全程工作项状态不变（队长收口不碰父项）；只有队员那条派发生成了一棵工作树（回归：队长行零工作面）。
+  assert.equal(itemStatus(runtime, parent.id), statusBefore);
+  assert.equal(
+    (await runtime.worktreeManager.list()).length,
+    treesBefore + 1,
+    "队长行不派生工作面：唯一一棵树来自那条队员 run",
+  );
+});
+
+// ── H：三类分流（spec §6.1）—— 队员有树有分支有台账；队长只台账；单独安排**三无**但会话照发 ──
+//
+// 逆推：§6.1「是否开工作树是**本次运行**的属性」⇒ 派发必须按**类别**（不是「非队长 ⇒ 开树」）分流 ⇒
+// 因此**必须**观察到：队员派生工作面、队长与单独安排不派生；且这个判据来自生产实现
+// `ledgerActionForRunClass`（本用例经它驱动，不是测试里另抄一份 switch）。
+test("H. 三类分流：队员（树+分支+台账）/ 队长（只台账）/ 单独安排（三无，派发照走）", async () => {
+  const f = await setup({ residentBridge: true });
+  const { squad, memberA } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const child = createItem(runtime, f, {
+    id: "wi-c",
+    title: "子任务",
+    parentId: parent.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  // 单独安排的对照项：顶层工作项、无父项 ⇒ 不在任何小队批次里（§6.1 那一类）。
+  const solo = createItem(runtime, f, {
+    id: "wi-solo",
+    title: "单独安排的任务",
+    assignee: { type: "agent", id: memberA.id },
+  });
+  const treesBefore = (await runtime.worktreeManager.list()).length;
+  const branchesBefore = await localBranches(f);
+
+  // 经**服务面唯一入口**（assignWorkItem ⇒ 唯一事件出口 ⇒ 常驻 hub ⇒ 派发桥）。
+  await f.service.assignWorkItem(f.target, { workItemId: child.id, agentId: memberA.id });
+  await f.drainBridge();
+  await f.service.assignWorkItem(f.target, { workItemId: solo.id, agentId: memberA.id });
+  await f.drainBridge();
+
+  assert.deepEqual(f.bridge.failures, [], "两条派发都不得抛");
+  const byItem = new Map(f.bridge.records.map((record) => [record.workItemId, record]));
+  assert.deepEqual(
+    [byItem.get(child.id)?.runClass, byItem.get(child.id)?.ledgerAction],
+    ["member", "open_member_run"],
+    "父项被指派给小队 ⇒ 队员（§6.4 开独立工作树）",
+  );
+  assert.deepEqual(
+    [byItem.get(solo.id)?.runClass, byItem.get(solo.id)?.ledgerAction],
+    ["standalone", "none"],
+    "顶层无父项 ⇒ 单独安排（§6.1 直接在工作区改）",
+  );
+
+  // 队员实体状态：台账一行（带队员分支）、工作树 + 分支各一。
+  const memberRow = await requireRun(f, byItem.get(child.id)!.runId);
+  assert.equal(memberRow.isLeaderTask, false);
+  assert.equal(memberRow.branch, planOf(child.id, memberA.id).member, "队员行带自己的分支名");
+  assert.equal(memberRow.status, "open");
+  assert.deepEqual(await worktreeBranches(f), [memberRow.branch!], "队员有一棵工作树（带分支）");
+  assert.ok(await branchExists(f, memberRow.branch!), "队员分支真的存在于 refs/heads");
+  assert.equal((await runtime.worktreeManager.list()).length, treesBefore + 1);
+  assert.deepEqual(
+    await runtime.lifecycle.computeActiveBranches(WS),
+    [memberRow.branch],
+    "队员分支进活跃集（活跃集合由 listActive 派生）",
+  );
+  assert.equal(
+    hasInProgressLeaderRun((await f.service.getSnapshot(f.target)).runs, child.id),
+    false,
+    "队员行不是队长行（isLeaderTask=false）",
+  );
+
+  // 单独安排实体状态：**三无** —— 无台账行、无分支、无工作树（§6.1「没有合并那一步」）。
+  assert.deepEqual(
+    (await runtime.squadRunRepo.listByWorkItem(solo.id)),
+    [],
+    "单独安排的智能体不得有台账行（台账是小队台账）",
+  );
+  assert.equal(
+    (await f.service.getSnapshot(f.target)).runs.some((record) => record.workItemId === solo.id),
+    false,
+    "单独安排不进活跃集（它不在任何小队里）",
+  );
+  assert.deepEqual(
+    await localBranches(f),
+    [...branchesBefore, memberRow.branch!].sort(),
+    "除队员那条外不得多出任何分支",
+  );
+  assert.equal(
+    (await runtime.worktreeManager.list()).length,
+    treesBefore + 1,
+    "单独安排不得建工作树",
+  );
+  // **对照的核心**：单独安排**不是「跳过派发」** —— 它仍经唯一出口驱动了一次派发（会话照发，落目标工作区）。
+  const soloRequests = f.dispatched.filter((request) => request.workItemId === solo.id);
+  assert.equal(soloRequests.length, 1, "单独安排仍要经 hub 发出派发请求（会话照发）");
+  assert.deepEqual(soloRequests[0], {
+    workItemId: solo.id,
+    agentId: memberA.id,
+    workspacePath: f.repoRoot,
+    workspaceIdentity: WS,
+  });
+});
+
+// ── I：响亮拒绝（spec §6.1 的反面）—— 声明 member 却给不出父项证据 ⇒ 抛，且拒绝在建任何东西之前 ──
+//
+// 逆推：§6.1 的隔离承诺是「队员必须在独立工作树里干活」⇒ 当**无法证明**本项不在小队批次里时
+// （有 parentId 却取不到父项：归档 / 删除 / 跨 workspace），按 standalone 放行 = 静默取消隔离，
+// 按 member 放行 = 凭空开树；两条都不能静默选 ⇒ 因此**必须**响亮失败，且**必须**不建树、不登记台账。
+// 这一格在服务面**可构造**（assignWorkItem 是三个入口之一，派发桥的类别声明走生产策略 declaredRunClassFor）。
+test("I. 声明 member 却给不出父项证据：派发桥响亮失败，且不建树、不登记台账、不建分支", async () => {
+  const f = await setup({ residentBridge: true });
+  const { squad } = await makeSquad(f);
+  const runtime = await f.runtime();
+
+  /* 归档父项 + 挂在它下面的**活跃**子项：只经 repo 落库（`insert` 不查父链、允许写 archivedAt；
+     服务面的 `create` 会按「父工作项不存在或已归档」拒掉 —— 正是那道闸让这种数据只能这样重现）。 */
+  runtime.workItemRepo.insert({
+    id: "wi-arch-p",
+    workspaceIdentity: WS,
+    workspacePath: f.repoRoot,
+    title: "已归档的批次父项",
+    body: "",
+    status: "todo",
+    assignee: { type: "squad", id: squad.id },
+    labels: [],
+    properties: {},
+    position: 0,
+    archivedAt: 1,
+  });
+  runtime.workItemRepo.insert({
+    id: "wi-arch-c",
+    workspaceIdentity: WS,
+    workspacePath: f.repoRoot,
+    parentId: "wi-arch-p",
+    title: "归档父项下的子项",
+    body: "",
+    status: "todo",
+    assignee: { type: "agent", id: "ta-x" },
+    labels: [],
+    properties: {},
+    position: 0,
+  });
+
+  // 前置（夹具必须有区分力）：本项有 parentId，但父项对**读路径**等同不存在 ⇒ 唯一策略声明 member。
+  const snapshot = await f.service.getSnapshot(f.target);
+  const child = snapshot.workItems.find((item) => item.id === "wi-arch-c");
+  assert.ok(child, "活跃子项必须可读");
+  assert.equal(child.parentId, "wi-arch-p");
+  assert.equal(
+    snapshot.workItems.some((item) => item.id === "wi-arch-p"),
+    false,
+    "归档父项对读路径等同不存在",
+  );
+  assert.equal(
+    declaredRunClassFor({ parentId: child.parentId, parent: null }),
+    "member",
+    "「有 parentId 却拿不到父项」那一格**故意**声明 member，好让 planDispatch 响亮拒绝",
+  );
+
+  const treesBefore = (await runtime.worktreeManager.list()).length;
+  const branchesBefore = await localBranches(f);
+  await f.service.assignWorkItem(f.target, { workItemId: "wi-arch-c", agentId: "ta-x" });
+  await f.drainBridge();
+
+  // §6.1 ⇒ 因此必须观察到：这次派发**响亮失败**（不是静默落成 standalone = 静默取消隔离）。
+  assert.equal(f.bridge.failures.length, 1, "父项已归档必须响亮失败，不得静默按单独安排放行");
+  assert.match(String(f.bridge.failures[0]), /没有可用的父项事实/, "错误必须点明缺的是父项事实");
+  // 拒绝发生在建任何东西之前：零台账行、零工作树、零分支。
+  assert.deepEqual(runtime.squadRunRepo.listByWorkItem("wi-arch-c"), [], "不得产生台账行");
+  assert.equal((await runtime.worktreeManager.list()).length, treesBefore, "不得建工作树");
+  assert.deepEqual(await localBranches(f), branchesBefore, "不得建分支");
+  // 负责人确实改了（指派这一半已成立）—— 响亮失败只针对「派发」这一半，不是整条指派回滚。
+  assert.deepEqual(
+    runtime.workItemRepo.get("wi-arch-c")?.assignee,
+    { type: "agent", id: "ta-x" },
+  );
+});
+
+// ── J：空批恢复（spec §6.2 崩溃窗口）—— 无 run 行的空批也能被重驱收尾；主分支不动；连跑两次幂等 ──
+//
+// 逆推：进程死在「子项转终态」与「child_completed 转发器跑完收尾」之间时，重启后**没有任何
+// run 台账行**；若重驱只看台账行，这个父项**永久**停在 todo（不是报错，是永远不动）⇒
+// 因此发现判据**必须**含第二条并列证据「父项被指派给小队」；而空批无成果可合 ⇒ **必须**不动主分支；
+// 恢复动作是幂等的重驱 ⇒ **必须**连跑两次无副作用。
+test("J. 空批恢复（无 run 行）：重驱 ⇒ 父项 done、主分支内容逐字节不变；连跑两次幂等", async () => {
+  // 关掉事件转发 = 模拟进程在收尾前死掉：没有订阅者会重放 child_completed。
+  const f = await setup({ forwardChildCompleted: false });
+  const { squad } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  createItem(runtime, f, {
+    id: "wi-c",
+    title: "派单前被取消的子任务",
+    parentId: parent.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  // 崩溃窗口态：唯一子项被取消（子项全终态）⇒ 空批；但没有事件驱动在本进程里跑。
+  runtime.workItemService.transition("wi-c", "cancelled", "todo");
+  // 前置：确实**没有任何** run 台账行 —— 否则本用例证明的不是「空批」那条路径。
+  assert.equal(runtime.squadRunRepo.listByParent(parent.id).length, 0, "空批必须零 run 台账行");
+  assert.equal(itemStatus(runtime, parent.id), "todo", "崩溃窗口态：父项尚未被推进");
+  const shaBefore = await mainSha(f);
+  const fileBefore = await readMainFile(f, "a.txt");
+
+  const first = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(first.failures, []);
+  assert.deepEqual(first.replayed, [parent.id], "无 run 行的空批必须进入重驱视野（含「父项指派给小队」证据）");
+  assert.equal(itemStatus(runtime, parent.id), "done", "重驱后父项确实到终态（读库）");
+  assert.equal(await mainSha(f), shaBefore, "空批无成果可合 ⇒ 主分支一个字节不动");
+  assert.equal(await readMainFile(f, "a.txt"), fileBefore, "主分支内容逐字节不变");
+  assert.deepEqual(await worktreeBranches(f), [], "空批收尾不建工作树");
+  const eventsAfterFirst = parentStatusEvents(f, parent.id).length;
+
+  // 幂等：连跑第二次无副作用（不重复合并 / 不重复推进 / 不重复发事件）。
+  const second = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(second.replayed, [], "已结算的批不再被重驱");
+  assert.deepEqual(second.failures, []);
+  assert.equal(await mainSha(f), shaBefore, "重复重驱不得再动主分支（幂等）");
+  assert.equal(await readMainFile(f, "a.txt"), fileBefore);
+  assert.equal(itemStatus(runtime, parent.id), "done");
+  assert.equal(
+    parentStatusEvents(f, parent.id).length,
+    eventsAfterFirst,
+    "重复重驱不得再发父项变迁事件（幂等）",
+  );
 });
