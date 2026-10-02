@@ -9,6 +9,8 @@
  * 因此按仓库既有做法（参见 scheduler/misfireDecision.ts）把纯逻辑摊出来单独测。
  */
 
+import type { ElectronReleaseChannel } from "@zcode/shared";
+
 /**
  * 应用是否带 designated requirement（DR）—— 即 Squirrel.Mac 能否初始化。
  *
@@ -68,4 +70,70 @@ export function shouldUseInAppAutoUpdate(params: {
   if (!params.isPackaged) return params.devAutoUpdateEnabled;
   if (params.platform !== "darwin") return true;
   return params.macHasDesignatedRequirement === true;
+}
+
+function mapElectronReleaseArch(arch: string): string {
+  switch (arch) {
+    case "arm64":
+      return "aarch64";
+    case "x64":
+      return "x86_64";
+    case "ia32":
+      return "x86";
+    default:
+      return arch;
+  }
+}
+
+function mapElectronReleasePlatform(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case "win32":
+      return "windows";
+    case "darwin":
+      return "darwin";
+    case "linux":
+      return "linux";
+    default:
+      return platform;
+  }
+}
+
+/**
+ * 当前运行平台的 electron 更新平台标识（如 `darwin-arm64` / `windows-x64`）。
+ *
+ * 原属 `manifestUpdateProvider.ts`（平台 manifest 更新源）。该文件在本分支是死代码、
+ * 已被删，但 autoUpdater.ts 仍用它打通道应用日志，故迁到这里 —— 本模块是
+ * autoUpdater.ts **已经依赖**且**无 electron 依赖**的纯逻辑模块，不必新增模块边，
+ * 也仍可被单测覆盖（这是「不留下悬空 import」的最小改法）。
+ *
+ * `TEST_UPDATER_ARCH` 是 manifest 时代的测试缝，随函数一并保留以保持行为不变；
+ * 仓库内已无任何调用方设置它（grep 零命中），后续可考虑删除。
+ */
+export function getElectronReleasePlatform(
+  platform: NodeJS.Platform = process.platform,
+  arch = process.env["TEST_UPDATER_ARCH"] || process.arch,
+): string {
+  return `${mapElectronReleasePlatform(platform)}-${mapElectronReleaseArch(arch)}`;
+}
+
+/**
+ * 「打开发布页」回退该指向哪个页面 —— 必须随**当前通道**走。
+ *
+ * 背景：未签名 mac（取不到 DR，Squirrel 起不来）的应用内更新不可用，手动检查退化为
+ * `shell.openExternal(发布页)`。此时若固定用 `/releases/latest`，GitHub 会重定向到
+ * **最新正式版**（prerelease 不计入 latest）⇒ 预览用户被送到正式版页，与
+ * 「开启后将最快、提前体验」的承诺矛盾。
+ *
+ * 取舍：预览通道指向**完整发布列表**而不是 `?q=prerelease%3Atrue` 过滤页 ——
+ * 过滤页会把正式版一并藏掉，而预览用户正需要看到「取代当前预览号的正式版」
+ * （`X.Y.Z-preview.N < X.Y.Z`，见 docs/superpowers/plans/2026-10-02-preview-update-channel.md 第二节）。
+ * 列表页会把 prerelease 带 Pre-release 徽标一并列出，两类都能取到。
+ */
+export function resolveGitHubReleasesPageUrl(
+  owner: string,
+  repo: string,
+  channel: ElectronReleaseChannel,
+): string {
+  const releasesBase = `https://github.com/${owner}/${repo}/releases`;
+  return channel === "preview" ? releasesBase : `${releasesBase}/latest`;
 }
