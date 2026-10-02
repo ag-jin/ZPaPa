@@ -1559,7 +1559,11 @@ const enUS: Record<string, string> = {
   "updateDialog.restartToUpdate": "Restart to update",
   "updateDialog.skipVersion": "Skip this version",
   "updateDialog.later": "Later",
+  "updateDialog.channel.stable": "Stable",
+  "updateDialog.channel.preview": "Preview",
   "update.toast.upToDate": "You're on the latest version (v{version})",
+  "update.toast.stableCatchUpPending":
+    "You are on preview v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once stable catches up.",
   "update.toast.available": "New version v{version} is available",
   "update.toast.downloading": "Downloading new version v{version}",
   "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
@@ -2209,6 +2213,10 @@ const enUS: Record<string, string> = {
   "settings.receivePreviewUpdates": "Receive preview updates early",
   "settings.receivePreviewUpdatesDescription":
     "When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.",
+  "settings.updateChannel.current.stable": "Current update channel: Stable",
+  "settings.updateChannel.current.preview": "Current update channel: Preview",
+  "settings.updateChannel.stableCatchUpPending":
+    "You are running preview build v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once a stable version catches up.",
   "settings.autoDownloadAndInstallUpdates": "Automatically download and install updates",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "When enabled, updates start downloading as soon as they are found. Restart still requires confirmation when tasks are running.",

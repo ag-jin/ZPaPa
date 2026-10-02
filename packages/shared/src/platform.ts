@@ -30,11 +30,13 @@ import type {
   PostUpdateReleaseNotesPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
+  UpdateUpToDateNotice,
 } from "./update.js";
 export type {
   PostUpdateReleaseNotesPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
+  UpdateUpToDateNotice,
 } from "./update.js";
 
 export interface TaskNotificationPayload {

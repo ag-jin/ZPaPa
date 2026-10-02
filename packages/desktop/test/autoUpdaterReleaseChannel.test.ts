@@ -40,8 +40,10 @@ const calls: RecordedCalls = [];
 type FakeUpdater = {
   _allowPrerelease: boolean;
   _channel: string | null;
+  _allowDowngrade: boolean;
   allowPrerelease: boolean;
   channel: string | null;
+  allowDowngrade: boolean;
   setFeedURL: (options: unknown) => void;
   checkForUpdates: () => Promise<unknown>;
   downloadUpdate: () => Promise<unknown>;
@@ -55,12 +57,16 @@ type FakeUpdater = {
 let pendingCheckMode = false;
 let resolvePendingCheck: (() => void) | null = null;
 
+// 安装版本可覆盖：测「装了预览版 + 关开关 + 正式号更低」这一格需要当前版本是预览版。
+let appVersionOverride: string | null = null;
+
 // 事件监听器：initAutoUpdater 通过 on() 注册，用例通过 emit() 推进状态机。
 const eventListeners = new Map<string, Array<(payload: unknown) => void>>();
 
 const fakeUpdater: FakeUpdater = {
   _allowPrerelease: false,
   _channel: null,
+  _allowDowngrade: false,
   get allowPrerelease(): boolean {
     return this._allowPrerelease;
   },
@@ -74,6 +80,18 @@ const fakeUpdater: FakeUpdater = {
   set channel(value: string | null) {
     this._channel = value;
     calls.push(`channel=${value}`);
+    // 忠实复刻 electron-updater 的副作用：`set channel` 每次赋值（**含赋 null**）都会
+    // 把 allowDowngrade 置 true（node_modules/electron-updater/out/AppUpdater.js:28-46）。
+    // 必须建模，否则「通道应用后显式关掉 allowDowngrade」这条断言即使被删掉也不会红。
+    this._allowDowngrade = true;
+    calls.push("allowDowngrade=true(channel-setter-side-effect)");
+  },
+  get allowDowngrade(): boolean {
+    return this._allowDowngrade;
+  },
+  set allowDowngrade(value: boolean) {
+    this._allowDowngrade = value;
+    calls.push(`allowDowngrade=${value}`);
   },
   setFeedURL() {
     calls.push("setFeedURL");
@@ -108,7 +126,7 @@ const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
 const electronStub = {
   app: {
     isPackaged: true,
-    getVersion: () => "3.16.3",
+    getVersion: () => appVersionOverride ?? "3.16.3",
     on() {},
     relaunch() {},
     exit() {},
@@ -193,17 +211,20 @@ function emit(event: string, payload?: unknown): void {
   }
 }
 
-function invokeIpc(channel: string): unknown {
+function invokeIpc(channel: string, ...args: unknown[]): unknown {
   const handler = ipcHandlers.get(channel);
   assert.ok(handler, `未注册 IPC handler：${channel}`);
-  return handler();
+  // 真实 handler 的第一个参数是 IpcMainInvokeEvent；多数 handler 忽略它，带参的（如跳版本）需要它占位。
+  return handler({} as never, ...args);
 }
 
 function resetFake(): void {
   fakeUpdater._allowPrerelease = false;
   fakeUpdater._channel = null;
+  fakeUpdater._allowDowngrade = false;
   pendingCheckMode = false;
   resolvePendingCheck = null;
+  appVersionOverride = null;
   calls.length = 0;
   // 监听器/handler 属于「上一次 initAutoUpdater」，清掉避免跨用例重复触发。
   eventListeners.clear();
@@ -550,3 +571,192 @@ test("接线守卫｜未签名 mac 的「打开发布页」回退随当前通道
   const fallbackBlock = readTopLevelBlock(source, "export function checkForUpdateMenuClick(");
   assert.match(fallbackBlock, /getGitHubReleasesPageUrl\(\)/, "回退必须走随通道选择的 URL helper");
 });
+
+/* ------------------- 事情二：allowDowngrade 显式关掉（不依赖降级） ------------------- */
+
+test("S6｜通道配置后 allowDowngrade 显式关掉（删掉那一行 ⇒ 必红）", async () => {
+  const { initAutoUpdater, refreshAutoUpdaterReleaseChannel } = await autoUpdaterModulePromise;
+  resetFake();
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: false }) as never,
+  });
+  await flush();
+  assert.equal(fakeUpdater.allowDowngrade, false, "冷启动（稳定通道）也不得允许降级");
+
+  refreshAutoUpdaterReleaseChannel(true, "test toggle on");
+  await flush();
+  assert.equal(fakeUpdater.channel, "preview");
+  assert.equal(
+    fakeUpdater.allowDowngrade,
+    false,
+    "开启预览通道后必须显式关掉 allowDowngrade（channel setter 会把它置 true）",
+  );
+
+  refreshAutoUpdaterReleaseChannel(false, "test toggle off");
+  await flush();
+  assert.equal(fakeUpdater.channel, null);
+  assert.equal(
+    fakeUpdater.allowDowngrade,
+    false,
+    "channel=null 同样会触发 setter 副作用（赋 null 也置 true），必须再次关掉",
+  );
+
+  // 桩若没有忠实复刻 setter 副作用，本用例就是空断言 —— 这里钉住副作用确实发生过。
+  const downgradeCalls = calls.filter((call) => call.startsWith("allowDowngrade="));
+  assert.ok(
+    downgradeCalls.includes("allowDowngrade=true(channel-setter-side-effect)"),
+    "桩必须复刻 electron-updater channel setter 的副作用",
+  );
+  assert.equal(downgradeCalls.at(-1), "allowDowngrade=false", "最后一次赋值必须是把降级关掉");
+});
+
+test("接线守卫｜allowDowngrade 在通道应用函数内、且位于 channel 赋值之后，全仓仅一处", () => {
+  const source = readFileSync(autoUpdaterSourcePath, "utf8");
+  assert.equal(
+    (source.match(/autoUpdater\.allowDowngrade =/g) ?? []).length,
+    1,
+    "allowDowngrade 只允许在应用函数里赋值一次",
+  );
+  const applyBlock = readTopLevelBlock(source, "function applyAutoUpdaterReleaseChannelConfig(");
+  const channelIndex = applyBlock.indexOf('autoUpdater.channel = isPreview ? "preview" : null');
+  const downgradeIndex = applyBlock.indexOf("autoUpdater.allowDowngrade = false");
+  assert.ok(channelIndex >= 0, "找不到 channel 赋值");
+  assert.ok(
+    downgradeIndex > channelIndex,
+    "必须在 channel 赋值之后显式关掉 allowDowngrade，否则会被 setter 副作用打开",
+  );
+  // 理由必须写进注释：为什么宁可停在预览版也不依赖降级。
+  assert.match(applyBlock, /Squirrel/, "必须注明 mac Squirrel 对降级支持不完整这一理由");
+});
+
+/* ------------- 事情三：zcodeReleaseChannel 取不到 ⇒ 删净，不留半截 ------------- */
+
+test("③(b)｜取不到的通道字段与恒不生效的 stale 守卫已连同依赖删净", () => {
+  const source = readFileSync(autoUpdaterSourcePath, "utf8");
+
+  // GitHub provider 的 UpdateInfo 从来不产出这些字段，平台 manifest 路径已删 ⇒ 恒为 null
+  // ⇒ 守卫恒不生效、通道标注只能靠簿记值。半截留着比删掉更危险（读者会以为有保护）。
+  assert.doesNotMatch(source, /zcodeReleaseChannel/, "不得留一个恒为 null 的通道字段");
+  assert.doesNotMatch(source, /shouldIgnoreStaleAvailableUpdate/, "恒不生效的守卫必须删除");
+  assert.doesNotMatch(source, /activeAutoUpdateCheckChannel/, "仅为该守卫服务的簿记变量必须一并删除");
+  assert.doesNotMatch(source, /readUpdateInfoReleaseChannel/, "读取该字段的实例方法必须一并删除");
+  assert.doesNotMatch(
+    source,
+    /infoChannel/,
+    "依赖该字段的中间变量不得残留（否则等于留了半截）",
+  );
+});
+
+test("③(b)｜通道标注取本次检查通道：preview 结果标 preview，跳过记录也进 preview 键", async () => {
+  const { initAutoUpdater, getAutoUpdaterState } = await autoUpdaterModulePromise;
+  resetFake();
+  const settingService = createSettingService({ receivePreviewUpdates: true });
+  await initAutoUpdater({ settingService: settingService as never });
+  await flush();
+  settingService.updates.length = 0;
+
+  // GitHub provider 的 update-available payload 里没有通道字段（真实形态）。
+  emit("update-available", { version: "3.17.0-preview.1" });
+  await flush();
+  await flush();
+
+  const state = getAutoUpdaterState();
+  assert.equal(state.kind, "update-available");
+  assert.equal(state.channel, "preview", "通道标注必须随「本次检查所用通道」走，而不是默认 stable");
+
+  // 跳过记录按通道分键：标错通道会把 preview 内容写进 stable 键（污染）。
+  invokeIpc(PlatformChannels.SkipUpdateVersion, "3.17.0-preview.1");
+  await flush();
+  assert.ok(
+    settingService.updates.some(
+      (patch) =>
+        (patch.skippedElectronUpdateVersions as Record<string, string> | undefined)?.preview ===
+        "3.17.0-preview.1",
+    ),
+    `跳过记录必须进 preview 键，实际补丁：${JSON.stringify(settingService.updates)}`,
+  );
+});
+
+/* --------------- 事情一：装了预览版 + 关开关 + 正式号更低 ⇒ 必须说清 --------------- */
+
+test("①｜装了预览版 + 关开关 + 正式号更低 ⇒ idle 必须带上「回不到正式版」的事实", async () => {
+  const { initAutoUpdater, getAutoUpdaterState } = await autoUpdaterModulePromise;
+  resetFake();
+  appVersionOverride = "3.17.0-preview.1";
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: false }) as never,
+  });
+  await flush();
+
+  // 正式版仍是更低的 3.16.3：既不允许降级、也没追上 ⇒ electron-updater 报 not-available。
+  emit("update-not-available", { version: "3.16.3" });
+  await flush();
+
+  const state = getAutoUpdaterState();
+  assert.equal(state.kind, "idle");
+  assert.equal(state.channel, "stable", "idle 也要带已应用通道，界面才说得清在哪条通道");
+  const notice = state.kind === "idle" ? state.upToDateNotice : undefined;
+  assert.ok(notice, "这一格必须带可解释的事实，否则界面只能显示「已是最新」");
+  assert.equal(notice.stableCatchUpPending, true);
+  assert.equal(notice.channel, "stable");
+  assert.equal(notice.currentVersion, "3.17.0-preview.1");
+  assert.equal(notice.latestChannelVersion, "3.16.3");
+});
+
+test("①｜普通「已是最新」不带误导性说明：稳定版装稳定版 / 预览通道两格都不带", async () => {
+  const { initAutoUpdater, getAutoUpdaterState } = await autoUpdaterModulePromise;
+
+  // 格一：装的是稳定版，确认无更新 ⇒ 无该状态（不该惊吓普通用户）。
+  resetFake();
+  appVersionOverride = "3.16.3";
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: false }) as never,
+  });
+  await flush();
+  emit("update-not-available", { version: "3.16.3" });
+  await flush();
+  const stableState = getAutoUpdaterState();
+  assert.equal(stableState.kind, "idle");
+  assert.equal(
+    stableState.kind === "idle" ? stableState.upToDateNotice : "sentinel",
+    undefined,
+    "稳定版已是最新时不得附带「回不到正式版」的说明",
+  );
+
+  // 格二：预览通道（开关打开）装预览版、确认无更新 ⇒ 检查就在预览通道上，不存在「回不去」。
+  resetFake();
+  appVersionOverride = "3.17.0-preview.1";
+  await initAutoUpdater({
+    settingService: createSettingService({ receivePreviewUpdates: true }) as never,
+  });
+  await flush();
+  emit("update-not-available", { version: "3.17.0-preview.1" });
+  await flush();
+  const previewState = getAutoUpdaterState();
+  assert.equal(previewState.kind, "idle");
+  assert.equal(previewState.channel, "preview");
+  assert.equal(
+    previewState.kind === "idle" ? previewState.upToDateNotice : "sentinel",
+    undefined,
+    "预览通道下不该说「回不到正式版」",
+  );
+});
+
+test("接线守卫｜手动检查的 up-to-date 结果同样带上事实（toast 不得只说「已是最新」）", () => {
+  const source = readFileSync(autoUpdaterSourcePath, "utf8");
+  const start = source.indexOf('autoUpdater.on("update-not-available"');
+  const end = source.indexOf('autoUpdater.on("download-progress"');
+  assert.ok(start >= 0 && end > start, "找不到 update-not-available 处理器");
+  const block = source.slice(start, end);
+
+  // 同一份事实必须同时落到「idle 状态」与「手动检查结果」两个出口：
+  // 前者供设置页常驻显示，后者供用户点击检查后的 toast，少一个就有静默路径。
+  assert.match(block, /buildUpToDateNotice\(info\.version\)/);
+  assert.ok(
+    (block.match(/upToDateNotice/g) ?? []).length >= 3,
+    "idle 状态与手动检查结果都要带上 upToDateNotice",
+  );
+  assert.match(block, /kind: "up-to-date"/);
+  assert.match(block, /channel: availableUpdateChannel/);
+});
+
