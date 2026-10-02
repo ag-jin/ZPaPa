@@ -40,7 +40,7 @@ import {
   startSchedulerResourceTelemetry,
   type SchedulerResourceTelemetry,
 } from "./schedulerResourceTelemetry.js";
-import { createWakeTick, WAKE_TICK_LIMIT } from "./wakeTick.js";
+import { createWakeTick } from "./wakeTick.js";
 
 /** 轮询间隔：cron 最小粒度是分钟，20s 轮询足以按时命中且开销低。 */
 const POLL_INTERVAL_MS = 20_000;
@@ -203,11 +203,27 @@ async function tick(): Promise<void> {
         for (const task of offPeakClaimed) {
           await handleOffPeakClaimed(task, now);
         }
-        // 第四条：唤醒规则（recon.md 缺口 #6）。与上面三路**共用同一个 20s tick**——
-        // 另起一个定时器会让两路 tick 相对漂移，misfire / 退避语义也会长出第二套口径。
-        // 先在这里按 limit 扫一遍（只为「有没有到点」这个廉价判断），再交给 wakeTick 逐条判定。
-        const wakeRules = requireWakeRuleRepo().listReady(now, WAKE_TICK_LIMIT);
-        if (wakeRules.length > 0) await wakeTick.run(now);
+        /* 第四条：唤醒规则（recon.md 缺口 #6）。与上面三路**共用同一个 20s tick**——
+           另起一个定时器会让两路 tick 相对漂移，misfire / 退避语义也会长出第二套口径。
+
+           ⚠ 必须**每轮都跑** run，不能像原先那样先 `listReady` 判「有没有到点」再决定跑不跑：
+           一条已 fire 的规则（advance-before-post）其 `next_fire_at` 已前进到未来，安静期里
+           `listReady` 恒为空 —— 若据此跳过 run，则**重投发不出去、过期记录也清理不掉**，
+           这次的「TTL 淘汰 + 重投」两格在生产里根本不会执行。run 内部自带 `listReady` 扫描，
+           去掉这层多余的预判同时也少一次重复的 SQL。 */
+        const evicted = await wakeTick.run(now);
+        /* 到 TTL 仍未结算的重投记录会被淘汰并交回这里 —— **必须留痕**：
+           「已发出但回执始终不来」（host/main 中途退出）的条目若静默消失，那次唤醒就
+           无从排查。attempts=0 表示从未收到任何回执，正是这一形态；
+           有过回执（attempts>0）说明是在退避重投里耗尽了 TTL。两者都打 error。 */
+        for (const item of evicted) {
+          log(
+            "error",
+            `squad wake dispatch pending expired (TTL) rule=${item.ruleId} eventKey=${item.eventKey}` +
+              ` pendingFor=${item.pendingForMs}ms attempts=${item.attempts}` +
+              `（本次唤醒放弃，不再重投：迟到的回执只会被当成 unknown）`,
+          );
+        }
         // keep-awake：上报执行中计数，main 据此 + 设置决定 powerSaveBlocker。
         await reportOffPeakActiveCount();
       } catch (error) {

@@ -30,6 +30,34 @@ const WAKE_RATE_WINDOW_MS = 60 * 60_000;
 const WAKE_DISPATCH_RETRY_BASE_MS = 30_000;
 const WAKE_DISPATCH_RETRY_CAP_MS = 15 * 60_000;
 
+/**
+ * 未被结算的重投记录的最长存活时间（**TTL**，从首次发出的那一刻算起）。
+ *
+ * 为什么必须有它：重投表的键是 `(ruleId, eventKey)`，而排期族每个网格点都算出**新的** eventKey
+ * ⇒ 只要「本机没有 host / 回执不来」持续，表就会**每格新增一条永不删除的记录**（无 TTL、无上限、无淘汰）。
+ * 它按事件数增长，而对照的 off-peak 退避表按**任务 id**（任务集固定）⇒ 「同形」在这一点上不成立。
+ * 所以要给它一个上界，并让「已发出但永不撤下」不再可能。
+ *
+ * 为什么取 1 小时（与退避参数的关系）：退避从 30s 起翻倍、封顶 15min，
+ *   attempt 1..6 = 30s → 60 → 120 → 240 → 480 → 900(封顶)，累计约 **30.5 分钟**才爬到帽子。
+ *   TTL 必须**严格大于**这段「退避爬升时间」，否则会在退避仍有增长空间时就放弃；
+ *   取 1 小时 ≈ 2× 爬升时间，让退避爬到 15min 后还能在帽子上再试一两轮。
+ *   1 小时也正好是 spec §5.5 速率闸窗口（`WAKE_HOURLY_RUN_LIMIT` / 一小时）的同一量级：
+ *   「一小时里本机始终没有 host / 回执始终不来」已足够判定这次唤醒没有落地。
+ *   反过来若 TTL=30min（≈爬升时间），会在退避刚封顶（或还没封顶）时淘汰 —— 见上面为什么不行。
+ *
+ * 到期后的归宿：**响亮放弃**（从表里删除、由调度器入口打 error 日志），而不是像基线那样永久占位。
+ * 不选择「到期重投」：请求可能仍在途，重投会与在途的那次**双跑**（同一 traceId 在下游没有去重保证），
+ * 静默双跑比响亮放弃糟得多。
+ *
+ * 最坏条数口径（表有多大）：稳定态下活记录数 ≈ `(TTL / 最小排期间隔) × 规则数`。
+ *   它**有限**（每个网格点至多一条、每条至多活一个 TTL），但可能**偏大**：间隔取最小（如 every 1 分钟
+ *   ⇒ 1h/1min=60 条/规则），规则数一多，表仍可能到几百条。这是「**有界**（不再随派发次数无界增长）
+ *   与「低开销」之间的取舍：每条只是一份薄请求 + 几个数字，淘汰是一次 O(表大小) 扫描。
+ *   若未来规则规模上去，再考虑把它下沉成带 TTL 的持久表（P2c）。
+ */
+export const WAKE_DISPATCH_PENDING_TTL_MS = 60 * 60_000;
+
 /** 事件的 source 维度（spec §5.7.1：两个来源的不同事实永不撞键）。规则唤醒的事实源固定是「小队调度」。 */
 const WAKE_EVENT_SOURCE = "squad";
 
@@ -121,9 +149,26 @@ export type WakeTickDeps = {
   decide?: (input: Parameters<typeof decideWake>[0]) => ReturnType<typeof decideWake>;
 };
 
+/**
+ * 一轮 tick 里**被 TTL 淘汰**的重投记录（只有 `run` 产出；措辞由调度器入口翻成日志 ——
+ * 与 `WakeSettlementOutcome` 同一条约定：判定留在这里，措辞留在那一处）。
+ *
+ * 为什么要有这条出口：「已发出但回执始终不来」的条目必须**有归宿**。没有它，条目只会
+ * 永久挂在表里（既不重投也不清理、静默消失）；有了它，入口能打一条可见的 error 日志。
+ */
+export type WakePendingEviction = {
+  ruleId: string;
+  eventKey: string;
+  /** 从首次发出到被淘汰经历的毫秒数（≥ TTL）。 */
+  pendingForMs: number;
+  /** 在这段期间收到的失败回执次数：0 ⇒ 从未收到任何回执（host/main 中途退出的形态）。 */
+  attempts: number;
+};
+
 export type WakeTick = {
-  /** 一轮 tick：先重投到期的那批，再处理本轮到点的规则。 */
-  run: (now: number) => Promise<void>;
+  /** 一轮 tick：先淘汰过 TTL 的那批，再重投到期的那批，最后处理本轮到点的规则。
+      返回本轮**被淘汰**的记录（可能为空）—— 由调度器入口打日志留痕。 */
+  run: (now: number) => Promise<WakePendingEviction[]>;
   /** 结算一条派发结果（main 侧回执）。返回结论，由调度器入口决定怎么留痕。 */
   settle: (result: WakeDispatchResult, now: number) => WakeSettlementOutcome;
 };
@@ -250,8 +295,13 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
      若瞬时结果（本机没有 host / 转发失败 / 库未就绪）就此丢弃，这次唤醒就永远消失 ——
      而邻居两条路（cron / off-peak）都有退避重投。本表把「已请求未结算」记下来，按退避重投**同一条**
      请求（同一个 `(ruleId, eventKey)`，正是 §3.9 幂等键要的「同一格重投算同一件事」）。
-     进程内（与 off-peak 的退避表同形）：调度器重启即丢，那一格由重启后的规则排期接管，不假装能补。 */
-  const pending = new Map<string, { request: WakeDispatchRequest; attempts: number; retryAt: number | null }>();
+     进程内（与 off-peak 的退避表同形）：调度器重启即丢，那一格由重启后的规则排期接管，不假装能补。
+     `postedAt` 是 TTL 的起点（首次发出的时刻）：**不因重投而刷新** —— 刷新会让重投循环永不淘汰，
+     又回到无界；不刷新则「一条记录最多活 `WAKE_DISPATCH_PENDING_TTL_MS`」。 */
+  const pending = new Map<
+    string,
+    { request: WakeDispatchRequest; attempts: number; retryAt: number | null; postedAt: number }
+  >();
   const pendingKey = (ruleId: string, eventKey: string): string => `${ruleId}\u0000${eventKey}`;
 
   const recentFireCount = (ruleId: string, now: number): number => {
@@ -300,7 +350,33 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
     };
     deps.postRequest(request);
     // 请求已经发出 ⇒ 记进重投表（还没有到期重投：retryAt=null，等回执说失败才排期）。
-    pending.set(pendingKey(rule.id, eventKey), { request, attempts: 0, retryAt: null });
+    // postedAt 是 TTL 起点（这次就是「首次发出」）。
+    pending.set(pendingKey(rule.id, eventKey), { request, attempts: 0, retryAt: null, postedAt: now });
+  };
+
+  /**
+   * TTL 淘汰：**任何**状态（在等回执 / 已排定重投）的记录，只要从首次发出起已过 TTL，
+   * 一律撤下并作为「被淘汰」交回入口留痕。
+   *
+   * 这一格同时关掉两个洞：
+   * ① 「本机无 host」持续 ⇒ 每个网格点新增的记录都会在 TTL 后被淘汰，表不再无界增长；
+   * ② 「已发出但回执始终不来」（`retryAt` 恒 null ⇒ 既不被重投也不被清理）⇒ 到 TTL 被**响亮放弃**，
+   *    不再静默占位、也不再需要「永不撤下」。
+   */
+  const evictExpired = (now: number): WakePendingEviction[] => {
+    const evicted: WakePendingEviction[] = [];
+    for (const [key, entry] of pending) {
+      const pendingForMs = now - entry.postedAt;
+      if (pendingForMs < WAKE_DISPATCH_PENDING_TTL_MS) continue;
+      pending.delete(key);
+      evicted.push({
+        ruleId: entry.request.ruleId,
+        eventKey: entry.request.eventKey,
+        pendingForMs,
+        attempts: entry.attempts,
+      });
+    }
+    return evicted;
   };
 
   /** 重投到期的那些（退避已过）：它们的规则早被 CAS 推进过，所以**不会**出现在本轮 listReady 里。 */
@@ -308,6 +384,7 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
     for (const [key, entry] of pending) {
       if (entry.retryAt === null || entry.retryAt > now) continue;
       // 先清 retryAt 再发：发出去到收到回执之间若又跑一轮 tick，不该把同一条重复发第二遍。
+      // postedAt 保持不变：TTL 仍从**首次**发出算起，重投不延长寿命。
       pending.set(key, { ...entry, retryAt: null });
       deps.postRequest(entry.request);
     }
@@ -315,7 +392,9 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
 
   return {
     async run(now) {
-      // 先重投到期的那批（它们不在 listReady 结果里：规则已被 CAS 推进）。
+      // 先淘汰过 TTL 的那批（无条件：无论它在等回执还是已排定重投）。
+      const evicted = evictExpired(now);
+      // 再重投到期的那批（它们不在 listReady 结果里：规则已被 CAS 推进）。
       repostDue(now);
       // 规则之间的处理顺序由 repo 的 ORDER BY 保证（next_fire_at, id），本层不再排序。
       for (const rule of deps.listReady(now, WAKE_TICK_LIMIT)) {
@@ -346,6 +425,7 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
 
         fire(rule, eventKey, factKey, now);
       }
+      return evicted;
     },
 
     settle(result, now) {
