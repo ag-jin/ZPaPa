@@ -68,6 +68,12 @@ export type SquadRuntime = {
   lifecycle: SquadRunLifecycle;
   /** 工作项事件的**唯一**出口。新增订阅者只准挂在这里，不得去读 repo 轮询。 */
   subscribeWorkItemEvents(handler: (event: WorkItemEvent) => void): () => void;
+  /**
+   * 工作项事件的**唯一**入口（`subscribeWorkItemEvents` 的发射侧；**加法**，2026-10-02 裁定
+   * Important-1 落地）。为什么必须和订阅走**同一张表**：`workitem.dispatch_requested` 必须与
+   * 状态变迁事件同源同形，否则「多路输入、一处写入」会退化成两套事件流（选哪套、谁先到，无人能说清）。
+   */
+  emitWorkItemEvent(event: WorkItemEvent): void;
   /** 供组合根在 dispose 时关闭本域自持的东西（repo 句柄由 node.ts 统一登记，不在此重复）。 */
   dispose(): void;
 };

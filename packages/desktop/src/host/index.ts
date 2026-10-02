@@ -771,8 +771,8 @@ function buildMemberRunPrompt(workItem: WorkItem): string {
     .join("\n\n");
 }
 
-/** 启动回收只该跑一次（`publish` 在重试/重复发布时会多次带 `phase: "ready"`）。 */
-let squadStartupReapStarted = false;
+/** 启动恢复只该跑一次（`publish` 在重试/重复发布时会多次带 `phase: "ready"`）。两件事共用这一道闸。 */
+let squadStartupRecoveryStarted = false;
 
 /**
  * 启动回收（spec §6.4 / §6.6）—— **best-effort，但绝不静默**。
@@ -817,6 +817,55 @@ async function reapStartupOrphansBestEffort(
   } catch (error) {
     // 响亮（带原文）：best-effort 不等于静默。
     logger.warn("[squad] startup reap failed", error);
+  }
+}
+
+/**
+ * 启动**重驱**未收尾的批次（spec §6.6 / S15；裁定 Important-2，2026-10-02）—— best-effort 但**绝不静默**。
+ *
+ * 为什么必须有这一步：批次收尾（`advanceAfterChildrenDone`）的**唯一**驱动者是「子项完成」事件的转发器。
+ * 若进程在「末个子项已 `done` 提交」与「`finalize` 落地」之间崩溃，重启后**没有任何东西会重发**
+ * `child_completed` ⇒ 父项永远停在 `in_review`、集成分支不再有人合回主分支；更危险的是 `merged`
+ * 的队员分支**不在 `listActive`** ⇒ 下次启动会被回收器当孤儿**连树带枝收掉**（有丢成果风险）。
+ * 所以恢复动作必须是**幂等的重驱**（不是重放事件）：对「子项全部终态、但该批尚未 finalize」的父项
+ * 再跑一次收尾。幂等性由编排层保证（重放闸 + 前置读当时状态的 CAS），这里只是把它接上。
+ *
+ * 为什么异步（调用点 `void`）：收尾要起 git 子进程做合并，同步跑会顶住启动（与启动回收同理由）。
+ * 为什么失败只记日志、不阻断启动：一次重驱失败不该让 Host 起不来；但**逐条带原文**记 —— 静默会让
+ * 「这批没恢复」和「本来就没有待恢复的批」长得一模一样。
+ */
+async function replayUnfinalizedBatchesBestEffort(
+  services: ServiceCollection | null,
+  candidates: ReadonlyArray<{ path: string; identity: string }>,
+): Promise<void> {
+  let target: { path: string; identity: string };
+  try {
+    target = resolveSquadWorkspaceBinding(candidates);
+  } catch (error) {
+    logger.warn(
+      "[squad] startup batch replay skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
+      error,
+    );
+    return;
+  }
+  try {
+    const squadRuntime = services?.getOptional(ISquadRuntimeService);
+    if (!squadRuntime) return;
+    const outcome = await squadRuntime.replayUnfinalizedBatches(target);
+    for (const failure of outcome.failures) {
+      // 逐条 error 带**原错误对象**：一次注定失败的调用若只留个计数，事后无从下手。
+      logger.error(
+        `[squad] startup batch replay failed parent=${failure.parentWorkItemId}`,
+        failure.error,
+      );
+    }
+    logger.info(
+      `[squad] startup batch replay done replayed=${outcome.replayed.length}` +
+        ` failed=${outcome.failures.length}`,
+    );
+  } catch (error) {
+    // 响亮（带原文）：best-effort 不等于静默。
+    logger.warn("[squad] startup batch replay failed", error);
   }
 }
 
@@ -2674,6 +2723,13 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
       /* 本次派发登记的终态订阅键（`(taskId, traceId)`）。声明在 try 之外：catch 要在失败路径上解绑它
          —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。 */
       let memberRunSubscriptionKey: string | undefined;
+      /* 失败出口要用、而 catch 在 try 之外的作用域，故按既有形态（`memberRunOpened` 同款）声明在外：
+         · `target` 只由 msg 算出（纯计算，不会抛）；
+         · `squadRuntimeRef` 在 try 里拿到服务后回填；
+         · `memberRunKind` 在判定 kind 后回填（失败出口只对**队员** run 生效）。 */
+      const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
+      let squadRuntimeRef: ISquadRuntimeService | undefined;
+      let memberRunKind = false;
       /** 确定性失败（重试不会自愈）的回执：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。
           每条回执都带 `ruleId`：调度器按 `(ruleId, eventKey)` 找那条「已请求未结算」的重投记录。 */
       const failPermanent = (error: string): void => {
@@ -2688,7 +2744,6 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
       };
       try {
         const targetServices = resolveAutomationTargetServices(msg);
-        const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
         const squadRuntime = targetServices.getOptional(ISquadRuntimeService);
         if (!squadRuntime) {
           // 静默跳过会让用户看到「到点了但什么都没发生」，且没有任何线索指向「服务没注册」。
@@ -2696,6 +2751,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           failPermanent("squad runtime service is not registered");
           return;
         }
+        squadRuntimeRef = squadRuntime;
 
         // 门禁：判据在**服务层单点**（spec §5.7.6 的三个入口共用一处判据）。
         // 这里**不读 appSettings** —— 读一次就多一份判据，改一处漏一处，正是「关掉实验照旧派发」的形态。
@@ -2755,6 +2811,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         }
 
         const kind = enqueued.isLeaderTask ? "leader" : "member";
+        memberRunKind = kind === "member"; // 失败出口（catch）只对队员 run 生效，故回填到外层作用域。
         /* 队员 run **先开树**（spec §6.1 的隔离承诺落点）：会话的 workspace 就是那棵工作树。
            ⚠️ 队长 run **绝不**走这里：`openMemberRun` 对 `isLeaderTask: true` 一样会开树
            （机械半如此规定，且有用例钉住），而队长直接在目标工作区执行（spec §6.2）。
@@ -2869,6 +2926,24 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
           });
         }
+        /* **会话回写台账**（裁定 Important-4）：`openMemberRun` 落台账时还不知道 sessionId（那时会话还没建），
+           于是写 `null`；而上面的忙检查（硬约束 1 的强探测）与「重投复用同一会话」都从台账读 sessionId
+           ⇒ 不回写就**恒为 null**，强探测与 `deferred` 分支在生产里永不可达（代码对、保护为零）。
+           只对**队员** run 回写：队长 run 没有台账行（见下方已知缺口）。
+           失败只 warn、不阻断本次派发：最坏后果是「下次重投另建一个会话」，而不是这次派发失败。 */
+        if (kind === "member") {
+          try {
+            await squadRuntime.bindMemberRunSession(target, {
+              runId: eventKey,
+              sessionId: task.taskId,
+            });
+          } catch (error) {
+            logger.warn(
+              "[squad] member run 会话回写台账失败（下次重投会另建会话；忙检查这一格这次不可达）",
+              error,
+            );
+          }
+        }
         // 完成通知要在 sendPrompt **之前**订阅：先跑完再注册 listener 会漏掉终态（best-effort，失败只 warn）。
         watchSquadRunCompletion({
           zcodeTaskService,
@@ -2899,6 +2974,25 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
                 if (outcome.inputId === traceId) {
                   disposeSquadMemberRunSubscription(subscriptionKey);
+                }
+                /* **失败/中止的 run 必须有出口**（裁定 Important-3）：否则它永远算「活跃」（`listActive`）
+                   ⇒ 它的工作树与分支**永不被回收**（S15 未达）。成功那一支由 `watchMemberRunSettlement`
+                   走 `completeMemberRun`（产出入账），这里只管「**没有产出**」这一支（`failed` / `stopped`）。
+                   只改台账状态（`discarded`），树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。
+                   失败只 error 留痕：出口没生效时那个 run 会一直停在活跃集，必须看得见。 */
+                if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
+                  void squadRuntime
+                    .failMemberRun(target, {
+                      runId: eventKey,
+                      reason:
+                        `队员会话终态=${outcome.outcome}` + (outcome.error ? `：${outcome.error}` : ""),
+                    })
+                    .catch((error: unknown) =>
+                      logger.error(
+                        `[squad] member run 失败出口未生效：${eventKey} 仍停在活跃集`,
+                        error,
+                      ),
+                    );
                 }
                 listener(outcome);
               });
@@ -2941,12 +3035,42 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
            回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
            刚开出的队员行会停在 `open`（没有终态可订阅，收口那一步根本没跑到）。
-           静默停在 open 会让它永远算「活跃」：工作树与分支不会被回收，而没人知道为什么。
-           服务面没有 failed/discard 出口，故此处只留响亮留痕（报告里登记为 P2c 的后续项）。 */
-        if (memberRunOpened) {
+           静默停在 open 会让它永远算「活跃」：工作树与分支不会被回收，而没人知道为什么。 */
+        /* **失败 run 的出口**（裁定 Important-3）：只要台账里真有这一行（`openMemberRun` 先落台账、
+           后建树，重投还可能撞上第一次留下的行）就把它**移出活跃集**，别让它永远停在 open。
+           为什么先读一次快照再决定：行不存在时 `failMemberRun` 会**响亮抛**（未命中不得静默），
+           而「这次失败发生在建台账之前」（如门禁 / 规划 / 缺树）是**正常**的，不该变成一条误导的 error。
+           **等待型（deferred）不在出口范围内**：那是「等一会再投」的重投，不是失败，run 要留下来被复用。 */
+        const deferred = error instanceof BoundSessionBusyError;
+        if (memberRunKind && !deferred && squadRuntimeRef) {
+          const reason = error instanceof Error ? error.message : String(error);
+          try {
+            const rows = (await squadRuntimeRef.getSnapshot(target)).runs;
+            if (rows.some((record: { runId: string }) => record.runId === eventKey)) {
+              await squadRuntimeRef.failMemberRun(target, { runId: eventKey, reason });
+              logger.error(
+                `[squad] member run 已按失败收口（离开活跃集，树/分支交给启动回收）` +
+                  ` runId=${eventKey} rule=${msg.ruleId}`,
+                error,
+              );
+            } else if (memberRunOpened) {
+              // 理论上不会到这（开过树就一定有台账行）：留一条，免得将来这两处判据漂移时变成静默。
+              logger.error(
+                `[squad] member run 台账行缺失、无法收口 runId=${eventKey} rule=${msg.ruleId}`,
+                error,
+              );
+            }
+          } catch (failError) {
+            // 出口没生效 = 这个 run 会一直停在活跃集：必须响亮（带原文），不能静默。
+            logger.error(
+              `[squad] member run 失败出口未生效：${eventKey} 仍停在 open（服务面 failMemberRun 失败）`,
+              failError,
+            );
+          }
+        } else if (memberRunOpened) {
           logger.error(
             `[squad] member run 停在 open：派发中途失败 runId=${eventKey} rule=${msg.ruleId}` +
-              "（服务面无 failed/discard 出口，工作树与分支不会被回收）",
+              (deferred ? "（等待型重投，保留该 run 复用）" : ""),
             error,
           );
         }
@@ -3356,8 +3480,8 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
              候选 workspace 取本次启动的预热名单（main 已按最近使用顺序限为 3 个）：恰好一个才回收，
              否则 `resolveSquadWorkspaceBinding` 列出候选后抛，本处响亮记日志并跳过（多 workspace 属 P2c）。
              `void` 它：回收失败不能阻断启动，但内部**会带原文 warn**，不是静默。 */
-          if (!squadStartupReapStarted) {
-            squadStartupReapStarted = true;
+          if (!squadStartupRecoveryStarted) {
+            squadStartupRecoveryStarted = true;
             const candidates = (
               msg.agentWarmupTargets && msg.agentWarmupTargets.length > 0
                 ? msg.agentWarmupTargets
@@ -3373,7 +3497,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               path: candidate.workspacePath,
               identity: candidate.workspaceIdentity ?? "",
             }));
-            void reapStartupOrphansBestEffort(activeServices, candidates);
+            /* 次序是**契约**（Important-2）：**重驱先于回收**。重驱会把未收尾的批 finalize（清掉它的
+               集成分支与已 `merged` 的队员分支）；而回收把「不在活跃集」的队员分支当孤儿删 ——
+               `merged` 恰不在活跃集。若先回收，这一批的队员分支会在重驱之前被删掉，
+               重驱随后撞「分支不存在」而失败（§6.6/S15 要救的那批成果就真没了）。 */
+            void (async () => {
+              await replayUnfinalizedBatchesBestEffort(activeServices, candidates);
+              await reapStartupOrphansBestEffort(activeServices, candidates);
+            })();
           }
         }
       },

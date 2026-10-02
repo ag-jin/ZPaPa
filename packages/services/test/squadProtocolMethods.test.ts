@@ -16,6 +16,9 @@ import {
   type SquadWorkspaceTarget,
 } from "../src/workitem/squadRuntimeService.js";
 import { archiveSquadAndTransfer, createSquadRuntime } from "../src/workitem/squadRuntime.js";
+import { createSquadOrchestrator } from "../src/workitem/squadOrchestrator.js";
+import type { WorkItemEvent } from "../src/workitem/workItemService.js";
+import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { makeRepo } from "./helpers/gitFixture.js";
 
 /* 队长派单三个协议方法的 **handler 层**用例（Task 7 追加范围 item ①）。
@@ -48,7 +51,12 @@ async function makeService(options?: { enabled?: boolean }) {
   const state = { enabled: options?.enabled ?? true };
   /** 记录服务面收到的目标 —— 用来证明 handler 把**调用方给的**目标原样交给服务面。 */
   const seenTargets: string[] = [];
-  const createRuntime = async (t: SquadWorkspaceTarget) => {
+  /** 工作项事件（含派发事件）—— handler 层的 ② 要断言「指派真的发出了派发事件」。
+      订阅挂在**每个新构的 runtime** 上，与组合根同形（事件表在实例内，按目标现构 ⇒ 必须逐实例挂）。 */
+  const events: WorkItemEvent[] = [];
+  /** 响亮留痕（Minor-3 的子项缺失支路）—— 断言「不抛但有留痕」。 */
+  const warnings: string[] = [];
+  const createRuntime = async (t: SquadWorkspaceTarget): Promise<SquadRuntime> => {
     seenTargets.push(`${t.path}|${t.identity}`);
     const runtime = await createSquadRuntime({
       db,
@@ -56,12 +64,15 @@ async function makeService(options?: { enabled?: boolean }) {
       workspaceIdentity: t.identity,
       readExperimentEnabled: () => state.enabled,
     });
+    runtime.subscribeWorkItemEvents((event) => events.push(event));
     return runtime;
   };
   const squadRuntimeService: ISquadRuntimeService = createSquadRuntimeService({
     createRuntime,
     readExperimentEnabled: async () => state.enabled,
     archiveSquadAndTransfer: async (t, id) => archiveSquadAndTransfer(await createRuntime(t), id),
+    createOrchestrator: createSquadOrchestrator,
+    logWarn: (message) => warnings.push(message),
   });
   // handler 拿到的是**服务面的来路**（组合根在装配完成后回填）；测试里直接指向刚建的那一份。
   const handlers = createProtocolSquadHandlers({
@@ -73,6 +84,8 @@ async function makeService(options?: { enabled?: boolean }) {
     runtime,
     handlers,
     seenTargets,
+    events,
+    warnings,
     setEnabled: (value: boolean) => {
       state.enabled = value;
     },
@@ -171,25 +184,24 @@ test("squad/create-child-work-item：父项不存在 ⇒ -32603 且点名父项 
   assert.match(error.message, /no-such-parent/);
 });
 
-// ---------- ② 派给队员 → openMemberRun ----------
+// ---------- ② 派给队员 → assignWorkItem（改负责人 + 发派发事件，**不**开 run） ----------
 
-// ⚠️ 本用例钉住的是**当前**实现（直接 `openMemberRun`），而这条语义已被 controller 裁定为「应为
-// 「改负责人 + 发派发事件」、由既有唤醒规则路径开 run」。裁定要求的语义**当前服务面表达不了**（缺
-// 「改既有工作项负责人」的写入口与「发派发事件」的出口，详见 `squadProtocolMethods.ts` 的原地注释与
-// 本轮修复报告的「裁定 2」）⇒ 已**停手待裁**，用例暂按现状保留。若裁定补服务面方法，本用例要改成
-// 「改了负责人 + 发出派发事件 + **没有**直接产生 run」。
-// 承重：删掉 `squadRuntimeService.openMemberRun` 的调用，本用例必红
-//（既拿不到 open 台账行，也看不到工作树）。
-test("squad/assign-work-item ⇒ 落到 openMemberRun（真实台账 open 行 + 真实工作树）", async () => {
-  const { runtime, repoRoot, handlers } = await makeService();
+/* 裁定 Important-1（2026-10-02）：指派语义 = **改负责人 + 发出派发事件**，**不直接开 run**
+   （§5.1「多路输入、一处写入」/ §5.6「`@` ≠ 指派」）。三条断言各自承重：
+   ① 读库证明负责人真的改了；② 订阅**唯一出口**证明派发事件真的发了；③ 读库 + 读 git 证明
+   **这次调用里没有直接产生 run**（没有台账行、没有工作树）。变异：把实现退回 `openMemberRun`
+   ⇒ ③ 必红（本用例就是裁定点名的「未直接产生 run」那条）。 */
+test("squad/assign-work-item ⇒ 改负责人 + 发派发事件 + **不**直接产生 run", async () => {
+  const { runtime, repoRoot, handlers, events } = await makeService();
   const parent = makeParent(runtime, repoRoot);
   const child = runtime.workItemService.create({
     workspaceIdentity: "ws",
     workspacePath: repoRoot,
     title: "子项",
     parentId: parent.id,
-    assignee: { type: "agent", id: "ta-a" },
+    assignee: { type: "squad", id: "sq-1" }, // 先指派给小队；派单把它改派给队员
   });
+  events.length = 0;
 
   const result = await handlers.assignWorkItem(target("ws"), {
     workItemId: child.id,
@@ -199,17 +211,49 @@ test("squad/assign-work-item ⇒ 落到 openMemberRun（真实台账 open 行 + 
   assert.ok(result.ok);
   assert.equal(result.result.dispatched, true);
 
-  const runs = runtime.squadRunRepo.listByParent(parent.id);
-  assert.equal(runs.length, 1, "派给队员 = 起一次 run（台账必须有行）");
-  assert.equal(runs[0]!.status, "open");
-  assert.equal(runs[0]!.agentId, "ta-a");
-  assert.equal(runs[0]!.workItemId, child.id);
-  assert.equal(runs[0]!.isLeaderTask, false, "派给队员的是队员 run，不是队长 run");
-  assert.ok(runs[0]!.branch?.startsWith("squad/member/"), "队员 run 必须有自己的分支");
-  // 隔离承诺的落点：队员在**独立工作树**里干活（spec §6.1）。
-  assert.ok(
-    (await runtime.worktreeManager.list()).some((entry) => entry.path.endsWith(runs[0]!.dirName!)),
+  // ① 负责人**真的**改了（读库实体状态，不是读返回值）。
+  assert.deepEqual(
+    runtime.workItemRepo.get(child.id)?.assignee,
+    { type: "agent", id: "ta-a" },
+    "指派必须把负责人改成指定队员",
   );
+
+  // ② 派发事件经**唯一出口**发出，且是具体那一条（工作项 id + 队员 id 都对）。
+  assert.deepEqual(
+    events.filter((event) => event.kind === "workitem.dispatch_requested"),
+    [{ kind: "workitem.dispatch_requested", workItemId: child.id, agentId: "ta-a" }],
+    "指派必须发出派发事件（开 run 由派发路径负责，不是这里）",
+  );
+
+  // ③ 这次调用**没有**直接产生 run：既没有台账行，也没有工作树（§6.1 的隔离承诺由派发路径负责）。
+  assert.deepEqual(runtime.squadRunRepo.listByParent(parent.id), [], "指派不得直接开台账行");
+  assert.deepEqual(await runtime.worktreeManager.list(), [], "指派不得直接建工作树");
+});
+
+// 指派**只动负责人**这一列：status 与父子结构一个字节不动（唯一写者那条约束管的是 status）。
+test("squad/assign-work-item：只改负责人（status 与父子结构不变）", async () => {
+  const { runtime, repoRoot, handlers } = await makeService();
+  const parent = makeParent(runtime, repoRoot);
+  const child = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "子项",
+    parentId: parent.id,
+    assignee: { type: "agent", id: "ta-a" },
+  });
+  const before = runtime.workItemRepo.get(child.id);
+  assert.ok(before);
+
+  const result = await handlers.assignWorkItem(target("ws"), {
+    workItemId: child.id,
+    agentId: "ta-b",
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const after = runtime.workItemRepo.get(child.id);
+  assert.ok(after);
+  assert.equal(after.status, before.status, "改负责人不得顺带改 status（唯一写者不变）");
+  assert.equal(after.parentId, before.parentId, "改负责人不得动父子结构");
+  assert.equal(after.title, before.title);
 });
 
 // 工作项不存在 ⇒ **响亮**（这是 CLI 侧「工作项不存在」那一格的 host 侧落点）。
@@ -229,21 +273,24 @@ test("squad/assign-work-item：缺 workItemId / agentId ⇒ -32602", async () =>
   assert.match(missing.message, /workItemId/);
 });
 
-// 子项没有父项时，自己就是那一批的「父项」（台账 parent_work_item_id 不为空）。
-test("squad/assign-work-item：无父项的顶层工作项 ⇒ parentWorkItemId 回落为自身", async () => {
-  const { runtime, repoRoot, handlers } = await makeService();
+// 无父项的顶层工作项也能被指派（改负责人 + 发事件），指派不依赖父子结构。
+test("squad/assign-work-item：无父项的顶层工作项也能指派（改负责人 + 发事件）", async () => {
+  const { runtime, repoRoot, handlers, events } = await makeService();
   const solo = runtime.workItemService.create({
     workspaceIdentity: "ws",
     workspacePath: repoRoot,
     title: "顶层",
     assignee: { type: "agent", id: "ta-a" },
   });
+  events.length = 0;
   const result = await handlers.assignWorkItem(target("ws"), {
     workItemId: solo.id,
-    agentId: "ta-a",
+    agentId: "ta-b",
   });
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(runtime.squadRunRepo.listByParent(solo.id).length, 1);
+  assert.deepEqual(runtime.workItemRepo.get(solo.id)?.assignee, { type: "agent", id: "ta-b" });
+  assert.equal(events.filter((e) => e.kind === "workitem.dispatch_requested").length, 1);
+  assert.deepEqual(runtime.squadRunRepo.listByParent(solo.id), [], "指派不得直接开 run");
 });
 
 // ---------- ③ 列花名册 → getSnapshot ----------
@@ -342,7 +389,12 @@ test("门禁关闭：两个派单动作都原样带回 squad_dispatch_disabled�
     await handlers.assignWorkItem(target("ws"), { workItemId: parent.id, agentId: "ta-a" }),
   );
   assert.match(assignError.message, /squad_dispatch_disabled/);
-  // 拦在入口：既没有新的工作项，也没有 run 行。
+  // 拦在入口：负责人**没有**被改动，也没有新的工作项或 run 行。
+  assert.deepEqual(
+    runtime.workItemRepo.get(parent.id)?.assignee,
+    { type: "squad", id: "sq-1" },
+    "门禁关闭时指派必须拦在改负责人之前（半个动作都没有）",
+  );
   assert.equal(runtime.workItemRepo.listByWorkspace("ws").length, 1, "只有那个父项");
   assert.deepEqual(runtime.squadRunRepo.listActive("ws"), []);
 });

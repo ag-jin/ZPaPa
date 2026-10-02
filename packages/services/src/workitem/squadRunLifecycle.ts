@@ -46,6 +46,27 @@ export interface SquadRunLifecycle {
     verdict: "approved" | "rejected";
   }): Promise<ReviewOutcome>;
   discardMemberRun(input: { runId: string }): Promise<void>;
+  /**
+   * 会话建立后把 `sessionId` **回写**到该 run 的台账行（Important-4，2026-10-02 裁定）。
+   *
+   * 为什么必须有这一步：`openMemberRun` 落台账时还不知道 sessionId（会话那时还没建），于是写 `null`；
+   * 而忙检查（硬约束 1）与「重投复用同一会话」都从台账读 `sessionId` ⇒ 不回写就**恒为 null**，
+   * 强探测与 `deferred` 分支在生产里**永不可达**（代码对、保护为零）。本方法只写 `session_id` 一列
+   * （不碰 status —— 见 `SquadRunRepo.bindSession` 的竞态理由）。
+   */
+  bindMemberRunSession(input: { runId: string; sessionId: string }): Promise<void>;
+  /**
+   * 失败 run 的**出口**（Important-3，2026-10-02 裁定）：把执行失败的 run 移出**活跃集**。
+   *
+   * 为什么必须有出口：`open ∈ SQUAD_RUN_ACTIVE_STATUSES` ⇒ 失败的 run 永远算「活跃」⇒ 它的工作树与
+   * 分支**永不被回收**（S15 未达）。本方法与 `reviewMemberRun` 同款纪律：**唯一写者**（只经
+   * `squadRunRepo.setStatus`）、**前置读当时状态**、**未命中响亮抛**。
+   *
+   * 只接受 `open`（执行失败 = 从未产出）；`discarded` 幂等返回；其余状态（`produced` / `merged` /
+   * `rejected`）**抛**——它们都意味着「已经产出了东西」，当失败丢弃会丢掉队员的活。
+   * 本方法**不碰 git**：树的删除留给启动回收器（按「不在活跃集」回收），见 spec §6.6/S15。
+   */
+  failMemberRun(input: { runId: string; reason: string }): Promise<void>;
 }
 
 export function createRunLifecycle(deps: {
@@ -244,6 +265,36 @@ export function createRunLifecycle(deps: {
       }
       // 摘树 + 删分支（顺序与配对校验都在 discardMember 内部）。
       await integrationMerger.discardMember({ branch: record.branch, dirName: record.dirName });
+      squadRunRepo.setStatus(runId, "discarded");
+    },
+
+    async bindMemberRunSession({ runId, sessionId }) {
+      // 行缺失 / runId 算错一律响亮抛（与其它方法同一口径：静默会让「这个 run 用哪个会话」无人知道）。
+      requireRun(runId);
+      squadRunRepo.bindSession(runId, sessionId);
+    },
+
+    async failMemberRun({ runId, reason }) {
+      // 没有原因就没有可行动的留痕：一条「失败了但不知道为什么」的台账行，事后无法处置。
+      if (reason.trim() === "") {
+        throw new Error(
+          "failMemberRun 必须给出失败原因（reason）：空原因等于把「为什么这条 run 没了」抹掉，" +
+            "事后无从处置（台账行只剩一个 discarded）。",
+        );
+      }
+      const record = requireRun(runId);
+      // 幂等：已经 discarded ⇒ 重复调用（重投 / 双路径）不报错、也不再动任何东西。
+      if (record.status === "discarded") return;
+      /* 只接受 `open`：失败的定义是「**从未产出**」。`produced` / `merged` 说明队员交了东西
+         （当失败丢弃会丢掉他的活）；`rejected` 说明产出被判待修（要活到修复后合并，spec §6.2）。
+         这三种状态走本方法一律**响亮抛**，不做「看起来像失败就丢弃」的猜测。 */
+      if (record.status !== "open") {
+        throw new Error(
+          `runId=「${runId}」当前状态是「${record.status}」而不是 open，不能按失败处置（reason=${reason}）：` +
+            "produced/merged/rejected 都意味着已经产出了东西，当失败丢弃会丢掉队员的活，故拒绝。",
+        );
+      }
+      // 只改台账，**不碰 git**：树与分支的清理交给启动回收器（它们已不在活跃集，spec §6.6/S15）。
       squadRunRepo.setStatus(runId, "discarded");
     },
   };

@@ -1050,6 +1050,9 @@ async function respondSquadProtocolResult<T>(
   });
 }
 
+/** squad/* 的兜底 catch 固定文案：原文（含路径/上游片段）只进服务端日志，不回传协议（照 offPeak 同一裁定）。 */
+const SQUAD_INTERNAL_ERROR_MESSAGE = "小队协议请求处理失败";
+
 /** 只有灰度有效开启且白名单非空才算"可创建"；其余一律视为关闭（空数组）。 */
 function resolveOffPeakAllowedModels(
   grayConfig: OffPeakClientConfig | undefined,
@@ -1141,6 +1144,17 @@ export function createZCodeAgentService(
           method: request.method,
           error: error instanceof Error ? error.message : String(error),
         });
+        /* **必须回应答**（Minor-2）：只 warn 不回应答 ⇒ CLI 侧拿不到任何东西，等成超时。
+           「响亮失败」要求失败**可被调用方看见**（超时看起来像「没反应」而不是「出错了」）。
+           固定文案 + -32603：跨层异常原文（含路径 / 上游片段）只进服务端日志，不回传协议。 */
+        void client
+          .respondError(request.id, { code: -32603, message: SQUAD_INTERNAL_ERROR_MESSAGE })
+          .catch((respondError: unknown) => {
+            logger.warn(undefined, "小队协议错误回执发送失败", {
+              method: request.method,
+              error: respondError instanceof Error ? respondError.message : String(respondError),
+            });
+          });
       });
   };
   const pluginProcessManager = new ZCodeAgentProcessManager({
@@ -2883,9 +2897,10 @@ export function createZCodeAgentService(
         /* ---- 小队派单（`squad/*`）：队长工具经 CLI 的 SquadPort 发来的反向请求 ----
            与 automation / off-peak 兄弟并列，落点在**服务面**（spec §14 / §4.3 / §5.1）：
            - 三个方法各自落到 `ISquadRuntimeService` 的对应方法上
-             （create-child-work-item → createWorkItem；assign-work-item → openMemberRun；
-             list-roster → getSnapshot 的只读投影）；实现体在 `squadProtocolMethods.ts`，
-             本链只做三件事：**显式构造目标**、调用对应方法、写回应答。
+             （create-child-work-item → createWorkItem；assign-work-item → assignWorkItem
+             ——「改负责人 + 发派发事件」；list-roster → getSnapshot 的只读投影）；
+             实现体在 `squadProtocolMethods.ts`，本链只做三件事：**显式构造目标**、
+             调用对应方法、写回应答。
            - **门禁不在这里判**（确认 2：判据只有服务层一处）。开关关闭时服务层抛
              `SquadDispatchDisabledError`，本链把它的稳定码（`squad_dispatch_disabled`）
              **原样**带回 —— 不吞、不改写、也不自己读开关（自己读就有了第二份判据）。

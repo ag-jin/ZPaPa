@@ -9,7 +9,7 @@ import { createServiceDescriptor } from "../descriptors.js";
 import type { CreateSquadInput } from "../teams/squadService.js";
 import type { CreateTeamAgentInput } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
-import type { SquadRuntime } from "./squadContracts.js";
+import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type { MemberRunRequest, OpenMemberRunResult, ReviewOutcome } from "./squadRunLifecycle.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
 
@@ -43,6 +43,21 @@ export type CreateWorkItemRequest = {
 
 /** 稳定错误码：跨 RPC 传到上层后按码分流（照 AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE 的做法）。 */
 export const SQUAD_DISPATCH_DISABLED_CODE = "squad_dispatch_disabled";
+
+/** 队长派单「指派」的入参（**加法**，2026-10-02 裁定 Important-1）。 */
+export type AssignWorkItemRequest = { workItemId: string; agentId: string };
+
+/** 启动重驱的结论（Important-2）：重驱了哪些父项、哪些失败（失败项要由调用方**响亮**记日志）。 */
+export type BatchReplayOutcome = {
+  replayed: string[];
+  failures: Array<{ parentWorkItemId: string; error: unknown }>;
+};
+
+/**
+ * 「响亮留痕」的注入形态（Minor-3）：本文件必须**浏览器安全**（`index.ts` 值导入导出它），
+ * 不能 import node 侧的 logger，故日志能力由组合根注入（与 `readExperimentEnabled` 同一手法）。
+ */
+export type SquadRuntimeLogWarn = (message: string, error?: unknown) => void;
 
 export class SquadDispatchDisabledError extends Error {
   readonly code = SQUAD_DISPATCH_DISABLED_CODE;
@@ -92,6 +107,45 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { runId: string; verdict: "approved" | "rejected" },
   ): Promise<ReviewOutcome>;
+  /**
+   * 把**既有**工作项指派给某位队员（裁定 Important-1，2026-10-02）：**改负责人 + 发出派发事件**。
+   *
+   * 语义严格按设计（§5.1「多路输入、一处写入」/ §5.6「`@` ≠ 指派」）：
+   * 1. **只经既有唯一写者之路改工作项**：负责人不是 `status`（唯一写者那条约束管的是 `status`），
+   *    走 `workItemRepo.updateAssignee` 那一层——repo 仍是内部件，调用方只经本方法；
+   * 2. **只发派发事件，不直接开 run**：事件经**唯一出口**（`SquadRuntime.emitWorkItemEvent`
+   *    ↔ `subscribeWorkItemEvents` 同一张表）发出；本方法**不调** `openMemberRun`
+   *    （开 run 是派发路径的事，不是「指派」的事）；
+   * 3. **入口过门禁**（入口③，与 createWorkItem / openMemberRun 同一处判据）：指派 = 新派发。
+   */
+  assignWorkItem(
+    target: SquadWorkspaceTarget,
+    input: AssignWorkItemRequest,
+  ): Promise<{ assigned: true }>;
+  /**
+   * 失败 run 的出口（裁定 Important-3）：把执行失败的 run 移出活跃集，使其工作树/分支**可被回收**。
+   * **不过门禁**：收口失败 run 不是「新派发」。与 `reviewMemberRun` 同款纪律（唯一写者 / 前置读当时
+   * 状态 / 未命中响亮抛），见 `SquadRunLifecycle.failMemberRun`。
+   */
+  failMemberRun(
+    target: SquadWorkspaceTarget,
+    input: { runId: string; reason: string },
+  ): Promise<void>;
+  /**
+   * 会话建立后把 `sessionId` 回写该 run 的台账（裁定 Important-4）：让忙检查的**强探测**与
+   * `deferred` 分支真正可达（否则台账恒为 `null`，保护为零）。**不过门禁**：不是「新派发」。
+   */
+  bindMemberRunSession(
+    target: SquadWorkspaceTarget,
+    input: { runId: string; sessionId: string },
+  ): Promise<void>;
+  /**
+   * 启动**重驱**未收尾的批次（裁定 Important-2）：对「子项全部终态、但该批尚未 finalize」的父项
+   * 再跑一次 `advanceAfterChildrenDone`。**幂等**（沿用编排层的 CAS / 前置读当时状态 / 重放闸）；
+   * **响亮**（失败逐条留在返回值里，由调用方记日志）。不实现「重发 `child_completed`」——
+   * 事件在崩溃后不会再有人重放，所以恢复动作必须是**幂等的重驱**而不是重放事件。
+   */
+  replayUnfinalizedBatches(target: SquadWorkspaceTarget): Promise<BatchReplayOutcome>;
   /** 启动回收（host 启动路径调用，spec §6.4/§6.6）。**不过门禁**：清理是恢复步骤，不是新派发。 */
   reapStartupOrphans(target: SquadWorkspaceTarget): Promise<ReapOutcome>;
   /** 归档小队 + 指派转交队长（#9，spec §3.10/S10）。**先转交后归档**。 */
@@ -130,8 +184,18 @@ export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService
  *   并不会去回滚集成分支 —— 那份产出就悬在那里。这与编排层对「子项被取消」的既有口径一致
  *   （`全 cancelled 子项：仍按 run 台账结算`）：取消子项不代表丢弃它已产出的活。
  * 这条支路有专门用例（断言「不抛、也不改写」），故它是**显式结论**而不是被吞掉的分支。
+ *
+ * **Minor-3（2026-10-02 裁定）：口径统一。** 「子项不存在/已归档」与上面那条支路处在**同一位置**
+ * （都在合并**已落地之后**）⇒ 必须同口径：**不抛 + 响亮留痕**（`logWarn` 带原文）。旧实现这里抛错，
+ * 与它自己的论证直接矛盾（README 形态：一次成功的合并被一个「找不到子项」的异常翻成响亮失败，
+ * 且上层不会回滚）。留痕经注入的 `logWarn`（本文件必须保持浏览器安全，不能 import node 侧 logger）。
+ * 与「runId 算错」严格区分：那是**调用方传参错误**（不是数据状态），继续响亮抛。
  */
-function settleChildWorkItem(runtime: SquadRuntime, runId: string): void {
+function settleChildWorkItem(
+  runtime: SquadRuntime,
+  runId: string,
+  logWarn: SquadRuntimeLogWarn,
+): void {
   const record = runtime.squadRunRepo.get(runId);
   if (!record) {
     throw new Error(
@@ -141,10 +205,14 @@ function settleChildWorkItem(runtime: SquadRuntime, runId: string): void {
   }
   const item = runtime.workItemRepo.get(record.workItemId);
   if (!item) {
-    throw new Error(
+    /* 子项不存在 / 已归档：合并**已经落地**（与「已取消」支路同一位置），故**不抛** ——
+       抛出去会把一次成功的合并变成响亮失败，而集成分支不会因此回滚。改为**响亮留痕**：
+       这条工作项不再参与 `children_done` 判定，是必须让人看见的事实（否则整批永不收尾且无人知道）。 */
+    logWarn(
       `审查通过后推进子项失败：子工作项「${record.workItemId}」不存在或已归档（runId=${runId}）。` +
-        "静默跳过会让这位队员的产出永远不参与 `children_done` 判定。",
+        "本次合并已落地，但该子项不再参与 `children_done` 判定 —— 这一批需要人工收尾。",
     );
+    return;
   }
   // 幂等：已是目标态就直接返回（不重复发事件 —— 事件是下游唯一判据，重复发会重复结算）。
   if (item.status === "done") return;
@@ -181,6 +249,19 @@ export function createSquadRuntimeService(deps: {
    * 不能值导入那个模块）。由组合根注入。
    */
   archiveSquadAndTransfer: (target: SquadWorkspaceTarget, id: string) => Promise<void>;
+  /**
+   * 批次编排工厂（`createSquadOrchestrator`）。**注入**：编排器模块 import 了 node 侧依赖
+   * （`node:crypto` 等），本文件值导入它会破坏浏览器安全不变量（见文件头注释）。
+   *
+   * 可选以保持**既有调用方不受影响**（加法）：未注入时 `replayUnfinalizedBatches` **响亮抛**
+   * ——缺工厂就说明这一份 runtime 的服务面根本没接上批次层，静默 no-op 会让崩溃窗口永久卡死。
+   */
+  createOrchestrator?: (deps: { runtime: SquadRuntime }) => SquadBatchOrchestrator;
+  /**
+   * 响亮留痕（Minor-3 的子项缺失支路要用）。同样**可选**：未注入时回落到 `console.warn`
+   * （本文件必须浏览器安全，不能值导入 node 侧 logger；`console` 是两侧都有的最小交底）。
+   */
+  logWarn?: SquadRuntimeLogWarn;
 }): ISquadRuntimeService {
   /** 本 runtime 的 `workspace_key`（C14 口径）：台账与快照都按它过滤。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -188,6 +269,9 @@ export function createSquadRuntimeService(deps: {
       workspacePath: runtime.boundWorkspace.path,
       workspaceIdentity: runtime.boundWorkspace.identity,
     });
+
+  /** 响亮留痕的唯一去处（Minor-3）：注入优先，否则回落 console（见 deps.logWarn 的理由）。 */
+  const logWarn: SquadRuntimeLogWarn = deps.logWarn ?? ((message) => console.warn(message));
 
   /**
    * 门禁的**唯一判据**（spec §5.7.6 / 确认 2）。三个入口（`assertDispatchEnabled` 自身、
@@ -275,8 +359,94 @@ export function createSquadRuntimeService(deps: {
          批在集成分支还缺这份成果时就 finalize —— 半批落到主分支上，回不去）。
          `rejected` 走不到这一支（`merged === false`）：被打回待修的子项**保持 `in_review`**，
          工作树存活到修复后重新审核（spec §6.2 / §16 S5）。 */
-      if (outcome.ok && outcome.merged === true) settleChildWorkItem(runtime, input.runId);
+      if (outcome.ok && outcome.merged === true) {
+        settleChildWorkItem(runtime, input.runId, logWarn);
+      }
       return outcome;
+    },
+
+    async assignWorkItem(target, input) {
+      /* 入口③（队长派单工具）与入口①② 共用**同一个**门禁判据（指派 = 新派发）。
+         「拦在入口」：半路拦会留下一条已改负责人、却没有派发事件的工作项（看上去成功了一半）。 */
+      await assertEnabled();
+      const runtime = await deps.createRuntime(target);
+      const item = runtime.workItemRepo.get(input.workItemId);
+      if (!item) {
+        // 响亮：本方法只改**既有**工作项的负责人（用 `createWorkItem` 会重建一条，丢掉 id 与已有子项）。
+        throw new Error(
+          `指派失败：工作项「${input.workItemId}」不存在或已归档。本方法只改既有工作项的负责人，` +
+            "静默建新项会让这条派发挂到一个与调用方所指无关的对象上。",
+        );
+      }
+      // 负责人不是 status（唯一写者那条约束管的是 status）；走 repo 的专用写入口（同样是
+      // 「恰命中一行才算成功」的条件更新），不在这里拼 SQL，也不把 repo 暴露给调用方。
+      if (!runtime.workItemRepo.updateAssignee(item.id, { type: "agent", id: input.agentId })) {
+        throw new Error(
+          `指派失败：工作项「${item.id}」在写入时已不可写（被归档或删除）——` +
+            "静默 no-op 会让调用方以为派单成功了，而库里仍指着旧负责人。",
+        );
+      }
+      /* **只发派发事件，不在这里开 run**（§5.1 一处写入 / §5.6 `@` ≠ 指派）。
+         事件经唯一出口发出：与状态变迁事件是**同一张订阅表**（`SquadRuntime.emitWorkItemEvent`
+         ↔ `subscribeWorkItemEvents`），消费方按 `kind` 分流。开 run 由派发路径负责，不由此处代劳。 */
+      runtime.emitWorkItemEvent({
+        kind: "workitem.dispatch_requested",
+        workItemId: item.id,
+        agentId: input.agentId,
+      });
+      return { assigned: true };
+    },
+
+    async failMemberRun(target, input) {
+      const runtime = await deps.createRuntime(target);
+      await runtime.lifecycle.failMemberRun({ runId: input.runId, reason: input.reason });
+    },
+
+    async bindMemberRunSession(target, input) {
+      const runtime = await deps.createRuntime(target);
+      await runtime.lifecycle.bindMemberRunSession({
+        runId: input.runId,
+        sessionId: input.sessionId,
+      });
+    },
+
+    async replayUnfinalizedBatches(target) {
+      const runtime = await deps.createRuntime(target);
+      const workspaceKey = keyOf(runtime);
+      if (!deps.createOrchestrator) {
+        // 缺工厂 = 这一份服务面没接上批次层：响亮抛（静默 no-op 会让崩溃窗口永久卡死一批）。
+        throw new Error(
+          "replayUnfinalizedBatches 无法执行：组合根没有注入 createOrchestrator（批次编排工厂）。" +
+            "缺它就没有能重驱收尾的编排器 —— 静默返回空结果会把「这批没恢复」伪装成「本来就没待恢复的批」。",
+        );
+      }
+      const orchestrator = deps.createOrchestrator({ runtime });
+      const replayed: string[] = [];
+      const failures: Array<{ parentWorkItemId: string; error: unknown }> = [];
+      /* 枚举「可能有未收尾批次」的父项：判据是**台账里有本批的 run 行**（`listByParent` 非空），
+         而不是「父项有子项」—— 普通父项的子项全终态时 `areAllChildrenTerminal` 也为真，那不是批，
+         收尾它会把一个无关的父项直接推到 `done`（跨过它自己的验收）。 */
+      for (const item of runtime.workItemRepo.listByWorkspace(workspaceKey)) {
+        if (runtime.squadRunRepo.listByParent(item.id).length === 0) continue;
+        // 已终态 = 已结算（`done`）或已被用户取消（`cancelled`）⇒ 幂等重放应直接跳过，不动 git。
+        if (isTerminalWorkItemStatus(item.status)) continue;
+        // 子项没全终态 ⇒ 半批，收尾会（正确地）拒绝：这里不重驱，等下一次 `child_completed`。
+        if (!runtime.workItemRepo.areAllChildrenTerminal(item.id)) continue;
+        try {
+          /* 幂等：`advanceAfterChildrenDone` 内部有重放闸（无待合队员且集成分支已不在 ⇒ 空转）与
+             「前置读当时状态」的 CAS，重复重驱不会重复合并 / 重复推进。回调里不得 await 的那条约束
+             在此**不适用**：这里不是事件回调，是启动恢复路径（没有外层链在等本层）。 */
+          await orchestrator.advanceAfterChildrenDone({
+            workspaceKey,
+            parentWorkItemId: item.id,
+          });
+          replayed.push(item.id);
+        } catch (error) {
+          // 逐条收集而不是首错即断：一条坏批不该让其它批的恢复也停下（响亮交给调用方逐条记）。
+          failures.push({ parentWorkItemId: item.id, error });
+        }
+      }
+      return { replayed, failures };
     },
 
     async reapStartupOrphans(target) {

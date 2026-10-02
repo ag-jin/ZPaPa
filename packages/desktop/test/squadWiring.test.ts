@@ -158,3 +158,51 @@ test("三个 squad/* 协议分支落在 zcodeAgentService 的 onRequest 链上",
     assert.ok(at < fallbackAt, `${method} 必须落在 -32601 兜底之前`);
   }
 });
+
+/* ---- Wave 2 第 1 轮裁定（Important-2/3/4）的 host 接线守卫 ---- */
+
+// Important-2：启动**重驱**未收尾的批次。它是「崩溃窗口」那格唯一的恢复动作（没有别的东西会重放
+// `child_completed`）。必须：在 ready 之后；**先于**启动回收（回收会删掉 `merged` 的队员分支 ⇒ 重驱
+// 会撞「分支不存在」而失败）；失败逐条带原文记日志（不静默）。
+test("host 启动路径重驱未收尾的批次（ready 之后，且先于启动回收）", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  const readyAt = host.indexOf('if (state.phase === "ready")');
+  assert.ok(readyAt >= 0, "host 里没有 database ready 分支");
+  const replayAt = host.indexOf("await replayUnfinalizedBatchesBestEffort(activeServices");
+  const reapAt = host.indexOf("await reapStartupOrphansBestEffort(activeServices");
+  assert.ok(replayAt > readyAt, "重驱必须在 ready 分支里（库就绪之后）");
+  assert.ok(replayAt - readyAt < 3000, "重驱调用点必须就在 ready 分支内，而不是文件另一处");
+  assert.ok(reapAt > replayAt, "重驱必须**先于**回收（否则回收会先删掉 merged 的队员分支）");
+  // 失败可被看见：逐条 error 带原文。
+  assert.match(host, /for \(const failure of outcome\.failures\)[\s\S]{0,200}logger\.error/);
+});
+
+// Important-3：失败 run 的出口必须真的接上（服务面没有出口之前，失败 run 永远留在活跃集 ⇒
+// 工作树/分支永不被回收）。两条路径都要接：派发中途失败（catch）与队员会话终态 failed/stopped（订阅闭包）。
+test("host 在两条失败路径上都调用 failMemberRun", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  const start = host.indexOf("HostMessageTypes.SquadWake");
+  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
+  const branch = host.slice(start, start + 20_000);
+  const calls = branch.match(/\.failMemberRun\(/g) ?? [];
+  assert.ok(
+    calls.length >= 2,
+    `失败出口必须同时接在「派发中途失败」与「会话终态未产出」两条路径上（实际 ${calls.length} 处）`,
+  );
+  assert.match(branch, /failMemberRun\(target, \{ runId: eventKey, reason/);
+});
+
+// Important-4：建会话之后把 sessionId **回写台账**，否则忙检查的强探测与 deferred 分支永不可达。
+// 位置也要钉：必须在 createTask 之后（会话还没建时没有 id 可写）。
+test("host 在建会话之后把 sessionId 回写 run 台账", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  const start = host.indexOf("HostMessageTypes.SquadWake");
+  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
+  const branch = host.slice(start, start + 20_000);
+  const bindAt = branch.indexOf("bindMemberRunSession(");
+  const createAt = branch.indexOf("createTask({");
+  assert.ok(bindAt >= 0, "host 没有把 sessionId 回写台账（忙检查的强探测将永不可达）");
+  assert.ok(createAt >= 0, "分支里应当有 createTask");
+  assert.ok(bindAt > createAt, "回写必须在 createTask 之后（会话建好才知道 sessionId）");
+  assert.match(branch, /sessionId: task\.taskId/);
+});

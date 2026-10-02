@@ -323,7 +323,9 @@ test("终态收口只认本次派发那一轮（inputId 不匹配 ⇒ 不结算�
 });
 
 // 失败/中止**不得**冒充产出：completeMemberRun 会把 run 置 produced、工作项推 in_review。
-// 服务面没有 failed/discard 出口 ⇒ 那一行的归宿是响亮留痕（台账仍在 open），不是静默。
+// 本用例只覆盖 `watchMemberRunSettlement` 这一层（它不负责动用失败出口）；**生产上**由 host 的订阅闭包
+// 用服务面的 `failMemberRun` 把它移出活跃集（服务面已于 2026-10-02 补上该出口，见
+// `squadRuntimeRecovery.test.ts` 的 Important-3 用例与 `squadWiring.test.ts` 的接线守卫）。
 test("终态是 failed/stopped ⇒ 不入账（仍是 open），但必须响亮留痕", async () => {
   const { runtime, workItem } = await makeRuntimeWithWorkItem();
   const runId = "e:id:squad:wi-3:1:0";

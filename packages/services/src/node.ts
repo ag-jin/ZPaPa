@@ -2580,6 +2580,21 @@ export function createLocalServices(options: {
   const forwardSquadChildCompleted =
     (runtime: SquadRuntime) =>
     (event: WorkItemEvent): void => {
+      /* `workitem.dispatch_requested`（队长派单工具改完负责人后发的派发事件，裁定 Important-1）：
+         **本组合根目前没有「派发器」去消费它** —— 唯一消费 `DispatchEvent` 的地方是 host 的规则 tick
+         分支，而那条路径要先有一条 `wake_rules` 行才会被触发，本期没有任何写入口能建出这样一条规则
+         （`wakeRuleRepo` 只被调度器读）。所以在当前架构下，这个事件**无法真正驱动出 run**。
+         按裁定**不得**退回「直接开 run」（那会把「指派」与「派发」揉成一步，§5.6），故这里
+         **响亮留痕、不静默吞掉**：让人能一眼看到「派单请求已发出、但没有分发器接它」。
+         （**这一点已在修复报告里按裁定的逃生口上报 NEEDS_CONTEXT 级缺口**：缺的是「能把
+         dispatch 请求变成一次 run 的既有路径」，需要 controller 裁定补哪个加法式方法。） */
+      if (event.kind === "workitem.dispatch_requested") {
+        squadRuntimeLog.warn("小队派发请求已发出，但本组合根没有分发器消费它（不会开出 run）", {
+          workItemId: event.workItemId,
+          agentId: event.agentId,
+        });
+        return;
+      }
       if (event.kind !== "workitem.child_completed") return;
       // 判据（`areAllChildrenTerminal`，按 category）在编排层内部，这里只做转发，
       // 不在这里再判一次（两处判据迟早分叉，分叉的表现是「批永远收不了尾」）。
@@ -2620,6 +2635,10 @@ export function createLocalServices(options: {
     archiveSquadAndTransfer: async (target, id) => {
       await archiveSquadAndTransfer(await createSquadRuntimeFor(target), id);
     },
+    // 编排器工厂由这里注入：描述符模块必须浏览器安全，值导入 squadOrchestrator 会把 node 侧依赖带进去。
+    createOrchestrator: createSquadOrchestrator,
+    // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
+    logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
   });
   // 回写前向引用：zcodeAgentService 的 `squad/*` 三个分支经它拿到服务面
   //（队长工具的每次调用都会走到这里；注册缺失时那条分支回 -32601，见 squadProtocolMethods.ts）。

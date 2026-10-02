@@ -2,7 +2,11 @@ import { createSquadService } from "../teams/squadService.js";
 import { resolveSquadDefinitionRoot } from "../teams/squadStorage.js";
 import { createTeamAgentService } from "../teams/teamAgentService.js";
 import { resolveSquadAgentRoot } from "../teams/teamAgentStorage.js";
-import { createBranchAllocator } from "../worktree/branchNaming.js";
+import {
+  createBranchAllocator,
+  INTEGRATION_NAMESPACE,
+  MEMBER_NAMESPACE,
+} from "../worktree/branchNaming.js";
 import { createGitRunner, ensureGitRunSucceeded, type GitRunner } from "../worktree/gitRunner.js";
 import { createIntegrationMerger, deleteBranch } from "../worktree/integrationMerge.js";
 import { createOrphanReaper } from "../worktree/orphanReaper.js";
@@ -27,6 +31,29 @@ import { createWakeRuleRepo } from "./wakeRuleRepo.js";
       外来的异己 workspaceKey 一律抛（见 `createRunLifecycle` 的 `assertOwnWorkspace`）。
    2. **不缓存**（由组合根决定使用方式）：本文件只提供「按目标现构」的工厂，每次调用都新建一套零件，
       所以不存在陈旧与失效逻辑；代价是一次 `git symbolic-ref` 子进程。 */
+
+/** 小队命名空间的分支（集成分支 / 队员分支）—— **永远不是** base：它们是小队运行期的产物。 */
+function isSquadNamespaceBranch(branch: string): boolean {
+  return branch.startsWith(INTEGRATION_NAMESPACE) || branch.startsWith(MEMBER_NAMESPACE);
+}
+
+/** 本仓库的短分支名（`refs/heads/` 下全部，按名字排序）。失败**抛**（给空数组会让「找不到候选」看起来像「本来就没有」）。 */
+async function listLocalBranchNames(git: GitRunner, workspacePath: string): Promise<string[]> {
+  const result = await git(["for-each-ref", "--format=%(refname:short)", "refs/heads/"], {
+    cwd: workspacePath,
+  });
+  if (result.code !== 0) {
+    throw new Error(
+      `无法枚举本仓库的分支（git for-each-ref 失败，exit ${result.code}` +
+        `${result.stderr.trim() ? `: ${result.stderr.trim()}` : ""}）：` +
+        "HEAD 停在小队命名空间分支时需要它来确定 base，枚举失败**不得**静默当作「没有候选」。",
+    );
+  }
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
 
 /** 解析 base 分支：显式给就用（空白视为没给），否则问 git；**绝不猜 "main"**。 */
 async function resolveBaseBranch(
@@ -54,6 +81,30 @@ async function resolveBaseBranch(
         "猜错会把整批成果合到一个与用户预期无关的分支上，且不报错。" +
         "确实要用别的基础分支，请在 deps.baseBranch 里显式给出。",
     );
+  }
+
+  /* **崩溃残留的 HEAD**：批次收尾里 `mergeInto` 会 `git checkout <集成分支>` 再 merge（主工作树
+     —— 所有 git 动作的 cwd 都是它），所以「末个子项 done 之后、finalize 落地之前」进程死掉时，
+     重启后的 HEAD 正指着**集成分支**（或某条队员分支）。若把它当 base：
+       · `finalize`（`checkout <base> && merge <integration>`）退化成「自己合自己」的空操作，
+         返回 `ok`；
+       · 随后 `discardIntegration` 因「集成分支正被检出」而**删不掉** ⇒ 整批**静默收不了尾**；
+       · 而这一批的 `merged` 队员分支已不在活跃集，会被启动回收器当孤儿删掉（丢成果风险）。
+     故小队命名空间的分支**一律不得当 base**：改用「本仓库**唯一**的非小队分支」（候选不唯一就抛，
+     不猜名字 —— 与 `resolveSquadWorkspaceBinding` 同一口径）。HEAD 是普通分支时行为完全不变。 */
+  if (isSquadNamespaceBranch(branch)) {
+    const candidates = (await listLocalBranchNames(git, workspacePath)).filter(
+      (name) => !isSquadNamespaceBranch(name),
+    );
+    if (candidates.length !== 1) {
+      throw new Error(
+        `HEAD 停在小队命名空间分支「${branch}」（崩溃残留：批次收尾会把主工作树检出到集成分支），` +
+          `而本仓库有 ${candidates.length} 条非小队分支` +
+          `${candidates.length > 0 ? `（${candidates.join(" / ")}）` : ""}：无法唯一确定 base 分支。` +
+          "请在 deps.baseBranch 里显式给出。**不猜**：猜错会把整批成果合到一个无关的分支上，且不报错。",
+      );
+    }
+    return candidates[0]!;
   }
   return branch;
 }
@@ -136,11 +187,14 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
   const subscribers = new Set<(event: WorkItemEvent) => void>();
+  /** 唯一的扇出实现：状态变迁（`workItemService` 的 emit）与派发请求（下面的 `emitWorkItemEvent`）
+      走**同一处**，免得两条事件流各写一份遍历（选哪套、谁先到就无人能说清）。 */
+  const fanout = (event: WorkItemEvent): void => {
+    for (const handler of subscribers) handler(event);
+  };
   const workItemService = createWorkItemService({
     repo: workItemRepo,
-    emit: (event) => {
-      for (const handler of subscribers) handler(event);
-    },
+    emit: fanout,
   });
 
   // ⑤ lifecycle：只收零件（不收 runtime 本身，避免自引用）。
@@ -193,6 +247,10 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
       return () => {
         subscribers.delete(handler);
       };
+    },
+    /** 发射侧：与 `subscribeWorkItemEvents` 共用同一张表（`fanout`）——见 `squadContracts.ts` 的说明。 */
+    emitWorkItemEvent(event) {
+      fanout(event);
     },
     /**
      * 只清本域自持的东西（事件订阅表）。**不关 db**：连接是 `taskIndexRepo` 的，

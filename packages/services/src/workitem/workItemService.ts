@@ -7,11 +7,18 @@ import {
 import { randomUUID } from "node:crypto";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
-/* 工作项事件：状态的每次真实变迁与「父项子项全部终态」。派发方（小队运行时）据此
-   唤醒队长——提前或漏发都会造成重复派发或永久挂起，所以事件形状必须窄而准。 */
+/* 工作项事件：状态的每次真实变迁、「父项子项全部终态」，以及「请把这条工作项派给这位队员」。
+   派发方（小队运行时）据此唤醒队长——提前或漏发都会造成重复派发或永久挂起，所以事件形状必须窄而准。
+
+   `workitem.dispatch_requested`（Important-1，2026-10-02 裁定）：队长派单工具（`squad/assign-work-item`）
+   的语义是「**改负责人 + 发出派发事件**」——它**不直接开 run**（§5.1「多路输入、一处写入」：三路输入
+   都不直接改状态，只发同一形状的派发事件；§5.6「`@` ≠ 指派」不许把「指派」与「派发」揉成一步）。
+   它经**唯一出口**（`SquadRuntime.subscribeWorkItemEvents` 的那张订阅表）发出，形状与状态变迁事件同壳，
+   故消费方按 `kind` 分流即可（未知 kind 一律忽略，向后兼容）。 */
 export type WorkItemEvent =
   | { kind: "workitem.status_changed"; id: string; from: WorkItemStatusKey; to: WorkItemStatusKey }
-  | { kind: "workitem.child_completed"; parentId: string };
+  | { kind: "workitem.child_completed"; parentId: string }
+  | { kind: "workitem.dispatch_requested"; workItemId: string; agentId: string };
 
 export interface CreateWorkItemInput {
   workspaceIdentity: string;

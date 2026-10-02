@@ -52,6 +52,15 @@ export interface SquadRunRepo {
    * 行不在说明 runId 算错了或台账被删——静默跳过会让这次 run 永远停在不一致的状态里而无人知晓。
    */
   setStatus(runId: string, status: SquadRunStatus, patch?: SquadRunStatusPatch): void;
+  /**
+   * 把会话绑定到 run（Important-4，2026-10-02 裁定）：**只写 `session_id` 一列**，不碰 `status`。
+   *
+   * 为什么不复用 `setStatus(runId, 当前status, { sessionId })`：那要调用方先读一次 status 再写回，
+   * 而读→写之间 `completeMemberRun` 可能已把它推到 `produced` ⇒ 回写会把 `produced` **改回** `open`
+   * （状态回退，且不报错）。单列更新从结构上消除这个竞态：session 与 state 是两件正交的事。
+   * 未命中该 runId 时**抛**（与 `setStatus` 同一口径：调用方以为绑上了，而行不在）。
+   */
+  bindSession(runId: string, sessionId: string): void;
 }
 
 interface SquadRunRow {
@@ -205,6 +214,19 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         throw new Error(
           `squad_runs 没有 runId=「${runId}」的行，无法推进状态：调用方传错 runId，或台账行已被删除。` +
             "静默 no-op 会让这次 run 永远停在不一致的状态里而没人知道，故一律抛。",
+        );
+      }
+    },
+
+    bindSession(runId, sessionId) {
+      // 单列更新 + changes 校验：不动 status（见接口注释里的竞态理由），未命中即抛。
+      const result = db
+        .prepare("UPDATE squad_runs SET session_id = ?, updated_at = ? WHERE run_id = ?")
+        .run(sessionId, Date.now(), runId);
+      if (result.changes !== 1) {
+        throw new Error(
+          `squad_runs 没有 runId=「${runId}」的行，无法绑定会话：调用方传错 runId，或台账行已被删除。` +
+            "静默 no-op 会让「这个 run 用哪个会话」变成没人知道的事，故一律抛。",
         );
       }
     },

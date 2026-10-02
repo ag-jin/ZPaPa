@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   zcodeSquadAssignWorkItemParamsSchema,
   zcodeSquadCreateChildWorkItemParamsSchema,
@@ -155,60 +154,24 @@ export function createProtocolSquadHandlers(deps: {
       }
     },
 
-    /* 派给队员 —— ⚠️ **语义已由 controller 裁定、但当前服务面表达不了，故停手待裁**（见本轮修复报告的「裁定 2」）。
-       裁定语义是「**改负责人 + 发出派发事件**」，由**既有的唤醒规则路径**去开 run（那才是 §5.1「多路输入、
-       一处写入」：三路输入都不直接改状态，只发同一形状的派发事件）。当前**不得**由本方法直接调
-       `openMemberRun` 把 run 开出来 —— 那会绕过规则，并把「指派」与「派发」揉成一步（§5.6）。
-
-       为什么现在停手而不是就地实现：服务面**缺两件东西**，都不是本文件能补的（本文件不碰仓库层、不许发明服务面方法）：
-       ① 没有「改既有工作项负责人」的写入口 —— `ISquadRuntimeService` 上没有这样的方法（只有
-          `createWorkItem` 建新项）；工作项服务只有 `create` / `transition`；唯一能改 assignee 的那个方法
-          在**工作项仓库**上，而仓库是内部件（刻意不进 `packages/services/src/index.ts`），
-          本模块的静态守卫也禁止 import 任何仓库模块。
-       ② 没有「发派发事件」的出口 —— `DispatchEvent`（`run.enqueued` 等）是 `planDispatch` 的**纯函数返回值**，
-          只在 host 的 `SquadWake` 分支里被消费，不经任何 bus；工作项事件的唯一出口
-          `runtime.subscribeWorkItemEvents` 是**订阅** API（不是发射 API），其事件并集里也没有 assign/dispatch 变体。
-       再加上「既有的唤醒规则路径」需要一条 `wake_rules` 行 + 调度器 tick（`listReady` → `SquadWake`）才能被触发，
-       而服务面没有任何创建/刷新唤醒规则的方法。⇒ 三处缺失写进报告，等 controller 裁定「补哪个加法式服务面方法」
-       或「本期接受直接开 run」。**在那之前这里保持原样（不发明新方法、也不假装已完成）。** */
+    /* 派给队员 = **改负责人 + 发出派发事件**（裁定 Important-1，2026-10-02）。
+       §5.1「多路输入、一处写入」：三路输入（用户指派 / 队长派单 / 规则触发）都**不直接改状态**，
+       只发**同一形状的派发事件**；开 run 是**派发路径**的事，不在这里（§5.6「`@` ≠ 指派」）。
+       故本分支只调服务面的 `assignWorkItem`（它改负责人并经唯一出口发事件），
+       **绝不**自己调 `openMemberRun` —— 那会把「指派」与「派发」揉成一步。
+       工作项不存在 / 已终态 / 门禁关闭都由服务面**响亮**拒绝，本层原样翻译（不吞、不改写）。 */
     async assignWorkItem(target, params) {
       const parsed = zcodeSquadAssignWorkItemParamsSchema.safeParse(params);
       if (!parsed.success) return invalidParams("squad assign-work-item", parsed.error);
       const resolved = resolveService();
       if ("failure" in resolved) return resolved.failure;
-      const { service } = resolved;
       try {
-        /* 台账按 parent 归批（批次收尾读 `listByParent`），而协议只给了 workItemId ⇒
-           必须先读到这条工作项才能知道它属于哪一批。读不到就**响亮**：
-           静默造一条 parent 为自身/空的台账行，会把这次派发挂到一个不存在的批次上。 */
-        const snapshot = await service.getSnapshot(target);
-        const workItem = snapshot.workItems.find(
-          (candidate) => candidate.id === parsed.data.workItemId,
-        );
-        if (!workItem) {
-          return {
-            ok: false,
-            error: {
-              code: INTERNAL_ERROR_CODE,
-              message:
-                `工作项不存在：${parsed.data.workItemId}。派单必须挂在一条真实工作项上` +
-                "（静默造行会让它飘在批之外，且收尾永远看不到它）。",
-            },
-          };
-        }
-        await service.openMemberRun(target, {
-          /* runId 由本次调用新造（真派发 = 一次新运行）。这与「同一条事实重投要幂等」不冲突：
-             那条幂等键（eventKey）属于**规则事实**，而队长工具调用不是事实重投。
-             同一位队员在同一条工作项上被派两次会在开树时撞「分支已被占用」而**响亮**失败
-             （`planBranches` 对 (workItem, agent) 是确定的）——已知缺口「重复指派合并为一次」
-             属 P2c，不在本任务。 */
-          runId: randomUUID(),
-          workItemId: workItem.id,
-          parentWorkItemId: workItem.parentId ?? workItem.id,
+        await resolved.service.assignWorkItem(target, {
+          workItemId: parsed.data.workItemId,
           agentId: parsed.data.agentId,
-          // 派给队员永远不是队长 run：队长 run 不建树，走的是另一条派发路径（host 的 SquadWake）。
-          isLeaderTask: false,
         });
+        /* 回执字段名 `dispatched` 来自冻结的协议结果形状（`zcodeSquadAssignWorkItemResultSchema`），
+           语义是「这次指派已入队（负责人已改、派发事件已发出）」，**不是**「已经开出了 run」。 */
         return { ok: true, result: { dispatched: true } };
       } catch (error) {
         return translateServiceError(error);

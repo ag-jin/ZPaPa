@@ -100,6 +100,9 @@ async function setup(): Promise<{
     archiveSquadAndTransfer: async () => {
       throw new Error("本用例不涉及归档转交");
     },
+    createOrchestrator: createSquadOrchestrator,
+    // Minor-3 的「子项缺失」支路会走这里：本用例不测它，收起来即可（不得静默吞掉，故仍记录）。
+    logWarn: () => {},
   });
 
   const runtime = await createRuntime(target);
