@@ -74,7 +74,13 @@ import {
   type SquadDispatchRequest,
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
-import { decideSquadDispatch, isSquadDispatchDisabledError, watchMemberRunSettlement } from "./squadDispatch.js";
+import {
+  decideSquadDispatch,
+  isSquadDispatchDisabledError,
+  watchLeaderRunSettlement,
+  watchMemberRunSettlement,
+  type SquadMemberRunTerminalOutcome,
+} from "./squadDispatch.js";
 import { resolveSquadWorkspaceBinding } from "./squadWorkspaceBinding.js";
 import {
   assertBoundSessionDispatchable,
@@ -871,24 +877,25 @@ async function replayUnfinalizedBatchesBestEffort(
 }
 
 /**
- * 队员 run 的**终态订阅句柄**（照 cron 侧 `cronRunSubscriptions` 的既有形态）。
+ * run 的**终态订阅句柄**（照 cron 侧 `cronRunSubscriptions` 的既有形态）。**队员与队长 run 共用**：
+ * 两者都是真实会话、终态都在同一条出口上可观察，句柄的生死规则也一样（终态后解绑 / 重投先撤旧）。
  *
- * 为什么必须有人持有它：`watchMemberRunSettlement` 内部的订阅是「等**这个 run** 的终态回调」，
- * 而派发中途抛错（createTask / resumeTask / sendPrompt 抛）时那个回调**可能永远不来**
- * （run 停在 `open`，本就是需要人工处置的残局）⇒ 句柄若无人持有，就残留到进程退出。
+ * 为什么必须有人持有它：`watchMemberRunSettlement` / `watchLeaderRunSettlement` 内部的订阅是
+ * 「等**这个 run** 的终态回调」，而派发中途抛错（createTask / resumeTask / sendPrompt 抛）时那个回调
+ * **可能永远不来**（run 停在 `open`，本就是需要人工处置的残局）⇒ 句柄若无人持有，就残留到进程退出。
  * 键与 cron 侧**同形**（`(taskId, traceId)`，用同一个构造器，免得两处各写一份分隔符约定）；
  * 两张表各自独立，即使同键也不会互相影响。
  *
  * 与 cron 的一处刻意差异：cron 侧在 `trackCronRunOutcome` 内部持有句柄（订阅与登记在同一函数里），
- * 而这里订阅发生在 `watchMemberRunSettlement`（另一 lane 的文件）内部 —— 本文件不改它的接口，
+ * 而这里订阅发生在 `watch*RunSettlement`（另一 lane 的文件）内部 —— 本文件不改它的接口，
  * 而是在**自己传进去的 `subscribe` 闭包**里把返回值接住（那正是「本处发起订阅」的返回值）。
  */
-const squadMemberRunSubscriptions = new Map<string, { dispose(): void }>();
+const squadRunSubscriptions = new Map<string, { dispose(): void }>();
 
-function disposeSquadMemberRunSubscription(key: string): void {
-  const disposable = squadMemberRunSubscriptions.get(key);
+function disposeSquadRunSubscription(key: string): void {
+  const disposable = squadRunSubscriptions.get(key);
   if (!disposable) return;
-  squadMemberRunSubscriptions.delete(key);
+  squadRunSubscriptions.delete(key);
   disposable.dispose();
 }
 
@@ -2613,8 +2620,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
      两者都必须留痕（见外层 catch）。声明在 try 之外：catch 要读它。 */
   let ledgerRowRegistered = false;
   /* 本次派发登记的终态订阅键（`(taskId, traceId)`）。声明在 try 之外：catch 要在失败路径上解绑它
-     —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。 */
-  let memberRunSubscriptionKey: string | undefined;
+     —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。
+     **队员与队长共用这一个键**：两者在同一次派发里只有一个 run（kind 决定是哪一个）。 */
+  let runSubscriptionKey: string | undefined;
   /* 失败出口要用、而 catch 在 try 之外的作用域，故按既有形态（`ledgerRowRegistered` 同款）声明在外：
      · `target` 只由 msg 算出（纯计算，不会抛）；
      · `squadRuntimeRef` 在 try 里拿到服务后回填；
@@ -2841,60 +2849,83 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       workspacePath: sessionWorkspacePath,
       ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
     });
-    /* run 的终态收口（**闭环的最后一环**）：只对**队员** run 订阅 —— 队长 run 现在也有台账行了
-       （上面的 `recordLeaderRun`），但 `completeMemberRun` 的语义（产出 ⇒ 把工作项推 `in_review`）
-       **不适用**于队长：spec §5.7(2) 明文「队长 run **不改父项状态**」，套上去会写坏父项。
-       队长的台账行何时离开活跃集属后续（本次只补「登记」，不补队长 run 的终态事实）。 */
-    if (kind === "member") {
+    /* run 的终态收口（**闭环的最后一环**）：**队员与队长都订阅** —— 两者都是**真实会话**，终态落在
+       同一条既有出口上（`onDynamicTaskTerminalOutcome` + `outcome.inputId === traceId`）。
+       差别只在「成功入账」那一格：
+         · 队员 ⇒ `completeMemberRun`（产出入账 + 工作项推 `in_review`）；
+         · 队长 ⇒ `completeLeaderRun`（**只把台账行移到终态**，不碰工作项 —— spec §5.7(2)
+           「队长 run 不改父项状态」，套上 `completeMemberRun` 会写坏父项）。
+       不订阅队长的后果就是旧缺口重演：成功的队长行长驻 `open` ⇒ §5.7(1)「进行中」**永真**。 */
+    {
       /* 订阅句柄**必须留一手**（照 cron 侧 `cronRunSubscriptions`）：这里订阅的是「这个 run 的终态」，
          而派发中途抛错时那个回调可能永远不来 ⇒ 句柄无主就残留到进程退出（本文件末尾的 catch 会解绑）。
          同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。 */
       const subscriptionKey = cronRunSubscriptionKey(task.taskId, traceId);
-      disposeSquadMemberRunSubscription(subscriptionKey);
-      memberRunSubscriptionKey = subscriptionKey;
-      watchMemberRunSettlement({
-        runId: eventKey,
-        traceId,
-        // 句柄从**本处**发起订阅的返回值接住（`watchMemberRunSettlement` 自己不持有它，
-        // 我们不去改那个文件）：接住之后既有成功终态的解绑，也有失败路径的解绑。
-        subscribe: (listener) => {
-          const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
-            outcome,
-          ) => {
-            // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
-            // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
-            if (outcome.inputId === traceId) {
-              disposeSquadMemberRunSubscription(subscriptionKey);
-            }
-            /* **失败/中止的 run 必须有出口**（裁定 Important-3）：否则它永远算「活跃」（`listActive`）
-               ⇒ 它的工作树与分支**永不被回收**（S15 未达）。成功那一支由 `watchMemberRunSettlement`
-               走 `completeMemberRun`（产出入账），这里只管「**没有产出**」这一支（`failed` / `stopped`）。
-               只改台账状态（`discarded`），树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。
-               失败只 error 留痕：出口没生效时那个 run 会一直停在活跃集，必须看得见。 */
-            if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
-              void squadRuntime
-                .failMemberRun(target, {
-                  runId: eventKey,
-                  reason:
-                    `队员会话终态=${outcome.outcome}` + (outcome.error ? `：${outcome.error}` : ""),
-                })
-                .catch((error: unknown) =>
-                  logger.error(
-                    `[squad] member run 失败出口未生效：${eventKey} 仍停在活跃集`,
-                    error,
-                  ),
-                );
-            }
-            listener(outcome);
-          });
-          squadMemberRunSubscriptions.set(subscriptionKey, disposable);
-          return disposable;
-        },
-        // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
-        completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
-        logInfo: (message) => logger.info(message),
-        logError: (message, error) => logger.error(message, error),
-      });
+      disposeSquadRunSubscription(subscriptionKey);
+      runSubscriptionKey = subscriptionKey;
+      /** 本次派发的 run 种类标签：只用于日志与失败原因文案（队员 / 队长）。 */
+      const runLabel = kind === "leader" ? "队长" : "队员";
+      /* 句柄从**本处**发起订阅的返回值接住（`watch*RunSettlement` 自己不持有它，我们不去改那个文件）：
+         接住之后既有成功终态的解绑，也有失败路径的解绑。**两种 run 共用这一个闭包** —— 终态规则
+         （认轮 / 解绑 / 失败出口）一模一样，只有「成功入账」按 kind 分叉（见下面的两个 watch* 调用）。 */
+      const subscribeTerminal = (listener: (outcome: SquadMemberRunTerminalOutcome) => void) => {
+        const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
+          outcome,
+        ) => {
+          // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
+          // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
+          if (outcome.inputId === traceId) {
+            disposeSquadRunSubscription(subscriptionKey);
+          }
+          /* **失败/中止的 run 必须有出口**（裁定 Important-3）：否则它永远算「活跃」（`listActive`）
+             ⇒ 它占着的工作树与分支**永不被回收**（S15 未达）；队长行虽无树，留在活跃集会让 §5.7(1)
+             的「进行中」**永真**（重复指派被永久合并）。成功那一支由 `watch*RunSettlement` 走对应入账，
+             这里只管「**没有产出**」这一支（`failed` / `stopped`）—— 两种 run 走同一条出口
+             （`failMemberRun` 的契约是「这条 run」，不是身份限制）。只改台账状态（`discarded`），
+             树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。失败只 error 留痕：出口没生效时
+             那个 run 会一直停在活跃集，必须看得见。 */
+          if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
+            void squadRuntime
+              .failMemberRun(target, {
+                runId: eventKey,
+                reason:
+                  `${runLabel}会话终态=${outcome.outcome}` +
+                  (outcome.error ? `：${outcome.error}` : ""),
+              })
+              .catch((error: unknown) =>
+                logger.error(
+                  `[squad] ${runLabel} run 失败出口未生效：${eventKey} 仍停在活跃集`,
+                  error,
+                ),
+              );
+          }
+          listener(outcome);
+        });
+        squadRunSubscriptions.set(subscriptionKey, disposable);
+        return disposable;
+      };
+      // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
+      if (kind === "member") {
+        watchMemberRunSettlement({
+          runId: eventKey,
+          traceId,
+          subscribe: subscribeTerminal,
+          completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
+          logInfo: (message) => logger.info(message),
+          logError: (message, error) => logger.error(message, error),
+        });
+      } else {
+        /* 队长 run 的成功入账：`completeLeaderRun` **只把台账行移到终态**（不碰工作项 — §5.7(2)）。
+           它与队员共用上面的订阅闭包 ⇒ 队长 run 的终态（成功 / 失败 / 中止）真的被写回。 */
+        watchLeaderRunSettlement({
+          runId: eventKey,
+          traceId,
+          subscribe: subscribeTerminal,
+          completeLeaderRun: (runId) => squadRuntime.completeLeaderRun(target, { runId }),
+          logInfo: (message) => logger.info(message),
+          logError: (message, error) => logger.error(message, error),
+        });
+      }
     }
     await zcodeTaskService.sendPrompt({
       taskId: task.taskId,
@@ -2902,10 +2933,10 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       content: decision.prompt,
       clientMode: "desktop-continuous",
     });
-    /* 两条 run 的台账行都已在上面分叉里写好（队员 `openMemberRun` / 队长 `recordLeaderRun`）。
-       队员 run 的**终态收口**由上面的 `watchMemberRunSettlement` 接上：成功 ⇒ `completeMemberRun`
-       把台账推到 `produced`（这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」）。
-       队长 run 的终态事实属后续（见上面的说明）。 */
+    /* 两条 run 的台账行都已在上面分叉里写好（队员 `openMemberRun` / 队长 `recordLeaderRun`），
+       且**两条 run 的终态收口都接上了**：队员 ⇒ `completeMemberRun`（台账推到 `produced`，
+       这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」）；队长 ⇒ `completeLeaderRun`
+       （台账推到终态 `merged`，不碰工作项）。失败/中止两条都走 `failMemberRun` 移出活跃集。 */
     logger.info(
       `[squad] dispatch completed ${triggerLabel} workItem=${msg.workItemId} kind=${kind}` +
         ` eventKey=${eventKey} task=${task.taskId}`,
@@ -2961,10 +2992,10 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     /* **失败路径也要解绑**（照 cron 侧在失败/终态后 dispose 的形态）：这次派发已经失败，
        而它订阅的「这个 run 的终态」可能**永远不来**（run 停在 open，本就无出口）⇒
        订阅留着就残留到进程退出（每次失败的派发多一条）。defer 分支在订阅**之前**就抛，
-       故那条路径上 `memberRunSubscriptionKey` 仍是 undefined，下一次重投会照常订阅。 */
-    if (memberRunSubscriptionKey !== undefined) {
-      disposeSquadMemberRunSubscription(memberRunSubscriptionKey);
-      memberRunSubscriptionKey = undefined;
+       故那条路径上 `runSubscriptionKey` 仍是 undefined，下一次重投会照常订阅。 */
+    if (runSubscriptionKey !== undefined) {
+      disposeSquadRunSubscription(runSubscriptionKey);
+      runSubscriptionKey = undefined;
     }
     return {
       ok: false,

@@ -8,7 +8,7 @@ import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper, ReapOutcome } from "../worktree/orphanReaper.js";
 import type { WorkItemService } from "./workItemService.js";
 import { slugForId } from "./slug.js";
-import type { SquadRunRepo } from "./squadRunRepo.js";
+import type { SquadRunRecord, SquadRunRepo } from "./squadRunRepo.js";
 
 /* 小队运行生命周期的**机械半**（spec §6.1–§6.3）：开树 / 收尾 / 审查 / 抛弃 / 启动回收。
 
@@ -50,6 +50,30 @@ export type ReviewOutcome =
   | { ok: true; merged: false; kept: true }
   | { ok: false; reason: "conflict" | "branch_missing"; detail: string };
 
+/**
+ * spec §5.7(1)「队长 run **进行中**时的重复指派**合并**为同一次（不排队堆积）」的**唯一读法**：
+ * 该 `workItemId` 此刻是否存在**未终态**（即仍在跑）的**队长**行。
+ *
+ * 为什么单独抽成函数而不是让调用方各自 `some(...)`：这条投影是「合并还是新起一次」的判据，
+ * 而判据一旦被抄成两份，迟早在「算不算队长行」或「活跃集合取哪个」上分叉 —— 分叉的表现是
+ * 「该合并的没合并（重复 run 堆积）」或「该新派的被永久吃掉」，**两者都不报错**。故定义只有这一处。
+ *
+ * **入参必须是活跃集合**（`SquadRunRepo.listActive` / `getSnapshot().runs`）：终态行已被该集合
+ * 排除，于是「存在」即「进行中」。传一个含终态行的列表（例如 `listByParent`）会得到恒真的错误答案
+ * —— 这正是本方法要防的那种「看起来没问题」。
+ *
+ * 何时为假：`completeLeaderRun`（成功 ⇒ `merged`）或失败/中止出口（⇒ `discarded`）把它移出活跃集
+ * 之后，同一读法必须变假（有用例钉住）—— 否则该判据对该工作项**永远为真**。
+ */
+export function hasInProgressLeaderRun(
+  activeRuns: readonly SquadRunRecord[],
+  workItemId: string,
+): boolean {
+  return activeRuns.some(
+    (record) => record.workItemId === workItemId && record.isLeaderTask,
+  );
+}
+
 export interface SquadRunLifecycle {
   openMemberRun(request: MemberRunRequest): Promise<OpenMemberRunResult>;
   /**
@@ -66,14 +90,47 @@ export interface SquadRunLifecycle {
    * 队长行因此对 `computeActiveBranches` **零贡献**（它按 `branch !== null` 投影），
    * 回收器也看不见它（它认的是工作树与分支）—— 既有的活跃集合口径与回收行为都不动。
    *
-   * 「进行中」的读法（给重复指派合并用）：`getSnapshot().runs`（= `listActive`，已含队长行且
-   * 已排除终态）里按 `workItemId` + `isLeaderTask` 过滤，存在即「该工作项有进行中的队长 run」。
+   * 「进行中」的读法（给重复指派合并用）：**唯一实现是下面导出的 `hasInProgressLeaderRun`**
+   * ——`getSnapshot().runs`（= `listActive`，已含队长行且已排除终态）里按 `workItemId` +
+   * `isLeaderTask` 过滤，存在即「该工作项有进行中的队长 run」。调用方**不得**各自重写这条投影
+   * （重写一份就会与这里漂移，而漂移的表现是「该合并的没合并 / 该新派的被吃掉」，都不报错）。
    *
    * 幂等口径与 `openMemberRun` 一致：同 `runId` 重复登记 ⇒ 台账**主键冲突响亮抛**
    * （静默复用旧行会让两次 run 的成果落进同一个身份里；`runId` 取幂等键 `eventKey`，
    * 故「同一事实重投」本就不该产生第二条 run）。
    */
   recordLeaderRun(request: LeaderRunRequest): Promise<void>;
+  /**
+   * 队长 run 的**成功终态收口**：把队长行的台账状态从 `open` 移到**终态**（`merged`）。
+   *
+   * 为什么必须有它（否则 §5.7(1) 的判据被架空）：`recordLeaderRun` 只登记（`open`），而队长 run
+   * **没有队员那一步 review/merge**（无分支可合、无树可抛，spec §6.1/§6.2）⇒ 没有任何既有方法会把
+   * 这条行移出活跃集（`SQUAD_RUN_ACTIVE_STATUSES` 含 `open`）⇒ **成功的队长行会长驻 `open`** ⇒
+   * 「该工作项有没有进行中的队长 run」（`hasInProgressLeaderRun`）**恒为真** ⇒ 重复指派合并会把
+   * 该工作项的**所有后续指派永久吃掉**（不报错）。这不是「少一个便利动作」，而是判据失真。
+   *
+   * 与 `completeMemberRun` 的两点**刻意差异**（对称但不等同）：
+   * 1. **不推工作项状态**：spec §5.7(2) 明文「队长 run **不改父项状态**」——`completeMemberRun`
+   *    里那句 `transition(..., "in_review", ...)` 套到队长行上会**写坏父项**（凭空把它推进待验收）。
+   *    本方法**一个字都不写工作项**。
+   * 2. **直接到终态**：队员的产出必须活到「被合并」（`produced` 仍是活跃态，spec §6.2），所以
+   *    `completeMemberRun` 只是入账、不是终态；队长没有分支/工作树，run 结束即收口 ⇒ 直接落
+   *    `merged`。该行 `branch=null` ⇒ 编排器 `memberRuns`（按 `branch !== null` 投影）与
+   *    `discardBatch` 都不会再看它，故 §6.2「队长 run 的终态**不得**影响工作树生命周期」成立。
+   *
+   * 三条纪律（与 `failMemberRun` / `reviewMemberRun` 同款）：
+   * · **唯一写者**：只经 `squadRunRepo.setStatus`；
+   * · **前置读当时状态**（从台账读到什么再决定怎么做，**不写死**）；
+   * · **未命中 / 跨终态响亮抛**：runId 不存在 ⇒ `requireRun` 抛；已是 `merged` ⇒ **幂等返回**
+   *   （同一条「成功」事实被重投一次是可能的，悄悄改写成别的才是问题）；已是 `discarded`
+   *   （失败/中止已收口）⇒ **抛** —— 把一条按失败收口的 run 改写成「成功」是跨终态改写，
+   *   会掩盖它当初为什么没跑完。
+   *
+   * **只收队长行**：非队长行（`isLeaderTask` 为假或 `branch` 非空）⇒ **抛**。误用于队员行会把一条
+   * **从未合并**的队员分支置 `merged`，编排器随后按「`merged` 且有分支」把它**连树带枝丢弃** ——
+   * 成果在没落地的情况下被删，且不报错。
+   */
+  completeLeaderRun(input: { runId: string }): Promise<void>;
   completeMemberRun(input: { runId: string }): Promise<void>;
   /** 硬约束 2 的**唯一**口径来源：未合并的队员分支（含被打回待修的）。 */
   computeActiveBranches(workspaceKey: string): Promise<string[]>;
@@ -102,6 +159,12 @@ export interface SquadRunLifecycle {
    * 只接受 `open`（执行失败 = 从未产出）；`discarded` 幂等返回；其余状态（`produced` / `merged` /
    * `rejected`）**抛**——它们都意味着「已经产出了东西」，当失败丢弃会丢掉队员的活。
    * 本方法**不碰 git**：树的删除留给启动回收器（按「不在活跃集」回收），见 spec §6.6/S15。
+   *
+   * **方法名里的「Member」是历史命名，契约上它收的是「这条 run」而不是「队员身份」**：队长 run 的
+   * 失败/中止出口同样走本方法（队长无树无枝 ⇒ `discarded` 之后不产生任何需要回收的东西，§6.2）。
+   * 刻意**不**为队长单开一个 `failLeaderRun`：那会是同一条规则的**第二份实现**，两份迟早分叉，
+   * 而分叉的表现是「同样一条失败 run，按哪条路收口结论不同」且不报错。队长与队员唯一的差别在
+   * **成功**那一支（队长不收口工作项），那一支才需要自己的写入口：`completeLeaderRun`。
    */
   failMemberRun(input: { runId: string; reason: string }): Promise<void>;
 }
@@ -260,6 +323,35 @@ export function createRunLifecycle(deps: {
         createdAt: now,
         updatedAt: now,
       });
+    },
+
+    async completeLeaderRun({ runId }) {
+      const record = requireRun(runId);
+      /* **只收队长行**（见接口注释末段）：误用于队员行会把一条从未合并的分支置 `merged`，
+         编排器随后按「`merged` 且有分支」把它连树带枝丢弃 —— 成果未落地就被删，且不报错。
+         判据用 `isLeaderTask` + `branch === null` 两个一起：只判身份会漏掉「自称队长却有分支」
+         这种被写坏的行，只判分支会漏掉「自称队员却无分支」的行；两者都排除才是「这条行真的没有
+         可合并/可抛弃的工作面」。 */
+      if (!record.isLeaderTask || record.branch !== null) {
+        throw new Error(
+          `runId=「${runId}」不是队长 run（isLeaderTask=${String(record.isLeaderTask)}、` +
+            `branch=${String(record.branch)}）：completeLeaderRun 只收口队长行。` +
+            "误用于队员行会把一条从未合并的分支置 merged，编排器随后会把它连树带枝当已合并丢弃。",
+        );
+      }
+      // 幂等：同一条「成功」事实被重投一次（终态事件重放 / 双路径）不报错、也不再动任何东西。
+      if (record.status === "merged") return;
+      /* 只接受 `open`：`discarded` 说明这条 run 已经按失败/中止收口过，把它改写成 `merged`
+         是**跨终态改写**，会掩盖它当初为什么没跑完；`produced` / `rejected` 对队长行本不该出现
+         （队长没有产出/审查这一步），出现即说明有第二处写者动了这条行 —— 一律响亮抛，不做猜测。 */
+      if (record.status !== "open") {
+        throw new Error(
+          `runId=「${runId}」当前状态是「${record.status}」而不是 open，不能收口为成功（跨终态改写）：` +
+            "把一条已按失败/中止收口的队长 run 改写成 merged，会掩盖它当初为什么没跑完。",
+        );
+      }
+      // 只动台账状态这一列（队长无工作树、无分支：没有任何东西要动）：**不碰 git、不碰工作项状态**。
+      squadRunRepo.setStatus(runId, "merged");
     },
 
     async completeMemberRun({ runId }) {

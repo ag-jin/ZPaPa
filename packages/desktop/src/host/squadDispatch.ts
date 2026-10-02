@@ -89,6 +89,9 @@ export function isSquadDispatchDisabledError(error: unknown): boolean {
 /**
  * 一次 task 输入轮次的终态（`IZCodeTaskService.onDynamicTaskTerminalOutcome` 的结构子集）。
  * 只取收口需要的字段：`inputId` 认「是不是本次派发」，`outcome` 判有没有产出。
+ *
+ * 名字里的 `Member` 是历史命名：队长 run 也是**一次真实会话**，终态落在**同一条出口**上
+ * （`onDynamicTaskTerminalOutcome` + `inputId === traceId`），故两种 run 共用这个形状。
  */
 export type SquadMemberRunTerminalOutcome = {
   inputId?: string;
@@ -97,24 +100,84 @@ export type SquadMemberRunTerminalOutcome = {
 };
 
 /**
- * 队员 run 的终态订阅句柄（照 cron 侧 `cronRunSubscriptions` 的形态：存起来、终态后 dispose）。
+ * run 的终态订阅句柄（照 cron 侧 `cronRunSubscriptions` 的形态：存起来、终态后 dispose）。
  *
  * 按 `runId`（= 一次派发的 `eventKey`，也就是幂等键的稳定一半）分账：
  * - 终态（成功 / 失败 / 中止）到达 ⇒ 收口结束，撤下句柄（否则每次派发都新增一个永不解绑的监听器，
  *   随派发次数累积）；
  * - 重投同一条事实会**重新订阅**（可能换了 taskId）⇒ 先撤下旧句柄再存新的，避免叠加。
  *
+ * **队员与队长 run 共用这一张表**：两者的 `runId` 都取 `eventKey`（同一次派发只有一个身份，
+ * 不可能相撞），而「终态后 dispose / 重投先撤旧」这套生死管理对两种 run **完全一样** ——
+ * 分开两张表就多一套需要各自维护的规则（迟早一边漏了 dispose）。
+ *
  * 为什么用模块级 Map 而不是把句柄交回调用点：与 cron 侧同形（那边也是模块级 Map + dispose 助手），
  * 且这里的调用点（`host/index.ts` 的派发桥）不持有生命周期钩子；收口本身就在这里发生，
  * 句柄的生死也在这里闭环。
  */
-const memberRunSubscriptions = new Map<string, { dispose(): void }>();
+const runSettlementSubscriptions = new Map<string, { dispose(): void }>();
 
-function disposeMemberRunSubscription(runId: string): void {
-  const disposable = memberRunSubscriptions.get(runId);
+function disposeRunSettlementSubscription(runId: string): void {
+  const disposable = runSettlementSubscriptions.get(runId);
   if (!disposable) return;
-  memberRunSubscriptions.delete(runId);
+  runSettlementSubscriptions.delete(runId);
   disposable.dispose();
+}
+
+/**
+ * run **终态收口**的**公共骨架**（队员 / 队长共用）：订阅该 task 的终态 → 按 `inputId` 认本次派发
+ * → 成功则入账、失败/中止则留痕 → 终态后撤下句柄（重投先撤旧）。
+ *
+ * 为什么抽成一处而不是各写一份：两种 run 的差别**只有两格** —— 成功的入账动作（`settleOnSuccess`）
+ * 与几句日志文案。订阅/认轮/解绑/异常处理这些是**同一套规则**；抄成两份后，任何一份的修补
+ * （例如某个路径忘了 dispose）都不会被另一份继承，而表现是「监听器随派发累积」这类不报错的泄漏。
+ *
+ * 失败/中止**不得**冒充成功：本骨架只负责「未产出就留痕」，**不负责**动用失败出口 ——
+ * 那是**调用方的订阅闭包**的事（host 收到 `outcome !== "succeeded"` 时调 `failMemberRun`，
+ * 裁定 Important-3）。本骨架的 `logError` 因此是**第二道**留痕，不是唯一归宿。
+ */
+function watchRunSettlement(params: {
+  /** 幂等键里稳定的那一半（`eventKey`），也是台账行的 runId。 */
+  runId: string;
+  /** 本次派发用的 trace（= sendPrompt 的 traceId）：只认这一轮，别轮的终态不算本次 run 的终态。 */
+  traceId: string;
+  subscribe: (listener: (outcome: SquadMemberRunTerminalOutcome) => void) => { dispose(): void };
+  /** 成功时的入账动作（队员 = `completeMemberRun`；队长 = `completeLeaderRun`）。 */
+  settleOnSuccess: (runId: string) => Promise<void>;
+  /** 「未产出」的留痕文案（只有两种 run 的措辞不同，格式一致，故由调用方给）。 */
+  notProducedLog: (outcome: SquadMemberRunTerminalOutcome) => string;
+  /** 成功入账后的留痕文案。 */
+  settledLog: string;
+  /** 入账动作本身失败时的留痕文案（run 会停在 `open`，必须响亮）。 */
+  settleFailedLog: string;
+  /** 订阅本身抛错时的留痕文案（没有订阅就没有收口）。 */
+  subscribeFailedLog: string;
+  logInfo: (message: string) => void;
+  logError: (message: string, error?: unknown) => void;
+}): void {
+  // 重投同一条事实会再次订阅 ⇒ 先撤下旧句柄，避免监听器随重投次数叠加（照 cron 的 dispose-before-set）。
+  disposeRunSettlementSubscription(params.runId);
+  try {
+    const disposable = params.subscribe((outcome) => {
+      // inputId 缺失或不是本轮 ⇒ 不是这次派发的终态（用户插话、上一轮残留），**继续等**：不解绑。
+      if (outcome.inputId !== params.traceId) return;
+      // 本轮终态（成功 / 失败 / 中止）到达 ⇒ 收口结束，撤下句柄（否则每次派发累积一个监听器）。
+      disposeRunSettlementSubscription(params.runId);
+      if (outcome.outcome !== "succeeded") {
+        params.logError(params.notProducedLog(outcome), outcome.error);
+        return;
+      }
+      void params.settleOnSuccess(params.runId).then(
+        () => params.logInfo(params.settledLog),
+        (error) => params.logError(params.settleFailedLog, error),
+      );
+    });
+    runSettlementSubscriptions.set(params.runId, disposable);
+  } catch (error) {
+    // 订阅本身失败也要响亮：没有订阅就没有收口，run 会停在 open。也不留下半个句柄。
+    disposeRunSettlementSubscription(params.runId);
+    params.logError(params.subscribeFailedLog, error);
+  }
 }
 
 /**
@@ -146,35 +209,63 @@ export function watchMemberRunSettlement(params: {
   logInfo: (message: string) => void;
   logError: (message: string, error?: unknown) => void;
 }): void {
-  // 重投同一条事实会再次订阅 ⇒ 先撤下旧句柄，避免监听器随重投次数叠加（照 cron 的 dispose-before-set）。
-  disposeMemberRunSubscription(params.runId);
-  try {
-    const disposable = params.subscribe((outcome) => {
-      // inputId 缺失或不是本轮 ⇒ 不是这次派发的终态（用户插话、上一轮残留），**继续等**：不解绑。
-      if (outcome.inputId !== params.traceId) return;
-      // 本轮终态（成功 / 失败 / 中止）到达 ⇒ 收口结束，撤下句柄（否则每次派发累积一个监听器）。
-      disposeMemberRunSubscription(params.runId);
-      if (outcome.outcome !== "succeeded") {
-        params.logError(
-          `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId}` +
-            " —— 失败那一支由 host 的订阅闭包调 `failMemberRun` 移出活跃集（工作树/分支交给启动回收）",
-          outcome.error,
-        );
-        return;
-      }
-      void params.completeMemberRun(params.runId).then(
-        () => params.logInfo(`[squad] member run 产出入账：runId=${params.runId} ⇒ produced`),
-        (error) =>
-          params.logError(
-            `[squad] member run 终态入账失败：runId=${params.runId} 停在 open（台账需人工/后续任务处置）`,
-            error,
-          ),
-      );
-    });
-    memberRunSubscriptions.set(params.runId, disposable);
-  } catch (error) {
-    // 订阅本身失败也要响亮：没有订阅就没有收口，run 会停在 open。也不留下半个句柄。
-    disposeMemberRunSubscription(params.runId);
-    params.logError(`[squad] member run 终态订阅失败：runId=${params.runId} 的收口会丢失`, error);
-  }
+  watchRunSettlement({
+    runId: params.runId,
+    traceId: params.traceId,
+    subscribe: params.subscribe,
+    settleOnSuccess: params.completeMemberRun,
+    notProducedLog: (outcome) =>
+      `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId}` +
+      " —— 失败那一支由 host 的订阅闭包调 `failMemberRun` 移出活跃集（工作树/分支交给启动回收）",
+    settledLog: `[squad] member run 产出入账：runId=${params.runId} ⇒ produced`,
+    settleFailedLog: `[squad] member run 终态入账失败：runId=${params.runId} 停在 open（台账需人工/后续任务处置）`,
+    subscribeFailedLog: `[squad] member run 终态订阅失败：runId=${params.runId} 的收口会丢失`,
+    logInfo: params.logInfo,
+    logError: params.logError,
+  });
+}
+
+/**
+ * 队长 run 的**终态收口**：与队员走**同一条出口**（`onDynamicTaskTerminalOutcome` + `inputId === traceId`）
+ * —— 队长 run 也是一次真实会话（会话与 trace 都在派发桥里建/发），终态一样能被观察到。
+ *
+ * 为什么队长也必须收口（否则 §5.7(1) 的判据被架空）：`recordLeaderRun` 只把行登记成 `open`，而队长
+ * run **没有队员那一步 review/merge**（无分支可合、无树可抛）⇒ 没有任何东西会在它跑完后把这条行
+ * 移出活跃集（`SQUAD_RUN_ACTIVE_STATUSES` 含 `open`）⇒ **成功的队长行长驻 `open`** ⇒
+ * 「该工作项有没有进行中的队长 run」（`hasInProgressLeaderRun`）**恒为真**，于是「重复指派合并为一次」
+ * 会把该工作项**所有后续指派永久吃掉**（不报错）。成功那一支的入账动作用 `completeLeaderRun`。
+ *
+ * 与队员的**唯一差别**是成功的入账动作：队员 ⇒ `completeMemberRun`（产出入账 + 工作项推 `in_review`）；
+ * 队长 ⇒ `completeLeaderRun`（**只把台账行移到终态**，不碰工作项 —— spec §5.7(2)）。失败/中止那一支
+ * 两者相同：host 的订阅闭包调 `failMemberRun` 把该 run 移出活跃集（队长无树无枝，`discarded` 之后
+ * 不产生任何需要回收的东西，§6.2）。
+ */
+export function watchLeaderRunSettlement(params: {
+  /** 幂等键里稳定的那一半（`eventKey`），也是台账行的 runId。 */
+  runId: string;
+  /** 本次派发用的 trace（= sendPrompt 的 traceId）：只认这一轮。 */
+  traceId: string;
+  subscribe: (listener: (outcome: SquadMemberRunTerminalOutcome) => void) => { dispose(): void };
+  /** `ISquadRuntimeService.completeLeaderRun` 的绑定形态（已绑定 target）。 */
+  completeLeaderRun: (runId: string) => Promise<void>;
+  logInfo: (message: string) => void;
+  logError: (message: string, error?: unknown) => void;
+}): void {
+  watchRunSettlement({
+    runId: params.runId,
+    traceId: params.traceId,
+    subscribe: params.subscribe,
+    settleOnSuccess: params.completeLeaderRun,
+    notProducedLog: (outcome) =>
+      `[squad] leader run 未产出（终态=${outcome.outcome}）：runId=${params.runId}` +
+      " —— 失败那一支由 host 的订阅闭包调 `failMemberRun` 移出活跃集（队长无工作树/分支）",
+    settledLog: `[squad] leader run 收口入账：runId=${params.runId} ⇒ merged（队长 run 不改父项状态）`,
+    // 队长行停在 open 的后果比队员更重：§5.7(1) 的「进行中」会**永真**（重复指派被永久合并）。
+    settleFailedLog:
+      `[squad] leader run 终态入账失败：runId=${params.runId} 停在 open` +
+      "（§5.7(1) 的「进行中」会永真 —— 该工作项的后续指派会被永久合并）",
+    subscribeFailedLog: `[squad] leader run 终态订阅失败：runId=${params.runId} 的收口会丢失`,
+    logInfo: params.logInfo,
+    logError: params.logError,
+  });
 }

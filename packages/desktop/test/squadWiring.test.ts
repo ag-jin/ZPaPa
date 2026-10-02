@@ -167,24 +167,24 @@ test("队员 run 的终态订阅在派发失败路径上也会解绑", () => {
   // ① 句柄真的被持有：订阅处的返回值进了 host 级登记表（否则解绑无从谈起）。
   assert.match(
     branch,
-    /squadMemberRunSubscriptions\.set\(/,
+    /squadRunSubscriptions\.set\(/,
     "订阅句柄没有被持有（会残留到进程退出）",
   );
   // ② 失败路径（catch）里解绑 —— 这条是并行那一路报的残留的**正面修复**。
   assert.match(
     branch,
-    /disposeSquadMemberRunSubscription\(memberRunSubscriptionKey\)/,
+    /disposeSquadRunSubscription\(runSubscriptionKey\)/,
     "派发失败的 catch 路径必须解绑该订阅",
   );
   // ③ 本次派发的终态到达时也解绑：不是「只在失败路径」，也不是「只在成功终态」。
   assert.match(
     branch,
-    /outcome\.inputId === traceId\)[\s\S]{0,120}disposeSquadMemberRunSubscription\(subscriptionKey\)/,
+    /outcome\.inputId === traceId\)[\s\S]{0,120}disposeSquadRunSubscription\(subscriptionKey\)/,
   );
   // ④ 同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。
   assert.match(
     branch,
-    /disposeSquadMemberRunSubscription\(subscriptionKey\);\n\s*memberRunSubscriptionKey = subscriptionKey;/,
+    /disposeSquadRunSubscription\(subscriptionKey\);\n\s*runSubscriptionKey = subscriptionKey;/,
   );
 });
 
@@ -303,4 +303,43 @@ test("派发桥为队长 run 登记台账行（recordLeaderRun，落在队长那
     1,
     "openMemberRun 只该有一处调用（队员支）——队长走它会给队长开树",
   );
+});
+
+/* ---- P2b 余项（终态事实）：队长 run 的终态必须**真的被写回** ----
+
+   `recordLeaderRun` 只登记成 `open`；队长 run 又没有队员那一步 review/merge ⇒ 若不接终态出口，
+   **成功的队长行长驻 `open`** ⇒ §5.7(1)「进行中」恒真 ⇒ 该工作项的后续指派被永久合并，且**不报错**。
+   这里钉两件事：① 出口用的是**与队员同一条**既有机制（`onDynamicTaskTerminalOutcome` + `inputId === traceId`，
+   不得自造第二条轮询兜底）；② 成功的入账动作是**队长专用**的 `completeLeaderRun`（不是 `completeMemberRun`
+   —— 后者会把父项推 `in_review`，违反 §5.7(2)）。 */
+
+test("派发桥为队长 run 接上终态收口（同一条出口 + completeLeaderRun）", () => {
+  const branch = squadDispatchBridgeSource();
+  // ① 队长 run 的终态收口真的接上了：非队员那一支调了 `watchLeaderRunSettlement`。
+  assert.match(
+    branch,
+    /watchLeaderRunSettlement\(/,
+    "队长 run 未接终态收口 —— 成功的队长行会长驻 open（§5.7(1) 判据恒真、重复指派被永久合并）",
+  );
+  // ② 成功的入账是**队长专用**动作：completeLeaderRun（不碰工作项）；不得错用 completeMemberRun。
+  assert.match(
+    branch,
+    /completeLeaderRun: \(runId\) => squadRuntime\.completeLeaderRun\(target, \{ runId \}\)/,
+    "队长的成功入账必须是 completeLeaderRun（completeMemberRun 会把父项推 in_review，违反 §5.7(2)）",
+  );
+  // ③ **同一条出口**：终态订阅只该有一处 `onDynamicTaskTerminalOutcome(` —— 两种 run 共用它。
+  //    两处订阅（或另加轮询）就是对同一次终态有两套判据，迟早给出不同结论。
+  assert.equal(
+    (branch.match(/onDynamicTaskTerminalOutcome\(/g) ?? []).length,
+    1,
+    "终态出口只该有一处订阅（队员与队长共用它，不得自造第二条兜底）",
+  );
+  // ④ 两种 run 复用**同一个**订阅闭包（同一个 `subscribe` 值），这也是「同一条出口」的正面证据。
+  assert.equal(
+    (branch.match(/subscribe: subscribeTerminal,/g) ?? []).length,
+    2,
+    "队员与队长必须复用同一个终态订阅闭包（两条出口 = 两套判据）",
+  );
+  // ⑤ 失败/中止那一支两种 run 都走 `failMemberRun`（同一条出口；它的契约是「这条 run」而非身份）。
+  assert.match(branch, /failMemberRun\(target, \{[\s\S]{0,120}runLabel/);
 });

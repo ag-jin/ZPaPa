@@ -16,6 +16,7 @@ import {
   createSquadRuntime,
   renderLeaderBriefingPrompt,
 } from "../src/workitem/squadRuntime.js";
+import { hasInProgressLeaderRun } from "../src/workitem/squadRunLifecycle.js";
 import { slugForId } from "../src/workitem/slug.js";
 import type { WorkItemEvent } from "../src/workitem/workItemService.js";
 import { makeRepo } from "./helpers/gitFixture.js";
@@ -1083,4 +1084,207 @@ test("recordLeaderRun 同 runId 重复 ⇒ 抛", async () => {
   await runtime.lifecycle.recordLeaderRun(request);
   await assert.rejects(() => runtime.lifecycle.recordLeaderRun(request), /UNIQUE|run_id/);
   assert.equal(runtime.squadRunRepo.listByWorkItem("wi-ld").length, 1);
+});
+
+/* ---------- 6. 队长 run 的**终态事实**（spec §5.7(1)：终态后「进行中」**必须**判为假） ----------
+
+   上一轮只补了「登记」（`recordLeaderRun` ⇒ `open`），于是**成功的队长行长驻 `open`** ⇒
+   「该工作项有没有进行中的队长 run」（`hasInProgressLeaderRun`）**恒为真** ⇒ §5.7(1) 的
+   「重复指派合并为一次」会把该工作项的所有后续指派**永久吃掉**（且不报错）。
+   下面把终态写入口（成功 `completeLeaderRun` / 失败 `failMemberRun`）、可判定性（读法随终态变假）、
+   对称性（队员行回归 / activeBranches 与回收器不变 / 跨终态响亮抛）逐格钉住。 */
+
+// ① 成功 ⇒ 行长到**终态**（`merged`）、**不在 listActive()**，且**一个字都不写工作项**（§5.7(2)）。
+//    这三条一起才说明「它离开了活跃集，但没有越权做队员那一步（推工作项）」。
+test("completeLeaderRun：成功 ⇒ 队长行到终态（merged）且不在 listActive；工作项状态不动", async () => {
+  const { repoRoot, runtime } = await setup();
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: repoRoot,
+    title: "队长终态的目标项",
+    assignee: { type: "user", id: "u1" },
+  });
+  const statusBefore = runtime.workItemRepo.get(item.id)!.status;
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lt-1",
+    workItemId: item.id,
+    agentId: "ta-lead",
+  });
+  // 前置（夹具必须有区分力）：登记后是 open、**在**活跃集里 —— 否则「终态后离开」证明不了任何事。
+  assert.equal(runtime.squadRunRepo.get("r-lt-1")!.status, "open");
+  assert.ok(
+    runtime.squadRunRepo.listActive("ws").some((record) => record.runId === "r-lt-1"),
+    "登记后必须在活跃集里，终态那一步才有可断言的变化",
+  );
+
+  await runtime.lifecycle.completeLeaderRun({ runId: "r-lt-1" });
+
+  assert.equal(
+    runtime.squadRunRepo.get("r-lt-1")!.status,
+    "merged",
+    "队长 run 成功 ⇒ 终态（它没有队员的 review/merge 那一步，run 结束即收口）",
+  );
+  assert.ok(
+    !runtime.squadRunRepo.listActive("ws").some((record) => record.runId === "r-lt-1"),
+    "终态的队长行**不得**留在活跃集（否则「进行中」恒真）",
+  );
+  assert.equal(
+    runtime.workItemRepo.get(item.id)!.status,
+    statusBefore,
+    "§5.7(2)：队长 run 不改父项状态（套上 completeMemberRun 的 in_review 会写坏父项）",
+  );
+});
+
+// ② 失败/中止 ⇒ 有归宿：离开活跃集（`discarded`），且**可被 listByWorkItem 看到**（留痕不丢，
+//    台账没有删除路径）。走既有 `failMemberRun` —— 与队员同一条出口，不另立第二份规则。
+test("队长 run 失败/中止 ⇒ 离开活跃集（failMemberRun 收口为 discarded）且行仍可查", async () => {
+  const { runtime } = await setup();
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lt-fail",
+    workItemId: "wi-lt-fail",
+    agentId: "ta-lead",
+  });
+  assert.ok(
+    runtime.squadRunRepo.listActive("ws").some((record) => record.runId === "r-lt-fail"),
+    "失败前它在活跃集里（夹具区分力的前提）",
+  );
+
+  await runtime.lifecycle.failMemberRun({ runId: "r-lt-fail", reason: "队长会话终态=failed" });
+
+  assert.equal(runtime.squadRunRepo.get("r-lt-fail")!.status, "discarded", "失败有归宿");
+  assert.ok(
+    !runtime.squadRunRepo.listActive("ws").some((record) => record.runId === "r-lt-fail"),
+    "失败后必须离开活跃集",
+  );
+  // 留痕不丢：行还在（只是状态变了），事后能看出「这条 run 跑过、没跑成」。
+  assert.equal(runtime.squadRunRepo.listByWorkItem("wi-lt-fail").length, 1);
+});
+
+// ③ 可判定性：§5.7(1) 的「进行中」读法（`hasInProgressLeaderRun`）在登记后为真、**终态后必须为假**。
+//    这一格是本次任务的**逆推起点**：§5.7(1) ⇒ 终态后必须能判定「无进行中的队长 run」。
+test("§5.7(1) 读法 hasInProgressLeaderRun：进行中为真，completeLeaderRun 之后为假", async () => {
+  const { runtime, svc } = await controllableSetup();
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: runtime.boundWorkspace.path,
+    title: "读法目标项",
+    assignee: { type: "user", id: "u1" },
+  });
+  await svc.recordLeaderRun(target("ws"), {
+    runId: "r-lt-read",
+    workItemId: item.id,
+    agentId: "ta-lead",
+  });
+
+  const before = await svc.getSnapshot(target("ws"));
+  assert.equal(
+    hasInProgressLeaderRun(before.runs, item.id),
+    true,
+    "登记后即「进行中」（这正是合并判据该命中的时刻）",
+  );
+
+  await svc.completeLeaderRun(target("ws"), { runId: "r-lt-read" });
+
+  const after = await svc.getSnapshot(target("ws"));
+  assert.equal(
+    hasInProgressLeaderRun(after.runs, item.id),
+    false,
+    "终态之后「进行中」必须为假 —— 否则该判据恒真、该工作项的后续指派被永久合并",
+  );
+});
+
+// ④ §6.2：队长行的终态**不得**影响工作树生命周期。同一父项下队员行与队长行并存，
+//    队长行走到终态后：`activeBranches` 仍是队员那条、回收器照样保住队员的工作树。
+test("队长行终态不影响 activeBranches / 回收器；同父项的队员行不受影响（回归）", async () => {
+  const { runtime } = await setup();
+  const member = await runtime.lifecycle.openMemberRun({
+    runId: "r-lt-mem",
+    workItemId: "wi-lt-mem",
+    parentWorkItemId: "wi-lt-parent",
+    agentId: "ta-mem",
+    isLeaderTask: false,
+  });
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lt-sibling",
+    workItemId: "wi-lt-sibling",
+    parentWorkItemId: "wi-lt-parent",
+    agentId: "ta-lead",
+  });
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches("ws"), [member.branch]);
+
+  await runtime.lifecycle.completeLeaderRun({ runId: "r-lt-sibling" });
+
+  // 队长行到终态对活跃集合**零影响**：它本来就没有分支（按 `branch !== null` 投影时被滤掉）。
+  assert.deepEqual(
+    await runtime.lifecycle.computeActiveBranches("ws"),
+    [member.branch],
+    "队长 run 无工作树：它的终态不得改变 activeBranches（§6.2）",
+  );
+  // 回收器视队长行如无物：队员树被保住（在活跃集合里），队长行不产生任何待回收物。
+  const reaped = await runtime.lifecycle.reapStartupOrphans({ workspaceKey: "ws" });
+  assert.ok(reaped.kept.includes(member.worktreePath.split("/").at(-1)!));
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches("ws"), [member.branch]);
+});
+
+// ⑤ 终态后再写一次：**同态幂等**（重投同一条「成功」事实不报错）、**跨终态响亮抛**
+//    （一条已按失败收口的 run 不能被改写成「成功」—— 那会掩盖它当初为什么没跑完）。
+//    与 failMemberRun 的口径一致（discarded 幂等；非 open 抛）。
+test("completeLeaderRun 同态幂等；跨终态（discarded 之后写成功）响亮抛", async () => {
+  const { runtime } = await setup();
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lt-idem",
+    workItemId: "wi-lt-idem",
+    agentId: "ta-lead",
+  });
+  await runtime.lifecycle.completeLeaderRun({ runId: "r-lt-idem" });
+  // 幂等：同一条「成功」事实被重投（终态重放 / 双路径）不报错、也不再动任何东西。
+  await runtime.lifecycle.completeLeaderRun({ runId: "r-lt-idem" });
+  assert.equal(runtime.squadRunRepo.get("r-lt-idem")!.status, "merged");
+
+  // 跨终态：先按失败收口，再想把它改写成成功 ⇒ 必须响亮抛，且**不落盘**（状态仍是 discarded）。
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-lt-cross",
+    workItemId: "wi-lt-cross",
+    agentId: "ta-lead",
+  });
+  await runtime.lifecycle.failMemberRun({ runId: "r-lt-cross", reason: "先失败" });
+  await assert.rejects(
+    () => runtime.lifecycle.completeLeaderRun({ runId: "r-lt-cross" }),
+    /不是 open|跨终态/,
+  );
+  assert.equal(
+    runtime.squadRunRepo.get("r-lt-cross")!.status,
+    "discarded",
+    "跨终态改写必须被拒且不落盘（否则失败原因被抹掉）",
+  );
+});
+
+// ⑥ 只收队长行：对**队员行**调用 completeLeaderRun ⇒ 响亮抛，且队员行一个字节不动。
+//    防的是最坏形态：把一条从未合并的队员分支置 `merged`，编排器随后按「merged 且有分支」
+//    把它连树带枝当「已合并」丢弃 —— 成果未落地就被删，且不报错。
+test("completeLeaderRun 只收队长行：对队员行调用 ⇒ 抛，且队员行状态/活跃集合不变", async () => {
+  const { runtime } = await setup();
+  const member = await runtime.lifecycle.openMemberRun({
+    runId: "r-lt-notleader",
+    workItemId: "wi-lt-notleader",
+    parentWorkItemId: "wi-lt-notleader",
+    agentId: "ta-mem",
+    isLeaderTask: false,
+  });
+  await assert.rejects(
+    () => runtime.lifecycle.completeLeaderRun({ runId: "r-lt-notleader" }),
+    /不是队长 run/,
+  );
+  assert.equal(runtime.squadRunRepo.get("r-lt-notleader")!.status, "open", "队员行不得被改写");
+  assert.deepEqual(await runtime.lifecycle.computeActiveBranches("ws"), [member.branch]);
+});
+
+// ⑦ 未命中 runId ⇒ 响亮抛（与 failMemberRun / requireRun 同一口径：静默 no-op 会让调用方
+//    以为收口成功，而那条 run 仍停在旧状态）。
+test("completeLeaderRun 对不存在的 runId ⇒ 响亮抛", async () => {
+  const { runtime } = await setup();
+  await assert.rejects(
+    () => runtime.lifecycle.completeLeaderRun({ runId: "r-lt-missing" }),
+    /没有 runId/,
+  );
 });

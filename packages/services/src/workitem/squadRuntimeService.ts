@@ -120,11 +120,34 @@ export interface ISquadRuntimeService {
    * 作身份标记（`branch` 是「有没有可操作的分支」的**操作性**判据，二者不可互替 —— 见
    * `squadOrchestrator.memberRuns` 的注释）。
    *
-   * **「进行中」的读法**（给**重复指派合并**用，spec §5.7(1)）：`getSnapshot().runs`
-   * （= `listActive`，已含队长行、已排除终态）里按 `workItemId` + `isLeaderTask` 过滤，
-   * 命中即「该工作项有进行中的队长 run」⇒ 重复指派应合并而不是新起一次。
+   * **「进行中」的读法**（给**重复指派合并**用，spec §5.7(1)）：唯一实现是
+   * `hasInProgressLeaderRun(runs, workItemId)`（由 `squadRunLifecycle.ts` 导出）——`getSnapshot().runs`
+   * 即活跃集合（已含队长行、已排除终态），命中即「该工作项有进行中的队长 run」⇒ 重复指派应合并
+   * 而不是新起一次。调用方**不得**自己重写这条投影（第二份定义迟早漂移，而漂移不报错）。
+   *
+   * **要「真的」可判定还差一半的写者**：登记只写 `open`；队长 run 结束时若不写终态，这条行会长驻
+   * 活跃集 ⇒ 读法**恒真**。补上它的正是下面的 `completeLeaderRun`（成功）与 `failMemberRun`（失败/中止）。
    */
   recordLeaderRun(target: SquadWorkspaceTarget, input: LeaderRunRequest): Promise<void>;
+  /**
+   * 队长 run 的**成功终态收口**（**加法**，P2b 余项）：把队长行从 `open` 移到终态（`merged`）。
+   *
+   * 为什么必须有它：`recordLeaderRun` 只登记，而队长 run **没有队员那一步 review/merge**
+   * （无分支可合、无树可抛，spec §6.1/§6.2）⇒ 没有既有方法会把这条行移出活跃集 ⇒ **成功的队长行
+   * 长驻 `open`** ⇒ `hasInProgressLeaderRun` **恒为真** ⇒ §5.7(1) 的「重复指派合并」会把该工作项的
+   * 所有后续指派**永久吃掉**（且不报错）。这不是「少一个便利动作」，而是判据被架空。
+   *
+   * 与 `completeMemberRun` 的**刻意差异**（对称但不等同）：**不推工作项状态**（spec §5.7(2)
+   * 「队长 run 不改父项状态」——套上 `completeMemberRun` 那句 `in_review` 会写坏父项）、
+   * **直接到终态**（队员的产出要活到合并，故 `produced` 仍是活跃态；队长无分支/工作树，run 结束
+   * 即收口）。队长行 `branch=null` ⇒ §6.2「终态**不得**影响工作树生命周期」成立。
+   *
+   * 三条纪律（与 `failMemberRun` 同款）：**唯一写者**（只经 `squadRunRepo.setStatus`）、
+   * **前置读当时状态**、**未命中 / 跨终态响亮抛**（已是 `merged` 幂等返回；`discarded` 等跨终态**抛**）。
+   * **只收队长行**（非队长行抛 —— 误用于队员行会把从未合并的分支置 `merged`，随后被连树带枝丢弃）。
+   * **不过门禁**：收口在途 run 不是「新派发」（与 `completeMemberRun` 同理由）。
+   */
+  completeLeaderRun(target: SquadWorkspaceTarget, input: { runId: string }): Promise<void>;
   /** run 终态（host 派发桥调用）。**不过门禁**：收尾在途 run 不属「新派发」。 */
   completeMemberRun(target: SquadWorkspaceTarget, input: { runId: string }): Promise<void>;
   /**
@@ -380,6 +403,16 @@ export function createSquadRuntimeService(deps: {
     async recordLeaderRun(target, input) {
       const runtime = await deps.createRuntime(target);
       await runtime.lifecycle.recordLeaderRun(input);
+    },
+
+    /**
+     * 队长 run 的成功收口：**只把台账行移到终态**（门禁理由与 `completeMemberRun` 同 —— 不过门禁）。
+     * 委托给 `lifecycle.completeLeaderRun`（唯一写者是生命周期层，服务面不做第二份动作；
+     * 也**不在这一层**碰任何工作项状态 —— §5.7(2) 队长 run 不改父项状态）。
+     */
+    async completeLeaderRun(target, input) {
+      const runtime = await deps.createRuntime(target);
+      await runtime.lifecycle.completeLeaderRun({ runId: input.runId });
     },
 
     // 以下三个**不过门禁**：收尾 / 审查 / 回收都不是「新派发」。

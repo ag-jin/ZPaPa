@@ -17,6 +17,7 @@ import { createBoundSessionExecutingProbe } from "../src/host/boundSessionBusyGa
 import {
   decideSquadDispatch,
   isSquadDispatchDisabledError,
+  watchLeaderRunSettlement,
   watchMemberRunSettlement,
   type SquadMemberRunTerminalOutcome,
 } from "../src/host/squadDispatch.js";
@@ -506,4 +507,143 @@ test("订阅本身抛 ⇒ 响亮留痕，并撤下旧句柄（不留半个句柄
   assert.equal(disposedOld, 1, "订阅抛时旧句柄必须已撤下（不留半个句柄）");
   assert.equal(errors.length, 1, "订阅失败必须响亮留痕");
   assert.match(errors[0] ?? "", /订阅失败/);
+});
+
+/* ── 队长 run 的终态收口（P2b 余项）：走**与队员同一条出口**，成功入账动作不同 ──
+
+   上一轮的缺口：`recordLeaderRun` 只把队长行登记成 `open`，而队长 run 没有队员那一步 review/merge
+   ⇒ **成功的队长行长驻 `open`** ⇒ §5.7(1)「进行中」恒真 ⇒ 重复指派被永久合并。
+   这里用**真实 runtime + 真实 sqlite 台账**驱动 `watchLeaderRunSettlement`，断言的是**实体状态**
+   （`squadRunRepo.get(...).status`）：去掉 `completeLeaderRun` 的调用，本用例必须红。 */
+
+test("队长 run 的终态收口：真实台账行从 open 走到终态（merged），且不动工作项状态", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:leader:wi-ls:1:0";
+  // 派发桥的队长分支：只登记、不建树（队长无工作树，spec §6.1/§6.2），此时状态是 open。
+  await runtime.lifecycle.recordLeaderRun({
+    runId,
+    workItemId: workItem.id,
+    agentId: "ta-lead",
+  });
+  assert.equal(runtime.squadRunRepo.get(runId)?.status, "open", "登记后是 open（还没跑完）");
+  assert.ok(
+    runtime.squadRunRepo.listActive("ws").some((record) => record.runId === runId),
+    "open 的队长行落在活跃集合里 —— 这正是「永不收缩、判据恒真」的那一格",
+  );
+
+  const logs: string[] = [];
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchLeaderRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return { dispose: () => {} };
+    },
+    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    logInfo: (message) => logs.push(message),
+    logError: (message) => logs.push(message),
+  });
+  assert.equal(typeof terminal, "function", "订阅必须发生在 sendPrompt 之前，否则终态会被漏掉");
+
+  // 终态到达（成功）⇒ 队长行收口到终态。
+  terminal!({ inputId: runId, outcome: "succeeded" });
+  await flushMicrotasks();
+
+  assert.equal(
+    runtime.squadRunRepo.get(runId)?.status,
+    "merged",
+    "队长 run 结束必须离开活跃集（否则 §5.7(1) 的「进行中」恒真）",
+  );
+  assert.ok(
+    !runtime.squadRunRepo.listActive("ws").some((record) => record.runId === runId),
+    "终态之后不得再留在活跃集",
+  );
+  assert.equal(
+    runtime.workItemRepo.get(workItem.id)?.status,
+    "in_progress",
+    "§5.7(2)：队长 run **不得**改父项状态（套上 completeMemberRun 会推成 in_review）",
+  );
+  assert.ok(
+    logs.some((line) => line.includes("merged")),
+    "收口要留痕",
+  );
+});
+
+test("队长 run 终态只认本次派发那一轮（inputId 不匹配 ⇒ 不结算，仍是 open）", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:leader:wi-ls-2:1:0";
+  await runtime.lifecycle.recordLeaderRun({ runId, workItemId: workItem.id, agentId: "ta-lead" });
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchLeaderRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return { dispose: () => {} };
+    },
+    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  // 用户插话 / 上一轮残留的终态：不是这次 run 的收官，不得把台账推到终态。
+  terminal!({ inputId: "别的轮次", outcome: "succeeded" });
+  await flushMicrotasks();
+  assert.equal(runtime.squadRunRepo.get(runId)?.status, "open");
+});
+
+// 失败/中止**不得**冒充成功：唯一的成功入账动作是 `completeLeaderRun`（会置 merged）。
+// 本用例只覆盖 `watchLeaderRunSettlement` 这一层（它不负责动用失败出口）；**生产上**由 host 的订阅闭包
+// 用服务面的 `failMemberRun` 把它移出活跃集（与队员同一条出口）。
+test("队长 run 终态是 failed/stopped ⇒ 不入账（仍是 open），但必须响亮留痕", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:leader:wi-ls-3:1:0";
+  await runtime.lifecycle.recordLeaderRun({ runId, workItemId: workItem.id, agentId: "ta-lead" });
+  const errors: string[] = [];
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchLeaderRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return { dispose: () => {} };
+    },
+    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    logInfo: () => {},
+    logError: (message) => errors.push(message),
+  });
+  terminal!({ inputId: runId, outcome: "failed", error: "boom" });
+  await flushMicrotasks();
+  assert.equal(runtime.squadRunRepo.get(runId)?.status, "open", "失败不等于成功收口");
+  assert.equal(errors.length, 1, "必须有一条 error 留痕（静默停在 open 才是要避免的）");
+  assert.match(errors[0] ?? "", /未产出/);
+  assert.match(errors[0] ?? "", /failMemberRun/);
+});
+
+test("队长 run 终态到达 ⇒ 释放订阅句柄（终态后不累积监听器）", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:leader:wi-ls-dispose:1:0";
+  await runtime.lifecycle.recordLeaderRun({ runId, workItemId: workItem.id, agentId: "ta-lead" });
+  let disposed = 0;
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchLeaderRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return {
+        dispose: () => {
+          disposed += 1;
+        },
+      };
+    },
+    completeLeaderRun: (settledRunId) => runtime.lifecycle.completeLeaderRun({ runId: settledRunId }),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  assert.equal(disposed, 0, "订阅后、终态前不得解绑");
+  terminal!({ inputId: runId, outcome: "succeeded" });
+  await flushMicrotasks();
+  assert.equal(disposed, 1, "终态到达后必须解绑（否则每次派发累积一个监听器）");
+  assert.equal(runtime.squadRunRepo.get(runId)?.status, "merged", "解绑不影响终态入账");
 });
