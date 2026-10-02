@@ -2,7 +2,11 @@
 /// <reference path="../../services/src/runtime-tools/node-forge.d.ts" />
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WAKE_TICK_LIMIT, createWakeTick } from "../src/scheduler/wakeTick.js";
+import {
+  WAKE_DISPATCH_PENDING_TTL_MS,
+  WAKE_TICK_LIMIT,
+  createWakeTick,
+} from "../src/scheduler/wakeTick.js";
 
 /* 上面那条 reference 只在**类型**层面把 services 里那份 node-forge 环境声明拉进本测试工程：
    `node-forge` 没有自带类型、也没装 @types/node-forge，声明全仓只有
@@ -422,6 +426,116 @@ test("找不到对应记录的迟到回执 ⇒ unknown（只留痕，不重投�
     { kind: "unknown" },
   );
   assert.equal(posts.length, 0);
+});
+
+/* ── 重投表的**上界**与「已发出但回执不来」的归宿（Minor-1）──
+
+   复审发现的两格：
+   ① 持续「本机没有 host」时，一条 every/cron 规则**每个网格点**都新增一条永不删除的记录
+      （无 TTL、无尝试上限、无淘汰）⇒ 内存随派发次数**无界**增长；
+   ② 请求已发出但回执始终不来（host/main 中途退出）的条目 `retryAt` 恒 null ⇒ **既不被重投、
+      也不被清理** ⇒ 那次唤醒静默消失，只在表里留一条永久占位。
+
+   裁定：让表**有界**，并让「永不撤下」不再可能 —— 到期**响亮放弃并留痕**（不静默占位）。
+   下面两条钉住这两格，用**假时钟**（显式传 now），不靠真实等待。 */
+
+test("持续无 host（每格瞬时失败）⇒ 重投记录有 TTL 淘汰，表不会无界增长", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: Array<ReturnType<typeof rule>> = [];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  const interval = 60_000;
+  const fired: Array<{ ruleId: string; eventKey: string }> = [];
+  const evictedKeys: string[] = [];
+  // 跑 3 个 TTL：若没有淘汰，表会线性增长到 3*TTL/interval 条（远大于一个 TTL 窗口）。
+  for (let grid = 1; grid * interval <= WAKE_DISPATCH_PENDING_TTL_MS * 3; grid += 1) {
+    const now = grid * interval;
+    ready.length = 0;
+    // 每格一条**新的**规则（id 也随之变化 ⇒ 各规则各自 1 次触发，都不撞 rate 闸）。
+    ready.push(
+      rule({
+        id: `w${grid}`,
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        nextFireAt: now,
+        // fireCount=0 且不设 maxFires：不撞默认 max_fires(20) 闸；eventKey 取 nextFireAt，与它无关。
+        fireCount: 0,
+      }),
+    );
+    const evicted = await tick.run(now);
+    for (const item of evicted) evictedKeys.push(item.eventKey);
+    // 本轮的到点请求落在 posts 末尾（evict/repostDue 先跑、规则后跑）⇒ 对它的瞬时失败回执。
+    const latest = posts[posts.length - 1] as { ruleId: string; eventKey: string };
+    assert.equal(latest.eventKey, `t:${now}`, "本轮新发出的就是这条（重投在前、到点在后的顺序）");
+    const outcome = tick.settle(
+      {
+        ruleId: latest.ruleId,
+        eventKey: latest.eventKey,
+        ok: false,
+        failureKind: "transient",
+        error: "no local host available",
+      },
+      now,
+    );
+    assert.equal(outcome.kind, "retry", "无 host 是瞬时失败：必须重投（否则这次唤醒被静默吞掉）");
+    fired.push({ ruleId: latest.ruleId, eventKey: latest.eventKey });
+  }
+  assert.ok(evictedKeys.length > 0, "超过 TTL 的记录必须被淘汰，否则内存随派发次数无界增长");
+  // 反查表的有界性：活条目只可能来自**最近一个 TTL 窗口**（TTL/interval 条 + 边界余量）。
+  const finalNow = WAKE_DISPATCH_PENDING_TTL_MS * 3;
+  let live = 0;
+  for (const entry of fired) {
+    const out = tick.settle(
+      { ruleId: entry.ruleId, eventKey: entry.eventKey, ok: false, failureKind: "transient" },
+      finalNow,
+    );
+    if (out.kind !== "unknown") live += 1;
+  }
+  const bound = Math.ceil(WAKE_DISPATCH_PENDING_TTL_MS / interval) + 2;
+  assert.ok(live <= bound, `活条目 ${live} 条应被 TTL 限在 ${bound} 条以内（表有界）`);
+});
+
+test("请求已发出但回执始终不来 ⇒ 到 TTL 被淘汰并交入口留痕（不再静默占位）", async () => {
+  const posts: Array<Record<string, unknown>> = [];
+  const ready: Array<ReturnType<typeof rule>> = [rule()];
+  const tick = createWakeTick({
+    listReady: () => ready,
+    advance: () => {},
+    postRequest: (r) => posts.push(r),
+  });
+  const firedAt = 1000;
+  await tick.run(firedAt);
+  assert.equal(posts.length, 1);
+  // 规则已被 CAS 推进：同一格不再出现在 listReady 里（那一格再也推不出来）。
+  ready.length = 0;
+
+  // 回执从未到达（retryAt 恒 null）：TTL 内既不得重投（重投可能双跑），也不得提前清理。
+  const beforeTtl = await tick.run(firedAt + WAKE_DISPATCH_PENDING_TTL_MS - 1);
+  assert.equal(beforeTtl.length, 0, "TTL 未到不得淘汰");
+  assert.equal(posts.length, 1, "无回执不得重投（请求可能仍在途，重投会双跑）");
+
+  // 到 TTL ⇒ 淘汰，并把「从未收到任何回执」这一事实交给调度器入口留痕（logger.error）。
+  const evicted = await tick.run(firedAt + WAKE_DISPATCH_PENDING_TTL_MS);
+  assert.equal(evicted.length, 1, "到 TTL 必须被淘汰（不得再无限期挂着）");
+  assert.equal(evicted[0]?.eventKey, EVENT_KEY);
+  assert.equal(evicted[0]?.ruleId, "w1", "留痕要够定位：ruleId 与 eventKey 都在");
+  assert.equal(evicted[0]?.pendingForMs, WAKE_DISPATCH_PENDING_TTL_MS);
+  assert.equal(
+    evicted[0]?.attempts,
+    0,
+    "attempts=0 ⇒ 从未收到任何回执 —— 正是「host/main 中途退出」的形态",
+  );
+  // 实体状态断言：表里已经没有它（迟到的回执只能得到 unknown）。
+  assert.deepEqual(
+    tick.settle({ ruleId: "w1", eventKey: EVENT_KEY, ok: true }, firedAt + WAKE_DISPATCH_PENDING_TTL_MS),
+    { kind: "unknown" },
+    "淘汰后该条目必须已从重投表移除",
+  );
+  assert.equal(posts.length, 1, "淘汰 ≠ 重投");
 });
 
 // 重投表按 `(ruleId, eventKey)` 分账：eventKey 里**没有** ruleId，同一工作项上的两条规则

@@ -97,6 +97,27 @@ export type SquadMemberRunTerminalOutcome = {
 };
 
 /**
+ * 队员 run 的终态订阅句柄（照 cron 侧 `cronRunSubscriptions` 的形态：存起来、终态后 dispose）。
+ *
+ * 按 `runId`（= 一次派发的 `eventKey`，也就是幂等键的稳定一半）分账：
+ * - 终态（成功 / 失败 / 中止）到达 ⇒ 收口结束，撤下句柄（否则每次派发都新增一个永不解绑的监听器，
+ *   随派发次数累积）；
+ * - 重投同一条事实会**重新订阅**（可能换了 taskId）⇒ 先撤下旧句柄再存新的，避免叠加。
+ *
+ * 为什么用模块级 Map 而不是把句柄交回调用点：与 cron 侧同形（那边也是模块级 Map + dispose 助手），
+ * 且这里的调用点（`host/index.ts` 的派发桥）不持有生命周期钩子；收口本身就在这里发生，
+ * 句柄的生死也在这里闭环。
+ */
+const memberRunSubscriptions = new Map<string, { dispose(): void }>();
+
+function disposeMemberRunSubscription(runId: string): void {
+  const disposable = memberRunSubscriptions.get(runId);
+  if (!disposable) return;
+  memberRunSubscriptions.delete(runId);
+  disposable.dispose();
+}
+
+/**
  * 队员 run 的**终态收口**（照 `trackCronRunOutcome` 的形态：订阅该 task 的终态 → 按 inputId 认本次派发）。
  *
  * 为什么必须有这一步：`openMemberRun` 写下的台账行只有经 `completeMemberRun` 才会从 `open` 前进到
@@ -122,10 +143,14 @@ export function watchMemberRunSettlement(params: {
   logInfo: (message: string) => void;
   logError: (message: string, error?: unknown) => void;
 }): void {
+  // 重投同一条事实会再次订阅 ⇒ 先撤下旧句柄，避免监听器随重投次数叠加（照 cron 的 dispose-before-set）。
+  disposeMemberRunSubscription(params.runId);
   try {
-    params.subscribe((outcome) => {
-      // inputId 缺失或不是本轮 ⇒ 不是这次派发的终态（用户插话、上一轮残留），跳过。
+    const disposable = params.subscribe((outcome) => {
+      // inputId 缺失或不是本轮 ⇒ 不是这次派发的终态（用户插话、上一轮残留），**继续等**：不解绑。
       if (outcome.inputId !== params.traceId) return;
+      // 本轮终态（成功 / 失败 / 中止）到达 ⇒ 收口结束，撤下句柄（否则每次派发累积一个监听器）。
+      disposeMemberRunSubscription(params.runId);
       if (outcome.outcome !== "succeeded") {
         params.logError(
           `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId} 的台账行仍为 open` +
@@ -143,8 +168,10 @@ export function watchMemberRunSettlement(params: {
           ),
       );
     });
+    memberRunSubscriptions.set(params.runId, disposable);
   } catch (error) {
-    // 订阅本身失败也要响亮：没有订阅就没有收口，run 会停在 open。
+    // 订阅本身失败也要响亮：没有订阅就没有收口，run 会停在 open。也不留下半个句柄。
+    disposeMemberRunSubscription(params.runId);
     params.logError(`[squad] member run 终态订阅失败：runId=${params.runId} 的收口会丢失`, error);
   }
 }

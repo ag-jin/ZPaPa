@@ -354,3 +354,145 @@ test("终态是 failed/stopped ⇒ 不入账（仍是 open），但必须响亮�
   assert.equal(errors.length, 1, "必须有一条 error 留痕（静默停在 open 才是要避免的）");
   assert.match(errors[0] ?? "", /open/);
 });
+
+/* ── 订阅句柄的释放（Minor-2）──
+
+   复审发现：`params.subscribe(...)` 返回的 `{ dispose() }` **既没保存也没释放**，而 cron 侧
+   （`cronRunSubscriptions`）会存起来、在终态后 dispose()。于是本处**每次派发都新增一个永不解绑的
+   监听器**（终态到达后也不解绑），随派发次数累积。裁定：照 cron 的形态——保存句柄、终态后 dispose()。
+   下面三条用**实体状态断言**（dispose 真的被调用了几次），不是只看返回字符串。 */
+
+test("终态到达 ⇒ 释放订阅句柄（成功后不再累积监听器；别轮的终态不解绑）", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:id:squad:wi-dispose-ok:1:0";
+  await runtime.lifecycle.openMemberRun({
+    runId,
+    workItemId: workItem.id,
+    parentWorkItemId: workItem.id,
+    agentId: "ta-dispose-ok",
+    isLeaderTask: false,
+  });
+  let disposed = 0;
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchMemberRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return {
+        dispose: () => {
+          disposed += 1;
+        },
+      };
+    },
+    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  assert.equal(disposed, 0, "订阅后、终态前不得解绑");
+  // 别轮终态不是本次 run 的收口 ⇒ 必须继续等，不得提前解绑（否则本次终态会漏掉）。
+  terminal!({ inputId: "别的轮次", outcome: "succeeded" });
+  await flushMicrotasks();
+  assert.equal(disposed, 0, "inputId 不匹配 ⇒ 不结算也不解绑");
+  // 本轮终态到达 ⇒ 收口完成，句柄必须释放。
+  terminal!({ inputId: runId, outcome: "succeeded" });
+  await flushMicrotasks();
+  assert.equal(disposed, 1, "终态到达后必须解绑（否则每次派发累积一个监听器）");
+  assert.equal(runtime.squadRunRepo.get(runId)?.status, "produced", "解绑不影响产出入账");
+});
+
+test("终态是 failed/stopped（放弃收口）⇒ 同样释放订阅句柄", async () => {
+  const { runtime, workItem } = await makeRuntimeWithWorkItem();
+  const runId = "e:id:squad:wi-dispose-fail:1:0";
+  await runtime.lifecycle.openMemberRun({
+    runId,
+    workItemId: workItem.id,
+    parentWorkItemId: workItem.id,
+    agentId: "ta-dispose-fail",
+    isLeaderTask: false,
+  });
+  let disposed = 0;
+  let terminal: ((outcome: SquadMemberRunTerminalOutcome) => void) | undefined;
+  watchMemberRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: (listener) => {
+      terminal = listener;
+      return {
+        dispose: () => {
+          disposed += 1;
+        },
+      };
+    },
+    completeMemberRun: (settledRunId) => runtime.lifecycle.completeMemberRun({ runId: settledRunId }),
+    logInfo: () => {},
+    logError: () => {},
+  });
+  terminal!({ inputId: runId, outcome: "stopped" });
+  await flushMicrotasks();
+  assert.equal(disposed, 1, "失败/中止的终态也是收口的尽头：句柄必须释放");
+});
+
+test("同一 runId 重新订阅（重投）⇒ 先撤下旧句柄，不累积", () => {
+  const runId = "e:id:squad:wi-resub:1:0";
+  let disposedFirst = 0;
+  let disposedSecond = 0;
+  const subscribeFirst = () => ({
+    dispose: () => {
+      disposedFirst += 1;
+    },
+  });
+  const subscribeSecond = () => ({
+    dispose: () => {
+      disposedSecond += 1;
+    },
+  });
+  const base = {
+    runId,
+    traceId: runId,
+    completeMemberRun: async () => {},
+    logInfo: () => {},
+    logError: () => {},
+  };
+  watchMemberRunSettlement({ ...base, subscribe: subscribeFirst });
+  assert.equal(disposedFirst, 0);
+  // 重投同一条事实会重新订阅（可能换了 taskId）：旧句柄必须先撤下。
+  watchMemberRunSettlement({ ...base, subscribe: subscribeSecond });
+  assert.equal(disposedFirst, 1, "重新订阅前必须撤下旧句柄（否则每次重投都多一个监听器）");
+  assert.equal(disposedSecond, 0, "新句柄仍在生效，不得误撤");
+});
+
+// 「放弃」的另一形态：订阅本身抛（拿不到句柄）⇒ 响亮留痕，且撤下同 runId 的旧句柄、不留半个句柄。
+test("订阅本身抛 ⇒ 响亮留痕，并撤下旧句柄（不留半个句柄）", () => {
+  const runId = "e:id:squad:wi-subfail:1:0";
+  let disposedOld = 0;
+  // 先成功订阅一次（重投前的那次）。
+  watchMemberRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: () => ({
+      dispose: () => {
+        disposedOld += 1;
+      },
+    }),
+    completeMemberRun: async () => {},
+    logInfo: () => {},
+    logError: () => {},
+  });
+  assert.equal(disposedOld, 0);
+  // 重投这次订阅抛：旧句柄必须被撤下，且失败要响亮（没有订阅就没有收口，run 会停在 open）。
+  const errors: string[] = [];
+  watchMemberRunSettlement({
+    runId,
+    traceId: runId,
+    subscribe: () => {
+      throw new Error("subscribe boom");
+    },
+    completeMemberRun: async () => {},
+    logInfo: () => {},
+    logError: (message) => errors.push(message),
+  });
+  assert.equal(disposedOld, 1, "订阅抛时旧句柄必须已撤下（不留半个句柄）");
+  assert.equal(errors.length, 1, "订阅失败必须响亮留痕");
+  assert.match(errors[0] ?? "", /订阅失败/);
+});
