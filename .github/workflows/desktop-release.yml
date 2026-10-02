@@ -175,9 +175,26 @@ jobs:
           set -euo pipefail
           REPO="${GITHUB_REPOSITORY}"
           TAG="${GITHUB_REF_NAME}"
+          # 预览通道：tag 形如 `vX.Y.Z-preview.N` 时发成 GitHub **Pre-release**。两个目缺一不可：
+          #   ① 被排除在 `releases/latest` 之外 —— 这正是「关闭开关的用户不会被误推到预览版」的机制；
+          #   ② 应用内打开预览开关后，electron-updater 按 tag 的 prerelease 标识选中它（标识必须恰为
+          #      `preview`；换 `rc`/`beta` 会同时破坏选择过滤与清单名回退，见预览通道计划第三节）。
+          # **绝不**加 `--latest`（那会把预览顶成正式）。
+          # 另注：根 `package.json` 的版本号必须写成同一个 prerelease 形式，否则上面那道
+          # 「tag 必须等于 package version」的闸门会在构建前直接拦下。
+          case "$TAG" in
+            *-preview.*) PRERELEASE_FLAG="--prerelease" ;;
+            *)           PRERELEASE_FLAG="" ;;
+          esac
           if gh release view "$TAG" -R "$REPO" --json name > /dev/null 2>&1; then
             echo "Release $TAG already exists, uploading with --clobber"
+            # 已存在的 Release 也要把标志纠正过来（幂等）：一次手工创建的 Release 会让预览版顶成 `latest`。
+            # 稳定版不动（不传 `--latest`，避免把别人的 latest 抢过来）。
+            if [ -n "$PRERELEASE_FLAG" ]; then
+              gh release edit "$TAG" -R "$REPO" --prerelease
+            fi
           else
-            gh release create "$TAG" -R "$REPO" --verify-tag --title "$TAG" --generate-notes
+            # shellcheck disable=SC2086  # 有意做词分割：`--prerelease` 与空标志两种形态
+            gh release create "$TAG" -R "$REPO" --verify-tag --title "$TAG" --generate-notes $PRERELEASE_FLAG
           fi
           gh release upload "$TAG" -R "$REPO" installers/* --clobber
