@@ -74,6 +74,7 @@ import {
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import { decideSquadDispatch, isSquadDispatchDisabledError, watchMemberRunSettlement } from "./squadDispatch.js";
+import { resolveSquadWorkspaceBinding } from "./squadWorkspaceBinding.js";
 import {
   assertBoundSessionDispatchable,
   resolveOffPeakDispatchKind,
@@ -768,6 +769,55 @@ function buildMemberRunPrompt(workItem: WorkItem): string {
   ]
     .filter((section) => section !== "")
     .join("\n\n");
+}
+
+/** 启动回收只该跑一次（`publish` 在重试/重复发布时会多次带 `phase: "ready"`）。 */
+let squadStartupReapStarted = false;
+
+/**
+ * 启动回收（spec §6.4 / §6.6）—— **best-effort，但绝不静默**。
+ *
+ * 为什么必须做：孤儿工作树会**占住分支名**，下次对同一 (工作项, 队员) 再派发时开树会撞
+ * 「分支已被占用」而失败 —— 清理是**重派发**的正确性前置，不是可选的维护动作。
+ *
+ * 为什么是异步（调用点 `void` 它）：回收要起 git 子进程（`worktree list` / `prune` / `branch -D`），
+ * 同步跑会顶住启动（spec §11.4：孤儿清理在启动时异步）。
+ *
+ * 为什么失败只记日志、不阻断启动：一次回收失败不该让整个 Host 起不来（用户还有别的活要干）；
+ * 但**必须**带原文 warn —— 静默吞掉会让「孤儿没收掉」和「本来就没有孤儿」长得一模一样。
+ *
+ * 为什么候选多于一个时只记日志：本期只支持单 workspace（多 workspace 属 P2c）。
+ * `resolveSquadWorkspaceBinding` 会**列出候选**后抛，这里把它当一次**响亮**的「本次不回收」处理，
+ * 而不是挑一个动手 —— 回收会删分支，挑错的代价是删别人仓库里的东西。
+ */
+async function reapStartupOrphansBestEffort(
+  services: ServiceCollection | null,
+  candidates: ReadonlyArray<{ path: string; identity: string }>,
+): Promise<void> {
+  let target: { path: string; identity: string };
+  try {
+    target = resolveSquadWorkspaceBinding(candidates);
+  } catch (error) {
+    logger.warn(
+      "[squad] startup reap skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
+      error,
+    );
+    return;
+  }
+  try {
+    // 服务可能没有注册（例如不是桌面的本机权威装配）：这不是错误，是没有小队域可回收。
+    const squadRuntime = services?.getOptional(ISquadRuntimeService);
+    if (!squadRuntime) return;
+    const outcome = await squadRuntime.reapStartupOrphans(target);
+    logger.info(
+      `[squad] startup reap done reclaimed=${outcome.reclaimed.length}` +
+        ` branches=${outcome.reclaimedBranches.length} kept=${outcome.kept.length}` +
+        ` foreign=${outcome.foreign.length}`,
+    );
+  } catch (error) {
+    // 响亮（带原文）：best-effort 不等于静默。
+    logger.warn("[squad] startup reap failed", error);
+  }
 }
 
 /**
@@ -3247,6 +3297,30 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             }
           }
           pendingStartupAttachments.clear();
+          /* 启动回收（spec §6.4 / §6.6）：**只在 database startup ready 之后**、且**异步**不阻塞 UI
+             （回收要起 git 子进程）。孤儿工作树会占住分支名 ⇒ 清理是重派发的正确性前置。
+             候选 workspace 取本次启动的预热名单（main 已按最近使用顺序限为 3 个）：恰好一个才回收，
+             否则 `resolveSquadWorkspaceBinding` 列出候选后抛，本处响亮记日志并跳过（多 workspace 属 P2c）。
+             `void` 它：回收失败不能阻断启动，但内部**会带原文 warn**，不是静默。 */
+          if (!squadStartupReapStarted) {
+            squadStartupReapStarted = true;
+            const candidates = (
+              msg.agentWarmupTargets && msg.agentWarmupTargets.length > 0
+                ? msg.agentWarmupTargets
+                : msg.workspacePath
+                  ? [
+                      {
+                        workspacePath: msg.workspacePath,
+                        ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+                      },
+                    ]
+                  : []
+            ).map((candidate) => ({
+              path: candidate.workspacePath,
+              identity: candidate.workspaceIdentity ?? "",
+            }));
+            void reapStartupOrphansBestEffort(activeServices, candidates);
+          }
         }
       },
       onFailure: (error) =>
