@@ -155,10 +155,22 @@ export function createProtocolSquadHandlers(deps: {
       }
     },
 
-    /* 派给队员 → `openMemberRun`（**入口③**：队长的派单工具与规则 tick 的队员段汇到这里）。
-       为什么是它而不是「改 assignee」：服务面上「起一位队员的一次运行 + 它的工作树 + 台账行」
-       只有这一个入口，而「派给队员」的语义恰恰是这三件事一起发生（spec §6.1 的隔离承诺）。
-       工作项状态一个字节都不写（唯一写者不变）。 */
+    /* 派给队员 —— ⚠️ **语义已由 controller 裁定、但当前服务面表达不了，故停手待裁**（见本轮修复报告的「裁定 2」）。
+       裁定语义是「**改负责人 + 发出派发事件**」，由**既有的唤醒规则路径**去开 run（那才是 §5.1「多路输入、
+       一处写入」：三路输入都不直接改状态，只发同一形状的派发事件）。当前**不得**由本方法直接调
+       `openMemberRun` 把 run 开出来 —— 那会绕过规则，并把「指派」与「派发」揉成一步（§5.6）。
+
+       为什么现在停手而不是就地实现：服务面**缺两件东西**，都不是本文件能补的（本文件不碰仓库层、不许发明服务面方法）：
+       ① 没有「改既有工作项负责人」的写入口 —— `ISquadRuntimeService` 上没有这样的方法（只有
+          `createWorkItem` 建新项）；工作项服务只有 `create` / `transition`；唯一能改 assignee 的那个方法
+          在**工作项仓库**上，而仓库是内部件（刻意不进 `packages/services/src/index.ts`），
+          本模块的静态守卫也禁止 import 任何仓库模块。
+       ② 没有「发派发事件」的出口 —— `DispatchEvent`（`run.enqueued` 等）是 `planDispatch` 的**纯函数返回值**，
+          只在 host 的 `SquadWake` 分支里被消费，不经任何 bus；工作项事件的唯一出口
+          `runtime.subscribeWorkItemEvents` 是**订阅** API（不是发射 API），其事件并集里也没有 assign/dispatch 变体。
+       再加上「既有的唤醒规则路径」需要一条 `wake_rules` 行 + 调度器 tick（`listReady` → `SquadWake`）才能被触发，
+       而服务面没有任何创建/刷新唤醒规则的方法。⇒ 三处缺失写进报告，等 controller 裁定「补哪个加法式服务面方法」
+       或「本期接受直接开 run」。**在那之前这里保持原样（不发明新方法、也不假装已完成）。** */
     async assignWorkItem(target, params) {
       const parsed = zcodeSquadAssignWorkItemParamsSchema.safeParse(params);
       if (!parsed.success) return invalidParams("squad assign-work-item", parsed.error);

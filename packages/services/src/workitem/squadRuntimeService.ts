@@ -1,4 +1,10 @@
-import { resolveWorkspaceKey, type Squad, type TeamAgent, type WorkItem } from "@zcode/shared";
+import {
+  isTerminalWorkItemStatus,
+  resolveWorkspaceKey,
+  type Squad,
+  type TeamAgent,
+  type WorkItem,
+} from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type { CreateSquadInput } from "../teams/squadService.js";
 import type { CreateTeamAgentInput } from "../teams/teamAgentService.js";
@@ -74,7 +80,14 @@ export interface ISquadRuntimeService {
   ): Promise<OpenMemberRunResult>;
   /** run 终态（host 派发桥调用）。**不过门禁**：收尾在途 run 不属「新派发」。 */
   completeMemberRun(target: SquadWorkspaceTarget, input: { runId: string }): Promise<void>;
-  /** 审查裁决（最小视图按钮调用）。**不过门禁**：审查既有产出的动作不产生新派发。 */
+  /**
+   * 审查裁决（最小视图按钮调用）。**不过门禁**：审查既有产出的动作不产生新派发。
+   *
+   * 通过（approved）时本方法做**两件事**，且次序固定：① 把该队员分支合进**集成分支**（生命周期层）；
+   * ② 把**该子工作项**推进到终态（裁定 1，经唯一写者 `workItemService.transition`）—— ② 是
+   * 「子项全终态 ⇒ `children_done` ⇒ 批次 finalize」这条链的唯一写者，缺了它整批永不收尾。
+   * 打回（rejected）**不写**工作项状态：工作树与分支存活到修复后重新审核（spec §6.2）。
+   */
   reviewMemberRun(
     target: SquadWorkspaceTarget,
     input: { runId: string; verdict: "approved" | "rejected" },
@@ -86,6 +99,63 @@ export interface ISquadRuntimeService {
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
+
+/**
+ * 审查通过 ⇒ 该子工作项推进到**终态**（`done`）——裁定 1：闭合「子项终态 ⇒ `children_done` ⇒ 批次收尾」的链条。
+ *
+ * 为什么必须补这个写者：`reviewMemberRun(approved)` 把队员分支合进**集成分支**之后就结束了 ——
+ * 全仓里 `"done"` 只出现在编排器给**父项**的地方，谁都不写**子项**的终态。于是
+ * `workItemService.transition` 内部的 `areAllChildrenTerminal` 永远为假 ⇒ `workitem.child_completed`
+ * 永不发出 ⇒ `advanceAfterChildrenDone` 永不运行 ⇒ 整批永不 finalize ⇒ 用户既看不到 `done`，
+ * 主分支也永远拿不到成果。这不是「少一个便利动作」，而是闭环断在这里。
+ *
+ * 三条纪律（逐条对应裁定原文）：
+ * 1. **写者不变**：只经 `workItemService.transition`（唯一写者）。本函数不碰 repo 的 `updateStatus`、
+ *    不写裸 SQL、不在协议 handler 里写状态。
+ * 2. **条件驱动，不是渲染驱动**（spec §4.2 / §4.3）：推进由「审查通过」这个**条件**发生 —— 本函数不读
+ *    界面正在显示什么，也不让状态反过来驱动执行。
+ * 3. **前置读当时状态、不得写死**：CAS 的 `expect` 必须来自**此刻**读到的子项状态。写死一个前置
+ *    （例如 `in_review`）会在子项实际停在别处时**静默未命中**，而 §5.7.5 的「未命中即丢弃」会把那次
+ *    结算吞掉 —— 用户既看不到 `done`，也看不到任何报错。这不是假想：机械半 `completeMemberRun` 的
+ *    `in_review ← in_progress` 前置就是写死的，而**全仓没有任何路径把子项推到 `in_progress`**
+ *    （`workItemService.create` 给的是 `todo`）⇒ 由队长建出的子项事实上停在 `todo`，写死前置必不命中。
+ *    故这里先读当时状态再拿它当前置；读到写之间被人改了（真 CAS 未命中）则**响亮抛**，绝不静默丢弃。
+ *
+ * **次序硬约束**：调用点只能在**合并成功之后**。反序（先标终态、后合并）会让子项终态抢先触发
+ * `child_completed` ⇒ 批次在集成分支还缺这份成果时就 finalize —— 半批已经落到主分支上，且回不去。
+ *
+ * 「子项已是**另一个**终态」（例如用户把它 `cancelled` 了）⇒ **不跨终态改写**，也不抛：
+ * · 不改成 `done`：跨终态改写会掩盖这条批是按什么次序结算的；
+ * · 不抛：此刻合并**已经落地**，抛出去会把一次成功的合并变成一次响亮失败，而上层拿到失败后
+ *   并不会去回滚集成分支 —— 那份产出就悬在那里。这与编排层对「子项被取消」的既有口径一致
+ *   （`全 cancelled 子项：仍按 run 台账结算`）：取消子项不代表丢弃它已产出的活。
+ * 这条支路有专门用例（断言「不抛、也不改写」），故它是**显式结论**而不是被吞掉的分支。
+ */
+function settleChildWorkItem(runtime: SquadRuntime, runId: string): void {
+  const record = runtime.squadRunRepo.get(runId);
+  if (!record) {
+    throw new Error(
+      `审查通过后推进子项失败：squad_runs 没有 runId=「${runId}」的行。` +
+        "静默跳过会让这次审查看起来成功了，而那条子工作项仍停在非终态 —— 整批就此永不收尾。",
+    );
+  }
+  const item = runtime.workItemRepo.get(record.workItemId);
+  if (!item) {
+    throw new Error(
+      `审查通过后推进子项失败：子工作项「${record.workItemId}」不存在或已归档（runId=${runId}）。` +
+        "静默跳过会让这位队员的产出永远不参与 `children_done` 判定。",
+    );
+  }
+  // 幂等：已是目标态就直接返回（不重复发事件 —— 事件是下游唯一判据，重复发会重复结算）。
+  if (item.status === "done") return;
+  if (isTerminalWorkItemStatus(item.status)) return;
+  if (!runtime.workItemService.transition(item.id, "done", item.status)) {
+    throw new Error(
+      `子工作项「${item.id}」的终态 CAS 未命中：读到前置「${item.status}」、目标「done」，` +
+        "但写入时该行已不是读到的那样（并发改动）。静默丢弃会让这次结算消失得无影无踪（§5.7.5），故响亮抛出。",
+    );
+  }
+}
 
 /**
  * 服务实现。依赖全部由组合根注入（本文件不得 import node 侧的值）。
@@ -196,7 +266,17 @@ export function createSquadRuntimeService(deps: {
 
     async reviewMemberRun(target, input) {
       const runtime = await deps.createRuntime(target);
-      return runtime.lifecycle.reviewMemberRun({ runId: input.runId, verdict: input.verdict });
+      const outcome = await runtime.lifecycle.reviewMemberRun({
+        runId: input.runId,
+        verdict: input.verdict,
+      });
+      /* 裁定 1（闭环的第三环）：审查**通过** ⇒ 该子工作项推进到终态。
+         顺序不可反：这里在**合并成功之后**才写（先写会让子项终态抢先触发 `child_completed`，
+         批在集成分支还缺这份成果时就 finalize —— 半批落到主分支上，回不去）。
+         `rejected` 走不到这一支（`merged === false`）：被打回待修的子项**保持 `in_review`**，
+         工作树存活到修复后重新审核（spec §6.2 / §16 S5）。 */
+      if (outcome.ok && outcome.merged === true) settleChildWorkItem(runtime, input.runId);
+      return outcome;
     },
 
     async reapStartupOrphans(target) {

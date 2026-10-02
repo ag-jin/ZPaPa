@@ -183,7 +183,8 @@
   - **ui 例外（必须带包内 tsconfig，否则 `@/` 别名解析失败）**：`pnpm exec tsx --tsconfig packages/ui/tsconfig.json --test packages/ui/test/<file>.test.ts`
   - `node:test` + `node:assert/strict`；**测试输出必须干净**（零 `console.log`、零 stray warning、无 `.only` / `skip`）。
 - **注释用中文说明**为什么**（不是说明做了什么）。
-- 每个任务结束必须通过 `pnpm typecheck` 与 `pnpm lint`（`pnpm run verify:pre-push` = `lint` + `architecture:check --changed`）。
+- **⚠️ 测试门缺口（2026-10-02 实测踩到）**：仓库的 `verify:pre-push` **只跑 `lint` + `architecture:check`，不跑任何测试**。⇒ 每个任务**提交前必须跑它所在包的「全量」测试**（`pnpm exec tsx --test packages/<pkg>/test/*.test.ts`；ui 包另加 `--tsconfig packages/ui/tsconfig.json`），**不能只跑自己改的那几个测试文件**。否则「改了 A 文件、撞红 B 文件的既有守卫」不会被任何本地门发现。（实例：Wave 2 卫生一路删掉 `scheduler/index.ts` 的 `listReady` 预判，撞红 `schedulerWiring.test.ts:35`，而它自报的「45/45 绿」只覆盖自己那两个文件。）
+- 每个任务结束必须通过 `pnpm typecheck` 与 `pnpm lint`（`pnpm run verify:pre-push` = `lint` + `architecture:check --changed`）——**但注意上一条：pre-push 不含测试**。
 - **不得改动**：`docs/superpowers/specs/**`、`docs/superpowers/plans/2026-10-01-multi-agent-squad-p{0,1,2a}.md`、`.superpowers/sdd/2026-10-01-multi-agent-squad-p2a/**`。
 
 ---

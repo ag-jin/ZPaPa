@@ -173,6 +173,11 @@ test("squad/create-child-work-item：父项不存在 ⇒ -32603 且点名父项 
 
 // ---------- ② 派给队员 → openMemberRun ----------
 
+// ⚠️ 本用例钉住的是**当前**实现（直接 `openMemberRun`），而这条语义已被 controller 裁定为「应为
+// 「改负责人 + 发派发事件」、由既有唤醒规则路径开 run」。裁定要求的语义**当前服务面表达不了**（缺
+// 「改既有工作项负责人」的写入口与「发派发事件」的出口，详见 `squadProtocolMethods.ts` 的原地注释与
+// 本轮修复报告的「裁定 2」）⇒ 已**停手待裁**，用例暂按现状保留。若裁定补服务面方法，本用例要改成
+// 「改了负责人 + 发出派发事件 + **没有**直接产生 run」。
 // 承重：删掉 `squadRuntimeService.openMemberRun` 的调用，本用例必红
 //（既拿不到 open 台账行，也看不到工作树）。
 test("squad/assign-work-item ⇒ 落到 openMemberRun（真实台账 open 行 + 真实工作树）", async () => {
@@ -409,10 +414,15 @@ test("handler 模块不读实验开关，也不直写工作项状态 / 台账", 
 
 // 断言「三个方法各自落到对应服务方法」的**另一方向**：handler 只经服务描述符取数，
 // 不得 import repo / workItemService（那是第二个写者与第二套口径的入口）。
+//
+// 先**剥注释**再匹配：注释里点名这些模块是合法的（它要说明「为什么不去碰它们」，例如
+// 「缺的是哪个写入口」），而裸 grep 会把「解释了不 import 谁」判成「import 了谁」——
+// 这正是本用例第一次被踩到的形态（一条解释性注释直接把断言变红，与被测事实无关）。
 test("handler 模块只依赖服务面（不 import repo / workItemService）", () => {
   const source = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), "../src/zcode-agent/squadProtocolMethods.ts"),
     "utf8",
   );
-  assert.doesNotMatch(source, /workItemRepo|squadRunRepo|createWorkItemService|createWorkItemRepo/);
+  const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, "").replaceAll(/\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /workItemRepo|squadRunRepo|createWorkItemService|createWorkItemRepo/);
 });

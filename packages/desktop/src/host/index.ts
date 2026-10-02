@@ -821,6 +821,28 @@ async function reapStartupOrphansBestEffort(
 }
 
 /**
+ * 队员 run 的**终态订阅句柄**（照 cron 侧 `cronRunSubscriptions` 的既有形态）。
+ *
+ * 为什么必须有人持有它：`watchMemberRunSettlement` 内部的订阅是「等**这个 run** 的终态回调」，
+ * 而派发中途抛错（createTask / resumeTask / sendPrompt 抛）时那个回调**可能永远不来**
+ * （run 停在 `open`，本就是需要人工处置的残局）⇒ 句柄若无人持有，就残留到进程退出。
+ * 键与 cron 侧**同形**（`(taskId, traceId)`，用同一个构造器，免得两处各写一份分隔符约定）；
+ * 两张表各自独立，即使同键也不会互相影响。
+ *
+ * 与 cron 的一处刻意差异：cron 侧在 `trackCronRunOutcome` 内部持有句柄（订阅与登记在同一函数里），
+ * 而这里订阅发生在 `watchMemberRunSettlement`（另一 lane 的文件）内部 —— 本文件不改它的接口，
+ * 而是在**自己传进去的 `subscribe` 闭包**里把返回值接住（那正是「本处发起订阅」的返回值）。
+ */
+const squadMemberRunSubscriptions = new Map<string, { dispose(): void }>();
+
+function disposeSquadMemberRunSubscription(key: string): void {
+  const disposable = squadMemberRunSubscriptions.get(key);
+  if (!disposable) return;
+  squadMemberRunSubscriptions.delete(key);
+  disposable.dispose();
+}
+
+/**
  * 完成通知（recon.md 缺口 #11，**best-effort**）：后台跑完把 task 置未读，用户在列表上看得见
  * 「这一轮跑完了」。
  *
@@ -2649,6 +2671,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
          那一行会留在 `open`，而它对应的可能就是一棵已经建好的工作树 —— 必须留痕（见外层 catch）。
          声明在 try 之外：catch 要读它。 */
       let memberRunOpened = false;
+      /* 本次派发登记的终态订阅键（`(taskId, traceId)`）。声明在 try 之外：catch 要在失败路径上解绑它
+         —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。 */
+      let memberRunSubscriptionKey: string | undefined;
       /** 确定性失败（重试不会自愈）的回执：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。
           每条回执都带 `ruleId`：调度器按 `(ruleId, eventKey)` 找那条「已请求未结算」的重投记录。 */
       const failPermanent = (error: string): void => {
@@ -2855,10 +2880,31 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
            队长 run 没有 `squad_runs` 行（服务面没有写入口，见报告 Important-C），
            对它调 completeMemberRun 会撞「台账里没有 runId」的响亮错误。 */
         if (kind === "member") {
+          /* 订阅句柄**必须留一手**（照 cron 侧 `cronRunSubscriptions`）：这里订阅的是「这个 run 的终态」，
+             而派发中途抛错时那个回调可能永远不来 ⇒ 句柄无主就残留到进程退出（本文件末尾的 catch 会解绑）。
+             同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。 */
+          const subscriptionKey = cronRunSubscriptionKey(task.taskId, traceId);
+          disposeSquadMemberRunSubscription(subscriptionKey);
+          memberRunSubscriptionKey = subscriptionKey;
           watchMemberRunSettlement({
             runId: eventKey,
             traceId,
-            subscribe: (listener) => zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)(listener),
+            // 句柄从**本处**发起订阅的返回值接住（`watchMemberRunSettlement` 自己不持有它，
+            // 我们不去改那个文件）：接住之后既有成功终态的解绑，也有失败路径的解绑。
+            subscribe: (listener) => {
+              const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
+                outcome,
+              ) => {
+                // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
+                // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
+                if (outcome.inputId === traceId) {
+                  disposeSquadMemberRunSubscription(subscriptionKey);
+                }
+                listener(outcome);
+              });
+              squadMemberRunSubscriptions.set(subscriptionKey, disposable);
+              return disposable;
+            },
             // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
             completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
             logInfo: (message) => logger.info(message),
@@ -2903,6 +2949,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               "（服务面无 failed/discard 出口，工作树与分支不会被回收）",
             error,
           );
+        }
+        /* **失败路径也要解绑**（照 cron 侧在失败/终态后 dispose 的形态）：这次派发已经失败，
+           而它订阅的「这个 run 的终态」可能**永远不来**（run 停在 open，本就无出口）⇒
+           订阅留着就残留到进程退出（每次失败的派发多一条）。defer 分支在订阅**之前**就抛，
+           故那条路径上 `memberRunSubscriptionKey` 仍是 undefined，下一次重投会照常订阅。 */
+        if (memberRunSubscriptionKey !== undefined) {
+          disposeSquadMemberRunSubscription(memberRunSubscriptionKey);
+          memberRunSubscriptionKey = undefined;
         }
         parentPort.postMessage({
           type: HostResponseTypes.SquadWakeResult,

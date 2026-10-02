@@ -63,7 +63,11 @@ test("小队派发分支用的是强探测，不是 off-peak 的投影判据", (
   const src = readFileSync(join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"), "utf8");
   const start = src.indexOf("HostMessageTypes.SquadWake");
   assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  const branch = src.slice(start, start + 6000);
+  /* 窗口是「够覆盖到强探测那一行」的上界，不是契约：原值 6000 在 Wave 2 的追加（失败路径上的
+     订阅解绑）之后只剩 46 字符余量 —— 那是**脆的**，下一次正当的追加就会把断言变成假红
+     （断言的本意是「本分支用强探测」，而不是「分支不超过 N 字节」）。放宽到 20000
+     （与 squadWiring.test.ts 同口径），并保留两条断言的语义不变。 */
+  const branch = src.slice(start, start + 20_000);
   assert.match(branch, /createBoundSessionExecutingProbe/);
   assert.doesNotMatch(branch, /assertBoundSessionDispatchable/);
 });

@@ -114,6 +114,39 @@ test("host 调服务层门禁并按稳定 code 翻译成 permanent", () => {
   assert.match(branch, /failureKind: "permanent"/);
 });
 
+// 并行那一路报的残留（它自己关不掉、必须在本文件所在的这一侧补）：
+// **派发中途抛错、且那次 run 的终态永不到达**时，`subscribe(...)` 拿到的 `{ dispose() }`
+// 无信号可依 ⇒ 会残留一个订阅句柄直到进程退出。修法照 cron 侧 `cronRunSubscriptions` 的既有形态：
+// 句柄持有在 host 级登记表里，**失败路径也解绑**（不只在成功终态解绑）。
+test("队员 run 的终态订阅在派发失败路径上也会解绑", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  const start = host.indexOf("HostMessageTypes.SquadWake");
+  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
+  const branch = host.slice(start, start + 20_000);
+  // ① 句柄真的被持有：订阅处的返回值进了 host 级登记表（否则解绑无从谈起）。
+  assert.match(
+    branch,
+    /squadMemberRunSubscriptions\.set\(/,
+    "订阅句柄没有被持有（会残留到进程退出）",
+  );
+  // ② 失败路径（catch）里解绑 —— 这条是并行那一路报的残留的**正面修复**。
+  assert.match(
+    branch,
+    /disposeSquadMemberRunSubscription\(memberRunSubscriptionKey\)/,
+    "派发失败的 catch 路径必须解绑该订阅",
+  );
+  // ③ 本次派发的终态到达时也解绑：不是「只在失败路径」，也不是「只在成功终态」。
+  assert.match(
+    branch,
+    /outcome\.inputId === traceId\)[\s\S]{0,120}disposeSquadMemberRunSubscription\(subscriptionKey\)/,
+  );
+  // ④ 同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。
+  assert.match(
+    branch,
+    /disposeSquadMemberRunSubscription\(subscriptionKey\);\n\s*memberRunSubscriptionKey = subscriptionKey;/,
+  );
+});
+
 // 三个 `squad/*` 协议分支落在 services 的应答面（不是 desktop：`packages/desktop/src/host/**`
 // 零协议 handler，且依赖方向 desktop→services）——漏了它们的表现是队长每次派单都拿 -32601。
 test("三个 squad/* 协议分支落在 zcodeAgentService 的 onRequest 链上", () => {
