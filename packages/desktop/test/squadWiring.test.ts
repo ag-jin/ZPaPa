@@ -13,6 +13,53 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const read = (...p: string[]): string => readFileSync(join(repoRoot, ...p), "utf8");
 
+/**
+ * 丢掉**整行都是注释**的行再匹配：说明性注释里点名某个标识符是**合法**的（例如「为什么不去碰它」），
+ * 而裸 grep 会把「解释了不调谁」判成「调了谁」——本仓已经踩过一次（见 squadProtocolMethods.test.ts）。
+ *
+ * 为什么按**行**丢而不是用「块注释整体正则替换」：源码里有 glob（星号 + 斜杠 + 星号）这类字符串，
+ * 那种正则会把第一个注释起始标记到后面某个注释结束标记之间**成片的代码**一起吃掉（断言随即变成假红）。
+ * 只丢注释行既不碰字符串、也不碰代码。
+ */
+function withoutCommentLines(source: string): string {
+  let inBlock = false;
+  return source
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (inBlock) {
+        if (trimmed.includes("*/")) inBlock = false;
+        return false;
+      }
+      if (trimmed.startsWith("/*")) {
+        if (!trimmed.includes("*/")) inBlock = true;
+        return false;
+      }
+      return !trimmed.startsWith("//");
+    })
+    .join("\n");
+}
+
+/**
+ * host 的**派发桥**源码区域（2026-10-02 第 2 轮裁定之后：实现体从 SquadWake 分支里抽成了
+ * `runSquadDispatch`，由**两条入口**共用 —— 规则到点的消息分支、队长派单经 hub 来的
+ * `dispatchSquadAssignment`）。断言「派发路径用了强探测 / 门禁 / 收口 / 失败出口」时必须覆盖
+ * **实现体 + 薄分支**两段：只看分支会漏掉实现（断言变成假绿），只看实现会漏掉接线。
+ *
+ * 不再用固定字节窗口：窗口是脆的（下一次正当的追加就会把断言变成假红），而「从函数签名到
+ * 消息处理器之间」是**结构上**的边界（实现体只可能在那一段里）。 */
+function squadDispatchBridgeSource(): string {
+  const host = read("packages/desktop/src/host/index.ts");
+  const implAt = host.indexOf("async function runSquadDispatch(");
+  assert.ok(implAt >= 0, "host 里没有 runSquadDispatch（派发桥实现体）");
+  const handlerAt = host.indexOf('parentPort.on("message",', implAt);
+  assert.ok(handlerAt > implAt, "找不到消息处理器边界");
+  const branchAt = host.indexOf("HostMessageTypes.SquadWake", handlerAt);
+  assert.ok(branchAt >= 0, "host 里没有 SquadWake 分支");
+  // 实现体（runSquadDispatch + dispatchSquadAssignment）+ 薄分支（两条入口的接线）。
+  return host.slice(implAt, handlerAt) + host.slice(branchAt, branchAt + 4_000);
+}
+
 // 启动回收是 spec §6.4 / §6.6 的**正确性前置**（孤儿占住分支会让重派发撞「分支已存在」）。
 // 只写在文档里不算：本用例把「host 启动路径上真的调了它」钉成断言。
 test("host 启动路径调用 reapStartupOrphans", () => {
@@ -105,10 +152,7 @@ test("desktop 侧不读开关（门禁判据在服务层）", () => {
 
 // host 只**调**服务层门禁并按稳定 code 分流；不得自己读设置。
 test("host 调服务层门禁并按稳定 code 翻译成 permanent", () => {
-  const host = read("packages/desktop/src/host/index.ts");
-  const start = host.indexOf("HostMessageTypes.SquadWake");
-  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  const branch = host.slice(start, start + 8000);
+  const branch = squadDispatchBridgeSource();
   assert.match(branch, /assertDispatchEnabled/);
   assert.match(branch, /SQUAD_DISPATCH_DISABLED_CODE|isSquadDispatchDisabledError/);
   assert.match(branch, /failureKind: "permanent"/);
@@ -119,10 +163,7 @@ test("host 调服务层门禁并按稳定 code 翻译成 permanent", () => {
 // 无信号可依 ⇒ 会残留一个订阅句柄直到进程退出。修法照 cron 侧 `cronRunSubscriptions` 的既有形态：
 // 句柄持有在 host 级登记表里，**失败路径也解绑**（不只在成功终态解绑）。
 test("队员 run 的终态订阅在派发失败路径上也会解绑", () => {
-  const host = read("packages/desktop/src/host/index.ts");
-  const start = host.indexOf("HostMessageTypes.SquadWake");
-  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  const branch = host.slice(start, start + 20_000);
+  const branch = squadDispatchBridgeSource();
   // ① 句柄真的被持有：订阅处的返回值进了 host 级登记表（否则解绑无从谈起）。
   assert.match(
     branch,
@@ -180,10 +221,7 @@ test("host 启动路径重驱未收尾的批次（ready 之后，且先于启动
 // Important-3：失败 run 的出口必须真的接上（服务面没有出口之前，失败 run 永远留在活跃集 ⇒
 // 工作树/分支永不被回收）。两条路径都要接：派发中途失败（catch）与队员会话终态 failed/stopped（订阅闭包）。
 test("host 在两条失败路径上都调用 failMemberRun", () => {
-  const host = read("packages/desktop/src/host/index.ts");
-  const start = host.indexOf("HostMessageTypes.SquadWake");
-  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  const branch = host.slice(start, start + 20_000);
+  const branch = squadDispatchBridgeSource();
   const calls = branch.match(/\.failMemberRun\(/g) ?? [];
   assert.ok(
     calls.length >= 2,
@@ -195,14 +233,45 @@ test("host 在两条失败路径上都调用 failMemberRun", () => {
 // Important-4：建会话之后把 sessionId **回写台账**，否则忙检查的强探测与 deferred 分支永不可达。
 // 位置也要钉：必须在 createTask 之后（会话还没建时没有 id 可写）。
 test("host 在建会话之后把 sessionId 回写 run 台账", () => {
-  const host = read("packages/desktop/src/host/index.ts");
-  const start = host.indexOf("HostMessageTypes.SquadWake");
-  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  const branch = host.slice(start, start + 20_000);
+  const branch = squadDispatchBridgeSource();
   const bindAt = branch.indexOf("bindMemberRunSession(");
   const createAt = branch.indexOf("createTask({");
   assert.ok(bindAt >= 0, "host 没有把 sessionId 回写台账（忙检查的强探测将永不可达）");
   assert.ok(createAt >= 0, "分支里应当有 createTask");
   assert.ok(bindAt > createAt, "回写必须在 createTask 之后（会话建好才知道 sessionId）");
   assert.match(branch, /sessionId: task\.taskId/);
+});
+
+/* ---- 第 2 轮裁定（指派 = **人发起**，走与「人手动触发」**同一条**派发路径；落点 ii = 可注入的单例 hub）---- */
+
+// 缺口（复审点名）：runtime 按目标现构 ⇒ 事件订阅表在实例内部 ⇒ 常驻侧订不到 ⇒ 指派**驱动不出 run**。
+// 修法：把「派发请求」这一格的出口做成**可注入的单例 hub**，组合根订**一次**并转给 host 的派发执行体。
+// 三处接线逐条钉死：① 组合根建一份 hub 并订一次；② 每个 runtime 都 publish 到那一份；③ host 注入执行体。
+test("指派经组合根的单例 hub 转给 host 的派发执行体（落点 ii）", () => {
+  const node = withoutCommentLines(read("packages/services/src/node.ts"));
+  assert.match(node, /createSquadDispatchRequestHub\(\)/, "组合根必须建那一份 hub");
+  assert.match(
+    node,
+    /squadDispatchRequests\.subscribe\(/,
+    "组合根必须**订一次**（否则常驻侧收不到）",
+  );
+  assert.match(node, /onSquadDispatchRequested/, "组合根必须把请求转给 host 的派发执行体");
+  // 每个 runtime 都要 publish 到那一份 hub（只建不注入 = 订了也收不到，整条链静默失效）。
+  assert.match(node, /dispatchRequestHub: squadDispatchRequests/);
+  const host = withoutCommentLines(read("packages/desktop/src/host/index.ts"));
+  assert.match(host, /onSquadDispatchRequested: dispatchSquadAssignment/, "host 必须注入执行体");
+});
+
+// 同一条派发路径：规则到点与人发起（队长派单）都调 `runSquadDispatch`，只差 `trigger`。
+// 同时**不得**为了派发去写唤醒规则（那与「`@` ≠ 指派」/「人发起豁免三道闸」直接冲突，spec §5.5）。
+test("规则与人发起共用 runSquadDispatch（只差 trigger），且不写唤醒规则", () => {
+  const host = withoutCommentLines(read("packages/desktop/src/host/index.ts"));
+  const branch = squadDispatchBridgeSource();
+  assert.match(branch, /trigger: "rule"/, "规则到点那条入口必须仍走同一条路径");
+  assert.match(branch, /trigger: "user"/, "人发起（队长派单）必须走同一条路径");
+  assert.doesNotMatch(
+    host,
+    /wakeRuleRepo|createWakeRule/,
+    "指派不得要求先写一条唤醒规则（人发起豁免三道闸）",
+  );
 });

@@ -71,6 +71,7 @@ import {
   renderLeaderBriefingPrompt,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
+  type SquadDispatchRequest,
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import { decideSquadDispatch, isSquadDispatchDisabledError, watchMemberRunSettlement } from "./squadDispatch.js";
@@ -2560,6 +2561,435 @@ process.on(
   }),
 );
 
+/* ───────────────────────── 小队派发桥（**唯一**的派发路径） ─────────────────────────
+   两条入口都走 `runSquadDispatch`：① 规则到点的 `squad-wake` 消息；② 队长派单（`squad/assign-work-item`）
+   经服务面 hub 转来的派发请求。**只差 `trigger`**：规则触发必须指名规则（`planDispatch` 会留下
+   `wake.rule_fired`，也是幂等四元组的一半）；**人发起豁免三道闸**（spec §5.5：`max_fires`/`loop`/`rate`
+   只约束规则型），因此**不写、也不要求**任何唤醒规则 —— 这正是「指派不得先写一条唤醒规则」的落点。 */
+
+/** 派发请求的触发源：规则触发带规则 id；人发起（含队长派单）没有。 */
+type SquadDispatchTrigger = { trigger: "rule"; ruleId: string } | { trigger: "user" };
+
+/** 一次派发的请求：消息形状的两路入口共用（`eventKey` 是幂等键里稳定的那一半，也是台账 runId）。 */
+type SquadDispatchRequestMsg = SquadDispatchTrigger & {
+  workItemId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  eventKey: string;
+};
+
+/** 派发结论：字段与线上 `HostResponseTypes.SquadWakeResult` 一一对应（规则路径原样回执给调度器）。 */
+type SquadDispatchReport = {
+  ok: boolean;
+  error?: string;
+  failureKind?: "transient" | "permanent" | "deferred";
+  taskId?: string;
+  sessionId?: string;
+  /** 本次派发的 run 种类：**只进日志**，不上线（线上契约里没有这一维）。 */
+  kind?: "leader" | "member";
+};
+
+/**
+ * **唯一的小队派发实现**（host 派发桥的两路入口都调它）。
+ *
+ * 为什么必须只有一处：这里是「解析工作项与小队 → 决定派给谁 → 渲染简报 → 开树 → 建会话 → 订阅收口 →
+ * 发 prompt」的全过程。两处实现迟早在判定次序/收口路径上分叉，而分叉的表现是「同一件事按哪条路进来
+ * 结论不同」，且不报错。故规则路径与人发起路径**共用这一个**函数，只由 `trigger` 分流。
+ *
+ * 消息（请求）是**薄**的：调度器与服务面都不读小队定义（那是文件、由服务层拥有），规划只在这里做一次。
+ */
+async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDispatchReport> {
+  if (databaseStartup?.coordinator.snapshot.phase !== "ready") {
+    return { ok: false, error: "Local database startup is not ready", failureKind: "transient" };
+  }
+  const eventKey = msg.eventKey;
+  /** 日志里的触发源标签：规则触发要指名规则；**人发起**（队长派单）没有规则（spec §5.5）。 */
+  const triggerLabel = msg.trigger === "rule" ? `rule=${msg.ruleId}` : "trigger=user";
+  /** planDispatch 的 ruleId 只在规则触发时给（人发起不写、也不要求任何规则）。 */
+  const ruleId = msg.trigger === "rule" ? msg.ruleId : undefined;
+  /* 本分支是否**已经**在台账里开出队员行：派发中途失败时（如 createTask / 发 prompt 抛），
+     那一行会留在 `open`，而它对应的可能就是一棵已经建好的工作树 —— 必须留痕（见外层 catch）。
+     声明在 try 之外：catch 要读它。 */
+  let memberRunOpened = false;
+  /* 本次派发登记的终态订阅键（`(taskId, traceId)`）。声明在 try 之外：catch 要在失败路径上解绑它
+     —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。 */
+  let memberRunSubscriptionKey: string | undefined;
+  /* 失败出口要用、而 catch 在 try 之外的作用域，故按既有形态（`memberRunOpened` 同款）声明在外：
+     · `target` 只由 msg 算出（纯计算，不会抛）；
+     · `squadRuntimeRef` 在 try 里拿到服务后回填；
+     · `memberRunKind` 在判定 kind 后回填（失败出口只对**队员** run 生效）。 */
+  const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
+  let squadRuntimeRef: ISquadRuntimeService | undefined;
+  let memberRunKind = false;
+  /** 确定性失败（重试不会自愈）的结论：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。 */
+  const failPermanent = (error: string): SquadDispatchReport => ({
+    ok: false,
+    error,
+    failureKind: "permanent",
+  });
+  try {
+    const targetServices = resolveAutomationTargetServices(msg);
+    const squadRuntime = targetServices.getOptional(ISquadRuntimeService);
+    if (!squadRuntime) {
+      // 静默跳过会让用户看到「到点了但什么都没发生」，且没有任何线索指向「服务没注册」。
+      logger.error("[squad] squad runtime service is not registered; squad wake dropped");
+      return failPermanent("squad runtime service is not registered");
+    }
+    squadRuntimeRef = squadRuntime;
+
+    // 门禁：判据在**服务层单点**（spec §5.7.6 的三个入口共用一处判据）。
+    // 这里**不读 appSettings** —— 读一次就多一份判据，改一处漏一处，正是「关掉实验照旧派发」的形态。
+    // 本调用只读设置、只抛错：**不中断在途 run**（不关会话、不动 squad_runs 行）。
+    try {
+      await squadRuntime.assertDispatchEnabled(target);
+    } catch (error) {
+      if (isSquadDispatchDisabledError(error)) {
+        // permanent：关闭实验是确定性状态，重试不会自愈 —— 别让调度器按 transient 空转退避。
+        return failPermanent(error instanceof Error ? error.message : String(error));
+      }
+      throw error;
+    }
+
+    // 规划（**唯一一处**）：工作项与小队都从服务面读，派发结论由 planDispatch 给
+    // （用户指派 / 队长派单 / 规则触发三路共用同一处解析，spec §5.1）。
+    const snapshot = await squadRuntime.getSnapshot(target);
+    const workItem = snapshot.workItems.find((candidate) => candidate.id === msg.workItemId);
+    if (!workItem) {
+      return failPermanent(`work item not found: ${msg.workItemId}`);
+    }
+    const squad =
+      workItem.assignee.type === "squad"
+        ? (snapshot.squads.find((candidate) => candidate.id === workItem.assignee.id) ?? null)
+        : null;
+    let events: ReturnType<typeof planDispatch>;
+    try {
+      events = planDispatch({
+        workItem,
+        squad,
+        trigger: msg.trigger,
+        ...(ruleId !== undefined ? { ruleId } : {}),
+      });
+    } catch (error) {
+      /* `planDispatch` 的输入契约违例（工作项形状/小队定义不对）是**数据**问题：
+         重投同一条事实会再次撞上同一个违例 —— 按 transient 退避是空转，按 permanent 收口并留痕。
+         （只有「数据被改好」才会自愈，而那时是一条新的事实、新的 eventKey。） */
+      logger.error(`[squad] planDispatch contract violation ${triggerLabel}`, error);
+      return failPermanent(
+        `planDispatch contract violation: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const enqueued = events.find((event) => event.kind === "run.enqueued");
+    if (enqueued?.kind !== "run.enqueued") {
+      /* 没有 run（inbox.notified：指派给人 / 小队不存在 / 已归档 / 已停用）⇒ **skip 不是失败**。
+         spec §3.9 的 dispatch_skipped 不进失败率：报成失败会让人去查一个并不存在的错误。 */
+      const skip = events.find((event) => event.kind === "inbox.notified");
+      logger.info(
+        `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId}` +
+          ` reason=${skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event"}`,
+      );
+      return { ok: true };
+    }
+
+    const kind = enqueued.isLeaderTask ? "leader" : "member";
+    memberRunKind = kind === "member"; // 失败出口（catch）只对队员 run 生效，故回填到外层作用域。
+    /* 队员 run **先开树**（spec §6.1 的隔离承诺落点）：会话的 workspace 就是那棵工作树。
+       ⚠️ 队长 run **绝不**走这里：`openMemberRun` 对 `isLeaderTask: true` 一样会开树
+       （机械半如此规定，且有用例钉住），而队长直接在目标工作区执行（spec §6.2）。
+       所以分叉必须发生在**调用点**，不能指望被调方替我分叉。 */
+    let worktree: OpenMemberRunResult | undefined;
+    if (kind === "member") {
+      try {
+        worktree = await squadRuntime.openMemberRun(target, {
+          runId: eventKey,
+          workItemId: workItem.id,
+          parentWorkItemId: workItem.parentId ?? workItem.id,
+          agentId: enqueued.agentId,
+          isLeaderTask: false,
+        });
+        memberRunOpened = true;
+      } catch (error) {
+        // 开树失败是**确定性**失败（分支残枝 / base 不存在 / 目录冲突 ⇒ 重试撞「已存在」），
+        // 按 permanent 回执，别让调度器按 transient 一直空转重试。
+        return failPermanent(error instanceof Error ? error.message : String(error));
+      }
+    }
+    const sessionWorkspacePath = worktree?.worktreePath ?? msg.workspacePath;
+
+    /* 忙检查（硬约束 1）：**强探测** —— 读的是 Agent runtime 快照，不是 tasks-index 的投影
+       （投影判据 `status === "running"` 会在崩溃/强杀留下的残留行上永久卡住派发，
+       见 boundSessionBusyGate.ts:8-13 的自证）。复用 cron 的同一实现，不另写一套。
+       只有「本次要落到一个**既有**会话」时才需要探测（新建会话不存在忙）——与 cron 的
+       targetTaskId 路径同形；绑定会话来自 run 台账（重投同一 eventKey 时才有）。 */
+    const boundSessionId =
+      snapshot.runs.find((record) => record.runId === eventKey)?.sessionId ?? null;
+    let busy = false;
+    if (boundSessionId) {
+      const agentService = targetServices.getOptional(IZCodeAgentService);
+      if (agentService) {
+        busy = await createBoundSessionExecutingProbe({
+          agentService,
+          logWarn: (message, error) => logger.warn(message, error),
+        })({
+          sessionId: boundSessionId,
+          workspacePath: sessionWorkspacePath,
+          ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+        });
+      }
+    }
+
+    /* 队长 run 必须带简报（`planDispatch` 的小队分支总会给）：缺了就等于「队长起来了但不知道该干什么」，
+       而空 prompt 的派发**不报错**——正是「跑起来了，但行为与产品语义对不上」那种最难查的形态。 */
+    if (kind === "leader" && enqueued.briefing === undefined) {
+      return failPermanent(`squad leader run has no briefing (${triggerLabel})`);
+    }
+    const decision = decideSquadDispatch({
+      // 「服务层说可以派发」这一事实的搬运：上面那次 assertDispatchEnabled 已放行。
+      // 门禁判据只有服务层一处，本文件（以及 desktop 的任何地方）都不读开关。
+      dispatchEnabled: true,
+      // 库就绪在上面已判过（phase !== "ready" 已回 transient）；传 true 让纯函数自洽可测。
+      databaseReady: true,
+      busy,
+      kind,
+      briefingPrompt: enqueued.briefing ? renderLeaderBriefingPrompt(enqueued.briefing) : "",
+      memberPrompt: buildMemberRunPrompt(workItem),
+      worktree,
+    });
+    if (decision.action === "defer") {
+      // 等待型重投：抛出去由下面的 catch 翻成 deferred（照 CronRun 分支 `:2483` 的既有写法），
+      // 不进调度器的 transient 重试预算 —— 否则长任务期间的唤醒会被重试上限判死而丢弃。
+      throw new BoundSessionBusyError(boundSessionId ?? eventKey);
+    }
+    if (decision.action === "fail") {
+      // 队员缺树：没有工作树就派发 = 队员直接改主工作区（spec §6.1 落空）——响亮失败。
+      return failPermanent(`squad member run requires a worktree (${decision.reason})`);
+    }
+    if (decision.action === "skip") {
+      // not_ready / disabled 已在上面拦掉，这里是防御性分支：skip 仍然**不是失败**。
+      logger.info(
+        `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=${decision.reason}`,
+      );
+      return { ok: true };
+    }
+
+    const zcodeTaskService = targetServices.getOptional(IZCodeTaskService);
+    if (!zcodeTaskService) {
+      /* 任务服务未注册是**确定性**状态（服务注册表在进程生命周期内不会长出这个服务），
+         按 transient 退避只会一直空转 —— 与 cron 路径不同：那边是「写配置/会话失败」类的未知错误，
+         这里是「环境缺件」。响亮 + permanent，别让这次唤醒在退避里转圈。 */
+      logger.error("[squad] ZCode task service is not initialized; squad wake dropped");
+      return failPermanent("ZCode task service is not initialized.");
+    }
+    // 幂等键的稳定一半当 trace：同一 eventKey 的重投落回同一个 trace，不会变成两次「新执行」。
+    const traceId = eventKey as TraceId;
+    const task = boundSessionId
+      ? { taskId: boundSessionId }
+      : await zcodeTaskService.createTask({
+          workspacePath: sessionWorkspacePath,
+          ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+        });
+    if (boundSessionId) {
+      // 绑定会话在 app 重启 / 切 workspace 后通常不在 active：先冷恢复再发 prompt，
+      // 否则 sendPrompt 会立即报 Session is not active，看起来像「派发失败了」。
+      await zcodeTaskService.resumeTask({
+        taskId: task.taskId,
+        workspacePath: sessionWorkspacePath,
+        ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+      });
+    }
+    /* **会话回写台账**（裁定 Important-4）：`openMemberRun` 落台账时还不知道 sessionId（那时会话还没建），
+       于是写 `null`；而上面的忙检查（硬约束 1 的强探测）与「重投复用同一会话」都从台账读 sessionId
+       ⇒ 不回写就**恒为 null**，强探测与 `deferred` 分支在生产里永不可达（代码对、保护为零）。
+       只对**队员** run 回写：队长 run 没有台账行（见下方已知缺口）。
+       失败只 warn、不阻断本次派发：最坏后果是「下次重投另建一个会话」，而不是这次派发失败。 */
+    if (kind === "member") {
+      try {
+        await squadRuntime.bindMemberRunSession(target, {
+          runId: eventKey,
+          sessionId: task.taskId,
+        });
+      } catch (error) {
+        logger.warn(
+          "[squad] member run 会话回写台账失败（下次重投会另建会话；忙检查这一格这次不可达）",
+          error,
+        );
+      }
+    }
+    // 完成通知要在 sendPrompt **之前**订阅：先跑完再注册 listener 会漏掉终态（best-effort，失败只 warn）。
+    watchSquadRunCompletion({
+      zcodeTaskService,
+      taskId: task.taskId,
+      workspacePath: sessionWorkspacePath,
+      ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+    });
+    /* run 的终态收口（**闭环的最后一环**）：只有队员 run 有台账行，故只对它订阅 ——
+       队长 run 没有 `squad_runs` 行（服务面没有写入口，见报告 Important-C），
+       对它调 completeMemberRun 会撞「台账里没有 runId」的响亮错误。 */
+    if (kind === "member") {
+      /* 订阅句柄**必须留一手**（照 cron 侧 `cronRunSubscriptions`）：这里订阅的是「这个 run 的终态」，
+         而派发中途抛错时那个回调可能永远不来 ⇒ 句柄无主就残留到进程退出（本文件末尾的 catch 会解绑）。
+         同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。 */
+      const subscriptionKey = cronRunSubscriptionKey(task.taskId, traceId);
+      disposeSquadMemberRunSubscription(subscriptionKey);
+      memberRunSubscriptionKey = subscriptionKey;
+      watchMemberRunSettlement({
+        runId: eventKey,
+        traceId,
+        // 句柄从**本处**发起订阅的返回值接住（`watchMemberRunSettlement` 自己不持有它，
+        // 我们不去改那个文件）：接住之后既有成功终态的解绑，也有失败路径的解绑。
+        subscribe: (listener) => {
+          const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
+            outcome,
+          ) => {
+            // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
+            // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
+            if (outcome.inputId === traceId) {
+              disposeSquadMemberRunSubscription(subscriptionKey);
+            }
+            /* **失败/中止的 run 必须有出口**（裁定 Important-3）：否则它永远算「活跃」（`listActive`）
+               ⇒ 它的工作树与分支**永不被回收**（S15 未达）。成功那一支由 `watchMemberRunSettlement`
+               走 `completeMemberRun`（产出入账），这里只管「**没有产出**」这一支（`failed` / `stopped`）。
+               只改台账状态（`discarded`），树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。
+               失败只 error 留痕：出口没生效时那个 run 会一直停在活跃集，必须看得见。 */
+            if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
+              void squadRuntime
+                .failMemberRun(target, {
+                  runId: eventKey,
+                  reason:
+                    `队员会话终态=${outcome.outcome}` + (outcome.error ? `：${outcome.error}` : ""),
+                })
+                .catch((error: unknown) =>
+                  logger.error(
+                    `[squad] member run 失败出口未生效：${eventKey} 仍停在活跃集`,
+                    error,
+                  ),
+                );
+            }
+            listener(outcome);
+          });
+          squadMemberRunSubscriptions.set(subscriptionKey, disposable);
+          return disposable;
+        },
+        // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
+        completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
+        logInfo: (message) => logger.info(message),
+        logError: (message, error) => logger.error(message, error),
+      });
+    }
+    await zcodeTaskService.sendPrompt({
+      taskId: task.taskId,
+      traceId,
+      content: decision.prompt,
+      clientMode: "desktop-continuous",
+    });
+    /* ⚠️ 已知缺口（见 task-3-report 顾虑 2）：这里**没有**写队长 run 的 `squad_runs` 行。
+       冻结的服务面（`ISquadRuntimeService`）没有「记录队长 run」的写入口，而 `openMemberRun`
+       会连工作树一起开（队长不建树，机械半明文），所以在派发桥这一侧无路可写。
+       不在此处自己 INSERT：那会绕过运行生命周期、成为台账的第二个写者（唯一写者/台账口径不变）。
+       于是 `getSnapshot().runs` 现阶段只显示队员 run；建议 P2c 给服务面补 recordLeaderRun。
+       （队员 run 的**终态收口**已由上面的 `watchMemberRunSettlement` 接上：成功 ⇒ completeMemberRun
+       把台账推到 `produced`；这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」。） */
+    logger.info(
+      `[squad] dispatch completed ${triggerLabel} workItem=${msg.workItemId} kind=${kind}` +
+        ` eventKey=${eventKey} task=${task.taskId}` +
+        (kind === "leader" ? " (leader ledger row pending service surface)" : ""),
+    );
+    return { ok: true, taskId: task.taskId, sessionId: task.taskId, kind };
+  } catch (error) {
+    /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
+       回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
+       刚开出的队员行会停在 `open`（没有终态可订阅，收口那一步根本没跑到）。
+       静默停在 open 会让它永远算「活跃」：工作树与分支不会被回收，而没人知道为什么。 */
+    /* **失败 run 的出口**（裁定 Important-3）：只要台账里真有这一行（`openMemberRun` 先落台账、
+       后建树，重投还可能撞上第一次留下的行）就把它**移出活跃集**，别让它永远停在 open。
+       为什么先读一次快照再决定：行不存在时 `failMemberRun` 会**响亮抛**（未命中不得静默），
+       而「这次失败发生在建台账之前」（如门禁 / 规划 / 缺树）是**正常**的，不该变成一条误导的 error。
+       **等待型（deferred）不在出口范围内**：那是「等一会再投」的重投，不是失败，run 要留下来被复用。 */
+    const deferred = error instanceof BoundSessionBusyError;
+    if (memberRunKind && !deferred && squadRuntimeRef) {
+      const reason = error instanceof Error ? error.message : String(error);
+      try {
+        const rows = (await squadRuntimeRef.getSnapshot(target)).runs;
+        if (rows.some((record: { runId: string }) => record.runId === eventKey)) {
+          await squadRuntimeRef.failMemberRun(target, { runId: eventKey, reason });
+          logger.error(
+            `[squad] member run 已按失败收口（离开活跃集，树/分支交给启动回收）` +
+              ` runId=${eventKey} ${triggerLabel}`,
+            error,
+          );
+        } else if (memberRunOpened) {
+          // 理论上不会到这（开过树就一定有台账行）：留一条，免得将来这两处判据漂移时变成静默。
+          logger.error(
+            `[squad] member run 台账行缺失、无法收口 runId=${eventKey} ${triggerLabel}`,
+            error,
+          );
+        }
+      } catch (failError) {
+        // 出口没生效 = 这个 run 会一直停在活跃集：必须响亮（带原文），不能静默。
+        logger.error(
+          `[squad] member run 失败出口未生效：${eventKey} 仍停在 open（服务面 failMemberRun 失败）`,
+          failError,
+        );
+      }
+    } else if (memberRunOpened) {
+      logger.error(
+        `[squad] member run 停在 open：派发中途失败 runId=${eventKey} ${triggerLabel}` +
+          (deferred ? "（等待型重投，保留该 run 复用）" : ""),
+        error,
+      );
+    }
+    /* **失败路径也要解绑**（照 cron 侧在失败/终态后 dispose 的形态）：这次派发已经失败，
+       而它订阅的「这个 run 的终态」可能**永远不来**（run 停在 open，本就无出口）⇒
+       订阅留着就残留到进程退出（每次失败的派发多一条）。defer 分支在订阅**之前**就抛，
+       故那条路径上 `memberRunSubscriptionKey` 仍是 undefined，下一次重投会照常订阅。 */
+    if (memberRunSubscriptionKey !== undefined) {
+      disposeSquadMemberRunSubscription(memberRunSubscriptionKey);
+      memberRunSubscriptionKey = undefined;
+    }
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
+    };
+  }
+
+}
+
+/**
+ * 队长派单（`squad/assign-work-item`）产生的派发请求 —— **与「人手动触发」同一条路径**
+ *（spec §5.5：人发起豁免三道闸，故 `trigger: "user"`、不写任何唤醒规则；2026-10-02 第 2 轮裁定）。
+ *
+ * 由组合根把服务面的派发 hub**订一次**之后转到这里（`createLocalServices` 的 `onSquadDispatchRequested`）：
+ * runtime 按目标现构、其事件订阅表在实例内部 ⇒ 常驻侧订不到，故这一格改由 hub 承载（落点 ii）。
+ *
+ * **结果必须可见**（不得静默吞掉）：成功/跳过/失败都留一条带 `workItemId` 的日志。这条路径**没有**
+ * 调度器的重投表可回执，也不自动重试 —— 那条 error 日志就是人（或下一次工具调用）据以动手的依据。
+ */
+async function dispatchSquadAssignment(request: SquadDispatchRequest): Promise<void> {
+  /* `eventKey` 是这次派发的身份（台账 runId / trace）：人发起没有规则 tick，故这里**现造**一个。
+     同一 (工作项, 队员) 再派一次会撞工作树分支名而**响亮失败**（响亮 > 静默重复，§5.7.7 属 P2c）。 */
+  const eventKey = `assign:${request.workItemId}:${request.agentId}:${randomUUID()}`;
+  const report = await runSquadDispatch({
+    trigger: "user",
+    workItemId: request.workItemId,
+    workspacePath: request.workspacePath,
+    workspaceIdentity: request.workspaceIdentity,
+    eventKey,
+  });
+  if (report.ok) {
+    logger.info(
+      `[squad] 指派派发完成 workItem=${request.workItemId} agent=${request.agentId} runId=${eventKey}` +
+        (report.taskId !== undefined ? ` task=${report.taskId}` : "") +
+        (report.kind !== undefined ? ` kind=${report.kind}` : " (skip)"),
+    );
+    return;
+  }
+  logger.error(
+    `[squad] 指派派发失败 workItem=${request.workItemId} agent=${request.agentId}` +
+      ` runId=${eventKey} failureKind=${report.failureKind ?? "unknown"}`,
+    report.error,
+  );
+}
+
 parentPort.on("message", async (e: Electron.MessageEvent) => {
   const result = parseHostIncomingMessageEvent(e);
   if (!result.success) {
@@ -2700,397 +3130,29 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   // 唤醒规则到点（spec §5.7.1 / §5.7.6 / §6.1）。消息是**薄**的（只有「哪条规则到点了」）——
-  // 规划（解析工作项与小队、决定派给谁、渲染简报、开树）一律在本分支里做：
+  // 规划（解析工作项与小队、决定派给谁、渲染简报、开树）一律在 `runSquadDispatch` 里做：
   // 调度器不读小队定义（那是文件、由服务层拥有），否则同一份规划会有两份实现且漂移时不报错。
+  // 结果按既有契约原样回执给调度器（`ruleId` + `eventKey` 定位「已请求未结算」的重投记录）。
   if (msg.type === HostMessageTypes.SquadWake) {
-    if (databaseStartup?.coordinator.snapshot.phase !== "ready") {
+    void (async () => {
+      const report = await runSquadDispatch({
+        trigger: "rule",
+        ruleId: msg.ruleId,
+        workItemId: msg.workItemId,
+        workspacePath: msg.workspacePath,
+        workspaceIdentity: msg.workspaceIdentity,
+        eventKey: msg.eventKey,
+      });
       parentPort.postMessage({
         type: HostResponseTypes.SquadWakeResult,
         ruleId: msg.ruleId,
         runId: msg.eventKey,
-        ok: false,
-        error: "Local database startup is not ready",
-        failureKind: "transient",
+        ok: report.ok,
+        ...(report.error !== undefined ? { error: report.error } : {}),
+        ...(report.failureKind !== undefined ? { failureKind: report.failureKind } : {}),
+        ...(report.taskId !== undefined ? { taskId: report.taskId } : {}),
+        ...(report.sessionId !== undefined ? { sessionId: report.sessionId } : {}),
       });
-      return;
-    }
-    void (async () => {
-      const eventKey = msg.eventKey;
-      /* 本分支是否**已经**在台账里开出队员行：派发中途失败时（如 createTask / 发 prompt 抛），
-         那一行会留在 `open`，而它对应的可能就是一棵已经建好的工作树 —— 必须留痕（见外层 catch）。
-         声明在 try 之外：catch 要读它。 */
-      let memberRunOpened = false;
-      /* 本次派发登记的终态订阅键（`(taskId, traceId)`）。声明在 try 之外：catch 要在失败路径上解绑它
-         —— 派发中途抛错时那次 run 的终态可能永远不来，订阅留着就残留到进程退出。 */
-      let memberRunSubscriptionKey: string | undefined;
-      /* 失败出口要用、而 catch 在 try 之外的作用域，故按既有形态（`memberRunOpened` 同款）声明在外：
-         · `target` 只由 msg 算出（纯计算，不会抛）；
-         · `squadRuntimeRef` 在 try 里拿到服务后回填；
-         · `memberRunKind` 在判定 kind 后回填（失败出口只对**队员** run 生效）。 */
-      const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
-      let squadRuntimeRef: ISquadRuntimeService | undefined;
-      let memberRunKind = false;
-      /** 确定性失败（重试不会自愈）的回执：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。
-          每条回执都带 `ruleId`：调度器按 `(ruleId, eventKey)` 找那条「已请求未结算」的重投记录。 */
-      const failPermanent = (error: string): void => {
-        parentPort.postMessage({
-          type: HostResponseTypes.SquadWakeResult,
-          ruleId: msg.ruleId,
-          runId: eventKey,
-          ok: false,
-          error,
-          failureKind: "permanent",
-        });
-      };
-      try {
-        const targetServices = resolveAutomationTargetServices(msg);
-        const squadRuntime = targetServices.getOptional(ISquadRuntimeService);
-        if (!squadRuntime) {
-          // 静默跳过会让用户看到「到点了但什么都没发生」，且没有任何线索指向「服务没注册」。
-          logger.error("[squad] squad runtime service is not registered; squad wake dropped");
-          failPermanent("squad runtime service is not registered");
-          return;
-        }
-        squadRuntimeRef = squadRuntime;
-
-        // 门禁：判据在**服务层单点**（spec §5.7.6 的三个入口共用一处判据）。
-        // 这里**不读 appSettings** —— 读一次就多一份判据，改一处漏一处，正是「关掉实验照旧派发」的形态。
-        // 本调用只读设置、只抛错：**不中断在途 run**（不关会话、不动 squad_runs 行）。
-        try {
-          await squadRuntime.assertDispatchEnabled(target);
-        } catch (error) {
-          if (isSquadDispatchDisabledError(error)) {
-            // permanent：关闭实验是确定性状态，重试不会自愈 —— 别让调度器按 transient 空转退避。
-            failPermanent(error instanceof Error ? error.message : String(error));
-            return;
-          }
-          throw error;
-        }
-
-        // 规划（**唯一一处**）：工作项与小队都从服务面读，派发结论由 planDispatch 给
-        // （用户指派 / 队长派单 / 规则触发三路共用同一处解析，spec §5.1）。
-        const snapshot = await squadRuntime.getSnapshot(target);
-        const workItem = snapshot.workItems.find((candidate) => candidate.id === msg.workItemId);
-        if (!workItem) {
-          failPermanent(`work item not found: ${msg.workItemId}`);
-          return;
-        }
-        const squad =
-          workItem.assignee.type === "squad"
-            ? (snapshot.squads.find((candidate) => candidate.id === workItem.assignee.id) ?? null)
-            : null;
-        let events: ReturnType<typeof planDispatch>;
-        try {
-          events = planDispatch({ workItem, squad, trigger: "rule", ruleId: msg.ruleId });
-        } catch (error) {
-          /* `planDispatch` 的输入契约违例（工作项形状/小队定义不对）是**数据**问题：
-             重投同一条事实会再次撞上同一个违例 —— 按 transient 退避是空转，按 permanent 收口并留痕。
-             （只有「数据被改好」才会自愈，而那时是一条新的事实、新的 eventKey。） */
-          logger.error(`[squad] planDispatch contract violation rule=${msg.ruleId}`, error);
-          failPermanent(
-            `planDispatch contract violation: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return;
-        }
-        const enqueued = events.find((event) => event.kind === "run.enqueued");
-        if (enqueued?.kind !== "run.enqueued") {
-          /* 没有 run（inbox.notified：指派给人 / 小队不存在 / 已归档 / 已停用）⇒ **skip 不是失败**。
-             spec §3.9 的 dispatch_skipped 不进失败率：报成失败会让人去查一个并不存在的错误。 */
-          const skip = events.find((event) => event.kind === "inbox.notified");
-          logger.info(
-            `[squad] wake skipped rule=${msg.ruleId} workItem=${msg.workItemId}` +
-              ` reason=${skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event"}`,
-          );
-          parentPort.postMessage({
-            type: HostResponseTypes.SquadWakeResult,
-            ruleId: msg.ruleId,
-            runId: eventKey,
-            ok: true,
-          });
-          return;
-        }
-
-        const kind = enqueued.isLeaderTask ? "leader" : "member";
-        memberRunKind = kind === "member"; // 失败出口（catch）只对队员 run 生效，故回填到外层作用域。
-        /* 队员 run **先开树**（spec §6.1 的隔离承诺落点）：会话的 workspace 就是那棵工作树。
-           ⚠️ 队长 run **绝不**走这里：`openMemberRun` 对 `isLeaderTask: true` 一样会开树
-           （机械半如此规定，且有用例钉住），而队长直接在目标工作区执行（spec §6.2）。
-           所以分叉必须发生在**调用点**，不能指望被调方替我分叉。 */
-        let worktree: OpenMemberRunResult | undefined;
-        if (kind === "member") {
-          try {
-            worktree = await squadRuntime.openMemberRun(target, {
-              runId: eventKey,
-              workItemId: workItem.id,
-              parentWorkItemId: workItem.parentId ?? workItem.id,
-              agentId: enqueued.agentId,
-              isLeaderTask: false,
-            });
-            memberRunOpened = true;
-          } catch (error) {
-            // 开树失败是**确定性**失败（分支残枝 / base 不存在 / 目录冲突 ⇒ 重试撞「已存在」），
-            // 按 permanent 回执，别让调度器按 transient 一直空转重试。
-            failPermanent(error instanceof Error ? error.message : String(error));
-            return;
-          }
-        }
-        const sessionWorkspacePath = worktree?.worktreePath ?? msg.workspacePath;
-
-        /* 忙检查（硬约束 1）：**强探测** —— 读的是 Agent runtime 快照，不是 tasks-index 的投影
-           （投影判据 `status === "running"` 会在崩溃/强杀留下的残留行上永久卡住派发，
-           见 boundSessionBusyGate.ts:8-13 的自证）。复用 cron 的同一实现，不另写一套。
-           只有「本次要落到一个**既有**会话」时才需要探测（新建会话不存在忙）——与 cron 的
-           targetTaskId 路径同形；绑定会话来自 run 台账（重投同一 eventKey 时才有）。 */
-        const boundSessionId =
-          snapshot.runs.find((record) => record.runId === eventKey)?.sessionId ?? null;
-        let busy = false;
-        if (boundSessionId) {
-          const agentService = targetServices.getOptional(IZCodeAgentService);
-          if (agentService) {
-            busy = await createBoundSessionExecutingProbe({
-              agentService,
-              logWarn: (message, error) => logger.warn(message, error),
-            })({
-              sessionId: boundSessionId,
-              workspacePath: sessionWorkspacePath,
-              ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
-            });
-          }
-        }
-
-        /* 队长 run 必须带简报（`planDispatch` 的小队分支总会给）：缺了就等于「队长起来了但不知道该干什么」，
-           而空 prompt 的派发**不报错**——正是「跑起来了，但行为与产品语义对不上」那种最难查的形态。 */
-        if (kind === "leader" && enqueued.briefing === undefined) {
-          failPermanent(`squad leader run has no briefing (rule=${msg.ruleId})`);
-          return;
-        }
-        const decision = decideSquadDispatch({
-          // 「服务层说可以派发」这一事实的搬运：上面那次 assertDispatchEnabled 已放行。
-          // 门禁判据只有服务层一处，本文件（以及 desktop 的任何地方）都不读开关。
-          dispatchEnabled: true,
-          // 库就绪在上面已判过（phase !== "ready" 已回 transient）；传 true 让纯函数自洽可测。
-          databaseReady: true,
-          busy,
-          kind,
-          briefingPrompt: enqueued.briefing ? renderLeaderBriefingPrompt(enqueued.briefing) : "",
-          memberPrompt: buildMemberRunPrompt(workItem),
-          worktree,
-        });
-        if (decision.action === "defer") {
-          // 等待型重投：抛出去由下面的 catch 翻成 deferred（照 CronRun 分支 `:2483` 的既有写法），
-          // 不进调度器的 transient 重试预算 —— 否则长任务期间的唤醒会被重试上限判死而丢弃。
-          throw new BoundSessionBusyError(boundSessionId ?? eventKey);
-        }
-        if (decision.action === "fail") {
-          // 队员缺树：没有工作树就派发 = 队员直接改主工作区（spec §6.1 落空）——响亮失败。
-          failPermanent(`squad member run requires a worktree (${decision.reason})`);
-          return;
-        }
-        if (decision.action === "skip") {
-          // not_ready / disabled 已在上面拦掉，这里是防御性分支：skip 仍然**不是失败**。
-          logger.info(
-            `[squad] wake skipped rule=${msg.ruleId} workItem=${msg.workItemId} reason=${decision.reason}`,
-          );
-          parentPort.postMessage({
-            type: HostResponseTypes.SquadWakeResult,
-            ruleId: msg.ruleId,
-            runId: eventKey,
-            ok: true,
-          });
-          return;
-        }
-
-        const zcodeTaskService = targetServices.getOptional(IZCodeTaskService);
-        if (!zcodeTaskService) {
-          /* 任务服务未注册是**确定性**状态（服务注册表在进程生命周期内不会长出这个服务），
-             按 transient 退避只会一直空转 —— 与 cron 路径不同：那边是「写配置/会话失败」类的未知错误，
-             这里是「环境缺件」。响亮 + permanent，别让这次唤醒在退避里转圈。 */
-          logger.error("[squad] ZCode task service is not initialized; squad wake dropped");
-          failPermanent("ZCode task service is not initialized.");
-          return;
-        }
-        // 幂等键的稳定一半当 trace：同一 eventKey 的重投落回同一个 trace，不会变成两次「新执行」。
-        const traceId = eventKey as TraceId;
-        const task = boundSessionId
-          ? { taskId: boundSessionId }
-          : await zcodeTaskService.createTask({
-              workspacePath: sessionWorkspacePath,
-              ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
-            });
-        if (boundSessionId) {
-          // 绑定会话在 app 重启 / 切 workspace 后通常不在 active：先冷恢复再发 prompt，
-          // 否则 sendPrompt 会立即报 Session is not active，看起来像「派发失败了」。
-          await zcodeTaskService.resumeTask({
-            taskId: task.taskId,
-            workspacePath: sessionWorkspacePath,
-            ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
-          });
-        }
-        /* **会话回写台账**（裁定 Important-4）：`openMemberRun` 落台账时还不知道 sessionId（那时会话还没建），
-           于是写 `null`；而上面的忙检查（硬约束 1 的强探测）与「重投复用同一会话」都从台账读 sessionId
-           ⇒ 不回写就**恒为 null**，强探测与 `deferred` 分支在生产里永不可达（代码对、保护为零）。
-           只对**队员** run 回写：队长 run 没有台账行（见下方已知缺口）。
-           失败只 warn、不阻断本次派发：最坏后果是「下次重投另建一个会话」，而不是这次派发失败。 */
-        if (kind === "member") {
-          try {
-            await squadRuntime.bindMemberRunSession(target, {
-              runId: eventKey,
-              sessionId: task.taskId,
-            });
-          } catch (error) {
-            logger.warn(
-              "[squad] member run 会话回写台账失败（下次重投会另建会话；忙检查这一格这次不可达）",
-              error,
-            );
-          }
-        }
-        // 完成通知要在 sendPrompt **之前**订阅：先跑完再注册 listener 会漏掉终态（best-effort，失败只 warn）。
-        watchSquadRunCompletion({
-          zcodeTaskService,
-          taskId: task.taskId,
-          workspacePath: sessionWorkspacePath,
-          ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
-        });
-        /* run 的终态收口（**闭环的最后一环**）：只有队员 run 有台账行，故只对它订阅 ——
-           队长 run 没有 `squad_runs` 行（服务面没有写入口，见报告 Important-C），
-           对它调 completeMemberRun 会撞「台账里没有 runId」的响亮错误。 */
-        if (kind === "member") {
-          /* 订阅句柄**必须留一手**（照 cron 侧 `cronRunSubscriptions`）：这里订阅的是「这个 run 的终态」，
-             而派发中途抛错时那个回调可能永远不来 ⇒ 句柄无主就残留到进程退出（本文件末尾的 catch 会解绑）。
-             同一 (taskId, traceId) 先解绑旧的：重投同一 eventKey 时不要叠两条监听。 */
-          const subscriptionKey = cronRunSubscriptionKey(task.taskId, traceId);
-          disposeSquadMemberRunSubscription(subscriptionKey);
-          memberRunSubscriptionKey = subscriptionKey;
-          watchMemberRunSettlement({
-            runId: eventKey,
-            traceId,
-            // 句柄从**本处**发起订阅的返回值接住（`watchMemberRunSettlement` 自己不持有它，
-            // 我们不去改那个文件）：接住之后既有成功终态的解绑，也有失败路径的解绑。
-            subscribe: (listener) => {
-              const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
-                outcome,
-              ) => {
-                // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
-                // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
-                if (outcome.inputId === traceId) {
-                  disposeSquadMemberRunSubscription(subscriptionKey);
-                }
-                /* **失败/中止的 run 必须有出口**（裁定 Important-3）：否则它永远算「活跃」（`listActive`）
-                   ⇒ 它的工作树与分支**永不被回收**（S15 未达）。成功那一支由 `watchMemberRunSettlement`
-                   走 `completeMemberRun`（产出入账），这里只管「**没有产出**」这一支（`failed` / `stopped`）。
-                   只改台账状态（`discarded`），树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。
-                   失败只 error 留痕：出口没生效时那个 run 会一直停在活跃集，必须看得见。 */
-                if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
-                  void squadRuntime
-                    .failMemberRun(target, {
-                      runId: eventKey,
-                      reason:
-                        `队员会话终态=${outcome.outcome}` + (outcome.error ? `：${outcome.error}` : ""),
-                    })
-                    .catch((error: unknown) =>
-                      logger.error(
-                        `[squad] member run 失败出口未生效：${eventKey} 仍停在活跃集`,
-                        error,
-                      ),
-                    );
-                }
-                listener(outcome);
-              });
-              squadMemberRunSubscriptions.set(subscriptionKey, disposable);
-              return disposable;
-            },
-            // 收尾**不过门禁**（服务面明文：收尾在途 run 不属「新派发」），关掉实验照旧收口。
-            completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
-            logInfo: (message) => logger.info(message),
-            logError: (message, error) => logger.error(message, error),
-          });
-        }
-        await zcodeTaskService.sendPrompt({
-          taskId: task.taskId,
-          traceId,
-          content: decision.prompt,
-          clientMode: "desktop-continuous",
-        });
-        /* ⚠️ 已知缺口（见 task-3-report 顾虑 2）：这里**没有**写队长 run 的 `squad_runs` 行。
-           冻结的服务面（`ISquadRuntimeService`）没有「记录队长 run」的写入口，而 `openMemberRun`
-           会连工作树一起开（队长不建树，机械半明文），所以在派发桥这一侧无路可写。
-           不在此处自己 INSERT：那会绕过运行生命周期、成为台账的第二个写者（唯一写者/台账口径不变）。
-           于是 `getSnapshot().runs` 现阶段只显示队员 run；建议 P2c 给服务面补 recordLeaderRun。
-           （队员 run 的**终态收口**已由上面的 `watchMemberRunSettlement` 接上：成功 ⇒ completeMemberRun
-           把台账推到 `produced`；这正是冻结面对 `completeMemberRun` 写明的调用者「host 派发桥」。） */
-        logger.info(
-          `[squad] wake dispatched rule=${msg.ruleId} workItem=${msg.workItemId} kind=${kind}` +
-            ` eventKey=${eventKey} task=${task.taskId}` +
-            (kind === "leader" ? " (leader ledger row pending service surface)" : ""),
-        );
-        parentPort.postMessage({
-          type: HostResponseTypes.SquadWakeResult,
-          ruleId: msg.ruleId,
-          runId: eventKey,
-          ok: true,
-          taskId: task.taskId,
-          sessionId: task.taskId,
-        });
-      } catch (error) {
-        /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
-           回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
-           刚开出的队员行会停在 `open`（没有终态可订阅，收口那一步根本没跑到）。
-           静默停在 open 会让它永远算「活跃」：工作树与分支不会被回收，而没人知道为什么。 */
-        /* **失败 run 的出口**（裁定 Important-3）：只要台账里真有这一行（`openMemberRun` 先落台账、
-           后建树，重投还可能撞上第一次留下的行）就把它**移出活跃集**，别让它永远停在 open。
-           为什么先读一次快照再决定：行不存在时 `failMemberRun` 会**响亮抛**（未命中不得静默），
-           而「这次失败发生在建台账之前」（如门禁 / 规划 / 缺树）是**正常**的，不该变成一条误导的 error。
-           **等待型（deferred）不在出口范围内**：那是「等一会再投」的重投，不是失败，run 要留下来被复用。 */
-        const deferred = error instanceof BoundSessionBusyError;
-        if (memberRunKind && !deferred && squadRuntimeRef) {
-          const reason = error instanceof Error ? error.message : String(error);
-          try {
-            const rows = (await squadRuntimeRef.getSnapshot(target)).runs;
-            if (rows.some((record: { runId: string }) => record.runId === eventKey)) {
-              await squadRuntimeRef.failMemberRun(target, { runId: eventKey, reason });
-              logger.error(
-                `[squad] member run 已按失败收口（离开活跃集，树/分支交给启动回收）` +
-                  ` runId=${eventKey} rule=${msg.ruleId}`,
-                error,
-              );
-            } else if (memberRunOpened) {
-              // 理论上不会到这（开过树就一定有台账行）：留一条，免得将来这两处判据漂移时变成静默。
-              logger.error(
-                `[squad] member run 台账行缺失、无法收口 runId=${eventKey} rule=${msg.ruleId}`,
-                error,
-              );
-            }
-          } catch (failError) {
-            // 出口没生效 = 这个 run 会一直停在活跃集：必须响亮（带原文），不能静默。
-            logger.error(
-              `[squad] member run 失败出口未生效：${eventKey} 仍停在 open（服务面 failMemberRun 失败）`,
-              failError,
-            );
-          }
-        } else if (memberRunOpened) {
-          logger.error(
-            `[squad] member run 停在 open：派发中途失败 runId=${eventKey} rule=${msg.ruleId}` +
-              (deferred ? "（等待型重投，保留该 run 复用）" : ""),
-            error,
-          );
-        }
-        /* **失败路径也要解绑**（照 cron 侧在失败/终态后 dispose 的形态）：这次派发已经失败，
-           而它订阅的「这个 run 的终态」可能**永远不来**（run 停在 open，本就无出口）⇒
-           订阅留着就残留到进程退出（每次失败的派发多一条）。defer 分支在订阅**之前**就抛，
-           故那条路径上 `memberRunSubscriptionKey` 仍是 undefined，下一次重投会照常订阅。 */
-        if (memberRunSubscriptionKey !== undefined) {
-          disposeSquadMemberRunSubscription(memberRunSubscriptionKey);
-          memberRunSubscriptionKey = undefined;
-        }
-        parentPort.postMessage({
-          type: HostResponseTypes.SquadWakeResult,
-          ruleId: msg.ruleId,
-          runId: eventKey,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-          failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
-        });
-      }
     })();
     return;
   }
@@ -3560,6 +3622,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 });
               },
               onAutomationManualRunRequested: dispatchManualAutomationRun,
+              /* 队长派单（`squad/assign-work-item`）产生的派发请求（2026-10-02 第 2 轮裁定）：
+                 服务面的派发 hub 由组合根订一次，转到这里 —— 走**与规则到点同一条**派发路径
+                 （`runSquadDispatch`，只是 `trigger: "user"`），不写任何唤醒规则。 */
+              onSquadDispatchRequested: dispatchSquadAssignment,
               onOffPeakSchedulerWakeRequested: () => {
                 parentPort?.postMessage({ type: HostResponseTypes.OffPeakSchedulerWakeRequest });
               },

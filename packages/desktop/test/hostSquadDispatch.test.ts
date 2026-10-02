@@ -61,13 +61,15 @@ test("队员 run 缺 worktree ⇒ 响亮失败，不派发", () => {
 // 不得照抄 off-peak 的投影判据（残留 running 行会让派发被永久卡死）。
 test("小队派发分支用的是强探测，不是 off-peak 的投影判据", () => {
   const src = readFileSync(join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"), "utf8");
-  const start = src.indexOf("HostMessageTypes.SquadWake");
-  assert.ok(start >= 0, "host 里没有 SquadWake 分支");
-  /* 窗口是「够覆盖到强探测那一行」的上界，不是契约：原值 6000 在 Wave 2 的追加（失败路径上的
-     订阅解绑）之后只剩 46 字符余量 —— 那是**脆的**，下一次正当的追加就会把断言变成假红
-     （断言的本意是「本分支用强探测」，而不是「分支不超过 N 字节」）。放宽到 20000
-     （与 squadWiring.test.ts 同口径），并保留两条断言的语义不变。 */
-  const branch = src.slice(start, start + 20_000);
+  /* 2026-10-02 第 2 轮裁定把实现体抽成 `runSquadDispatch`（规则到点与队长派单**两条入口共用**），
+     故这里按**结构边界**取区域（从函数签名到消息处理器之间），不再用固定字节窗口：窗口是脆的
+     （原来的 6000 在 Wave 2 的追加后只剩 46 字符余量），而这条断言的本意是「派发路径用强探测」，
+     不是「那段代码不超过 N 字节」。 */
+  const start = src.indexOf("async function runSquadDispatch(");
+  assert.ok(start >= 0, "host 里没有 runSquadDispatch（派发桥实现体）");
+  const end = src.indexOf('parentPort.on("message",', start);
+  assert.ok(end > start, "找不到消息处理器边界");
+  const branch = src.slice(start, end);
   assert.match(branch, /createBoundSessionExecutingProbe/);
   assert.doesNotMatch(branch, /assertBoundSessionDispatchable/);
 });
@@ -358,5 +360,8 @@ test("终态是 failed/stopped ⇒ 不入账（仍是 open），但必须响亮�
     "工作项也不得被推到 in_review",
   );
   assert.equal(errors.length, 1, "必须有一条 error 留痕（静默停在 open 才是要避免的）");
-  assert.match(errors[0] ?? "", /open/);
+  // 文案在 2026-10-02 的 doc 修正后指向**真正的归宿**（host 订阅闭包里的 failMemberRun）——
+  // 断言「留痕里说清了这是未产出」而不是旧的「台账仍为 open」字样（后者已过时：失败出口早就补上了）。
+  assert.match(errors[0] ?? "", /未产出/);
+  assert.match(errors[0] ?? "", /failMemberRun/);
 });

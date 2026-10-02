@@ -7,6 +7,7 @@ import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper } from "../worktree/orphanReaper.js";
 import type { WorktreeManager } from "../worktree/worktreeManager.js";
 import type { SquadRunLifecycle } from "./squadRunLifecycle.js";
+import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
 import type { WakeRuleRepo } from "./wakeRuleRepo.js";
 import type { WorkItemEvent, WorkItemService } from "./workItemService.js";
@@ -44,6 +45,17 @@ export type SquadRuntimeDeps = {
    * 异步账本 + await 会让「谁来判」重新散开成多处。
    */
   readExperimentEnabled: () => boolean;
+  /**
+   * 派发请求的**常驻订阅出口**（**加法**，2026-10-02 第 2 轮裁定，落点 ii）。
+   *
+   * 为什么必需：runtime 是**按目标现构、不缓存**的，其 `subscribeWorkItemEvents` 的订阅表在**实例
+   * 内部** ⇒ 常驻侧（host 进程里的组合根）订不到任何实例 ⇒ 「队长派单只发一条
+   * `workitem.dispatch_requested`」在当前架构下**驱动不出 run**。组合根建**一份** hub 注入进来，
+   * runtime 在发出 `workitem.dispatch_requested` 时一并 `publish`；常驻侧订**一次**即可收到。
+   *
+   * **可选**（既有调用方不受影响）：未注入时行为与加法前**完全一致**（只走实例级订阅表）。
+   */
+  dispatchRequestHub?: SquadDispatchRequestHub;
 };
 
 export type SquadRuntime = {
@@ -72,6 +84,9 @@ export type SquadRuntime = {
    * 工作项事件的**唯一**入口（`subscribeWorkItemEvents` 的发射侧；**加法**，2026-10-02 裁定
    * Important-1 落地）。为什么必须和订阅走**同一张表**：`workitem.dispatch_requested` 必须与
    * 状态变迁事件同源同形，否则「多路输入、一处写入」会退化成两套事件流（选哪套、谁先到，无人能说清）。
+   *
+   * `workitem.dispatch_requested` 还会**同时**发给注入的 `dispatchRequestHub`（轮 2 裁定）：
+   * 实例级订阅表在 runtime 内部，常驻侧订不到 ⇒ 那一格改由 hub 承载（additive，见 `SquadRuntimeDeps`）。
    */
   emitWorkItemEvent(event: WorkItemEvent): void;
   /** 供组合根在 dispose 时关闭本域自持的东西（repo 句柄由 node.ts 统一登记，不在此重复）。 */

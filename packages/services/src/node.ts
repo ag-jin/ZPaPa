@@ -300,6 +300,9 @@ export {
   renderLeaderBriefingPrompt,
 } from "./workitem/squadRuntime.js";
 export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
+/** 派发请求 hub（轮 2 裁定落点 ii）：组合根建**一份**、注入给每个 runtime 并订**一次**。 */
+export { createSquadDispatchRequestHub } from "./workitem/squadDispatchRequests.js";
+export type { SquadDispatchRequest } from "./workitem/squadDispatchRequests.js";
 // 批次编排工厂：desktop 侧（Wave 2 的组合根装配）只能经本入口取它（packages/services/package.json#exports）。
 export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
@@ -398,6 +401,10 @@ import {
 } from "./workitem/squadRuntimeService.js";
 import { archiveSquadAndTransfer, createSquadRuntime } from "./workitem/squadRuntime.js";
 import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+import {
+  createSquadDispatchRequestHub,
+  type SquadDispatchRequest,
+} from "./workitem/squadDispatchRequests.js";
 import type { SquadRuntime } from "./workitem/squadContracts.js";
 import type { WorkItemEvent } from "./workitem/workItemService.js";
 import { createBotsService } from "./bots/botsService.js";
@@ -1382,6 +1389,16 @@ export function createLocalServices(options: {
     automation: ZCodeAutomation;
     run: ZCodeAutomationRun;
   }) => Promise<void>;
+  /**
+   * 队长派单（`squad/assign-work-item`）产生的**派发请求**的执行体（**加法**，2026-10-02 第 2 轮裁定）。
+   *
+   * 为什么要有它：指派**不走唤醒规则**（那与「`@` ≠ 指派」及「人发起豁免三道闸」冲突，spec §5.5），
+   * 应走**与「人手动触发」同一条派发路径**、由**常驻侧**执行。服务面把派发请求经 hub 发到组合根，
+   * 组合根转给本回调 —— host 的派发桥据此开 run（与规则到点那条消息共用**同一个**派发实现）。
+   *
+   * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
+   */
+  onSquadDispatchRequested?: (request: SquadDispatchRequest) => Promise<void> | void;
   /** 闲时任务翻 schedulable 后请求宿主立即唤醒 scheduler（desktop host 注入 parentPort 转发）。 */
   onOffPeakSchedulerWakeRequested?: () => void;
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
@@ -2558,6 +2575,30 @@ export function createLocalServices(options: {
      再改成按 `workspaceKey` 缓存**并显式登记失效面**（并在任务报告里写明依据）——
      但**任何时候都不得**退化成「取首个 workspace」。 */
 
+  /* 派发请求的**常驻订阅口**（2026-10-02 第 2 轮裁定，落点 ii）：runtime 按目标现构、其事件订阅表在
+     实例内部 ⇒ 常驻侧订不到 ⇒「队长派单只发一条 `workitem.dispatch_requested`」在旧形态下**驱动不出 run**。
+     故把这一格的出口做成**可注入的单例 hub**（本文件建一份 = 「单例」= 组合根这一份），runtime 在
+     `emitWorkItemEvent` 里 publish，这里**订一次**并转给 host 注入的派发执行体。
+     为什么**订在组合根**而不是 host 里再订一次：组合根就活在 host 进程内、且是进程生命周期内唯一的那一份
+     （`createLocalServices` 只被 host 调用，见 desktop/src/host/index.ts）—— 它就是「常驻侧」的装配面。
+     **不静默**：没有执行体（如 remote host / 单测装配）时，请求发出去却没人接也必须能被看见。 */
+  const squadDispatchRequests = createSquadDispatchRequestHub();
+  squadDispatchRequests.subscribe((request: SquadDispatchRequest) => {
+    const dispatchAssigned = options?.onSquadDispatchRequested;
+    if (!dispatchAssigned) {
+      squadRuntimeLog.warn(
+        "小队派发请求已发出，但本组合根没有注入 onSquadDispatchRequested（不会开出 run）",
+        { workItemId: request.workItemId, agentId: request.agentId },
+      );
+      return;
+    }
+    /* 派发执行体是**异步**的（要起 git/会话），而 hub 是同步扇出：用 `void` + catch 收口，
+       异常一律留痕（吞掉的话「派单了但什么都没发生」会变成一条查不到原因的静默路径）。 */
+    void Promise.resolve(dispatchAssigned(request)).catch((error: unknown) =>
+      squadRuntimeLog.error("小队指派派发执行体抛错", { workItemId: request.workItemId, error }),
+    );
+  });
+
   /**
    * 批次收尾的**驱动**（spec §5.7.3 / §5.7.4 / §6.3）：子项**全部**终态 ⇒ `advanceAfterChildrenDone`
    *（它内部完成：串行把每个队员合进集成分支 → 整批 `finalize` 合回主分支 → 抛弃已 `merged` 的工作树
@@ -2580,21 +2621,10 @@ export function createLocalServices(options: {
   const forwardSquadChildCompleted =
     (runtime: SquadRuntime) =>
     (event: WorkItemEvent): void => {
-      /* `workitem.dispatch_requested`（队长派单工具改完负责人后发的派发事件，裁定 Important-1）：
-         **本组合根目前没有「派发器」去消费它** —— 唯一消费 `DispatchEvent` 的地方是 host 的规则 tick
-         分支，而那条路径要先有一条 `wake_rules` 行才会被触发，本期没有任何写入口能建出这样一条规则
-         （`wakeRuleRepo` 只被调度器读）。所以在当前架构下，这个事件**无法真正驱动出 run**。
-         按裁定**不得**退回「直接开 run」（那会把「指派」与「派发」揉成一步，§5.6），故这里
-         **响亮留痕、不静默吞掉**：让人能一眼看到「派单请求已发出、但没有分发器接它」。
-         （**这一点已在修复报告里按裁定的逃生口上报 NEEDS_CONTEXT 级缺口**：缺的是「能把
-         dispatch 请求变成一次 run 的既有路径」，需要 controller 裁定补哪个加法式方法。） */
-      if (event.kind === "workitem.dispatch_requested") {
-        squadRuntimeLog.warn("小队派发请求已发出，但本组合根没有分发器消费它（不会开出 run）", {
-          workItemId: event.workItemId,
-          agentId: event.agentId,
-        });
-        return;
-      }
+      /* `workitem.dispatch_requested`（队长派单工具改完负责人后发的派发请求）**不在这里处理**：
+         它由注入的 `dispatchRequestHub` 发给常驻侧（见上面 hub 那段与 `SquadRuntimeDeps` 的说明）——
+         实例级订阅表在 runtime 内部、按目标现构，常驻侧订不到，所以这一格的收口不能在实例回调里做。
+         这里直接放行（不是「静默吞掉」：请求已由 hub 交给 host 注入的派发执行体，其结果在那边留痕）。 */
       if (event.kind !== "workitem.child_completed") return;
       // 判据（`areAllChildrenTerminal`，按 category）在编排层内部，这里只做转发，
       // 不在这里再判一次（两处判据迟早分叉，分叉的表现是「批永远收不了尾」）。
@@ -2621,6 +2651,9 @@ export function createLocalServices(options: {
       workspaceIdentity: target.identity,
       // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
       readExperimentEnabled: () => squadsEnabled,
+      // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
+      // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
+      dispatchRequestHub: squadDispatchRequests,
     });
     runtime.subscribeWorkItemEvents(forwardSquadChildCompleted(runtime));
     return runtime;

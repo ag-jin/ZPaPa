@@ -105,8 +105,11 @@ export type SquadMemberRunTerminalOutcome = {
  * 冻结面把 `completeMemberRun` 的调用者写明是「host 派发桥」——就是这里。
  *
  * 失败/中止**不得**冒充产出：`completeMemberRun` 会把 run 置 `produced` 并把工作项推到 `in_review`，
- * 那等于凭空宣布「队员交了东西」。服务面目前没有 `failed`/`discard` 出口，所以那一行的归宿只能是
- * **响亮留痕**（台账仍为 open，报告里登记为 P2c 的阻塞式后续项）——静默停在 open 才是真正要避免的。
+ * 那等于凭空宣布「队员交了东西」。失败那一支的归宿在**调用方的订阅闭包**里：host 收到
+ * `outcome !== "succeeded"` 时调服务面的 `failMemberRun` 把该 run 移出活跃集（裁定 Important-3，
+ * 2026-10-02；见 `squadRuntimeRecovery.test.ts` 与 `squadWiring.test.ts` 的接线守卫），工作树/分支
+ * 随后由启动回收器按「不在活跃集」回收（spec §6.6）。本函数**不负责**动用那个出口（它只做成功入账），
+ * 故这里的 `logError` 是**第二道**留痕（人能看到「哪一次没产出」），不是唯一归宿。
  *
  * 依赖全部注入（订阅出口 / 收口动作 / 日志）：本函数因此能在没有 Electron、没有 sqlite 的进程里
  * 被直接驱动 —— 「run 真的从 open 走到产出入账」这一格必须由**实体状态**断言，而不是读源码相信。
@@ -128,8 +131,8 @@ export function watchMemberRunSettlement(params: {
       if (outcome.inputId !== params.traceId) return;
       if (outcome.outcome !== "succeeded") {
         params.logError(
-          `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId} 的台账行仍为 open` +
-            "（服务面没有 failed/discard 出口，P2c 需补）—— 该 run 的工作树与分支不会被回收",
+          `[squad] member run 未产出（终态=${outcome.outcome}）：runId=${params.runId}` +
+            " —— 失败那一支由 host 的订阅闭包调 `failMemberRun` 移出活跃集（工作树/分支交给启动回收）",
           outcome.error,
         );
         return;

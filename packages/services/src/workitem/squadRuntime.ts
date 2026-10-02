@@ -251,6 +251,19 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     /** 发射侧：与 `subscribeWorkItemEvents` 共用同一张表（`fanout`）——见 `squadContracts.ts` 的说明。 */
     emitWorkItemEvent(event) {
       fanout(event);
+      /* **派发请求**（队长派单改完负责人后发的 `workitem.dispatch_requested`）另发一份到注入的
+         `dispatchRequestHub`：实例级订阅表在 runtime 内部、常驻侧订不到（runtime 按目标现构，
+         2026-10-02 第 2 轮裁定），故这一格必须由 hub 承载才能真的开 run。
+         只对这一种事件 publish（状态变迁事件的消费方在实例内，没必要进常驻 hub）；
+         `workspacePath/Identity` 取 runtime 的**绑定值**——不是调用方传进来的，避免在错的 workspace 上开 run。 */
+      if (event.kind === "workitem.dispatch_requested" && deps.dispatchRequestHub) {
+        deps.dispatchRequestHub.publish({
+          workItemId: event.workItemId,
+          agentId: event.agentId,
+          workspacePath,
+          workspaceIdentity,
+        });
+      }
     },
     /**
      * 只清本域自持的东西（事件订阅表）。**不关 db**：连接是 `taskIndexRepo` 的，
