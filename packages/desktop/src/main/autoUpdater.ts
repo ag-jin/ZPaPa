@@ -642,8 +642,7 @@ function isSameAutoUpdaterMenuState(left: AutoUpdaterMenuState, right: AutoUpdat
       return (
         right.kind === left.kind &&
         right.channel === left.channel &&
-        JSON.stringify(right.upToDateNotice ?? null) ===
-          JSON.stringify(left.upToDateNotice ?? null)
+        JSON.stringify(right.upToDateNotice ?? null) === JSON.stringify(left.upToDateNotice ?? null)
       );
     case "checking":
     default:

@@ -150,7 +150,10 @@ test("接线守卫｜设置页把通道接到界面，并且「回不到正式�
   // 设置页消费展示模型（去掉 ⇒ 用户又看不出自己在哪里）。
   assert.match(settingsHelperSource, /deriveUpdateChannelSettingsView\(/);
   assert.match(settingsHelperSource, /useUpdateChannelStatus\(/);
-  assert.match(settingsHelperSource, /settings\.updateChannel\.current\.\$\{updateChannelView\.channel\}/);
+  assert.match(
+    settingsHelperSource,
+    /settings\.updateChannel\.current\.\$\{updateChannelView\.channel\}/,
+  );
   // 「装了预览版 + 关开关 + 正式号更低」这一格：必须有专门的可见文案与落点。
   assert.match(settingsHelperSource, /settings\.updateChannel\.stableCatchUpPending/);
   assert.match(settingsHelperSource, /settings-update-channel-stable-catch-up-pending/);

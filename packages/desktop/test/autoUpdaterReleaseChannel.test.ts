@@ -518,11 +518,7 @@ test("S1(2)｜已下载待安装时拨开关：记待应用通道，就绪被放
   refreshAutoUpdaterReleaseChannel(true, "test toggle on while ready");
   await flush();
   assert.equal(fakeUpdater.channel, null, "已就绪时不得立刻改通道（会丢弃已下载的安装包）");
-  assert.equal(
-    getAutoUpdaterState().kind,
-    "update-downloaded",
-    "就绪态拨开关不得被打断",
-  );
+  assert.equal(getAutoUpdaterState().kind, "update-downloaded", "就绪态拨开关不得被打断");
 
   // 就绪被放弃（staging / 安装失败）是真实恢复路径 ⇒ 待应用通道必须落地。
   emit("error", new Error("staging failed"));
@@ -638,13 +634,13 @@ test("③(b)｜取不到的通道字段与恒不生效的 stale 守卫已连同�
   // ⇒ 守卫恒不生效、通道标注只能靠簿记值。半截留着比删掉更危险（读者会以为有保护）。
   assert.doesNotMatch(source, /zcodeReleaseChannel/, "不得留一个恒为 null 的通道字段");
   assert.doesNotMatch(source, /shouldIgnoreStaleAvailableUpdate/, "恒不生效的守卫必须删除");
-  assert.doesNotMatch(source, /activeAutoUpdateCheckChannel/, "仅为该守卫服务的簿记变量必须一并删除");
-  assert.doesNotMatch(source, /readUpdateInfoReleaseChannel/, "读取该字段的实例方法必须一并删除");
   assert.doesNotMatch(
     source,
-    /infoChannel/,
-    "依赖该字段的中间变量不得残留（否则等于留了半截）",
+    /activeAutoUpdateCheckChannel/,
+    "仅为该守卫服务的簿记变量必须一并删除",
   );
+  assert.doesNotMatch(source, /readUpdateInfoReleaseChannel/, "读取该字段的实例方法必须一并删除");
+  assert.doesNotMatch(source, /infoChannel/, "依赖该字段的中间变量不得残留（否则等于留了半截）");
 });
 
 test("③(b)｜通道标注取本次检查通道：preview 结果标 preview，跳过记录也进 preview 键", async () => {
@@ -759,4 +755,3 @@ test("接线守卫｜手动检查的 up-to-date 结果同样带上事实（toast
   assert.match(block, /kind: "up-to-date"/);
   assert.match(block, /channel: availableUpdateChannel/);
 });
-
