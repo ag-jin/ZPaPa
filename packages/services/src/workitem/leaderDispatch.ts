@@ -15,8 +15,66 @@ export type SquadBriefing = {
   squadId: string;
   leaderAgentId: string;
   roster: { agentId: string; role?: string }[];
+  /** **系统生成**的机制段（spec §3.3）：内容与用户指令无关，见 `LEADER_PROTOCOL_TEXT`。 */
+  protocol: string;
   instructions: Record<string, string>;
 };
+
+/**
+ * 操作协议：简报的**机制**那一半（spec §3.3）。**系统生成、非用户可写**。
+ *
+ * 为什么必须是独立一段、不能并进 `instructions`（spec §3.3 末段）：`instructions` 是**用户意图**
+ * 那一半，机制交还给用户去写，没写就等于「队长不知道规则却照跑」——而且**不报错**，
+ * 表现只是「它自顾自地跑，规矩和产品语义对不上」。
+ *
+ * 逐项对应 spec §3.3 的 protocol 行与 §5.5 / §5.7 / §6.2 / §6.3：
+ * 三道闸与判定次序、stopCondition 与 maxRounds 语义、派单不改父项状态、
+ * 串行合并到集成分支、整批通过才合回主分支、解不了冲突 → blocked + 进 Inbox、
+ * 审查未通过前工作树存活、合并后才抛弃。
+ * 文案做成常量而不是拼在 `buildBriefing` 里：它是**契约面**（Wave 1 的渲染器、测试与将来的
+ * 本地化都要对表），散在函数体里会随改动漂移而没人发现。
+ */
+export const LEADER_PROTOCOL_TEXT = [
+  "你是本小队的队长。以下规则由系统给定，不由用户指令覆盖：",
+  "",
+  "1. 三道闸与判定次序（防失控，硬规则）：派发前先判 `max_fires`，再判 `rate`（一小时内 run 次数），",
+  "   最后判 `loop`（run 链中同一规则重复出现）；三道闸都过了才判去重。顺序不可调换。",
+  "2. 收手条件与轮次上限：用户给的 `stopCondition` 决定何时继续 / 收工 / 叫人，`maxRounds` 是",
+  "   最多派几轮。两者与 `max_fires` 呼应，撞上任何一条都停下来并进 Inbox 汇报，不要自己放宽。",
+  "3. 派单只产出**子工作项与派发事件**，**不得改父项状态**：父项由工作项服务按条件推进。",
+  "4. 合并是**串行**的：一次只合一个队员进集成分支，不要并发合并。",
+  "5. 队员的成果先合到集成分支，**整批通过才合回主分支**；中途不得直接改主分支。",
+  "6. 集成分支上解不了的冲突：把工作项置 `blocked` 并进 **Inbox** 交给用户，不要自行丢弃或强推。",
+  "7. 审查未通过的队员分支：其工作树必须**存活**到合并为止，不得提前清理。",
+  "8. 工作树与分支在**合并后**才抛弃；未合并就删 = 丢掉一个队员的活。",
+].join("\n");
+
+/**
+ * 一次 run 的**类别**（spec §6.1「是否开工作树是**本次运行**的属性」的三分）：
+ *
+ * · `leader`     —— 队长 run：在**目标工作区**执行（不开工作树）；仍需一条台账行（§5.7(1) 判「进行中」）。
+ * · `member`     —— 小队**队员** run：开**独立工作树 + 独立分支**（§6.4），登记台账行，产出活到合并（§6.2）。
+ * · `standalone` —— **单独安排的智能体**（不在任何小队里）：**直接在工作区改** —— 不开工作树、不开分支、
+ *                   **没有合并那一步**（§6.1）⇒ 也就没有孤儿要回收。
+ *
+ * 为什么必须是**显式字段**、而不是让消费者去猜（复审判词）：派发结果里唯一带 `squadId` 的是队长，
+ * 其余两类此前**没有任何可分辨的字段** —— 于是消费者只能按「非队长 ⇒ 开树」处理，把单独安排的智能体
+ * 也塞进了一条分支。那条分支**永不合并、也永不被回收**（`activeBranches` 只覆盖小队命名空间），
+ * 而且全程**不报错**。用 `squadId` 的有无代替判别就是一条隐式契约：谁一改就漂移，故这里写成**必填**。
+ *
+ * **产出面必填还不够**：类别在**输入面**也必须由调用方显式声明（见 `planDispatch` 的 `runClass` 入参
+ * 与 `DeclaredRunClass`）—— 否则「调用方漏传父项事实」会静默落成 `standalone`（下一轮修掉的残留）。
+ */
+export type RunClass = "leader" | "member" | "standalone";
+
+/**
+ * 类别**声明**的取值：`member`（小队队员）与 `standalone`（单独安排的智能体）。
+ *
+ * 为什么没有 `leader`：队长由「负责人被指派给小队」这一**事实**唯一决定（`assignee.type === "squad"`），
+ * 调用方既不需要也无法声明它。**为什么需要这个字段**：见 `planDispatch` 的 `runClass` 入参注释 ——
+ * 一句话，类别不能从「可选字段的有无」推断，必须**必答**，答漏了要响亮。
+ */
+export type DeclaredRunClass = "member" | "standalone";
 
 /** 派发事件：`run.enqueued` 起一次运行；`inbox.notified` 是**跳过**（进 Inbox 等人处理）；
     `wake.rule_fired` 是规则触发的留痕（幂等键 `(workItemId, ruleId, revision, eventKey)` 的一半，§3.9）。 */
@@ -25,7 +83,10 @@ export type DispatchEvent =
       kind: "run.enqueued";
       workItemId: string;
       agentId: string;
+      /** 历史字段，机械半与既有消费者仍读它；与 `runClass` 恒等（`=== "leader"`）。**新增不替换**。 */
       isLeaderTask: boolean;
+      /** 本次 run 的**类别**（见 `RunClass`）：消费者据此分流，**不得**再靠 `squadId` 的有无去猜。 */
+      runClass: RunClass;
       squadId?: string;
       briefing?: SquadBriefing;
     }
@@ -35,6 +96,43 @@ export type DispatchEvent =
 export function planDispatch(input: {
   workItem: WorkItem;
   squad: Squad | null;
+  /**
+   * **派发时的事实**（加法，spec §6.1/§6.2）：本工作项的**父项**。**校验**用（不再是判据 —— 判据是
+   * 调用方给的 `runClass` 声明）：队长用 `squad.createChildWorkItem` 建出的子项**总是挂在「指派给小队
+   * 的那条父项」之下**（工具的 modelInstructions 明文要求「Always pass the parent work item id you
+   * were given」），所以「父项被指派给小队」是「本项在一支小队批次里」的**证据**。
+   *
+   * 为什么校验要盯这条事实、而不是触发来源：spec §5.5 让「队长派单」与「人手动触发」走**同一条**
+   * 派发路径（`trigger: "user"`）⇒ 来源分不出「队员」与「单独安排」；而「本项在不在小队批次里」是
+   * **工作项自身的事实**，与谁触发无关（规则触发一条队员子项时它仍是队员 ⇒ 仍必须开树）。
+   *
+   * 为什么这条事实仍然要传：它不是判据了，但它仍是**校验**的一半 —— 只声明、无证据（或证据与声明
+   * 矛盾）一律响亮抛。**光靠源码守卫盯「调用方有没有传」是不够的**（它只能证「传了」，证不了「传对了」），
+   * 所以本函数把「声明 ↔ 事实」当场对表（见 `resolveAgentRunClass`）。
+   *
+   * 省略 / `null`（没给 / 根本没查到）= **没有「在批次里」的证据**：若调用方声明 `member`，这会导致
+   * 响亮抛（**不得**默认成 standalone，见 `resolveAgentRunClass`）；声明 `standalone` 时才放行。
+   * 既有调用方不传时编译不受影响（**加法**）。
+   */
+  parentWorkItem?: WorkItem | null;
+  /**
+   * 本次 run 的**类别**，由**派发调用方显式声明**（加法；`assignee.type === "agent"` 时**运行时必填**）。
+   *
+   * 这一格是「队员被判成单独安排、静默丢掉工作树隔离」那条残留的修法。旧判别式写作
+   * `isSquadBatchChild(input.parentWorkItem) ? "member" : "standalone"`，而 `parentWorkItem` 因 F8
+   * 冻结签名只能做成**可选** ⇒ 调用方**漏传**时没有「在批次里」的证据 ⇒ 静默落 `standalone`
+   * ⇒ **那个队员不开工作树、直接在主工作区改** —— spec §6.1 的隔离承诺被**静默取消**，且全程不报错。
+   * 根因是**拿「可选字段的有无」当判据**：漏传与「确实不在批次里」在结果上长得一模一样，而前者是接线缺陷。
+   * 所以类别改为**必答**：调用方说出它派的是哪一类，`parentWorkItem` 降级为**校验** ——
+   * 声明缺证据 / 声明与证据矛盾一律**响亮抛**，没有任何一格会「碰巧」落成 standalone。
+   *
+   * 「声明什么」由 `declaredRunClassFor`（同一模块导出，唯一策略）算：它只读本项的 `parentId` 与父项
+   * 事实，**包括**「父项查不到」那一格（那一格故意声明 `member` 好让本函数响亮拒绝，理由见该函数）。
+   *
+   * 非 agent 指派（`user` / `squad`）的调用方**可以不传**：那两类的类别由负责人类型本身唯一决定
+   * （人 ⇒ 不排队；小队 ⇒ 队长），`runClass` 只在 agent 这一支里有信息量。
+   */
+  runClass?: DeclaredRunClass;
   trigger: "user" | "leader" | "rule";
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
@@ -70,14 +168,23 @@ export function planDispatch(input: {
       events.push(notify(workItem.id, "工作项指派给人：不排队起 run，进 Inbox 等人处理"));
       break;
 
-    /* 显式指派单个智能体：起一次普通 run。不挂队长标记、也不夹带花名册简报——
-       否则接到简报的普通智能体会以为自己该去派单。 */
+    /* 显式指派单个智能体（spec §5.6 `@` ≠ 指派）。类别由**调用方声明**（`input.runClass`），本函数拿
+       `parentWorkItem` 事实**校验**这个声明（见 `resolveAgentRunClass`）：声明缺证据 / 声明与证据矛盾
+       一律响亮抛。不再有「非队长 ⇒ 单独安排」那条静默缺省 —— 那正是本次要修的那条残留
+       （漏传父项 ⇒ 队员静默丢了工作树隔离，§6.1 落空且不报错）。
+       两类都**不挂队长标记、不夹带花名册简报** —— 否则接到简报的普通智能体会以为自己该去派单。 */
     case "agent":
       events.push({
         kind: "run.enqueued",
         workItemId: workItem.id,
         agentId: workItem.assignee.id,
         isLeaderTask: false,
+        runClass: resolveAgentRunClass({
+          declared: input.runClass,
+          parent: input.parentWorkItem,
+          workItemId: workItem.id,
+          parentId: workItem.parentId,
+        }),
       });
       break;
 
@@ -122,6 +229,7 @@ export function planDispatch(input: {
         workItemId: workItem.id,
         agentId: squad.leaderAgentId,
         isLeaderTask: true,
+        runClass: "leader",
         squadId: squad.id,
         briefing: buildBriefing(squad),
       });
@@ -149,10 +257,117 @@ function notify(workItemId: string, reason: string): DispatchEvent {
 }
 
 /**
- * 队长简报。当前只有 **花名册 + 8 槽位 `instructions`** 两部分——
- * spec §3.3 描述的是「花名册 + 操作协议 + `instructions`」，但**「操作协议」这一件还没有实现**，
- * 属 P2（spec §17 已登记为待补：接线简报时补，或明确并入 `instructions`）。
- * 这里如实写明「暂缺操作协议」，免得读注释的人以为简报已经带了协议。
+ * `parentWorkItem` 这条**证据**是否支持「本项在一支小队批次里」：父项被**指派给小队**。
+ *
+ * 为什么是「父项负责人」：队长派活的方式是 `squad.createChildWorkItem`（挂一条**子项**在指派给小队的
+ * 那条父项之下，再 `squad.assignWorkItem` 指给某位队员），所以「队员的任务」= 一条 `parentId` 指向
+ * **小队项**的工作项。这只读**派发那一刻的工作项事实**（§6.2：开不开工作树是「本次运行」的属性），
+ * 与触发来源、与队员是谁都无关 —— 换个触发源（规则 / 人 / 队长）不会改变结论。
+ *
+ * **它已经不再是判据**（判据是调用方给 `runClass` 的那条**声明**）：本函数只回答「这份证据支持哪一边」，
+ * 由 `resolveAgentRunClass` 负责拿它与声明对表。原因就是本次的残留 —— 「从可选字段的有无推断类别」
+ * 让**漏传**与「确实不在批次里」在结果上长得一样，前者是接线缺陷却被静默当成后者。
+ */
+function isSquadBatchChild(parent: WorkItem | null | undefined): boolean {
+  return parent != null && parent.assignee.type === "squad";
+}
+
+/**
+ * 把「调用方的类别**声明**」与「父项**证据**」对表，得出 `agent` 指派这一支真正的 `runClass`。
+ * 三个「不该沉默」的格子全部在这里**响亮抛**（`assignee.type === "agent"` 专用，见 `planDispatch` 的
+ * `runClass` 入参注释）：
+ *
+ * · **没声明**：类别必须必答。缺省落成 `standalone` 会把一名队员静默降级成「直接改主工作区」。
+ * · **声明 `member` 但缺 `parentWorkItem`**：这一格就是「父项已归档 / 被删 / 跨 workspace」的落点
+ *   （`workItemRepo.listByWorkspace` 过滤归档行 ⇒ 查不到就是 `null`）。**不许**默认成 standalone：
+ *   查不到父项**无法证明它不在批次里**，按 standalone 放行 = 静默取消 §6.1 的隔离；而按 member 放行又
+ *   没有证据可校验。两条都不能静默选 ⇒ 拒绝并交给人处置（重派发不会自愈，host 会按 permanent 收口）。
+ * · **声明与证据矛盾**（member 对上一份非小队证据 / standalone 对上一份小队证据）：不静默改判任何一边。
+ *   按 standalone 放行会丢隔离，按 member 放行是**凭空**开一棵调用方没要求的树 —— 两者都在掩盖接线缺陷。
+ *
+ * 为什么不在这里「按证据修正声明」：修正 = 把矛盾吞掉，而下一次矛盾就没人看得见了；响亮抛的代价只是
+ * 一次可见的 permanent 失败，改对声明即可自愈。
+ */
+function resolveAgentRunClass(input: {
+  declared: DeclaredRunClass | undefined;
+  parent: WorkItem | null | undefined;
+  workItemId: string;
+  parentId: string | undefined;
+}): "member" | "standalone" {
+  const { declared, parent } = input;
+  if (declared === undefined) {
+    throw new Error(
+      `工作项 ${input.workItemId} 被指派给单个智能体，但没有声明 runClass（member / standalone）：` +
+        "类别必须由调用方**显式声明**，缺省不得落成 standalone —— 那会把一名队员静默降级成" +
+        "「直接在工作区改」，spec §6.1 的工作树隔离会在无人察觉的情况下被取消",
+    );
+  }
+  if (declared === "member") {
+    if (parent == null) {
+      throw new Error(
+        `工作项 ${input.workItemId} 声明 runClass=member（在一支小队批次里），但没有可用的父项事实` +
+          `（parentId=${input.parentId ?? "（无）"}；父项被归档 / 删除 / 落在别的 workspace 时都查不到）：` +
+          "缺父项证据不得默认成 standalone（那是静默取消 §6.1 的隔离），也不得凭空开树 —— " +
+          "请先让父项可读，或显式声明它不在批次里（runClass=standalone）",
+      );
+    }
+    if (!isSquadBatchChild(parent)) {
+      throw new Error(
+        `工作项 ${input.workItemId} 声明 runClass=member，但父项 ${parent.id} 的负责人是` +
+          `「${parent.assignee.type}」而不是小队：声明与事实矛盾（批次成员要求父项被指派给小队）。` +
+          "静默改判任一方向都会掩盖这条接线/数据缺陷，故在此响亮失败",
+      );
+    }
+    return "member";
+  }
+  // declared === "standalone"
+  if (parent != null && isSquadBatchChild(parent)) {
+    throw new Error(
+      `工作项 ${input.workItemId} 声明 runClass=standalone，但父项 ${parent.id} 被指派给小队：` +
+        "本项其实在一支小队批次里 —— 按 standalone 放行等于静默丢掉工作树隔离，" +
+        "按 member 放行则是凭空开一棵调用方没要求的树；请把声明改成 runClass=member",
+    );
+  }
+  return "standalone";
+}
+
+/**
+ * 调用方该**声明**哪一类（`planDispatch` 的 `runClass` 入参）—— 「声明」的算法，**不是判据**：
+ * 真正的判据是「声明 ↔ 证据」的对表，那一处只在 `resolveAgentRunClass`。
+ *
+ * 为什么要有这个小函数：类别必须显式声明，而「声明什么」只能从**派发时的事实**推出来 —— 本项的
+ * `parentId`（工作项自身的字段，不经任何查找）+ 父项事实。把这条规则收在一处并导出，是为了让**所有**
+ * 调用方（host 派发桥、测试里的同形副本）用同一条规则，而不是各写一份「碰巧一样」的推导
+ * （那种复制的表现正是「改一处漏一处」，而它不会报错）。
+ *
+ * 逐格（与 `leaderDispatch.test.ts` 的穷举表一一对应）：
+ * · `parentId` 缺（顶层项）⇒ `standalone`：它不在任何层级里，也就无从在批次里。
+ * · 父项在、负责人是**小队** ⇒ `member`：正是 §6.4「每队员独立分支」的那一类。
+ * · 父项在、负责人**不是**小队 ⇒ `standalone`：普通父子层级里的项**不是**批次成员（§6.1「单独安排的
+ *   智能体」就是这个语义）。这一格也是**显式决定**的一格：批次被归档时
+ *   `archiveSquadAndTransfer` 会把指派给该小队的父项**转交给队长** ⇒ 父项不再是批次根 ⇒ 不是队员。
+ *   （无法与「本来就是普通父项」区分，故按非批次处理；理由：批次已终止 ⇒ 没有集成分支可合，
+ *   开一棵树只会得到一棵永不合并、也永不被回收的树。）
+ * · `parentId` 在、父项却**查不到**（归档 / 删除 / 跨 workspace）⇒ 仍声明 `member`：
+ *   这一格**故意**让 `planDispatch` **响亮抛**、把它交给人处置 —— 见 `resolveAgentRunClass`。
+ */
+export function declaredRunClassFor(input: {
+  /** 本项自身的 `parentId`（工作项字段，**不是**查找结果）。 */
+  parentId: string | undefined;
+  /** 父项事实：查得到就是那条工作项，查不到（或本就没有父项）是 `null`。 */
+  parent: WorkItem | null;
+}): DeclaredRunClass {
+  if (input.parentId === undefined) return "standalone";
+  // 有 parentId 却拿不到父项：**故意**声明 member，好让 planDispatch 响亮拒绝（不许按单独安排放行）。
+  if (input.parent === null) return "member";
+  return isSquadBatchChild(input.parent) ? "member" : "standalone";
+}
+
+/**
+ * 队长简报（spec §3.3，**三段**）：花名册 + 操作协议 + 8 槽位 `instructions`。
+ *
+ * `protocol` 是系统生成的机制段（`LEADER_PROTOCOL_TEXT`），**不取自用户可写的 `instructions`**：
+ * 两者一个是机制、一个是用户意图，并起来等于把机制交还给用户去写（spec §3.3 末段）。
  * 花名册与指令都做浅拷贝——派发出去的是**此刻的快照**：§3.10 说小队成员变更不影响已派发且
  * 进行中的 run，若这里直接把 `squad.members` 交出去，之后任何就地修改都会连带改掉已派发 run 的简报，
  * 快照语义就没了（而「以派发那一刻的花名册为准」正是队员变更规则的立足点）。
@@ -165,6 +380,7 @@ function buildBriefing(squad: Squad): SquadBriefing {
     squadId: squad.id,
     leaderAgentId: squad.leaderAgentId,
     roster: squad.members.map((member) => ({ ...member })),
+    protocol: LEADER_PROTOCOL_TEXT,
     instructions: { ...squad.instructions },
   };
 }

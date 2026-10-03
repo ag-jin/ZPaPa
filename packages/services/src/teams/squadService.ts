@@ -88,14 +88,17 @@ export function createSquadService(deps: SquadServiceDeps): SquadService {
       return writeSquad(root, next);
     },
 
+    /* 归档**只做归档**（F8 冻结的无依赖签名不变）：只写 `archivedAt`，花名册与指令都保留。
+       spec §3.10/§16 S10 的「归档 → 工作项指派转交队长」**不在这里**——它需要按 assignee 查工作项、
+       属于工作项查询层，而本服务的 deps 只有两个定义根目录。转交由组合层 `archiveSquadAndTransfer`
+       （`workitem/squadRuntime.ts`）在做完归档侧的组合后执行：`SquadService` 保持无依赖，
+       转交逻辑也不必为了拿到 workItemRepo 而把本服务改造成「什么都懂」的服务。
+       若把转交塞进本方法的早退分支里，「已归档但漏转交」的残局就再也修不回来。 */
     archive(id) {
       const current = readSquad(root, id);
       if (!current) throw new Error(`小队不存在：${id}`);
       // 已归档就原样返回（不重写）：时间戳记的是「何时离开在用名单」，重复点击不该把它推后。
       if (current.archivedAt !== undefined) return current;
-      /* TODO(P2): spec §3.10/§5.5 要求「归档小队 → 工作项指派与排班**转交队长**」，
-         这需要「按 assignee 查工作项」的能力（属工作项查询层，P1 尚无），故本阶段只做归档本身。
-         代价：P2 之前归档小队会留下指向已归档小队的指派。 */
       return writeSquad(root, { ...current, archivedAt: Date.now() });
     },
   };

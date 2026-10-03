@@ -556,6 +556,9 @@ export const HostMessageTypes = {
   CronRun: "cron-run",
   /** main → host：闲时任务派发；首跑 createTask 新建 session，续跑带 conversationId/sessionId resume */
   OffPeakRun: "off-peak-run",
+  /** main → host：一条唤醒规则到点。**薄消息**：只带「哪条规则到点了」，
+      规划（解析工作项与小队、决定派给谁、渲染简报）留在 host 侧一处完成（spec §5.7.1 / §3.3）。 */
+  SquadWake: "squad-wake",
   /** main → host：browser-use 命令执行结果（CDP 执行完回传，按 requestId 关联） */
   BrowserExecuteResult: "browser-execute-result",
   /** main → host：本地视频 canonical path 授权结果 */
@@ -649,6 +652,8 @@ export const HostResponseTypes = {
   CronRunResult: "cron-run-result",
   /** host → main：闲时任务派发结果（成功回填 conversationId/sessionId，失败带 transient/permanent） */
   OffPeakRunResult: "off-peak-run-result",
+  /** host → main：小队唤醒派发结果（runId 用幂等键里的 eventKey；门禁关闭按 permanent 回执） */
+  SquadWakeResult: "squad-wake-result",
   /** host → main：manual run 已落库，请立即唤醒 scheduler 认领派发 */
   CronSchedulerWakeRequest: "cron-scheduler-wake-request",
   /** host → main：闲时任务翻 schedulable，请立即唤醒 scheduler 认领派发（与 cron 消息独立） */

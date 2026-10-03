@@ -2,6 +2,7 @@ import type {
   ElectronReleaseChannel,
   PostUpdateReleaseNotesPayload,
   UpdateStatePayload,
+  UpdateUpToDateNotice,
 } from "@zcode/shared";
 
 export type UpdateStatusDialogPhase = "before-download" | "downloading" | "downloaded";
@@ -60,8 +61,7 @@ export function deriveUpdateStatusViewModel({
   };
 }
 
-export function isUpdateActionCompleted(
-  action: UpdateActionInFlight,
+export function isUpdateActionCompleted(  action: UpdateActionInFlight,
   updateState: UpdateStatePayload | null,
 ) {
   return (
@@ -75,6 +75,56 @@ export function isUpdateActionCompleted(
       updateState?.kind !== "update-available" &&
       updateState?.kind !== "download-progress")
   );
+}
+
+/**
+ * 设置页「更新通道」行的展示模型。
+ *
+ * 为什么需要它（T3 ①）：`updateChannel` 此前只在更新弹窗里算、无人消费，用户看不出自己
+ * 拿的是预览版还是正式版；更要紧的是「装了预览版 + 关掉开关 + 正式版号还没追上来」这一格：
+ * electron-updater 不允许降级、正式版又更低 ⇒ 结果是 not-available，界面若只说「已是最新」
+ * 会让人以为一切正常，实则回不到正式版。`upToDateNotice` 由 main 用 semver 算好事实
+ * （见 shared 的 UpdateUpToDateNotice），这里只做展示层映射。
+ */
+export type UpdateChannelSettingsView = {
+  /** 当前生效通道：优先取 main 报来的已应用通道，拿不到时退回用户开关值。 */
+  channel: ElectronReleaseChannel;
+  /** 装了预览版 + 关着开关 + 正式版号更低 ⇒ 必须显示「暂时回不到正式版」的原因。 */
+  stableCatchUpPending: boolean;
+  /** 触发上述判断的正式版号（无该状态时为 null）。 */
+  latestChannelVersion: string | null;
+  /** 当前运行的版本（无该状态时为 null）。 */
+  currentVersion: string | null;
+};
+
+export function deriveUpdateChannelSettingsView({
+  appliedChannel,
+  receivePreviewUpdates,
+  upToDateNotice,
+}: {
+  appliedChannel: ElectronReleaseChannel | null;
+  receivePreviewUpdates: boolean;
+  upToDateNotice: UpdateUpToDateNotice | null;
+}): UpdateChannelSettingsView {
+  return {
+    // main 的 idle 态带有「已应用通道」；冷启动尚未检查时退回开关值 —— 开关就是用户的通道选择。
+    channel: appliedChannel ?? (receivePreviewUpdates ? "preview" : "stable"),
+    stableCatchUpPending: upToDateNotice?.stableCatchUpPending === true,
+    latestChannelVersion: upToDateNotice?.latestChannelVersion ?? null,
+    currentVersion: upToDateNotice?.currentVersion ?? null,
+  };
+}
+
+/**
+ * 「已是最新」toast 该不该改成解释「回不到正式版」的文案。
+ *
+ * 判据与设置页同一份事实（main 算好的 UpdateUpToDateNotice）。把判断收敛在这里，
+ * 是为了让「只说已是最新」这个静默失效路径有单一可测的出口。
+ */
+export function shouldExplainBlockedReturnToStable(
+  upToDateNotice: UpdateUpToDateNotice | undefined,
+): boolean {
+  return upToDateNotice?.stableCatchUpPending === true;
 }
 
 function getUpdateDownloadProgressLabel(updateState: UpdateStatePayload | null) {

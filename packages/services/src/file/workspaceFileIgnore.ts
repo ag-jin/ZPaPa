@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 import ignoreFactory from "ignore";
 import type { Ignore } from "ignore";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
+import { WORKSPACE_PRODUCT_TOP_LEVEL_NAMES } from "../workspaceProductDirs.js";
 
 /**
  * workspace 文件搜索忽略的单一真相源。
@@ -43,6 +44,25 @@ interface WorkspaceFileSearchIgnoreContent {
  * 默认模板的内置排除规则：承接旧 defaultWorkspaceFileSearchFilter 目录黑名单的退役部分，
  * 保证"从零创建"的 workspace 行为与旧默认一致（node_modules/.git 等仍被剪枝）。
  * 前缀通配按 gitignore 语法表达（cmake-build-* 等），与旧 SKIPPED_DIRECTORY_PREFIXES 等价。
+ *
+ * 末尾那段（C10 工作区产物目录）**从 `WORKSPACE_PRODUCT_DIRS` 派生**，不是第三份手写清单。
+ * 为什么它必须出现在这里（spec §17 表 `spec:675` 的闭合件，硬约束 3）：`.zcodeignore` 的那条
+ * 生成路径依赖「workspace 首次搜索时按 `.gitignore` 拷贝」——**无 `.gitignore` 的 workspace**
+ * 与**已有旧 `.zcodeignore` 的 workspace** 都拿不到 C10 那几条，而这两类最常见。本数组是
+ * **唯一不依赖 workspace 状态**的那半边（它在"从零创建"与"恢复默认"两条路上都被写入），
+ * 把它放进来，那两类 workspace 才第一次真正被排除；否则 `.worktree/` 里的 N 份仓库副本会被
+ * 索引/搜索吃进、manifestHash 漂移，**不报错**。
+ * 唯一来源仍是 `workspaceProductDirs.ts`：改那里一处，这里的排除项与仓库根 `.gitignore`
+ * 的一致性测试会自动跟上（见 workspaceProductDirExclusions.test.ts）。
+ *
+ * —— 一处**刻意的三方不对称**（计划明文规定，不改行为，只记一行）——
+ * 本模板按**顶层名**展开（`WORKSPACE_PRODUCT_TOP_LEVEL_NAMES` 把 `.zcode/squad` /
+ * `.zcode/agent-memory` / `.zcode/agent-memory-local` 归并成 `.zcode`），所以它忽略的是**整个 `.zcode/`**
+ * ——连 `.zcode/agents`（现有 subagent 定义目录，**不在** C10 清单里）也一并被搜索排除；
+ * 而仓库根 `.gitignore` 只逐条列了 `.zcode/{squad,agent-memory,agent-memory-local}`（不排除 `.zcode/agents`）。
+ * 这层不对称是计划规定的：模板侧取顶层名是为了与 `wikiScan.ts` 的**顶层剪枝**同一口径
+ * （不在上层剪掉 `.zcode` 就走不到 `.zcode/squad`）。**不是 bug，不要「对齐」**：逐子目录展开会让
+ * 扫描器需要在每一层都判一次，两处判据随即分叉。
  */
 const BUILTIN_IGNORE_LINES = [
   ".git/",
@@ -73,6 +93,8 @@ const BUILTIN_IGNORE_LINES = [
   "eggs/",
   "pip-wheel-metadata/",
   "wheels/",
+  // C10 工作区产物目录：顶层名从唯一来源派生（`.worktree` / `.zcode` 一律不再手写）。
+  ...[...WORKSPACE_PRODUCT_TOP_LEVEL_NAMES].map((name) => `${name}/`),
 ];
 
 const TEMPLATE_HEADER = [

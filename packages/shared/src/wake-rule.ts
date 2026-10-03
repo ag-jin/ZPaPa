@@ -243,3 +243,268 @@ export function validateWakeRule(rule: WakeRule): WakeRuleValidationResult {
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }
+
+/* ------------------------------------------------------------------ *
+ * `eventKey` 构造（spec §5.7.1）
+ *
+ * §3.9 的幂等键是 `(workItemId, ruleId, revision, eventKey)`，而 `eventKey` 此前**没有定义**。
+ * 这是最危险的一类留白：不定义，接线方会就地拼串，**重复投递的事件静默重复触发**——不报错、
+ * 看起来正常。故这里是**唯一构造器**：调度器与 Repo 都调它，不得各自拼串。
+ *
+ * 为什么它住在 shared 而不是 services：调度器（Task 3）与 Repo（Task 4）都要算它，
+ * 而「同一事实必须算出同一个 key」这条只有在**同一份实现**下才成立。放进 services 会让
+ * shared 侧的消费方（域模型的读者）反过来依赖 services。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 参与指纹前被**排除**的易变字段（spec §5.7.1 末段）。
+ *
+ * 这些字段记的是「这一次投递」的属性（第几次尝试、投递/接收时刻），不是**事实本身**的属性。
+ * 不排除它们，同一件事重投两次会算出两个 key ⇒ 去重形同虚设（每次都当新事件处理）。
+ *
+ * 清单必须**同处声明**（就在本文件里）：spec 明确禁止在调用点就地过滤——那会让「哪些字段算易变」
+ * 变成每个调用方各写一份的判断，而漏掉一处的表现是**静默重复触发**。
+ * 排除按**键名**在所有层级生效：投递元数据常嵌在子对象里（`{ meta: { deliveryAttempt } }`）。
+ */
+export const EVENT_KEY_VOLATILE_FIELDS = [
+  "deliveryAttempt",
+  "deliveredAt",
+  "deliveryTimestamp",
+  "receivedAt",
+] as const;
+
+const VOLATILE_FIELD_SET: ReadonlySet<string> = new Set(EVENT_KEY_VOLATILE_FIELDS);
+
+/** 统一的失败出口：文案带 `eventKey`，调用方（与测试）按它分因。 */
+function eventKeyError(detail: string): Error {
+  return new Error(`eventKey: ${detail}`);
+}
+
+/**
+ * 规范化序列化（spec §5.7.1）：对象键按**码点升序**、数组**保序**、数字最简形式、字符串 JSON 转义。
+ *
+ * 为什么不能用 `JSON.stringify` 直接算指纹：它的输出依赖**属性插入顺序**
+ * （`{a:1,b:2}` 与 `{b:2,a:1}` 是同一件事却得到两个指纹），而事件 payload 的键序随
+ * 事件源、JSON 库版本而变 —— 同一件事于是被判成两件，去重静默失效。
+ *
+ * 不可规范化的值一律**抛**（不返回一个「看起来还行」的串）：`undefined` / 函数 / Symbol / BigInt /
+ * 非有限数字 / 循环引用。其中 `undefined` 与非有限数字最阴：`JSON.stringify` 会把它们
+ * **静默丢掉或写成 null**，让两个不同的事实撞成同一个指纹——那正是「重复触发且不报错」。
+ */
+function stableStringify(value: unknown, path: string, seen: Set<object>): string {
+  if (value === null) return "null";
+  switch (typeof value) {
+    case "boolean":
+      return value ? "true" : "false";
+    case "number":
+      if (!Number.isFinite(value)) {
+        throw eventKeyError(`payload 含非有限数字（${path}），无法规范化`);
+      }
+      // 数字最简形式：JSON 的十进制最短表示（-0 → "0"，1e21 → "1e+21"）。
+      return JSON.stringify(value);
+    case "string":
+      return JSON.stringify(value);
+    case "object":
+      break;
+    default:
+      throw eventKeyError(`payload 含不可规范化值（类型 ${typeof value}，${path}）`);
+  }
+
+  const container = value as object;
+  if (seen.has(container)) {
+    throw eventKeyError(`payload 含循环引用（${path}），无法规范化`);
+  }
+  // 同一对象在**不同分支**里出现两次是合法的（那不是环），所以进入时登记、离开时撤销。
+  seen.add(container);
+  try {
+    if (Array.isArray(container)) {
+      // 数组**保序**：`[1,2]` 与 `[2,1]` 是两个不同的事实，排序会把它俩抹成同一个 key。
+      return `[${container
+        .map((entry, index) => stableStringify(entry, `${path}[${index}]`, seen))
+        .join(",")}]`;
+    }
+    const entries = Object.entries(container as Record<string, unknown>)
+      .filter(([key]) => !VOLATILE_FIELD_SET.has(key))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    return `{${entries
+      .map(
+        ([key, entry]) =>
+          `${JSON.stringify(key)}:${stableStringify(entry, `${path}.${key}`, seen)}`,
+      )
+      .join(",")}}`;
+  } finally {
+    seen.delete(container);
+  }
+}
+
+/* SHA-256 的**纯 TypeScript 实现**（FIPS 180-4）。
+ *
+ * 为什么手写而不是 `import { createHash } from "node:crypto"`：本文件经
+ * `packages/shared/src/index.ts` 的 `export *` 被 renderer 直接解析，而 shared 根入口
+ * 迄今**零** `node:*` 可达模块（实测：从 index.ts 递归可达 173 个模块，违规 0 条）。
+ * 加一条 `node:crypto` 会让整包在浏览器侧解析失败——现场表现是「页面停在启动壳、
+ * 没有任何报错浮层」，极难定位。`crypto.subtle` 是异步的，而 `computeEventKey` 必须是同步纯函数
+ * （去重键要在 tick 的同步判定里算出来），故不可用。
+ *
+ * 算法即标准 SHA-256，唯一目的是「确定、无依赖、跨进程一致」——不是给任何安全用途用的。 */
+const SHA256_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+function rotateRight(value: number, bits: number): number {
+  return ((value >>> bits) | (value << (32 - bits))) >>> 0;
+}
+
+/* **导出仅供测试**（不是给生产用的 API，也不是给任何安全用途的）：
+   这 70 行密码学实现若没有一份**外部对照**，将来改坏填充或某个轮常量时，仓内没有任何用例会变红
+   （`computeEventKey` 的用例只比较 key 之间的相等/不等 —— 任何确定性函数都能通过）。
+   但走 `computeEventKey` 的指纹族**无法**喂进空串与任意字节长度（先过 `stableStringify`，
+   其输出恒非空、且形状受限），所以「空串 / 块边界 55·56·63·64 字节」这些向量在那里不可达。
+   故把实现本身导出，让测试直接与 `node:crypto` 逐例比对（见 `packages/shared/test/wakeRuleSha256.test.ts`
+   与 `packages/services/test/eventKey.test.ts` 的指纹族交叉比对）。
+   它已在生产路径上被 `computeEventKey` 使用（唯一调用点），导出不改变任何行为。 */
+export function sha256Hex(input: string): string {
+  const data = new TextEncoder().encode(input);
+  const bitLength = data.length * 8;
+  // 填充：`1` 位 + `0` 位到 56 (mod 64) + 64 位大端长度。
+  const paddedLength = data.length + 1 + ((56 - ((data.length + 1) % 64) + 64) % 64) + 8;
+  const bytes = new Uint8Array(paddedLength);
+  bytes.set(data, 0);
+  bytes[data.length] = 0x80;
+  const view = new DataView(bytes.buffer);
+  // 长度按 64 位写；JS 数字精确到 2^53，故拆成高低两个 32 位字（够用到 PB 级输入）。
+  view.setUint32(paddedLength - 8, Math.floor(bitLength / 0x100000000));
+  view.setUint32(paddedLength - 4, bitLength >>> 0);
+
+  const state = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ]);
+  const schedule = new Uint32Array(64);
+
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    for (let index = 0; index < 16; index += 1) {
+      schedule[index] = view.getUint32(offset + index * 4);
+    }
+    for (let index = 16; index < 64; index += 1) {
+      const w15 = schedule[index - 15]!;
+      const w2 = schedule[index - 2]!;
+      const s0 = (rotateRight(w15, 7) ^ rotateRight(w15, 18) ^ (w15 >>> 3)) >>> 0;
+      const s1 = (rotateRight(w2, 17) ^ rotateRight(w2, 19) ^ (w2 >>> 10)) >>> 0;
+      schedule[index] = (schedule[index - 16]! + s0 + schedule[index - 7]! + s1) >>> 0;
+    }
+
+    let a = state[0]!;
+    let b = state[1]!;
+    let c = state[2]!;
+    let d = state[3]!;
+    let e = state[4]!;
+    let f = state[5]!;
+    let g = state[6]!;
+    let h = state[7]!;
+    for (let index = 0; index < 64; index += 1) {
+      const s1 = (rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25)) >>> 0;
+      const ch = ((e & f) ^ (~e & g)) >>> 0;
+      const temp1 = (h + s1 + ch + SHA256_K[index]! + schedule[index]!) >>> 0;
+      const s0 = (rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22)) >>> 0;
+      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+      const temp2 = (s0 + maj) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    state[0] = (state[0]! + a) >>> 0;
+    state[1] = (state[1]! + b) >>> 0;
+    state[2] = (state[2]! + c) >>> 0;
+    state[3] = (state[3]! + d) >>> 0;
+    state[4] = (state[4]! + e) >>> 0;
+    state[5] = (state[5]! + f) >>> 0;
+    state[6] = (state[6]! + g) >>> 0;
+    state[7] = (state[7]! + h) >>> 0;
+  }
+
+  return Array.from(state, (word) => word.toString(16).padStart(8, "0")).join("");
+}
+
+/** 事件事实：调度器从事件源归一化得到的「一件事」（spec §5.7.1 (A)）。 */
+export type WakeEventFact = {
+  /** 事件源（如 `github`）：进 identity，故两个来源的不同事实永不撞键。 */
+  source: string;
+  /** 事件类型（如 `issue.assigned`）：只在**指纹**族里进 identity（有稳定 id 时它不参与）。 */
+  eventType: string;
+  /** 事件源自带的**稳定 id**（如 GitHub `X-GitHub-Delivery`、`event.id`）。有则**首选**。 */
+  externalId?: string | null;
+  /** 事件完整负载：指纹用**完整 payload**，不是 `filters` 子集。 */
+  payload?: unknown;
+};
+
+/** 排期事实：本次**应当触发的名义时刻**（epoch ms 整数），不是调度器发现它的墙钟时刻。 */
+export type WakeScheduleFact = { scheduledFor: number };
+
+export type WakeFact = WakeEventFact | WakeScheduleFact;
+
+function readNonBlank(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw eventKeyError(
+      `事件族必须有非空的 ${field}（实际 ${JSON.stringify(value)}）：缺了它算不出 identity，` +
+        "只能拼出一个所有事件共用的 key（除第一件外全被去重吞掉）",
+    );
+  }
+  return value;
+}
+
+/**
+ * **唯一**的 `eventKey` 构造器（spec §5.7.1）。两族前缀不同 ⇒ 事件的第 N 次与排期的第 N 次永不撞键：
+ *
+ * - 事件族：`e:id:<source>:<externalId>`（有稳定 id 时优先）
+ *   → `e:fp:<source>:<eventType>:<sha256(stableStringify(payload))>`（无稳定 id 时退用指纹）
+ * - 排期族（`at` / `every` / `cron`）：`t:<scheduledFor>`
+ *
+ * `filters` / `eventTypes` / `revision` / `workItemId` **不参与**：前者判「是否匹配」，
+ * 后两者已是幂等四元组的独立项（拼进来会让一次无关的规则编辑作废全部历史去重记录）。
+ *
+ * 排期族的「钉死锚点」不在本函数：名义时刻由调用方按网格算出后传入，本函数**只做格式化**
+ * （锚点归调度器，见 spec §5.7.1 (B) 末段）。
+ */
+export function computeEventKey(rule: WakeRule, fact: WakeFact): string {
+  if (rule.kind === "event") {
+    const event = fact as WakeEventFact;
+    const source = readNonBlank(event.source, "source");
+    const stableId =
+      typeof event.externalId === "string" && event.externalId.trim() !== ""
+        ? event.externalId
+        : undefined;
+    if (stableId !== undefined) {
+      return `e:id:${source}:${stableId}`;
+    }
+    const eventType = readNonBlank(event.eventType, "eventType");
+    /* payload **缺失**按空负载归一（`?? null`，与显式 `null` 同键）。这是有意的：既没有稳定 id、
+       又没有负载时，两件事之间**不存在任何可区分的信息**，「算作同一件」是唯一自洽的结论
+       （换个 key 只会把同一批无法区分的事件重新当成新事实处理一遍）。
+       它与「payload 里含不可规范化值」是两回事：后者**抛**（见 stableStringify），
+       因为那说明负载本该有内容却写成了规范化不了的形式，静默丢字段会让两个不同事实撞键。 */
+    // 无稳定 id 且 payload 不可规范化 ⇒ **抛**（不 fire）：不可去重的事件每次重投都会重复触发。
+    return `e:fp:${source}:${eventType}:${sha256Hex(stableStringify(event.payload ?? null, "$", new Set()))}`;
+  }
+
+  const scheduledFor = (fact as WakeScheduleFact).scheduledFor;
+  if (typeof scheduledFor !== "number" || !Number.isInteger(scheduledFor)) {
+    throw eventKeyError(
+      `排期族的 scheduledFor 必须是整数毫秒（实际 ${JSON.stringify(scheduledFor)}）：` +
+        "非整数会让「同一格」每次算出不同的字符串，去重静默失效",
+    );
+  }
+  return `t:${scheduledFor}`;
+}

@@ -248,3 +248,30 @@ export const WAKE_RULE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_wake_rules_work_item
     ON wake_rules(work_item_id);
 `;
+
+// 0006 追加：小队运行台账。只新增，不改既有表/列。
+// 这张表是硬约束 2 的落点：启动回收的「活跃集合」必须**跨重启存活**——
+// 内存里的「当前有没有在跑的 run」既活不过重启，也会把「已产出但未合并」漏在外面。
+// branch / dir_name 可空：队长 run 不建工作树（spec §6.1「是否开工作树是本次运行的属性」）。
+// 刻意不建指向 work_items 的外键：工作项只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA 同一条理由）。
+export const SQUAD_RUN_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS squad_runs (
+    run_id               TEXT PRIMARY KEY,
+    workspace_key        TEXT NOT NULL,
+    workspace_path       TEXT NOT NULL,
+    work_item_id         TEXT NOT NULL,
+    parent_work_item_id  TEXT NOT NULL,
+    agent_id             TEXT NOT NULL,
+    is_leader_task       INTEGER NOT NULL,
+    branch               TEXT,
+    dir_name             TEXT,
+    status               TEXT NOT NULL,
+    session_id           TEXT,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_active
+    ON squad_runs(workspace_key, status);
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_work_item
+    ON squad_runs(work_item_id);
+`;

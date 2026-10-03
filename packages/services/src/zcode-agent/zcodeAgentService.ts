@@ -298,6 +298,8 @@ import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { ZCodeAgentMcpStatusModeUnsupportedError } from "#src/zcode-agent/zcodeAgentErrors.js";
 import { ZCodeAgentProcessManager } from "./zcodeAgentProcessManager.js";
 import type { ZCodeAgentProcessManagerOptions } from "./zcodeAgentProcessManager.js";
+import { createProtocolSquadHandlers, type SquadProtocolResult } from "./squadProtocolMethods.js";
+import type { ISquadRuntimeService } from "#src/workitem/squadRuntimeService.js";
 import type { IOffPeakTaskService } from "#src/session/offPeakTask.js";
 import {
   ZCodeProtocolRequestTimeoutError,
@@ -895,6 +897,18 @@ interface CreateZCodeAgentServiceOptions extends Omit<
     | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
   /**
+   * 小队运行时的服务面来路（`squad/*` 三个协议方法的落点）。
+   *
+   * 为什么是 `resolve` 而不是直接注入实例：`node.ts` 在 `ServiceCollection` 装配**之后**才回填
+   * （本服务的工厂在注册链求值期执行，那时 `services` 常量还未初始化）。惰性取用同时让
+   * 「服务没注册」这件事在协议层是**响亮**的（-32601），而不是一个静默的 no-op。
+   *
+   * 为什么落在这里而不是 desktop 的 host：反向请求（CLI → Host）的应答面本就是本文件里
+   * 这条 `client.onRequest` if 链，`packages/desktop/src/host/**` 零协议 handler，
+   * 且依赖方向是 desktop→services（services 不可能消费 desktop 的文件）。
+   */
+  resolveSquadRuntimeService?: () => ISquadRuntimeService | undefined;
+  /**
    * browser-use 执行桥：把 agent 的 interaction/browserExecute 反向请求转发到 main
    * （WebContentsView+CDP）。desktop host 装配时注入；缺省（纯 CLI/远控无 main）则
    * browser 命令返回 backend_unavailable，不影响其它功能。
@@ -1013,6 +1027,32 @@ async function respondOffPeakInternalError(
   });
 }
 
+/**
+ * 小队协议（`squad/*`）handler 的判别联合结果 → 协议应答。
+ *
+ * 为什么收在一处：三个分支各写一遍应答，就会各写各的 code 与字段；而「稳定码落在 `data.code`」
+ * 这条跨层分流约定（照 `AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE`）一旦在某一条上漏掉，
+ * 那条通路的「实验已关闭」就从「按码分流」退回成「读文案」——文案会改，分流随之失灵。
+ */
+async function respondSquadProtocolResult<T>(
+  client: Pick<ZCodeProtocolClient, "respond" | "respondError">,
+  requestId: ZCodeProtocolRequestId,
+  result: SquadProtocolResult<T>,
+): Promise<void> {
+  if (result.ok) {
+    await client.respond(requestId, result.result);
+    return;
+  }
+  await client.respondError(requestId, {
+    code: result.error.code,
+    message: result.error.message,
+    ...(result.error.data !== undefined ? { data: result.error.data } : {}),
+  });
+}
+
+/** squad/* 的兜底 catch 固定文案：原文（含路径/上游片段）只进服务端日志，不回传协议（照 offPeak 同一裁定）。 */
+const SQUAD_INTERNAL_ERROR_MESSAGE = "小队协议请求处理失败";
+
 /** 只有灰度有效开启且白名单非空才算"可创建"；其余一律视为关闭（空数组）。 */
 function resolveOffPeakAllowedModels(
   grayConfig: OffPeakClientConfig | undefined,
@@ -1079,6 +1119,44 @@ export function createZCodeAgentService(
   const automationRepo = new AutomationRepo();
   const automationService = new AutomationService(automationRepo);
   const automationTaskIndexRepo = new TaskIndexRepo();
+  /* 小队派单三个协议方法（`squad/*`）的实现体（`squadProtocolMethods.ts`）。
+     服务面**惰性**取：组合根在 ServiceCollection 装配完成后才回填 `resolveSquadRuntimeService`，
+     而协议连接可能早于/晚于那个时点建立。单例持有（不每次新建）不影响惰性——resolver 每次调用才被调。 */
+  const squadProtocolHandlers = createProtocolSquadHandlers({
+    resolveSquadRuntimeService: () => options?.resolveSquadRuntimeService?.(),
+  });
+  /**
+   * 三个 `squad/*` 分支共用的应答壳。
+   *
+   * handler 把可预期的失败（参数不合法 / 门禁关闭 / 服务面缺失）翻译成**结果**，故走到 `catch`
+   * 只剩「应答链路本身出了问题」——那也必须留痕（warn），不得静默吞掉：
+   * 静默会让队长看到一次没有回执的工具调用。
+   */
+  const respondSquadRequest = (
+    client: ZCodeProtocolClient,
+    request: { id: ZCodeProtocolRequestId; method: string },
+    run: () => Promise<SquadProtocolResult<unknown>>,
+  ): void => {
+    void run()
+      .then((result) => respondSquadProtocolResult(client, request.id, result))
+      .catch((error: unknown) => {
+        logger.warn(undefined, "小队协议请求处理失败", {
+          method: request.method,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        /* **必须回应答**（Minor-2）：只 warn 不回应答 ⇒ CLI 侧拿不到任何东西，等成超时。
+           「响亮失败」要求失败**可被调用方看见**（超时看起来像「没反应」而不是「出错了」）。
+           固定文案 + -32603：跨层异常原文（含路径 / 上游片段）只进服务端日志，不回传协议。 */
+        void client
+          .respondError(request.id, { code: -32603, message: SQUAD_INTERNAL_ERROR_MESSAGE })
+          .catch((respondError: unknown) => {
+            logger.warn(undefined, "小队协议错误回执发送失败", {
+              method: request.method,
+              error: respondError instanceof Error ? respondError.message : String(respondError),
+            });
+          });
+      });
+  };
   const pluginProcessManager = new ZCodeAgentProcessManager({
     commandResolver: options?.commandResolver,
     presentationSurface: options?.presentationSurface,
@@ -2813,6 +2891,51 @@ export function createZCodeAgentService(
               });
             }
           })();
+          return;
+        }
+
+        /* ---- 小队派单（`squad/*`）：队长工具经 CLI 的 SquadPort 发来的反向请求 ----
+           与 automation / off-peak 兄弟并列，落点在**服务面**（spec §14 / §4.3 / §5.1）：
+           - 三个方法各自落到 `ISquadRuntimeService` 的对应方法上
+             （create-child-work-item → createWorkItem；assign-work-item → assignWorkItem
+             ——「改负责人 + 发派发事件」；list-roster → getSnapshot 的只读投影）；
+             实现体在 `squadProtocolMethods.ts`，本链只做三件事：**显式构造目标**、
+             调用对应方法、写回应答。
+           - **门禁不在这里判**（确认 2：判据只有服务层一处）。开关关闭时服务层抛
+             `SquadDispatchDisabledError`，本链把它的稳定码（`squad_dispatch_disabled`）
+             **原样**带回 —— 不吞、不改写、也不自己读开关（自己读就有了第二份判据）。
+           - 目标 workspace **显式构造**（裁定 4：每个服务方法第一个参数就是它，没有隐式默认、
+             结构上不存在「取首个」）。workspace 由 host 从当前连接注入，不进协议参数。 */
+        if (request.method === zcodeProtocolMethods.squadCreateChildWorkItem) {
+          const target = {
+            path: workspace.workspacePath,
+            identity: workspace.workspaceIdentity ?? "",
+          };
+          respondSquadRequest(client, request, () =>
+            squadProtocolHandlers.createChildWorkItem(target, request.params),
+          );
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.squadAssignWorkItem) {
+          const target = {
+            path: workspace.workspacePath,
+            identity: workspace.workspaceIdentity ?? "",
+          };
+          respondSquadRequest(client, request, () =>
+            squadProtocolHandlers.assignWorkItem(target, request.params),
+          );
+          return;
+        }
+
+        if (request.method === zcodeProtocolMethods.squadListRoster) {
+          const target = {
+            path: workspace.workspacePath,
+            identity: workspace.workspaceIdentity ?? "",
+          };
+          respondSquadRequest(client, request, () =>
+            squadProtocolHandlers.listRoster(target, request.params),
+          );
           return;
         }
 

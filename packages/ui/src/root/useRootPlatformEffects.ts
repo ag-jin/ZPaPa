@@ -12,6 +12,7 @@ import { isShortcutRecordingActive } from "@/shortcuts/bindings.js";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { useOptionalBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { shouldPublishCompleteWorkspaceSnapshot } from "@/root/rootPlatformWorkspaceSync.js";
+import { shouldExplainBlockedReturnToStable } from "@/updateStatusModel.js";
 import {
   createShareImportIntent,
   isShareImportIntentSame,
@@ -231,6 +232,21 @@ export function useRootPlatformEffects({
           logger.info("[Root] onUpdateCheckResult:", payload.kind);
           switch (payload.kind) {
             case "up-to-date":
+              // 「已是最新」在一种情况下具有误导性：用户装的是预览版、关掉了预览开关，
+              // 而最新正式版号还更低 —— 此时并非「一切正常」，而是回不到正式版（不允许降级）。
+              // main 用 semver 算好事实随 payload 带来，这里必须改说原因（T3 ①）。
+              if (shouldExplainBlockedReturnToStable(payload.upToDateNotice)) {
+                toast(
+                  intl.formatMessage(
+                    { id: "update.toast.stableCatchUpPending" },
+                    {
+                      version: payload.upToDateNotice?.currentVersion ?? payload.currentVersion,
+                      latestVersion: payload.upToDateNotice?.latestChannelVersion ?? "",
+                    },
+                  ),
+                );
+                return;
+              }
               toast(
                 intl.formatMessage(
                   { id: "update.toast.upToDate" },

@@ -174,6 +174,27 @@ git push origin main v3.14.4
 - Windows 首次运行仍有 SmartScreen 提示（未做时间戳签名）。
 - 试跑（只构建为 Actions 产物、不发布 Release）：在 Actions 页面手动触发 `workflow_dispatch`，产物保留 7 天。
 
+### 预览版（Preview 通道）
+
+面向愿意提前试新功能的用户。应用内「设置 ▸ 通用 ▸ 接受提前收到预览版更新」打开后只会收到**预览版**，关闭则只跟随正式版节奏；**切换即时生效，无需重启**。
+
+发布一个预览版：
+
+```bash
+# 1. 把根 package.json 的 version 写成 prerelease 形式（例如 3.16.4-preview.1）
+# 2. 提交后打同名 tag 并推送
+git tag v3.16.4-preview.1
+git push origin main v3.16.4-preview.1
+```
+
+- 流水线识别 tag 里的 `-preview`，把该 Release 标为 **Pre-release**（**不是 Latest**），因此**关着预览开关的用户不会被推送到它**。产物与正式版同形：同样 10 个资产，含更新清单 `latest-mac.yml`（两架构合并）与 `latest.yml`。
+- **两条纪律**（违反会静默出问题，不是报错）：
+  1. **prerelease 标识必须恰为 `preview`**。更新器按「tag 的 prerelease 标识」做筛选与清单定位；换成 `rc`/`beta` 会同时破坏筛选条件与清单回退，表现为「开关打开了却收不到预览版」。
+  2. **预览版号不得高于随后发布的正式版号**。`X.Y.Z-preview.N < X.Y.Z`，所以**关着开关**的客户端在正式版发布后会看到它并升回去；若反过来（先发 `3.17.0-preview.1`、之后却把 `3.16.4` 当正式版发），这类用户会**卡在预览版**回不来。
+     注意：**开着开关**的客户端**不会**因为正式版发布而回到正式版——它只在自己的通道（prerelease 标识恰为 `preview` 的 Release）里选，正式版对它不可见，因此会一直显示「已是最新」。要回到正式版的动作是**关掉开关**（`3.16.4` 起立即生效），不是等一次发布。
+- 验收：推 tag 后确认该 Release 有 **Pre-release 徽标**、**不是 Latest**、且带 `latest-mac.yml`；再打开 `https://github.com/ag-jin/ZPaPa/releases/latest` 确认它**仍指向正式版**。
+- 注意：**存量正式版（`3.16.3` 及更早）点开关不生效**——运行时切换通道的能力是 `3.16.4-preview.1` 起才有的。首次进入预览通道需要**手动装一次**预览构建。
+
 ### 应用内自动更新
 
 三个平台都走 GitHub Releases（`ag-jin/ZPaPa`）的应用内更新：启动时自动检查、每小时轮询，下载完成后可从菜单「重启以更新」安装。macOS 依赖 ad-hoc 签名带来的 designated requirement（见上节）；若某个构建形态取不到 DR，应用会自动降级为「检查更新」直接打开发布页，不会出现点了没反应。

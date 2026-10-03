@@ -1559,7 +1559,11 @@ const enUS: Record<string, string> = {
   "updateDialog.restartToUpdate": "Restart to update",
   "updateDialog.skipVersion": "Skip this version",
   "updateDialog.later": "Later",
+  "updateDialog.channel.stable": "Stable",
+  "updateDialog.channel.preview": "Preview",
   "update.toast.upToDate": "You're on the latest version (v{version})",
+  "update.toast.stableCatchUpPending":
+    "You are on preview v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once stable catches up.",
   "update.toast.available": "New version v{version} is available",
   "update.toast.downloading": "Downloading new version v{version}",
   "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
@@ -2209,6 +2213,10 @@ const enUS: Record<string, string> = {
   "settings.receivePreviewUpdates": "Receive preview updates early",
   "settings.receivePreviewUpdatesDescription":
     "When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.",
+  "settings.updateChannel.current.stable": "Current update channel: Stable",
+  "settings.updateChannel.current.preview": "Current update channel: Preview",
+  "settings.updateChannel.stableCatchUpPending":
+    "You are running preview build v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once a stable version catches up.",
   "settings.autoDownloadAndInstallUpdates": "Automatically download and install updates",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "When enabled, updates start downloading as soon as they are found. Restart still requires confirmation when tasks are running.",
@@ -4343,6 +4351,79 @@ const enUS: Record<string, string> = {
   "settings.experiments.squadToggle.description":
     "Enable collaborative agents, squads, and worktree isolation",
   "settings.experiments.saveFailed": "Could not save. Please try again.",
+  "settings.experiments.squad.viewTitle": "Multi-agent squads (minimal entry)",
+  "settings.experiments.squad.teamAgents": "Collaborative agents",
+  "settings.experiments.squad.squads": "Squads",
+  "settings.experiments.squad.workItems": "Work items",
+  "settings.experiments.squad.createTeamAgent": "New collaborative agent",
+  "settings.experiments.squad.createSquad": "New squad",
+  "settings.experiments.squad.createWorkItem": "New work item",
+  "settings.experiments.squad.review.approve": "Approve",
+  "settings.experiments.squad.review.reject": "Reject",
+  "settings.experiments.squad.loopHint":
+    "This stage's path: create a leader and a member collaborative agent → create a squad → create a parent work item and assign it to that squad → the leader wakes and uses its own tools to create sub-items and dispatch them to members → each member runs in its own worktree → approve or reject here → once the whole batch merges, the worktrees and branches are discarded. The “report” and “request review” tools, and the reviewer agent, arrive in P2c and are not available yet.",
+  "settings.experiments.squad.refresh": "Refresh",
+  "settings.experiments.squad.noWorkspace": "No active workspace, so squad data cannot be read",
+  "settings.experiments.squad.serviceUnavailable":
+    "Squad runtime service unavailable: this connection does not expose it (a container or remote host may not have it yet)",
+  "settings.experiments.squad.operationFailed": "The operation failed",
+  "settings.experiments.squad.dispatchDisabled":
+    "The experiment is off: new dispatches are stopped (running work is not interrupted)",
+  "settings.experiments.squad.teamAgents.empty": "No collaborative agents yet",
+  "settings.experiments.squad.squads.empty": "No squads yet",
+  "settings.experiments.squad.workItems.empty": "No work items yet",
+  "settings.experiments.squad.archived": "Archived",
+  "settings.experiments.squad.disabled": "Disabled",
+  "settings.experiments.squad.leader": "Leader",
+  "settings.experiments.squad.membersCount": "{count} members",
+  "settings.experiments.squad.review.title": "Runs awaiting wrap-up",
+  "settings.experiments.squad.review.empty": "No runs awaiting wrap-up",
+  "settings.experiments.squad.review.merged": "Approved: merged into the integration branch",
+  "settings.experiments.squad.review.rejectedKept":
+    "Rejected: the member's worktree is kept until it is fixed and merged",
+  "settings.experiments.squad.review.conflict":
+    "Merge conflict: not merged into the main branch; resolve the conflict first",
+  "settings.experiments.squad.review.branchMissing":
+    "The member branch is missing, so it cannot be merged",
+  "settings.experiments.squad.discard.action": "Discard batch",
+  "settings.experiments.squad.discard.title": "Discard the whole batch “{title}”?",
+  "settings.experiments.squad.discard.description":
+    "This deletes this batch's member branches and its integration branch, and cleans up their worktrees — unmerged changes in those worktrees are lost. The batch is marked as abandoned and nobody will wrap it up. This cannot be undone.",
+  "settings.experiments.squad.discard.confirm": "Discard batch",
+  "settings.experiments.squad.discard.succeeded":
+    "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
+  "settings.experiments.squad.discard.notConfirmed":
+    "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
+  "settings.experiments.squad.agentCreated": "Collaborative agent created",
+  "settings.experiments.squad.squadCreated": "Squad created",
+  "settings.experiments.squad.workItemCreated": "Work item created",
+  "settings.experiments.squad.dialogHint":
+    "This stage asks for the minimum required fields only; the rest arrive in a later version.",
+  "settings.experiments.squad.cancel": "Cancel",
+  "settings.experiments.squad.submit": "Create",
+  "settings.experiments.squad.name": "Name",
+  "settings.experiments.squad.systemPrompt": "System prompt",
+  "settings.experiments.squad.memoryScope": "Memory scope",
+  "settings.experiments.squad.memoryScope.user": "User",
+  "settings.experiments.squad.memoryScope.project": "Project",
+  "settings.experiments.squad.memoryScope.local": "Local",
+  "settings.experiments.squad.leaderAgent": "Leader agent",
+  "settings.experiments.squad.memberAgents": "Member agents (multi-select)",
+  "settings.experiments.squad.memberAgents.none":
+    "No other dispatchable agents; a leader alone is fine (the leader becomes a member automatically).",
+  "settings.experiments.squad.stopCondition": "Stop condition (required)",
+  "settings.experiments.squad.maxRounds": "Max rounds (required)",
+  "settings.experiments.squad.title": "Title",
+  "settings.experiments.squad.body": "Body (optional)",
+  "settings.experiments.squad.assignee": "Assign to",
+  "settings.experiments.squad.assignee.user": "Me",
+  "settings.experiments.squad.parent": "Parent work item (optional)",
+  "settings.experiments.squad.parent.none": "None (top level)",
+  "settings.experiments.squad.runStatus.open": "Dispatched",
+  "settings.experiments.squad.runStatus.produced": "Produced, awaiting review",
+  "settings.experiments.squad.runStatus.rejected": "Rejected, awaiting fixes",
+  "settings.experiments.squad.runStatus.merged": "Merged",
+  "settings.experiments.squad.runStatus.discarded": "Discarded",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

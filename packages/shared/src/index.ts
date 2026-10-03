@@ -224,6 +224,7 @@ export type {
   TaskNotificationPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
+  UpdateUpToDateNotice,
   WSLDistro,
   ZCodeStdioTapDevState,
 } from "./platform.js";

@@ -13,6 +13,7 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
+  resolveWorkspaceKey,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
 
@@ -283,6 +284,59 @@ export {
   isValidCronExpr,
 } from "./session/automationCron.js";
 
+/* ---------------- 小队域（workitem / teams / worktree）从 node 入口可达 ----------------
+   为什么这些必须从这里出去：desktop 只能经 `@zcode/services/node` 与 `.` 两个入口取东西
+   （见 packages/services/package.json#exports），而 workitem/ 域此前**零桌面侧消费**（recon.md C6）。
+   Wave 1 A 的调度器进程要**自己**建 tasks-index 连接（与 AutomationRepo / OffPeakTaskRepo 同法）
+   并跑判定，故 repo 与判定函数也必须可达。
+
+   刻意**不**从 `packages/services/src/index.ts` 出这些：那个入口被 renderer 直接解析，
+   只要有一条运行时依赖触达 `node:*` 就会让整包在挂载前失败（browserSafeRootEntry.test.ts 守这条）。
+   故依赖 `node:crypto`（slug）或 node 侧 git/工作树实现的都只从本文件出；
+   浏览器安全的描述符、错误类、纯类型与 `createSquadRunRepo`（只 `import type` node:sqlite）走根入口。 */
+export {
+  archiveSquadAndTransfer,
+  createSquadRuntime,
+  renderLeaderBriefingPrompt,
+} from "./workitem/squadRuntime.js";
+export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
+/** 派发请求 hub（轮 2 裁定落点 ii）：组合根建**一份**、注入给每个 runtime 并订**一次**。 */
+export { createSquadDispatchRequestHub } from "./workitem/squadDispatchRequests.js";
+export type { SquadDispatchRequest } from "./workitem/squadDispatchRequests.js";
+// 批次编排工厂：desktop 侧（Wave 2 的组合根装配）只能经本入口取它（packages/services/package.json#exports）。
+export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+export { decideWake } from "./workitem/wakeGuard.js";
+export {
+  LEADER_PROTOCOL_TEXT,
+  planDispatch,
+  declaredRunClassFor,
+} from "./workitem/leaderDispatch.js";
+// 派发类别（队长 / 队员 / 单独安排）：host 派发桥按它分流，故类型要与 `planDispatch` 同源出（加法）。
+export type { RunClass } from "./workitem/leaderDispatch.js";
+// 类别**声明**的取值：调用方（host 派发桥）按 `declaredRunClassFor` 算出它再传给 `planDispatch`；
+// 声明值的类型与规划同源出，避免调用方就地抄一份联合（抄一份改了那边忘了这边不会有编译错）。
+export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
+/* §5.7(1)/S13 的**判据**（「该工作项有没有进行中的队长 run」）导出给派发桥用：派发侧拿它做
+   「重复指派合并为同一次」的决定。判据只有这一处实现（`listActive` 上按 workItemId + 队长标记投影），
+   让调用方各自拼一份就是「同一语义两处实现」，两边迟早分叉。**只从 node 入口出**：
+   `squadRunLifecycle` 经 Repo 触到 node:sqlite，从浏览器安全入口（`index.ts`）出值会整包炸。 */
+export { hasInProgressLeaderRun } from "./workitem/squadRunLifecycle.js";
+// 队长行登记的**结论**（`recorded: false` = 本次并入进行中的那次）：派发桥要按它决定「起不起会话」，
+// 故类型与判据同源出（调用方就地抄一份联合，改了那边忘了这边不会有编译错）。
+export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";
+// 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
+export { slugForId } from "./workitem/slug.js";
+export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+export type { WorkItemEvent, WorkItemService } from "./workitem/workItemService.js";
+export type { WorkItemRepo } from "./workitem/workItemRepo.js";
+export type {
+  SquadBatchOrchestrator,
+  SquadRuntime,
+  SquadRuntimeDeps,
+} from "./workitem/squadContracts.js";
+export type { SquadRunLifecycle } from "./workitem/squadRunLifecycle.js";
+
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
 import { IMediaPreviewService } from "./media-preview/mediaPreview.js";
@@ -356,6 +410,20 @@ import { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAda
 import { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 import { createZCodeTaskIndexSyncer } from "./zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
+// 小队运行时（Wave 0b）：装配在本文件的 createLocalServices 里，门禁读数只有一处（同步快照）。
+import {
+  ISquadRuntimeService,
+  createSquadRuntimeService,
+  type SquadWorkspaceTarget,
+} from "./workitem/squadRuntimeService.js";
+import { archiveSquadAndTransfer, createSquadRuntime } from "./workitem/squadRuntime.js";
+import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+import {
+  createSquadDispatchRequestHub,
+  type SquadDispatchRequest,
+} from "./workitem/squadDispatchRequests.js";
+import type { SquadRuntime } from "./workitem/squadContracts.js";
+import type { WorkItemEvent } from "./workitem/workItemService.js";
 import { createBotsService } from "./bots/botsService.js";
 import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge.js";
 import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
@@ -1338,6 +1406,16 @@ export function createLocalServices(options: {
     automation: ZCodeAutomation;
     run: ZCodeAutomationRun;
   }) => Promise<void>;
+  /**
+   * 队长派单（`squad/assign-work-item`）产生的**派发请求**的执行体（**加法**，2026-10-02 第 2 轮裁定）。
+   *
+   * 为什么要有它：指派**不走唤醒规则**（那与「`@` ≠ 指派」及「人发起豁免三道闸」冲突，spec §5.5），
+   * 应走**与「人手动触发」同一条派发路径**、由**常驻侧**执行。服务面把派发请求经 hub 发到组合根，
+   * 组合根转给本回调 —— host 的派发桥据此开 run（与规则到点那条消息共用**同一个**派发实现）。
+   *
+   * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
+   */
+  onSquadDispatchRequested?: (request: SquadDispatchRequest) => Promise<void> | void;
   /** 闲时任务翻 schedulable 后请求宿主立即唤醒 scheduler（desktop host 注入 parentPort 转发）。 */
   onOffPeakSchedulerWakeRequested?: () => void;
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
@@ -2085,6 +2163,10 @@ export function createLocalServices(options: {
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
+  // 小队运行时服务面同样在下方创建（晚于 agent service）：队长的两个派单工具经
+  // CLI 的 SquadPort 发反向请求，落到 zcodeAgentService 的 `squad/*` 分支；
+  // 用前向引用 holder 惰性绑定——那些请求只会发生在服务集合装配完成之后。
+  let squadRuntimeServiceForAgent: ISquadRuntimeService | undefined;
   // desktop-attached-remote 装配不暴露 Off-Peak 工具面（远程不在支持范围）。
   const offPeakToolWiring =
     options?.serviceAuthorityMode === "desktop-attached-remote"
@@ -2101,6 +2183,8 @@ export function createLocalServices(options: {
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
+    // 小队派单工具的落点（`squad/*` 三个协议方法汇总到 ISquadRuntimeService）。
+    resolveSquadRuntimeService: () => squadRuntimeServiceForAgent,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
@@ -2466,6 +2550,150 @@ export function createLocalServices(options: {
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];
+
+  /* ---------------- 小队运行时（Wave 0b 的装配点） ----------------
+     门禁的**唯一读取口**（spec §5.7.6 / 确认 2）：`ISettingService` 只有异步 `get()`，而门禁判定在派发
+     路径上不该变成一条异步 IO 链（每处 `await get()` 会让「谁来判」重新散开成多份判据），
+     故在组合根维护一份**单点刷新**的同步快照：
+
+     - 初值 `false`（**关**）：读设置是异步的，第一次读回来之前一律按「关」处理。
+       **首次加载失败也停在「关」**（初值就是 false）⇒ 这一格是 fail-closed；
+     - 之后**只**由 `settingService` 的变更事件刷新，刷新点只有这一处；
+     - 此后**刷新失败保留上一次结论**（不是「一律收敛到 false」）：这是**刻意**的，不叫「保守值」——
+       设置读取的偶发抖动不该把在途实验整批误关（关掉会停新派发、且不改在途 run，用户看到的是「功能忽然没了」）。
+       代价如实写明：上一次为 `true` 时，刷新失败期间是 **fail-open**（继续按开处理），直到下一次刷新成功。
+       取舍是「抖动静默按开」对「抖动误关在途实验」——选前者，因为后者是用户可见的行为突变。
+
+     为什么不是「每个入口各自 `await settingService.get()`」：那正是三份判据的形状（改一处漏一处），
+     也正是「关掉实验照旧派发」的成因（recon.md B4 现状）。 */
+  let squadsEnabled = false;
+  const squadRuntimeLog = createServiceLogger("squad-runtime");
+  const refreshSquadsEnabled = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        squadsEnabled = settings.experimentalAgentSquadsEnabled === true;
+      },
+      (error: unknown) => {
+        squadRuntimeLog.warn("读取实验开关失败：保留上一次结论（不因抖动误关在途实验）", { error });
+      },
+    );
+  };
+  refreshSquadsEnabled();
+  settingService.onDidUpdate(() => {
+    refreshSquadsEnabled();
+  });
+
+  /* 小队 runtime **不做长期单例、不缓存**（确认 3）：每个使用点带着自己的**目标 workspace** 进来，
+     这里为它现构一个 runtime，方法返回后不再保留它。
+
+     为什么选「不缓存」：缓存要回答「什么时候失效」——workspace 切换、会话迁移、设置变更都会让它变陈旧，
+     而陈旧的表现是**在错的 workspace 上读写**（用户看到「我明明没建过」）。不缓存 ⇒ 无陈旧、无失效逻辑。
+     代价：每次操作多一次构造（含一次 `git symbolic-ref` 子进程）。若这一步实测成为热路径，
+     再改成按 `workspaceKey` 缓存**并显式登记失效面**（并在任务报告里写明依据）——
+     但**任何时候都不得**退化成「取首个 workspace」。 */
+
+  /* 派发请求的**常驻订阅口**（2026-10-02 第 2 轮裁定，落点 ii）：runtime 按目标现构、其事件订阅表在
+     实例内部 ⇒ 常驻侧订不到 ⇒「队长派单只发一条 `workitem.dispatch_requested`」在旧形态下**驱动不出 run**。
+     故把这一格的出口做成**可注入的单例 hub**（本文件建一份 = 「单例」= 组合根这一份），runtime 在
+     `emitWorkItemEvent` 里 publish，这里**订一次**并转给 host 注入的派发执行体。
+     为什么**订在组合根**而不是 host 里再订一次：组合根就活在 host 进程内、且是进程生命周期内唯一的那一份
+     （`createLocalServices` 只被 host 调用，见 desktop/src/host/index.ts）—— 它就是「常驻侧」的装配面。
+     **不静默**：没有执行体（如 remote host / 单测装配）时，请求发出去却没人接也必须能被看见。 */
+  const squadDispatchRequests = createSquadDispatchRequestHub();
+  squadDispatchRequests.subscribe((request: SquadDispatchRequest) => {
+    const dispatchAssigned = options?.onSquadDispatchRequested;
+    if (!dispatchAssigned) {
+      squadRuntimeLog.warn(
+        "小队派发请求已发出，但本组合根没有注入 onSquadDispatchRequested（不会开出 run）",
+        { workItemId: request.workItemId, agentId: request.agentId },
+      );
+      return;
+    }
+    /* 派发执行体是**异步**的（要起 git/会话），而 hub 是同步扇出：用 `void` + catch 收口，
+       异常一律留痕（吞掉的话「派单了但什么都没发生」会变成一条查不到原因的静默路径）。 */
+    void Promise.resolve(dispatchAssigned(request)).catch((error: unknown) =>
+      squadRuntimeLog.error("小队指派派发执行体抛错", { workItemId: request.workItemId, error }),
+    );
+  });
+
+  /**
+   * 批次收尾的**驱动**（spec §5.7.3 / §5.7.4 / §6.3）：子项**全部**终态 ⇒ `advanceAfterChildrenDone`
+   *（它内部完成：串行把每个队员合进集成分支 → 整批 `finalize` 合回主分支 → 抛弃已 `merged` 的工作树
+   * → 删集成分支 → 父项 `done`）。挂点**只有** `runtime.subscribeWorkItemEvents` 这一个事件出口
+   * ——**没有第二处轮询**（轮询会与事件流并发出两套判据）。
+   *
+   * 为什么把**同一个**转发器挂到**每一个新构的 runtime** 上（而不是只挂「某一个」）：
+   * 工作项事件的订阅表在 runtime **实例**内部（`workItemService` 的 emit 派发给本实例的订阅表），
+   * 而本组合根是**按目标现构、不缓存**的 ⇒ 只挂某一个实例的话，其余实例（服务面每次调用都会新构一个）
+   * 发出的 `child_completed` **永远收不到**，批次收尾静默失效。逐实例挂不是「重复挂」：
+   * 重复挂指同一个实例挂两次（同一次事件被处理两遍 ⇒ 第二次 merge 撞「分支不存在」），
+   * 而每个实例各自只挂一次、各自只收到自己发出的事件。
+   *
+   * **不得把 `advanceAfterChildrenDone` 在这里 `await`**：`serializeOnRepo` 的队列键是**仓库根**
+   * 且是模块级的（`squadOrchestrator.ts` 的 `repoChains`），两个实例的队列是**同一条链**。
+   * 本回调是在 `workItemService.transition` 的 emit 里**同步**跑的，而那一次 transition 往往正发生在
+   * 另一条 `advanceAfterChildrenDone`（同仓库，链上）的 task 内部 ⇒ 若在这里 `await`，内层调用会排队
+   * 等外层，外层又等内层，**自等死锁**。故只 `void` + `.catch` 留痕。
+   */
+  const forwardSquadChildCompleted =
+    (runtime: SquadRuntime) =>
+    (event: WorkItemEvent): void => {
+      /* `workitem.dispatch_requested`（队长派单工具改完负责人后发的派发请求）**不在这里处理**：
+         它由注入的 `dispatchRequestHub` 发给常驻侧（见上面 hub 那段与 `SquadRuntimeDeps` 的说明）——
+         实例级订阅表在 runtime 内部、按目标现构，常驻侧订不到，所以这一格的收口不能在实例回调里做。
+         这里直接放行（不是「静默吞掉」：请求已由 hub 交给 host 注入的派发执行体，其结果在那边留痕）。 */
+      if (event.kind !== "workitem.child_completed") return;
+      // 判据（`areAllChildrenTerminal`，按 category）在编排层内部，这里只做转发，
+      // 不在这里再判一次（两处判据迟早分叉，分叉的表现是「批永远收不了尾」）。
+      void createSquadOrchestrator({ runtime })
+        .advanceAfterChildrenDone({
+          // 用 runtime 的**绑定**身份（身份非空白优先，否则路径）：与台账/快照同一处口径。
+          workspaceKey: resolveWorkspaceKey({
+            workspacePath: runtime.boundWorkspace.path,
+            workspaceIdentity: runtime.boundWorkspace.identity,
+          }),
+          parentWorkItemId: event.parentId,
+        })
+        .catch((error: unknown) =>
+          squadRuntimeLog.error("小队批次收尾失败", { parentWorkItemId: event.parentId, error }),
+        );
+    };
+
+  const createSquadRuntimeFor = async (target: SquadWorkspaceTarget): Promise<SquadRuntime> => {
+    // tasks-index 连接由本组合根统一持有；`ensureReady()` 之后再取，拿到的才是走过迁移与回填的那一条。
+    await taskIndexRepo.ensureReady();
+    const runtime = await createSquadRuntime({
+      db: taskIndexRepo.openSharedDatabase(), // 与 taskIndexRepo 是**同一条**连接（recon.md F3）
+      workspacePath: target.path,
+      workspaceIdentity: target.identity,
+      // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
+      readExperimentEnabled: () => squadsEnabled,
+      // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
+      // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
+      dispatchRequestHub: squadDispatchRequests,
+    });
+    runtime.subscribeWorkItemEvents(forwardSquadChildCompleted(runtime));
+    return runtime;
+  };
+  const squadRuntimeService = createSquadRuntimeService({
+    createRuntime: createSquadRuntimeFor,
+    // 呈现与门禁**共用同一份快照**（就是上面那个 `squadsEnabled` 变量）：不再各自 `await settingService.get()`，
+    // 两次独立读取会互相漂移（呈现说「开」而门禁说「关」），表现为「入口看得见、点了没反应」。
+    // 门禁本体在服务侧的唯一判据（读的也是这份值）。
+    readExperimentEnabled: async () => squadsEnabled,
+    // 归档转交的组合在 squadRuntime.ts（它要用 workItemRepo，而描述符那一侧必须浏览器安全）。
+    archiveSquadAndTransfer: async (target, id) => {
+      await archiveSquadAndTransfer(await createSquadRuntimeFor(target), id);
+    },
+    // 编排器工厂由这里注入：描述符模块必须浏览器安全，值导入 squadOrchestrator 会把 node 侧依赖带进去。
+    createOrchestrator: createSquadOrchestrator,
+    // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
+    logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
+  });
+  // 回写前向引用：zcodeAgentService 的 `squad/*` 三个分支经它拿到服务面
+  //（队长工具的每次调用都会走到这里；注册缺失时那条分支回 -32601，见 squadProtocolMethods.ts）。
+  squadRuntimeServiceForAgent = squadRuntimeService;
+
   const services = new ServiceCollection()
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
@@ -2664,7 +2892,9 @@ export function createLocalServices(options: {
   providerProvisioningTriggerDisposers.set(services, providerProvisioningDisposers);
   services
     .register(IProviderSettingsService, providerRuntime.providerSettings)
-    .register(IModelSelectionService, providerRuntime.modelSelection);
+    .register(IModelSelectionService, providerRuntime.modelSelection)
+    // 小队运行时：UI / host / 工具三处都经它取数或触发派发，门禁判据只有 runtime 里那一处。
+    .register(ISquadRuntimeService, squadRuntimeService);
   if (
     shouldRegisterProviderProvisioningTarget({
       serviceAuthorityMode: options.serviceAuthorityMode,
