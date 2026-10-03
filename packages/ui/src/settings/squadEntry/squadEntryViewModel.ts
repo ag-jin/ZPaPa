@@ -1,10 +1,13 @@
-import type { Squad, TeamAgent, WorkItem } from "@zcode/shared";
+import { isTerminalWorkItemStatus, type Squad, type TeamAgent, type WorkItem } from "@zcode/shared";
 import {
   SQUAD_DISPATCH_DISABLED_CODE,
+  isSquadBatchRoot,
+  type ISquadRuntimeServiceShape,
   type ReviewOutcome,
   type SquadRunRecord,
   type SquadRunStatus,
   type SquadSnapshot,
+  type SquadWorkspaceTarget,
 } from "@zcode/services";
 
 /* 最小入口视图的**纯逻辑**（不 import React、不 import UI 原语）。
@@ -197,4 +200,93 @@ export function squadEntryErrorFeedback(error: unknown): SquadEntryFeedback {
 /** 取数通路缺失（`SquadRuntimeServiceUnavailableError`）的单列提示：它跟普通操作失败不是一类事。 */
 export function squadServiceUnavailableFeedback(): SquadEntryFeedback {
   return { tone: "error", messageId: "settings.experiments.squad.serviceUnavailable" };
+}
+
+// ---------- 整批放弃（spec §6.3「整批可整体放弃」）----------
+
+/**
+ * 哪些工作项上给出「**放弃整批**」入口（spec §6.3）。
+ *
+ * 三条同时成立才给：
+ * ① 它是一支小队批次的**根** —— 判据用服务面导出的 `isSquadBatchRoot`（与重驱枚举**同一份定义**）；
+ *    这里**不重写**「什么是批次根」，否则「界面给得出、服务层不认」这种漂移不会报错。
+ * ② **尚未终态** —— 已结算的批没有可弃之物，服务层会响亮拒绝（§5.7.4）；界面不该先给一个必然失败的按钮。
+ * ③ 本批**确实开过队员 run** —— 入口是**破坏性**的（会删分支、清工作树），所以不给空批入口：
+ *    对着一条没有任何分支/工作树的批次说「会删掉队员分支与集成分支」会让确认文案本身变成假话。
+ *    （服务层对空批的放弃**是**接受的——那等于取消一条还没派过单的批；界面只是不把它做成按钮。）
+ */
+export function squadDiscardableWorkItemIds(snapshot: SquadSnapshot): Set<string> {
+  const runParentWorkItemIds = snapshot.runs.map((run) => run.parentWorkItemId);
+  const ids = new Set<string>();
+  for (const workItem of snapshot.workItems) {
+    if (isTerminalWorkItemStatus(workItem.status)) continue;
+    if (!isSquadBatchRoot({ workItem, runParentWorkItemIds })) continue;
+    if (!runParentWorkItemIds.includes(workItem.id)) continue;
+    ids.add(workItem.id);
+  }
+  return ids;
+}
+
+/**
+ * 「放弃整批」的**二次确认**状态（纯逻辑，可被 node:test 钉住）。
+ *
+ * 为什么把这一步抽出来而不是让组件自己 `useState<string | null>`：本动作**破坏且不可撤销**
+ * （删分支 + 清工作树），"未确认就不执行"是它的**正确性**要求，不是样式细节 ——
+ * 写成纯函数之后，「点按钮只进入待确认态」「只有确认能产出可执行目标」两件事都能被断言，
+ * 而不是只能靠读 JSX 相信它。
+ */
+export type SquadDiscardConfirmState = { readonly pendingWorkItemId: string | null };
+
+export const SQUAD_DISCARD_CONFIRM_IDLE: SquadDiscardConfirmState = { pendingWorkItemId: null };
+
+/** 用户点「放弃整批」⇒ **只进入待确认态**：本函数拿不到任何服务，结构上不可能执行任何东西。 */
+export function requestSquadDiscard(workItemId: string): SquadDiscardConfirmState {
+  return { pendingWorkItemId: workItemId };
+}
+
+/** 取消 ⇒ 回到空闲（不执行）。 */
+export function cancelSquadDiscard(): SquadDiscardConfirmState {
+  return SQUAD_DISCARD_CONFIRM_IDLE;
+}
+
+/**
+ * 确认 ⇒ 给出**唯一**可执行的目标。
+ *
+ * 返回值与状态分开（`next` 与 `workItemId`）：先把状态收回到空闲、再拿目标去执行，
+ * 于是「对话框还开着时重复点确认」不会执行第二次（第二次的输入是空闲态 ⇒ 目标为 `null`）。
+ */
+export function confirmSquadDiscard(state: SquadDiscardConfirmState): {
+  next: SquadDiscardConfirmState;
+  workItemId: string | null;
+} {
+  return { next: SQUAD_DISCARD_CONFIRM_IDLE, workItemId: state.pendingWorkItemId };
+}
+
+/**
+ * 执行「放弃整批」并把结果翻成**用户可见**的提示（成功/失败都有归宿，不静默吞掉）。
+ *
+ * 这个函数是 UI 侧**唯一**会调到 `discardBatch` 的地方（组件里连这个名字都不出现，见
+ * `squadEntryView.test.ts` 的结构守卫）：于是「执行必须经过确认」这条约束有一个**单一入口**可守 ——
+ * 未确认（`workItemId === null`）时**一级都不执行**，并回一条明说「没有删除任何东西」的提示。
+ *
+ * 为什么未确认也算「一条提示」而不是直接抛：走到这里说明调用方接线错了，但错误的代价可能是
+ * 一次不可撤销的删除 —— 宁可给一条「没执行」的提示（用户能看见，代码走查也能看见），
+ * 也绝不把它变成一次误删。
+ */
+export async function executeSquadDiscard(input: {
+  service: Pick<ISquadRuntimeServiceShape, "discardBatch">;
+  target: SquadWorkspaceTarget;
+  decision: ReturnType<typeof confirmSquadDiscard>;
+}): Promise<SquadEntryFeedback> {
+  if (input.decision.workItemId === null) {
+    return { tone: "warning", messageId: "settings.experiments.squad.discard.notConfirmed" };
+  }
+  try {
+    // 目标显式（确认 3：runtime 按目标现构、不缓存，没有隐式默认 workspace）。
+    await input.service.discardBatch(input.target, { parentWorkItemId: input.decision.workItemId });
+    return { tone: "success", messageId: "settings.experiments.squad.discard.succeeded" };
+  } catch (error) {
+    // 失败必须能读出来：稳定码翻译（门禁/未接上）+ 未知失败带**原始细节**，见 squadEntryErrorFeedback。
+    return squadEntryErrorFeedback(error);
+  }
 }

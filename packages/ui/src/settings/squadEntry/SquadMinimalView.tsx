@@ -9,6 +9,7 @@ import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { SquadDialog, TeamAgentDialog, WorkItemDialog } from "./SquadCreateDialogs.js";
+import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
 import {
   SquadList,
   SquadRunList,
@@ -21,8 +22,14 @@ import {
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
 import {
+  SQUAD_DISCARD_CONFIRM_IDLE,
+  cancelSquadDiscard,
+  confirmSquadDiscard,
   dispatchableTeamAgents,
+  executeSquadDiscard,
+  requestSquadDiscard,
   reviewOutcomeFeedback,
+  squadDiscardableWorkItemIds,
   squadEntryErrorFeedback,
   squadEntrySectionState,
   squadMemberCandidateAgents,
@@ -61,6 +68,9 @@ export function SquadMinimalView() {
   const [loadFailure, setLoadFailure] = useState<SquadEntryFeedback | null>(null);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"teamAgent" | "squad" | "workItem" | null>(null);
+  /** 「放弃整批」的**二次确认**状态（纯逻辑在视图模型：点按钮只进入待确认态，执行只发生在确认路径）。 */
+  const [discardConfirm, setDiscardConfirm] = useState(SQUAD_DISCARD_CONFIRM_IDLE);
+  const [discardingId, setDiscardingId] = useState<string | null>(null);
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
@@ -103,6 +113,16 @@ export function SquadMinimalView() {
   }, [reload]);
 
   const sections = snapshot ? squadEntrySectionState(snapshot) : null;
+  /** 给了入口的工作项（破坏性动作的判据在视图模型里，可被 node:test 钉住）。 */
+  const discardableIds = useMemo(
+    () => (snapshot ? squadDiscardableWorkItemIds(snapshot) : new Set<string>()),
+    [snapshot],
+  );
+  /** 待确认的那一条：取不到（快照刚变过）就不渲染对话框 —— 绝不用一个「大概的那条」去确认删除。 */
+  const discardTargetItem =
+    snapshot && discardConfirm.pendingWorkItemId
+      ? (snapshot.workItems.find((item) => item.id === discardConfirm.pendingWorkItemId) ?? null)
+      : null;
 
   /** 三个「新建」共用一次提交：成功 ⇒ 提示 + 重载；失败 ⇒ 按稳定码翻译（含门禁拒绝）。 */
   const create = useCallback(
@@ -148,6 +168,41 @@ export function SquadMinimalView() {
     },
     [notify, reload, services, target],
   );
+
+  /**
+   * 「放弃整批」的**唯一执行点**（只在确认对话框的确认动作里被调到）。
+   *
+   * 为什么执行目标必须来自 `confirmSquadDiscard` 的返回值：那是本视图里**唯一**能产出「可执行的那一条」
+   * 的地方，`workItemId` 为 `null`（= 没确认过）时下面直接返回 —— 于是「未确认就执行」在接线层面
+   * 也没法凑出来（组件里不出现 `discardBatch`；服务调用只在 `executeSquadDiscard` 一处）。
+   *
+   * 状态与执行分离：先把待确认态收回到空闲（对话框随之关闭）再执行，所以重复点确认不会执行第二次。
+   */
+  const runDiscard = useCallback(async () => {
+    const decision = confirmSquadDiscard(discardConfirm);
+    setDiscardConfirm(decision.next);
+    if (!target || decision.workItemId === null) return;
+    setDiscardingId(decision.workItemId);
+    try {
+      // 成功与失败都有可见归宿：executeSquadDiscard 把两种结果都翻成提示（失败带原始细节，不吞错）。
+      notify(
+        await executeSquadDiscard({
+          service: resolveSquadRuntimeService(services),
+          target,
+          decision,
+        }),
+      );
+      await reload();
+    } catch (error) {
+      // 取数通路缺失（服务没接上）在这里冒出：不吞，翻成可见提示。
+      logger.warn("[SquadMinimalView] 放弃整批失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      notify(squadEntryErrorFeedback(error));
+    } finally {
+      setDiscardingId(null);
+    }
+  }, [discardConfirm, notify, reload, services, target]);
 
   return (
     <SettingsGroupCard>
@@ -231,7 +286,16 @@ export function SquadMinimalView() {
             }
             detail={
               sections.workItems.empty ? undefined : (
-                <SquadWorkItemList workItems={sections.workItems.items} snapshot={snapshot} />
+                <SquadWorkItemList
+                  workItems={sections.workItems.items}
+                  snapshot={snapshot}
+                  discardableIds={discardableIds}
+                  busyWorkItemId={discardingId}
+                  onDiscard={(workItemId) => {
+                    // **只进入待确认态**：真正的删除必须经对话框确认（不得一键即毁）。
+                    setDiscardConfirm(requestSquadDiscard(workItemId));
+                  }}
+                />
               )
             }
           />
@@ -255,6 +319,19 @@ export function SquadMinimalView() {
             }
           />
         </>
+      ) : null}
+
+      {/* 二次确认：**只在确认后**才执行放弃（执行目标由 confirmSquadDiscard 产出）。
+          文案必须说清后果（删哪些分支、工作树会被清、该批判为什么）。 */}
+      {discardTargetItem ? (
+        <SquadDiscardDialog
+          workItem={discardTargetItem}
+          pending={discardingId !== null}
+          onCancel={() => setDiscardConfirm(cancelSquadDiscard())}
+          onConfirm={() => {
+            void runDiscard();
+          }}
+        />
       ) : null}
 
       {snapshot && target && dialog === "teamAgent" ? (

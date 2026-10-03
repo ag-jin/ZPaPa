@@ -358,6 +358,10 @@ export {
   ISquadRuntimeService,
   SQUAD_DISPATCH_DISABLED_CODE,
   SquadDispatchDisabledError,
+  /* 「本工作项是不是一支小队批次的根」的**唯一判据**（纯函数、浏览器安全）：服务面的重驱枚举与
+     最小视图的「放弃整批」入口共用它 —— UI 必须能用**同一份定义**判断哪些工作项给破坏性入口，
+     否则「界面给得出、服务层不认」这类漂移不会报错。 */
+  isSquadBatchRoot,
 } from "./workitem/squadRuntimeService.js";
 /** 与描述符同名的接口类型换个名字导出：UI 侧要能单独引用**类型**（`ISquadRuntimeService` 这个名字
     在本入口已经是值），与 IZCodeTaskService 等既有约定的处理方式一致。 */

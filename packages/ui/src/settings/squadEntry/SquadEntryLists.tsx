@@ -78,9 +78,17 @@ export function SquadList({ squads, snapshot }: { squads: Squad[]; snapshot: Squ
 export function SquadWorkItemList({
   workItems,
   snapshot,
+  discardableIds,
+  busyWorkItemId,
+  onDiscard,
 }: {
   workItems: WorkItem[];
   snapshot: SquadSnapshot;
+  /** 「放弃整批」入口出现的工作项（判据见 `squadDiscardableWorkItemIds`：只有**破坏性**动作才需要判据）。 */
+  discardableIds: ReadonlySet<string>;
+  busyWorkItemId: string | null;
+  /** 点「放弃整批」⇒ **只进入待确认态**（本层拿不到服务，结构上不可能直接执行）。 */
+  onDiscard: (workItemId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   return (
@@ -95,10 +103,22 @@ export function SquadWorkItemList({
             <span className="min-w-0 break-words text-ui-base text-foreground">
               {workItem.title}
             </span>
-            <span className="shrink-0 text-ui-xs text-foreground-subtle">
-              {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
-              {assigneeName ??
-                intl.formatMessage({ id: "settings.experiments.squad.assignee.user" })}
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="text-ui-xs text-foreground-subtle">
+                {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
+                {assigneeName ??
+                  intl.formatMessage({ id: "settings.experiments.squad.assignee.user" })}
+              </span>
+              {discardableIds.has(workItem.id) ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyWorkItemId === workItem.id}
+                  onClick={() => onDiscard(workItem.id)}
+                >
+                  {intl.formatMessage({ id: "settings.experiments.squad.discard.action" })}
+                </Button>
+              ) : null}
             </span>
           </li>
         );

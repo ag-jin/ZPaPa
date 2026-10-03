@@ -35,6 +35,7 @@ function gitAt(
 
 async function setup(options: { baseBranch?: string } = {}): Promise<{
   repoRoot: string;
+  db: DatabaseSync;
   runtime: SquadRuntime;
   orchestrator: ReturnType<typeof createSquadOrchestrator>;
 }> {
@@ -48,7 +49,12 @@ async function setup(options: { baseBranch?: string } = {}): Promise<{
     baseBranch: options.baseBranch,
     readExperimentEnabled: () => true,
   });
-  return { repoRoot, runtime, orchestrator: createSquadOrchestrator({ runtime }) };
+  return {
+    repoRoot,
+    db,
+    runtime,
+    orchestrator: createSquadOrchestrator({ runtime }),
+  };
 }
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
@@ -609,6 +615,117 @@ test("整批放弃：父项停在 in_progress 也能被取消（读库断言，�
     "父项确实变成 cancelled（不是停在 in_progress）",
   );
   assert.equal(runStatus(f, "r-a"), "discarded");
+});
+
+// ── discardBatch 的前置闸：**已结算的批不得再被「放弃」**（§5.7.4 的逆否）───────────────
+//
+// 逆推：§5.7.4 说「未合回的批不得被当已落地」；把这句话反过来就是「**已落地的批不得被当放弃**」。
+// §6.3 又只把「放弃」许给**还没合回主分支**的批 ⇒ 因此「已合回后放弃」**必须**被拒绝，且**必须**
+// 拒绝在任何不可逆动作（删分支 / 清工作树）之前 —— 否则一次注定失败的调用已经造成了破坏。
+test("整批放弃：批**已合回主分支**（父项 done）⇒ 响亮拒绝，且一个字节都没动", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  const a = await produce(f, {
+    runId: "r-a",
+    childId,
+    parentId: parent.id,
+    agentId: "ta-a",
+    file: "a.txt",
+    content: "A\n",
+  });
+  f.runtime.workItemService.transition(childId, "done", "in_review");
+  // 正常收尾：整批合回 main、父项 done（这正是「已落地」的形状）。
+  await f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id });
+  assert.equal(itemStatus(f, parent.id), "done", "夹具前提：这条批已经落地");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n");
+
+  await assert.rejects(
+    f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    // **必须**是「已合回主分支」这个理由（不是随便一个失败）：把闸改成静默返回时本断言必红。
+    /已经合回主分支/,
+  );
+
+  // 实体状态断言：**已落地的成果仍在主分支上**（不许静默丢弃 / 也不许把它标成放弃）。
+  assert.equal(itemStatus(f, parent.id), "done", "父项仍是 done（没有被改写成 cancelled）");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "已落地的成果一个字节都没动");
+  assert.equal(runStatus(f, "r-a"), "discarded", "该 run 的终态仍是收尾时的 discarded");
+  assert.equal(await branchExists(f, a.branch), false, "收尾后就该没有队员分支（未被复活）");
+});
+
+test("整批放弃：重复放弃（父项已 cancelled）⇒ 响亮拒绝，不是静默成功", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  await produce(f, {
+    runId: "r-a",
+    childId,
+    parentId: parent.id,
+    agentId: "ta-a",
+    file: "a.txt",
+    content: "A\n",
+  });
+  await f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id });
+  assert.equal(itemStatus(f, parent.id), "cancelled");
+
+  // 第二次：放弃是终态动作。给一个「假成功」会让用户以为他曾放弃的是一条别的批 —— 故响亮拒绝。
+  await assert.rejects(
+    f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /已是终态/,
+  );
+  assert.equal(itemStatus(f, parent.id), "cancelled");
+});
+
+test("整批放弃：集成分支**已合回 base**（父项却未收口）⇒ 响亮拒绝，不把已落地的成果标成放弃", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  await produce(f, {
+    runId: "r-a",
+    childId,
+    parentId: parent.id,
+    agentId: "ta-a",
+    file: "a.txt",
+    content: "A\n",
+  });
+  const integration = `squad/integration/${slugOf(f, childId)}`;
+  // 把队员合进集成分支（父项仍停在 in_review —— 收尾的第一步）。
+  await f.runtime.lifecycle.reviewMemberRun({ runId: "r-a", verdict: "approved" });
+  // 手工做**收尾的最后一步之前**最危险的那件事：整批合回 base（成果此刻已在主分支上）。
+  const landed = await f.runtime.integrationMerger.finalize({ integration, target: "main" });
+  assert.equal(landed.ok, true, "夹具前提：集成分支已合回 main");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n");
+  assert.equal(itemStatus(f, parent.id), "in_review", "夹具前提：父项还没收口（异常半程）");
+
+  await assert.rejects(
+    f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /已经合回 main/,
+  );
+
+  assert.equal(itemStatus(f, parent.id), "in_review", "父项没有被标成放弃");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "已在主分支上的成果没被动过");
+});
+
+test("整批放弃：父工作项不存在 / 已归档 ⇒ 响亮拒绝（不静默返回）", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  await produce(f, {
+    runId: "r-a",
+    childId,
+    parentId: parent.id,
+    agentId: "ta-a",
+    file: "a.txt",
+    content: "A\n",
+  });
+
+  await assert.rejects(
+    f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: "wi-does-not-exist" }),
+    /不存在或已归档/,
+  );
+  // 归档（`get` 对归档项返回 null ⇒ 与「不存在」同一条闸）：先归档再放弃必须同样响亮。
+  f.db.prepare("UPDATE work_items SET archived_at = ? WHERE id = ?").run(1, parent.id);
+  await assert.rejects(
+    f.orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /不存在或已归档/,
+  );
+  assert.equal(runStatus(f, "r-a"), "produced", "队员的活仍在（拒绝发生在任何破坏之前）");
 });
 
 // ── 契约本体：一批只能落到一条集成分支（Important-2）──────────────────────────

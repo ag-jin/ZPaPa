@@ -4385,6 +4385,15 @@ const enUS: Record<string, string> = {
     "Merge conflict: not merged into the main branch; resolve the conflict first",
   "settings.experiments.squad.review.branchMissing":
     "The member branch is missing, so it cannot be merged",
+  "settings.experiments.squad.discard.action": "Discard batch",
+  "settings.experiments.squad.discard.title": "Discard the whole batch “{title}”?",
+  "settings.experiments.squad.discard.description":
+    "This deletes this batch's member branches and its integration branch, and cleans up their worktrees — unmerged changes in those worktrees are lost. The batch is marked as abandoned and nobody will wrap it up. This cannot be undone.",
+  "settings.experiments.squad.discard.confirm": "Discard batch",
+  "settings.experiments.squad.discard.succeeded":
+    "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
+  "settings.experiments.squad.discard.notConfirmed":
+    "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
   "settings.experiments.squad.agentCreated": "Collaborative agent created",
   "settings.experiments.squad.squadCreated": "Squad created",
   "settings.experiments.squad.workItemCreated": "Work item created",

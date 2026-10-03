@@ -4105,6 +4105,14 @@ const zhCN: Record<string, string> = {
     "已打回：队员的工作树保留到修好并合并之后再删",
   "settings.experiments.squad.review.conflict": "合并冲突：没有合入主分支，需要先解决冲突",
   "settings.experiments.squad.review.branchMissing": "队员分支不存在，无法合并",
+  "settings.experiments.squad.discard.action": "放弃整批",
+  "settings.experiments.squad.discard.title": "放弃整批「{title}」？",
+  "settings.experiments.squad.discard.description":
+    "这会删除这一批的队员分支与集成分支，并清理它们的工作树 —— 工作树里还没合并的改动会一并消失；该批会被判为「已放弃」，不会再有人为它收尾。此操作不可撤销。",
+  "settings.experiments.squad.discard.confirm": "放弃整批",
+  "settings.experiments.squad.discard.succeeded":
+    "已放弃整批：队员分支与集成分支已删除、工作树已清理，该批判为放弃",
+  "settings.experiments.squad.discard.notConfirmed": "未确认，未执行放弃：没有删除任何分支或工作树",
   "settings.experiments.squad.agentCreated": "已创建协作智能体",
   "settings.experiments.squad.squadCreated": "已创建小队",
   "settings.experiments.squad.workItemCreated": "已创建工作项",

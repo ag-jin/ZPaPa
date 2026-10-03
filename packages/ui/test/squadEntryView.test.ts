@@ -10,6 +10,7 @@ import {
   type ISquadRuntimeServiceShape,
   type SquadRunRecord,
   type SquadSnapshot,
+  type SquadWorkspaceTarget,
 } from "@zcode/services";
 import type { IServiceAccessor } from "@zcode/services";
 import {
@@ -18,11 +19,17 @@ import {
   squadWorkspaceTarget,
 } from "../src/settings/squadEntry/squadRuntimeAccess.js";
 import {
+  SQUAD_DISCARD_CONFIRM_IDLE,
   SQUAD_RUN_STATUS_MESSAGE_IDS,
+  cancelSquadDiscard,
+  confirmSquadDiscard,
+  executeSquadDiscard,
   parseAssigneeValue,
+  requestSquadDiscard,
   resolveAssigneeName,
   resolveTeamAgentName,
   reviewOutcomeFeedback,
+  squadDiscardableWorkItemIds,
   squadEntryErrorFeedback,
   squadEntrySectionState,
   workItemAssigneeOptions,
@@ -305,6 +312,142 @@ test("错误提示：未知失败带原始细节，不吞错", () => {
     detail: "ECONNREFUSED",
   });
   assert.equal(squadEntryErrorFeedback("plain failure").detail, "plain failure");
+});
+
+// ---------- 整批放弃（§6.3「整批可整体放弃」）：入口判据 + 二次确认 ----------
+
+/** 只实现 `discardBatch` 的替身：调用次数与入参都留痕 —— 「未确认 ⇒ 零调用」这条只能靠它证明。 */
+function discardSpy(outcome: "ok" | "boom" = "ok") {
+  const calls: Array<{ target: SquadWorkspaceTarget; parentWorkItemId: string }> = [];
+  const service: Pick<ISquadRuntimeServiceShape, "discardBatch"> = {
+    async discardBatch(target, input) {
+      calls.push({ target, parentWorkItemId: input.parentWorkItemId });
+      if (outcome === "boom") throw new Error("git 炸了");
+    },
+  };
+  return { calls, service };
+}
+
+const DISCARD_TARGET: SquadWorkspaceTarget = { path: "/w/a", identity: "id" };
+
+// §6.3 只承诺「整批可整体放弃」，而入口是**破坏性**的 ⇒ 判据必须严：
+// ① 批次根（与服务面重驱**同一份定义** `isSquadBatchRoot`）；② 未终态（已结算的批没有可弃之物）；
+// ③ 本批确实开过队员 run（否则「会删掉队员分支与集成分支」这句确认文案本身是假话）。
+test("放弃整批入口：只给「未终态 + 批次根 + 有队员 run」的工作项", () => {
+  const runForW1 = aRun; // parentWorkItemId === "w1"
+  const runForW3 = { ...aRun, runId: "r3", parentWorkItemId: "w3" };
+  const snapshot = snapshotWith({
+    workItems: [
+      aWorkItem, // w1：指派给小队 + 有 run + 未终态 ⇒ 给
+      { ...aWorkItem, id: "w3", status: "done" }, // 已终态（已结算）⇒ 不给
+      { ...aWorkItem, id: "w4" }, // 空批（指派给小队但没有任何 run）⇒ 界面不给（无分支/工作树可删）
+      {
+        ...aWorkItem,
+        id: "w5",
+        assignee: { type: "user", id: "user" }, // 非批次根（既没指派给小队、也没 run）⇒ 不给
+      },
+    ],
+    runs: [runForW1, runForW3],
+  });
+  assert.deepEqual([...squadDiscardableWorkItemIds(snapshot)], ["w1"]);
+});
+
+// UI：**未确认时不得执行**（不得一键即毁）。这条用替身证明「一次调用都没有」，
+// 而不是读 JSX 相信它 —— 破坏性动作的「没发生」必须是可断言的。
+test("放弃整批：未确认 ⇒ 一次都不执行（零调用），并给一条「没有删除任何东西」的提示", async () => {
+  const spy = discardSpy();
+  const feedback = await executeSquadDiscard({
+    service: spy.service,
+    target: DISCARD_TARGET,
+    decision: confirmSquadDiscard(SQUAD_DISCARD_CONFIRM_IDLE),
+  });
+  assert.equal(spy.calls.length, 0, "未确认 ⇒ 不得调用 discardBatch（不得一键即毁）");
+  assert.deepEqual(feedback, {
+    tone: "warning",
+    messageId: "settings.experiments.squad.discard.notConfirmed",
+  });
+});
+
+// UI：确认后 ⇒ 执行，且结果可见。
+test("放弃整批：确认后执行一次（带显式目标），成功有成功提示", async () => {
+  const spy = discardSpy();
+  const pending = requestSquadDiscard("w1");
+  assert.equal(pending.pendingWorkItemId, "w1", "点按钮只进入待确认态");
+  const decision = confirmSquadDiscard(pending);
+  assert.deepEqual(decision, { next: SQUAD_DISCARD_CONFIRM_IDLE, workItemId: "w1" });
+  // 重复确认：第二次的输入已是空闲态 ⇒ 目标为 null（不会执行第二次）。
+  assert.equal(confirmSquadDiscard(decision.next).workItemId, null);
+
+  const feedback = await executeSquadDiscard({
+    service: spy.service,
+    target: DISCARD_TARGET,
+    decision,
+  });
+  assert.deepEqual(spy.calls, [{ target: DISCARD_TARGET, parentWorkItemId: "w1" }]);
+  assert.deepEqual(feedback, {
+    tone: "success",
+    messageId: "settings.experiments.squad.discard.succeeded",
+  });
+});
+
+test("放弃整批：取消 ⇒ 回到空闲，取消之后（即使再确认）也不执行", async () => {
+  const spy = discardSpy();
+  const cancelled = cancelSquadDiscard();
+  assert.equal(cancelled.pendingWorkItemId, null);
+  const feedback = await executeSquadDiscard({
+    service: spy.service,
+    target: DISCARD_TARGET,
+    decision: confirmSquadDiscard(cancelled),
+  });
+  assert.equal(spy.calls.length, 0);
+  assert.equal(feedback.messageId, "settings.experiments.squad.discard.notConfirmed");
+});
+
+// 失败必须**能读出来**：不稳定码翻译 + 未知失败带原始细节（不吞错）。
+test("放弃整批：失败可见（带原始细节，不吞错）", async () => {
+  const spy = discardSpy("boom");
+  const feedback = await executeSquadDiscard({
+    service: spy.service,
+    target: DISCARD_TARGET,
+    decision: confirmSquadDiscard(requestSquadDiscard("w1")),
+  });
+  assert.equal(spy.calls.length, 1, "确认后的失败也要真的调过一次服务");
+  assert.deepEqual(feedback, {
+    tone: "error",
+    messageId: "settings.experiments.squad.operationFailed",
+    detail: "git 炸了",
+  });
+});
+
+/* 组件层的**结构守卫**：ui 包没有渲染测试设施，而「二次确认」这条正确性要求必须被钉住 ——
+   于是用两条**结构**断言（这个仓已有先例：上面 renderer accessor 那条就是读源码）：
+   ① 组件里**不出现** `discardBatch(` —— 执行只能经 `executeSquadDiscard`（唯一入口），
+      于是「点按钮直接执行」这种改法连写都写不出来（写出来本用例红）；
+   ② 「点按钮」只能进入待确认态（`requestSquadDiscard`），且必须渲染确认对话框。
+   变异验证：把确认对话框删掉、让按钮直接执行 ⇒ 本用例必红（见报告）。 */
+const SQUAD_ENTRY_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/settings/squadEntry",
+);
+
+test("组件层：执行只经 executeSquadDiscard（组件里不出现 discardBatch 调用）+ 必须经确认对话框", () => {
+  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
+  assert.ok(
+    !/discardBatch\s*\(/.test(view),
+    "组件不得直接调用 discardBatch：执行只能经 executeSquadDiscard（未确认就执行必须写不出来）",
+  );
+  assert.ok(view.includes("executeSquadDiscard("), "执行必须经视图模型的唯一入口");
+  assert.ok(view.includes("requestSquadDiscard("), "点「放弃整批」只能进入待确认态");
+  assert.ok(view.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
+
+  // 确认对话框必须**说清后果**（用到那条描述文案）并且是 destructive 变体。
+  const dialog = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadDiscardDialog.tsx"), "utf8");
+  assert.ok(
+    dialog.includes("settings.experiments.squad.discard.description"),
+    "确认文案必须说明后果（删哪些分支、工作树会被清、该批判为放弃）",
+  );
+  assert.ok(dialog.includes('variant="destructive"'), "破坏性动作必须是 destructive 变体");
+  assert.ok(!/discardBatch\s*\(/.test(dialog), "对话框只回意图，不执行任何服务调用");
 });
 
 // ---------- 取数通路（renderer 侧：只做加法）----------

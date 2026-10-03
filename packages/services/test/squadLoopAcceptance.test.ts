@@ -1359,12 +1359,16 @@ test("重驱失败响亮：子项全终态但队员 run 停在 open ⇒ failures
   );
 });
 
-// 缺陷 2（「整批放弃」未接线）：spec 的「抛弃」含**用户显式取消整批**这条语义，实体是
-// `SquadBatchOrchestrator.discardBatch`（`squadOrchestrator.ts:388`）。但全仓**没有任何生产调用方**：
+// 缺陷 2（「整批放弃」未接线）——**已修复**（本轮任务：把入口放进最小视图，选项 A）。
+//
+// 原现场：spec 的「抛弃」含**用户显式取消整批**这条语义，实体是
+// `SquadBatchOrchestrator.discardBatch`（`squadOrchestrator.ts`），但全仓**没有任何生产调用方** ——
 // 它既不在 `ISquadRuntimeService` 上（服务面不可达），也不在 host / 协议 handler 里（grep 只命中测试）。
-// 故用户目前**无法**放弃一个还没合并的批（被打回/已产出但整批不要了）—— 只有「合并后自动抛弃」可达。
-// 本用例给出两条证据：① 结构证据（服务面没有这个方法）；② 机制证据（经真实编排器调用它是成立的）。
-test("缺陷2. 整批放弃机制成立，但未接到服务面/组合根（无生产调用方）", async () => {
+// 于是 §6.3 承诺的「整批可整体放弃」**用户用不了**（只有「合并后自动抛弃」可达）。
+//
+// 修复后本用例的断言方向**反转**：从「结构上没有这个方法」变成「经服务面可达、且真把整批收干净」。
+// 仍读**实体状态**（sqlite / git ref / 工作树目录 / 主分支内容），不看返回字符串。
+test("缺陷2（已修复）. 整批放弃经服务面可达：未合回的批被整批收干净（分支 / 工作树 / 集成 / 父项）", async () => {
   const f = await setup({ forwardChildCompleted: false });
   const { squad, memberA, memberB } = await makeSquad(f);
   const runtime = await f.runtime();
@@ -1399,13 +1403,13 @@ test("缺陷2. 整批放弃机制成立，但未接到服务面/组合根（无�
   await f.service.reviewMemberRun(f.target, { runId: "r-b", verdict: "rejected" });
   const shaBefore = await mainSha(f);
 
-  // ① 结构证据：服务面（UI 与协议 handler 的唯一入口）不暴露 discardBatch。
-  assert.equal("discardBatch" in f.service, false, "ISquadRuntimeService 不暴露 discardBatch");
+  // ① 结构证据：服务面（UI 与协议 handler 的**唯一**入口）现在暴露它 —— 用户够得到。
+  assert.equal("discardBatch" in f.service, true, "ISquadRuntimeService 必须暴露 discardBatch");
 
-  // ② 机制证据：经**真实编排器**调用它是成立的（语义没坏，只是没接线）。
-  const orchestrator = createSquadOrchestrator({ runtime: await f.runtime() });
-  await orchestrator.discardBatch({ workspaceKey: WS, parentWorkItemId: parent.id });
-  assert.equal(itemStatus(runtime, parent.id), "cancelled");
+  // ② 行为证据：经**服务面**调用（不再是直连编排器）—— 这正是 UI 的那条路。
+  await f.service.discardBatch(f.target, { parentWorkItemId: parent.id });
+
+  assert.equal(itemStatus(runtime, parent.id), "cancelled", "父项被判为放弃（§6.3）");
   assert.equal(await readRunStatus(f, "r-a"), "discarded");
   assert.equal(await readRunStatus(f, "r-b"), "discarded");
   assert.equal(
@@ -1414,12 +1418,120 @@ test("缺陷2. 整批放弃机制成立，但未接到服务面/组合根（无�
     "整批放弃 ⇒ 队员分支（含 produced / rejected）都删",
   );
   assert.equal(await branchExists(f, b.branch), false);
-  assert.equal(existsSync(a.worktreePath), false);
+  assert.equal(existsSync(a.worktreePath), false, "工作树被清（§6.2：整批放弃时应当清理）");
+  assert.equal(existsSync(b.worktreePath), false);
   assert.ok(
     (await branchExists(f, planOf(child.id, memberA.id).integration)) === false,
     "集成分支也不留",
   );
-  assert.equal(await mainSha(f), shaBefore, "整批放弃 ⇒ 主分支一个字节都没动过");
+  assert.equal(await mainSha(f), shaBefore, "整批放弃 ⇒ 主分支一个字节都没动过（§5.7.4）");
+  assert.deepEqual(
+    await worktreeBranches(f),
+    [],
+    "本批的工作树一条不剩（与「被打回待修 ⇒ 工作树存活」刻意区分）",
+  );
+});
+
+// **「已合回主分支的批」这一格：拒绝**（§5.7.4 的逆否：已落地的批不得被当放弃）。
+// 为什么是拒绝而不是「允许」：整批落回 main 之后就没有「还没落地的成果」可弃了，而「放弃」会
+// 把一份**已经在主分支上**的成果标成放弃（同时删集成分支 / 可能删掉别的批的活）——
+// 那是把 spec §5.7.4 想防的那件事反过来犯一遍。也不允许静默 no-op：用户点了却没反应，无从分辨
+// 「我这次生效了」与「这条批本来就不是等待放弃的状态」。
+test("整批放弃：批已合回主分支 ⇒ 服务面响亮拒绝，已落地成果一个字节都没动", async () => {
+  const f = await setup({ forwardChildCompleted: false });
+  const { squad, memberA } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const child = createItem(runtime, f, {
+    id: "wi-c",
+    title: "子任务",
+    parentId: parent.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  // 子项先进入 in_progress，`completeMemberRun` 的 CAS（`in_review ← in_progress`）才命中 ——
+  // 这正是「子项事实停在 todo 时那条 CAS 会静默未命中」的既有形状，夹具按生产次序走。
+  runtime.workItemService.transition(child.id, "in_progress", "todo");
+  const a = await produce(f, {
+    runId: "r-a",
+    childId: child.id,
+    parentId: parent.id,
+    agentId: memberA.id,
+    file: "a.txt",
+    content: "A\n",
+  });
+  runtime.workItemService.transition(child.id, "done", "in_review");
+  // 经**服务面**的正常收尾路径（不是直连编排器）：父项 done、成果落 main、分支被抛弃。
+  const replay = await f.service.replayUnfinalizedBatches(f.target);
+  assert.deepEqual(replay.failures, []);
+  assert.deepEqual(replay.replayed, [parent.id], "夹具前提：这一批已被收尾");
+  assert.equal(itemStatus(runtime, parent.id), "done");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "夹具前提：成果已在主分支上");
+
+  await assert.rejects(
+    f.service.discardBatch(f.target, { parentWorkItemId: parent.id }),
+    // **必须**是「已合回主分支」这个理由（不是随便一个失败）：把闸改成静默返回时本断言必红。
+    /已经合回主分支/,
+  );
+
+  assert.equal(itemStatus(runtime, parent.id), "done", "父项没有被改写成放弃");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "已落地的成果没被动过");
+  assert.equal(await branchExists(f, a.branch), false, "队员分支没有被复活");
+});
+
+// 响亮拒绝的三个前置格：工厂缺失 / 父项不存在 / 父项已归档 —— 都**不许**静默返回。
+test("整批放弃：工厂缺失 / 父项不存在 / 已归档 ⇒ 响亮拒绝，且一个字节都没动", async () => {
+  const f = await setup({ forwardChildCompleted: false });
+  const { squad, memberA } = await makeSquad(f);
+  const runtime = await f.runtime();
+  const parent = createItem(runtime, f, {
+    id: "wi-p",
+    title: "计划",
+    assignee: { type: "squad", id: squad.id },
+  });
+  const child = createItem(runtime, f, {
+    id: "wi-c",
+    title: "子任务",
+    parentId: parent.id,
+    assignee: { type: "squad", id: squad.id },
+  });
+  const a = await produce(f, {
+    runId: "r-a",
+    childId: child.id,
+    parentId: parent.id,
+    agentId: memberA.id,
+    file: "a.txt",
+    content: "A\n",
+  });
+
+  // ① 组合根没注入编排器工厂 ⇒ 响亮抛（静默 no-op 会把「一个字节都没动」伪装成「已放弃」）。
+  const withoutFactory = createSquadRuntimeService({
+    createRuntime: () => f.runtime(),
+    readExperimentEnabled: async () => true,
+    archiveSquadAndTransfer: async () => {},
+  });
+  await assert.rejects(
+    withoutFactory.discardBatch(f.target, { parentWorkItemId: parent.id }),
+    /createOrchestrator/,
+  );
+
+  // ② 父项不存在 / ③ 已归档（`get` 对归档行返回 null ⇒ 同一条闸）—— 都在任何 git 写动作之前。
+  await assert.rejects(
+    f.service.discardBatch(f.target, { parentWorkItemId: "wi-nope" }),
+    /不存在或已归档/,
+  );
+  f.db.prepare("UPDATE work_items SET archived_at = ? WHERE id = ?").run(1, parent.id);
+  await assert.rejects(
+    f.service.discardBatch(f.target, { parentWorkItemId: parent.id }),
+    /不存在或已归档/,
+  );
+
+  assert.equal(await readRunStatus(f, "r-a"), "produced", "队员的活仍在：拒绝发生在破坏之前");
+  assert.equal(await branchExists(f, a.branch), true);
+  assert.equal(existsSync(a.worktreePath), true);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

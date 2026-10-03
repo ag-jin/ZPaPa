@@ -64,6 +64,36 @@ export type BatchReplayOutcome = {
  */
 export type SquadRuntimeLogWarn = (message: string, error?: unknown) => void;
 
+/**
+ * 「本工作项是一支小队批次的**根**」的**唯一判据**（`packages/services/src/index.ts` 从**值**入口导出，
+ * 故纯函数、浏览器安全）。
+ *
+ * 为什么它必须只有一处定义：这条判据有两个消费方 —— 启动重驱（`replayUnfinalizedBatches` 用它枚举
+ * 「可能有未收尾批次的父项」，缺陷 1 的修法）与**最小视图的「放弃整批」入口**（UI 只在批次根上给出
+ * 破坏性动作）。两处各写一份「什么是批次根」迟早漂移，而漂移**不报错** —— 表现会是「界面给的按钮
+ * 服务层不接受」或反过来「某类批永远看不见入口」。
+ *
+ * 两条**并列**证据（命中任意一条即为批次根）：
+ * (a) 台账里有以它为 `parentWorkItemId` 的 run 行 —— 有队员产出过的批；
+ * (b) 本项被**指派给小队**（`assignee.type === "squad"`）—— 小队的批次根，且**空批没有任何 run 行**
+ *     （例如唯一子项在派单前被取消）也覆盖得到。
+ *
+ * 为什么不能用「父项有子项」代替 (b)：这对一个**普通父项**同样为真 —— 那会把无关的父项也认成批次根
+ * （重驱会跨过它自己的验收把它推到 `done`；UI 会给它一个会删分支的破坏性入口）。
+ *
+ * `runParentWorkItemIds` 由调用方从**自己的取数口**给出（服务侧是 `squadRunRepo.listByParent`，
+ * UI 侧是快照的活跃 run 集合）：本函数不做 IO，也不去猜该查哪张表。
+ */
+export function isSquadBatchRoot(input: {
+  workItem: Pick<WorkItem, "id" | "assignee">;
+  runParentWorkItemIds: readonly string[];
+}): boolean {
+  return (
+    input.workItem.assignee.type === "squad" ||
+    input.runParentWorkItemIds.some((parentId) => parentId === input.workItem.id)
+  );
+}
+
 export class SquadDispatchDisabledError extends Error {
   readonly code = SQUAD_DISPATCH_DISABLED_CODE;
   constructor() {
@@ -209,6 +239,27 @@ export interface ISquadRuntimeService {
   reapStartupOrphans(target: SquadWorkspaceTarget): Promise<ReapOutcome>;
   /** 归档小队 + 指派转交队长（#9，spec §3.10/S10）。**先转交后归档**。 */
   archiveSquadAndTransfer(target: SquadWorkspaceTarget, id: string): Promise<void>;
+  /**
+   * **整批放弃**（spec §6.3「整批可整体放弃」，**加法**）：用户显式取消一个**还没合回主分支**的批 ——
+   * 逐个抛弃队员（删分支 + 清工作树，含 `produced` / `rejected`）→ 删集成分支 → 父项置 `cancelled`。
+   *
+   * 为什么必须补这个入口：机制（`SquadBatchOrchestrator.discardBatch`）早已实现，但此前
+   * **没有任何生产调用方** ⇒ 服务面与 host 都够不到 ⇒ §6.3 承诺的「整批可整体放弃」**用户用不了**，
+   * 只有「合并后自动抛弃」可达。
+   *
+   * 三条纪律（与冻结面既有形态一致）：
+   * 1. **唯一写者不变**：父项状态只经 `workItemService.transition`（编排器内部已如此），本方法不碰 repo。
+   * 2. **不过门禁**：放弃**不产生新派发**，与 `reviewMemberRun` / `failMemberRun` 同款 ——
+   *    关掉实验开关只停新派发（§5.7.6），若把放弃也拦下，用户就**收不掉**一个已经在跑的批。
+   * 3. **显式目标**：第一个参数就是 `SquadWorkspaceTarget`（裁定 4：没有隐式默认 workspace）。
+   *
+   * **前置条件由编排层响亮拒绝**（全部在任何 git 写动作**之前**）：父项不存在 / 已归档、父项已终态
+   * （`done` = 成果已合回主分支；`cancelled` = 已放弃过）、或集成分支已合回 base —— 见
+   * `squadOrchestrator.discardBatch` 的详注。**「已合回主分支的批」= 拒绝**（不得静默丢弃已落地成果）。
+   *
+   * **发现判据**：哪些工作项是批次根由 `isSquadBatchRoot` 给出（与 UI 入口共用同一份定义）。
+   */
+  discardBatch(target: SquadWorkspaceTarget, input: { parentWorkItemId: string }): Promise<void>;
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
@@ -514,10 +565,19 @@ export function createSquadRuntimeService(deps: {
          （普通父项只靠 `child_completed` 事件的**驱动**才会被收尾；它是事件驱动、要求「有子项**本进程内**
          转过终态」，而重驱是**状态扫描**，会捞到历史遗留的全终态普通父项 —— 二者的差别正在这里。）
          为什么不给空批补一条**假 run 行**：那是伪造事实，会污染 `listActive` / 活跃分支口径与回收判据
-         （一条从不存在的 run 被当成真的在跑）。缺证据时补的是**发现判据**，不是**编造台账**。 */
+         （一条从不存在的 run 被当成真的在跑）。缺证据时补的是**发现判据**，不是**编造台账**。
+         这两条证据已收敛成**一处实现**（`isSquadBatchRoot`）：最小视图的「放弃整批」入口也用同一份
+         判据（UI 侧传快照的活跃 run 集合），因此不存在「界面认得出、服务层认不出」的第二份口径。 */
       for (const item of runtime.workItemRepo.listByWorkspace(workspaceKey)) {
-        const hasRunRows = runtime.squadRunRepo.listByParent(item.id).length > 0;
-        if (!hasRunRows && item.assignee.type !== "squad") continue;
+        const parentRunItems = runtime.squadRunRepo.listByParent(item.id);
+        if (
+          !isSquadBatchRoot({
+            workItem: item,
+            runParentWorkItemIds: parentRunItems.map((record) => record.parentWorkItemId),
+          })
+        ) {
+          continue;
+        }
         // 已终态 = 已结算（`done`）或已被用户取消（`cancelled`）⇒ 幂等重放应直接跳过，不动 git。
         if (isTerminalWorkItemStatus(item.status)) continue;
         // 子项没全终态 ⇒ 半批，收尾会（正确地）拒绝：这里不重驱，等下一次 `child_completed`。
@@ -546,6 +606,37 @@ export function createSquadRuntimeService(deps: {
 
     async archiveSquadAndTransfer(target, id) {
       await deps.archiveSquadAndTransfer(target, id);
+    },
+
+    /**
+     * 整批放弃（§6.3「整批可整体放弃」）：**只做一件事** —— 把显式目标与 `workspaceKey` 交给编排器。
+     *
+     * 门禁理由（不过门禁）：放弃是**收尾/取消**动作，不产生新派发，与 `reviewMemberRun` /
+     * `failMemberRun` 同款（§5.7.6 只停新派发）。若在这里也判一次开关，用户就**收不掉**一个
+     * 开关关闭前已经开跑的批 —— 而放弃恰恰是「把这个批停掉」的那条路。
+     *
+     * `workspaceKey` 取自 runtime 的**绑定值**（与 `createWorkItem` 取 workspace 列、重驱逐
+     * 同一条纪律）：runtime 才是「为哪个 workspace 而构造」的权威；编排层还会再比一次
+     * （`assertOwnWorkspace`），异己 key 一律响亮拒绝，不会静默动作在别处。
+     *
+     * 前置条件（父项存在 / 未终态 / 集成分支未合回 base）由编排层**在任何 git 写动作之前**响亮拒绝
+     * —— 见 `squadOrchestrator.discardBatch`，本层不重写一遍（那就是第二份判据）。
+     */
+    async discardBatch(target, input) {
+      const runtime = await deps.createRuntime(target);
+      if (!deps.createOrchestrator) {
+        // 缺工厂 = 这一份服务面没接上批次层：响亮抛（静默 no-op 会让用户以为「整批已放弃」，
+        // 而分支与工作树一个都没被收 —— 那正是本次要消灭的「点了没反应」形态）。
+        throw new Error(
+          "discardBatch 无法执行：组合根没有注入 createOrchestrator（批次编排工厂）。" +
+            "缺它就没有能执行「整批放弃」的编排器 —— 静默返回会把「一个字节都没动」伪装成「已放弃」。",
+        );
+      }
+      const orchestrator = deps.createOrchestrator({ runtime });
+      await orchestrator.discardBatch({
+        workspaceKey: keyOf(runtime),
+        parentWorkItemId: input.parentWorkItemId,
+      });
     },
   };
 }

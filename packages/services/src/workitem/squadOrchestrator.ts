@@ -234,6 +234,46 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
   }
 
   /**
+   * 本批**可能**存在的集成分支名（按 `workItemSlug` 去重）。
+   *
+   * 为什么是「按 run 逐个算再取集合」而不是复用 `integrationBranch()`：后者对「队员分属多个工作项」
+   * **响亮拒绝**（那批只能落一条，是 `finalize` 的前提）。而 `discardBatch` **只删不合并** ——
+   * 删两条不会造成「部分成果落在主分支」，所以它必须能处理这批名字**多条**的形状（见 `discardBatch` 注释）。
+   * 两条路径共用同一个命名规则来源（`planBranches`），不在这里重拼前缀。
+   */
+  function integrationBranchNames(runs: readonly SquadRunRecord[]): string[] {
+    return [
+      ...new Set(
+        runs.map(
+          (record) =>
+            planBranches({
+              workItemSlug: slugForId(record.workItemId),
+              agentSlug: slugForId(record.agentId),
+            }).integration,
+        ),
+      ),
+    ];
+  }
+
+  /**
+   * 集成分支是否**已经合回 base**（`merge-base --is-ancestor <integration> <base>`：成立 ⇔ 它的每个提交
+   * 都已在 base 上）。判据口径与 `integrationMerger.discardIntegration` 里那道闸**同一句 git 命令**
+   * ——「已合回」这件事必须只有一种定义，否则两处会各自漂移。
+   *
+   * 为什么不用 `git branch -d` 的「已合并」检查：它看的是**当前 HEAD**，而合并会挪走主工作树的 HEAD
+   * （`integrationMerge` 的调用方约束），拿一个会漂的指针去回答「成果在不在主分支上」正是安静丢成果的形状。
+   *
+   * 只在 `branchExists` 为真之后调用：分支不存在时 `merge-base` 返回 128（错误），
+   * 而「不存在」与「存在但未合回」在这里的结论相同（都不是「已落地」），故不额外区分。
+   */
+  async function isMergedBack(integration: string): Promise<boolean> {
+    const result = await runtime.git(["merge-base", "--is-ancestor", integration, baseBranch], {
+      cwd: runtime.boundWorkspace.path,
+    });
+    return result.code === 0;
+  }
+
+  /**
    * 让**主工作树**别再检出 `branch`（本题里特指集成分支）。
    *
    * 为什么整体放弃时必须做这一步：`git branch -D` 拒绝删除正被工作树检出的分支
@@ -387,6 +427,12 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
    * 3. 集成分支**允许多条**：这里只删不合并，删两条不会造成「部分成果落在主分支」，
    *    所以不做 `integrationBranch` 的「一批一条」那条限制，而是逐条（存在才删、直接 `-D`）。
    *
+   * **前置条件（零副作用的响亮拒绝）**：只对**未结算**的批成立 ——
+   * ① 父工作项存在（不存在 / 已归档 ⇒ 抛）；② 父项**未终态**（已是 `done` = 成果已合回主分支 /
+   * 已是 `cancelled` = 已放弃过 ⇒ 抛）；③ 本批的集成分支**没有**合回 base（合回了 ⇒ 成果已在主分支上 ⇒ 抛）。
+   * 这三条都在**任何 git 写动作之前**：删分支与删工作树不可回滚，先动手再拒绝会留下不可逆的半程破坏。
+   * 见实现内的详注（spec §5.7.4「未合回的批不得被当已落地」的逆否）。
+   *
    * ——调用方义务（P2b 唯一未加闸的集成分支删除点，必须遵守）——
    * 本方法是全仓**唯一**用 `deleteBranch` 直删集成分支的地方（`discardIntegration` 的那道
    * 「集成必须是 target 的祖先」闸在这里被**刻意绕过**，理由见下）。因此它**只可用于用户显式发起的
@@ -402,6 +448,50 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
 
     await serializeRepo(async () => {
       const runs = memberRuns(input.parentWorkItemId);
+      const integrations = integrationBranchNames(runs);
+
+      /* ── 前置闸（零副作用、纯读）：**已经结算过的批不得再「放弃」** ──────────────────────────
+         spec §5.7.4 的逆否：「未合回的批不得被当已落地」的反面是「**已落地的批不得被当放弃**」。
+         本闸必须在**任何 git 写动作之前**，理由正是破坏性：下面两处（删队员分支 / 删集成分支）
+         不可回滚，若先动手再发现父项早已结算，我们会留下「分支删了、父项却没被改」的半程，
+         且这次调用最终还是抛 —— 一次注定失败的调用已经造成了不可逆的破坏。
+
+         格子①父项**已终态**：`done` = 本批成果已在主分支上（`advanceAfterChildrenDone` 的收口）；
+         `cancelled` = 这条批已经放弃过一次。两种来路都说明**无物可弃**，且再写一次会抹掉它真实的
+         结算次序（`transitionParent` 的跨终态拒绝也拦得住，但那时破坏已经发生）。
+         格子②父项**未终态**、但集成分支**已是 base 的祖先**：成果其实已经在主分支上（异常半程 ——
+         `finalize` 落地后父项那一步没收口）。这一格必须单独判：父项状态在这儿**看不出来**，
+         而后果与格子①同因（把已落地的成果标成放弃）。
+
+         为什么「响亮抛」而不是「幂等返回」：放弃是**用户显式发起的破坏性动作**，调用它却什么都没发生，
+         用户无法分辨「我点的那次生效了」与「这条批早就不是等待放弃的状态」。让人看见原因，
+         比给一个假成功好（与 `deleteBranch`「删不存在的分支 = 抛」同一取舍）。 */
+      const parent = workItemRepo.get(input.parentWorkItemId);
+      if (!parent) {
+        throw new Error(
+          `无法放弃整批：父工作项「${input.parentWorkItemId}」不存在或已归档。` +
+            "静默返回会把「根本没找到这条批」伪装成「已经放弃成功」——而分支与工作树一个都没被收。",
+        );
+      }
+      if (isTerminalWorkItemStatus(parent.status)) {
+        throw new Error(
+          `无法放弃整批：父工作项「${parent.id}」已是终态「${parent.status}」——` +
+            (parent.status === "done"
+              ? "这条批的成果**已经合回主分支**，把它判为「放弃」会抹掉一份已落地成果的真实归属。"
+              : "这条批已经结算过（放弃后的父项就是终态），重复放弃没有可收的东西。") +
+            "本方法会删队员分支、集成分支与工作树，对已结算的批执行它只会造成不可逆的破坏，故响亮拒绝。",
+        );
+      }
+      for (const integration of integrations) {
+        if ((await branchExists(integration)) && (await isMergedBack(integration))) {
+          throw new Error(
+            `无法放弃整批：本批的集成分支「${integration}」**已经合回 ${baseBranch}**` +
+              `（父项「${parent.id}」却还停在「${parent.status}」，说明收尾只差最后一步没收口）。` +
+              "成果已在主分支上、回不去，再放弃会把一份已落地的成果标成「放弃」，故响亮拒绝" +
+              "（要收口请走 advanceAfterChildrenDone，不要走本方法）。",
+          );
+        }
+      }
 
       for (const record of runs) {
         if (record.status === "discarded") continue; // 无树无枝，再抛一次只会撞「分支不存在」
@@ -415,16 +505,9 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          一律拒绝（实测：`集成分支尚未合回 main，拒绝删除`）。这与「整批可整体放弃」直接冲突。
          更不能留它不删：`ensureIntegration` 对已存在的集成分支**什么都不做**（它不敢 reset，怕丢成果），
          所以残留的集成分支会带着**旧的 base**继续吃掉下一批的合并 —— 一批从未落地的成果悄悄混进来。
-         存在性先读一次：从没合并过任何队员时它根本不存在，而 `deleteBranch` 对不存在的分支是**抛**。 */
-      for (const integration of new Set(
-        runs.map(
-          (record) =>
-            planBranches({
-              workItemSlug: slugForId(record.workItemId),
-              agentSlug: slugForId(record.agentId),
-            }).integration,
-        ),
-      )) {
+         存在性先读一次：从没合并过任何队员时它根本不存在，而 `deleteBranch` 对不存在的分支是**抛**。
+         注：上面那道前置闸已经保证「走到这里 ⇒ 集成分支**没有**合回 base」，本循环只做删。 */
+      for (const integration of integrations) {
         if (await branchExists(integration)) {
           await detachFromHead(integration);
           await deleteBranch(runtime.git, runtime.boundWorkspace.path, integration);
