@@ -71,6 +71,7 @@ export function WorkItemsBoard({
   busyWorkItemId,
   timelineExpandedWorkItemId,
   onEdit,
+  onReassign,
   onDiscard,
   onToggleTimeline,
   workspacePath,
@@ -85,6 +86,8 @@ export function WorkItemsBoard({
   /** 当前展开了时间线的那条批根（页面的**单一**状态：一次只展开一批，见 WorkItemsPage）。 */
   timelineExpandedWorkItemId: string | null;
   onEdit: (item: WorkItem) => void;
+  /** 点「改派」⇒ 交给页面打开改派对话框（本层不持有状态、也不执行服务调用）。 */
+  onReassign: (item: WorkItem) => void;
   /** 点「放弃整批」⇒ **只进入待确认态**（本层拿不到服务，结构上不可能直接执行）。 */
   onDiscard: (workItemId: string) => void;
   /** 点「时间线」⇒ 交给页面切换展开态（同一条再点 = 收起；本层不持有状态）。 */
@@ -160,6 +163,17 @@ export function WorkItemsBoard({
                   onClick={() => onEdit(item)}
                 >
                   {t("squad.common.edit")}
+                </Button>
+                {/* 改派：**所有行都给**（含子项）—— 改负责人是派发语义（改派 = 新派发），
+                    与"改个错别字"（编辑）是两类动作，故单列一个钮；点它只把意图交给页面。 */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="work-item-reassign"
+                  onClick={() => onReassign(item)}
+                >
+                  {t("squad.workItems.reassign")}
                 </Button>
                 {/* 放弃整批：只给判据（纯函数）认下的行；点它**只进入待确认态**。 */}
                 {discardableIds.has(item.id) ? (

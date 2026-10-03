@@ -272,6 +272,32 @@ test("规则与人发起共用 runSquadDispatch（只差 trigger），且不写�
   );
 });
 
+/* ---- 改派泛化（2026-10-03）：派发请求的载荷是 `assignee`（类型 + id），不是裸 `agentId` ----
+
+   请求的语义是「把这条活派给**谁**」——小队也能是被派发对象（用户把工作项改派给小队 ⇒ 派发路径
+   解析出一条队长 run），裸 agentId 只描述得了队员这一种。**身份里必须带类型**：`eventKey` 是这次
+   派发的身份（台账 runId / trace），而 agent 与 squad 的 id 空间彼此独立 —— 「智能体 X」与「小队 X」
+   不得用同一个身份字符串代表（旧形态会撞名，而撞名**不报错**，只让台账/日志读起来指错对象）。
+   变异：把 eventKey 退回 `request.agentId`（或删掉类型段）⇒ 本用例必红。 */
+test("派发请求载荷是 assignee（类型 + id）：eventKey 与日志都按它取名", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /request\.assignee\.type/,
+    "派发请求载荷必须带 assignee 类型（小队也能被指派；agent/squad 的 id 空间独立，不得只按 id 取名）",
+  );
+  assert.match(
+    branch,
+    /assign:\$\{request\.workItemId\}:\$\{request\.assignee\.type\}:\$\{request\.assignee\.id\}:/,
+    "eventKey（台账 runId 的身份）必须含 workItemId + assignee 类型 + id",
+  );
+  assert.doesNotMatch(
+    branch,
+    /request\.agentId/,
+    "派发请求已无裸 agentId 字段（载荷泛化为 assignee）",
+  );
+});
+
 /* ---- P2b 余项：队长 run 的台账写入口（spec §5.7(1)：没有记录就无从判「进行中」）---- */
 
 // 派发桥必须**真的**为队长 run 登记台账行（服务面新增的 `recordLeaderRun`，**只登记不执行**）。

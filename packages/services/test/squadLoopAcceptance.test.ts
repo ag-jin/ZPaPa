@@ -242,7 +242,14 @@ async function setup(
       await runBridgeDispatch(
         service,
         target,
-        { workItemId, agentId, workspacePath: repoRoot, workspaceIdentity: WS },
+        // 载荷是 `assignee`（类型 + id，2026-10-03 泛化）：这里模拟「规则到点」那条入口的请求，
+        // 派发结论仍由 runBridgeDispatch 从快照重读工作项得出（请求字段只用于身份/日志）。
+        {
+          workItemId,
+          assignee: { type: "agent", id: agentId },
+          workspacePath: repoRoot,
+          workspaceIdentity: WS,
+        },
         bridgeRecords,
       );
     },
@@ -477,7 +484,7 @@ test("闭环S1+S2：建小队落盘、建项指派给小队、指派只发派发
   assert.equal(f.dispatched.length, 1, "指派必须经常驻 hub 恰好发出一条派发请求");
   assert.deepEqual(f.dispatched[0], {
     workItemId: child.id,
-    agentId: memberA.id,
+    assignee: { type: "agent", id: memberA.id },
     workspacePath: f.repoRoot,
     workspaceIdentity: WS,
   });
@@ -1795,7 +1802,7 @@ test("H. 三类分流：队员（树+分支+台账）/ 队长（只台账）/ �
   assert.equal(soloRequests.length, 1, "单独安排仍要经 hub 发出派发请求（会话照发）");
   assert.deepEqual(soloRequests[0], {
     workItemId: solo.id,
-    agentId: memberA.id,
+    assignee: { type: "agent", id: memberA.id },
     workspacePath: f.repoRoot,
     workspaceIdentity: WS,
   });

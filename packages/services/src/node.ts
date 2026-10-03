@@ -1425,11 +1425,14 @@ export function createLocalServices(options: {
     run: ZCodeAutomationRun;
   }) => Promise<void>;
   /**
-   * 队长派单（`squad/assign-work-item`）产生的**派发请求**的执行体（**加法**，2026-10-02 第 2 轮裁定）。
+   * 队长派单（`squad/assign-work-item`）与 UI 改派（`reassignWorkItem`）产生的**派发请求**的执行体
+   * （**加法**，2026-10-02 第 2 轮裁定；载荷 2026-10-03 泛化为 `assignee`）。
    *
    * 为什么要有它：指派**不走唤醒规则**（那与「`@` ≠ 指派」及「人发起豁免三道闸」冲突，spec §5.5），
    * 应走**与「人手动触发」同一条派发路径**、由**常驻侧**执行。服务面把派发请求经 hub 发到组合根，
    * 组合根转给本回调 —— host 的派发桥据此开 run（与规则到点那条消息共用**同一个**派发实现）。
+   * 请求载荷是 `assignee`（类型 + id）：小队也能是被派发对象（负责人是 squad ⇒ 队长 run），
+   * 详见 `SquadDispatchRequest` 的注释。
    *
    * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
    */
@@ -2623,7 +2626,10 @@ export function createLocalServices(options: {
     if (!dispatchAssigned) {
       squadRuntimeLog.warn(
         "小队派发请求已发出，但本组合根没有注入 onSquadDispatchRequested（不会开出 run）",
-        { workItemId: request.workItemId, agentId: request.agentId },
+        {
+          workItemId: request.workItemId,
+          assignee: `${request.assignee.type}:${request.assignee.id}`,
+        },
       );
       return;
     }

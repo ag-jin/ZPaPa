@@ -90,6 +90,22 @@ export function parseAssigneeValue(value: string): WorkItem["assignee"] {
   return { type: kind, id };
 }
 
+/**
+ * `parseAssigneeValue` 的**逆向**（改派对话框的初值要用）：`WorkItem["assignee"]` → 选项 value。
+ * 编码（`user` / `agent:<id>` / `squad:<id>`）只有 `workItemAssigneeOptions` 那一处定义，
+ * 这里只做反解 —— 不另抄一份 `agent:` 前缀（散成两处迟早漂移，而漂移不报错）。
+ *
+ * **未知 id 的回落口径**（id 不在快照里：智能体已归档 / 小队被删 / 对象不存在）：
+ * 仍按 `agent:<id>` / `squad:<id>` **原样编码**，**不**回落成 `"user"`、也不改判成别的对象。
+ * 理由：value 表达的是「这条活现在指给谁」这个**事实**，不是「候选里有没有他」。回落成 `"user"`
+ * 会让「打开对话框、原样提交」变成一次用户没要求的改派（库里真的会变、还会发派发事件）——
+ * 宁可让对话框显示「指给一个已不在候选里的对象」，由用户自己挑新对象；原样提交则由服务面
+ * 同值短路（`assigned:false` ⇒「未变更」）。
+ */
+export function assigneeOptionValue(assignee: WorkItem["assignee"]): string {
+  return assignee.type === "user" ? "user" : `${assignee.type}:${assignee.id}`;
+}
+
 // ---------- 运行状态文案 ----------
 
 /** 运行状态的文案 id：用 `Record<SquadRunStatus, string>` **强制穷尽** ——

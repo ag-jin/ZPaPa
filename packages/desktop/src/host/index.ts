@@ -3308,19 +3308,29 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
 }
 
 /**
- * 队长派单（`squad/assign-work-item`）产生的派发请求 —— **与「人手动触发」同一条路径**
- *（spec §5.5：人发起豁免三道闸，故 `trigger: "user"`、不写任何唤醒规则；2026-10-02 第 2 轮裁定）。
+ * 队长派单（`squad/assign-work-item`）与 UI 改派（`reassignWorkItem`）产生的派发请求 ——
+ * **与「人手动触发」同一条路径**（spec §5.5：人发起豁免三道闸，故 `trigger: "user"`、不写任何唤醒规则；
+ * 2026-10-02 第 2 轮裁定）。
  *
  * 由组合根把服务面的派发 hub**订一次**之后转到这里（`createLocalServices` 的 `onSquadDispatchRequested`）：
  * runtime 按目标现构、其事件订阅表在实例内部 ⇒ 常驻侧订不到，故这一格改由 hub 承载（落点 ii）。
+ *
+ * **载荷是 `assignee`（类型 + id）**（2026-10-03 泛化）：请求描述的是「要把这条活派给谁」这一事实，
+ * 小队也能是被派发对象（`assignee.type === "squad"` ⇒ 派发路径解析出一条队长 run）；
+ * 这个字段**只用于 `eventKey` 命名与日志** —— 派发结论由 `runSquadDispatch` 从快照**重读**工作项、
+ * 交给 `planDispatch` 规划得出（库里刚写好的 `assignee` 才是权威，请求不是第二份判据）。
  *
  * **结果必须可见**（不得静默吞掉）：成功/跳过/失败都留一条带 `workItemId` 的日志。这条路径**没有**
  * 调度器的重投表可回执，也不自动重试 —— 那条 error 日志就是人（或下一次工具调用）据以动手的依据。
  */
 async function dispatchSquadAssignment(request: SquadDispatchRequest): Promise<void> {
   /* `eventKey` 是这次派发的身份（台账 runId / trace）：人发起没有规则 tick，故这里**现造**一个。
-     同一 (工作项, 队员) 再派一次会撞工作树分支名而**响亮失败**（响亮 > 静默重复，§5.7.7 属 P2c）。 */
-  const eventKey = `assign:${request.workItemId}:${request.agentId}:${randomUUID()}`;
+     身份里**补上 assignee 的类型**（`agent:` / `squad:` 段）：两个 id 空间彼此独立，「智能体 X」与
+     「小队 X」在台账/日志里不得被同一个身份字符串代表（旧形态只有裸 agentId，改派到小队后同一个 id
+     会与某个智能体的 run 撞名）。同一 (工作项, 对象) 再派一次会撞工作树分支名而**响亮失败**
+     （响亮 > 静默重复，§5.7.7 属 P2c）—— 队长 run 则由 §5.7(1) 合并。 */
+  const eventKey = `assign:${request.workItemId}:${request.assignee.type}:${request.assignee.id}:${randomUUID()}`;
+  const assigneeLabel = `${request.assignee.type}:${request.assignee.id}`;
   const report = await runSquadDispatch({
     trigger: "user",
     workItemId: request.workItemId,
@@ -3330,14 +3340,14 @@ async function dispatchSquadAssignment(request: SquadDispatchRequest): Promise<v
   });
   if (report.ok) {
     logger.info(
-      `[squad] 指派派发完成 workItem=${request.workItemId} agent=${request.agentId} runId=${eventKey}` +
+      `[squad] 指派派发完成 workItem=${request.workItemId} assignee=${assigneeLabel} runId=${eventKey}` +
         (report.taskId !== undefined ? ` task=${report.taskId}` : "") +
         (report.kind !== undefined ? ` kind=${report.kind}` : " (skip)"),
     );
     return;
   }
   logger.error(
-    `[squad] 指派派发失败 workItem=${request.workItemId} agent=${request.agentId}` +
+    `[squad] 指派派发失败 workItem=${request.workItemId} assignee=${assigneeLabel}` +
       ` runId=${eventKey} failureKind=${report.failureKind ?? "unknown"}`,
     report.error,
   );

@@ -4166,6 +4166,11 @@ const zhCN: Record<string, string> = {
   "squad.workItems.created": "已创建工作项",
   "squad.workItems.updated": "已保存",
   "squad.workItems.editTitle": "编辑工作项",
+  // 改派（看板行「改派」钮 → ReassignWorkItemDialog）：把既有工作项改给 user / agent / squad。
+  "squad.workItems.reassign": "改派",
+  "squad.workItems.reassignTitle": "改派工作项",
+  "squad.workItems.reassigned": "已改派",
+  "squad.workItems.reassignUnchanged": "未变更：指派对象与当前相同",
   "squad.workItems.loading": "正在读取工作项…",
   "squad.workItems.loadFailed": "读取工作项失败",
   "squad.workItems.empty": "还没有工作项",

@@ -19,6 +19,9 @@ import type {
   ReviewOutcome,
 } from "./squadRunLifecycle.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
+// 「改负责人 + 发派发事件」的**唯一实现**（唯一写者纪律 / 同值处置 / 事件出口全在其中）。
+// 单拆成文件是为了浏览器安全（本文件被根入口值导出）+ 400 行 lint 门槛，详见该文件的头部注释。
+import { applyWorkItemAssignee } from "./workItemAssignee.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -312,15 +315,53 @@ export interface ISquadRuntimeService {
     input: { runId: string; verdict: "approved" | "rejected" },
   ): Promise<ReviewOutcome>;
   /**
+   * 改派（**加法**，2026-10-03）：把**既有**工作项改给 user / agent / squad（UI 的唯一入口）。
+   * 返回本次调用是否**真的发生了变更**（`assigned:false` = 对象与现值相同 ⇒ 有意不动作，见第 3 条）。
+   *
+   * 语义逐条：
+   * 1. **入口过门禁**（指派 = 新派发）：与 `assignWorkItem` / `createWorkItem` 同一处判据
+   *    （`assertEnabled`）。**次序**：门禁在**构造 runtime 之前**过 —— 与 `createWorkItem` 同款。
+   *    门禁要回答的是「现在允不允许新派发」，它与目标 workspace 是不是一个可用的 git 仓库无关；
+   *    先建 runtime 会先跑 base 分支解析（构造期解析、失败即抛），于是在**非 git 目标**上关闭开关时，
+   *    调用方拿到的是「base 分支解析失败」而不是**门禁结论** —— 上层按稳定码分流
+   *    （`SQUAD_DISPATCH_DISABLED_CODE`）就分不出来，界面上会显示成 workspace 坏了。
+   *    关掉实验后改派被拒（`SquadDispatchDisabledError` 原样带出）。
+   * 2. **工作项不存在 / 已归档 ⇒ 响亮抛**（照 `assignWorkItem` 的口径）：本方法只改**既有**工作项的
+   *    负责人；静默建新项会把这次派发挂到一个与调用方所指无关的对象上。
+   * 3. **assignee 与现值相同（type 与 id 都相同）⇒ 不写、不发事件、返回 `{assigned:false}`**：
+   *    重复指派给同一对象**不该再起一次 run** —— 队员 run 会撞工作树/分支名而响亮失败，队长 run 则由
+   *    §5.7(1) 合并；「同一事实重投不产生第二次动作」与 Inbox 的幂等（`insertIfAbsent`）是同一条纪律。
+   *    （队长派单工具的 `assignWorkItem` 在这一格**有意不同**：照旧写 + 照旧发事件 —— 那是对同一队员的
+   *    **重试**入口，见该方法的注释。）
+   * 4. `assignee.type === "user"` ⇒ **只写负责人**（`updateAssignee`），**不发派发事件**：
+   *    人不需要被派 run ——「指派给人 = 等人自己动手」（`planDispatch` 的 user 支路同样只通知、不排队）。
+   * 5. `assignee.type === "agent" | "squad"` ⇒ 写负责人 + 发 `workitem.dispatch_requested`（经
+   *    **唯一出口** `SquadRuntime.emitWorkItemEvent` ↔ `subscribeWorkItemEvents` 同一张表 / 同一个
+   *    常驻 hub），**不在这里开 run**（开 run 是派发路径的事，§5.1 一处写入 / §5.6 `@` ≠ 指派）。
+   *    载荷是 `assignee`（类型 + id）而非裸 `agentId`：小队也能被指派（负责人是 squad ⇒ 派发路径
+   *    解析出队长 run）。
+   * 6. **写者纪律**：负责人不是 `status`（唯一写者那条约束管的是 `status`），只经 repo 的专用写入口
+   *    `workItemRepo.updateAssignee`（「恰命中一行才算成功」的条件更新）；未命中（写入时已不可写：
+   *    被归档 / 删除）⇒ **响亮抛**，不静默 no-op。
+   */
+  reassignWorkItem(
+    target: SquadWorkspaceTarget,
+    input: { workItemId: string; assignee: WorkItem["assignee"] },
+  ): Promise<{ assigned: boolean }>;
+  /**
    * 把**既有**工作项指派给某位队员（裁定 Important-1，2026-10-02）：**改负责人 + 发出派发事件**。
    *
-   * 语义严格按设计（§5.1「多路输入、一处写入」/ §5.6「`@` ≠ 指派」）：
-   * 1. **只经既有唯一写者之路改工作项**：负责人不是 `status`（唯一写者那条约束管的是 `status`），
-   *    走 `workItemRepo.updateAssignee` 那一层——repo 仍是内部件，调用方只经本方法；
-   * 2. **只发派发事件，不直接开 run**：事件经**唯一出口**（`SquadRuntime.emitWorkItemEvent`
-   *    ↔ `subscribeWorkItemEvents` 同一张表）发出；本方法**不调** `openMemberRun`
-   *    （开 run 是派发路径的事，不是「指派」的事）；
-   * 3. **入口过门禁**（入口③，与 createWorkItem / openMemberRun 同一处判据）：指派 = 新派发。
+   * **薄包装**（2026-10-03 收口）：内部走 `reassignWorkItem` 的**同一实现**（传
+   * `{type:"agent", id: agentId}`），使「改负责人 + 发事件」在服务面**只有一份实现**。对外契约
+   * 保持不变：入参形状、返回 `{assigned:true}`、过门禁、只支持 agent。
+   *
+   * **有意保留的一格差异**：同一队员**重复指派**（对象与现值相同）照旧**写 + 发事件** —— 那是对
+   * 该队员的**重试**入口（队员 run 失败后该队员可能仍是负责人，重派一次是正当操作；派发结论的响亮
+   * 失败由派发路径给，见 host 的 eventKey 注释），把它静默改成 no-op 会让工具回执「已派发」而实际
+   * 什么都没发生 —— 正是本项目一路在消灭的「点了没反应」。服务面实现因此在同值这一格接受两种策略，
+   * 由调用面显式选择（见 `applyWorkItemAssignee` 的 `sameAssignee`）。
+   *
+   * 语义其余部分（门禁在前 / 只改既有项 / 只发事件不开 run / 唯一写者）与 `reassignWorkItem` 完全一致。
    */
   assignWorkItem(
     target: SquadWorkspaceTarget,
@@ -755,35 +796,32 @@ export function createSquadRuntimeService(deps: {
       return outcome;
     },
 
-    async assignWorkItem(target, input) {
-      /* 入口③（队长派单工具）与入口①② 共用**同一个**门禁判据（指派 = 新派发）。
-         「拦在入口」：半路拦会留下一条已改负责人、却没有派发事件的工作项（看上去成功了一半）。 */
+    async reassignWorkItem(target, input) {
+      /* UI 改派（入口③'）。与入口①②③ 共用**同一个**门禁判据（指派 = 新派发）。
+         「拦在入口」：半路拦会留下一条已改负责人、却没有派发事件的工作项（看上去成功了一半）。
+         **次序**：先门禁、后建 runtime（与 `createWorkItem` 同款）—— 门禁只读开关、只抛错，
+         不依赖目标是不是 git 仓库；先建 runtime 会先跑 base 解析，非 git 目标上关开关时调用方
+         拿到的是「base 解析失败」而不是门禁结论（稳定码分流就分不出来）。 */
       await assertEnabled();
       const runtime = await deps.createRuntime(target);
-      const item = runtime.workItemRepo.get(input.workItemId);
-      if (!item) {
-        // 响亮：本方法只改**既有**工作项的负责人（用 `createWorkItem` 会重建一条，丢掉 id 与已有子项）。
-        throw new Error(
-          `指派失败：工作项「${input.workItemId}」不存在或已归档。本方法只改既有工作项的负责人，` +
-            "静默建新项会让这条派发挂到一个与调用方所指无关的对象上。",
-        );
-      }
-      // 负责人不是 status（唯一写者那条约束管的是 status）；走 repo 的专用写入口（同样是
-      // 「恰命中一行才算成功」的条件更新），不在这里拼 SQL，也不把 repo 暴露给调用方。
-      if (!runtime.workItemRepo.updateAssignee(item.id, { type: "agent", id: input.agentId })) {
-        throw new Error(
-          `指派失败：工作项「${item.id}」在写入时已不可写（被归档或删除）——` +
-            "静默 no-op 会让调用方以为派单成功了，而库里仍指着旧负责人。",
-        );
-      }
-      /* **只发派发事件，不在这里开 run**（§5.1 一处写入 / §5.6 `@` ≠ 指派）。
-         事件经唯一出口发出：与状态变迁事件是**同一张订阅表**（`SquadRuntime.emitWorkItemEvent`
-         ↔ `subscribeWorkItemEvents`），消费方按 `kind` 分流。开 run 由派发路径负责，不由此处代劳。 */
-      runtime.emitWorkItemEvent({
-        kind: "workitem.dispatch_requested",
-        workItemId: item.id,
-        agentId: input.agentId,
-      });
+      // 同值 ⇒ skip：不写、不发事件、返回 `{assigned:false}`（语义 3：重复指派不该再起一次 run）。
+      return applyWorkItemAssignee(runtime, input, { sameAssignee: "skip" });
+    },
+
+    async assignWorkItem(target, input) {
+      /* 队长派单工具（入口③）—— **薄包装**：与 `reassignWorkItem` 同一份实现（`applyWorkItemAssignee`），
+         差异只有显式两处：① 对象固定为 `{type:"agent", id}`（本方法对外契约只支持 agent，保持不变）；
+         ② **同值 ⇒ reapply**（照旧写 + 照旧发事件）：这是对同一队员的**重试**入口，把它静默 no-op 会让
+         工具回执「已派发」而实际什么都没发生（见接口注释的取舍说明）。
+         门禁同样是构造 runtime **之前**过（与 reassignWorkItem / createWorkItem 同一处判据、同一次序）。 */
+      await assertEnabled();
+      const runtime = await deps.createRuntime(target);
+      applyWorkItemAssignee(
+        runtime,
+        { workItemId: input.workItemId, assignee: { type: "agent", id: input.agentId } },
+        { sameAssignee: "reapply" },
+      );
+      // 返回形状不变（reapply 恒写 + 恒发；未命中 / 不可写已在实现里响亮抛，走不到这里）。
       return { assigned: true };
     },
 

@@ -9,6 +9,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { WorkItemDialog, type WorkItemDialogSubmitInput } from "./SquadCreateDialogs.js";
+import { ReassignWorkItemDialog } from "./ReassignWorkItemDialog.js";
 import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
 import { SquadRunsReview } from "./SquadRunsReview.js";
 import { WorkItemsBoard } from "./WorkItemsBoard.js";
@@ -33,9 +34,9 @@ import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
 import { workItemCreateEnabled } from "./workItemsViewModel.js";
 
 /* 「工作项」一级入口的**完整功能面**（用户 2026-10-03 裁定：入口不藏设置；「UI 功能需要打磨
-   完整，不要缺少东西」）。树形看板（父项批次 → 子项）/ 新建 / 编辑 / 放弃整批 / 待收尾运行的
-   审查（通过 / 打回 / 打开会话），以及空态、加载态、错误态（带原因与重试）、实验已关闭横幅、
-   两语文案 —— 一个都不少。
+   完整，不要缺少东西」）。树形看板（父项批次 → 子项）/ 新建 / 编辑 / 改派 / 放弃整批 / 待收尾
+   运行的审查（通过 / 打回 / 打开会话），以及空态、加载态、错误态（带原因与重试）、实验已关闭
+   横幅、两语文案 —— 一个都不少。
 
    为什么目标 workspace 从 **props** 拿（与 SquadAgentsPage / SquadsPage 同款理由）：本页由
    WorkspaceShellLayout 渲染，shell 手里就有 `workspaceAbsPath` / `workspaceIdentity`；
@@ -85,6 +86,10 @@ export function WorkItemsPage({
   /** 「放弃整批」的**二次确认**状态（纯逻辑在视图模型：点按钮只进入待确认态，执行只发生在确认路径）。 */
   const [discardConfirm, setDiscardConfirm] = useState(SQUAD_DISCARD_CONFIRM_IDLE);
   const [discardingId, setDiscardingId] = useState<string | null>(null);
+  /** 正在改派的那一条（`null` = 对话框没开）。单开一个状态而不是塞进 `dialog` 判别联合：
+      它带自己那条提交路径（同值可能返回 `assigned:false`，要显示「未变更」而不是「已保存」），
+      揉进新建 / 编辑那条 `runAction`（成功即 `setDialog(null)`）会把两处语义搅混。 */
+  const [reassignTarget, setReassignTarget] = useState<WorkItem | null>(null);
   /* 展开了时间线的**那一条**批根（一次只展开一批：状态就是一个 id）。收起/切换都只改这一处，
      不做展开态记忆；SquadTimelineSection 随条件渲染挂载/卸载，数据随之丢弃。 */
   const [expandedTimelineWorkItemId, setExpandedTimelineWorkItemId] = useState<string | null>(null);
@@ -275,6 +280,47 @@ export function WorkItemsPage({
      有选择的表单（「点得开但通往死路」比置灰更糟）；按钮本身**始终渲染**。 */
   const createDisabled = !workItemCreateEnabled({ hasTarget: target !== null, snapshot });
 
+  /**
+   * 改派的提交路径（**有意不走 `runAction`**）：`runAction` 的语义是「新建 / 编辑成功 ⇒
+   * `setDialog(null)` + 一条成功提示」，而改派多一种结论 —— 服务面在**同值**时短路并回
+   * `{assigned:false}`（同一事实重投不产生第二次动作；重复指派给同一对象不该再起一次 run），
+   * 界面必须显示「未变更」而不是「已保存」。形态与 `runAction` 对齐（置忙 → 调服务 → 成功提示 +
+   * 重载 / 失败提示 → 复位），但**不揉进它的语义**（把 `assigned:false` 塞进「成功即 setDialog(null)
+   * 的那条路」会让两个结论共用一条提示，改一处漏一处）。busy 期间重复提交在此被挡（同款前置判断）。
+   * 失败时**不关对话框**（与 runAction 一致：失败要能看见，重试就在眼前）。
+   */
+  const submitReassign = useCallback(
+    (assignee: WorkItem["assignee"]) => {
+      const item = reassignTarget;
+      if (busyWorkItemId !== null || !target || item === null) return;
+      void (async () => {
+        setBusyWorkItemId(item.id);
+        try {
+          const outcome = await resolveSquadRuntimeService(services).reassignWorkItem(target, {
+            workItemId: item.id,
+            assignee,
+          });
+          setReassignTarget(null);
+          notify({
+            tone: "success",
+            messageId: outcome.assigned
+              ? "squad.workItems.reassigned"
+              : "squad.workItems.reassignUnchanged",
+          });
+          await reload();
+        } catch (error) {
+          logger.warn("[WorkItemsPage] 改派失败", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          notify(squadEntryErrorFeedback(error));
+        } finally {
+          setBusyWorkItemId(null);
+        }
+      })();
+    },
+    [busyWorkItemId, notify, reassignTarget, reload, services, target],
+  );
+
   /** 「时间线」展开钮：同一条再点 = 收起；点别的条 = 换过去（换过去 = 旧的卸载、数据丢弃）。 */
   const toggleTimeline = useCallback((item: WorkItem) => {
     setExpandedTimelineWorkItemId((previous) => (previous === item.id ? null : item.id));
@@ -372,6 +418,7 @@ export function WorkItemsPage({
             busyWorkItemId={discardingId ?? busyWorkItemId}
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
             onEdit={(item) => setDialog({ kind: "edit", item })}
+            onReassign={(item) => setReassignTarget(item)}
             onDiscard={(workItemId) => {
               // **只进入待确认态**：真正的删除必须经对话框确认（不得一键即毁）。
               setDiscardConfirm(requestSquadDiscard(workItemId));
@@ -423,6 +470,18 @@ export function WorkItemsPage({
           titleId="squad.workItems.editTitle"
           submitLabelId="squad.common.save"
           initial={{ title: dialog.item.title, body: dialog.item.body }}
+        />
+      ) : null}
+
+      {/* 改派：改负责人（改派 = 新派发，可能开出一次新 run）。候选 / 初值 / 解析都在视图模型与
+          对话框里（`workItemAssigneeOptions` / `assigneeOptionValue` / `parseAssigneeValue`），
+          本页只接提交路径（同值 ⇒「未变更」）。 */}
+      {snapshot && target && reassignTarget ? (
+        <ReassignWorkItemDialog
+          workItem={reassignTarget}
+          snapshot={snapshot}
+          onClose={() => setReassignTarget(null)}
+          onSubmit={submitReassign}
         />
       ) : null}
     </div>

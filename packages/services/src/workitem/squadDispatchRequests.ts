@@ -12,12 +12,23 @@
    本文件必须**浏览器安全**（它被 `squadRuntime.ts` 值导入，而该文件同时也被测试与 node 侧使用）：
    只 import type，不触达 `node:*`，因此不引入任何运行时依赖。 */
 
+import type { WorkItemDispatchAssignee } from "./workItemService.js";
+
 /** 一条派发请求：**要开一个 run** 这条事实（不是工作项状态变迁）。 */
 export type SquadDispatchRequest = {
   /** 被指派的工作项（run 挂在它下面）。 */
   workItemId: string;
-  /** 被指派到的队员（`assignWorkItem` 刚写进 `assignee` 的那个值）。 */
-  agentId: string;
+  /**
+   * 这次派发要派给**谁**：`{ type, id }`（`reassignWorkItem` / `assignWorkItem` 刚写进 `assignee` 的
+   * 那个值）。**为什么是 assignee 而不是裸 `agentId`**：请求描述的是「要把这条活派给谁」这一**事实**，
+   * 而小队也能被指派 —— 负责人是 `squad` 时派发路径解析出的是一条**队长 run**（`planDispatch` 从快照
+   * 重读工作项，请求里的这个字段只用于 eventKey 命名与日志）。身份里带类型还避免「智能体 X」与
+   * 「小队 X」在台账/日志里撞名（两个 id 空间彼此独立）。
+   *
+   * **不出现 `user`**：指派给人**不发**这条请求（人不需要被派 run ——「指派给人 = 等人自己动手」，
+   * 见 `reassignWorkItem` 的语义 4），故这条事实里 run 的对象只可能是 agent / squad。
+   */
+  assignee: WorkItemDispatchAssignee;
   /** 目标 workspace：runtime 的**绑定值**（不是调用方传进来的，避免「读错的 workspace 上开 run」）。 */
   workspacePath: string;
   workspaceIdentity: string;

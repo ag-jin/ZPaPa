@@ -4451,6 +4451,11 @@ const enUS: Record<string, string> = {
   "squad.workItems.created": "Work item created",
   "squad.workItems.updated": "Saved",
   "squad.workItems.editTitle": "Edit work item",
+  // Reassign (board row "Reassign" button -> ReassignWorkItemDialog): change an existing item's assignee.
+  "squad.workItems.reassign": "Reassign",
+  "squad.workItems.reassignTitle": "Reassign work item",
+  "squad.workItems.reassigned": "Reassigned",
+  "squad.workItems.reassignUnchanged": "Unchanged: same assignee",
   "squad.workItems.loading": "Loading work items…",
   "squad.workItems.loadFailed": "Failed to load work items",
   "squad.workItems.empty": "No work items yet",
