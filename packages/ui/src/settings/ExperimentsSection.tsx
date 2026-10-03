@@ -5,8 +5,8 @@ import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
-import { SquadMinimalView } from "@/settings/squadEntry/SquadMinimalView.js";
-import { squadEntryVisible } from "@/settings/squadEntry/squadEntryVisibility.js";
+import { SquadMinimalView } from "@/squad/SquadMinimalView.js";
+import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 
 /**
  * 「实验功能」分区：所有实验开关的统一去处。

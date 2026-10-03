@@ -7,7 +7,7 @@ import {
 } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type { CreateSquadInput } from "../teams/squadService.js";
-import type { CreateTeamAgentInput } from "../teams/teamAgentService.js";
+import type { CreateTeamAgentInput, TeamAgentEditablePatch } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type {
@@ -121,6 +121,40 @@ export interface ISquadRuntimeService {
   /** UI 的唯一取数口（含只读的 `enabled` 供呈现用）。 */
   getSnapshot(target: SquadWorkspaceTarget): Promise<SquadSnapshot>;
   createTeamAgent(target: SquadWorkspaceTarget, input: CreateTeamAgentInput): Promise<TeamAgent>;
+  /**
+   * 编辑协作智能体的**可编辑定义字段**（名字 / 系统提示词 / 记忆作用域），返回写盘后的实体
+   * （**加法**，2026-10-03：名册的一级入口「智能体」要求编辑可用）。
+   *
+   * 三条纪律：
+   * 1. **唯一写者**：只经注入的 `teamAgentService`（它内部 read-modify-write + 原子写盘）。
+   *    调用方**不得**自己写 `<ws>/.zcode/squad/agents/<id>.json` —— 第二份写者迟早漂移，
+   *    而漂移的表现是「界面看着改了、盘上没改」或反过来，两处都不报错。
+   * 2. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），写进目标自己的
+   *    `<ws>/.zcode/squad/agents`——与 `createTeamAgent` 同款（runtime 按目标现构、不缓存）。
+   * 3. **不过门禁**：名册管理不产生新派发（§5.7.6 只停新派发），与 `failMemberRun` /
+   *    `reviewMemberRun` 同款理由 —— 关掉实验开关后**不该连改名字都不让**（在途 run 的收尾、
+   *    名册的整理都与派发无关）。**本层不得写任何第二份开关判据**；界面侧入口的显隐由
+   *    `squadEntryVisible` 负责，那是呈现、不是门禁。
+   */
+  updateTeamAgent(
+    target: SquadWorkspaceTarget,
+    input: { id: string; patch: TeamAgentEditablePatch },
+  ): Promise<TeamAgent>;
+  /**
+   * 启用 / 停用协作智能体（**加法**）。**不过门禁**：不产生新派发（与 `updateTeamAgent` 同理由）。
+   * **唯一写者**：只经注入的 `teamAgentService.setEnabled`（它保留除 `enabled` 外的全部字段，
+   * 含 `archivedAt` —— 停用不是归档，两者互不覆盖）。**目标显式**：同 `updateTeamAgent`。
+   */
+  setTeamAgentEnabled(
+    target: SquadWorkspaceTarget,
+    input: { id: string; enabled: boolean },
+  ): Promise<void>;
+  /**
+   * 归档协作智能体（**加法**）：只写 `archivedAt`，定义与记忆都保留（不是硬删）。
+   * **不过门禁**：不是「新派发」（与 `updateTeamAgent` 同理由；归档本身正是**减少**派发候选的动作）。
+   * **唯一写者**：只经注入的 `teamAgentService.archive`。**目标显式**：同 `updateTeamAgent`。
+   */
+  archiveTeamAgent(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   createSquad(target: SquadWorkspaceTarget, input: CreateSquadInput): Promise<Squad>;
   /** 指派即入队 ⇒ **入口过门禁**（入口② 走这条）。 */
   createWorkItem(target: SquadWorkspaceTarget, input: CreateWorkItemRequest): Promise<WorkItem>;
@@ -426,6 +460,26 @@ export function createSquadRuntimeService(deps: {
 
     async createTeamAgent(target, input) {
       return (await deps.createRuntime(target)).teamAgentService.create(input);
+    },
+
+    /* 以下三个名册管理动作（**加法**）都不调 `assertEnabled`：名册管理不产生新派发
+       （§5.7.6 只停新派发），与 `failMemberRun` / `reviewMemberRun` 同款理由 ——
+       关掉实验开关时名册管理仍应可用（界面侧入口此时本就隐藏，见 `squadEntryVisible`）。
+       **这里刻意不写任何第二份开关判据**：门禁的唯一判据是上面的 `assertEnabled`，
+       名册这里连"判一下"的必要都没有（不是漏判，是不该判）。
+       写者纪律：只经注入的 `teamAgentService`（read-modify-write + 原子写盘在其内部），
+       服务面不碰任何文件，也不做第二份拼装。目标 `target` 原样交给 `createRuntime` ——
+       它是**唯一权威**（runtime 按目标现构、不缓存，没有隐式默认 workspace）。 */
+    async updateTeamAgent(target, input) {
+      return (await deps.createRuntime(target)).teamAgentService.update(input.id, input.patch);
+    },
+
+    async setTeamAgentEnabled(target, input) {
+      await (await deps.createRuntime(target)).teamAgentService.setEnabled(input.id, input.enabled);
+    },
+
+    async archiveTeamAgent(target, input) {
+      await (await deps.createRuntime(target)).teamAgentService.archive(input.id);
     },
 
     async createSquad(target, input) {

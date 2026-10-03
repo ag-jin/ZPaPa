@@ -17,7 +17,7 @@ import {
   SQUAD_RUNTIME_SERVICE_UNAVAILABLE_CODE,
   resolveSquadRuntimeService,
   squadWorkspaceTarget,
-} from "../src/settings/squadEntry/squadRuntimeAccess.js";
+} from "../src/squad/squadRuntimeAccess.js";
 import {
   SQUAD_DISCARD_CONFIRM_IDLE,
   SQUAD_RUN_STATUS_MESSAGE_IDS,
@@ -33,7 +33,7 @@ import {
   squadEntryErrorFeedback,
   squadEntrySectionState,
   workItemAssigneeOptions,
-} from "../src/settings/squadEntry/squadEntryViewModel.js";
+} from "../src/squad/squadEntryViewModel.js";
 
 /* 这些用例全部是**纯逻辑**：不渲染 React（ui 包没有渲染测试设施），
    所以「数据面 / 审查动作 / 关闭实验 / 响亮失败」四类矩阵格子都落在这里的纯函数上。
@@ -425,26 +425,26 @@ test("放弃整批：失败可见（带原始细节，不吞错）", async () =>
       于是「点按钮直接执行」这种改法连写都写不出来（写出来本用例红）；
    ② 「点按钮」只能进入待确认态（`requestSquadDiscard`），且必须渲染确认对话框。
    变异验证：把确认对话框删掉、让按钮直接执行 ⇒ 本用例必红（见报告）。 */
-const SQUAD_ENTRY_DIR = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../src/settings/squadEntry",
-);
+const SQUAD_ENTRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src/squad");
 
-/* ── 接线守卫：**取数失败时三个「新建」仍在（置灰），不是整块消失** ──
+/* ── 接线守卫：**取数失败时「新建」入口仍在（置灰），不是整块消失** ──
 
    2026-10-03 用户实测：开了实验开关、打开这张卡，只看到「操作失败 + 刷新」，
    第一反应是「**前端没有 UI 承接操作吗？**」——因为入口原本包在 `snapshot && sections` 里，
    读失败就把入口一起藏掉了。**「被错误挡住」看起来和「产品没做入口」一模一样**。
    判据：入口的可见性**不得依赖取数成功**；取数失败时由状态行说明原因、按钮置灰即可。
-   变异验证：把 `disabled={!snapshot}` 改回「包在 snapshot 条件里」⇒ 本用例必红。 */
-test("接线守卫｜三个「新建」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
+   变异验证：把 `disabled={!snapshot}` 改回「包在 snapshot 条件里」⇒ 本用例必红。
+
+   2026-10-03 搬家后此处只剩**两个**入口（小队 / 工作项）：智能体名册移到侧栏一级入口
+   「智能体」（`src/squad/SquadAgentsPage.tsx`），本卡只留一行指引 —— 见下面那条搬家断言。 */
+test("接线守卫｜两个「新建」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
   const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
   assert.equal(
     (view.match(/disabled=\{!snapshot\}/g) ?? []).length,
-    3,
-    "三个新建入口都要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
+    2,
+    "两个新建入口都要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
   );
-  for (const kind of ["teamAgent", "squad", "workItem"]) {
+  for (const kind of ["squad", "workItem"]) {
     assert.equal(
       (view.match(new RegExp(`setDialog\\("${kind}"\\)`, "g")) ?? []).length,
       1,
@@ -453,7 +453,34 @@ test("接线守卫｜三个「新建」入口常驻（无快照⇒置灰），�
   }
   assert.ok(
     !/snapshot && sections && target \?/.test(view),
-    "三个入口不得再整体包在「快照成功」的条件里（那正是本轮要修的形态）",
+    "两个入口不得再整体包在「快照成功」的条件里（那正是本轮要修的形态）",
+  );
+});
+
+/* ── 搬家守卫：**智能体名册搬家不留拷贝**（2026-10-03 用户裁定：入口是一级导航，不藏设置）──
+
+   设置卡里不得再出现智能体的新建分支（`setDialog("teamAgent")`）、表单（`TeamAgentDialog`）
+   或列表（`SquadTeamAgentList`）—— 三者只要回来一个，就会出现"设置卡里也能建智能体"的
+   第二份入口，而两份入口迟早分叉（改了这处没改那处，且不报错）。
+   变异验证：把智能体那一行加回设置卡 ⇒ 本用例必红。 */
+test("搬家守卫｜设置卡不再持有智能体名册（不留拷贝），只留一行指引", () => {
+  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
+  assert.equal(
+    (view.match(/setDialog\("teamAgent"\)/g) ?? []).length,
+    0,
+    "设置卡里不得再有智能体的新建入口（它现在长在侧栏一级入口「智能体」）",
+  );
+  assert.ok(
+    !view.includes("TeamAgentDialog"),
+    "设置卡不得再引用智能体表单（唯一实现在 squad 目录）",
+  );
+  assert.ok(
+    !view.includes("SquadTeamAgentList"),
+    "设置卡不得再引用智能体列表（列表在 SquadAgentsPage）",
+  );
+  assert.ok(
+    view.includes("squad.agents.settingsMovedHint"),
+    "必须留一行指引：原处找不到名册会看起来像「功能没了」",
   );
 });
 

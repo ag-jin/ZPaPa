@@ -46,6 +46,7 @@ import type {
 } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
 import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadcrumbFrame.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
+import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -198,6 +199,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   onOpenAutomationConsumed,
   handleOpenAutomations,
   handleOpenPluginStore,
+  handleOpenSquadAgents,
   handleManageInstalledPlugins,
   onConnectRemote,
   onSelectRemoteProject,
@@ -1472,8 +1474,15 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // Draft 之前维护一套独立轻量 header，导致 side pane、caption 安全区和拖拽入口
   // 与 Task Header 分叉。桌面端统一复用 WorkspaceHeader，只由 variant 裁剪 task 专属内容；
   // 手机远控无 active task 时仍不渲染桌面 chrome，继续遵守 replayable overlay 边界。
-  const shouldRenderMainViewHeader =
-    workspaceMainView !== "automations" && workspaceMainView !== "plugin-store";
+  //
+  // 「整页主视图」= 自带面包屑框架（AutomationsMainBreadcrumbFrame）的扁平页面：
+  // automations / plugin-store / agents。这三处共用一个具名判据（header 渲染、终端面板显隐）；
+  // 各写一份字面量判断迟早漂移 —— 漏一处就是某个入口多一层 header 或终端面板，且不报错。
+  const isFullPageMainView =
+    workspaceMainView === "automations" ||
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "agents";
+  const shouldRenderMainViewHeader = !isFullPageMainView;
   const shouldRenderWorkspaceHeader =
     shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
   // ErrorBoundary resetKeys 的数组如果每次 render 都重新创建，
@@ -1578,6 +1587,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     automationsActive={workspaceMainView === "automations"}
                     onOpenPluginStore={handleOpenPluginStore}
                     pluginStoreActive={workspaceMainView === "plugin-store"}
+                    onOpenSquadAgents={handleOpenSquadAgents}
+                    squadAgentsActive={workspaceMainView === "agents"}
                   />
                 </WorkflowRunOpenProvider>
               </V4SplitPaneEntryProvider>
@@ -1798,6 +1809,38 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                             </div>
                           </AutomationsMainBreadcrumbFrame>
                         </main>
+                      ) : workspaceMainView === "agents" ? (
+                        /* 「智能体」一级入口（用户 2026-10-03 裁定：一级导航，不藏设置）。
+                           骨架逐句对齐插件市场分支：面包屑框架 + 稳定滚动槽 + 居中内容列。
+                           `ScopedErrorBoundary` scope 独立（"squad-agents"）：本页的崩溃
+                           不该把别的页面一起带走，也不该被别人的崩溃连坐。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openSquadAgents",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="squad-agents"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <SquadAgentsPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
                       ) : (
                         <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
                           {renderChatFindDialog()}
@@ -1876,7 +1919,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     </div>
                   </section>
                 </ResizablePanel>
-                {workspaceMainView !== "automations" && workspaceMainView !== "plugin-store" ? (
+                {isFullPageMainView ? null : (
                   <AnimatedTerminalPanel
                     frameClassName={cn(
                       isSidePaneVisible
@@ -1903,7 +1946,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     onClose={() => setIsTerminalOpen(false)}
                     onOpenBrowserUrl={handleOpenBrowserUrl}
                   />
-                ) : null}
+                )}
               </ResizablePanelGroup>
             </ResizablePanel>
             {/* Browser Guest Host 必须与主视图路由解耦，避免 automations/plugin

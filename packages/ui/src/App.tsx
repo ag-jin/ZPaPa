@@ -835,6 +835,11 @@ export function App({
   const handleNavigateToTaskMain = useCallback(() => {
     setWorkspaceMainView("chat");
   }, []);
+  // 侧栏一级入口「智能体」（照 handleNavigateToTaskMain 的形态）：只是切主视图，
+  // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
+  const handleOpenSquadAgentsMain = useCallback(() => {
+    setWorkspaceMainView("agents");
+  }, []);
   const { preserveNextSettingsExit } = useWorkspaceMainViewSettingsExit({
     isWorkspaceVisible,
     workspaceMainView,
@@ -1135,6 +1140,7 @@ export function App({
         onOpenAutomationConsumed={handleOpenAutomationConsumed}
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
+        handleOpenSquadAgents={handleOpenSquadAgentsMain}
         handleManageInstalledPlugins={handleManageInstalledPlugins}
         onConnectRemote={onConnectRemote}
         onSelectRemoteProject={onSelectRemoteProject}

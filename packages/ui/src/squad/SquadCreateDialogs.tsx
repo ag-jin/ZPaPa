@@ -40,12 +40,15 @@ const NO_PARENT_VALUE = "__none__";
 /** 三个表单共用的外壳：标题 + 说明 + 提交/取消。 */
 function CreateDialogShell({
   titleId,
+  submitLabelId,
   onSubmit,
   onClose,
   canSubmit,
   children,
 }: {
   titleId: string;
+  /** 提交按钮文案；省略即「创建」（编辑模式传「保存」——同一个表单不抄第二份）。 */
+  submitLabelId?: string;
   onSubmit: () => void;
   onClose: () => void;
   canSubmit: boolean;
@@ -74,7 +77,7 @@ function CreateDialogShell({
               {intl.formatMessage({ id: "settings.experiments.squad.cancel" })}
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {intl.formatMessage({ id: "settings.experiments.squad.submit" })}
+              {intl.formatMessage({ id: submitLabelId ?? "settings.experiments.squad.submit" })}
             </Button>
           </SettingsFormActions>
         </form>
@@ -117,9 +120,20 @@ function FieldGroup({ labelId, children }: { labelId: string; children: ReactNod
   );
 }
 
+/**
+ * 协作智能体表单：**创建 / 编辑两用**（只有这一处实现 —— 另抄一份编辑表单会让两个表单
+ * 在字段与校验上陆续分叉，而分叉不报错）。
+ *
+ * `initial` 省略即「新建」（空白表单）；给出即「编辑」（按既有值填初值，标题与提交按钮
+ * 的文案由 `titleId` / `submitLabelId` 换）。提交的回调形状两者相同：三个可编辑字段
+ * ——正是服务面 `updateTeamAgent` 的白名单（`TeamAgentEditablePatch`），不多不少。
+ */
 export function TeamAgentDialog({
   onClose,
   onSubmit,
+  initial,
+  titleId = "settings.experiments.squad.createTeamAgent",
+  submitLabelId = "settings.experiments.squad.submit",
 }: {
   onClose: () => void;
   onSubmit: (input: {
@@ -127,15 +141,24 @@ export function TeamAgentDialog({
     systemPrompt: string;
     memoryScope: TeamAgent["memoryScope"];
   }) => void;
+  /** 编辑既有智能体时的初值；省略 = 新建。 */
+  initial?: { name: string; systemPrompt: string; memoryScope: TeamAgent["memoryScope"] };
+  /** 标题文案键；省略即「新建协作智能体」。 */
+  titleId?: string;
+  /** 提交按钮文案键；省略即「创建」。 */
+  submitLabelId?: string;
 }) {
   const { intl } = useZCodeIntl();
-  const [name, setName] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [memoryScope, setMemoryScope] = useState<TeamAgent["memoryScope"]>("project");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
+  const [memoryScope, setMemoryScope] = useState<TeamAgent["memoryScope"]>(
+    initial?.memoryScope ?? "project",
+  );
 
   return (
     <CreateDialogShell
-      titleId="settings.experiments.squad.createTeamAgent"
+      titleId={titleId}
+      submitLabelId={submitLabelId}
       onClose={onClose}
       canSubmit={name.trim().length > 0 && systemPrompt.trim().length > 0}
       onSubmit={() => onSubmit({ name: name.trim(), systemPrompt, memoryScope })}

@@ -14,6 +14,7 @@ import {
 import {
   Archive,
   Blocks,
+  Bot,
   CalendarClock,
   Clock3,
   Cloud,
@@ -90,6 +91,8 @@ import {
   reorderSidebarPurposeSections,
 } from "@/lib/sidebarPurposeSectionPreferences.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
@@ -241,8 +244,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter,
   onOpenAutomations,
   onOpenPluginStore,
+  onOpenSquadAgents,
   automationsActive = false,
   pluginStoreActive = false,
+  squadAgentsActive = false,
 }: {
   workspacePath: string;
   workspaceRemoteSessionId?: string;
@@ -290,8 +295,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter: () => void;
   onOpenAutomations?: () => void;
   onOpenPluginStore?: () => void;
+  onOpenSquadAgents?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
+  squadAgentsActive?: boolean;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const handleTaskRowSelect = useCallback(
@@ -722,6 +729,15 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenAutomationsMain = useCallback(() => {
     onOpenAutomations?.();
   }, [onOpenAutomations]);
+  const handleOpenSquadAgentsMain = useCallback(() => {
+    onOpenSquadAgents?.();
+  }, [onOpenSquadAgents]);
+  /* 「智能体」一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
+     判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒ 不可见，
+     避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
+     assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。 */
+  const { settings } = useSettings();
+  const showSquadAgentsEntry = squadEntryVisible(settings);
   const handleOpenCodingPlanUpgrade = useCallback(
     (
       providerId: string,
@@ -1307,6 +1323,25 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               <Blocks className="size-4" />
               {intl.formatMessage({ id: "workspace.openPluginsSettings" })}
             </Button>
+            {/* 「智能体」一级入口（用户 2026-10-03 裁定：不藏设置；与「自动化」「插件市场」同层级）。
+                显隐由 squadEntryVisible 一处给出（见上方注释）—— 不是门禁。 */}
+            {showSquadAgentsEntry ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenSquadAgentsMain}
+                data-icon="inline-start"
+                data-testid="squad-agents-sidebar-open"
+                size="lg"
+                aria-pressed={squadAgentsActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  squadAgentsActive && "bg-selected text-foreground",
+                )}
+              >
+                <Bot className="size-4" />
+                {intl.formatMessage({ id: "workspace.openSquadAgents" })}
+              </Button>
+            ) : null}
           </div>
 
           <div className="relative flex min-h-0 flex-1 flex-col">

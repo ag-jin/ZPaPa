@@ -1494,6 +1494,7 @@ const zhCN: Record<string, string> = {
   "workspace.startFromScratch": "从空目录开始",
   "workspace.openFolder": "打开文件夹",
   "workspace.openPluginsSettings": "插件市场",
+  "workspace.openSquadAgents": "智能体",
   "workspace.backToWorkspace": "返回工作区",
   "workspace.noActiveForNewTask": "当前还没有可用的工作区，请先打开一个工作区。",
   "workspace.wslUncPrompt.title": "建议通过 WSL 远程连接打开",
@@ -4101,8 +4102,7 @@ const zhCN: Record<string, string> = {
   "settings.experiments.squad.review.title": "待收尾的运行",
   "settings.experiments.squad.review.empty": "没有待收尾的运行",
   "settings.experiments.squad.review.merged": "已通过：合入集成分支",
-  "settings.experiments.squad.review.rejectedKept":
-    "已打回：队员的工作树保留到修好并合并之后再删",
+  "settings.experiments.squad.review.rejectedKept": "已打回：队员的工作树保留到修好并合并之后再删",
   "settings.experiments.squad.review.conflict": "合并冲突：没有合入主分支，需要先解决冲突",
   "settings.experiments.squad.review.branchMissing": "队员分支不存在，无法合并",
   "settings.experiments.squad.discard.action": "放弃整批",
@@ -4142,6 +4142,27 @@ const zhCN: Record<string, string> = {
   "settings.experiments.squad.runStatus.rejected": "已打回，待修复",
   "settings.experiments.squad.runStatus.merged": "已合并",
   "settings.experiments.squad.runStatus.discarded": "已抛弃",
+
+  // 侧栏一级入口「智能体」页面（2026-10-03 搬家：名册从设置卡移到一级导航）。
+  "squad.agents.editTitle": "编辑协作智能体",
+  "squad.agents.save": "保存",
+  "squad.agents.edit": "编辑",
+  "squad.agents.enable": "启用",
+  "squad.agents.disable": "停用",
+  "squad.agents.archive": "归档",
+  "squad.agents.archiveConfirmTitle": "归档协作智能体「{name}」？",
+  "squad.agents.archiveConfirmDescription":
+    "归档后它不再出现在派发候选里；定义与记忆都会保留，不会删除任何数据。此操作不可撤销。",
+  "squad.agents.archiveSucceeded": "已归档",
+  "squad.agents.updated": "已保存",
+  "squad.agents.enabledToast": "已启用",
+  "squad.agents.disabledToast": "已停用",
+  "squad.agents.loading": "正在读取协作智能体…",
+  "squad.agents.loadFailed": "读取协作智能体失败",
+  "squad.agents.emptyHint": "建一个协作智能体，它才能被小队指派干活。",
+  "squad.agents.experimentOff":
+    "多智能体小队实验已关闭：入口已隐藏，新派发会被服务层拒绝；此处的名册管理仍可用。",
+  "squad.agents.settingsMovedHint": "协作智能体的管理已移到侧栏「智能体」入口",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",
@@ -4537,7 +4558,8 @@ const zhCN: Record<string, string> = {
   "wiki.settings.projectList.pending": "待更新 {count}",
   "wiki.settings.autoUpdate.projectHint": "仅对当前项目生效；每个项目各自保存自己的配置",
   "wiki.settings.time.hint": "在 {time} 执行",
-  "wiki.settings.description": "AI 通读项目后生成可读的开发文档，产物放在项目的 wiki 目录下，跟随代码版本演进。",
+  "wiki.settings.description":
+    "AI 通读项目后生成可读的开发文档，产物放在项目的 wiki 目录下，跟随代码版本演进。",
   "wiki.action.generateNow": "立即生成",
   "wiki.action.save": "保存",
   "wiki.settings.schedule.label": "更新计划",

@@ -3,7 +3,7 @@ import test from "node:test";
 import { appSettingsSchema } from "@zcode/shared";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
-import { squadEntryVisible } from "../src/settings/squadEntry/squadEntryVisibility.js";
+import { squadEntryVisible } from "../src/squad/squadEntryVisibility.js";
 
 // spec §12 / §16 S8（口径即 §5.7 第 6 项「关闭实验开关」）：关闭实验 ⇒ 入口**整体消失**
 // （不是灰掉、不是报错页），且**不影响**现有 subagent / automation 的任何界面。
