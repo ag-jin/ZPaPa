@@ -3,12 +3,12 @@ import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
-import { teamAgentRowActions } from "./squadAgentsViewModel.js";
+import { rosterRowActions } from "./squadSurfaceViewModel.js";
 
 /* 「智能体」页面的**纯呈现**列表（取数与动作都在 SquadAgentsPage）。
 
    拆出来是为了两件事：① 单文件不越 400 行；② 列表与动作解耦后，"哪些行给哪些按钮"的判据
-   只在 `teamAgentRowActions` 一处出现（本层只照它画），页面只负责调服务。
+   只在共享的 `rosterRowActions` 一处出现（本层只照它画），页面只负责调服务。
 
    **空态在这里**（空列表 + 引导 + 新建按钮在页面头部常驻）：空态不是"没有内容"，
    而是"这里该有什么、怎么开始"的那句话，与列表是同一条渲染分支，分开写会漂移。 */
@@ -48,7 +48,7 @@ export function SquadAgentsList({
   return (
     <ul className={LIST_CLASSNAME} data-testid="squad-agents-list">
       {agents.map((agent) => {
-        const actions = teamAgentRowActions(agent);
+        const actions = rosterRowActions(agent);
         const busy = busyAgentId === agent.id;
         return (
           <li
@@ -83,7 +83,7 @@ export function SquadAgentsList({
             </span>
             <span className="flex shrink-0 items-center gap-2">
               {/* 已归档 ⇒ 三个动作都不给（归档是终态，仓库里没有"取消归档"）——
-                  判据在 teamAgentRowActions，本层只照它画。 */}
+                  判据在共享的 rosterRowActions，本层只照它画。 */}
               {actions.canEdit ? (
                 <Button
                   size="sm"
@@ -92,7 +92,7 @@ export function SquadAgentsList({
                   data-testid="squad-agent-edit"
                   onClick={() => onEdit(agent)}
                 >
-                  {t("squad.agents.edit")}
+                  {t("squad.common.edit")}
                 </Button>
               ) : null}
               {actions.canToggle ? (
@@ -103,7 +103,7 @@ export function SquadAgentsList({
                   data-testid="squad-agent-toggle"
                   onClick={() => onToggle(agent)}
                 >
-                  {agent.enabled ? t("squad.agents.disable") : t("squad.agents.enable")}
+                  {agent.enabled ? t("squad.common.disable") : t("squad.common.enable")}
                 </Button>
               ) : null}
               {actions.canArchive ? (
@@ -114,7 +114,7 @@ export function SquadAgentsList({
                   data-testid="squad-agent-archive"
                   onClick={() => onArchive(agent)}
                 >
-                  {t("squad.agents.archive")}
+                  {t("squad.common.archive")}
                 </Button>
               ) : null}
             </span>

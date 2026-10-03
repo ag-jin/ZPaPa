@@ -435,51 +435,64 @@ const SQUAD_ENTRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src
    判据：入口的可见性**不得依赖取数成功**；取数失败时由状态行说明原因、按钮置灰即可。
    变异验证：把 `disabled={!snapshot}` 改回「包在 snapshot 条件里」⇒ 本用例必红。
 
-   2026-10-03 搬家后此处只剩**两个**入口（小队 / 工作项）：智能体名册移到侧栏一级入口
-   「智能体」（`src/squad/SquadAgentsPage.tsx`），本卡只留一行指引 —— 见下面那条搬家断言。 */
-test("接线守卫｜两个「新建」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
+   2026-10-03 两次搬家后此处只剩**一个**入口（工作项）：智能体名册移到侧栏一级入口
+   「智能体」（`src/squad/SquadAgentsPage.tsx`），小队名册移到一级入口「小队」
+   （`src/squad/SquadsPage.tsx`），本卡只留一行指引 —— 见下面那条搬家断言。 */
+test("接线守卫｜「新建工作项」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
   const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
   assert.equal(
     (view.match(/disabled=\{!snapshot\}/g) ?? []).length,
-    2,
-    "两个新建入口都要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
+    1,
+    "仅存的工作项入口要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
   );
-  for (const kind of ["squad", "workItem"]) {
-    assert.equal(
-      (view.match(new RegExp(`setDialog\\("${kind}"\\)`, "g")) ?? []).length,
-      1,
-      `${kind} 入口只该有一处：为错误态另抄一份入口 = 同一语义两处实现`,
-    );
-  }
+  assert.equal(
+    (view.match(/setDialog\("workItem"\)/g) ?? []).length,
+    1,
+    "工作项入口只该有一处：为错误态另抄一份入口 = 同一语义两处实现",
+  );
+  // 小队入口已搬走：设置卡里不得再有它的新建分支（本轮搬运的守卫面）。
+  assert.equal(
+    (view.match(/setDialog\("squad"\)/g) ?? []).length,
+    0,
+    "小队的新建分支必须已从设置卡移除（它现在长在侧栏一级入口「小队」）",
+  );
   assert.ok(
     !/snapshot && sections && target \?/.test(view),
-    "两个入口不得再整体包在「快照成功」的条件里（那正是本轮要修的形态）",
+    "入口不得再整体包在「快照成功」的条件里（那正是要修的形态）",
   );
 });
 
-/* ── 搬家守卫：**智能体名册搬家不留拷贝**（2026-10-03 用户裁定：入口是一级导航，不藏设置）──
+/* ── 搬家守卫：**名册搬家不留拷贝**（2026-10-03 用户裁定：入口是一级导航，不藏设置）──
 
-   设置卡里不得再出现智能体的新建分支（`setDialog("teamAgent")`）、表单（`TeamAgentDialog`）
-   或列表（`SquadTeamAgentList`）—— 三者只要回来一个，就会出现"设置卡里也能建智能体"的
-   第二份入口，而两份入口迟早分叉（改了这处没改那处，且不报错）。
-   变异验证：把智能体那一行加回设置卡 ⇒ 本用例必红。 */
-test("搬家守卫｜设置卡不再持有智能体名册（不留拷贝），只留一行指引", () => {
+   设置卡里不得再出现智能体 / 小队的新建分支（`setDialog("teamAgent")` / `setDialog("squad")`）、
+   表单（`TeamAgentDialog` / `SquadDialog`）或列表（`SquadTeamAgentList` / `SquadList`）——
+   只要回来一个，就会出现"设置卡里也能建"的第二份入口，而两份入口迟早分叉
+   （改了这处没改那处，且不报错）。
+   变异验证：把智能体或小队那一行加回设置卡 ⇒ 本用例必红。 */
+test("搬家守卫｜设置卡不再持有智能体 / 小队名册（不留拷贝），只留一行指引", () => {
   const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
   assert.equal(
     (view.match(/setDialog\("teamAgent"\)/g) ?? []).length,
     0,
     "设置卡里不得再有智能体的新建入口（它现在长在侧栏一级入口「智能体」）",
   );
+  assert.equal(
+    (view.match(/setDialog\("squad"\)/g) ?? []).length,
+    0,
+    "设置卡里不得再有小队的新建入口（它现在长在侧栏一级入口「小队」）",
+  );
   assert.ok(
     !view.includes("TeamAgentDialog"),
     "设置卡不得再引用智能体表单（唯一实现在 squad 目录）",
   );
+  assert.ok(!view.includes("SquadDialog"), "设置卡不得再引用小队表单（唯一实现在 squad 目录）");
   assert.ok(
     !view.includes("SquadTeamAgentList"),
     "设置卡不得再引用智能体列表（列表在 SquadAgentsPage）",
   );
+  assert.ok(!view.includes("SquadList"), "设置卡不得再引用小队列表（列表在 SquadsPage）");
   assert.ok(
-    view.includes("squad.agents.settingsMovedHint"),
+    view.includes("squad.common.settingsMovedHint"),
     "必须留一行指引：原处找不到名册会看起来像「功能没了」",
   );
 });

@@ -28,6 +28,7 @@ import {
   Minimize2,
   Plus,
   Search,
+  UsersRound,
   X,
 } from "lucide-react";
 import {
@@ -245,9 +246,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenAutomations,
   onOpenPluginStore,
   onOpenSquadAgents,
+  onOpenSquads,
   automationsActive = false,
   pluginStoreActive = false,
   squadAgentsActive = false,
+  squadsActive = false,
 }: {
   workspacePath: string;
   workspaceRemoteSessionId?: string;
@@ -296,9 +299,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenAutomations?: () => void;
   onOpenPluginStore?: () => void;
   onOpenSquadAgents?: () => void;
+  onOpenSquads?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
   squadAgentsActive?: boolean;
+  squadsActive?: boolean;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const handleTaskRowSelect = useCallback(
@@ -732,12 +737,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenSquadAgentsMain = useCallback(() => {
     onOpenSquadAgents?.();
   }, [onOpenSquadAgents]);
-  /* 「智能体」一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
+  const handleOpenSquadsMain = useCallback(() => {
+    onOpenSquads?.();
+  }, [onOpenSquads]);
+  /* 「智能体」与「小队」两个一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
      判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒ 不可见，
      避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
-     assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。 */
+     assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。
+     两个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给小队再造一个判据变量
+     就是同一语义两处实现，改一处漏一处不报错。 */
   const { settings } = useSettings();
-  const showSquadAgentsEntry = squadEntryVisible(settings);
+  const showSquadEntries = squadEntryVisible(settings);
   const handleOpenCodingPlanUpgrade = useCallback(
     (
       providerId: string,
@@ -1325,7 +1335,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
             </Button>
             {/* 「智能体」一级入口（用户 2026-10-03 裁定：不藏设置；与「自动化」「插件市场」同层级）。
                 显隐由 squadEntryVisible 一处给出（见上方注释）—— 不是门禁。 */}
-            {showSquadAgentsEntry ? (
+            {showSquadEntries ? (
               <Button
                 variant="ghost"
                 onClick={handleOpenSquadAgentsMain}
@@ -1340,6 +1350,25 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               >
                 <Bot className="size-4" />
                 {intl.formatMessage({ id: "workspace.openSquadAgents" })}
+              </Button>
+            ) : null}
+            {/* 「小队」一级入口：紧跟在「智能体」之后（用户 2026-10-03 入口清单：AI 团队 ▸ 智能体 / 小队）。
+                显隐与「智能体」**共用同一个判据变量**（见上方注释）—— 不是门禁。 */}
+            {showSquadEntries ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenSquadsMain}
+                data-icon="inline-start"
+                data-testid="squad-squads-sidebar-open"
+                size="lg"
+                aria-pressed={squadsActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  squadsActive && "bg-selected text-foreground",
+                )}
+              >
+                <UsersRound className="size-4" />
+                {intl.formatMessage({ id: "workspace.openSquads" })}
               </Button>
             ) : null}
           </div>

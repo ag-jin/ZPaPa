@@ -23,6 +23,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
+import type { SquadDialogInitial } from "./squadsViewModel.js";
 
 /* 本阶段的三个「最小」创建表单（协作智能体 / 小队 / 工作项）。
 
@@ -206,11 +207,18 @@ export function TeamAgentDialog({
   );
 }
 
+/** 小队表单：**创建 / 编辑两用**（与 `TeamAgentDialog` 同一手法，只有这一份实现；另抄一份会让
+    两个表单在字段与校验上陆续分叉，而分叉不报错）。`initial` 省略即「新建」，给出即「编辑」
+    （填初值；标题与提交按钮由 `titleId` / `submitLabelId` 换）。提交回调形状两者相同：
+    name / leaderAgentId / members / instructions —— 正是服务面 SquadRosterPatch 收的字段。 */
 export function SquadDialog({
   candidates,
   members,
   onClose,
   onSubmit,
+  initial,
+  titleId = "settings.experiments.squad.createSquad",
+  submitLabelId = "settings.experiments.squad.submit",
 }: {
   candidates: TeamAgent[];
   members: TeamAgent[];
@@ -221,20 +229,30 @@ export function SquadDialog({
     members: string[];
     instructions: { stopCondition: string; maxRounds: string };
   }) => void;
+  /** 编辑既有小队时的初值；省略 = 新建（形状见 `SquadDialogInitial`，页面同用一份）。 */
+  initial?: SquadDialogInitial;
+  /** 标题文案键；省略即「新建小队」。 */
+  titleId?: string;
+  /** 提交按钮文案键；省略即「创建」。 */
+  submitLabelId?: string;
 }) {
   const { intl } = useZCodeIntl();
-  const [name, setName] = useState("");
-  const [leaderAgentId, setLeaderAgentId] = useState("");
-  const [stopCondition, setStopCondition] = useState("");
-  const [maxRounds, setMaxRounds] = useState("");
-  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [leaderAgentId, setLeaderAgentId] = useState(initial?.leaderAgentId ?? "");
+  const [stopCondition, setStopCondition] = useState(initial?.stopCondition ?? "");
+  const [maxRounds, setMaxRounds] = useState(initial?.maxRounds ?? "");
+  const [memberIds, setMemberIds] = useState<string[]>(initial?.memberIds ?? []);
 
+  const leaderPlaceholder = intl.formatMessage({
+    id: "settings.experiments.squad.leaderAgent",
+  });
   const leaderName = candidates.find((agent) => agent.id === leaderAgentId)?.name;
   const selectableMembers = members.filter((agent) => agent.id !== leaderAgentId);
 
   return (
     <CreateDialogShell
-      titleId="settings.experiments.squad.createSquad"
+      titleId={titleId}
+      submitLabelId={submitLabelId}
       onClose={onClose}
       canSubmit={
         name.trim().length > 0 &&
@@ -272,11 +290,7 @@ export function SquadDialog({
             }}
           >
             <SelectTrigger id={controlId}>
-              <SelectValue
-                placeholder={intl.formatMessage({ id: "settings.experiments.squad.leaderAgent" })}
-              >
-                {leaderName}
-              </SelectValue>
+              <SelectValue placeholder={leaderPlaceholder}>{leaderName}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {candidates.map((agent) => (

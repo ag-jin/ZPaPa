@@ -1612,6 +1612,7 @@ const enUS: Record<string, string> = {
   "workspace.openFolder": "Open folder",
   "workspace.openPluginsSettings": "Plugin Marketplace",
   "workspace.openSquadAgents": "Agents",
+  "workspace.openSquads": "Squads",
   "workspace.backToWorkspace": "Back to workspace",
   "workspace.noActiveForNewTask": "There is no available workspace yet. Open a workspace first.",
   "workspace.wslUncPrompt.title": "Open this through WSL remote connection?",
@@ -4430,13 +4431,20 @@ const enUS: Record<string, string> = {
   "settings.experiments.squad.runStatus.merged": "Merged",
   "settings.experiments.squad.runStatus.discarded": "Discarded",
 
-  // Sidebar first-level entry "Agents" page (2026-10-03 move: roster left the settings card).
+  // Sidebar first-level entries "Agents" / "Squads" pages (2026-10-03 move: rosters left the settings card).
+  // Copy shared by both surfaces lives under squad.common.*: one word per action, synced across both.
+  "squad.common.save": "Save",
+  "squad.common.edit": "Edit",
+  "squad.common.enable": "Enable",
+  "squad.common.disable": "Disable",
+  "squad.common.archive": "Archive",
+  "squad.common.experimentOff":
+    "The multi-agent squad experiment is off: the entry is hidden and new dispatches are rejected by the service layer; roster management here still works.",
+  "squad.common.settingsMovedHint":
+    "Team agent and squad management has moved to the “Agents” and “Squads” entries in the sidebar",
+
+  // "Agents" surface (squad.agents.*).
   "squad.agents.editTitle": "Edit team agent",
-  "squad.agents.save": "Save",
-  "squad.agents.edit": "Edit",
-  "squad.agents.enable": "Enable",
-  "squad.agents.disable": "Disable",
-  "squad.agents.archive": "Archive",
   "squad.agents.archiveConfirmTitle": "Archive team agent “{name}”?",
   "squad.agents.archiveConfirmDescription":
     "Once archived it no longer appears as a dispatch candidate; its definition and memory are kept and no data is deleted. This action cannot be undone.",
@@ -4447,10 +4455,24 @@ const enUS: Record<string, string> = {
   "squad.agents.loading": "Loading team agents…",
   "squad.agents.loadFailed": "Failed to load team agents",
   "squad.agents.emptyHint": "Create a team agent so squads can dispatch work to it.",
-  "squad.agents.experimentOff":
-    "The multi-agent squad experiment is off: the entry is hidden and new dispatches are rejected by the service layer; roster management here still works.",
-  "squad.agents.settingsMovedHint":
-    "Team agent management has moved to the “Agents” entry in the sidebar",
+
+  // "Squads" surface (squad.squads.*).
+  "squad.squads.editTitle": "Edit squad",
+  "squad.squads.archiveConfirmTitle": "Archive squad “{name}”?",
+  "squad.squads.archiveConfirmDescription":
+    "Once archived it no longer appears as a dispatch candidate; work items assigned to the squad transfer to the leader; the roster and instructions are kept and no data is deleted. This action cannot be undone.",
+  "squad.squads.archiveSucceeded": "Archived",
+  "squad.squads.updated": "Saved",
+  "squad.squads.enabledToast": "Enabled",
+  "squad.squads.disabledToast": "Disabled",
+  "squad.squads.loading": "Loading squads…",
+  "squad.squads.loadFailed": "Failed to load squads",
+  "squad.squads.empty": "No squads yet",
+  "squad.squads.emptyHint": "Create a squad to put a leader and members to work together.",
+  "squad.squads.leaderLabel": "Leader: ",
+  "squad.squads.membersLabel": "Members: ",
+  "squad.squads.noDispatchableAgentsHint":
+    "No dispatchable collaborative agents yet: create an enabled one under the “Agents” entry in the sidebar first.",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

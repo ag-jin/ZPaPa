@@ -1,15 +1,11 @@
-import type { Squad, WorkItem } from "@zcode/shared";
+import type { WorkItem } from "@zcode/shared";
 import type { SquadRunRecord, SquadSnapshot } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
-import {
-  resolveAssigneeName,
-  resolveTeamAgentName,
-  squadRunStatusMessageId,
-} from "./squadEntryViewModel.js";
+import { resolveAssigneeName, squadRunStatusMessageId } from "./squadEntryViewModel.js";
 
-/* 最小入口三段列表的**纯呈现**（小队 / 工作项 / 待收尾的运行；取数与动作都在 SquadMinimalView）。
+/* 最小入口**两段**列表的**纯呈现**（工作项 / 待收尾的运行；取数与动作都在 SquadMinimalView）。
    拆出来是为了两件事：① 单文件不越 400 行；② 列表与动作解耦后，动作（审查 / 新建）的
    语义只在一处出现，列表这一层只把给定的数据画全。
    本阶段**全量渲染**（spec §11.4 的虚拟化留到 P2c），不做分页也不做截断。 */
@@ -18,30 +14,10 @@ const LIST_CLASSNAME = "flex flex-col gap-2";
 /** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
 const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
 
-/* 智能体名册的列表**已搬家**：`SquadTeamAgentList`（旧的设置卡专用列表）随名册一起退役，
-   现在长在 `SquadAgentsList.tsx`（一级入口「智能体」用）。这里不保留旧组件 ——
-   零调用方的第二份列表就是「同一语义两处实现」的种子：将来改了这处没改那处，且不报错。 */
-
-export function SquadList({ squads, snapshot }: { squads: Squad[]; snapshot: SquadSnapshot }) {
-  const { intl } = useZCodeIntl();
-  return (
-    <ul className={LIST_CLASSNAME}>
-      {squads.map((squad) => (
-        <li key={squad.id} className={cn(ROW_CLASSNAME, "flex flex-col gap-1")}>
-          <span className="break-words text-ui-base text-foreground">{squad.name}</span>
-          <span className="text-ui-xs text-foreground-subtle">
-            {intl.formatMessage({ id: "settings.experiments.squad.leader" })}：
-            {resolveTeamAgentName(snapshot, squad.leaderAgentId)} ·{" "}
-            {intl.formatMessage(
-              { id: "settings.experiments.squad.membersCount" },
-              { count: squad.members.length },
-            )}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
+/* 名册列表**都已搬家**：智能体的 `SquadTeamAgentList`（2026-10-03）与**小队的 `SquadList`**
+   （本轮）都随名册一起退役，现在长在一级入口的 `SquadAgentsList.tsx` / `SquadsList.tsx`。
+   这里不保留旧组件 —— 零调用方的第二份列表就是「同一语义两处实现」的种子：
+   将来改了这处没改那处，且不报错。 */
 
 export function SquadWorkItemList({
   workItems,

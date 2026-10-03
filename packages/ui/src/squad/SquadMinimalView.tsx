@@ -8,9 +8,9 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { SquadDialog, WorkItemDialog } from "./SquadCreateDialogs.js";
+import { WorkItemDialog } from "./SquadCreateDialogs.js";
 import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
-import { SquadList, SquadRunList, SquadWorkItemList } from "./SquadEntryLists.js";
+import { SquadRunList, SquadWorkItemList } from "./SquadEntryLists.js";
 import {
   SQUAD_RUNTIME_SERVICE_UNAVAILABLE_CODE,
   resolveSquadRuntimeService,
@@ -20,14 +20,12 @@ import {
   SQUAD_DISCARD_CONFIRM_IDLE,
   cancelSquadDiscard,
   confirmSquadDiscard,
-  dispatchableTeamAgents,
   executeSquadDiscard,
   requestSquadDiscard,
   reviewOutcomeFeedback,
   squadDiscardableWorkItemIds,
   squadEntryErrorFeedback,
   squadEntrySectionState,
-  squadMemberCandidateAgents,
   squadServiceUnavailableFeedback,
   type SquadEntryFeedback,
 } from "./squadEntryViewModel.js";
@@ -37,10 +35,10 @@ import {
    本阶段只做呈现与最小闭环：建小队 / 建工作项并指派 / 对未合并的 run 通过或打回。
    时间线、虚拟化、评论与「汇报 / 请求审查」两个工具都属 P2c（见 loopHint 文案，不替本阶段许诺）。
 
-   **协作智能体的名册管理已搬家**（用户 2026-10-03 裁定：入口必须是一级导航，不藏设置）：
-   列表 / 新建 / 编辑 / 启停 / 归档现在长在侧栏一级入口「智能体」（`@/squad/SquadAgentsPage`）。
-   本卡只留一行**指引**（新键 `squad.agents.settingsMovedHint`），防止用户在原处找不到 ——
-   同一语义只有一份实现：本文件不再持有智能体的任何列表或表单。
+   **协作智能体与小队的名册管理都已搬家**（用户 2026-10-03 裁定：入口必须是一级导航，不藏设置）：
+   列表 / 新建 / 编辑 / 启停 / 归档现在长在侧栏一级入口「智能体」（`@/squad/SquadAgentsPage`）
+   与「小队」（`@/squad/SquadsPage`）。本卡只留一行**指引**（新键 `squad.common.settingsMovedHint`），
+   防止用户在原处找不到 —— 同一语义只有一份实现：本文件不再持有智能体或小队的任何列表或表单。
 
    **不是门禁**（确认 2）：开关只用来**显隐**（由 ExperimentsSection 调用 squadEntryVisible）。
    服务层单点 `ISquadRuntimeService.assertDispatchEnabled` 才是判据；这里既不读开关决定派发，
@@ -67,7 +65,7 @@ export function SquadMinimalView() {
   const [loading, setLoading] = useState(false);
   const [loadFailure, setLoadFailure] = useState<SquadEntryFeedback | null>(null);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"squad" | "workItem" | null>(null);
+  const [dialog, setDialog] = useState<"workItem" | null>(null);
   /** 「放弃整批」的**二次确认**状态（纯逻辑在视图模型：点按钮只进入待确认态，执行只发生在确认路径）。 */
   const [discardConfirm, setDiscardConfirm] = useState(SQUAD_DISCARD_CONFIRM_IDLE);
   const [discardingId, setDiscardingId] = useState<string | null>(null);
@@ -124,7 +122,7 @@ export function SquadMinimalView() {
       ? (snapshot.workItems.find((item) => item.id === discardConfirm.pendingWorkItemId) ?? null)
       : null;
 
-  /** 三个「新建」共用一次提交：成功 ⇒ 提示 + 重载；失败 ⇒ 按稳定码翻译（含门禁拒绝）。 */
+  /** 「新建工作项」的提交：成功 ⇒ 提示 + 重载；失败 ⇒ 按稳定码翻译（含门禁拒绝）。 */
   const create = useCallback(
     async (
       action: (runtime: ISquadRuntimeServiceShape) => Promise<unknown>,
@@ -236,34 +234,17 @@ export function SquadMinimalView() {
         />
       ) : null}
 
-      {/* 三个「新建」**始终渲染**（读不通当前 workspace 时**置灰**，而不是整块消失）。
+      {/* 「新建工作项」入口**始终渲染**（读不通当前 workspace 时**置灰**，而不是整块消失）。
           2026-10-03 实测教训：用户开了实验开关、打开这张卡，看到的是「操作失败 + 刷新」——
           因为入口原本包在 `snapshot && sections` 里，**读失败就把入口一起藏掉了** ⇒
           「被错误挡住」看起来和「产品没做这个入口」一模一样（用户的原话就是「前端没有 UI 承接操作吗？」）。
           判据：**入口的可见性不得依赖取数成功**；取数失败时由上面的状态行说明原因，按钮置灰即可。
-          （2026-10-03 搬家后此处只剩「小队」「工作项」两个入口；智能体名册在侧栏一级入口。） */}
+          （2026-10-03 两次搬家后此处只剩「工作项」一个入口；智能体与小队的名册在侧栏一级入口。） */}
       {target ? (
         <>
-          {/* 搬家指引（**不是**智能体入口：同一语义只有一份实现，入口在侧栏「智能体」）。
+          {/* 搬家指引（**不是**入口：同一语义只有一份实现，入口在侧栏「智能体」「小队」）。
               没有这一行，用过旧界面的用户会在原处找不到名册 —— 找不到会看起来像"功能没了"。 */}
-          <SettingsRow label={t("squad.agents.settingsMovedHint")} control={null} />
-
-          <SettingsRow
-            label={t("settings.experiments.squad.squads")}
-            description={
-              sections?.squads.empty ? t("settings.experiments.squad.squads.empty") : undefined
-            }
-            control={
-              <Button size="sm" disabled={!snapshot} onClick={() => setDialog("squad")}>
-                {t("settings.experiments.squad.createSquad")}
-              </Button>
-            }
-            detail={
-              snapshot && sections && !sections.squads.empty ? (
-                <SquadList squads={sections.squads.items} snapshot={snapshot} />
-              ) : undefined
-            }
-          />
+          <SettingsRow label={t("squad.common.settingsMovedHint")} control={null} />
 
           <SettingsRow
             label={t("settings.experiments.squad.workItems")}
@@ -326,20 +307,6 @@ export function SquadMinimalView() {
           onCancel={() => setDiscardConfirm(cancelSquadDiscard())}
           onConfirm={() => {
             void runDiscard();
-          }}
-        />
-      ) : null}
-
-      {snapshot && target && dialog === "squad" ? (
-        <SquadDialog
-          candidates={dispatchableTeamAgents(snapshot)}
-          members={squadMemberCandidateAgents(snapshot, null)}
-          onClose={() => setDialog(null)}
-          onSubmit={(input) => {
-            void create(
-              (runtime) => runtime.createSquad(target, input),
-              "settings.experiments.squad.squadCreated",
-            );
           }}
         />
       ) : null}

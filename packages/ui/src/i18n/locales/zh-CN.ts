@@ -1495,6 +1495,7 @@ const zhCN: Record<string, string> = {
   "workspace.openFolder": "打开文件夹",
   "workspace.openPluginsSettings": "插件市场",
   "workspace.openSquadAgents": "智能体",
+  "workspace.openSquads": "小队",
   "workspace.backToWorkspace": "返回工作区",
   "workspace.noActiveForNewTask": "当前还没有可用的工作区，请先打开一个工作区。",
   "workspace.wslUncPrompt.title": "建议通过 WSL 远程连接打开",
@@ -4143,13 +4144,19 @@ const zhCN: Record<string, string> = {
   "settings.experiments.squad.runStatus.merged": "已合并",
   "settings.experiments.squad.runStatus.discarded": "已抛弃",
 
-  // 侧栏一级入口「智能体」页面（2026-10-03 搬家：名册从设置卡移到一级导航）。
+  // 侧栏一级入口「智能体」「小队」两个页面（2026-10-03 起搬家：名册从设置卡移到一级导航）。
+  // 两面共用的动作文案放 squad.common.*：同一个动作只有一个词，改一处两面同步（值不变，只是改名收拢）。
+  "squad.common.save": "保存",
+  "squad.common.edit": "编辑",
+  "squad.common.enable": "启用",
+  "squad.common.disable": "停用",
+  "squad.common.archive": "归档",
+  "squad.common.experimentOff":
+    "多智能体小队实验已关闭：入口已隐藏，新派发会被服务层拒绝；此处的名册管理仍可用。",
+  "squad.common.settingsMovedHint": "协作智能体与小队的名册管理已移到侧栏「智能体」「小队」入口",
+
+  // 「智能体」面（squad.agents.*）。
   "squad.agents.editTitle": "编辑协作智能体",
-  "squad.agents.save": "保存",
-  "squad.agents.edit": "编辑",
-  "squad.agents.enable": "启用",
-  "squad.agents.disable": "停用",
-  "squad.agents.archive": "归档",
   "squad.agents.archiveConfirmTitle": "归档协作智能体「{name}」？",
   "squad.agents.archiveConfirmDescription":
     "归档后它不再出现在派发候选里；定义与记忆都会保留，不会删除任何数据。此操作不可撤销。",
@@ -4160,9 +4167,24 @@ const zhCN: Record<string, string> = {
   "squad.agents.loading": "正在读取协作智能体…",
   "squad.agents.loadFailed": "读取协作智能体失败",
   "squad.agents.emptyHint": "建一个协作智能体，它才能被小队指派干活。",
-  "squad.agents.experimentOff":
-    "多智能体小队实验已关闭：入口已隐藏，新派发会被服务层拒绝；此处的名册管理仍可用。",
-  "squad.agents.settingsMovedHint": "协作智能体的管理已移到侧栏「智能体」入口",
+
+  // 「小队」面（squad.squads.*）。
+  "squad.squads.editTitle": "编辑小队",
+  "squad.squads.archiveConfirmTitle": "归档小队「{name}」？",
+  "squad.squads.archiveConfirmDescription":
+    "归档后它不再出现在派发候选里；指派给该小队的工作项会转交给队长；花名册与指令都会保留，不会删除任何数据。此操作不可撤销。",
+  "squad.squads.archiveSucceeded": "已归档",
+  "squad.squads.updated": "已保存",
+  "squad.squads.enabledToast": "已启用",
+  "squad.squads.disabledToast": "已停用",
+  "squad.squads.loading": "正在读取小队…",
+  "squad.squads.loadFailed": "读取小队失败",
+  "squad.squads.empty": "还没有小队",
+  "squad.squads.emptyHint": "建一支小队，把队长与队员组起来接活。",
+  "squad.squads.leaderLabel": "队长：",
+  "squad.squads.membersLabel": "队员：",
+  "squad.squads.noDispatchableAgentsHint":
+    "还没有可派发的协作智能体：请先到侧栏「智能体」建一个启用中的协作智能体。",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",

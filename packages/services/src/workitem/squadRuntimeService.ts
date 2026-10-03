@@ -6,7 +6,7 @@ import {
   type WorkItem,
 } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
-import type { CreateSquadInput } from "../teams/squadService.js";
+import type { CreateSquadInput, SquadRosterPatch } from "../teams/squadService.js";
 import type { CreateTeamAgentInput, TeamAgentEditablePatch } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
@@ -156,6 +156,38 @@ export interface ISquadRuntimeService {
    */
   archiveTeamAgent(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   createSquad(target: SquadWorkspaceTarget, input: CreateSquadInput): Promise<Squad>;
+  /**
+   * 编辑小队的**可改定义字段**（名字 / 队长 / 名册 / 指令槽位），返回写盘后的实体
+   * （**加法**，2026-10-03：小队的一级入口「小队」要求编辑可用）。
+   *
+   * 三条纪律（与 `updateTeamAgent` 同款）：
+   * 1. **唯一写者**：只经注入的 `squadService.updateRoster`（它内部 read-modify-write + 原子写盘，
+   *    且逐字段显式构造 `next`——白名单是**运行期**的墙）。调用方**不得**自己写
+   *    `<ws>/.zcode/squad/squads/<id>.json` —— 第二份写者迟早漂移，而漂移的表现是
+   *    「界面看着改了、盘上没改」或反过来，两处都不报错。
+   * 2. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），写进目标自己的
+   *    `<ws>/.zcode/squad/squads`——与 `createSquad` 同款（runtime 按目标现构、不缓存）。
+   * 3. **不过门禁**：名册管理不产生新派发（§5.7.6 只停新派发），与 `updateTeamAgent` 同款理由。
+   *    **本层不得写任何第二份开关判据**；界面侧入口的显隐由 `squadEntryVisible` 负责（呈现，不是门禁）。
+   *
+   * 小队**归档**不在此处新增方法：归档要「先转交工作项、后归档」的组合语义，唯一实现在既有的
+   * `archiveSquadAndTransfer`（UI 直接调它，见 `squadRuntime.ts` 的详注）。
+   */
+  updateSquad(
+    target: SquadWorkspaceTarget,
+    input: { id: string; patch: SquadRosterPatch },
+  ): Promise<Squad>;
+  /**
+   * 启用 / 停用小队（**加法**）。**不过门禁**：不产生新派发（与 `updateSquad` 同理由）。
+   * **唯一写者**：只经注入的 `squadService.update`（保留除 `enabled` 外的全部字段，含 `archivedAt`
+   * —— 停用不是归档，两者互不覆盖；`update` 合并后会**重新校验**，非法定义被响亮拒绝——
+   * 这是可接受的：本方法不做第二份校验，也不新开第三个写路径）。
+   * **目标显式**：同 `updateSquad`。
+   */
+  setSquadEnabled(
+    target: SquadWorkspaceTarget,
+    input: { id: string; enabled: boolean },
+  ): Promise<void>;
   /** 指派即入队 ⇒ **入口过门禁**（入口② 走这条）。 */
   createWorkItem(target: SquadWorkspaceTarget, input: CreateWorkItemRequest): Promise<WorkItem>;
   /** 起新 run ⇒ **入口过门禁**（入口① 的队员段与入口③ 都汇到这里）。 */
@@ -484,6 +516,23 @@ export function createSquadRuntimeService(deps: {
 
     async createSquad(target, input) {
       return (await deps.createRuntime(target)).squadService.create(input);
+    },
+
+    /* 以下两个小队名册管理动作（**加法**）与上面三个智能体的同款：都不调 `assertEnabled`
+       —— 名册管理不产生新派发（§5.7.6 只停新派发），关掉实验开关后名册整理仍应可用。
+       写者纪律：只经注入的 `squadService`（read-modify-write + 原子写盘在其内部），
+       服务面不碰任何文件，也不做第二份拼装。目标 `target` 原样交给 `createRuntime` ——
+       它是**唯一权威**（runtime 按目标现构、不缓存，没有隐式默认 workspace）。
+       小队归档**刻意不在这里**：归档的「先转交后归档」组合只有一处实现
+       （`archiveSquadAndTransfer`），UI 直接调它，本层不再加第三个写入口。 */
+    async updateSquad(target, input) {
+      return (await deps.createRuntime(target)).squadService.updateRoster(input.id, input.patch);
+    },
+
+    async setSquadEnabled(target, input) {
+      // 经通用的 `update`（它保留其余字段含 `archivedAt`，并在合并后重新校验）——
+      // 不为「改一个 enabled」新开第三个写路径。
+      (await deps.createRuntime(target)).squadService.update(input.id, { enabled: input.enabled });
     },
 
     async createWorkItem(target, input) {

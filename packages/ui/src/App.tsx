@@ -840,6 +840,11 @@ export function App({
   const handleOpenSquadAgentsMain = useCallback(() => {
     setWorkspaceMainView("agents");
   }, []);
+  // 侧栏一级入口「小队」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图，
+  // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
+  const handleOpenSquadsMain = useCallback(() => {
+    setWorkspaceMainView("squads");
+  }, []);
   const { preserveNextSettingsExit } = useWorkspaceMainViewSettingsExit({
     isWorkspaceVisible,
     workspaceMainView,
@@ -1141,6 +1146,7 @@ export function App({
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
         handleOpenSquadAgents={handleOpenSquadAgentsMain}
+        handleOpenSquads={handleOpenSquadsMain}
         handleManageInstalledPlugins={handleManageInstalledPlugins}
         onConnectRemote={onConnectRemote}
         onSelectRemoteProject={onSelectRemoteProject}
