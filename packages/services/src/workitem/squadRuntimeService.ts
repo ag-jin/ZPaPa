@@ -121,6 +121,30 @@ export interface ISquadRuntimeService {
   assertDispatchEnabled(target: SquadWorkspaceTarget): Promise<void>;
   /** UI 的唯一取数口（含只读的 `enabled` 供呈现用）。 */
   getSnapshot(target: SquadWorkspaceTarget): Promise<SquadSnapshot>;
+  /**
+   * **运行台账的历史读取面**（**加法**，规格 §11.2 活动时间线）：给了 `parentWorkItemId` ⇒
+   * 该批的 run（`listByParent` 口径）；否则 ⇒ 本 workspace **全部** run（`listByWorkspace` 口径，
+   * 含 merged / discarded 的终态行）。
+   *
+   * 为什么必须补它：`getSnapshot().runs` 是 `listActive` 的口径（只列未合并的活跃 run —— 快照
+   * 关心「还欠收尾的那些」），而时间线要**历史**：已合并 / 已抛弃的 run 也是一次发生过的活动，
+   * 只画活跃 run 会让每一次收尾都把图上的一段**静默抹掉**（用户看到的不是「历史」，是「还在跑的」）。
+   * 两个口径的分工见 `SquadRunRepo.listByWorkspace` 的注释：**不得互相替代**。
+   *
+   * 三条纪律（与冻结面既有形态一致）：
+   * 1. **只读**：只经 runtime 的 `squadRunRepo` 读，不写任何行、不碰 git。
+   * 2. **不过门禁**（`assertDispatchEnabled`）：读历史不是新派发（§5.7.6 只停新派发），与
+   *    `reviewMemberRun` / `listInboxItems` 同款理由 —— 关掉实验开关后，界面仍应能查看已经跑过什么
+   *    （那正是收尾在途 run / 复盘所需的视野）。**本层不得写任何第二份开关判据**。
+   * 3. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），workspaceKey 取自
+   *    runtime 的**绑定值**（与 `getSnapshot` / `createWorkItem` 同一条式子 —— runtime 才是
+   *    「为哪个 workspace 而构造」的权威）。过滤与排序都由 repo 单源给出，本层不重写 SQL、
+   *    不读回后重排（第二份判据会与 repo 漂移，而漂移不报错）。
+   */
+  listSquadRuns(
+    target: SquadWorkspaceTarget,
+    input?: { parentWorkItemId?: string },
+  ): Promise<SquadRunRecord[]>;
   createTeamAgent(target: SquadWorkspaceTarget, input: CreateTeamAgentInput): Promise<TeamAgent>;
   /**
    * 编辑协作智能体的**可编辑定义字段**（名字 / 系统提示词 / 记忆作用域），返回写盘后的实体
@@ -575,6 +599,20 @@ export function createSquadRuntimeService(deps: {
         workItems: runtime.workItemRepo.listByWorkspace(keyOf(runtime)),
         runs: runtime.squadRunRepo.listActive(keyOf(runtime)),
       };
+    },
+
+    /* 历史读取面（**加法**，规格 §11.2 时间线的数据面）。**不过门禁**：读历史不是新派发
+       （接口注释里有完整理由），与 `getSnapshot` 不同 —— 后者读 `enabled` 是为了**呈现**，
+       本方法连开关值都不需要：图要画的是「发生过什么」，不是「现在允许做什么」。
+       两个口径都由 repo 单源给出、原样交回：批次过滤 `listByParent`、全量历史 `listByWorkspace`；
+       本层不在这里筛、不在这里重排（第二份判据会与 repo 的排序/过滤漂移，而漂移不报错）。
+       `keyOf(runtime)` 取自 runtime 的**绑定值**：runtime 才是「为哪个 workspace 而构造」的权威
+       （与 createWorkItem 取 workspace 列同一条纪律）。 */
+    async listSquadRuns(target, input) {
+      const runtime = await deps.createRuntime(target);
+      return input?.parentWorkItemId
+        ? runtime.squadRunRepo.listByParent(input.parentWorkItemId)
+        : runtime.squadRunRepo.listByWorkspace(keyOf(runtime));
     },
 
     async createTeamAgent(target, input) {

@@ -62,6 +62,20 @@ export interface SquadRunRepo {
   /** 硬约束 2 的**唯一口径来源**：本 workspace 下未合并（含被打回待修）的 run。 */
   listActive(workspaceKey: string): SquadRunRecord[];
   /**
+   * **全部历史**的口径（活动时间线用）：本 workspace 下的**所有** run，含已合并 / 已抛弃的终态行。
+   *
+   * 与 `listActive` 的分工**不得互相替代**：`listActive` 回答「还欠收尾的是哪些」（启动回收、
+   * 快照、处置入口都按它走 —— 终态 run 的活已结算，混进来会让那些判据把历史当成在途）；
+   * 本方法回答「历史上跑过什么」（时间线要把 merged / discarded 也画出来 —— 一笔写进终态的 run
+   * 同样是一次发生过的活动，只画活跃 run 会得到一张永远在自我修剪的假图）。
+   * 用错口径不会报错：回收拿它当活跃集会把终态 run 的工作树当残枝再清一次；
+   * 时间线拿 `listActive` 当历史会让已收尾的活动凭空消失 —— 两种都是静默错，故两边各自显式。
+   *
+   * 排序与 `listActive` / `listByParent` 同一条（`ORDER_BY_CREATED`：created_at ASC, run_id ASC）：
+   * 时间线从左到右、同刻按 id 定序，同一份台账读两次的行序逐字一致。
+   */
+  listByWorkspace(workspaceKey: string): SquadRunRecord[];
+  /**
    * 推进状态，可顺带 patch 工作树 / 会话列。
    *
    * 未找到该 runId 时**抛错**而不是静默 no-op：调用方（生命周期）以为自己在推进某个 run，
@@ -239,6 +253,17 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `SELECT * FROM squad_runs WHERE workspace_key = ? AND status IN (${ACTIVE_STATUS_PLACEHOLDERS}) ${ORDER_BY_CREATED}`,
         )
         .all(workspaceKey, ...SQUAD_RUN_ACTIVE_STATUSES) as unknown as SquadRunRow[];
+      return rows.map(rowToSquadRun);
+    },
+
+    // 全状态（见接口注释：这是「全部历史」的口径，与 listActive 的「还欠收尾」不得互替）。
+    // 与上面刻意**不共用一个 SQL 前缀**：两处各自写全 WHERE，读代码时不必先跳去常量处
+    // 才能确认这条查询到底带不带状态过滤 —— 而这两条口径之差只在一个 `status IN` 上，
+    // 恰是最容易被顺手复制错的地方。
+    listByWorkspace(workspaceKey) {
+      const rows = db
+        .prepare(`SELECT * FROM squad_runs WHERE workspace_key = ? ${ORDER_BY_CREATED}`)
+        .all(workspaceKey) as unknown as SquadRunRow[];
       return rows.map(rowToSquadRun);
     },
 
