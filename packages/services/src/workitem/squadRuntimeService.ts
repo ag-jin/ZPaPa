@@ -9,6 +9,7 @@ import { createServiceDescriptor } from "../descriptors.js";
 import type { CreateSquadInput, SquadRosterPatch } from "../teams/squadService.js";
 import type { CreateTeamAgentInput, TeamAgentEditablePatch } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
+import type { InboxItem, InboxItemInput, InboxItemRepo } from "./inboxItemRepo.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type {
   LeaderRunRecordOutcome,
@@ -354,6 +355,40 @@ export interface ISquadRuntimeService {
    * **发现判据**：哪些工作项是批次根由 `isSquadBatchRoot` 给出（与 UI 入口共用同一份定义）。
    */
   discardBatch(target: SquadWorkspaceTarget, input: { parentWorkItemId: string }): Promise<void>;
+  /**
+   * 登记一条 InboxItem（**加法**，P2c）：host 在「需要人介入」的产生点调用（队员失败 / 启动和解 /
+   * 派发 skip）；冲突那一条由**编排器**直写（它本来就用同一组 repo，见 `SquadRuntime.inboxItemRepo`）。
+   *
+   * 三条纪律（与 `updateTeamAgent` / `updateWorkItem` 同款）：
+   * 1. **唯一写者**：只经 runtime 的 `inboxItemRepo.insertIfAbsent`（存储层幂等：唯一索引 +
+   *    `INSERT OR IGNORE` —— 同一事实重投不产生第二条、已归档不复活）。调用方不得自己拼 SQL，
+   *    也不得绕过本方法直连 repo；`kind → severity` 的映射在 repo 内单源（产生点只表态 kind）。
+   * 2. **不过门禁**：登记通知**不是新派发**（§5.7.6 只停新派发），与 `failMemberRun` /
+   *    `updateTeamAgent` 同款理由 —— 关掉实验开关后，在途 run 的失败与和解仍必须能落进收件箱
+   *    （那正是要「看得见」的东西）。**本层不得写任何第二份开关判据**。
+   * 3. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），runtime 按目标现构、不缓存
+   *    —— 与 `createWorkItem` 同款。**幂等结论不回传**（`insertIfAbsent` 的 `false` 在本签名上折成
+   *    void）：调用点是 best-effort 留痕，不据它分流 ——「重投」与「新登记」对调用方的后续动作没有差别。
+   */
+  recordInboxItem(target: SquadWorkspaceTarget, input: InboxItemInput): Promise<void>;
+  /**
+   * 收件箱的**跨项目**读取面（**加法**，P2c）：用户裁定收件箱是**跨 workspace 的通知面**
+   * （跨项目一级入口，下一轮落地），故本方法**有意偏离**「目标显式」这条覆盖全文件的纪律 ——
+   * **没有** target 参数，也**不得**有人悄悄加一个（加了就退回「一次只能看一个项目」，
+   * 而「所有项目里等我处理的事」正是收件箱存在的理由）。
+   *
+   * 默认**排除已归档**（归档 = 用户说「处理完了」）；`includeArchived: true` 才连归档行一起取。
+   * 读取不经任一 runtime（跨 workspace ⇒ 没有唯一目标），走组合根注入的懒取 repo：库未就绪时
+   * 它在**调用时**响亮抛，不静默返回空表（空表会把「库没开」伪装成「收件箱是空的」）。
+   */
+  listInboxItems(options?: { includeArchived?: boolean }): Promise<InboxItem[]>;
+  /** 标已读（**加法**）：只改 `read_at` 一列（重复调用保留首次时间戳）。未命中 ⇒ 响亮抛。 */
+  markInboxItemRead(id: string): Promise<void>;
+  /**
+   * 归档（**加法**）：只改 `archived_at` 一列（不碰 `read_at` —— 已读与归档是两件正交的事）。
+   * 归档后同一事实的重投**不复活**它（存储层不变式，见 `recordInboxItem` 第 1 条）。未命中 ⇒ 响亮抛。
+   */
+  archiveInboxItem(id: string): Promise<void>;
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
@@ -466,6 +501,19 @@ export function createSquadRuntimeService(deps: {
    * （本文件必须浏览器安全，不能值导入 node 侧 logger；`console` 是两侧都有的最小交底）。
    */
   logWarn?: SquadRuntimeLogWarn;
+  /**
+   * 收件箱的**懒取** repo 口（跨 workspace 的读取面用：`listInboxItems` / `markInboxItemRead` /
+   * `archiveInboxItem` —— 它们没有唯一目标，故不经 runtime）。
+   *
+   * 为什么是「一次调用一次的取法」而不是实例：组合根在 `ensureReady()` 之后才拿得到同一条 db
+   * （`openSharedDatabase()` 未初始化即抛，见 `createSquadRuntimeFor` 的既有口径），而服务面在库
+   * 就绪前就已构造。故注入闭包、调用时才取：未就绪在**调用时响亮抛**（不静默返回空表 —— 空表会把
+   * 「库没开」伪装成「收件箱是空的」，与既有「响亮失败优于静默」同款）。
+   *
+   * **可选**（加法，既有调用方不受影响）：未注入时上面三个方法**响亮抛** —— 缺它说明这一份服务面
+   * 根本没接上收件箱台账，静默 no-op 会让界面显示「空收件箱」而库里其实有东西。
+   */
+  getInboxItemRepo?: () => InboxItemRepo;
 }): ISquadRuntimeService {
   /** 本 runtime 的 `workspace_key`（C14 口径）：台账与快照都按它过滤。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -476,6 +524,21 @@ export function createSquadRuntimeService(deps: {
 
   /** 响亮留痕的唯一去处（Minor-3）：注入优先，否则回落 console（见 deps.logWarn 的理由）。 */
   const logWarn: SquadRuntimeLogWarn = deps.logWarn ?? ((message) => console.warn(message));
+
+  /**
+   * 跨 workspace 读取面用的懒取 repo（见 `deps.getInboxItemRepo` 的理由）。
+   * 未注入 ⇒ **响亮抛**：这不只是「没配」，而是「这一份服务面根本没接上收件箱」——
+   * 静默返回空表会让用户看到一个空收件箱，而库里其实有东西。
+   */
+  const requireInboxItemRepo = (): InboxItemRepo => {
+    if (!deps.getInboxItemRepo) {
+      throw new Error(
+        "收件箱台账未接通：组合根没有注入 getInboxItemRepo（懒取 repo 口）。" +
+          "静默返回空结果会把「这份服务面没接收件箱」伪装成「收件箱是空的」，故一律抛。",
+      );
+    }
+    return deps.getInboxItemRepo();
+  };
 
   /**
    * 门禁的**唯一判据**（spec §5.7.6 / 确认 2）。三个入口（`assertDispatchEnabled` 自身、
@@ -797,6 +860,37 @@ export function createSquadRuntimeService(deps: {
         workspaceKey: keyOf(runtime),
         parentWorkItemId: input.parentWorkItemId,
       });
+    },
+
+    /* 收件箱四项（**加法**，P2c）。前三个是目标方法、第四个是**有意的跨项目偏离**：
+
+       `recordInboxItem` 走**目标显式**的既有形态（先按 target 现构 runtime，再由它的 repo 落库）——
+       与 `createWorkItem` 同款：runtime 才是「为哪个 workspace 而构造」的权威。
+       `listInboxItems` / `markInboxItemRead` / `archiveInboxItem` **没有唯一目标**（跨项目通知面 /
+       全局唯一的条目 id），故走组合根注入的懒取 repo —— 这里**不得**给它们补一个 target 参数：
+       用户裁定的正是「所有项目里等我处理的事，一次看全」。 */
+    async recordInboxItem(target, input) {
+      /* **不过门禁**（见接口注释第 2 条）：登记通知不是新派发。这里刻意不调 `assertEnabled`。
+         写者纪律：只经 runtime 的 `inboxItemRepo.insertIfAbsent`，本层不碰 SQL、不拼 dedupKey
+         （那是 `inboxItemProducers` 的唯一形状）。**不吞错**：登记失败照抛，由 best-effort 的调用方
+         记日志（在 host 的失败/收尾路径上，一个抛错不得翻掉主流程 —— 但也不得在这里被静默）。 */
+      const runtime = await deps.createRuntime(target);
+      runtime.inboxItemRepo.insertIfAbsent(input);
+    },
+
+    async listInboxItems(options) {
+      // 跨 workspace 的读取面（接口注释里有「有意偏离」的理由）：不经任一 runtime、不挑目标。
+      return requireInboxItemRepo().listAll(options);
+    },
+
+    async markInboxItemRead(id) {
+      // 条目 id 全局唯一 ⇒ 不需要目标。未命中由 repo **响亮抛**（界面不会以为标成功了）。
+      requireInboxItemRepo().markRead(id);
+    },
+
+    async archiveInboxItem(id) {
+      // 同 markInboxItemRead：只改 archived_at 一列；未命中响亮抛。
+      requireInboxItemRepo().archive(id);
     },
   };
 }

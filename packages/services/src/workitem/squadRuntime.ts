@@ -12,6 +12,7 @@ import { createIntegrationMerger, deleteBranch } from "../worktree/integrationMe
 import { createOrphanReaper } from "../worktree/orphanReaper.js";
 import { createWorktreeManager } from "../worktree/worktreeManager.js";
 import type { SquadBriefing } from "./leaderDispatch.js";
+import { createInboxItemRepo } from "./inboxItemRepo.js";
 import type { SquadRuntime, SquadRuntimeDeps } from "./squadContracts.js";
 import { createRunLifecycle } from "./squadRunLifecycle.js";
 import { createSquadRunRepo } from "./squadRunRepo.js";
@@ -184,6 +185,9 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   const squadRunRepo = createSquadRunRepo(db);
   const workItemRepo = createWorkItemRepo(db);
   const wakeRuleRepo = createWakeRuleRepo(db);
+  // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
+  // 服务面经注入的懒取 repo 读写 —— 两处是**同一个** createInboxItemRepo，唯一写者不变。
+  const inboxItemRepo = createInboxItemRepo(db);
 
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
@@ -220,6 +224,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     workItemRepo,
     wakeRuleRepo,
     squadRunRepo,
+    inboxItemRepo,
     workItemService,
     teamAgentService,
     squadService,

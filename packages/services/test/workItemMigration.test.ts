@@ -27,9 +27,10 @@ function workItemIndexes(db: DatabaseSync): string[] {
 }
 
 function ledger(db: DatabaseSync): Array<{ id: string; checksum: string }> {
-  return db
-    .prepare("SELECT id, checksum FROM tasks_schema_migration ORDER BY id")
-    .all() as Array<{ id: string; checksum: string }>;
+  return db.prepare("SELECT id, checksum FROM tasks_schema_migration ORDER BY id").all() as Array<{
+    id: string;
+    checksum: string;
+  }>;
 }
 
 const EXPECTED_WORK_ITEM_INDEXES = [
@@ -57,6 +58,7 @@ const PINNED_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
 const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = {
   "0005_wake_rules": ["DROP TABLE wake_rules"],
   "0006_squad_runs": ["DROP TABLE squad_runs"],
+  "0007_inbox_items": ["DROP TABLE inbox_items"],
 };
 
 test("迁移建出 work_items 表与索引", () => {

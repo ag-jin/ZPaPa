@@ -71,6 +71,10 @@ import {
   declaredRunClassFor,
   hasInProgressLeaderRun,
   renderLeaderBriefingPrompt,
+  // 收件箱的四个产生点构建件（P2c）：host 侧只负责「事实是什么」，不自己拼 dedupKey / title。
+  buildDispatchSkippedInboxItem,
+  buildMemberFailedInboxItem,
+  buildOrphanedRunInboxItem,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
   type SquadDispatchRequest,
@@ -887,17 +891,56 @@ async function settleStaleLeaderRunsBestEffort(
         if (executing) executingSessionIds.add(run.sessionId);
       }
       const stale = selectStaleLeaderRuns({ activeRuns: leaderRuns, executingSessionIds });
+      /* 收件箱记录的 workspace 列（C14 口径，与服务层同一条规则）：纯计算，循环外算一次。 */
+      const targetWorkspaceKey = resolveWorkspaceKey({
+        workspacePath: target.path,
+        workspaceIdentity: target.identity,
+      });
       for (const runId of stale) {
+        /** 和解原因原文：`failMemberRun` 的台账理由与 Inbox 登记的 detail 用**同一份**。 */
+        const reconcileReason =
+          "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）";
         /* 失败只 warn（best-effort）但**逐条**记：一条收不掉的行会把那个工作项的后续指派永久吃掉，
          所以「哪条没收掉」必须能从日志里读出来。 */
         try {
           await squadRuntime.failMemberRun(target, {
             runId,
-            reason:
-              "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）",
+            reason: reconcileReason,
           });
         } catch (error) {
           logger.warn(`[squad] startup leader-run reconciliation failed for run=${runId}`, error);
+        }
+        /* P2c（产生点 ③，spec §6.6 / §16 S-C4）：这条残留 run 也登记一条 InboxItem
+           （`run_orphaned` / attention）—— 启动和解此前只在日志里（「收了几条」），
+           人看不到「哪个工作项的哪条 run 被卡过」。与上面 `failMemberRun` 同款 best-effort：
+           失败只 warn（带原文），不阻断后面的行、也不阻断**已经完成**的和解本身。 */
+        const record = leaderRuns.find((run) => run.runId === runId);
+        if (!record) {
+          /* `stale` 由 `selectStaleLeaderRuns` 从同一份 `leaderRuns` 投影出 ⇒ 记录必在。
+             真取不到时**不编造**（跳过一次登记 + 响亮留痕），而不是拿半个事实去写。 */
+          logger.warn(
+            `[squad] startup reconciliation 找不到 run 记录，跳过 Inbox 登记 run=${runId}`,
+          );
+        } else {
+          try {
+            await squadRuntime.recordInboxItem(
+              target,
+              buildOrphanedRunInboxItem({
+                workspaceKey: targetWorkspaceKey,
+                workspacePath: target.path,
+                runId,
+                workItemId: record.workItemId,
+                // 工作项标题从同一份快照取（已归档 / 删掉的取不到 ⇒ null ⇒ 构建件回落 id）。
+                workItemTitle:
+                  snapshot.workItems.find((item) => item.id === record.workItemId)?.title ?? null,
+                agentId: record.agentId,
+                sessionId: record.sessionId,
+                reason: reconcileReason,
+              }),
+            );
+          } catch (error) {
+            logger.warn(`[squad] startup reconciliation 未能登记 Inbox：run=${runId}`, error);
+          }
         }
       }
       logger.info(
@@ -2767,6 +2810,13 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
      · `squadRuntimeRef` 在 try 里拿到服务后回填；
      · `ledgerRowRegistered` 在队员开树 / 队长登记成功后回填（失败出口对两者都生效）。 */
   const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
+  /* 本目标的 `workspace_key`（C14 口径：identity 非空白优先，否则 path）——收件箱记录的 workspace 列
+     用它，与服务层（runtime/snapshot/台账）算出来的是**同一条规则**（`resolveWorkspaceKey` 的唯一实现）。
+     纯计算，故与 `target` 一样声明在 try 之外、失败分支也能用。 */
+  const targetWorkspaceKey = resolveWorkspaceKey({
+    workspacePath: target.path,
+    workspaceIdentity: target.identity,
+  });
   let squadRuntimeRef: ISquadRuntimeService | undefined;
   /** 确定性失败（重试不会自愈）的结论：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。 */
   const failPermanent = (error: string): SquadDispatchReport => ({
@@ -2864,6 +2914,26 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId}` +
           ` reason=${skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event"}`,
       );
+      /* P2c（产生点 ④）：skip 也是「需人介入」的一种（指派给人 = 等人自己动手；小队不接新派发 =
+         等人处置）—— 登记一条 InboxItem，让「跳过」从日志里的一行变成界面上可查的一条。
+         `reason` 用**事件原文**：去重键含它（同工作项 + 同原因 = 同一事实；原因变了 ⇒ 新的一条）。
+         best-effort：登记失败只 warn，**不得**把「skip 不是失败」的结论翻成失败（上面那行 info 已留痕）。 */
+      if (skip?.kind === "inbox.notified") {
+        void squadRuntime
+          .recordInboxItem(
+            target,
+            buildDispatchSkippedInboxItem({
+              workspaceKey: targetWorkspaceKey,
+              workspacePath: target.path,
+              workItemId: msg.workItemId,
+              workItemTitle: workItem.title,
+              reason: skip.reason,
+            }),
+          )
+          .catch((error: unknown) =>
+            logger.warn(`[squad] skip 未能登记 Inbox：workItem=${msg.workItemId}`, error),
+          );
+      }
       return { ok: true };
     }
 
@@ -3088,18 +3158,47 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
              树/分支交给启动回收器按「不在活跃集」回收（spec §6.6）。失败只 error 留痕：出口没生效时
              那个 run 会一直停在活跃集，必须看得见。 */
           if (outcome.inputId === traceId && outcome.outcome !== "succeeded") {
+            /* 失败原因原文：`failMemberRun` 的台账理由与下面 Inbox 登记的 `detail.reason` 用**同一份**。
+               名字带 `runLabel` 是因为这条 reason 的**内容**以类别标签开头（「队员」/「队长」）——
+               既有接线守卫（squadWiring.test.ts ⑤）钉的正是「这一支的 reason 点名 run 类别」，
+               合并成一份后这条性质仍然成立，只是标签从内联字面量换成了这个标识符。 */
+            const runLabelReason =
+              `${runLabel}会话终态=${outcome.outcome}` +
+              (outcome.error ? `：${outcome.error}` : "");
             void squadRuntime
               .failMemberRun(target, {
                 runId: eventKey,
-                reason:
-                  `${runLabel}会话终态=${outcome.outcome}` +
-                  (outcome.error ? `：${outcome.error}` : ""),
+                reason: runLabelReason,
               })
               .catch((error: unknown) =>
                 logger.error(
                   `[squad] ${runLabel} run 失败出口未生效：${eventKey} 仍停在活跃集`,
                   error,
                 ),
+              );
+            /* P2c（产生点 ②，spec §6.2）：失败 run 也登记一条 InboxItem（`member_failed` / attention）
+               ——「这条 run 失败了、产出没了」是**需人介入**的事，此前只有一行日志。
+               · title：能拿工作项标题就拿、拿不到回落 workItemId（回落规则在构建件里，不在这里判）；
+               · detail：runId / agentId / branch —— branch 取**本次派发登记工作树时**拿到的信息
+                 （队员有、队长没有 ⇒ `null`；两个 run 类别共用这一条失败出口，故允许空）；
+               · best-effort：登记失败只 warn（带原文）—— 上面 `failMemberRun` 的出口才是台账的收口，
+                 Inbox 是留痕，不得阻断、也不得静默。 */
+            void squadRuntime
+              .recordInboxItem(
+                target,
+                buildMemberFailedInboxItem({
+                  workspaceKey: targetWorkspaceKey,
+                  workspacePath: target.path,
+                  workItemId: workItem.id,
+                  workItemTitle: workItem.title,
+                  runId: eventKey,
+                  agentId: enqueued.agentId,
+                  branch: worktree?.branch ?? null,
+                  reason: runLabelReason,
+                }),
+              )
+              .catch((error: unknown) =>
+                logger.warn(`[squad] ${runLabel} run 失败未能登记 Inbox：${eventKey}`, error),
               );
           }
           listener(outcome);

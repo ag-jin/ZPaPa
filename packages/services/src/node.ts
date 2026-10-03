@@ -328,6 +328,23 @@ export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+/* 收件箱（P2c）：repo 工厂与四个产生点的**纯构建件**只从这里出值 ——
+   `inboxItemRepo` 值导入 `node:crypto`（id 生成），从浏览器安全入口出值会让 renderer 整包失败
+   （browserSafeRootEntry.test.ts 守这条）；构建件虽纯，但只有 desktop host 用得到，同门出即可。
+   `computeInboxDedupKey` 故意不再单独出：产生点不得自己拼键（构建件内部已消费它）。 */
+export { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
+export {
+  buildDispatchSkippedInboxItem,
+  buildMemberFailedInboxItem,
+  buildMergeConflictInboxItem,
+  buildOrphanedRunInboxItem,
+} from "./workitem/inboxItemProducers.js";
+export type {
+  InboxItem,
+  InboxItemInput,
+  InboxItemKind,
+  InboxItemSeverity,
+} from "./workitem/inboxItemRepo.js";
 export type { WorkItemEvent, WorkItemService } from "./workitem/workItemService.js";
 export type { WorkItemRepo } from "./workitem/workItemRepo.js";
 export type {
@@ -344,9 +361,7 @@ import { IGitService } from "./git/git.js";
 import { IGitCheckpointService } from "./git/gitCheckpoint.js";
 import { ISystemService } from "./system/system.js";
 import { ITerminalService } from "./terminal/terminal.js";
-import {
-  IRemoteDeviceConfigService,
-} from "./remote/remoteDeviceConfig.js";
+import { IRemoteDeviceConfigService } from "./remote/remoteDeviceConfig.js";
 import { createRemoteDeviceConfigService } from "./remote/remoteDeviceConfigNode.js";
 import { ISettingService } from "./setting/setting.js";
 import { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
@@ -418,6 +433,9 @@ import {
 } from "./workitem/squadRuntimeService.js";
 import { archiveSquadAndTransfer, createSquadRuntime } from "./workitem/squadRuntime.js";
 import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+// 收件箱台账（P2c）：跨 workspace 的读取面要一条 repo，由组合根**懒取**注入给服务面
+// （见 createSquadRuntimeService 的 deps.getInboxItemRepo 注释：库就绪前服务面已构造）。
+import { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
 import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
@@ -2687,6 +2705,10 @@ export function createLocalServices(options: {
     },
     // 编排器工厂由这里注入：描述符模块必须浏览器安全，值导入 squadOrchestrator 会把 node 侧依赖带进去。
     createOrchestrator: createSquadOrchestrator,
+    /* 收件箱的跨项目读取面（listInboxItems / mark / archive）用的懒取 repo：
+       与 createSquadRuntimeFor 里 openSharedDatabase() 同一条口径 —— `ensureReady()` 之后才拿得到
+       同一条（走过迁移与回填的）连接；未就绪时它自己响亮抛（不静默给空表）。 */
+    getInboxItemRepo: () => createInboxItemRepo(taskIndexRepo.openSharedDatabase()),
     // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
     logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
   });

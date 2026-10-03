@@ -275,3 +275,37 @@ export const SQUAD_RUN_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_squad_runs_work_item
     ON squad_runs(work_item_id);
 `;
+
+// 0007 追加：收件箱（Inbox）实体。只新增，不改既有表/列。
+// 这张表是「需人介入的事 → 一条可查的记录」的**机械落点**（spec §3.x 实体表 / §5.7.4 冲突 / §6.2 队员失败 /
+// §6.6 启动和解）：此前这些事实只在日志与状态变迁里，没有可查的实体。
+// · `dedup_key` + 唯一索引是**存储层的幂等不变式**（见 idx_inbox_items_dedup）：同一事实重投不得产生
+//   第二条、已归档不得被重投复活 —— 两条都靠「冲突时不更新任何列」实现，不靠「先查后插」（并发下两次查
+//   都可能看不到对方）。
+// · `kind` 回答「这是什么」（枚举由 inboxItemRepo 单源定义），`severity` 只回答「多急」。
+// · `detail_json` 是结构化事实（分支名 / runId / reason 原文等），不拆列：形状随产生点而变，
+//   拆列会把未枚举的字段当未知列拒掉（与 WAKE_RULE_SCHEMA 的 condition/filters 同一条理由）。
+// · `read_at` / `archived_at` 可空且**只由专用写入口改**：已读与归档是两件正交的事。
+// · 刻意不建指向 work_items / squad_runs 的外键：两者都只归档不硬删，外键会让写入失败
+//   （与 WORK_ITEM_SCHEMA / SQUAD_RUN_SCHEMA 同一条理由）。
+export const INBOX_ITEM_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS inbox_items (
+    id               TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    workspace_path   TEXT NOT NULL,
+    dedup_key        TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    severity         TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    detail_json      TEXT NOT NULL,
+    work_item_id     TEXT,
+    run_id           TEXT,
+    created_at       INTEGER NOT NULL,
+    read_at          INTEGER,
+    archived_at      INTEGER
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_dedup
+    ON inbox_items(workspace_key, dedup_key);
+  CREATE INDEX IF NOT EXISTS idx_inbox_items_active
+    ON inbox_items(workspace_key, archived_at);
+`;

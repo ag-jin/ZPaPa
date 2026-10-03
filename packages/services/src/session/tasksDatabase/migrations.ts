@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   AUTOMATION_SCHEMA,
+  INBOX_ITEM_SCHEMA,
   OFF_PEAK_SCHEMA,
   SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
@@ -79,6 +80,10 @@ const definitions = [
     id: "0006_squad_runs",
     checksumInput: [SQUAD_RUN_SCHEMA],
   },
+  {
+    id: "0007_inbox_items",
+    checksumInput: [INBOX_ITEM_SCHEMA],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -131,6 +136,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0004_work_items") db.exec(WORK_ITEM_SCHEMA);
       else if (migration.id === "0005_wake_rules") db.exec(WAKE_RULE_SCHEMA);
       else if (migration.id === "0006_squad_runs") db.exec(SQUAD_RUN_SCHEMA);
+      else if (migration.id === "0007_inbox_items") db.exec(INBOX_ITEM_SCHEMA);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

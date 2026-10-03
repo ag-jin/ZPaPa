@@ -6,6 +6,7 @@ import {
 import { planBranches } from "../worktree/branchNaming.js";
 import { ensureGitRunSucceeded } from "../worktree/gitRunner.js";
 import { deleteBranch } from "../worktree/integrationMerge.js";
+import { buildMergeConflictInboxItem, type MergeConflictFacts } from "./inboxItemProducers.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
 import { slugForId } from "./slug.js";
@@ -86,6 +87,48 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       throw new Error(
         `workspaceKey 不属于本 runtime：本方绑定「${boundWorkspaceKey}」（${runtime.boundWorkspace.path}），` +
           `收到「${workspaceKey}」。批次编排为某一个目标 workspace 而构造，任何异己 key 一律拒绝。`,
+      );
+    }
+  }
+
+  /**
+   * 冲突登记 Inbox（P2c，spec §5.7.4 / §16 S17）：**best-effort** —— 写失败只留痕，
+   * **绝不**把一次已落库的 `blocked` 流转翻成失败。
+   *
+   * 为什么必须吞掉：调用点上面那句 `transitionParent` 已经把父项置 `blocked`（真实的状态流转，
+   * 且经工作项事件的唯一出口发出）——让一条 Inbox 记录写失败去翻掉它，会把一次成功的冲突处置
+   * 记成 error，而人已经能在 `workitem.status_changed{to:"blocked"}` 里看到它。
+   *
+   * 为什么用 `console.warn`：本层的 deps 只有 `runtime`，而 runtime 契约里没有 warn 通道
+   * （它按目标现构、不缓存 logger）；`console` 是 node 侧的最小交底，与 `squadRuntimeService`
+   * 未注入 logger 时的回落同一手法。
+   *
+   * 为什么直写 `runtime.inboxItemRepo` 而不经服务面：本层本来就用同一组 repo（见 `SquadRuntime` 的
+   * `inboxItemRepo` 注释）——「父项 blocked + 登记一条 InboxItem」是一件事的两半，放在同层才不会留下
+   * 「blocked 了但没人知道」的半程状态。
+   */
+  function recordConflictInboxItem(input: {
+    parentWorkItemId: string;
+    conflict: MergeConflictFacts;
+  }): void {
+    try {
+      // 父项标题：拿不到（已归档 / 被删）就回落 id —— 一条「父项 xx 冲突」远好过什么都没记。
+      const parent = workItemRepo.get(input.parentWorkItemId);
+      runtime.inboxItemRepo.insertIfAbsent(
+        buildMergeConflictInboxItem({
+          workspaceKey: boundWorkspaceKey,
+          workspacePath: runtime.boundWorkspace.path,
+          parentWorkItemId: input.parentWorkItemId,
+          parentTitle: parent?.title ?? null,
+          conflict: input.conflict,
+        }),
+      );
+      // 返回 false（同一事实已登记过，含已归档那格）= 幂等重投的结论，不是错误：静默返回。
+    } catch (error) {
+      console.warn(
+        `[squad] 冲突已把父项置 blocked，但未能登记 Inbox（父项=${input.parentWorkItemId}）：` +
+          "这条冲突在收件箱里不可见，需人工留意。",
+        error,
       );
     }
   }
@@ -374,11 +417,22 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
 
         if (outcome.reason === "conflict") {
           /* spec §5.7.4 / §16 S17：解不了的冲突 → 父项 `blocked` + 进 Inbox，**且不提前合回主分支**。
-             P2b 里「进 Inbox」的机械形态就是这条 `blocked` 变迁本身：它经 `workItemService.transition`
-             发 `workitem.status_changed{to:"blocked"}`（工作项事件的**唯一**出口），人据此看到「这条卡住了」。
-             （完整 Inbox 语义——已读 / 归档 / 严重级 / 订阅者——明属 P2c，见计划「明确不在本计划」表。）
-             前置从**当时状态**读（`transitionParent`），不是写死 `in_review`。 */
+             父项流转经 `workItemService.transition`（唯一写者），发 `workitem.status_changed{to:"blocked"}`
+             （工作项事件的**唯一**出口）；「进 Inbox」从 P2c 起有**实体**（`inbox_items` 一条记录，
+             见下面的 best-effort 登记）。前置从**当时状态**读（`transitionParent`），不是写死 `in_review`。 */
           transitionParent(input.parentWorkItemId, "blocked", "集成分支冲突（队员合并）");
+          recordConflictInboxItem({
+            parentWorkItemId: input.parentWorkItemId,
+            conflict: {
+              phase: "member_merge",
+              runId: record.runId,
+              agentId: record.agentId,
+              // `runs` 来自 `memberRuns`（只取 branch !== null 的行），故这里的队员分支必非空。
+              memberBranch: record.branch!,
+              integrationBranch: integration,
+              detail: outcome.detail,
+            },
+          });
           return; // 立即停手：后面的成员不再合，主分支一个字节都没动
         }
 
@@ -392,8 +446,17 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       const landed = await integrationMerger.finalize({ integration, target: baseBranch });
       if (!landed.ok) {
         if (landed.reason === "conflict") {
-          // 与逐队员冲突同一处置：父项 blocked + 停手（`finalize` 内部已把主工作树回滚到合并前）。
+          // 与逐队员冲突同一处置：父项 blocked + 登记 Inbox + 停手（`finalize` 内部已把主工作树回滚到合并前）。
           transitionParent(input.parentWorkItemId, "blocked", "集成分支冲突（整批合回）");
+          recordConflictInboxItem({
+            parentWorkItemId: input.parentWorkItemId,
+            conflict: {
+              phase: "batch_finalize",
+              integrationBranch: integration,
+              targetBranch: baseBranch,
+              detail: landed.detail,
+            },
+          });
           return;
         }
         // 集成分支 / base 分支不存在：既不是「冲突」也不是「本批没成果」，属环境或次序被破坏。

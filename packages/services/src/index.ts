@@ -381,5 +381,14 @@ export type {
 export type { ReapOutcome } from "./worktree/orphanReaper.js";
 export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
 export type { SquadRunRecord, SquadRunRepo, SquadRunStatus } from "./workitem/squadRunRepo.js";
+/* 收件箱（P2c）**只出类型**：`inboxItemRepo` 值导入 `node:crypto`（id 生成），从本入口出值会让
+   renderer 整包失败（browserSafeRootEntry.test.ts 守这条）；值（repo 工厂 / 构建件）只从
+   `@zcode/services/node` 出。类型是擦除的，UI 侧要能命名这些形状。 */
+export type {
+  InboxItem,
+  InboxItemInput,
+  InboxItemKind,
+  InboxItemSeverity,
+} from "./workitem/inboxItemRepo.js";
 // `eventKey` 的唯一构造器（spec §5.7.1）：全仓只此一处，调度器与 Repo 都调它。
 export { computeEventKey } from "@zcode/shared";

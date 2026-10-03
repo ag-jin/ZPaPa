@@ -6,6 +6,7 @@ import type { GitRunner } from "../worktree/gitRunner.js";
 import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper } from "../worktree/orphanReaper.js";
 import type { WorktreeManager } from "../worktree/worktreeManager.js";
+import type { InboxItemRepo } from "./inboxItemRepo.js";
 import type { SquadRunLifecycle } from "./squadRunLifecycle.js";
 import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
@@ -62,6 +63,15 @@ export type SquadRuntime = {
   workItemRepo: WorkItemRepo;
   wakeRuleRepo: WakeRuleRepo;
   squadRunRepo: SquadRunRepo;
+  /**
+   * 收件箱台账（**加法**，P2c）。`inbox_items` 表的唯一读写处（repo 内部是唯一写者）。
+   *
+   * 为什么给编排器一条**直写通路**：冲突发生在编排器内部、它本来就用同一组 repo
+   * （`workItemRepo` / `squadRunRepo`），把「父项 blocked + 登记一条 InboxItem」这两半放在同一层
+   * 才不会出现「blocked 了但没人知道」的半程状态。服务面（`ISquadRuntimeService.recordInboxItem`
+   * 等）仍是 UI / host 的入口 —— 两条通路共用**这一个** repo（唯一写者不变）。
+   */
+  inboxItemRepo: InboxItemRepo;
   workItemService: WorkItemService;
   teamAgentService: TeamAgentService;
   squadService: SquadService;
