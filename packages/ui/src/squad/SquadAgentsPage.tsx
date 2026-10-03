@@ -144,7 +144,7 @@ export function SquadAgentsPage({
         description: intl.formatMessage({ id: "squad.agents.archiveConfirmDescription" }),
         confirmVariant: "destructive",
         confirmLabel: intl.formatMessage({ id: "squad.common.archive" }),
-        cancelLabel: intl.formatMessage({ id: "settings.experiments.squad.cancel" }),
+        cancelLabel: intl.formatMessage({ id: "squad.common.cancel" }),
       });
       // 未确认 ⇒ 一个服务调用都不发（破坏性动作的"没发生"必须是可读出来的）。
       if (!confirmed || !target) return;
@@ -186,7 +186,7 @@ export function SquadAgentsPage({
         void runAction(
           "*",
           (service) => service.createTeamAgent(target, input),
-          "settings.experiments.squad.agentCreated",
+          "squad.agents.created",
         );
         return;
       }
@@ -217,7 +217,7 @@ export function SquadAgentsPage({
           }}
         >
           {loading ? <Spinner className="size-3.5" /> : null}
-          {t("settings.experiments.squad.refresh")}
+          {t("squad.common.refresh")}
         </Button>
         <Button
           size="sm"
@@ -225,7 +225,7 @@ export function SquadAgentsPage({
           data-testid="squad-agents-create"
           onClick={() => setDialog({ kind: "create" })}
         >
-          {t("settings.experiments.squad.createTeamAgent")}
+          {t("squad.agents.create")}
         </Button>
       </div>
 
@@ -247,7 +247,7 @@ export function SquadAgentsPage({
           </AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("settings.experiments.squad.refresh")}
+              {t("squad.common.refresh")}
             </Button>
           </AlertAction>
         </Alert>
@@ -255,7 +255,7 @@ export function SquadAgentsPage({
 
       {state.mode === "no-workspace" ? (
         <Alert data-testid="squad-agents-no-workspace">
-          <AlertTitle>{t("settings.experiments.squad.noWorkspace")}</AlertTitle>
+          <AlertTitle>{t("squad.common.noWorkspace")}</AlertTitle>
         </Alert>
       ) : null}
 
@@ -279,7 +279,7 @@ export function SquadAgentsPage({
           </AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("settings.experiments.squad.refresh")}
+              {t("squad.common.refresh")}
             </Button>
           </AlertAction>
         </Alert>
@@ -303,8 +303,8 @@ export function SquadAgentsPage({
         <TeamAgentDialog
           onClose={() => setDialog(null)}
           onSubmit={submitDialog}
-          titleId="settings.experiments.squad.createTeamAgent"
-          submitLabelId="settings.experiments.squad.submit"
+          titleId="squad.agents.create"
+          submitLabelId="squad.common.submit"
         />
       ) : null}
 

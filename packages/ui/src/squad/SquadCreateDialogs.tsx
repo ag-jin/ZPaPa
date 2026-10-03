@@ -1,17 +1,8 @@
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
-import type { TeamAgent } from "@zcode/shared";
-import { Button } from "@/components/ui/button.js";
+import type { TeamAgent, WorkItem } from "@zcode/shared";
 import { Checkbox } from "@/components/ui/checkbox.js";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog.js";
 import { Input } from "@/components/ui/input.js";
-import { Label } from "@/components/ui/label.js";
 import {
   Select,
   SelectContent,
@@ -20,9 +11,9 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
+import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
 import type { SquadDialogInitial } from "./squadsViewModel.js";
 
 /* 本阶段的三个「最小」创建表单（协作智能体 / 小队 / 工作项）。
@@ -38,89 +29,6 @@ import type { SquadDialogInitial } from "./squadsViewModel.js";
 /** 下拉里表示「没有父项」的哨兵值：Radix Select 不允许空字符串取值。 */
 const NO_PARENT_VALUE = "__none__";
 
-/** 三个表单共用的外壳：标题 + 说明 + 提交/取消。 */
-function CreateDialogShell({
-  titleId,
-  submitLabelId,
-  onSubmit,
-  onClose,
-  canSubmit,
-  children,
-}: {
-  titleId: string;
-  /** 提交按钮文案；省略即「创建」（编辑模式传「保存」——同一个表单不抄第二份）。 */
-  submitLabelId?: string;
-  onSubmit: () => void;
-  onClose: () => void;
-  canSubmit: boolean;
-  children: ReactNode;
-}) {
-  const { intl } = useZCodeIntl();
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!canSubmit) return;
-    onSubmit();
-  };
-  return (
-    <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
-      {/* 圆角由 DialogContent 原语给出（rounded-2xl，spec §11.3 的对话框层级）。 */}
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{intl.formatMessage({ id: titleId })}</DialogTitle>
-          <DialogDescription>
-            {intl.formatMessage({ id: "settings.experiments.squad.dialogHint" })}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit}>
-          <div className="flex flex-col gap-3">{children}</div>
-          <SettingsFormActions>
-            <Button type="button" variant="outline" onClick={onClose}>
-              {intl.formatMessage({ id: "settings.experiments.squad.cancel" })}
-            </Button>
-            <Button type="submit" disabled={!canSubmit}>
-              {intl.formatMessage({ id: submitLabelId ?? "settings.experiments.squad.submit" })}
-            </Button>
-          </SettingsFormActions>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** 单控件字段：用 `htmlFor`/`id` 把标签与控件关联（house style：见 HookForm.tsx）。
-    控件 id 由 `useId()` 生成，避免多个对话框里的字面量 id 撞车。 */
-function Field({
-  labelId,
-  children,
-}: {
-  labelId: string;
-  children: (controlId: string) => ReactNode;
-}) {
-  const { intl } = useZCodeIntl();
-  const controlId = useId();
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor={controlId}>{intl.formatMessage({ id: labelId })}</Label>
-      {children(controlId)}
-    </div>
-  );
-}
-
-/** 一组控件（多选队员）的字段：用 `role="group"` + `aria-labelledby` 关联组名，
-    而不是让 `label` 的 `htmlFor` 指向一个不存在的控件。 */
-function FieldGroup({ labelId, children }: { labelId: string; children: ReactNode }) {
-  const { intl } = useZCodeIntl();
-  const groupId = useId();
-  return (
-    <div className="flex flex-col gap-1" role="group" aria-labelledby={groupId}>
-      <span id={groupId} className="text-ui-base font-medium text-foreground">
-        {intl.formatMessage({ id: labelId })}
-      </span>
-      {children}
-    </div>
-  );
-}
-
 /**
  * 协作智能体表单：**创建 / 编辑两用**（只有这一处实现 —— 另抄一份编辑表单会让两个表单
  * 在字段与校验上陆续分叉，而分叉不报错）。
@@ -133,8 +41,8 @@ export function TeamAgentDialog({
   onClose,
   onSubmit,
   initial,
-  titleId = "settings.experiments.squad.createTeamAgent",
-  submitLabelId = "settings.experiments.squad.submit",
+  titleId = "squad.agents.create",
+  submitLabelId = "squad.common.submit",
 }: {
   onClose: () => void;
   onSubmit: (input: {
@@ -164,7 +72,7 @@ export function TeamAgentDialog({
       canSubmit={name.trim().length > 0 && systemPrompt.trim().length > 0}
       onSubmit={() => onSubmit({ name: name.trim(), systemPrompt, memoryScope })}
     >
-      <Field labelId="settings.experiments.squad.name">
+      <Field labelId="squad.common.name">
         {(controlId) => (
           <Input
             id={controlId}
@@ -174,7 +82,7 @@ export function TeamAgentDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.systemPrompt">
+      <Field labelId="squad.common.systemPrompt">
         {(controlId) => (
           <SettingsFormTextarea
             id={controlId}
@@ -184,7 +92,7 @@ export function TeamAgentDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.memoryScope">
+      <Field labelId="squad.common.memoryScope">
         {(controlId) => (
           <Select
             value={memoryScope}
@@ -196,7 +104,7 @@ export function TeamAgentDialog({
             <SelectContent>
               {(["user", "project", "local"] as const).map((scope) => (
                 <SelectItem key={scope} value={scope}>
-                  {intl.formatMessage({ id: `settings.experiments.squad.memoryScope.${scope}` })}
+                  {intl.formatMessage({ id: `squad.common.memoryScope.${scope}` })}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -217,8 +125,8 @@ export function SquadDialog({
   onClose,
   onSubmit,
   initial,
-  titleId = "settings.experiments.squad.createSquad",
-  submitLabelId = "settings.experiments.squad.submit",
+  titleId = "squad.squads.create",
+  submitLabelId = "squad.common.submit",
 }: {
   candidates: TeamAgent[];
   members: TeamAgent[];
@@ -244,7 +152,7 @@ export function SquadDialog({
   const [memberIds, setMemberIds] = useState<string[]>(initial?.memberIds ?? []);
 
   const leaderPlaceholder = intl.formatMessage({
-    id: "settings.experiments.squad.leaderAgent",
+    id: "squad.squads.leaderAgent",
   });
   const leaderName = candidates.find((agent) => agent.id === leaderAgentId)?.name;
   const selectableMembers = members.filter((agent) => agent.id !== leaderAgentId);
@@ -269,7 +177,7 @@ export function SquadDialog({
         })
       }
     >
-      <Field labelId="settings.experiments.squad.name">
+      <Field labelId="squad.common.name">
         {(controlId) => (
           <Input
             id={controlId}
@@ -279,7 +187,7 @@ export function SquadDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.leaderAgent">
+      <Field labelId="squad.squads.leaderAgent">
         {(controlId) => (
           <Select
             value={leaderAgentId}
@@ -302,10 +210,10 @@ export function SquadDialog({
           </Select>
         )}
       </Field>
-      <FieldGroup labelId="settings.experiments.squad.memberAgents">
+      <FieldGroup labelId="squad.squads.memberAgents">
         {selectableMembers.length === 0 ? (
           <p className="text-ui-xs text-foreground-subtlest">
-            {intl.formatMessage({ id: "settings.experiments.squad.memberAgents.none" })}
+            {intl.formatMessage({ id: "squad.squads.memberAgents.none" })}
           </p>
         ) : (
           <div className="flex flex-col gap-2">
@@ -330,7 +238,7 @@ export function SquadDialog({
           </div>
         )}
       </FieldGroup>
-      <Field labelId="settings.experiments.squad.stopCondition">
+      <Field labelId="squad.squads.stopCondition">
         {(controlId) => (
           <Input
             id={controlId}
@@ -339,7 +247,7 @@ export function SquadDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.maxRounds">
+      <Field labelId="squad.squads.maxRounds">
         {(controlId) => (
           <Input
             id={controlId}
@@ -352,44 +260,84 @@ export function SquadDialog({
   );
 }
 
+/**
+ * 「新建工作项」对话框提交的形状（**带 mode 的判别联合**）：create 带全部字段，
+ * edit **只能**带标题 / 正文 —— 指派人与父项**不是**可编辑字段（见下），让它们
+ * 在类型上就不存在比"界面上藏起来、回调里其实能传"更强。
+ */
+export type WorkItemDialogSubmitInput =
+  | {
+      mode: "create";
+      title: string;
+      body?: string;
+      parentId?: string;
+      assignee: WorkItem["assignee"];
+    }
+  | { mode: "edit"; title: string; body?: string };
+
+/** 工作项表单：**创建 / 编辑两用**（只有这一份实现 —— 另抄一份编辑表单会让两个表单
+    在字段与校验上陆续分叉，而分叉不报错）。`mode` 默认 `"create"`（显示全部字段，现状）；
+    `"edit"` 只显示标题 / 正文：
+    ① **指派人不在编辑里** —— 改负责人是**派发语义**（改派 = 新派发，服务面另有 `assignWorkItem`
+       且它只支持 agent），与"改个错别字"不是一类动作，改派留待单独裁定；
+    ② **父项不在编辑里** —— 服务面 `updateContent` 只写 title / body，移动父项没有路径，
+       给一个提交后不生效的下拉比不给更糟。
+    编辑成功与新建成功的回调形状因此不同（判别联合），由页面按 `mode` 分流。 */
 export function WorkItemDialog({
   snapshot,
   onClose,
   onSubmit,
+  mode = "create",
+  initial,
+  titleId = "squad.workItems.create",
+  submitLabelId = "squad.common.submit",
 }: {
   snapshot: SquadSnapshot;
   onClose: () => void;
-  onSubmit: (input: {
-    title: string;
-    body?: string;
-    parentId?: string;
-    assignee: { type: "user" | "agent" | "squad"; id: string };
-  }) => void;
+  onSubmit: (input: WorkItemDialogSubmitInput) => void;
+  /** `create`（默认）显示全部字段；`edit` 只显示标题 / 正文（理由见上）。 */
+  mode?: "create" | "edit";
+  /** 编辑既有工作项时的初值（标题 / 正文）；省略 = 空白（仅 create 用得到）。 */
+  initial?: { title: string; body: string };
+  /** 标题文案键；省略即「新建工作项」。 */
+  titleId?: string;
+  /** 提交按钮文案键；省略即「创建」。 */
+  submitLabelId?: string;
 }) {
   const { intl } = useZCodeIntl();
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [body, setBody] = useState(initial?.body ?? "");
   const [assigneeValue, setAssigneeValue] = useState("user");
   const [parentValue, setParentValue] = useState(NO_PARENT_VALUE);
 
   // 候选只含**可派发**的智能体 / 小队（停用与归档的不给：给了再被拒等于替用户制造一次失败）。
   const assigneeOptions = workItemAssigneeOptions(snapshot);
+  const isEdit = mode === "edit";
 
   return (
     <CreateDialogShell
-      titleId="settings.experiments.squad.createWorkItem"
+      titleId={titleId}
+      submitLabelId={submitLabelId}
       onClose={onClose}
       canSubmit={title.trim().length > 0}
-      onSubmit={() =>
+      onSubmit={() => {
+        if (isEdit) {
+          // 编辑：body **总是**提交（哪怕用户清空成 ""）—— 传 undefined 会被服务面当成
+          // "没提这个字段"而保留旧正文，用户以为删掉了、盘上还在。
+          onSubmit({ mode: "edit", title: title.trim(), body });
+          return;
+        }
         onSubmit({
+          mode: "create",
           title: title.trim(),
+          // 新建时的既有口径不变：正文空白视作"没给"（存库为 ""，两者等价，不传更诚实）。
           body: body.trim() ? body : undefined,
           parentId: parentValue === NO_PARENT_VALUE ? undefined : parentValue,
           assignee: parseAssigneeValue(assigneeValue),
-        })
-      }
+        });
+      }}
     >
-      <Field labelId="settings.experiments.squad.title">
+      <Field labelId="squad.common.title">
         {(controlId) => (
           <Input
             id={controlId}
@@ -399,7 +347,7 @@ export function WorkItemDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.body">
+      <Field labelId="squad.common.body">
         {(controlId) => (
           <SettingsFormTextarea
             id={controlId}
@@ -409,43 +357,48 @@ export function WorkItemDialog({
           />
         )}
       </Field>
-      <Field labelId="settings.experiments.squad.assignee">
-        {(controlId) => (
-          <Select value={assigneeValue} onValueChange={setAssigneeValue}>
-            <SelectTrigger id={controlId}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {assigneeOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.kind === "user"
-                    ? intl.formatMessage({ id: "settings.experiments.squad.assignee.user" })
-                    : option.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </Field>
-      <Field labelId="settings.experiments.squad.parent">
-        {(controlId) => (
-          <Select value={parentValue} onValueChange={setParentValue}>
-            <SelectTrigger id={controlId}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_PARENT_VALUE}>
-                {intl.formatMessage({ id: "settings.experiments.squad.parent.none" })}
-              </SelectItem>
-              {snapshot.workItems.map((workItem) => (
-                <SelectItem key={workItem.id} value={workItem.id}>
-                  {workItem.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </Field>
+      {/* 指派人与父项**只在创建时**出现（编辑为何不带它们见函数头注释）。 */}
+      {!isEdit ? (
+        <>
+          <Field labelId="squad.common.assignee">
+            {(controlId) => (
+              <Select value={assigneeValue} onValueChange={setAssigneeValue}>
+                <SelectTrigger id={controlId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {assigneeOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.kind === "user"
+                        ? intl.formatMessage({ id: "squad.common.assignee.user" })
+                        : option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </Field>
+          <Field labelId="squad.common.parent">
+            {(controlId) => (
+              <Select value={parentValue} onValueChange={setParentValue}>
+                <SelectTrigger id={controlId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PARENT_VALUE}>
+                    {intl.formatMessage({ id: "squad.common.parent.none" })}
+                  </SelectItem>
+                  {snapshot.workItems.map((workItem) => (
+                    <SelectItem key={workItem.id} value={workItem.id}>
+                      {workItem.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </Field>
+        </>
+      ) : null}
     </CreateDialogShell>
   );
 }

@@ -43,18 +43,15 @@ export function SquadDiscardDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {intl.formatMessage(
-              { id: "settings.experiments.squad.discard.title" },
-              { title: workItem.title },
-            )}
+            {intl.formatMessage({ id: "squad.discard.title" }, { title: workItem.title })}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {intl.formatMessage({ id: "settings.experiments.squad.discard.description" })}
+            {intl.formatMessage({ id: "squad.discard.description" })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending} onClick={onCancel}>
-            {intl.formatMessage({ id: "settings.experiments.squad.cancel" })}
+            {intl.formatMessage({ id: "squad.common.cancel" })}
           </AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
@@ -65,7 +62,7 @@ export function SquadDiscardDialog({
               onConfirm();
             }}
           >
-            {intl.formatMessage({ id: "settings.experiments.squad.discard.confirm" })}
+            {intl.formatMessage({ id: "squad.discard.confirm" })}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

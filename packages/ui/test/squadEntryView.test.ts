@@ -31,13 +31,15 @@ import {
   reviewOutcomeFeedback,
   squadDiscardableWorkItemIds,
   squadEntryErrorFeedback,
-  squadEntrySectionState,
   workItemAssigneeOptions,
 } from "../src/squad/squadEntryViewModel.js";
 
 /* 这些用例全部是**纯逻辑**：不渲染 React（ui 包没有渲染测试设施），
-   所以「数据面 / 审查动作 / 关闭实验 / 响亮失败」四类矩阵格子都落在这里的纯函数上。
-   组件（SquadMinimalView.tsx）只负责把这些纯结论画出来 + 调服务。 */
+   所以「指派候选 / 审查动作 / 关闭实验 / 响亮失败 / 放弃整批」五类矩阵格子都落在这里的纯函数上。
+   组件（WorkItemsPage / WorkItemsBoard / SquadRunsReview）只负责把这些纯结论画出来 + 调服务。
+
+   2026-10-03 工作项面落地：`squadEntrySectionState` 随 SquadMinimalView 退役删除（零消费者），
+   对应的四条「数据面」用例一并删除；四段列表的呈现由新组件 + 各自的纯函数承接。 */
 
 // ---------- 取数通路（accessor 侧）----------
 
@@ -153,39 +155,6 @@ const aRun = {
   updatedAt: 1,
 } as SquadRunRecord;
 
-test("数据面：一段都没有时四段全为空", () => {
-  const state = squadEntrySectionState(snapshotWith({}));
-  assert.equal(state.teamAgents.empty, true);
-  assert.equal(state.squads.empty, true);
-  assert.equal(state.workItems.empty, true);
-  assert.equal(state.runs.empty, true);
-});
-
-test("数据面：只有 run 时只有该段非空", () => {
-  const state = squadEntrySectionState(snapshotWith({ runs: [aRun] }));
-  assert.equal(state.runs.empty, false);
-  assert.deepEqual(state.runs.items, [aRun]);
-  assert.equal(state.teamAgents.empty, true);
-  assert.equal(state.squads.empty, true);
-  assert.equal(state.workItems.empty, true);
-});
-
-test("数据面：四段都有时没有空段", () => {
-  const state = squadEntrySectionState(
-    snapshotWith({ teamAgents: [anAgent], squads: [aSquad], workItems: [aWorkItem], runs: [aRun] }),
-  );
-  assert.equal(state.teamAgents.empty, false);
-  assert.equal(state.squads.empty, false);
-  assert.equal(state.workItems.empty, false);
-  assert.equal(state.runs.empty, false);
-});
-
-// 列表全量渲染（P2c 才虚拟化/分页）：这一段只证明「给了多少就给多少」，不在这里再做任何裁剪。
-test("数据面：列表原样透出（本阶段不分页）", () => {
-  const many = Array.from({ length: 120 }, (_v, index) => ({ ...aRun, runId: `r${index}` }));
-  assert.equal(squadEntrySectionState(snapshotWith({ runs: many })).runs.items.length, 120);
-});
-
 // ---------- 建工作项时的指派选项 ----------
 
 test("指派选项：用户恒在首位，其次是可派发的智能体与小队", () => {
@@ -236,7 +205,7 @@ test("指派选项：归档或停用的智能体/小队不进候选", () => {
 test("审查：合并成功给成功提示", () => {
   assert.deepEqual(reviewOutcomeFeedback({ ok: true, merged: true }), {
     tone: "success",
-    messageId: "settings.experiments.squad.review.merged",
+    messageId: "squad.runs.merged",
   });
 });
 
@@ -244,7 +213,7 @@ test("审查：合并成功给成功提示", () => {
 test("审查：打回后工作树保留，提示必须是「保留」而不是「完成」", () => {
   assert.deepEqual(reviewOutcomeFeedback({ ok: true, merged: false, kept: true }), {
     tone: "warning",
-    messageId: "settings.experiments.squad.review.rejectedKept",
+    messageId: "squad.runs.rejectedKept",
   });
 });
 
@@ -252,11 +221,11 @@ test("审查：打回后工作树保留，提示必须是「保留」而不是�
 test("审查：冲突与分支缺失都是失败提示（不静默）", () => {
   assert.deepEqual(reviewOutcomeFeedback({ ok: false, reason: "conflict", detail: "x" }), {
     tone: "error",
-    messageId: "settings.experiments.squad.review.conflict",
+    messageId: "squad.runs.conflict",
   });
   assert.deepEqual(reviewOutcomeFeedback({ ok: false, reason: "branch_missing", detail: "x" }), {
     tone: "error",
-    messageId: "settings.experiments.squad.review.branchMissing",
+    messageId: "squad.runs.branchMissing",
   });
 });
 
@@ -284,7 +253,7 @@ test("运行状态文案覆盖五个状态", () => {
     "rejected",
   ]);
   for (const messageId of Object.values(SQUAD_RUN_STATUS_MESSAGE_IDS)) {
-    assert.ok(messageId.startsWith("settings.experiments.squad.runStatus."), messageId);
+    assert.ok(messageId.startsWith("squad.runs.status."), messageId);
   }
 });
 
@@ -295,20 +264,17 @@ test("运行状态文案覆盖五个状态", () => {
 test("错误提示：门禁拒绝按稳定码翻译成「实验已关闭」", () => {
   assert.deepEqual(squadEntryErrorFeedback(new SquadDispatchDisabledError()), {
     tone: "warning",
-    messageId: "settings.experiments.squad.dispatchDisabled",
+    messageId: "squad.common.dispatchDisabled",
   });
   const codeOnly = Object.assign(new Error("boom"), { code: SQUAD_DISPATCH_DISABLED_CODE });
-  assert.equal(
-    squadEntryErrorFeedback(codeOnly).messageId,
-    "settings.experiments.squad.dispatchDisabled",
-  );
+  assert.equal(squadEntryErrorFeedback(codeOnly).messageId, "squad.common.dispatchDisabled");
 });
 
 // 网络失败 / 未知错误：一律响亮，且**带上原始细节**，不吞错。
 test("错误提示：未知失败带原始细节，不吞错", () => {
   assert.deepEqual(squadEntryErrorFeedback(new Error("ECONNREFUSED")), {
     tone: "error",
-    messageId: "settings.experiments.squad.operationFailed",
+    messageId: "squad.common.operationFailed",
     detail: "ECONNREFUSED",
   });
   assert.equal(squadEntryErrorFeedback("plain failure").detail, "plain failure");
@@ -364,7 +330,7 @@ test("放弃整批：未确认 ⇒ 一次都不执行（零调用），并给一
   assert.equal(spy.calls.length, 0, "未确认 ⇒ 不得调用 discardBatch（不得一键即毁）");
   assert.deepEqual(feedback, {
     tone: "warning",
-    messageId: "settings.experiments.squad.discard.notConfirmed",
+    messageId: "squad.discard.notConfirmed",
   });
 });
 
@@ -386,7 +352,7 @@ test("放弃整批：确认后执行一次（带显式目标），成功有成�
   assert.deepEqual(spy.calls, [{ target: DISCARD_TARGET, parentWorkItemId: "w1" }]);
   assert.deepEqual(feedback, {
     tone: "success",
-    messageId: "settings.experiments.squad.discard.succeeded",
+    messageId: "squad.discard.succeeded",
   });
 });
 
@@ -400,7 +366,7 @@ test("放弃整批：取消 ⇒ 回到空闲，取消之后（即使再确认）
     decision: confirmSquadDiscard(cancelled),
   });
   assert.equal(spy.calls.length, 0);
-  assert.equal(feedback.messageId, "settings.experiments.squad.discard.notConfirmed");
+  assert.equal(feedback.messageId, "squad.discard.notConfirmed");
 });
 
 // 失败必须**能读出来**：不稳定码翻译 + 未知失败带原始细节（不吞错）。
@@ -414,18 +380,21 @@ test("放弃整批：失败可见（带原始细节，不吞错）", async () =>
   assert.equal(spy.calls.length, 1, "确认后的失败也要真的调过一次服务");
   assert.deepEqual(feedback, {
     tone: "error",
-    messageId: "settings.experiments.squad.operationFailed",
+    messageId: "squad.common.operationFailed",
     detail: "git 炸了",
   });
 });
 
 /* 组件层的**结构守卫**：ui 包没有渲染测试设施，而「二次确认」这条正确性要求必须被钉住 ——
-   于是用两条**结构**断言（这个仓已有先例：上面 renderer accessor 那条就是读源码）：
-   ① 组件里**不出现** `discardBatch(` —— 执行只能经 `executeSquadDiscard`（唯一入口），
+   于是用几条**结构**断言（这个仓已有先例：上面 renderer accessor 那条就是读源码）：
+   ① 页面里**不出现** `discardBatch(` —— 执行只能经 `executeSquadDiscard`（唯一入口），
       于是「点按钮直接执行」这种改法连写都写不出来（写出来本用例红）；
    ② 「点按钮」只能进入待确认态（`requestSquadDiscard`），且必须渲染确认对话框。
-   变异验证：把确认对话框删掉、让按钮直接执行 ⇒ 本用例必红（见报告）。 */
-const SQUAD_ENTRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src/squad");
+   2026-10-03 工作项面落地：这几条守卫**原判据搬到新页面**
+   （`src/squad/WorkItemsPage.tsx`）—— SquadMinimalView 已退役，同一判据不许削弱
+   （workItemsPage.test.ts 里有一条同名守卫读同一文件，两条一起红才算真的搬干净）。 */
+const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+const SQUAD_ENTRY_DIR = resolve(SRC_DIR, "squad");
 
 /* ── 接线守卫：**取数失败时「新建」入口仍在（置灰），不是整块消失** ──
 
@@ -433,84 +402,78 @@ const SQUAD_ENTRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src
    第一反应是「**前端没有 UI 承接操作吗？**」——因为入口原本包在 `snapshot && sections` 里，
    读失败就把入口一起藏掉了。**「被错误挡住」看起来和「产品没做入口」一模一样**。
    判据：入口的可见性**不得依赖取数成功**；取数失败时由状态行说明原因、按钮置灰即可。
-   变异验证：把 `disabled={!snapshot}` 改回「包在 snapshot 条件里」⇒ 本用例必红。
-
-   2026-10-03 两次搬家后此处只剩**一个**入口（工作项）：智能体名册移到侧栏一级入口
-   「智能体」（`src/squad/SquadAgentsPage.tsx`），小队名册移到一级入口「小队」
-   （`src/squad/SquadsPage.tsx`），本卡只留一行指引 —— 见下面那条搬家断言。 */
+   工作项面的承接页是 `WorkItemsPage`（侧栏一级入口），置灰判据收敛在纯函数
+   `workItemCreateEnabled`（有目标 + 已取到快照）。 */
 test("接线守卫｜「新建工作项」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
-  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
+  const page = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPage.tsx"), "utf8");
   assert.equal(
-    (view.match(/disabled=\{!snapshot\}/g) ?? []).length,
-    1,
-    "仅存的工作项入口要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
-  );
-  assert.equal(
-    (view.match(/setDialog\("workItem"\)/g) ?? []).length,
+    (page.match(/data-testid="work-items-create"/g) ?? []).length,
     1,
     "工作项入口只该有一处：为错误态另抄一份入口 = 同一语义两处实现",
   );
-  // 小队入口已搬走：设置卡里不得再有它的新建分支（本轮搬运的守卫面）。
   assert.equal(
-    (view.match(/setDialog\("squad"\)/g) ?? []).length,
-    0,
-    "小队的新建分支必须已从设置卡移除（它现在长在侧栏一级入口「小队」）",
+    (page.match(/disabled=\{createDisabled\}/g) ?? []).length,
+    1,
+    "入口要以「无快照 ⇒ 置灰」的形态常驻（按钮本身始终渲染，可见性不依赖取数成功）",
   );
   assert.ok(
-    !/snapshot && sections && target \?/.test(view),
-    "入口不得再整体包在「快照成功」的条件里（那正是要修的形态）",
+    page.includes("workItemCreateEnabled("),
+    "置灰判据必须走纯函数 workItemCreateEnabled（有目标 + 已取到快照）",
+  );
+  // 入口必须在状态分支**之前**（动作行常驻）——包进 `state.mode === "ready"` 就等于
+  // 被错误态连坐藏掉，正是要修的形态。
+  const createIndex = page.indexOf('data-testid="work-items-create"');
+  const firstModeCheck = page.indexOf("state.mode ===");
+  assert.ok(
+    createIndex >= 0 && firstModeCheck > createIndex,
+    "入口不得整体包在状态条件里（那正是要修的形态）",
   );
 });
 
-/* ── 搬家守卫：**名册搬家不留拷贝**（2026-10-03 用户裁定：入口是一级导航，不藏设置）──
+/* ── 搬家守卫：**设置卡不留任何小队视图拷贝**（2026-10-03 用户裁定：入口是一级导航，不藏设置）──
 
-   设置卡里不得再出现智能体 / 小队的新建分支（`setDialog("teamAgent")` / `setDialog("squad")`）、
-   表单（`TeamAgentDialog` / `SquadDialog`）或列表（`SquadTeamAgentList` / `SquadList`）——
+   设置卡（`ExperimentsSection`）不得再出现智能体 / 小队 / 工作项的新建分支、表单或列表 ——
    只要回来一个，就会出现"设置卡里也能建"的第二份入口，而两份入口迟早分叉
-   （改了这处没改那处，且不报错）。
-   变异验证：把智能体或小队那一行加回设置卡 ⇒ 本用例必红。 */
-test("搬家守卫｜设置卡不再持有智能体 / 小队名册（不留拷贝），只留一行指引", () => {
-  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
-  assert.equal(
-    (view.match(/setDialog\("teamAgent"\)/g) ?? []).length,
-    0,
-    "设置卡里不得再有智能体的新建入口（它现在长在侧栏一级入口「智能体」）",
-  );
-  assert.equal(
-    (view.match(/setDialog\("squad"\)/g) ?? []).length,
-    0,
-    "设置卡里不得再有小队的新建入口（它现在长在侧栏一级入口「小队」）",
-  );
+   （改了这处没改那处，且不报错）。本轮收尾后设置区**只留总开关 + 一行指引**。
+   变异验证：把 SquadMinimalView 或任一入口加回设置卡 ⇒ 本用例必红。 */
+test("搬家守卫｜设置卡不再持有智能体 / 小队 / 工作项视图（不留拷贝），只留一行指引", () => {
+  const section = readFileSync(resolve(SRC_DIR, "settings/ExperimentsSection.tsx"), "utf8");
+  for (const forbidden of [
+    "SquadMinimalView",
+    "TeamAgentDialog",
+    "SquadDialog",
+    "WorkItemDialog",
+    "SquadWorkItemList",
+    "SquadRunList",
+  ]) {
+    assert.ok(
+      !section.includes(forbidden),
+      `设置卡不得再引用 ${forbidden}（视图都在侧栏一级入口）`,
+    );
+  }
   assert.ok(
-    !view.includes("TeamAgentDialog"),
-    "设置卡不得再引用智能体表单（唯一实现在 squad 目录）",
+    section.includes("squad.common.settingsMovedHint"),
+    "必须留一行指引：原处找不到入口会看起来像「功能没了」",
   );
-  assert.ok(!view.includes("SquadDialog"), "设置卡不得再引用小队表单（唯一实现在 squad 目录）");
-  assert.ok(
-    !view.includes("SquadTeamAgentList"),
-    "设置卡不得再引用智能体列表（列表在 SquadAgentsPage）",
-  );
-  assert.ok(!view.includes("SquadList"), "设置卡不得再引用小队列表（列表在 SquadsPage）");
-  assert.ok(
-    view.includes("squad.common.settingsMovedHint"),
-    "必须留一行指引：原处找不到名册会看起来像「功能没了」",
-  );
+  // 新家：工作项入口的唯一实现在 WorkItemsPage；编辑复用**同一份**表单（mode=edit）。
+  const page = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPage.tsx"), "utf8");
+  assert.ok(page.includes('mode="edit"'), "编辑复用同一份 WorkItemDialog（mode=edit）");
 });
 
-test("组件层：执行只经 executeSquadDiscard（组件里不出现 discardBatch 调用）+ 必须经确认对话框", () => {
-  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
+test("组件层：执行只经 executeSquadDiscard（页面里不出现 discardBatch 调用）+ 必须经确认对话框", () => {
+  const page = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPage.tsx"), "utf8");
   assert.ok(
-    !/discardBatch\s*\(/.test(view),
-    "组件不得直接调用 discardBatch：执行只能经 executeSquadDiscard（未确认就执行必须写不出来）",
+    !/discardBatch\s*\(/.test(page),
+    "页面不得直接调用 discardBatch：执行只能经 executeSquadDiscard（未确认就执行必须写不出来）",
   );
-  assert.ok(view.includes("executeSquadDiscard("), "执行必须经视图模型的唯一入口");
-  assert.ok(view.includes("requestSquadDiscard("), "点「放弃整批」只能进入待确认态");
-  assert.ok(view.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
+  assert.ok(page.includes("executeSquadDiscard("), "执行必须经视图模型的唯一入口");
+  assert.ok(page.includes("requestSquadDiscard("), "点「放弃整批」只能进入待确认态");
+  assert.ok(page.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
 
   // 确认对话框必须**说清后果**（用到那条描述文案）并且是 destructive 变体。
   const dialog = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadDiscardDialog.tsx"), "utf8");
   assert.ok(
-    dialog.includes("settings.experiments.squad.discard.description"),
+    dialog.includes("squad.discard.description"),
     "确认文案必须说明后果（删哪些分支、工作树会被清、该批判为放弃）",
   );
   assert.ok(dialog.includes('variant="destructive"'), "破坏性动作必须是 destructive 变体");

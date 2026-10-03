@@ -48,6 +48,7 @@ import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadc
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { SquadsPage } from "@/squad/SquadsPage.js";
 import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
+import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -202,6 +203,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   handleOpenPluginStore,
   handleOpenSquadAgents,
   handleOpenSquads,
+  handleOpenWorkItems,
   handleManageInstalledPlugins,
   onConnectRemote,
   onSelectRemoteProject,
@@ -1484,7 +1486,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     workspaceMainView === "automations" ||
     workspaceMainView === "plugin-store" ||
     workspaceMainView === "agents" ||
-    workspaceMainView === "squads";
+    workspaceMainView === "squads" ||
+    workspaceMainView === "work-items";
   const shouldRenderMainViewHeader = !isFullPageMainView;
   const shouldRenderWorkspaceHeader =
     shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
@@ -1594,6 +1597,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     squadAgentsActive={workspaceMainView === "agents"}
                     onOpenSquads={handleOpenSquads}
                     squadsActive={workspaceMainView === "squads"}
+                    onOpenWorkItems={handleOpenWorkItems}
+                    workItemsActive={workspaceMainView === "work-items"}
                   />
                 </WorkflowRunOpenProvider>
               </V4SplitPaneEntryProvider>
@@ -1872,6 +1877,48 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   <SquadsPage
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "work-items" ? (
+                        /* 「工作项」一级入口（用户 2026-10-03 裁定：一级导航，不藏设置）。
+                           骨架逐句对齐「小队」分支：面包屑框架 + 稳定滚动槽 + 居中内容列。
+                           `ScopedErrorBoundary` scope 独立（"work-items-page"）：本页的崩溃
+                           不该把别的页面一起带走，也不该被别人的崩溃连坐。
+                           `onOpenSession` 照 AutomationsSection 的接线：run 的会话穿透走 shell
+                           既有的 `handleSelectTaskInChat`（目标就是本页的 workspace），
+                           页面自己不拼导航。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openWorkItems",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="work-items-page"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <WorkItemsPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    onOpenSession={(sessionId) =>
+                                      handleSelectTaskInChat(
+                                        workspaceAbsPath,
+                                        sessionId,
+                                        workspaceIdentity,
+                                      )
+                                    }
                                   />
                                 </div>
                               </ScopedErrorBoundary>

@@ -1613,6 +1613,7 @@ const enUS: Record<string, string> = {
   "workspace.openPluginsSettings": "Plugin Marketplace",
   "workspace.openSquadAgents": "Agents",
   "workspace.openSquads": "Squads",
+  "workspace.openWorkItems": "Work items",
   "workspace.backToWorkspace": "Back to workspace",
   "workspace.noActiveForNewTask": "There is no available workspace yet. Open a workspace first.",
   "workspace.wslUncPrompt.title": "Open this through WSL remote connection?",
@@ -4357,82 +4358,10 @@ const enUS: Record<string, string> = {
   "settings.experiments.squadToggle.description":
     "Enable collaborative agents, squads, and worktree isolation",
   "settings.experiments.saveFailed": "Could not save. Please try again.",
-  "settings.experiments.squad.viewTitle": "Multi-agent squads (minimal entry)",
-  "settings.experiments.squad.teamAgents": "Collaborative agents",
-  "settings.experiments.squad.squads": "Squads",
-  "settings.experiments.squad.workItems": "Work items",
-  "settings.experiments.squad.createTeamAgent": "New collaborative agent",
-  "settings.experiments.squad.createSquad": "New squad",
-  "settings.experiments.squad.createWorkItem": "New work item",
-  "settings.experiments.squad.review.approve": "Approve",
-  "settings.experiments.squad.review.reject": "Reject",
-  "settings.experiments.squad.loopHint":
-    "This stage's path: create a leader and a member collaborative agent → create a squad → create a parent work item and assign it to that squad → the leader wakes and uses its own tools to create sub-items and dispatch them to members → each member runs in its own worktree → approve or reject here → once the whole batch merges, the worktrees and branches are discarded. The “report” and “request review” tools, and the reviewer agent, arrive in P2c and are not available yet.",
-  "settings.experiments.squad.refresh": "Refresh",
-  "settings.experiments.squad.noWorkspace": "No active workspace, so squad data cannot be read",
-  "settings.experiments.squad.serviceUnavailable":
-    "Squad runtime service unavailable: this connection does not expose it (a container or remote host may not have it yet)",
-  "settings.experiments.squad.operationFailed": "The operation failed",
-  "settings.experiments.squad.dispatchDisabled":
-    "The experiment is off: new dispatches are stopped (running work is not interrupted)",
-  "settings.experiments.squad.teamAgents.empty": "No collaborative agents yet",
-  "settings.experiments.squad.squads.empty": "No squads yet",
-  "settings.experiments.squad.workItems.empty": "No work items yet",
-  "settings.experiments.squad.archived": "Archived",
-  "settings.experiments.squad.disabled": "Disabled",
-  "settings.experiments.squad.leader": "Leader",
-  "settings.experiments.squad.membersCount": "{count} members",
-  "settings.experiments.squad.review.title": "Runs awaiting wrap-up",
-  "settings.experiments.squad.review.empty": "No runs awaiting wrap-up",
-  "settings.experiments.squad.review.merged": "Approved: merged into the integration branch",
-  "settings.experiments.squad.review.rejectedKept":
-    "Rejected: the member's worktree is kept until it is fixed and merged",
-  "settings.experiments.squad.review.conflict":
-    "Merge conflict: not merged into the main branch; resolve the conflict first",
-  "settings.experiments.squad.review.branchMissing":
-    "The member branch is missing, so it cannot be merged",
-  "settings.experiments.squad.discard.action": "Discard batch",
-  "settings.experiments.squad.discard.title": "Discard the whole batch “{title}”?",
-  "settings.experiments.squad.discard.description":
-    "This deletes this batch's member branches and its integration branch, and cleans up their worktrees — unmerged changes in those worktrees are lost. The batch is marked as abandoned and nobody will wrap it up. This cannot be undone.",
-  "settings.experiments.squad.discard.confirm": "Discard batch",
-  "settings.experiments.squad.discard.succeeded":
-    "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
-  "settings.experiments.squad.discard.notConfirmed":
-    "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
-  "settings.experiments.squad.agentCreated": "Collaborative agent created",
-  "settings.experiments.squad.squadCreated": "Squad created",
-  "settings.experiments.squad.workItemCreated": "Work item created",
-  "settings.experiments.squad.dialogHint":
-    "This stage asks for the minimum required fields only; the rest arrive in a later version.",
-  "settings.experiments.squad.cancel": "Cancel",
-  "settings.experiments.squad.submit": "Create",
-  "settings.experiments.squad.name": "Name",
-  "settings.experiments.squad.systemPrompt": "System prompt",
-  "settings.experiments.squad.memoryScope": "Memory scope",
-  "settings.experiments.squad.memoryScope.user": "User",
-  "settings.experiments.squad.memoryScope.project": "Project",
-  "settings.experiments.squad.memoryScope.local": "Local",
-  "settings.experiments.squad.leaderAgent": "Leader agent",
-  "settings.experiments.squad.memberAgents": "Member agents (multi-select)",
-  "settings.experiments.squad.memberAgents.none":
-    "No other dispatchable agents; a leader alone is fine (the leader becomes a member automatically).",
-  "settings.experiments.squad.stopCondition": "Stop condition (required)",
-  "settings.experiments.squad.maxRounds": "Max rounds (required)",
-  "settings.experiments.squad.title": "Title",
-  "settings.experiments.squad.body": "Body (optional)",
-  "settings.experiments.squad.assignee": "Assign to",
-  "settings.experiments.squad.assignee.user": "Me",
-  "settings.experiments.squad.parent": "Parent work item (optional)",
-  "settings.experiments.squad.parent.none": "None (top level)",
-  "settings.experiments.squad.runStatus.open": "Dispatched",
-  "settings.experiments.squad.runStatus.produced": "Produced, awaiting review",
-  "settings.experiments.squad.runStatus.rejected": "Rejected, awaiting fixes",
-  "settings.experiments.squad.runStatus.merged": "Merged",
-  "settings.experiments.squad.runStatus.discarded": "Discarded",
 
-  // Sidebar first-level entries "Agents" / "Squads" pages (2026-10-03 move: rosters left the settings card).
-  // Copy shared by both surfaces lives under squad.common.*: one word per action, synced across both.
+  // Sidebar first-level entries "Agents" / "Squads" / "Work items" pages (2026-10-03 move: the surfaces
+  // left the settings card; only the master switch and one hint row remain in settings).
+  // Copy shared by all three lives under squad.common.*: one word, one place.
   "squad.common.save": "Save",
   "squad.common.edit": "Edit",
   "squad.common.enable": "Enable",
@@ -4441,7 +4370,7 @@ const enUS: Record<string, string> = {
   "squad.common.experimentOff":
     "The multi-agent squad experiment is off: the entry is hidden and new dispatches are rejected by the service layer; roster management here still works.",
   "squad.common.settingsMovedHint":
-    "Team agent and squad management has moved to the “Agents” and “Squads” entries in the sidebar",
+    "Agents, squads and the work-item board all live under the first-level sidebar entries",
 
   // "Agents" surface (squad.agents.*).
   "squad.agents.editTitle": "Edit team agent",
@@ -4473,6 +4402,88 @@ const enUS: Record<string, string> = {
   "squad.squads.membersLabel": "Members: ",
   "squad.squads.noDispatchableAgentsHint":
     "No dispatchable collaborative agents yet: create an enabled one under the “Agents” entry in the sidebar first.",
+  "squad.common.refresh": "Refresh",
+  "squad.common.cancel": "Cancel",
+  "squad.common.submit": "Create",
+  "squad.common.dialogHint":
+    "This stage asks for the minimum required fields only; the rest arrive in a later version.",
+  "squad.common.name": "Name",
+  "squad.common.systemPrompt": "System prompt",
+  "squad.common.memoryScope": "Memory scope",
+  "squad.common.memoryScope.user": "User",
+  "squad.common.memoryScope.project": "Project",
+  "squad.common.memoryScope.local": "Local",
+  "squad.common.noWorkspace": "No active workspace, so squad data cannot be read",
+  "squad.common.operationFailed": "The operation failed",
+  "squad.common.serviceUnavailable":
+    "Squad runtime service unavailable: this connection does not expose it (a container or remote host may not have it yet)",
+  "squad.common.dispatchDisabled":
+    "The experiment is off: new dispatches are stopped (running work is not interrupted)",
+  "squad.common.archived": "Archived",
+  "squad.common.disabled": "Disabled",
+  "squad.common.leader": "Leader",
+  "squad.common.assignee": "Assign to",
+  "squad.common.assignee.user": "Me",
+  "squad.common.title": "Title",
+  "squad.common.body": "Body (optional)",
+  "squad.common.parent": "Parent work item (optional)",
+  "squad.common.parent.none": "None (top level)",
+
+  "squad.agents.create": "New collaborative agent",
+  "squad.agents.created": "Collaborative agent created",
+  "squad.agents.empty": "No collaborative agents yet",
+
+  "squad.squads.create": "New squad",
+  "squad.squads.created": "Squad created",
+  "squad.squads.leaderAgent": "Leader agent",
+  "squad.squads.memberAgents": "Member agents (multi-select)",
+  "squad.squads.memberAgents.none":
+    "No other dispatchable agents; a leader alone is fine (the leader becomes a member automatically).",
+  "squad.squads.stopCondition": "Stop condition (required)",
+  "squad.squads.maxRounds": "Max rounds (required)",
+
+  "squad.workItems.create": "New work item",
+  "squad.workItems.created": "Work item created",
+  "squad.workItems.updated": "Saved",
+  "squad.workItems.editTitle": "Edit work item",
+  "squad.workItems.loading": "Loading work items…",
+  "squad.workItems.loadFailed": "Failed to load work items",
+  "squad.workItems.empty": "No work items yet",
+  "squad.workItems.emptyHint":
+    "Create a work item and assign it to a team agent or squad; squads dispatch it through their leader.",
+  "squad.workItems.status.todo": "To do",
+  "squad.workItems.status.in_progress": "In progress",
+  "squad.workItems.status.in_review": "In review",
+  "squad.workItems.status.blocked": "Blocked",
+  "squad.workItems.status.done": "Done",
+  "squad.workItems.status.cancelled": "Cancelled",
+
+  "squad.runs.title": "Runs awaiting wrap-up",
+  "squad.runs.empty": "No runs awaiting wrap-up",
+  "squad.runs.approve": "Approve",
+  "squad.runs.reject": "Reject",
+  "squad.runs.merged": "Approved: merged into the integration branch",
+  "squad.runs.rejectedKept": "Rejected: the member's worktree is kept until it is fixed and merged",
+  "squad.runs.conflict":
+    "Merge conflict: not merged into the main branch; resolve the conflict first",
+  "squad.runs.branchMissing": "The member branch is missing, so it cannot be merged",
+  "squad.runs.leader": "Leader",
+  "squad.runs.openSession": "Open session",
+  "squad.runs.status.open": "Dispatched",
+  "squad.runs.status.produced": "Produced, awaiting review",
+  "squad.runs.status.rejected": "Rejected, awaiting fixes",
+  "squad.runs.status.merged": "Merged",
+  "squad.runs.status.discarded": "Discarded",
+
+  "squad.discard.action": "Discard batch",
+  "squad.discard.title": "Discard the whole batch “{title}”?",
+  "squad.discard.description":
+    "This deletes this batch's member branches and its integration branch, and cleans up their worktrees — unmerged changes in those worktrees are lost. The batch is marked as abandoned and nobody will wrap it up. This cannot be undone.",
+  "squad.discard.confirm": "Discard batch",
+  "squad.discard.succeeded":
+    "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
+  "squad.discard.notConfirmed":
+    "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

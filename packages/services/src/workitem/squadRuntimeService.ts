@@ -190,6 +190,30 @@ export interface ISquadRuntimeService {
   ): Promise<void>;
   /** 指派即入队 ⇒ **入口过门禁**（入口② 走这条）。 */
   createWorkItem(target: SquadWorkspaceTarget, input: CreateWorkItemRequest): Promise<WorkItem>;
+  /**
+   * 编辑工作项的**内容字段**（标题 / 正文），返回写盘后的实体（**加法**，2026-10-03：
+   * 工作项看板要求编辑可用）。
+   *
+   * 三条纪律（与 `updateTeamAgent` / `updateSquad` 同款）：
+   * 1. **唯一写者**：`status` 仍只经 `workItemService.transition`（本条不碰它）；内容经 repo 的
+   *    专用写入口 `workItemRepo.updateContent`（同样是「恰命中一行才算成功」的条件更新）——
+   *    调用方**不得**自己碰 repo，更不得写裸 SQL：第二份写者迟早漂移，而漂移的表现是
+   *    「界面看着改了、库里没改」或反过来，两处都不报错。
+   * 2. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），runtime 按目标现构、
+   *    不缓存 —— 与 `createWorkItem` 同款。
+   * 3. **不过门禁**：改标题 / 正文**不产生新派发**（§5.7.6 只停新派发），与 `updateTeamAgent`
+   *    同款理由 —— 关掉实验开关后不该连改个字都不让。**本层不得写任何第二份开关判据**；
+   *    界面侧入口的显隐由 `squadEntryVisible` 负责（呈现，不是门禁）。
+   *
+   * **未命中 / 空 patch ⇒ 响亮抛**（照 `assignWorkItem` 的既有口径）：未命中 = id 算错或该行
+   * 已被归档，空 patch = 调用方没给任何要改的字段 —— 静默 no-op 会让界面以为改成功了，
+   * 而库里仍是旧标题。写盘后读回返回；读回为空（理论不可达：刚刚命中过同一条件）也响亮抛，
+   * 不返回 undefined 让调用方在下一层才炸。
+   */
+  updateWorkItem(
+    target: SquadWorkspaceTarget,
+    input: { id: string; patch: { title?: string; body?: string } },
+  ): Promise<WorkItem>;
   /** 起新 run ⇒ **入口过门禁**（入口① 的队员段与入口③ 都汇到这里）。 */
   openMemberRun(
     target: SquadWorkspaceTarget,
@@ -556,6 +580,33 @@ export function createSquadRuntimeService(deps: {
       await assertEnabled();
       const runtime = await deps.createRuntime(target);
       return runtime.lifecycle.openMemberRun(input);
+    },
+
+    /* 工作项**内容**编辑（**加法**）：不调 `assertEnabled` —— 改标题 / 正文不产生新派发
+       （§5.7.6 只停新派发），与 `updateTeamAgent` / `updateSquad` 同款理由。
+       写者纪律：只经 repo 的专用写入口 `workItemRepo.updateContent`（status 的唯一写者仍是
+       `workItemService.transition`，本方法不碰它）；调用方不接触 repo。
+       未命中（含空 patch：repo 直接 false）⇒ 响亮抛，照 `assignWorkItem` 的既有口径 ——
+       静默 no-op 会让界面以为改成功了，而库里仍是旧标题。目标 `target` 原样交给
+       `createRuntime`（唯一权威，没有隐式默认 workspace）。 */
+    async updateWorkItem(target, input) {
+      const runtime = await deps.createRuntime(target);
+      if (!runtime.workItemRepo.updateContent(input.id, input.patch)) {
+        throw new Error(
+          `编辑工作项失败：工作项「${input.id}」不存在、已归档、或没有给任何要改的字段（空 patch）——` +
+            "静默 no-op 会让界面以为改成功了，而库里仍是旧内容。",
+        );
+      }
+      // 读回写盘后的实体返回；理论上刚刚命中过同一条件，读回为 null 不可达 —— 真不可达时也响亮抛，
+      // 不返回 undefined 让调用方在下一层才炸。
+      const item = runtime.workItemRepo.get(input.id);
+      if (!item) {
+        throw new Error(
+          `编辑工作项失败：工作项「${input.id}」写入成功后读回为空（理论不可达）——` +
+            "不返回 undefined，避免调用方在下一层才炸。",
+        );
+      }
+      return item;
     },
 
     /**

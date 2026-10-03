@@ -118,7 +118,13 @@ export interface GitChangeSummary {
   removed: number;
 }
 
-export type WorkspaceMainView = "chat" | "automations" | "plugin-store" | "agents" | "squads";
+export type WorkspaceMainView =
+  | "chat"
+  | "automations"
+  | "plugin-store"
+  | "agents"
+  | "squads"
+  | "work-items";
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
   workspaceReadOnlyReason?: string;
@@ -134,6 +140,8 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenSquadAgents: () => void;
   /** 打开侧栏一级入口「小队」（照 handleOpenSquadAgents 的形态）。 */
   handleOpenSquads: () => void;
+  /** 打开侧栏一级入口「工作项」（照 handleOpenSquads 的形态）。 */
+  handleOpenWorkItems: () => void;
   handleManageInstalledPlugins: () => void;
   workspaceShellZCodeState: WorkspaceShellZCodeState;
   theme: Theme;

@@ -84,7 +84,7 @@ test("投影：ready 暴露整个快照，小队面取 snapshot.squads（原样�
     ...input,
     failure: {
       tone: "error",
-      messageId: "settings.experiments.squad.operationFailed",
+      messageId: "squad.common.operationFailed",
       detail: "x",
     },
   });
@@ -301,8 +301,8 @@ test("守卫｜侧栏「小队」入口恰一处、紧跟「智能体」之后�
   );
   assert.equal(
     (sidebar.match(/\{showSquadEntries \? \(/g) ?? []).length,
-    2,
-    "两个实验入口（智能体 / 小队）都要挂同一个显隐条件",
+    3,
+    "三个实验入口（智能体 / 小队 / 工作项）都要挂同一个显隐条件",
   );
   // 入口必须真的在**自己的**条件块内：从最近一个条件起点到入口之间不得出现条件闭合。
   const gate = sidebar.lastIndexOf("{showSquadEntries ? (", squadsIndex);
@@ -397,12 +397,14 @@ test("守卫｜SquadsPage 走响亮取数通路，四个服务调用齐全，归
 });
 
 // 守卫 d：设置卡不留拷贝（与 squadEntryView.test.ts 的同名守卫**同一判据的第二种读法**：
-// 那条读 SquadMinimalView 的"内容"，这条读"它引用了谁"——两条都红才算真的搬干净）。
+// 那条读"设置卡引用了哪些实体"，这条读"它有没有把视图带回来"——都红才算真的搬干净）。
+// 2026-10-03 工作项面落地后 SquadMinimalView 已删：设置卡主体是 ExperimentsSection。
 test("守卫｜设置卡不再引用小队表单 / 列表 / 新建分支", () => {
-  const view = readSource("squad/SquadMinimalView.tsx");
-  assert.ok(!view.includes("SquadDialog"), "设置卡不得引用小队表单");
-  assert.ok(!view.includes("SquadList"), "设置卡不得引用小队列表");
-  assert.ok(!view.includes('setDialog("squad")'), "设置卡不得再有小队的新建分支");
+  const section = readSource("settings/ExperimentsSection.tsx");
+  assert.ok(!section.includes("SquadDialog"), "设置卡不得引用小队表单");
+  assert.ok(!section.includes("SquadMinimalView"), "设置卡不得再渲染 SquadMinimalView（已退役）");
+  assert.ok(!section.includes("SquadList"), "设置卡不得引用小队列表");
+  assert.ok(!section.includes('setDialog("squad")'), "设置卡不得再有小队的新建分支");
 });
 
 /* 守卫 e：共享状态机**单实现**（B0 的单一实现约定）。

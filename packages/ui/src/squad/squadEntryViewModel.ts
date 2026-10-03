@@ -4,46 +4,22 @@ import {
   isSquadBatchRoot,
   type ISquadRuntimeServiceShape,
   type ReviewOutcome,
-  type SquadRunRecord,
   type SquadRunStatus,
   type SquadSnapshot,
   type SquadWorkspaceTarget,
 } from "@zcode/services";
 
-/* 最小入口视图的**纯逻辑**（不 import React、不 import UI 原语）。
+/* 小队三个功能面（智能体 / 小队 / 工作项）的**共用纯逻辑**（不 import React、不 import UI 原语）。
 
-   为什么把它单拆一层：ui 包没有渲染测试设施（既有测试全是纯逻辑），把「哪一段为空」「哪个结果
-   配哪条提示」「哪些智能体可派发」这类判断留在组件里就等于**不可测**。放这里之后，
-   数据面 / 审查动作 / 失败提示三类矩阵格子都能被 node:test 逐格钉住，组件只负责画。 */
+   为什么把它单拆一层：ui 包没有渲染测试设施（既有测试全是纯逻辑），把「哪个结果配哪条提示」
+   「哪些智能体可派发」「哪些工作项给破坏性入口」这类判断留在组件里就等于**不可测**。放这里之后，
+   指派候选 / 运行状态 / 审查结果 / 失败提示 / 放弃整批五类矩阵格子都能被 node:test 逐格钉住，
+   组件只负责画。
 
-// ---------- 数据面 ----------
+   名字里的 `Entry` 是历史（起点是设置卡的「最小入口」），现在三个面共用同一份实现；
+   改名会拖动全部 import，价值仅在名字本身，故保留。 */
 
-export type SquadEntrySection<T> = { items: T[]; empty: boolean };
-
-export type SquadEntrySectionState = {
-  teamAgents: SquadEntrySection<TeamAgent>;
-  squads: SquadEntrySection<Squad>;
-  workItems: SquadEntrySection<WorkItem>;
-  runs: SquadEntrySection<SquadRunRecord>;
-};
-
-function section<T>(items: T[]): SquadEntrySection<T> {
-  return { items, empty: items.length === 0 };
-}
-
-/**
- * 一次算出四段视图状态。**全量渲染**：本阶段不做分页 / 虚拟化（spec §11.4 的性能条留到 P2c），
- * 快照里有几条就画几条；这也是 `getSnapshot()` 的当前口径（服务侧已经按 workspace 过滤过）。
- */
-export function squadEntrySectionState(snapshot: SquadSnapshot): SquadEntrySectionState {
-  return {
-    teamAgents: section(snapshot.teamAgents),
-    squads: section(snapshot.squads),
-    workItems: section(snapshot.workItems),
-    // 快照里的 runs 只含**未合并**的（`listActive` 口径），正是本视图要「收尾」的那批。
-    runs: section(snapshot.runs),
-  };
-}
+// ---------- 可派发判据 ----------
 
 /** 可派发的协作智能体：停用或已归档的**不出现在候选里**（spec §16 S10：归档在派发时被 skip，不是失败）。 */
 export function isDispatchableAgent(agent: TeamAgent): boolean {
@@ -118,11 +94,11 @@ export function parseAssigneeValue(value: string): WorkItem["assignee"] {
 /** 运行状态的文案 id：用 `Record<SquadRunStatus, string>` **强制穷尽** ——
     将来给 `SQUAD_RUN_STATUSES` 加一个状态时这里会编译失败，而不是界面上多出一个裸 key。 */
 export const SQUAD_RUN_STATUS_MESSAGE_IDS: Record<SquadRunStatus, string> = {
-  open: "settings.experiments.squad.runStatus.open",
-  produced: "settings.experiments.squad.runStatus.produced",
-  rejected: "settings.experiments.squad.runStatus.rejected",
-  merged: "settings.experiments.squad.runStatus.merged",
-  discarded: "settings.experiments.squad.runStatus.discarded",
+  open: "squad.runs.status.open",
+  produced: "squad.runs.status.produced",
+  rejected: "squad.runs.status.rejected",
+  merged: "squad.runs.status.merged",
+  discarded: "squad.runs.status.discarded",
 };
 
 export function squadRunStatusMessageId(status: SquadRunStatus): string {
@@ -168,12 +144,12 @@ export type SquadEntryFeedback = {
 export function reviewOutcomeFeedback(outcome: ReviewOutcome): SquadEntryFeedback {
   if (outcome.ok) {
     return outcome.merged
-      ? { tone: "success", messageId: "settings.experiments.squad.review.merged" }
-      : { tone: "warning", messageId: "settings.experiments.squad.review.rejectedKept" };
+      ? { tone: "success", messageId: "squad.runs.merged" }
+      : { tone: "warning", messageId: "squad.runs.rejectedKept" };
   }
   return outcome.reason === "conflict"
-    ? { tone: "error", messageId: "settings.experiments.squad.review.conflict" }
-    : { tone: "error", messageId: "settings.experiments.squad.review.branchMissing" };
+    ? { tone: "error", messageId: "squad.runs.conflict" }
+    : { tone: "error", messageId: "squad.runs.branchMissing" };
 }
 
 /**
@@ -188,18 +164,18 @@ export function reviewOutcomeFeedback(outcome: ReviewOutcome): SquadEntryFeedbac
 export function squadEntryErrorFeedback(error: unknown): SquadEntryFeedback {
   const code = (error as { code?: unknown } | null | undefined)?.code;
   if (code === SQUAD_DISPATCH_DISABLED_CODE) {
-    return { tone: "warning", messageId: "settings.experiments.squad.dispatchDisabled" };
+    return { tone: "warning", messageId: "squad.common.dispatchDisabled" };
   }
   return {
     tone: "error",
-    messageId: "settings.experiments.squad.operationFailed",
+    messageId: "squad.common.operationFailed",
     detail: error instanceof Error ? error.message : String(error),
   };
 }
 
 /** 取数通路缺失（`SquadRuntimeServiceUnavailableError`）的单列提示：它跟普通操作失败不是一类事。 */
 export function squadServiceUnavailableFeedback(): SquadEntryFeedback {
-  return { tone: "error", messageId: "settings.experiments.squad.serviceUnavailable" };
+  return { tone: "error", messageId: "squad.common.serviceUnavailable" };
 }
 
 // ---------- 整批放弃（spec §6.3「整批可整体放弃」）----------
@@ -279,12 +255,12 @@ export async function executeSquadDiscard(input: {
   decision: ReturnType<typeof confirmSquadDiscard>;
 }): Promise<SquadEntryFeedback> {
   if (input.decision.workItemId === null) {
-    return { tone: "warning", messageId: "settings.experiments.squad.discard.notConfirmed" };
+    return { tone: "warning", messageId: "squad.discard.notConfirmed" };
   }
   try {
     // 目标显式（确认 3：runtime 按目标现构、不缓存，没有隐式默认 workspace）。
     await input.service.discardBatch(input.target, { parentWorkItemId: input.decision.workItemId });
-    return { tone: "success", messageId: "settings.experiments.squad.discard.succeeded" };
+    return { tone: "success", messageId: "squad.discard.succeeded" };
   } catch (error) {
     // 失败必须能读出来：稳定码翻译（门禁/未接上）+ 未知失败带**原始细节**，见 squadEntryErrorFeedback。
     return squadEntryErrorFeedback(error);

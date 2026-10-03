@@ -158,7 +158,7 @@ export function SquadsPage({
         description: intl.formatMessage({ id: "squad.squads.archiveConfirmDescription" }),
         confirmVariant: "destructive",
         confirmLabel: intl.formatMessage({ id: "squad.common.archive" }),
-        cancelLabel: intl.formatMessage({ id: "settings.experiments.squad.cancel" }),
+        cancelLabel: intl.formatMessage({ id: "squad.common.cancel" }),
       });
       // 未确认 ⇒ 一个服务调用都不发（破坏性动作的"没发生"必须是可读出来的）。
       if (!confirmed || !target) return;
@@ -206,7 +206,7 @@ export function SquadsPage({
         void runAction(
           "*",
           (service) => service.createSquad(target, input),
-          "settings.experiments.squad.squadCreated",
+          "squad.squads.created",
         );
         return;
       }
@@ -244,7 +244,7 @@ export function SquadsPage({
           }}
         >
           {loading ? <Spinner className="size-3.5" /> : null}
-          {t("settings.experiments.squad.refresh")}
+          {t("squad.common.refresh")}
         </Button>
         <Button
           size="sm"
@@ -252,7 +252,7 @@ export function SquadsPage({
           data-testid="squads-create"
           onClick={() => setDialog({ kind: "create" })}
         >
-          {t("settings.experiments.squad.createSquad")}
+          {t("squad.squads.create")}
         </Button>
       </div>
 
@@ -274,7 +274,7 @@ export function SquadsPage({
           </AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("settings.experiments.squad.refresh")}
+              {t("squad.common.refresh")}
             </Button>
           </AlertAction>
         </Alert>
@@ -282,7 +282,7 @@ export function SquadsPage({
 
       {state.mode === "no-workspace" ? (
         <Alert data-testid="squads-no-workspace">
-          <AlertTitle>{t("settings.experiments.squad.noWorkspace")}</AlertTitle>
+          <AlertTitle>{t("squad.common.noWorkspace")}</AlertTitle>
         </Alert>
       ) : null}
 
@@ -306,7 +306,7 @@ export function SquadsPage({
           </AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("settings.experiments.squad.refresh")}
+              {t("squad.common.refresh")}
             </Button>
           </AlertAction>
         </Alert>

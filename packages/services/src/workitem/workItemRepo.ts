@@ -42,6 +42,24 @@ export interface WorkItemRepo {
    * 以为「转交完成了」而库里仍指着旧对象。
    */
   updateAssignee(id: string, assignee: WorkItem["assignee"]): boolean;
+  /**
+   * 改写工作项**内容**（title / body）—— 不含 `status`（唯一写者是 `WorkItemService` 的
+   * `transition`）与 `assignee`（另有 `updateAssignee`）。CAS 式：`id` 存在、未归档、
+   * **且给了至少一个字段**才写；恰命中一行返回 `true`。
+   *
+   * 为什么与 `updateAssignee` 同款「条件更新 + 恰命中一行才算成功」：先读后写会与并发
+   * 派发竞态，也会把「这一行已经不存在了」伪装成一次成功的改写 —— 未命中必须返回 `false`
+   * 而不是静默 no-op，否则调用方以为「改成功了」而库里仍是旧标题。
+   *
+   * 为什么空 patch（两个字段都 `undefined`）**直接返回 false**：一次不 SET 任何列的
+   * `UPDATE` 没有语义（等于「改了什么？什么都没改」），若放行则调用方传空 patch 会得到
+   * 「成功」，把接线错误静默成一次空写。返回 `false` 让空 patch 落到调用方的响亮错误路径。
+   *
+   * SET 子句**逐字段拼接**（patch 里出现哪个字段才 SET 哪个），不做整包展开：运行期多带的
+   * 键必须被忽略 —— 否则 `patch` 上恰好同名于别的列（`status` / `archived_at`）的键就能
+   * 绕开白名单写到不该写的列上。
+   */
+  updateContent(id: string, patch: { title?: string; body?: string }): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
   areAllChildrenTerminal(parentId: string): boolean;
 }
@@ -144,6 +162,30 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
           "UPDATE work_items SET assignee_type=?, assignee_id=?, updated_at=? WHERE id=? AND archived_at IS NULL",
         )
         .run(assignee.type, assignee.id, Date.now(), id);
+      return result.changes === 1;
+    },
+
+    // 与 updateAssignee 同口径的单条条件更新（未命中 = 已归档或 id 算错 ⇒ false）。
+    // SET 子句逐字段拼接：patch 里出现哪个字段才 SET 哪个（空 patch 在拼之前就返回 false，
+    // 不发「不 SET 任何列」的 UPDATE）；运行期多带的键不参与拼接，故写不到白名单之外的列。
+    updateContent(id, patch) {
+      const assignments: string[] = [];
+      const values: Array<string | number> = [];
+      if (patch.title !== undefined) {
+        assignments.push("title=?");
+        values.push(patch.title);
+      }
+      if (patch.body !== undefined) {
+        assignments.push("body=?");
+        values.push(patch.body);
+      }
+      // 空 patch：没有任何要写的列 ⇒ 不执行空 UPDATE，直接未命中（响亮错误留给调用方）。
+      if (assignments.length === 0) return false;
+      const result = db
+        .prepare(
+          `UPDATE work_items SET ${assignments.join(", ")}, updated_at=? WHERE id=? AND archived_at IS NULL`,
+        )
+        .run(...values, Date.now(), id);
       return result.changes === 1;
     },
 

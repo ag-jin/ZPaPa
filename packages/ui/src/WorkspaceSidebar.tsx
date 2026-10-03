@@ -22,6 +22,7 @@ import {
   FolderOpen,
   Hash,
   ListFilter,
+  ListTodo,
   Maximize2,
   MessageCircleCheck,
   MessageCirclePlus,
@@ -247,10 +248,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenPluginStore,
   onOpenSquadAgents,
   onOpenSquads,
+  onOpenWorkItems,
   automationsActive = false,
   pluginStoreActive = false,
   squadAgentsActive = false,
   squadsActive = false,
+  workItemsActive = false,
 }: {
   workspacePath: string;
   workspaceRemoteSessionId?: string;
@@ -300,10 +303,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenPluginStore?: () => void;
   onOpenSquadAgents?: () => void;
   onOpenSquads?: () => void;
+  onOpenWorkItems?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
   squadAgentsActive?: boolean;
   squadsActive?: boolean;
+  workItemsActive?: boolean;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const handleTaskRowSelect = useCallback(
@@ -740,11 +745,14 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenSquadsMain = useCallback(() => {
     onOpenSquads?.();
   }, [onOpenSquads]);
-  /* 「智能体」与「小队」两个一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
+  const handleOpenWorkItemsMain = useCallback(() => {
+    onOpenWorkItems?.();
+  }, [onOpenWorkItems]);
+  /* 「智能体」「小队」「工作项」三个一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
      判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒ 不可见，
      避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
      assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。
-     两个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给小队再造一个判据变量
+     三个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给工作项再造一个判据变量
      就是同一语义两处实现，改一处漏一处不报错。 */
   const { settings } = useSettings();
   const showSquadEntries = squadEntryVisible(settings);
@@ -1369,6 +1377,25 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               >
                 <UsersRound className="size-4" />
                 {intl.formatMessage({ id: "workspace.openSquads" })}
+              </Button>
+            ) : null}
+            {/* 「工作项」一级入口：紧跟在「小队」之后（用户 2026-10-03 入口清单：AI 团队 ▸ 智能体 / 小队，
+                工作 ▸ 工作项看板）。显隐继续**共用同一个判据变量**（同一个实验开关管这组入口）。 */}
+            {showSquadEntries ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenWorkItemsMain}
+                data-icon="inline-start"
+                data-testid="work-items-sidebar-open"
+                size="lg"
+                aria-pressed={workItemsActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  workItemsActive && "bg-selected text-foreground",
+                )}
+              >
+                <ListTodo className="size-4" />
+                {intl.formatMessage({ id: "workspace.openWorkItems" })}
               </Button>
             ) : null}
           </div>

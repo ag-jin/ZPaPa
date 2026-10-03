@@ -37,9 +37,7 @@ export function SquadAgentsList({
   if (agents.length === 0) {
     return (
       <div className="flex flex-col gap-1" data-testid="squad-agents-empty">
-        <p className="text-ui-base text-foreground">
-          {t("settings.experiments.squad.teamAgents.empty")}
-        </p>
+        <p className="text-ui-base text-foreground">{t("squad.agents.empty")}</p>
         <p className="text-ui-sm text-foreground-subtlest">{t("squad.agents.emptyHint")}</p>
       </div>
     );
@@ -67,17 +65,17 @@ export function SquadAgentsList({
               />
               <span className="break-words text-ui-base text-foreground">{agent.name}</span>
               <span className="text-ui-xs text-foreground-subtlest">
-                {t(`settings.experiments.squad.memoryScope.${agent.memoryScope}`)}
+                {t(`squad.common.memoryScope.${agent.memoryScope}`)}
               </span>
               {/* 状态徽标复用既有键（不新造一份文案）。 */}
               {agent.archivedAt !== undefined ? (
                 <span className="text-ui-xs text-foreground-subtlest">
-                  {t("settings.experiments.squad.archived")}
+                  {t("squad.common.archived")}
                 </span>
               ) : null}
               {!agent.enabled ? (
                 <span className="text-ui-xs text-foreground-subtlest">
-                  {t("settings.experiments.squad.disabled")}
+                  {t("squad.common.disabled")}
                 </span>
               ) : null}
             </span>

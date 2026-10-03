@@ -90,12 +90,12 @@ export function SquadsList({
               {/* 状态徽标复用既有键（不新造一份文案）。 */}
               {squad.archivedAt !== undefined ? (
                 <span className="text-ui-xs text-foreground-subtlest">
-                  {t("settings.experiments.squad.archived")}
+                  {t("squad.common.archived")}
                 </span>
               ) : null}
               {!squad.enabled ? (
                 <span className="text-ui-xs text-foreground-subtlest">
-                  {t("settings.experiments.squad.disabled")}
+                  {t("squad.common.disabled")}
                 </span>
               ) : null}
             </span>

@@ -43,7 +43,7 @@ function snapshotWith(enabled: boolean, teamAgents: TeamAgent[] = []): SquadSnap
 
 const failure: SquadEntryFeedback = {
   tone: "error",
-  messageId: "settings.experiments.squad.operationFailed",
+  messageId: "squad.common.operationFailed",
   detail: "ECONNREFUSED",
 };
 
@@ -87,7 +87,7 @@ test("状态机：有 workspace 无快照 + 失败落定 ⇒ error（带 failure
   const state = squadSurfaceViewState({ ...base, failure });
   assert.equal(state.mode, "error");
   assert.ok(state.mode === "error");
-  assert.equal(state.feedback.messageId, "settings.experiments.squad.operationFailed");
+  assert.equal(state.feedback.messageId, "squad.common.operationFailed");
   assert.equal(state.feedback.detail, "ECONNREFUSED", "错误态必须把原始原因带给用户");
 });
 
@@ -305,10 +305,12 @@ test("守卫｜SquadAgentsPage 走响亮取数通路，三个写动作齐全，�
 });
 
 // 守卫 d：设置卡不留拷贝（与 squadEntryView.test.ts 的同名守卫**同一判据的第二种读法**：
-// 那条读 SquadMinimalView 的"内容"，这条读"它引用了谁"——两条都红才算真的搬干净）。
+// 那条读"设置卡引用了哪些实体"，这条读"它有没有把视图带回来"——都红才算真的搬干净）。
+// 2026-10-03 工作项面落地后 SquadMinimalView 已删：设置卡主体是 ExperimentsSection。
 test("守卫｜设置卡不再引用智能体表单 / 列表 / 新建分支", () => {
-  const view = readSource("squad/SquadMinimalView.tsx");
-  assert.ok(!view.includes("TeamAgentDialog"), "设置卡不得引用智能体表单");
-  assert.ok(!view.includes("SquadTeamAgentList"), "设置卡不得引用智能体列表");
-  assert.ok(!view.includes('setDialog("teamAgent")'), "设置卡不得再有智能体的新建分支");
+  const section = readSource("settings/ExperimentsSection.tsx");
+  assert.ok(!section.includes("TeamAgentDialog"), "设置卡不得引用智能体表单");
+  assert.ok(!section.includes("SquadMinimalView"), "设置卡不得再渲染 SquadMinimalView（已退役）");
+  assert.ok(!section.includes("SquadTeamAgentList"), "设置卡不得引用智能体列表");
+  assert.ok(!section.includes('setDialog("teamAgent")'), "设置卡不得再有智能体的新建分支");
 });
