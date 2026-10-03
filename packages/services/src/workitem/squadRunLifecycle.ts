@@ -45,6 +45,18 @@ export type LeaderRunRequest = {
   parentWorkItemId?: string;
 };
 
+/**
+ * 队长行登记的**结论**（§5.7(1)/S13 的存储层不变式：同一工作项至多一条活跃队长行）。
+ *
+ * `recorded: false` 说明该工作项**已经有一条进行中的队长 run** ⇒ 本次指派被**并入**它
+ * （不产生第二行，也不该起第二个会话）。调用方必须据此**跳过本次派发**：
+ * 当成功（静默）会让上层以为 run 起了、台账里却没有；当失败会让人去查一个并不存在的错误。
+ * 两种误读都与「合并」的语义相反 —— 所以它必须是一个**要处理的返回值**，不是 void、也不是异常。
+ */
+export type LeaderRunRecordOutcome =
+  | { recorded: true }
+  | { recorded: false; reason: "in_progress_run_exists" };
+
 export type ReviewOutcome =
   | { ok: true; merged: true }
   | { ok: true; merged: false; kept: true }
@@ -97,7 +109,7 @@ export interface SquadRunLifecycle {
    * （静默复用旧行会让两次 run 的成果落进同一个身份里；`runId` 取幂等键 `eventKey`，
    * 故「同一事实重投」本就不该产生第二条 run）。
    */
-  recordLeaderRun(request: LeaderRunRequest): Promise<void>;
+  recordLeaderRun(request: LeaderRunRequest): Promise<LeaderRunRecordOutcome>;
   /**
    * 队长 run 的**成功终态收口**：把队长行的台账状态从 `open` 移到**终态**（`merged`）。
    *
@@ -305,7 +317,7 @@ export function createRunLifecycle(deps: {
          刻意**不**复用 `openMemberRun` 再「事后清掉树」：那会先建一棵树再删，中间任何一步失败
          都会留下一棵无主工作树（而这次 run 本不该有树）。 */
       const now = Date.now();
-      squadRunRepo.insert({
+      const record: SquadRunRecord = {
         runId: request.runId,
         workspaceKey: boundWorkspaceKey,
         workspacePath: deps.boundWorkspace.path,
@@ -320,7 +332,26 @@ export function createRunLifecycle(deps: {
         sessionId: null,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      /* 原子登记（见 `SquadRunRepo.insertLeaderRunIfNotInProgress` 的注释）：前置写在语句里，
+         所以两条**并发**派发也只可能有一条活跃队长行 —— 光靠「读一次再写」挡不住那个窗口
+         （两次读都可能早于对方的写入），而那正是「同一个工作项起两条队长 run」的来路。
+         返回 false = 已有进行中的队长 run ⇒ **本次并入**（§5.7(1)/S13），把结论如实交回调用方。 */
+      if (squadRunRepo.insertLeaderRunIfNotInProgress(record)) {
+        return { recorded: true };
+      }
+      /* 走到这里说明**这次没写进去**。先把「runId 复用」这一格翻回**响亮错误**：
+         语句的前置（NOT EXISTS 活跃队长行）会先于主键冲突生效，于是同 runId 的重复登记
+         会「少一行且不抛」—— 那会把一个调用方 bug 静默成一个「已并入」（两次 run 的成果
+         落进同一个身份里）。与 `openMemberRun` 同口径：**复用 runId 必须响亮**。 */
+      if (squadRunRepo.get(request.runId) !== null) {
+        throw new Error(
+          `队长 run 的 runId 已存在（UNIQUE 冲突）：${request.runId}。` +
+            "复用 runId 会让两次 run 的成果落进同一个身份里，故拒绝；" +
+            "若要重新指派，请等这条 run 收口后再用新的幂等键。",
+        );
+      }
+      return { recorded: false, reason: "in_progress_run_exists" };
     },
 
     async completeLeaderRun({ runId }) {

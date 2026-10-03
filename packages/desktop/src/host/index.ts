@@ -2784,12 +2784,24 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
          `runId` 取 `eventKey`（幂等键的稳定一半）⇒ 同一事实重投不会生成第二条 run。
          台账行的 `is_leader_task=1` / `branch=null` 是它与队员行可区分的判据。 */
       try {
-        await squadRuntime.recordLeaderRun(target, {
+        const ledgerOutcome = await squadRuntime.recordLeaderRun(target, {
           runId: eventKey,
           workItemId: workItem.id,
           parentWorkItemId: workItem.parentId ?? workItem.id,
           agentId: enqueued.agentId,
         });
+        /* §5.7(1)/S13 的**原子兜底**：上面 `decideSquadDispatch` 那条合并判据是「读一次再决定」，
+           两条派发**并发**时可能各自读到「没有进行中」（快照早于对方写入）⇒ 登记语句自己带前置，
+           这里拿到的 `recorded: false` 就是那个窗口的结论：本次指派**并入**进行中的那一次。
+           必须**在这里返回**（会话还没建、也没有本行的收口订阅要拆），而**不得**继续往下发 prompt：
+           否则就是「两个会话干同一件事」——即 §5.7(1) 要消灭的形态。
+           与上面纯函数那条 skip 用同一个 reason，日志里两处可一起 grep。 */
+        if (!ledgerOutcome.recorded) {
+          logger.info(
+            `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=leader_run_merged`,
+          );
+          return { ok: true };
+        }
         ledgerRowRegistered = true;
       } catch (error) {
         /* 与开树失败同口径按 permanent 回执：主键冲突（同一 `eventKey` 已登记过）重投必然再撞，

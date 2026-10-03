@@ -40,6 +40,22 @@ export type SquadRunStatusPatch = Partial<Pick<SquadRunRecord, "branch" | "dirNa
 export interface SquadRunRepo {
   /** 写入一行。createdAt / updatedAt 由调用方给定（记录即真相，不在落盘时改写时刻）。 */
   insert(record: SquadRunRecord): void;
+  /**
+   * 队长行的**原子登记**（§5.7(1)/S13 的存储层不变式：同一工作项**至多一条活跃队长行**）。
+   *
+   * 为什么不能「先 `listActive` 读一次、再 `insert`」：两条派发**并发**时，两次读都可能早于对方的
+   * 写入 ⇒ 两条活跃队长行 ⇒ 两个会话干同一件事，而且**不报错**（上层的读法判据是给「决定」用的，
+   * 它挡不住这个窗口）。这里把前置**写进语句本身**（`INSERT … SELECT … WHERE NOT EXISTS(活跃队长行)`）：
+   * 单条语句在 SQLite 下即原子，谁先谁后都只会有一条。
+   *
+   * 返回 `true` = 本次真的登记了；`false` = 该工作项已有活跃队长行 ⇒ **本次并入**（不写第二行）。
+   * 调用方必须把 `false` 当**结论**处理（跳过本次派发），不是当错误、也不是静默忽略。
+   * 同 `runId` 重复不靠这里兜：那种情况下主键会抛（复用 runId 是调用方 bug，必须响亮）。
+   *
+   * 活跃集合由 `SQUAD_RUN_ACTIVE_STATUSES` **单源**拼装（与 `listActive` 同一处常量）：
+   * 各写一份状态字面量，改了常量就会出现「读法说没有活跃行、这条 SQL 也说没有」的静默分叉。
+   */
+  insertLeaderRunIfNotInProgress(record: SquadRunRecord): boolean;
   get(runId: string): SquadRunRecord | null;
   listByWorkItem(workItemId: string): SquadRunRecord[];
   listByParent(parentWorkItemId: string): SquadRunRecord[];
@@ -153,6 +169,44 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         record.createdAt,
         record.updatedAt,
       );
+    },
+
+    // 见接口注释：前置写进语句本身（单条语句原子），并发下同一工作项只可能有一条活跃队长行。
+    // 参数顺序：先 SELECT 的 13 个值，再 NOT EXISTS 子句的 workspace_key / work_item_id，最后活跃状态集。
+    insertLeaderRunIfNotInProgress(record) {
+      assertStatus(record.status);
+      const changes = db
+        .prepare(
+          `INSERT INTO squad_runs (
+            run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1 FROM squad_runs
+              WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
+                AND status IN (${ACTIVE_STATUS_PLACEHOLDERS})
+           )`,
+        )
+        .run(
+          record.runId,
+          record.workspaceKey,
+          record.workspacePath,
+          record.workItemId,
+          record.parentWorkItemId,
+          record.agentId,
+          record.isLeaderTask ? 1 : 0,
+          record.branch,
+          record.dirName,
+          record.status,
+          record.sessionId,
+          record.createdAt,
+          record.updatedAt,
+          record.workspaceKey,
+          record.workItemId,
+          ...SQUAD_RUN_ACTIVE_STATUSES,
+        ).changes;
+      return changes === 1;
     },
 
     get(runId) {

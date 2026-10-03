@@ -11,6 +11,7 @@ import type { CreateTeamAgentInput } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type {
+  LeaderRunRecordOutcome,
   LeaderRunRequest,
   MemberRunRequest,
   OpenMemberRunResult,
@@ -158,7 +159,10 @@ export interface ISquadRuntimeService {
    * **要「真的」可判定还差一半的写者**：登记只写 `open`；队长 run 结束时若不写终态，这条行会长驻
    * 活跃集 ⇒ 读法**恒真**。补上它的正是下面的 `completeLeaderRun`（成功）与 `failMemberRun`（失败/中止）。
    */
-  recordLeaderRun(target: SquadWorkspaceTarget, input: LeaderRunRequest): Promise<void>;
+  recordLeaderRun(
+    target: SquadWorkspaceTarget,
+    input: LeaderRunRequest,
+  ): Promise<LeaderRunRecordOutcome>;
   /**
    * 队长 run 的**成功终态收口**（**加法**，P2b 余项）：把队长行从 `open` 移到终态（`merged`）。
    *
@@ -457,7 +461,9 @@ export function createSquadRuntimeService(deps: {
      */
     async recordLeaderRun(target, input) {
       const runtime = await deps.createRuntime(target);
-      await runtime.lifecycle.recordLeaderRun(input);
+      // 结论**原样交回**（`recorded: false` = 本次并入进行中的那次，§5.7(1)/S13）：服务面不替调用方
+      // 消化这个结论 —— 谁能起会话只有它自己知道，在服务面「当成功吞掉」会让上层以为 run 起了。
+      return runtime.lifecycle.recordLeaderRun(input);
     },
 
     /**

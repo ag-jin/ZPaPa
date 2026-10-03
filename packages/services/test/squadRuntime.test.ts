@@ -1086,6 +1086,60 @@ test("recordLeaderRun 同 runId 重复 ⇒ 抛", async () => {
   assert.equal(runtime.squadRunRepo.listByWorkItem("wi-ld").length, 1);
 });
 
+/* ---------- 5.5. 存储层不变式：同一工作项**至多一条活跃队长行**（并发下的兜底） ----------
+
+   判据的**读法**（`hasInProgressLeaderRun`）是给「决定」用的；但两条派发**并发**时，各自读到的快照
+   都可能早于对方的写入 ⇒ 光靠读法挡不住「起两条队长 run」（两个会话干同一件事）。
+   所以**写入口**必须原子地兜住这条不变式：登记语句自带「同一工作项没有活跃队长行」的前置
+   （单条 `INSERT … WHERE NOT EXISTS …`，SQLite 下即原子），并把「本次被并入」如实告诉调用方 ——
+   不是静默少一行（上层以为起了 run、台账里却没有，是最坏的形态）。 */
+
+test("同一工作项已有活跃队长行 ⇒ 再登记并入（不产生第二行），并如实告诉调用方", async () => {
+  const { runtime } = await setup();
+  const first = await runtime.lifecycle.recordLeaderRun({
+    runId: "r-l-one",
+    workItemId: "wi-l-one",
+    agentId: "ta-l",
+  });
+  assert.deepEqual(first, { recorded: true }, "第一条正常登记");
+
+  const second = await runtime.lifecycle.recordLeaderRun({
+    runId: "r-l-two",
+    workItemId: "wi-l-one",
+    agentId: "ta-l",
+  });
+  assert.deepEqual(
+    second,
+    { recorded: false, reason: "in_progress_run_exists" },
+    "第二条必须**并入**并如实回报，不得静默少一行",
+  );
+  assert.equal(runtime.squadRunRepo.get("r-l-two"), null, "不得产生第二行");
+  assert.equal(runtime.squadRunRepo.listByWorkItem("wi-l-one").length, 1);
+
+  // 终态之后**必须**能再登记：否则一条残留的活跃行会把该工作项的所有后续指派**永久吃掉**（且不报错）。
+  await runtime.lifecycle.completeLeaderRun({ runId: "r-l-one" });
+  assert.deepEqual(
+    await runtime.lifecycle.recordLeaderRun({
+      runId: "r-l-three",
+      workItemId: "wi-l-one",
+      agentId: "ta-l",
+    }),
+    { recorded: true },
+    "队长行终态后必须能重新登记（不是永久吃掉）",
+  );
+
+  // 不变式的键是**工作项**：别的工作项不受影响。
+  assert.deepEqual(
+    await runtime.lifecycle.recordLeaderRun({
+      runId: "r-l-other",
+      workItemId: "wi-l-other",
+      agentId: "ta-l",
+    }),
+    { recorded: true },
+    "另一个工作项不受影响",
+  );
+});
+
 /* ---------- 6. 队长 run 的**终态事实**（spec §5.7(1)：终态后「进行中」**必须**判为假） ----------
 
    上一轮只补了「登记」（`recordLeaderRun` ⇒ `open`），于是**成功的队长行长驻 `open`** ⇒

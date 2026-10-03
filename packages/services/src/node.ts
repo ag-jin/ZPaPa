@@ -322,6 +322,9 @@ export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
    让调用方各自拼一份就是「同一语义两处实现」，两边迟早分叉。**只从 node 入口出**：
    `squadRunLifecycle` 经 Repo 触到 node:sqlite，从浏览器安全入口（`index.ts`）出值会整包炸。 */
 export { hasInProgressLeaderRun } from "./workitem/squadRunLifecycle.js";
+// 队长行登记的**结论**（`recorded: false` = 本次并入进行中的那次）：派发桥要按它决定「起不起会话」，
+// 故类型与判据同源出（调用方就地抄一份联合，改了那边忘了这边不会有编译错）。
+export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
