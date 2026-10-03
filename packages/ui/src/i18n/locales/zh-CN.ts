@@ -4287,6 +4287,17 @@ const zhCN: Record<string, string> = {
   "squad.rules.paused": "已暂停该规则",
   "squad.rules.resumed": "已启用该规则",
   "squad.rules.created": "已创建唤醒规则",
+  // 编辑 / 删除（第 41 轮）：编辑复用同一份表单（工作项只读 —— 挂载对象不可改，hostLocked 说明为什么）；
+  // 删除是破坏性动作 ⇒ 二次确认，文案必须说清「触发记录随行删除、不可撤销」（deleteConfirmDescription）。
+  "squad.rules.edit": "编辑",
+  "squad.rules.editTitle": "编辑规则",
+  "squad.rules.hostLocked": "编辑不改变挂载的工作项：换工作项等于换一条规则的归属，应删旧建新。",
+  "squad.rules.updated": "已保存规则",
+  "squad.rules.delete": "删除",
+  "squad.rules.deleteConfirmTitle": "删除「{name}」的唤醒规则？",
+  "squad.rules.deleteConfirmDescription":
+    "该规则的触发记录（已触发 {count} 次）会随规则一起删除，且不可撤销。",
+  "squad.rules.deleted": "已删除该规则",
   "squad.rules.loading": "正在读取唤醒规则…",
   "squad.rules.loadFailed": "读取唤醒规则失败",
   "squad.rules.schedule.at": "到点 {time}",

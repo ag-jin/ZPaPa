@@ -1,10 +1,11 @@
 import { WAKE_MAX_FIRES_MAX, WAKE_MAX_FIRES_MIN, type WakeRule } from "@zcode/shared";
-import type { CreateWakeRuleRequest } from "@zcode/services";
+import type { CreateWakeRuleRequest, UpdateWakeRuleRequest } from "@zcode/services";
 
 /* 「唤醒规则」分区（WorkItemsPage 的 `WakeRulesSection` / `CreateWakeRuleDialog`）的**纯逻辑**：
-   排期事实投影、行状态机、建规则的入参组装。不 import React、不 import UI 原语 —— 照
-   squadEntryViewModel / inboxViewModel 的既定做法（ui 包没有渲染测试设施，判断留在组件里
-   就等于不可测）。
+   排期事实投影、行状态机、建 / 编辑规则的入参组装（**校验核心只有一份**：创建与编辑共用
+   `buildEditableWakeRuleFields`，两份校验会陆续分叉而分叉不报错）。不 import React、不 import UI
+   原语 —— 照 squadEntryViewModel / inboxViewModel 的既定做法（ui 包没有渲染测试设施，判断留在
+   组件里就等于不可测）。
 
    为什么挂载在「工作项」页而不是「自动化」页（已定口径，照此执行）：规则挂在**工作项**上、
    列表按 workspace 的工作项**反查**（`listWakeRules`）⇒ 它的作用域就是「当前项目」；
@@ -173,12 +174,11 @@ export const WAKE_RULE_STATUS_BADGE_CLASSES: Record<WakeRuleRowStatus, string> =
   unscheduled: "bg-warning/10 text-warning",
 };
 
-// ---------- ③ 建规则的入参组装 ----------
+// ---------- ③ 建 / 编辑规则的入参组装（**校验核心只有一份**） ----------
 
-/** 建规则表单的**原始形状**（全是字符串：文本框原样，解析在 `buildCreateWakeRuleInput` 里）。 */
-export type CreateWakeRuleForm = {
-  /** 挂到哪个工作项上（select 的 value）。 */
-  workItemId: string;
+/** 规则表单的**可编辑字段**（全是字符串：文本框原样，解析在下面的共用校验核心里）。
+    `workItemId` **不在**本形状里：它只在创建时可选（编辑时挂载对象只读、不进 patch）。 */
+export type WakeRuleEditableForm = {
   /** 三种排班 kind（类型上就排除 event —— 事件型规则需要未枚举的词汇表）。 */
   kind: "at" | "every" | "cron";
   /** `<input type="datetime-local">` 的原样值（`YYYY-MM-DDTHH:mm[:ss]`，本地时间）。 */
@@ -191,9 +191,19 @@ export type CreateWakeRuleForm = {
   maxFiresText: string;
 };
 
+/** 建规则表单的**原始形状** = 可编辑字段 + 挂载对象（select 的 value）。 */
+export type CreateWakeRuleForm = WakeRuleEditableForm & {
+  workItemId: string;
+};
+
 /** `reasonId` 是**文案 id**（不本地化 —— 本文件不碰 i18n，组件用 `t(reasonId)` 显示）。 */
 export type BuildCreateWakeRuleInputResult =
   | { ok: true; input: CreateWakeRuleRequest }
+  | { ok: false; reasonId: string };
+
+/** 编辑组装的结果：`patch` 即 `updateWakeRule` 的补丁（**不含 workItemId**）。 */
+export type BuildUpdateWakeRuleInputResult =
+  | { ok: true; patch: UpdateWakeRuleRequest }
   | { ok: false; reasonId: string };
 
 /** `datetime-local` 的合法形状（浏览器原生控件的输出；秒段可选）。 */
@@ -233,7 +243,9 @@ function parsePositiveInteger(text: string): number | null {
 }
 
 /**
- * 表单 ⇒ `CreateWakeRuleRequest`（服务面 `createWakeRule` 的入参），或一条**可读的** rejection。
+ * **共用校验核心**（创建与编辑**同一份**，不得各写一份 —— 另写一份会让两个表单在字段与校验上
+ * 陆续分叉，而分叉不报错）：可编辑字段 ⇒ `UpdateWakeRuleRequest`（= 创建集减去 `workItemId`，
+ * 也是编辑 patch 的形状），或一条**可读的** rejection。
  *
  * 为什么 UI 要先做这一层（而不是把表单原样递上去、让服务面拒）：服务面的拒绝是给日志与
  * 接线方看的**中文问题清单**（`validateWakeRule` 原样带出），而用户看到的应该是「哪个字段
@@ -250,15 +262,11 @@ function parsePositiveInteger(text: string): number | null {
  * 构造，运行期不可能混进别的键 —— 结构守卫与用例都钉住这一点）。空白可选字段（上限）**不传**：
  * 传一个 `undefined` 键与不传在服务面组装层同义，但「不传」让产物形状与「用户真没填」一致。
  */
-export function buildCreateWakeRuleInput(
-  form: CreateWakeRuleForm,
+function buildEditableWakeRuleFields(
+  form: WakeRuleEditableForm,
   now: number,
-): BuildCreateWakeRuleInputResult {
-  const workItemId = form.workItemId.trim();
-  if (workItemId === "") return { ok: false, reasonId: "squad.rules.invalid.workItem" };
-
-  const input: CreateWakeRuleRequest = {
-    workItemId,
+): { ok: true; fields: UpdateWakeRuleRequest } | { ok: false; reasonId: string } {
+  const fields: UpdateWakeRuleRequest = {
     kind: form.kind,
     mode: form.kind === "at" ? "once" : "continuous",
   };
@@ -267,15 +275,15 @@ export function buildCreateWakeRuleInput(
     const at = parseDatetimeLocal(form.atLocal);
     // 未填 / 解析不出 / 不晚于 now 都归一条：从句式上它们对用户的修法相同（重选一个未来时刻）。
     if (at === null || at <= now) return { ok: false, reasonId: "squad.rules.invalid.at" };
-    input.at = at;
+    fields.at = at;
   } else if (form.kind === "every") {
     const intervalSeconds = parsePositiveInteger(form.intervalSecondsText);
     if (intervalSeconds === null) return { ok: false, reasonId: "squad.rules.invalid.interval" };
-    input.intervalSeconds = intervalSeconds;
+    fields.intervalSeconds = intervalSeconds;
   } else {
     const cronExpression = form.cronExpression.trim();
     if (cronExpression === "") return { ok: false, reasonId: "squad.rules.invalid.cron" };
-    input.cronExpression = cronExpression;
+    fields.cronExpression = cronExpression;
   }
 
   // 上限：空白 = 不传；否则必须是 1..1000 的整数（边界取自共享常量，不在这里写第二份 1/1000）。
@@ -287,8 +295,70 @@ export function buildCreateWakeRuleInput(
     }
     // `once` 没有「上限」语义（validateWakeRule 互斥第 4 条会响亮拒）——同样不把必然失败递上去。
     if (form.kind === "at") return { ok: false, reasonId: "squad.rules.invalid.maxFires" };
-    input.maxFires = maxFires;
+    fields.maxFires = maxFires;
   }
 
-  return { ok: true, input };
+  return { ok: true, fields };
+}
+
+/** 表单 ⇒ `CreateWakeRuleRequest`（`createWakeRule` 的入参）：宿主校验 + **共用核心**。 */
+export function buildCreateWakeRuleInput(
+  form: CreateWakeRuleForm,
+  now: number,
+): BuildCreateWakeRuleInputResult {
+  const workItemId = form.workItemId.trim();
+  if (workItemId === "") return { ok: false, reasonId: "squad.rules.invalid.workItem" };
+  const result = buildEditableWakeRuleFields(form, now);
+  if (!result.ok) return result;
+  return { ok: true, input: { workItemId, ...result.fields } };
+}
+
+/**
+ * 表单 ⇒ `UpdateWakeRuleRequest`（`updateWakeRule` 的 patch）：**同一份共用核心**，只是**不含**
+ * `workItemId`（挂载对象不可改 —— 改了等于换一条规则的归属，应删旧建新，见对话框的只读行）。
+ */
+export function buildUpdateWakeRuleInput(
+  form: WakeRuleEditableForm,
+  now: number,
+): BuildUpdateWakeRuleInputResult {
+  const result = buildEditableWakeRuleFields(form, now);
+  if (!result.ok) return result;
+  return { ok: true, patch: result.fields };
+}
+
+/** epoch ms ⇒ `datetime-local` 的原样值（**本地时区**，与解析侧对称：`parseDatetimeLocal` 的逆）。 */
+function formatDatetimeLocal(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/**
+ * 一条规则 ⇒ 编辑对话框的初值（`CreateWakeRuleForm` 形状，**只有这一份映射**）。
+ *
+ * 三种排班 kind 的原值逐字段填回（`timezone` / `expiresAt` / `condition` / `eventTypes` / `filters`
+ * **不在表单里** —— 第 39 轮硬约束，编辑同样不暴露；服务面的 `casUpdateConfig` 也不写这些列，
+ * 故它们的落盘值原样留存）。`at` 按本地时区格式化（与解析侧同一时区口径）。
+ *
+ * `kind` 的**防御映射**（登记）：本表单只能表达排班三支（事件型无词汇表、不给入口）。库里若出现
+ * `kind=event` 的行（只能来自库外写入 —— 生产 insert 路径给不出它），初值回落 `"at"` 且排期字段留空：
+ * 用户必须显式选一种触发方式并填好它才能保存（表单校验会拒绝空字段），不会静默把 event 改写成
+ * 某条排班规则。`maxFires` 只在连续 kind（every / cron）上回填 —— `at` 没有上限语义，
+ * 回填会留下一个看不见也改不掉的输入（下一次提交必然失败）。
+ */
+export function wakeRuleDialogInitial(rule: WakeRule): CreateWakeRuleForm {
+  const kind: WakeRuleEditableForm["kind"] =
+    rule.kind === "every" || rule.kind === "cron" ? rule.kind : "at";
+  return {
+    workItemId: rule.workItemId,
+    kind,
+    atLocal: kind === "at" && rule.at !== undefined ? formatDatetimeLocal(rule.at) : "",
+    intervalSecondsText:
+      kind === "every" && rule.intervalSeconds !== undefined ? String(rule.intervalSeconds) : "",
+    cronExpression: kind === "cron" ? (rule.cronExpression ?? "") : "",
+    maxFiresText: kind !== "at" && rule.maxFires !== undefined ? String(rule.maxFires) : "",
+  };
 }

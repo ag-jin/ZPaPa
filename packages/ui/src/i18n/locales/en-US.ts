@@ -4581,6 +4581,20 @@ const enUS: Record<string, string> = {
   "squad.rules.paused": "Rule paused",
   "squad.rules.resumed": "Rule resumed",
   "squad.rules.created": "Wake rule created",
+  // Edit / delete (round 41): edit reuses the very same form (the host work item is
+  // read-only — it cannot be changed; hostLocked says why). Delete is destructive and
+  // irreversible in what it removes, so it is confirmed and the copy must spell out
+  // "the fire history goes with it" (deleteConfirmDescription).
+  "squad.rules.edit": "Edit",
+  "squad.rules.editTitle": "Edit wake rule",
+  "squad.rules.hostLocked":
+    "Editing does not move the rule to another work item: changing the host would swap the rule’s ownership — delete it and create a new one instead.",
+  "squad.rules.updated": "Wake rule saved",
+  "squad.rules.delete": "Delete",
+  "squad.rules.deleteConfirmTitle": "Delete the wake rule for “{name}”?",
+  "squad.rules.deleteConfirmDescription":
+    "This rule’s fire history ({count} fired) is deleted along with it. This cannot be undone.",
+  "squad.rules.deleted": "Wake rule deleted",
   "squad.rules.loading": "Loading wake rules…",
   "squad.rules.loadFailed": "Failed to load wake rules",
   "squad.rules.schedule.at": "Fires at {time}",

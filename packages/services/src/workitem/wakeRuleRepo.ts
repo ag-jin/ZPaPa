@@ -130,6 +130,40 @@ export interface WakeRuleRepo {
      */
     enabled?: boolean,
   ): boolean;
+  /**
+   * **编辑配置**（加法，P2b 收口）：`WHERE id=? AND revision=?` 的单条条件更新，写**配置列**
+   * （`kind` / `mode` / `at` / `interval_seconds` / `cron_expression` / `next_fire_at` / `max_fires`）
+   * 并 **`revision = revision + 1`**（+ `updated_at`）。
+   *
+   * **`revision+1` 是 §5.7 的 fencing 契约**，不是记账：调度器读到某一版后派发时把当时的 revision
+   * 带进幂等四元组，并在推进那一格时用它作 `casAdvance` 的 expectRevision —— 编辑若在「读到」
+   * 与「推进」之间发生，旧 revision 的推进自然未命中（过期派发自动作废），不会把编辑后的新配置
+   * 又按旧语义推一格。故此方法**必须** bump revision（M1 变异：不 bump ⇒ 版本栅栏用例红）。
+   *
+   * **不写**的列（各有自己的口径或不可改）：
+   * · `fire_count` —— 触发计数归调度推进（`casAdvance`），编辑不该重置或改写它；
+   * · `paused_reason` —— 闸暂停的专列（封闭枚举），编辑不伪造也不清除闸原因；
+   * · `enabled` —— 用户启停（`listReady` 的 `enabled = 1` 条件），编辑不改开关；
+   * · `work_item_id` —— 挂载对象不可改（改了等于换一条规则的归属，应删旧建新）；
+   * · `expires_at` / `timezone` / `condition` / `event_types` / `filters` —— 服务面编辑入口不暴露
+   *   （见 `UpdateWakeRuleRequest`），列值**原样留存**（本方法不把它们写成 NULL）。
+   *
+   * 返回 `changes === 1`（恰命中一行才算成功）：未命中 = revision 已被并发改动（例如调度器刚推进
+   * 一格）⇒ 调用方**响亮抛**（见 `squadWakeRules.ts` 的 `casMissError`），不得静默盖写。
+   */
+  casUpdateConfig(id: string, expectRevision: number, rule: WakeRule): boolean;
+  /**
+   * **删除一行**（加法，P2b 收口）：`DELETE ... WHERE id=?`，返回 `changes === 1`。
+   *
+   * 为什么删除是规则的正常生命周期终点：规则是**配置**（一张挂在工作项上的排班表），不是实体
+   * 记录 —— 关掉实验、配错一条 cron 之后，用户需要能把它从配置面上抹掉（这也是「编辑」的兜底：
+   * 改不回来的旧规则应当删掉重配）。故这里做**硬删**，不留软删标记（schema 也没有该列）。
+   *
+   * **已触发的记录（`fire_count`）随行一起消失**：本表没有触发历史表，删除即抹掉这条规则的一切
+   * 痕迹 —— 是否可接受由调用方（服务面 / UI 文案）向用户交代（见 `deleteWakeRule` 与
+   * `squad.rules.deleteConfirmDescription`），本层不做第二份判断。
+   */
+  remove(id: string): boolean;
   listByWorkItem(workItemId: string): WakeRule[];
 }
 
@@ -206,6 +240,37 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
           id,
           expectRevision,
         );
+      return result.changes === 1;
+    },
+
+    /* 编辑配置：单条条件更新 + revision+1（§5.7 fencing，契约见接口 doc）。
+       **不写** fire_count / paused_reason / enabled / work_item_id / expires_at / timezone 等列
+       （各有口径，见接口 doc）—— 只把「排班表的配置」这一组列换成新的。 */
+    casUpdateConfig(id, expectRevision, rule) {
+      const result = db
+        .prepare(
+          `UPDATE wake_rules SET kind=?, mode=?, at=?, interval_seconds=?, cron_expression=?,
+             next_fire_at=?, max_fires=?, revision=revision+1, updated_at=?
+           WHERE id=? AND revision=?`,
+        )
+        .run(
+          rule.kind,
+          rule.mode,
+          rule.at ?? null,
+          rule.intervalSeconds ?? null,
+          rule.cronExpression ?? null,
+          rule.nextFireAt ?? null,
+          rule.maxFires ?? null,
+          Date.now(),
+          id,
+          expectRevision,
+        );
+      return result.changes === 1;
+    },
+
+    // 删除一行：硬删（理由与「触发记录随行消失」的交代见接口 doc）。恰命中一行才算成功。
+    remove(id) {
+      const result = db.prepare("DELETE FROM wake_rules WHERE id = ?").run(id);
       return result.changes === 1;
     },
 

@@ -371,10 +371,12 @@ export type {
   SquadSnapshot,
   SquadWorkspaceTarget,
 } from "./workitem/squadRuntimeService.js";
-/* 唤醒规则的建入参（P2b 第二半）：UI 下一轮的规则表单要能命名它。类型声明在实现文件
+/* 唤醒规则的建/编辑入参（P2b 第二半 + 收口）：UI 的规则表单要能命名它们。类型声明在实现文件
    （`squadWakeRules.ts`，400 行门槛的拆分点），与 `MemberRunRequest` 声明在 `squadRunLifecycle.ts`
-   同一条先例 —— 只做类型再导出（编译擦除，不进 renderer 的运行时依赖图）。 */
-export type { CreateWakeRuleRequest } from "./workitem/squadWakeRules.js";
+   同一条先例 —— 只做类型再导出（编译擦除，不进 renderer 的运行时依赖图）。
+   两个形状都是「与创建同集」的：`UpdateWakeRuleRequest` = 创建集减去 `workItemId`（挂载对象不可改）
+   与 `timezone` / `expiresAt`（界面不暴露，调度侧未消费）。 */
+export type { CreateWakeRuleRequest, UpdateWakeRuleRequest } from "./workitem/squadWakeRules.js";
 // 方法的入参/出参类型也要可命名：Wave 1 的 host 与 UI 要用它们构造调用，
 // 只能从接口签名里「结构性」拿到是没法写代码的。
 export type {

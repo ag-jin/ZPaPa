@@ -23,9 +23,14 @@ import type { SquadRunRecord } from "./squadRunRepo.js";
 // 「改负责人 + 发派发事件」的**唯一实现**（唯一写者纪律 / 同值处置 / 事件出口全在其中）。
 // 单拆成文件是为了浏览器安全（本文件被根入口值导出）+ 400 行 lint 门槛，详见该文件的头部注释。
 import { applyWorkItemAssignee } from "./workItemAssignee.js";
-// 唤醒规则四项（list / create / pause / resume）的**唯一实现**（组装 / 校验 / 排期 / CAS 全在其中）。
-// 同款拆文件：本文件必须浏览器安全 + 贴着 400 行门槛；门禁口径与「用户暂停」的落库口径见该文件头注释。
-import { createWakeRuleOps, type CreateWakeRuleRequest } from "./squadWakeRules.js";
+// 唤醒规则六项（list / create / pause / resume / update / delete）的唯一实现（组装 / 校验 / 排期 /
+// CAS 全在其中）。同款拆文件：本文件必须浏览器安全 + 贴着 400 行门槛；门禁口径与「用户暂停」的
+// 落库口径见该文件头注释。
+import {
+  createWakeRuleOps,
+  type CreateWakeRuleRequest,
+  type UpdateWakeRuleInput,
+} from "./squadWakeRules.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -290,6 +295,31 @@ export interface ISquadRuntimeService {
    * CAS 未命中的处置同 `pauseWakeRule`（前置读当时状态、响亮抛）。
    */
   resumeWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /**
+   * 编辑规则的**配置**（kind + 排期字段 + maxFires；挂载对象不可改）。**过门禁**（编辑让未来派发
+   * 变样 —— 规则 = 未来派发的排班表；与 `createWakeRule` 同一处判据、同一次序：门禁在构造
+   * runtime 之前过）。**revision +1**（§5.7 fencing：过期 revision 的进行中派发靠它自动作废）；
+   * `enabled` / `pausedReason` / `fireCount` 原样保留（编辑不改开关与闸态）。
+   *
+   * 实现要点（唯一实现在 `squadWakeRules.ts`，复用**同一份**组装与首格排期）：
+   * 1. 读现行（不存在 ⇒ 响亮抛）；2. 以 patch 调 `assembleWakeRule` 造新配置实体（旧 kind 的
+   * 排期字段不带入 ⇒ 切换即清；**不含** `workItemId` / `timezone` / `expiresAt`，形状见
+   * `UpdateWakeRuleRequest`）；3. 抄回 `fireCount` / `enabled` / `pausedReason`；
+   * 4. `validateWakeRule` 不过 ⇒ 中文 problems 原样带出；5. 在跑的规则重算 `nextFireAt`
+   * （无未来排期点 ⇒ 响亮抛且不写盘）；暂停中（用户暂停 / 闸暂停）编辑 ⇒ 排期保持空；
+   * 6. `casUpdateConfig` 写盘，CAS 未命中 ⇒ 响亮抛；读回返回。
+   */
+  updateWakeRule(target: SquadWorkspaceTarget, input: UpdateWakeRuleInput): Promise<WakeRule>;
+  /**
+   * 删除规则。**不过门禁**（删掉 = 未来派发**减少**，与 `pauseWakeRule` 同款理由；关掉实验开关后
+   * 也要能清配置）。
+   *
+   * 规则是**配置**（一张挂在工作项上的排班表），删除是它的正常生命周期终点；但**已触发的记录
+   * （`fire_count`）随行一起消失、不可撤销** —— 这一点由 UI 的二次确认文案向用户交代
+   * （`squad.rules.deleteConfirmDescription`），服务面只保证「恰命中一行才算成功」：
+   * 不存在 / 未命中（并发被删）都**响亮抛**，绝不静默 no-op（那会让界面以为删掉了而列表里还在）。
+   */
+  deleteWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   /**
    * 编辑工作项的**内容字段**（标题 / 正文），返回写盘后的实体（**加法**，2026-10-03：
    * 工作项看板要求编辑可用）。
@@ -697,10 +727,11 @@ export function createSquadRuntimeService(deps: {
     }
   };
 
-  /* 唤醒规则四项（**加法**，P2b 第二半）：实现全在 `squadWakeRules.ts`（组装 / 校验 / 排期 / CAS），
-     这里只把两个依赖接进去 —— ① `deps.createRuntime`（按目标现构，不缓存）；② `assertEnabled`
-     （服务侧唯一门禁：create / resume 在构造 runtime **之前**过它；pause / list 不过）。
-     **这里刻意不写任何第二份开关判据**（门禁的唯一判据就是上面的 `assertEnabled`）。 */
+  /* 唤醒规则六项（**加法**：P2b 第二半 + 收口）：实现全在 `squadWakeRules.ts`
+     （组装 / 校验 / 排期 / CAS），这里只把两个依赖接进去 —— ① `deps.createRuntime`（按目标现构，
+     不缓存）；② `assertEnabled`（服务侧唯一门禁：create / resume / update 在构造 runtime **之前**
+     过它；pause / list / delete 不过）。**这里刻意不写任何第二份开关判据**（门禁的唯一判据就是
+     上面的 `assertEnabled`）。 */
   const wakeRuleOps = createWakeRuleOps({
     createRuntime: deps.createRuntime,
     assertEnabled,
@@ -1050,8 +1081,8 @@ export function createSquadRuntimeService(deps: {
       requireInboxItemRepo().archive(id);
     },
 
-    /* 唤醒规则四项（**加法**，P2b 第二半）：实现与逐条口径全在 `squadWakeRules.ts`
-       （见该文件头注释与接口 doc）；上面构造的 `wakeRuleOps` 即那四个方法，原样并进本返回值。 */
+    /* 唤醒规则六项（**加法**：P2b 第二半 + 收口）：实现与逐条口径全在 `squadWakeRules.ts`
+       （见该文件头注释与接口 doc）；上面构造的 `wakeRuleOps` 即那六个方法，原样并进本返回值。 */
     ...wakeRuleOps,
   };
 }

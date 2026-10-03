@@ -9,9 +9,9 @@ import type { SquadRuntime } from "./squadContracts.js";
 import type { ISquadRuntimeService, SquadWorkspaceTarget } from "./squadRuntimeService.js";
 import { nextFireAtAfter } from "./wakeSchedule.js";
 
-/* 唤醒规则的**服务面四个方法**（`listWakeRules` / `createWakeRule` / `pauseWakeRule` /
-   `resumeWakeRule`）的唯一实现（P2b 第二半：让规则**能被建出来、能被暂停/恢复、能被调度真的命中**；
-   UI 面留下一轮）。
+/* 唤醒规则的**服务面六个方法**（`listWakeRules` / `createWakeRule` / `pauseWakeRule` /
+   `resumeWakeRule` / `updateWakeRule` / `deleteWakeRule`）的唯一实现（P2b 第二半 + 收口：
+   让规则**能被建出来、能被暂停/恢复、能被调度真的命中**；UI 面一轮；编辑与删除一轮）。
 
    为什么单独成文件（照 `workItemAssignee.ts` 的两条先例）：
    ① `squadRuntimeService.ts` 是描述符那一侧、**必须保持浏览器安全**（`packages/services/src/index.ts`
@@ -22,13 +22,14 @@ import { nextFireAtAfter } from "./wakeSchedule.js";
 
    **门禁口径**（服务侧唯一判据仍是 `squadRuntimeService` 的私有 `assertEnabled`，本文件不写第二份：
    经 deps 注入的 `assertEnabled` 调用）：
-   - `createWakeRule` / `resumeWakeRule` **过门禁**：两者都让**未来的派发重新可能**
-     （规则 = 未来派发的排班表；恢复 = 恢复排期）⇒ 属 §5.7.6 的「新派发」的准备。
-     次序与 `createWorkItem` 同款：**门禁在构造 runtime 之前**过 —— 门禁要回答的是
+   - `createWakeRule` / `resumeWakeRule` / `updateWakeRule` **过门禁**：三者都让**未来的派发
+     变样**（规则 = 未来派发的排班表；恢复 = 恢复排期；编辑 = 改排班表）⇒ 属 §5.7.6 的「新派发」
+     的准备。次序与 `createWorkItem` 同款：**门禁在构造 runtime 之前**过 —— 门禁要回答的是
      「现在允不允许新派发」，与目标 workspace 是不是可用的 git 仓库无关；先建 runtime 会在非 git
      目标上把门禁结论换成「base 分支解析失败」，上层按稳定码分流就分不出来。
-   - `pauseWakeRule` / `listWakeRules` **不过门禁**：停下不是新派发（与 `failMemberRun` /
-     `reviewMemberRun` 同款理由 —— 关掉实验开关后仍应能停掉一条规则、仍应能查看有哪些规则）。
+   - `pauseWakeRule` / `listWakeRules` / `deleteWakeRule` **不过门禁**：停下与删除都不是新派发
+     （删掉 = 未来派发**减少**，与 pause 同款理由 —— 关掉实验开关后仍应能清掉一条配错的规则）；
+     `listWakeRules` 只读。
      **本文件不得写任何第二份开关判据**。
 
    **CAS 与「前置读当时状态」**（照既有纪律）：pause/resume 都先 `get(id)` 拿到**当时**的
@@ -93,6 +94,30 @@ export type CreateWakeRuleRequest = {
 
 /** id 生成：不 import `node:crypto`（本文件必须浏览器安全，见头注释）——`globalThis.crypto` 两侧都有。 */
 const newRuleId = (): string => globalThis.crypto.randomUUID();
+
+/**
+ * 编辑规则的**配置**入参（**加法**，P2b 收口：规则能改配置、能删）。
+ *
+ * 形状 = **与创建同集**减去三个不在此暴露的项（逐条写清，避免与 `CreateWakeRuleRequest` 漂移）：
+ * · `kind` / 该 kind 的排期字段（`at` / `intervalSeconds` / `cronExpression`）/ `maxFires?` —— 与创建
+ *   逐字段同义，同一份 `validateWakeRule` 校验（中文 problems 原样带出）；
+ * · `mode` 保留（与创建同集）：编辑表单同样**由 kind 推导**（at⇒once、every/cron⇒continuous），
+ *   推导结果随 patch 一起交上来 —— 服务面不另写一份推导（第二份判据会与域模型漂移），
+ *   `validateWakeRule` 互斥第 1 条是最终判据；
+ * · **不含 `workItemId`**：挂载对象不可改（改了等于换一条规则的归属 —— 列表按工作项反查归属，
+ *   换归属应删旧建新），故它在类型上就没有入口；
+ * · **不含 `timezone` / `expiresAt`**：第 39 轮硬约束 —— 界面不暴露（调度侧未消费 timezone、
+ *   wakeTick 不判 expiresAt）。落盘的旧值原样留存（`casUpdateConfig` 不写这两列）。
+ */
+export type UpdateWakeRuleRequest = Omit<
+  CreateWakeRuleRequest,
+  "workItemId" | "timezone" | "expiresAt"
+>;
+
+/** `updateWakeRule` 的入参（id + patch）。**具名声明**而不是在描述符里内联的原因之一：
+    `squadRuntimeService.ts` 贴着 400 行 lint 门槛 —— 内联形状要把签名折成四行，具名后一行装得下；
+    形状本身一字未变（就是 `{ id: string; patch: UpdateWakeRuleRequest }`）。 */
+export type UpdateWakeRuleInput = { id: string; patch: UpdateWakeRuleRequest };
 
 /**
  * 首格排期点（`createWakeRule` 与 `resumeWakeRule` 共用**同一份**计算）：与调度器同一网格语义。
@@ -170,7 +195,12 @@ export function createWakeRuleOps(
   deps: WakeRuleOpsDeps,
 ): Pick<
   ISquadRuntimeService,
-  "listWakeRules" | "createWakeRule" | "pauseWakeRule" | "resumeWakeRule"
+  | "listWakeRules"
+  | "createWakeRule"
+  | "pauseWakeRule"
+  | "resumeWakeRule"
+  | "updateWakeRule"
+  | "deleteWakeRule"
 > {
   /** 本 runtime 的 `workspace_key`（C14 口径）：与 `getSnapshot` / `createWorkItem` 同一条式子。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -336,6 +366,109 @@ export function createWakeRuleOps(
         true,
       );
       if (!ok) throw casMissError("恢复", rule.id, rule.revision);
+    },
+
+    /**
+     * 编辑规则的**配置**（kind + 排期字段 + maxFires；挂载对象不可改）。**过门禁**（编辑让未来派发
+     * 变样 —— 与 createWakeRule 同一处判据、同一次序：门禁在构造 runtime **之前**过）。
+     *
+     * 复用**同一份**组装与首格排期（不得另写校验 / 排期）。六步，次序固定：
+     * ① 读现行（不存在 ⇒ 响亮抛：静默 no-op 会让界面以为保存成功了）；
+     * ② **合并**：`assembleWakeRule({...patch, workItemId: rule.workItemId}, rule.id)` 造出
+     *    「新配置实体」—— 实体只由 patch 的字段构成，**旧 kind 的排期字段不会被带进来**
+     *    （kind 切换即天然清掉；若写成 `{...rule, ...patch}`，every→cron 会把旧的 intervalSeconds
+     *    与新表达式一起留在实体里 —— 正是 `validateWakeRule` 互斥第 7 条要拦的脏形状）；
+     * ③ **不归编辑管**的字段从现行抄回：`fireCount` / `enabled` / `pausedReason`（若有）/
+     *    `expiresAt`（若有；本方法不写这一列，抄回只为实体自洽）。编辑不改开关与闸态。
+     * ④ `validateWakeRule` 不过 ⇒ 响亮抛（中文 problems 原样带出）；
+     * ⑤ 排期：**在跑**（`enabled === true` **且无** `pausedReason`）⇒
+     *    `nextFireAt = initialNextFireAt(merged, now)`（与 create / resume **同一份**首格计算），
+     *    `null` ⇒ **响亮抛且不写盘**（死配置，理由同 create）；
+     *    **暂停中**（用户暂停 `enabled === false`，或闸暂停 `pausedReason` 有值）⇒ 排期置空 ——
+     *    暂停中编辑不改排期（那是 resume 的事，恢复路径本就会重算）。
+     *    **两处「暂停中」一视同仁（有意收口，登记）**：闸暂停的落库形态是
+     *    `enabled=true + pausedReason + 排期空`，若编辑只按 `enabled` 重排，就会在保留闸原因的同时
+     *    把规则重新排上（界面显示「防失控已停」而它其实会再触发）—— 与「编辑不改闸态」直接矛盾。
+     * ⑥ `casUpdateConfig` 写盘（**revision+1**，§5.7 fencing 契约）；CAS 未命中（并发改动，例如
+     *    调度器刚推进一格）⇒ 用既有 `casMissError` 的口径响亮抛；读回返回。
+     */
+    async updateWakeRule(target, input) {
+      await deps.assertEnabled();
+      const runtime = await deps.createRuntime(target);
+      const rule = runtime.wakeRuleRepo.get(input.id);
+      if (!rule) {
+        throw new Error(
+          `编辑唤醒规则失败：规则「${input.id}」不存在或读不回来。` +
+            "静默 no-op 会让界面以为保存成功了，而库里仍是旧配置。",
+        );
+      }
+      /* ② 合并（见 doc）；③ 抄回不归编辑管的字段。`revision` 也抄现行 —— 写盘时由 SQL 做
+         revision+1，实体自身保持「写盘前是哪一版」的诚实（CAS 用 rule.revision 作前置）。 */
+      const merged = assembleWakeRule({ ...input.patch, workItemId: rule.workItemId }, rule.id);
+      merged.fireCount = rule.fireCount;
+      merged.enabled = rule.enabled;
+      if (rule.pausedReason !== undefined) merged.pausedReason = rule.pausedReason;
+      if (rule.expiresAt !== undefined) merged.expiresAt = rule.expiresAt;
+      merged.revision = rule.revision;
+
+      const verdict = validateWakeRule(merged);
+      if (!verdict.ok) {
+        throw new Error(`无法编辑唤醒规则：${verdict.problems.join("；")}`);
+      }
+
+      const now = Date.now();
+      if (merged.enabled && merged.pausedReason === undefined) {
+        const nextFireAt = initialNextFireAt(merged, now);
+        if (nextFireAt === null) {
+          throw new Error(
+            `无法编辑唤醒规则：改后的配置永不触发（死配置）—— ${noFutureScheduleReason(merged, now)}。` +
+              "静默落盘会让界面看起来正常，而调度器的到点扫描（next_fire_at <= now）永远扫不到它；" +
+              "**不写盘**（该行保持原样）。",
+          );
+        }
+        merged.nextFireAt = nextFireAt;
+      } else {
+        // 暂停中（用户暂停 / 闸暂停）编辑：排期保持空 —— 恢复路径（resume）本就会重算。
+        merged.nextFireAt = undefined;
+      }
+
+      if (!runtime.wakeRuleRepo.casUpdateConfig(rule.id, rule.revision, merged)) {
+        throw casMissError("编辑", rule.id, rule.revision);
+      }
+      const readBack = runtime.wakeRuleRepo.get(rule.id);
+      if (!readBack) {
+        throw new Error(
+          `编辑唤醒规则失败：规则「${rule.id}」写入成功后读回为空（理论不可达）——` +
+            "不返回 undefined，避免调用方在下一层才炸。",
+        );
+      }
+      return readBack;
+    },
+
+    /**
+     * 删除规则。**不过门禁**（删掉 = 未来派发**减少**，与 pauseWakeRule 同款理由：关掉实验开关后
+     * 也要能清配置 —— 试验中配错一条 cron 的出路就在这里）。
+     *
+     * 两步：① 读现行（不存在 ⇒ 响亮抛：静默 no-op 会让界面以为删除成功了，而列表里还留着它）；
+     * ② `remove`；**未命中**（读到之后被别人删了）⇒ 响亮抛且文案说清「可能已被并发删除」。
+     * 删除的后果（`fire_count` 等触发记录随行消失、**不可撤销**）由 UI 的二次确认文案向用户交代
+     * （`squad.rules.deleteConfirmDescription`）；本层不写第二份确认逻辑，也不做软删（见 repo doc）。
+     */
+    async deleteWakeRule(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const rule = runtime.wakeRuleRepo.get(input.id);
+      if (!rule) {
+        throw new Error(
+          `删除唤醒规则失败：规则「${input.id}」不存在或读不回来。` +
+            "静默 no-op 会让界面以为它已经被删掉了，而列表里还留着。",
+        );
+      }
+      if (!runtime.wakeRuleRepo.remove(input.id)) {
+        throw new Error(
+          `删除唤醒规则失败：规则「${input.id}」未被删除（可能已被并发删除）。` +
+            "恰命中一行才算成功 —— 静默丢弃会让界面与库里的状态分叉。",
+        );
+      }
     },
   };
 }

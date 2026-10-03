@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CreateWakeRuleRequest } from "@zcode/services";
+import type { CreateWakeRuleRequest, UpdateWakeRuleRequest } from "@zcode/services";
 import type { WakeRule, WorkItem } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Spinner } from "@/components/ui/spinner.js";
@@ -8,7 +8,8 @@ import { cn } from "@/components/lib/utils.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import { CreateWakeRuleDialog } from "./CreateWakeRuleDialog.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
+import { WakeRuleDialogs } from "./WakeRuleDialogs.js";
 import {
   squadEntryErrorFeedback,
   squadServiceUnavailableFeedback,
@@ -30,7 +31,8 @@ import {
 
 /* 「唤醒规则」分区（「工作项」一级页面里的一块，spec §11.1 / UI 方案承诺的「项目窗口 ▸ 规则」）：
    列出本项目的唤醒规则（`listWakeRules` 按工作项反查 ⇒ 作用域就是这个项目）、建新规则
-   （`createWakeRule`）、启停（`pauseWakeRule` / `resumeWakeRule`）。
+   （`createWakeRule`）、启停（`pauseWakeRule` / `resumeWakeRule`）、**编辑配置**
+   （`updateWakeRule`，同一份对话框表单的编辑模式）、**删除**（`deleteWakeRule`，破坏性 ⇒ 二次确认）。
 
    为什么挂「工作项」页而不是「自动化」页（已定口径）：规则挂在**工作项**上、按 workspace 反查
    ⇒ 它天然是项目作用域的；而 spec §5.6 明确 cron 自动化与唤醒规则是两套**分工**的机制 ——
@@ -84,6 +86,9 @@ export function WakeRulesSection({
   const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  /** 正在编辑的那一条（`null` = 编辑对话框没开）：初值由 `wakeRuleDialogInitial` 从**当时读到的**
+      实体映射，提交走 `updateWakeRule`（成功关框 + toast + 重载；失败不关框）。 */
+  const [editTarget, setEditTarget] = useState<WakeRule | null>(null);
 
   /** 文案：带占位符替换的一种（`values` 供 kind 相关句式与进度文案用）。 */
   const t = useCallback(
@@ -101,6 +106,11 @@ export function WakeRulesSection({
     },
     [t],
   );
+
+  /** 写动作失败一律带原始 detail（不吞错）：三行的 logger 调用收成一行（本文件贴着 400 行门槛）。 */
+  const logFailure = useCallback((message: string, error: unknown) => {
+    logger.warn(message, { error: error instanceof Error ? error.message : String(error) });
+  }, []);
 
   /* 重载：**失败不清空已有列表**。取数通路必须经 `resolveSquadRuntimeService`（缺服务时响亮抛，
      见 squadRuntimeAccess 的头注）——`listWakeRules` 与 `getSnapshot` 不同：它不过门禁
@@ -150,15 +160,13 @@ export function WakeRulesSection({
         });
         await reload();
       } catch (error) {
-        logger.warn("[WakeRulesSection] 唤醒规则操作失败", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logFailure("[WakeRulesSection] 唤醒规则操作失败", error);
         notify(squadEntryErrorFeedback(error));
       } finally {
         setBusyRuleId(null);
       }
     },
-    [busyRuleId, notify, reload, services, target],
+    [busyRuleId, logFailure, notify, reload, services, target],
   );
 
   /**
@@ -177,20 +185,81 @@ export function WakeRulesSection({
           notify({ tone: "success", messageId: "squad.rules.created" });
           await reload();
         } catch (error) {
-          logger.warn("[WakeRulesSection] 创建唤醒规则失败", {
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logFailure("[WakeRulesSection] 创建唤醒规则失败", error);
           notify(squadEntryErrorFeedback(error));
         } finally {
           setCreating(false);
         }
       })();
     },
-    [creating, notify, reload, services, target],
+    [creating, logFailure, notify, reload, services, target],
   );
 
   /** 写动作在飞（暂停 / 启用 / 新建任一）——行内动作与新建钮的公共禁用判据。 */
   const writing = busyRuleId !== null || creating;
+
+  /**
+   * 编辑的提交路径（对话框已用 `buildUpdateWakeRuleInput` 校验过，收进来的是**合法 patch**）。
+   * 与 `submitCreate` 同款：置忙（走既有的单飞 `busyRuleId`）→ 调服务 → 成功关框 + toast + 重载 /
+   * 失败**不关框**（重试就在眼前）+ 失败提示（含门禁拒绝 —— 编辑过门禁）。
+   */
+  const submitEdit = useCallback(
+    (patch: UpdateWakeRuleRequest) => {
+      const rule = editTarget;
+      if (!target || rule === null || busyRuleId !== null) return;
+      void (async () => {
+        setBusyRuleId(rule.id);
+        try {
+          await resolveSquadRuntimeService(services).updateWakeRule(target, {
+            id: rule.id,
+            patch,
+          });
+          setEditTarget(null);
+          notify({ tone: "success", messageId: "squad.rules.updated" });
+          await reload();
+        } catch (error) {
+          logFailure("[WakeRulesSection] 编辑唤醒规则失败", error);
+          notify(squadEntryErrorFeedback(error));
+        } finally {
+          setBusyRuleId(null);
+        }
+      })();
+    },
+    [busyRuleId, editTarget, logFailure, notify, reload, services, target],
+  );
+
+  /**
+   * 删除入口：破坏性且**不可撤销**（已触发的记录随行消失）⇒ 必须二次确认（仓里既有的确认
+   * 对话框单例）。文案必须说清后果：**该规则的触发记录（已触发 N 次）会随规则一起删除**。
+   * 未确认 ⇒ **一个服务调用都不发**（破坏性动作的「没发生」必须是可读出来的）—— 执行体因此
+   * 写在 `if (!confirmed) return;` **之后**（`deleteWakeRule(` 全文件只此一处）。
+   */
+  const requestDeleteRule = useCallback(
+    async (rule: WakeRule) => {
+      if (!target || busyRuleId !== null) return;
+      const hostName = resolveWorkItemTitle(workItems, rule.workItemId);
+      const confirmed = await useConfirmDialogStore.getState().requestConfirmation({
+        title: t("squad.rules.deleteConfirmTitle", { name: hostName }),
+        description: t("squad.rules.deleteConfirmDescription", { count: rule.fireCount }),
+        confirmVariant: "destructive",
+        confirmLabel: t("squad.rules.delete"),
+        cancelLabel: t("squad.common.cancel"),
+      });
+      if (!confirmed) return;
+      setBusyRuleId(rule.id);
+      try {
+        await resolveSquadRuntimeService(services).deleteWakeRule(target, { id: rule.id });
+        notify({ tone: "success", messageId: "squad.rules.deleted" });
+        await reload();
+      } catch (error) {
+        logFailure("[WakeRulesSection] 删除唤醒规则失败", error);
+        notify(squadEntryErrorFeedback(error));
+      } finally {
+        setBusyRuleId(null);
+      }
+    },
+    [busyRuleId, logFailure, notify, reload, services, t, target, workItems],
+  );
 
   return (
     <section className="flex flex-col gap-2" data-testid="squad-rules-section">
@@ -369,6 +438,29 @@ export function WakeRulesSection({
                           {t("squad.rules.resume")}
                         </Button>
                       ) : null}
+                      {/* 编辑：**所有行都给**（与暂停 / 启用不同 —— 那两个由状态机门控，而
+                          completed / unscheduled 正是要靠改配置救回来的：终态与坏数据格在这里
+                          不是「没有正解」，是「改一条新配置」）。写动作单飞 ⇒ 在飞期间禁用。 */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={writing}
+                        data-testid="rule-edit"
+                        onClick={() => setEditTarget(rule)}
+                      >
+                        {t("squad.rules.edit")}
+                      </Button>
+                      {/* 删除：破坏性且不可撤销 ⇒ 走二次确认（见 requestDeleteRule）。
+                          未确认 ⇒ 一个服务调用都不发。在飞期间禁用（单飞）。 */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={writing}
+                        data-testid="rule-delete"
+                        onClick={() => void requestDeleteRule(rule)}
+                      >
+                        {t("squad.rules.delete")}
+                      </Button>
                     </span>
                   </li>
                 );
@@ -378,14 +470,19 @@ export function WakeRulesSection({
         </>
       ) : null}
 
-      {/* 新建对话框：本分区持有开关与提交路径（成功关框 + toast + 重载；失败不关框）；
-          对话框本身只收集 + 校验 + 回意图。 */}
-      {createOpen && target ? (
-        <CreateWakeRuleDialog
+      {/* 新建 / 编辑对话框：**同一份表单**（开关、写路径、初值映射归分区持有；挂载点单拆一层
+          是为了守住 400 行 lint 门槛，理由与拆法见 `WakeRuleDialogs` 的头注释）。 */}
+      {target ? (
+        <WakeRuleDialogs
           workItems={workItems}
-          busy={creating}
-          onClose={() => setCreateOpen(false)}
-          onSubmit={submitCreate}
+          createOpen={createOpen}
+          creating={creating}
+          onCloseCreate={() => setCreateOpen(false)}
+          onSubmitCreate={submitCreate}
+          editTarget={editTarget}
+          editBusy={busyRuleId !== null}
+          onCloseEdit={() => setEditTarget(null)}
+          onSubmitEdit={submitEdit}
         />
       ) : null}
     </section>

@@ -567,7 +567,10 @@ test("守卫｜CreateWakeRuleDialog 经 buildCreateWakeRuleInput 校验、不执
   assert.ok(!dialog.includes("resolveSquadRuntimeService("), "对话框不碰服务通路");
   assert.ok(dialog.includes("<CreateDialogShell"), "复用 squadDialogParts 的对话框壳");
   assert.ok(dialog.includes("<Field"), "复用 Field 原语");
-  assert.ok(dialog.includes('titleId="squad.rules.createTitle"'), "标题文案键");
+  /* 标题文案键：第 41 轮把表单泛化成创建 / 编辑两用 ⇒ 创建标题移到**默认参数**
+     （`titleId = "squad.rules.createTitle"`），编辑由分区显式传 `squad.rules.editTitle`。
+     断言随之改到默认参数形态（守的是「创建默认标题仍是这条键」这件事，不是代码写法）。 */
+  assert.match(dialog, /titleId = "squad\.rules\.createTitle"/, "创建标题文案键（默认参数形态）");
   // 校验不过 ⇒ **就地**显示 reasonId 文案（不调服务）。
   assert.ok(dialog.includes("setReasonId(result.reasonId)"), "校验不过就地显示 reasonId");
   // kind 切换清掉上一类字段（防混装；切进 at 连上限一起清 —— 否则留下不可见也改不掉的输入）。
@@ -649,6 +652,14 @@ const SQUAD_RULES_KEYS = [
   "squad.rules.paused",
   "squad.rules.resumed",
   "squad.rules.created",
+  "squad.rules.edit",
+  "squad.rules.editTitle",
+  "squad.rules.hostLocked",
+  "squad.rules.updated",
+  "squad.rules.delete",
+  "squad.rules.deleteConfirmTitle",
+  "squad.rules.deleteConfirmDescription",
+  "squad.rules.deleted",
   "squad.rules.loading",
   "squad.rules.loadFailed",
   "squad.rules.schedule.at",
