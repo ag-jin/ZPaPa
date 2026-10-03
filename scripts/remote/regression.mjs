@@ -111,6 +111,20 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "multi-project-write-scope",
+    title: "同设备多项目写作用域矩阵（穷举 24 格，含 fail-closed）",
+    cwd: "packages/desktop",
+    file: "test/remoteMultiProjectWriteScope.test.ts",
+  },
+  {
+    layer: 1,
+    id: "device-workspace-bindings",
+    title: "设备 workspace 绑定按列表存（绑过不丢 / 未绑定必拒）",
+    cwd: "packages/desktop",
+    file: "test/remoteDeviceWorkspaceBindings.test.ts",
+  },
+  {
+    layer: 1,
     id: "device-config-store",
     title: "设备配置独立文件存储与坏数据容错",
     cwd: "packages/desktop",

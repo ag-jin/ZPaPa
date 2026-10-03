@@ -39,8 +39,18 @@ interface WindowRemoteLogicalSessionSnapshot {
   remoteSessionId: string;
   requestId: string;
   target: RemoteTarget;
+  /** 当前绑定（最后一次 bindWorkspaceContext 的项目）。 */
   workspacePath?: string;
   workspaceIdentity?: string;
+  /**
+   * 本次 logical session 绑定过的**全部** workspace（列表形态）。
+   *
+   * 一台设备可被投射多个项目（Projection Scope），绑定是"增加"而不是"覆盖"：
+   * 非当前项目仍要能解析出设备级 services 并接受写操作，否则对投射会话的归档/置顶/
+   * 标记已读会因 attachment scope 与目标项目不符而被 fail-closed 拒绝。
+   * 断开/释放时按本列表逐项收口。
+   */
+  boundWorkspaces?: RemoteWorkspaceContext[];
   generation: number;
   state: WindowRemoteConnectionState;
   sourceAvailability: "online" | "offline";
@@ -100,7 +110,10 @@ interface LogicalSession<TServices, TCapabilities> {
   state: WindowRemoteConnectionState;
   sourceAvailability: "online" | "offline";
   entry: ConnectionEntry<TServices, TCapabilities>;
+  /** 当前绑定；WSL workspace runtime 的所有权按它 + generation 判定。 */
   workspaceKey?: string;
+  /** 绑定过的全部 workspace（键 = workspaceIdentity.trim() || workspacePath）。 */
+  boundWorkspaces: Map<string, RemoteWorkspaceContext>;
   workspaceGeneration?: number;
   workspaceReady: Promise<void>;
   workspaceReadyState: "pending" | "ready" | "failed";
@@ -125,6 +138,11 @@ function buildConnectionKey(target: RemoteTarget, remoteSessionId: string): stri
   }
 }
 
+/** 绑定键口径与全仓一致：identity 优先，其次路径。 */
+function boundWorkspaceKey(context: RemoteWorkspaceContext): string {
+  return context.workspaceIdentity?.trim() || context.workspacePath;
+}
+
 function toSessionSnapshot<TServices, TCapabilities>(
   session: LogicalSession<TServices, TCapabilities>,
 ): WindowRemoteLogicalSessionSnapshot {
@@ -134,10 +152,23 @@ function toSessionSnapshot<TServices, TCapabilities>(
     target: stripRemoteTargetSecrets(session.target),
     ...(session.workspacePath ? { workspacePath: session.workspacePath } : {}),
     ...(session.workspaceIdentity ? { workspaceIdentity: session.workspaceIdentity } : {}),
+    boundWorkspaces: Array.from(session.boundWorkspaces.values()),
     generation: session.generation,
     state: session.state,
     sourceAvailability: session.sourceAvailability,
   };
+}
+
+/** workspace 上下文是否落在该 session 已绑定的项目里（当前绑定也算）。 */
+function sessionCoversWorkspace<TServices, TCapabilities>(
+  session: LogicalSession<TServices, TCapabilities>,
+  params: { workspacePath: string; workspaceIdentity?: string },
+): boolean {
+  const key = boundWorkspaceKey({
+    workspacePath: params.workspacePath,
+    ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+  });
+  return session.boundWorkspaces.has(key);
 }
 
 export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = never>(options: {
@@ -506,6 +537,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
       state: entry.state === "online" ? "online" : "connecting",
       sourceAvailability: entry.state === "online" ? "online" : "offline",
       entry,
+      boundWorkspaces: new Map(),
       workspaceReady: Promise.resolve(),
       workspaceReadyState: "pending",
       cancelled: false,
@@ -513,10 +545,14 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
       cancellation,
     };
     entry.sessions.add(remoteSessionId);
-    const initialWorkspaceKey = params.workspaceIdentity?.trim() || params.workspacePath;
-    if (initialWorkspaceKey) {
-      entry.workspaceKeys.add(initialWorkspaceKey);
-      session.workspaceKey = initialWorkspaceKey;
+    if (params.workspacePath) {
+      const initialContext: RemoteWorkspaceContext = {
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      };
+      session.boundWorkspaces.set(boundWorkspaceKey(initialContext), initialContext);
+      entry.workspaceKeys.add(boundWorkspaceKey(initialContext));
+      session.workspaceKey = boundWorkspaceKey(initialContext);
     }
     sessionsById.set(remoteSessionId, session);
     pendingSessionsByRequestId.set(params.requestId, session);
@@ -608,6 +644,19 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
       workspaceKey: session.workspaceKey,
       workspaceGeneration: session.workspaceGeneration,
     };
+    // 绑定是"增加"而不是"覆盖"：切到另一个项目后，先前绑定的项目仍要能被解析出
+    // 设备级 services 并接受写操作（否则归档/置顶/标记已读会因 attachment scope 与
+    // 目标项目不符被 fail-closed 拒绝）。列表形态也是 Single Device Scope 的要求。
+    session.boundWorkspaces.set(
+      boundWorkspaceKey({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+      }),
+      {
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+      },
+    );
     session.workspacePath = params.workspacePath;
     session.workspaceIdentity = params.workspaceIdentity;
     session.generation += 1;
@@ -631,10 +680,10 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     if (!session) {
       throw new WindowRemoteConnectionUnavailableError(scope.remoteSessionId);
     }
-    if (
-      session.workspacePath !== scope.workspacePath ||
-      session.workspaceIdentity !== scope.workspaceIdentity
-    ) {
+    // attachment 是**设备粒度**的：同一设备上的多个投射项目共用同一份 services，
+    // attachmentScope 只是"绑定时刻的项目"。因此这里按"已绑定项目"校验，而不是
+    // 只认当前那一个 —— 但仍然只认该 session 自己绑定过的项目（fail-closed）。
+    if (!sessionCoversWorkspace(session, scope)) {
       throw new Error(
         `远程 attachment scope 与 logical session 不匹配，remoteSessionId=${scope.remoteSessionId}`,
       );
@@ -699,14 +748,18 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     listSessions(): WindowRemoteLogicalSessionSnapshot[] {
       return Array.from(sessionsById.values(), toSessionSnapshot);
     },
+    /**
+     * 按 workspace 上下文找 logical session：**已绑定的任一项目**都算命中
+     * （一台设备可被投射多个项目）。返回的快照带上**被请求的** workspace 上下文 ——
+     * 调用方据此构造 scope，而 session 的当前绑定可能已是另一个项目。
+     * 未绑定的项目返回 null，调用方必须 fail-closed，不能回落本地库。
+     */
     findSessionForWorkspace(params: {
       workspacePath: string;
       workspaceIdentity?: string;
     }): WindowRemoteLogicalSessionSnapshot | null {
-      const matches = Array.from(sessionsById.values()).filter(
-        (session) =>
-          session.workspacePath === params.workspacePath &&
-          session.workspaceIdentity === params.workspaceIdentity,
+      const matches = Array.from(sessionsById.values()).filter((session) =>
+        sessionCoversWorkspace(session, params),
       );
       const onlineMatches = matches.filter(
         (session) => session.state === "online" && session.sourceAvailability === "online",
@@ -717,7 +770,16 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
         );
       }
       const match = onlineMatches[0] ?? matches[0];
-      return match ? toSessionSnapshot(match) : null;
+      if (!match) {
+        return null;
+      }
+      return {
+        ...toSessionSnapshot(match),
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity !== undefined
+          ? { workspaceIdentity: params.workspaceIdentity }
+          : { workspaceIdentity: undefined }),
+      };
     },
     getStats(): { connectionCount: number; logicalSessionCount: number } {
       return {

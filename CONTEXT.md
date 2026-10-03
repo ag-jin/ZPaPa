@@ -99,6 +99,13 @@ _Avoid_: 离线缓存（暗示存了数据）、历史记录（暗示只是一�
 投射端唯一持久化的信息：**连接入口**（主机、认证、远端目录）。会话数据与会话索引一律不留存。
 _Avoid_: 缓存、副本、离线数据
 
+**Device-scoped Attachment（设备粒度 attachment）**:
+一台被投射设备只对应一个 logical session 与一份 services（attachment），
+其 workspace 绑定是**列表**（`boundWorkspaces`）而非单值——同一设备可被投射多个项目，
+切换项目只是新增绑定。写操作（归档/置顶/删除/标记已读）的校验因此只认"同一台设备"，
+不要求目标项目等于「当前绑定项目」；未绑定项目与跨设备仍然 fail-closed。
+_Avoid_: 项目粒度 attachment（会让同一设备的多项目共用关系被误判为错配）
+
 **Index Isolation（索引隔离）**:
 一条贯穿读、写两条通路的约束：**本端为远程工作区起的隔离标签
 （`remote:<kind>:...:path`）只在本端使用，绝不跨机传到对端的数据层。**
@@ -137,6 +144,8 @@ _Avoid_: 端口转发（含糊）、代理（暗示改写内容）
 
 回归入口：`pnpm remote:regression`（三层接缝，见 ADR 0002）；
 `pnpm typecheck` 已含两个 `test/` 目录。
+缺陷记录：`.agents/plans/finding-remote-multi-project-write-scope.md`
+（同设备多项目写作用域；层 1 穷举矩阵 + 层 3 实机验收）。
 
 ## 插件商店（Plugin Store）
 
