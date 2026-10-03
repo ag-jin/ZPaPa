@@ -505,3 +505,37 @@ test("i18n：squad.timeline.* 两语齐全，且「推断」声明在图例与�
   assert.deepEqual(placeholders(zhCN["squad.timeline.ariaLabel"] ?? ""), ["lanes", "runs"]);
   assert.deepEqual(placeholders(enUS["squad.timeline.ariaLabel"] ?? ""), ["lanes", "runs"]);
 });
+
+/* 守卫（controller 审查发现项）：`workItems` prop 必须**承重** —— 站点 tooltip 的第一行是
+   工作项标题（"这次运行做的是哪条活"），不是躺在契约里的死 prop。
+   变异：把标题从 tooltip 数组里去掉（或分区不再传表）⇒ 本守卫必红。 */
+test("守卫｜tooltip 第一行是工作项标题：分区传表、渲染层取用", () => {
+  const timeline = readSource("squad/SquadTimeline.tsx");
+  assert.ok(
+    timeline.includes("workItemTitles?: ReadonlyMap<string, string>"),
+    "SquadTimeline 必须收 workItemTitles（可选，取不到就不出现该片段）",
+  );
+  // 站点标题取自**模型侧**的 meta（布局层的站只有几何字段，几何不需要 workItemId）——
+  // 读法：`stationsById` 的 meta → workItemId → 标题表。
+  assert.ok(
+    timeline.includes("workItemTitles.get(meta.workItemId)"),
+    "tooltip 必须经模型侧 meta 的 workItemId 取标题",
+  );
+  const titleBlock = timeline.slice(
+    timeline.indexOf("const title = ["),
+    timeline.indexOf("].join("),
+  );
+  assert.ok(
+    titleBlock.includes("workItemTitle"),
+    "工作项标题必须在 tooltip 的**第一行**（比分支名更先需要知道）",
+  );
+  const section = readSource("squad/SquadTimelineSection.tsx");
+  assert.ok(
+    section.includes("workItemTitles={workItemTitles}"),
+    "分区必须把标题表传给渲染层（否则 prop 又是死的）",
+  );
+  assert.ok(
+    section.includes("new Map(workItems.map((item) => [item.id, item.title]"),
+    "标题表从 workItems 构建（同一次快照的口径）",
+  );
+});

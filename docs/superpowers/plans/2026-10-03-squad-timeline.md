@@ -1,6 +1,7 @@
 # 小队活动时间线（规格 §11.2）：渲染方案（**提案，2026-10-03 controller 已收口**）
 
-> 本轮（第 36 轮）已落地两半基础，本文档只谈**下一轮**怎么画：
+> **状态（2026-10-03）：第 37 轮已按本文档实施完成**（渲染 + 挂载 + 动效门控；`d44c5d2`）。
+> 两半基础由第 36 轮落地：
 > · 数据面：`ISquadRuntimeService.listSquadRuns(target, { parentWorkItemId? })`（不传 = 本 workspace 全量历史，含 merged / discarded）；
 > · 布局模型：`packages/ui/src/squad/squadTimelineModel.ts`（lane / station / arc / domain，纯函数，已被 16 条用例逐格钉住）。
 > 视觉语言（§11.2）：**lane = 队员 / station = 一次运行 / 弧线 = 交接**；**不复用** workflow 时间线组件。
@@ -39,8 +40,11 @@
   起点 / 终点取站点条的边缘锚点。只画 `model.arcs` 给的边，**不在组件里重新推断**。
 - **动效策略**：入场 = 数据到齐后整体淡入（150–200ms，不做逐站级联 —— 时间线是复盘视图，不是表演）；
   推进 = 仅有开口站时，右端按秒级 tick 伸展（或 rAF 但节流到 1s）。**必须尊重 `prefers-reduced-motion`**：
-  命中时禁用过渡与 tick 推进（站点直接按静态宽度画、开口端直接画到 now），
-  这块以 CSS media query 为准，不靠 JS 判断（§11.3 复用既有 token）。
+  命中时禁用过渡与 tick 推进（站点直接按静态宽度画、开口端直接画到 now）。
+  **实现口径（第 37 轮实测）**：淡入走 CSS transition（可被 CSS media query 抑制）；
+  **开口站的 ticker 必须由 JS 门控** —— `setInterval` 不是样式，CSS media query 管不到它，
+  故用 `window.matchMedia("(prefers-reduced-motion: reduce)")` 判断后**不启动** ticker
+  （`matchMedia` 不可用的环境按"不启动"处理）。两处互为补充，缺 ticker 那一半 = 动效纪律落空。
 - **缩放 / 平移**：v1 不做。铺满容器宽 + 自适应即可；引入 zoom 时再谈交互与坐标变换。
 
 ## 三、悬挂项：虚拟化（v1 **先不做**）
@@ -66,6 +70,7 @@
   两者都要迁移 / 新写者，不在本轮加法范围内 —— 届时 `kind` 从 `leader_dispatch_inferred` 扩出真值类型，
   编译期会把全部消费点（含渲染层）拖出来对齐。
 
-## 五、明确不做（本轮，与规格一致）
+## 五、落地边界（第 37 轮**已做**渲染/挂载/动效门控；本节列的是延续的「明确不做」）
 
-React / SVG / 虚拟化 / 动效 / 挂载点接线、台账加「派发边」列或迁移、host 侧 `desktop`、唤醒规则入口、推送。
+虚拟化 / 缩放平移（触发条件见 §三）、台账加「派发边」列或迁移（见 §四「升级路径」）、
+host 侧 `desktop`、唤醒规则入口、推送。

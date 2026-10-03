@@ -43,6 +43,7 @@ export function SquadTimelineSection({
   workspacePath,
   workspaceIdentity,
   teamAgents,
+  workItems,
   onOpenSession,
 }: {
   /** 批根工作项 id：本批历史按 `parentWorkItemId` 收敛在它名下。 */
@@ -51,8 +52,8 @@ export function SquadTimelineSection({
   workspaceIdentity?: string;
   /** 名册（页面的同一份快照口径）：模型据此定 lane 的名字与身份色。 */
   teamAgents: TeamAgent[];
-  /** 工作项全集（页面同一次快照的口径）：本分区当前**不消费** —— 模型只需 runs + teamAgents；
-      留在契约里与 teamAgents 同源同传（页面按同一份快照给两个区块传参），不另从快照里挑字段。 */
+  /** 工作项全集（页面同一次快照的口径）：用来把 `run.workItemId` 翻成**站点 tooltip 的第一行**
+      （"这次运行做的是哪条活"）——与 `teamAgents` 同源同传，不另从快照里挑字段。 */
   workItems: WorkItem[];
   /** 打开某次运行的会话；不传 ⇒ 站点不可点（透传自页面，见 WorkItemsBoard）。 */
   onOpenSession?: (sessionId: string) => void;
@@ -119,6 +120,11 @@ export function SquadTimelineSection({
   const timelineWidth =
     measuredWidth !== null && measuredWidth > 0 ? measuredWidth : SQUAD_TIMELINE_FALLBACK_WIDTH;
 
+  /** run.workItemId → 标题（tooltip 用）；取不到不出现该片段。 */
+  const workItemTitles = useMemo(
+    () => new Map(workItems.map((item) => [item.id, item.title] as const)),
+    [workItems],
+  );
   const model = useMemo(
     () => (runs === null ? null : buildSquadTimelineModel({ runs, teamAgents })),
     [runs, teamAgents],
@@ -185,6 +191,7 @@ export function SquadTimelineSection({
             width={timelineWidth}
             now={renderedAt}
             onOpenSession={onOpenSession}
+            workItemTitles={workItemTitles}
           />
         ) : null}
       </div>

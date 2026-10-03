@@ -43,6 +43,7 @@ export function SquadTimeline({
   width,
   now,
   onOpenSession,
+  workItemTitles,
 }: {
   model: SquadTimelineModel;
   /** 画布可用宽（容器实测，由分区给）。 */
@@ -51,6 +52,9 @@ export function SquadTimeline({
   now: number;
   /** 打开某次运行的会话；不传 ⇒ 站点**不可点**（没有去处就不给可点的样子）。 */
   onOpenSession?: (sessionId: string) => void;
+  /** 工作项标题表（run.workItemId → 标题）：站点 tooltip 的**第一行**——「这次运行做的是哪条活」
+      比分支名更先需要知道。取不到（已归档/被删）就不出现该片段，绝不渲染 undefined。 */
+  workItemTitles?: ReadonlyMap<string, string>;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
@@ -173,7 +177,12 @@ export function SquadTimeline({
           openSession();
         };
         const centerY = station.y + barHeight / 2;
+        const workItemTitle =
+          meta !== undefined && workItemTitles !== undefined
+            ? (workItemTitles.get(meta.workItemId) ?? null)
+            : null;
         const title = [
+          ...(workItemTitle !== null ? [workItemTitle] : []),
           branchLabel,
           statusText(station.status),
           durationText(meta?.startAt ?? 0, meta?.endAt ?? null),
