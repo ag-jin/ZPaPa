@@ -302,7 +302,7 @@ test("守卫｜侧栏「小队」入口恰一处、紧跟「智能体」之后�
   assert.equal(
     (sidebar.match(/\{showSquadEntries \? \(/g) ?? []).length,
     4,
-    "三个实验入口（智能体 / 小队 / 工作项）都要挂同一个显隐条件",
+    "四个实验入口（收件箱 / 智能体 / 小队 / 工作项）都要挂同一个显隐条件",
   );
   // 入口必须真的在**自己的**条件块内：从最近一个条件起点到入口之间不得出现条件闭合。
   const gate = sidebar.lastIndexOf("{showSquadEntries ? (", squadsIndex);
