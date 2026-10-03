@@ -317,6 +317,11 @@ export type { RunClass } from "./workitem/leaderDispatch.js";
 // 类别**声明**的取值：调用方（host 派发桥）按 `declaredRunClassFor` 算出它再传给 `planDispatch`；
 // 声明值的类型与规划同源出，避免调用方就地抄一份联合（抄一份改了那边忘了这边不会有编译错）。
 export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
+/* §5.7(1)/S13 的**判据**（「该工作项有没有进行中的队长 run」）导出给派发桥用：派发侧拿它做
+   「重复指派合并为同一次」的决定。判据只有这一处实现（`listActive` 上按 workItemId + 队长标记投影），
+   让调用方各自拼一份就是「同一语义两处实现」，两边迟早分叉。**只从 node 入口出**：
+   `squadRunLifecycle` 经 Repo 触到 node:sqlite，从浏览器安全入口（`index.ts`）出值会整包炸。 */
+export { hasInProgressLeaderRun } from "./workitem/squadRunLifecycle.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";

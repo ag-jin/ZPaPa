@@ -343,6 +343,26 @@ test("派发桥按 runClass 三类分流，单独安排不开工作树、不登�
   assert.match(branch, /if \(ledgerAction !== "none"\) \{/, "没有台账行的那一类不得订阅终态收口");
 });
 
+/* ---- §5.7(1)/S13：队长 run 进行中的重复指派**合并为同一次**（判据取自服务层唯一读法）---- */
+
+// 决定本身在**纯函数**里（`decideSquadDispatch`，`hostSquadDispatch.test.ts` 有行为用例，
+// 含与忙检查的次序）。这里钉的是**接线**：那个布尔必须由服务层的唯一读法算出来，不能写死。
+// 写死/恒 false 的表现是「同一个工作项能起两条队长 run」——两个会话干同一件事，
+// 而 §5.7(1) 要求合并；更糟的是它**不报错**（判据接了线却一行不跑，正是 recon.md C6 那类静默失效）。
+test("派发桥把「有没有进行中的队长 run」按服务层读法算出来再交给决策", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /leaderRunInProgress:[\s\S]{0,160}?hasInProgressLeaderRun\(snapshot\.runs, workItem\.id\)/,
+    "leaderRunInProgress 未取服务层读法（hasInProgressLeaderRun）：§5.7(1) 的合并判据会恒为假",
+  );
+  assert.doesNotMatch(
+    branch,
+    /leaderRunInProgress:\s*(?:false|true)\b/,
+    "leaderRunInProgress 不得写死常量：那等于把判据摘掉（看起来接了线、实际不动）",
+  );
+});
+
 /* 「派发时的事实」与「类别**声明**」必须**一起**进规划：类别不再由父项的有无**推断** ——
    那条推断把「调用方漏传父项」与「本项确实不在批次里」合并成同一个 `standalone`，前者是接线缺陷
    却被静默当成后者 ⇒ 队员**直接改主工作区**（§6.1 的隔离承诺静默落空，且不报错）。

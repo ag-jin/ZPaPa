@@ -69,6 +69,7 @@ import {
   OffPeakPermanentDispatchError,
   planDispatch,
   declaredRunClassFor,
+  hasInProgressLeaderRun,
   renderLeaderBriefingPrompt,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
@@ -2839,6 +2840,11 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       databaseReady: true,
       busy,
       kind,
+      /* §5.7(1)/S13：判据取自**服务层导出的唯一读法**（`listActive` 上按 workItemId + 队长标记投影），
+         本层不另写一份「有没有进行中的队长 run」。事实取自上面那份 `snapshot`（与工作项/小队同批读，
+         不额外查库）。只对队长算：队员与单独安排不走这条判据（见 `decideSquadDispatch` 的说明）。 */
+      leaderRunInProgress:
+        kind === "leader" ? hasInProgressLeaderRun(snapshot.runs, workItem.id) : false,
       briefingPrompt: enqueued.briefing ? renderLeaderBriefingPrompt(enqueued.briefing) : "",
       memberPrompt: buildMemberRunPrompt(workItem),
       standalonePrompt: buildStandaloneRunPrompt(workItem),

@@ -30,6 +30,9 @@ const base = {
   databaseReady: true,
   busy: false,
   kind: "leader" as const,
+  // 「该工作项有没有进行中的队长 run」——**服务层台账**给出的事实（`hasInProgressLeaderRun`
+  // 是唯一读法），本函数只搬运；默认 false = 目前没有队长 run 在跑。
+  leaderRunInProgress: false,
   briefingPrompt: "P",
   memberPrompt: "P",
   standalonePrompt: "P",
@@ -245,10 +248,51 @@ test("runtime 真在执行 ⇒ 强探测判忙 ⇒ defer", async () => {
   });
 });
 
+/* ── §5.7(1)/S13：队长 run 进行中时的重复指派**合并**为同一次 ──
+
+   这一条以前只有**读法**（服务层导出的 `hasInProgressLeaderRun`）而没有**行为**：它零生产调用方，
+   于是同一工作项被指派两次就会起两条队长 run —— 两个会话干同一件事，而 §5.7(1) 要求
+   「合并为同一次（不排队堆积）」。判据仍然只有一处（服务层那个读法），本函数只把它搬进来做决定。 */
+test("队长 run 进行中 ⇒ skip(leader_run_merged)：并入同一次，不起第二次 run", () => {
+  assert.deepEqual(decideSquadDispatch({ ...base, leaderRunInProgress: true }), {
+    action: "skip",
+    reason: "leader_run_merged",
+  });
+});
+
+// 次序：**合并判据必须排在忙检查之前**。排在后面的话，重投会先拿到 defer（等队长跑完），
+// 之后照样起第二次 run —— 那正是 S13 要禁的「排队的第二次 run」。这一格是唯一能观测该次序的输入。
+test("次序：队长进行中 ＞ busy —— 忙也先合并，不得先 defer 事后补起第二次 run", () => {
+  assert.deepEqual(decideSquadDispatch({ ...base, leaderRunInProgress: true, busy: true }), {
+    action: "skip",
+    reason: "leader_run_merged",
+  });
+});
+
+// 该判据**只对队长**成立：队员与单独安排的智能体各有自己的幂等口径
+//（队员：同一 `eventKey` 撞台账主键；单独安排：压根不登记台账行，「进行中」无从谈起）。
+// 套到那两类身上，会把一次正常的派发静默吞掉。
+test("队长进行中判据不误伤队员 / 单独安排", () => {
+  const member = decideSquadDispatch({
+    ...base,
+    kind: "member",
+    worktree: { branch: "squad/member/a", worktreePath: "/repo/.worktree/a" },
+    leaderRunInProgress: true,
+  });
+  assert.equal(member.action, "dispatch", "队员派发不受队长判据影响");
+  const standalone = decideSquadDispatch({
+    ...base,
+    kind: "standalone",
+    leaderRunInProgress: true,
+  });
+  assert.equal(standalone.action, "dispatch", "单独安排不登记台账行，也谈不上「进行中」");
+});
+
 // 判定次序本身是契约（brief Step 3 第 7 条自上而下）：
-// 库未就绪 → 门禁 → 队员缺树（配置错，最该响亮）→ 忙（等一会）→ 派发。
+// 库未就绪 → 门禁 → 队员缺树（配置错，最该响亮）→ 队长进行中（合并）→ 忙（等一会）→ 派发。
 // 每一对相邻判据都要能分出「谁先谁后」，否则同一事实会拿到两种结论。
-test("判定次序：not_ready ＞ disabled ＞ 队员缺树 ＞ busy ＞ dispatch", () => {
+// （「队员缺树」与「队长进行中」在 `kind` 上不相交、谁先谁后不可观测；与忙那一对的次序是**必需**的。）
+test("判定次序：not_ready ＞ disabled ＞ 队员缺树 ＞ 队长进行中 ＞ busy ＞ dispatch", () => {
   assert.deepEqual(
     decideSquadDispatch({ ...base, databaseReady: false, dispatchEnabled: false, busy: true }),
     { action: "skip", reason: "not_ready" },
@@ -261,6 +305,11 @@ test("判定次序：not_ready ＞ disabled ＞ 队员缺树 ＞ busy ＞ dispat
   assert.deepEqual(decideSquadDispatch({ ...base, busy: true, kind: "member" }), {
     action: "fail",
     reason: "member_run_requires_worktree",
+  });
+  // 合并比忙更靠前：忙着的那次很可能**正是**那条进行中的队长 run 本身。
+  assert.deepEqual(decideSquadDispatch({ ...base, busy: true, leaderRunInProgress: true }), {
+    action: "skip",
+    reason: "leader_run_merged",
   });
   assert.deepEqual(decideSquadDispatch({ ...base, busy: true }), {
     action: "defer",

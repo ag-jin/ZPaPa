@@ -60,7 +60,7 @@ export type SquadDispatchDecision =
       workspacePath?: string;
     }
   | { action: "defer"; reason: "bound_session_busy" }
-  | { action: "skip"; reason: "disabled_by_service" | "not_ready" }
+  | { action: "skip"; reason: "disabled_by_service" | "not_ready" | "leader_run_merged" }
   | { action: "fail"; reason: "member_run_requires_worktree" };
 
 /**
@@ -74,9 +74,11 @@ export type SquadDispatchDecision =
  *    （忙是「等一会」，缺树是「这次派发的配置错了」，后者更严重）。
  *    **只对 `member` 判**：队长与**单独安排的智能体**本来就**没有**工作树（§6.1/§6.2，
  *    `worktree === undefined` 是它们的正确形状），把这条判据套到它们身上会把正确的派发判成失败。
- * 4. `busy` → defer：绑定会话正在执行（**强探测**的结论，见 host 分支）。等待型重投：
+ * 4. **队长** run 进行中 → skip(`leader_run_merged`)：§5.7(1)/S13 的「重复指派合并为同一次」。
+ *    位置**必须**在忙检查之前 —— 见函数体里的理由（否则会先 defer、等队长跑完再起第二次 run）。
+ * 5. `busy` → defer：绑定会话正在执行（**强探测**的结论，见 host 分支）。等待型重投：
  *    既不投递也不判失败（与 cron 的 deferred 同义），避免长任务期间唤醒被重试预算判死。
- * 5. 否则 → dispatch。
+ * 6. 否则 → dispatch。
  */
 export function decideSquadDispatch(input: {
   /** 服务层门禁调用的结论（判据只有服务层一处，见文件头注释）。 */
@@ -85,6 +87,12 @@ export function decideSquadDispatch(input: {
   /** 绑定会话是否正在执行：只接受**强探测**（Agent runtime 快照）的结论，不是 tasks-index 投影。 */
   busy: boolean;
   kind: SquadDispatchKind;
+  /**
+   * 该工作项**有没有进行中的队长 run** —— 服务层台账给出的事实（唯一读法是 `hasInProgressLeaderRun`，
+   * 随包入口导出；本函数既不读台账、也不另写一份「怎么算进行中」的判据）。
+   * 用途见下面的第 4 条判据（§5.7(1)/S13 的重复指派合并）。
+   */
+  leaderRunInProgress: boolean;
   /** 队长 run 的 prompt（三段简报渲染出来的）。 */
   briefingPrompt: string;
   /** 队员 run 的 prompt（工作项标题+正文+**工作树**要求）。 */
@@ -98,6 +106,16 @@ export function decideSquadDispatch(input: {
   if (!input.dispatchEnabled) return { action: "skip", reason: "disabled_by_service" };
   if (input.kind === "member" && input.worktree === undefined) {
     return { action: "fail", reason: "member_run_requires_worktree" };
+  }
+  /* §5.7(1)/S13：队长 run 进行中 ⇒ **合并**（吸收这次指派），不新起一条队长 run。
+     为什么**必须**在 `busy` 之前：忙是「等一会再投」⇒ 排在它后面的话，这次指派会先被 defer，
+     等那条队长 run 跑完（会话空闲）后**照样起第二次 run** —— 那正是 S13 要禁的「排队的第二次 run」。
+     而且忙着的那次很可能**正是**这条进行中的队长 run 本身（同一工作项、同一个绑定会话）。
+     为什么**只对队长**：队员的幂等靠台账主键（同一 `eventKey` 重投撞主键、响亮回执），
+     单独安排的智能体压根不登记台账行（§6.1，没有「进行中」可言）—— 把这条判据套到那两类身上，
+     会让一次**正常**的派发被静默吞掉（用户看到「指派了但什么都没发生」）。 */
+  if (input.kind === "leader" && input.leaderRunInProgress) {
+    return { action: "skip", reason: "leader_run_merged" };
   }
   if (input.busy) return { action: "defer", reason: "bound_session_busy" };
   return {
