@@ -913,6 +913,7 @@ const zhCN: Record<string, string> = {
   "subagentDirectory.squadRuns.title": "小队运行（本项目）",
   "subagentDirectory.squadRuns.empty": "本项目当前没有在跑的小队运行",
   "subagentDirectory.squadRuns.loadFailed": "读取小队运行失败",
+  "chat.statusPanel.openAgentDirectory": "打开智能体目录",
   "chat.statusPanel.endedAgents": "已结束",
   // workflow run 目录（任务页脚行 → 这一页 → 详情页）。状态词复用
   // chat.toolCall.workflow.run.status.*，这里只有页面自己的结构文案。

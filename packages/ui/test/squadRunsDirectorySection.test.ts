@@ -9,6 +9,7 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import { resolveSubagentColorFromName } from "../src/lib/subagentColors.js";
 import {
+  resolveAgentSectionRenderable,
   RUNNING_AGENT_AVATAR_MAX_DOTS,
   runningAgentAvatarColors,
 } from "../src/v4/conversationStatusPanelModel.js";
@@ -432,4 +433,60 @@ test("守卫｜shell → 侧栏宿主 → 目录页 逐处接线，一个渲染�
     !/onOpenSquadRunSession\?:/.test(readSource("app-shell/SubagentDirectorySidePane.tsx")),
     "SubagentDirectorySidePane 的 prop 必填",
   );
+});
+
+// ---------- ③ 会话面板的「目录门」：空分区也要把门留着（审查发现项） ----------
+//
+// 背景：目录（含「小队运行」段）**唯一**的入口是 agent 分区的页脚行；而分区原本只在
+// 「有 subagent」时渲染 ⇒ 一个 subagent 都没用过的会话里，小队运行彻底看不见。
+// 修法：小队实验开启时加一项 `squadDirectoryDoor` 把门留着（实验关闭恒 false ⇒ 旧行为不变）。
+// 变异：把 `resolveAgentSectionRenderable` 里的 `squadDirectoryDoor` 项去掉 ⇒ 下面矩阵红。
+
+test("目录门：agent 分区渲染判据三输入八格（任一项为真即渲染）", () => {
+  const M = resolveAgentSectionRenderable;
+  const cells: Array<[boolean, boolean, boolean]> = [
+    [false, false, false],
+    [true, false, false],
+    [false, true, false],
+    [false, false, true],
+    [true, true, false],
+    [true, false, true],
+    [false, true, true],
+    [true, true, true],
+  ];
+  const got = cells.map(([running, ended, door]) =>
+    M({ runningSubagentCount: running ? 1 : 0, hasEndedAgents: ended, squadDirectoryDoor: door }),
+  );
+  assert.deepEqual(
+    got,
+    [false, true, true, true, true, true, true, true],
+    "只有「三无」格才不渲染；小队实验开着（door）时即使没有任何 subagent 也要渲染分区",
+  );
+});
+
+test("目录门：空分区 + 门开着 ⇒ 渲染一行「打开智能体目录」且在 squadDirectoryDoor 条件下", () => {
+  const panel = readSource("v4/ConversationStatusPanel.tsx");
+  assert.ok(
+    panel.includes("resolveAgentSectionRenderable("),
+    "分区渲染判据必须走纯函数（可被钉住；不得退回裸 `||` 表达式）",
+  );
+  assert.ok(
+    panel.includes("squadDirectoryDoor") && panel.includes("squadEntryVisible(settings)"),
+    "门的存在由既有呈现判据 squadEntryVisible 给出（与侧栏一级入口同一份语义）",
+  );
+  const gate = panel.indexOf("emptyWithDirectoryDoor && squadDirectoryDoor");
+  const row = panel.indexOf('data-testid="agent-directory-door-row"');
+  assert.ok(
+    gate >= 0,
+    "空分区 + 门开着必须有专门的渲染条件（EndedSubagentDirectoryRow 在 count<=0 时自我吞掉）",
+  );
+  assert.ok(row > gate, "门行必须在上述条件内（不得无条件渲染）");
+  assert.ok(
+    panel.includes('{ id: "chat.statusPanel.openAgentDirectory" }'),
+    "门行文案走新键 chat.statusPanel.openAgentDirectory",
+  );
+  const zh = readSource("i18n/locales/zh-CN.ts");
+  const en = readSource("i18n/locales/en-US.ts");
+  assert.ok(zh.includes('"chat.statusPanel.openAgentDirectory"'), "zh-CN 缺门行文案");
+  assert.ok(en.includes('"chat.statusPanel.openAgentDirectory"'), "en-US 缺门行文案");
 });

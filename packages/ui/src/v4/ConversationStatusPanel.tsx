@@ -79,6 +79,8 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import type {
   OpenPlanDetailSideTabRequest,
@@ -90,6 +92,7 @@ import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
 import {
   buildConversationStatusPanelModel,
+  resolveAgentSectionRenderable,
   RUNNING_AGENT_AVATAR_MAX_DOTS,
   runningAgentAvatarColors,
   type ConversationStatusPanelRunningSubagent,
@@ -1363,6 +1366,7 @@ function SubagentStatusSection({
   separated,
   title,
   subagents,
+  squadDirectoryDoor,
 }: {
   endedSubagentCount: number;
   onCancelBackgroundWork?: (workId: string) => void;
@@ -1375,6 +1379,13 @@ function SubagentStatusSection({
   separated: boolean;
   title: string;
   subagents: readonly ConversationStatusPanelRunningSubagent[];
+  /**
+   * 小队实验开启时**把目录的门留着**（见 `resolveAgentSectionRenderable` 的 ③）：
+   * 即使本会话一个 subagent 都没有，也渲染这个分区（只带一行通往「智能体目录」的门），
+   * 否则目录里的「小队运行（本项目）」在没用过 subagent 的会话里彻底看不见。
+   * 实验关闭时恒 false ⇒ 与旧行为逐字等价。
+   */
+  squadDirectoryDoor?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const [now, setNow] = useState(() => Date.now());
@@ -1387,7 +1398,10 @@ function SubagentStatusSection({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [subagents.length]);
-  if (subagents.length === 0 && endedSubagentCount <= 0) return null;
+  /** 空分区但门要留：只有这一种情形会在"没有任何 subagent"时仍渲染（且默认展开，
+      否则门缩在折叠里等于没留）。 */
+  const emptyWithDirectoryDoor = subagents.length === 0 && endedSubagentCount <= 0;
+  if (emptyWithDirectoryDoor && !squadDirectoryDoor) return null;
   const longestElapsedMs = subagents.reduce(
     (longest, item) => Math.max(longest, Math.max(0, now - (item.startedAt ?? now))),
     0,
@@ -1396,7 +1410,7 @@ function SubagentStatusSection({
   return (
     <StatusSection
       section="agent"
-      defaultOpen={false}
+      defaultOpen={emptyWithDirectoryDoor}
       open={open}
       onOpenChange={onOpenChange}
       separated={separated}
@@ -1490,6 +1504,26 @@ function SubagentStatusSection({
           );
         })}
       </ul>
+      {/* 空分区 + 门要留：一行通往「智能体目录」（目录里长着「小队运行（本项目）」那段）。
+          为什么不用 EndedSubagentDirectoryRow：它在 count <= 0 时自我吞掉（见其实现），
+          而这一格的语义恰恰是"没有任何 subagent、但小队实验开着" ⇒ 必须单独一行。 */}
+      {emptyWithDirectoryDoor && squadDirectoryDoor && parentSessionId ? (
+        <button
+          type="button"
+          data-testid="agent-directory-door-row"
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-base text-[var(--color-foreground)] hover:bg-[var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
+          onClick={() =>
+            onOpenSubagentDirectory?.({
+              rootSessionId: rootSessionId ?? parentSessionId,
+              parentSessionId,
+            })
+          }
+        >
+          <BotIcon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+          <span>{intl.formatMessage({ id: "chat.statusPanel.openAgentDirectory" })}</span>
+          <ChevronRightIcon className="ml-auto size-4 text-[var(--color-foreground-subtle)]" />
+        </button>
+      ) : null}
       <EndedSubagentDirectoryRow
         count={endedSubagentCount}
         parentSessionId={parentSessionId}
@@ -1795,6 +1829,9 @@ function ConversationStatusPanelImpl({
   className,
 }: ConversationStatusPanelProps) {
   const isOfficeMode = useIsOfficeMode();
+  /** 小队实验开关（只用于**呈现**：把通往「智能体目录」的门留着 —— 目录里长着「小队运行」）。
+      门禁仍是服务层单点，这里不判派发（与侧栏一级入口同一份语义、同一份纯函数）。 */
+  const { settings } = useSettings();
   const miniMeasureRef = useRef<HTMLDivElement | null>(null);
   const [miniWidth, setMiniWidth] = useState(320);
   const model = useMemo(
@@ -1857,9 +1894,19 @@ function ConversationStatusPanelImpl({
   const canRenderEndedAgents = Boolean(
     endedSubagentCount > 0 && parentSessionId && onOpenSubagentDirectory,
   );
+  /* 「小队实验开着 ⇒ 把通往智能体目录的门留着」（见 resolveAgentSectionRenderable 的 ③）：
+     目录里长着「小队运行（本项目）」那段（§11.1 C11 的合并入口），而本分区是它**唯一**的入口 ——
+     若分区只在"有 subagent"时渲染，没用过 subagent 的会话里那段就彻底看不见。
+     实验关闭 / 无目录回调 / 无 parentSessionId ⇒ 恒 false ⇒ 与旧行为逐字等价。 */
+  const squadDirectoryDoor =
+    Boolean(parentSessionId && onOpenSubagentDirectory) && squadEntryVisible(settings);
   // 已结束目录入口过去渲染在 Agent StatusSection 之后，视觉和 DOM 都被提升成
   // 并列顶层 section。Agent 的运行态和已结束目录属于同一领域，统一由 Agent 折叠分组承载。
-  const canRenderAgents = model.runningSubagentWorks.length > 0 || canRenderEndedAgents;
+  const canRenderAgents = resolveAgentSectionRenderable({
+    runningSubagentCount: model.runningSubagentWorks.length,
+    hasEndedAgents: canRenderEndedAgents,
+    squadDirectoryDoor,
+  });
   const handlePanelModeChange = useCallback(
     (value: string) => {
       if (value === "auto") {
@@ -2087,6 +2134,7 @@ function ConversationStatusPanelImpl({
                 title={intl.formatMessage({ id: "chat.statusPanel.agents" })}
                 subagents={model.runningSubagentWorks}
                 endedSubagentCount={canRenderEndedAgents ? endedSubagentCount : 0}
+                squadDirectoryDoor={squadDirectoryDoor}
                 onCancelBackgroundWork={onCancelBackgroundWork}
                 open={agentSectionOpen}
                 onOpenChange={onAgentSectionOpenChange}

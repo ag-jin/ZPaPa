@@ -303,6 +303,27 @@ export function runningAgentAvatarColors(
 }
 
 /**
+ * agent 分区**渲不渲染**（三者之一即可）：
+ * ① 有在跑的 subagent；② 有已结束的 subagent 且目录可开；③ **`squadDirectoryDoor`**。
+ *
+ * 为什么要有 ③：分区里的「目录」页脚行是会话通往「智能体目录」的**唯一入口**，而目录里长着
+ * 「小队运行（本项目）」那段（规格 §11.1 C11 的合并入口）。若分区只在"有 subagent"时渲染，
+ * 那么**一个 subagent 都没用过的会话**里，小队运行就彻底看不见 —— 与会话侧那条既有的
+ * workflow 目录失效同型（"重启后活动数为零，若只按它开门，通往 run 目录的唯一入口会连带消失"）。
+ * ③ 由「小队实验开启 + 目录可开（有回调与 parentSessionId）」给出：**实验关闭时本函数与旧行为
+ * 逐字等价**（该项恒 false），不影响任何既有会话的渲染。
+ *
+ * 纯函数（不读 React / settings）：调用方把三项事实算好传进来，判据本身可被 node:test 逐格钉住。
+ */
+export function resolveAgentSectionRenderable(input: {
+  runningSubagentCount: number;
+  hasEndedAgents: boolean;
+  squadDirectoryDoor: boolean;
+}): boolean {
+  return input.runningSubagentCount > 0 || input.hasEndedAgents || input.squadDirectoryDoor;
+}
+
+/**
  * composer 徽标直达：本会话的运行态**恰好**
  * 是一条可开详情页的 workflow run 时，返回它的打开意图；否则 null，徽标退回展开胶囊。
  *

@@ -994,6 +994,7 @@ const enUS: Record<string, string> = {
   "subagentDirectory.squadRuns.title": "Squad runs (this project)",
   "subagentDirectory.squadRuns.empty": "No squad runs in this project right now",
   "subagentDirectory.squadRuns.loadFailed": "Failed to load squad runs",
+  "chat.statusPanel.openAgentDirectory": "Open agent directory",
   "chat.statusPanel.endedAgents": "Ended",
   "chat.statusPanel.endedWorkflows": "Ended workflows",
   "workflowDirectory.title": "Workflow runs",
