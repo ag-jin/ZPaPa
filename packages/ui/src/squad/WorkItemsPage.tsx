@@ -12,6 +12,7 @@ import { WorkItemDialog, type WorkItemDialogSubmitInput } from "./SquadCreateDia
 import { ReassignWorkItemDialog } from "./ReassignWorkItemDialog.js";
 import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
 import { SquadRunsReview } from "./SquadRunsReview.js";
+import { WakeRulesSection } from "./WakeRulesSection.js";
 import { WorkItemsBoard } from "./WorkItemsBoard.js";
 import {
   SQUAD_DISCARD_CONFIRM_IDLE,
@@ -435,6 +436,16 @@ export function WorkItemsPage({
               void review(runId, verdict);
             }}
             onOpenSession={onOpenSession}
+          />
+          {/* 「唤醒规则」分区（spec §11.1 / UI 方案「项目窗口 ▸ 规则」的承诺）。**次序**：看板
+              （干活的地方）→ 待收尾运行（裁决队列）→ 规则（未来排班的配置）—— 配置面放在动作面
+              之后。规则不混进「自动化」页：spec §5.6 里 cron 自动化与唤醒规则是两套分工的机制，
+              混排会让用户读成一套。取数 / 写动作 / 四态都在分区里自含（理由见其文件头），
+              本页只把工作项（行标题 + 建规则宿主候选）投影给它。 */}
+          <WakeRulesSection
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            workItems={state.snapshot.workItems}
           />
         </>
       ) : null}

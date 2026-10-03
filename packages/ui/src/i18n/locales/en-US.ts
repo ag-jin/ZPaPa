@@ -4538,6 +4538,59 @@ const enUS: Record<string, string> = {
   "squad.inbox.severity.action_required": "Action required",
   "squad.inbox.severity.attention": "Attention",
   "squad.inbox.severity.info": "Notice",
+
+  // Wake rules section (squad.rules.*) — mounted on the Work Items page (§11.1
+  // "project window ▸ rules"). The round-39 hard constraints apply: `timezone` /
+  // `expiresAt` must not be exposed (the scheduler does not consume them) and
+  // condition / eventTypes / filters (event rules) have no vocabulary yet — no inputs
+  // for any of them. `mode` is derived from kind (at⇒once, every/cron⇒continuous),
+  // never a separate choice (kindHint.* tells the user).
+  // ⚠️ `kindHint.cron` must mention the rejection: an expression with no future match
+  // is loudly rejected by the service — that is the feature working, not an error.
+  "squad.rules.title": "Wake rules",
+  "squad.rules.empty": "This project has no wake rules yet",
+  "squad.rules.emptyHint":
+    "Rules attach to a work item: click “New rule”, pick one and a trigger, and its assignee is woken when the time comes.",
+  "squad.rules.create": "New rule",
+  "squad.rules.createTitle": "New wake rule",
+  "squad.rules.createHint":
+    "The trigger determines how the rule runs (no separate choice): “At a time” fires once; “Every interval” and “Cron expression” fire repeatedly, bounded by the max-fires cap.",
+  "squad.rules.workItem": "Work item",
+  "squad.rules.kind.at": "At a time",
+  "squad.rules.kind.every": "Every interval",
+  "squad.rules.kind.cron": "Cron expression",
+  "squad.rules.kindHint.at": "Wakes once at the given local time; the rule is done after it fires.",
+  "squad.rules.kindHint.every":
+    "Wakes repeatedly at a fixed interval (anchored at creation/resume; missed windows are skipped).",
+  "squad.rules.kindHint.cron":
+    "Wakes repeatedly at the times the cron expression matches; the expression must have a future match or it is rejected.",
+  "squad.rules.atTime": "Fire time (local)",
+  "squad.rules.intervalSeconds": "Interval (seconds)",
+  "squad.rules.cronExpression": "Cron expression",
+  "squad.rules.maxFires": "Max fires (1–1000, blank for default)",
+  "squad.rules.fireProgress": "{count} / {max} fired",
+  "squad.rules.status.active": "Active",
+  "squad.rules.status.userPaused": "Paused",
+  "squad.rules.status.gatePaused": "Stopped by guard",
+  "squad.rules.status.completed": "Completed",
+  "squad.rules.status.unscheduled": "Unscheduled",
+  "squad.rules.pause": "Pause",
+  "squad.rules.resume": "Resume",
+  "squad.rules.paused": "Rule paused",
+  "squad.rules.resumed": "Rule resumed",
+  "squad.rules.created": "Wake rule created",
+  "squad.rules.loading": "Loading wake rules…",
+  "squad.rules.loadFailed": "Failed to load wake rules",
+  "squad.rules.schedule.at": "Fires at {time}",
+  "squad.rules.schedule.every": "Every {seconds}s",
+  "squad.rules.schedule.cron": "Cron: {expression}",
+  "squad.rules.invalid.workItem": "Pick the work item this rule attaches to",
+  "squad.rules.invalid.at": "The fire time must be a valid moment later than now (local time)",
+  "squad.rules.invalid.interval": "The interval must be a positive whole number of seconds",
+  "squad.rules.invalid.cron": "The cron expression cannot be empty",
+  "squad.rules.invalid.maxFires":
+    "Max fires must be a whole number between 1 and 1000 (blank for default)",
+  "squad.rules.configMissing": "Schedule configuration missing",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

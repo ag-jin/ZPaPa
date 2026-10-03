@@ -4247,6 +4247,55 @@ const zhCN: Record<string, string> = {
   "squad.inbox.severity.action_required": "需处理",
   "squad.inbox.severity.attention": "需关注",
   "squad.inbox.severity.info": "通知",
+
+  // 「唤醒规则」分区（squad.rules.*）—— 挂在「工作项」一级页面（§11.1「项目窗口 ▸ 规则」）。
+  // ⚠️ 第 39 轮硬约束：`timezone` / `expiresAt` 界面不得暴露（调度侧未消费）、
+  // condition / eventTypes / filters（事件型）无词汇表 ⇒ 都没有输入入口；`mode` 由 kind 推导
+  //（at⇒once、every/cron⇒continuous），不作为独立选择（kindHint.* 把这件事说给用户）。
+  // ⚠️ `kindHint.cron` 文案里必须有「拒绝」二字：表达式无未来命中时服务面会响亮拒 —— 那是功能
+  //（不是错误），文案不能让用户以为随便写都能成。
+  "squad.rules.title": "唤醒规则",
+  "squad.rules.empty": "这个项目还没有唤醒规则",
+  "squad.rules.emptyHint":
+    "规则挂在工作项上：点「新建规则」选一条工作项与触发方式，到点后该工作项的负责人会被自动唤醒。",
+  "squad.rules.create": "新建规则",
+  "squad.rules.createTitle": "新建唤醒规则",
+  "squad.rules.createHint":
+    "触发方式决定运行方式（不另选）：「到点一次」只触发一次；「每隔一段」「按 cron 表达式」反复触发，次数受上限约束。",
+  "squad.rules.workItem": "工作项",
+  "squad.rules.kind.at": "到点一次",
+  "squad.rules.kind.every": "每隔一段",
+  "squad.rules.kind.cron": "按 cron 表达式",
+  "squad.rules.kindHint.at": "在指定的本地时刻唤醒一次；触发过这条规则就结束了。",
+  "squad.rules.kindHint.every": "按固定间隔反复唤醒（从创建 / 恢复时刻起算，不补跑错过的窗口）。",
+  "squad.rules.kindHint.cron":
+    "按 cron 表达式的命中时刻反复唤醒；表达式必须还有未来的命中，否则会被拒绝。",
+  "squad.rules.atTime": "到点时间（本地）",
+  "squad.rules.intervalSeconds": "间隔（秒）",
+  "squad.rules.cronExpression": "cron 表达式",
+  "squad.rules.maxFires": "触发上限（1–1000，留空按默认）",
+  "squad.rules.fireProgress": "已触发 {count} / {max}",
+  "squad.rules.status.active": "运行中",
+  "squad.rules.status.userPaused": "已暂停",
+  "squad.rules.status.gatePaused": "防失控已停",
+  "squad.rules.status.completed": "已完成",
+  "squad.rules.status.unscheduled": "未排期",
+  "squad.rules.pause": "暂停",
+  "squad.rules.resume": "启用",
+  "squad.rules.paused": "已暂停该规则",
+  "squad.rules.resumed": "已启用该规则",
+  "squad.rules.created": "已创建唤醒规则",
+  "squad.rules.loading": "正在读取唤醒规则…",
+  "squad.rules.loadFailed": "读取唤醒规则失败",
+  "squad.rules.schedule.at": "到点 {time}",
+  "squad.rules.schedule.every": "每 {seconds} 秒",
+  "squad.rules.schedule.cron": "cron：{expression}",
+  "squad.rules.invalid.workItem": "请先选择规则挂到哪个工作项上",
+  "squad.rules.invalid.at": "到点时间必须是晚于现在的有效时刻（本地时间）",
+  "squad.rules.invalid.interval": "间隔必须是正整数（秒）",
+  "squad.rules.invalid.cron": "cron 表达式不能为空",
+  "squad.rules.invalid.maxFires": "触发上限必须是 1–1000 的整数（留空按默认）",
+  "squad.rules.configMissing": "排期配置缺失",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",
