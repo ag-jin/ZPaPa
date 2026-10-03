@@ -4,6 +4,7 @@ import {
   isSquadBatchRoot,
   type ISquadRuntimeServiceShape,
   type ReviewOutcome,
+  type SquadRunRecord,
   type SquadRunStatus,
   type SquadSnapshot,
   type SquadWorkspaceTarget,
@@ -103,6 +104,23 @@ export const SQUAD_RUN_STATUS_MESSAGE_IDS: Record<SquadRunStatus, string> = {
 
 export function squadRunStatusMessageId(status: SquadRunStatus): string {
   return SQUAD_RUN_STATUS_MESSAGE_IDS[status];
+}
+
+/**
+ * 这次运行**能不能审查**（通过 / 打回）：只有「已产出（`produced`）」与「被打回待修（`rejected`）」
+ * 两种状态有可裁决的东西 —— 前者有分支可合，后者的工作树按 spec §6.2 存活到修复后重新裁决。
+ *
+ * 为什么必须挡住 `open`（**闭合 spec §17 登记项**：「通过/打回 对 `open`（已派发未产出）的 run 也
+ * 显示 —— 服务会以 `branch_missing` 响亮拒绝，但该可供性**邀请**了一次本可预防的失败」）：
+ * 运行还在跑、分支上还没有产出 ⇒ 审查按钮点下去最好的情况是一次空合并、最坏是一次响亮失败，
+ * 两者都不是用户想做的事（想看进度应该点「打开会话」）。**不给必然失败的入口** ——
+ * 与「归档的智能体不进候选」是同一条纪律。
+ *
+ * `merged` / `discarded` 是终态（不在快照的活跃集里）；判据仍把它们算作不可审查 ——
+ * 纯函数不依赖「调用方只喂活跃集」这个前提，否则判据会随调用点漂移。
+ */
+export function runReviewable(run: Pick<SquadRunRecord, "status">): boolean {
+  return run.status === "produced" || run.status === "rejected";
 }
 
 // ---------- 显示名解析 ----------

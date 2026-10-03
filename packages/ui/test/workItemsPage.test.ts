@@ -11,6 +11,7 @@ import {
   workItemCreateEnabled,
   workItemStatusMessageId,
 } from "../src/squad/workItemsViewModel.js";
+import { runReviewable } from "../src/squad/squadEntryViewModel.js";
 
 /* 「工作项」一级入口（WorkItemsPage / WorkItemsBoard / SquadRunsReview）的用例：
    **纯逻辑 + 结构守卫**（ui 包没有渲染测试设施，这是本项目既定做法，见 squadEntryView.test.ts）。分工：
@@ -357,6 +358,26 @@ test("守卫｜「打开会话」只在 run.sessionId 非空时给出（没有�
     review.indexOf("onOpenSession(sessionId)") > button,
     "按钮点击必须把 sessionId 交给 onOpenSession",
   );
+});
+
+/* 守卫 e2（controller 审查发现项，闭合 spec §17 登记）：通过 / 打回只给**有可裁决产出**的 run。
+   变异：把 approve/reject 挪出 `runReviewable(run) ?` 条件（无条件显示）⇒ 本守卫必红。 */
+test("守卫｜通过 / 打回只在 runReviewable（produced / rejected）时给出", () => {
+  const review = readSource("squad/SquadRunsReview.tsx");
+  const gate = review.indexOf("{runReviewable(run) ? (");
+  const approve = review.indexOf('data-testid="run-approve"');
+  const reject = review.indexOf('data-testid="run-reject"');
+  assert.ok(gate >= 0, "必须有 runReviewable 判断分支");
+  assert.ok(approve > gate, "通过按钮必须在可审查条件下（不得无条件渲染）");
+  assert.ok(reject > approve, "打回按钮同样在可审查条件下");
+});
+
+test("运行可审查性：produced / rejected 可审，其余三态（open / merged / discarded）一律不可", () => {
+  assert.equal(runReviewable({ status: "produced" }), true);
+  assert.equal(runReviewable({ status: "rejected" }), true);
+  assert.equal(runReviewable({ status: "open" }), false, "还在跑的 run 没有可裁决的产出");
+  assert.equal(runReviewable({ status: "merged" }), false);
+  assert.equal(runReviewable({ status: "discarded" }), false);
 });
 
 /* 守卫 f：设置卡**终态**（本轮收尾）：只留总开关 + 一行指引，不再渲染任何小队视图。

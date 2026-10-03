@@ -2,7 +2,7 @@ import type { SquadRunRecord } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { squadRunStatusMessageId } from "./squadEntryViewModel.js";
+import { runReviewable, squadRunStatusMessageId } from "./squadEntryViewModel.js";
 
 /* 「待收尾的运行」区块的**纯呈现**（取数与动作都在 WorkItemsPage）。
 
@@ -74,23 +74,31 @@ export function SquadRunsReview({
                       {t("squad.runs.openSession")}
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    disabled={busy}
-                    data-testid="run-approve"
-                    onClick={() => onReview(run.runId, "approved")}
-                  >
-                    {t("squad.runs.approve")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    data-testid="run-reject"
-                    onClick={() => onReview(run.runId, "rejected")}
-                  >
-                    {t("squad.runs.reject")}
-                  </Button>
+                  {/* 通过 / 打回：只给**有可裁决产出**的 run（produced / rejected，判据在
+                      `runReviewable`）。还在跑的 run 给这两个按钮 = 邀请一次必然失败
+                      （spec §17 登记项：对 open 的 run 审查会以 branch_missing 响亮拒绝）——
+                      想看进度应该点「打开会话」。 */}
+                  {runReviewable(run) ? (
+                    <>
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        data-testid="run-approve"
+                        onClick={() => onReview(run.runId, "approved")}
+                      >
+                        {t("squad.runs.approve")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        data-testid="run-reject"
+                        onClick={() => onReview(run.runId, "rejected")}
+                      >
+                        {t("squad.runs.reject")}
+                      </Button>
+                    </>
+                  ) : null}
                 </span>
               </li>
             );

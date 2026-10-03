@@ -4135,7 +4135,6 @@ const zhCN: Record<string, string> = {
   "squad.common.dispatchDisabled": "实验功能已关闭：已停止新的派发（进行中的运行不会被中断）",
   "squad.common.archived": "已归档",
   "squad.common.disabled": "已停用",
-  "squad.common.leader": "队长",
   "squad.common.assignee": "指派给",
   "squad.common.assignee.user": "我",
   "squad.common.title": "标题",

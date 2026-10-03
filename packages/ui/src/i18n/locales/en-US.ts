@@ -4421,7 +4421,6 @@ const enUS: Record<string, string> = {
     "The experiment is off: new dispatches are stopped (running work is not interrupted)",
   "squad.common.archived": "Archived",
   "squad.common.disabled": "Disabled",
-  "squad.common.leader": "Leader",
   "squad.common.assignee": "Assign to",
   "squad.common.assignee.user": "Me",
   "squad.common.title": "Title",
