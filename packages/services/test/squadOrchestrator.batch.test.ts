@@ -532,6 +532,73 @@ test("父项已是终态但批未结算 ⇒ 响亮抛（不静默、也不跨终
   assert.equal(await readMainFile(f, "a.txt"), "1\n", "一个字节都不许动");
 });
 
+// ── 收尾的崩溃窗口：**不可逆的清理不得先于「落地事实」** ─────────────────────────────
+//
+// 收尾最后两步是「删集成分支」与「父项 → done」。**删分支不可逆**，而父项终态是本批「成果已落在
+// 主分支上」的唯一记录。若先删后记，两步之间崩溃就留下一个**无法判决的残局**：
+// 父项未终态 + 集成分支已不在 + 队员 run 全 `discarded`。这个形状既可能是「已落地但没记账」，
+// 也可能是「用户放弃的批（`discardBatch` 只删不合并）」——台账里**没有任何东西能把两者分开**，
+// 于是两条路径都会给出错误答案：
+//   · 启动重驱的幂等闸（「没有待合队员 + 集成分支不在 ⇒ 认为已收过尾」）会**静默**把父项永久留在
+//     非终态：功能上「永远在审查中」，而没有任何报错；
+//   · `discardBatch` 那道「已落地的批不得被当放弃」的闸，判据是 `branchExists && isMergedBack`，
+//     分支已删时它**看不见** ⇒ 用户再点一次「放弃整批」，一份**已经在主分支上**的成果会被记成
+//     `cancelled`（这正是那道闸存在的理由）。
+// 反过来（**先记后删**）两步之间崩溃只留下「父项 `done` + 集成分支还在」：落地事实已经写下，
+// 残留只是**待重试的清理**，且与「批已结算」自洽（`discardBatch` 的「已合回 ⇒ 响亮拒绝」格
+// 与评审的 `blocked` 格都仍按原判据成立）。
+test("收尾崩溃：结算那一步失败时，不可逆的集成分支清理必须尚未发生（且恢复后能收敛）", async () => {
+  const f = await setup();
+  const { parent, childId } = await batchWithOneChild(f);
+  await produce(f, {
+    runId: "r-a",
+    childId,
+    parentId: parent.id,
+    agentId: "ta-a",
+    file: "a.txt",
+    content: "A\n",
+  });
+  f.runtime.workItemService.transition(childId, "done", "in_review");
+  const integration = `squad/integration/${slugOf(f, childId)}`;
+
+  // 只让「父项 → done」这一次流转失败，其余照旧走真实实现 ⇒ 精确模拟「结算那一步崩溃」。
+  const service = f.runtime.workItemService;
+  const realTransition = service.transition;
+  let settlementAttempts = 0;
+  (service as { transition: typeof realTransition }).transition = (workItemId, next, from) => {
+    if (workItemId === parent.id && next === "done") {
+      settlementAttempts += 1;
+      throw new Error("模拟：父项结算那一步的进程崩溃");
+    }
+    return realTransition.call(service, workItemId, next, from);
+  };
+
+  await assert.rejects(
+    () =>
+      f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id }),
+    /模拟：父项结算那一步的进程崩溃/,
+  );
+  assert.equal(settlementAttempts, 1, "失败必须恰好发生在结算那一步（否则本用例没测到要测的次序）");
+
+  // 真相：成果**已经**在主分支上（`finalize` 先于这两步）。
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "finalize 已落地，主分支上应有成果");
+  // 结算没成功 ⇒ 父项不得被谎报成终态。
+  assert.equal(itemStatus(f, parent.id), "in_review", "结算失败，父项不该变终态");
+  // **本用例的要害**：不可逆的那一步必须还没发生。
+  assert.equal(
+    await branchExists(f, integration),
+    true,
+    "删集成分支不可逆，它只能排在「父项结算」之后：先删后记会让两步之间崩溃留下无法判决的残局",
+  );
+
+  // 恢复后重驱必须收敛：父项到 done、待重试的清理做完、内容不重复合并。
+  (service as { transition: typeof realTransition }).transition = realTransition;
+  await f.orchestrator.advanceAfterChildrenDone({ workspaceKey: WS, parentWorkItemId: parent.id });
+  assert.equal(itemStatus(f, parent.id), "done", "重驱收敛到终态");
+  assert.equal(await branchExists(f, integration), false, "重驱把待重试的清理做完");
+  assert.equal(await readMainFile(f, "a.txt"), "A\n", "重驱不重复合并、内容不变");
+});
+
 // ── discardBatch：整批放弃（用户取消）────────────────────────────────────────
 
 test("整批放弃：逐个抛弃（含 rejected / produced）→ 父项 cancelled，且集成分支不存在时也不抛", async () => {

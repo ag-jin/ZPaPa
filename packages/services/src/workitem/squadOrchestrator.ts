@@ -410,10 +410,19 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
           await lifecycle.discardMemberRun({ runId: record.runId });
         }
       }
-      // 集成分支的删除**只在整批合回主分支之后**（§6.3）：`discardIntegration` 内部会验证
-      // 「集成是 target 的祖先」，所以它自己就是那道闸，本层不重复判定。
-      await integrationMerger.discardIntegration({ integration, target: baseBranch });
+      /* 次序（崩溃窗口）：**先把「落地事实」写下（父项 → done），再做不可逆的清理（删集成分支）**。
+         反过来的话，两步之间崩溃会留下一个**无法判决**的残局：父项未终态 + 集成分支已不在 +
+         队员 run 全 `discarded`。它与「用户放弃的批」形状**完全一样**（`discardBatch` 只删不合并），
+         台账里没有任何东西能把两者分开，于是两条路都给出错答案：启动重驱的幂等闸（「没有待合队员
+         + 集成分支不在 ⇒ 认为已收过尾」）会**静默**把父项永久留在非终态；而 `discardBatch` 那道
+         「已落地不得被当放弃」的闸判据是 `branchExists && isMergedBack`，分支已删时**看不见** ⇒
+         用户再点一次「放弃整批」会把一份已在主分支上的成果记成 `cancelled`。
+         本次序下，两步之间崩溃只留下「父项 done + 集成分支还在」：落地事实已写下，残留只是
+         **待重试的清理**（重驱即补做，见「收尾崩溃」用例）。§6.3 的约束是「集成分支的删除只能在
+         **整批合回主分支**之后」—— `finalize` 在其上，这里动的只是父项结算，与该约束无关；
+         `discardIntegration` 内部「集成必须是 target 的祖先」那道闸照旧生效（本层不重复判定）。 */
       transitionParent(input.parentWorkItemId, "done", "整批合回主分支");
+      await integrationMerger.discardIntegration({ integration, target: baseBranch });
     });
   }
 
