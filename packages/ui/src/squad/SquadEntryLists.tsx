@@ -1,16 +1,15 @@
-import type { Squad, TeamAgent, WorkItem } from "@zcode/shared";
+import type { Squad, WorkItem } from "@zcode/shared";
 import type { SquadRunRecord, SquadSnapshot } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
-import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import {
   resolveAssigneeName,
   resolveTeamAgentName,
   squadRunStatusMessageId,
 } from "./squadEntryViewModel.js";
 
-/* 最小入口四段列表的**纯呈现**（取数与动作都在 SquadMinimalView）。
+/* 最小入口三段列表的**纯呈现**（小队 / 工作项 / 待收尾的运行；取数与动作都在 SquadMinimalView）。
    拆出来是为了两件事：① 单文件不越 400 行；② 列表与动作解耦后，动作（审查 / 新建）的
    语义只在一处出现，列表这一层只把给定的数据画全。
    本阶段**全量渲染**（spec §11.4 的虚拟化留到 P2c），不做分页也不做截断。 */
@@ -19,40 +18,9 @@ const LIST_CLASSNAME = "flex flex-col gap-2";
 /** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
 const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
 
-export function SquadTeamAgentList({ agents }: { agents: TeamAgent[] }) {
-  const { intl } = useZCodeIntl();
-  return (
-    <ul className={LIST_CLASSNAME}>
-      {agents.map((agent) => (
-        <li key={agent.id} className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}>
-          <span className="flex min-w-0 items-center gap-2">
-            <span
-              className={cn(
-                "size-2 shrink-0 rounded-full",
-                // 九色板只表达身份，不编码状态（spec §11.3）；未设色时按名字稳定取一个。
-                SUBAGENT_COLOR_CLASS[agent.color ?? resolveSubagentColorFromName(agent.name)],
-              )}
-              aria-hidden
-            />
-            <span className="break-words text-ui-base text-foreground">{agent.name}</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-2">
-            {agent.archivedAt !== undefined ? (
-              <span className="text-ui-xs text-foreground-subtlest">
-                {intl.formatMessage({ id: "settings.experiments.squad.archived" })}
-              </span>
-            ) : null}
-            {!agent.enabled ? (
-              <span className="text-ui-xs text-foreground-subtlest">
-                {intl.formatMessage({ id: "settings.experiments.squad.disabled" })}
-              </span>
-            ) : null}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
+/* 智能体名册的列表**已搬家**：`SquadTeamAgentList`（旧的设置卡专用列表）随名册一起退役，
+   现在长在 `SquadAgentsList.tsx`（一级入口「智能体」用）。这里不保留旧组件 ——
+   零调用方的第二份列表就是「同一语义两处实现」的种子：将来改了这处没改那处，且不报错。 */
 
 export function SquadList({ squads, snapshot }: { squads: Squad[]; snapshot: SquadSnapshot }) {
   const { intl } = useZCodeIntl();

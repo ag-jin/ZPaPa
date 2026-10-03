@@ -105,12 +105,13 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
 
   /**
-   * 小队运行时（实验功能，spec §11.1「名册在设置」/ §16 S8）。
+   * 小队运行时（实验功能；名册落点已按用户裁定改为侧栏一级入口，见 spec §17 对应行 / §16 S8）。
    *
    * **为什么是可选**：它不是所有 host 都注册的服务面，且既有测试 double / 非 desktop host
    * 未必提供；声明为可选才不会把这条新服务变成所有实现的必填项（那正是本轮要避免的连锁改动）。
-   * 取不到时**由消费方响亮报错**（`packages/ui/src/settings/squadEntry/squadRuntimeAccess.ts`
-   * 的 `resolveSquadRuntimeService`），不在这里静默兜底成 undefined —— 静默兜底会让界面
+   * 取不到时**由消费方响亮报错**（`packages/ui/src/squad/squadRuntimeAccess.ts`
+   * 的 `resolveSquadRuntimeService`；2026-10-03 名册搬家时该文件由 `settings/squadEntry/` 移到 `squad/`），
+   * 不在这里静默兜底成 undefined —— 静默兜底会让界面
    * 一片空白而分不清「没有数据」与「服务没接上」。
    *
    * **为什么用 defineProperty 且 enumerable: false**：与 `remoteDeviceConfigService` /
