@@ -1,3 +1,5 @@
+// eslint-disable-next-line typescript-eslint/triple-slash-reference -- 见下方说明（全仓只有这一处声明，不另写一份）
+/// <reference path="../../services/src/runtime-tools/node-forge.d.ts" />
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as nodeModule from "node:module";
@@ -22,6 +24,12 @@ import { PlatformChannels } from "@zcode/shared";
  * **真实的 autoUpdater.ts 行为**做断言，而不只是读源码文本。
  * 另有一小组源码接线守卫（与 schedulerWiring.test.ts 同源），用于钉住无法从外部观测的
  * 模块内私有缓存（readyUpdateVersion / availableUpdateChannel）。
+ *
+ * 顶部那条 triple-slash reference 只在**类型**层面把服务端那份 node-forge 环境声明拉进本测试工程：
+ * 本文件 import `../src/main/autoUpdater.ts`，而它 `import type { ISettingService } from "@zcode/services"`，
+ * 于是 services 的**源码图**被编进 desktop 的测试工程，走到 runtime-tools/appCaCert.ts —— 那里用了
+ * 没自带类型的 node-forge。声明全仓只有 `services/src/runtime-tools/node-forge.d.ts` 一处，
+ * 这里**只引用、不另写第二份**（第二份正是「改一处漏一处」的形态）。
  */
 
 const testDir = dirname(fileURLToPath(import.meta.url));
