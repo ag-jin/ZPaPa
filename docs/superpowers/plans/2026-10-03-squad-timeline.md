@@ -1,10 +1,11 @@
-# 小队活动时间线（规格 §11.2）：渲染方案（**提案，待 controller 收口 / 用户过目**）
+# 小队活动时间线（规格 §11.2）：渲染方案（**提案，2026-10-03 controller 已收口**）
 
 > 本轮（第 36 轮）已落地两半基础，本文档只谈**下一轮**怎么画：
 > · 数据面：`ISquadRuntimeService.listSquadRuns(target, { parentWorkItemId? })`（不传 = 本 workspace 全量历史，含 merged / discarded）；
 > · 布局模型：`packages/ui/src/squad/squadTimelineModel.ts`（lane / station / arc / domain，纯函数，已被 16 条用例逐格钉住）。
 > 视觉语言（§11.2）：**lane = 队员 / station = 一次运行 / 弧线 = 交接**；**不复用** workflow 时间线组件。
-> 下面标 **【悬挂】** 的是留给收口的问题；未标注的是本提案的推荐口径。
+> 下面标 **【已收口（2026-10-03）】** 的两处是 controller 的裁定（挂载点 = 批根行内联展开；
+> 不做展开态记忆）；未标注的是本提案的推荐口径，实施按它走。
 
 ## 一、挂载点：**选中某批后展开**（推荐），不做「全批平铺」
 
@@ -22,7 +23,11 @@
 4. 内联展开与「批根」判据**同源**：批根已由 `isSquadBatchRoot` 认出（放弃整批入口在用同一份判据），
    展开钮只在批根行上出现，不新增第二份「什么是批」。
 
-**【悬挂】** 展开钮的落点（行内联 vs 看板右下的固定分区跟随选中）与是否记忆展开态，收口时定。
+**【已收口（2026-10-03）】** 展开钮落在**批根行内联**：`isSquadBatchRoot` 认下的行给「时间线」钮，
+展开内容渲染在**该行下方**（`WorkItemsBoard` 的 `<li>` 里挂 `SquadTimelineSection`，组件自己按
+`parentWorkItemId` 拉本批历史）；**不做展开态记忆** —— 一次只展开一批（页面单点
+`expandedTimelineWorkItemId`），再点收起即卸载、数据丢弃。实施落点见
+`packages/ui/src/squad/{WorkItemsBoard,WorkItemsPage,SquadTimelineSection}.tsx`。
 
 ## 二、几何与动效
 

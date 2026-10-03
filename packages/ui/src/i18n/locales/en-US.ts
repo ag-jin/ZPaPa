@@ -4481,6 +4481,22 @@ const enUS: Record<string, string> = {
   "squad.runs.status.merged": "Merged",
   "squad.runs.status.discarded": "Discarded",
 
+  // Activity timeline (squad.timeline.*, spec §11.2): the swimlane chart expanded inline under a
+  // batch-root row. ⚠️ Arcs are **inferred** dispatch relations (the ledger has no such edge) —
+  // `legendInferred` / `inferredTooltip` must say so; never present them as established fact.
+  "squad.timeline.toggle": "Timeline",
+  "squad.timeline.loading": "Loading timeline…",
+  "squad.timeline.loadFailed": "Failed to load the timeline",
+  "squad.timeline.empty": "No runs in this batch yet",
+  "squad.timeline.legendTitle": "Legend",
+  "squad.timeline.legendIdentity": "Color = agent identity",
+  "squad.timeline.legendInferred": "Dashed = inferred dispatch",
+  "squad.timeline.ariaLabel": "Activity timeline: {lanes} lanes / {runs} runs",
+  "squad.timeline.inferredTooltip":
+    "No dispatch edge in the ledger: this relation is inferred from time and batch",
+  "squad.timeline.openSessionTooltip": "Click to open the session",
+  "squad.timeline.durationSeconds": "{seconds}s",
+
   "squad.discard.action": "Discard batch",
   "squad.discard.title": "Discard the whole batch “{title}”?",
   "squad.discard.description":

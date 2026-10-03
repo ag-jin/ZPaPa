@@ -85,6 +85,9 @@ export function WorkItemsPage({
   /** 「放弃整批」的**二次确认**状态（纯逻辑在视图模型：点按钮只进入待确认态，执行只发生在确认路径）。 */
   const [discardConfirm, setDiscardConfirm] = useState(SQUAD_DISCARD_CONFIRM_IDLE);
   const [discardingId, setDiscardingId] = useState<string | null>(null);
+  /* 展开了时间线的**那一条**批根（一次只展开一批：状态就是一个 id）。收起/切换都只改这一处，
+     不做展开态记忆；SquadTimelineSection 随条件渲染挂载/卸载，数据随之丢弃。 */
+  const [expandedTimelineWorkItemId, setExpandedTimelineWorkItemId] = useState<string | null>(null);
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
@@ -272,6 +275,11 @@ export function WorkItemsPage({
      有选择的表单（「点得开但通往死路」比置灰更糟）；按钮本身**始终渲染**。 */
   const createDisabled = !workItemCreateEnabled({ hasTarget: target !== null, snapshot });
 
+  /** 「时间线」展开钮：同一条再点 = 收起；点别的条 = 换过去（换过去 = 旧的卸载、数据丢弃）。 */
+  const toggleTimeline = useCallback((item: WorkItem) => {
+    setExpandedTimelineWorkItemId((previous) => (previous === item.id ? null : item.id));
+  }, []);
+
   return (
     <div data-testid="work-items-page" className="flex flex-col gap-4">
       {/* 动作行**常驻**：入口的可见性不得依赖取数成功（2026-10-03 用户实测教训）——
@@ -362,11 +370,16 @@ export function WorkItemsPage({
             snapshot={state.snapshot}
             discardableIds={discardableIds}
             busyWorkItemId={discardingId ?? busyWorkItemId}
+            timelineExpandedWorkItemId={expandedTimelineWorkItemId}
             onEdit={(item) => setDialog({ kind: "edit", item })}
             onDiscard={(workItemId) => {
               // **只进入待确认态**：真正的删除必须经对话框确认（不得一键即毁）。
               setDiscardConfirm(requestSquadDiscard(workItemId));
             }}
+            onToggleTimeline={toggleTimeline}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            onOpenSession={onOpenSession}
           />
           <SquadRunsReview
             runs={state.snapshot.runs}

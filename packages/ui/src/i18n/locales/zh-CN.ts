@@ -4195,6 +4195,21 @@ const zhCN: Record<string, string> = {
   "squad.runs.status.merged": "已合并",
   "squad.runs.status.discarded": "已抛弃",
 
+  // 「活动时间线」（squad.timeline.*，§11.2）：批根行内联展开的泳道图。
+  // ⚠️ 弧线是**推断**的派发关系（台账里没有「谁派生了谁」这条边）—— `legendInferred` /
+  // `inferredTooltip` 必须把这件事说出来：不得画成既成事实、不得写"派发关系"这样的断言句。
+  "squad.timeline.toggle": "时间线",
+  "squad.timeline.loading": "正在读取时间线…",
+  "squad.timeline.loadFailed": "读取时间线失败",
+  "squad.timeline.empty": "这一批还没有运行记录",
+  "squad.timeline.legendTitle": "图例",
+  "squad.timeline.legendIdentity": "颜色 = 队员身份",
+  "squad.timeline.legendInferred": "虚线 = 推断的派发关系",
+  "squad.timeline.ariaLabel": "活动时间线：{lanes} 条泳道 / {runs} 次运行",
+  "squad.timeline.inferredTooltip": "台账里没有派发边：这条关系是按时间与批次推断的",
+  "squad.timeline.openSessionTooltip": "点击打开会话",
+  "squad.timeline.durationSeconds": "{seconds} 秒",
+
   "squad.discard.action": "放弃整批",
   "squad.discard.title": "放弃整批「{title}」？",
   "squad.discard.description":
