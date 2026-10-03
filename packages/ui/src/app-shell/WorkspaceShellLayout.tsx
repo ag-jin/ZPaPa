@@ -1458,6 +1458,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       onOpenFileLink={handleOpenMarkdownFileLink}
       onOpenBackgroundBash={handleOpenBackgroundBash}
       onOpenSubagentSession={handleOpenSubagentSession}
+      onOpenSquadRunSession={(sessionId) =>
+        handleSelectTaskInChat(workspaceAbsPath, sessionId, workspaceIdentity)
+      }
       onOpenWorkflowActorSession={handleOpenWorkflowActorSession}
       onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
       onOpenWorkflowArtifact={handleOpenWorkflowArtifact}

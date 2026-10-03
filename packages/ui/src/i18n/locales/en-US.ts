@@ -990,6 +990,10 @@ const enUS: Record<string, string> = {
   "subagentDirectory.status.failed": "Failed",
   "subagentDirectory.status.cancelled": "Cancelled",
   "subagentDirectory.status.lost": "Lost",
+  // Squad runs (this project) section in the subagent directory side pane (spec §11.1 decision C11).
+  "subagentDirectory.squadRuns.title": "Squad runs (this project)",
+  "subagentDirectory.squadRuns.empty": "No squad runs in this project right now",
+  "subagentDirectory.squadRuns.loadFailed": "Failed to load squad runs",
   "chat.statusPanel.endedAgents": "Ended",
   "chat.statusPanel.endedWorkflows": "Ended workflows",
   "workflowDirectory.title": "Workflow runs",
@@ -4467,6 +4471,7 @@ const enUS: Record<string, string> = {
     "Merge conflict: not merged into the main branch; resolve the conflict first",
   "squad.runs.branchMissing": "The member branch is missing, so it cannot be merged",
   "squad.runs.leader": "Leader",
+  "squad.runs.member": "Member",
   "squad.runs.openSession": "Open session",
   "squad.runs.status.open": "Dispatched",
   "squad.runs.status.produced": "Produced, awaiting review",

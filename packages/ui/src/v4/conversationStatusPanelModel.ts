@@ -1,4 +1,4 @@
-import type { GitRepositorySummary } from "@zcode/shared";
+import type { AgentColor, GitRepositorySummary } from "@zcode/shared";
 import type {
   BackgroundWorkSummary,
   GoalState,
@@ -9,6 +9,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { workflowRunStepCounts } from "@zcode/shared/zcode-protocol-v4";
 import { extractPlanToolCallContent, getPlanDirectoryTitle } from "@/lib/planToolCall.js";
+import { resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 
 export interface ConversationStatusPanelGitModel {
   branchName: string | null;
@@ -273,6 +274,32 @@ function buildRunningWorkflowRuns(
     });
   }
   return rows;
+}
+
+/** 头像簇最多画 **4** 个色点（定数）：再多的点在一行里既挤又难辨认；溢出用 `+K` 计数补齐。 */
+export const RUNNING_AGENT_AVATAR_MAX_DOTS = 4;
+
+/**
+ * 运行中的 subagent → 头像簇色点（**只表达身份，不编码状态** —— spec §11.3 的九色板纪律）。
+ *
+ * 身份口径：`agentId`（同一 agent 的多个运行同色）→ 无 agentId 的旧投影回落到 `title`
+ * → 最后 `childSessionId` 兜底；色值按身份**稳定哈希**取（`resolveSubagentColorFromName`），
+ * 与 `SquadAgentsList` / 面板胶囊同款式子 —— 同一份输入两次结果一致（组件重渲染不闪色）。
+ *
+ * 返回类名**键**（`AgentColor`）而不是 Tailwind 类：映射到 `SUBAGENT_COLOR_CLASS` 是渲染层的事，
+ * 模型层不 import UI 原语（本文件既定的分层）。
+ */
+export function runningAgentAvatarColors(
+  subagents: readonly Pick<RunningSubagentSummary, "agentId" | "title" | "childSessionId">[],
+  maxDots: number,
+): { colors: AgentColor[]; overflowCount: number } {
+  const visible = subagents.slice(0, Math.max(0, maxDots));
+  return {
+    colors: visible.map((subagent) =>
+      resolveSubagentColorFromName(subagent.agentId || subagent.title || subagent.childSessionId),
+    ),
+    overflowCount: subagents.length - visible.length,
+  };
 }
 
 /**

@@ -79,6 +79,7 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import type {
   OpenPlanDetailSideTabRequest,
   OpenSubagentDirectorySideTabRequest,
@@ -89,6 +90,8 @@ import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
 import {
   buildConversationStatusPanelModel,
+  RUNNING_AGENT_AVATAR_MAX_DOTS,
+  runningAgentAvatarColors,
   type ConversationStatusPanelRunningSubagent,
   type ConversationStatusPanelModel,
   type ConversationStatusPanelSessionPlanItem,
@@ -225,6 +228,40 @@ function formatRunningSubagentCount(
     { count: String(count) },
   );
 }
+
+/**
+ * 运行中 subagent 的**头像簇**：一排身份色圆点 + 溢出的 `+K`（spec §11.3：九色板只表达身份，
+ * **不编码状态**）。agent 分区标题的 trailing（展开 / 收起两种形态）与收起态摘要胶囊**共用这一份**
+ * （抄两份会让两处随时间长出不同的点距与溢出口径）。
+ *
+ * **装饰**：紧随其后的计数文本（`formatRunningSubagentCount`）已经给出语义，读屏再念一遍色点
+ * 没有任何信息增量，故整体 `aria-hidden`；点本身也不参与交互（无可点目标）。
+ */
+const RunningAgentAvatarCluster = memo(function RunningAgentAvatarCluster({
+  subagents,
+}: {
+  subagents: readonly ConversationStatusPanelRunningSubagent[];
+}) {
+  const { colors, overflowCount } = runningAgentAvatarColors(
+    subagents,
+    RUNNING_AGENT_AVATAR_MAX_DOTS,
+  );
+  if (colors.length === 0) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
+      {colors.map((color, index) => (
+        // 点是**序号**对齐身份（同 agent 的两次运行 = 两个点、不合并），列表本身短小稳定，
+        // 用下标做 key 不会造成错位重排。
+        <span key={index} className={cn("size-2 rounded-full", SUBAGENT_COLOR_CLASS[color])} />
+      ))}
+      {overflowCount > 0 ? (
+        <span className="text-ui-xs tabular-nums text-[var(--color-foreground-subtle)]">
+          +{overflowCount}
+        </span>
+      ) : null}
+    </span>
+  );
+});
 
 type StatusSectionKind =
   | "environment"
@@ -1365,20 +1402,27 @@ function SubagentStatusSection({
       separated={separated}
       title={title}
       trailing={(isOpen) =>
-        subagents.length === 0 ? null : isOpen ? (
-          <span>{formatRunningSubagentCount(intl.formatMessage, subagents.length)}</span>
-        ) : (
+        subagents.length === 0 ? null : (
           <>
-            <span className="min-w-0 truncate">
-              {formatDurationUnits(
-                Math.max(1, Math.floor(longestElapsedMs / 1000)),
-                intl.formatMessage,
-              )}
-            </span>
-            <span className="shrink-0">·</span>
-            <span className="shrink-0">
-              {formatRunningSubagentCount(intl.formatMessage, subagents.length)}
-            </span>
+            {/* 头像簇在计数文本**之前**（身份点 + 「N 在跑」）：展开与收起两种形态都带它，
+                故放在 isOpen 分支之外只写一处。 */}
+            <RunningAgentAvatarCluster subagents={subagents} />
+            {isOpen ? (
+              <span>{formatRunningSubagentCount(intl.formatMessage, subagents.length)}</span>
+            ) : (
+              <>
+                <span className="min-w-0 truncate">
+                  {formatDurationUnits(
+                    Math.max(1, Math.floor(longestElapsedMs / 1000)),
+                    intl.formatMessage,
+                  )}
+                </span>
+                <span className="shrink-0">·</span>
+                <span className="shrink-0">
+                  {formatRunningSubagentCount(intl.formatMessage, subagents.length)}
+                </span>
+              </>
+            )}
           </>
         )
       }
@@ -1662,6 +1706,11 @@ function StatusSummaryRow({
     >
       {/* 产品规则：实时活动只能在没有 Goal/Todo/Git 等主状态时兜底，
           避免胶囊把主状态和输入框已展示的实时计数重复拼接。 */}
+      {/* 头像簇在 subagent 计数文本**之前**（与 agent 分区 trailing 共用同一个组件）；
+          只在计数走 subagent 文案时给 —— 纯 bash / workflow 的计数没有 subagent 身份可表达。 */}
+      {hasRunningSubagent ? (
+        <RunningAgentAvatarCluster subagents={model.runningSubagentWorks} />
+      ) : null}
       <span className="shrink-0">
         {hasRunningSubagent
           ? formatRunningSubagentCount(intl.formatMessage, runningCount)
