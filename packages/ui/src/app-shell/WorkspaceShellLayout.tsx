@@ -49,6 +49,7 @@ import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { SquadsPage } from "@/squad/SquadsPage.js";
 import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
 import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
+import { InboxPage } from "@/squad/InboxPage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -202,6 +203,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   handleOpenAutomations,
   handleOpenPluginStore,
   handleOpenSquadAgents,
+  handleOpenInbox,
   handleOpenSquads,
   handleOpenWorkItems,
   handleManageInstalledPlugins,
@@ -1483,11 +1485,13 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // 手机远控无 active task 时仍不渲染桌面 chrome，继续遵守 replayable overlay 边界。
   //
   // 「整页主视图」= 自带面包屑框架（AutomationsMainBreadcrumbFrame）的扁平页面：
-  // automations / plugin-store / agents / squads。这四处共用一个具名判据（header 渲染、终端面板显隐）；
-  // 各写一份字面量判断迟早漂移 —— 漏一处就是某个入口多一层 header 或终端面板，且不报错。
+  // automations / plugin-store / inbox / agents / squads / work-items。这六处共用一个具名判据
+  // （header 渲染、终端面板显隐）；各写一份字面量判断迟早漂移 —— 漏一处就是某个入口多一层
+  // header 或终端面板，且不报错。
   const isFullPageMainView =
     workspaceMainView === "automations" ||
     workspaceMainView === "plugin-store" ||
+    workspaceMainView === "inbox" ||
     workspaceMainView === "agents" ||
     workspaceMainView === "squads" ||
     workspaceMainView === "work-items";
@@ -1598,6 +1602,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     pluginStoreActive={workspaceMainView === "plugin-store"}
                     onOpenSquadAgents={handleOpenSquadAgents}
                     squadAgentsActive={workspaceMainView === "agents"}
+                    onOpenInbox={handleOpenInbox}
+                    inboxActive={workspaceMainView === "inbox"}
                     onOpenSquads={handleOpenSquads}
                     squadsActive={workspaceMainView === "squads"}
                     onOpenWorkItems={handleOpenWorkItems}
@@ -1819,6 +1825,37 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   onManageInstalled={handleManageInstalledPlugins}
                                 />
                               </div>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "inbox" ? (
+                        /* 「收件箱」一级入口（用户 2026-10-03 裁定：一级导航；本轮落地跨项目
+                           通知面）。骨架逐句对齐「智能体」分支：面包屑框架 + 稳定滚动槽 +
+                           居中内容列。`ScopedErrorBoundary` scope 独立（"inbox-page"）：本页的
+                           崩溃不该把别的页面一起带走，也不该被别人的崩溃连坐。
+                           与其他三面不同的一点：**不传 workspace props** —— 收件箱是跨项目面
+                           （服务面 `listInboxItems` 没有目标参数），页面自己不带"当前项目"语义。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openInbox",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="inbox-page"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <InboxPage />
+                                </div>
+                              </ScopedErrorBoundary>
                             </div>
                           </AutomationsMainBreadcrumbFrame>
                         </main>

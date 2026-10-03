@@ -835,6 +835,11 @@ export function App({
   const handleNavigateToTaskMain = useCallback(() => {
     setWorkspaceMainView("chat");
   }, []);
+  // 侧栏一级入口「收件箱」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图。
+  // 与其他小队入口不同的一点：收件箱是**跨项目**面，页面不取 workspace 目标（服务面也没有目标参数）。
+  const handleOpenInboxMain = useCallback(() => {
+    setWorkspaceMainView("inbox");
+  }, []);
   // 侧栏一级入口「智能体」（照 handleNavigateToTaskMain 的形态）：只是切主视图，
   // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
   const handleOpenSquadAgentsMain = useCallback(() => {
@@ -1151,6 +1156,7 @@ export function App({
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
         handleOpenSquadAgents={handleOpenSquadAgentsMain}
+        handleOpenInbox={handleOpenInboxMain}
         handleOpenSquads={handleOpenSquadsMain}
         handleOpenWorkItems={handleOpenWorkItemsMain}
         handleManageInstalledPlugins={handleManageInstalledPlugins}

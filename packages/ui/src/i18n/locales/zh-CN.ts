@@ -1501,6 +1501,7 @@ const zhCN: Record<string, string> = {
   "workspace.startFromScratch": "从空目录开始",
   "workspace.openFolder": "打开文件夹",
   "workspace.openPluginsSettings": "插件市场",
+  "workspace.openInbox": "收件箱",
   "workspace.openSquadAgents": "智能体",
   "workspace.openSquads": "小队",
   "workspace.openWorkItems": "工作项",
@@ -4201,6 +4202,31 @@ const zhCN: Record<string, string> = {
   "squad.discard.confirm": "放弃整批",
   "squad.discard.succeeded": "已放弃整批：队员分支与集成分支已删除、工作树已清理，该批判为放弃",
   "squad.discard.notConfirmed": "未确认，未执行放弃：没有删除任何分支或工作树",
+
+  // 「收件箱」面（squad.inbox.*）—— **跨项目**的通知面（2026-10-04）：一级入口「收件箱」，
+  // 收的是"需要人介入的事"（冲突 / 运行失败 / 残留运行 / 派发被跳过）。
+  // ⚠️ `member_failed` **必须是中性词**（「运行失败」）：队员 run 与**队长 run 共用同一失败出口**，
+  // 写「队员失败」队长那条就成了假话；谁失败由次要行的 reason 原文自报（以「队员」/「队长」开头）。
+  // `archiveSucceeded` 不复用 squad.common.archived（那是形容词）：这里是动作结果，
+  // 且必须出现「归档」二字（不写"删除"）—— 归档行还能用「显示已归档」取回来。
+  "squad.inbox.loading": "正在读取收件箱…",
+  "squad.inbox.loadFailed": "读取收件箱失败",
+  "squad.inbox.empty": "收件箱是空的",
+  "squad.inbox.emptyHint": "没有需要你处理的事。已归档的条目可以打开「显示已归档」查看。",
+  "squad.inbox.showArchived": "显示已归档",
+  "squad.inbox.markRead": "标已读",
+  "squad.inbox.archive": "归档",
+  "squad.inbox.markReadSucceeded": "已标为已读",
+  "squad.inbox.archiveSucceeded": "已归档：可用「显示已归档」再看到它",
+  "squad.inbox.experimentOff":
+    "多智能体小队实验已关闭：侧栏入口已隐藏、新的派发会被服务层拒绝；收件箱里已有的条目仍可阅读与归档。",
+  "squad.inbox.kind.merge_conflict": "合并冲突",
+  "squad.inbox.kind.member_failed": "运行失败",
+  "squad.inbox.kind.run_orphaned": "残留的运行",
+  "squad.inbox.kind.dispatch_skipped": "派发被跳过",
+  "squad.inbox.severity.action_required": "需处理",
+  "squad.inbox.severity.attention": "需关注",
+  "squad.inbox.severity.info": "通知",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",

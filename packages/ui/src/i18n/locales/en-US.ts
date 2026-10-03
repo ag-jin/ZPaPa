@@ -1616,6 +1616,7 @@ const enUS: Record<string, string> = {
   "workspace.startFromScratch": "Start from scratch",
   "workspace.openFolder": "Open folder",
   "workspace.openPluginsSettings": "Plugin Marketplace",
+  "workspace.openInbox": "Inbox",
   "workspace.openSquadAgents": "Agents",
   "workspace.openSquads": "Squads",
   "workspace.openWorkItems": "Work items",
@@ -4489,6 +4490,33 @@ const enUS: Record<string, string> = {
     "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
   "squad.discard.notConfirmed":
     "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
+
+  // Inbox surface (squad.inbox.*) — the cross-project notification face (2026-10-04).
+  // ⚠️ `member_failed` must stay neutral ("Run failed"): member runs and the leader run
+  // share one failure exit, so "member failed" would be false for leader runs; the reason
+  // line names who failed (it starts with "member"/"leader").
+  // `archiveSucceeded` does not reuse squad.common.archived (an adjective): it is an action
+  // result and must say "archived" (never "deleted") — the row is still retrievable
+  // with "Show archived".
+  "squad.inbox.loading": "Loading inbox…",
+  "squad.inbox.loadFailed": "Failed to load inbox",
+  "squad.inbox.empty": "Your inbox is empty",
+  "squad.inbox.emptyHint":
+    "Nothing needs your attention. Archived entries can be viewed with Show archived.",
+  "squad.inbox.showArchived": "Show archived",
+  "squad.inbox.markRead": "Mark read",
+  "squad.inbox.archive": "Archive",
+  "squad.inbox.markReadSucceeded": "Marked as read",
+  "squad.inbox.archiveSucceeded": "Archived — you can still see it with Show archived",
+  "squad.inbox.experimentOff":
+    "The multi-agent squad experiment is off: the sidebar entry is hidden and new dispatches are rejected by the service; existing inbox entries remain readable and archivable.",
+  "squad.inbox.kind.merge_conflict": "Merge conflict",
+  "squad.inbox.kind.member_failed": "Run failed",
+  "squad.inbox.kind.run_orphaned": "Orphaned run",
+  "squad.inbox.kind.dispatch_skipped": "Dispatch skipped",
+  "squad.inbox.severity.action_required": "Action required",
+  "squad.inbox.severity.attention": "Attention",
+  "squad.inbox.severity.info": "Notice",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

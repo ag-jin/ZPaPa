@@ -21,6 +21,7 @@ import {
   Folder,
   FolderOpen,
   Hash,
+  Inbox,
   ListFilter,
   ListTodo,
   Maximize2,
@@ -246,11 +247,13 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter,
   onOpenAutomations,
   onOpenPluginStore,
+  onOpenInbox,
   onOpenSquadAgents,
   onOpenSquads,
   onOpenWorkItems,
   automationsActive = false,
   pluginStoreActive = false,
+  inboxActive = false,
   squadAgentsActive = false,
   squadsActive = false,
   workItemsActive = false,
@@ -301,11 +304,13 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter: () => void;
   onOpenAutomations?: () => void;
   onOpenPluginStore?: () => void;
+  onOpenInbox?: () => void;
   onOpenSquadAgents?: () => void;
   onOpenSquads?: () => void;
   onOpenWorkItems?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
+  inboxActive?: boolean;
   squadAgentsActive?: boolean;
   squadsActive?: boolean;
   workItemsActive?: boolean;
@@ -739,6 +744,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenAutomationsMain = useCallback(() => {
     onOpenAutomations?.();
   }, [onOpenAutomations]);
+  const handleOpenInboxMain = useCallback(() => {
+    onOpenInbox?.();
+  }, [onOpenInbox]);
   const handleOpenSquadAgentsMain = useCallback(() => {
     onOpenSquadAgents?.();
   }, [onOpenSquadAgents]);
@@ -748,11 +756,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenWorkItemsMain = useCallback(() => {
     onOpenWorkItems?.();
   }, [onOpenWorkItems]);
-  /* 「智能体」「小队」「工作项」三个一级入口的**显隐**：只在实验开关开启时渲染（spec §12 / §16 S8）。
-     判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒ 不可见，
-     避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
+  /* 「收件箱」「智能体」「小队」「工作项」四个一级入口的**显隐**：只在实验开关开启时渲染
+     （spec §12 / §16 S8）。判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒
+     不可见，避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
      assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。
-     三个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给工作项再造一个判据变量
+     四个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给收件箱再造一个判据变量
      就是同一语义两处实现，改一处漏一处不报错。 */
   const { settings } = useSettings();
   const showSquadEntries = squadEntryVisible(settings);
@@ -1341,6 +1349,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               <Blocks className="size-4" />
               {intl.formatMessage({ id: "workspace.openPluginsSettings" })}
             </Button>
+            {/* 「收件箱」一级入口：小队组的**最前**（在「智能体」之前 —— 与 multica 侧栏
+                「收件箱 → AI 团队」的顺序一致：先看"有什么要我处理"，再看名单）。
+                显隐与其他三个实验入口**共用同一个判据变量**（见上方注释）—— 不是门禁。 */}
+            {showSquadEntries ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenInboxMain}
+                data-icon="inline-start"
+                data-testid="inbox-sidebar-open"
+                size="lg"
+                aria-pressed={inboxActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  inboxActive && "bg-selected text-foreground",
+                )}
+              >
+                <Inbox className="size-4" />
+                {intl.formatMessage({ id: "workspace.openInbox" })}
+              </Button>
+            ) : null}
             {/* 「智能体」一级入口（用户 2026-10-03 裁定：不藏设置；与「自动化」「插件市场」同层级）。
                 显隐由 squadEntryVisible 一处给出（见上方注释）—— 不是门禁。 */}
             {showSquadEntries ? (
