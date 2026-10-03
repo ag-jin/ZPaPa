@@ -22,6 +22,23 @@ export function canCreateSquad(snapshot: SquadSnapshot): boolean {
 }
 
 /**
+ * 「新建小队」按钮**可点**吗：有目标 + **已成功取到快照** + 有可派发候选。
+ *
+ * 为什么必须等快照：新建对话框的队长下拉**来自快照**（`dispatchableTeamAgents`）。取数失败时
+ * 快照为 null ⇒ 对话框里的队长候选是空数组 ⇒ 提交按钮永远不亮 —— **入口点得开、但通往死路**，
+ * 比置灰更糟（用户只会读成"功能坏了"）。置灰 + 上方错误态（带原因与重试）才是既有裁定
+ * （2026-10-03 实测教训：「入口常驻、置灰，由状态行说明原因」，不是整块消失）。
+ *
+ * 注意与「入口常驻」不矛盾：本判据只决定**可不可点**，按钮始终渲染（可见性不依赖取数成功）。
+ */
+export function squadCreateEnabled(input: {
+  hasTarget: boolean;
+  snapshot: SquadSnapshot | null;
+}): boolean {
+  return input.hasTarget && input.snapshot !== null && canCreateSquad(input.snapshot);
+}
+
+/**
  * 小队表单（`SquadDialog`）**编辑模式的初值形状**。
  *
  * 为什么形状定义在这里而不是表单文件里：初值由页面构造（`SquadsPage` 从 `squad.members`

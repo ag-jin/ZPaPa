@@ -25,7 +25,7 @@ import {
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
 import {
-  canCreateSquad,
+  squadCreateEnabled,
   squadEditLeaderCandidates,
   squadEditMemberCandidates,
 } from "./squadsViewModel.js";
@@ -224,9 +224,10 @@ export function SquadsPage({
     [busySquadId, dialog, runAction, target],
   );
 
-  /* 候选为空 ⇒ 新建置灰（判据是纯函数 canCreateSquad：没有可派发的协作智能体时，
-     建小队对话框连队长都选不出来）。快照还没读到时不置灰 —— 入口的可见性不得依赖取数成功。 */
-  const createDisabled = !target || (snapshot !== null && !canCreateSquad(snapshot));
+  /* 新建可不可点：纯函数 squadCreateEnabled（有目标 + 已取到快照 + 有可派发候选）。
+     快照没读到（加载中/失败）时置灰 —— 对话框的队长候选来自快照，读不到就开不出可提交的表单
+     （「点得开但通往死路」比置灰更糟）；按钮本身**始终渲染**（可见性不依赖取数成功）。 */
+  const createDisabled = !squadCreateEnabled({ hasTarget: target !== null, snapshot });
 
   return (
     <div data-testid="squads-page" className="flex flex-col gap-4">

@@ -15,6 +15,7 @@ import {
 } from "../src/squad/squadSurfaceViewModel.js";
 import {
   canCreateSquad,
+  squadCreateEnabled,
   squadEditLeaderCandidates,
   squadEditMemberCandidates,
 } from "../src/squad/squadsViewModel.js";
@@ -113,6 +114,29 @@ test("空候选：没有可派发的协作智能体 ⇒ canCreateSquad 为 false
     teamAgents: [anAgent, { ...anAgent, id: "a2", enabled: false }],
   });
   assert.equal(canCreateSquad(snapshot), dispatchableTeamAgents(snapshot).length > 0);
+});
+
+// 新建按钮可点性（四格穷举）：取数失败/加载中（快照为 null）时**置灰** —— 对话框的队长候选
+// 来自快照，读不到就开不出可提交的表单（「点得开但通往死路」比置灰更糟）；按钮始终渲染。
+// 变异：把 `snapshot !== null` 从 squadCreateEnabled 里去掉 ⇒ 第二格必红。
+test("新建可点性：无目标 / 快照未取到 / 无候选 / 有候选 —— 四格逐条断言", () => {
+  const withCandidate = snapshotWith({ teamAgents: [anAgent] });
+  const withoutCandidate = snapshotWith({ teamAgents: [] });
+  assert.deepEqual(
+    [
+      squadCreateEnabled({ hasTarget: false, snapshot: withCandidate }),
+      squadCreateEnabled({ hasTarget: true, snapshot: null }),
+      squadCreateEnabled({ hasTarget: true, snapshot: withoutCandidate }),
+      squadCreateEnabled({ hasTarget: true, snapshot: withCandidate }),
+    ],
+    [false, false, false, true],
+    "只有「有目标 + 已取到快照 + 有可派发候选」才可点（快照为 null ⇒ 置灰，不给自己一条死路）",
+  );
+  // 与候选判据同源：squadCreateEnabled 的最后一格就是 canCreateSquad。
+  assert.equal(
+    squadCreateEnabled({ hasTarget: true, snapshot: withCandidate }),
+    canCreateSquad(withCandidate),
+  );
 });
 
 // ---------- ②b 编辑模式候选：当前队长 / 当前成员即使不可派发也必须在列 ----------
@@ -349,8 +373,12 @@ test("守卫｜SquadsPage 走响亮取数通路，四个服务调用齐全，归
     page.includes("squad.squads.archiveConfirmDescription"),
     "确认文案必须说清后果（工作项转交队长 / 花名册与指令保留 / 不可撤销）",
   );
-  // 新建置灰判据必须是纯函数 canCreateSquad（页面与列表空态问同一个函数）。
-  assert.ok(page.includes("canCreateSquad("), "新建按钮的置灰判据必须走纯函数 canCreateSquad");
+  // 新建按钮的置灰判据必须走纯函数（squadCreateEnabled：有目标 + 已取到快照 + 有候选），
+  // 列表空态的「为什么建不了」说明走 canCreateSquad（同一候选判据，两处不各写一遍）。
+  assert.ok(
+    page.includes("squadCreateEnabled("),
+    "新建按钮的置灰判据必须走纯函数 squadCreateEnabled",
+  );
   // 编辑模式的候选必须走两个 helper（当前队长/成员即使不可派发也在列；变异：换回裸
   // `dispatchableTeamAgents` ⇒ 本断言红，且上面的 ②b 用例也会红）。
   assert.ok(
