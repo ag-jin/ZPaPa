@@ -51,8 +51,34 @@ test("唤醒规则复用同一个 20s tick，没有第二套定时器", () => {
   );
 });
 
-/* 唤醒规则必须**每轮无条件**跑 `wakeTick.run` —— 这是本次修复在生产中生效的关键：
-   `fire()` 是 advance-before-post，已 fire 的规则 `next_fire_at` 已前进到未来 ⇒ 安静期里
+/* 排期计算（`nominalInstant` / `nextFireAtAfter`）的**唯一实现**在 `@zcode/services/node`
+   （`workitem/wakeSchedule.ts`，由 `wakeTick.ts` 整体搬入）：调度器（fire 后推进下一格）与服务面
+   （`createWakeRule` / `resumeWakeRule` 算首格）共用它，而「同一份实现」只有在**源代码只有一处**
+   时才成立 —— 在 wakeTick 里复制一份本地实现，两份会静默漂移：建出来的规则与调度器推进的网格
+   对不上（同一格算出两个名义时刻），eventKey 去重静默失效，且没有任何报错。
+   故 wakeTick.ts 只允许 **import / 再导出**，不得出现本地定义（函数声明与变量赋值两种形态都不行）。 */
+test("wakeTick 不得再定义排期计算（唯一实现在 services 的 wakeSchedule.ts）", () => {
+  const wakeTick = readFileSync(join(desktopSrc, "scheduler/wakeTick.ts"), "utf8");
+  for (const name of ["nextFireAtAfter", "nominalInstant"]) {
+    assert.doesNotMatch(
+      wakeTick,
+      new RegExp(`(?:export\\s+)?function\\s+${name}\\b`),
+      `${name} 不得在 wakeTick.ts 里再定义一份（函数声明形态）：两份实现会与 services 的唯一实现静默漂移`,
+    );
+    assert.doesNotMatch(
+      wakeTick,
+      new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=`),
+      `${name} 不得在 wakeTick.ts 里再定义一份（变量赋值形态）：同上`,
+    );
+  }
+  assert.match(
+    wakeTick,
+    /import\s*\{[^}]*nextFireAtAfter[^}]*\}\s*from\s*"@zcode\/services\/node"/,
+    "排期计算必须从 @zcode/services/node 导入（搬运的落点），不得留在本包",
+  );
+});
+
+/* 唤醒规则必须**每轮无条件**跑 `wakeTick.run` —— 这是本次修复在生产中生效的关键：   `fire()` 是 advance-before-post，已 fire 的规则 `next_fire_at` 已前进到未来 ⇒ 安静期里
    `listReady` 恒为空。若像基线那样「入口先按 limit 预扫一遍，为空就跳过 run」，则安静期的
    **重投与 TTL 淘汰整段永不执行**（一条 once 规则的瞬时失败会静默丢失）。所以钉住两件事：
    ① run 被直接 `await` 调用；② 入口里没有那层预判门控 —— 门控的**签名**就是入口直接用

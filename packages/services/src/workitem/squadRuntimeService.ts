@@ -3,6 +3,7 @@ import {
   resolveWorkspaceKey,
   type Squad,
   type TeamAgent,
+  type WakeRule,
   type WorkItem,
 } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
@@ -22,6 +23,9 @@ import type { SquadRunRecord } from "./squadRunRepo.js";
 // 「改负责人 + 发派发事件」的**唯一实现**（唯一写者纪律 / 同值处置 / 事件出口全在其中）。
 // 单拆成文件是为了浏览器安全（本文件被根入口值导出）+ 400 行 lint 门槛，详见该文件的头部注释。
 import { applyWorkItemAssignee } from "./workItemAssignee.js";
+// 唤醒规则四项（list / create / pause / resume）的**唯一实现**（组装 / 校验 / 排期 / CAS 全在其中）。
+// 同款拆文件：本文件必须浏览器安全 + 贴着 400 行门槛；门禁口径与「用户暂停」的落库口径见该文件头注释。
+import { createWakeRuleOps, type CreateWakeRuleRequest } from "./squadWakeRules.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -218,6 +222,74 @@ export interface ISquadRuntimeService {
   ): Promise<void>;
   /** 指派即入队 ⇒ **入口过门禁**（入口② 走这条）。 */
   createWorkItem(target: SquadWorkspaceTarget, input: CreateWorkItemRequest): Promise<WorkItem>;
+  /**
+   * 本 workspace 的唤醒规则（经工作项反查 —— `wake_rules` 表没有 workspace 列，见调度器注释）。
+   *
+   * **不过门禁**（只读不是新派发，§5.7.6 只停新派发）：关掉实验开关后仍应能查看有哪些规则
+   * —— 那是收尾 / 复盘所需的视野（与 `listSquadRuns` / `listInboxItems` 同款理由）。
+   * **本层不得写任何第二份开关判据。**
+   *
+   * 取数口径（实现见 `squadWakeRules.ts`，过滤判据只有那一处）：
+   * 1. `wakeRuleRepo.listAll()` **全量**读出（repo 单源排序，本层不重排），
+   * 2. 用本 workspace 的工作项 id 集合（`workItemRepo.listByWorkspace(key)`）过滤 ——
+   *    `key` 取自 runtime 的**绑定值**（与 `getSnapshot` / `createWorkItem` 同一条式子：
+   *    runtime 才是「为哪个 workspace 而构造」的权威）。
+   * 3. **已归档工作项的规则列不出来**（有意登记）：`listByWorkspace` 的口径是「归档行视同不存在」
+   *    （repo 既定口径，服务面没有列出归档工作项的取数口，`wake_rules` 也没有 workspace 列可反查）
+   *    ⇒ 这类规则**无法归属到任何 workspace**。它们同时**不可派发**（host 对归档工作项一律
+   *    解析不到 workspace ⇒ tick 响亮失败），属显式的坏配置而非静默消失；若界面确需展示，
+   *    下一轮补一条「含归档的按 workspace 列工作项」的 repo 口再收录（本轮不加取数口、不加 SQL）。
+   */
+  listWakeRules(target: SquadWorkspaceTarget): Promise<WakeRule[]>;
+  /**
+   * 建一条唤醒规则（**加法**，P2b 第二半：「规则半边」此前**全仓没有任何创建路径** ——
+   * `wakeRuleRepo.insert` 零生产调用方 ⇒ 没有 `next_fire_at` 的规则永远不会被调度器扫到）。
+   *
+   * **过门禁**（§5.7.6）：规则 = 未来派发的排班表，属「新派发」的准备 —— 与 `createWorkItem`
+   * 同一处判据（`assertEnabled`），**次序也同款：门禁在构造 runtime 之前过**（门禁只回答
+   * 「现在允不允许新派发」，与目标是不是可用的 git 仓库无关；先建 runtime 会在非 git 目标上
+   * 把门禁结论换成「base 分支解析失败」，上层按稳定码分流就分不出来）。关掉开关后**响亮拒绝**。
+   *
+   * 实现要点（唯一实现在 `squadWakeRules.ts`，此处只把 runtime 工厂与门禁接进去）：
+   * 1. 组装：`id` 新生成（`globalThis.crypto.randomUUID`）、`fireCount: 0`、`enabled: true`，
+   *    排期字段按 kind 原样透传；`condition` / `eventTypes` / `filters` 类型上就没有入口（见
+   *    `CreateWakeRuleRequest` 的形状决定）。
+   * 2. `validateWakeRule` **优先**：不过 ⇒ 中文 problems **原样带出**（照 `assertValid` 的既有做法）。
+   * 3. 宿主体检：工作项不存在 / 已归档 / 不属于目标 workspace ⇒ 响亮抛（挂不上的规则永不触发）。
+   * 4. `nextFireAt = ` 与调度器**同一份**实现算出的首格（`every` 锚点 = 创建时刻 ⇒ 落在未来一个
+   *    间隔内；`at` 必须严格晚于创建时刻；`cron` 取表达式在创建时刻之后的下一次命中）。
+   *    **无未来命中 ⇒ 响亮抛**（「这条规则建成即永不触发」属死配置 —— 静默落盘正是本半要消灭的
+   *    形态：listReady 只取 `next_fire_at <= now`，没有排期点的规则永远不触发且零报错）。
+   * 5. `insert` 写盘后**读回**返回（照 `updateRoster` 的读回口径）。
+   */
+  createWakeRule(target: SquadWorkspaceTarget, input: CreateWakeRuleRequest): Promise<WakeRule>;
+  /**
+   * 暂停（不清除配置）：`nextFireAt` 置空（不再是到点扫描的候选）。**不过门禁**（停下不是新派发，
+   * 与 `failMemberRun` 同款理由 —— 关掉开关后仍应能停掉一条规则）。
+   *
+   * **落库口径（有意偏离 brief 字面，逐条登记）**：`pausedReason` **不写下任何固定码** ——
+   * 该列的读回是**封闭枚举**校验（`wakeRuleRepo.enumColumn`：枚举外值读回即抛，会让调度器
+   * 整批扫描炸掉），集合只有 `max_fires | rate | loop` 三个**防失控闸**的码，没有「用户手动暂停」
+   * 这一码（shared 本轮冻结）。写任何一个既有码都是**伪造闸原因**（界面会把用户暂停显示成
+   * 「被 rate 闸停了」），故本实现只置空 `nextFireAt`（目标语义「不再到点 = 停下来了」完整成立），
+   * `pausedReason` 原样保留（闸写下的原因不因用户再点一次 pause 而被抹掉）。
+   * 下一轮若要区分「手动暂停」与「闸暂停」，需要给 shared 的 `WAKE_PAUSE_REASONS` 加一码。
+   *
+   * 前置读当时状态 + CAS（revision fencing，照既有纪律）：已不再到点的规则 ⇒ **幂等早退**
+   * （不写盘、不 bump revision）；CAS 未命中（并发改动，如调度器刚推进一格）⇒ **响亮抛**。
+   */
+  pauseWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /**
+   * 恢复：清 `pausedReason` 并**重算** `nextFireAt`（与 `createWakeRule` 同一份首格排期计算：
+   * `every` 锚点 = 恢复时刻、`cron` 取之后下一次命中、`at` 取 `at` 本身并要求仍晚于恢复时刻）。
+   * **过门禁**（恢复 = 让未来的派发重新可能，与 `createWakeRule` 同一处判据、同一次序）。
+   *
+   * 分格口径（写清）：已在排期的规则 ⇒ **幂等早退且不重算**（重算会静默挪动在跑规则的网格，
+   * 比报错更坏）；重算后**无未来排期点**（如一次性的 `at` 已过点、或 cron 无未来命中）⇒
+   * **响亮抛且不写盘**（死动作：恢复一条永不触发的规则会让用户以为它又开始跑了）。
+   * CAS 未命中的处置同 `pauseWakeRule`（前置读当时状态、响亮抛）。
+   */
+  resumeWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   /**
    * 编辑工作项的**内容字段**（标题 / 正文），返回写盘后的实体（**加法**，2026-10-03：
    * 工作项看板要求编辑可用）。
@@ -625,6 +697,15 @@ export function createSquadRuntimeService(deps: {
     }
   };
 
+  /* 唤醒规则四项（**加法**，P2b 第二半）：实现全在 `squadWakeRules.ts`（组装 / 校验 / 排期 / CAS），
+     这里只把两个依赖接进去 —— ① `deps.createRuntime`（按目标现构，不缓存）；② `assertEnabled`
+     （服务侧唯一门禁：create / resume 在构造 runtime **之前**过它；pause / list 不过）。
+     **这里刻意不写任何第二份开关判据**（门禁的唯一判据就是上面的 `assertEnabled`）。 */
+  const wakeRuleOps = createWakeRuleOps({
+    createRuntime: deps.createRuntime,
+    assertEnabled,
+  });
+
   return {
     async assertDispatchEnabled(_target) {
       // 只答门禁问题：**不构造 runtime**（也就不依赖 git 解析），只读设置、只抛错。
@@ -968,5 +1049,9 @@ export function createSquadRuntimeService(deps: {
       // 同 markInboxItemRead：只改 archived_at 一列；未命中响亮抛。
       requireInboxItemRepo().archive(id);
     },
+
+    /* 唤醒规则四项（**加法**，P2b 第二半）：实现与逐条口径全在 `squadWakeRules.ts`
+       （见该文件头注释与接口 doc）；上面构造的 `wakeRuleOps` 即那四个方法，原样并进本返回值。 */
+    ...wakeRuleOps,
   };
 }

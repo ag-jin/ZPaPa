@@ -101,6 +101,19 @@ export interface WakeRuleRepo {
       依赖 idx_wake_rules_ready 部分索引；用 SQL 过滤而不是全表读回后内存筛，
       否则每次 tick 都要把禁用的死规则一并读出来。 */
   listReady(now: number, limit: number): WakeRule[];
+  /**
+   * **全表读取**（加法，P2b 第二半）：服务面 `listWakeRules` 的取数口 —— `wake_rules` 表没有
+   * workspace 列（派发目标由工作项给出），「本 workspace 的规则」只能**全量读出后**按调用方的
+   * 工作项 id 集合过滤，故这里不接过滤参数（SQL 不猜 workspace，按工作项过滤是调用方的事）。
+   *
+   * **排序**：`work_item_id ASC, created_at ASC, id ASC`，三层键全部确定。为什么不用
+   * `listReady` 的到点序：本方法服务的是「读完过滤后直接呈现/遍历」，而不是到点批次 ——
+   * 到点序在暂停/终态行（next_fire_at 为 NULL）上会先排空值再排活跃值，对「按工作项看规则」
+   * 没有意义。取 work_item_id 优先是因为规则按工作项成组（挂在工作项上）；同组内按创建先后
+   * （created_at），同刻创建（毫秒级并列）再按 id 兜底 —— 任何一层并列都不会让顺序随
+   * 存储顺序漂移。
+   */
+  listAll(): WakeRule[];
   /** revision fencing（spec §5.7）：只有 revision 仍等于 expectRevision 才推进，
       命中即 revision+1。**单条条件 UPDATE**——先读后写会与并发派发竞态，
       让「编辑规则」后仍在飞的旧派发覆盖掉新状态。 */
@@ -179,6 +192,15 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
         )
         .run(nextFireAt, fireCount, pausedReason ?? null, Date.now(), id, expectRevision);
       return result.changes === 1;
+    },
+
+    // 全表读取（读取面，非调度扫表）：排序按 work_item_id → created_at → id，三层键全确定 ——
+    // 同一批规则的呈现次序不随存储顺序漂移（与 listByWorkItem / listByWorkspace 同一条理由）。
+    listAll() {
+      const rows = db
+        .prepare("SELECT * FROM wake_rules ORDER BY work_item_id ASC, created_at ASC, id ASC")
+        .all() as unknown as WakeRuleRow[];
+      return rows.map(rowToWakeRule);
     },
 
     listByWorkItem(workItemId) {
