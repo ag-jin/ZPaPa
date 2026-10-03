@@ -281,6 +281,13 @@ test("守卫｜SquadAgentsPage 走响亮取数通路，三个写动作齐全，�
     assert.ok(page.includes(call), `页面必须接上 ${call}（缺一个就是缺一件功能）`);
   }
   assert.ok(page.includes("requestConfirmation("), "归档必须经确认对话框（破坏性且不可撤销）");
+  // 「问了但不管答案」= 确认戏法：结果必须被消费，未确认时**一个服务调用都不发**。
+  // 变异：把 `!confirmed` 从提前返回里去掉（问了照做）⇒ 本断言红。
+  assert.match(
+    page,
+    /if \(!confirmed \|\| !target\) return;/,
+    "确认结果必须真的被消费（未确认 ⇒ 提前返回，不执行任何服务调用）",
+  );
   assert.ok(
     page.includes('confirmVariant: "destructive"'),
     "归档确认必须是 destructive 变体（文案要说清后果）",
