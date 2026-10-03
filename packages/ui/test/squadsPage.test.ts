@@ -13,7 +13,11 @@ import {
   squadSurfaceViewState,
   type SquadSurfaceViewModelInput,
 } from "../src/squad/squadSurfaceViewModel.js";
-import { canCreateSquad } from "../src/squad/squadsViewModel.js";
+import {
+  canCreateSquad,
+  squadEditLeaderCandidates,
+  squadEditMemberCandidates,
+} from "../src/squad/squadsViewModel.js";
 
 /* 「小队」一级入口（SquadsPage / SquadsList）的用例：**纯逻辑 + 结构守卫**（ui 包没有渲染测试
    设施，这是本项目既定做法，见 squadEntryView.test.ts）。分工：
@@ -109,6 +113,50 @@ test("空候选：没有可派发的协作智能体 ⇒ canCreateSquad 为 false
     teamAgents: [anAgent, { ...anAgent, id: "a2", enabled: false }],
   });
   assert.equal(canCreateSquad(snapshot), dispatchableTeamAgents(snapshot).length > 0);
+});
+
+// ---------- ②b 编辑模式候选：当前队长 / 当前成员即使不可派发也必须在列 ----------
+// 审查（controller）发现的缺口：编辑一支"队长已被停用"或"成员已被归档"的小队时，
+// 若候选只给可派发集合 —— 队长名会显示成空白（表单像是没队长）、被归档的成员**永远无法移除**
+// （归档没有"取消归档"）。修法：编辑模式候选 = 可派发 ∪ 当前成员/队长；**新增**仍只限可派发。
+// 变异：把两个 helper 换成裸 `dispatchableTeamAgents` ⇒ 下面两条用例必红。
+test("编辑候选：当前队长已停用 ⇒ 仍在队长候选里（名字显示得出来），但非成员的停用智能体不进", () => {
+  const disabledLeader = { ...anAgent, id: "a2", enabled: false };
+  const disabledNonMember = { ...anAgent, id: "a3", enabled: false };
+  const snapshot = snapshotWith({ teamAgents: [anAgent, disabledLeader, disabledNonMember] });
+  const squad = { ...aSquad, leaderAgentId: "a2", members: [{ agentId: "a2" }] } as Squad;
+
+  assert.deepEqual(
+    squadEditLeaderCandidates(snapshot, squad).map((agent) => agent.id),
+    ["a2", "a1"],
+    "当前队长在首（可显示/可重选），其余按可派发顺序；非成员的停用智能体不得混进来",
+  );
+});
+
+test("编辑候选：成员已停用 / 已归档 ⇒ 仍在勾选源里（能被移除），非成员的归档智能体不进", () => {
+  const disabledMember = { ...anAgent, id: "a2", enabled: false };
+  const archivedMember = { ...anAgent, id: "a3", archivedAt: 1 };
+  const archivedNonMember = { ...anAgent, id: "a4", archivedAt: 1 };
+  const snapshot = snapshotWith({
+    teamAgents: [anAgent, disabledMember, archivedMember, archivedNonMember],
+  });
+  const squad = {
+    ...aSquad,
+    leaderAgentId: "a1",
+    members: [{ agentId: "a1", role: "leader" }, { agentId: "a2" }, { agentId: "a3" }],
+  } as Squad;
+
+  assert.deepEqual(
+    squadEditMemberCandidates(snapshot, squad).map((agent) => agent.id),
+    ["a1", "a2", "a3"],
+    "当前成员全在列（a1 是队长，由对话框按当前选择过滤）；非成员的归档智能体不得混进来",
+  );
+  // 去重：同一成员只出现一次（可派发集合里已有的不重复追加）。
+  const withDup = squadEditMemberCandidates(snapshot, {
+    ...squad,
+    members: [{ agentId: "a1" }, { agentId: "a1" }, { agentId: "a2" }],
+  } as Squad);
+  assert.equal(new Set(withDup.map((agent) => agent.id)).size, withDup.length);
 });
 
 // ---------- ② 行动作：小队对象走共享的同一函数 ----------
@@ -303,6 +351,12 @@ test("守卫｜SquadsPage 走响亮取数通路，四个服务调用齐全，归
   );
   // 新建置灰判据必须是纯函数 canCreateSquad（页面与列表空态问同一个函数）。
   assert.ok(page.includes("canCreateSquad("), "新建按钮的置灰判据必须走纯函数 canCreateSquad");
+  // 编辑模式的候选必须走两个 helper（当前队长/成员即使不可派发也在列；变异：换回裸
+  // `dispatchableTeamAgents` ⇒ 本断言红，且上面的 ②b 用例也会红）。
+  assert.ok(
+    page.includes("squadEditLeaderCandidates(") && page.includes("squadEditMemberCandidates("),
+    "编辑对话框的候选必须走 squadEditLeaderCandidates / squadEditMemberCandidates",
+  );
   // 测试锚点（后续 e2e 依赖；顺手钉住防被误删）。
   assert.ok(page.includes('data-testid="squads-page"'), "页根 testid 不得改名");
   assert.ok(page.includes('data-testid="squads-create"'), "新建按钮 testid 不得改名");

@@ -24,7 +24,11 @@ import {
   resolveSquadRuntimeService,
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
-import { canCreateSquad } from "./squadsViewModel.js";
+import {
+  canCreateSquad,
+  squadEditLeaderCandidates,
+  squadEditMemberCandidates,
+} from "./squadsViewModel.js";
 
 /* 「小队」一级入口的**完整功能面**（与「智能体」面逐条同形；用户 2026-10-03 裁定：
    入口不藏设置；「UI 功能需要打磨完整，不要缺少东西」）。列表 / 新建 / 编辑 / 启停 / 归档，
@@ -332,13 +336,14 @@ export function SquadsPage({
         />
       ) : null}
 
-      {/* 编辑：队员勾选源给全部可派发的智能体（对话框自己滤掉当前选中的队长）。队员初值 =
-          名册去掉队长（队长由 leaderAgentId 表达；spec §3.3 自动并入）；初值里那些当前不可派发的
-          成员不在勾选源里，但仍在 memberIds 中 ⇒ 提交时保留，不会被这次编辑静默挤掉。 */}
+      {/* 编辑：候选与勾选源走 squadEditLeaderCandidates / squadEditMemberCandidates ——
+          当前队长/成员即使已停用或归档也**在列**（否则队长名显示成空白、成员没法被移除，
+          见 squadsViewModel 的详注）；**新增**仍只限于可派发的智能体。队员初值 =
+          名册去掉队长（队长由 leaderAgentId 表达；spec §3.3 自动并入）。 */}
       {dialog?.kind === "edit" ? (
         <SquadDialog
-          candidates={snapshot ? dispatchableTeamAgents(snapshot) : []}
-          members={snapshot ? dispatchableTeamAgents(snapshot) : []}
+          candidates={snapshot ? squadEditLeaderCandidates(snapshot, dialog.squad) : []}
+          members={snapshot ? squadEditMemberCandidates(snapshot, dialog.squad) : []}
           onClose={() => setDialog(null)}
           onSubmit={submitDialog}
           titleId="squad.squads.editTitle"
