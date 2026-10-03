@@ -660,6 +660,7 @@ const SQUAD_RULES_KEYS = [
   "squad.rules.invalid.cron",
   "squad.rules.invalid.maxFires",
   "squad.rules.configMissing",
+  "squad.rules.noWorkItemsHint",
 ];
 
 test("i18n：squad.rules.* 显式键清单两语齐全，且命名空间里没有清单外的键", () => {
@@ -722,4 +723,29 @@ test("i18n：占位符齐备；kindHint.cron 必须写明「会被拒绝」（�
     (enUS["squad.rules.kindHint.cron"] ?? "").toLowerCase().includes("rejected"),
     "en kindHint.cron must say it is rejected",
   );
+});
+
+/* 守卫（controller 审查发现项）：无工作项时「新建规则」置灰，**且给出可见原因** ——
+   通用 hint 那句「点新建规则选一条工作项」在按钮点不动时是空话。
+   变异：去掉 `workItems.length === 0` 的定向 hint（或去掉按钮的置灰条件）⇒ 本守卫必红。 */
+test("守卫｜无工作项：按钮置灰 + 空态改用定向指引（置灰必须有可见原因）", () => {
+  const section = readSource("squad/WakeRulesSection.tsx");
+  // 必须是**条件句**：`workItems.length === 0 ? 定向指引 : 通用指引` ——
+  // 只断言"两个字符串都在文件里"挡不住「无条件显示定向指引 / 顺序写反」这类变形
+  // （我第一版就是这么写的，实测挡不住一个把 hint 改成无条件拼接的变异）。
+  assert.match(
+    section,
+    /workItems\.length === 0[\s\S]{0,80}?t\("squad\.rules\.noWorkItemsHint"\)/,
+    "无工作项时必须以条件句改用定向指引（不是无条件显示、也不是那句点不动的「点新建规则」）",
+  );
+  // 按钮的禁用条件里必须仍有「无工作项」这一项：置灰的原因与指引文案是同一件事的两半。
+  assert.match(
+    section,
+    /disabled=\{[^}]*workItems\.length === 0[^}]*\}/,
+    "「新建规则」钮必须仍含 `workItems.length === 0` 的禁用条件（无工作项 ⇒ 建不出规则）",
+  );
+  const zh = readSource("i18n/locales/zh-CN.ts");
+  const en = readSource("i18n/locales/en-US.ts");
+  assert.ok(zh.includes('"squad.rules.noWorkItemsHint"'), "zh-CN 缺定向指引文案");
+  assert.ok(en.includes('"squad.rules.noWorkItemsHint"'), "en-US 缺定向指引文案");
 });

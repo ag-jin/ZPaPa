@@ -277,7 +277,14 @@ export function WakeRulesSection({
           {rules.length === 0 ? (
             <div className="flex flex-col gap-1" data-testid="squad-rules-empty">
               <p className="text-ui-base text-foreground">{t("squad.rules.empty")}</p>
-              <p className="text-ui-sm text-foreground-subtlest">{t("squad.rules.emptyHint")}</p>
+              {/* 无工作项时「新建规则」是**置灰**的（规则必须挂在某条工作项上）——此时那句
+                  「点新建规则选一条工作项」是句空话（按钮点不动）：换成定向指引，
+                  置灰的按钮旁边必须能读到**为什么**（本项目一路的既有纪律）。 */}
+              <p className="text-ui-sm text-foreground-subtlest">
+                {workItems.length === 0
+                  ? t("squad.rules.noWorkItemsHint")
+                  : t("squad.rules.emptyHint")}
+              </p>
             </div>
           ) : (
             <ul className={LIST_CLASSNAME} data-testid="squad-rules-list">

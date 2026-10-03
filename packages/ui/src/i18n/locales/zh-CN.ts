@@ -4258,6 +4258,8 @@ const zhCN: Record<string, string> = {
   "squad.rules.empty": "这个项目还没有唤醒规则",
   "squad.rules.emptyHint":
     "规则挂在工作项上：点「新建规则」选一条工作项与触发方式，到点后该工作项的负责人会被自动唤醒。",
+  "squad.rules.noWorkItemsHint":
+    "规则挂在工作项上，而本项目还没有工作项：先到上面的看板建一条，再回来加规则。",
   "squad.rules.create": "新建规则",
   "squad.rules.createTitle": "新建唤醒规则",
   "squad.rules.createHint":

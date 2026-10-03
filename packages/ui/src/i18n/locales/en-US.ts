@@ -4551,6 +4551,8 @@ const enUS: Record<string, string> = {
   "squad.rules.empty": "This project has no wake rules yet",
   "squad.rules.emptyHint":
     "Rules attach to a work item: click “New rule”, pick one and a trigger, and its assignee is woken when the time comes.",
+  "squad.rules.noWorkItemsHint":
+    "Rules attach to a work item, and this project has none yet: create one on the board above first, then come back.",
   "squad.rules.create": "New rule",
   "squad.rules.createTitle": "New wake rule",
   "squad.rules.createHint":
