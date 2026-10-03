@@ -75,10 +75,11 @@ async function resolveBaseBranch(
   const branch = result.stdout.trim();
   if (result.code !== 0 || branch === "") {
     throw new Error(
-      `无法解析 base 分支：在 ${workspacePath} 上执行 git symbolic-ref --short HEAD 失败` +
-        `（exit ${result.code}${result.stderr.trim() ? `: ${result.stderr.trim()}` : ""}）。` +
-        '这通常意味着目录不是 git 仓库、或正处于 detached HEAD。**不猜 "main"**：' +
-        "猜错会把整批成果合到一个与用户预期无关的分支上，且不报错。" +
+      `小队需要一个 git 仓库作为 workspace：在 ${workspacePath} 上解析 base 分支失败` +
+        `（git symbolic-ref --short HEAD 退出码 ${result.code}` +
+        `${result.stderr.trim() ? `：${result.stderr.trim()}` : ""}）。` +
+        "这通常意味着该目录不是 git 仓库、或正处于 detached HEAD。" +
+        '**不猜 "main"**：猜错会把整批成果合到一个与用户预期无关的分支上，且不报错。' +
         "确实要用别的基础分支，请在 deps.baseBranch 里显式给出。",
     );
   }

@@ -430,6 +430,33 @@ const SQUAD_ENTRY_DIR = resolve(
   "../src/settings/squadEntry",
 );
 
+/* ── 接线守卫：**取数失败时三个「新建」仍在（置灰），不是整块消失** ──
+
+   2026-10-03 用户实测：开了实验开关、打开这张卡，只看到「操作失败 + 刷新」，
+   第一反应是「**前端没有 UI 承接操作吗？**」——因为入口原本包在 `snapshot && sections` 里，
+   读失败就把入口一起藏掉了。**「被错误挡住」看起来和「产品没做入口」一模一样**。
+   判据：入口的可见性**不得依赖取数成功**；取数失败时由状态行说明原因、按钮置灰即可。
+   变异验证：把 `disabled={!snapshot}` 改回「包在 snapshot 条件里」⇒ 本用例必红。 */
+test("接线守卫｜三个「新建」入口常驻（无快照⇒置灰），不随取数失败消失", () => {
+  const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
+  assert.equal(
+    (view.match(/disabled=\{!snapshot\}/g) ?? []).length,
+    3,
+    "三个新建入口都要以「无快照 ⇒ 置灰」的形态常驻（少一个就说明又被包回取数条件里了）",
+  );
+  for (const kind of ["teamAgent", "squad", "workItem"]) {
+    assert.equal(
+      (view.match(new RegExp(`setDialog\\("${kind}"\\)`, "g")) ?? []).length,
+      1,
+      `${kind} 入口只该有一处：为错误态另抄一份入口 = 同一语义两处实现`,
+    );
+  }
+  assert.ok(
+    !/snapshot && sections && target \?/.test(view),
+    "三个入口不得再整体包在「快照成功」的条件里（那正是本轮要修的形态）",
+  );
+});
+
 test("组件层：执行只经 executeSquadDiscard（组件里不出现 discardBatch 调用）+ 必须经确认对话框", () => {
   const view = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadMinimalView.tsx"), "utf8");
   assert.ok(

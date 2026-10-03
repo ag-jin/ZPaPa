@@ -236,56 +236,63 @@ export function SquadMinimalView() {
         />
       ) : null}
 
-      {snapshot && sections && target ? (
+      {/* 三个「新建」**始终渲染**（读不通当前 workspace 时**置灰**，而不是整块消失）。
+          2026-10-03 实测教训：用户开了实验开关、打开这张卡，看到的是「操作失败 + 刷新」——
+          因为入口原本包在 `snapshot && sections` 里，**读失败就把入口一起藏掉了** ⇒
+          「被错误挡住」看起来和「产品没做这个入口」一模一样（用户的原话就是「前端没有 UI 承接操作吗？」）。
+          判据：**入口的可见性不得依赖取数成功**；取数失败时由上面的状态行说明原因，按钮置灰即可。 */}
+      {target ? (
         <>
           <SettingsRow
             label={t("settings.experiments.squad.teamAgents")}
             description={
-              sections.teamAgents.empty
+              sections?.teamAgents.empty
                 ? t("settings.experiments.squad.teamAgents.empty")
                 : undefined
             }
             control={
-              <Button size="sm" onClick={() => setDialog("teamAgent")}>
+              <Button size="sm" disabled={!snapshot} onClick={() => setDialog("teamAgent")}>
                 {t("settings.experiments.squad.createTeamAgent")}
               </Button>
             }
             detail={
-              sections.teamAgents.empty ? undefined : (
+              snapshot && sections && !sections.teamAgents.empty ? (
                 <SquadTeamAgentList agents={sections.teamAgents.items} />
-              )
+              ) : undefined
             }
           />
 
           <SettingsRow
             label={t("settings.experiments.squad.squads")}
             description={
-              sections.squads.empty ? t("settings.experiments.squad.squads.empty") : undefined
+              sections?.squads.empty ? t("settings.experiments.squad.squads.empty") : undefined
             }
             control={
-              <Button size="sm" onClick={() => setDialog("squad")}>
+              <Button size="sm" disabled={!snapshot} onClick={() => setDialog("squad")}>
                 {t("settings.experiments.squad.createSquad")}
               </Button>
             }
             detail={
-              sections.squads.empty ? undefined : (
+              snapshot && sections && !sections.squads.empty ? (
                 <SquadList squads={sections.squads.items} snapshot={snapshot} />
-              )
+              ) : undefined
             }
           />
 
           <SettingsRow
             label={t("settings.experiments.squad.workItems")}
             description={
-              sections.workItems.empty ? t("settings.experiments.squad.workItems.empty") : undefined
+              sections?.workItems.empty
+                ? t("settings.experiments.squad.workItems.empty")
+                : undefined
             }
             control={
-              <Button size="sm" onClick={() => setDialog("workItem")}>
+              <Button size="sm" disabled={!snapshot} onClick={() => setDialog("workItem")}>
                 {t("settings.experiments.squad.createWorkItem")}
               </Button>
             }
             detail={
-              sections.workItems.empty ? undefined : (
+              snapshot && sections && !sections.workItems.empty ? (
                 <SquadWorkItemList
                   workItems={sections.workItems.items}
                   snapshot={snapshot}
@@ -296,28 +303,31 @@ export function SquadMinimalView() {
                     setDiscardConfirm(requestSquadDiscard(workItemId));
                   }}
                 />
-              )
+              ) : undefined
             }
           />
 
-          <SettingsRow
-            label={t("settings.experiments.squad.review.title")}
-            description={
-              sections.runs.empty ? t("settings.experiments.squad.review.empty") : undefined
-            }
-            control={null}
-            detail={
-              sections.runs.empty ? undefined : (
-                <SquadRunList
-                  runs={sections.runs.items}
-                  busyRunId={busyRunId}
-                  onReview={(runId, verdict) => {
-                    void review(runId, verdict);
-                  }}
-                />
-              )
-            }
-          />
+          {/* 审查列表没有「新建」入口，只在取数成功后才有内容可渲染。 */}
+          {snapshot && sections ? (
+            <SettingsRow
+              label={t("settings.experiments.squad.review.title")}
+              description={
+                sections.runs.empty ? t("settings.experiments.squad.review.empty") : undefined
+              }
+              control={null}
+              detail={
+                sections.runs.empty ? undefined : (
+                  <SquadRunList
+                    runs={sections.runs.items}
+                    busyRunId={busyRunId}
+                    onReview={(runId, verdict) => {
+                      void review(runId, verdict);
+                    }}
+                  />
+                )
+              }
+            />
+          ) : null}
         </>
       ) : null}
 
