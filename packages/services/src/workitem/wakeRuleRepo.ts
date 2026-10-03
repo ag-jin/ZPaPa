@@ -123,6 +123,12 @@ export interface WakeRuleRepo {
     nextFireAt: number | null,
     fireCount: number,
     pausedReason?: string,
+    /**
+     * **可选**主开关（用户启停，`listReady` 的 `enabled = 1` 条件）：
+     * 省略 = 原样保留（`COALESCE(?, enabled)`），给出才改。既有调用方（闸暂停 / 调度推进）不受影响 ——
+     * 闸暂停只关排期、不动用户开关。
+     */
+    enabled?: boolean,
   ): boolean;
   listByWorkItem(workItemId: string): WakeRule[];
 }
@@ -184,13 +190,22 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
     },
 
     // CAS 必须是单条条件更新并校验 changes：先读后写会与并发派发竞态。
-    casAdvance(id, expectRevision, nextFireAt, fireCount, pausedReason) {
+    casAdvance(id, expectRevision, nextFireAt, fireCount, pausedReason, enabled) {
       const result = db
         .prepare(
-          `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?, revision=revision+1, updated_at=?
+          `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?,
+             enabled=COALESCE(?, enabled), revision=revision+1, updated_at=?
            WHERE id=? AND revision=?`,
         )
-        .run(nextFireAt, fireCount, pausedReason ?? null, Date.now(), id, expectRevision);
+        .run(
+          nextFireAt,
+          fireCount,
+          pausedReason ?? null,
+          enabled === undefined ? null : enabled ? 1 : 0,
+          Date.now(),
+          id,
+          expectRevision,
+        );
       return result.changes === 1;
     },
 

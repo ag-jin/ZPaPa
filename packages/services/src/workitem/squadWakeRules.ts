@@ -45,16 +45,13 @@ import { nextFireAtAfter } from "./wakeSchedule.js";
    - resume 重算后**没有未来排期点** ⇒ **响亮抛且不写盘**（死动作：恢复一条永不触发的规则，
      用户会以为它又开始跑了；与 create 的「建成即不触发」同一条理由）。
 
-   **「用户暂停」的落库口径（有意偏离 brief 字面，登记如下）**：brief 写的是
-   `pause ⇒ {pausedReason: <固定码/文案>, nextFireAt: null}`，但 `pausedReason` 的读回是**封闭枚举**
-   校验（`wakeRuleRepo.enumColumn`，枚举外值**读回即抛**，见 wakeRuleRepo.test.ts 的契约违例用例）：
-   集合只有 `max_fires | rate | loop` 三个**防失控闸**的码，没有「用户手动暂停」这一码
-   （shared 本轮冻结、不可加值；写了枚举外值会让该行**读不回来** —— `get` / `listReady` 全抛，
-   调度器整批扫描都会炸）。故本实现**不伪造**任何一种闸原因：pause 只置空 `nextFireAt`
-   （`pausedReason` 原样保留 —— 原来有闸原因的保留，本来就是用户的则仍为空），
-   真实语义是「不再到点 = 停下来了」。恢复时**清 `pausedReason`**（这正是闸暂停（`rate` 等）
-   「等窗口滑过 / 人工恢复」的复位路径）。登记：下一轮若要区分「手动暂停」与「闸暂停」，
-   需要给 shared 的 `WAKE_PAUSE_REASONS` 加一码（如 `manual`），届时 pause 补写该码。 */
+   **「用户暂停」的落库口径（审查收口，2026-10-03）**：实体自己有**用户启停**字段 ——
+   `WakeRule.enabled`（schema 默认 true，`listReady` 的 `enabled = 1` 条件真正消费它）。
+   故 pause = **关主开关 `enabled=false` + 清排期 `nextFireAt=null`**；resume = **开开关 + 重算排期**。
+   为什么不写 `pausedReason`：那是**闸暂停**的专列（封闭枚举 `max_fires | rate | loop`，写枚举外值
+   会让该行读不回来、调度器整批扫描炸掉；写闸的码 = 伪造闸原因）。两件事由此可分辨：
+   「我停的」= `enabled=false`；「被闸停的」= `enabled=true` + `pausedReason` 有值 + 排期空。
+   恢复都走 resume（闸暂停时它会清原因并重排 —— 即「人工复位」）。 */
 
 /**
  * 建一条唤醒规则的入参（**加法**，P2b 第二半）。形状覆盖 `wakeRuleSchema` 的必填与互斥所需的字段，
@@ -286,13 +283,19 @@ export function createWakeRuleOps(
             "静默 no-op 会让界面以为它已经停下来了，而到点扫描仍会命中它。",
         );
       }
-      if (rule.nextFireAt === undefined) return; // 幂等：目标状态（不再到点）已达成。
+      // 幂等：主开关已关（目标状态「停下来」已达成）⇒ 不写盘、不 bump revision。
+      if (!rule.enabled) return;
+      /* **关主开关 + 清排期**：`enabled` 是**用户启停**（`listReady` 的 `enabled = 1` 条件），
+         语义与「闸暂停」（`pausedReason` + 清排期、开关不动）分开 —— 于是界面上「我停的」与
+         「被闸停的」是两件可分辨的事，各自带各自的复位路径（resume / 等窗口滑过或 resume）。
+         `pausedReason` 原样保留（不伪造闸原因：那是封闭枚举，写码 = 假数据）。 */
       const ok = runtime.wakeRuleRepo.casAdvance(
         rule.id,
         rule.revision,
         null,
         rule.fireCount,
         rule.pausedReason,
+        false,
       );
       if (!ok) throw casMissError("暂停", rule.id, rule.revision);
     },
@@ -313,7 +316,9 @@ export function createWakeRuleOps(
             "静默 no-op 会让界面以为它又开始跑了。",
         );
       }
-      if (rule.nextFireAt !== undefined) return; // 幂等：已在排期（目标是「在跑」，已达成）。
+      // 幂等：开关开着**且**已在排期（目标状态「在跑」已达成）⇒ 不写盘、更不重算
+      // （重算会把一条在跑的规则挪到新的网格轴上，静默改日程比报错更坏）。
+      if (rule.enabled && rule.nextFireAt !== undefined) return;
       const now = Date.now();
       const nextFireAt = initialNextFireAt(rule, now);
       if (nextFireAt === null) {
@@ -327,7 +332,8 @@ export function createWakeRuleOps(
         rule.revision,
         nextFireAt,
         rule.fireCount,
-        undefined,
+        undefined, // 清 pausedReason（闸暂停的复位路径；`undefined ⇒ null`）
+        true,
       );
       if (!ok) throw casMissError("恢复", rule.id, rule.revision);
     },

@@ -265,6 +265,30 @@ test("pause：排期点清空、listReady 不再命中、幂等可重放（pause
   );
 });
 
+test("启停：用户暂停关主开关（与闸暂停可分辨）、恢复开回来 + 重排", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  const runtime = await createRuntime(WS);
+
+  await squadRuntimeService.pauseWakeRule(WS, { id: created.id });
+  const paused = runtime.wakeRuleRepo.get(created.id)!;
+  assert.equal(paused.enabled, false, "用户暂停 = 关主开关（listReady 的 enabled = 1 条件）");
+  assert.equal(paused.pausedReason, undefined, "用户暂停不写闸原因（两件事可分辨）");
+  assert.deepEqual(runtime.wakeRuleRepo.listReady(FAR_FUTURE, 100), []);
+
+  await squadRuntimeService.resumeWakeRule(WS, { id: created.id });
+  const resumed = runtime.wakeRuleRepo.get(created.id)!;
+  assert.equal(resumed.enabled, true, "恢复 = 开回主开关");
+  const nextFireAt = resumed.nextFireAt;
+  assert.ok(typeof nextFireAt === "number", "恢复必须重算排期");
+  assert.deepEqual(
+    runtime.wakeRuleRepo.listReady(nextFireAt, 100).map((rule) => rule.id),
+    [created.id],
+    "恢复后重新被到点扫描命中",
+  );
+});
+
 test("resume：清 pausedReason + 重算为未来排期 + 重新被 listReady 命中", async () => {
   const { squadRuntimeService, createRuntime } = await makeService();
   const item = await makeWorkItem(squadRuntimeService);
@@ -285,6 +309,7 @@ test("resume：清 pausedReason + 重算为未来排期 + 重新被 listReady �
 
   const resumed = runtime.wakeRuleRepo.get(created.id)!;
   assert.equal(resumed.pausedReason, undefined, "恢复必须清 pausedReason（闸原因的复位路径）");
+  assert.equal(resumed.enabled, true, "恢复 = 开主开关（用户启停）");
   const nextFireAt = resumed.nextFireAt;
   assert.ok(
     typeof nextFireAt === "number" &&
