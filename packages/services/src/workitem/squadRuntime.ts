@@ -92,7 +92,7 @@ async function resolveBaseBranch(
        · 随后 `discardIntegration` 因「集成分支正被检出」而**删不掉** ⇒ 整批**静默收不了尾**；
        · 而这一批的 `merged` 队员分支已不在活跃集，会被启动回收器当孤儿删掉（丢成果风险）。
      故小队命名空间的分支**一律不得当 base**：改用「本仓库**唯一**的非小队分支」（候选不唯一就抛，
-     不猜名字 —— 与 `resolveSquadWorkspaceBinding` 同一口径）。HEAD 是普通分支时行为完全不变。 */
+     不猜名字 —— 与启动维护那侧的「不猜目标」同一口径）。HEAD 是普通分支时行为完全不变。 */
   if (isSquadNamespaceBranch(branch)) {
     const candidates = (await listLocalBranchNames(git, workspacePath)).filter(
       (name) => !isSquadNamespaceBranch(name),

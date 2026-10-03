@@ -1,42 +1,53 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveSquadWorkspaceBinding } from "../src/host/squadWorkspaceBinding.js";
+import { listSquadWorkspaceTargets } from "../src/host/squadWorkspaceBinding.js";
 
-/* 小队运行时的 workspace 绑定：**显式，且不许静默取首个**（裁定 4 / 确认 3）。
+/* 启动维护的**逐候选**目标（2026-10-03 改）。
 
-   为什么这一层的用例必须存在：启动回收会**删分支与工作树**，而它需要一个唯一目标；
-   目标在启动路径上只以「候选」的形式出现。挑错的表现是「在一个没有小队的仓库上动手」，
-   两边都不报错 —— 这类静默错选只有把三条路径钉成断言才拦得住。 */
+   原来这里测的是 `resolveSquadWorkspaceBinding`「候选多于一个 ⇒ 抛」——那条语义已被删掉：
+   用户真机实测（最近 workspace 三个）触发「三步全部 skip ⇒ 启动维护从来没跑过」。
+   改成逐候选后，要钉的是**别的东西**：
+   1. 没有候选 ⇒ **返回空表**（调用方据此记 info 并跳过，不是失败）；
+   2. 多个候选 ⇒ **全都保留、且按入参原序**（顺序即预热名单的顺序，不得被打乱）；
+   3. 同一对 (path, identity) 重复 ⇒ **只处理一次**；
+   4. 返回的是**副本**：调用方对候选数组元素的就地修改不得改变已解析的结论。 */
 
-test("唯一候选 ⇒ 绑定它", () => {
+test("没有候选 ⇒ 空表（跳过由调用方记 info，不是抛）", () => {
+  assert.deepEqual(listSquadWorkspaceTargets([]), []);
+});
+
+test("多个候选 ⇒ 全部保留且保持原序", () => {
+  assert.deepEqual(
+    listSquadWorkspaceTargets([
+      { path: "/ws/b", identity: "b" },
+      { path: "/ws/a", identity: "a" },
+      { path: "/ws/c", identity: "c" },
+    ]),
+    [
+      { path: "/ws/b", identity: "b" },
+      { path: "/ws/a", identity: "a" },
+      { path: "/ws/c", identity: "c" },
+    ],
+  );
+});
+
+test("同一对 (path, identity) 重复 ⇒ 只处理一次；同 path 不同 identity 是**两个**目标", () => {
+  assert.deepEqual(
+    listSquadWorkspaceTargets([
+      { path: "/ws/a", identity: "a" },
+      { path: "/ws/a", identity: "a" },
+      { path: "/ws/a", identity: "a@remote" },
+    ]),
+    [
+      { path: "/ws/a", identity: "a" },
+      { path: "/ws/a", identity: "a@remote" },
+    ],
+  );
+});
+
+test("返回的是副本（就地改候选元素不得改变结论）", () => {
   const only = { path: "/ws/a", identity: "a" };
-  assert.deepEqual(resolveSquadWorkspaceBinding([only]), only);
-  // 返回的是**副本**：后续对候选数组元素的就地修改不得改变已解析的结论。
+  const resolved = listSquadWorkspaceTargets([only]);
   only.identity = "changed";
-  assert.deepEqual(resolveSquadWorkspaceBinding([{ path: "/ws/a", identity: "a" }]), {
-    path: "/ws/a",
-    identity: "a",
-  });
-});
-
-test("没有候选 ⇒ 抛（不返回一个空目标）", () => {
-  assert.throws(() => resolveSquadWorkspaceBinding([]), /没有候选/);
-});
-
-test("多候选 ⇒ 抛，且**列出全部候选**（不许静默挑一个）", () => {
-  const error = (() => {
-    try {
-      resolveSquadWorkspaceBinding([
-        { path: "/ws/a", identity: "a" },
-        { path: "/ws/b", identity: "b" },
-      ]);
-      return null;
-    } catch (caught: unknown) {
-      return caught;
-    }
-  })();
-  assert.ok(error instanceof Error, "多候选必须抛");
-  // 文案里两侧都要有：只报「有多少个」而不报「是哪几个」，收错误的人无从选择。
-  assert.match(error.message, /a\(\/ws\/a\)/);
-  assert.match(error.message, /b\(\/ws\/b\)/);
+  assert.deepEqual(resolved, [{ path: "/ws/a", identity: "a" }]);
 });

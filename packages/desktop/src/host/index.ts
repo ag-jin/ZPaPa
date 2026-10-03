@@ -87,15 +87,12 @@ import {
   type SquadDispatchKind,
   type SquadMemberRunTerminalOutcome,
 } from "./squadDispatch.js";
-import { resolveSquadWorkspaceBinding } from "./squadWorkspaceBinding.js";
+import { listSquadWorkspaceTargets } from "./squadWorkspaceBinding.js";
 import {
   assertBoundSessionDispatchable,
   resolveOffPeakDispatchKind,
 } from "./offPeakDispatchPlan.js";
-import {
-  BoundSessionBusyError,
-  createBoundSessionExecutingProbe,
-} from "./boundSessionBusyGate.js";
+import { BoundSessionBusyError, createBoundSessionExecutingProbe } from "./boundSessionBusyGate.js";
 import {
   HostMessageTypes,
   HostResponseTypes,
@@ -175,6 +172,7 @@ import {
   type WindowRemoteConnectionCloseEvent,
   type WindowRemoteConnectionHandle,
 } from "./windowRemoteConnectionRegistry.js";
+import { resolveRemoteControllerSource } from "./windowRemoteControllerSource.js";
 import { createWindowHostControllerRuntime } from "./windowHostControllerService.js";
 import { resolveAutomationSubmissionModelSelection } from "./automationModelSelection.js";
 import { createRemoteConnectionProgressContext } from "@zcode/server/remote/remoteConnectionProgressContext.js";
@@ -817,38 +815,29 @@ let squadStartupRecoveryStarted = false;
  * 为什么失败只记日志、不阻断启动：一次回收失败不该让整个 Host 起不来（用户还有别的活要干）；
  * 但**必须**带原文 warn —— 静默吞掉会让「孤儿没收掉」和「本来就没有孤儿」长得一模一样。
  *
- * 为什么候选多于一个时只记日志：本期只支持单 workspace（多 workspace 属 P2c）。
- * `resolveSquadWorkspaceBinding` 会**列出候选**后抛，这里把它当一次**响亮**的「本次不回收」处理，
- * 而不是挑一个动手 —— 回收会删分支，挑错的代价是删别人仓库里的东西。
+ * 逐候选执行（2026-10-03 改）：每个候选只在自己的仓库作用域里回收 —— 走 `squad/member/**` 与
+ * `<target>/.worktree/`，所以「候选多于一个」不再需要跳过（也不再存在「挑错仓库」那种风险）。
  */
 async function reapStartupOrphansBestEffort(
   services: ServiceCollection | null,
   candidates: ReadonlyArray<{ path: string; identity: string }>,
 ): Promise<void> {
-  let target: { path: string; identity: string };
-  try {
-    target = resolveSquadWorkspaceBinding(candidates);
-  } catch (error) {
-    logger.warn(
-      "[squad] startup reap skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
-      error,
-    );
-    return;
-  }
-  try {
-    // 服务可能没有注册（例如不是桌面的本机权威装配）：这不是错误，是没有小队域可回收。
-    const squadRuntime = services?.getOptional(ISquadRuntimeService);
-    if (!squadRuntime) return;
-    const outcome = await squadRuntime.reapStartupOrphans(target);
-    logger.info(
-      `[squad] startup reap done reclaimed=${outcome.reclaimed.length}` +
-        ` branches=${outcome.reclaimedBranches.length} kept=${outcome.kept.length}` +
-        ` foreign=${outcome.foreign.length}`,
-    );
-  } catch (error) {
-    // 响亮（带原文）：best-effort 不等于静默。
-    logger.warn("[squad] startup reap failed", error);
-  }
+  await forEachSquadWorkspaceTarget(candidates, "reap", async (target) => {
+    try {
+      // 服务可能没有注册（例如不是桌面的本机权威装配）：这不是错误，是没有小队域可回收。
+      const squadRuntime = services?.getOptional(ISquadRuntimeService);
+      if (!squadRuntime) return;
+      const outcome = await squadRuntime.reapStartupOrphans(target);
+      logger.info(
+        `[squad] startup reap done reclaimed=${outcome.reclaimed.length}` +
+          ` branches=${outcome.reclaimedBranches.length} kept=${outcome.kept.length}` +
+          ` foreign=${outcome.foreign.length}`,
+      );
+    } catch (error) {
+      // 响亮（带原文）：best-effort 不等于静默。
+      logger.warn(`[squad] startup reap failed workspace=${target.path}`, error);
+    }
+  });
 }
 
 /**
@@ -869,63 +858,90 @@ async function settleStaleLeaderRunsBestEffort(
   services: ServiceCollection | null,
   candidates: ReadonlyArray<{ path: string; identity: string }>,
 ): Promise<void> {
-  let target: { path: string; identity: string };
-  try {
-    target = resolveSquadWorkspaceBinding(candidates);
-  } catch (error) {
-    logger.warn(
-      "[squad] startup leader-run reconciliation skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
-      error,
-    );
+  await forEachSquadWorkspaceTarget(candidates, "leader-run reconciliation", async (target) => {
+    try {
+      const squadRuntime = services?.getOptional(ISquadRuntimeService);
+      if (!squadRuntime) return;
+      const agentService = services?.getOptional(IZCodeAgentService);
+      if (!agentService) {
+        // 没有强探测就读不出「哪条会话还在跑」⇒ 判据不可得。**不猜**：这和解**不执行**，但要留痕。
+        logger.warn(
+          "[squad] startup leader-run reconciliation skipped: code agent service 未注册，无法探测会话存活",
+        );
+        return;
+      }
+      const snapshot = await squadRuntime.getSnapshot(target);
+      const leaderRuns = snapshot.runs.filter((run) => run.isLeaderTask);
+      if (leaderRuns.length === 0) return;
+      const probe = createBoundSessionExecutingProbe({
+        agentService,
+        logWarn: (message, error) => logger.warn(message, error),
+      });
+      const executingSessionIds = new Set<string>();
+      for (const run of leaderRuns) {
+        if (run.sessionId === null) continue; // 未绑会话：判据里按「没有东西会推进它」处理，不必探。
+        const executing = await probe({
+          sessionId: run.sessionId,
+          workspacePath: run.workspacePath,
+        });
+        if (executing) executingSessionIds.add(run.sessionId);
+      }
+      const stale = selectStaleLeaderRuns({ activeRuns: leaderRuns, executingSessionIds });
+      for (const runId of stale) {
+        /* 失败只 warn（best-effort）但**逐条**记：一条收不掉的行会把那个工作项的后续指派永久吃掉，
+         所以「哪条没收掉」必须能从日志里读出来。 */
+        try {
+          await squadRuntime.failMemberRun(target, {
+            runId,
+            reason:
+              "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）",
+          });
+        } catch (error) {
+          logger.warn(`[squad] startup leader-run reconciliation failed for run=${runId}`, error);
+        }
+      }
+      logger.info(
+        `[squad] startup leader-run reconciliation done active=${leaderRuns.length}` +
+          ` executing=${executingSessionIds.size} settled=${stale.length}`,
+      );
+    } catch (error) {
+      // 响亮（带原文）：best-effort 不等于静默。
+      logger.warn(
+        `[squad] startup leader-run reconciliation failed workspace=${target.path}`,
+        error,
+      );
+    }
+  });
+}
+
+/**
+ * 启动维护步骤的**逐候选**执行器（2026-10-03 改：不再要求「候选恰好一个」）。
+ *
+ * 为什么改：这三步原本都先要求唯一目标 ⇒ 「最近 workspace 多于一个」的用户那里**三步全部 skip**，
+ * 启动维护**从来没跑过**（2026-10-03 用户真机实测到）。为什么逐候选不会重现「挑错仓库」：
+ * 每一步都只在**目标自己的**作用域里动手（`<target>/.worktree/` + `squad/member/**` / 该 workspace 的台账行）——
+ * 见 `listSquadWorkspaceTargets` 的注释。
+ *
+ * 为什么没有候选只记 info、不报警：没有候选就是没有小队域要维护，不是失败。
+ * 为什么逐条 try/catch：一个仓库的问题（git 报错 / 权限）不该让**别的**仓库的维护整批不做；
+ * 但**不许静默** —— 每条失败都带 workspace 路径响亮记一行。
+ */
+async function forEachSquadWorkspaceTarget(
+  candidates: ReadonlyArray<{ path: string; identity: string }>,
+  step: string,
+  run: (target: { path: string; identity: string }) => Promise<void>,
+): Promise<void> {
+  const targets = listSquadWorkspaceTargets(candidates);
+  if (targets.length === 0) {
+    logger.info(`[squad] startup ${step}: 没有 workspace 候选，跳过`);
     return;
   }
-  try {
-    const squadRuntime = services?.getOptional(ISquadRuntimeService);
-    if (!squadRuntime) return;
-    const agentService = services?.getOptional(IZCodeAgentService);
-    if (!agentService) {
-      // 没有强探测就读不出「哪条会话还在跑」⇒ 判据不可得。**不猜**：这和解**不执行**，但要留痕。
-      logger.warn(
-        "[squad] startup leader-run reconciliation skipped: code agent service 未注册，无法探测会话存活",
-      );
-      return;
+  for (const target of targets) {
+    try {
+      await run(target);
+    } catch (error) {
+      logger.warn(`[squad] startup ${step} failed workspace=${target.path}`, error);
     }
-    const snapshot = await squadRuntime.getSnapshot(target);
-    const leaderRuns = snapshot.runs.filter((run) => run.isLeaderTask);
-    if (leaderRuns.length === 0) return;
-    const probe = createBoundSessionExecutingProbe({
-      agentService,
-      logWarn: (message, error) => logger.warn(message, error),
-    });
-    const executingSessionIds = new Set<string>();
-    for (const run of leaderRuns) {
-      if (run.sessionId === null) continue; // 未绑会话：判据里按「没有东西会推进它」处理，不必探。
-      const executing = await probe({
-        sessionId: run.sessionId,
-        workspacePath: run.workspacePath,
-      });
-      if (executing) executingSessionIds.add(run.sessionId);
-    }
-    const stale = selectStaleLeaderRuns({ activeRuns: leaderRuns, executingSessionIds });
-    for (const runId of stale) {
-      /* 失败只 warn（best-effort）但**逐条**记：一条收不掉的行会把那个工作项的后续指派永久吃掉，
-         所以「哪条没收掉」必须能从日志里读出来。 */
-      try {
-        await squadRuntime.failMemberRun(target, {
-          runId,
-          reason: "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）",
-        });
-      } catch (error) {
-        logger.warn(`[squad] startup leader-run reconciliation failed for run=${runId}`, error);
-      }
-    }
-    logger.info(
-      `[squad] startup leader-run reconciliation done active=${leaderRuns.length}` +
-        ` executing=${executingSessionIds.size} settled=${stale.length}`,
-    );
-  } catch (error) {
-    // 响亮（带原文）：best-effort 不等于静默。
-    logger.warn("[squad] startup leader-run reconciliation failed", error);
   }
 }
 
@@ -947,35 +963,27 @@ async function replayUnfinalizedBatchesBestEffort(
   services: ServiceCollection | null,
   candidates: ReadonlyArray<{ path: string; identity: string }>,
 ): Promise<void> {
-  let target: { path: string; identity: string };
-  try {
-    target = resolveSquadWorkspaceBinding(candidates);
-  } catch (error) {
-    logger.warn(
-      "[squad] startup batch replay skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
-      error,
-    );
-    return;
-  }
-  try {
-    const squadRuntime = services?.getOptional(ISquadRuntimeService);
-    if (!squadRuntime) return;
-    const outcome = await squadRuntime.replayUnfinalizedBatches(target);
-    for (const failure of outcome.failures) {
-      // 逐条 error 带**原错误对象**：一次注定失败的调用若只留个计数，事后无从下手。
-      logger.error(
-        `[squad] startup batch replay failed parent=${failure.parentWorkItemId}`,
-        failure.error,
+  await forEachSquadWorkspaceTarget(candidates, "batch replay", async (target) => {
+    try {
+      const squadRuntime = services?.getOptional(ISquadRuntimeService);
+      if (!squadRuntime) return;
+      const outcome = await squadRuntime.replayUnfinalizedBatches(target);
+      for (const failure of outcome.failures) {
+        // 逐条 error 带**原错误对象**：一次注定失败的调用若只留个计数，事后无从下手。
+        logger.error(
+          `[squad] startup batch replay failed parent=${failure.parentWorkItemId}`,
+          failure.error,
+        );
+      }
+      logger.info(
+        `[squad] startup batch replay done replayed=${outcome.replayed.length}` +
+          ` failed=${outcome.failures.length}`,
       );
+    } catch (error) {
+      // 响亮（带原文）：best-effort 不等于静默。
+      logger.warn(`[squad] startup batch replay failed workspace=${target.path}`, error);
     }
-    logger.info(
-      `[squad] startup batch replay done replayed=${outcome.replayed.length}` +
-        ` failed=${outcome.failures.length}`,
-    );
-  } catch (error) {
-    // 响亮（带原文）：best-effort 不等于静默。
-    logger.warn("[squad] startup batch replay failed", error);
-  }
+  });
 }
 
 /**
@@ -2092,6 +2100,45 @@ async function createWindowRemoteConnectionHandle(params: {
   };
 }
 
+/**
+ * 该 logical session 绑定过的全部 workspace（列表形态，含当前绑定）。
+ *
+ * 一台设备可被投射多个项目，所以断开与释放必须按列表逐项收口 —— 只收口"当前绑定"
+ * 会让先前项目的 Controller source 留在投影里假装在线。结构类型声明是为了不导出
+ * registry 内部的快照类型。
+ */
+function remoteWorkspaceContextsOf(
+  session: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    boundWorkspaces?: Array<{ workspacePath: string; workspaceIdentity?: string }>;
+  } | null,
+): Array<{ workspacePath: string; workspaceIdentity: string }> {
+  if (!session) {
+    return [];
+  }
+  const contexts = session.boundWorkspaces?.length
+    ? session.boundWorkspaces
+    : [{ workspacePath: session.workspacePath, workspaceIdentity: session.workspaceIdentity }];
+  const seen = new Set<string>();
+  const result: Array<{ workspacePath: string; workspaceIdentity: string }> = [];
+  for (const context of contexts) {
+    if (!context.workspacePath || !context.workspaceIdentity) {
+      continue;
+    }
+    const key = `${context.workspaceIdentity}\u0000${context.workspacePath}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push({
+      workspacePath: context.workspacePath,
+      workspaceIdentity: context.workspaceIdentity,
+    });
+  }
+  return result;
+}
+
 const windowRemoteConnectionRegistry = createWindowRemoteConnectionRegistry<
   ServiceCollection,
   HostRemoteConnectionCapabilities
@@ -2118,13 +2165,16 @@ const windowRemoteConnectionRegistry = createWindowRemoteConnectionRegistry<
     // logical session 已离线时 attachment 仍持有旧 services/订阅；后续 sessionId
     // 换代只释放 transport，无法按旧 ID 找回这些端口。Host 在失效源头统一关闭所有 clientMode。
     windowHostAttachmentRegistry.detachRemoteSessionAttachments(event.remoteSessionId);
-    const session = windowRemoteConnectionRegistry.getSession(event.remoteSessionId);
-    if (session?.workspacePath && session.workspaceIdentity) {
+    // 该设备投射过的每个项目都要收口成离线（Disconnected Projection：条目灰显保留），
+    // 只收口当前绑定项目会让先前项目的 source 留在投影里假装在线。
+    for (const context of remoteWorkspaceContextsOf(
+      windowRemoteConnectionRegistry.getSession(event.remoteSessionId),
+    )) {
       windowHostControllerRuntime.disconnectSource({
         kind: "remote",
         remoteSessionId: event.remoteSessionId,
-        workspacePath: session.workspacePath,
-        workspaceIdentity: session.workspaceIdentity,
+        workspacePath: context.workspacePath,
+        workspaceIdentity: context.workspaceIdentity,
       });
     }
     parentPort?.postMessage({
@@ -2148,24 +2198,12 @@ const windowHostControllerRuntime = createWindowHostControllerRuntime({
     );
   },
   resolveSource: (scope) => {
-    const remoteSession = windowRemoteConnectionRegistry.findSessionForWorkspace(scope);
-    if (remoteSession?.workspacePath && remoteSession.workspaceIdentity) {
-      const controllerScope = {
-        kind: "remote" as const,
-        remoteSessionId: remoteSession.remoteSessionId,
-        workspacePath: remoteSession.workspacePath,
-        workspaceIdentity: remoteSession.workspaceIdentity,
-      };
-      if (remoteSession.sourceAvailability !== "online") {
-        return { scope: controllerScope, sourceAvailability: "offline" as const };
-      }
-      const services = windowRemoteConnectionRegistry.resolveScopedServices(controllerScope);
-      return {
-        scope: controllerScope,
-        taskService: services.get(IZCodeTaskService),
-        agentService: services.getOptional(IZCodeAgentService),
-        sourceAvailability: "online" as const,
-      };
+    const remoteSource = resolveRemoteControllerSource({
+      scope,
+      registry: windowRemoteConnectionRegistry,
+    });
+    if (remoteSource) {
+      return remoteSource;
     }
     // 远程 history scope 未连接或已被移除时，绝不能落回本地 tasks-index。
     if (scope.workspaceIdentity && isRemoteWorkspaceIdentity(scope.workspaceIdentity)) {
@@ -2204,8 +2242,7 @@ const windowHostControllerRuntime = createWindowHostControllerRuntime({
       workspacePath: remoteSession.workspacePath,
       workspaceIdentity: remoteSession.workspaceIdentity,
     };
-    const capabilities =
-      windowRemoteConnectionRegistry.resolveScopedCapabilities(controllerScope);
+    const capabilities = windowRemoteConnectionRegistry.resolveScopedCapabilities(controllerScope);
     if (!capabilities?.openTcpTunnel) {
       return null;
     }
@@ -3037,9 +3074,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
          接住之后既有成功终态的解绑，也有失败路径的解绑。**两种 run 共用这一个闭包** —— 终态规则
          （认轮 / 解绑 / 失败出口）一模一样，只有「成功入账」按 kind 分叉（见下面的两个 watch* 调用）。 */
       const subscribeTerminal = (listener: (outcome: SquadMemberRunTerminalOutcome) => void) => {
-        const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((
-          outcome,
-        ) => {
+        const disposable = zcodeTaskService.onDynamicTaskTerminalOutcome(task.taskId)((outcome) => {
           // 本次派发的终态一到就解绑（含 failed/stopped —— 那也是一次「有信号」的收官）：
           // 不只在失败路径解绑，正常收官同样不该把监听留到进程退出。
           if (outcome.inputId === traceId) {
@@ -3141,10 +3176,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           );
         } else if (ledgerRowRegistered) {
           // 理论上不会到这（登记过就一定有台账行）：留一条，免得将来这两处判据漂移时变成静默。
-          logger.error(
-            `[squad] run 台账行缺失、无法收口 runId=${eventKey} ${triggerLabel}`,
-            error,
-          );
+          logger.error(`[squad] run 台账行缺失、无法收口 runId=${eventKey} ${triggerLabel}`, error);
         }
       } catch (failError) {
         // 出口没生效 = 这个 run 会一直停在活跃集：必须响亮（带原文），不能静默。
@@ -3174,7 +3206,6 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
     };
   }
-
 }
 
 /**
@@ -3525,28 +3556,40 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         }),
       )
       .then(async (descriptor) => {
-        const replacedOfflineSessions = windowRemoteConnectionRegistry
-          .listSessions()
-          .filter(
-            (session) =>
-              session.remoteSessionId !== descriptor.remoteSessionId &&
-              session.state === "disconnected" &&
-              session.workspacePath === descriptor.workspacePath &&
-              session.workspaceIdentity === descriptor.workspaceIdentity,
-          );
+        const replacedWorkspace =
+          descriptor.workspacePath && descriptor.workspaceIdentity
+            ? {
+                workspacePath: descriptor.workspacePath,
+                workspaceIdentity: descriptor.workspaceIdentity,
+              }
+            : undefined;
+        // 旧 session 的"当前绑定"可能已是另一个项目，所以按**绑定过的全部项目**匹配：
+        // 只要旧 session 绑定过本次要连的这个 workspace，它就是被替换的那一代。
+        const replacedOfflineSessions = replacedWorkspace
+          ? windowRemoteConnectionRegistry
+              .listSessions()
+              .filter(
+                (session) =>
+                  session.remoteSessionId !== descriptor.remoteSessionId &&
+                  session.state === "disconnected" &&
+                  (session.boundWorkspaces ?? []).some(
+                    (context) =>
+                      context.workspacePath === replacedWorkspace.workspacePath &&
+                      context.workspaceIdentity === replacedWorkspace.workspaceIdentity,
+                  ),
+              )
+          : [];
         for (const replaced of replacedOfflineSessions) {
-          if (replaced.workspacePath && replaced.workspaceIdentity) {
+          if (replacedWorkspace) {
             const previousScope = {
               kind: "remote",
               remoteSessionId: replaced.remoteSessionId,
-              workspacePath: replaced.workspacePath,
-              workspaceIdentity: replaced.workspaceIdentity,
+              ...replacedWorkspace,
             } as const;
             const nextScope = {
               kind: "remote",
               remoteSessionId: descriptor.remoteSessionId,
-              workspacePath: replaced.workspacePath,
-              workspaceIdentity: replaced.workspaceIdentity,
+              ...replacedWorkspace,
             } as const;
             try {
               const services = windowRemoteConnectionRegistry.resolveScopedServices(nextScope);
@@ -3560,6 +3603,24 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               // 离线可信投影。Controller 会保留 pending replacement，后续 query 成功后原子替换。
               logger.warn("failed to atomically replace disconnected Controller source", error);
             }
+          }
+          // 旧 session 可能还投射着该设备的其它项目。它已被 dispose，这些 source 不能
+          // 留在投影里假装在线；本次要连的那个 workspace 已由 replaceDisconnectedSource
+          // 原子接手，其余逐项摘除（新 session 绑定/查询到时会重新登记）。
+          for (const context of remoteWorkspaceContextsOf(replaced)) {
+            if (
+              replacedWorkspace &&
+              context.workspacePath === replacedWorkspace.workspacePath &&
+              context.workspaceIdentity === replacedWorkspace.workspaceIdentity
+            ) {
+              continue;
+            }
+            windowHostControllerRuntime.removeSource({
+              kind: "remote",
+              remoteSessionId: replaced.remoteSessionId,
+              workspacePath: context.workspacePath,
+              workspaceIdentity: context.workspaceIdentity,
+            });
           }
           windowHostAttachmentRegistry.detachRemoteSessionAttachments(replaced.remoteSessionId);
           await windowRemoteConnectionRegistry.disposeSession(replaced.remoteSessionId);
@@ -3594,7 +3655,6 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   if (msg.type === HostMessageTypes.BindRemoteWorkspaceContext) {
-    const previous = windowRemoteConnectionRegistry.getSession(msg.remoteSessionId);
     let workspaceReady: Promise<void>;
     try {
       workspaceReady = windowRemoteConnectionRegistry.bindWorkspaceContext({
@@ -3623,14 +3683,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
         error,
       );
     });
-    if (previous?.workspacePath && previous.workspaceIdentity) {
-      windowHostControllerRuntime.removeSource({
-        kind: "remote",
-        remoteSessionId: msg.remoteSessionId,
-        workspacePath: previous.workspacePath,
-        workspaceIdentity: previous.workspaceIdentity,
-      });
-    }
+    // 这里**不**摘除上一个绑定项目的 Controller source：一台设备可被投射多个项目
+    // （Projection Scope），先前绑定的项目仍在用户的投射清单里，切走不等于取消投射。
+    // 摘除会让它的条目从列表消失 —— 那既是"看不到"，也让写操作失去落点。
     logger.info(
       `bound remote workspace context, remoteSessionId=${msg.remoteSessionId}, workspacePath=${msg.workspacePath}`,
     );
@@ -3643,12 +3698,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     void windowRemoteConnectionRegistry
       .disposeSession(msg.remoteSessionId)
       .then(() => {
-        if (disposedSession?.workspacePath && disposedSession.workspaceIdentity) {
+        // session 释放 = 该设备整条连接退出：绑定过的每个项目都要摘除 source，
+        // 只摘当前绑定项目会让先前项目的行留在投影里假装在线。
+        for (const context of remoteWorkspaceContextsOf(disposedSession)) {
           windowHostControllerRuntime.removeSource({
             kind: "remote",
             remoteSessionId: msg.remoteSessionId,
-            workspacePath: disposedSession.workspacePath,
-            workspaceIdentity: disposedSession.workspaceIdentity,
+            workspacePath: context.workspacePath,
+            workspaceIdentity: context.workspaceIdentity,
           });
         }
         parentPort.postMessage({
@@ -3763,7 +3820,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           /* 启动回收（spec §6.4 / §6.6）：**只在 database startup ready 之后**、且**异步**不阻塞 UI
              （回收要起 git 子进程）。孤儿工作树会占住分支名 ⇒ 清理是重派发的正确性前置。
              候选 workspace 取本次启动的预热名单（main 已按最近使用顺序限为 3 个）：恰好一个才回收，
-             否则 `resolveSquadWorkspaceBinding` 列出候选后抛，本处响亮记日志并跳过（多 workspace 属 P2c）。
+             启动维护按**逐候选**执行（见 `forEachSquadWorkspaceTarget`），每个候选只在自己的作用域里动手。
              `void` 它：回收失败不能阻断启动，但内部**会带原文 warn**，不是静默。 */
           if (!squadStartupRecoveryStarted) {
             squadStartupRecoveryStarted = true;
@@ -3774,7 +3831,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                   ? [
                       {
                         workspacePath: msg.workspacePath,
-                        ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+                        ...(msg.workspaceIdentity
+                          ? { workspaceIdentity: msg.workspaceIdentity }
+                          : {}),
                       },
                     ]
                   : []
@@ -3893,7 +3952,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           services,
           log: (message) => logger.info(`[resident-exposure] ${message}`),
           warn: (message, error) =>
-            logger.warn(`[resident-exposure] ${message}`, error instanceof Error ? error : undefined),
+            logger.warn(
+              `[resident-exposure] ${message}`,
+              error instanceof Error ? error : undefined,
+            ),
         });
         const agentWarmupTargets =
           msg.agentWarmupTargets && msg.agentWarmupTargets.length > 0
