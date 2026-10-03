@@ -81,6 +81,7 @@ import {
   decideSquadDispatch,
   isSquadDispatchDisabledError,
   ledgerActionForRunClass,
+  selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
   type SquadDispatchKind,
@@ -847,6 +848,84 @@ async function reapStartupOrphansBestEffort(
   } catch (error) {
     // 响亮（带原文）：best-effort 不等于静默。
     logger.warn("[squad] startup reap failed", error);
+  }
+}
+
+/**
+ * 启动**和解**残留的队长 run（§5.7(1) 的另一面，2026-10-03）—— best-effort 但**绝不静默**。
+ *
+ * 为什么必须有它：队长行的终态由「该 run 的会话终态回调」送入；进程在队长 run 进行中被强杀 / 重启后
+ * 那个回调**永远不会来** ⇒ 行永远停在 `open`；而 §5.7(1) 的合并判据（第 14 轮接上行为、第 15 轮又落到
+ * 存储层）会因此把该工作项的**后续所有指派静默并入** —— 用户看到的是「点了指派没反应」，且是**永久**的。
+ *
+ * 判据见 `selectStaleLeaderRuns`（不在执行的会话 = 没有东西会再推进它；未绑会话的历史行同样如此）。
+ * 收口走**服务面的 `failMemberRun`**（唯一写者；队长行不碰 git、不碰工作项），每一条都记日志 ——
+ * 「收了几条、哪几条」必须能从日志里读出来，否则「和解没跑」与「本来就没有残留」长得一模一样。
+ *
+ * 次序上排在「重驱 → 回收」之后：它只动队长行（无树无枝），与那两步没有共享资源，
+ * 放最后是为了**不遮住**那两步之间「重驱必须先于回收」的既有契约。
+ */
+async function settleStaleLeaderRunsBestEffort(
+  services: ServiceCollection | null,
+  candidates: ReadonlyArray<{ path: string; identity: string }>,
+): Promise<void> {
+  let target: { path: string; identity: string };
+  try {
+    target = resolveSquadWorkspaceBinding(candidates);
+  } catch (error) {
+    logger.warn(
+      "[squad] startup leader-run reconciliation skipped（候选 workspace 不是恰好一个；多 workspace 支持属 P2c）",
+      error,
+    );
+    return;
+  }
+  try {
+    const squadRuntime = services?.getOptional(ISquadRuntimeService);
+    if (!squadRuntime) return;
+    const agentService = services?.getOptional(IZCodeAgentService);
+    if (!agentService) {
+      // 没有强探测就读不出「哪条会话还在跑」⇒ 判据不可得。**不猜**：这和解**不执行**，但要留痕。
+      logger.warn(
+        "[squad] startup leader-run reconciliation skipped: code agent service 未注册，无法探测会话存活",
+      );
+      return;
+    }
+    const snapshot = await squadRuntime.getSnapshot(target);
+    const leaderRuns = snapshot.runs.filter((run) => run.isLeaderTask);
+    if (leaderRuns.length === 0) return;
+    const probe = createBoundSessionExecutingProbe({
+      agentService,
+      logWarn: (message, error) => logger.warn(message, error),
+    });
+    const executingSessionIds = new Set<string>();
+    for (const run of leaderRuns) {
+      if (run.sessionId === null) continue; // 未绑会话：判据里按「没有东西会推进它」处理，不必探。
+      const executing = await probe({
+        sessionId: run.sessionId,
+        workspacePath: run.workspacePath,
+      });
+      if (executing) executingSessionIds.add(run.sessionId);
+    }
+    const stale = selectStaleLeaderRuns({ activeRuns: leaderRuns, executingSessionIds });
+    for (const runId of stale) {
+      /* 失败只 warn（best-effort）但**逐条**记：一条收不掉的行会把那个工作项的后续指派永久吃掉，
+         所以「哪条没收掉」必须能从日志里读出来。 */
+      try {
+        await squadRuntime.failMemberRun(target, {
+          runId,
+          reason: "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）",
+        });
+      } catch (error) {
+        logger.warn(`[squad] startup leader-run reconciliation failed for run=${runId}`, error);
+      }
+    }
+    logger.info(
+      `[squad] startup leader-run reconciliation done active=${leaderRuns.length}` +
+        ` executing=${executingSessionIds.size} settled=${stale.length}`,
+    );
+  } catch (error) {
+    // 响亮（带原文）：best-effort 不等于静默。
+    logger.warn("[squad] startup leader-run reconciliation failed", error);
   }
 }
 
@@ -2904,13 +2983,17 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
       });
     }
-    /* **会话回写台账**（裁定 Important-4）：`openMemberRun` 落台账时还不知道 sessionId（那时会话还没建），
-       于是写 `null`；而上面的忙检查（硬约束 1 的强探测）与「重投复用同一会话」都从台账读 sessionId
-       ⇒ 不回写就**恒为 null**，强探测与 `deferred` 分支在生产里永不可达（代码对、保护为零）。
-       只对**队员** run 回写：队长 run 的台账行已在上面分叉里登记，但本次不补队长的会话绑定
-       （那需要另一条写入口；队长 run 无工作树，忙检查/重投复用对它的收益见报告顾虑）。
+    /* **会话回写台账**（裁定 Important-4）：`openMemberRun` / `recordLeaderRun` 落台账时还不知道
+       sessionId（那时会话还没建），于是写 `null`；而「重投复用同一会话」与**启动和解**
+       （判断一条队长行是否还有东西会把它推向终态）都要从台账读 sessionId ⇒ 不回写就**恒为 null**，
+       那些保护在生产里永不可达（代码对、保护为零）。
+       判据是「**这次派发登记过台账行**」（`ledgerAction !== "none"`），不是按 kind 枚举：
+       单独安排没有行，回写会撞「未命中即抛」；按 kind 枚举则会在多一类带行的 run 时**漏掉回写**
+       （这正是「队长行 sessionId 恒 null」此前存在的原因）。
+       （`bindMemberRunSession` 的「Member」是历史命名：契约上它收的是**这条 run**，队长行的失败出口
+       同样走 `failMemberRun` —— 见两者的 doc 注释。）
        失败只 warn、不阻断本次派发：最坏后果是「下次重投另建一个会话」，而不是这次派发失败。 */
-    if (kind === "member") {
+    if (ledgerAction !== "none") {
       try {
         await squadRuntime.bindMemberRunSession(target, {
           runId: eventKey,
@@ -2918,7 +3001,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         });
       } catch (error) {
         logger.warn(
-          "[squad] member run 会话回写台账失败（下次重投会另建会话；忙检查这一格这次不可达）",
+          "[squad] run 会话回写台账失败（重投会另建会话；忙检查与启动和解这一格这次不可达）",
           error,
         );
       }
@@ -3706,6 +3789,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             void (async () => {
               await replayUnfinalizedBatchesBestEffort(activeServices, candidates);
               await reapStartupOrphansBestEffort(activeServices, candidates);
+              /* 第三步：和解**残留的队长 run**（`open` 卡住的行会把该工作项后续指派永久静默吃掉）。
+                 放最后只为不遮住「重驱必须先于回收」那条既有契约；它只动队长行（无树无枝）。 */
+              await settleStaleLeaderRunsBestEffort(activeServices, candidates);
             })();
           }
         }

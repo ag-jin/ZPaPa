@@ -363,6 +363,40 @@ test("派发桥把「有没有进行中的队长 run」按服务层读法算出�
   );
 });
 
+/* ---- §5.7(1) 的另一面：残留队长行的**启动和解**（否则该工作项的指派被永久静默吃掉）---- */
+
+// 和解的判据是**纯函数**（`selectStaleLeaderRuns`，`hostSquadDispatch.test.ts` 有行为用例）。
+// 这里钉接线：① 台账会话回写必须覆盖队长行（和解要靠它读出「哪条会话」）；② 启动链必须真的调它。
+test("派发桥：台账会话回写覆盖队长行（按「有没有台账行」判，不按 kind 枚举）", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /if \(ledgerAction !== "none"\) \{[\s\S]{0,200}?bindMemberRunSession\(/,
+    "回写必须覆盖队长行 —— 队长行的启动和解要从台账读 sessionId（恒 null 就没法判死活）",
+  );
+  // 反向钉住旧形态：按 `kind === "member"` 枚举会**静默漏掉队长行**，那正是恒 null 的成因。
+  assert.doesNotMatch(
+    branch,
+    /if \(kind === "member"\) \{[\s\S]{0,200}?bindMemberRunSession\(/,
+    "按 kind 枚举会漏掉队长行：将来多一类带台账行的 run 同样会被漏掉",
+  );
+});
+
+test("启动路径调用队长行和解，且排在「重驱 → 回收」之后", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  assert.match(
+    host,
+    /replayUnfinalizedBatchesBestEffort\(activeServices, candidates\);[\s\S]{0,400}?reapStartupOrphansBestEffort\(activeServices, candidates\);[\s\S]{0,400}?settleStaleLeaderRunsBestEffort\(activeServices, candidates\);/,
+    "启动链必须是「重驱 → 回收 → 队长行和解」，且三步都真的被调",
+  );
+  // 收口必须走**服务面的唯一写者**（`failMemberRun`），不得在 host 自造一条状态写路径。
+  assert.match(
+    host,
+    /const stale = selectStaleLeaderRuns\(\{[\s\S]{0,900}?failMemberRun\(target, \{/,
+    "收口要走 failMemberRun（唯一写者）；host 里没有第二种改台账状态的手段",
+  );
+});
+
 /* 「派发时的事实」与「类别**声明**」必须**一起**进规划：类别不再由父项的有无**推断** ——
    那条推断把「调用方漏传父项」与「本项确实不在批次里」合并成同一个 `standalone`，前者是接线缺陷
    却被静默当成后者 ⇒ 队员**直接改主工作区**（§6.1 的隔离承诺静默落空，且不报错）。

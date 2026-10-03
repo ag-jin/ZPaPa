@@ -135,6 +135,33 @@ export function decideSquadDispatch(input: {
 }
 
 /**
+ * 启动**和解**的判据：活跃队长行里，哪些**已经没有东西会把它推向终态**（⇒ 必须收口）。
+ *
+ * 为什么必须有这一步：队长行的终态由「该 run 的会话终态回调」送入。进程在队长 run 进行中被强杀 /
+ * 重启后，**那个回调永远不会来** ⇒ 行永远停在 `open`；而 §5.7(1) 的合并判据（第 14 轮接上行为、
+ * 第 15 轮又落到存储层）会因此把该工作项的**后续所有指派静默并入** —— 用户看到的是
+ * 「点了指派没反应」，而且**永久**如此。静默 + 永久是本项目最忌讳的形态（见台账第 15 轮）。
+ *
+ * 判据 = **不在执行**（`executingSessionIds` 里没有它）。启动时刻这条判据可靠：重启后没有任何
+ * 自动恢复会把队长会话接着跑（`resumeTask` 只在真正要派发时按需冷恢复，见 host 的绑定会话分支）。
+ * **未绑会话的行**（`sessionId === null`：本次改动之前登记的历史行）同样按「没有东西会推进它」处置
+ * —— 启动时刻它们只可能来自上一个进程。
+ *
+ * **只收队长行**：队员行的归宿是它自己的终态回调 + 启动回收器（它有树有枝，规则不同），
+ * 在这里顺手收会绕开「产出必须活到合并」（§6.2 / S5）——那正是回收器按命名空间限域要保护的东西。
+ */
+export function selectStaleLeaderRuns(input: {
+  activeRuns: ReadonlyArray<{ runId: string; isLeaderTask: boolean; sessionId: string | null }>;
+  /** 此刻**真的在执行**的会话 id（host 侧强探测的结论；探测不到的会话不在集合里）。 */
+  executingSessionIds: ReadonlySet<string>;
+}): string[] {
+  return input.activeRuns
+    .filter((run) => run.isLeaderTask)
+    .filter((run) => run.sessionId === null || !input.executingSessionIds.has(run.sessionId))
+    .map((run) => run.runId);
+}
+
+/**
  * 门禁错误按**稳定 code** 判，不按文案（spec §5.7.6：错误码跨进程传到上层后要继续可分流）。
  *
  * 为什么不能匹配 message：文案是给人看的，会随措辞改动漂移；一旦按文案判，

@@ -18,6 +18,7 @@ import {
   decideSquadDispatch,
   isSquadDispatchDisabledError,
   ledgerActionForRunClass,
+  selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
   type SquadMemberRunTerminalOutcome,
@@ -286,6 +287,54 @@ test("队长进行中判据不误伤队员 / 单独安排", () => {
     leaderRunInProgress: true,
   });
   assert.equal(standalone.action, "dispatch", "单独安排不登记台账行，也谈不上「进行中」");
+});
+
+/* ── 启动**和解**的判据（§5.7(1) 的另一面）：哪些残留队长行已经没有东西会把它推向终态 ──
+
+   一条卡在 `open` 的队长行会让该工作项**后续的所有指派被静默并入**（用户看到「点了指派没反应」，
+   而且是永久的）。这四条把「收谁、不收谁」逐格钉死。 */
+test("启动和解：会话不在执行的队长行必须被收（否则该工作项的指派被永久静默吃掉）", () => {
+  assert.deepEqual(
+    selectStaleLeaderRuns({
+      activeRuns: [{ runId: "r-dead", isLeaderTask: true, sessionId: "s-dead" }],
+      executingSessionIds: new Set(["s-live"]),
+    }),
+    ["r-dead"],
+  );
+});
+
+test("启动和解：正在执行的队长行不得被收（那会把一条在跑的 run 判死）", () => {
+  assert.deepEqual(
+    selectStaleLeaderRuns({
+      activeRuns: [{ runId: "r-live", isLeaderTask: true, sessionId: "s-live" }],
+      executingSessionIds: new Set(["s-live"]),
+    }),
+    [],
+  );
+});
+
+test("启动和解：未绑会话的历史行同样收（启动时刻它只可能来自上一个进程）", () => {
+  assert.deepEqual(
+    selectStaleLeaderRuns({
+      activeRuns: [{ runId: "r-unbound", isLeaderTask: true, sessionId: null }],
+      executingSessionIds: new Set(),
+    }),
+    ["r-unbound"],
+  );
+});
+
+test("启动和解只收队长行：队员行（不在执行）不得被这里收掉（有树有枝，规则不同）", () => {
+  assert.deepEqual(
+    selectStaleLeaderRuns({
+      activeRuns: [
+        { runId: "r-mem", isLeaderTask: false, sessionId: "s-gone" },
+        { runId: "r-lead", isLeaderTask: true, sessionId: "s-gone" },
+      ],
+      executingSessionIds: new Set(),
+    }),
+    ["r-lead"],
+    "队员行的归宿是它自己的终态回调 + 启动回收器（§6.2 / S5：产出必须活到合并）",
+  );
 });
 
 // 判定次序本身是契约（brief Step 3 第 7 条自上而下）：
