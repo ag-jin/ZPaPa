@@ -80,6 +80,12 @@ import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useServices } from "@/hooks/useServices.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import {
+  resolveSquadRuntimeService,
+  squadWorkspaceTarget,
+} from "@/squad/squadRuntimeAccess.js";
 import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import type {
@@ -94,6 +100,7 @@ import {
   buildConversationStatusPanelModel,
   resolveAgentSectionRenderable,
   RUNNING_AGENT_AVATAR_MAX_DOTS,
+  mergeRunningSubagentsWithSquadRuns,
   runningAgentAvatarColors,
   type ConversationStatusPanelRunningSubagent,
   type ConversationStatusPanelModel,
@@ -993,9 +1000,9 @@ function buildRunningSubagentOpenRequest({
 }: {
   parentSessionId?: string;
   rootSessionId?: string;
-  subagent: ZCodeSessionRunningSubagent;
+  subagent: ConversationStatusPanelRunningSubagent;
 }): OpenSubagentSideTabRequest | null {
-  if (!parentSessionId) return null;
+  if (!parentSessionId || (subagent.squadRunSessionId === null)) return null;
   return {
     rootSessionId: rootSessionId ?? parentSessionId,
     parentSessionId,
@@ -1832,8 +1839,39 @@ function ConversationStatusPanelImpl({
   /** 小队实验开关（只用于**呈现**：把通往「智能体目录」的门留着 —— 目录里长着「小队运行」）。
       门禁仍是服务层单点，这里不判派发（与侧栏一级入口同一份语义、同一份纯函数）。 */
   const { settings } = useSettings();
+  const services = useServices();
+  const taskListVersion = useZCodeSessionStore((state) =>
+    state.getWorkspaceState(workspacePath, workspaceIdentity).taskListVersion,
+  );
+  const [squadSnapshot, setSquadSnapshot] = useState<import("@zcode/services").SquadSnapshot | null>(null);
+  const squadTarget = useMemo(
+    () => squadWorkspaceTarget(workspacePath, workspaceIdentity),
+    [workspacePath, workspaceIdentity],
+  );
+  useEffect(() => {
+    if (!squadTarget || !squadEntryVisible(settings)) {
+      setSquadSnapshot(null);
+      return;
+    }
+    let cancelled = false;
+    void resolveSquadRuntimeService(services)
+      .getSnapshot(squadTarget)
+      .then((snapshot) => {
+        if (!cancelled) setSquadSnapshot(snapshot);
+      })
+      .catch(() => {
+        // 失败保留旧快照，避免把已有会话 subagent 簇误报为 0。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [services, squadTarget, settings, taskListVersion]);
   const miniMeasureRef = useRef<HTMLDivElement | null>(null);
   const [miniWidth, setMiniWidth] = useState(320);
+  const mergedRunningSubagents = useMemo(
+    () => mergeRunningSubagentsWithSquadRuns(runningSubagents, squadSnapshot, parentSessionId),
+    [parentSessionId, runningSubagents, squadSnapshot],
+  );
   const model = useMemo(
     () =>
       buildConversationStatusPanelModel({
@@ -1846,7 +1884,7 @@ function ConversationStatusPanelImpl({
         workspacePath,
         plan,
         backgroundWorks,
-        runningSubagents,
+        runningSubagents: mergedRunningSubagents,
         workflowRuns,
       }),
     [

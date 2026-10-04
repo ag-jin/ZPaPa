@@ -1,4 +1,5 @@
 import type { AgentColor, GitRepositorySummary } from "@zcode/shared";
+import type { SquadSnapshot } from "@zcode/services";
 import type {
   BackgroundWorkSummary,
   GoalState,
@@ -45,6 +46,49 @@ export interface ConversationStatusPanelSessionPlansModel {
 export interface ConversationStatusPanelRunningSubagent extends RunningSubagentSummary {
   controlWorkId?: string;
   cancellable?: boolean;
+  squadRunSessionId?: string | null;
+}
+
+export interface ConversationStatusPanelSquadRun {
+  runId: string;
+  sessionId: string | null;
+  agentId: string;
+  title: string;
+  startedAt: number;
+}
+
+/**
+ * 将同 workspace 的活跃小队 run 并入当前会话 subagent 头像簇。
+ * sessionId/runId 是唯一事实：当前会话不计入，小队 run 与已有 projection 重叠时只保留一份。
+ */
+export function mergeRunningSubagentsWithSquadRuns(
+  subagents: readonly ConversationStatusPanelRunningSubagent[],
+  snapshot: SquadSnapshot | null | undefined,
+  currentSessionId?: string,
+): ConversationStatusPanelRunningSubagent[] {
+  const merged = [...subagents];
+  const identities = new Set(subagents.map((subagent) => subagent.childSessionId));
+  for (const run of snapshot?.runs ?? []) {
+    if (run.status !== "open" && run.status !== "produced" && run.status !== "rejected") continue;
+    if (currentSessionId && (run.runId === currentSessionId || run.sessionId === currentSessionId)) {
+      continue;
+    }
+    const identity = run.sessionId ?? run.runId;
+    if (identities.has(identity) || identities.has(run.runId)) continue;
+    identities.add(identity);
+    identities.add(run.runId);
+    const agent = snapshot?.teamAgents.find((candidate) => candidate.id === run.agentId);
+    merged.push({
+      agentId: run.agentId,
+      childSessionId: run.sessionId ?? run.runId,
+      squadRunSessionId: run.sessionId,
+      subagentType: "subagent",
+      title: agent?.name ?? run.agentId,
+      status: "running",
+      startedAt: run.createdAt,
+    });
+  }
+  return merged;
 }
 
 /**

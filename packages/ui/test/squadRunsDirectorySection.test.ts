@@ -12,6 +12,7 @@ import {
   resolveAgentSectionRenderable,
   RUNNING_AGENT_AVATAR_MAX_DOTS,
   runningAgentAvatarColors,
+  mergeRunningSubagentsWithSquadRuns,
 } from "../src/v4/conversationStatusPanelModel.js";
 import {
   squadDirectorySectionVisible,
@@ -73,7 +74,31 @@ function snapshotWith(parts: { teamAgents?: TeamAgent[]; runs?: SquadRunRecord[]
   };
 }
 
-// ---------- ① 行投影（全格） ----------
+test("守卫｜会话面板按 taskListVersion 刷新，失败不清空既有快照", () => {
+  const panel = readSource("v4/ConversationStatusPanel.tsx");
+  assert.match(panel, /taskListVersion/);
+  assert.ok(panel.includes("[services, squadTarget, settings, taskListVersion]"));
+  assert.ok(panel.includes("// 失败保留旧快照，避免把已有会话 subagent 簇误报为 0。"));
+});
+
+test("头像簇合并：活跃 run 去重、排除当前会话、无 sessionId 可计数", () => {
+  const base = [{
+    agentId: "a0", childSessionId: "session-existing", subagentType: "subagent", title: "已有", status: "running",
+  }] as never[];
+  const snapshot = snapshotWith({
+    teamAgents: [anAgent],
+    runs: [
+      { ...aMemberRun, runId: "same-run", sessionId: "session-existing" },
+      { ...aMemberRun, runId: "current", sessionId: "current-session" },
+      { ...aMemberRun, runId: "no-session", sessionId: null },
+      { ...aMemberRun, runId: "merged", status: "merged" },
+    ],
+  });
+  const result = mergeRunningSubagentsWithSquadRuns(base, snapshot, "current-session");
+  assert.deepEqual(result.map((item) => item.childSessionId), ["session-existing", "no-session"]);
+  assert.equal(result.length, 2);
+});
+
 
 // 空快照 ⇒ 没有行（空态文案由组件画；这里只证明投影本身不出假行）。
 test("行投影：空快照 ⇒ 空数组", () => {
