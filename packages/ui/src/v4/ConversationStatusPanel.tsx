@@ -39,6 +39,7 @@ import {
   TID_CHAT_SUMMARY_PANEL,
   TID_V4_BACKGROUND_WORK_CANCEL,
   TID_V4_BACKGROUND_WORK_ITEM,
+  isRemoteWorkspaceIdentity,
   testId,
 } from "@zcode/shared";
 import type {
@@ -1849,7 +1850,11 @@ function ConversationStatusPanelImpl({
     [workspacePath, workspaceIdentity],
   );
   useEffect(() => {
-    if (!squadTarget || !squadEntryVisible(settings)) {
+    if (
+      !squadTarget ||
+      (workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim())) ||
+      !squadEntryVisible(settings)
+    ) {
       setSquadSnapshot(null);
       return;
     }
