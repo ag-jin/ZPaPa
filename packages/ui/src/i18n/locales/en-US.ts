@@ -4390,6 +4390,7 @@ const enUS: Record<string, string> = {
   "squad.agents.loading": "Loading team agents…",
   "squad.agents.loadFailed": "Failed to load team agents",
   "squad.agents.emptyHint": "Create a team agent so squads can dispatch work to it.",
+  "squad.agents.modelDefault": "Follows default model",
 
   // "Squads" surface (squad.squads.*).
   "squad.squads.editTitle": "Edit squad",

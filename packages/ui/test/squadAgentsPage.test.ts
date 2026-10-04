@@ -314,3 +314,42 @@ test("守卫｜设置卡不再引用智能体表单 / 列表 / 新建分支", ()
   assert.ok(!section.includes("SquadTeamAgentList"), "设置卡不得引用智能体列表");
   assert.ok(!section.includes('setDialog("teamAgent")'), "设置卡不得再有智能体的新建分支");
 });
+
+// 守卫 e（2026-10-04 第 52 轮）：列表卡片的信息密度 —— 模型徽标与描述必须在场。
+// 背景：对照 multica 的 Agents 面（「名字/提供商/runtime」），此前我们的列表只有名字 +
+// 记忆范围，模型（modelSelection）与描述（description）在数据模型里有、UI 不可见。
+// 变异：删掉 SquadAgentsList 里的模型徽标 / 描述分支 ⇒ 本组红。
+
+test("守卫｜智能体列表呈现模型徽标（有配置显示型号，无配置显示默认）", () => {
+  const list = readSource("squad/SquadAgentsList.tsx");
+  assert.match(
+    list,
+    /modelSelection/,
+    "列表必须读 agent.modelSelection（模型是配置面的一等公民，缺它就是缺一件）",
+  );
+  assert.match(
+    list,
+    /squad\.agents\.modelDefault/,
+    "无 modelSelection 时必须显示「跟随默认模型」（缺席要可见，不是空白）",
+  );
+  assert.match(
+    list,
+    /squad-agent-model-badge/,
+    "模型徽标必须有稳定 testid（供后续 e2e / 回归定位）",
+  );
+});
+
+test("守卫｜智能体列表呈现描述（有则一行截断，无则不渲染）", () => {
+  const list = readSource("squad/SquadAgentsList.tsx");
+  assert.match(
+    list,
+    /agent\.description \?/,
+    "描述必须条件渲染：有才画（空占位会让卡片看起来坏了一半）",
+  );
+  assert.match(list, /squad-agent-description/, "描述必须有稳定 testid");
+  assert.match(
+    list,
+    /truncate/,
+    "描述必须单行截断（长描述撑破卡片 = 布局缺陷，不是信息密度）",
+  );
+});

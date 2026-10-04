@@ -4108,6 +4108,7 @@ const zhCN: Record<string, string> = {
   "squad.agents.loading": "正在读取协作智能体…",
   "squad.agents.loadFailed": "读取协作智能体失败",
   "squad.agents.emptyHint": "建一个协作智能体，它才能被小队指派干活。",
+  "squad.agents.modelDefault": "跟随默认模型",
 
   // 「小队」面（squad.squads.*）。
   "squad.squads.editTitle": "编辑小队",
