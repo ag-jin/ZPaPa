@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -105,7 +105,8 @@ test("装配后 repo / service / 工具都在，且 base 分支来自真实 HEAD
   // 裁定 4 / 确认 3：runtime 与目标 workspace **一一对应**，绑定字段就写在这里。
   assert.deepEqual(runtime.boundWorkspace, { path: runtime.boundWorkspace.path, identity: "ws" });
   // makeRepo 用 `git init -b main`，所以 HEAD 解析必须给出 main（不是硬编码的猜测）。
-  assert.equal(runtime.baseBranch, "main");
+  // 第 50 轮起 base 是 lazy 的：读它走 resolveBaseBranch()（首个 git-dependent 动作时才解析）。
+  assert.equal(await runtime.resolveBaseBranch(), "main");
 });
 
 // T1 交接项 1（taskIndexRepo.openSharedDatabase 的落点）：三个 repo 必须吃**同一条**连接。
@@ -153,23 +154,35 @@ test("runtime 的三个 repo 与注入句柄是同一条连接（recon.md F3）"
 });
 
 // base 分支**绝不猜 "main"**（brief 的冻结契约）：解析失败就抛，否则整批成果会合到别的分支上。
-test("非 git 目录 + 未显式给 base ⇒ 构造时抛（不猜 main）", async () => {
+// 第 50 轮起解析是 lazy 的：构造不再碰 git，**首个 git-dependent 动作**才解析并抛。
+test("非 git 目录 + 未显式给 base ⇒ 首个 git 动作时抛（不猜 main；构造与只读面不受影响）", async () => {
   const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
   const db = await makeMemoryDb();
+  const runtime = await createSquadRuntime({
+    db,
+    workspacePath: plain,
+    workspaceIdentity: "ws",
+    readExperimentEnabled: () => true,
+  });
+  // 只读面照常（这正是本轮修的缺陷：修前连构造都挂）。
+  assert.deepEqual(runtime.workItemRepo.listByWorkspace("ws"), []);
+  await assert.rejects(() => runtime.resolveBaseBranch(), /base 分支/);
   await assert.rejects(
     () =>
-      createSquadRuntime({
-        db,
-        workspacePath: plain,
-        workspaceIdentity: "ws",
-        readExperimentEnabled: () => true,
+      runtime.lifecycle.openMemberRun({
+        runId: "r-1",
+        workItemId: "wi-1",
+        parentWorkItemId: "wi-p",
+        agentId: "ta-a",
+        isLeaderTask: false,
       }),
     /base 分支/,
   );
 });
 
 // 补集方向：显式给 base（且目录**不是** git 仓库）时构造成功，证明这条路上真的没有跑 HEAD 解析。
-test("显式给 baseBranch ⇒ 跳过 HEAD 解析（非 git 目录也能构造）", async () => {
+// 第 50 轮起 base 是 lazy 的：显式值在 resolveBaseBranch() 里原样交回（git 动作才会用到它）。
+test("显式给 baseBranch ⇒ 跳过 HEAD 解析（非 git 目录也能构造，显式值原样交回）", async () => {
   const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
   const db = await makeMemoryDb();
   const runtime = await createSquadRuntime({
@@ -179,23 +192,20 @@ test("显式给 baseBranch ⇒ 跳过 HEAD 解析（非 git 目录也能构造�
     baseBranch: "release/2.0",
     readExperimentEnabled: () => true,
   });
-  assert.equal(runtime.baseBranch, "release/2.0");
+  assert.equal(await runtime.resolveBaseBranch(), "release/2.0");
 });
 
 test("显式给的 baseBranch 为空白 ⇒ 抛（不许静默回退到 HEAD 解析）", async () => {
   const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
   const db = await makeMemoryDb();
-  await assert.rejects(
-    () =>
-      createSquadRuntime({
-        db,
-        workspacePath: plain,
-        workspaceIdentity: "ws",
-        baseBranch: "   ",
-        readExperimentEnabled: () => true,
-      }),
-    /base 分支/,
-  );
+  const runtime = await createSquadRuntime({
+    db,
+    workspacePath: plain,
+    workspaceIdentity: "ws",
+    baseBranch: "   ",
+    readExperimentEnabled: () => true,
+  });
+  await assert.rejects(() => runtime.resolveBaseBranch(), /base 分支/);
 });
 
 // ---------- 2. 运行生命周期（机械半） ----------
@@ -866,13 +876,23 @@ test("非 git 目标 + 开关关闭 ⇒ 得到门禁错误（而非 base 分支�
   // 补集方向①：开关**打开**时，门禁在非 git 目标上**放行**（它压根不碰 git）——
   // 这一格与下面那格合起来才说明「门禁前置」不是「把非 git 目标也放过去派发」。
   await makeService(true).assertDispatchEnabled(noRepo);
-  // 补集方向②：真正需要 workspace 的操作（建工作项）在开关打开时仍抛 base 分支错误 ——
+  // 补集方向②：真正需要 workspace 的操作（建工作项）在开关打开时仍显式失败 ——
   // 说明「base 分支错误」并没有消失，它只是**不再冒充门禁结论**。
+  // 第 50 轮起 base 解析是 lazy 的：createWorkItem 走「构造 runtime（不碰 git）→ 建工作项（SQLite）」，
+  // 真正因 git 缺失而失败的是**开 run** 那一步（openMemberRun 起子进程建树）。
+  const created = await makeService(true).createWorkItem(noRepo, {
+    title: "t",
+    assignee: { type: "agent", id: "ta-a" },
+  });
+  assert.ok(created.id, "工作项是 SQLite 事实：非 git 目标上也该建得出来");
   await assert.rejects(
     () =>
-      makeService(true).createWorkItem(noRepo, {
-        title: "t",
-        assignee: { type: "agent", id: "ta-a" },
+      makeService(true).openMemberRun(noRepo, {
+        runId: "r-ng",
+        workItemId: created.id,
+        parentWorkItemId: created.id,
+        agentId: "ta-a",
+        isLeaderTask: false,
       }),
     /base 分支/,
   );
@@ -1468,5 +1488,202 @@ test("completeLeaderRun 对不存在的 runId ⇒ 响亮抛", async () => {
   await assert.rejects(
     () => runtime.lifecycle.completeLeaderRun({ runId: "r-lt-missing" }),
     /没有 runId/,
+  );
+});
+
+/* ---------- 6. lazy Git capability（非 Git workspace 上小队 UI 仍可用，2026-10-04 第 50 轮） ----------
+
+   缺陷背景：`createSquadRuntime()` 曾在构造期就跑 `git symbolic-ref --short HEAD` 解析 base，
+   而组合根对服务面的**每一次**调用都现构 runtime ⇒ 非 git 目录上连 `getSnapshot`（工作项页的
+   首屏读）都挂，报「小队需要一个 git 仓库作为 workspace」。但工作项/花名册/台账都是 SQLite
+   事实，读它们根本不需要 git；真正需要 git 的只有派发 / 工作树 / 审查合并 / 抛弃那一类动作。
+   修法边界（台账第 50 轮）：只读与配置操作在非 git 目录必须可用；git-dependent 动作显式报错；
+   绝不伪造 base（显式 deps.baseBranch > HEAD 解析 > 崩溃残留唯一非小队分支，规则原样保留）；
+   最小 lazy 接缝：首个 git-dependent 动作时解析 base，并发调用共享同一个初始化 Promise。 */
+
+/** 非 git 目录上的只读装配：构造必须成功（这条本身就是回归断言——修前在构造期就抛 base 分支错）。 */
+async function plainSetup() {
+  const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
+  const db = await makeMemoryDb();
+  const runtime = await createSquadRuntime({
+    db,
+    workspacePath: plain,
+    workspaceIdentity: "ws",
+    readExperimentEnabled: () => true,
+  });
+  return { plain, db, runtime };
+}
+
+// ① 读路径：非 git 目录构造成功，getSnapshot 那一组的只读面全部可用（工作项页首屏不再挂）。
+test("非 git 目录：构造成功，只读面（工作项/花名册/收件箱/快照）全部可用", async () => {
+  const { runtime } = await plainSetup();
+  // 写 + 读工作项走的是 SQLite（不碰 git）：create 会发派发事件，但派发只在本实例订阅表里，不开 run。
+  const item = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: runtime.boundWorkspace.path,
+    title: "t",
+    assignee: { type: "agent", id: "ta-a" },
+  });
+  assert.equal(runtime.workItemRepo.listByWorkspace("ws").length, 1);
+  assert.deepEqual(
+    runtime.squadRunRepo.listActive("ws").map((r) => r.runId),
+    [],
+  );
+  assert.deepEqual(runtime.squadService.list(), []);
+  assert.deepEqual(runtime.teamAgentService.list(), []);
+  assert.equal(typeof runtime.inboxItemRepo.listAll, "function");
+  // 门禁照常回答（它本来就不碰 git）。
+  await runtime.assertDispatchEnabled();
+  // 活跃集合口径只查台账：不经 lifecycle 门面（那侧是 git-dependent 谱面），repo 直读。
+  assert.equal(item.title, "t");
+});
+
+// ② Git-dependent 动作：在非 git 目录上显式、清晰地报错（同一个「需要 git 仓库」文案，不猜 base）。
+test("非 git 目录：派发/回收等 git 动作显式报错（不猜 base）", async () => {
+  const { runtime } = await plainSetup();
+  await assert.rejects(
+    () =>
+      runtime.lifecycle.openMemberRun({
+        runId: "r-1",
+        workItemId: "wi-1",
+        parentWorkItemId: "wi-p",
+        agentId: "ta-a",
+        isLeaderTask: false,
+      }),
+    /需要 git 仓库|base 分支/,
+  );
+  // 回收要起 git 子进程：同样显式失败，而不是把「没回收」伪装成「没有孤儿」。
+  await assert.rejects(
+    () => runtime.lifecycle.reapStartupOrphans({ workspaceKey: "ws" }),
+    /需要 git 仓库|base 分支/,
+  );
+  // 抛弃（摘树删分支）也属 git 动作：先落台账再抛的既有顺序不动，这里只断言它不静默成功。
+  runtime.squadRunRepo.insert({
+    runId: "r-d",
+    workspaceKey: "ws",
+    workspacePath: runtime.boundWorkspace.path,
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-a",
+    isLeaderTask: false,
+    branch: "squad/member/x/y",
+    dirName: "x",
+    status: "open",
+    sessionId: null,
+    dispatchCause: null,
+    causedByRunId: null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+  await assert.rejects(
+    () => runtime.lifecycle.discardMemberRun({ runId: "r-d" }),
+    /需要 git 仓库|base 分支/,
+  );
+});
+
+// ③ 初始化去重：base 解析只在首个 git-dependent 动作时发生一次，并发调用共享同一个 Promise。
+//    判据用「失败也要去重」：非 git 目录上两条并发的 openMemberRun 必须拿到**同一个**错误对象
+//    （若各跑一次 symbolic-ref，两次各自 new 出不同 Error；共享 Promise 则恒同一引用）。
+test("非 git 目录：并发的 git 动作共享同一次 base 解析（同一错误对象）", async () => {
+  const { runtime } = await plainSetup();
+  const request = {
+    runId: "r-race",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: "ta-a",
+    isLeaderTask: false,
+  } as const;
+  const [a, b, c] = await Promise.all([
+    runtime.lifecycle.openMemberRun(request).then(
+      () => null,
+      (caught: unknown) => caught,
+    ),
+    runtime.lifecycle.openMemberRun({ ...request, runId: "r-race-2" }).then(
+      () => null,
+      (caught: unknown) => caught,
+    ),
+    runtime.lifecycle.reapStartupOrphans({ workspaceKey: "ws" }).then(
+      () => null,
+      (caught: unknown) => caught,
+    ),
+  ]);
+  assert.ok(a instanceof Error, "非 git 目录上 git 动作必须失败");
+  assert.strictEqual(a, b, "并发 git 动作必须共享同一次初始化（同一 Error 实例）");
+  assert.strictEqual(a, c, "不同 git 动作也走同一个初始化 Promise");
+});
+
+// ③ 补集：git 目录上 base 解析仍然只做一次（成功路径同样去重），且并发派发不互相踩初始化。
+test("git 目录：并发派发共享同一次 base 解析，且都成功", async () => {
+  const repoRoot = await makeRepo();
+  const db = await makeMemoryDb();
+  const runtime = await createSquadRuntime({
+    db,
+    workspacePath: repoRoot,
+    workspaceIdentity: "ws",
+    readExperimentEnabled: () => true,
+  });
+  // 首次派发：在 base 真正解析之前并发开三条 run（同一个初始化 Promise 必须让三者都拿到同一 base）。
+  const opened = await Promise.all([
+    runtime.lifecycle.openMemberRun({
+      runId: "r-c1",
+      workItemId: "wi-a",
+      parentWorkItemId: "wi-p",
+      agentId: "ta-a",
+      isLeaderTask: false,
+    }),
+    runtime.lifecycle.openMemberRun({
+      runId: "r-c2",
+      workItemId: "wi-b",
+      parentWorkItemId: "wi-p",
+      agentId: "ta-b",
+      isLeaderTask: false,
+    }),
+    runtime.lifecycle.openMemberRun({
+      runId: "r-c3",
+      workItemId: "wi-c",
+      parentWorkItemId: "wi-p",
+      agentId: "ta-c",
+      isLeaderTask: false,
+    }),
+  ]);
+  // 都从 main 派生（makeRepo 用 git init -b main）——并发没有各自跑出不同的初始化结论。
+  // 断言用「三条分支都真的建出来了」：并发初始化若各跑各的，会有调用撞「树已存在」而失败。
+  for (const out of opened) {
+    assert.ok(out.branch.startsWith("squad/member/"));
+    assert.ok(existsSync(out.worktreePath), `工作树必须真的建出来: ${out.worktreePath}`);
+  }
+});
+
+// ④ 既有规则原样保留：显式 deps.baseBranch 在非 git 目录上让 git 动作照常进行（base 从不解析自 git）。
+test("非 git 目录 + 显式 baseBranch：git 动作仍失败（git 不可用不是 base 缺失），且不再崩溃在构造期", async () => {
+  const plain = mkdtempSync(join(tmpdir(), "not-a-repo-"));
+  const db = await makeMemoryDb();
+  const runtime = await createSquadRuntime({
+    db,
+    workspacePath: plain,
+    workspaceIdentity: "ws",
+    baseBranch: "release/2.0",
+    readExperimentEnabled: () => true,
+  });
+  assert.equal(await runtime.resolveBaseBranch(), "release/2.0");
+  assert.equal(runtime.workItemRepo.listByWorkspace("ws").length, 0);
+  // git 动作照旧失败（这次是 git 子进程自己报非 git 仓库），且错误信息不是「base 分支不能确定」。
+  await assert.rejects(
+    () =>
+      runtime.lifecycle.openMemberRun({
+        runId: "r-eb",
+        workItemId: "wi-1",
+        parentWorkItemId: "wi-p",
+        agentId: "ta-a",
+        isLeaderTask: false,
+      }),
+    (caught: unknown) => {
+      assert.ok(caught instanceof Error);
+      // 显式 base 已给：失败归因必须是 git 本身（not a git repository / fatal），
+      // 而不是「无法确定 base 分支」——后者会把可修的配置问题伪装成不可判定。
+      assert.doesNotMatch(caught.message, /base 分支不能确定|无法唯一确定 base/);
+      assert.match(caught.message, /not a git repository|fatal|无法|失败|128/i);
+      return true;
+    },
   );
 });

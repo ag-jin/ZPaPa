@@ -77,11 +77,21 @@ export type SquadRuntime = {
   squadService: SquadService;
   git: GitRunner;
   worktreeManager: WorktreeManager;
-  /** base 分支（由 HEAD 解析或 deps 显式给出，**不猜 "main"**）。整批 finalize 的目标就是它。 */
-  baseBranch: string;
+  /**
+   * **lazy base 解析的谱面**（2026-10-04 第 50 轮）：base 分支不在构造期解析（非 git 目录上
+   * 只读/配置操作必须可用），而是推迟到**首个 git-dependent 动作**，并发调用共享同一个初始化
+   * Promise。解析规则一条不动：显式 `deps.baseBranch` > HEAD 解析 > 小队命名空间分支崩溃残留时
+   * 用唯一非小队分支（候选不唯一则抛），**绝不猜 "main"**。
+   */
+  resolveBaseBranch(): Promise<string>;
+  /**
+   * **测试专用**（`__test-` 前缀）：门面解析后的底层 lifecycle。唯一用途是「按仓库串行」测试
+   * 往底层方法打补丁（门面是 Proxy，不可写）。生产代码**不得**用它绕过门面 —— 那等于绕过
+   * 「非 git 目录显式报错」这道闸。
+   */
+  __testUnderlyingLifecycle(): Promise<SquadRunLifecycle>;
   branchAllocator: ReturnType<typeof createBranchAllocator>;
   integrationMerger: ReturnType<typeof createIntegrationMerger>;
-  orphanReaper: ReturnType<typeof createOrphanReaper>;
   /** 绑定的 workspace 身份（裁定 4 + 确认 3）：runtime **为某一个目标 workspace 而构造**，
    *  内部所有访问都只用它；任何来自外部的异己 workspaceKey 一律抛。 */
   boundWorkspace: { path: string; identity: string };

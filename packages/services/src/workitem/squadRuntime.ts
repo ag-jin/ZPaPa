@@ -13,7 +13,7 @@ import { createOrphanReaper } from "../worktree/orphanReaper.js";
 import { createWorktreeManager } from "../worktree/worktreeManager.js";
 import type { SquadBriefing } from "./leaderDispatch.js";
 import { createInboxItemRepo } from "./inboxItemRepo.js";
-import type { SquadRuntime, SquadRuntimeDeps } from "./squadContracts.js";
+import type { SquadRunLifecycle, SquadRuntime, SquadRuntimeDeps } from "./squadContracts.js";
 import { createRunLifecycle } from "./squadRunLifecycle.js";
 import { createSquadRunRepo } from "./squadRunRepo.js";
 import { SquadDispatchDisabledError } from "./squadRuntimeService.js";
@@ -145,41 +145,88 @@ export function renderLeaderBriefingPrompt(briefing: SquadBriefing): string {
  * ④ 工作项服务（带内部事件出口）；⑤ `createRunLifecycle`；⑥ 拼成 runtime。
  * `lifecycle` **不得**在 ②⑤ 之前建（它要用两者的产物），而 `lifecycle` 又不能收 `SquadRuntime`
  * 本身（自引用），故它只收自己那几件零件。
+ *
+ * **lazy Git capability（2026-10-04 第 50 轮）**：base 分支**不在构造期**解析。工作项/花名册/
+ * 台账/收件箱都是 SQLite 事实，读它们不需要 git；而组合根对服务面每一次调用都现构 runtime ⇒
+ * 构造期急切解析会让非 git 目录上连 `getSnapshot`（工作项页首屏读）都崩在
+ * `git symbolic-ref` 退出码 128。修法边界：只读/配置操作非 git 目录必须可用；派发 / 工作树 /
+ * 审查合并 / 抛弃等 **git-dependent** 动作首次执行时才解析 base（并发调用共享同一个
+ * 初始化 Promise —— 失败也共享，故两个并发的 git 动作拿到**同一个** Error 实例）；
+ * 解析规则本身一条不动：显式 `deps.baseBranch` > HEAD 解析 > 小队命名空间分支崩溃残留时
+ * 用唯一非小队分支（候选不唯一则抛），**绝不猜 "main"**。
  */
 export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadRuntime> {
   const { db, workspacePath, workspaceIdentity } = deps;
 
   // ① git：面向 worktree/merge 的薄壳 runner（失败也返回 code/stdout/stderr，含义由调用点定）。
   const git = createGitRunner();
-  // ② 五个工作树工具。base 分支在这里解析一次，之后所有分支动作（建树 / 集成分支派生）都用它。
+  // ② 五个工作树工具（构造期全部纯函数，不起子进程）。base 分支在首个 git-dependent 动作时
+  //    才解析一次，之后所有分支动作（建树 / 集成分支派生）都用它 —— 见下面 `gitCapability`。
   const worktreeManager = createWorktreeManager({ git, repoRoot: workspacePath });
   const branchAllocator = createBranchAllocator({ manager: worktreeManager });
-  const baseBranch = await resolveBaseBranch(git, workspacePath, deps.baseBranch);
-  const integrationMerger = createIntegrationMerger({
-    git,
-    repoRoot: workspacePath,
-    base: baseBranch,
-  });
-  const orphanReaper = createOrphanReaper({
-    manager: worktreeManager,
-    repoRoot: workspacePath,
-    // 两个 dep 由调用方绑定成单参（P2a 契约）：两处共用同一份实现，免得 `git branch -D` 分叉。
-    deleteBranch: (branch) => deleteBranch(git, workspacePath, branch),
-    // 按**分支名前缀**问 git 枚举短名（如 `squad/member/`）；失败**抛**而不是给空数组 ——
-    // 空数组会让回收器以为「没有残枝」，把该清的清不掉还说成功了。
-    listBranches: async (prefix) => {
-      const result = ensureGitRunSucceeded(
-        `git for-each-ref refs/heads/${prefix}`,
-        await git(["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}`], {
-          cwd: workspacePath,
-        }),
-      );
-      return result.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "");
-    },
-  });
+
+  /* **lazy Git capability 的唯一接缝**：把「base 解析 + 拿 base 的那三个工具（merger / lifecycle /
+     orchestrator 用的 allocator 参数）」收敛成**一个** Promise，首次 git-dependent 动作时兑现。
+     - 去重：`resolveGitDeps` 被 N 个并发调用 ⇒ 全部 await **同一个** promise（失败也共享，
+       非 git 目录上两个并发动作拿到同一 Error 实例，不重复起子进程）。
+     - 成功后 memoize：本 runtime 生命周期内 base 只解析一次（与修前「构造期解析一次」同代价）。
+     - 什么算 git-dependent：开树派生分支（`openMemberRun`）、集成分支派生（`ensureIntegration` /
+       `mergeMember`）、审查合并（`reviewMemberRun` 的 approved 支）、摘树删分支（`discardMember` /
+       `discardMemberRun`）、启动回收（`reapStartupOrphans`）。台账登记（`recordLeaderRun` /
+       `bindMemberRunSession` / `failMemberRun` / `completeMemberRun`）与全部只读面**不走**这里。 */
+  const gitDeps = async (): Promise<{
+    baseBranch: string;
+    integrationMerger: ReturnType<typeof createIntegrationMerger>;
+    lifecycle: SquadRunLifecycle;
+  }> => {
+    if (resolved === null) {
+      resolved = (async () => {
+        const baseBranch = await resolveBaseBranch(git, workspacePath, deps.baseBranch);
+        const integrationMerger = createIntegrationMerger({
+          git,
+          repoRoot: workspacePath,
+          base: baseBranch,
+        });
+        const orphanReaper = createOrphanReaper({
+          manager: worktreeManager,
+          repoRoot: workspacePath,
+          // 两个 dep 由调用方绑定成单参（P2a 契约）：两处共用同一份实现，免得 `git branch -D` 分叉。
+          deleteBranch: (branch) => deleteBranch(git, workspacePath, branch),
+          // 按**分支名前缀**问 git 枚举短名（如 `squad/member/`）；失败**抛**而不是给空数组 ——
+          // 空数组会让回收器以为「没有残枝」，把该清的清不掉还说成功了。
+          listBranches: async (prefix) => {
+            const result = ensureGitRunSucceeded(
+              `git for-each-ref refs/heads/${prefix}`,
+              await git(["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}`], {
+                cwd: workspacePath,
+              }),
+            );
+            return result.stdout
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line !== "");
+          },
+        });
+        const lifecycle = createRunLifecycle({
+          squadRunRepo,
+          workItemService,
+          baseBranch,
+          branchAllocator,
+          integrationMerger,
+          orphanReaper,
+          boundWorkspace: { path: workspacePath, identity: workspaceIdentity },
+        });
+        return { baseBranch, integrationMerger, lifecycle };
+      })();
+    }
+    return resolved;
+  };
+  /** memoized 初始化（null = 还没有任何 git-dependent 动作来过）。 */
+  let resolved: Promise<{
+    baseBranch: string;
+    integrationMerger: ReturnType<typeof createIntegrationMerger>;
+    lifecycle: SquadRunLifecycle;
+  }> | null = null;
 
   // ③ 台账 / 工作项 / 唤醒规则三个 repo：**同一条** db（recon.md F3：另开连接会跳过迁移与回填）。
   const squadRunRepo = createSquadRunRepo(db);
@@ -202,23 +249,60 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     emit: fanout,
   });
 
-  // ⑤ lifecycle：只收零件（不收 runtime 本身，避免自引用）。
-  const lifecycle = createRunLifecycle({
-    squadRunRepo,
-    workItemService,
-    baseBranch,
-    branchAllocator,
-    integrationMerger,
-    orphanReaper,
-    boundWorkspace: { path: workspacePath, identity: workspaceIdentity },
-  });
-
   // ⑥ 拼成 runtime。定义根都从目标 workspace 派生（实验命名空间 `<ws>/.zcode/squad/`）。
   const teamAgentService = createTeamAgentService({ root: resolveSquadAgentRoot(workspacePath) });
   const squadService = createSquadService({
     root: resolveSquadDefinitionRoot(workspacePath),
     teamAgentRoot: resolveSquadAgentRoot(workspacePath),
   });
+
+  // git-dependent 动作的门面：`runtime.lifecycle` 的**所有**方法都先过 `gitDeps()`。
+  // 用 Proxy 而不是手写十个转发：手写版每加一个 lifecycle 方法就要记得同步一份，
+  // 漏掉的那一个会**静默绕过**门面（在非 git 目录上直接拿未初始化的零件跑）——
+  // Proxy 按整对象包装，新方法默认就接上门面，漏接在结构上不可能。
+  //   · 非 git 目录：首个 lifecycle 调用就抛「需要 git 仓库」—— 对 `computeActiveBranches` 这类
+  //     只查台账的方法偏严格，但 getSnapshot 不经这里（服务面直接用 repo），实际只读面不受影响；
+  //   · 刻意保守（不抄「哪个方法真的不碰 git」的判据进 runtime）：漏接一格的代价是
+  //     **静默在错的 workspace 上动 git**，多拦一格的代价只是一条响亮报错。
+  const lazyLifecycle: SquadRunLifecycle = new Proxy({} as SquadRunLifecycle, {
+    get(_target, prop: string | symbol) {
+      return async (...args: unknown[]) => {
+        const { lifecycle } = await gitDeps();
+        const method = (lifecycle as unknown as Record<string, unknown>)[prop as string];
+        if (typeof method !== "function") {
+          throw new Error(
+            `SquadRunLifecycle 上不存在方法「${String(prop)}」：runtime 的 lifecycle 门面只代理方法。`,
+          );
+        }
+        return method.apply(lifecycle, args);
+      };
+    },
+  });
+  // `integrationMerger` 同理（`reviewMemberRun` approved 支之外唯一的合入入口；runtime 契约上的
+  // 直访面）。方法集是**冻结**的五个，逐个转发（不用 Proxy：merger 的返回类型不是清一色 Promise<void>，
+  // 逐个转发保留精确签名，调用方（含测试对 conflict/branch_missing 的精确断言）不需要改读法）。
+  const lazyIntegrationMerger: ReturnType<typeof createIntegrationMerger> = {
+    ensureIntegration: async (branch: string) => {
+      const { integrationMerger } = await gitDeps();
+      return integrationMerger.ensureIntegration(branch);
+    },
+    mergeMember: async (input: { integration: string; member: string }) => {
+      const { integrationMerger } = await gitDeps();
+      return integrationMerger.mergeMember(input);
+    },
+    finalize: async (input: { integration: string; target: string }) => {
+      const { integrationMerger } = await gitDeps();
+      return integrationMerger.finalize(input);
+    },
+    discardMember: async (input: { branch: string; dirName: string }) => {
+      const { integrationMerger } = await gitDeps();
+      return integrationMerger.discardMember(input);
+    },
+    discardIntegration: async (input: { integration: string; target: string }) => {
+      const { integrationMerger } = await gitDeps();
+      return integrationMerger.discardIntegration(input);
+    },
+  };
 
   return {
     workItemRepo,
@@ -230,10 +314,16 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     squadService,
     git,
     worktreeManager,
-    baseBranch,
     branchAllocator,
-    integrationMerger,
-    orphanReaper,
+    integrationMerger: lazyIntegrationMerger,
+    /** 见 `SquadRuntimeDeps`/契约：lazy base 解析的唯一谱面（git-dependent 动作内部已接同一份初始化）。 */
+    resolveBaseBranch: async () => (await gitDeps()).baseBranch,
+    /**
+     * **测试专用**（`__test-` 前缀，不进契约）：门面解析后的底层 lifecycle。
+     * 唯一用途是「按仓库串行」那条测试要往底层方法上打补丁（门面是 Proxy，不可写）。
+     * 生产代码**不得**绕过门面直取底层对象 —— 那等于绕过「非 git 目录显式报错」这道闸。
+     */
+    __testUnderlyingLifecycle: async () => (await gitDeps()).lifecycle,
     boundWorkspace: { path: workspacePath, identity: workspaceIdentity },
     /**
      * 门禁的**唯一实现**（spec §5.7.6 / 确认 2）：关闭 ⇒ 拒这次的**新**派发，抛稳定码错误。
@@ -247,7 +337,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
         throw new SquadDispatchDisabledError();
       }
     },
-    lifecycle,
+    lifecycle: lazyLifecycle,
     subscribeWorkItemEvents(handler) {
       subscribers.add(handler);
       return () => {

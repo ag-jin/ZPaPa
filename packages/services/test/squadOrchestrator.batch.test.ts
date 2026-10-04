@@ -932,14 +932,18 @@ test("两个不同父项的批次在同一仓库上不并发（按仓库串行�
   f.runtime.workItemService.transition("wi-c2", "done", "in_review");
 
   // 挡住**第一次**合并入口：它属于第一条链。
-  const realReview = f.runtime.lifecycle.reviewMemberRun.bind(f.runtime.lifecycle);
+  // 第 50 轮起 lifecycle 是 runtime 上的 lazy 门面（Proxy，不可写）。补丁打到**门面解析出的底层
+  // lifecycle** 上：编排器每次动作都经门面重新取底层对象，两条链共用的仍是同一个对象，
+  // 「按仓库串行」的断言含义不变。
+  const underlying = await f.runtime.__testUnderlyingLifecycle();
+  const realReview = underlying.reviewMemberRun.bind(underlying);
   const entered: string[] = [];
   let releaseFirst!: () => void;
   const held = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
   let heldOnce = false;
-  f.runtime.lifecycle.reviewMemberRun = async (input) => {
+  underlying.reviewMemberRun = async (input: { runId: string }) => {
     entered.push(input.runId);
     if (!heldOnce) {
       heldOnce = true;

@@ -71,8 +71,13 @@ function serializeOnRepo<T>(repoRoot: string, task: () => Promise<T>): Promise<T
 
 export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadBatchOrchestrator {
   const { runtime } = deps;
-  const { workItemRepo, workItemService, squadRunRepo, lifecycle, integrationMerger, baseBranch } =
-    runtime;
+  const { workItemRepo, workItemService, squadRunRepo, lifecycle, integrationMerger } = runtime;
+  /* base 是 lazy 的（第 50 轮）：编排器的每个入口（advanceAfterChildrenDone / discardBatch）
+     本来就是 git-dependent 动作，base 在动作内按需解析（resolveBaseBranch 与 lifecycle 门面
+     共享同一份初始化，非 git 目录上这里会得到「需要 git 仓库」的显式报错，而不是 undefined）。
+     之前在构造期同步解构 runtime.baseBranch，lazy 化后那会拿到 undefined 并把
+     `git checkout undefined` 一路带进合并/抛弃 —— 那正是「静默在错的地方动 git」的形状。 */
+  const resolveBase = (): Promise<string> => runtime.resolveBaseBranch();
 
   /* 本 runtime 绑定的 `workspace_key`（C14 口径，与生命周期/快照同一处算法），以及异己 key 的**响亮拒绝**。
      为什么必须拒绝而不是「按传入值操作」：本层会用这个 key 判归属、也会按它去动 git；在**另一个**
@@ -310,6 +315,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
    * 而「不存在」与「存在但未合回」在这里的结论相同（都不是「已落地」），故不额外区分。
    */
   async function isMergedBack(integration: string): Promise<boolean> {
+    const baseBranch = await resolveBase();
     const result = await runtime.git(["merge-base", "--is-ancestor", integration, baseBranch], {
       cwd: runtime.boundWorkspace.path,
     });
@@ -332,6 +338,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       cwd: runtime.boundWorkspace.path,
     });
     if (head.code !== 0 || head.stdout.trim() !== branch) return;
+    const baseBranch = await resolveBase();
     ensureGitRunSucceeded(
       `git checkout ${baseBranch}（整体放弃前把主工作树挪回 base）`,
       await runtime.git(["checkout", baseBranch], { cwd: runtime.boundWorkspace.path }),
@@ -443,7 +450,10 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         );
       }
 
-      const landed = await integrationMerger.finalize({ integration, target: baseBranch });
+      const landed = await integrationMerger.finalize({
+        integration,
+        target: await resolveBase(),
+      });
       if (!landed.ok) {
         if (landed.reason === "conflict") {
           // 与逐队员冲突同一处置：父项 blocked + 登记 Inbox + 停手（`finalize` 内部已把主工作树回滚到合并前）。
@@ -453,7 +463,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
             conflict: {
               phase: "batch_finalize",
               integrationBranch: integration,
-              targetBranch: baseBranch,
+              targetBranch: await resolveBase(),
               detail: landed.detail,
             },
           });
@@ -461,7 +471,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         }
         // 集成分支 / base 分支不存在：既不是「冲突」也不是「本批没成果」，属环境或次序被破坏。
         // 把父项标 done 是谎报（成果没落地），标 blocked 会误导人去解冲突 —— 响亮抛出。
-        throw new Error(`整批合回 ${baseBranch} 失败（不是冲突）：${landed.detail}`);
+        throw new Error(`整批合回 ${await resolveBase()} 失败（不是冲突）：${landed.detail}`);
       }
 
       /* 抛弃集合 = **已 merged 的**（含本批刚合的与更早经审查合过的）。
@@ -485,7 +495,10 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          **整批合回主分支**之后」—— `finalize` 在其上，这里动的只是父项结算，与该约束无关；
          `discardIntegration` 内部「集成必须是 target 的祖先」那道闸照旧生效（本层不重复判定）。 */
       transitionParent(input.parentWorkItemId, "done", "整批合回主分支");
-      await integrationMerger.discardIntegration({ integration, target: baseBranch });
+      await integrationMerger.discardIntegration({
+        integration,
+        target: await resolveBase(),
+      });
     });
   }
 
@@ -557,7 +570,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       for (const integration of integrations) {
         if ((await branchExists(integration)) && (await isMergedBack(integration))) {
           throw new Error(
-            `无法放弃整批：本批的集成分支「${integration}」**已经合回 ${baseBranch}**` +
+            `无法放弃整批：本批的集成分支「${integration}」**已经合回 ${await resolveBase()}**` +
               `（父项「${parent.id}」却还停在「${parent.status}」，说明收尾只差最后一步没收口）。` +
               "成果已在主分支上、回不去，再放弃会把一份已落地的成果标成「放弃」，故响亮拒绝" +
               "（要收口请走 advanceAfterChildrenDone，不要走本方法）。",
