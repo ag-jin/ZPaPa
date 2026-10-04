@@ -29,19 +29,25 @@
 | 7 | 运行数据（该 agent 跑过什么） | `squad_runs.agentId` + `listSquadRuns`（服务面已有，按 workspace） | 智能体页**不显示**该 agent 的 run 历史 | 吸收：agent 维度的 run 计数/最近 run（数据已齐，纯 UI） | 待实现 |
 | 8 | 设置的参数（模型等） | `modelSelection` / `tools[]` / `disallowedTools[]` / `permissionMode` / `memoryScope` | 列表有模型徽标（第 52 轮）；**编辑白名单只有 3 字段**（name/systemPrompt/memoryScope） | 吸收：编辑白名单扩 `description`/`color`/`modelSelection`（第②刀）；tools/permissionMode（第③刀） | 第②③刀 |
 
-## 1.1 「一个 agent 一个 CLI」的核对（用户 2026-10-04 问，已证实）
+## 1.1 「一 agent 一 CLI」的核对（用户 2026-10-04 两轮问答，已证实并精确化）
 
-用户问「multica 是不是一个智能体用一个 CLI、每个 CLI 相对隔离」——**是**（实证：
-investigation.md 二进制符号 `agent.(*XBackend).Execute` ×24 + daemon 日志
-`picked chat task agent=Mika provider=omp`）。multica 的 daemon 探测 26 种 agent CLI，
-每种注册一个 runtime；agent 定义绑定 runtime + 模型；隔离分三层（独立进程 spawn /
-每任务独立 worktree / daemon 统一管会话文件 + 任务级 `mat_` 令牌）。
+用户先问「multica 是不是一个智能体用一个 CLI、每个 CLI 相对隔离」，再补充「**同一个 CLI
+也能建多个智能体**」——两点都对，合成准确表述：
 
-**我们的有意差异（不吸收多 CLI）**：吸收评审早已裁定「智能体是独立的，调用**我们自己的
-CLI**」——全部 agent 用 ZCode CLI，独立性靠定义文件（`.zcode/squad/agents/`）+
-`modelSelection`（每 agent 可不同模型）+ 独立记忆 + 独立工作树，**不靠换 CLI**。
-矩阵 #8 的「设置参数」因此**不含 runtime/CLI 选择**维度；后续轮次不得把「不能选 CLI」
-当缺失功能补进来。
+- **runtime（CLI）是 daemon 机器级注册的执行引擎**：每个 CLI 一个 profile
+  （`multica runtime profile create`），二进制含 `agent.(*XBackend).Execute` ×24、
+  支持清单 26 种；
+- **agent 是定义层个体**：创建时选（名字/提供商/）runtime + 模型，日志实证
+  `picked chat task agent=Mika provider=omp` —— agent 名（Mika）与 runtime 名（omp）
+  是**两个独立字段**，多个 agent 可绑定同一个 runtime；
+- **绑定是多对一**：隔离不靠「独占 CLI」，靠每 agent 独立定义 + 每任务独立 worktree +
+  daemon 统一管会话文件（`~/.multica/pi-sessions/` + 任务级 `mat_` 令牌）。
+
+**我们的模型与此同构（用户补充后差异进一步收窄）**：ZPaPa = 所有 agent 绑定**唯一的
+ZCode CLI runtime**，独立性同样靠定义文件（`.zcode/squad/agents/`）+ `modelSelection`
+（每 agent 可不同模型）+ 独立记忆 + 独立工作树。与 multica 的差别只剩「可选 runtime 的
+数量（26 vs 1）」，而这是既定裁定（不做多 CLI 平台）。矩阵 #8 的「设置参数」因此**不含
+runtime/CLI 选择**维度；后续轮次不得把「不能选 CLI」当缺失功能补进来。
 
 ## 2. 实现次序（沿台账第 52 轮的三刀，并入本矩阵）
 
