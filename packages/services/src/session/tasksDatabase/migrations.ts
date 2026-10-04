@@ -5,6 +5,7 @@ import {
   AUTOMATION_SCHEMA,
   INBOX_ITEM_SCHEMA,
   OFF_PEAK_SCHEMA,
+  SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
@@ -84,6 +85,12 @@ const definitions = [
     id: "0007_inbox_items",
     checksumInput: [INBOX_ITEM_SCHEMA],
   },
+  /* 0008 只加两列（`ALTER TABLE ADD COLUMN`），**不改既有列/表**：既有库的 checksum 一字不动，
+     新库与老库升级后同一形状。SQL 冻结后不得再改（改了老库升级会抛 checksum_mismatch）。 */
+  {
+    id: "0008_squad_run_cause",
+    checksumInput: [SQUAD_RUN_CAUSE_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -137,6 +144,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0005_wake_rules") db.exec(WAKE_RULE_SCHEMA);
       else if (migration.id === "0006_squad_runs") db.exec(SQUAD_RUN_SCHEMA);
       else if (migration.id === "0007_inbox_items") db.exec(INBOX_ITEM_SCHEMA);
+      else if (migration.id === "0008_squad_run_cause") db.exec(SQUAD_RUN_CAUSE_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

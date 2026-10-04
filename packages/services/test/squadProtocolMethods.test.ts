@@ -219,7 +219,7 @@ test("squad/assign-work-item ⇒ 改负责人 + 发派发事件 + **不**直接�
   );
 
   // ② 派发事件经**唯一出口**发出，且是具体那一条（工作项 id + 对象都对；载荷是 `assignee`，
-  //    类型 + id —— 2026-10-03 从裸 agentId 泛化，小队也能是被派发对象）。
+  //    类型 + id —— 2026-10-03 从裸 agentId 泛化，小队也能是被派发对象；成因 = 队长派单工具）。
   assert.deepEqual(
     events.filter((event) => event.kind === "workitem.dispatch_requested"),
     [
@@ -227,6 +227,7 @@ test("squad/assign-work-item ⇒ 改负责人 + 发派发事件 + **不**直接�
         kind: "workitem.dispatch_requested",
         workItemId: child.id,
         assignee: { type: "agent", id: "ta-a" },
+        cause: "leader_tool",
       },
     ],
     "指派必须发出派发事件（开 run 由派发路径负责，不是这里）",

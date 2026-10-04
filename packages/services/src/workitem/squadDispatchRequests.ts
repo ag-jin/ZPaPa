@@ -10,14 +10,47 @@
    **加法式**：既有的 `subscribeWorkItemEvents`（实例级订阅表）一字未改，既有调用方不受影响。
 
    本文件必须**浏览器安全**（它被 `squadRuntime.ts` 值导入，而该文件同时也被测试与 node 侧使用）：
-   只 import type，不触达 `node:*`，因此不引入任何运行时依赖。 */
+   只 import type，不触达 `node:*`，因此不引入任何运行时依赖。文件里唯一的**值**导出是
+   `DISPATCH_CAUSES`（成因闭集的常量数组，纯字面量）——它仍是零依赖，不破坏这条不变量。 */
 
 import type { WorkItemDispatchAssignee } from "./workItemService.js";
+
+/**
+ * 派发的**成因**（闭集；`squad_runs.dispatch_cause` 列的取值域）。
+ *
+ * 为什么是闭集而不是自由文本：成因是台账上的**既成事实**，读回来要能直接分流（时间线从此能把
+ * 「队长→队员」的弧线从渲染时推断升级为事实、区分用户改派与规则唤醒）。自由文本会让同一成因在库里
+ * 长出多种拼法，读回时只能靠猜 —— 而猜错不报错。列值域与这里的常量**同源**（`DISPATCH_CAUSES`），
+ * 读写两侧的守卫都取它，不存在「类型加了一档、守卫还认旧集」的静默分叉。
+ *
+ * · `leader_tool`：队长派单工具（`squad/assign-work-item`）发起的派发；
+ * · `user_reassign`：用户在界面上改派（`reassignWorkItem`）发起的派发；
+ * · `rule`：唤醒规则到点发起的派发 —— 它**不经**事件/hub（是 host 自己的入口），
+ *   由派发桥就地归并（见 `SquadDispatchRequest.cause`）。
+ *
+ * **NULL 是列上的合法值**：遗留行 / 未知成因 —— 读回**不得猜**（`readDispatchCause` 对枚举外值响亮抛）。
+ */
+export const DISPATCH_CAUSES = ["leader_tool", "user_reassign", "rule"] as const;
+export type DispatchCause = (typeof DISPATCH_CAUSES)[number];
+
+/**
+ * 用户侧子集（**不含 `rule`**）：`workitem.dispatch_requested` 事件载荷与常驻 hub 的派发请求只可能是
+ * 这两者 —— 规则触发是 host 自己的接法，不经过服务面的事件链（那条链上没有第二个写入者）。
+ * 收窄成子集而不是复用全集：让「事件载荷里冒出 `rule`」在**类型层**就不可表达
+ * （宽松的联合放行后，写错的那条路径不会有任何编译错）。
+ */
+export type UserDispatchCause = Exclude<DispatchCause, "rule">;
 
 /** 一条派发请求：**要开一个 run** 这条事实（不是工作项状态变迁）。 */
 export type SquadDispatchRequest = {
   /** 被指派的工作项（run 挂在它下面）。 */
   workItemId: string;
+  /**
+   * 这次派发的**成因**（用户侧子集）：服务面在事件源头就分好（队长工具 vs UI 改派），
+   * 本 hub 与 host 派发桥**只搬运、不二次判定**；`rule` 那一档由 host 在派发桥里就地归并
+   * （规则到点的消息不经这条链）。
+   */
+  cause: UserDispatchCause;
   /**
    * 这次派发要派给**谁**：`{ type, id }`（`reassignWorkItem` / `assignWorkItem` 刚写进 `assignee` 的
    * 那个值）。**为什么是 assignee 而不是裸 `agentId`**：请求描述的是「要把这条活派给谁」这一**事实**，

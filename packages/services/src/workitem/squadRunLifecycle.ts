@@ -8,6 +8,7 @@ import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper, ReapOutcome } from "../worktree/orphanReaper.js";
 import type { WorkItemService } from "./workItemService.js";
 import { slugForId } from "./slug.js";
+import type { DispatchCause } from "./squadDispatchRequests.js";
 import type { SquadRunRecord, SquadRunRepo } from "./squadRunRepo.js";
 
 /* 小队运行生命周期的**机械半**（spec §6.1–§6.3）：开树 / 收尾 / 审查 / 抛弃 / 启动回收。
@@ -26,6 +27,21 @@ export type MemberRunRequest = {
   parentWorkItemId: string;
   agentId: string;
   isLeaderTask: boolean;
+  /**
+   * 本次派发的**成因**（台账 `dispatch_cause` 列，见 `DispatchCause`）。
+   *
+   * **host 派发桥必须传**（规则 / 队长工具 / UI 改派三路都在那里归并，见 host 的 `runSquadDispatch`；
+   * desktop 侧有用例钉住这条接线）。**缺席 = 未知 ⇒ 落 NULL**（遗留行语义）—— 读回**不得猜**
+   * （`readDispatchCause` 对枚举外值响亮抛）。刻意做成**可选**：它把「谁该传」写成契约而不是
+   * 把「没传」变成不可能——历史调用方（既有用例里的旧形态）不因加列而全体改签名。
+   */
+  dispatchCause?: DispatchCause;
+  /**
+   * 派发这条队员 run 的**队长 run**（台账 `caused_by_run_id` 列）：仅当
+   * `dispatchCause === "leader_tool"` 且派发时刻该批根工作项上确有活跃队长 run 时，由 host 在
+   * **派发时刻**解析并传入（见 `findActiveLeaderRunId`）；其余成因一律缺席 ⇒ 落 NULL（不猜）。
+   */
+  causedByRunId?: string;
 };
 
 export type OpenMemberRunResult = { branch: string; worktreePath: string };
@@ -43,6 +59,16 @@ export type LeaderRunRequest = {
   workItemId: string;
   agentId: string;
   parentWorkItemId?: string;
+  /**
+   * 本次派发的**成因**（同 `MemberRunRequest.dispatchCause`；host 派发桥必须传，缺席 = 未知 ⇒ NULL）。
+   */
+  dispatchCause?: DispatchCause;
+  /**
+   * 队长 run 的**入边**：批次起点（由规则到点 / 用户指派触发）没有「派发它的队长」，故 host 派发桥
+   * **不传**（恒落 NULL）。字段与队员共用同一落台路径、原样透传（本层不做二次判定）——代价是
+   * 「误传一个值」也会落台；那由 host 侧守卫钉住（接线用例断言队长那一支不读 `causedByRunId`）。
+   */
+  causedByRunId?: string;
 };
 
 /**
@@ -82,6 +108,31 @@ export function hasInProgressLeaderRun(
   workItemId: string,
 ): boolean {
   return activeRuns.some((record) => record.workItemId === workItemId && record.isLeaderTask);
+}
+
+/**
+ * 「该工作项上**活跃**的队长 run 是**哪一条**」的**唯一读法**（台账 `caused_by_run_id` 列的唯一来源）。
+ *
+ * 与 `hasInProgressLeaderRun` 是同一份「进行中」投影的两面：邻居回答「有没有」，本函数回答「是哪条」。
+ * 放在紧邻位置而不是让调用方各自 `find(...)`：两处若各写一份过滤，迟早在「算不算队长行」或
+ * 「读哪个集合」上分叉 —— 而分叉的表现是台账里的 `caused_by_run_id` 指向一条错的 run（或凭空为 null），
+ * 时间线据此画出一根错的弧线，**且不报错**。
+ *
+ * **入参必须是活跃集合**（`SquadRunRepo.listActive` / `getSnapshot().runs`）：终态行已被该集合排除，
+ * 于是「命中」即「当时还在跑」。传一个含终态行的列表（例如 `listByParent`）会得到**恒真/错误答案**
+ * ——「队长 run 早已收口，却仍被记为派发者」，这正是本函数要防的那种「看起来没问题」。
+ *
+ * 命中第一行（行序由 repo 的 `ORDER_BY_CREATED` 定死，同刻按 runId）；没有 ⇒ `null`
+ * （**不猜**：宁缺毋错 —— 写 NULL 是「未知」的既有语义，写一个猜的值是造事实）。
+ */
+export function findActiveLeaderRunId(
+  activeRuns: readonly SquadRunRecord[],
+  workItemId: string,
+): string | null {
+  const record = activeRuns.find(
+    (candidate) => candidate.workItemId === workItemId && candidate.isLeaderTask,
+  );
+  return record?.runId ?? null;
 }
 
 export interface SquadRunLifecycle {
@@ -299,6 +350,10 @@ export function createRunLifecycle(deps: {
         dirName: memberDirName(plan),
         status: "open",
         sessionId: null,
+        // 成因与入边**原样透传**（host 派发桥在派发时刻给的既成事实）：本层不推断、不二次判定；
+        // 缺席（历史调用方）⇒ NULL = 遗留行/未知成因，读回不得猜。
+        dispatchCause: request.dispatchCause ?? null,
+        causedByRunId: request.causedByRunId ?? null,
         createdAt: now,
         updatedAt: now,
       });
@@ -330,6 +385,9 @@ export function createRunLifecycle(deps: {
         dirName: null,
         status: "open",
         sessionId: null,
+        // 同 `openMemberRun`：成因/入边原样透传（队长这一支 host 不传 `causedByRunId` ⇒ NULL）。
+        dispatchCause: request.dispatchCause ?? null,
+        causedByRunId: request.causedByRunId ?? null,
         createdAt: now,
         updatedAt: now,
       };

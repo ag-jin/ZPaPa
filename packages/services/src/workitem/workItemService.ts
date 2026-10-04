@@ -5,6 +5,7 @@ import {
   type WorkItemStatusKey,
 } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
+import type { UserDispatchCause } from "./squadDispatchRequests.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
 /* 工作项事件：状态的每次真实变迁、「父项子项全部终态」，以及「请把这条工作项派给这个对象」。
@@ -19,13 +20,23 @@ import type { WorkItemRepo } from "./workItemRepo.js";
    **载荷是 `assignee`（类型 + id），不是裸 `agentId`**（改派泛化，2026-10-03）：这条事件描述的事实是
    「要把这条活派给**谁**」，而"谁"不只有队员 —— 工作项也能被指派给**小队**（改派语义下这是常路：
    负责人是 squad ⇒ 派发路径解析出队长 run）。裸 `agentId` 只描述得了队员这一种，且把「智能体 X」
-   与「小队 X」的 id 空间揉成一个字符串（它们彼此独立，同名不算同一对象）。 */
+   与「小队 X」的 id 空间揉成一个字符串（它们彼此独立，同名不算同一对象）。
+
+   **载荷还带 `cause`**（派发成因，2026-10-04）：成因不是渲染时推断，而是**派发时刻**就落下来的事实 ——
+   两个发出点（队长派单工具 / UI 改派）各自在调用面显式给出，本事件原样带上；它随请求进常驻 hub、
+   最终落 `squad_runs.dispatch_cause`（时间线据此把「队长→队员」弧线从推断升级为事实）。
+   类型是**用户侧子集**（`rule` 不经这条链，由 host 的规则入口就地归并）。 */
 export type WorkItemDispatchAssignee = { type: "agent" | "squad"; id: string };
 
 export type WorkItemEvent =
   | { kind: "workitem.status_changed"; id: string; from: WorkItemStatusKey; to: WorkItemStatusKey }
   | { kind: "workitem.child_completed"; parentId: string }
-  | { kind: "workitem.dispatch_requested"; workItemId: string; assignee: WorkItemDispatchAssignee };
+  | {
+      kind: "workitem.dispatch_requested";
+      workItemId: string;
+      assignee: WorkItemDispatchAssignee;
+      cause: UserDispatchCause;
+    };
 
 export interface CreateWorkItemInput {
   workspaceIdentity: string;

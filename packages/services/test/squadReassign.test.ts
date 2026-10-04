@@ -16,6 +16,7 @@ import {
   type ISquadRuntimeService,
   type SquadWorkspaceTarget,
 } from "../src/workitem/squadRuntimeService.js";
+import type { WorkItemEvent } from "../src/workitem/workItemService.js";
 import { makeRepo } from "./helpers/gitFixture.js";
 
 /* 改派（`reassignWorkItem`，2026-10-03 加法）的服务面用例 + `assignWorkItem` 薄包装的回归。
@@ -54,6 +55,8 @@ async function makeService() {
   const seenTargets: string[] = [];
   /** 常驻侧收到的派发请求（组合根那一份 hub 的订阅 spy）。 */
   const published: SquadDispatchRequest[] = [];
+  /** 经**唯一出口**（实例订阅表）收到的事件：成因断言的直接证据（hub 请求的 cause 由它转发而来）。 */
+  const events: WorkItemEvent[] = [];
   /** 写调用 spy（见上）。 */
   const assigneeWrites: Array<{ id: string; assignee: WorkItem["assignee"] }> = [];
   const hub = createSquadDispatchRequestHub();
@@ -68,6 +71,7 @@ async function makeService() {
       // 与组合根同形：每个 runtime 都把派发请求 publish 到**那一份** hub。
       dispatchRequestHub: hub,
     });
+    runtime.subscribeWorkItemEvents((event) => events.push(event));
     const updateAssignee = runtime.workItemRepo.updateAssignee.bind(runtime.workItemRepo);
     runtime.workItemRepo.updateAssignee = (id, assignee) => {
       assigneeWrites.push({ id, assignee });
@@ -87,6 +91,7 @@ async function makeService() {
     db,
     squadRuntimeService,
     published,
+    events,
     assigneeWrites,
     seenTargets,
     /** 现构一个 runtime（造归档行等夹具要用；裁定 4：不缓存、不取首个）。 */
@@ -162,11 +167,13 @@ test("改派给 agent：写库 + 派发请求原样到 hub（载荷带类型）"
       {
         workItemId: item.id,
         assignee: { type: "agent", id: "ta-b" },
+        // 成因：本次派发由**用户在界面上改派**发起（服务面在事件源头分好，hub 原样转发）。
+        cause: "user_reassign",
         workspacePath: repoRoot,
         workspaceIdentity: WS.identity,
       },
     ],
-    "派发请求必须原样到 hub（assignee 带类型；workspace 取 runtime 的绑定值）",
+    "派发请求必须原样到 hub（assignee 带类型；成因 user_reassign；workspace 取 runtime 的绑定值）",
   );
 });
 
@@ -187,6 +194,7 @@ test("改派给 squad：写库 + 派发请求载荷类型是 squad", async () =>
     {
       workItemId: item.id,
       assignee: { type: "squad", id: "sq-1" },
+      cause: "user_reassign",
       workspacePath: repoRoot,
       workspaceIdentity: WS.identity,
     },
@@ -309,6 +317,8 @@ test("assignWorkItem 回归：返回形状不变、写库、hub 载荷是 agent 
     {
       workItemId: item.id,
       assignee: { type: "agent", id: "ta-a" },
+      // 队长派单工具发起 ⇒ 成因 `leader_tool`（与 UI 改派的 `user_reassign` 是两档事实）。
+      cause: "leader_tool",
       workspacePath: repoRoot,
       workspaceIdentity: WS.identity,
     },
@@ -324,6 +334,57 @@ test("assignWorkItem 回归：返回形状不变、写库、hub 载荷是 agent 
   assert.deepEqual(repeat, { assigned: true });
   assert.equal(assigneeWrites.length, 1, "同值重指派必须照旧写（重试入口，不得静默 no-op）");
   assert.equal(published.length, 1, "同值重指派必须照旧发派发请求");
+});
+
+/* 成因（`cause`）落在**事件载荷**上：两条调用面各传自己的值（队长工具 ⇒ `leader_tool`、
+   UI 改派 ⇒ `user_reassign`）—— 服务面只搬运，不在这里反推。成因是台账 `dispatch_cause` 的源头，
+   断言在**事件**这一层（不是只看 hub 转发后的副本）：漏传/传错的表现是「谁派的」在库里永久失真，
+   而下游（hub → host → 台账）一路都不报错。 */
+test("成因：reassignWorkItem ⇒ 事件 cause=user_reassign；assignWorkItem ⇒ leader_tool", async () => {
+  const { squadRuntimeService, events } = await makeService();
+  const item = await createItem(squadRuntimeService, { type: "user", id: "user" });
+  events.length = 0;
+
+  await squadRuntimeService.reassignWorkItem(WS, {
+    workItemId: item.id,
+    assignee: { type: "agent", id: "ta-b" },
+  });
+  assert.deepEqual(
+    events.filter((event) => event.kind === "workitem.dispatch_requested"),
+    [
+      {
+        kind: "workitem.dispatch_requested",
+        workItemId: item.id,
+        assignee: { type: "agent", id: "ta-b" },
+        cause: "user_reassign",
+      },
+    ],
+    "UI 改派发出的派发事件必须带成因 user_reassign",
+  );
+
+  events.length = 0;
+  await squadRuntimeService.assignWorkItem(WS, { workItemId: item.id, agentId: "ta-b" });
+  assert.deepEqual(
+    events.filter((event) => event.kind === "workitem.dispatch_requested"),
+    [
+      {
+        kind: "workitem.dispatch_requested",
+        workItemId: item.id,
+        assignee: { type: "agent", id: "ta-b" },
+        cause: "leader_tool",
+      },
+    ],
+    "队长派单工具发出的派发事件必须带成因 leader_tool（同值 reapply 也照发）",
+  );
+
+  // 同值 skip 短路：不写、不发事件 ⇒ 也谈不上成因（回归：成因不得让 skip 多发一次事件）。
+  events.length = 0;
+  const skipped = await squadRuntimeService.reassignWorkItem(WS, {
+    workItemId: item.id,
+    assignee: { type: "agent", id: "ta-b" },
+  });
+  assert.deepEqual(skipped, { assigned: false });
+  assert.deepEqual(events, [], "同值 skip 不得发事件（成因只随真实派发走）");
 });
 
 // ---------- 目标纪律 ----------

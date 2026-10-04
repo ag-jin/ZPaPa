@@ -303,6 +303,10 @@ export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
 /** 派发请求 hub（轮 2 裁定落点 ii）：组合根建**一份**、注入给每个 runtime 并订**一次**。 */
 export { createSquadDispatchRequestHub } from "./workitem/squadDispatchRequests.js";
 export type { SquadDispatchRequest } from "./workitem/squadDispatchRequests.js";
+/* 派发**成因**（2026-10-04）：host 派发桥要把三路成因归并进台账（`squad_runs.dispatch_cause`），
+   故类型与常量都与请求同源出（调用方就地抄一份三值联合，改了那边忘了这边不会有编译错）。 */
+export { DISPATCH_CAUSES } from "./workitem/squadDispatchRequests.js";
+export type { DispatchCause, UserDispatchCause } from "./workitem/squadDispatchRequests.js";
 // 批次编排工厂：desktop 侧（Wave 2 的组合根装配）只能经本入口取它（packages/services/package.json#exports）。
 export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
@@ -326,6 +330,10 @@ export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
    让调用方各自拼一份就是「同一语义两处实现」，两边迟早分叉。**只从 node 入口出**：
    `squadRunLifecycle` 经 Repo 触到 node:sqlite，从浏览器安全入口（`index.ts`）出值会整包炸。 */
 export { hasInProgressLeaderRun } from "./workitem/squadRunLifecycle.js";
+/* 「该工作项上活跃的队长 run 是**哪一条**」——台账 `caused_by_run_id` 的唯一来源（与上面那条读法
+   是同一份「进行中」投影的两面）。host 派发桥在**派发时刻**用它解析入边，故与判据同源出；
+   **只从 node 入口出**（同 `hasInProgressLeaderRun` 的理由：`squadRunLifecycle` 经 Repo 触到 node:sqlite）。 */
+export { findActiveLeaderRunId } from "./workitem/squadRunLifecycle.js";
 // 队长行登记的**结论**（`recorded: false` = 本次并入进行中的那次）：派发桥要按它决定「起不起会话」，
 // 故类型与判据同源出（调用方就地抄一份联合，改了那边忘了这边不会有编译错）。
 export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";

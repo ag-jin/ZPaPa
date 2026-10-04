@@ -16,7 +16,8 @@ import {
   createSquadRuntime,
   renderLeaderBriefingPrompt,
 } from "../src/workitem/squadRuntime.js";
-import { hasInProgressLeaderRun } from "../src/workitem/squadRunLifecycle.js";
+import { findActiveLeaderRunId, hasInProgressLeaderRun } from "../src/workitem/squadRunLifecycle.js";
+import type { SquadRunRecord } from "../src/workitem/squadRunRepo.js";
 import { slugForId } from "../src/workitem/slug.js";
 import type { WorkItemEvent } from "../src/workitem/workItemService.js";
 import { makeRepo } from "./helpers/gitFixture.js";
@@ -269,6 +270,92 @@ test("openMemberRun 记录 isLeaderTask，但不因它改变动作", async () =>
   assert.equal(row.isLeaderTask, true);
   assert.equal(row.branch, out.branch);
   assert.equal(row.dirName, out.worktreePath.split("/").at(-1));
+});
+
+/* 0008：派发成因两列（`dispatch_cause` / `caused_by_run_id`）经 lifecycle **原样落台** ——
+   传了就落（含入边）、缺席 NULL。断言读库实体（不是请求回声）：漏传/传错的表现是台账里
+   「谁派的 / 哪个队长派的」永久失真，而下游一路不报错。 */
+test("openMemberRun / recordLeaderRun 落成因两列（传了就有、缺席 NULL）", async () => {
+  const { runtime } = await setup();
+  // 队员 run：队长派单工具发起 ⇒ 成因 + 入边（派发它的队长 run）都落台。
+  await runtime.lifecycle.openMemberRun({
+    runId: "r-cause-member",
+    workItemId: "wi-cause-child",
+    parentWorkItemId: "wi-cause-parent",
+    agentId: "ta-cause-m",
+    isLeaderTask: false,
+    dispatchCause: "leader_tool",
+    causedByRunId: "r-cause-lead",
+  });
+  const member = runtime.squadRunRepo.get("r-cause-member")!;
+  assert.equal(member.dispatchCause, "leader_tool");
+  assert.equal(member.causedByRunId, "r-cause-lead");
+
+  // 队长 run：host 只传成因（队长是批次起点、无入边）⇒ caused_by_run_id 必须为 NULL。
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-cause-lead-2",
+    workItemId: "wi-cause-parent",
+    agentId: "ta-lead",
+    dispatchCause: "rule",
+  });
+  const leader = runtime.squadRunRepo.get("r-cause-lead-2")!;
+  assert.equal(leader.dispatchCause, "rule");
+  assert.equal(leader.causedByRunId, null, "队长 run 是批次起点：无入边");
+
+  // 缺席（历史调用方形态）= 未知 ⇒ NULL（遗留行语义）—— 不猜任何一档。
+  // 换一个工作项：`recordLeaderRun` 对同一工作项只允许一条活跃队长行（§5.7(1) 的存储层不变式）。
+  await runtime.lifecycle.recordLeaderRun({
+    runId: "r-cause-legacy",
+    workItemId: "wi-cause-parent-2",
+    agentId: "ta-lead-2",
+  });
+  const legacy = runtime.squadRunRepo.get("r-cause-legacy")!;
+  assert.equal(legacy.dispatchCause, null);
+  assert.equal(legacy.causedByRunId, null);
+});
+
+/* 派发时刻的**组合形状**（host 派发桥那两行在这里逐字复演，证明它是可判定的）：
+   队长工具派发的队员 run ⇒ 台账行 `dispatch_cause='leader_tool'` 且 `caused_by_run_id`
+   = **当时活跃**的队长 run（读法取自快照的活跃集合）。队长行收口之后，同一读法不得再命中
+   —— 否则「谁派的」会指向一条早已结束的 run（正是「含终态行会得到错误答案」那条口径的实证）。 */
+test("leader_tool 派发的队员行：入边 = 当时活跃的队长 run；队长收口后该读法不再命中", async () => {
+  const { runtime, svc } = await controllableSetup();
+  const parent = runtime.workItemService.create({
+    workspaceIdentity: "ws",
+    workspacePath: runtime.boundWorkspace.path,
+    title: "批根",
+    assignee: { type: "user", id: "u1" },
+  });
+  // 队长 run 先到（规则触发）：它此刻是活跃的。
+  await svc.recordLeaderRun(target("ws"), {
+    runId: "r-compose-lead",
+    workItemId: parent.id,
+    agentId: "ta-lead",
+    dispatchCause: "rule",
+  });
+  const atDispatch = await svc.getSnapshot(target("ws"));
+  const causedByRunId = findActiveLeaderRunId(atDispatch.runs, parent.id);
+  assert.equal(causedByRunId, "r-compose-lead", "派发时刻的活跃队长 run 必须被解析出来");
+  assert.ok(causedByRunId !== null);
+
+  // 队员 run 落台（host 派发桥的调用形状：dispatchCause + 仅非 null 时带 causedByRunId）。
+  await svc.openMemberRun(target("ws"), {
+    runId: "r-compose-member",
+    workItemId: "wi-compose-child",
+    parentWorkItemId: parent.id,
+    agentId: "ta-member",
+    isLeaderTask: false,
+    dispatchCause: "leader_tool",
+    causedByRunId,
+  });
+  const row = runtime.squadRunRepo.get("r-compose-member")!;
+  assert.equal(row.dispatchCause, "leader_tool");
+  assert.equal(row.causedByRunId, "r-compose-lead", "台账落的是派发时刻解析出的那条队长 run");
+
+  // 队长收口 ⇒ 活跃集合里不再有它 ⇒ 同一读法返回 null（不猜：而不是继续指向已结束的 run）。
+  await svc.completeLeaderRun(target("ws"), { runId: "r-compose-lead" });
+  const after = await svc.getSnapshot(target("ws"));
+  assert.equal(findActiveLeaderRunId(after.runs, parent.id), null);
 });
 
 // 残枝（分支已存在、但没挂任何工作树）⇒ 响亮失败；台账行**已落**（先落台账的次序是有意的：
@@ -1245,6 +1332,47 @@ test("§5.7(1) 读法 hasInProgressLeaderRun：进行中为真，completeLeaderR
     false,
     "终态之后「进行中」必须为假 —— 否则该判据恒真、该工作项的后续指派被永久合并",
   );
+});
+
+/* ③' 与上面**同一份投影**的另一面：`findActiveLeaderRunId`（台账 `caused_by_run_id` 的唯一读法）——
+   邻居回答「有没有」，它回答「是哪条」。四格逐条：命中 / 无命中 / 只认队长行 / 只认该工作项。
+   （入参必须是**活跃集合**：含终态行会得到恒真/错误答案 —— 与邻居同款口径，见函数 doc。） */
+test("findActiveLeaderRunId：命中该工作项的活跃队长行；其余一律 null", () => {
+  const rec = (over: Partial<SquadRunRecord>): SquadRunRecord => ({
+    runId: "run-1",
+    workspaceKey: "ws",
+    workspacePath: "/tmp/ws",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-1",
+    agentId: "ta-a",
+    isLeaderTask: false,
+    branch: null,
+    dirName: null,
+    status: "open",
+    sessionId: null,
+    dispatchCause: null,
+    causedByRunId: null,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  });
+  const rows = [
+    rec({ runId: "r-member", workItemId: "wi-1", isLeaderTask: false }),
+    rec({ runId: "r-lead-other", workItemId: "wi-2", isLeaderTask: true }),
+    rec({ runId: "r-lead-1", workItemId: "wi-1", isLeaderTask: true }),
+  ];
+  assert.equal(findActiveLeaderRunId(rows, "wi-1"), "r-lead-1", "命中该工作项的活跃队长行");
+  assert.equal(findActiveLeaderRunId(rows, "wi-2"), "r-lead-other");
+  assert.equal(findActiveLeaderRunId(rows, "wi-3"), null, "无命中 ⇒ null（不猜：宁缺毋错）");
+  assert.equal(
+    findActiveLeaderRunId(
+      [rec({ runId: "r-member", workItemId: "wi-1", isLeaderTask: false })],
+      "wi-1",
+    ),
+    null,
+    "只认队长行（队员行不是「派发者」）",
+  );
+  assert.equal(findActiveLeaderRunId([], "wi-1"), null, "空集合 ⇒ null");
 });
 
 // ④ §6.2：队长行的终态**不得**影响工作树生命周期。同一父项下队员行与队长行并存，

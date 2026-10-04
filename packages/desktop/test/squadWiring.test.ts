@@ -491,3 +491,67 @@ test("派发桥为队长 run 接上终态收口（同一条出口 + completeLead
   // ⑤ 失败/中止那一支两种 run 都走 `failMemberRun`（同一条出口；它的契约是「这条 run」而非身份）。
   assert.match(branch, /failMemberRun\(target, \{[\s\S]{0,120}runLabel/);
 });
+
+/* ---- 派发成因落台账（2026-10-04）：三路成因在派发桥**归并**，队员 run 另带入边 ----
+
+   `squad_runs.dispatch_cause` 是时间线把「队长→队员」弧线从渲染时推断升级为**事实**的数据依据；
+   `caused_by_run_id` 记「哪个队长派的」。两列都只在**派发时刻**由 host 派发桥给出：
+   漏传的表现是两列恒 NULL（弧线永远只能推断），而下游一路**不报错** —— 故这里钉接线。 */
+
+// 成因的三路来源在派发桥归并成一处：规则触发（消息形状里没有 cause）就地落 `rule`，
+// 人发起那一支用**服务面给的** cause（队长工具 / UI 改派 —— 服务面在事件源头就分好了）。
+// 反向守卫：不得按调用者反推成因（那是二次判定，推断错会往台账里落一个错的成因且读回不报错）。
+test("派发桥归并三路成因：rule 就地归并、人发起用服务面给的 cause", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /msg\.trigger === "rule" \? "rule" : msg\.cause/,
+    "成因必须在派发桥归并成一处（规则触发没有 cause，人发起的那支才读 msg.cause）",
+  );
+  assert.doesNotMatch(
+    branch,
+    /dispatchCause\s*=\s*"(?:leader_tool|user_reassign|rule)"/,
+    "不得在派发桥写死成因 —— 人发起那两支的成因是服务面给的事实，本层只搬运",
+  );
+  // 人发起两条入口的薄分支：hub 请求的 cause 原样填进消息（`dispatchSquadAssignment`）。
+  assert.match(
+    branch,
+    /cause: request\.cause/,
+    "dispatchSquadAssignment 必须把 request.cause 原样填进派发消息",
+  );
+});
+
+// 两处台账写入口都要拿到成因；队员那处还要拿入边（`caused_by_run_id`）。
+// 入边的解析只有服务层那一处读法（`findActiveLeaderRunId`），host 不得自己 `find(...)` 拼一份。
+// 断言按**代码形状**匹配（整行键 + 条件展开），不用裸标识符：注释里提到字段名是合法的
+//（本仓踩过「注释还在、代码被删」的假绿），故这里要求的是真的作为参数出现。
+test("派发桥两处台账调用都传 dispatchCause；队员处传 causedByRunId", () => {
+  const branch = squadDispatchBridgeSource();
+  assert.match(
+    branch,
+    /openMemberRun\(target, \{[\s\S]{0,400}?\n\s+dispatchCause,\n/,
+    "队员 run 的台账行必须带成因（丢它就是「弧线永远只能推断」）",
+  );
+  assert.match(
+    branch,
+    /openMemberRun\(target, \{[\s\S]{0,400}?\.\.\.\(causedByRunId !== null \? \{ causedByRunId \} : \{\}\),/,
+    "队员 run 的入边必须按「仅非 null 时带键」的既有风格传（null 不是一条事实）",
+  );
+  assert.match(
+    branch,
+    /recordLeaderRun\(target, \{[\s\S]{0,300}?\n\s+dispatchCause,\n/,
+    "队长 run 的台账行必须带成因",
+  );
+  // 入边只在「队长工具派发的队员 run」这一格解析，且用服务层的唯一读法 + 同一份快照。
+  assert.match(
+    branch,
+    /kind === "member" && dispatchCause === "leader_tool" && parentWorkItem[\s\S]{0,200}?findActiveLeaderRunId\(snapshot\.runs, parentWorkItem\.id\)/,
+    "causedByRunId 必须只在「member + leader_tool + 有父项」时按服务层读法解析",
+  );
+  // 队长那一支**不得**带 causedByRunId（队长 run 是批次起点，无入边 ⇒ NULL）。
+  assert.doesNotMatch(
+    branch,
+    /recordLeaderRun\(target, \{[\s\S]{0,300}?causedByRunId/,
+    "队长 run 无入边：recordLeaderRun 不得传 causedByRunId",
+  );
+});

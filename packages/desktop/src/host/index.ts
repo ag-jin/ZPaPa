@@ -70,6 +70,9 @@ import {
   planDispatch,
   declaredRunClassFor,
   hasInProgressLeaderRun,
+  /* 「该工作项上活跃的队长 run 是**哪一条**」——台账 `caused_by_run_id` 的唯一读法
+     （与 `hasInProgressLeaderRun` 同一份「进行中」投影的两面）。 */
+  findActiveLeaderRunId,
   renderLeaderBriefingPrompt,
   // 收件箱的四个产生点构建件（P2c）：host 侧只负责「事实是什么」，不自己拼 dedupKey / title。
   buildDispatchSkippedInboxItem,
@@ -79,6 +82,10 @@ import {
   type OffPeakRequestAuthBuilder,
   type SquadDispatchRequest,
   type DeclaredRunClass,
+  /* 派发**成因**（2026-10-04）：三条入口在派发桥归并成 `DispatchCause` 落台账
+     （`squad_runs.dispatch_cause`）；人发起那支的成因由服务面在事件源头给出（`UserDispatchCause`）。 */
+  type DispatchCause,
+  type UserDispatchCause,
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import {
@@ -2756,8 +2763,10 @@ process.on(
    `wake.rule_fired`，也是幂等四元组的一半）；**人发起豁免三道闸**（spec §5.5：`max_fires`/`loop`/`rate`
    只约束规则型），因此**不写、也不要求**任何唤醒规则 —— 这正是「指派不得先写一条唤醒规则」的落点。 */
 
-/** 派发请求的触发源：规则触发带规则 id；人发起（含队长派单）没有。 */
-type SquadDispatchTrigger = { trigger: "rule"; ruleId: string } | { trigger: "user" };
+/** 派发请求的触发源：规则触发带规则 id；人发起（队长派单 / UI 改派）**带成因**（服务面给的事实）。 */
+type SquadDispatchTrigger =
+  | { trigger: "rule"; ruleId: string }
+  | { trigger: "user"; cause: UserDispatchCause };
 
 /** 一次派发的请求：消息形状的两路入口共用（`eventKey` 是幂等键里稳定的那一半，也是台账 runId）。 */
 type SquadDispatchRequestMsg = SquadDispatchTrigger & {
@@ -2938,6 +2947,23 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     }
 
     const kind: SquadDispatchKind = enqueued.runClass;
+    /* 本次派发的**成因**（台账 `dispatch_cause` 列）：规则触发与人发起**在这一处归并** ——
+       人发起那一支的成因由服务面在事件源头分好（队长工具 / UI 改派，随 hub 请求到这里），
+       规则到点的消息形状里**没有** cause（它是 host 自己的入口，不经服务面事件链）。
+       本层只归并、**不二次判定**（按调用者反推成因就是推断，推断错会往台账里落一个错的成因，
+       而读回不报错）。 */
+    const dispatchCause: DispatchCause = msg.trigger === "rule" ? "rule" : msg.cause;
+    /* 入边 `caused_by_run_id`：**只在派发时刻**解析「这条队员 run 的上级队长 run」——
+       ① 仅 `leader_tool` 派发（队长工具派单；用户改派/规则触发没有必然的上级队长）；
+       ② 仅队员 run（队长 run 是批次起点，无入边；单独安排没有台账行）；
+       ③ 在**该批根工作项**（本项的父项）上找当时活跃的队长行（读法只有 `findActiveLeaderRunId`
+          一处，事实取自上面那份 `snapshot`——它就是「写入台账行之前」的既成事实）。
+       `parentWorkItem` 为空（顶层项 / 父项查不到）⇒ null：不抛、也不改 kind ——
+       入边只影响一列，不该反过来改变这次派发的类别判定（那是 `planDispatch` 的结论）。 */
+    const causedByRunId =
+      kind === "member" && dispatchCause === "leader_tool" && parentWorkItem
+        ? findActiveLeaderRunId(snapshot.runs, parentWorkItem.id)
+        : null;
     /* 台账 / 开树这一格按**类别**分流（`runClass` 是 `planDispatch` 给的显式判别字段）。为什么必须是
        显式三分类、不能靠 `isLeaderTask` 二分：那样**单独安排的智能体**（不在小队里的 agent，
        spec §6.1）会落进「非队长 ⇒ 开树」那条腿 —— 于是它也被塞进一条分支，而那条分支
@@ -2956,6 +2982,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           parentWorkItemId: workItem.parentId ?? workItem.id,
           agentId: enqueued.agentId,
           isLeaderTask: false,
+          // 派发时刻的既成事实，原样落台账（不在这里推断）：见上面 `dispatchCause` / `causedByRunId`。
+          dispatchCause,
+          ...(causedByRunId !== null ? { causedByRunId } : {}),
         });
         ledgerRowRegistered = true;
       } catch (error) {
@@ -2975,6 +3004,8 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           workItemId: workItem.id,
           parentWorkItemId: workItem.parentId ?? workItem.id,
           agentId: enqueued.agentId,
+          // 成因照落（队长这一支不传入边：队长 run 是批次起点，没有派发它的队长 ⇒ 落 NULL）。
+          dispatchCause,
         });
         /* §5.7(1)/S13 的**原子兜底**：上面 `decideSquadDispatch` 那条合并判据是「读一次再决定」，
            两条派发**并发**时可能各自读到「没有进行中」（快照早于对方写入）⇒ 登记语句自己带前置，
@@ -3323,6 +3354,10 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
  * 这个字段**只用于 `eventKey` 命名与日志** —— 派发结论由 `runSquadDispatch` 从快照**重读**工作项、
  * 交给 `planDispatch` 规划得出（库里刚写好的 `assignee` 才是权威，请求不是第二份判据）。
  *
+ * **载荷还带 `cause`**（派发成因，2026-10-04）：与 `assignee` 不同，它**不只是命名用的** ——
+ * 原样进派发桥并落 `squad_runs.dispatch_cause`（时间线「队长→队员」弧线的事实依据）；
+ * 本层只搬运（服务面在事件源头分好队长工具 / UI 改派），**不得**在这里按调用者反推成因。
+ *
  * **结果必须可见**（不得静默吞掉）：成功/跳过/失败都留一条带 `workItemId` 的日志。这条路径**没有**
  * 调度器的重投表可回执，也不自动重试 —— 那条 error 日志就是人（或下一次工具调用）据以动手的依据。
  */
@@ -3336,6 +3371,8 @@ async function dispatchSquadAssignment(request: SquadDispatchRequest): Promise<v
   const assigneeLabel = `${request.assignee.type}:${request.assignee.id}`;
   const report = await runSquadDispatch({
     trigger: "user",
+    // 成因**原样搬运**（服务面在事件源头分好：队长工具 / UI 改派）：本层不二次判定。
+    cause: request.cause,
     workItemId: request.workItemId,
     workspacePath: request.workspacePath,
     workspaceIdentity: request.workspaceIdentity,

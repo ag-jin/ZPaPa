@@ -309,3 +309,9 @@ export const INBOX_ITEM_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_inbox_items_active
     ON inbox_items(workspace_key, archived_at);
 `;
+
+// 0008 追加：给 squad_runs 落「派发成因」两列。只加列，不改既有列/表；NULL = 遗留行/未知成因（读回不得猜）。
+export const SQUAD_RUN_CAUSE_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN dispatch_cause TEXT;
+  ALTER TABLE squad_runs ADD COLUMN caused_by_run_id TEXT;
+`;

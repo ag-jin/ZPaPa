@@ -44,6 +44,9 @@ const run = (over: Partial<SquadRunRecord> = {}): SquadRunRecord => ({
   dirName: null,
   status: "open",
   sessionId: null,
+  // 0008 两列（派发成因 / 入边）：本文件只做渲染守卫，缺省 = NULL（遗留行语义）。
+  dispatchCause: null,
+  causedByRunId: null,
   createdAt: 1,
   updatedAt: 1,
   ...over,

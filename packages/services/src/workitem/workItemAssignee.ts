@@ -1,4 +1,5 @@
 import type { WorkItem } from "@zcode/shared";
+import type { UserDispatchCause } from "./squadDispatchRequests.js";
 import type { SquadRuntime } from "./squadContracts.js";
 
 /* 「改负责人 + 发派发事件」的**唯一实现**（`reassignWorkItem`（UI 改派）与 `assignWorkItem`
@@ -26,11 +27,15 @@ import type { SquadRuntime } from "./squadContracts.js";
    3. **写者**：只经 `workItemRepo.updateAssignee`（条件更新，恰命中一行才算成功）；未命中 ⇒ 响亮抛。
    4. **发事件**：`type === "user"` ⇒ **不发**（人不需要被派 run ——「指派给人 = 等人自己动手」）；
       `agent` / `squad` ⇒ 发 `workitem.dispatch_requested`（载荷 `assignee`：类型 + id，小队也能是对象），
-      经**唯一出口**（实例订阅表 + 常驻 hub），**不在这里开 run**（§5.1 一处写入 / §5.6 `@` ≠ 指派）。 */
+      经**唯一出口**（实例订阅表 + 常驻 hub），**不在这里开 run**（§5.1 一处写入 / §5.6 `@` ≠ 指派）。
+   5. **成因（`cause`）是调用面的事实，本函数只搬运**：两条调用面各自知道「这次派发是谁发起的」
+      （队长派单工具 / UI 改派），故由它们显式给出、本函数原样带进事件载荷 —— 在这里反推成因
+      （例如按调用者猜）就是**二次判定**：推断错的表现是台账里落一个错的成因，而读回不会报错。
+      类型收窄成用户侧子集（`rule` 不经这条链）。**同值 `skip` 短路时不发事件 ⇒ 不涉及成因。 */
 export function applyWorkItemAssignee(
   runtime: SquadRuntime,
   input: { workItemId: string; assignee: WorkItem["assignee"] },
-  options: { sameAssignee: "skip" | "reapply" },
+  options: { sameAssignee: "skip" | "reapply"; cause: UserDispatchCause },
 ): { assigned: boolean } {
   const item = runtime.workItemRepo.get(input.workItemId);
   if (!item) {
@@ -67,6 +72,7 @@ export function applyWorkItemAssignee(
       kind: "workitem.dispatch_requested",
       workItemId: item.id,
       assignee: { type: input.assignee.type, id: input.assignee.id },
+      cause: options.cause,
     });
   }
   return { assigned: true };

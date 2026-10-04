@@ -49,6 +49,9 @@ const run = (over: Partial<SquadRunRecord> = {}): SquadRunRecord => ({
   dirName: "aaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb",
   status: "open",
   sessionId: null,
+  // 0008 两列：缺省 = NULL（遗留行语义）—— 本文件不关心成因，但行必须逐字段成型。
+  dispatchCause: null,
+  causedByRunId: null,
   createdAt: 1,
   updatedAt: 1,
   ...over,

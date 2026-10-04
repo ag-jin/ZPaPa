@@ -485,6 +485,8 @@ test("闭环S1+S2：建小队落盘、建项指派给小队、指派只发派发
   assert.deepEqual(f.dispatched[0], {
     workItemId: child.id,
     assignee: { type: "agent", id: memberA.id },
+    // 成因：队长派单工具（`squad/assign-work-item`）发起 ⇒ `leader_tool`（台账 dispatch_cause 的源头）。
+    cause: "leader_tool",
     workspacePath: f.repoRoot,
     workspaceIdentity: WS,
   });
@@ -1803,6 +1805,7 @@ test("H. 三类分流：队员（树+分支+台账）/ 队长（只台账）/ �
   assert.deepEqual(soloRequests[0], {
     workItemId: solo.id,
     assignee: { type: "agent", id: memberA.id },
+    cause: "leader_tool",
     workspacePath: f.repoRoot,
     workspaceIdentity: WS,
   });

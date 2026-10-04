@@ -260,7 +260,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
       /* **派发请求**（改完负责人后发的 `workitem.dispatch_requested`：队长派单工具与 UI 改派都经它）
          另发一份到注入的 `dispatchRequestHub`：实例级订阅表在 runtime 内部、常驻侧订不到（runtime 按目标
          现构，2026-10-02 第 2 轮裁定），故这一格必须由 hub 承载才能真的开 run。
-         载荷是 `assignee`（类型 + id，小队也能是被派发对象）—— 见 `SquadDispatchRequest` 的详注；
+         载荷是 `assignee`（类型 + id，小队也能是被派发对象）与 `cause`（成因：队长工具 / UI 改派）
+         —— 见 `SquadDispatchRequest` 的详注；
          请求里不含 `user`：指派给人的事件根本不带派发请求（服务面只在 agent / squad 时发这条事件）。
          只对这一种事件 publish（状态变迁事件的消费方在实例内，没必要进常驻 hub）；
          `workspacePath/Identity` 取 runtime 的**绑定值**——不是调用方传进来的，避免在错的 workspace 上开 run。 */
@@ -268,6 +269,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
         deps.dispatchRequestHub.publish({
           workItemId: event.workItemId,
           assignee: event.assignee,
+          // 成因**原样转发**（服务面在事件源头就分好：队长工具 / UI 改派）：本层不二次判定。
+          cause: event.cause,
           workspacePath,
           workspaceIdentity,
         });

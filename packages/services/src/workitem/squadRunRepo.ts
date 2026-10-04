@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { DISPATCH_CAUSES, type DispatchCause } from "./squadDispatchRequests.js";
 
 /* 小队运行台账：squad_runs 表的读写。刻意不进 packages/services/src/index.ts——
    服务层（SquadRunLifecycle）才是唯一公开入口，导出 Repo 会让调用方绕过生命周期直接改运行状态。 */
@@ -30,6 +31,18 @@ export type SquadRunRecord = {
   dirName: string | null;
   status: SquadRunStatus;
   sessionId: string | null;
+  /**
+   * 本次派发的**成因**（`dispatch_cause`，闭集见 `DispatchCause`）。
+   * **NULL = 遗留行 / 未知成因**（加列之前的行，或 host 没给）—— **读回不得猜**：
+   * 枚举外值读回响亮抛（`readDispatchCause`），落 NULL 只表示「不知道」，不表示任何具体成因。
+   */
+  dispatchCause: DispatchCause | null;
+  /**
+   * 派发这条队员 run 的**队长 run**（`caused_by_run_id`）：仅 `leader_tool` 派发的队员行有值
+   * （派发时刻该批根工作项上活跃的队长行，`findActiveLeaderRunId` 的唯一读法）；队长行与其余成因
+   * 一律 NULL（队长 run 是批次起点，无入边）。自由字符串列（不枚举），故无守卫。
+   */
+  causedByRunId: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -105,6 +118,8 @@ interface SquadRunRow {
   dir_name: string | null;
   status: string;
   session_id: string | null;
+  dispatch_cause: string | null;
+  caused_by_run_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -133,6 +148,32 @@ function assertStatus(status: SquadRunStatus): SquadRunStatus {
   return status;
 }
 
+/* `dispatch_cause` 的读回/写路径断言（与 readStatus / assertStatus 同款裁定）。
+   为什么成因也要响亮：它决定「这条 run 是谁派的」——时间线画「队长→队员」弧线、回溯规则触发
+   都读它。静默按默认处理（当成 NULL）会让成因变成没人知道的事：库里明明写着别的值，
+   读出来却是「不知道」，而且不报错。故**枚举外值一律抛**。NULL 是合法值（遗留行/未知成因），
+   原样返回 —— 列上的 NULL 与「枚举外值」是两件不同的事，不得混为一谈。 */
+function readDispatchCause(value: string | null): DispatchCause | null {
+  if (value === null) return null;
+  if (!(DISPATCH_CAUSES as readonly string[]).includes(value)) {
+    throw new Error(
+      `squad_runs.dispatch_cause 读回非法值「${value}」：列被写坏或枚举被改小。静默按默认处理会让` +
+        "「这条 run 是谁派的」变成没人知道的事，故一律抛。",
+    );
+  }
+  return value as DispatchCause;
+}
+
+/** 写路径的同一道闸：列值只有 `DISPATCH_CAUSES` 这几档（外加 NULL），写别的说明调用方传错了。 */
+function assertDispatchCause(cause: DispatchCause | null): DispatchCause | null {
+  if (cause !== null && !(DISPATCH_CAUSES as readonly string[]).includes(cause)) {
+    throw new Error(
+      `squad_runs.dispatch_cause 拒绝写入非法值「${String(cause)}」（不在 DISPATCH_CAUSES 内）`,
+    );
+  }
+  return cause;
+}
+
 function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
   return {
     runId: row.run_id,
@@ -146,6 +187,8 @@ function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
     dirName: row.dir_name,
     status: readStatus(row.status),
     sessionId: row.session_id,
+    dispatchCause: readDispatchCause(row.dispatch_cause),
+    causedByRunId: row.caused_by_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -163,11 +206,14 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
   return {
     insert(record) {
       assertStatus(record.status);
+      // 成因先过写路径闸：非法值绝不落盘（否则读回校验会在下次启动才炸，把失败推迟到无人值守的时刻）。
+      assertDispatchCause(record.dispatchCause);
       db.prepare(
         `INSERT INTO squad_runs (
           run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
-          is_leader_task, branch, dir_name, status, session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+          dispatch_cause, caused_by_run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.runId,
         record.workspaceKey,
@@ -182,20 +228,24 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         record.sessionId,
         record.createdAt,
         record.updatedAt,
+        record.dispatchCause,
+        record.causedByRunId,
       );
     },
 
     // 见接口注释：前置写进语句本身（单条语句原子），并发下同一工作项只可能有一条活跃队长行。
-    // 参数顺序：先 SELECT 的 13 个值，再 NOT EXISTS 子句的 workspace_key / work_item_id，最后活跃状态集。
+    // 参数顺序：先 SELECT 的 15 个值，再 NOT EXISTS 子句的 workspace_key / work_item_id，最后活跃状态集。
     insertLeaderRunIfNotInProgress(record) {
       assertStatus(record.status);
+      assertDispatchCause(record.dispatchCause);
       const changes = db
         .prepare(
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
-            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+            dispatch_cause, caused_by_run_id
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
@@ -216,6 +266,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.sessionId,
           record.createdAt,
           record.updatedAt,
+          record.dispatchCause,
+          record.causedByRunId,
           record.workspaceKey,
           record.workItemId,
           ...SQUAD_RUN_ACTIVE_STATUSES,

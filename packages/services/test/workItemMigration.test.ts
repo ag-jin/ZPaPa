@@ -59,7 +59,34 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
   "0005_wake_rules": ["DROP TABLE wake_rules"],
   "0006_squad_runs": ["DROP TABLE squad_runs"],
   "0007_inbox_items": ["DROP TABLE inbox_items"],
+  // 0008 是**列级**追加（不改表）：反向 DDL 是逐列 DROP（SQLite 3.35+ 支持的形态）。
+  "0008_squad_run_cause": [
+    "ALTER TABLE squad_runs DROP COLUMN dispatch_cause",
+    "ALTER TABLE squad_runs DROP COLUMN caused_by_run_id",
+  ],
 };
+
+const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
+  "run_id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "parent_work_item_id",
+  "agent_id",
+  "is_leader_task",
+  "branch",
+  "dir_name",
+  "status",
+  "session_id",
+  "created_at",
+  "updated_at",
+];
+
+function squadRunColumns(db: DatabaseSync): string[] {
+  return (db.prepare("PRAGMA table_info(squad_runs)").all() as Array<{ name: string }>).map(
+    (column) => column.name,
+  );
+}
 
 test("迁移建出 work_items 表与索引", () => {
   const db = openFreshDb();
@@ -69,6 +96,58 @@ test("迁移建出 work_items 表与索引", () => {
     .all();
   assert.equal(tables.length, 1);
   assert.deepEqual(workItemIndexes(db), EXPECTED_WORK_ITEM_INDEXES);
+});
+
+/* 0008 的**直接**用例（老库升级 + 从零建库两条路都要走）：
+   · 老库（已有 0001–0007、库里还有行）补跑 0008 ⇒ **只加两列**、既有 13 列一字未动、
+     既有行读回两列 = NULL（NULL = 遗留行/未知成因，加列**不猜值**）；
+   · 从零建库同样带这两列 ⇒ 新库与老库升级后**同一形状**（否则两边读回同一条 SQL 结果不同）。 */
+test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  // 自适配：0008 之后若再添迁移，本用例按同一条路逐条退回「0008 之前」。
+  const from008 = fullLedger.findIndex((row) => row.id === "0008_squad_run_cause");
+  assert.ok(from008 > 0, "账本里没有 0008（迁移没挂上）");
+  for (const row of fullLedger.slice(from008)) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  // 退回「0008 之前」的形状：13 列，且我们真的能按旧列清单写入一条既有行。
+  assert.deepEqual(squadRunColumns(db), EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008);
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at)
+     VALUES ('legacy-1', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL, 1, 1)`,
+  ).run();
+
+  const migrated: Array<string | null> = [];
+  runTasksDatabaseMigrations(db, {
+    onProgress: (phase, facts) => {
+      if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
+    },
+  });
+  // 只补跑了一条：执行时账本头是 0008 之前的那一条（与上面「老库升级」用例同一读法）。
+  assert.deepEqual(migrated, [fullLedger[from008 - 1]?.id ?? null], "老库升级只补跑 0008");
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  const columns = squadRunColumns(db);
+  assert.deepEqual(
+    columns,
+    [...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008, "dispatch_cause", "caused_by_run_id"],
+    "只加两列（在末尾），既有 13 列一字未动",
+  );
+  // 既有行读回两列 = NULL：加列不猜值（遗留行语义），读回不得把 NULL 当成某一档成因。
+  const legacy = db
+    .prepare("SELECT dispatch_cause, caused_by_run_id FROM squad_runs WHERE run_id = 'legacy-1'")
+    .get() as { dispatch_cause: string | null; caused_by_run_id: string | null };
+  assert.equal(legacy.dispatch_cause, null);
+  assert.equal(legacy.caused_by_run_id, null);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), columns);
 });
 
 // 迁移必须幂等：老库升级与重放都不能报错、不能改动结构。

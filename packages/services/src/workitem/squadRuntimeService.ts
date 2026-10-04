@@ -917,7 +917,10 @@ export function createSquadRuntimeService(deps: {
       await assertEnabled();
       const runtime = await deps.createRuntime(target);
       // 同值 ⇒ skip：不写、不发事件、返回 `{assigned:false}`（语义 3：重复指派不该再起一次 run）。
-      return applyWorkItemAssignee(runtime, input, { sameAssignee: "skip" });
+      // 成因取 `user_reassign` —— 本次派发由用户在界面上发起（事实由调用面给出，实现只搬运）。
+      // 选项做成单行常量而不是内联字面量：本文件贴着 oxlint 的行数门槛（skipComments 口径）。
+      const reassignOptions = { sameAssignee: "skip", cause: "user_reassign" } as const;
+      return applyWorkItemAssignee(runtime, input, reassignOptions);
     },
 
     async assignWorkItem(target, input) {
@@ -931,7 +934,8 @@ export function createSquadRuntimeService(deps: {
       applyWorkItemAssignee(
         runtime,
         { workItemId: input.workItemId, assignee: { type: "agent", id: input.agentId } },
-        { sameAssignee: "reapply" },
+        // 成因取 `leader_tool`（本次派发由队长派单工具发起）；与改派那一支各传自己的值。
+        { sameAssignee: "reapply", cause: "leader_tool" },
       );
       // 返回形状不变（reapply 恒写 + 恒发；未命中 / 不可写已在实现里响亮抛，走不到这里）。
       return { assigned: true };

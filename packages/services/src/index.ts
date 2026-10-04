@@ -384,6 +384,11 @@ export type {
   OpenMemberRunResult,
   ReviewOutcome,
 } from "./workitem/squadRunLifecycle.js";
+/* 派发**成因**（2026-10-04，`squad_runs.dispatch_cause`）的词汇：闭集三值联合（时间线把
+   「队长→队员」弧线从渲染时推断升级为事实时要能命名它）。声明在 `squadDispatchRequests.ts`
+   （浏览器安全的那个文件）；这里**只出类型**（编译擦除）—— 值（`DISPATCH_CAUSES` 常量数组）
+   只从 `@zcode/services/node` 出。 */
+export type { DispatchCause } from "./workitem/squadDispatchRequests.js";
 export type { ReapOutcome } from "./worktree/orphanReaper.js";
 export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
 export type { SquadRunRecord, SquadRunRepo, SquadRunStatus } from "./workitem/squadRunRepo.js";
