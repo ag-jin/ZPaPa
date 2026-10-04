@@ -138,3 +138,23 @@ Model / ThinkingLevel / ServiceTier / **ConversationStarters** / **ComposioToolk
 
 **源码新增待裁定格**：`CustomEnv`（每 agent 自定义环境变量）/ `CustomArgs`（每 agent 自定义
 CLI 参数）——我们完全没有；派发链路要透传，吸收需动 host 侧，成本高于 UI 字段。
+
+## 4. 用户逐项裁定（2026-10-04，七格全部定案）
+
+| # | 格 | 裁定 |
+|---|---|---|
+| 1 | Concurrency（每 agent 最大并发 run） | **要**：字段 + 服务层派发闸（完整吸收，默认值实现时定） |
+| 2 | 归档可恢复（Restore） | **要**：归档从终态改为可逆（智能体与小队同口径；定义与记忆本就保留） |
+| 3 | CustomEnv / CustomArgs | **缓**：等真实场景（动派发链路透传，成本高） |
+| 4 | per-agent MCP | **要**：agent 级独立 MCP 配置；涉及 host 层挂载合并，**实现前先出设计细节** |
+| 5 | AI 对话式创建（AgentBuilder） | **要**：依赖聊天面，排期靠后，方向定了 |
+| 6 | 任务表呈现位 | **独立详情页**（同 multica agents/:id 形态，新增路由） |
+| 7 | 运行数据呈现位 | **进详情页**（与任务表同页分区/页签） |
+
+**裁定后的实现次序（取代 §2 中被影响的部分）**：
+1. 第②刀（不变）：表单扩 description / color 选色器 / modelSelection + 服务面编辑白名单（TDD）。
+2. 第③刀（不变）：skills / tools / permissionMode 编辑。
+3. **第④刀（新）**：agent 独立详情页——概览 + 任务表（#6）+ 运行数据（#7）三区一体；含路由与导航接线。
+4. **第⑤刀（新）**：Concurrency 字段 + 派发闸（服务层）；归档可恢复（服务层 restore + UI 入口，含确认文案从「不可撤销」改「可恢复」）。
+5. **远期（新）**：per-agent MCP（先设计后实现）、AI 对话式创建（依赖聊天面）。
+6. **缓**：CustomEnv / CustomArgs（等场景触发）。
