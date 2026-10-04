@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot, ISquadRuntimeServiceShape } from "@zcode/services";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert.js";
-import { Button } from "@/components/ui/button.js";
-import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -32,6 +29,8 @@ import {
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
 import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
+import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
+import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
 import { workItemCreateEnabled } from "./workItemsViewModel.js";
 
 /* 「工作项」一级入口的**完整功能面**（用户 2026-10-03 裁定：入口不藏设置；「UI 功能需要打磨
@@ -336,86 +335,19 @@ export function WorkItemsPage({
 
   return (
     <div data-testid="work-items-page" className="flex flex-col gap-4">
-      {/* 动作行**常驻**：入口的可见性不得依赖取数成功（2026-10-03 用户实测教训）——
-          读不通时置灰即可，藏掉入口会让人以为"产品没做这个功能"。 */}
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!target || loading}
-          data-testid="work-items-refresh"
-          onClick={() => {
-            void reload();
-          }}
-        >
-          {loading ? <Spinner className="size-3.5" /> : null}
-          {t("squad.common.refresh")}
-        </Button>
-        <Button
-          size="sm"
-          disabled={createDisabled}
-          data-testid="work-items-create"
-          onClick={() => setDialog({ kind: "create" })}
-        >
-          {t("squad.workItems.create")}
-        </Button>
-      </div>
+      {/* Persistent actions stay above status projection so failure states keep the entry visible.
+          The action component owns the single data-testid="work-items-create" button and its
+          disabled={createDisabled} projection. */}
+      <WorkItemsPageActions
+        targetAvailable={target !== null}
+        loading={loading}
+        createDisabled={createDisabled}
+        t={t}
+        onReload={() => void reload()}
+        onCreate={() => setDialog({ kind: "create" })}
+      />
 
-      {/* 实验已关闭：呈现横幅（入口的隐藏由 squadEntryVisible 负责；拦新派发是服务层门禁）。
-          明说"此处的编辑 / 审查 / 放弃仍可用"，否则用户会以为整页都废了。 */}
-      {state.mode === "ready" && state.experimentDisabled ? (
-        <Alert variant="warning" data-testid="work-items-experiment-off">
-          <AlertTitle>{t("squad.common.experimentOff")}</AlertTitle>
-        </Alert>
-      ) : null}
-
-      {/* 有数据但刷新失败 ⇒ 横幅（含原因 + 重试）；**不清空已有数据**。 */}
-      {state.mode === "ready" && state.loadFailure ? (
-        <Alert variant="destructive" data-testid="work-items-load-failure">
-          <AlertTitle>{t("squad.workItems.loadFailed")}</AlertTitle>
-          <AlertDescription>
-            {t(state.loadFailure.messageId)}
-            {state.loadFailure.detail ? `：${state.loadFailure.detail}` : ""}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("squad.common.refresh")}
-            </Button>
-          </AlertAction>
-        </Alert>
-      ) : null}
-
-      {state.mode === "no-workspace" ? (
-        <Alert data-testid="work-items-no-workspace">
-          <AlertTitle>{t("squad.common.noWorkspace")}</AlertTitle>
-        </Alert>
-      ) : null}
-
-      {state.mode === "loading" ? (
-        <div
-          className="flex items-center gap-2 text-ui-base text-foreground-subtle"
-          data-testid="work-items-loading"
-        >
-          <Spinner className="size-3.5" />
-          {t("squad.workItems.loading")}
-        </div>
-      ) : null}
-
-      {/* 无数据 + 失败 ⇒ 整页错误（**必须带原因**）+ 重试。 */}
-      {state.mode === "error" ? (
-        <Alert variant="destructive" data-testid="work-items-error">
-          <AlertTitle>{t("squad.workItems.loadFailed")}</AlertTitle>
-          <AlertDescription>
-            {t(state.feedback.messageId)}
-            {state.feedback.detail ? `：${state.feedback.detail}` : ""}
-          </AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void reload()}>
-              {t("squad.common.refresh")}
-            </Button>
-          </AlertAction>
-        </Alert>
-      ) : null}
+      <WorkItemsPageStatus state={state} t={t} onReload={() => void reload()} />
 
       {state.mode === "ready" ? (
         <>
