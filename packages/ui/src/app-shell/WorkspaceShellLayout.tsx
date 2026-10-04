@@ -7,7 +7,7 @@ import type {
 } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
-import { TID_APP_HEADER } from "@zcode/shared";
+import { TID_APP_HEADER, isRemoteWorkspaceIdentity } from "@zcode/shared";
 // 保活：workspace tab 真正关闭时，按 workspaceKey 回收 side pane terminal 的常驻 PTY/xterm。
 // 对称下侧 Terminal.tsx 的 openWorkspaceKeys 回收。
 import { sidePaneTerminalSessionRegistry } from "@/terminal/sidePaneTerminalSessionRegistry.js";
@@ -931,20 +931,40 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
      `inboxItemWorkItemTarget` 一处给出）；不带时只按 path 处理（本地 tab 的既有语义）。 */
   const handleOpenInboxWorkItem = useCallback(
     (target: InboxWorkItemTarget) => {
-      const workspaceTabOptions = target.workspaceIdentity
-        ? { workspaceIdentity: target.workspaceIdentity }
-        : undefined;
-      // 不存在就建（收件箱是跨项目面：目标项目可能根本没打开 —— 只 activate 会静默失败，
-      // 见 App.tsx handleStartDraftInWorkspace 的注释：那正是"点了没反应"的既有坑）。
-      tabStoreApi.getState().ensureWorkspaceTab(target.workspacePath, workspaceTabOptions);
-      if (!tabStoreApi.getState().activateTabByPath(target.workspacePath, workspaceTabOptions)) {
-        logger.error("[inbox] 打开工作项：workspace tab 激活失败（项目不存在或已失效）", {
+      const failLoudly = (detail: { reason: string }) => {
+        logger.error("[inbox] 打开工作项失败：workspace tab 未能激活", {
           workspacePath: target.workspacePath,
           workspaceIdentity: target.workspaceIdentity,
           workItemId: target.workItemId,
+          ...detail,
         });
         toast(intl.formatMessage({ id: "squad.inbox.openFailed" }));
-        return;
+      };
+      const workspaceTabOptions = target.workspaceIdentity
+        ? { workspaceIdentity: target.workspaceIdentity }
+        : undefined;
+      /* 次序：**先激活已存在的 tab**，只有"本地项目且确实没有 tab"才允许「不存在就建」。
+         为什么顺序要紧（审查发现项）：`ensureWorkspaceTab` 对**远程 identity** 也会建 tab ——
+         建成一个「带 identity、没有 attachment」的伪 tab（实验功能不参与投射，§12/C8），
+         表现为「看起来打开了，其实接不上」。故远程 identity 且窗口内无匹配 tab ⇒ **不建、响亮失败**
+         （宁可明说打开不了，也不造一个假象）。本地项目仍走「不存在就建」——收件箱是跨项目面，
+         目标项目可能根本没打开，只 activate 会静默失败（App.tsx handleStartDraftInWorkspace 记过这个坑）。 */
+      const activated = tabStoreApi
+        .getState()
+        .activateTabByPath(target.workspacePath, workspaceTabOptions);
+      if (!activated) {
+        if (
+          target.workspaceIdentity !== undefined &&
+          isRemoteWorkspaceIdentity(target.workspaceIdentity)
+        ) {
+          failLoudly({ reason: "remote_identity_without_open_tab" });
+          return;
+        }
+        tabStoreApi.getState().ensureWorkspaceTab(target.workspacePath, workspaceTabOptions);
+        if (!tabStoreApi.getState().activateTabByPath(target.workspacePath, workspaceTabOptions)) {
+          failLoudly({ reason: "activate_failed_after_ensure" });
+          return;
+        }
       }
       onInboxFocusRequest(target.workItemId);
       onWorkspaceMainViewChange("work-items");

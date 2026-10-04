@@ -608,42 +608,48 @@ test("守卫｜InboxPage 的两个穿透 props：必填且原样透传（点击�
   );
 });
 
-/* 守卫 h：shell 的「打开工作项」路径 —— ensure（不存在就建）→ activate（false ⇒ 响亮）→
-   切主视图（次序：先激活 tab 才保证主视图翻过去时目标项目已在窗前）。
-   变异（M3：「打开工作项」只切主视图，去掉 ensure/activate）⇒ 前三个断言必红。 */
-test("守卫｜shell「打开工作项」：ensure → activate → 主视图；失败响亮不静默", () => {
+/* 守卫 h：shell 的「打开工作项」路径 —— **先 activate 已存在的 tab**；没有才分流：
+   **远程 identity ⇒ 不建 tab、响亮失败**（防"带 identity、无 attachment"的伪 tab，实验不参与投射
+   §12/C8）；本地 ⇒ ensure（不存在就建）→ 再 activate 双保险。失败带 toast + logger（响亮不静默），
+   最后才切主视图。
+   变异：① 只切主视图、去掉 ensure/activate ⇒ 前三条断言必红；② 去掉远程 fail-closed 分支 ⇒ 本守卫红。 */
+test("守卫｜shell「打开工作项」：activate-first + 远程 fail-closed + 本地 ensure；失败响亮不静默", () => {
   const layout = readSource("app-shell/WorkspaceShellLayout.tsx");
   const handlerAt = layout.indexOf("const handleOpenInboxWorkItem");
   assert.ok(handlerAt >= 0, "shell 必须有「打开工作项」处理（页面注入的通路）");
-  const ensureAt = layout.indexOf("ensureWorkspaceTab(target.workspacePath", handlerAt);
-  const activateAt = layout.indexOf("activateTabByPath(target.workspacePath", handlerAt);
   const viewAt = layout.indexOf('onWorkspaceMainViewChange("work-items")', handlerAt);
+  assert.ok(viewAt > handlerAt, "处理后段必须切「工作项」主视图");
+  const handler = layout.slice(handlerAt, viewAt);
+  const firstActivateAt = handler.indexOf("activateTabByPath(target.workspacePath");
+  const ensureAt = handler.indexOf("ensureWorkspaceTab(target.workspacePath");
+  assert.ok(firstActivateAt >= 0, "必须**先尝试** activateTabByPath（激活已存在的 tab）");
+  assert.ok(ensureAt > firstActivateAt, "ensure（不存在就建）只允许在 activate 失败之后");
+  // 远程 identity 且无 tab ⇒ 不建：判据与响亮失败都要在 ensure **之前**出现。
+  const remoteGateAt = handler.indexOf("isRemoteWorkspaceIdentity(");
   assert.ok(
-    ensureAt > handlerAt,
-    "必须先 ensureWorkspaceTab（收件箱是跨项目面：目标项目可能没打开）",
+    remoteGateAt > firstActivateAt && remoteGateAt < ensureAt,
+    "远程 identity 的 fail-closed 判据必须在「activate 失败」与「ensure」之间",
   );
-  assert.ok(activateAt > ensureAt, "再 activateTabByPath（激活失败不许静默 —— 既有坑）");
-  assert.ok(viewAt > activateAt, "最后才切主视图（次序反了会先用旧项目渲染一帧工作项页）");
-  const gate = layout.slice(handlerAt, viewAt);
-  assert.ok(gate.includes("squad.inbox.openFailed"), "activate 失败要有可见归宿（toast 文案键）");
-  assert.ok(gate.includes("logger.error"), "activate 失败要留痕（响亮，不静默）");
+  // 「响亮」的落点是一处共用的 failLoudly 助手（两条失败路径都走它）：先钉它内里两样齐全，
+  // 再钉远程分支确实调用它 —— 只查"切片里有没有 toast 字面量"会被助手抽取这种正常重构打假红。
+  const helperAt = handler.indexOf("const failLoudly");
+  const helperEnd = handler.indexOf("};", helperAt);
   assert.ok(
-    gate.includes("if (!tabStoreApi.getState().activateTabByPath("),
-    "失败分支必须先判返回值",
+    helperAt >= 0 && helperEnd > helperAt,
+    "失败路径必须有一处共用的响亮归宿（failLoudly）",
   );
-
-  // 「打开会话」：目标三样（path / identity / sessionId）原样进既有 handleSelectTaskInChat。
-  const inboxAt = layout.indexOf("onOpenWorkItem={handleOpenInboxWorkItem}");
-  assert.ok(inboxAt >= 0, "InboxPage 必须接线「打开工作项」");
-  const sessionAt = layout.indexOf("onOpenSession={(target) =>", inboxAt);
-  assert.ok(sessionAt > inboxAt, "InboxPage 必须接线「打开会话」");
-  const sessionWiring = layout.slice(sessionAt, sessionAt + 400);
-  assert.ok(sessionWiring.includes("handleSelectTaskInChat("), "会话穿透走 shell 既有通路");
-  assert.ok(sessionWiring.includes("target.sessionId"), "会话目标带 sessionId");
+  const helper = handler.slice(helperAt, helperEnd);
   assert.ok(
-    sessionWiring.includes("target.workspacePath") &&
-      sessionWiring.includes("target.workspaceIdentity"),
-    "会话目标带 workspacePath / workspaceIdentity（跨项目坐标不丢）",
+    helper.includes("logger.error") && helper.includes("squad.inbox.openFailed"),
+    "响亮失败必须两样齐全：logger.error（留痕）+ openFailed toast（可见）",
+  );
+  assert.ok(
+    handler.slice(remoteGateAt, ensureAt).includes("failLoudly("),
+    "远程 fail-closed 必须走同一处响亮失败，不得静默返回",
+  );
+  assert.ok(
+    (handler.match(/activateTabByPath\(/g) ?? []).length >= 2,
+    "ensure 之后要再 activate 一次（双保险：失败仍响亮）",
   );
 });
 
