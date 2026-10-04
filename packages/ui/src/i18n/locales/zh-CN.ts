@@ -4154,6 +4154,10 @@ const zhCN: Record<string, string> = {
   "squad.agents.create": "新建协作智能体",
   "squad.agents.created": "已创建协作智能体",
   "squad.agents.empty": "还没有协作智能体",
+  "squad.sidebar.noProjects": "还没有打开过的项目。",
+  "squad.sidebar.loadFailed": "读取失败（见日志）",
+  "squad.sidebar.agentsEntry": "智能体",
+  "squad.sidebar.squadsEntry": "小队",
 
   "squad.squads.create": "新建小队",
   "squad.squads.created": "已创建小队",
