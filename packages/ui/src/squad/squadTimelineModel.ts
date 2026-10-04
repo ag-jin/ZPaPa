@@ -54,24 +54,27 @@ export type TimelineLane = {
 /**
  * 一条弧 = 一次**交接**：`fromRunId`（队长 run）→ `toRunId`（队员 run）。
  *
- * ⚠️ **这是推断，不是台账里的边**（本轮最大的诚实点）：
- * · 台账 `squad_runs` **没有**「谁派生了谁」的列 —— 派发关系在现有数据里不存在；
- * · v1 的代理判据（见 buildSquadTimelineModel 第 ④ 步）：队员站取「**同批**
- *   （`parentWorkItemId` 相同）中、`isLeaderTask === true`、`createdAt <= 该队员站 createdAt`」
- *   里 `createdAt` 最大的那条队长站；
- * · **典型成立**（队长先起 run、再派单 —— 正常路径）；**不典型不成立**：
- *   手工在队长 run 之前起的队员 run 不会被画弧；两条队长 run 时间交叠时，归给**最近先前**的一条
- *   （未必是真正派它的那条）。
- * · 升级路径：要给真边就**给台账加一列**（派发时写入）或另存事件 —— 那需要迁移与写者，
- *   不在本轮的加法范围内。在此之前，渲染层**必须以「推断」呈现**（虚线 / 问号 / 图例说明，
- *   具体样式下一轮定），不得把它画成既成事实。
- * `kind` 是**字面量类型**：把「这是推断」钉进类型与用例 —— 将来真边落地时，
- * 它要么改类型（编译期拖出全部消费点），要么新增一种 kind（界面可以两者并存地显示）。
+ * 两种成色（分格判据**只在 build 第 ④ 步 / `resolveMemberEdge`**；渲染层只按 `kind` 选样式，
+ * 不得再判成因）：
+ *
+ * · `leader_dispatch_recorded` —— **台账事实**。队员行的 `dispatchCause === "leader_tool"` 且
+ *   `causedByRunId` 能在本站点集里定位到一条**队长站** ⇒ 目标 = 被引用的那条站，不用时间推断。
+ *   两列由 0008 迁移落账（派发时刻由队长工具写入）。渲染 = **实线**。
+ * · `leader_dispatch_inferred` —— **回落推断**（不是事实），三种格（见 build 第 ④ 步 C 格）：
+ *   `dispatchCause === null`（0008 之前的遗留行）、`leader_tool` 但入边缺失、或入边指向的 run
+ *   在本站点集里定位不到（防御：坏输入不抛、不画到不存在的目标）。沿用 v1 代理判据：队员站取
+ *   「**同批**（`parentWorkItemId` 相同）中、`isLeaderTask === true`、`createdAt <= 该队员站 createdAt`」
+ *   里 `createdAt` 最大的那条队长站；**找不到就不画**（推断不出来就说不知道）。
+ *   渲染 = **虚线**（+ 图例与悬停说明注明「按时间与批次推断」）。
+ * · `user_reassign` / `rule` 的队员行**没有入边**（台账说了不是队长派的）⇒ 两种弧都不画。
+ *
+ * `kind` 是**字面量类型**：把两种成色的区分钉进类型与用例 —— 将来再加成色（如规则触发的记录）
+ * 要么改类型（编译期拖出全部消费点）、要么新增一种 kind（界面可以并存显示）。
  */
 export type TimelineArc = {
   fromRunId: string;
   toRunId: string;
-  kind: "leader_dispatch_inferred";
+  kind: "leader_dispatch_recorded" | "leader_dispatch_inferred";
 };
 
 export type SquadTimelineModel = {
@@ -127,6 +130,41 @@ function laneOrderKey(lane: TimelineLane): { leader: boolean; earliest: number }
   return { leader: false, earliest: lane.stations[0]!.startAt };
 }
 
+/** 队员站**入边**的四格判据（本文件的唯一判据处；渲染层只消费 `arc.kind`，不得再判成因）。
+ *
+ * · A **事实**：`leader_tool` + `causedByRunId` 在站点集里定位到一条队长站 ⇒ `recorded`，
+ *   目标 = 被引用的那条站（不用时间推断）；
+ * · B **事实**：`user_reassign` / `rule` ⇒ `null`（台账说了不是队长派的 —— 画弧就是在编）；
+ * · C **回落**：NULL（遗留行）/ `leader_tool` 但入边缺失、或入边定位不到队长站 ⇒ `inferred`
+ *   （交给 build 第 ④ 步的「最近先前队长站」启发）。
+ *
+ * 「定位不到」含两种坏输入：被引用的 run 不在站点集里、或它存在但不是队长站 —— 两者都不抛、
+ * 不画到不存在的目标，回落推断而不是编一条看似事实的实线。
+ * 返回值 `null` 与 `inferred` 是**不同的事实**（「没有入边」vs「有入边但只推断得出」），不合并。 */
+function resolveMemberEdge(
+  run: SquadRunRecord,
+  stationByRunId: ReadonlyMap<string, TimelineStation>,
+):
+  | { kind: "leader_dispatch_recorded"; fromRunId: string }
+  | { kind: "leader_dispatch_inferred" }
+  | null {
+  switch (run.dispatchCause) {
+    case "user_reassign":
+    case "rule":
+      return null; // B 格：不是队长派的。
+    case "leader_tool": {
+      // 入边非空且在站点集里定位到**队长站** ⇒ 事实；否则（缺失 / 定位不到 / 指向非队长站）
+      // 回落 C 格 —— 防御坏输入，不抛、不画到违例目标。
+      const target = run.causedByRunId === null ? undefined : stationByRunId.get(run.causedByRunId);
+      return target?.isLeaderTask
+        ? { kind: "leader_dispatch_recorded", fromRunId: target.runId }
+        : { kind: "leader_dispatch_inferred" };
+    }
+    case null:
+      return { kind: "leader_dispatch_inferred" }; // C 格：0008 之前的遗留行。
+  }
+}
+
 /**
  * 台账 + 名册 → 时间线模型（纯函数：同输入两次调用结果**逐字一致**）。五条规则：
  *
@@ -138,11 +176,15 @@ function laneOrderKey(lane: TimelineLane): { leader: boolean; earliest: number }
  * ③ **站点的开放 / 闭合**：终态（`merged` / `discarded`）⇒ `endAt = updatedAt`、`open = false`；
  *    其余（`open` / `produced` / `rejected`）⇒ `endAt = null`、`open = true`。活跃站**不取 now**：
  *    模型必须纯（同输入同输出），「现在」由渲染层给。
- * ④ **弧线（推断，见 `TimelineArc` 顶注）**：对每个**队员**站，取「同批 + `isLeaderTask` +
- *    `createdAt <= 该站 createdAt`」里 `createdAt` **最大**的那条队长站 ⇒ 一条
- *    `leader_dispatch_inferred` 弧；**找不到就不画**（不许编一条）。同刻队长站并列时取台账顺序里
- *    靠后的那条（`createdAt` 相同再按 `runId`，即 `ORDER_BY_CREATED` 的最后一条）——
- *    与「最近先前」的口径一致，且保证确定性。
+ * ④ **弧线（四格，判据见 `resolveMemberEdge` 与 `TimelineArc` 顶注）**：对每个**队员**站：
+ *    A `dispatchCause === "leader_tool"` 且 `causedByRunId` 在本站点集里定位到**队长站**
+ *      ⇒ 一条 `leader_dispatch_recorded` 弧，目标 = 被引用的那条站（不推断）；
+ *    B `dispatchCause === "user_reassign"` / `"rule"` ⇒ **不画弧**（台账说了不是队长派的）；
+ *    C 其余（NULL 遗留行 / `leader_tool` 但入边缺失 / 入边定位不到队长站）⇒ 回落推断：
+ *      取「同批 + `isLeaderTask` + `createdAt <= 该站 createdAt`」里 `createdAt` **最大**的队长站
+ *      ⇒ 一条 `leader_dispatch_inferred` 弧；**找不到就不画**（不许编一条）。同刻队长站并列时取
+ *      台账顺序里靠后的那条（`createdAt` 相同再按 `runId`，即 `ORDER_BY_CREATED` 的最后一条）——
+ *      与「最近先前」的口径一致，且保证确定性。
  * ⑤ **容错**：同一 `runId` 重复 ⇒ 只取第一条（防御：坏数据不得把同一次运行画成两个站；
  *    「第一条」= 给定顺序里的第一条，确定性不依赖 Map 行为）；`teamAgents` 为空 ⇒ 全 lane
  *    回落 id + 稳定色（仍有 lane，见 ①）。
@@ -200,7 +242,8 @@ export function buildSquadTimelineModel(input: {
     return keyA.earliest - keyB.earliest || compareRunId(a.laneId, b.laneId);
   });
 
-  // ④ 弧线：先把 run 归到台账顺序（created_at ASC, run_id ASC），再逐队员站找最近先前的队长站。
+  // ④ 弧线：四格判据在 resolveMemberEdge。先把 run 归到台账顺序（created_at ASC, run_id ASC），
+  // 供 C 格的「最近先前队长站」启发用。
   const orderedRuns = [...runs].sort(
     (a, b) => a.createdAt - b.createdAt || compareRunId(a.runId, b.runId),
   );
@@ -214,9 +257,28 @@ export function buildSquadTimelineModel(input: {
       leadersByBatch.set(run.parentWorkItemId, [run]);
     }
   }
+  // A 格的站点集：runId → 站。取**已去重、已归 lane**的站（与画出来的站同一份对象，
+  // 保证 recorded 弧的目标端点必然可画 —— 布局层不再有机会遇到「目标不存在」）。
+  const stationByRunId = new Map<string, TimelineStation>();
+  for (const lane of lanes) {
+    for (const station of lane.stations) stationByRunId.set(station.runId, station);
+  }
   const arcs: TimelineArc[] = [];
   for (const run of orderedRuns) {
     if (run.isLeaderTask) continue; // 队长站是弧的起点，不是终点。
+    const edge = resolveMemberEdge(run, stationByRunId);
+    // B 格：台账说不是队长派的（用户改派 / 规则）⇒ 真的少一条弧（不画、也不回落推断）。
+    if (edge === null) continue;
+    if (edge.kind === "leader_dispatch_recorded") {
+      // A 格：目标取自被引用的站，不参与时间推断。
+      arcs.push({
+        fromRunId: edge.fromRunId,
+        toRunId: run.runId,
+        kind: "leader_dispatch_recorded",
+      });
+      continue;
+    }
+    // C 格（回落推断）：同批里取「createdAt 最大且 <= 本队员站」的队长站。
     const leaders = leadersByBatch.get(run.parentWorkItemId);
     if (!leaders) continue;
     let dispatchedBy: SquadRunRecord | null = null;

@@ -4201,16 +4201,20 @@ const zhCN: Record<string, string> = {
   "squad.runs.status.discarded": "已抛弃",
 
   // 「活动时间线」（squad.timeline.*，§11.2）：批根行内联展开的泳道图。
-  // ⚠️ 弧线是**推断**的派发关系（台账里没有「谁派生了谁」这条边）—— `legendInferred` /
-  // `inferredTooltip` 必须把这件事说出来：不得画成既成事实、不得写"派发关系"这样的断言句。
+  // 弧线两种成色：**实线 = 台账记录的派发**（0008 两列，派发时刻由队长工具落账）；
+  // **虚线 = 推断**（遗留行 / 入边缺失时的回落）—— `legendInferred` / `inferredTooltip`
+  // 必须把「推断」这件事说出来：不得画成既成事实、不得写"派发关系"这样的断言句。
   "squad.timeline.toggle": "时间线",
   "squad.timeline.loading": "正在读取时间线…",
   "squad.timeline.loadFailed": "读取时间线失败",
   "squad.timeline.empty": "这一批还没有运行记录",
   "squad.timeline.legendTitle": "图例",
   "squad.timeline.legendIdentity": "颜色 = 队员身份",
+  "squad.timeline.legendRecorded": "实线 = 台账记录的派发（队长工具）",
   "squad.timeline.legendInferred": "虚线 = 推断的派发关系",
   "squad.timeline.ariaLabel": "活动时间线：{lanes} 条泳道 / {runs} 次运行",
+  "squad.timeline.recordedTooltip":
+    "台账记录的派发：派发时刻由队长工具写入（谁派的是一次既成事实）",
   "squad.timeline.inferredTooltip": "台账里没有派发边：这条关系是按时间与批次推断的",
   "squad.timeline.openSessionTooltip": "点击打开会话",
   "squad.timeline.durationSeconds": "{seconds} 秒",

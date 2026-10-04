@@ -20,7 +20,8 @@ import type { SquadTimelineModel, TimelineStation } from "./squadTimelineModel.j
      不另建十六进制表 —— 那会是第二份九色板）；
    · **状态只用语义色 token**（`STATION_STATUS_CLASSES`），并用既有 `squadRunStatusMessageId`
      翻词；状态**绝不**走九色板；
-   · **弧线以「推断」呈现**：虚线 + 低不透明度 + 悬停说明（台账里没有「谁派生了谁」这条边）。 */
+   · **弧线按成色分流**（判据全在模型，本层只照抄 `arc.kind`）：**recorded（台账事实）画实线**；
+     **inferred（回落推断）画虚线 + 低不透明度** —— 图例与每条弧的悬停说明把两种成色说清。 */
 
 /** 每条 lane 的行高（px）：站条 ~20 高 + 上下呼吸。 */
 const SQUAD_TIMELINE_LANE_HEIGHT = 28;
@@ -253,22 +254,28 @@ export function SquadTimeline({
         );
       })}
 
-      {/* 弧线 = **推断的**派发关系（台账没有这条边）：虚线 + 低不透明度，绝不画成实线。
-          每条弧自带悬停说明；kind 目前只有 leader_dispatch_inferred 一种，线型按它固定。 */}
+      {/* 弧线 = 派发关系，两种成色（**判据全在模型**；本层只按 arc.kind 选样式，不再判成因）：
+          recorded（台账 0008 两列记着的派发）= **实线**；inferred（遗留行回落推断）= **虚线**。
+          每条弧自带悬停说明，把「这条是哪种成色」说出来。 */}
       {layout.arcs.map((arc) => (
         <path
           key={`${arc.fromRunId}->${arc.toRunId}`}
           data-arc-from={arc.fromRunId}
           data-arc-to={arc.toRunId}
+          data-arc-kind={arc.kind}
           d={`M ${arc.from.x} ${arc.from.y} Q ${arc.control.x} ${arc.control.y} ${arc.to.x} ${arc.to.y}`}
           fill="none"
-          strokeDasharray="4 3"
+          strokeDasharray={arc.kind === "leader_dispatch_inferred" ? "4 3" : undefined}
           strokeWidth={1.25}
           opacity={0.55}
           className="stroke-foreground-subtle"
           aria-hidden
         >
-          <title>{t("squad.timeline.inferredTooltip")}</title>
+          <title>
+            {arc.kind === "leader_dispatch_recorded"
+              ? t("squad.timeline.recordedTooltip")
+              : t("squad.timeline.inferredTooltip")}
+          </title>
         </path>
       ))}
     </svg>

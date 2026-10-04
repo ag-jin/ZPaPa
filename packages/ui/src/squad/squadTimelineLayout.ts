@@ -1,6 +1,6 @@
 import type { SquadRunStatus } from "@zcode/services";
 import type { AgentColor } from "@zcode/shared";
-import type { SquadTimelineModel } from "./squadTimelineModel.js";
+import type { SquadTimelineModel, TimelineArc } from "./squadTimelineModel.js";
 
 /* 「活动时间线」（规格 §11.2）的**纯几何**：布局模型 + 画布参数 → 可逐值断言的坐标。
 
@@ -72,7 +72,8 @@ export type SquadTimelineLayout = {
   arcs: Array<{
     fromRunId: string;
     toRunId: string;
-    kind: "leader_dispatch_inferred";
+    /** 成色原样带出（recorded / inferred）—— 渲染层按它选实线 / 虚线，本层不判成因。 */
+    kind: TimelineArc["kind"];
     /** 二次贝塞尔的三点（起点 = 队长站条右缘中点，终点 = 队员站条左缘中点，控制点 = x 取两站中点、y 取两 lane 中线）。 */
     from: { x: number; y: number };
     control: { x: number; y: number };

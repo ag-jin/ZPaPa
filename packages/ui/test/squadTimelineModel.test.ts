@@ -15,7 +15,8 @@ import {
    覆盖：空输入 / 单队长站 / 队长+两队员（两条弧） / 队员先于队长（无弧） / 同批无队长（零弧）
    / 跨批不画弧 / 两条队长 run（归最近先前） / 开放与终态站 / 名册缺失（不丢行） /
    lane 顺序（队长最上、最早站、同刻 tie-break） / 确定性（同输入两次逐字一致） /
-   弧的诚实性（kind 只能是 leader_dispatch_inferred） / 同 runId 重复（只画一次）。
+   弧的四格（A 事实 recorded 命中目标站 / B 非队长派发无弧 ×2 成因 / C 三种回落 inferred）
+   / 同 runId 重复（只画一次）。
    每条都写明变异方式（改哪一行会红），变异已在交付报告里逐条实测。 */
 
 const run = (over: Partial<SquadRunRecord> = {}): SquadRunRecord => ({
@@ -223,7 +224,7 @@ test("两条队长 run 时间交叠 ⇒ 弧归**最近先前**的那条（不是
   ]);
 });
 
-test("弧的诚实性：每条弧的 kind 只能是 leader_dispatch_inferred（把「这是推断」钉进类型与用例）", () => {
+test("弧的成色是字面量联合：本模型（NULL 遗留行）只出 inferred；类型层并列 recorded / inferred", () => {
   const model = buildSquadTimelineModel({
     runs: [
       run({
@@ -241,11 +242,166 @@ test("弧的诚实性：每条弧的 kind 只能是 leader_dispatch_inferred（�
   });
   assert.equal(model.arcs.length, 1);
   for (const arc of model.arcs) {
-    assert.equal(arc.kind, "leader_dispatch_inferred", "台账没有派发边：渲染层必须以「推断」呈现");
+    assert.equal(
+      arc.kind,
+      "leader_dispatch_inferred",
+      "NULL 遗留行的台账里没有派发边：渲染层必须以「推断」呈现（虚线）",
+    );
   }
-  // 类型层面也只有一个取值（真边落地时要么改类型拖出全部消费点、要么新增 kind 并存显示）。
-  const onlyKind: TimelineArc["kind"] = "leader_dispatch_inferred";
-  assert.equal(onlyKind, "leader_dispatch_inferred");
+  // 类型层面并列两个字面量（Record 强制穷尽：将来加/删成色这里编译失败，消费点全被拖出来）：
+  // recorded = 台账事实（0008 两列）、inferred = 回落推断。
+  const kinds: Record<TimelineArc["kind"], true> = {
+    leader_dispatch_recorded: true,
+    leader_dispatch_inferred: true,
+  };
+  assert.deepEqual(Object.keys(kinds).sort(), [
+    "leader_dispatch_inferred",
+    "leader_dispatch_recorded",
+  ]);
+});
+
+// ---------- 弧的四格（A 事实 / B 不画 / C 回落） ----------
+
+/* A 格（事实）：leader_tool + causedByRunId 命中队长站 ⇒ recorded，目标 = **被引用的**那条站。
+   关键反例钉法：故意让时间上**更近**的队长站在场（leader-2, 30），台账却记着是 leader-1（5）
+   派的 —— A 格若偷用「最近先前」启发，起点会变成 leader-2，本用例必红；
+   kind 若回落成 inferred，第一条 deepEqual 也必红。 */
+test("A 格：leader_tool 且入边命中队长站 ⇒ recorded 弧，目标 = 被引用的站（不是最近先前）", () => {
+  const model = buildSquadTimelineModel({
+    runs: [
+      run({
+        runId: "run-leader-1",
+        agentId: "ta-leader",
+        isLeaderTask: true,
+        branch: null,
+        status: "merged",
+        createdAt: 5,
+        updatedAt: 6,
+      }),
+      run({
+        runId: "run-leader-2",
+        agentId: "ta-leader",
+        isLeaderTask: true,
+        branch: null,
+        status: "merged",
+        createdAt: 30,
+        updatedAt: 31,
+      }),
+      run({
+        runId: "run-m1",
+        agentId: "ta-m1",
+        createdAt: 40,
+        dispatchCause: "leader_tool",
+        causedByRunId: "run-leader-1",
+      }),
+    ],
+    teamAgents: [agent(), agent({ id: "ta-m1", name: "甲" })],
+  });
+
+  assert.deepEqual(model.arcs, [
+    { fromRunId: "run-leader-1", toRunId: "run-m1", kind: "leader_dispatch_recorded" },
+  ]);
+});
+
+/* B 格（事实）：user_reassign / rule ⇒ **不画弧** —— 即便画推断弧的条件全部在场
+   （同批有更早的队长站，时间启发本会画一条）。
+   变异（V1）：删掉 B 格判据（让两种成因也走回落推断）⇒ 本用例必红。 */
+test("B 格：user_reassign / rule 的队员站没有入边（台账说了不是队长派的，画弧就是在编）", () => {
+  for (const cause of ["user_reassign", "rule"] as const) {
+    const model = buildSquadTimelineModel({
+      runs: [
+        run({
+          runId: "run-leader",
+          agentId: "ta-leader",
+          isLeaderTask: true,
+          branch: null,
+          status: "merged",
+          createdAt: 5,
+          updatedAt: 6,
+        }),
+        run({ runId: "run-m1", agentId: "ta-m1", createdAt: 10, dispatchCause: cause }),
+      ],
+      teamAgents: [agent(), agent({ id: "ta-m1", name: "甲" })],
+    });
+    assert.deepEqual(model.arcs, [], `cause=${cause}：不画弧`);
+  }
+});
+
+/* C 格（回落推断）：三种格都必须落到 inferred（渲染层的虚线语义），不许抛、不许画到不存在的目标：
+   ① NULL（0008 之前的遗留行）；② leader_tool 但入边缺失；③ 入边指向的 run 不在站点集里（坏输入）。
+   变异（V3）：删掉回落（NULL 行不再画弧）⇒ 本用例第 ① 格必红。 */
+test("C 格：NULL / leader_tool 缺入边 / 入边查不到站 ⇒ 都是 inferred（最近先前队长站）", () => {
+  const cases: Array<{ name: string; over: Partial<SquadRunRecord> }> = [
+    { name: "NULL（遗留行）", over: {} },
+    {
+      name: "leader_tool 但入边缺失",
+      over: { dispatchCause: "leader_tool", causedByRunId: null },
+    },
+    {
+      name: "leader_tool 但入边查不到站",
+      over: { dispatchCause: "leader_tool", causedByRunId: "run-ghost" },
+    },
+  ];
+  for (const { name, over } of cases) {
+    const model = buildSquadTimelineModel({
+      runs: [
+        run({
+          runId: "run-leader",
+          agentId: "ta-leader",
+          isLeaderTask: true,
+          branch: null,
+          status: "merged",
+          createdAt: 5,
+          updatedAt: 6,
+        }),
+        run({ runId: "run-m1", agentId: "ta-m1", createdAt: 10, ...over }),
+      ],
+      teamAgents: [agent(), agent({ id: "ta-m1", name: "甲" })],
+    });
+    assert.deepEqual(
+      model.arcs,
+      [{ fromRunId: "run-leader", toRunId: "run-m1", kind: "leader_dispatch_inferred" }],
+      `${name}：回落到「最近先前队长站」的推断弧（虚线段位）`,
+    );
+  }
+});
+
+/* C 格的防御边界：入边指向的站**存在但不是队长站**（坏数据）⇒ 不算事实，回落推断；
+   绝不从队员站画一条「队长派发」的实线，也不抛（resolveMemberEdge 的 if 取「定位到队长站」）。 */
+test("C 格（防御）：入边指向站点集里的非队长站 ⇒ 回落推断，不产出「事实」弧", () => {
+  const model = buildSquadTimelineModel({
+    runs: [
+      run({
+        runId: "run-leader",
+        agentId: "ta-leader",
+        isLeaderTask: true,
+        branch: null,
+        status: "merged",
+        createdAt: 5,
+        updatedAt: 6,
+      }),
+      // 更早的队员站 run-m0：被 m1 的入边错误引用（它是站，但不是队长站）。
+      run({ runId: "run-m0", agentId: "ta-m0", createdAt: 8 }),
+      run({
+        runId: "run-m1",
+        agentId: "ta-m1",
+        createdAt: 10,
+        dispatchCause: "leader_tool",
+        causedByRunId: "run-m0",
+      }),
+    ],
+    teamAgents: [agent(), agent({ id: "ta-m0", name: "零" }), agent({ id: "ta-m1", name: "甲" })],
+  });
+
+  assert.deepEqual(
+    model.arcs.find((arc) => arc.toRunId === "run-m1"),
+    { fromRunId: "run-leader", toRunId: "run-m1", kind: "leader_dispatch_inferred" },
+    "入边没定位到队长站 ⇒ 回落推断（最近先前队长站），不是被引用的那条队员站",
+  );
+  assert.ok(
+    !model.arcs.some((arc) => arc.kind === "leader_dispatch_recorded"),
+    "坏数据不得产出「事实」弧（不许把实线画到违例目标上）",
+  );
 });
 
 // ---------- 开放 / 闭合 ----------

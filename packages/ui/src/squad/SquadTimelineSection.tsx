@@ -196,13 +196,18 @@ export function SquadTimelineSection({
         ) : null}
       </div>
 
-      {/* 图例：身份色（九色板）只表达队员身份；**虚线 = 推断**的派发关系（台账没有这条边）。 */}
+      {/* 图例：身份色（九色板）只表达队员身份；**实线 = 台账记录的派发**（0008 两列，队长工具落账）、
+       **虚线 = 推断**的派发关系（遗留行 / 入边缺失时的回落）。 */}
       {mode === "ready" && model !== null ? (
         <div
           className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 pt-2 text-ui-xs text-foreground-subtlest"
           data-testid="squad-timeline-legend"
         >
           <span>{t("squad.timeline.legendTitle")}</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-5 shrink-0 border-t border-foreground-subtle" aria-hidden />
+            {t("squad.timeline.legendRecorded")}
+          </span>
           <span className="flex items-center gap-1.5">
             <span
               className="w-5 shrink-0 border-t border-dashed border-foreground-subtle"

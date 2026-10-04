@@ -4487,16 +4487,21 @@ const enUS: Record<string, string> = {
   "squad.runs.status.discarded": "Discarded",
 
   // Activity timeline (squad.timeline.*, spec §11.2): the swimlane chart expanded inline under a
-  // batch-root row. ⚠️ Arcs are **inferred** dispatch relations (the ledger has no such edge) —
-  // `legendInferred` / `inferredTooltip` must say so; never present them as established fact.
+  // batch-root row. Arcs come in two shades: **solid = recorded dispatch** (the 0008 columns,
+  // written by the leader tool at dispatch time); **dashed = inferred** (legacy rows / missing
+  // edge). `legendInferred` / `inferredTooltip` must keep saying "inferred"; never present an
+  // inferred arc as established fact.
   "squad.timeline.toggle": "Timeline",
   "squad.timeline.loading": "Loading timeline…",
   "squad.timeline.loadFailed": "Failed to load the timeline",
   "squad.timeline.empty": "No runs in this batch yet",
   "squad.timeline.legendTitle": "Legend",
   "squad.timeline.legendIdentity": "Color = agent identity",
+  "squad.timeline.legendRecorded": "Solid = recorded dispatch (leader tool)",
   "squad.timeline.legendInferred": "Dashed = inferred dispatch",
   "squad.timeline.ariaLabel": "Activity timeline: {lanes} lanes / {runs} runs",
+  "squad.timeline.recordedTooltip":
+    "Recorded in the ledger: this dispatch was written by the leader tool at dispatch time",
   "squad.timeline.inferredTooltip":
     "No dispatch edge in the ledger: this relation is inferred from time and batch",
   "squad.timeline.openSessionTooltip": "Click to open the session",

@@ -19,13 +19,15 @@ import { buildSquadTimelineModel } from "../src/squad/squadTimelineModel.js";
    ui 包没有渲染测试设施（本项目既定做法）⇒ 几何逐值钉在纯函数上、判断钉在源码形态上。
 
    分工：
-   ① 几何逐格：空模型 / 零长度域（单站同刻）/ 普通三站 / 开口站两格（now 在域外 / 域内）/
-      最小站宽（含「下界不是上界」）/ lane 的 y 递增与站对齐 / 弧三点逐值 / 弧只透传不推断；
-   ② 结构守卫：SquadTimeline（弧虚线、九色板只做身份、状态语义 token、reduced-motion、可点判据）、
-      SquadTimelineSection（历史读通路、失败重试、不拉快照、实测宽）、
+   ① 几何逐格：空模型 / 零长度域（单站同刻）/ 普通三站 / recorded 弧端点 = 被引用队长站 /
+      开口站两格（now 在域外 / 域内）/ 最小站宽（含「下界不是上界」）/ lane 的 y 递增与站对齐 /
+      弧三点逐值 / 弧只透传不推断；
+   ② 结构守卫：SquadTimeline（**线型按 arc.kind 分类**：recorded 实线 / inferred 虚线、
+      九色板只做身份、状态语义 token、reduced-motion、可点判据）、
+      SquadTimelineSection（历史读通路、失败重试、不拉快照、实测宽、**图例两行**）、
       WorkItemsBoard（展开钮只在批根行）、WorkItemsPage（展开态单点）；
    ③ i18n：squad.timeline.* 显式键两语齐全（`squad.` 前缀的命名空间级齐平由 squadsPage.test.ts
-      那条既有用例自动覆盖）+ 「推断」声明必须在文案里。
+      那条既有用例自动覆盖）+ 「推断」声明必须在文案里（inferred 侧）、「台账记录」在 recorded 侧。
 
    每条守卫都写明变异方式（哪一行改坏会红）；变异 M1–M5 已在交付报告里逐条实测。 */
 
@@ -185,8 +187,61 @@ test("普通三站：缩放逐值、lane 的 y 递增且站与 lane 对齐、弧
     ],
   );
   for (const arc of layout.arcs) {
-    assert.equal(arc.kind, "leader_dispatch_inferred", "kind 原样带出（推断的字面量不在这里改写）");
+    assert.equal(arc.kind, "leader_dispatch_inferred", "kind 原样带出（成色不在这里改写）");
   }
+  assertNoNaN(layout);
+});
+
+/* recorded 弧的几何（A 格）：端点取自**被引用**的队长站 —— 时间启发画不出的边也照画。
+   场景：两条队长站（leader-1 0→64、leader-2 96→128），队员 m1（16→32）台账记着 leader-2 派的。
+   时间上 leader-2 晚于 m1（推断启发只会指向 leader-1）⇒ 只有「照抄被引用的站」才画得出这条弧。
+   变异：把 recorded 的目标改回「最近先前队长站」⇒ 下面的 from 断言必红（会变成 leader-1 的右缘）。 */
+test("recorded 弧：端点 = 被引用队长站条的边缘锚点（布局只翻模型给的边）", () => {
+  const model = buildSquadTimelineModel({
+    runs: [
+      run({
+        runId: "run-leader-1",
+        agentId: "ta-leader",
+        isLeaderTask: true,
+        branch: null,
+        status: "merged",
+        createdAt: 0,
+        updatedAt: 64,
+      }),
+      run({
+        runId: "run-leader-2",
+        agentId: "ta-leader",
+        isLeaderTask: true,
+        branch: null,
+        status: "merged",
+        createdAt: 96,
+        updatedAt: 128,
+      }),
+      run({
+        runId: "run-m1",
+        agentId: "ta-m1",
+        status: "merged",
+        createdAt: 16,
+        updatedAt: 32,
+        dispatchCause: "leader_tool",
+        causedByRunId: "run-leader-2",
+      }),
+    ],
+    teamAgents: [agent()],
+  });
+  assert.deepEqual(
+    model.arcs,
+    [{ fromRunId: "run-leader-2", toRunId: "run-m1", kind: "leader_dispatch_recorded" }],
+    "前提：模型 A 格把目标定在被引用的 leader-2",
+  );
+
+  // 域 {0, 128}（leader-2 的 128 是域右端）、可绘制 128 ⇒ 系数 1；x(t) = 40 + t。
+  const layout = layoutSquadTimeline({ model, ...canvas, now: 128 });
+  assert.deepEqual(layout.domain, { startAt: 0, endAt: 128 });
+  const arc = layout.arcs[0]!;
+  assert.equal(arc.kind, "leader_dispatch_recorded", "成色原样带出（实线 / 虚线由渲染层按它选）");
+  assert.deepEqual(arc.from, { x: 168, y: 10 }, "起点 = 被引用队长站条右缘中点（x(96) + 宽 32）");
+  assert.deepEqual(arc.to, { x: 56, y: 30 }, "终点 = 队员站条左缘中点（m1 在第二条 lane）");
   assertNoNaN(layout);
 });
 
@@ -308,18 +363,30 @@ test("弧只透传：队员先于队长（模型 0 弧）⇒ 布局 0 弧；不�
 
 // ---------- ⑦ 结构守卫（读源码，逐条可变异） ----------
 
-/* 守卫 a：SquadTimeline.tsx 的三条视觉纪律。
-   变异：M1 弧线去掉 strokeDasharray（画成实线）⇒ 第 1 条红；
+/* 守卫 a：SquadTimeline.tsx 的三条视觉纪律（弧线是**分类**判据：recorded 实线 / inferred 虚线）。
+   变异：V2 线型不再按成色分流（recorded 也走虚线，或 inferred 走实线）⇒ 第 1 组红；
         M5 ticker 无条件启动（去掉 matchMedia 判断）⇒ reduced-motion 两条红。 */
-test("守卫｜SquadTimeline：弧必须虚线、九色板只做身份、reduced-motion 在 ticker 之前", () => {
+test("守卫｜SquadTimeline：弧线按 arc.kind 分类（recorded 实线 / inferred 虚线）、九色板只做身份、reduced-motion 在 ticker 之前", () => {
   const src = readSource("squad/SquadTimeline.tsx");
 
-  // (1) 弧的渲染段（layout.arcs.map( … </svg>，弧是 SVG 的最后一块）里必须有 strokeDasharray。
-  // 切片而不是全文匹配：开口端帽也用虚线，全文匹配会在「弧改成实线」时被端帽放过去。
+  // (1) 弧的渲染段（layout.arcs.map( … </svg>，弧是 SVG 的最后一块）必须**按 arc.kind 分类**：
+  // inferred ⇒ `strokeDasharray="4 3"`；recorded ⇒ `undefined`（不画 dasharray = 实线）。
+  // 切片而不是全文匹配：开口端帽也用虚线，全文匹配会在「弧改成实线」时被端帽放过去；
+  // 判据钉在「分类」上（而不是「有 dasharray」）：recorded 变虚线、inferred 变实线都要红。
   const arcsBlock = src.slice(src.indexOf("layout.arcs.map("), src.indexOf("</svg>"));
   assert.ok(arcsBlock.includes("layout.arcs.map("), "弧渲染段必须存在（切片锚点）");
-  assert.ok(arcsBlock.includes("strokeDasharray"), "弧线必须虚线：推断的派发关系不得画成实线");
+  assert.match(
+    arcsBlock,
+    /strokeDasharray=\{\s*arc\.kind === "leader_dispatch_inferred"\s*\?\s*"4 3"\s*:\s*undefined\s*\}/,
+    "线型必须按成色分流：inferred ⇒ 虚线 4 3；recorded ⇒ 无 dasharray（实线）",
+  );
   assert.ok(arcsBlock.includes("opacity"), "弧线必须带低不透明度");
+  // 悬停说明同样分流：recorded 说「台账记录」、inferred 保留「按时间与批次推断」。
+  assert.match(
+    arcsBlock,
+    /arc\.kind === "leader_dispatch_recorded"\s*\?\s*t\("squad\.timeline\.recordedTooltip"\)\s*:\s*t\("squad\.timeline\.inferredTooltip"\)/,
+    "悬停说明必须按成色分流（recorded 侧不得缺、inferred 侧不得换成断言句）",
+  );
 
   // (2) 九色板只允许出现在身份侧：全文件恰一处取色，且以 lane.color 为键。
   assert.equal(
@@ -408,7 +475,21 @@ test("守卫｜SquadTimelineSection：历史读经服务通路、失败带重试
     src.includes("[services, target, workItemId]"),
     "取数依赖里没有宽度 —— 宽度变化只重画、不重取数据",
   );
-  assert.ok(src.includes("squad.timeline.legendInferred"), "图例必须注明「虚线 = 推断」");
+  // 图例两行：实线 = 台账记录（recorded）、虚线 = 推断（inferred）—— 样本样式与文案都要在。
+  // 变异：删掉 recorded 行（只留虚线）⇒ 前两条红；把 recorded 样本也改成 border-dashed ⇒ 第 3 条红。
+  assert.ok(
+    src.includes("squad.timeline.legendRecorded"),
+    "图例必须新增「实线 = 台账记录的派发」一行",
+  );
+  assert.ok(src.includes("squad.timeline.legendInferred"), "图例必须保留「虚线 = 推断」");
+  assert.ok(
+    src.includes('className="w-5 shrink-0 border-t border-foreground-subtle"'),
+    "recorded 样本必须是**实线**（不带 border-dashed 的样本样式）",
+  );
+  assert.ok(
+    src.includes('className="w-5 shrink-0 border-t border-dashed border-foreground-subtle"'),
+    "inferred 样本必须是虚线（既有样式不得被顺手改成实线）",
+  );
 });
 
 /* 守卫 c：展开钮只在**批根行**（判据 = 服务面唯一实现 isSquadBatchRoot）。
@@ -477,8 +558,9 @@ test("守卫｜WorkItemsPage：展开态单点声明 + 单点改写 + 单点接�
 
 /* 显式清单（照 inboxPage.test.ts 的写法）：`squad.` 前缀的命名空间级两语齐平由
    squadsPage.test.ts 的既有用例自动覆盖；这里把**语义**逐条钉住（开关/加载/失败/空/
-   图例/推断说明/无障碍标签/会话提示/时长），并钉住「推断」二字必须在文案里。 */
-test("i18n：squad.timeline.* 两语齐全，且「推断」声明在图例与悬停说明里", () => {
+   图例两行/recorded 与 inferred 两条悬停说明/无障碍标签/会话提示/时长），
+   并分别钉住 recorded 侧的「台账」与 inferred 侧的「推断」二字必须在文案里。 */
+test("i18n：squad.timeline.* 两语齐全；recorded 侧说「台账」、inferred 侧说「推断」", () => {
   for (const key of [
     "squad.timeline.toggle",
     "squad.timeline.loading",
@@ -486,8 +568,10 @@ test("i18n：squad.timeline.* 两语齐全，且「推断」声明在图例与�
     "squad.timeline.empty",
     "squad.timeline.legendTitle",
     "squad.timeline.legendIdentity",
+    "squad.timeline.legendRecorded",
     "squad.timeline.legendInferred",
     "squad.timeline.ariaLabel",
+    "squad.timeline.recordedTooltip",
     "squad.timeline.inferredTooltip",
     "squad.timeline.openSessionTooltip",
     "squad.timeline.durationSeconds",
@@ -496,11 +580,23 @@ test("i18n：squad.timeline.* 两语齐全，且「推断」声明在图例与�
     assert.ok((enUS[key] ?? "").length > 0, `en-US 缺少 ${key}`);
   }
 
-  // 弧是**推断**的：图例与悬停说明都必须把话说出来（不得画成既成事实）。
+  // inferred 侧：图例与悬停说明都必须把「推断」说出来（不得画成既成事实）。
   assert.ok((zhCN["squad.timeline.legendInferred"] ?? "").includes("推断"));
   assert.ok((zhCN["squad.timeline.inferredTooltip"] ?? "").includes("没有派发边"));
   assert.ok(/inferred/i.test(enUS["squad.timeline.legendInferred"] ?? ""));
   assert.ok(/no dispatch edge/i.test(enUS["squad.timeline.inferredTooltip"] ?? ""));
+
+  // recorded 侧：图例说「实线 / 台账记录」，悬停说明说「台账记录的派发」—— 两种成色不许共用一个说法。
+  assert.ok((zhCN["squad.timeline.legendRecorded"] ?? "").includes("实线"));
+  assert.ok((zhCN["squad.timeline.legendRecorded"] ?? "").includes("台账"));
+  assert.ok(/solid/i.test(enUS["squad.timeline.legendRecorded"] ?? ""));
+  assert.ok((zhCN["squad.timeline.recordedTooltip"] ?? "").includes("台账"));
+  assert.ok(/recorded/i.test(enUS["squad.timeline.recordedTooltip"] ?? ""));
+  assert.notEqual(
+    zhCN["squad.timeline.recordedTooltip"],
+    zhCN["squad.timeline.inferredTooltip"],
+    "两种成色的悬停说明必须分流（共用一句 = 事实与推断又混在一起）",
+  );
 
   // aria-label 的占位符两语一致（组件传 lanes / runs；缺一个占位符会渲染出裸花括号）。
   const placeholders = (text: string) =>
