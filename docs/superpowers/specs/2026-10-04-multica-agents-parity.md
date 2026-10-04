@@ -49,13 +49,67 @@ ZCode CLI runtime**，独立性同样靠定义文件（`.zcode/squad/agents/`）
 数量（26 vs 1）」，而这是既定裁定（不做多 CLI 平台）。矩阵 #8 的「设置参数」因此**不含
 runtime/CLI 选择**维度；后续轮次不得把「不能选 CLI」当缺失功能补进来。
 
-## 2. 实现次序（沿台账第 52 轮的三刀，并入本矩阵）
+## 1.2 实地取证：本机 Multica.app 前端 bundle 里的智能体设计（2026-10-04，用户指引）
+
+> 来源：`/Applications/Multica.app` 的 renderer bundle（asar 解包，Zod schema + i18n 键表 +
+> 路由树实证）。这是**实地版**，取代此前仅凭调研报告转述的部分。凭据（daemon token 等）不入文档。
+
+### multica 智能体的完整设计（实地）
+
+**定义字段全集**（`StoredAgentDraftSchema`）：`name` / `description` / `instructions`（指令）/
+`conversation_starters[]`（开场白 label+prompt）/ `avatar_url`（头像上传）/ `model` /
+`thinking_level` / `service_tier`（速度档）/ `skill_ids[]` / `permission_scope`
+（private|workspace|members）/ `member_ids[]` / `team_ids[]`。
+
+**详情页结构**（i18n `inspector.*` 键表）：
+- Profile：头像（可换）/ 名字（重命名）/ 描述；
+- Execution：**Runtime 选择器**（online/offline 状态、owned by）· Model（Default /
+  Managed by runtime / 搜索或直输 model ID / **动态发现**）· Thinking · Speed ·
+  **Concurrency（每 agent 最大并发 run 数，滑杆 min–max）**；
+- Access：可见性；Properties / Details（Owner/Created/Updated 只读生命周期）；
+- Skills：**挂 workspace 级技能库**（Attach a workspace skill）；
+- Integrations 分区。
+- Overview 含「Runs need attention」（runtime 不可用时排队 run 计数）。
+
+**任务/运行数据**（`AgentTaskSchema`，比我们的 squad_runs 多出的列）：`priority` /
+`attempt` / `parent_task_id` / `failure_reason` / `autopilot_run_id`；分页（nextCursor）。
+另有仪表盘聚合（agent_id / total_seconds / task_count / metered_task_count）。
+
+**生命周期**：archive 后**可 Restore**（非终态）；runtime 缺失时「保留配置与历史，绑
+runtime 才能跑」横幅；DM 私聊入口 + Assign work 直接指派。
+
+**创建方式两条**（路由树）：`agents/new/manual`（手动表单）与 `agents/new/ai`（**AI 对话式
+AgentBuilder**，含草稿持久化 + 中途切换 runtime；另有内置「Chief of Staff」agent Mika）。
+
+**MCP / 集成的实际形态**（修正矩阵 #3 #4）：
+- MCP 是 **workspace 级** `mcp_config`（对话框带名字/JSON 校验），任务启动时按任务开关传入
+  （daemon 日志 E4 `mcp_config=false`）——**不是 per-agent 独立 MCP 定义**；
+- 集成 = workspace 设置里的 composio/apps 连接管理（feature flag `composio_mcp_apps` 控制），
+  agent 侧只有 Integrations 呈现分区。
+
+**唤醒规则**（`IssueWakeupSchema`，与我们 WakeRule 同构）：agent_id + instruction +
+kind（event/at/every/cron）+ mode（once/continuous）。
+
+### 对矩阵 #1–#8 的修正与新格
+
+| 格 | 修正/结论 |
+|---|---|
+| #3 MCP | 语义已清：workspace 级配置 + 任务级开关 ⇒ 对应到我们 = workspace 的 MCP 设置（已有），agent 页只需呈现；**不做 per-agent MCP** |
+| #4 集成 | 语义已清：外部服务连接（composio 一类，workspace 级）⇒ 我们暂无此层，**不吸收**（登记为远期） |
+| #8 设置参数 | 新增发现：**Concurrency（每 agent 最大并发 run 数）**我们完全没有——多队员同时派发时的防失控手段，值得吸收（需裁定默认值与上限） |
+| 新格 | **archive 可 Restore**：multica 归档可恢复；我们是终态不可逆——差异真实存在，是否补「恢复」待用户裁定 |
+| 新格 | **AI 对话式创建**（AgentBuilder）：先登记待定，不建议本阶段吸收（依赖聊天面） |
+| 新格 | conversation_starters / avatar 上传 / permission_scope：与我们聊天复用、九色板、协作域权限占位的既有取舍不同，**按既有裁定不吸收**（permission_scope 与协作域 canView/canInvoke 预留同向，实现时对齐） |
+
+## 2. 实现次序（沿台账第 52 轮的三刀，并入本矩阵；§1.2 实地取证后修订）
 
 1. **第②刀（编辑能力）**：矩阵 #6 #8 的可编辑半边——表单扩 description / color 选色器 /
    modelSelection（复用现成模型选择组件）；服务面 `TeamAgentEditablePatch` 白名单扩展（TDD 先行）。
 2. **第③刀（高级字段）**：矩阵 #2 skills、#8 的 tools/permissionMode。
 3. **agent 维度任务/运行数据（#5 #7）**：数据层已齐，纯呈现；呈现位（卡片内展开 vs 详情页）待定。
-4. **#3 MCP / #4 集成**：**不开工**，先由用户确认语义与边界（可能涉及 host 层，不只是 UI）。
+4. **§1.2 已清语义的格**：#3 MCP（呈现 workspace 级配置即可）、#4 集成（不吸收，远期）——不再等确认。
+5. **新增待裁定格**：#8 的 Concurrency（每 agent 最大并发 run，建议吸收）、archive 可 Restore
+   （建议吸收，破坏「归档即终态」的既有取舍需用户点头）——实现排入第②③刀之后。
 
 ## 3. 纪律
 
