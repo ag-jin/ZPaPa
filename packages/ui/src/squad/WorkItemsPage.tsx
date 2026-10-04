@@ -5,9 +5,8 @@ import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import { WorkItemDialog, type WorkItemDialogSubmitInput } from "./SquadCreateDialogs.js";
-import { ReassignWorkItemDialog } from "./ReassignWorkItemDialog.js";
-import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
+import type { WorkItemDialogSubmitInput } from "./SquadCreateDialogs.js";
+import { WorkItemsPageDialogs } from "./WorkItemsPageDialogs.js";
 import { SquadRunsReview } from "./SquadRunsReview.js";
 import { WakeRulesSection } from "./WakeRulesSection.js";
 import { WorkItemsBoard } from "./WorkItemsBoard.js";
@@ -391,51 +390,23 @@ export function WorkItemsPage({
         </>
       ) : null}
 
-      {/* 二次确认：**只在确认后**才执行放弃（执行目标由 confirmSquadDiscard 产出）。
-          文案必须说清后果（删哪些分支、工作树会被清、该批判为什么）。 */}
-      {discardTargetItem ? (
-        <SquadDiscardDialog
-          workItem={discardTargetItem}
-          pending={discardingId !== null}
-          onCancel={() => setDiscardConfirm(cancelSquadDiscard())}
-          onConfirm={() => {
-            void runDiscard();
-          }}
-        />
-      ) : null}
-
-      {snapshot && target && dialog?.kind === "create" ? (
-        <WorkItemDialog
-          snapshot={snapshot}
-          onClose={() => setDialog(null)}
-          onSubmit={submitDialog}
-        />
-      ) : null}
-
-      {/* 编辑：同一份表单（`mode="edit"` 只显示标题 / 正文，见 WorkItemDialog 注释）。 */}
-      {snapshot && target && dialog?.kind === "edit" ? (
-        <WorkItemDialog
-          snapshot={snapshot}
-          onClose={() => setDialog(null)}
-          onSubmit={submitDialog}
-          mode="edit"
-          titleId="squad.workItems.editTitle"
-          submitLabelId="squad.common.save"
-          initial={{ title: dialog.item.title, body: dialog.item.body }}
-        />
-      ) : null}
-
-      {/* 改派：改负责人（改派 = 新派发，可能开出一次新 run）。候选 / 初值 / 解析都在视图模型与
-          对话框里（`workItemAssigneeOptions` / `assigneeOptionValue` / `parseAssigneeValue`），
-          本页只接提交路径（同值 ⇒「未变更」）。 */}
-      {snapshot && target && reassignTarget ? (
-        <ReassignWorkItemDialog
-          workItem={reassignTarget}
-          snapshot={snapshot}
-          onClose={() => setReassignTarget(null)}
-          onSubmit={submitReassign}
-        />
-      ) : null}
+      <WorkItemsPageDialogs
+        snapshot={snapshot}
+        targetAvailable={target !== null}
+        dialog={dialog}
+        reassignTarget={reassignTarget}
+        discardTargetItem={discardTargetItem}
+        discarding={discardingId !== null}
+        busyWorkItemId={busyWorkItemId}
+        onCancelDiscard={() => setDiscardConfirm(cancelSquadDiscard())}
+        onConfirmDiscard={() => {
+          void runDiscard();
+        }}
+        onCloseWorkItem={() => setDialog(null)}
+        onSubmitWorkItem={submitDialog}
+        onCloseReassign={() => setReassignTarget(null)}
+        onSubmitReassign={submitReassign}
+      />
     </div>
   );
 }

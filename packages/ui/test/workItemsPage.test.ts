@@ -308,7 +308,13 @@ test("守卫｜WorkItemsPage 走响亮取数通路，写动作齐全，放弃整
   );
   assert.ok(page.includes("executeSquadDiscard("), "执行必须经视图模型的唯一入口");
   assert.ok(page.includes("requestSquadDiscard("), "点「放弃整批」只能进入待确认态");
-  assert.ok(page.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
+  assert.ok(page.includes("<WorkItemsPageDialogs"), "必须渲染工作项对话框装配组件");
+  const dialogs = readSource("squad/WorkItemsPageDialogs.tsx");
+  const dialogWiring = page.slice(page.indexOf("<WorkItemsPageDialogs"));
+  assert.ok(dialogs.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
+  assert.ok(dialogs.includes("onConfirm={onConfirmDiscard}"), "确认动作不得在装配层变成 no-op");
+  assert.ok(dialogWiring.includes("onConfirmDiscard") && dialogWiring.includes("runDiscard()"), "确认动作必须回到页面唯一执行路径");
+  assert.ok(dialogWiring.includes("onSubmitReassign={submitReassign}"), "改派提交必须回到页面编排");
   assert.ok(
     page.includes("squadDiscardableWorkItemIds("),
     "「放弃整批」入口的判据必须走纯函数（与服务面重驱同一份定义 isSquadBatchRoot）",

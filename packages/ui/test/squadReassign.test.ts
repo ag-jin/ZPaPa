@@ -119,7 +119,9 @@ test("守卫｜WorkItemsPage 有改派状态与对话框接线，提交经 reass
     "改派目标是一个页面状态（WorkItem | null）",
   );
   assert.ok(page.includes("setReassignTarget(item)"), "看板的 onReassign 必须落到页面状态");
-  assert.ok(page.includes("<ReassignWorkItemDialog"), "必须渲染改派对话框");
+  assert.ok(page.includes("<WorkItemsPageDialogs"), "页面必须接线对话框装配组件");
+  const dialogs = readSource("squad/WorkItemsPageDialogs.tsx");
+  assert.ok(dialogs.includes("<ReassignWorkItemDialog"), "必须渲染改派对话框");
   assert.ok(page.includes("reassignWorkItem("), "提交必须经服务面 reassignWorkItem");
   assert.ok(
     page.includes('"squad.workItems.reassigned"') &&

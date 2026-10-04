@@ -457,7 +457,8 @@ test("搬家守卫｜设置卡不再持有智能体 / 小队 / 工作项视图�
   );
   // 新家：工作项入口的唯一实现在 WorkItemsPage；编辑复用**同一份**表单（mode=edit）。
   const page = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPage.tsx"), "utf8");
-  assert.ok(page.includes('mode="edit"'), "编辑复用同一份 WorkItemDialog（mode=edit）");
+  const dialogs = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPageDialogs.tsx"), "utf8");
+  assert.ok(dialogs.includes('mode="edit"'), "编辑复用同一份 WorkItemDialog（mode=edit）");
 });
 
 test("组件层：执行只经 executeSquadDiscard（页面里不出现 discardBatch 调用）+ 必须经确认对话框", () => {
@@ -468,7 +469,9 @@ test("组件层：执行只经 executeSquadDiscard（页面里不出现 discardB
   );
   assert.ok(page.includes("executeSquadDiscard("), "执行必须经视图模型的唯一入口");
   assert.ok(page.includes("requestSquadDiscard("), "点「放弃整批」只能进入待确认态");
-  assert.ok(page.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
+  assert.ok(page.includes("<WorkItemsPageDialogs"), "页面必须接线对话框装配组件");
+  const dialogs = readFileSync(resolve(SQUAD_ENTRY_DIR, "WorkItemsPageDialogs.tsx"), "utf8");
+  assert.ok(dialogs.includes("<SquadDiscardDialog"), "必须经确认对话框");
 
   // 确认对话框必须**说清后果**（用到那条描述文案）并且是 destructive 变体。
   const dialog = readFileSync(resolve(SQUAD_ENTRY_DIR, "SquadDiscardDialog.tsx"), "utf8");
