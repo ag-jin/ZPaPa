@@ -115,3 +115,26 @@ kind（event/at/every/cron）+ mode（once/continuous）。
 
 - 每格实现前确认「待用户确认」标记已消除；拿不准的回到本文登记，不猜。
 - 与 subagent 的隔离（§0）是**硬边界**：任何实现轮次违反即回退，不将就。
+
+## 1.3 源码级对照（multica-ai/multica@b4ca5b4，2026-10-04 clone）
+
+> 用户指引直接读源码。浅克隆 `github.com/multica-ai/multica`，读 `server/migrations/`（agent 表
+> 001 建表 + 75 个 ALTER）、`server/pkg/db/generated/agent.sql.go`（UpdateAgentParams）、
+> `server/internal/service/task.go`（ClaimTask）、`server/internal/handler/mcp_overlay.go`。
+
+**agent 表可编辑字段全集**（`UpdateAgentParams`，sqlc 生成，源码级权威）：Name / Description /
+AvatarUrl / RuntimeConfig·RuntimeMode·RuntimeID（三件） / Visibility / **PermissionMode** /
+Status / **MaxConcurrentTasks** / Instructions / **CustomEnv** / **CustomArgs** / **McpConfig** /
+Model / ThinkingLevel / ServiceTier / **ConversationStarters** / **ComposioToolkitAllowlist**。
+
+**对 §1.2（bundle 推断）的三处源码修正**：
+1. **MCP 是 per-agent 的**：`agent.mcp_config` 是真实列（Claude 风格 `{"mcpServers":…}`），
+   且任务领取时 `mergeMCPOverlay` 把**每任务 overlay** 叠加在 agent 配置上（mcp_overlay.go）。
+   §1.2 「不做 per-agent MCP」的结论**作废**，该格重回待裁定。
+2. **集成的 agent 侧形态 = `ComposioToolkitAllowlist`**（agent 级 composio 工具白名单）+
+   workspace 级 composio 连接——依赖 composio 生态，维持不吸收（远期）。
+3. **Concurrency 生效层 = 服务端派发闸**：`ClaimTask` 的 SQL 原子领取按 `max_concurrent_tasks`
+   限流（task.go:3488，含 runtime 作用域），**默认 6**（migration 023）。非 UI 摆设。
+
+**源码新增待裁定格**：`CustomEnv`（每 agent 自定义环境变量）/ `CustomArgs`（每 agent 自定义
+CLI 参数）——我们完全没有；派发链路要透传，吸收需动 host 侧，成本高于 UI 字段。
