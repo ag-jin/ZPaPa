@@ -20,7 +20,11 @@ import {
   resolveSquadRuntimeService,
 } from "./squadRuntimeAccess.js";
 import { squadEntryVisible } from "./squadEntryVisibility.js";
-import { inboxViewState } from "./inboxViewModel.js";
+import {
+  inboxViewState,
+  type InboxSessionTarget,
+  type InboxWorkItemTarget,
+} from "./inboxViewModel.js";
 
 /* 「收件箱」一级入口的**完整功能面**（用户 2026-10-03 裁定：一级导航「收件箱」；
    2026-10-04 本轮：跨项目的通知面）。本轮是**纯 UI**：服务面
@@ -47,9 +51,28 @@ import { inboxViewState } from "./inboxViewModel.js";
 
    实验开关关闭**不是门禁**：本页仍可用（读 / 标已读 / 归档都不经服务部门禁），横幅只是把
    "入口为什么不见了、已有的条目还能不能读"说清楚 —— spec §12 的呈现判据是 `squadEntryVisible`，
-   本页复用它（同一份语义），不新造判据。 */
+   本页复用它（同一份语义），不新造判据。
 
-export function InboxPage() {
+   **穿透**（本轮：把"只读的死信"接上"看到 → 处理"的闭环）：两条去处由 shell 注入，页面只把
+   纯函数推出的**目标**原样转出去 —— 本页拿不到 tab store、也不该拿（跨 workspace 导航是
+   shell 的事，与 `handleSelectTaskInChat` 同一条既有通路）。`onOpenWorkItem` / `onOpenSession`
+   **必填而不是可选**：可选会留下"按钮在、点了没反应"的静默路径（`onOpenWorkItem?.(…)`
+   无声吞掉），把契约钉在类型上（照 WorkItemsPage `onOpenSession` 的既定理由）。
+
+   **点击不自动标已读 —— 有意为之**：穿透是"去处理"，标已读是"我知道它了"，两件事正交；
+   自动标已读 = 替用户做决定（他可能只是想看一眼再回来处理），而且写动作失败时要么给一次
+   假导航、要么吞掉失败，两种都不如"什么都不做"。**同样不自动归档**：归档 = "处理完了"，
+   更不该替用户宣布。 */
+
+export function InboxPage({
+  onOpenWorkItem,
+  onOpenSession,
+}: {
+  /** 「打开工作项」⇒ shell（跨 workspace 激活/补开 + 切到工作项页 + 聚焦那条）。 */
+  onOpenWorkItem: (target: InboxWorkItemTarget) => void;
+  /** 「打开会话」⇒ shell（经既有 handleSelectTaskInChat 打开 run 的会话）。 */
+  onOpenSession: (target: InboxSessionTarget) => void;
+}) {
   const { intl } = useZCodeIntl();
   const services = useServices();
   const { settings } = useSettings();
@@ -239,6 +262,8 @@ export function InboxPage() {
               "squad.inbox.archiveSucceeded",
             );
           }}
+          onOpenWorkItem={onOpenWorkItem}
+          onOpenSession={onOpenSession}
         />
       ) : null}
     </div>

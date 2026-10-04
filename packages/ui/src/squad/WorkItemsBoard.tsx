@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { isSquadBatchRoot } from "@zcode/services";
@@ -24,11 +25,19 @@ import { flattenWorkItemBoard, workItemStatusMessageId } from "./workItemsViewMo
    同一份定义）—— 本层不得另写一份"什么是批"。
 
    缩进沿用 `WikiCatalogTree` 的既有手法（`paddingLeft: depth * 12 + 8` px）：深度由纯函数
-   算好，本层只负责按它缩进 —— 组件里递归 = 不可测。 */
+   算好，本层只负责按它缩进 —— 组件里递归 = 不可测。
+
+   **聚焦（收件箱「打开工作项」的落点）在本层**：只有这里拿着"渲染后的行"，"目标在不在列表"
+   才答得准。`focusWorkItemId` 到了就 `scrollIntoView({ block: "nearest" })`（只滚最小距离）
+   + 一条**短暂环形高亮**（语义色 token，§11.3；不是状态编码），然后调 `onFocusConsumed()`
+   把意图清掉；**目标不在当前列表同样消费**（父项被归档等 —— 不留悬挂意图、不报错）。 */
 
 const LIST_CLASSNAME = "flex flex-col gap-2";
 /** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
 const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
+   不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
+const FOCUS_HIGHLIGHT_MS = 1600;
 
 /**
  * 指派人前面的圆点（**只表达身份，不编码状态**，spec §11.3）：
@@ -70,6 +79,8 @@ export function WorkItemsBoard({
   discardableIds,
   busyWorkItemId,
   timelineExpandedWorkItemId,
+  focusWorkItemId,
+  onFocusConsumed,
   onEdit,
   onReassign,
   onDiscard,
@@ -85,6 +96,10 @@ export function WorkItemsBoard({
   busyWorkItemId: string | null;
   /** 当前展开了时间线的那条批根（页面的**单一**状态：一次只展开一批，见 WorkItemsPage）。 */
   timelineExpandedWorkItemId: string | null;
+  /** 收件箱穿透的**一次性聚焦意图**：哪一行要被滚到视野里 + 短暂高亮（`null` = 没有意图）。 */
+  focusWorkItemId?: string | null;
+  /** 聚焦消费回调：找到就滚 + 高亮后调；**目标不在列表也调**（父项被归档等 —— 不留悬挂意图）。 */
+  onFocusConsumed?: () => void;
   onEdit: (item: WorkItem) => void;
   /** 点「改派」⇒ 交给页面打开改派对话框（本层不持有状态、也不执行服务调用）。 */
   onReassign: (item: WorkItem) => void;
@@ -100,6 +115,40 @@ export function WorkItemsBoard({
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
+
+  /* 聚焦（收件箱「打开工作项」的落点）：行 DOM 引用按 id 收在 ref 里（不用 querySelector：
+     它是字符串拼选择器，id 里将来出现特殊字符就静默找不到）。 */
+  const rowElementsRef = useRef(new Map<string, HTMLLIElement>());
+  /** 当前正在高亮的那一行（一次性提示，定时器到点清掉）。 */
+  const [highlightedWorkItemId, setHighlightedWorkItemId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // 意图只在**有值**时消费一次；消费（或确认缺席）后由 onFocusConsumed 把意图清成 null。
+    if (!focusWorkItemId) return;
+    const row = rowElementsRef.current.get(focusWorkItemId);
+    if (row) {
+      // 只滚最小距离：聚焦一条不该把整页甩走（`nearest` 已在视野内则不动）。
+      row.scrollIntoView({ block: "nearest" });
+      setHighlightedWorkItemId(focusWorkItemId);
+      if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = window.setTimeout(() => {
+        setHighlightedWorkItemId(null);
+        highlightTimerRef.current = null;
+      }, FOCUS_HIGHLIGHT_MS);
+    }
+    /* **目标不在当前列表也消费**（父项被归档、条目引自别的 workspace 的旧意图等）：
+       不消费会让意图挂在那里，下次进这一页又试一次（永远找不到、永远重试）；
+       也不报错 —— "这条已经不在这份列表里"是合法事实，不是故障。 */
+    onFocusConsumed?.();
+  }, [focusWorkItemId, onFocusConsumed, workItems]);
+  // 卸载时别把定时器留成孤儿（它 setState 的目标已经不在了）。
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+    },
+    [],
+  );
 
   if (workItems.length === 0) {
     return (
@@ -125,8 +174,18 @@ export function WorkItemsBoard({
             key={item.id}
             data-work-item-id={item.id}
             data-depth={depth}
+            ref={(element) => {
+              if (element) rowElementsRef.current.set(item.id, element);
+              else rowElementsRef.current.delete(item.id);
+            }}
             style={{ paddingLeft: `${depth * 12 + 8}px` }}
-            className={cn(ROW_CLASSNAME, "flex flex-col gap-2")}
+            className={cn(
+              ROW_CLASSNAME,
+              "flex flex-col gap-2",
+              // 聚焦高亮：**语义色 token**（brand 环，照 WhiteboardPane 的既有手法），
+              // 不引九色板、不编码状态 —— 它只回答"刚才是这一条"。
+              highlightedWorkItemId === item.id && "ring-2 ring-brand",
+            )}
           >
             <div className="flex items-center justify-between gap-3">
               <span className="flex min-w-0 items-center gap-2">

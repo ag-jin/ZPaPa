@@ -50,6 +50,7 @@ import { SquadsPage } from "@/squad/SquadsPage.js";
 import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
 import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
 import { InboxPage } from "@/squad/InboxPage.js";
+import type { InboxWorkItemTarget } from "@/squad/inboxViewModel.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -200,6 +201,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   openAutomationTab,
   onWorkspaceMainViewChange,
   onOpenAutomationConsumed,
+  inboxFocusWorkItemId,
+  onInboxFocusRequest,
+  onInboxFocusConsumed,
   handleOpenAutomations,
   handleOpenPluginStore,
   handleOpenSquadAgents,
@@ -914,6 +918,38 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       }
     },
     [handleSelectTask, intl, shellWorkbenchBinding, showChatMainView, tabStoreApi, workspaceTabs],
+  );
+  /* 「收件箱」穿透 ①：「打开工作项」—— 跨 workspace 激活/补开目标项目，切到它的「工作项」页
+     并把**聚焦意图**交给页面（页面消费，见 WorkItemsPage/WorkItemsBoard）。
+     次序有意如此（先确保 tab → 再激活 → 再设意图 → 最后切主视图）：
+     ① 主视图（App 状态）与 active tab（tab store）是两个状态源；**激活在前**才能保证主视图
+        翻到 work-items 那一刻 shell 的 workspaceAbsPath 已经是目标项目 —— 反了会先用旧项目
+        渲染一帧工作项页（页面按 workspace 目标取数，取错项目的快照且不报错）；
+     ② activate 失败 ⇒ **整条导航放弃**（响亮：logger + toast，不静默、不假装成功）——
+        先切视图就撤不回来了（会停在旧项目的 empty 工作项页，看起来像"跳转成功了但我的事没了"）。
+     identity 口径：`target.workspaceIdentity` 由条目的 `workspaceKey` 按 C14 反推（纯函数
+     `inboxItemWorkItemTarget` 一处给出）；不带时只按 path 处理（本地 tab 的既有语义）。 */
+  const handleOpenInboxWorkItem = useCallback(
+    (target: InboxWorkItemTarget) => {
+      const workspaceTabOptions = target.workspaceIdentity
+        ? { workspaceIdentity: target.workspaceIdentity }
+        : undefined;
+      // 不存在就建（收件箱是跨项目面：目标项目可能根本没打开 —— 只 activate 会静默失败，
+      // 见 App.tsx handleStartDraftInWorkspace 的注释：那正是"点了没反应"的既有坑）。
+      tabStoreApi.getState().ensureWorkspaceTab(target.workspacePath, workspaceTabOptions);
+      if (!tabStoreApi.getState().activateTabByPath(target.workspacePath, workspaceTabOptions)) {
+        logger.error("[inbox] 打开工作项：workspace tab 激活失败（项目不存在或已失效）", {
+          workspacePath: target.workspacePath,
+          workspaceIdentity: target.workspaceIdentity,
+          workItemId: target.workItemId,
+        });
+        toast(intl.formatMessage({ id: "squad.inbox.openFailed" }));
+        return;
+      }
+      onInboxFocusRequest(target.workItemId);
+      onWorkspaceMainViewChange("work-items");
+    },
+    [intl, onInboxFocusRequest, onWorkspaceMainViewChange, tabStoreApi],
   );
   // 中枢直接启动 accepted 后切到新会话（run 卡已在顶部）：复用运行历史那条导航，
   // target 恒带工作流所属项目坐标（不变式 7），remoteSessionId 决定连接 endpoint。
@@ -1834,7 +1870,10 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                            居中内容列。`ScopedErrorBoundary` scope 独立（"inbox-page"）：本页的
                            崩溃不该把别的页面一起带走，也不该被别人的崩溃连坐。
                            与其他三面不同的一点：**不传 workspace props** —— 收件箱是跨项目面
-                           （服务面 `listInboxItems` 没有目标参数），页面自己不带"当前项目"语义。 */
+                           （服务面 `listInboxItems` 没有目标参数），页面自己不带"当前项目"语义；
+                           两条**穿透**是例外（本轮）：目标由每条条目自带，经 shell 的既有通路
+                           导航 —— 「打开工作项」走 `handleOpenInboxWorkItem`（跨 workspace 激活 +
+                           聚焦意图），「打开会话」走既有的 `handleSelectTaskInChat`。 */
                         <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
                           <AutomationsMainBreadcrumbFrame
                             isDesktop={Boolean(isDesktop)}
@@ -1853,7 +1892,16 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                 className="min-h-full"
                               >
                                 <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
-                                  <InboxPage />
+                                  <InboxPage
+                                    onOpenWorkItem={handleOpenInboxWorkItem}
+                                    onOpenSession={(target) =>
+                                      handleSelectTaskInChat(
+                                        target.workspacePath,
+                                        target.sessionId,
+                                        target.workspaceIdentity,
+                                      )
+                                    }
+                                  />
                                 </div>
                               </ScopedErrorBoundary>
                             </div>
@@ -1930,7 +1978,10 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                            不该把别的页面一起带走，也不该被别人的崩溃连坐。
                            `onOpenSession` 照 AutomationsSection 的接线：run 的会话穿透走 shell
                            既有的 `handleSelectTaskInChat`（目标就是本页的 workspace），
-                           页面自己不拼导航。 */
+                           页面自己不拼导航。
+                           `focusWorkItemId` / `onFocusConsumed` 是收件箱「打开工作项」带进来的
+                           一次性聚焦意图（照 openAutomationId 的先例：shell 透传 → 看板消费后
+                           经回调清掉，见 WorkItemsBoard 的消费点）。 */
                         <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
                           <AutomationsMainBreadcrumbFrame
                             isDesktop={Boolean(isDesktop)}
@@ -1952,6 +2003,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   <WorkItemsPage
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}
+                                    focusWorkItemId={inboxFocusWorkItemId}
+                                    onFocusConsumed={onInboxFocusConsumed}
                                     onOpenSession={(sessionId) =>
                                       handleSelectTaskInChat(
                                         workspaceAbsPath,

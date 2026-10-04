@@ -11,6 +11,9 @@ import {
   INBOX_SEVERITY_BADGE_CLASSES,
   INBOX_SEVERITY_MESSAGE_IDS,
   inboxItemDetailLine,
+  inboxItemSessionId,
+  inboxItemSessionTarget,
+  inboxItemWorkItemTarget,
   inboxRowActions,
   inboxViewState,
 } from "../src/squad/inboxViewModel.js";
@@ -24,7 +27,10 @@ import {
    ④ 行动作四格（未读未归档 / 已读未归档 / 未读已归档 / 已读已归档）；
    ⑤ 结构守卫：侧栏入口（位置 + 同一个显隐判据）、shell 接线与全页判据、页面服务接线与
       **有意无二次确认**（把"有意为之"钉住，防下一个人当成漏做补上）、归档动作的条件、
-      开关真的传进取数。每条都写明变异方式，并在交付报告里逐条实测。 */
+      开关真的传进取数。每条都写明变异方式，并在交付报告里逐条实测。
+   ⑥（本轮）**穿透**：两个纯函数的目标判据（含 identity 的 C14 反推）+ 全链结构守卫
+      （行内两钮各有条件 / 页面 props / shell 的 ensure→activate→主视图 / 聚焦意图
+      App→shell→页面→看板、看板消费 + scrollIntoView）。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
@@ -334,7 +340,9 @@ test("守卫｜侧栏「收件箱」入口恰一处、在「智能体」之前�
 test("守卫｜shell 有 inbox 分支且渲染 InboxPage；全页判据含 inbox", () => {
   const layout = readSource("app-shell/WorkspaceShellLayout.tsx");
   assert.ok(layout.includes('workspaceMainView === "inbox" ?'), "装饰视图必须有 inbox 分支");
-  assert.ok(layout.includes("<InboxPage />"), "inbox 分支必须渲染 InboxPage");
+  // 本轮穿透把两条回调传给了页面（`<InboxPage …>`），故只钉"渲染了它"这件事。
+  assert.ok(layout.includes("<InboxPage"), "inbox 分支必须渲染 InboxPage");
+  assert.ok(layout.includes("<InboxPage\n"), "InboxPage 必须接上穿透回调（多行 props）");
   assert.ok(layout.includes('scope="inbox-page"'), "收件箱页要有独立的 ScopedErrorBoundary scope");
   assert.ok(layout.includes("workspace.openInbox"), "面包屑 sectionLabel 用 workspace.openInbox");
   const predicate = layout.slice(
@@ -426,4 +434,281 @@ test("守卫｜「显示已归档」开关真的传进取数（includeArchived �
     page.includes("aria-pressed={includeArchived}"),
     "按下态用 aria-pressed（照侧栏入口的既有手法）",
   );
+});
+
+// ---------- ⑥ 穿透（本轮：把"只读的死信"接上「看到 → 处理」的闭环） ----------
+
+// 会话 id 读法四格：只有**非空字符串**才算有会话；null / 缺失 / 非字符串（含空串）一律 null。
+// 边界来源：`sessionId` 是本轮才补进 member_failed 的键，此前产生的条目没有它 ⇒ 必须按缺失降级。
+// 变异：把非字符串也返回（不判 typeof）⇒ 第三、四格必红。
+test("穿透｜inboxItemSessionId：非空字符串才返回；null / 缺失 / 非字符串一律 null", () => {
+  assert.equal(
+    inboxItemSessionId(inboxItem({ detail: { sessionId: "sess-1" } })),
+    "sess-1",
+    "非空字符串 ⇒ 返回它（「打开会话」的唯一来源）",
+  );
+  assert.equal(
+    inboxItemSessionId(inboxItem({ detail: { sessionId: null } })),
+    null,
+    "null（run_orphaned 的既有关卡：未绑会话）⇒ 不给会话钮",
+  );
+  assert.equal(
+    inboxItemSessionId(inboxItem({ detail: { runId: "r1" } })),
+    null,
+    "键缺失（本轮之前的 member_failed 旧行）⇒ 同样不给钮，不报错",
+  );
+  assert.equal(
+    inboxItemSessionId(inboxItem({ detail: { sessionId: 42 } })),
+    null,
+    "非字符串坏形状 ⇒ null（detail 是 Record<string, unknown>，不猜）",
+  );
+  assert.equal(inboxItemSessionId(inboxItem({ detail: { sessionId: "" } })), null, "空串 ≠ 有会话");
+});
+
+// 工项目标两格 + identity 的 C14 反推（`resolveWorkspaceKey`：identity 非空优先、否则 path）：
+// key === path ⇒ 条目没带 identity ⇒ 只给 path（**不得**拿 path 当 identity）；
+// key ≠ path ⇒ key 就是（trim 后的）identity ⇒ 按 identity 带上。
+// 变异：恒带上 `workspaceIdentity: item.workspaceKey`（把 key 当 identity 用）⇒ 第一格必红。
+test("穿透｜inboxItemWorkItemTarget：workItemId 非空才给；identity 按 C14 反推（不拿 key 冒充）", () => {
+  assert.deepEqual(
+    inboxItemWorkItemTarget(
+      inboxItem({ workItemId: "wi-1", workspacePath: "/w/a", workspaceKey: "/w/a" }),
+    ),
+    { workspacePath: "/w/a", workItemId: "wi-1" },
+    "key === path ⇒ 条目没带 identity：只给 path（deepEqual 钉住连键都没有）",
+  );
+  assert.deepEqual(
+    inboxItemWorkItemTarget(
+      inboxItem({
+        workItemId: "wi-1",
+        workspacePath: "/home/u/p",
+        workspaceKey: "remote:ssh:host:22:u:/home/u/p",
+      }),
+    ),
+    {
+      workspacePath: "/home/u/p",
+      workspaceIdentity: "remote:ssh:host:22:u:/home/u/p",
+      workItemId: "wi-1",
+    },
+    "key ≠ path ⇒ key 就是（trim 后的）identity：跨端 tab 匹配要靠它",
+  );
+  assert.equal(
+    inboxItemWorkItemTarget(inboxItem({ workItemId: null })),
+    null,
+    "没有 workItemId ⇒ 不给钮（不猜去哪条）",
+  );
+  assert.equal(
+    inboxItemWorkItemTarget(inboxItem({ workItemId: "" })),
+    null,
+    "空串同样不给（坏形状一律 null）",
+  );
+  assert.equal(
+    inboxItemWorkItemTarget(inboxItem({ workItemId: "wi-1", workspacePath: "" })),
+    null,
+    "workspacePath 为空 ⇒ 没有项目可去，不给钮",
+  );
+});
+
+// 会话目标的判据收在一处：会话 id 与项目坐标**都**推得出才给 —— 只按 sessionId 渲染、
+// 到点击时才拼坐标会让拼不出的那条变成**死钮**。变异：不看 sessionId 直接给目标 ⇒ 第二格红。
+test("穿透｜inboxItemSessionTarget：会话 id 与项目坐标都推得出才给（不给死钮）", () => {
+  assert.deepEqual(
+    inboxItemSessionTarget(
+      inboxItem({ detail: { sessionId: "s1" }, workspacePath: "/w/a", workspaceKey: "/w/a" }),
+    ),
+    { workspacePath: "/w/a", sessionId: "s1" },
+    "两样齐全 ⇒ 目标（三样：path / identity? / 目标 id）",
+  );
+  assert.equal(
+    inboxItemSessionTarget(inboxItem({ detail: {} })),
+    null,
+    "本轮之前的 member_failed 旧行（无 sessionId）⇒ 不给目标 = 界面不给钮",
+  );
+  assert.equal(
+    inboxItemSessionTarget(
+      inboxItem({ detail: { sessionId: "s1" }, workspacePath: "", workspaceKey: "" }),
+    ),
+    null,
+    "坐标坏（空 path）⇒ 同样不给（不造死钮）",
+  );
+});
+
+/* 守卫 f：行内两钮 —— 各只一处、各有条件、判据走纯函数。
+   变异（M2：无条件渲染会话钮）⇒ 把 `{sessionTarget ? (` 条件去掉 ⇒ 第二个断言（门位置）必红；
+   两钮与 `inboxRowActions` 正交（读了 ≠ 处理完）⇒ 条件文本里不得出现 `actions.`。 */
+test("守卫｜行内穿透钮：各只一处且各有条件（已读/已归档行同样留着去处）", () => {
+  const list = readSource("squad/InboxList.tsx");
+  assert.equal(
+    (list.match(/data-testid="inbox-open-work-item"/g) ?? []).length,
+    1,
+    "「打开工作项」只该有一处（为别的形态另抄一份 = 同一语义两处实现）",
+  );
+  assert.equal(
+    (list.match(/data-testid="inbox-open-session"/g) ?? []).length,
+    1,
+    "「打开会话」只该有一处",
+  );
+
+  const workItemGate = list.indexOf("{workItemTarget ? (");
+  const workItemButton = list.indexOf('data-testid="inbox-open-work-item"');
+  assert.ok(workItemGate >= 0, "「打开工作项」必须有条件分支（无条件渲染 = 坏形状条目也点得动）");
+  assert.ok(workItemButton > workItemGate, "按钮必须在条件块内");
+  assert.ok(
+    !list.slice(workItemGate, workItemButton).includes(") : null}"),
+    "条件中途就闭合了 = 按钮裸奔",
+  );
+
+  const sessionGate = list.indexOf("{sessionTarget ? (");
+  const sessionButton = list.indexOf('data-testid="inbox-open-session"');
+  assert.ok(sessionGate >= 0, "「打开会话」必须有条件分支（缺 sessionId 的旧行不给钮）");
+  assert.ok(sessionButton > sessionGate, "按钮必须在条件块内");
+  assert.ok(
+    !list.slice(sessionGate, sessionButton).includes(") : null}"),
+    "条件中途就闭合了 = 按钮裸奔",
+  );
+
+  assert.ok(
+    list.includes("inboxItemWorkItemTarget(item)") && list.includes("inboxItemSessionTarget(item)"),
+    "两个判据必须走纯函数（本层不拼 target、不判 identity）",
+  );
+  // 穿透钮与行状态正交：读了不等于处理完，归档行也留着去处 —— 条件里不得引用行状态的动作表。
+  assert.ok(
+    !list.slice(workItemGate, workItemButton).includes("actions."),
+    "穿透钮不得挂进行状态判据（inboxRowActions 只管标已读 / 归档）",
+  );
+  assert.ok(
+    !list.slice(sessionGate, sessionButton).includes("actions."),
+    "同上：已读 / 已归档行照样给「打开会话」",
+  );
+});
+
+/* 守卫 g：页面的两个穿透 props —— 必填（可选会留下"按钮在、点了没反应"的静默路径）、
+   原样透传给列表（**不在穿透前塞一次自动标已读** —— 那是替用户做决定，见 InboxPage 文件头注）。
+   变异：把 `onOpenWorkItem={onOpenWorkItem}` 改成包一层先 markRead ⇒ 第二个断言必红。 */
+test("守卫｜InboxPage 的两个穿透 props：必填且原样透传（点击不自动标已读）", () => {
+  const page = readSource("squad/InboxPage.tsx");
+  assert.ok(
+    page.includes("onOpenWorkItem: (target: InboxWorkItemTarget) => void;"),
+    "onOpenWorkItem 必须必填（可选 = 静默吞点击）",
+  );
+  assert.ok(
+    page.includes("onOpenSession: (target: InboxSessionTarget) => void;"),
+    "onOpenSession 同样必填",
+  );
+  assert.ok(!page.includes("onOpenWorkItem?:"), "不得退化成可选");
+  assert.ok(!page.includes("onOpenSession?:"), "不得退化成可选");
+  assert.ok(
+    page.includes("onOpenWorkItem={onOpenWorkItem}") &&
+      page.includes("onOpenSession={onOpenSession}"),
+    "两个回调必须原样透传给列表（包一层 = 偷偷标已读 / 改语义）",
+  );
+  assert.ok(
+    !page.includes("requestConfirmation"),
+    "穿透同样**有意**无二次确认（与归档 / 标已读同一条纪律）",
+  );
+});
+
+/* 守卫 h：shell 的「打开工作项」路径 —— ensure（不存在就建）→ activate（false ⇒ 响亮）→
+   切主视图（次序：先激活 tab 才保证主视图翻过去时目标项目已在窗前）。
+   变异（M3：「打开工作项」只切主视图，去掉 ensure/activate）⇒ 前三个断言必红。 */
+test("守卫｜shell「打开工作项」：ensure → activate → 主视图；失败响亮不静默", () => {
+  const layout = readSource("app-shell/WorkspaceShellLayout.tsx");
+  const handlerAt = layout.indexOf("const handleOpenInboxWorkItem");
+  assert.ok(handlerAt >= 0, "shell 必须有「打开工作项」处理（页面注入的通路）");
+  const ensureAt = layout.indexOf("ensureWorkspaceTab(target.workspacePath", handlerAt);
+  const activateAt = layout.indexOf("activateTabByPath(target.workspacePath", handlerAt);
+  const viewAt = layout.indexOf('onWorkspaceMainViewChange("work-items")', handlerAt);
+  assert.ok(
+    ensureAt > handlerAt,
+    "必须先 ensureWorkspaceTab（收件箱是跨项目面：目标项目可能没打开）",
+  );
+  assert.ok(activateAt > ensureAt, "再 activateTabByPath（激活失败不许静默 —— 既有坑）");
+  assert.ok(viewAt > activateAt, "最后才切主视图（次序反了会先用旧项目渲染一帧工作项页）");
+  const gate = layout.slice(handlerAt, viewAt);
+  assert.ok(gate.includes("squad.inbox.openFailed"), "activate 失败要有可见归宿（toast 文案键）");
+  assert.ok(gate.includes("logger.error"), "activate 失败要留痕（响亮，不静默）");
+  assert.ok(
+    gate.includes("if (!tabStoreApi.getState().activateTabByPath("),
+    "失败分支必须先判返回值",
+  );
+
+  // 「打开会话」：目标三样（path / identity / sessionId）原样进既有 handleSelectTaskInChat。
+  const inboxAt = layout.indexOf("onOpenWorkItem={handleOpenInboxWorkItem}");
+  assert.ok(inboxAt >= 0, "InboxPage 必须接线「打开工作项」");
+  const sessionAt = layout.indexOf("onOpenSession={(target) =>", inboxAt);
+  assert.ok(sessionAt > inboxAt, "InboxPage 必须接线「打开会话」");
+  const sessionWiring = layout.slice(sessionAt, sessionAt + 400);
+  assert.ok(sessionWiring.includes("handleSelectTaskInChat("), "会话穿透走 shell 既有通路");
+  assert.ok(sessionWiring.includes("target.sessionId"), "会话目标带 sessionId");
+  assert.ok(
+    sessionWiring.includes("target.workspacePath") &&
+      sessionWiring.includes("target.workspaceIdentity"),
+    "会话目标带 workspacePath / workspaceIdentity（跨项目坐标不丢）",
+  );
+});
+
+/* 守卫 i：聚焦意图**全链**（照 openAutomationId 的先例）：
+   App 持意图 → shell 在导航成功后设它并透传给工作项页 → 页面透传给看板 → **看板消费后清掉**。
+   变异（M4：看板不调 onFocusConsumed）⇒ 第四个断言（消费是 effect 的最后一步）必红 ——
+   不消费的表现是"每次回到这一页都再聚焦一次"，且不报错。 */
+test("守卫｜聚焦意图全链 App → shell → 页面 → 看板（看过即消费，不留悬挂意图）", () => {
+  const app = readSource("App.tsx");
+  assert.ok(
+    app.includes(
+      "const [inboxFocusWorkItemId, setInboxFocusWorkItemId] = useState<string | null>(null)",
+    ),
+    "意图状态在 App（跨页面存活；放页面里会被主视图切换卸载顺手清掉）",
+  );
+  assert.ok(app.includes("inboxFocusWorkItemId={inboxFocusWorkItemId}"), "意图传给 shell");
+  assert.ok(app.includes("onInboxFocusRequest={handleInboxFocusRequest}"), "设置口传给 shell");
+  assert.ok(app.includes("onInboxFocusConsumed={handleInboxFocusConsumed}"), "消费口传给 shell");
+
+  const layout = readSource("app-shell/WorkspaceShellLayout.tsx");
+  assert.ok(
+    layout.includes("onInboxFocusRequest(target.workItemId)"),
+    "shell 在导航**成功后**才设意图（失败路径提前 return）",
+  );
+  assert.ok(layout.includes("focusWorkItemId={inboxFocusWorkItemId}"), "shell 把意图交给工作项页");
+  assert.ok(layout.includes("onFocusConsumed={onInboxFocusConsumed}"), "消费回调同样传下去");
+
+  const page = readSource("squad/WorkItemsPage.tsx");
+  assert.ok(page.includes("focusWorkItemId={focusWorkItemId}"), "页面透传意图给看板");
+  assert.ok(
+    page.includes("onFocusConsumed={onFocusConsumed}"),
+    "页面透传消费回调给看板（消费点在看板：只有那里拿着渲染后的行）",
+  );
+
+  const board = readSource("squad/WorkItemsBoard.tsx");
+  assert.ok(
+    board.includes('scrollIntoView({ block: "nearest" })'),
+    "看板把目标行滚进视野（最小距离）",
+  );
+  assert.ok(board.includes("ring-brand"), "高亮用语义色 token（brand 环，不引九色板）");
+  const consumeAt = board.indexOf("onFocusConsumed?.()");
+  assert.ok(consumeAt >= 0, "看板必须消费聚焦意图（清掉后壳才不会再聚焦）");
+  const focusEffectStart = board.indexOf("if (!focusWorkItemId) return;");
+  const focusEffectEnd = board.indexOf("}, [focusWorkItemId", focusEffectStart);
+  assert.ok(focusEffectStart >= 0 && focusEffectEnd > focusEffectStart, "聚焦消费必须在 effect 里");
+  const focusEffect = board.slice(focusEffectStart, focusEffectEnd);
+  assert.ok(
+    focusEffect.includes("scrollIntoView("),
+    "聚焦动作（滚动 + 高亮）与消费在同一处：只滚不消费 = 每次回来再滚一次",
+  );
+  assert.match(
+    focusEffect,
+    /onFocusConsumed\?\.\(\);\s*$/,
+    "消费是 effect 的**最后一步**：目标不在列表（父项被归档等）也走到它 —— 不留悬挂意图，也不报错",
+  );
+});
+
+// 三键两语齐全（穿透的可见文案；`openFailed` 是导航失败的响亮归宿）。
+test("穿透文案三键两语齐全", () => {
+  for (const id of [
+    "squad.inbox.openWorkItem",
+    "squad.inbox.openSession",
+    "squad.inbox.openFailed",
+  ]) {
+    assert.ok((zhCN[id] ?? "").length > 0, `zh 缺 ${id}`);
+    assert.ok((enUS[id] ?? "").length > 0, `en 缺 ${id}`);
+  }
 });

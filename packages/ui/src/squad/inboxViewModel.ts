@@ -176,6 +176,86 @@ export function inboxItemDetailLine(item: InboxItem): string | null {
   return fragments.length > 0 ? fragments.join(" · ") : null;
 }
 
+// ---------- 穿透目标（「看到 → 处理」的闭环） ----------
+
+/* 收件箱是**跨项目**面：每条条目自己带着「这件事在哪个项目」的坐标（`workspacePath` +
+   `workspaceKey`）。穿透（打开工作项 / 打开会话）的第一步就是把这两个坐标还原成
+   shell 能用的导航目标 —— 还原规则只在这里一份（可被 node:test 钉住），组件不各自拼。
+
+   **identity 的口径（C14，唯一来源是共享的 `resolveWorkspaceKey`）**：
+   `workspaceKey = workspaceIdentity?.trim() || workspacePath`。反过来推：
+   · `workspaceKey !== workspacePath` ⇒ key 就是（trim 后的）identity —— 可以按 identity 用；
+   · `workspaceKey === workspacePath` ⇒ 条目没带 identity（落库时就是空）⇒ **只给 path**，
+     绝不可拿 key 冒充 identity（拿 path 当 identity 传进 tabStore 会让同路径的远端 tab
+     匹配不上，激活静默失败）。
+   两种形状在条目上长得一样（都是非空字符串），所以这条反推规则必须写清楚，且只写一处。 */
+
+/** 「打开工作项」的去处：目标项目坐标 + 要聚焦的那条工作项（shell 负责跨 workspace 导航）。 */
+export type InboxWorkItemTarget = {
+  workspacePath: string;
+  /** 由 `workspaceKey` 反推（C14 口径）；`undefined` = 条目没带 identity（按本地项目处理）。 */
+  workspaceIdentity?: string;
+  workItemId: string;
+};
+
+/** 「打开会话」的去处：目标项目坐标 + 要打开的会话 id（run 类条目的穿透）。 */
+export type InboxSessionTarget = {
+  workspacePath: string;
+  /** 同 `InboxWorkItemTarget.workspaceIdentity`（同一处反推）。 */
+  workspaceIdentity?: string;
+  sessionId: string;
+};
+
+/** 条目 → 项目坐标（`null` = 坏形状：`workspacePath` 为空串——没有项目可去，不猜）。 */
+function inboxWorkspaceTarget(
+  item: Pick<InboxItem, "workspacePath" | "workspaceKey">,
+): { workspacePath: string; workspaceIdentity?: string } | null {
+  if (item.workspacePath.length === 0) return null;
+  const identity = item.workspaceKey !== item.workspacePath ? item.workspaceKey.trim() : "";
+  return identity.length > 0
+    ? { workspacePath: item.workspacePath, workspaceIdentity: identity }
+    : { workspacePath: item.workspacePath };
+}
+
+/**
+ * 条目的会话 id：`detail.sessionId` 是**非空字符串**才返回它，否则 `null`（坏形状一律 null，不猜）。
+ *
+ * `sessionId` 是本轮才补进 `member_failed` 的键（此前产生的条目没有它），`run_orphaned` 的键一直
+ * 允许 `null` —— 两种情况都必须按「缺失」降级（界面不给「打开会话」钮），不得报错。
+ * 读法与次要行同源（`readDetailString`）：detail 是 `Record<string, unknown>`，形状可能坏。
+ */
+export function inboxItemSessionId(item: Pick<InboxItem, "detail">): string | null {
+  return readDetailString(item.detail, "sessionId");
+}
+
+/**
+ * 「打开工作项」的目标：`workItemId` 非空 且 项目坐标推得出 ⇒ 目标；否则 `null`（不给钮，不猜）。
+ * 返回的目标三样齐全（`workspacePath` / `workspaceIdentity?` / `workItemId`），shell 拿到即可导航。
+ */
+export function inboxItemWorkItemTarget(
+  item: Pick<InboxItem, "workspacePath" | "workspaceKey" | "workItemId">,
+): InboxWorkItemTarget | null {
+  const workspace = inboxWorkspaceTarget(item);
+  const workItemId =
+    typeof item.workItemId === "string" && item.workItemId.length > 0 ? item.workItemId : null;
+  if (!workspace || workItemId === null) return null;
+  return { ...workspace, workItemId };
+}
+
+/**
+ * 「打开会话」的目标：会话 id 与项目坐标**都**推得出 ⇒ 目标；否则 `null`。
+ * 只按 `inboxItemSessionId` 渲染会话钮、到点击时才拼坐标会让拼不出的那条变成**死钮** ——
+ * 判据收在这里，两种形状由同一个函数回答。
+ */
+export function inboxItemSessionTarget(
+  item: Pick<InboxItem, "detail" | "workspacePath" | "workspaceKey">,
+): InboxSessionTarget | null {
+  const workspace = inboxWorkspaceTarget(item);
+  const sessionId = inboxItemSessionId(item);
+  if (!workspace || sessionId === null) return null;
+  return { ...workspace, sessionId };
+}
+
 // ---------- 行动作 ----------
 
 export type InboxRowActions = {

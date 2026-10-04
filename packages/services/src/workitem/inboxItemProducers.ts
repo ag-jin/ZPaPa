@@ -113,6 +113,8 @@ export function buildMergeConflictInboxItem(input: {
  *
  * `branch` 允许 `null`：**队长 run 无分支**（不建工作树），而失败分支是队员与队长**共用**的
  * （两者都是有台账的真实会话）—— 产生点从台账信息可得处取，拿不到（或本来就没有）给 `null`。
+ * `sessionId` 同样允许 `null`：**UI 的「打开会话」穿透靠它**（`detail.sessionId` 是唯一来源，
+ * 见 ui 的 `inboxItemSessionId`）—— 拿不到就登记 `null`，界面按缺失降级（不给钮），不报错。
  * `title` 拿不到工作项标题时回落 `workItemId`（同 `buildMergeConflictInboxItem` 的回落口径）。
  */
 export function buildMemberFailedInboxItem(input: {
@@ -125,6 +127,9 @@ export function buildMemberFailedInboxItem(input: {
   agentId: string;
   /** 该 run 的分支名；队长 run 无分支 ⇒ `null`（两个 run 类别共用这条失败出口）。 */
   branch: string | null;
+  /** 这个 run 的会话 id（host 派发时拿到的是 `task.taskId`）；`null` = 拿不到 ⇒ UI 不给「打开会话」。
+      键名与 `buildOrphanedRunInboxItem` 的既有 `sessionId` 一致：两条 run 类条目对 UI 是同一件事。 */
+  sessionId: string | null;
   /** 失败原因原文（含会话终态与错误详情）。 */
   reason: string;
 }): InboxItemInput {
@@ -139,6 +144,7 @@ export function buildMemberFailedInboxItem(input: {
       runId: input.runId,
       agentId: input.agentId,
       branch: input.branch,
+      sessionId: input.sessionId,
       reason: input.reason,
     },
     workItemId: input.workItemId,

@@ -58,10 +58,22 @@ import { workItemCreateEnabled } from "./workItemsViewModel.js";
 export function WorkItemsPage({
   workspacePath,
   workspaceIdentity,
+  focusWorkItemId,
+  onFocusConsumed,
   onOpenSession,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** 收件箱「打开工作项」带进来的**一次性聚焦意图**（照 openAutomationId 的先例：
+      shell 透传 → 看板聚焦/确认缺席后消费）。`null` / 缺省 = 没有待消费的意图。
+
+      为什么这层只透传不消费：**可靠渲染的那份列表在看板里**（页面拿到的 snapshot 在 ready 态
+      才交给看板；"目标在不在列表"只有拿着渲染后的行才答得准）。页面若在这里判一遍
+      `snapshot.workItems.some(...)`，等于给"在不在列表"开第二处判据，且看不到归档过滤等
+      行级事实（第二处判据与第一处不一致时不报错）。 */
+  focusWorkItemId?: string | null;
+  /** 看板消费完聚焦意图后的回调（清掉意图，避免每次回到本页再聚焦一次）。 */
+  onFocusConsumed?: () => void;
   /** 打开某个 run 的独立会话（由 shell 注入：目标 workspace 就是本页那个）。
       必填而不是可选：可选会留下"按钮在、点了没反应"的静默路径（onOpenSession?.(…) 无声吞掉）
       —— shell 恒会传（`handleSelectTaskInChat` 接线），把契约钉在类型上。 */
@@ -222,12 +234,7 @@ export function WorkItemsPage({
     }
   }, [discardConfirm, notify, reload, services, target]);
 
-  const state = squadSurfaceViewState({
-    hasTarget: target !== null,
-    snapshot,
-    loading,
-    failure,
-  });
+  const state = squadSurfaceViewState({ hasTarget: target !== null, snapshot, loading, failure });
 
   /** 给了「放弃整批」入口的工作项（破坏性动作的判据在视图模型里，可被 node:test 钉住）。 */
   const discardableIds = useMemo(
@@ -418,6 +425,8 @@ export function WorkItemsPage({
             discardableIds={discardableIds}
             busyWorkItemId={discardingId ?? busyWorkItemId}
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
+            focusWorkItemId={focusWorkItemId}
+            onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}
             onReassign={(item) => setReassignTarget(item)}
             onDiscard={(workItemId) => {

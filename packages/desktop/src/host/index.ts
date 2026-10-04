@@ -3181,6 +3181,8 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
                · title：能拿工作项标题就拿、拿不到回落 workItemId（回落规则在构建件里，不在这里判）；
                · detail：runId / agentId / branch —— branch 取**本次派发登记工作树时**拿到的信息
                  （队员有、队长没有 ⇒ `null`；两个 run 类别共用这一条失败出口，故允许空）；
+               · sessionId：本次派发的**真实会话 id**（`task.taskId`，闭包内即在作用域里）——
+                 UI 的「打开会话」穿透靠它（与 run_orphaned 的 `detail.sessionId` 同一个键）；
                · best-effort：登记失败只 warn（带原文）—— 上面 `failMemberRun` 的出口才是台账的收口，
                  Inbox 是留痕，不得阻断、也不得静默。 */
             void squadRuntime
@@ -3194,6 +3196,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
                   runId: eventKey,
                   agentId: enqueued.agentId,
                   branch: worktree?.branch ?? null,
+                  sessionId: task.taskId,
                   reason: runLabelReason,
                 }),
               )

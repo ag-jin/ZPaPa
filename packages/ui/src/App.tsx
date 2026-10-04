@@ -830,6 +830,10 @@ export function App({
   const [openAutomationTab, setOpenAutomationTab] = useState<NonNullable<
     AutomationsNavigationTarget["automationTab"]
   > | null>(null);
+  /* 「收件箱」穿透的一次性聚焦意图（照 openAutomationId 的先例）：shell 的「打开工作项」
+     导航成功后设它、工作项页的看板消费后清它 —— 意图跨页面存活要放在 App 这一层，
+     页面组件随主视图切走就卸载，放页面里会被卸载顺手清掉（清早 = 聚焦蒸发）。 */
+  const [inboxFocusWorkItemId, setInboxFocusWorkItemId] = useState<string | null>(null);
   const [pluginStoreReturnScopeKey, setPluginStoreReturnScopeKey] = useState("user");
   const [pluginStoreOpenVersion, setPluginStoreOpenVersion] = useState(0);
   const handleNavigateToTaskMain = useCallback(() => {
@@ -876,6 +880,14 @@ export function App({
   const handleOpenAutomationConsumed = useCallback(() => {
     setOpenAutomationId(null);
     setOpenAutomationTab(null);
+  }, []);
+  /** 收件箱「打开工作项」：shell 导航成功后设置聚焦意图（`workItemId`）。 */
+  const handleInboxFocusRequest = useCallback((workItemId: string) => {
+    setInboxFocusWorkItemId(workItemId);
+  }, []);
+  /** 工作项页消费掉聚焦意图（聚焦或确认目标不在列表）后清掉 —— 不留悬挂意图。 */
+  const handleInboxFocusConsumed = useCallback(() => {
+    setInboxFocusWorkItemId(null);
   }, []);
   const {
     handleSelectTask,
@@ -1153,6 +1165,9 @@ export function App({
         openAutomationTab={openAutomationTab}
         onWorkspaceMainViewChange={setWorkspaceMainView}
         onOpenAutomationConsumed={handleOpenAutomationConsumed}
+        inboxFocusWorkItemId={inboxFocusWorkItemId}
+        onInboxFocusRequest={handleInboxFocusRequest}
+        onInboxFocusConsumed={handleInboxFocusConsumed}
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
         handleOpenSquadAgents={handleOpenSquadAgentsMain}

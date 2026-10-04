@@ -83,6 +83,20 @@ test("host 产生点 ②：终态失败分支里登记 member_failed 且链 .cat
   assertRecordWrappedByCatch(subscribeTerminal, "buildMemberFailedInboxItem(");
 });
 
+/* P2（本轮补的穿透来源）：失败登记**带上会话 id** —— UI 的「打开会话」穿透读的就是
+   `detail.sessionId`（键名与 run_orphaned 的既有键一致）。`task` 是本次派发的目标
+   （闭包内可见），登记处必须写 `sessionId: task.taskId`，否则界面退化成"没有会话可去"的条目。
+   变异（M2d）：把这一行去掉（或改成别的值）⇒ 本用例红。 */
+test("host 产生点 ②：失败登记带 `sessionId: task.taskId`（UI「打开会话」的唯一来源）", () => {
+  const registration = region("buildMemberFailedInboxItem({", ".catch(");
+  assert.equal(
+    (registration.match(/sessionId: task\.taskId/g) ?? []).length,
+    1,
+    "member_failed 的 detail.sessionId 必须恰好传一次 task.taskId（UI 的「打开会话」靠它）",
+  );
+  assert.match(registration, /runId: eventKey,/, "区域取对了：runId 用的是本次派发的 eventKey");
+});
+
 // P3（产生点 ③，spec §6.6）：启动和解的每条残留 run ⇒ 除 failMemberRun 外还要登记 Inbox。
 test("host 产生点 ③：启动和解循环里登记 run_orphaned 且在 try/catch 内", () => {
   const reconcile = region(

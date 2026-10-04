@@ -9,7 +9,11 @@ import {
   INBOX_SEVERITY_BADGE_CLASSES,
   INBOX_SEVERITY_MESSAGE_IDS,
   inboxItemDetailLine,
+  inboxItemSessionTarget,
+  inboxItemWorkItemTarget,
   inboxRowActions,
+  type InboxSessionTarget,
+  type InboxWorkItemTarget,
 } from "./inboxViewModel.js";
 
 /* 「收件箱」页面的**纯呈现**列表（取数与动作都在 InboxPage）。
@@ -26,6 +30,12 @@ import {
      `undefined`）+ **所属项目**（跨项目面：每行自己说清是哪个 workspace 的事）
      + **相对时间**（复用既有 `formatTaskRelativeTime`，与侧栏任务行同一套词）。
 
+   **穿透钮与行状态正交**（本轮交付）：「打开工作项」/「打开会话」的判据是**目标推得出**
+   （`inboxItemWorkItemTarget` / `inboxItemSessionTarget` 一处给出，坏形状不给钮），
+   与 `inboxRowActions`（标已读 / 归档）不是一回事 —— **已读 / 已归档行照样给穿透钮**：
+   读了不等于处理完，去处必须留着（归档行是"留痕可查"，留痕的价值一半在于还能点进去）。
+   点击**不自动标已读**：穿透是穿透，自动改状态是替用户做决定（理由见 InboxPage 文件头注）。
+
    **空态在这里**（空列表 + 两行说明）：空态不是"没有内容"，而是"这里该有什么"的那句话。
    「已归档可用开关查看」这句提示**只在列表为空且开关没开时**给 —— 开关开着还是空，说明
    连归档里也没有，再提一句"可以查看归档"就是废话。 */
@@ -40,6 +50,8 @@ export function InboxList({
   busyItemId,
   onMarkRead,
   onArchive,
+  onOpenWorkItem,
+  onOpenSession,
 }: {
   items: InboxItem[];
   /** 「显示已归档」开关的当前值：只影响空态那句提示（数据面的过滤在服务侧）。 */
@@ -48,6 +60,10 @@ export function InboxList({
   busyItemId: string | null;
   onMarkRead: (item: InboxItem) => void;
   onArchive: (item: InboxItem) => void;
+  /** 「打开工作项」⇒ 交给页面（页面把目标转给 shell 做跨 workspace 导航；本层不持有目标）。 */
+  onOpenWorkItem: (target: InboxWorkItemTarget) => void;
+  /** 「打开会话」⇒ 交给页面（run 类条目的会话穿透；同上）。 */
+  onOpenSession: (target: InboxSessionTarget) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -70,6 +86,9 @@ export function InboxList({
         const actions = inboxRowActions(item);
         const detailLine = inboxItemDetailLine(item);
         const busy = busyItemId === item.id;
+        // 穿透目标（判据在纯函数里，含 identity 的 C14 反推）：推不出 ⇒ 不给钮（不猜、不造死钮）。
+        const workItemTarget = inboxItemWorkItemTarget(item);
+        const sessionTarget = inboxItemSessionTarget(item);
         return (
           <li
             key={item.id}
@@ -113,6 +132,31 @@ export function InboxList({
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-2">
+              {/* 穿透钮（不分已读 / 已归档：去处与"处理完了没"正交 —— 读了不等于处理完）：
+                  有目标才给，推不出的条目（坏形状 / 缺 sessionId 的旧行）不给。
+                  点击**不自动标已读**：穿透是穿透，自动改状态是替用户做决定。 */}
+              {workItemTarget ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="inbox-open-work-item"
+                  onClick={() => onOpenWorkItem(workItemTarget)}
+                >
+                  {t("squad.inbox.openWorkItem")}
+                </Button>
+              ) : null}
+              {sessionTarget ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="inbox-open-session"
+                  onClick={() => onOpenSession(sessionTarget)}
+                >
+                  {t("squad.inbox.openSession")}
+                </Button>
+              ) : null}
               {/* 未读且未归档 ⇒ 标已读；已读 / 已归档 ⇒ 不给（判据在共享的 inboxRowActions，
                   本层只照它画）。轻动作无二次确认（理由见 InboxPage 的文件头注）。 */}
               {actions.canMarkRead ? (

@@ -316,6 +316,7 @@ test("四个构建件：kind / dedupKey / title 回落 / detail 原始值", () =
     runId: "r-1",
     agentId: "ta-1",
     branch: null,
+    sessionId: "sess-1",
     reason: "队员会话终态=failed：boom",
   });
   assert.equal(failed.kind, "member_failed");
@@ -326,6 +327,7 @@ test("四个构建件：kind / dedupKey / title 回落 / detail 原始值", () =
     runId: "r-1",
     agentId: "ta-1",
     branch: null,
+    sessionId: "sess-1",
     reason: "队员会话终态=failed：boom",
   });
 
@@ -355,6 +357,47 @@ test("四个构建件：kind / dedupKey / title 回落 / detail 原始值", () =
     "reason 用原文（去重键含它）",
   );
   assert.equal(skipped.detail.reason, "工作项指派给人：不排队起 run，进 Inbox 等人处理");
+});
+
+/* member_failed 的 `detail.sessionId`（本轮补：UI 的「打开会话」穿透靠它）两格：
+   带（host 派发时 `task.taskId`）⇒ 原样写进 detail；不带（null）⇒ **也写 null**（形状固定 ——
+   UI 按缺失降级不给钮，而不是看不见键）。键名与 `run_orphaned` 的既有 `sessionId` 一致。
+   变异 M1：构建件不写 sessionId（去掉 `sessionId: input.sessionId`）⇒ 本用例两格都红。 */
+test("member_failed 的 detail.sessionId：带/不带两格都写（形状固定，UI 按缺失降级）", () => {
+  const base = { workspaceKey: WS, workspacePath: "/tmp/ws" };
+  const withSession = buildMemberFailedInboxItem({
+    ...base,
+    workItemId: "wi-c",
+    workItemTitle: "子任务",
+    runId: "r-a",
+    agentId: "ta-a",
+    branch: "squad/member/x/y",
+    sessionId: "sess-a",
+    reason: "队员会话终态=failed：boom",
+  });
+  assert.equal(withSession.detail.sessionId, "sess-a", "会话 id 必须原样写进 detail");
+  assert.deepEqual(
+    Object.keys(withSession.detail).sort(),
+    ["agentId", "branch", "reason", "runId", "sessionId", "workItemId"],
+    "detail 形状固定（键集不随有没有会话漂移）",
+  );
+
+  const withoutSession = buildMemberFailedInboxItem({
+    ...base,
+    workItemId: "wi-c",
+    workItemTitle: "子任务",
+    runId: "r-b",
+    agentId: "ta-b",
+    branch: null,
+    sessionId: null,
+    reason: "队长会话终态=stopped",
+  });
+  assert.ok("sessionId" in withoutSession.detail, "拿不到会话也要有键（缺失 ≠ 键消失）");
+  assert.equal(
+    withoutSession.detail.sessionId,
+    null,
+    "拿不到会话 ⇒ null（UI 据此不给「打开会话」）",
+  );
 });
 
 // ── 3. P1 端到端：真 git 冲突 ────────────────────────────────────────────────

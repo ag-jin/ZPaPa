@@ -4238,6 +4238,12 @@ const zhCN: Record<string, string> = {
   "squad.inbox.archive": "归档",
   "squad.inbox.markReadSucceeded": "已标为已读",
   "squad.inbox.archiveSucceeded": "已归档：可用「显示已归档」再看到它",
+  // 穿透（本轮）：条目不是只读的死信 —— 「打开工作项」跨项目激活并聚焦那条；
+  // 「打开会话」只在有会话 id 的条目上出现（member_failed / run_orphaned）。
+  // `openFailed` 是**导航失败**的可见归宿（activate 静默失败是既有坑：不响就等于点了没反应）。
+  "squad.inbox.openWorkItem": "打开工作项",
+  "squad.inbox.openSession": "打开会话",
+  "squad.inbox.openFailed": "无法打开：找不到该项目或它已失效",
   "squad.inbox.experimentOff":
     "多智能体小队实验已关闭：侧栏入口已隐藏、新的派发会被服务层拒绝；收件箱里已有的条目仍可阅读与归档。",
   "squad.inbox.kind.merge_conflict": "合并冲突",

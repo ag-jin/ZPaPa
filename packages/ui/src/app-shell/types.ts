@@ -135,6 +135,13 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   openAutomationTab: AutomationsNavigationTab | null;
   onWorkspaceMainViewChange: (view: WorkspaceMainView) => void;
   onOpenAutomationConsumed: () => void;
+  /** 「收件箱」穿透的一次性聚焦意图（照 `openAutomationId` 的先例：意图 + 消费回调）。
+      工作项页把它（`focusWorkItemId`）交给看板，看板聚焦/确认缺席后经消耗回调清掉。 */
+  inboxFocusWorkItemId: string | null;
+  /** shell 在「打开工作项」导航**成功后**设置聚焦意图（状态在 App：跨页面存活；点击处理在 shell）。 */
+  onInboxFocusRequest: (workItemId: string) => void;
+  /** 工作项页消费掉聚焦意图后回调（清掉，避免每次回到该页都再聚焦一次）。 */
+  onInboxFocusConsumed: () => void;
   handleOpenAutomations: OpenAutomationsMain;
   handleOpenPluginStore: () => void;
   /** 打开侧栏一级入口「智能体」（照 handleOpenPluginStore 的形态）。 */

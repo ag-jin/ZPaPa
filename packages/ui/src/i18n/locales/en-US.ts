@@ -4529,6 +4529,14 @@ const enUS: Record<string, string> = {
   "squad.inbox.archive": "Archive",
   "squad.inbox.markReadSucceeded": "Marked as read",
   "squad.inbox.archiveSucceeded": "Archived — you can still see it with Show archived",
+  // Penetration (this round): entries are no longer read-only dead letters — "Open work item"
+  // activates the owning project (cross-workspace) and focuses that row; "Open session" only
+  // appears on entries that carry a session id (member_failed / run_orphaned).
+  // `openFailed` is the visible fate of a failed navigation (activate failing silently is a
+  // known pitfall: silence looks like "clicked, nothing happened").
+  "squad.inbox.openWorkItem": "Open work item",
+  "squad.inbox.openSession": "Open session",
+  "squad.inbox.openFailed": "Could not open: the project was not found or is no longer available",
   "squad.inbox.experimentOff":
     "The multi-agent squad experiment is off: the sidebar entry is hidden and new dispatches are rejected by the service; existing inbox entries remain readable and archivable.",
   "squad.inbox.kind.merge_conflict": "Merge conflict",
