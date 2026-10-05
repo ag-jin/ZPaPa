@@ -1,6 +1,6 @@
 # 工作项协作域规格：Comment / Activity / Decision
 
-- **状态**：规格草案，待后续实现轮次拆解；本轮只新增规格，不实现产品代码
+- **状态**：规格草案，待后续实现轮次拆解；本轮只新增规格，不实现产品代码。§12 十二项未决问题已于 2026-10-05 全部裁定（见 §12.1）
 - **日期**：2026-10-04
 - **适用分支**：`feat/multi-agent-squad-p2b`
 - **上位依据**：`docs/superpowers/specs/2026-10-01-multi-agent-squad-design.md`（§5.1、§5.5、§5.7、§8、§10、§15），`docs/multica-squad-absorption-review.md`（§1.4、§1.6、§1.8、§5.6、§5.7），以及 `.superpowers/sdd/2026-10-01-multi-agent-squad-p2b/progress.md` 最近的 P2b 接线记录。
@@ -105,7 +105,7 @@ SourceRunRef {
 | `clientRequestId?` | string | 调用方重试幂等键；作用域为 workspace + author |
 | `revision` | integer | 评论序号或存储版本；创建后不变，用于排序/重启审计 |
 
-`InlineAnchor` 至少包含 `path`、`startLine`、`startColumn?`、`endLine?`、`endColumn?`、`baseRevision?`。它是上下文，不是工作树状态；行号漂移不能修改评论，也不能让评论消失。
+`InlineAnchor` 至少包含 `path`、`startLine`、`startColumn?`、`endLine?`、`endColumn?`、`baseRevision?`。它是上下文，不是工作树状态；行号漂移不能修改评论，也不能让评论消失。引用形态已定案：锚点 + 尽力存评论时 commit SHA（`baseRevision`），不存内容快照（§12.1-9）。
 
 评论删除、编辑、覆盖均不在本轮语义内。若未来需要隐藏，增加独立的 moderation Activity 或 tombstone，不更新原评论行。
 
@@ -221,6 +221,8 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 5. 合并窗口、窗口结束条件、跨重启如何恢复必须是持久化契约，不得靠内存定时器决定事实是否重复。
 6. `/note` 与 `@all` 永不进入可触发合并桶。
 
+窗口形态已按 multica 源码定案为**队列状态窗**（非时间窗）：合并条件 = (workItem, targetAgent) 已有待开 Run；持久状态即待开 Run 行与完成重放义务本身，重启天然恢复（§12.1-1、§12.2）。
+
 ### 4.4 什么“绝不触发”
 
 下列输入绝不直接产生 dispatch event：共享沟通会话消息、普通评论、`@all`、所有 `/note`、Activity 被读取/展示、Decision 被创建、评论编辑/删除请求（本域不支持编辑/删除）。若未来 WakeRule 消费这些事实，必须由 WakeRule 的 `eventKey`、`revision` 和防失控规则决定是否派发，不能把“Activity 写入”本身解释成自动执行许可。
@@ -305,7 +307,7 @@ Comment/Decision 接入时必须按以下事实挂 reason：
 | 创建工作项的顶层人类 | `creator` | 记录创建者，不因后续改派消失 |
 | 当前 assignee | `assignee` | 改派后按新负责人生成/撤销关系 |
 | 成功写入至少一条 Comment 的主体 | `commenter` | 不能仅因浏览评论订阅 |
-| 被 `@agent` 明确点名的主体 | `mentioned` | `@all` 本轮只广播，不 fan-out 触发；通知 fan-out 需另定 |
+| 被 `@agent` 明确点名的主体 | `mentioned` | `@all` 只广播，不 fan-out 触发；已定案**无副作用**：不开 run、不建订阅、不产生通知（通知只发订阅者），唯一语义 = 抑制隐式派发路由（§12.1-3；隐式路由对齐见 §12.2 待裁项 a） |
 | 队长将子项派给队员/小队 | `delegated` | 来源由 `causedByRunId` 或派发 Activity 关联 |
 | 用户手工订阅 | `manual` | 不被自动规则删除 |
 
@@ -455,7 +457,7 @@ canInvoke(subject, workItem, target)    // 能否通过 @、手动入口或工�
 
 ## 12. 未决问题
 
-以下问题必须在对应实现轮次开始前定案；本规格刻意不把它们伪装成完成：
+以下问题必须在对应实现轮次开始前定案；本规格刻意不把它们伪装成完成。（**2026-10-05 已全部定案，逐项裁定见 §12.1**）
 
 1. Comment dispatch 的合并窗口是固定毫秒数、线程 turn，还是显式“消息批次”？窗口跨重启的持久表示是什么？
 2. 连续同 agent 评论若目标 agent 当前已有 Run，默认是合并为同一新 Run、排队，还是升级为 steering？本规格只规定三者不能隐式混用。
@@ -468,7 +470,49 @@ canInvoke(subject, workItem, target)    // 能否通过 @、手动入口或工�
 9. 内联评论的代码快照如何引用：只存 path/行锚点，还是必须绑定 commit/blob SHA？工作树合并后锚点可见性尚未定。
 10. Comment/Activity/Decision 是否进入现有远程投射/同步面？当前 ZPaPa 实验功能不参与远程投射，需在协议层明确过滤。
 11. `initiatedBy` 的主体 id 如何与现有 session/user identity 对接，尤其是离线本地单用户没有服务端 account 的情况？
-12. 权限失败、归档工作项、已关闭实验开关时，评论是否仍允许只读写入 Comment/Activity？本规格倾向“可审计但不可 dispatch”，待 C1/C4 裁定。
+12. 权限失败、归档工作项、已关闭实验开关时，评论是否仍允许只读写入 Comment/Activity？本规格倾向”可审计但不可 dispatch”，待 C1/C4 裁定。
+
+### 12.1 用户逐项裁定 + multica 源码复审定案（2026-10-05，12 项全部定案）
+
+用户先经逐项确认（三批 4+4+4，全部按主会话推荐通过）；裁定后用户追加**上位裁定：优先按 multica 的设计**（§12.2）。据此对 12 项做源码复审：#1 #3 与 multica 实际设计冲突，按上位裁定翻案；#2 补齐源码里的另一半语义；其余 9 项维持或找到同构印证。
+
+| # | 问题 | 定案 | 依据 |
+|---|---|---|---|
+| 1 | 合并窗口形态 | **队列状态窗（翻案）**：无时间窗。合并条件 = (workItem, targetAgent) 已有待开（queued/dispatched）Run；持久状态 = 待开 Run 行与重放义务本身，重启天然恢复，不用 timer | multica 无时间窗：`idx_one_pending_task_per_issue_agent_v2` 唯一索引 + head-scoped 原子合并（comment.go，MUL-4195/#5914） |
+| 2 | 目标 agent 已有 Run | **并入待开 Run + 完成重放（用户裁定+源码补全）**：有待开 Run → 并入（coalesced，coalesced_comment_ids 逐条留痕）；仅运行中 Run → 不排新任务、不注入，评论登记为完成后重放义务（deferred），完成 reconcile 重放，义务只传递不丢弃；steering 恒为显式动作 | 用户裁定「并入待开 Run」；源码补齐 deferred 半边（reconcileCommentsOnCompletion + propagateUncoveredCommentObligation） |
+| 3 | @all 通知语义 | **无副作用（翻案）**：不开 run、不建订阅、不产生通知；唯一语义 = 抑制隐式派发路由；显式 @agent/@squad 优先于 @all（两者并存时 @all 只抑制、不吞显式目标） | MUL-5411：@all 从不 enqueue；`parseUUID(“all”)` 必败 + `user_type` CHECK 拒绝订阅；通知只发订阅者（notifyIssueSubscribers） |
+| 4 | /note 正文存储 | **raw + normalized 两份**：body 存原文（含前缀，审计），另存去前缀 normalized（展示）；展示不重新解析 | 用户裁定；multica 无 /note 对应物，无冲突 |
+| 5 | Decision 子类型 | **冻结通用骨架**：等首批真实场景再闭集化（C3 前再定） | 用户裁定；multica 无 Decision 表 |
+| 6 | Activity sequence 粒度 | **每 WorkItem**：索引 (workspaceIdentity, workItemId, sequence)；跨项聚合按 occurredAt | 用户裁定；multica 仅按 created_at 排序（服务端单时钟），sequence 是我们本地多进程的必需，无冲突 |
+| 7 | 补偿性系统事件 | **允许、按写入排序**：occurredAt=补偿发生时间、sequence 顺延、payload 引用原事实 id | 用户裁定；multica 的 comment.type='system' 条目与义务传递日志同向 |
+| 8 | 跨父/子项冒泡 | **只作用于被评论 WorkItem**；跨项触发未来须显式规则化 | 用户裁定；multica 未见评论跨 issue 冒泡触发 |
+| 9 | 内联评论代码引用 | **锚点 + baseRevision**（§3.2 字段定案）：path/行锚点 + 尽力存评论时 commit SHA，不存内容快照 | 用户裁定 |
+| 10 | 远程投射/同步 | **协议层过滤**：三实体纯本地、显式排除；多设备/协作场景明确后再扩协议 | 用户裁定；本地 SQLite 属 §10 有意差异（multica 为云端服务端，不适用） |
+| 11 | initiatedBy 主体 id | **本地稳定 id**：首次生成本地稳定人类主体 id（一机一主），displayName 展示快照；未来接 account 建映射不换 id | 用户裁定；与 multica `OriginatorUserID`（链顶人类）同构，仅 id 来源不同（云端账号 vs 本地生成） |
+| 12 | 受限状态下的评论写入 | **可审计不可派发**：Comment/comment_created 照写，dispatch 被拒并落 comment_dispatch_suppressed（带原因）；评论响应须逐目标如实上报派发结果 | 用户裁定；multica 同构印证：TriggerOutcomes 的 `blocked` = 「评论已发，但 N 个目标未触发」如实回传 |
+
+### 12.2 上位裁定与 multica 源码复审（2026-10-05）
+
+**上位裁定（用户，2026-10-05）**：**优先按 multica 的设计**——凡我们的裁定/规格与 multica 实际设计冲突且无既定有意差异保护的，对齐 multica。取证源：`multica-ai/multica@b4ca5b4` 源码（第 57 轮同源复原）。
+
+**源码关键事实（已吸收进 §12.1）**：
+
+1. 派发闭环：评论触发 → 每目标 `TriggerOutcomes`（`queued | coalesced | deferred | blocked`）如实回传；创建响应即可展示「评论已发，但 N 个目标未触发」；另有 trigger preview 端点（发前预览谁会被触发/阻塞）。
+2. 待开唯一性：`(issue_id, agent_id)` 唯一索引（状态 queued/dispatched）；并入 = 原子 head-scoped 合并进待开任务（coalesced_comment_ids 留痕）。
+3. 运行中不排队不注入：活动任务存在时，新评论走 deferred——完成时 `reconcileCommentsOnCompletion` 按 `created_at > since` 重放；义务跨状态传递（propagateUncoveredCommentObligation），绝不静默丢弃。
+4. `activity_log` 表（workspace/issue/actor_type/actor/action/details JSONB）与我们 WorkItemActivity 同构——三实体分离方向被验证；其 comment 表另带 `type ∈ comment|status_change|progress_update|system` 供线程内系统条目展示。
+5. 订阅 reason 闭集：creator/assignee/commenter/mentioned/manual（迁移 249 后加 delegated、迁移 120 加 autopilot）——与我们 §7.1 六 reason 同源多 autopilot。
+6. 链顶人类归因 `OriginatorUserID` 与我们 `initiatedBy` 同构；agent 评论不参与 member 驱动的会话路由。
+
+**待裁分歧清单（multica-first 复审新发现，未在本轮改动，逐项对齐排下一轮）**：
+
+| 项 | multica 设计 | 我们现状 | 建议方向 |
+|---|---|---|---|
+| a. 隐式路由 | 人类评论对 agent 指派的 issue **默认触发该 agent**（trigger source `issue_assignee`）；@all/@member-mention 抑制；agent 评论不参与隐式路由 | §4.2 规定普通无 mention 评论 → N（不触发） | **对齐**：普通人类评论在工作项指派给 agent 时默认触发该 agent；抑制语义随 @all 定案生效 |
+| b. 触发源闭集 | `issue_assignee / mention_agent / mention_squad_leader / thread_parent / conversation_continuation` 五源 | 仅 mention（@agent/@all）一源 | 对齐 a 后引入五源闭集；thread_parent/conversation_continuation 需逐个语义确认 |
+| c. @squad mention | 提及小队 = 触发其队长（mention_squad_leader） | 无 | 随 b 引入 |
+| d. 评论表混合 type | comment.type 含 status_change/progress_update/system（线程内系统条目） | Comment 纯沟通 + 独立 Activity（已被 activity_log 印证） | 维持分离；线程内系统条目展示形态实现轮再议 |
+| e. 重放义务持久化 | multica 自认 best-effort（durable obligation 明确 out of scope，错误日志兜底） | §8.4 要求启动恢复扫描 receipt | 我们标准更严，维持 §8.4 |
 
 ## 13. 实现纪律
 
