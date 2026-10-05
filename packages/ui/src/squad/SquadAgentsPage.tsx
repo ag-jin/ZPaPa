@@ -288,6 +288,8 @@ export function SquadAgentsPage({
       {state.mode === "ready" ? (
         <SquadAgentsList
           agents={state.snapshot.teamAgents}
+          runs={state.snapshot.runs}
+          queuedRuns={state.snapshot.queuedRuns}
           busyAgentId={busyAgentId}
           onEdit={(agent) => setDialog({ kind: "edit", agent })}
           onToggle={(agent) => {

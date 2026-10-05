@@ -1,9 +1,11 @@
+import type { SquadRunRecord } from "@zcode/services";
 import type { TeamAgent } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { rosterRowActions } from "./squadSurfaceViewModel.js";
+import { buildAgentPresence } from "./squadPresenceViewModel.js";
 
 /* 「智能体」页面的**纯呈现**列表（取数与动作都在 SquadAgentsPage）。
 
@@ -35,9 +37,18 @@ function modelBadgeLabel(agent: TeamAgent): string {
   return reasoning ? `${selection.modelId} · ${reasoning}` : selection.modelId;
 }
 
+/** presence 状态点的语义 token（§11.3：状态不靠九色板；working/queued/idle 各一档）。 */
+const PRESENCE_DOT_CLASSNAME: Record<"working" | "queued" | "idle", string> = {
+  working: "bg-success",
+  queued: "bg-warning",
+  idle: "bg-border",
+};
+
 export function SquadAgentsList({
   agents,
   busyAgentId,
+  runs,
+  queuedRuns,
   onEdit,
   onToggle,
   onArchive,
@@ -45,12 +56,17 @@ export function SquadAgentsList({
   agents: TeamAgent[];
   /** 有请求在飞的行 id（照 SquadMinimalView 的 busyRunId 形态）：该行动作按钮全部禁用。 */
   busyAgentId: string | null;
+  /** 活跃 run（snapshot.runs）：presence 的 working 计数源（只认 open）。 */
+  runs: SquadRunRecord[];
+  /** 排队 run（snapshot.queuedRuns）：排队的**唯一合法数据源**（C5 契约）。 */
+  queuedRuns: SquadRunRecord[];
   onEdit: (agent: TeamAgent) => void;
   onToggle: (agent: TeamAgent) => void;
   onArchive: (agent: TeamAgent) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const t = (id: string) => intl.formatMessage({ id });
+  const t = (id: string, values?: Record<string, string | number>) =>
+    intl.formatMessage({ id }, values);
 
   if (agents.length === 0) {
     return (
@@ -67,6 +83,7 @@ export function SquadAgentsList({
         const actions = rosterRowActions(agent);
         const busy = busyAgentId === agent.id;
         const modelBadge = modelBadgeLabel(agent);
+        const presence = buildAgentPresence(agent, runs, queuedRuns);
         return (
           <li
             key={agent.id}
@@ -98,6 +115,46 @@ export function SquadAgentsList({
                 ) : null}
                 {!agent.enabled ? (
                   <span className={BADGE_CLASSNAME}>{t("squad.common.disabled")}</span>
+                ) : null}
+                {/* presence（T5）：working/queued/idle + 计数。点色只作视觉，语义全在文案
+                    （aria-hidden，不裸数字不裸色）；runningCount=0 不渲染「运行中·0」；
+                    working+queued 并存双值（+M 排队）；排队数据只来自 snapshot.queuedRuns。 */}
+                {presence.workload !== null ? (
+                  <span
+                    className={BADGE_CLASSNAME}
+                    data-testid="squad-presence"
+                    aria-label={t(
+                      presence.workload === "working"
+                        ? "squad.sidebar.working"
+                        : presence.workload === "queued"
+                          ? "squad.sidebar.queued"
+                          : "squad.sidebar.idle",
+                      { count: presence.workload === "idle" ? 0 : presence.workload === "queued" ? presence.queuedCount : presence.runningCount },
+                    )}
+                  >
+                    <span
+                      className={cn("inline-block size-1.5 rounded-full align-middle", PRESENCE_DOT_CLASSNAME[presence.workload])}
+                      aria-hidden
+                    />
+                    {presence.workload === "working" ? (
+                      <>
+                        <span data-testid="squad-running-count">
+                          {t("squad.sidebar.working", { count: presence.runningCount })}
+                        </span>
+                        {presence.queuedCount > 0 ? (
+                          <span data-testid="squad-queued-count">
+                            {t("squad.sidebar.queuedShort", { count: presence.queuedCount })}
+                          </span>
+                        ) : null}
+                      </>
+                    ) : presence.workload === "queued" ? (
+                      <span data-testid="squad-queued-count">
+                        {t("squad.sidebar.queued", { count: presence.queuedCount })}
+                      </span>
+                    ) : (
+                      t("squad.sidebar.idle")
+                    )}
+                  </span>
                 ) : null}
               </span>
               {/* 描述一行截断：没有就不渲染（空占位只会让卡片看起来坏了一半）。 */}

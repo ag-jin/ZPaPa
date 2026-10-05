@@ -362,3 +362,27 @@ test("守卫｜智能体列表呈现描述（有则一行截断，无则不渲�
     "描述必须单行截断（长描述撑破卡片 = 布局缺陷，不是信息密度）",
   );
 });
+
+/* ---------- T5：presence 密度的结构守卫（判定矩阵见 squadPresenceViewModel.test.ts） ---------- */
+
+test("守卫｜presence 接线：列表消费 runs/queuedRuns 契约字段，计数 testid 齐全且不裸数字", () => {
+  const page = readSource("squad/SquadAgentsPage.tsx");
+  assert.ok(
+    page.includes("runs={state.snapshot.runs}") && page.includes("queuedRuns={state.snapshot.queuedRuns}"),
+    "页面必须把 snapshot 的 runs/queuedRuns 传进列表（排队的唯一合法数据源 = queuedRuns 契约字段）",
+  );
+  const list = readSource("squad/SquadAgentsList.tsx");
+  assert.ok(list.includes("buildAgentPresence("), "presence 判定必须走唯一实现（view model 纯函数）");
+  assert.ok(list.includes('data-testid="squad-presence"'), "presence 行须有 squad-presence testid");
+  assert.ok(list.includes('data-testid="squad-running-count"'), "运行计数 testid");
+  assert.ok(list.includes('data-testid="squad-queued-count"'), "排队计数 testid");
+  assert.ok(
+    list.includes('t("squad.sidebar.working", { count: presence.runningCount })'),
+    "计数必须走带 {count} 占位符的 i18n 键（不裸数字、不字符串拼接）",
+  );
+  assert.ok(
+    list.includes("presence.queuedCount > 0 ?"),
+    "runningCount=0 不渲染「运行中·0」；queued>0 才追加 +M 排队（双值条件渲染）",
+  );
+  assert.ok(list.includes("aria-hidden"), "状态点 aria-hidden（语义在文案，不裸色）");
+});

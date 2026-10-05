@@ -4155,6 +4155,11 @@ const zhCN: Record<string, string> = {
   "squad.agents.created": "已创建协作智能体",
   "squad.agents.empty": "还没有协作智能体",
   "squad.sidebar.aiTeam": "AI 团队",
+  "squad.sidebar.idle": "空闲",
+  "squad.sidebar.working": "运行中 · {count}",
+  "squad.sidebar.queued": "排队中 · +{count}",
+  "squad.sidebar.queuedShort": "+{count} 排队",
+  "squad.sidebar.statusUnavailable": "状态暂不可用",
 
   "squad.squads.create": "新建小队",
   "squad.squads.created": "已创建小队",
