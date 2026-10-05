@@ -46,7 +46,6 @@ import {
   ICuaPipSessionService,
   IProviderProvisioningTargetService,
   ISquadRuntimeService,
-  type OpenMemberRunResult,
   createUntrustedProviderProvisioningTarget,
   isProviderProvisioningTrustedClientMode,
   createZCodeAgentConnectionScope,
@@ -2972,11 +2971,11 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
          · 队员 ⇒ 开工作树 + 登记台账行（会话落在树里）；
          · 队长 ⇒ **只登记台账行**、**不开树**（§6.1/§6.2，队长在目标工作区执行）；
          · 单独安排 ⇒ **两者都不做**：直接在工作区改（§6.1）——没有工作树、没有分支、也没有台账行。 */
-    let worktree: OpenMemberRunResult | undefined;
+    let worktree: { branch: string; worktreePath: string } | undefined;
     const ledgerAction = ledgerActionForRunClass(kind);
     if (ledgerAction === "open_member_run") {
       try {
-        worktree = await squadRuntime.openMemberRun(target, {
+        const openOutcome = await squadRuntime.openMemberRun(target, {
           runId: eventKey,
           workItemId: workItem.id,
           parentWorkItemId: workItem.parentId ?? workItem.id,
@@ -2986,7 +2985,27 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           dispatchCause,
           ...(causedByRunId !== null ? { causedByRunId } : {}),
         });
-        ledgerRowRegistered = true;
+        /* C3 并发闸的三种「未开跑」结论（回执一律 ok + 可见日志；推进/重放在 C4）：
+           · queued / coalesced：容量满 ⇒ 排队（或并入既存排队行）——**不建会话、不发 prompt**，
+             直接返回，等收尾事件推进。与 leader_run_merged 的 skip 同款形态：静默继续会让
+             上层以为 run 起了（会话却不存在）。
+           · already_registered（R5）：同 eventKey 重投，台账已有此行——不重复建树，
+             继续走下方既有忙探测/绑定会话路径（那正是为重投设计的）。 */
+        if (openOutcome.kind === "queued" || openOutcome.kind === "coalesced") {
+          logger.info(
+            `[squad] dispatch queued ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}` +
+              (openOutcome.kind === "coalesced"
+                ? ` coalescedInto=${openOutcome.targetRunId}`
+                : ""),
+          );
+          return { ok: true };
+        }
+        if (openOutcome.kind === "already_registered") {
+          ledgerRowRegistered = true;
+        } else {
+          worktree = { branch: openOutcome.branch, worktreePath: openOutcome.worktreePath };
+          ledgerRowRegistered = true;
+        }
       } catch (error) {
         // 开树失败是**确定性**失败（分支残枝 / base 不存在 / 目录冲突 ⇒ 重试撞「已存在」），
         // 按 permanent 回执，别让调度器按 transient 一直空转重试。
@@ -3014,6 +3033,14 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
            否则就是「两个会话干同一件事」——即 §5.7(1) 要消灭的形态。
            与上面纯函数那条 skip 用同一个 reason，日志里两处可一起 grep。 */
         if (!ledgerOutcome.recorded) {
+          /* C3/A8：容量满 ⇒ 队长排队行（吸收优先于排队——`in_progress_run_exists` 仍走下方
+             既有合并日志）。与队员排队同款形态：不建会话、不发 prompt，回执 ok + 可见日志。 */
+          if (ledgerOutcome.reason === "capacity_full_queued") {
+            logger.info(
+              `[squad] dispatch queued (leader) ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}`,
+            );
+            return { ok: true };
+          }
           logger.info(
             `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=leader_run_merged`,
           );

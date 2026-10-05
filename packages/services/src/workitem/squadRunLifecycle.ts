@@ -44,7 +44,19 @@ export type MemberRunRequest = {
   causedByRunId?: string;
 };
 
-export type OpenMemberRunResult = { branch: string; worktreePath: string };
+/**
+ * 开跑结论（C3 起为判别联合；闸在**本方法内部、建树之前**——C0 2.2 裁定）：
+ *  - `opened`：照旧派发（台账 open 行 + 工作树）；
+ *  - `queued`：该 agent 容量已满 ⇒ 本 runId 落排队行，**未建树、未建会话**（推进在 C4）；
+ *  - `coalesced`：该 (workItem,agent) 已有排队行 ⇒ 并入（不另起行），留痕见明细表；
+ *  - `already_registered`：同 runId（幂等键 eventKey）重投 ⇒ 台账已有此行，不重复建树/登记，
+ *    调用方继续走既有忙探测/绑定会话路径（R5 收口：此前是无条件 INSERT 撞主键）。
+ */
+export type OpenMemberRunResult =
+  | { kind: "opened"; branch: string; worktreePath: string }
+  | { kind: "queued"; runId: string }
+  | { kind: "coalesced"; targetRunId: string }
+  | { kind: "already_registered" };
 
 /**
  * 队长 run 的**登记**入参（`recordLeaderRun`）。
@@ -81,7 +93,10 @@ export type LeaderRunRequest = {
  */
 export type LeaderRunRecordOutcome =
   | { recorded: true }
-  | { recorded: false; reason: "in_progress_run_exists" };
+  | { recorded: false; reason: "in_progress_run_exists" }
+  /** C3/A8：无活跃队长行但该 agent 容量已满 ⇒ 落队长排队行（吸收优先于排队：已存在活跃队长行
+   *  仍走 `in_progress_run_exists` 吸收，不问容量）。调用方据此**跳过本次派发**（回执 ok + 可见日志）。 */
+  | { recorded: false; reason: "capacity_full_queued" };
 
 export type ReviewOutcome =
   | { ok: true; merged: true }
@@ -245,6 +260,13 @@ export function createRunLifecycle(deps: {
    * 「异己 workspaceKey ⇒ 抛」也需要一个**权威的**绑定值来比对。
    */
   boundWorkspace: { path: string; identity: string };
+  /**
+   * 每 agent 并发上限的**唯一读取点**（C3）：返回 undefined = 名册里**没有**该 agent 定义
+   * （A5：不套缺省、不排队、照旧派发——闸对不存在的个体不设限）或调用方（测试）未注入。
+   * 有定义 ⇒ 返回 `resolveTeamAgentMaxConcurrentRuns(agent)`（显式值或缺省 6）。
+   * 计数与判定在 repo 语句内（单一判定实现；host 不写第二份计数投影）。
+   */
+  resolveAgentMaxConcurrentRuns?: (agentId: string) => number | undefined;
 }): SquadRunLifecycle {
   const {
     squadRunRepo,
@@ -331,13 +353,22 @@ export function createRunLifecycle(deps: {
       });
       const now = Date.now();
 
+      /* R5 收口（C3）：同 runId（幂等键 eventKey）重投 ⇒ 台账已有此行，**不重复建树/登记**，
+         交回 `already_registered` 让调用方走既有忙探测/绑定会话路径。此前是无条件 INSERT，
+         重投会撞主键响亮抛——把「同一事实的重复投递」误当调用方 bug。 */
+      if (squadRunRepo.get(request.runId) !== null) {
+        return { kind: "already_registered" };
+      }
+
       /* **先落台账、后建树**（顺序不可颠倒）。
          反过来（树建好了而台账里没有这一行）时若在两者之间崩溃：下一次启动的回收
          看不见这条 run ⇒ 分不出「活跃」⇒ 队员**未提交**的成果会被当孤儿连树带枝收掉，
          spec §6.2「审查被拒必须存活到合并」当场落空，且回收过程不报错。
          台账先写、树后建，最坏结果是「台账里有一条 open 行而没有树」——那是可被下一次
-         openMemberRun 或人工看到的显式状态，不会静默丢活。 */
-      squadRunRepo.insert({
+         openMemberRun 或人工看到的显式状态，不会静默丢活。
+         C3 起：落台账这一步经**并发闸**（容量满 ⇒ 排队/并入，**建树之前**判定——C0 2.2）。
+         名册缺席（A5）或未注入解析器 ⇒ 不闸、照旧直开（不得凭空套缺省 6）。 */
+      const record: SquadRunRecord = {
         runId: request.runId,
         workspaceKey: boundWorkspaceKey,
         workspacePath: deps.boundWorkspace.path,
@@ -356,12 +387,24 @@ export function createRunLifecycle(deps: {
         causedByRunId: request.causedByRunId ?? null,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      const limit = deps.resolveAgentMaxConcurrentRuns?.(request.agentId);
+      if (limit === undefined) {
+        squadRunRepo.insert(record);
+      } else {
+        const outcome = squadRunRepo.insertMemberRunOrQueue(record, limit);
+        if (outcome.kind === "queued") {
+          return { kind: "queued", runId: outcome.runId };
+        }
+        if (outcome.kind === "coalesced") {
+          return { kind: "coalesced", targetRunId: outcome.targetRunId };
+        }
+      }
 
       // 建树失败（分支残枝 / base 不存在 / 目录冲突）**原样抛出**：上面的台账行保留，
       // 那是「这条 run 已经开过」的事实，不该被下面的失败抹掉（台账没有删除路径，也不该有）。
       const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
-      return { branch: plan.member, worktreePath: memberPath };
+      return { kind: "opened", branch: plan.member, worktreePath: memberPath };
     },
 
     async recordLeaderRun(request) {
@@ -394,8 +437,18 @@ export function createRunLifecycle(deps: {
       /* 原子登记（见 `SquadRunRepo.insertLeaderRunIfNotInProgress` 的注释）：前置写在语句里，
          所以两条**并发**派发也只可能有一条活跃队长行 —— 光靠「读一次再写」挡不住那个窗口
          （两次读都可能早于对方的写入），而那正是「同一个工作项起两条队长 run」的来路。
-         返回 false = 已有进行中的队长 run ⇒ **本次并入**（§5.7(1)/S13），把结论如实交回调用方。 */
-      if (squadRunRepo.insertLeaderRunIfNotInProgress(record)) {
+         返回 false = 已有进行中的队长 run ⇒ **本次并入**（§5.7(1)/S13），把结论如实交回调用方。
+         C3 起（A8「吸收优先于排队」）：有名册上限时改走 `insertLeaderRunOrQueue`——语句同持
+         「无活跃队长行 + 容量未满」两前置；容量满 ⇒ 队长排队行；已有排队行 ⇒ 并入留痕。 */
+      const leaderLimit = deps.resolveAgentMaxConcurrentRuns?.(request.agentId);
+      if (leaderLimit !== undefined) {
+        const gated = squadRunRepo.insertLeaderRunOrQueue(record, leaderLimit);
+        if (gated.kind === "recorded") return { recorded: true };
+        if (gated.kind === "queued" || gated.kind === "coalesced") {
+          return { recorded: false, reason: "capacity_full_queued" };
+        }
+        // absorbed ⇒ 落到下方与「读一次再决定」窗口同一口径的收口（runId 复用检查 + 吸收结论）。
+      } else if (squadRunRepo.insertLeaderRunIfNotInProgress(record)) {
         return { recorded: true };
       }
       /* 走到这里说明**这次没写进去**。先把「runId 复用」这一格翻回**响亮错误**：

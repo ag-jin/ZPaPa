@@ -1,3 +1,4 @@
+import { resolveTeamAgentMaxConcurrentRuns } from "@zcode/shared";
 import { createSquadService } from "../teams/squadService.js";
 import { resolveSquadDefinitionRoot } from "../teams/squadStorage.js";
 import { createTeamAgentService } from "../teams/teamAgentService.js";
@@ -215,6 +216,15 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
           integrationMerger,
           orphanReaper,
           boundWorkspace: { path: workspacePath, identity: workspaceIdentity },
+          /* C3 并发闸的上限读取点（唯一实现）：名册缺席 ⇒ undefined ⇒ 不闸照旧派发（A5，
+             不得凭空套缺省 6）。闭包前向引用下方 `teamAgentService`（:253 处 const）：
+             本函数只在首个 lifecycle 调用时执行，那时构造已完成，无 TDZ 风险。 */
+          resolveAgentMaxConcurrentRuns: (agentId) => {
+            const agent = teamAgentService
+              .list()
+              .find((candidate) => candidate.id === agentId);
+            return agent === undefined ? undefined : resolveTeamAgentMaxConcurrentRuns(agent);
+          },
         });
         return { baseBranch, integrationMerger, lifecycle };
       })();

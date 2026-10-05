@@ -247,9 +247,10 @@ test("openMemberRun 先落台账再建树", async () => {
   assert.ok(out.branch.includes(slugForId("ta-a")));
 });
 
-// 同 runId 重复 ⇒ 台账主键冲突**响亮失败**，且不得在失败前多挂一棵树
-// （静默复用旧行会让两次 run 的成果落进同一个身份里）。
-test("openMemberRun 同 runId 重复 ⇒ 抛，且不重复建树", async () => {
+// 同 runId 重复（= 幂等键 eventKey 重投，R5/C3 收口）⇒ **already_registered**，不抛、不重复建树、
+// 不重复登记——调用方（host）据此走既有忙探测/绑定会话路径。旧契约是主键冲突响亮抛，把
+// 「同一事实的重复投递」误当调用方 bug；重投路径真实存在（wakeTick 同 (ruleId,eventKey) 再投）。
+test("openMemberRun 同 runId 重复 ⇒ already_registered，且不重复建树", async () => {
   const { runtime } = await setup();
   const request = {
     runId: "r-dup",
@@ -260,8 +261,10 @@ test("openMemberRun 同 runId 重复 ⇒ 抛，且不重复建树", async () => 
   };
   await runtime.lifecycle.openMemberRun(request);
   const before = (await runtime.worktreeManager.list()).length;
-  await assert.rejects(() => runtime.lifecycle.openMemberRun(request), /UNIQUE|run_id/);
-  assert.equal((await runtime.worktreeManager.list()).length, before);
+  const again = await runtime.lifecycle.openMemberRun(request);
+  assert.equal(again.kind, "already_registered");
+  assert.equal((await runtime.worktreeManager.list()).length, before, "不重复建树");
+  assert.equal(runtime.squadRunRepo.listByWorkItem("wi-c").length, 1, "台账仍只有一行");
 });
 
 /* `isLeaderTask` 只被**记录**，本层不因它分叉（brief 的机械半明文如此）。

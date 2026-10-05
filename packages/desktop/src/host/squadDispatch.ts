@@ -1,4 +1,4 @@
-import { SQUAD_DISPATCH_DISABLED_CODE, type OpenMemberRunResult } from "@zcode/services";
+import { SQUAD_DISPATCH_DISABLED_CODE } from "@zcode/services";
 import type { RunClass } from "@zcode/services/node";
 
 /* 小队派发的**决策**（spec §5.7.6 门禁 / §6.1 隔离承诺 / 硬约束 1 忙检查）。
@@ -100,7 +100,9 @@ export function decideSquadDispatch(input: {
   /** 单独安排的智能体 run 的 prompt（工作项标题+正文+**直接在工作区改**的要求，§6.1）。 */
   standalonePrompt: string;
   /** 队员 run 先开树的结果；队长与单独安排的智能体恒为 undefined（这两类不建树）。 */
-  worktree: OpenMemberRunResult | undefined;
+  /* 已开树的形态（C3 起 openMemberRun 的返回是判别联合，走到这里的一定是 opened 变体；
+     纯函数只消费「树在哪」，不消费排队/并入结论——那些在 host 派发桥分流）。 */
+  worktree: { branch: string; worktreePath: string } | undefined;
 }): SquadDispatchDecision {
   if (!input.databaseReady) return { action: "skip", reason: "not_ready" };
   if (!input.dispatchEnabled) return { action: "skip", reason: "disabled_by_service" };

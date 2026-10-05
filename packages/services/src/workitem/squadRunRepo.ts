@@ -1,3 +1,6 @@
+/* oxlint-disable eslint(max-lines) -- squad_runs 的唯一写者面：三段原子 INSERT…SELECT（队长合并 /
+   成员并发闸 / 队长闸+吸收）刻意内联——「判定写进语句本身」是防并发竞态的既定裁定
+   （见 insertLeaderRunIfNotInProgress 的注释）；拆文件会把同一张表的全部写入形状拆散。 */
 import type { DatabaseSync } from "node:sqlite";
 import { DISPATCH_CAUSES, type DispatchCause } from "./squadDispatchRequests.js";
 
@@ -35,6 +38,13 @@ export type SquadRunStatus = (typeof SQUAD_RUN_STATUSES)[number];
  *  - `coalesced`：该目标已有排队行 ⇒ 并入（不另起行），`targetRunId` = 既存排队行，留痕见明细表。 */
 export type InsertMemberRunOrQueueResult =
   | { kind: "opened" }
+  | { kind: "queued"; runId: string }
+  | { kind: "coalesced"; targetRunId: string };
+
+/** `insertLeaderRunOrQueue` 的判别结论（C3/A8）：吸收（既有不变式）优先于排队。 */
+export type InsertLeaderRunOrQueueResult =
+  | { kind: "recorded" }
+  | { kind: "absorbed" }
   | { kind: "queued"; runId: string }
   | { kind: "coalesced"; targetRunId: string };
 
@@ -116,6 +126,15 @@ export interface SquadRunRepo {
    * `targetRunId` = 它并入的排队行/义务行。同一请求重投不产生第二行（主键即请求 id）。
    */
   recordCoalescedRequest(requestRunId: string, targetRunId: string): void;
+  /**
+   * 队长行的**带闸原子登记**（C3/A8：「吸收优先于排队」——已存在活跃队长行 ⇒ 照旧吸收，
+   * 不问容量；无活跃队长行且容量满 ⇒ 落队长排队行；已有排队行 ⇒ 并入留痕）。
+   * 单条语句同持两个前置（活跃队长行 NOT EXISTS + 容量 count），并发下不失不变式。
+   */
+  insertLeaderRunOrQueue(
+    record: SquadRunRecord,
+    maxConcurrentRuns: number,
+  ): InsertLeaderRunOrQueueResult;
   get(runId: string): SquadRunRecord | null;
   listByWorkItem(workItemId: string): SquadRunRecord[];
   listByParent(parentWorkItemId: string): SquadRunRecord[];
@@ -474,6 +493,123 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
       db.prepare(
         "INSERT OR IGNORE INTO squad_run_coalesced_details (request_run_id, target_run_id, created_at) VALUES (?, ?, ?)",
       ).run(requestRunId, targetRunId, Date.now());
+    },
+
+    // 见接口注释：语句一同持「无活跃队长行 + 容量未满」两前置；未命中再排队/并入。
+    insertLeaderRunOrQueue(record, maxConcurrentRuns) {
+      assertStatus(record.status);
+      assertDispatchCause(record.dispatchCause);
+      if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1) {
+        throw new Error(
+          `insertLeaderRunOrQueue 的 maxConcurrentRuns 必须是 ≥1 的整数（收到 ${String(maxConcurrentRuns)}）`,
+        );
+      }
+      const recorded = db
+        .prepare(
+          `INSERT INTO squad_runs (
+            run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+            dispatch_cause, caused_by_run_id
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1 FROM squad_runs
+              WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
+                AND status IN (${ACTIVE_STATUS_PLACEHOLDERS})
+           )
+             AND (SELECT COUNT(*) FROM squad_runs
+                   WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?`,
+        )
+        .run(
+          record.runId,
+          record.workspaceKey,
+          record.workspacePath,
+          record.workItemId,
+          record.parentWorkItemId,
+          record.agentId,
+          record.isLeaderTask ? 1 : 0,
+          record.branch,
+          record.dirName,
+          record.status,
+          record.sessionId,
+          record.createdAt,
+          record.updatedAt,
+          record.dispatchCause,
+          record.causedByRunId,
+          record.workspaceKey,
+          record.workItemId,
+          ...SQUAD_RUN_ACTIVE_STATUSES,
+          record.workspaceKey,
+          record.agentId,
+          maxConcurrentRuns,
+        ).changes;
+      if (recorded === 1) return { kind: "recorded" };
+
+      // 吸收**优先于排队**（A8）：同工作项已有活跃队长行 ⇒ 吸收结论，**不得**排队
+      //（把重复指派变成排队正是 S13 明令禁止的「排在 busy 之后的第二次 run」形态）。
+      // 必须在排队语句之前判：排队语句的 NOT EXISTS 只看排队行，看不见活跃队长行。
+      const activeLeader = db
+        .prepare(
+          `SELECT 1 FROM squad_runs
+            WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
+              AND status IN (${ACTIVE_STATUS_PLACEHOLDERS}) LIMIT 1`,
+        )
+        .get(record.workspaceKey, record.workItemId, ...SQUAD_RUN_ACTIVE_STATUSES);
+      if (activeLeader !== undefined) return { kind: "absorbed" };
+
+      // 容量满且无活跃队长行 ⇒ 尝试排队行（branch/dir_name 一律 NULL）。
+      const queued = db
+        .prepare(
+          `INSERT INTO squad_runs (
+            run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+            dispatch_cause, caused_by_run_id
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1 FROM squad_runs
+              WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
+           )`,
+        )
+        .run(
+          record.runId,
+          record.workspaceKey,
+          record.workspacePath,
+          record.workItemId,
+          record.parentWorkItemId,
+          record.agentId,
+          record.isLeaderTask ? 1 : 0,
+          record.sessionId,
+          record.createdAt,
+          record.updatedAt,
+          record.dispatchCause,
+          record.causedByRunId,
+          record.workspaceKey,
+          record.workItemId,
+          record.agentId,
+        ).changes;
+      if (queued === 1) return { kind: "queued", runId: record.runId };
+
+      // 排队语句也未命中 ⇒ 并入既存排队行（唯一索引保证存在）：留痕幂等，返回目标。
+      const existingQueued = db
+        .prepare(
+          `SELECT run_id FROM squad_runs
+            WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
+            ${ORDER_BY_CREATED} LIMIT 1`,
+        )
+        .get(record.workspaceKey, record.workItemId, record.agentId) as
+        | { run_id: string }
+        | undefined;
+      if (!existingQueued) {
+        throw new Error(
+          `insertLeaderRunOrQueue 未命中任何分支（workspace=${record.workspaceKey}, workItem=${record.workItemId}, ` +
+            `agent=${record.agentId}）：既非可登记、非吸收、也无可并入的排队行，属不可达态，须人工查库。`,
+        );
+      }
+      db.prepare(
+        "INSERT OR IGNORE INTO squad_run_coalesced_details (request_run_id, target_run_id, created_at) VALUES (?, ?, ?)",
+      ).run(record.runId, existingQueued.run_id, Date.now());
+      return { kind: "coalesced", targetRunId: existingQueued.run_id };
     },
 
     listByWorkItem(workItemId) {
