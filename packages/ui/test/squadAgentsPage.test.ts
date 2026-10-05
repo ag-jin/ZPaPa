@@ -386,3 +386,30 @@ test("守卫｜presence 接线：列表消费 runs/queuedRuns 契约字段，计
   );
   assert.ok(list.includes("aria-hidden"), "状态点 aria-hidden（语义在文案，不裸色）");
 });
+
+/* ---------- T7 收口：presence 计数键的占位符两语成对（沿归档确认标题先例） ---------- */
+
+test("i18n：presence 计数键占位符两语一致", () => {
+  const placeholdersOf = (value: string) =>
+    [...value.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
+  for (const key of [
+    "squad.sidebar.working",
+    "squad.sidebar.queued",
+    "squad.sidebar.queuedShort",
+    "squad.sidebar.agentCount",
+    "squad.sidebar.moreMembers",
+  ]) {
+    assert.ok(zhCN[key] && enUS[key], `两语缺 ${key}`);
+    assert.equal(
+      placeholdersOf(zhCN[key] ?? ""),
+      placeholdersOf(enUS[key] ?? ""),
+      `${key} 占位符不成对（{count} 只译一侧会显示原始花括号）`,
+    );
+    assert.equal(placeholdersOf(zhCN[key] ?? ""), "count", `${key} 只允许 {count} 一个占位符`);
+  }
+  // 非计数键不得带占位符（带了的渲染调用没传值会露原始花括号）。
+  for (const key of ["squad.sidebar.idle", "squad.sidebar.aiTeam", "squad.sidebar.statusUnavailable"]) {
+    assert.equal(placeholdersOf(zhCN[key] ?? ""), "", `${key} 不应带占位符`);
+    assert.equal(placeholdersOf(enUS[key] ?? ""), "", `${key} 不应带占位符`);
+  }
+});
