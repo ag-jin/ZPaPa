@@ -93,3 +93,79 @@ test("口径：只数本 agent 的行（跨 agent 不串）；queuedRuns 同口�
   assert.equal(presence.runningCount, 1);
   assert.equal(presence.queuedCount, 1);
 });
+
+/* ---------- T6：小队聚合 presence + 头像堆叠投影 ---------- */
+import { buildSquadPresence } from "../src/squad/squadPresenceViewModel.js";
+import type { Squad } from "@zcode/shared";
+
+const squadOf = (over: Partial<Squad> & { members: Squad["members"] }): Squad => ({
+  id: "sq-1",
+  name: "s",
+  leaderAgentId: "ta-1",
+  instructions: { stopCondition: "x", maxRounds: "3" },
+  enabled: true,
+  ...over,
+});
+const member = (agentId: string) => ({ agentId });
+
+test("聚合：runningCount = Σ 成员 count(open)（队长计入）；queued 同口径；跨队重复计数显式成立", () => {
+  const roster = [
+    agent({ id: "ta-1" }),
+    agent({ id: "ta-2" }),
+    agent({ id: "ta-3" }),
+  ];
+  const presence = buildSquadPresence(
+    squadOf({ members: [member("ta-1"), member("ta-2")] }),
+    roster,
+    [
+      run({ status: "open", agentId: "ta-1" }),  // 队长在跑 ⇒ 计入（口径注意③）
+      run({ status: "open", agentId: "ta-2" }),
+      run({ status: "open", agentId: "ta-9" }),  // 名册外/别队 agent ⇒ 不计（按成员过滤）
+      run({ status: "produced", agentId: "ta-2" }),
+    ],
+    [run({ status: "queued", agentId: "ta-2" })],
+  );
+  assert.equal(presence.workload, "working");
+  assert.equal(presence.runningCount, 2, "Σ 成员 count(open)（队长计入，produced 不计）");
+  assert.equal(presence.queuedCount, 1);
+  // 口径注意①（写死断言）：同一 agent 属两个队 ⇒ 两张卡各自全数——聚合是**按卡**口径，
+  // 全局求和会重复；这是既定口径不是缺陷（S4 §2.6），UI 不得悄悄去重。
+  const other = buildSquadPresence(
+    squadOf({ id: "sq-2", members: [member("ta-2")] }),
+    roster,
+    [run({ status: "open", agentId: "ta-2" })],
+    [],
+  );
+  assert.equal(other.runningCount, 1, "跨队成员在每张卡上都计（口径①：按卡不去重）");
+});
+
+test("头像堆叠：可见 3 + '+N'；成员数排除归档与名册外；归档小队不给 workload", () => {
+  const roster = [
+    agent({ id: "ta-1" }),
+    agent({ id: "ta-2" }),
+    agent({ id: "ta-3", archivedAt: 1 }),   // 归档成员：不入头像与成员数
+    agent({ id: "ta-4" }),
+    agent({ id: "ta-5" }),
+    agent({ id: "ta-6", name: "ghost" }),   // 名册在但…
+  ];
+  const five = buildSquadPresence(
+    squadOf({ members: [member("ta-1"), member("ta-2"), member("ta-3"), member("ta-4"), member("ta-5")] }),
+    roster, [], [],
+  );
+  assert.equal(five.activeMemberCount, 4, "归档成员不计（名册可变的口径注意②同源）");
+  assert.equal(five.avatarStack.length, 3, "可见头像至多 3");
+  assert.equal(five.avatarOverflow, 1, "溢出 +N");
+  // 名册外成员（查不到定义）：不计入头像/成员数（不猜颜色不猜身份）。
+  const ghost = buildSquadPresence(
+    squadOf({ members: [member("ta-1"), member("ta-x")] }),
+    roster, [], [],
+  );
+  assert.equal(ghost.activeMemberCount, 1, "名册外成员不计（口径注意②）");
+  // 归档小队：availability=archived、无 workload（不显示可运行状态）。
+  const archived = buildSquadPresence(
+    squadOf({ archivedAt: 1, members: [member("ta-1")] }),
+    roster, [run({ status: "open", agentId: "ta-1" })], [],
+  );
+  assert.equal(archived.availability, "archived");
+  assert.equal(archived.workload, null);
+});

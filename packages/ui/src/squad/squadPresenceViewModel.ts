@@ -1,5 +1,9 @@
 import type { SquadRunRecord, SquadRunStatus } from "@zcode/services";
-import type { TeamAgent } from "@zcode/shared";
+import type { Squad, TeamAgent } from "@zcode/shared";
+import {
+  SUBAGENT_COLOR_CLASS,
+  resolveSubagentColorFromName,
+} from "@/lib/subagentColors.js";
 
 /* T5：presence 的**唯一判定实现**（纯函数，UI 归属——T4 裁定③「U」：判据不出 UI 层，
    零 services 导出面改动；先例 runReviewable）。
@@ -59,4 +63,68 @@ export function buildAgentPresence(
           ? "queued"
           : "idle";
   return { availability, workload, runningCount, queuedCount };
+}
+
+/** 头像堆叠投影：可见至多 3 个色点（成员身份色，九色板；归档/名册外成员不入堆叠）。 */
+export type SquadAvatarStackEntry = { agentId: string; colorClass: string };
+
+export type SquadAggregatePresence = {
+  availability: SquadPresenceAvailability;
+  workload: SquadPresenceWorkload | null;
+  runningCount: number;
+  queuedCount: number;
+  /** 未归档且在名册内的成员数（归档成员是历史条目，不计入「现有成员」摘要）。 */
+  activeMemberCount: number;
+  avatarStack: SquadAvatarStackEntry[];
+  /** 超出可见 3 个的成员数（0 = 无溢出，UI 不渲染 +N）。 */
+  avatarOverflow: number;
+};
+
+const AVATAR_STACK_LIMIT = 3;
+
+export function buildSquadPresence(
+  squad: Squad,
+  teamAgents: readonly TeamAgent[],
+  runs: readonly SquadRunRecord[],
+  queuedRuns: readonly SquadRunRecord[],
+): SquadAggregatePresence {
+  const availability: SquadPresenceAvailability =
+    squad.archivedAt !== undefined ? "archived" : squad.enabled ? "enabled" : "disabled";
+  // 口径注意②：名册可变 ⇒ 成员 agentId 查不到定义（或已归档）时不计入头像与成员数（不猜）。
+  const activeMembers = squad.members.flatMap((member) => {
+    const agent = teamAgents.find(
+      (candidate) => candidate.id === member.agentId && candidate.archivedAt === undefined,
+    );
+    return agent ? [agent] : [];
+  });
+  // 口径注意③：队长 ∈ members ⇒ 队长 run 计入本队聚合（不加特判）。
+  // 口径注意①：聚合是**按卡**口径——同一 agent 跨队时两张卡各自全数（不去重，写死于测试）。
+  let runningCount = 0;
+  let queuedCount = 0;
+  for (const member of activeMembers) {
+    const presence = buildAgentPresence(member, runs, queuedRuns);
+    runningCount += presence.runningCount;
+    queuedCount += presence.queuedCount;
+  }
+  const workload: SquadPresenceWorkload | null =
+    availability !== "enabled"
+      ? null
+      : runningCount > 0
+        ? "working"
+        : queuedCount > 0
+          ? "queued"
+          : "idle";
+  return {
+    availability,
+    workload,
+    runningCount,
+    queuedCount,
+    activeMemberCount: activeMembers.length,
+    avatarStack: activeMembers.slice(0, AVATAR_STACK_LIMIT).map((agent) => ({
+      agentId: agent.id,
+      colorClass:
+        SUBAGENT_COLOR_CLASS[agent.color ?? resolveSubagentColorFromName(agent.name)],
+    })),
+    avatarOverflow: Math.max(0, activeMembers.length - AVATAR_STACK_LIMIT),
+  };
 }

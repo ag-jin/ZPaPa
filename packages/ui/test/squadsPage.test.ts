@@ -463,3 +463,35 @@ test("守卫｜状态机与行动作只有 squadSurfaceViewModel 一份实现（
     assert.ok(readSource(list).includes("rosterRowActions("), `${list} 必须走共享的行动作判据`);
   }
 });
+
+/* ---------- T6：小队卡片密度（头像堆叠 + 聚合 presence）的结构守卫 ---------- */
+
+test("守卫｜小队卡片：头像堆叠可见3+溢出、成员计数、聚合 presence、归档不显示可运行状态", () => {
+  const list = readSource("squad/SquadsList.tsx");
+  assert.ok(list.includes("buildSquadPresence("), "聚合判定必须走唯一实现（view model）");
+  assert.ok(
+    list.includes("data-testid={`squad-profile-card-${squad.id}`}"),
+    "卡片 testid 模板 squad-profile-card-{id}",
+  );
+  assert.ok(list.includes('data-testid="squad-avatar-stack"'), "头像堆叠 testid");
+  assert.ok(
+    list.includes("-ml-1.5") && list.includes("ring-1 ring-background"),
+    "重叠（负边距≈8px）与 surface 描边走类名",
+  );
+  assert.ok(
+    list.includes("presence.avatarOverflow > 0"),
+    "溢出条件渲染 +N（0 不渲染，文案走 moreMembers 占位符）",
+  );
+  assert.ok(
+    list.includes('t("squad.sidebar.agentCount", { count: presence.activeMemberCount })'),
+    "成员计数走占位符（排除归档的口径在 view model）",
+  );
+  assert.ok(
+    list.includes("presence.workload !== null"),
+    "归档/停用小队不显示聚合可运行状态（workload=null 省略）",
+  );
+  assert.ok(
+    list.includes("snapshot.queuedRuns"),
+    "聚合排队数据只来自 queuedRuns 契约字段（C5）",
+  );
+});

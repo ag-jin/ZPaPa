@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveTeamAgentName } from "./squadEntryViewModel.js";
+import { buildSquadPresence } from "./squadPresenceViewModel.js";
 import { rosterRowActions } from "./squadSurfaceViewModel.js";
 import { canCreateSquad } from "./squadsViewModel.js";
 
@@ -39,7 +40,8 @@ export function SquadsList({
   onArchive: (squad: Squad) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const t = (id: string) => intl.formatMessage({ id });
+  const t = (id: string, values?: Record<string, string | number>) =>
+    intl.formatMessage({ id }, values);
 
   if (squads.length === 0) {
     return (
@@ -67,10 +69,17 @@ export function SquadsList({
         const memberNames = squad.members
           .filter((member) => member.agentId !== squad.leaderAgentId)
           .map((member) => resolveTeamAgentName(snapshot, member.agentId));
+        const presence = buildSquadPresence(
+          squad,
+          snapshot.teamAgents,
+          snapshot.runs,
+          snapshot.queuedRuns,
+        );
         return (
           <li
             key={squad.id}
             data-squad-id={squad.id}
+            data-testid={`squad-profile-card-${squad.id}`}
             className={cn(ROW_CLASSNAME, "flex items-center justify-between gap-3")}
           >
             <span className="flex min-w-0 flex-wrap items-center gap-2">
@@ -87,6 +96,52 @@ export function SquadsList({
                   </>
                 ) : null}
               </span>
+              {/* T6 头像堆叠：可见 3 + "+N"（可读文案）；重叠 -ml-1.5（≈8px）+ surface 描边。 */}
+              <span className="flex items-center" data-testid="squad-avatar-stack" aria-hidden>
+                {presence.avatarStack.map((entry) => (
+                  <span
+                    key={entry.agentId}
+                    className={cn(
+                      "size-2.5 rounded-full ring-1 ring-background first:ml-0 -ml-1.5",
+                      entry.colorClass,
+                    )}
+                  />
+                ))}
+                {presence.avatarOverflow > 0
+                  ? t("squad.sidebar.moreMembers", { count: presence.avatarOverflow })
+                  : null}
+              </span>
+              <span className="text-ui-xs text-foreground-subtlest">
+                {t("squad.sidebar.agentCount", { count: presence.activeMemberCount })}
+              </span>
+              {/* T6 聚合 presence：与智能体行同一套呈现（Σ 成员 count(open) / Σ queued）；
+                  归档小队 workload=null ⇒ 不显示可运行状态（只留「已归档」）。 */}
+              {presence.workload !== null ? (
+                <span
+                  className="text-ui-xs text-foreground-subtlest"
+                  data-testid="squad-presence"
+                >
+                  <span
+                    className={cn(
+                      "mr-1 inline-block size-1.5 rounded-full align-middle",
+                      presence.workload === "working"
+                        ? "bg-success"
+                        : presence.workload === "queued"
+                          ? "bg-warning"
+                          : "bg-border",
+                    )}
+                    aria-hidden
+                  />
+                  {presence.workload === "working"
+                    ? t("squad.sidebar.working", { count: presence.runningCount })
+                    : presence.workload === "queued"
+                      ? t("squad.sidebar.queued", { count: presence.queuedCount })
+                      : t("squad.sidebar.idle")}
+                  {presence.workload === "working" && presence.queuedCount > 0
+                    ? t("squad.sidebar.queuedShort", { count: presence.queuedCount })
+                    : null}
+                </span>
+              ) : null}
               {/* 状态徽标复用既有键（不新造一份文案）。 */}
               {squad.archivedAt !== undefined ? (
                 <span className="text-ui-xs text-foreground-subtlest">

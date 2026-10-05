@@ -4440,6 +4440,8 @@ const enUS: Record<string, string> = {
   "squad.agents.empty": "No collaborative agents yet",
   "squad.sidebar.aiTeam": "AI Team",
   "squad.sidebar.idle": "Idle",
+  "squad.sidebar.agentCount": "{count} agents",
+  "squad.sidebar.moreMembers": "+{count} more",
   "squad.sidebar.working": "Working · {count}",
   "squad.sidebar.queued": "Queued · +{count}",
   "squad.sidebar.queuedShort": "+{count} queued",

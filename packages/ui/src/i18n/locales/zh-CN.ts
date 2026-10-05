@@ -4156,6 +4156,8 @@ const zhCN: Record<string, string> = {
   "squad.agents.empty": "还没有协作智能体",
   "squad.sidebar.aiTeam": "AI 团队",
   "squad.sidebar.idle": "空闲",
+  "squad.sidebar.agentCount": "{count} 个智能体",
+  "squad.sidebar.moreMembers": "还有 {count} 个",
   "squad.sidebar.working": "运行中 · {count}",
   "squad.sidebar.queued": "排队中 · +{count}",
   "squad.sidebar.queuedShort": "+{count} 排队",
