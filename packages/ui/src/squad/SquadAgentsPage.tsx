@@ -192,6 +192,8 @@ export function SquadAgentsPage({
       description?: string;
       color?: TeamAgent["color"];
       modelSelection?: TeamAgent["modelSelection"];
+      skills?: string[];
+      permissionMode?: TeamAgent["permissionMode"];
     }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
@@ -340,6 +342,12 @@ export function SquadAgentsPage({
             ...(dialog.agent.color !== undefined ? { color: dialog.agent.color } : {}),
             ...(dialog.agent.modelSelection !== undefined
               ? { modelSelection: dialog.agent.modelSelection }
+              : {}),
+            ...(dialog.agent.skills !== undefined && dialog.agent.skills.length > 0
+              ? { skills: dialog.agent.skills }
+              : {}),
+            ...(dialog.agent.permissionMode !== undefined
+              ? { permissionMode: dialog.agent.permissionMode }
               : {}),
           }}
         />

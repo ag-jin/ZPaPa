@@ -54,6 +54,28 @@ test("create 省略 maxConcurrentRuns ⇒ 盘上无该键（存量零改写）�
 });
 
 // ②刀（2026-10-06）：编辑白名单再扩 description/color/modelSelection（第②刀裁定）。
+// ③刀（2026-10-06）：编辑白名单再扩 skills/tools/disallowedTools/permissionMode。
+test("update 白名单含 skills/tools/disallowedTools/permissionMode（③刀）；数组与枚举逐字生效", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  const updated = svc.update(a.id, {
+    skills: ["code-review", "wiki"],
+    tools: ["Bash", "Edit"],
+    disallowedTools: ["WebSearch"],
+    permissionMode: "plan",
+  });
+  assert.deepEqual(updated.skills, ["code-review", "wiki"]);
+  assert.deepEqual(updated.tools, ["Bash", "Edit"]);
+  assert.deepEqual(updated.disallowedTools, ["WebSearch"]);
+  assert.equal(updated.permissionMode, "plan");
+  // 清空语义逐字：skills=[] 是合法值（不带技能）；undefined = 保持原值（不碰）。
+  assert.deepEqual(svc.update(a.id, { skills: [] }).skills, []);
+  assert.deepEqual(svc.update(a.id, {}).skills, []);
+  // permissionMode 切换往返；undefined 保持。
+  assert.equal(svc.update(a.id, { permissionMode: "auto" }).permissionMode, "auto");
+  assert.equal(svc.update(a.id, {}).permissionMode, "auto");
+});
+
 test("update 白名单含 description/color/modelSelection（②刀）；越界键原样保留", () => {
   const svc = setup();
   const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });

@@ -61,6 +61,10 @@ export function TeamAgentDialog({
     color?: TeamAgent["color"];
     /** ②b：模型选择（含推理档位；未选定不落盘）。 */
     modelSelection?: ModelSelection;
+    /** ③a：技能清单（空串输入 ⇒ 不提交 = 保持原值；显式清空用 []——见提交语义）。 */
+    skills?: string[];
+    /** ③a：权限模式（undefined = 未设置，落 optional 语义）。 */
+    permissionMode?: TeamAgent["permissionMode"];
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
   initial?: {
@@ -70,6 +74,8 @@ export function TeamAgentDialog({
     description?: string;
     color?: TeamAgent["color"];
     modelSelection?: ModelSelection;
+    skills?: string[];
+    permissionMode?: TeamAgent["permissionMode"];
   };
   /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
       模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
@@ -93,6 +99,19 @@ export function TeamAgentDialog({
   const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(
     initial?.modelSelection?.options?.reasoningLevel,
   );
+  const [skillsText, setSkillsText] = useState(initial?.skills?.join(", ") ?? "");
+  const [permissionMode, setPermissionMode] = useState<"unset" | TeamAgent["permissionMode"]>(
+    initial?.permissionMode ?? "unset",
+  );
+  /** 令牌化：逗号/空白分隔、去空、去重保序。空结果 = 不提交（保持原值）。 */
+  const parsedSkills = (): string[] | null => {
+    const tokens = skillsText
+      .split(/[,，\s]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+    const unique = [...new Set(tokens)];
+    return unique.length > 0 ? unique : null;
+  };
 
   return (
     <CreateDialogShell
@@ -100,7 +119,8 @@ export function TeamAgentDialog({
       submitLabelId={submitLabelId}
       onClose={onClose}
       canSubmit={name.trim().length > 0 && systemPrompt.trim().length > 0}
-      onSubmit={() =>
+      onSubmit={() => {
+        const skillsTokens = parsedSkills();
         onSubmit({
           name: name.trim(),
           systemPrompt,
@@ -119,8 +139,12 @@ export function TeamAgentDialog({
                 },
               }
             : {}),
-        })
-      }
+          /* skills 令牌输入：逗号/空白分隔去空；「有输入才提交」（空串 = 不碰原值——
+             与显式清空（提交 []）区分：清空走输入框留分隔符的场景由服务面 [] 语义承载）。 */
+          ...(skillsTokens !== null ? { skills: skillsTokens } : {}),
+          ...(permissionMode !== "unset" ? { permissionMode } : {}),
+        });
+      }}
     >
       <Field labelId="squad.common.name">
         {(controlId) => (
@@ -213,6 +237,45 @@ export function TeamAgentDialog({
               onReasoningLevelChange={setReasoningLevel}
             />
           </div>
+        )}
+      </Field>
+      <Field labelId="squad.common.skills">
+        {(controlId) => (
+          /* ③a：技能令牌输入（逗号/空白分隔；schema skills[] 的轻量编辑面——
+             multica 是从 workspace 技能库多选，我们暂无技能枚举服务，先用令牌输入登记差异）。 */
+          <Input
+            id={controlId}
+            value={skillsText}
+            placeholder={intl.formatMessage({ id: "squad.common.skillsPlaceholder" })}
+            onChange={(event) => setSkillsText(event.target.value)}
+            data-testid="squad-agent-skills-input"
+          />
+        )}
+      </Field>
+      <Field labelId="squad.common.permissionMode">
+        {(controlId) => (
+          /* ③a：权限模式三态——「跟随默认（未设置）」是合法值（schema optional），不是缺省猜测。 */
+          <Select
+            value={permissionMode}
+            onValueChange={(value) =>
+              setPermissionMode(value as "unset" | TeamAgent["permissionMode"])
+            }
+          >
+            <SelectTrigger id={controlId} data-testid="squad-agent-permission-mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unset">
+                {intl.formatMessage({ id: "squad.common.permissionMode.unset" })}
+              </SelectItem>
+              <SelectItem value="auto">
+                {intl.formatMessage({ id: "squad.common.permissionMode.auto" })}
+              </SelectItem>
+              <SelectItem value="plan">
+                {intl.formatMessage({ id: "squad.common.permissionMode.plan" })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         )}
       </Field>
     </CreateDialogShell>

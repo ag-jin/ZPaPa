@@ -470,3 +470,28 @@ test("守卫｜模型选择走 ModelPickerRow 复用：受控值含推理档位�
   );
   assert.ok(page.includes("dialog.agent.modelSelection"), "编辑初值回填 modelSelection");
 });
+
+/* ---------- ③a：skills 令牌输入 + permissionMode 三态下拉 ---------- */
+
+test("守卫｜③a 表单：skills 令牌化（去空去重、空=不提交）、permissionMode 三态含「未设置」", () => {
+  const dialog = readSource("squad/SquadCreateDialogs.tsx");
+  assert.ok(dialog.includes('data-testid="squad-agent-skills-input"'), "skills 输入 testid");
+  assert.ok(
+    dialog.includes(".split(/[,，\\s]+/)") && dialog.includes("[...new Set("),
+    "令牌化：逗号/空白分隔 + 去重保序",
+  );
+  assert.ok(
+    dialog.includes("skillsTokens !== null ? { skills: skillsTokens }"),
+    "空输入不提交（保持原值），显式 [] 才是清空（服务面语义）",
+  );
+  assert.ok(dialog.includes('data-testid="squad-agent-permission-mode"'), "权限模式下拉 testid");
+  assert.ok(
+    dialog.includes('"unset"') && dialog.includes('value="plan"'),
+    "三态：未设置（schema optional 合法值）/auto/plan",
+  );
+  const page = readSource("squad/SquadAgentsPage.tsx");
+  assert.ok(
+    page.includes("dialog.agent.skills") && page.includes("dialog.agent.permissionMode"),
+    "编辑初值回填 skills/permissionMode",
+  );
+});

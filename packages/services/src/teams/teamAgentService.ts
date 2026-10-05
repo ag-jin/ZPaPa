@@ -41,7 +41,17 @@ export interface CreateTeamAgentInput {
 export type TeamAgentEditablePatch = Partial<
   Pick<
     TeamAgent,
-    "name" | "systemPrompt" | "memoryScope" | "maxConcurrentRuns" | "description" | "color" | "modelSelection"
+    | "name"
+      | "systemPrompt"
+      | "memoryScope"
+      | "maxConcurrentRuns"
+      | "description"
+      | "color"
+      | "modelSelection"
+      | "skills"
+      | "tools"
+      | "disallowedTools"
+      | "permissionMode"
   >
 >;
 
@@ -187,6 +197,34 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         ) {
           // 拷贝而非赋值：不让调用方的可变对象与台账定义共享引用（prefillFrom 同款纪律）。
           next.modelSelection = { ...patch.modelSelection };
+          changed = true;
+        }
+        // ③刀（2026-10-06）：skills/tools/disallowedTools/permissionMode 进编辑白名单。
+        // 数组判等用 JSON（浅字面量数组）；「空数组」是合法值（skills=[] 不带技能 /
+        // tools=[] 按既有口径=允许全部），与 undefined（保持原值）严格区分。
+        if (
+          patch.skills !== undefined &&
+          JSON.stringify(patch.skills) !== JSON.stringify(agent.skills)
+        ) {
+          next.skills = [...patch.skills];
+          changed = true;
+        }
+        if (
+          patch.tools !== undefined &&
+          JSON.stringify(patch.tools) !== JSON.stringify(agent.tools)
+        ) {
+          next.tools = [...patch.tools];
+          changed = true;
+        }
+        if (
+          patch.disallowedTools !== undefined &&
+          JSON.stringify(patch.disallowedTools) !== JSON.stringify(agent.disallowedTools)
+        ) {
+          next.disallowedTools = [...patch.disallowedTools];
+          changed = true;
+        }
+        if (patch.permissionMode !== undefined && patch.permissionMode !== agent.permissionMode) {
+          next.permissionMode = patch.permissionMode;
           changed = true;
         }
         // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。
