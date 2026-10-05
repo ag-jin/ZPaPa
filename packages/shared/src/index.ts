@@ -1,3 +1,4 @@
+export { TEAM_AGENT_COLORS } from "./team-agent.js";
 export type {
   FileBinaryPreview,
   FileEntry,

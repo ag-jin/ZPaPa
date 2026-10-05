@@ -39,7 +39,10 @@ export interface CreateTeamAgentInput {
  * 白名单把「编辑定义」与「状态迁移」在类型层就分开：越界的字段**传不进来**。
  */
 export type TeamAgentEditablePatch = Partial<
-  Pick<TeamAgent, "name" | "systemPrompt" | "memoryScope" | "maxConcurrentRuns">
+  Pick<
+    TeamAgent,
+    "name" | "systemPrompt" | "memoryScope" | "maxConcurrentRuns" | "description" | "color" | "modelSelection"
+  >
 >;
 
 export interface TeamAgentService {
@@ -166,6 +169,24 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
           patch.maxConcurrentRuns !== agent.maxConcurrentRuns
         ) {
           next.maxConcurrentRuns = patch.maxConcurrentRuns;
+          changed = true;
+        }
+        // ②刀（2026-10-06）：描述/身份色/模型选择进编辑白名单（update 逐字段，越界键仍被忽略）。
+        if (patch.description !== undefined && patch.description !== agent.description) {
+          next.description = patch.description;
+          changed = true;
+        }
+        if (patch.color !== undefined && patch.color !== agent.color) {
+          next.color = patch.color;
+          changed = true;
+        }
+
+        if (
+          patch.modelSelection !== undefined &&
+          JSON.stringify(patch.modelSelection) !== JSON.stringify(agent.modelSelection)
+        ) {
+          // 拷贝而非赋值：不让调用方的可变对象与台账定义共享引用（prefillFrom 同款纪律）。
+          next.modelSelection = { ...patch.modelSelection };
           changed = true;
         }
         // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。

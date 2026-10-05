@@ -53,6 +53,24 @@ test("create 省略 maxConcurrentRuns ⇒ 盘上无该键（存量零改写）�
   assert.equal(svc.get(explicit.id)?.maxConcurrentRuns, 10);
 });
 
+// ②刀（2026-10-06）：编辑白名单再扩 description/color/modelSelection（第②刀裁定）。
+test("update 白名单含 description/color/modelSelection（②刀）；越界键原样保留", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  const updated = svc.update(a.id, {
+    description: "第二描述",
+    color: "purple",
+    modelSelection: { providerId: "p", modelId: "m", options: { reasoningLevel: "high" } },
+  });
+  assert.equal(updated.description, "第二描述");
+  assert.equal(updated.color, "purple");
+  assert.equal(updated.modelSelection?.modelId, "m");
+  assert.equal(updated.modelSelection?.options?.reasoningLevel, "high");
+  // 改色往返：换色生效、清空（undefined）保持原值（不是清空——清空色需显式语义，白名单不做）。
+  assert.equal(svc.update(a.id, { color: "cyan" }).color, "cyan");
+  assert.equal(svc.update(a.id, {}).color, "cyan");
+});
+
 test("update 白名单含 maxConcurrentRuns；白名单外字段（enabled/archivedAt）原样保留", () => {
   const svc = setup();
   const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 2 });

@@ -413,3 +413,34 @@ test("i18n：presence 计数键占位符两语一致", () => {
     assert.equal(placeholdersOf(enUS[key] ?? ""), "", `${key} 不应带占位符`);
   }
 });
+
+/* ---------- ②刀：表单扩 description/选色器（modelSelection 控件归②b） ---------- */
+
+test("守卫｜表单含描述与身份色选色器：色板=TEAM_AGENT_COLORS 九色、radio 语义、提交带可选字段", () => {
+  const dialog = readSource("squad/SquadCreateDialogs.tsx");
+  assert.ok(dialog.includes("TEAM_AGENT_COLORS.map"), "选色器必须走 shared 单源色板常量");
+  assert.ok(dialog.includes('data-testid="squad-agent-color-picker"'), "选色器 testid");
+  assert.ok(dialog.includes('role="radiogroup"'), "radio 组语义（可访问）");
+  assert.ok(
+    dialog.includes("aria-checked={color === candidate}"),
+    "单选语义（aria-checked）",
+  );
+  assert.ok(
+    dialog.includes("setColor(color === candidate ? undefined : candidate)"),
+    "再点同色可撤销回未选（undefined=不落盘）",
+  );
+  assert.ok(
+    dialog.includes("description.trim().length > 0 ? { description: description.trim() }"),
+    "描述空串不落盘（schema optional 语义）",
+  );
+  assert.ok(
+    dialog.includes("SUBAGENT_COLOR_CLASS") && !dialog.includes("bg-success"),
+    "色板只表达身份（spec §11.3），表单不得出现状态色",
+  );
+  // 页面编辑初值带新字段（编辑可回填描述与既有色）。
+  const page = readSource("squad/SquadAgentsPage.tsx");
+  assert.ok(
+    page.includes("dialog.agent.description") && page.includes("dialog.agent.color"),
+    "编辑初值回填 description/color",
+  );
+});

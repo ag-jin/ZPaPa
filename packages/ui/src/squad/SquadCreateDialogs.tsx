@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
-import type { TeamAgent, WorkItem } from "@zcode/shared";
+import { TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import {
@@ -11,6 +11,8 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
+import { cn } from "@/components/lib/utils.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
@@ -49,9 +51,18 @@ export function TeamAgentDialog({
     name: string;
     systemPrompt: string;
     memoryScope: TeamAgent["memoryScope"];
+    /** ②刀：描述与身份色（可选——未填/未选不落盘，编辑时 undefined 保持原值）。 */
+    description?: string;
+    color?: TeamAgent["color"];
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
-  initial?: { name: string; systemPrompt: string; memoryScope: TeamAgent["memoryScope"] };
+  initial?: {
+    name: string;
+    systemPrompt: string;
+    memoryScope: TeamAgent["memoryScope"];
+    description?: string;
+    color?: TeamAgent["color"];
+  };
   /** 标题文案键；省略即「新建协作智能体」。 */
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
@@ -63,6 +74,8 @@ export function TeamAgentDialog({
   const [memoryScope, setMemoryScope] = useState<TeamAgent["memoryScope"]>(
     initial?.memoryScope ?? "project",
   );
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [color, setColor] = useState<TeamAgent["color"] | undefined>(initial?.color);
 
   return (
     <CreateDialogShell
@@ -70,7 +83,17 @@ export function TeamAgentDialog({
       submitLabelId={submitLabelId}
       onClose={onClose}
       canSubmit={name.trim().length > 0 && systemPrompt.trim().length > 0}
-      onSubmit={() => onSubmit({ name: name.trim(), systemPrompt, memoryScope })}
+      onSubmit={() =>
+        onSubmit({
+          name: name.trim(),
+          systemPrompt,
+          memoryScope,
+          // 描述空串不落盘（与 schema 的 optional 语义一致：没写就是没有）；
+          // 色未选不送（undefined = 保持原值/跟随名字稳定色）。
+          ...(description.trim().length > 0 ? { description: description.trim() } : {}),
+          ...(color !== undefined ? { color } : {}),
+        })
+      }
     >
       <Field labelId="squad.common.name">
         {(controlId) => (
@@ -109,6 +132,44 @@ export function TeamAgentDialog({
               ))}
             </SelectContent>
           </Select>
+        )}
+      </Field>
+      <Field labelId="squad.common.description">
+        {(controlId) => (
+          <SettingsFormTextarea
+            id={controlId}
+            value={description}
+            rows={2}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        )}
+      </Field>
+      <Field labelId="squad.common.color">
+        {() => (
+          /* 身份色选色器（②刀）：九色板（与列表色点同一常量），radio 语义（单选可撤销回未选）。
+             色板只表达身份（spec §11.3），不编码任何状态。 */
+          <div
+            className="flex flex-wrap items-center gap-2"
+            data-testid="squad-agent-color-picker"
+            role="radiogroup"
+            aria-label={intl.formatMessage({ id: "squad.common.color" })}
+          >
+            {TEAM_AGENT_COLORS.map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                role="radio"
+                aria-checked={color === candidate}
+                data-testid={`squad-agent-color-${candidate}`}
+                className={cn(
+                  "size-4 rounded-full ring-1 ring-border",
+                  SUBAGENT_COLOR_CLASS[candidate],
+                  color === candidate && "ring-2 ring-foreground scale-110",
+                )}
+                onClick={() => setColor(color === candidate ? undefined : candidate)}
+              />
+            ))}
+          </div>
         )}
       </Field>
     </CreateDialogShell>

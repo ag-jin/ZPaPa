@@ -180,7 +180,13 @@ export function SquadAgentsPage({
   /* 新建 / 编辑共用一个对话框：提交期间（busyAgentId 非空）忽略重复提交 ——
      表单是同一份实现，重复点提交不该建出两个智能体。 */
   const submitDialog = useCallback(
-    (input: { name: string; systemPrompt: string; memoryScope: TeamAgent["memoryScope"] }) => {
+    (input: {
+      name: string;
+      systemPrompt: string;
+      memoryScope: TeamAgent["memoryScope"];
+      description?: string;
+      color?: TeamAgent["color"];
+    }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
         void runAction(
@@ -320,6 +326,10 @@ export function SquadAgentsPage({
             name: dialog.agent.name,
             systemPrompt: dialog.agent.systemPrompt,
             memoryScope: dialog.agent.memoryScope,
+            ...(dialog.agent.description !== undefined
+              ? { description: dialog.agent.description }
+              : {}),
+            ...(dialog.agent.color !== undefined ? { color: dialog.agent.color } : {}),
           }}
         />
       ) : null}
