@@ -194,6 +194,8 @@ export function SquadAgentsPage({
       modelSelection?: TeamAgent["modelSelection"];
       skills?: string[];
       permissionMode?: TeamAgent["permissionMode"];
+      tools?: string[];
+      disallowedTools?: string[];
     }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
@@ -348,6 +350,10 @@ export function SquadAgentsPage({
               : {}),
             ...(dialog.agent.permissionMode !== undefined
               ? { permissionMode: dialog.agent.permissionMode }
+              : {}),
+            ...(dialog.agent.tools !== undefined ? { tools: dialog.agent.tools } : {}),
+            ...(dialog.agent.disallowedTools !== undefined
+              ? { disallowedTools: dialog.agent.disallowedTools }
               : {}),
           }}
         />

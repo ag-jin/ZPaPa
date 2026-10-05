@@ -495,3 +495,33 @@ test("守卫｜③a 表单：skills 令牌化（去空去重、空=不提交）�
     "编辑初值回填 skills/permissionMode",
   );
 });
+
+/* ---------- ③b：tools/disallowedTools 编辑器 ---------- */
+
+test("守卫｜③b 工具编辑器：all/custom 两态（[]=全部）、复选清单走 TOOL_OPTIONS 单源、禁用工具令牌", () => {
+  const dialog = readSource("squad/SquadCreateDialogs.tsx");
+  assert.ok(dialog.includes('data-testid="squad-agent-tools-mode"'), "工具模式 testid");
+  assert.ok(
+    dialog.includes('data-testid="squad-agent-tools-editor"'),
+    "编辑器容器 testid",
+  );
+  assert.ok(
+    dialog.includes("TOOL_OPTIONS.map") &&
+      dialog.includes('import { TOOL_OPTIONS } from "@/settings/SubagentsSection.js"'),
+    "复选清单必须走 SubagentsSection 的 TOOL_OPTIONS 单源（另抄一份会漂移）",
+  );
+  assert.ok(
+    dialog.includes('...(toolMode === "all"' + "\n" + '            ? { tools: [] }'),
+    "「允许全部」显式提交 tools=[]（空数组=全部的既有口径；undefined 才是保持原值）",
+  );
+  assert.ok(
+    dialog.includes("preservedToolsRef"),
+    "未知工具名随提交原样保留（不因不在复选清单而丢失）",
+  );
+  assert.ok(dialog.includes('data-testid="squad-agent-disallowed-input"'), "禁用工具令牌输入 testid");
+  const page = readSource("squad/SquadAgentsPage.tsx");
+  assert.ok(
+    page.includes("dialog.agent.tools") && page.includes("dialog.agent.disallowedTools"),
+    "编辑初值回填 tools/disallowedTools",
+  );
+});

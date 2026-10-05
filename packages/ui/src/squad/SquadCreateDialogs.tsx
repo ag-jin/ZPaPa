@@ -1,5 +1,5 @@
 /* oxlint-disable eslint(max-lines) -- 创建/编辑双用表单：TeamAgent 与 Squad 两个对话框刻意同文件（两份表单会分叉）；字段区按服务面白名单一一对应。 */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
 import { TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
 import { Checkbox } from "@/components/ui/checkbox.js";
@@ -14,6 +14,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import { ModelPickerRow } from "@/settings/WikiModelPickerRow.js";
+import { TOOL_OPTIONS } from "@/settings/SubagentsSection.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import type { ModelSelection } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
@@ -65,6 +66,10 @@ export function TeamAgentDialog({
     skills?: string[];
     /** ③a：权限模式（undefined = 未设置，落 optional 语义）。 */
     permissionMode?: TeamAgent["permissionMode"];
+    /** ③b：允许的工具（[] = 允许全部，与既有口径一致；undefined = 不碰原值）。 */
+    tools?: string[];
+    /** ③b：禁用工具令牌（空 = 不提交）。 */
+    disallowedTools?: string[];
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
   initial?: {
@@ -76,6 +81,8 @@ export function TeamAgentDialog({
     modelSelection?: ModelSelection;
     skills?: string[];
     permissionMode?: TeamAgent["permissionMode"];
+    tools?: string[];
+    disallowedTools?: string[];
   };
   /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
       模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
@@ -103,7 +110,30 @@ export function TeamAgentDialog({
   const [permissionMode, setPermissionMode] = useState<"unset" | TeamAgent["permissionMode"]>(
     initial?.permissionMode ?? "unset",
   );
+  /* ③b：工具编辑器（subagent 表单同款形态）——「允许全部」= 未设置或 [] 或 *；
+     自定义 = 已知工具复选（TOOL_OPTIONS 单源）+ 保留的未知工具（随提交原样带回）。 */
+  const initialAllowsAll =
+    initial?.tools === undefined ||
+    initial.tools.length === 0 ||
+    initial.tools.some((tool) => tool.trim() === "*");
+  const [toolMode, setToolMode] = useState<"all" | "custom">(initialAllowsAll ? "all" : "custom");
+  const [selectedTools, setSelectedTools] = useState<string[]>(
+    (initial?.tools ?? []).filter((tool) => (TOOL_OPTIONS as readonly string[]).includes(tool)),
+  );
+  const preservedToolsRef = useRef<string[]>(
+    (initial?.tools ?? []).filter((tool) => !(TOOL_OPTIONS as readonly string[]).includes(tool)),
+  );
+  const [disallowedText, setDisallowedText] = useState(initial?.disallowedTools?.join(", ") ?? "");
   /** 令牌化：逗号/空白分隔、去空、去重保序。空结果 = 不提交（保持原值）。 */
+  const parsedDisallowed = (): string[] | null => {
+    const tokens = disallowedText
+      .split(/[,，\s]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+    const unique = [...new Set(tokens)];
+    return unique.length > 0 ? unique : null;
+  };
+
   const parsedSkills = (): string[] | null => {
     const tokens = skillsText
       .split(/[,，\s]+/)
@@ -121,6 +151,7 @@ export function TeamAgentDialog({
       canSubmit={name.trim().length > 0 && systemPrompt.trim().length > 0}
       onSubmit={() => {
         const skillsTokens = parsedSkills();
+        const disallowedTokens = parsedDisallowed();
         onSubmit({
           name: name.trim(),
           systemPrompt,
@@ -143,6 +174,10 @@ export function TeamAgentDialog({
              与显式清空（提交 []）区分：清空走输入框留分隔符的场景由服务面 [] 语义承载）。 */
           ...(skillsTokens !== null ? { skills: skillsTokens } : {}),
           ...(permissionMode !== "unset" ? { permissionMode } : {}),
+          ...(toolMode === "all"
+            ? { tools: [] }
+            : { tools: [...selectedTools, ...preservedToolsRef.current] }),
+          ...(disallowedTokens !== null ? { disallowedTools: disallowedTokens } : {}),
         });
       }}
     >
@@ -276,6 +311,59 @@ export function TeamAgentDialog({
               </SelectItem>
             </SelectContent>
           </Select>
+        )}
+      </Field>
+      <Field labelId="squad.common.tools">
+        {() => (
+          <div className="flex flex-col gap-2" data-testid="squad-agent-tools-editor">
+            <Select value={toolMode} onValueChange={(value) => setToolMode(value as "all" | "custom")}>
+              <SelectTrigger className="w-fit" data-testid="squad-agent-tools-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  {intl.formatMessage({ id: "squad.common.toolsMode.all" })}
+                </SelectItem>
+                <SelectItem value="custom">
+                  {intl.formatMessage({ id: "squad.common.toolsMode.custom" })}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {toolMode === "custom" ? (
+              <div className="flex flex-wrap gap-2">
+                {TOOL_OPTIONS.map((tool) => (
+                  <label
+                    key={tool}
+                    className="flex items-center gap-1 text-ui-sm text-foreground-subtle"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTools.includes(tool)}
+                      onChange={(event) =>
+                        setSelectedTools((current) =>
+                          event.target.checked
+                            ? [...current, tool]
+                            : current.filter((item) => item !== tool),
+                        )
+                      }
+                    />
+                    {tool}
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Field>
+      <Field labelId="squad.common.disallowedTools">
+        {(controlId) => (
+          <Input
+            id={controlId}
+            value={disallowedText}
+            placeholder={intl.formatMessage({ id: "squad.common.skillsPlaceholder" })}
+            onChange={(event) => setDisallowedText(event.target.value)}
+            data-testid="squad-agent-disallowed-input"
+          />
         )}
       </Field>
     </CreateDialogShell>
