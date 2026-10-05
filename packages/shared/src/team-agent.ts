@@ -28,6 +28,23 @@ const TEAM_AGENT_PERMISSION_MODES = [
 /** 记忆作用域：复用现成 agent-memory 能力（spec §3.2 / §7）。 */
 export const TEAM_AGENT_MEMORY_SCOPES = ["user", "project", "local"] as const;
 
+/** 每 agent 最大并发 run 数的缺省（C1，⑤刀 Concurrency 半边）：对齐 multica `MaxConcurrentTasks` 默认 6（migration 023）。 */
+export const DEFAULT_TEAM_AGENT_MAX_CONCURRENT_RUNS = 6;
+/** 并发上限的**校验界**（不是存储界）：单机 CLI 场景每个并发 run = 一条 CLI 会话 + 一棵工作树，16 已覆盖批量在途并留余量；将来放宽只改此常量、无需迁移。 */
+export const TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT = 16;
+
+/**
+ * 读「该 agent 允许的最大并发 run 数」的唯一入口：缺省（字段未设置）与显式值都经这里解析。
+ * 闸（C3）、UI 与详情页必须读同一处，不得各写一份 `?? 6`——否则缺省语义会分叉。
+ * 注意（C3 闸行为，评审 A5）：名册里**找不到 agent 定义**时不适用本函数、更不得凭空套缺省 6——
+ * 那是「闸不排队、照旧派发 + 日志」的独立分支，与本字段无关。
+ */
+export function resolveTeamAgentMaxConcurrentRuns(
+  agent: Pick<TeamAgent, "maxConcurrentRuns">,
+): number {
+  return agent.maxConcurrentRuns ?? DEFAULT_TEAM_AGENT_MAX_CONCURRENT_RUNS;
+}
+
 /** 预填来源留痕：只记「从哪来」，不建立引用（spec §3.2「此后无持续引用」）。 */
 export const teamAgentProvenanceSchema = z
   .object({
@@ -57,6 +74,13 @@ export const teamAgentSchema = z
     disallowedTools: z.array(z.string()).optional(),
     permissionMode: z.enum(TEAM_AGENT_PERMISSION_MODES).optional(),
     memoryScope: z.enum(TEAM_AGENT_MEMORY_SCOPES),
+    /** 每 agent 最大并发 run 数（C1）：可选——缺省不落盘（存量文件零改写），读数经 resolveTeamAgentMaxConcurrentRuns。 */
+    maxConcurrentRuns: z
+      .number()
+      .int()
+      .min(1)
+      .max(TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT)
+      .optional(),
     enabled: z.boolean(),
     /** 归档时间戳（毫秒）：归档而非硬删，定义与记忆都不丢（Task 8 的 archive 写入）。 */
     archivedAt: z.number().int().nonnegative().optional(),

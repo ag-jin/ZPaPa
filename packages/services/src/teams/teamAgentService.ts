@@ -22,6 +22,8 @@ export interface CreateTeamAgentInput {
   permissionMode?: TeamAgent["permissionMode"];
   /** 记忆作用域必须显式给出：它决定记忆写到哪个命名空间，猜错会把记忆写串。 */
   memoryScope: TeamAgent["memoryScope"];
+  /** 每 agent 最大并发 run 数（C1）：省略即不落盘，读数方经 resolve 拿缺省 6。 */
+  maxConcurrentRuns?: TeamAgent["maxConcurrentRuns"];
   /** 省略即 true：新建的队友默认启用，用户不必额外开一次开关。 */
   enabled?: boolean;
   provenance?: TeamAgent["provenance"];
@@ -37,7 +39,7 @@ export interface CreateTeamAgentInput {
  * 白名单把「编辑定义」与「状态迁移」在类型层就分开：越界的字段**传不进来**。
  */
 export type TeamAgentEditablePatch = Partial<
-  Pick<TeamAgent, "name" | "systemPrompt" | "memoryScope">
+  Pick<TeamAgent, "name" | "systemPrompt" | "memoryScope" | "maxConcurrentRuns">
 >;
 
 export interface TeamAgentService {
@@ -99,6 +101,7 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         disallowedTools: input.disallowedTools,
         permissionMode: input.permissionMode,
         memoryScope: input.memoryScope,
+        maxConcurrentRuns: input.maxConcurrentRuns,
         enabled: input.enabled ?? true,
         provenance: input.provenance ?? { source: "manual" },
       };
@@ -156,6 +159,13 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         }
         if (patch.memoryScope !== undefined && patch.memoryScope !== agent.memoryScope) {
           next.memoryScope = patch.memoryScope;
+          changed = true;
+        }
+        if (
+          patch.maxConcurrentRuns !== undefined &&
+          patch.maxConcurrentRuns !== agent.maxConcurrentRuns
+        ) {
+          next.maxConcurrentRuns = patch.maxConcurrentRuns;
           changed = true;
         }
         // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。
