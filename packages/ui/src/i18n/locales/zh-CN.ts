@@ -4145,6 +4145,7 @@ const zhCN: Record<string, string> = {
   "squad.common.archived": "已归档",
   "squad.common.description": "描述",
   "squad.common.color": "身份色",
+  "squad.common.model": "模型",
   "squad.common.disabled": "已停用",
   "squad.common.assignee": "指派给",
   "squad.common.assignee.user": "我",

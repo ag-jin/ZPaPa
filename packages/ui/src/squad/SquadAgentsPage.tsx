@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
+import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
@@ -52,6 +53,10 @@ export function SquadAgentsPage({
 }) {
   const { intl } = useZCodeIntl();
   const services = useServices();
+  // ②b：模型选择视图（ModelPickerRow 的数据源；服务缺失 ⇒ 控件禁用态，不阻塞表单其余字段）。
+  const { state: modelView } = useModelSelectionServiceView(
+    services.modelSelectionService ?? null,
+  );
 
   const target = useMemo(
     () => squadWorkspaceTarget(workspacePath, workspaceIdentity),
@@ -186,6 +191,7 @@ export function SquadAgentsPage({
       memoryScope: TeamAgent["memoryScope"];
       description?: string;
       color?: TeamAgent["color"];
+      modelSelection?: TeamAgent["modelSelection"];
     }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
@@ -311,6 +317,7 @@ export function SquadAgentsPage({
         <TeamAgentDialog
           onClose={() => setDialog(null)}
           onSubmit={submitDialog}
+          modelView={modelView}
           titleId="squad.agents.create"
           submitLabelId="squad.common.submit"
         />
@@ -320,6 +327,7 @@ export function SquadAgentsPage({
         <TeamAgentDialog
           onClose={() => setDialog(null)}
           onSubmit={submitDialog}
+          modelView={modelView}
           titleId="squad.agents.editTitle"
           submitLabelId="squad.common.save"
           initial={{
@@ -330,6 +338,9 @@ export function SquadAgentsPage({
               ? { description: dialog.agent.description }
               : {}),
             ...(dialog.agent.color !== undefined ? { color: dialog.agent.color } : {}),
+            ...(dialog.agent.modelSelection !== undefined
+              ? { modelSelection: dialog.agent.modelSelection }
+              : {}),
           }}
         />
       ) : null}

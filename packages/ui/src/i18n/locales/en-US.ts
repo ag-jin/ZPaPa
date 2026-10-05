@@ -4429,6 +4429,7 @@ const enUS: Record<string, string> = {
   "squad.common.archived": "Archived",
   "squad.common.description": "Description",
   "squad.common.color": "Identity color",
+  "squad.common.model": "Model",
   "squad.common.disabled": "Disabled",
   "squad.common.assignee": "Assign to",
   "squad.common.assignee.user": "Me",

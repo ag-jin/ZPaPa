@@ -444,3 +444,29 @@ test("守卫｜表单含描述与身份色选色器：色板=TEAM_AGENT_COLORS �
     "编辑初值回填 description/color",
   );
 });
+
+/* ---------- ②b：表单接模型选择（ModelPickerRow 复用） ---------- */
+
+test("守卫｜模型选择走 ModelPickerRow 复用：受控值含推理档位、服务缺失不阻塞表单、编辑回填", () => {
+  const dialog = readSource("squad/SquadCreateDialogs.tsx");
+  assert.ok(dialog.includes("<ModelPickerRow"), "模型选择必须复用 ModelPickerRow（清单/生效值/推理档位规则单点）");
+  assert.ok(dialog.includes('data-testid="squad-agent-model-picker"'), "选择器容器 testid");
+  assert.ok(
+    dialog.includes("modelView ?? { status: \"unavailable\""),
+    "页面未传视图时禁用态降级，不阻塞表单其余字段",
+  );
+  assert.ok(
+    dialog.includes("...(reasoningLevel !== undefined\n                    ? { options: { reasoningLevel } }"),
+    "推理档位并入 modelSelection.options（不另立字段）",
+  );
+  assert.ok(
+    dialog.includes("...(modelSelection !== undefined\n            ? {"),
+    "未选定不落盘（undefined 不进提交）",
+  );
+  const page = readSource("squad/SquadAgentsPage.tsx");
+  assert.ok(
+    page.includes("useModelSelectionServiceView(") && page.includes("modelView={modelView}"),
+    "页面持有模型视图 hook 并传入 dialog（表单不起第二份取数）",
+  );
+  assert.ok(page.includes("dialog.agent.modelSelection"), "编辑初值回填 modelSelection");
+});

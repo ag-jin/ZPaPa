@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- 创建/编辑双用表单：TeamAgent 与 Squad 两个对话框刻意同文件（两份表单会分叉）；字段区按服务面白名单一一对应。 */
 import { useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
 import { TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
@@ -12,6 +13,9 @@ import {
 } from "@/components/ui/select.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
+import { ModelPickerRow } from "@/settings/WikiModelPickerRow.js";
+import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
+import type { ModelSelection } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
@@ -43,6 +47,7 @@ export function TeamAgentDialog({
   onClose,
   onSubmit,
   initial,
+  modelView,
   titleId = "squad.agents.create",
   submitLabelId = "squad.common.submit",
 }: {
@@ -54,6 +59,8 @@ export function TeamAgentDialog({
     /** ②刀：描述与身份色（可选——未填/未选不落盘，编辑时 undefined 保持原值）。 */
     description?: string;
     color?: TeamAgent["color"];
+    /** ②b：模型选择（含推理档位；未选定不落盘）。 */
+    modelSelection?: ModelSelection;
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
   initial?: {
@@ -62,7 +69,11 @@ export function TeamAgentDialog({
     memoryScope: TeamAgent["memoryScope"];
     description?: string;
     color?: TeamAgent["color"];
+    modelSelection?: ModelSelection;
   };
+  /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
+      模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
+  modelView?: ReturnType<typeof useModelSelectionServiceView>["state"];
   /** 标题文案键；省略即「新建协作智能体」。 */
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
@@ -76,6 +87,12 @@ export function TeamAgentDialog({
   );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [color, setColor] = useState<TeamAgent["color"] | undefined>(initial?.color);
+  const [modelSelection, setModelSelection] = useState<ModelSelection | undefined>(
+    initial?.modelSelection,
+  );
+  const [reasoningLevel, setReasoningLevel] = useState<string | undefined>(
+    initial?.modelSelection?.options?.reasoningLevel,
+  );
 
   return (
     <CreateDialogShell
@@ -92,6 +109,16 @@ export function TeamAgentDialog({
           // 色未选不送（undefined = 保持原值/跟随名字稳定色）。
           ...(description.trim().length > 0 ? { description: description.trim() } : {}),
           ...(color !== undefined ? { color } : {}),
+          ...(modelSelection !== undefined
+            ? {
+                modelSelection: {
+                  ...modelSelection,
+                  ...(reasoningLevel !== undefined
+                    ? { options: { reasoningLevel } }
+                    : {}),
+                },
+              }
+            : {}),
         })
       }
     >
@@ -169,6 +196,22 @@ export function TeamAgentDialog({
                 onClick={() => setColor(color === candidate ? undefined : candidate)}
               />
             ))}
+          </div>
+        )}
+      </Field>
+      <Field labelId="squad.common.model">
+        {() => (
+          /* ②b：模型 + 推理档位——复用 wiki/subagents 同款 ModelPickerRow（模型清单、
+             生效值、推理档位规则只在那一处实现）。未选定时显示环境生效值（wiki 同款取舍：
+             选定即落盘；「清除回跟随默认」不在此控件——登记为后续可选）。 */
+          <div data-testid="squad-agent-model-picker">
+            <ModelPickerRow
+              selection={modelSelection}
+              reasoningLevel={reasoningLevel}
+              modelView={modelView ?? { status: "unavailable", reason: "remote-waiting" }}
+              onSelectionChange={setModelSelection}
+              onReasoningLevelChange={setReasoningLevel}
+            />
           </div>
         )}
       </Field>
