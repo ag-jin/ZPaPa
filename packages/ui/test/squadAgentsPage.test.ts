@@ -220,12 +220,12 @@ function sliceBetween(source: string, startMarker: string, endMarker: string): s
   return source.slice(start, end);
 }
 
-/* 守卫 a：侧栏一级入口。变异：把 `{showSquadEntries ? (…) : null}` 的显隐去掉
-   （入口无条件渲染）⇒ 本用例必红。 */
-test("守卫｜侧栏「智能体」入口恰一处、且被 squadEntryVisible 的判据包着", () => {
+/* 守卫 a：侧栏一级入口（T2 起位于 AI Team 分组内）。变异：把分组外层
+   `{showSquadEntries ? (…) : null}` 的显隐去掉（入口无条件渲染）⇒ 本用例必红。 */
+test("守卫｜侧栏「智能体」入口恰一处、在 AI Team 分组内、被 squadEntryVisible 的判据包着", () => {
   const sidebar = readSource("WorkspaceSidebar.tsx");
   assert.equal(
-    (sidebar.match(/squad-agents-sidebar-open/g) ?? []).length,
+    (sidebar.match(/ai-team-sidebar-agents/g) ?? []).length,
     1,
     "入口按钮只该有一处（为别的形态另抄一份 = 同一语义两处实现）",
   );
@@ -233,15 +233,24 @@ test("守卫｜侧栏「智能体」入口恰一处、且被 squadEntryVisible �
     sidebar,
     /showSquadEntries = squadEntryVisible\(settings\)/,
     "显隐必须只由既有纯函数 squadEntryVisible 给出（它是呈现判据，不是门禁）；" +
-      "两个实验入口共用这一个判据变量（别给小队再造一个）",
+      "实验入口共用这一个判据变量（别给小队再造一个）",
   );
   assert.equal(
     (sidebar.match(/onOpenSquadAgents\?\.\(\)/g) ?? []).length,
     1,
     "点入口只该有一处回调调用（转发给 shell 切主视图）",
   );
-  const gated = sliceBetween(sidebar, "{showSquadEntries ? (", "squad-agents-sidebar-open");
-  assert.ok(gated.length > 0, "入口按钮必须在 showSquadEntries 的条件里（关实验 ⇒ 入口整体消失）");
+  const agentsIndex = sidebar.indexOf("ai-team-sidebar-agents");
+  assert.ok(
+    sidebar.indexOf("ai-team-sidebar-section") < agentsIndex,
+    "入口必须位于 AI Team 分组内（multica 纯导航形态）",
+  );
+  const gate = sidebar.lastIndexOf("{showSquadEntries ? (", agentsIndex);
+  assert.ok(gate >= 0, "入口必须挂在 showSquadEntries 的条件里（关实验 ⇒ 分组整体消失）");
+  assert.ok(
+    !sidebar.slice(gate, agentsIndex).includes(") : null}"),
+    "入口必须在条件块内（条件中途闭合 = 入口裸奔）",
+  );
 });
 
 /* 守卫 b：主视图接线。变异：① 删掉 `workspaceMainView === "agents"` 分支 ⇒ 红；

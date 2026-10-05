@@ -216,8 +216,8 @@ test("守卫｜侧栏「工作项」入口恰一处、紧跟「小队」之后�
   );
   const workItemsIndex = sidebar.indexOf("work-items-sidebar-open");
   assert.ok(
-    workItemsIndex > sidebar.indexOf("squad-squads-sidebar-open"),
-    "「工作项」入口在「小队」之后（用户入口清单的次序）",
+    workItemsIndex > sidebar.indexOf("ai-team-sidebar-squads"),
+    "「工作项」在 AI Team 分组之后（既有 Work 语义位置不重排）",
   );
   assert.equal(
     (sidebar.match(/showSquadEntries = squadEntryVisible\(settings\)/g) ?? []).length,
@@ -226,8 +226,8 @@ test("守卫｜侧栏「工作项」入口恰一处、紧跟「小队」之后�
   );
   assert.equal(
     (sidebar.match(/\{showSquadEntries \? \(/g) ?? []).length,
-    4,
-    "四个实验入口（收件箱 / 智能体 / 小队 / 工作项）都要挂同一个显隐条件",
+    3,
+    "三个显隐条件（收件箱 / AI Team 分组 / 工作项）都要挂同一个显隐条件",
   );
   // 入口必须真的在**自己的**条件块内：从最近一个条件起点到入口之间不得出现条件闭合。
   const gate = sidebar.lastIndexOf("{showSquadEntries ? (", workItemsIndex);

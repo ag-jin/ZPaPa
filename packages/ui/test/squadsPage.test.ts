@@ -282,17 +282,21 @@ test("i18n：归档确认文案含「工作项转交队长」这一后果", () =
    变异：① 去掉入口外的 `{showSquadEntries ? (… ) : null}` ⇒ 红（最后一个断言：
    条件块中途闭合 = 入口裸露）；② 为小队另造一个判据变量 ⇒ 红（计数 ≠ 1）；
    ③ 把入口整个删掉 ⇒ 红（找不到 testid）。 */
-test("守卫｜侧栏「小队」入口恰一处、紧跟「智能体」之后、挂同一个显隐判据", () => {
+test("守卫｜侧栏「小队」入口恰一处、在 AI Team 分组内「智能体」之后、挂同一个显隐判据", () => {
   const sidebar = readSource("WorkspaceSidebar.tsx");
   assert.equal(
-    (sidebar.match(/squad-squads-sidebar-open/g) ?? []).length,
+    (sidebar.match(/ai-team-sidebar-squads/g) ?? []).length,
     1,
     "小队入口按钮只该有一处（为别的形态另抄一份 = 同一语义两处实现）",
   );
-  const squadsIndex = sidebar.indexOf("squad-squads-sidebar-open");
+  const squadsIndex = sidebar.indexOf("ai-team-sidebar-squads");
   assert.ok(
-    squadsIndex > sidebar.indexOf("squad-agents-sidebar-open"),
-    "「小队」入口在「智能体」之后（用户入口清单的次序）",
+    squadsIndex > sidebar.indexOf("ai-team-sidebar-agents"),
+    "「小队」入口在「智能体」之后（multica 顺序：Agents → Squads）",
+  );
+  assert.ok(
+    squadsIndex > sidebar.indexOf("ai-team-sidebar-section"),
+    "「小队」入口必须在 AI Team 分组内（multica 纯导航形态）",
   );
   assert.equal(
     (sidebar.match(/showSquadEntries = squadEntryVisible\(settings\)/g) ?? []).length,
@@ -301,8 +305,8 @@ test("守卫｜侧栏「小队」入口恰一处、紧跟「智能体」之后�
   );
   assert.equal(
     (sidebar.match(/\{showSquadEntries \? \(/g) ?? []).length,
-    4,
-    "四个实验入口（收件箱 / 智能体 / 小队 / 工作项）都要挂同一个显隐条件",
+    3,
+    "三个显隐条件（收件箱 / AI Team 分组 / 工作项）都要挂同一个显隐条件",
   );
   // 入口必须真的在**自己的**条件块内：从最近一个条件起点到入口之间不得出现条件闭合。
   const gate = sidebar.lastIndexOf("{showSquadEntries ? (", squadsIndex);

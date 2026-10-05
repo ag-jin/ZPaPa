@@ -317,8 +317,8 @@ test("守卫｜侧栏「收件箱」入口恰一处、在「智能体」之前�
   );
   const inboxIndex = sidebar.indexOf("inbox-sidebar-open");
   assert.ok(
-    inboxIndex < sidebar.indexOf("squad-agents-sidebar-open"),
-    "「收件箱」在小队组的**最前**（「智能体」之前 —— multica 顺序：收件箱 → AI 团队）",
+    inboxIndex < sidebar.indexOf("ai-team-sidebar-section"),
+    "「收件箱」在 AI Team 分组**之前**（multica 顺序：收件箱 → AI 团队）",
   );
   assert.equal(
     (sidebar.match(/showSquadEntries = squadEntryVisible\(settings\)/g) ?? []).length,

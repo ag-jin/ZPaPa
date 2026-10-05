@@ -1369,43 +1369,51 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                 {intl.formatMessage({ id: "workspace.openInbox" })}
               </Button>
             ) : null}
-            {/* 「智能体」一级入口（用户 2026-10-03 裁定：不藏设置；与「自动化」「插件市场」同层级）。
-                显隐由 squadEntryVisible 一处给出（见上方注释）—— 不是门禁。 */}
+            {/* AI Team 分组（侧栏小队重做 T2，multica 纯导航形态）：分组标题（静态不可折叠）+
+                「智能体」「小队」两个一击直达入口。整组共用 showSquadEntries 判据（同一实验开关）；
+                不取数、不按项目/工作区分组、不接旧 SquadSidebarSection（已废弃，待 T3 删除）。 */}
             {showSquadEntries ? (
-              <Button
-                variant="ghost"
-                onClick={handleOpenSquadAgentsMain}
-                data-icon="inline-start"
-                data-testid="squad-agents-sidebar-open"
-                size="lg"
-                aria-pressed={squadAgentsActive}
-                className={cn(
-                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
-                  squadAgentsActive && "bg-selected text-foreground",
-                )}
+              <section
+                data-testid="ai-team-sidebar-section"
+                aria-label={intl.formatMessage({ id: "squad.sidebar.aiTeam" })}
+                className="flex flex-col gap-1"
               >
-                <Bot className="size-4" />
-                {intl.formatMessage({ id: "workspace.openSquadAgents" })}
-              </Button>
-            ) : null}
-            {/* 「小队」一级入口：紧跟在「智能体」之后（用户 2026-10-03 入口清单：AI 团队 ▸ 智能体 / 小队）。
-                显隐与「智能体」**共用同一个判据变量**（见上方注释）—— 不是门禁。 */}
-            {showSquadEntries ? (
-              <Button
-                variant="ghost"
-                onClick={handleOpenSquadsMain}
-                data-icon="inline-start"
-                data-testid="squad-squads-sidebar-open"
-                size="lg"
-                aria-pressed={squadsActive}
-                className={cn(
-                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
-                  squadsActive && "bg-selected text-foreground",
-                )}
-              >
-                <UsersRound className="size-4" />
-                {intl.formatMessage({ id: "workspace.openSquads" })}
-              </Button>
+                <div className="px-3 pb-1 pt-2 text-ui-xs font-medium tracking-wide text-foreground-subtlest">
+                  {intl.formatMessage({ id: "squad.sidebar.aiTeam" })}
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={handleOpenSquadAgentsMain}
+                  data-icon="inline-start"
+                  data-testid="ai-team-sidebar-agents"
+                  size="lg"
+                  aria-pressed={squadAgentsActive}
+                  aria-current={squadAgentsActive ? "page" : undefined}
+                  className={cn(
+                    "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                    squadAgentsActive && "bg-selected text-foreground",
+                  )}
+                >
+                  <Bot className="size-4" />
+                  {intl.formatMessage({ id: "workspace.openSquadAgents" })}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleOpenSquadsMain}
+                  data-icon="inline-start"
+                  data-testid="ai-team-sidebar-squads"
+                  size="lg"
+                  aria-pressed={squadsActive}
+                  aria-current={squadsActive ? "page" : undefined}
+                  className={cn(
+                    "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                    squadsActive && "bg-selected text-foreground",
+                  )}
+                >
+                  <UsersRound className="size-4" />
+                  {intl.formatMessage({ id: "workspace.openSquads" })}
+                </Button>
+              </section>
             ) : null}
             {/* 「工作项」一级入口：紧跟在「小队」之后（用户 2026-10-03 入口清单：AI 团队 ▸ 智能体 / 小队，
                 工作 ▸ 工作项看板）。显隐继续**共用同一个判据变量**（同一个实验开关管这组入口）。 */}
