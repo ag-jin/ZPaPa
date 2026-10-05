@@ -8,7 +8,7 @@ import zhCN from "../src/i18n/locales/zh-CN.js";
 
 /* 侧栏「AI Team 分组」结构守卫（T2，2026-10-05 侧栏小队重做·multica 纯导航形态）：
    分组标题（静态不可折叠）+ 智能体/小队两个一击直达入口；不按项目/工作区分组、
-   不取数、不接旧 SquadSidebarSection（已废弃，待 T3 删除）。 */
+   不取数（旧按项目内嵌面板形态已退役，见 squadSidebarSectionRetired.test.ts）。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");

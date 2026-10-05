@@ -1371,7 +1371,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
             ) : null}
             {/* AI Team 分组（侧栏小队重做 T2，multica 纯导航形态）：分组标题（静态不可折叠）+
                 「智能体」「小队」两个一击直达入口。整组共用 showSquadEntries 判据（同一实验开关）；
-                不取数、不按项目/工作区分组、不接旧 SquadSidebarSection（已废弃，待 T3 删除）。 */}
+                不取数、不按项目/工作区分组（旧内嵌面板形态已退役，见 squadSidebarSectionRetired.test.ts）。 */}
             {showSquadEntries ? (
               <section
                 data-testid="ai-team-sidebar-section"

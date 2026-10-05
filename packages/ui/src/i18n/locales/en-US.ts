@@ -4439,10 +4439,6 @@ const enUS: Record<string, string> = {
   "squad.agents.created": "Collaborative agent created",
   "squad.agents.empty": "No collaborative agents yet",
   "squad.sidebar.aiTeam": "AI Team",
-  "squad.sidebar.noProjects": "No projects opened yet.",
-  "squad.sidebar.loadFailed": "Failed to load (see logs)",
-  "squad.sidebar.agentsEntry": "Agents",
-  "squad.sidebar.squadsEntry": "Squads",
 
   "squad.squads.create": "New squad",
   "squad.squads.created": "Squad created",
