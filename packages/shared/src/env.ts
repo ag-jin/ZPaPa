@@ -37,6 +37,13 @@ export const ZCODE_PRODUCT_FLAVOR = normalizeZCodeProductFlavor(
   typeof __ZCODE_PRODUCT_FLAVOR__ !== "undefined" ? __ZCODE_PRODUCT_FLAVOR__ : undefined,
   ZCODE_ENV,
 );
+/**
+ * 该 bundle 是否真的注入了 flavor define（注入边界 = 桌面构建的 tsup/vite 两处构建配置）。
+ * 未注入面（node:test/web/CLI/server）用它把渠道缺省关回保守值——`normalizeZCodeProductFlavor`
+ * 的 fallback 会把 test 后端判为 preview，不能让该 fallback 泄漏进任何「按身份取默认」的决策。
+ */
+export const IS_ZCODE_PRODUCT_FLAVOR_INJECTED: boolean =
+  typeof __ZCODE_PRODUCT_FLAVOR__ !== "undefined";
 export const ZCODE_APP_VERSION_ENV = "ZCODE_APP_VERSION" as const;
 export const ZCODE_BUILD_COMMIT_ID_ENV = "ZCODE_BUILD_COMMIT_ID" as const;
 

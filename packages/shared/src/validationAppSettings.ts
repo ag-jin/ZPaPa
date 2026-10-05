@@ -5,6 +5,8 @@ import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
 import { normalizeZCodeEndpointOrigin } from "./zcodeEndpoint.js";
+import { IS_ZCODE_PRODUCT_FLAVOR_INJECTED, ZCODE_PRODUCT_FLAVOR } from "./env.js";
+import type { ZCodeProductFlavor } from "./env.js";
 import {
   DEFAULT_EMBEDDED_BROWSER_VIEWPORT_PREFERENCE,
   embeddedBrowserViewportPreferenceSchema,
@@ -468,6 +470,19 @@ const wikiSettingsSchema = z
   })
   .strict();
 
+/**
+ * 小队实验开关的渠道缺省（A1，2026-10-05 裁定）：只有真注入了 flavor define 的构建（桌面包）
+ * 才按身份取默认；未注入面（node:test/web/CLI/server）一律回退 false，防止 test ⇒ preview 的
+ * fallback 把测试与生产语义漂移成「默认开」。显式值不受缺省影响：zod `.default()` 只在键缺失时
+ * 生效，显式关闭过的用户重启/升级/换渠道后保持关闭（I3/I4，见 experimentalSquadFlag.test.ts）。
+ */
+export function resolveExperimentalAgentSquadsDefault(
+  flavor: ZCodeProductFlavor = ZCODE_PRODUCT_FLAVOR,
+  flavorInjected: boolean = IS_ZCODE_PRODUCT_FLAVOR_INJECTED,
+): boolean {
+  return flavorInjected && flavor === "preview";
+}
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -513,8 +528,9 @@ const appSettingsObjectSchema = z.object({
   onboardingOccupation: appSettingsOccupationSchema.nullish(),
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().default(false),
-  // 多智能体小队实验开关。默认关闭：不显式打开就不启用。
-  experimentalAgentSquadsEnabled: z.boolean().default(false),
+  // 多智能体小队实验开关。缺省按安装包身份（A1）：preview 包默认开启、其余默认关闭；显式值优先
+  //（default 只在键缺失时生效——显式关闭过的用户不会被渠道默认翻回 true）。
+  experimentalAgentSquadsEnabled: z.boolean().default(resolveExperimentalAgentSquadsDefault()),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
