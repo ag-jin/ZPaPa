@@ -57,7 +57,11 @@ export type OpenMemberRunResult =
   | { kind: "opened"; branch: string; worktreePath: string }
   | { kind: "queued"; runId: string }
   | { kind: "coalesced"; targetRunId: string }
-  | { kind: "already_registered" };
+  | { kind: "already_registered" }
+  /** R2（S6 §12.1-2，2026-10-05 用户裁定）：同 (workItem,agent) 已有活跃 run ⇒ 不开第二条
+   *  （撞分支）也不排队（排队等容量、义务等「目标对离开活跃集」），登记完成后重放义务。
+   *  `coalescedInto` = 并入的既存义务行（同目标已有义务时）。 */
+  | { kind: "deferred"; runId: string; coalescedInto?: string };
 
 /**
  * 队长 run 的**登记**入参（`recordLeaderRun`）。
@@ -270,6 +274,8 @@ export function createRunLifecycle(deps: {
   resolveAgentMaxConcurrentRuns?: (agentId: string) => number | undefined;
   /** C4：收尾迁移之后的结算事实扇出（不注入 ⇒ 不发布）。 */
   runSettlementHub?: SquadRunSettlementHub;
+  /** R2：deferred 重放义务表（不注入 ⇒ 遇到「活跃 run 已存在」时响亮抛，不静默降级）。 */
+  squadDeferredDispatchRepo?: import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRepo;
 }): SquadRunLifecycle {
   const {
     squadRunRepo,
@@ -433,6 +439,39 @@ export function createRunLifecycle(deps: {
       const limit = deps.resolveAgentMaxConcurrentRuns?.(request.agentId);
       if (limit === undefined) {
         squadRunRepo.insert(record);
+      } else if (
+        !squadRunRepo.hasQueuedRunForPair(boundWorkspaceKey, request.workItemId, request.agentId) &&
+        squadRunRepo.hasActiveRunForPair(boundWorkspaceKey, request.workItemId, request.agentId)
+      ) {
+        /* R2：已有活跃 run（占树）⇒ 登记完成后重放义务（原「撞分支名响亮失败」改为排队重放，
+           用户 2026-10-05 裁定）。排队行优先于义务（统一裁决表第 1 行 ⇒ 上面的 hasQueued 前置）。 */
+        const obligationRepo = deps.squadDeferredDispatchRepo;
+        if (obligationRepo === undefined) {
+          throw new Error(
+            "openMemberRun 遇到「同 (workItem,agent) 已有活跃 run」但未注入义务表 repo：R2 语义要求登记 deferred 义务，" +
+              "静默降级（开第二条撞分支 / 排队错语义）都不接受，故响亮抛。",
+          );
+        }
+        const inserted = obligationRepo.insertIfAbsent({
+          runId: request.runId,
+          workspaceKey: boundWorkspaceKey,
+          workItemId: request.workItemId,
+          agentId: request.agentId,
+          dispatchCause: request.dispatchCause ?? null,
+          createdAt: now,
+          updatedAt: now,
+        });
+        if (inserted) return { kind: "deferred", runId: request.runId };
+        const existingObligation = obligationRepo.find(
+          boundWorkspaceKey,
+          request.workItemId,
+          request.agentId,
+        );
+        squadRunRepo.recordCoalescedRequest(
+          request.runId,
+          existingObligation?.runId ?? request.runId,
+        );
+        return { kind: "deferred", runId: request.runId, coalescedInto: existingObligation?.runId };
       } else {
         const outcome = squadRunRepo.insertMemberRunOrQueue(record, limit);
         if (outcome.kind === "queued") {

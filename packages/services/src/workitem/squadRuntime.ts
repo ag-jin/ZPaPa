@@ -17,6 +17,7 @@ import { createInboxItemRepo } from "./inboxItemRepo.js";
 import type { SquadRunLifecycle, SquadRuntime, SquadRuntimeDeps } from "./squadContracts.js";
 import { createRunLifecycle } from "./squadRunLifecycle.js";
 import { createSquadRunRepo } from "./squadRunRepo.js";
+import { createSquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js";
 import { SquadDispatchDisabledError } from "./squadRuntimeService.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
 import { createWorkItemService, type WorkItemEvent } from "./workItemService.js";
@@ -226,6 +227,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
             return agent === undefined ? undefined : resolveTeamAgentMaxConcurrentRuns(agent);
           },
           runSettlementHub: deps.runSettlementHub,
+          squadDeferredDispatchRepo,
         });
         return { baseBranch, integrationMerger, lifecycle };
       })();
@@ -241,6 +243,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
 
   // ③ 台账 / 工作项 / 唤醒规则三个 repo：**同一条** db（recon.md F3：另开连接会跳过迁移与回填）。
   const squadRunRepo = createSquadRunRepo(db);
+  // R2：deferred 重放义务表（与 squad_runs 同一条 db；资格判据与排队不同故分表）。
+  const squadDeferredDispatchRepo = createSquadDeferredDispatchRepo(db);
   const workItemRepo = createWorkItemRepo(db);
   const wakeRuleRepo = createWakeRuleRepo(db);
   // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
@@ -319,6 +323,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     workItemRepo,
     wakeRuleRepo,
     squadRunRepo,
+    squadDeferredDispatchRepo,
     inboxItemRepo,
     workItemService,
     teamAgentService,

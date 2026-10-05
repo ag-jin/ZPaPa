@@ -452,6 +452,10 @@ import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
 } from "./workitem/squadDispatchRequests.js";
+import {
+  createSquadRunSettlementHub,
+  type SquadRunSettlement,
+} from "./workitem/squadRunSettlementHub.js";
 import type { SquadRuntime } from "./workitem/squadContracts.js";
 import type { WorkItemEvent } from "./workitem/workItemService.js";
 import { createBotsService } from "./bots/botsService.js";
@@ -1449,6 +1453,12 @@ export function createLocalServices(options: {
    * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
    */
   onSquadDispatchRequested?: (request: SquadDispatchRequest) => Promise<void> | void;
+  /**
+   * C4b：run 结算事实的常驻订阅口（形态与 onSquadDispatchRequested 同款）：组合根建一份
+   * settlement hub、每个 runtime 收尾后 publish；host 注入本回调做队列推进/义务重放。
+   * 不注入 ⇒ 事实发得出但没人推进（warn 留痕，不静默）。
+   */
+  onSquadRunSettled?: (settlement: SquadRunSettlement) => Promise<void> | void;
   /** 闲时任务翻 schedulable 后请求宿主立即唤醒 scheduler（desktop host 注入 parentPort 转发）。 */
   onOffPeakSchedulerWakeRequested?: () => void;
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
@@ -2652,6 +2662,23 @@ export function createLocalServices(options: {
     );
   });
 
+  /* C4b：run 结算事实的常驻出口（与派发请求 hub 同款裁定）：组合根建一份，
+     每个 runtime 经 deps.runSettlementHub publish，这里订一次转给 host 注入的推进执行体。 */
+  const squadRunSettlements = createSquadRunSettlementHub();
+  squadRunSettlements.subscribe((settlement: SquadRunSettlement) => {
+    const runSettled = options?.onSquadRunSettled;
+    if (!runSettled) {
+      squadRuntimeLog.warn(
+        "run 已结算，但本组合根没有注入 onSquadRunSettled（排队行不会被推进）",
+        { runId: settlement.runId, agentId: settlement.agentId, status: settlement.status },
+      );
+      return;
+    }
+    void Promise.resolve(runSettled(settlement)).catch((error: unknown) =>
+      squadRuntimeLog.error("run 结算的推进执行体抛错", { runId: settlement.runId, error }),
+    );
+  });
+
   /**
    * 批次收尾的**驱动**（spec §5.7.3 / §5.7.4 / §6.3）：子项**全部**终态 ⇒ `advanceAfterChildrenDone`
    *（它内部完成：串行把每个队员合进集成分支 → 整批 `finalize` 合回主分支 → 抛弃已 `merged` 的工作树
@@ -2707,6 +2734,7 @@ export function createLocalServices(options: {
       // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
       // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
       dispatchRequestHub: squadDispatchRequests,
+      runSettlementHub: squadRunSettlements,
     });
     runtime.subscribeWorkItemEvents(forwardSquadChildCompleted(runtime));
     return runtime;

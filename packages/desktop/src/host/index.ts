@@ -3000,6 +3000,15 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           );
           return { ok: true };
         }
+        if (openOutcome.kind === "deferred") {
+          /* R2（用户 2026-10-05 裁定）：同 (workItem,agent) 已有活跃 run ⇒ 登记完成后重放义务
+             （原「撞分支名」失败路径退役）。不建会话、不发 prompt，回执 ok + 可见日志；重放接线在 C4b。 */
+          logger.info(
+            `[squad] dispatch deferred ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}` +
+              (openOutcome.coalescedInto ? ` coalescedInto=${openOutcome.coalescedInto}` : ""),
+          );
+          return { ok: true };
+        }
         if (openOutcome.kind === "already_registered") {
           ledgerRowRegistered = true;
         } else {

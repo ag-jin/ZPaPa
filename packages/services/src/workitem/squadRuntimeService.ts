@@ -1,3 +1,5 @@
+/* oxlint-disable eslint(max-lines) -- 小队服务面：ISquadRuntimeService 是冻结接口的聚合入口
+   （门禁/快照/台账/花名册/收件箱/队列读取都从这一处出），拆分会在描述符与协议两侧各留一份影子。 */
 import {
   isTerminalWorkItemStatus,
   resolveWorkspaceKey,
@@ -344,6 +346,12 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { id: string; patch: { title?: string; body?: string } },
   ): Promise<WorkItem>;
+  /** C4b：排队行读取口（推进扫描/快照计数共用；ORDER_BY_CREATED）。 */
+  listQueuedSquadRuns(target: SquadWorkspaceTarget): Promise<SquadRunRecord[]>;
+  /** C4b：deferred 重放义务读取口（推进扫描用；资格判定在推进侧，这里只给事实）。 */
+  listSquadDeferredObligations(
+    target: SquadWorkspaceTarget,
+  ): Promise<import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRecord[]>;
   /** 起新 run ⇒ **入口过门禁**（入口① 的队员段与入口③ 都汇到这里）。 */
   openMemberRun(
     target: SquadWorkspaceTarget,
@@ -827,6 +835,17 @@ export function createSquadRuntimeService(deps: {
         parentId: input.parentId,
         assignee: input.assignee,
       });
+    },
+
+    async listQueuedSquadRuns(target) {
+      const runtime = await deps.createRuntime(target);
+      // workspaceKey 与台账行同源口径（C14：identity 去空白优先，否则 path）。
+      return runtime.squadRunRepo.listQueued(keyOf(runtime));
+    },
+
+    async listSquadDeferredObligations(target) {
+      const runtime = await deps.createRuntime(target);
+      return runtime.squadDeferredDispatchRepo.list(keyOf(runtime));
     },
 
     async openMemberRun(target, input) {

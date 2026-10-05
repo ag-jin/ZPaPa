@@ -72,6 +72,8 @@ export type SquadRuntime = {
   workItemRepo: WorkItemRepo;
   wakeRuleRepo: WakeRuleRepo;
   squadRunRepo: SquadRunRepo;
+  /** R2：deferred 重放义务表（C4b）：服务面读取/推进扫描用；写入唯一入口仍是 lifecycle。 */
+  squadDeferredDispatchRepo: import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRepo;
   /**
    * 收件箱台账（**加法**，P2c）。`inbox_items` 表的唯一读写处（repo 内部是唯一写者）。
    *

@@ -132,6 +132,10 @@ export interface SquadRunRepo {
    * 认领成功后由调用方（生命周期推进臂）建树并 patch branch/dir_name。
    */
   claimQueuedRunForPromotion(runId: string, maxConcurrentRuns: number): boolean;
+  /** R2 判据一：该 (workspace,workItem,agent) 已有排队行（并入优先于义务，统一裁决表第 1 行）。 */
+  hasQueuedRunForPair(workspaceKey: string, workItemId: string, agentId: string): boolean;
+  /** R2 判据二：该 (workspace,workItem,agent) 已有活跃 run（open/produced/rejected——仍占树）。 */
+  hasActiveRunForPair(workspaceKey: string, workItemId: string, agentId: string): boolean;
   /**
    * 队长行的**带闸原子登记**（C3/A8：「吸收优先于排队」——已存在活跃队长行 ⇒ 照旧吸收，
    * 不问容量；无活跃队长行且容量满 ⇒ 落队长排队行；已有排队行 ⇒ 并入留痕）。
@@ -493,6 +497,25 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
             "静默 no-op 会让「这条排队派发还跑不跑」变成没人知道的事，故一律抛。",
         );
       }
+    },
+
+    hasQueuedRunForPair(workspaceKey, workItemId, agentId) {
+      const row = db
+        .prepare(
+          "SELECT 1 FROM squad_runs WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued' LIMIT 1",
+        )
+        .get(workspaceKey, workItemId, agentId);
+      return row !== undefined;
+    },
+
+    hasActiveRunForPair(workspaceKey, workItemId, agentId) {
+      const row = db
+        .prepare(
+          `SELECT 1 FROM squad_runs WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ?
+             AND status IN (${ACTIVE_STATUS_PLACEHOLDERS}) LIMIT 1`,
+        )
+        .get(workspaceKey, workItemId, agentId, ...SQUAD_RUN_ACTIVE_STATUSES);
+      return row !== undefined;
     },
 
     claimQueuedRunForPromotion(runId, maxConcurrentRuns) {

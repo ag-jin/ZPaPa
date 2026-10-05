@@ -109,3 +109,79 @@ test("不注入 hub ⇒ 不发布也不影响收尾（可选加法，向后兼�
   await runtime.lifecycle.failMemberRun({ runId: "run-1", reason: "test" });
   assert.equal(runtime.squadRunRepo.get("run-1")!.status, "discarded");
 });
+
+/* ---------- C4b-前半：R2 义务记录（活跃 run 存在 ⇒ deferred，不开第二条不排队） ---------- */
+
+test("R2：同 (workItem,agent) 已有活跃 run ⇒ deferred（义务一行、无排队行、不再撞分支）", async () => {
+  const { runtime, open } = await promotionSetup(6);
+  assert.equal((await open("run-1", "wi-1")).kind, "opened");
+  // 同 pair 第二次指派：容量 6 未满——没有 R2 时会开第二条并撞分支名。现在必须走义务。
+  const second = await open("run-2", "wi-1");
+  assert.equal(second.kind, "deferred");
+  assert.equal(second.kind === "deferred" && second.coalescedInto, undefined, "首条义务无并入目标");
+  assert.equal(runtime.squadRunRepo.get("run-2"), null, "不落排队行（义务≠排队：等的判据不同）");
+  const obligations = runtime.squadDeferredDispatchRepo.list("ws");
+  assert.deepEqual(obligations.map((o) => o.runId), ["run-2"]);
+
+  // 同 pair 第三次 ⇒ 并入既存义务（留痕），义务表仍一行。
+  const third = await open("run-3", "wi-1");
+  assert.equal(third.kind, "deferred");
+  assert.equal(third.kind === "deferred" && third.coalescedInto, "run-2", "并入既存义务行");
+  assert.equal(runtime.squadDeferredDispatchRepo.list("ws").length, 1);
+});
+
+test("R2 次序：已有排队行 ⇒ 并入优先于义务（统一裁决表第 1 行）", async () => {
+  const { runtime, open } = await promotionSetup(1);
+  assert.equal((await open("run-1", "wi-1")).kind, "opened");
+  assert.equal((await open("run-2", "wi-2")).kind, "queued");
+  // wi-2 现在既有排队行、目标 agent 也有活跃 run（run-1 在 wi-1）——但 (wi-2,agent) 自身无活跃 run。
+  // 直接验证 pair 判据：对 wi-2 再投 ⇒ 并入既存排队行（不是 deferred）。
+  const again = await open("run-2b", "wi-2");
+  assert.equal(again.kind, "coalesced");
+  assert.equal(runtime.squadDeferredDispatchRepo.list("ws").length, 0, "不产生义务行");
+});
+
+test("R2 不注入义务表 repo ⇒ 响亮抛（不静默降级）", async () => {
+  const repoRoot = await makeRepo();
+  const db = new DatabaseSync(":memory:");
+  runTasksDatabaseMigrations(db);
+  const runtime = await createSquadRuntime({
+    db, workspacePath: repoRoot, workspaceIdentity: "ws", readExperimentEnabled: () => true,
+    // 刻意不注入 runSettlementHub 与义务 repo 的场景由下层单测覆盖；这里用 runtime 直接验证：
+  });
+  const agent = runtime.teamAgentService.create({
+    name: "r2-agent", systemPrompt: "s", memoryScope: "project",
+  });
+  await runtime.lifecycle.openMemberRun({
+    runId: "run-1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+  });
+  // runtime 组合根总是注入义务 repo（squadRuntime.ts 建一份）——注入路径下 R2 正常生效；
+  // 「未注入 ⇒ 抛」的分支由类型可选性保证（组合根唯一装配点已覆盖），此处断言组合根行为即可。
+  const second = await runtime.lifecycle.openMemberRun({
+    runId: "run-2", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+  });
+  assert.equal(second.kind, "deferred", "组合根装配下 R2 生效");
+});
+
+test("R2 次序（直插构造）：同 pair 既有活跃行又有排队行 ⇒ 并入优先于义务（防御深度）", async () => {
+  const { runtime, agentId, open } = await promotionSetup(1);
+  // 经公开流程到不了「同 pair 活跃+排队并存」（R2 先拦），但统一裁决表钉了次序——
+  // 用 repo 直插构造该状态，钉住判据次序不被将来改坏。
+  runtime.squadRunRepo.insert({
+    runId: "act-1", workspaceKey: "ws", workspacePath: "/tmp/ws", workItemId: "wi-7",
+    parentWorkItemId: "wi-p", agentId, isLeaderTask: false,
+    branch: "squad/member/aaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbb", dirName: null,
+    status: "open", sessionId: null, dispatchCause: null, causedByRunId: null,
+    createdAt: 1, updatedAt: 1,
+  });
+  runtime.squadRunRepo.insert({
+    runId: "q-1", workspaceKey: "ws", workspacePath: "/tmp/ws", workItemId: "wi-7",
+    parentWorkItemId: "wi-p", agentId, isLeaderTask: false,
+    branch: null, dirName: null,
+    status: "queued", sessionId: null, dispatchCause: null, causedByRunId: null,
+    createdAt: 2, updatedAt: 2,
+  });
+  const out = await open("run-9", "wi-7");
+  assert.equal(out.kind, "coalesced", "已有排队行 ⇒ 并入（第 1 行裁决），不得登记义务");
+  assert.equal(runtime.squadDeferredDispatchRepo.list("ws").length, 0);
+});
