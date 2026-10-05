@@ -71,6 +71,7 @@ function snapshotWith(parts: { teamAgents?: TeamAgent[]; runs?: SquadRunRecord[]
     squads: [],
     workItems: [],
     runs: parts.runs ?? [],
+    queuedRuns: [],
   };
 }
 

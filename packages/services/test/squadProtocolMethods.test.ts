@@ -82,6 +82,7 @@ async function makeService(options?: { enabled?: boolean }) {
   return {
     repoRoot,
     runtime,
+    service: squadRuntimeService,
     handlers,
     seenTargets,
     events,
@@ -485,4 +486,42 @@ test("handler 模块只依赖服务面（不 import repo / workItemService）", 
   );
   const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, "").replaceAll(/\/\/.*$/gm, "");
   assert.doesNotMatch(code, /workItemRepo|squadRunRepo|createWorkItemService|createWorkItemRepo/);
+});
+
+// ---------- C5：快照的 queuedRuns 读取面（排队对 UI 可得；与 runs 口径互斥） ----------
+
+test("getSnapshot 含 queuedRuns：无排队 ⇒ []（非 undefined）；排队行按台账序透出且与 runs 互斥", async () => {
+  const { runtime, service } = await makeService();
+  const target0 = { path: "/tmp/ws", identity: "ws" };
+  const empty = await service.getSnapshot(target0);
+  assert.deepEqual(empty.queuedRuns, [], "无排队 ⇒ 空数组（不是 undefined——UI 直接 .length 即可）");
+
+  const agent = runtime.teamAgentService.create({
+    name: "c5", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 1,
+  });
+  await runtime.lifecycle.openMemberRun({
+    runId: "c5-r1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+  });
+  await runtime.lifecycle.openMemberRun({
+    runId: "c5-q1", workItemId: "wi-2", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+  });
+  await runtime.lifecycle.openMemberRun({
+    runId: "c5-q2", workItemId: "wi-3", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+  });
+  const snap = await service.getSnapshot(target0);
+  assert.deepEqual(
+    snap.queuedRuns.map((r) => r.runId),
+    ["c5-q1", "c5-q2"],
+    "排队行按台账序（ORDER_BY_CREATED）透出",
+  );
+  assert.ok(
+    snap.queuedRuns.every((r) => r.branch === null && r.dirName === null),
+    "排队行无树无分支（实体不变式经快照可见）",
+  );
+  // 口径互斥：runs（活跃=欠收尾）不含排队行；open 计入 runs、queued 不计。
+  assert.deepEqual(
+    snap.runs.map((r) => r.runId),
+    ["c5-r1"],
+    "runs 语义一字不动：open 在、排队不在（两条读法不得互替）",
+  );
 });

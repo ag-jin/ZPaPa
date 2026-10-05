@@ -38,7 +38,7 @@ const anAgent = {
 } as TeamAgent;
 
 function snapshotWith(enabled: boolean, teamAgents: TeamAgent[] = []): SquadSnapshot {
-  return { enabled, teamAgents, squads: [], workItems: [], runs: [] };
+  return { enabled, teamAgents, squads: [], workItems: [], runs: [], queuedRuns: [] };
 }
 
 const failure: SquadEntryFeedback = {

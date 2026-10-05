@@ -109,6 +109,7 @@ function snapshotWith(
     squads: parts.squads ?? [],
     workItems: parts.workItems ?? [],
     runs: parts.runs ?? [],
+    queuedRuns: [],
   };
 }
 

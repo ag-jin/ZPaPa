@@ -53,6 +53,11 @@ export type SquadSnapshot = {
   workItems: WorkItem[];
   /** 只列**未合并**的 run（`SquadRunRepo.listActive` 的口径）：最小视图关心的是「还欠收尾的那些」。 */
   runs: SquadRunRecord[];
+  /**
+   * **排队待开**的 run（C5，`SquadRunRepo.listQueued` 单源、台账序）：排队行无树无分支，
+   * 与 `runs` 口径**互斥不得互替**（runs=还欠收尾；queued=还没开跑）。无排队 ⇒ `[]`（非 undefined）。
+   */
+  queuedRuns: SquadRunRecord[];
 };
 
 export type CreateWorkItemRequest = {
@@ -768,6 +773,7 @@ export function createSquadRuntimeService(deps: {
         squads: runtime.squadService.list(),
         workItems: runtime.workItemRepo.listByWorkspace(keyOf(runtime)),
         runs: runtime.squadRunRepo.listActive(keyOf(runtime)),
+        queuedRuns: runtime.squadRunRepo.listQueued(keyOf(runtime)),
       };
     },
 

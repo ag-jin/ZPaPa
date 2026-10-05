@@ -182,7 +182,7 @@ test("工作项状态文案覆盖六个状态，且键集与共享层一致", ()
 // ---------- ③ 新建可点性（四格穷举） ----------
 
 function snapshotWith(workItems: WorkItem[]): SquadSnapshot {
-  return { enabled: true, teamAgents: [], squads: [], workItems, runs: [] };
+  return { enabled: true, teamAgents: [], squads: [], workItems, runs: [], queuedRuns: [] };
 }
 
 // 新建按钮可点性（四格穷举）：快照未取到（加载中/失败）时**置灰** —— 对话框的指派人 / 父项

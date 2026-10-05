@@ -66,6 +66,7 @@ test("往返：parseAssigneeValue(assigneeOptionValue(x)) 原样还原 x", () =>
     squads: [{ id: "s1", name: "第 1 小队", enabled: true } as Squad],
     workItems: [],
     runs: [],
+    queuedRuns: [],
   };
   const values = new Set(workItemAssigneeOptions(snapshot).map((option) => option.value));
   for (const assignee of [
