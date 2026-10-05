@@ -225,6 +225,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
               .find((candidate) => candidate.id === agentId);
             return agent === undefined ? undefined : resolveTeamAgentMaxConcurrentRuns(agent);
           },
+          runSettlementHub: deps.runSettlementHub,
         });
         return { baseBranch, integrationMerger, lifecycle };
       })();

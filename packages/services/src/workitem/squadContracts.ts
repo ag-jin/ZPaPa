@@ -1,3 +1,4 @@
+import type { SquadRunSettlementHub } from "./squadRunSettlementHub.js";
 import type { TasksIndexDatabase } from "../session/taskIndexRepo.js";
 import type { SquadService } from "../teams/squadService.js";
 import type { TeamAgentService } from "../teams/teamAgentService.js";
@@ -29,6 +30,8 @@ export type {
   SquadRunLifecycle,
 } from "./squadRunLifecycle.js";
 
+export type { SquadRunSettlementHub } from "./squadRunSettlementHub.js";
+
 export type SquadRuntimeDeps = {
   /** `taskIndexRepo.openSharedDatabase()` 交出的**同一条**连接。自行另开一条会跳过迁移/回填（recon.md F3）。 */
   db: TasksIndexDatabase;
@@ -46,6 +49,12 @@ export type SquadRuntimeDeps = {
    * 异步账本 + await 会让「谁来判」重新散开成多处。
    */
   readExperimentEnabled: () => boolean;
+  /**
+   * run 结算事实的扇出 hub（C4，**可选加法**）：生命周期在每个收尾迁移之后 publish，
+   * 一次覆盖全部收尾路径（host 订阅闭包 / UI 审查 / 编排器——分散挂会漏，C0 2.4）。
+   * 推进/重放的消费方接线在 C4b；不注入 ⇒ 不发布（测试可静默）。
+   */
+  runSettlementHub?: SquadRunSettlementHub;
   /**
    * 派发请求的**常驻订阅出口**（**加法**，2026-10-02 第 2 轮裁定，落点 ii）。
    *

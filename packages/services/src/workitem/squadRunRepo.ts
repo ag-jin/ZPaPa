@@ -127,6 +127,12 @@ export interface SquadRunRepo {
    */
   recordCoalescedRequest(requestRunId: string, targetRunId: string): void;
   /**
+   * 排队行的**认领升级**（C4 推进）：原子 `queued → open`，容量子查询在语句内（认领即占位，
+   * 并发认领不超上限）。返回 false = 容量仍满或行已不在排队态（别的推进路径先到）。
+   * 认领成功后由调用方（生命周期推进臂）建树并 patch branch/dir_name。
+   */
+  claimQueuedRunForPromotion(runId: string, maxConcurrentRuns: number): boolean;
+  /**
    * 队长行的**带闸原子登记**（C3/A8：「吸收优先于排队」——已存在活跃队长行 ⇒ 照旧吸收，
    * 不问容量；无活跃队长行且容量满 ⇒ 落队长排队行；已有排队行 ⇒ 并入留痕）。
    * 单条语句同持两个前置（活跃队长行 NOT EXISTS + 容量 count），并发下不失不变式。
@@ -487,6 +493,27 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
             "静默 no-op 会让「这条排队派发还跑不跑」变成没人知道的事，故一律抛。",
         );
       }
+    },
+
+    claimQueuedRunForPromotion(runId, maxConcurrentRuns) {
+      if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1) {
+        throw new Error(
+          `claimQueuedRunForPromotion 的 maxConcurrentRuns 必须是 ≥1 的整数（收到 ${String(maxConcurrentRuns)}）`,
+        );
+      }
+      const row = db
+        .prepare("SELECT workspace_key AS workspaceKey, agent_id AS agentId FROM squad_runs WHERE run_id = ? AND status = 'queued'")
+        .get(runId) as { workspaceKey: string; agentId: string } | undefined;
+      if (row === undefined) return false;
+      const changes = db
+        .prepare(
+          `UPDATE squad_runs SET status = 'open', updated_at = ?
+             WHERE run_id = ? AND status = 'queued'
+               AND (SELECT COUNT(*) FROM squad_runs
+                     WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?`,
+        )
+        .run(Date.now(), runId, row.workspaceKey, row.agentId, maxConcurrentRuns).changes;
+      return changes === 1;
     },
 
     recordCoalescedRequest(requestRunId, targetRunId) {

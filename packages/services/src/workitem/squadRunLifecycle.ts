@@ -9,7 +9,8 @@ import type { createOrphanReaper, ReapOutcome } from "../worktree/orphanReaper.j
 import type { WorkItemService } from "./workItemService.js";
 import { slugForId } from "./slug.js";
 import type { DispatchCause } from "./squadDispatchRequests.js";
-import type { SquadRunRecord, SquadRunRepo } from "./squadRunRepo.js";
+import type { SquadRunRecord, SquadRunRepo, SquadRunStatusPatch } from "./squadRunRepo.js";
+import type { SquadRunSettlementHub } from "./squadRunSettlementHub.js";
 
 /* 小队运行生命周期的**机械半**（spec §6.1–§6.3）：开树 / 收尾 / 审查 / 抛弃 / 启动回收。
 
@@ -267,6 +268,8 @@ export function createRunLifecycle(deps: {
    * 计数与判定在 repo 语句内（单一判定实现；host 不写第二份计数投影）。
    */
   resolveAgentMaxConcurrentRuns?: (agentId: string) => number | undefined;
+  /** C4：收尾迁移之后的结算事实扇出（不注入 ⇒ 不发布）。 */
+  runSettlementHub?: SquadRunSettlementHub;
 }): SquadRunLifecycle {
   const {
     squadRunRepo,
@@ -338,6 +341,24 @@ export function createRunLifecycle(deps: {
       .filter((branch): branch is string => branch !== null && branch !== "");
   }
 
+  /* C4：唯一写者在每个收尾迁移之后发布结算事实（覆盖 host 闭包/UI 审查/编排器全部路径——
+     分散挂会漏，C0 2.4 事实 2）。settled 行读不到（理论不可达）时用绑定 workspaceKey、
+     agentId 置空串——发布事实仍要发出（订阅方按 runId 也能定位）。 */
+  const settleStatus = (
+    runId: string,
+    status: "produced" | "rejected" | "merged" | "discarded",
+    patch?: SquadRunStatusPatch,
+  ): void => {
+    const settled = squadRunRepo.get(runId);
+    squadRunRepo.setStatus(runId, status, patch);
+    deps.runSettlementHub?.publish({
+      runId,
+      workspaceKey: settled?.workspaceKey ?? boundWorkspaceKey,
+      agentId: settled?.agentId ?? "",
+      status,
+    });
+  };
+
   return {
     async openMemberRun(request) {
       // `assertSafeSlug` 由 planBranches 的消费方（allocator / memberDirName）负责：
@@ -356,8 +377,29 @@ export function createRunLifecycle(deps: {
       /* R5 收口（C3）：同 runId（幂等键 eventKey）重投 ⇒ 台账已有此行，**不重复建树/登记**，
          交回 `already_registered` 让调用方走既有忙探测/绑定会话路径。此前是无条件 INSERT，
          重投会撞主键响亮抛——把「同一事实的重复投递」误当调用方 bug。 */
-      if (squadRunRepo.get(request.runId) !== null) {
-        return { kind: "already_registered" };
+      const existing = squadRunRepo.get(request.runId);
+      if (existing !== null) {
+        if (existing.status !== "queued") {
+          return { kind: "already_registered" };
+        }
+        /* C4 推进：排队行的「重放同 runId」就是推进入口（host 收到结算事件后按 runId 重投——
+           单一派发实现，不另写建会话+发 prompt 的第二套）。认领（原子 queued→open，容量子查询
+           在语句内）成功 ⇒ 建树 + patch branch/dir_name（先认领后建树：建树失败时行已是 open、
+           无树——与 openMemberRun 既有「台账先行」崩溃形态一致，失败出口可收口）。
+           认领失败（容量仍满/名册缺席）⇒ 照旧返回排队结论，等下一次结算。 */
+        const promoteLimit = deps.resolveAgentMaxConcurrentRuns?.(request.agentId);
+        if (
+          promoteLimit !== undefined &&
+          squadRunRepo.claimQueuedRunForPromotion(request.runId, promoteLimit)
+        ) {
+          const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
+          squadRunRepo.setStatus(request.runId, "open", {
+            branch: plan.member,
+            dirName: memberDirName(plan),
+          });
+          return { kind: "opened", branch: plan.member, worktreePath: memberPath };
+        }
+        return { kind: "queued", runId: request.runId };
       }
 
       /* **先落台账、后建树**（顺序不可颠倒）。
@@ -491,13 +533,13 @@ export function createRunLifecycle(deps: {
         );
       }
       // 只动台账状态这一列（队长无工作树、无分支：没有任何东西要动）：**不碰 git、不碰工作项状态**。
-      squadRunRepo.setStatus(runId, "merged");
+      settleStatus(runId, "merged");
     },
 
     async completeMemberRun({ runId }) {
       const record = requireRun(runId);
       // 台账状态：产出即 `produced`（该分支从此算「活跃」——已产出未合并，spec §6.2 要求它活到合并）。
-      squadRunRepo.setStatus(runId, "produced");
+      settleStatus(runId, "produced");
       /* 工作项推进到 `in_review` 走**工作项服务**（唯一写者不变）。
          CAS 未命中**不抛**（spec §5.7 第 5 项「不匹配则丢弃并记事件，不报错」）：
          产物已经产出了，若因为父项状态被别人改过就抛，队员的成果会连状态一起丢掉。 */
@@ -527,7 +569,7 @@ export function createRunLifecycle(deps: {
       if (verdict === "rejected") {
         /* 打回待修：只改台账状态，**工作树一个字节不动**（spec §6.2「审查被拒时必须存活到合并」）。
            删树/删分支要等到它被合并（或整批被放弃）时，由批次层的 discard 走。 */
-        squadRunRepo.setStatus(runId, "rejected");
+        settleStatus(runId, "rejected");
         return { ok: true, merged: false, kept: true };
       }
 
@@ -541,7 +583,7 @@ export function createRunLifecycle(deps: {
       });
 
       if (outcome.ok) {
-        squadRunRepo.setStatus(runId, "merged");
+        settleStatus(runId, "merged");
         return { ok: true, merged: true };
       }
 
@@ -560,7 +602,7 @@ export function createRunLifecycle(deps: {
       }
       // 摘树 + 删分支（顺序与配对校验都在 discardMember 内部）。
       await integrationMerger.discardMember({ branch: record.branch, dirName: record.dirName });
-      squadRunRepo.setStatus(runId, "discarded");
+      settleStatus(runId, "discarded");
     },
 
     async bindMemberRunSession({ runId, sessionId }) {
@@ -590,7 +632,7 @@ export function createRunLifecycle(deps: {
         );
       }
       // 只改台账，**不碰 git**：树与分支的清理交给启动回收器（它们已不在活跃集，spec §6.6/S15）。
-      squadRunRepo.setStatus(runId, "discarded");
+      settleStatus(runId, "discarded");
     },
   };
 }
