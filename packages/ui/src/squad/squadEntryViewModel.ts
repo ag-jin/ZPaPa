@@ -116,6 +116,8 @@ export const SQUAD_RUN_STATUS_MESSAGE_IDS: Record<SquadRunStatus, string> = {
   rejected: "squad.runs.status.rejected",
   merged: "squad.runs.status.merged",
   discarded: "squad.runs.status.discarded",
+  // C2 排队态：文案键必须穷尽（列表/详情读得到）；时间线不画排队站（R6 裁定，见 squadTimelineModel）。
+  queued: "squad.runs.status.queued",
 };
 
 export function squadRunStatusMessageId(status: SquadRunStatus): string {

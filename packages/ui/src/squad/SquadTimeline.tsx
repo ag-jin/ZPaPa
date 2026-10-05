@@ -37,6 +37,8 @@ const STATION_STATUS_CLASSES: Record<SquadRunStatus, string> = {
   rejected: "text-destructive",
   merged: "text-success",
   discarded: "text-foreground-subtlest",
+  // C2 排队态：穷尽键（Record 编译强制）；queued 行在建模型时已被排除（R6），不会走到渲染。
+  queued: "text-foreground-subtlest",
 };
 
 export function SquadTimeline({

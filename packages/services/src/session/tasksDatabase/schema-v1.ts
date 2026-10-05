@@ -315,3 +315,32 @@ export const SQUAD_RUN_CAUSE_SQL = `
   ALTER TABLE squad_runs ADD COLUMN dispatch_cause TEXT;
   ALTER TABLE squad_runs ADD COLUMN caused_by_run_id TEXT;
 `;
+
+/* 0009（C2 队列）：只加两索引与两张新表，**不加列**——0008 的列集断言在 0009 后逐字成立。
+   · 部分唯一索引 = 「(workspace, workItem,agent) 至多一个待开 Run」的一条 DDL 表达
+     （与 multica idx_one_pending_task_per_issue_agent_v2 同法；S6 §12.1-1 队列状态窗）；
+   · 容量索引服务闸的 count(open)×agent 计数（C0 十点之 10：produced/rejected 不占容量）；
+   · squad_run_deferred_dispatches = 运行中收到的派发请求的重放义务（S6 §12.1-2 deferred，
+     资格判据与排队不同故分表）；squad_run_coalesced_details = 并入留痕（INSERT OR IGNORE 幂等）。 */
+export const SQUAD_RUN_QUEUE_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_squad_runs_one_queued_per_item_agent
+    ON squad_runs(workspace_key, work_item_id, agent_id)
+    WHERE status = 'queued';
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_agent_capacity
+    ON squad_runs(workspace_key, agent_id, status);
+  CREATE TABLE IF NOT EXISTS squad_run_deferred_dispatches (
+    run_id           TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    work_item_id     TEXT NOT NULL,
+    agent_id         TEXT NOT NULL,
+    dispatch_cause   TEXT,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, agent_id)
+  );
+  CREATE TABLE IF NOT EXISTS squad_run_coalesced_details (
+    request_run_id   TEXT PRIMARY KEY,
+    target_run_id    TEXT NOT NULL,
+    created_at       INTEGER NOT NULL
+  );
+`;

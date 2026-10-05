@@ -205,6 +205,9 @@ export function buildSquadTimelineModel(input: {
   for (const run of input.runs) {
     if (seenRunIds.has(run.runId)) continue;
     seenRunIds.add(run.runId);
+    // R6 裁定（2026-10-05）：排队中的派发**不画站**——时间线是「运行历史」，排队行无树无会话，
+    // 画出来会被当开放站延伸到「现在」，看起来像一直在跑。排队的可见性归队列计数与详情页。
+    if (run.status === "queued") continue;
     runs.push(run);
   }
 

@@ -5,10 +5,20 @@ import { DISPATCH_CAUSES, type DispatchCause } from "./squadDispatchRequests.js"
    服务层（SquadRunLifecycle）才是唯一公开入口，导出 Repo 会让调用方绕过生命周期直接改运行状态。 */
 
 /**
- * 运行状态全集（spec §6.2 的生命周期：派单 → 执行 → 审查 → 合并 / 抛弃）。
- * 这五个是**持久行上的列值**，不是内存状态：启动回收要靠它跨重启认活跃集合（硬约束 2）。
+ * 运行状态全集（spec §6.2 的生命周期：派单 → 执行 → 审查 → 合并 / 抛弃；C2 起追加 queued）。
+ * 这六个是**持久行上的列值**，不是内存状态：启动回收要靠它跨重启认活跃集合（硬约束 2）。
+ * `queued`（排队待开，C2/⑤刀 Concurrency 半边）：**无树无分支无会话**——写路径拒绝带
+ * branch/dir_name 的 queued 行；它等待的只是容量，**不**在活跃集（SQUAD_RUN_ACTIVE_STATUSES 三值不动，
+ * 混进去会静默污染快照/启动和解/队长判据，C0 2.1 整表后果）。
  */
-export const SQUAD_RUN_STATUSES = ["open", "produced", "rejected", "merged", "discarded"] as const;
+export const SQUAD_RUN_STATUSES = [
+  "open",
+  "produced",
+  "rejected",
+  "merged",
+  "discarded",
+  "queued",
+] as const;
 
 /**
  * 「仍然占着工作树 / 分支」的三个状态：已派单、已产出待审、审查被拒待修。
@@ -18,6 +28,15 @@ export const SQUAD_RUN_STATUSES = ["open", "produced", "rejected", "merged", "di
 export const SQUAD_RUN_ACTIVE_STATUSES = ["open", "produced", "rejected"] as const;
 
 export type SquadRunStatus = (typeof SQUAD_RUN_STATUSES)[number];
+
+/** `insertMemberRunOrQueue` 的判别结论（C0 2.2-I；生命周期/host 的接线在 C3）：
+ *  - `opened`：容量未满且无既存排队行 ⇒ 本次直接开 run（行照既有 open 形态落盘）；
+ *  - `queued`：容量已满 ⇒ 本 runId 落为排队行（至多一个待开 per (workspace,workItem,agent)）；
+ *  - `coalesced`：该目标已有排队行 ⇒ 并入（不另起行），`targetRunId` = 既存排队行，留痕见明细表。 */
+export type InsertMemberRunOrQueueResult =
+  | { kind: "opened" }
+  | { kind: "queued"; runId: string }
+  | { kind: "coalesced"; targetRunId: string };
 
 export type SquadRunRecord = {
   runId: string;
@@ -69,6 +88,34 @@ export interface SquadRunRepo {
    * 各写一份状态字面量，改了常量就会出现「读法说没有活跃行、这条 SQL 也说没有」的静默分叉。
    */
   insertLeaderRunIfNotInProgress(record: SquadRunRecord): boolean;
+  /**
+   * 带并发闸的**原子开跑或排队**（C2 存储面；`openMemberRun` 内部接线在 C3）。
+   *
+   * 判定**写进语句本身**（与 `insertLeaderRunIfNotInProgress` 同法，「先查后插」在并发下
+   * 两次读都可能早于对方写入）：
+   *  - 语句一：`count(open)×agent < maxConcurrentRuns` 且无既存排队行 ⇒ 直接插 open 行；
+   *  - 语句二（语句一未命中时）：`NOT EXISTS` 前置插 **queued 行**（branch/dir_name 一律 NULL——
+   *    排队不占树；部分唯一索引 `idx_squad_runs_one_queued_per_item_agent` 在语句前置之外兜并发）；
+   *  - 两条都未命中 ⇒ 并入既存排队行 + `squad_run_coalesced_details` 留痕（幂等）。
+   *
+   * 容量口径：`count(status='open')`——produced/rejected 仍占树但**不占并发容量**（C0 十点之 10）。
+   */
+  insertMemberRunOrQueue(
+    record: SquadRunRecord,
+    maxConcurrentRuns: number,
+  ): InsertMemberRunOrQueueResult;
+  /** 排队行读取口（C5 快照计数/推进扫描共用）：本 workspace 全部 queued 行，`ORDER_BY_CREATED`。 */
+  listQueued(workspaceKey: string): SquadRunRecord[];
+  /**
+   * 排队丢弃出口（queued → discarded 终态）。只收 queued 行：对 open 行或已终态行调用
+   * **响亮抛**——静默 no-op 会让「这条排队派发到底还跑不跑」变成没人知道的事。
+   */
+  discardQueuedRun(runId: string): void;
+  /**
+   * 并入留痕（R3 裁定：明细表 `INSERT OR IGNORE` 幂等）：`requestRunId` = 本次被并入的请求，
+   * `targetRunId` = 它并入的排队行/义务行。同一请求重投不产生第二行（主键即请求 id）。
+   */
+  recordCoalescedRequest(requestRunId: string, targetRunId: string): void;
   get(runId: string): SquadRunRecord | null;
   listByWorkItem(workItemId: string): SquadRunRecord[];
   listByParent(parentWorkItemId: string): SquadRunRecord[];
@@ -138,7 +185,7 @@ function readStatus(value: string): SquadRunStatus {
   return value as SquadRunStatus;
 }
 
-/** 写路径的同一道闸：表列只有 SQUAD_RUN_STATUSES 这五个取值，写别的说明调用方传错了。 */
+/** 写路径的同一道闸：表列只有 SQUAD_RUN_STATUSES 这六个取值，写别的说明调用方传错了。 */
 function assertStatus(status: SquadRunStatus): SquadRunStatus {
   if (!(SQUAD_RUN_STATUSES as readonly string[]).includes(status)) {
     throw new Error(
@@ -146,6 +193,18 @@ function assertStatus(status: SquadRunStatus): SquadRunStatus {
     );
   }
   return status;
+}
+
+/* 排队行实体不变式的写路径闸：queued ⇒ 无树无分支。排队占的只是「容量席位」，开树发生在
+   推进（queued→open）之后；带 branch/dir_name 的 queued 行是把「已开树」与「未开树」混成一格，
+   回收器按 branch 投影时会把它当成活树处理（或静默漏掉），两种都不可接受。 */
+function assertQueuedHasNoTree(record: { status: SquadRunStatus; branch: string | null; dirName: string | null }): void {
+  if (record.status === "queued" && (record.branch !== null || record.dirName !== null)) {
+    throw new Error(
+      "squad_runs 拒绝写入带 branch/dir_name 的 queued 行：排队行无树无分支，开树发生在推进为 open 之后" +
+        `（branch=${String(record.branch)}，dir_name=${String(record.dirName)}）`,
+    );
+  }
 }
 
 /* `dispatch_cause` 的读回/写路径断言（与 readStatus / assertStatus 同款裁定）。
@@ -208,6 +267,7 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
       assertStatus(record.status);
       // 成因先过写路径闸：非法值绝不落盘（否则读回校验会在下次启动才炸，把失败推迟到无人值守的时刻）。
       assertDispatchCause(record.dispatchCause);
+      assertQueuedHasNoTree(record);
       db.prepare(
         `INSERT INTO squad_runs (
           run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
@@ -280,6 +340,140 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         | SquadRunRow
         | undefined;
       return row ? rowToSquadRun(row) : null;
+    },
+
+    // 见接口注释：三段式语句（开跑 → 排队 → 并入），每段的判定都写进语句本身。
+    insertMemberRunOrQueue(record, maxConcurrentRuns) {
+      assertStatus(record.status);
+      assertDispatchCause(record.dispatchCause);
+      if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1) {
+        throw new Error(
+          `insertMemberRunOrQueue 的 maxConcurrentRuns 必须是 ≥1 的整数（收到 ${String(maxConcurrentRuns)}）`,
+        );
+      }
+      // 语句一：容量未满且无既存排队行 ⇒ 直接开跑（行照 record 原样落盘，含调用方给定的 branch/dirName）。
+      const opened = db
+        .prepare(
+          `INSERT INTO squad_runs (
+            run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+            dispatch_cause, caused_by_run_id
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE (SELECT COUNT(*) FROM squad_runs
+                   WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?
+             AND NOT EXISTS (
+               SELECT 1 FROM squad_runs
+                WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
+             )`,
+        )
+        .run(
+          record.runId,
+          record.workspaceKey,
+          record.workspacePath,
+          record.workItemId,
+          record.parentWorkItemId,
+          record.agentId,
+          record.isLeaderTask ? 1 : 0,
+          record.branch,
+          record.dirName,
+          record.status,
+          record.sessionId,
+          record.createdAt,
+          record.updatedAt,
+          record.dispatchCause,
+          record.causedByRunId,
+          record.workspaceKey,
+          record.agentId,
+          maxConcurrentRuns,
+          record.workspaceKey,
+          record.workItemId,
+          record.agentId,
+        ).changes;
+      if (opened === 1) return { kind: "opened" };
+
+      // 语句二：插排队行——branch/dir_name 一律 NULL（实体不变式，语句层强制，record 带了也不落）。
+      const queued = db
+        .prepare(
+          `INSERT INTO squad_runs (
+            run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
+            is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+            dispatch_cause, caused_by_run_id
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (
+             SELECT 1 FROM squad_runs
+              WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
+           )`,
+        )
+        .run(
+          record.runId,
+          record.workspaceKey,
+          record.workspacePath,
+          record.workItemId,
+          record.parentWorkItemId,
+          record.agentId,
+          record.isLeaderTask ? 1 : 0,
+          record.sessionId,
+          record.createdAt,
+          record.updatedAt,
+          record.dispatchCause,
+          record.causedByRunId,
+          record.workspaceKey,
+          record.workItemId,
+          record.agentId,
+        ).changes;
+      if (queued === 1) return { kind: "queued", runId: record.runId };
+
+      // 两条都未命中 ⇒ 并入既存排队行（唯一索引保证它存在）：留痕幂等，返回目标。
+      const existing = db
+        .prepare(
+          `SELECT run_id FROM squad_runs
+            WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
+            ${ORDER_BY_CREATED} LIMIT 1`,
+        )
+        .get(record.workspaceKey, record.workItemId, record.agentId) as
+        | { run_id: string }
+        | undefined;
+      if (!existing) {
+        throw new Error(
+          `insertMemberRunOrQueue 并入失败：(workspace=${record.workspaceKey}, workItem=${record.workItemId}, ` +
+            `agent=${record.agentId}) 既无排队行也无法插入——并发窗口内行被移走且唯一索引阻止重插，属不可达态，须人工查库。`,
+        );
+      }
+      db.prepare(
+        "INSERT OR IGNORE INTO squad_run_coalesced_details (request_run_id, target_run_id, created_at) VALUES (?, ?, ?)",
+      ).run(record.runId, existing.run_id, Date.now());
+      return { kind: "coalesced", targetRunId: existing.run_id };
+    },
+
+    listQueued(workspaceKey) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM squad_runs WHERE workspace_key = ? AND status = 'queued' ${ORDER_BY_CREATED}`,
+        )
+        .all(workspaceKey) as unknown as SquadRunRow[];
+      return rows.map(rowToSquadRun);
+    },
+
+    discardQueuedRun(runId) {
+      const result = db
+        .prepare(
+          "UPDATE squad_runs SET status = 'discarded', branch = NULL, dir_name = NULL, updated_at = ? WHERE run_id = ? AND status = 'queued'",
+        )
+        .run(Date.now(), runId);
+      if (result.changes !== 1) {
+        throw new Error(
+          `squad_runs 没有 runId=「${runId}」的 queued 行，无法丢弃：行不存在、已推进为 open、或已终态。` +
+            "静默 no-op 会让「这条排队派发还跑不跑」变成没人知道的事，故一律抛。",
+        );
+      }
+    },
+
+    recordCoalescedRequest(requestRunId, targetRunId) {
+      db.prepare(
+        "INSERT OR IGNORE INTO squad_run_coalesced_details (request_run_id, target_run_id, created_at) VALUES (?, ?, ?)",
+      ).run(requestRunId, targetRunId, Date.now());
     },
 
     listByWorkItem(workItemId) {

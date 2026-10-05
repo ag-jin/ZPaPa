@@ -64,6 +64,14 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "ALTER TABLE squad_runs DROP COLUMN dispatch_cause",
     "ALTER TABLE squad_runs DROP COLUMN caused_by_run_id",
   ],
+  // 0009（C2 队列）：只加两索引（队列唯一性部分索引 + 容量计数索引）与两张新表（deferred 义务 / 合并明细），
+  // 不加列——列集断言（EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 路径）在 0009 后仍逐字成立。
+  "0009_squad_run_queue": [
+    "DROP INDEX idx_squad_runs_one_queued_per_item_agent",
+    "DROP INDEX idx_squad_runs_agent_capacity",
+    "DROP TABLE squad_run_coalesced_details",
+    "DROP TABLE squad_run_deferred_dispatches",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
@@ -128,8 +136,13 @@ test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库�
       if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
     },
   });
-  // 只补跑了一条：执行时账本头是 0008 之前的那一条（与上面「老库升级」用例同一读法）。
-  assert.deepEqual(migrated, [fullLedger[from008 - 1]?.id ?? null], "老库升级只补跑 0008");
+  // 补跑了两条（0008 + 0009）：`lastAppliedMigrationId` 在循环前只取一次基线，
+  // 两条 migrating 回调带的是**同一个基线 id**（B1：0009 落地后本断言必须随之改为 2 条同基线）。
+  assert.deepEqual(
+    migrated,
+    [fullLedger[from008 - 1]?.id ?? null, fullLedger[from008 - 1]?.id ?? null],
+    "老库升级补跑 0008 与 0009（基线 id 相同，各出现一次）",
+  );
   assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
   const columns = squadRunColumns(db);
   assert.deepEqual(

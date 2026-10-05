@@ -406,13 +406,16 @@ test("C 格（防御）：入边指向站点集里的非队长站 ⇒ 回落推�
 
 // ---------- 开放 / 闭合 ----------
 
-// 五态逐格（`Record<SquadRunStatus, boolean>` 强制穷尽：将来加状态时这里编译失败）。
+// 六态逐格（`Record<SquadRunStatus, boolean>` 强制穷尽：将来加状态时这里编译失败）。
+// queued 特判（R6 裁定 2026-10-05）：排队中的派发**不画站**——时间线是「运行历史」，
+// 排队行无树无会话，画出来是一条「看起来在跑」的假开放站；排队可见性归队列计数与详情。
 const EXPECTED_OPEN: Record<SquadRunStatus, boolean> = {
   open: true,
   produced: true,
   rejected: true,
   merged: false,
   discarded: false,
+  queued: false,
 };
 
 test("开放/闭合逐态：活跃站 open=true / endAt=null；终态站 open=false / endAt=updatedAt", () => {
@@ -423,6 +426,10 @@ test("开放/闭合逐态：活跃站 open=true / endAt=null；终态站 open=fa
       runs: [run({ runId: `run-${status}`, status, createdAt: 10, updatedAt: 99 })],
       teamAgents: [],
     });
+    if (status === "queued") {
+      assert.equal(model.lanes.length, 0, `status=${status}：不得建 lane（排队站被排除）`);
+      continue;
+    }
     const station = model.lanes[0]!.stations[0]!;
     assert.equal(station.open, expectedOpen, `status=${status} 的开放判据`);
     if (expectedOpen) {

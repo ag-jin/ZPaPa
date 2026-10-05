@@ -243,13 +243,15 @@ test("显示名解析：查不到对象时回落到 id，用户指派由视图�
 });
 
 // 运行状态文案必须**穷尽**：`Record<SquadRunStatus, string>` 让漏一个状态变成编译错误；
-// 这条用例再把「键集 = 服务层五个状态」钉住，防止有人把 Record 改成 Partial 而没被发现。
-test("运行状态文案覆盖五个状态", () => {
+// 这条用例再把「键集 = 服务层全部状态」钉住，防止有人把 Record 改成 Partial 而没被发现。
+// C2 起闭集含 queued（六个）：文案键在（列表/详情读得到），但时间线不画排队站（R6）。
+test("运行状态文案覆盖六个状态", () => {
   assert.deepEqual(Object.keys(SQUAD_RUN_STATUS_MESSAGE_IDS).sort(), [
     "discarded",
     "merged",
     "open",
     "produced",
+    "queued",
     "rejected",
   ]);
   for (const messageId of Object.values(SQUAD_RUN_STATUS_MESSAGE_IDS)) {

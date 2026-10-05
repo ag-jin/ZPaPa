@@ -4201,6 +4201,7 @@ const zhCN: Record<string, string> = {
   "squad.runs.status.rejected": "已打回，待修复",
   "squad.runs.status.merged": "已合并",
   "squad.runs.status.discarded": "已抛弃",
+  "squad.runs.status.queued": "排队中",
 
   // 「活动时间线」（squad.timeline.*，§11.2）：批根行内联展开的泳道图。
   // 弧线两种成色：**实线 = 台账记录的派发**（0008 两列，派发时刻由队长工具落账）；

@@ -46,7 +46,8 @@ test("迁移建出 squad_runs 表与索引", () => {
   const i = db
     .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_squad_runs%'")
     .all();
-  assert.equal(i.length, 2);
+  // C2（0009）后共 4 个：active / work_item + 队列唯一性部分索引 / 容量计数索引。
+  assert.equal(i.length, 4);
 });
 
 // 硬约束 2 的落点：活跃集合必须**跨重启存活**，所以它是持久行而不是内存状态。
@@ -114,10 +115,20 @@ test("写入未知状态抛错（不落盘）", () => {
 // 隔离要按**状态全集**逐格验：只测「别的 workspace 的 open 行不出现」会漏掉
 // 「别的 workspace 的 merged / discarded 行混进结果」这类错法——SQL 少一个 workspace_key
 // 条件时，多出来的正是这些行，而且不报错。
-test("listActive 的 workspace 隔离覆盖全部五个状态", () => {
+// C2 起：闭集含 queued（六个）。**期望值不变**即「queued 不入活跃集」的回归断言
+//（排队行无树无会话，混进活跃集会污染快照/启动和解/队长判据——C0 2.1 的整表后果）。
+test("listActive 的 workspace 隔离覆盖全部六个状态（queued 不入活跃集）", () => {
   const { repo } = setup();
   for (const status of SQUAD_RUN_STATUSES) {
-    repo.insert(row({ runId: `ws2-${status}`, workspaceKey: "ws2", status }));
+    repo.insert(
+      row({
+        runId: `ws2-${status}`,
+        workspaceKey: "ws2",
+        status,
+        // 排队行实体不变式：无树无分支（写路径闸会拒绝带 branch/dir_name 的 queued 行）。
+        ...(status === "queued" ? { branch: null, dirName: null } : {}),
+      }),
+    );
   }
   repo.insert(row({ runId: "ws-open" }));
   assert.deepEqual(
@@ -128,6 +139,119 @@ test("listActive 的 workspace 隔离覆盖全部五个状态", () => {
     repo.listActive("ws2").map((r) => r.runId),
     ["ws2-open", "ws2-produced", "ws2-rejected"],
   );
+});
+
+/* ---------- C2：队列持久事实（路径 A：闭集扩 queued，活跃集三值不动） ---------- */
+
+test("queued 行实体不变式：写路径拒绝带 branch/dir_name 的排队行", () => {
+  const { repo } = setup();
+  assert.throws(
+    () => repo.insert(row({ runId: "q-bad", status: "queued" })),
+    /queued/,
+    "排队行无树无分支：insert 必须拒绝带 branch/dir_name 的 queued 行",
+  );
+  repo.insert(row({ runId: "q-ok", status: "queued", branch: null, dirName: null }));
+  const queued = repo.get("q-ok")!;
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.branch, null);
+  assert.equal(queued.dirName, null);
+});
+
+test("insertMemberRunOrQueue：容量未满直开；满则排队；已有排队行则并入（留痕）", () => {
+  const { repo, db } = setup();
+  // 容量 1：第一条直开（open 行照既有形态落盘）。
+  const first = repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 1);
+  assert.equal(first.kind, "opened");
+  assert.equal(repo.get("r-1")!.status, "open");
+
+  // 容量满（count(open)≥1）且无排队行 ⇒ 新 runId 落 queued 行。
+  const second = repo.insertMemberRunOrQueue(
+    row({ runId: "r-2", workItemId: "wi-2" }),
+    1,
+  );
+  assert.equal(second.kind, "queued");
+  const queuedRow = repo.get("r-2")!;
+  assert.equal(queuedRow.status, "queued");
+  assert.equal(queuedRow.branch, null, "排队行不占树：branch 必须为 NULL");
+  assert.equal(queuedRow.dirName, null, "排队行不占树：dir_name 必须为 NULL");
+
+  // 容量满且已有 (workItem,agent) 之外……不——并入键是 (workspace,workItem,agent)：
+  // 同 agent 的**另一个**工作项会各自排队；这里验「同 (workItem,agent) 第三次请求 ⇒ 并入既存排队行」。
+  const third = repo.insertMemberRunOrQueue(
+    row({ runId: "r-3", workItemId: "wi-2" }),
+    1,
+  );
+  assert.equal(third.kind, "coalesced");
+  assert.equal(third.targetRunId, "r-2", "并入目标 = 既存排队行 r-2（至多一个待开）");
+  // 排队行总数仍为 1（部分唯一索引在语句前置之外再兜一层）。
+  const queuedCount = db
+    .prepare("SELECT COUNT(*) AS n FROM squad_runs WHERE status = 'queued'")
+    .get() as { n: number };
+  assert.equal(queuedCount.n, 1);
+  // 并入留痕：明细表一行，幂等（同请求重投不重复计数）。（映射成标量数组再比：SQLite 行是
+  // null 原型对象，与字面量 deepEqual 会因原型不同而假红。）
+  const details = db
+    .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details")
+    .all() as Array<{ request_run_id: string; target_run_id: string }>;
+  assert.deepEqual(
+    details.map((d) => [d.request_run_id, d.target_run_id]),
+    [["r-3", "r-2"]],
+  );
+});
+
+test("insertMemberRunOrQueue：不同工作项各自排队（唯一性按 (workspace,workItem,agent)）", () => {
+  const { repo, db } = setup();
+  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 1).kind, "opened");
+  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind, "queued");
+  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-3", workItemId: "wi-3" }), 1).kind, "queued");
+  const queuedCount = db
+    .prepare("SELECT COUNT(*) AS n FROM squad_runs WHERE status = 'queued'")
+    .get() as { n: number };
+  assert.equal(queuedCount.n, 2, "不同 workItem 的排队行互不并入（键是 (workspace,workItem,agent)）");
+});
+
+test("insertMemberRunOrQueue：容量放宽后恢复直开；produced/rejected 不占容量", () => {
+  const { repo } = setup();
+  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 2).kind, "opened");
+  // produced 仍占树但**不占并发容量**（计数口径 = count(open)，C0 十点之 10）。
+  repo.setStatus("r-1", "produced");
+  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind, "opened");
+});
+
+test("listQueued：按台账序返回；跨重启持久", () => {
+  const dir = mkdtempSync(join(tmpdir(), "squad-queue-"));
+  try {
+    const dbPath = join(dir, "tasks.db");
+    const db = new DatabaseSync(dbPath);
+    runTasksDatabaseMigrations(db);
+    const repo = createSquadRunRepo(db);
+    repo.insert(row({ runId: "r-1", workItemId: "wi-1" }));
+    repo.insertMemberRunOrQueue(row({ runId: "q-1", workItemId: "wi-2", createdAt: 5 }), 1);
+    repo.insertMemberRunOrQueue(row({ runId: "q-2", workItemId: "wi-3", createdAt: 9 }), 1);
+    db.close();
+    // 重开连接：排队事实仍在（持久，不靠内存）。
+    const reopened = new DatabaseSync(dbPath);
+    const repo2 = createSquadRunRepo(reopened);
+    assert.deepEqual(
+      repo2.listQueued("ws").map((r) => r.runId),
+      ["q-1", "q-2"],
+      "排队行跨重启可读，序 = ORDER_BY_CREATED",
+    );
+    reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("discardQueuedRun：只收排队行；重复丢弃/非排队行响亮抛", () => {
+  const { repo } = setup();
+  repo.insert(row({ runId: "r-1", workItemId: "wi-1" }));
+  const result = repo.insertMemberRunOrQueue(row({ runId: "q-1", workItemId: "wi-2" }), 1);
+  assert.equal(result.kind, "queued");
+  repo.discardQueuedRun("q-1");
+  assert.equal(repo.get("q-1")!.status, "discarded", "丢弃出口：queued → discarded（终态）");
+  assert.throws(() => repo.discardQueuedRun("q-1"), /queued/, "已终态的行不得再丢（响亮，不静默）");
+  assert.throws(() => repo.discardQueuedRun("r-1"), /queued/, "open 行不走排队丢弃出口");
 });
 
 // 队长 run 不建工作树（spec §6.1），它的 branch / dirName 是 NULL。活跃集合按 status 过滤、

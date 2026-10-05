@@ -4487,6 +4487,7 @@ const enUS: Record<string, string> = {
   "squad.runs.status.rejected": "Rejected, awaiting fixes",
   "squad.runs.status.merged": "Merged",
   "squad.runs.status.discarded": "Discarded",
+  "squad.runs.status.queued": "Queued",
 
   // Activity timeline (squad.timeline.*, spec §11.2): the swimlane chart expanded inline under a
   // batch-root row. Arcs come in two shades: **solid = recorded dispatch** (the 0008 columns,
