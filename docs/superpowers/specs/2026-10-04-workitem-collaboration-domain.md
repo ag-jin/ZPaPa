@@ -1,6 +1,6 @@
 # 工作项协作域规格：Comment / Activity / Decision
 
-- **状态**：规格草案，待后续实现轮次拆解；本轮只新增规格，不实现产品代码。§12 十二项未决问题已于 2026-10-05 全部裁定（见 §12.1）
+- **状态**：规格草案，待后续实现轮次拆解；本轮只新增规格，不实现产品代码。§12 十二项未决问题已于 2026-10-05 全部裁定（§12.1）；同日上位裁定「优先按 multica 的设计」+ 分歧五项与追加三项定案（§12.2）
 - **日期**：2026-10-04
 - **适用分支**：`feat/multi-agent-squad-p2b`
 - **上位依据**：`docs/superpowers/specs/2026-10-01-multi-agent-squad-design.md`（§5.1、§5.5、§5.7、§8、§10、§15），`docs/multica-squad-absorption-review.md`（§1.4、§1.6、§1.8、§5.6、§5.7），以及 `.superpowers/sdd/2026-10-01-multi-agent-squad-p2b/progress.md` 最近的 P2b 接线记录。
@@ -107,7 +107,11 @@ SourceRunRef {
 
 `InlineAnchor` 至少包含 `path`、`startLine`、`startColumn?`、`endLine?`、`endColumn?`、`baseRevision?`。它是上下文，不是工作树状态；行号漂移不能修改评论，也不能让评论消失。引用形态已定案：锚点 + 尽力存评论时 commit SHA（`baseRevision`），不存内容快照（§12.1-9）。
 
-评论删除、编辑、覆盖均不在本轮语义内。若未来需要隐藏，增加独立的 moderation Activity 或 tombstone，不更新原评论行。
+评论**软删除**（对齐 multica #8296，2026-10-05 裁定）：新增 `deletedAt?` 墓碑字段——置位只写时间戳，正文/作者/锚点一律不动；已删评论不再作为 thread_parent 参与路由（§4.5 第 5 条），但其线程内回复仍是回复（不升格为新请求）；删除事实写 `comment_deleted` Activity。编辑/覆盖仍不支持。
+
+**线程解决态**（对齐 multica 069，2026-10-05 裁定）：线程根评论新增 `resolvedAt?`；仅根可置位/取消，各写一条 Activity；解决态不影响任何触发语义。
+
+**表情回应**（对齐 multica 026，2026-10-05 裁定）：新增轻实体 `WorkItemCommentReaction { id, workspaceIdentity, workItemId, commentId, author, emoji, createdAt }`，append-only，`(commentId, author, emoji)` 幂等；永不触发派发；写 `comment_reaction_added` Activity。
 
 ### 3.3 WorkItemActivity
 
@@ -148,6 +152,9 @@ SourceRunRef {
 - `worktree_discarded`
 - `wake_rule_fired`
 - `inbox_item_created`
+- `comment_deleted`
+- `comment_resolved`
+- `comment_reaction_added`
 
 其中 `status_changed` 必须引用既有 `WorkItemService.transition` 产生的事件；Activity 不能反过来成为状态写接口。
 
@@ -192,20 +199,20 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 
 | 来源/形态 | C | A | D | N/R 规则 | 说明 |
 |---|---:|---:|---:|---|---|
-| 普通人类评论，无 mention | 是 | `comment_created` | 否 | N | 记录讨论，不改变 assignee/status |
-| 普通 agent 评论，无 mention | 是 | `comment_created` | 否 | N | `sourceRun` 必须存在；不因 agent 身份自动派发 |
+| 普通人类评论，无 mention | 是 | `comment_created`；触发时另写派发事实 | 按级联 | 隐式路由级联定目标（§4.5）；无 agent 语境则 N | 对齐 multica：对 agent 指派/agent 参与的项说话＝请求其处理；@all/@人名 抑制（§4.5） |
+| 普通 agent 评论，无 mention | 是 | `comment_created` | 否 | N | `sourceRun` 必须存在；agent 评论不参与隐式路由（§4.5），显式 @ 才触发 |
 | `@agent` 人类评论 | 是 | `comment_created` + `comment_mention_parsed` + `comment_dispatch_requested` | 是，一次 | D 后按既有去重/合并规则进入 R | `@` 是一次运行请求，不是改派，不改负责人/状态 |
 | `@agent` 队长/队员评论 | 是 | 同上 | 是，一次 | 顶层人类归因沿 `initiatedBy` 传递 | A2A 不得绕过权限；不因“来自 agent”自动放大权限 |
-| `@all` 评论 | 是 | `comment_created` + `comment_mention_parsed` + `comment_dispatch_suppressed` | 否 | N | `@all` 是广播标记/展示语义，本轮不产生 fan-out run |
+| `@all` 评论 | 是 | `comment_created` + `comment_mention_parsed` + `comment_dispatch_suppressed` | 否 | N | @all 无副作用（不开 run/不订阅/不通知），唯一语义＝抑制隐式路由（§12.1-3、§4.5） |
 | `/note` 无 mention | 是 | `comment_created` + `comment_dispatch_suppressed` | 否 | N | `/note` 只留记录；正文是否去除命令前缀由实现统一决定，原文必须可审计 |
 | `/note @agent` | 是 | 同上，另记录 mention 解析 | 否 | N | `/note` 优先级高于 mention；不得因为 mention 再派发 |
 | 未知 slash command | 是或拒绝，取决于 parser；不得静默降级 | 若接受则 `comment_created` | 否，除非明确解析为已知触发命令 | N | 规格要求响亮错误或明确普通文本策略，不能让客户端各自猜 |
-| 内联评论，无 mention | 是 | `comment_created`（含 `inline`） | 否 | N | 行锚点只提供上下文 |
+| 内联评论，无 mention | 是 | `comment_created`（含 `inline`） | 按级联 | 同普通人类评论（§4.5） | 行锚点只提供上下文，不改变触发语义 |
 | 内联评论 `@agent` | 是 | 评论三件套 | 是，一次 | D 后按普通 `@agent` 规则 | 内联不抑制触发 |
 | 同一作者连续普通评论 | 每条均是 | 每条均写 | 否 | N | 评论事实不合并、不丢原文 |
 | 同一 agent 连续 `@agent` 评论 | 每条均是 | 每条均写 | 合并为一个逻辑 dispatch event | 目标相同且合并窗口内时只 R 一次 | “连续评论合并”只合并派发，不合并 Comment/Activity |
 | 不同 agent 连续评论 | 每条均是 | 每条均写 | 分别按目标去重 | 不得因时间接近而跨作者合并 | 合并键至少包含 workItem、目标 agent、thread、窗口/代次 |
-| 评论回复 `parentCommentId` | 是 | `comment_created` | 由本条 mention 决定 | N 或 D | parent/thread 只表达关系，不自动触发 |
+| 评论回复 `parentCommentId` | 是 | `comment_created` | 由级联决定 | N 或 D | mention 优先；否则 thread_parent / conversation_continuation 规则（§4.5）；人回人不触发、不落兜底 |
 | 共享沟通会话消息 | 否（除非显式转成工作项 Comment） | 不写工作项 Activity | 否 | N | 会话消息不享有评论触发特权 |
 | 系统状态/Run/合并事实 | 否 | 写对应 Activity | 不由 Activity 直接产生 | N；若匹配 WakeRule，由规则路径 D | 事实可被 WakeRule 消费，但 Activity 不是执行器 |
 
@@ -225,7 +232,21 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 
 ### 4.4 什么“绝不触发”
 
-下列输入绝不直接产生 dispatch event：共享沟通会话消息、普通评论、`@all`、所有 `/note`、Activity 被读取/展示、Decision 被创建、评论编辑/删除请求（本域不支持编辑/删除）。若未来 WakeRule 消费这些事实，必须由 WakeRule 的 `eventKey`、`revision` 和防失控规则决定是否派发，不能把“Activity 写入”本身解释成自动执行许可。
+下列输入绝不直接产生 dispatch event：共享沟通会话消息、普通 **agent** 评论、无 agent 语境的人类普通评论（指派给人或未指派）、`@all`（仅抑制，自身不触发）、所有 `/note`、Activity 被读取/展示、Decision 被创建、评论编辑请求（不支持）与软删除请求、表情回应。人类普通评论对 agent 语境工作项的触发走 §4.5 隐式路由级联，是显式规则而非例外。若未来 WakeRule 消费这些事实，必须由 WakeRule 的 `eventKey`、`revision` 和防失控规则决定是否派发，不能把“Activity 写入”本身解释成自动执行许可。
+
+### 4.5 隐式路由级联（对齐 multica，2026-10-05 裁定 a/b/c；五源一次全量进 C1）
+
+人类评论（无显式 @agent/@squad mention）按以下优先级确定触发目标，命中即止：
+
+1. **显式 mention 优先**：`@agent`/`@squad` 走 §4.2 矩阵，本级联不参与；
+2. **@all 抑制**：含 `@all` ⇒ 无隐式触发（MUL-5411）；
+3. **@人名抑制**：评论点名了人类成员 ⇒ 无隐式触发（说给人听，不惊动 agent）；
+4. **指派小队 ⇒ 队长**：assignee 为 squad 时触发其队长；
+5. **thread_parent**：回复某 agent 作者的评论 ⇒ 触发该 agent；父评论已软删除（`deletedAt` 置位）则不算；
+6. **conversation_continuation**：回复线程的根所有者 agent ⇒ 触发之；人回人（父作者为人类）⇒ 不触发，也不落到指派兜底；
+7. **issue_assignee 兜底**：以上未命中且指派为 agent ⇒ 触发该 agent。
+
+约束：agent 评论不参与本级联（显式 @ 才触发）；触发源为五源闭集 `issue_assignee | mention_agent | mention_squad_leader | thread_parent | conversation_continuation`，派发事实与 Activity 必须带源；命中目标后的合并/排队/重放仍按 §12.1-1/2 执行（队列状态窗、并入待开 Run、完成重放义务）。
 
 ## 5. 状态与唯一写者
 
@@ -411,9 +432,9 @@ canInvoke(subject, workItem, target)    // 能否通过 @、手动入口或工�
 
 ### 11.2 C1：评论解析与触发矩阵
 
-范围：thread/parent、mention、`/note`、`@all`、inline anchor、连续评论合并、comment dispatch receipt。
+范围：thread/parent、mention、`/note`、`@all`、inline anchor、连续评论合并、comment dispatch receipt；**隐式路由级联五源一次全量**（§4.5，2026-10-05 裁定 b）；软删除、线程解决态、表情回应三件套（§3.2，2026-10-05 追加裁定）。
 
-验收场景至少穷举：普通评论、`@agent`、`@all`、`/note`、`/note @agent`、内联评论、回复、连续同 agent 评论、不同 agent 评论、共享会话消息。
+验收场景至少穷举：普通评论、`@agent`、`@all`、`/note`、`/note @agent`、内联评论、回复、连续同 agent 评论、不同 agent 评论、共享会话消息；级联五源各自命中与优先级（含 @all/@人名抑制、软删除父评论排除、人回人不兜底）；软删除/解决态/回应各自动作且均不触发派发。
 
 每个场景都断言 C/A/D/N/R 结果，特别断言：
 
@@ -504,15 +525,17 @@ canInvoke(subject, workItem, target)    // 能否通过 @、手动入口或工�
 5. 订阅 reason 闭集：creator/assignee/commenter/mentioned/manual（迁移 249 后加 delegated、迁移 120 加 autopilot）——与我们 §7.1 六 reason 同源多 autopilot。
 6. 链顶人类归因 `OriginatorUserID` 与我们 `initiatedBy` 同构；agent 评论不参与 member 驱动的会话路由。
 
-**待裁分歧清单（multica-first 复审新发现，未在本轮改动，逐项对齐排下一轮）**：
+**分歧裁定（2026-10-05 用户逐项，五项全部定案）**：
 
-| 项 | multica 设计 | 我们现状 | 建议方向 |
+| 项 | multica 设计 | 我们现状（裁定前） | 裁定 |
 |---|---|---|---|
-| a. 隐式路由 | 人类评论对 agent 指派的 issue **默认触发该 agent**（trigger source `issue_assignee`）；@all/@member-mention 抑制；agent 评论不参与隐式路由 | §4.2 规定普通无 mention 评论 → N（不触发） | **对齐**：普通人类评论在工作项指派给 agent 时默认触发该 agent；抑制语义随 @all 定案生效 |
-| b. 触发源闭集 | `issue_assignee / mention_agent / mention_squad_leader / thread_parent / conversation_continuation` 五源 | 仅 mention（@agent/@all）一源 | 对齐 a 后引入五源闭集；thread_parent/conversation_continuation 需逐个语义确认 |
-| c. @squad mention | 提及小队 = 触发其队长（mention_squad_leader） | 无 | 随 b 引入 |
-| d. 评论表混合 type | comment.type 含 status_change/progress_update/system（线程内系统条目） | Comment 纯沟通 + 独立 Activity（已被 activity_log 印证） | 维持分离；线程内系统条目展示形态实现轮再议 |
-| e. 重放义务持久化 | multica 自认 best-effort（durable obligation 明确 out of scope，错误日志兜底） | §8.4 要求启动恢复扫描 receipt | 我们标准更严，维持 §8.4 |
+| a. 隐式路由 | 人类评论对 agent 语境的 issue 默认触发（级联见 §4.5）；@all/@人名 抑制；agent 评论不参与 | 原规格普通评论 → N | **对齐 multica（全量级联）**——§4.2/§4.4/§4.5 已同步改写 |
+| b. 触发源闭集 | 五源 | 原仅 mention 一源 | **一次全量进 C1**（用户裁定，超出主会话建议的分期；C1 范围与验收面相应扩大，§11.2 已更新） |
+| c. @squad mention | 触发其队长（mention_squad_leader） | 无 | **对齐：触发队长**（含在 §4.5 与 @squad mention 规则中） |
+| d. 评论表混合 type | comment.type 含 status_change/progress_update/system | Comment 纯沟通 + 独立 Activity（已被 activity_log 印证） | **维持三实体分离**；线程内系统条目展示形态实现轮再议（登记为有意差异） |
+| e. 重放义务持久化 | best-effort（durable obligation 是其 out of scope，错误日志兜底） | §8.4 更严 | **维持 §8.4 更严标准**（multica 自认短板，不跟随） |
+
+**追加裁定（同轮取证发现，三项全部吸收，2026-10-05 用户勾选）**：评论软删除（`deletedAt` 墓碑，路由级联视已删父评论不算，§3.2/§4.5）、线程解决态（`resolvedAt`，§3.2）、表情回应（轻实体，永不触发，§3.2）；均进 C1 范围。
 
 ## 13. 实现纪律
 
