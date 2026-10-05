@@ -360,6 +360,7 @@ export function createRunLifecycle(deps: {
     deps.runSettlementHub?.publish({
       runId,
       workspaceKey: settled?.workspaceKey ?? boundWorkspaceKey,
+      workspacePath: settled?.workspacePath ?? deps.boundWorkspace.path,
       agentId: settled?.agentId ?? "",
       status,
     });

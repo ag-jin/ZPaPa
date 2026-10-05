@@ -8,6 +8,8 @@
 export type SquadRunSettlement = {
   runId: string;
   workspaceKey: string;
+  /** 本地定位快照（C4b）：推进侧由它构造 SquadWorkspaceTarget（identity 口径同 C14）。 */
+  workspacePath: string;
   /** 结算的那条 run 属于哪个 agent（推进扫描按 agent 找排队行/义务）。 */
   agentId: string;
   /** 收尾后的终态（produced / rejected / merged / discarded）。 */

@@ -86,3 +86,27 @@ test("跨重启持久：义务事实不靠内存", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* ---------- C4b：到期认领（恰一次；到期 = 目标对离开活跃集） ---------- */
+
+test("claimDue：活跃 run 占树 ⇒ 不到期不认领；收尾（离开活跃集）⇒ 认领恰一次", () => {
+  const { repo, db } = setup();
+  repo.insertIfAbsent(obligation({ runId: "obl-1", workItemId: "wi-1" }));
+  // 目标对有活跃 run（open）⇒ 不到期。
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id,
+       agent_id, is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
+       dispatch_cause, caused_by_run_id)
+     VALUES ('act-1', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, 'squad/member/x', NULL, 'open', NULL, 1, 1, NULL, NULL)`,
+  ).run();
+  assert.deepEqual(repo.claimDue("ws"), [], "活跃 run 仍占树（撞分支风险）⇒ 义务不到期");
+  // produced 仍在活跃集（占树待审）⇒ 仍不到期。
+  db.prepare("UPDATE squad_runs SET status = 'produced' WHERE run_id = 'act-1'").run();
+  assert.deepEqual(repo.claimDue("ws"), [], "produced 仍占树 ⇒ 不到期（按离开活跃集判，不按离开 open 判）");
+  // merged（终态、树已收）⇒ 到期，认领恰一次。
+  db.prepare("UPDATE squad_runs SET status = 'merged' WHERE run_id = 'act-1'").run();
+  const claimed = repo.claimDue("ws");
+  assert.deepEqual(claimed.map((o) => o.runId), ["obl-1"]);
+  assert.deepEqual(repo.claimDue("ws"), [], "认领即删除（恰一次；重复结算不重放第二次）");
+  assert.equal(repo.find("ws", "wi-1", "ta-a"), null);
+});

@@ -114,6 +114,7 @@ import {
   buildRemoteEnvironmentKey,
   isOffPeakTicketExpiredError,
   isRemoteWorkspaceIdentity,
+  isTerminalWorkItemStatus,
   resolveWorkspaceKey,
   formatModelPickerValue,
   type ZCodePromptAttachment,
@@ -2765,7 +2766,10 @@ process.on(
 /** 派发请求的触发源：规则触发带规则 id；人发起（队长派单 / UI 改派）**带成因**（服务面给的事实）。 */
 type SquadDispatchTrigger =
   | { trigger: "rule"; ruleId: string }
-  | { trigger: "user"; cause: UserDispatchCause };
+  | { trigger: "user"; cause: UserDispatchCause }
+  /** C4b：队列推进/义务重放（结算事实或启动扫描触发）。不是人发起、也没有规则到点——
+      语义是「把一条已经登记的派发意图继续执行」，幂等键 = 既存排队行/义务的 runId。 */
+  | { trigger: "replay"; replayCause?: DispatchCause };
 
 /** 一次派发的请求：消息形状的两路入口共用（`eventKey` 是幂等键里稳定的那一半，也是台账 runId）。 */
 type SquadDispatchRequestMsg = SquadDispatchTrigger & {
@@ -2801,7 +2805,12 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
   }
   const eventKey = msg.eventKey;
   /** 日志里的触发源标签：规则触发要指名规则；**人发起**（队长派单）没有规则（spec §5.5）。 */
-  const triggerLabel = msg.trigger === "rule" ? `rule=${msg.ruleId}` : "trigger=user";
+  const triggerLabel =
+    msg.trigger === "rule"
+      ? `rule=${msg.ruleId}`
+      : msg.trigger === "replay"
+        ? "trigger=replay"
+        : "trigger=user";
   /** planDispatch 的 ruleId 只在规则触发时给（人发起不写、也不要求任何规则）。 */
   const ruleId = msg.trigger === "rule" ? msg.ruleId : undefined;
   /* 本次派发是否**已经**在台账里留下自己的行（队员：`openMemberRun`；队长：`recordLeaderRun`）：
@@ -2896,7 +2905,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         squad,
         parentWorkItem,
         ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
-        trigger: msg.trigger,
+        trigger: msg.trigger === "replay" ? "user" : msg.trigger,
         ...(ruleId !== undefined ? { ruleId } : {}),
       });
     } catch (error) {
@@ -2951,7 +2960,14 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        规则到点的消息形状里**没有** cause（它是 host 自己的入口，不经服务面事件链）。
        本层只归并、**不二次判定**（按调用者反推成因就是推断，推断错会往台账里落一个错的成因，
        而读回不报错）。 */
-    const dispatchCause: DispatchCause = msg.trigger === "rule" ? "rule" : msg.cause;
+    /* replay 携带台账里存的原始成因；原始行没有（遗留 NULL）⇒ undefined 落 NULL（遗留/未知语义，
+       读回不得猜）——不在本层写死任何一档（守卫钉住「只搬运」）。 */
+    const dispatchCause: DispatchCause | undefined =
+      msg.trigger === "rule"
+        ? "rule"
+        : msg.trigger === "replay"
+          ? msg.replayCause
+          : msg.cause;
     /* 入边 `caused_by_run_id`：**只在派发时刻**解析「这条队员 run 的上级队长 run」——
        ① 仅 `leader_tool` 派发（队长工具派单；用户改派/规则触发没有必然的上级队长）；
        ② 仅队员 run（队长 run 是批次起点，无入边；单独安排没有台账行）；
@@ -3374,6 +3390,132 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       error: error instanceof Error ? error.message : String(error),
       failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
     };
+  }
+}
+
+
+/**
+ * C4b：**队列推进与义务重放**（结算事实/启动扫描的共唯一实现）。
+ *
+ * 为什么在收到「run 已结算」后做：结算释放了容量（open→produced/merged/discarded）或分支
+ * （活跃集收缩）——这正是排队行可认领、义务已到期的时刻。为什么订阅**结算 hub**而不是在
+ * 每个收尾点各挂一次：收尾触发者分散（host 闭包/UI 审查/编排器），分散挂会漏（C0 2.4）。
+ *
+ * A1 四项重验（与启动扫描同一套）：工作项存在且未终态/未归档、assignee 仍指向该 agent、
+ * agent 在名册且 enabled 未归档、实验开（门禁在 runSquadDispatch 内部）。不过 ⇒ 排队行收口
+ * discarded + error 留痕（S6 §12.1-12「可审计不可派发」），义务已认领的 ⇒ failMemberRun 收口。
+ * 重投 = `runSquadDispatch`（唯一派发实现）：排队行重放同 runId（C4a 认领升级臂）、义务用其
+ * runId 开新行；A2：回执 ok:false 且行已被认领为 open ⇒ failMemberRun + error 留痕（不收口
+ * 即僵尸 open + 容量泄漏）。
+ */
+async function advanceSquadQueueAfterSettlement(
+  services: ServiceCollection | null,
+  target: { path: string; identity: string },
+  /** 只推进该 agent（结算事件路径）；undefined = 全量扫描（启动第四步）。 */
+  agentFilter?: string,
+): Promise<void> {
+  const squadRuntime = services?.getOptional(ISquadRuntimeService);
+  if (!squadRuntime) {
+    logger.warn("[squad] queue advancement skipped: squad runtime service 未注册");
+    return;
+  }
+  const snapshot = await squadRuntime.getSnapshot(target);
+
+  // ① 排队行：A1 重验 → 重放同 runId（推进臂在 openMemberRun 内认领，容量仍满则回排队结论）。
+  for (const queued of await squadRuntime.listQueuedSquadRuns(target)) {
+    if (agentFilter !== undefined && queued.agentId !== agentFilter) continue;
+    const workItem = snapshot.workItems.find((item) => item.id === queued.workItemId);
+    const agent = snapshot.teamAgents.find((entry) => entry.id === queued.agentId);
+    if (
+      workItem === undefined ||
+      isTerminalWorkItemStatus(workItem.status) ||
+      workItem.archivedAt !== undefined ||
+      workItem.assignee.type !== "agent" ||
+      workItem.assignee.id !== queued.agentId ||
+      agent === undefined ||
+      agent.enabled !== true ||
+      agent.archivedAt !== undefined
+    ) {
+      await squadRuntime.discardQueuedSquadRun(target, queued.runId);
+      logger.error(
+        `[squad] queued dispatch discarded (A1 re-verify failed) workItem=${queued.workItemId}` +
+          ` agent=${queued.agentId} runId=${queued.runId}`,
+      );
+      continue;
+    }
+    const report = await runSquadDispatch({
+      trigger: "replay",
+      replayCause: queued.dispatchCause ?? undefined,
+      workItemId: queued.workItemId,
+      workspacePath: queued.workspacePath,
+      ...(queued.workspaceKey !== queued.workspacePath
+        ? { workspaceIdentity: queued.workspaceKey }
+        : {}),
+      eventKey: queued.runId,
+    });
+    if (!report.ok) {
+      // A2：认领可能已把行变 open（claim 先于失败）——收口，否则僵尸 open 永久占容量。
+      const row = (await squadRuntime.listQueuedSquadRuns(target)).find(
+        (entry) => entry.runId === queued.runId,
+      );
+      if (row === undefined) {
+        await squadRuntime
+          .failMemberRun(target, { runId: queued.runId, reason: `replay failed: ${report.error ?? "unknown"}` })
+          .catch((error: unknown) =>
+            logger.error(`[squad] replay failure cleanup failed runId=${queued.runId}`, error),
+          );
+      }
+      logger.error(
+        `[squad] queued dispatch replay failed workItem=${queued.workItemId} runId=${queued.runId}` +
+          ` failureKind=${report.failureKind ?? "unknown"}`,
+        report.error,
+      );
+    }
+  }
+
+  // ② 到期义务（恰一次认领）：A1 重验 → 用义务 runId 开新行（容量满则自然重新排队，语义自洽）。
+  for (const obligation of await squadRuntime.claimDueSquadDeferredObligations(target)) {
+    if (agentFilter !== undefined && obligation.agentId !== agentFilter) {
+      // 过滤不符的义务已从表里认领删除——这是实现缺陷（认领不该带过滤），响亮留痕。
+      logger.error(
+        `[squad] deferred obligation claimed but filtered out (BUG) workItem=${obligation.workItemId}` +
+          ` agent=${obligation.agentId} runId=${obligation.runId}`,
+      );
+      continue;
+    }
+    const workItem = snapshot.workItems.find((item) => item.id === obligation.workItemId);
+    const agent = snapshot.teamAgents.find((entry) => entry.id === obligation.agentId);
+    if (
+      workItem === undefined ||
+      isTerminalWorkItemStatus(workItem.status) ||
+      workItem.archivedAt !== undefined ||
+      workItem.assignee.type !== "agent" ||
+      workItem.assignee.id !== obligation.agentId ||
+      agent === undefined ||
+      agent.enabled !== true ||
+      agent.archivedAt !== undefined
+    ) {
+      logger.error(
+        `[squad] deferred obligation dropped (A1 re-verify failed) workItem=${obligation.workItemId}` +
+          ` agent=${obligation.agentId} runId=${obligation.runId}`,
+      );
+      continue;
+    }
+    const report = await runSquadDispatch({
+      trigger: "replay",
+      replayCause: obligation.dispatchCause ?? undefined,
+      workItemId: obligation.workItemId,
+      workspacePath: target.path,
+      ...(target.identity !== "" ? { workspaceIdentity: target.identity } : {}),
+      eventKey: obligation.runId,
+    });
+    if (!report.ok) {
+      logger.error(
+        `[squad] deferred obligation replay failed workItem=${obligation.workItemId}` +
+          ` runId=${obligation.runId} failureKind=${report.failureKind ?? "unknown"}`,
+        report.error,
+      );
+    }
   }
 }
 
@@ -4036,6 +4178,12 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               /* 第三步：和解**残留的队长 run**（`open` 卡住的行会把该工作项后续指派永久静默吃掉）。
                  放最后只为不遮住「重驱必须先于回收」那条既有契约；它只动队长行（无树无枝）。 */
               await settleStaleLeaderRunsBestEffort(activeServices, candidates);
+
+              /* 第四步（C4b，v2.1 C4-1）：排队行与到期义务的全量扫描推进（与在线同一实现；
+                 判据全持久无 timer；不通过 ⇒ 收口+留痕，S6 §8.4-4/§12.1-12）。 */
+              await forEachSquadWorkspaceTarget(candidates, "queue reconciliation", async (target) => {
+                await advanceSquadQueueAfterSettlement(activeServices, target);
+              });
             })();
           }
         }
@@ -4096,6 +4244,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                  服务面的派发 hub 由组合根订一次，转到这里 —— 走**与规则到点同一条**派发路径
                  （`runSquadDispatch`，只是 `trigger: "user"`），不写任何唤醒规则。 */
               onSquadDispatchRequested: dispatchSquadAssignment,
+              /* C4b：结算事实 → 队列推进/义务重放（组合根 hub 订一次转到这里）。
+                 异步不阻塞结算扇出；异常由组合根订阅侧统一留痕。 */
+              onSquadRunSettled: (settlement) =>
+                advanceSquadQueueAfterSettlement(
+                  activeServices,
+                  { path: settlement.workspacePath, identity: settlement.workspaceKey },
+                  settlement.agentId,
+                ),
               onOffPeakSchedulerWakeRequested: () => {
                 parentPort?.postMessage({ type: HostResponseTypes.OffPeakSchedulerWakeRequest });
               },

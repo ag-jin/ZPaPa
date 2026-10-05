@@ -824,3 +824,39 @@ test("队长 run 终态到达 ⇒ 释放订阅句柄（终态后不累积监听�
   assert.equal(disposed, 1, "终态到达后必须解绑（否则每次派发累积一个监听器）");
   assert.equal(runtime.squadRunRepo.get(runId)?.status, "merged", "解绑不影响终态入账");
 });
+
+/* ---------- C4b：推进回路的结构守卫（行为级端到端归 T8 打包态） ---------- */
+
+test("守卫｜队列推进回路接线齐全：结算回调 → advanceSquadQueueAfterSettlement → runSquadDispatch(重放) + 启动第四步", () => {
+  const host = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/host/index.ts"),
+    "utf8",
+  );
+  // ① 组合根回调接线（onSquadRunSettled → advance）。
+  assert.match(
+    host,
+    /onSquadRunSettled: \(settlement\) =>\s*advanceSquadQueueAfterSettlement\(/,
+    "结算事实必须接到推进回路（组合根 options）",
+  );
+  // ② 推进重投走唯一派发实现，且 trigger=replay（区别于人发起/规则到点）。
+  assert.match(host, /trigger: "replay",/, "重投必须用 replay 触发源（语义与审计可区分）");
+  // ③ A1 重验存在：排队行重投前判工作项终态/归档与名册（不验即复活已取消工作项的派发）。
+  const advanceSlice = host.slice(
+    host.indexOf("async function advanceSquadQueueAfterSettlement"),
+    host.indexOf("async function dispatchSquadAssignment"),
+  );
+  // 分段验：排队循环与义务循环**各自**要重验（全函数 includes 会被另一循环的同款调用误绿）。
+  const queuedLoop = advanceSlice.slice(0, advanceSlice.indexOf("claimDueSquadDeferredObligations"));
+  const obligationLoop = advanceSlice.slice(advanceSlice.indexOf("claimDueSquadDeferredObligations"));
+  for (const [name, loop] of [["排队行", queuedLoop], ["义务", obligationLoop]] as const) {
+    assert.ok(loop.includes("isTerminalWorkItemStatus("), `${name}推进必须重验工作项终态（A1）`);
+    assert.ok(loop.includes("archivedAt !== undefined"), `${name}推进必须重验归档（工作项与名册，A1）`);
+  }
+  assert.ok(advanceSlice.includes("discardQueuedSquadRun"), "重验不过必须收口排队行（不静默滞留）");
+  assert.ok(advanceSlice.includes("claimDueSquadDeferredObligations"), "义务到期认领必须走服务面（恰一次）");
+  assert.ok(advanceSlice.includes("failMemberRun"), "A2：认领后派发失败必须收口 open 行（防僵尸占容量）");
+  // ④ 启动第四步（queue reconciliation）挂在第三步之后。
+  const settleIdx = host.indexOf("await settleStaleLeaderRunsBestEffort(activeServices, candidates);");
+  const queueIdx = host.indexOf('"queue reconciliation"');
+  assert.ok(settleIdx >= 0 && queueIdx > settleIdx, "启动扫描第四步必须排在队长和解（第三步）之后");
+});

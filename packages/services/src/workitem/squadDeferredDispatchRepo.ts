@@ -37,6 +37,12 @@ export interface SquadDeferredDispatchRepo {
    * 静默 no-op 会让义务凭空滞留，下次启动又被「重放」一遍（重复派发且不报错）。
    */
   fulfill(workspaceKey: string, workItemId: string, agentId: string): void;
+  /**
+   * **到期认领**（C4b 重放，恰一次）：义务到期 = 目标对 (workItem,agent) **已离开活跃集**
+   * （无 open/produced/rejected 行——produced/rejected 仍占树，按 run 收尾会撞活分支，C0 2.3 事实 3）。
+   * 条件 DELETE（到期子查询写进语句）changes===1 才算认领——并发/重复结算不会重放第二次。
+   */
+  claimDue(workspaceKey: string): SquadDeferredDispatchRecord[];
 }
 
 interface DeferredRow {
@@ -129,6 +135,33 @@ export function createSquadDeferredDispatchRepo(db: DatabaseSync): SquadDeferred
         )
         .all(workspaceKey) as unknown as DeferredRow[];
       return rows.map(rowToRecord);
+    },
+
+    claimDue(workspaceKey) {
+      // 先读候选（到期判据在 DELETE 里再验一次：读与删之间的窗口由条件删除兜住）。
+      const rows = db
+        .prepare(
+          `SELECT * FROM squad_run_deferred_dispatches WHERE workspace_key = ?
+
+             ORDER BY created_at ASC, run_id ASC`,
+        )
+        .all(workspaceKey) as unknown as DeferredRow[];
+      const claimed: SquadDeferredDispatchRecord[] = [];
+      for (const row of rows) {
+        const changes = db
+          .prepare(
+            `DELETE FROM squad_run_deferred_dispatches
+              WHERE run_id = ?
+                AND NOT EXISTS (
+                  SELECT 1 FROM squad_runs
+                   WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ?
+                     AND status IN ('open', 'produced', 'rejected')
+                )`,
+          )
+          .run(row.run_id, row.workspace_key, row.work_item_id, row.agent_id).changes;
+        if (changes === 1) claimed.push(rowToRecord(row));
+      }
+      return claimed;
     },
 
     fulfill(workspaceKey, workItemId, agentId) {

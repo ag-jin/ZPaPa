@@ -583,6 +583,14 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         await lifecycle.discardMemberRun({ runId: record.runId });
       }
 
+      /* C4b：排队行（branch=null）对上面的 memberRuns 投影不可见，不收口会滞留成「批已放弃、
+         排队行还在等容量」的孤儿——按 S6 §12.1-12「可审计不可派发」收口为 discarded（留痕不静默）。 */
+      for (const queued of squadRunRepo
+        .listByParent(input.parentWorkItemId)
+        .filter((record) => record.status === "queued")) {
+        squadRunRepo.discardQueuedRun(queued.runId);
+      }
+
       /* 集成分支：**存在才删**，且这里**刻意不调 `discardIntegration`**、直接用 `deleteBranch`
          （全仓唯一那份 `git branch -D` 实现，与 lifecycle 的 `discardMember` 同源）。
          为什么：`discardIntegration` 的立身之本是那道**「必须是 target 的祖先」**的闸（防止把未落地的

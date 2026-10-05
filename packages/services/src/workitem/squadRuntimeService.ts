@@ -348,6 +348,15 @@ export interface ISquadRuntimeService {
   ): Promise<WorkItem>;
   /** C4b：排队行读取口（推进扫描/快照计数共用；ORDER_BY_CREATED）。 */
   listQueuedSquadRuns(target: SquadWorkspaceTarget): Promise<SquadRunRecord[]>;
+  /** C4b：排队行丢弃出口（A1 重验不过 / 批次放弃时收口，queued→discarded；只收排队行）。 */
+  discardQueuedSquadRun(target: SquadWorkspaceTarget, runId: string): Promise<void>;
+  /**
+   * C4b：**到期认领** deferred 义务（恰一次；到期 = 目标对已离开活跃集，判据在 DELETE 语句内）。
+   * 认领即删除——调用方拿到记录后必须完成重放（或响亮留痕），义务不回滚。
+   */
+  claimDueSquadDeferredObligations(
+    target: SquadWorkspaceTarget,
+  ): Promise<import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRecord[]>;
   /** C4b：deferred 重放义务读取口（推进扫描用；资格判定在推进侧，这里只给事实）。 */
   listSquadDeferredObligations(
     target: SquadWorkspaceTarget,
@@ -841,6 +850,16 @@ export function createSquadRuntimeService(deps: {
       const runtime = await deps.createRuntime(target);
       // workspaceKey 与台账行同源口径（C14：identity 去空白优先，否则 path）。
       return runtime.squadRunRepo.listQueued(keyOf(runtime));
+    },
+
+    async discardQueuedSquadRun(target, runId) {
+      const runtime = await deps.createRuntime(target);
+      runtime.squadRunRepo.discardQueuedRun(runId);
+    },
+
+    async claimDueSquadDeferredObligations(target) {
+      const runtime = await deps.createRuntime(target);
+      return runtime.squadDeferredDispatchRepo.claimDue(keyOf(runtime));
     },
 
     async listSquadDeferredObligations(target) {

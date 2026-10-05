@@ -505,8 +505,8 @@ test("派发桥归并三路成因：rule 就地归并、人发起用服务面给
   const branch = squadDispatchBridgeSource();
   assert.match(
     branch,
-    /msg\.trigger === "rule" \? "rule" : msg\.cause/,
-    "成因必须在派发桥归并成一处（规则触发没有 cause，人发起的那支才读 msg.cause）",
+    /msg\.trigger === "rule"\s*\?\s*"rule"\s*:\s*msg\.trigger === "replay"\s*\?\s*msg\.replayCause\s*:\s*msg\.cause/,
+    "成因必须在派发桥归并成一处（规则就地落 rule；replay 携带台账原始成因，缺 ⇒ undefined 落 NULL；人发起读 msg.cause）",
   );
   assert.doesNotMatch(
     branch,
