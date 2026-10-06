@@ -188,6 +188,11 @@ export function createSquadDeferredDispatchRepo(db: DatabaseSync): SquadDeferred
         .all(workspaceKey) as unknown as DeferredRow[];
       const claimed: SquadDeferredDispatchRecord[] = [];
       for (const row of rows) {
+        /* F1（X2.1 修复）：**读回校验先于 DELETE**。反序（先删后映射）时，闭集外的 origin /
+           dispatch_cause 会让抛错发生在行已被删除之后：该义务既不重放、也不留痕、也不清 receipt
+           —— 静默蒸发。写坏只可能来自外部直写 SQL（两个写者都有写闸），但一旦发生，
+           正确行为是响亮抛且行保留（重放账目与事实不脱节）。 */
+        const record = rowToRecord(row);
         const changes = db
           .prepare(
             `DELETE FROM squad_run_deferred_dispatches
@@ -199,7 +204,7 @@ export function createSquadDeferredDispatchRepo(db: DatabaseSync): SquadDeferred
                 )`,
           )
           .run(row.run_id, row.workspace_key, row.work_item_id, row.agent_id).changes;
-        if (changes === 1) claimed.push(rowToRecord(row));
+        if (changes === 1) claimed.push(record);
       }
       return claimed;
     },

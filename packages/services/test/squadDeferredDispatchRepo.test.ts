@@ -122,6 +122,38 @@ test("G4｜origin：评论义务与 R2 义务可判别；缺省 'reassign' 向�
   assert.throws(() => repo.find("ws", "wi-4", "ta-a"), /origin/);
 });
 
+/* ---------- F1（X2.1 修复）：读回校验先于 DELETE —— 坏行不得静默蒸发 ---------- */
+
+/* claimDue 的**唯一**合法顺序：先把行映射成记录（含读回闸校验），再按条件 DELETE。
+   反序（先删后映射）时，闭集外的 origin / dispatch_cause 会让抛错发生在**行已被删除之后**：
+   该义务既不重放、也不留痕、也不清 receipt —— 静默蒸发（复验报告 F1，important）。
+   写坏只可能来自外部直写 SQL（两个写者都有写闸），但一旦发生，正确行为是**响亮抛且行保留**。 */
+test("F1｜claimDue 读回校验先于 DELETE：origin 坏值抛错且义务行保留（不蒸发）", () => {
+  const { repo, db } = setup();
+  repo.insertIfAbsent(obligation({ runId: "obl-origin-bad" }));
+  db.prepare("UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-origin-bad'").run();
+  assert.throws(() => repo.claimDue("ws"), /origin/);
+  const rows = db
+    .prepare("SELECT run_id FROM squad_run_deferred_dispatches")
+    .all() as Array<{ run_id: string }>;
+  assert.deepEqual(
+    rows.map((row) => row.run_id),
+    ["obl-origin-bad"],
+    "读回校验失败时义务行必须保留：删除发生在校验之后（否则重放义务静默蒸发）",
+  );
+});
+
+test("F1｜claimDue 同款顺序：dispatch_cause 坏值抛错且义务行保留", () => {
+  const { repo, db } = setup();
+  repo.insertIfAbsent(obligation({ runId: "obl-cause-bad" }));
+  db.prepare("UPDATE squad_run_deferred_dispatches SET dispatch_cause = 'bogus' WHERE run_id = 'obl-cause-bad'").run();
+  assert.throws(() => repo.claimDue("ws"), /dispatch_cause/);
+  const rows = db
+    .prepare("SELECT run_id FROM squad_run_deferred_dispatches")
+    .all() as Array<{ run_id: string }>;
+  assert.deepEqual(rows.map((row) => row.run_id), ["obl-cause-bad"], "坏成因同样不得让行蒸发");
+});
+
 /* ---------- C4b：到期认领（恰一次；到期 = 目标对离开活跃集） ---------- */
 
 test("claimDue：活跃 run 占树 ⇒ 不到期不认领；收尾（离开活跃集）⇒ 认领恰一次", () => {
