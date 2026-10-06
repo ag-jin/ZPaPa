@@ -1004,5 +1004,25 @@ test("X2.1 接线：评论变体的成因只搬运（msg.cause），派发桥不
   );
   assert.doesNotMatch(branch, /dispatchCause\s*=\s*"(?:leader_tool|user_reassign|rule|comment)"/);
   // 评论变体必须带显式目标（B-1 的目标覆盖入参），否则会退回 assignee 推导。
-  assert.match(branch, /targetOverride/, "评论派发必须把 targetAgentId 交给 planDispatch 的覆盖入参");
+  assert.match(
+    branch,
+    /\.\.\.\(targetOverride !== undefined \? \{ targetOverride \} : \{\}\),/,
+    "评论派发必须把 targetAgentId 交给 planDispatch 的覆盖入参（只声明不用 = 目标退回 assignee）",
+  );
+});
+
+test("X2.1-D 接线：派发桥把目标 agent 的名册事实交给 planDispatch（归档/停用 ⇒ skip）", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function runSquadDispatch(");
+  const end = host.indexOf('parentPort.on("message",', start);
+  const branch = host.slice(start, end);
+  // 事实来源：同一份快照的名册（含已归档行）——查不到 ⇒ null（缺证据不设限）。
+  assert.match(branch, /snapshot\.teamAgents\.find\(\(entry\) => entry\.id === targetAgentId\)/);
+  assert.match(branch, /const targetAgentId =[\s\S]{0,200}?msg\.trigger === "comment"/);
+  // 事实进规划：漏传 ⇒ 已归档/停用的目标照旧起 run（#4 的缺陷形态）。
+  assert.match(
+    branch,
+    /planDispatch\(\{[\s\S]{0,300}?\.\.\.\(targetAgent !== undefined \? \{ targetAgent \} : \{\}\),/,
+    "名册事实必须进 planDispatch（#4：归档/停用按 skip）",
+  );
 });

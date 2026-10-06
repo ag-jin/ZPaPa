@@ -2937,6 +2937,21 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        覆盖值直接取自派发消息（入口已按 receipt 事实构造；本层不重新解析目标）。 */
     const targetOverride =
       msg.trigger === "comment" ? ({ type: "agent", id: msg.targetAgentId } as const) : undefined;
+    /* #4 修复（用户 2026-10-06 裁定）：目标智能体的**名册事实** —— `planDispatch` 用它把
+       「已归档 / 已停用」按 skip 处置（`inbox.notified` ⇒ 下面 skip 分支落 `dispatch_skipped` Inbox）。
+       目标 = 评论点名者，或 agent 指派项的 assignee（其余负责人类型由各自分支判，不传）。
+       名册里查不到 ⇒ `null`（缺证据不设限，A5 既有语义）；事实取自**同一份快照**
+       （`teamAgents` 含已归档行——`listTeamAgents` 刻意不过滤，是否隐藏由上层判）。 */
+    const targetAgentId =
+      msg.trigger === "comment"
+        ? msg.targetAgentId
+        : workItem.assignee.type === "agent"
+          ? workItem.assignee.id
+          : undefined;
+    const targetAgent =
+      targetAgentId === undefined
+        ? undefined
+        : (snapshot.teamAgents.find((entry) => entry.id === targetAgentId) ?? null);
     let events: ReturnType<typeof planDispatch>;
     try {
       events = planDispatch({
@@ -2944,6 +2959,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         squad,
         parentWorkItem,
         ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
+        ...(targetAgent !== undefined ? { targetAgent } : {}),
         ...(targetOverride !== undefined ? { targetOverride } : {}),
         /* replay 与 comment 都是**用户侧收口**（没有规则到点）：planDispatch 只按 trigger 区分
            「是否留 wake.rule_fired」，规则那一档才需要 trigger:"rule"；成因的分流在

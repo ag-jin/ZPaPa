@@ -1,4 +1,4 @@
-import type { Squad, WorkItem } from "@zcode/shared";
+import type { Squad, TeamAgent, WorkItem } from "@zcode/shared";
 
 /* 队长角色 run 的派发（spec §3.3 指派语义 / §5.1 三路输入一处写入 / §5.7.2 队长不改父项状态）。
 
@@ -152,6 +152,21 @@ export function planDispatch(input: {
    * · 只描述**派给谁**，不写任何状态：`assignee`/`status` 一字不动（纯函数，§5.2）。
    */
   targetOverride?: { type: "agent"; id: string };
+  /**
+   * **目标智能体的名册事实**（#4 修复，用户 2026-10-06 裁定）：本次要派的那个 agent
+   * （`agent` 指派的 assignee，或 `targetOverride` 的点名者）在名册里的定义。
+   *
+   * 为什么必须补这道判据：归档 / 停用是「这个智能体现在**不接新派发**」（与小队分支的
+   * `archivedAt` / `enabled` 两条并列状态**同一语义**），而 agent 分支此前**一个都不看** ——
+   * 一条派给已归档智能体的指派（或评论点名）会照样起 run，全程不报错，用户看到的只有
+   * 「它已经归档了却还在跑」。本函数把它按 **skip** 处置（`inbox.notified` 事件 ⇒ host 落
+   * `dispatch_skipped` Inbox，复用既有 kind）——skip 不是失败（spec §3.9 / multica errDispatchSkipped）。
+   *
+   * `null` / 省略 = **没有名册证据**（查不到 / 未注入）：不设限、照旧派发（既有 A5 语义不动）——
+   * 「查不到」证不了「它已归档」，按不可派发放行会把一次正常派发静默吞掉；名册缺席与
+   * 「已归档 / 已停用」是两种事实，不合并。
+   */
+  targetAgent?: Pick<TeamAgent, "id" | "enabled" | "archivedAt"> | null;
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
      缺失、空串、或**纯空白**一律抛错，见下面的 if 分支。 */
@@ -182,6 +197,11 @@ export function planDispatch(input: {
      完整答案 ⇒ 不再进入按 assignee 类型分流的 switch（负责人是人/小队时也照样起 agent run）。
      类别仍走 `resolveAgentRunClass` 的「声明 ↔ 父项证据」对表：覆盖只换目标，不换类别判据。 */
   if (input.targetOverride !== undefined) {
+    const unavailable = unavailableAgentReason(input.targetAgent);
+    if (unavailable !== null) {
+      events.push(notify(workItem.id, unavailable));
+      return events;
+    }
     events.push({
       kind: "run.enqueued",
       workItemId: workItem.id,
@@ -212,7 +232,15 @@ export function planDispatch(input: {
        一律响亮抛。不再有「非队长 ⇒ 单独安排」那条静默缺省 —— 那正是本次要修的那条残留
        （漏传父项 ⇒ 队员静默丢了工作树隔离，§6.1 落空且不报错）。
        两类都**不挂队长标记、不夹带花名册简报** —— 否则接到简报的普通智能体会以为自己该去派单。 */
-    case "agent":
+    case "agent": {
+      /* #4 修复：目标 agent 的归档 / 停用按 **skip**（非失败）处置 —— 与 squad 分支的
+         archivedAt / enabled 两条并列状态同一语义（「这个智能体现在不接新派发」）。
+         次序同 squad 分支：归档先判（更强的终态结论），两者同时命中时报「已归档」。 */
+      const unavailable = unavailableAgentReason(input.targetAgent);
+      if (unavailable !== null) {
+        events.push(notify(workItem.id, unavailable));
+        break;
+      }
       events.push({
         kind: "run.enqueued",
         workItemId: workItem.id,
@@ -226,6 +254,7 @@ export function planDispatch(input: {
         }),
       });
       break;
+    }
 
     /* 指派给小队：解析 `leaderAgentId` 并注入简报（spec §3.3）。三条触发路径共用本分支。 */
     case "squad": {
@@ -293,6 +322,28 @@ export function planDispatch(input: {
 
 function notify(workItemId: string, reason: string): DispatchEvent {
   return { kind: "inbox.notified", workItemId, reason };
+}
+
+/**
+ * 目标智能体此刻**接不接新派发**（`#4` 修复的唯一判据处，agent 分支与 targetOverride 分支共用）：
+ * 归档 / 停用 ⇒ 返回 skip 文案（host 落 `dispatch_skipped` Inbox）；可用或**无名册证据** ⇒ `null`。
+ *
+ * 为什么抽一处：两条分支（assignee agent / 评论点名者）各写一遍迟早分叉，而分叉的表现是
+ * 「同一条已归档的智能体，改派被拦、评论点名却照跑」——两种入口对同一事实给出不同结论且不报错。
+ * 次序与 squad 分支对齐：归档先判（更强的终态结论）；文案可分辨（归档 ⇒ 取消归档；停用 ⇒ 重新启用）。
+ */
+function unavailableAgentReason(
+  agent: Pick<TeamAgent, "enabled" | "archivedAt"> | null | undefined,
+): string | null {
+  // 无名册证据（查不到 / 未注入）：不设限、照旧派发（A5 既有语义；本条不扩）。
+  if (agent == null) return null;
+  if (agent.archivedAt !== undefined) {
+    return "被指派 / 点名的智能体已归档：按归档语义跳过本次派发，等人在 Inbox 处理";
+  }
+  if (agent.enabled === false) {
+    return "被指派 / 点名的智能体已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发";
+  }
+  return null;
 }
 
 /**

@@ -944,3 +944,86 @@ test("targetOverride：trigger=rule 时仍先留痕 wake.rule_fired（规则幂�
   assert.deepEqual(events[0], { kind: "wake.rule_fired", workItemId: "wi_1", ruleId: RULE_ID });
   assert.equal(events[1]?.kind, "run.enqueued");
 });
+
+/* ---------- 5.10 #4 修复（用户 2026-10-06 裁定）：归档 / 停用 agent 的派发 skip ----------
+
+   `D4`（登记不修 → 本轮修）：agent 分支此前**不校验名册状态** —— 一条指派（或评论点名）到一个
+   已归档 / 已停用智能体的派发会照样起 run。归档/停用是「这个智能体现在不接新派发」，按
+   **skip（非失败）** 处置（对齐 multica errDispatchSkipped 口径）：`inbox.notified` 事件 ⇒ host
+   现有 skip 分支落 `dispatch_skipped` Inbox（复用既有 kind，不新造枚举）。
+   判据只在调用方**给出了名册事实**时生效：名册缺席（查不到 / 未注入）保持既有 A5 语义（不设限）。 */
+
+test("#4：targetAgent 已归档 ⇒ skip（不是 failed），带可分辨的归档文案", () => {
+  const events = planDispatch({
+    workItem: agentItem(undefined),
+    squad: null,
+    trigger: "user",
+    runClass: "standalone",
+    targetAgent: { id: "ta_a", archivedAt: 1, enabled: true } as never,
+  });
+  assert.equal(
+    events.some((event) => event.kind === "run.enqueued"),
+    false,
+    "已归档的智能体不得被起 run（归档 = 停止使用）",
+  );
+  const skip = events.find((event) => event.kind === "inbox.notified");
+  assert.ok(skip?.kind === "inbox.notified");
+  assert.match(skip.reason, /归档/, "归档文案要能让人知道该去「取消归档」");
+});
+
+test("#4：targetAgent 已停用 ⇒ skip 且文案与归档可分辨", () => {
+  const events = planDispatch({
+    workItem: agentItem(undefined),
+    squad: null,
+    trigger: "user",
+    runClass: "standalone",
+    targetAgent: { id: "ta_a", enabled: false } as never,
+  });
+  assert.equal(events.some((event) => event.kind === "run.enqueued"), false);
+  const skip = events.find((event) => event.kind === "inbox.notified");
+  assert.ok(skip?.kind === "inbox.notified");
+  assert.match(skip.reason, /停用/, "停用是可随时重开的临时开关：文案不得与归档混用");
+  assert.doesNotMatch(skip.reason, /归档/);
+});
+
+test("#4：正常 / 名册缺席都照旧派发（缺证据不设限，A5 语义不变）", () => {
+  for (const targetAgent of [
+    { id: "ta_a", enabled: true },
+    { id: "ta_a", enabled: true, archivedAt: undefined },
+    null,
+    undefined,
+  ] as const) {
+    const events = planDispatch({
+      workItem: agentItem(undefined),
+      squad: null,
+      trigger: "user",
+      runClass: "standalone",
+      ...(targetAgent !== undefined ? { targetAgent } : {}),
+    });
+    assert.equal(
+      events.some((event) => event.kind === "run.enqueued"),
+      true,
+      `targetAgent=${JSON.stringify(targetAgent)} 时不得被拦（缺名册证据 ≠ 不可派发）`,
+    );
+  }
+});
+
+test("#4：targetOverride 目标已归档 / 已停用 ⇒ 同样 skip（评论点名者与 assignee 同一条判据）", () => {
+  for (const [agent, pattern] of [
+    [{ id: "ta_mentioned", archivedAt: 5, enabled: true }, /归档/],
+    [{ id: "ta_mentioned", enabled: false }, /停用/],
+  ] as const) {
+    const events = planDispatch({
+      workItem: agentItem(undefined),
+      squad: null,
+      trigger: "user",
+      runClass: "standalone",
+      targetOverride: { type: "agent", id: "ta_mentioned" },
+      targetAgent: agent as never,
+    });
+    assert.equal(events.some((event) => event.kind === "run.enqueued"), false);
+    const skip = events.find((event) => event.kind === "inbox.notified");
+    assert.ok(skip?.kind === "inbox.notified");
+    assert.match(skip.reason, pattern);
+  }
+});
