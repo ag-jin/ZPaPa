@@ -223,7 +223,10 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 1. 每条 Comment 原样落库，每条对应 `comment_created` Activity。
 2. 解析每条 mention 并落 `comment_mention_parsed` Activity。
 3. 对可触发 mention 计算稳定合并键：
-   `workspaceIdentity + workItemId + targetAgentId + threadId + dispatchGeneration`。
+   `workspaceIdentity + workItemId + targetAgentId + dispatchGeneration`。
+   （B-3 裁定 2026-10-06：**threadId 不进合并键**——与已落地的队列唯一索引
+   `(workspace_key, work_item_id, agent_id) WHERE status='queued'` 同键；threadId 降为
+   请求身份键（进 dedupKey，不进唯一性），避免两套「至多一个待开」定义。）
 4. 在规定合并窗口内，重复目标只产生一个 `comment_dispatch_requested` 的事实和一个逻辑 dispatch event；后续评论 Activity 引用第一次 event。
 5. 合并窗口、窗口结束条件、跨重启如何恢复必须是持久化契约，不得靠内存定时器决定事实是否重复。
 6. `/note` 与 `@all` 永不进入可触发合并桶。
