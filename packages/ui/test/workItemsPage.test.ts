@@ -270,8 +270,10 @@ test("守卫｜shell 有 work-items 分支且渲染 WorkItemsPage；全页判据
     "全页视图判据漏了 work-items（漏一个 = 该入口多一层 header 或终端面板，且不报错）",
   );
   assert.ok(
-    layout.includes('workItemsActive={workspaceMainView === "work-items"}'),
-    "侧栏入口的高亮态由同一个主视图判据给出",
+    // B5.1（S4）把该判据从「只看板」扩到「看板 + 工作项详情页」：详情页同属这个侧栏入口，
+    // 漏掉详情 ⇒ 进详情后侧栏失焦（静默）。断言相应加宽为**两个视图都覆盖**（比原来更强，不是放宽）。
+    layout.includes('workspaceMainView === "work-items" || workspaceMainView === "work-item-detail"'),
+    "侧栏入口的高亮态由同一个主视图判据给出（B5.1 起含工作项详情页）",
   );
   // 打开会话穿透：照 AutomationsSection 的形态经 shell 既有的 handleSelectTaskInChat
   //（目标就是本页的 workspace）—— 页面自己不拼导航。变异：删掉 onOpenSession ⇒ 红。

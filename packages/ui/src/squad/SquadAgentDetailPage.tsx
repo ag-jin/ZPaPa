@@ -23,6 +23,7 @@ export function SquadAgentDetailPage({
   workspaceIdentity,
   agentId,
   onBack,
+  onOpenWorkItem,
   onStartConversation,
   canStartConversation,
 }: {
@@ -32,6 +33,8 @@ export function SquadAgentDetailPage({
   agentId: string | null;
   /** 返回智能体列表（shell 顶栏返回同一条判据）。 */
   onBack: () => void;
+  /** B5.1：打开任务表里某条任务的工作项详情（由 shell 注入；返回目标 = 本 agent 详情页）。 */
+  onOpenWorkItem: (workItemId: string) => void;
   /** 4b DM 直通（用户裁定③：新建会话 + 预填提及该智能体——复用 startDraft + 预填机制）。 */
   onStartConversation: (agentName: string) => void;
   /** 只读 workspace ⇒ DM 入口隐藏（通路在只读态是静默返回，入口不该出现）。 */
@@ -81,12 +84,7 @@ export function SquadAgentDetailPage({
   return (
     <div data-testid="squad-agent-detail-page" className="flex flex-col gap-3 py-2">
       <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onBack}
-          data-testid="squad-agent-detail-back"
-        >
+        <Button size="sm" variant="outline" onClick={onBack} data-testid="squad-agent-detail-back">
           {t("squad.agentDetail.back")}
         </Button>
         {failure ? (
@@ -102,7 +100,11 @@ export function SquadAgentDetailPage({
             onStartConversation={onStartConversation}
             canStartConversation={canStartConversation}
           />
-          <TasksZone workItems={snapshot.workItems} agentId={agent.id} />
+          <TasksZone
+            workItems={snapshot.workItems}
+            agentId={agent.id}
+            onOpenWorkItem={onOpenWorkItem}
+          />
           <RunsZone runs={runHistory} agentId={agent.id} />
         </>
       ) : !failure ? (
@@ -194,9 +196,17 @@ function OverviewZone({
   );
 }
 
-
-/** 4b 任务表区：指派给该 agent 的工作项（只读——用户裁定⑥；动作归工作项页）。 */
-function TasksZone({ workItems, agentId }: { workItems: WorkItem[]; agentId: string }) {
+/** 4b 任务表区：指派给该 agent 的工作项（只读——用户裁定⑥；动作归工作项页）。
+    B5.1：行标题成为**可访问入口**（打开工作项详情）——只加导航，不在此页造写路径。 */
+function TasksZone({
+  workItems,
+  agentId,
+  onOpenWorkItem,
+}: {
+  workItems: WorkItem[];
+  agentId: string;
+  onOpenWorkItem: (workItemId: string) => void;
+}) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
   const assigned = workItems.filter(
@@ -213,7 +223,15 @@ function TasksZone({ workItems, agentId }: { workItems: WorkItem[]; agentId: str
         <ul className="flex flex-col gap-1">
           {assigned.map((item) => (
             <li key={item.id} className="flex items-center gap-2 text-ui-sm">
-              <span className="min-w-0 flex-1 truncate text-foreground">{item.title}</span>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="min-w-0 flex-1 justify-start truncate"
+                data-testid="squad-agent-detail-task-open"
+                onClick={() => onOpenWorkItem(item.id)}
+              >
+                {item.title}
+              </Button>
               <span className={BADGE_CLASSNAME}>{item.status}</span>
               {item.archivedAt !== undefined ? (
                 <span className={BADGE_CLASSNAME}>{t("squad.common.archived")}</span>
@@ -257,9 +275,7 @@ function RunsZone({ runs, agentId }: { runs: SquadRunRecord[] | null; agentId: s
         <ul className="flex flex-col gap-1">
           {visible.map((run) => (
             <li key={run.runId} className="flex items-center gap-2 text-ui-sm">
-              <span className={BADGE_CLASSNAME}>
-                {t(`squad.runs.status.${run.status}`)}
-              </span>
+              <span className={BADGE_CLASSNAME}>{t(`squad.runs.status.${run.status}`)}</span>
               <span className="min-w-0 flex-1 truncate text-foreground-subtlest">
                 {run.branch ?? run.runId}
               </span>

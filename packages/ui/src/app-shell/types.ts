@@ -126,7 +126,20 @@ export type WorkspaceMainView =
   | "agents"
   | "squads"
   | "work-items"
-  | "agent-detail";
+  | "agent-detail"
+  | "work-item-detail";
+
+/**
+ * 工作项详情页的**导航意图**（B5.1，照 `openAutomationId` / `agentDetailId` 的先例）：
+ * 唯一持有者是 App（跨页面存活）；详情页**不猜历史**，只调 `onBack`，
+ * 回哪个视图由这里的 `returnView` 决定（从看板进 ⇒ 回看板；从 agent 任务表进 ⇒ 回 agent 详情）。
+ *
+ * `commentId` 是设计案 §1.3 的深链接预留位：本轮**没有入口**、不填值，也不写死结构。
+ */
+export type WorkItemDetailIntent = {
+  workItemId: string;
+  returnView: "work-items" | "agent-detail";
+};
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
   workspaceReadOnlyReason?: string;
@@ -151,6 +164,18 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   agentDetailId: string | null;
   /** ④刀：打开某 agent 的详情页（切主视图 + 记 id）。 */
   onOpenAgentDetail: (agentId: string) => void;
+  /** B5.1：工作项详情页的导航意图（`null` = 未选中；详情页消费 `workItemId`）。 */
+  workItemDetailIntent: WorkItemDetailIntent | null;
+  /** B5.1：从**工作项看板**打开详情（`returnView` 固定为 work-items）。 */
+  onOpenWorkItemDetail: (workItemId: string) => void;
+  /** B5.1：从 **agent 详情任务表**打开详情（`returnView` 固定为 agent-detail）。 */
+  onOpenWorkItemFromAgentDetail: (workItemId: string) => void;
+  /** B5.1：详情页返回（回哪个视图由 App 的意图态决定，详情页不猜历史）。 */
+  onBackFromWorkItemDetail: () => void;
+  /** B5.1：看板滚动位置（跨视图卸载后仍有值；进详情前记录、返回后由 shell 在 layout 阶段还原）。 */
+  workItemsScrollTop: number;
+  /** B5.1：离开工作项视图时把滚动位置交回 App。 */
+  onWorkItemsScrollTopChange: (scrollTop: number) => void;
   /** 打开侧栏一级入口「收件箱」（照 handleOpenSquadAgents 的形态）。 */
   handleOpenInbox: () => void;
   /** 打开侧栏一级入口「小队」（照 handleOpenSquadAgents 的形态）。 */

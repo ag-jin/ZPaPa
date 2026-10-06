@@ -64,7 +64,7 @@ import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js"
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useOffPeakTaskNotifications } from "@/hooks/useOffPeakTaskNotifications.js";
-import type { AppProps, WorkspaceMainView } from "@/app-shell/types.js";
+import type { AppProps, WorkItemDetailIntent, WorkspaceMainView } from "@/app-shell/types.js";
 import type {
   ChatSearchResultHighlightRequest,
   ChatViewSummaryPanelVariant,
@@ -830,6 +830,16 @@ export function App({
   /* ④刀（2026-10-06 裁定①：新独立视图）：agent 详情页的 id 寻址态——
      与 openAutomationId 同款「App 级意图」形态（带参视图在当前机制下只能并列状态携带）。 */
   const [agentDetailId, setAgentDetailId] = useState<string | null>(null);
+  /* B5.1：工作项详情页的意图态（**唯一**持有者）——`{ workItemId, returnView }`，形态对齐上面的
+     agentDetailId / openAutomationId。返回目标由 `returnView` 决定，详情页**不猜历史**（设计案 §1.3）；
+     `agentDetailId` 在跳走时**不清**（只在打开下一个 agent 时被覆盖）⇒ `returnView:"agent-detail"`
+     能原样复现上一屏。 */
+  const [workItemDetailIntent, setWorkItemDetailIntent] = useState<WorkItemDetailIntent | null>(
+    null,
+  );
+  /* B5.1：看板滚动位置（视图切换会把看板整棵子树卸载 ⇒ scrollTop 归零）。状态放在 App：
+     进详情前由 shell 记下、返回后 shell 在 layout 阶段还原（§3.1）。 */
+  const [workItemsScrollTop, setWorkItemsScrollTop] = useState(0);
   const [openAutomationTab, setOpenAutomationTab] = useState<NonNullable<
     AutomationsNavigationTarget["automationTab"]
   > | null>(null);
@@ -856,6 +866,28 @@ export function App({
   const handleOpenAgentDetail = useCallback((agentId: string) => {
     setAgentDetailId(agentId);
     setWorkspaceMainView("agent-detail");
+  }, []);
+  /* B5.1：工作项详情页的**唯一**打开路径（两个入口各自固定 returnView，见下面两个包装）。 */
+  const openWorkItemDetail = useCallback(
+    (workItemId: string, returnView: WorkItemDetailIntent["returnView"]) => {
+      setWorkItemDetailIntent({ workItemId, returnView });
+      setWorkspaceMainView("work-item-detail");
+    },
+    [],
+  );
+  /** 入口①：工作项看板行（返回 ⇒ 回看板，滚动位置由 shell 记录/还原）。 */
+  const handleOpenWorkItemDetail = useCallback(
+    (workItemId: string) => openWorkItemDetail(workItemId, "work-items"),
+    [openWorkItemDetail],
+  );
+  /** 入口②：agent 详情任务表（返回 ⇒ 回该 agent 的详情页）。 */
+  const handleOpenWorkItemFromAgentDetail = useCallback(
+    (workItemId: string) => openWorkItemDetail(workItemId, "agent-detail"),
+    [openWorkItemDetail],
+  );
+  /** 离开工作项看板视图时记下滚动位置（shell 在滚动时写 ref，离开时才交回 App —— 不在每帧 setState）。 */
+  const handleWorkItemsScrollTopChange = useCallback((scrollTop: number) => {
+    setWorkItemsScrollTop(scrollTop);
   }, []);
   // 侧栏一级入口「小队」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图，
   // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
@@ -990,15 +1022,23 @@ export function App({
   const handleBackFromAgentDetailApp = useCallback(() => {
     setWorkspaceMainView("agents");
   }, []);
+  /* B5.1：工作项详情返回 = 回**来源视图**（意图里的 returnView；详情页不猜历史）。
+     意图不清：再进入时由打开动作覆盖；留着它才能让「返回」在多次往返间稳定。 */
+  const handleBackFromWorkItemDetailApp = useCallback(() => {
+    setWorkspaceMainView(workItemDetailIntent?.returnView ?? "work-items");
+  }, [workItemDetailIntent]);
   const handlePrimaryNavigationBack =
     workspaceMainView === "plugin-store"
       ? handleManageInstalledPlugins
       : workspaceMainView === "agent-detail"
         ? handleBackFromAgentDetailApp
-        : handleTaskNavBack;
+        : workspaceMainView === "work-item-detail"
+          ? handleBackFromWorkItemDetailApp
+          : handleTaskNavBack;
   const canPrimaryNavigationBack =
     workspaceMainView === "plugin-store" ||
     workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail" ||
     canTaskNavBack;
   const shellPanelIds = useMemo(() => ["sidebar", "content"], []);
 
@@ -1192,6 +1232,12 @@ export function App({
         handleOpenSquadAgents={handleOpenSquadAgentsMain}
         agentDetailId={agentDetailId}
         onOpenAgentDetail={handleOpenAgentDetail}
+        workItemDetailIntent={workItemDetailIntent}
+        onOpenWorkItemDetail={handleOpenWorkItemDetail}
+        onOpenWorkItemFromAgentDetail={handleOpenWorkItemFromAgentDetail}
+        onBackFromWorkItemDetail={handleBackFromWorkItemDetailApp}
+        workItemsScrollTop={workItemsScrollTop}
+        onWorkItemsScrollTopChange={handleWorkItemsScrollTopChange}
         handleOpenInbox={handleOpenInboxMain}
         handleOpenSquads={handleOpenSquadsMain}
         handleOpenWorkItems={handleOpenWorkItemsMain}

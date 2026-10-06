@@ -401,5 +401,51 @@ export type {
   InboxItemKind,
   InboxItemSeverity,
 } from "./workitem/inboxItemRepo.js";
+/* B5.1：工作项协作**读门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.4）——描述符从根入口出
+   （renderer 要经它取数），形状与语义见该文件头注释。新增描述符**不新增任何 IPC handler /
+   协议 schema**：host 侧 `ServiceCollection.register` 即把 channel 暴露在线路上。
+   三处接线（本入口导出 / node.ts register / client remoteServiceAccess 代理）由 UI 的 R4 守卫成对钉住。 */
+export {
+  IWorkItemCollaborationService,
+  createWorkItemCollaborationService,
+} from "./workitem/workItemCollaborationService.js";
+export type {
+  IWorkItemCollaborationService as IWorkItemCollaborationServiceShape,
+  WorkItemCollaborationRead,
+  WorkItemCollaborationRepos,
+  WorkItemCollaborationServiceDeps,
+} from "./workitem/workItemCollaborationService.js";
+/* 协作域的三张**运行时闭集**从根入口出值（浏览器安全：三个模块对 node 侧只用 `import type`）。
+   UI 的穷尽映射守卫必须拿**同一份**闭集做 deepEqual —— 硬编码 18 / 7 / 5 会在闭集增删时静默漂移
+   （界面少一个 kind 的文案而仍显示，永不报错）。 */
+export { WORK_ITEM_ACTIVITY_KINDS } from "./workitem/workItemActivityRepo.js";
+export type {
+  WorkItemActivityKind,
+  WorkItemActivityRecord,
+} from "./workitem/workItemActivityRepo.js";
+export {
+  COMMENT_DISPATCH_OUTCOMES,
+  COMMENT_DISPATCH_SOURCES,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export type {
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  CommentDispatchSource,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export { SOURCE_RUN_ROLES } from "./workitem/workItemCommentRepo.js";
+export type {
+  AuthorRef,
+  CommentCommand,
+  InlineAnchor,
+  MentionRef,
+  SourceRunRef,
+  WorkItemCommentRecord,
+} from "./workitem/workItemCommentRepo.js";
+export type { WorkItemCommentReactionRecord } from "./workitem/workItemCommentReactionRepo.js";
+export { WORK_ITEM_DECISION_KINDS } from "./workitem/workItemDecisionRepo.js";
+export type {
+  WorkItemDecisionKind,
+  WorkItemDecisionRecord,
+} from "./workitem/workItemDecisionRepo.js";
 // `eventKey` 的唯一构造器（spec §5.7.1）：全仓只此一处，调度器与 Repo 都调它。
 export { computeEventKey } from "@zcode/shared";

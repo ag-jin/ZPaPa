@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- workspace shell 当前集中编排 sidebar、chat、terminal 和 browser pane 的布局联动，先保持单文件收口，避免为满足行数限制打散关键布局状态。*/
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -50,6 +50,7 @@ import { SquadsPage } from "@/squad/SquadsPage.js";
 import { SquadAgentDetailPage } from "@/squad/SquadAgentDetailPage.js";
 import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
 import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
+import { WorkItemDetailPage } from "@/squad/WorkItemDetailPage.js";
 import { InboxPage } from "@/squad/InboxPage.js";
 import type { InboxWorkItemTarget } from "@/squad/inboxViewModel.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
@@ -208,8 +209,14 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   handleOpenAutomations,
   handleOpenPluginStore,
   handleOpenSquadAgents,
-    agentDetailId,
-    onOpenAgentDetail,
+  agentDetailId,
+  onOpenAgentDetail,
+  workItemDetailIntent,
+  onOpenWorkItemDetail,
+  onOpenWorkItemFromAgentDetail,
+  onBackFromWorkItemDetail,
+  workItemsScrollTop,
+  onWorkItemsScrollTopChange,
   handleOpenInbox,
   handleOpenSquads,
   handleOpenWorkItems,
@@ -820,14 +827,41 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   const handleBackFromAgentDetail = useCallback(() => {
     onWorkspaceMainViewChange("agents");
   }, [onWorkspaceMainViewChange]); // MUT-S5
+  /* B5.1：工作项详情返回 = 交回 App 的意图态决定（回看板 / 回 agent 详情）——
+     shell 与 App 两处判据同款（S5/S6），详情页只调 onBack。 */
+  const handleBackFromWorkItemDetail = useCallback(() => {
+    onBackFromWorkItemDetail();
+  }, [onBackFromWorkItemDetail]);
+  /* B5.1 看板滚动位置（§3.1）：视图切换会把看板整棵子树卸载 ⇒ scrollTop 归零。落点：
+     ① 滚动时只写 ref（**不** setState —— 每帧一次 App 重渲染会拖垮看板）；
+     ② 离开工作项视图时把值交回 App（意图态那一层，跨卸载存活）；
+     ③ 回到工作项视图时在 **layout 阶段**还原（渲染后立刻写 scrollTop，用户看不到跳动）。 */
+  const workItemsScrollRef = useRef<HTMLDivElement | null>(null);
+  const workItemsScrollTopRef = useRef(0);
+  useLayoutEffect(() => {
+    if (workspaceMainView !== "work-items") return;
+    const element = workItemsScrollRef.current;
+    if (element && element.scrollTop !== workItemsScrollTop) {
+      element.scrollTop = workItemsScrollTop;
+    }
+  }, [workspaceMainView, workItemsScrollTop]);
+  useEffect(() => {
+    if (workspaceMainView === "work-items") return;
+    onWorkItemsScrollTopChange(workItemsScrollTopRef.current);
+  }, [workspaceMainView, onWorkItemsScrollTopChange]);
   const primaryNavigationBack =
     workspaceMainView === "plugin-store"
       ? handleManageInstalledPlugins
       : workspaceMainView === "agent-detail"
         ? handleBackFromAgentDetail
-        : handleTaskNavBack;
+        : workspaceMainView === "work-item-detail"
+          ? handleBackFromWorkItemDetail
+          : handleTaskNavBack;
   const canPrimaryNavigationBack =
-    workspaceMainView === "plugin-store" || workspaceMainView === "agent-detail" || canTaskNavBack;
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail" ||
+    canTaskNavBack;
   const handleCreateTaskInChat = useCallback(
     (request?: Parameters<typeof onCreateTask>[0]) => {
       // workspaceReadOnlyReason 判定的是活动 workspace；当 request 显式带 targetWorkspace 时
@@ -1568,9 +1602,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // 手机远控无 active task 时仍不渲染桌面 chrome，继续遵守 replayable overlay 边界。
   //
   // 「整页主视图」= 自带面包屑框架（AutomationsMainBreadcrumbFrame）的扁平页面：
-  // automations / plugin-store / inbox / agents / squads / work-items / agent-detail。这七处共用一个具名判据
-  // （header 渲染、终端面板显隐）；各写一份字面量判断迟早漂移 —— 漏一处就是某个入口多一层
-  // header 或终端面板，且不报错。
+  // automations / plugin-store / inbox / agents / squads / work-items / agent-detail / work-item-detail。
+  // 这几处共用一个具名判据（header 渲染、终端面板显隐）；各写一份字面量判断迟早漂移 ——
+  // 漏一处就是某个入口多一层 header 或终端面板，且不报错。
   const isFullPageMainView =
     workspaceMainView === "automations" ||
     workspaceMainView === "plugin-store" ||
@@ -1578,7 +1612,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     workspaceMainView === "agents" ||
     workspaceMainView === "squads" ||
     workspaceMainView === "work-items" ||
-    workspaceMainView === "agent-detail";
+    workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail";
   const shouldRenderMainViewHeader = !isFullPageMainView;
   const shouldRenderWorkspaceHeader =
     shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
@@ -1686,14 +1721,16 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     pluginStoreActive={workspaceMainView === "plugin-store"}
                     onOpenSquadAgents={handleOpenSquadAgents}
                     squadAgentsActive={
-                    workspaceMainView === "agents" || workspaceMainView === "agent-detail"
-                  }
+                      workspaceMainView === "agents" || workspaceMainView === "agent-detail"
+                    }
                     onOpenInbox={handleOpenInbox}
                     inboxActive={workspaceMainView === "inbox"}
                     onOpenSquads={handleOpenSquads}
                     squadsActive={workspaceMainView === "squads"}
                     onOpenWorkItems={handleOpenWorkItems}
-                    workItemsActive={workspaceMainView === "work-items"}
+                    workItemsActive={
+                      workspaceMainView === "work-items" || workspaceMainView === "work-item-detail"
+                    }
                   />
                 </WorkflowRunOpenProvider>
               </V4SplitPaneEntryProvider>
@@ -2017,11 +2054,47 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                     workspaceIdentity={workspaceIdentity}
                                     agentId={agentDetailId}
                                     onBack={handleBackFromAgentDetail}
+                                    onOpenWorkItem={onOpenWorkItemFromAgentDetail}
                                     onStartConversation={handleStartAgentConversation}
                                     canStartConversation={
                                       workspaceReadOnlyReason === null ||
                                       workspaceReadOnlyReason === undefined
                                     }
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "work-item-detail" ? (
+                        /* B5.1：「工作项详情页」——独立视图（设计案 §1.2：不是抽屉/对话框），
+                           id 寻址（App 的意图态）、概览 + 混排活动时间线 + composer 外壳。
+                           骨架逐句对齐 agent-detail 分支（面包屑框架 + 稳定滚动槽 + 居中内容列，
+                           `ScopedErrorBoundary` scope 独立 "work-item-detail"）。
+                           返回只调 `onBackFromWorkItemDetail`：回哪个视图由 App 的意图态决定。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openWorkItems",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="work-item-detail"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <WorkItemDetailPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    workItemId={workItemDetailIntent?.workItemId ?? null}
+                                    onBack={onBackFromWorkItemDetail}
                                   />
                                 </div>
                               </ScopedErrorBoundary>
@@ -2081,7 +2154,15 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                               id: "settings.breadcrumbLabel",
                             })}
                           >
-                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                            <div
+                              ref={workItemsScrollRef}
+                              onScroll={(event) => {
+                                // 只在滚动时写 ref（不 setState —— 每帧一次 App 重渲染会拖垮看板）；
+                                // 离开视图时由下面的 effect 把值交回 App（§3.1）。
+                                workItemsScrollTopRef.current = event.currentTarget.scrollTop;
+                              }}
+                              className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+                            >
                               <ScopedErrorBoundary
                                 scope="work-items-page"
                                 resetKeys={workspaceOnlyResetKeys}
@@ -2094,6 +2175,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                     workspaceIdentity={workspaceIdentity}
                                     focusWorkItemId={inboxFocusWorkItemId}
                                     onFocusConsumed={onInboxFocusConsumed}
+                                    onOpenWorkItemDetail={onOpenWorkItemDetail}
                                     onOpenSession={(sessionId) =>
                                       handleSelectTaskInChat(
                                         workspaceAbsPath,

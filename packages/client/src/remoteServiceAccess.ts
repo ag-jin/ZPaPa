@@ -45,6 +45,8 @@ import {
   IWindowControllerService,
   ISquadRuntimeService,
   type ISquadRuntimeServiceShape,
+  IWorkItemCollaborationService,
+  type IWorkItemCollaborationServiceShape,
   type IServiceAccessor,
 } from "@zcode/services";
 
@@ -122,6 +124,19 @@ export class RemoteServiceAccess implements IServiceAccessor {
    * 不可枚举 ⇒ 直接属性读仍然有效，但不会随展开泄漏到另一个 host 的 scope。
    */
   readonly squadRuntimeService?: ISquadRuntimeServiceShape;
+
+  /**
+   * 工作项协作**读门面**（B5.1）：按 (workspace, workItemId) 的一次聚合读（评论 / 活动 /
+   * 决定 / 回应 / receipt）。与 `squadRuntimeService` 同款理由声明为**可选**：不是所有 host
+   * 都注册该描述符，既有测试 double / 非 desktop host 未必提供；取不到时由消费方响亮报错
+   * （`packages/ui/src/squad/workItemCollaborationAccess.ts` 的 `resolveWorkItemCollaborationService`）。
+   *
+   * **为什么也用 defineProperty 且 enumerable: false**：与 `squadRuntimeService` 同一条理由 ——
+   * 远端 workspace 的 accessor 是 `{...baseServices, ...}` 展开组装的，enumerable 会让本机 host
+   * 的服务被悄悄带进远端 workspace scope，于是拿着远端路径去问本机 host。
+   * 不可枚举 ⇒ 直接属性读仍然有效，但不会随展开泄漏。
+   */
+  readonly workItemCollaborationService?: IWorkItemCollaborationServiceShape;
 
   constructor(channelClient: IChannelClient) {
     this.fileService = ProxyChannel.toService<IFileService>(
@@ -271,6 +286,15 @@ export class RemoteServiceAccess implements IServiceAccessor {
     Object.defineProperty(this, "squadRuntimeService", {
       value: ProxyChannel.toService<ISquadRuntimeServiceShape>(
         channelClient.getChannel(ISquadRuntimeService.channelName),
+      ),
+      enumerable: false,
+    });
+    // 工作项协作读门面（B5.1）：与上面同款 —— host 侧 `register(IWorkItemCollaborationService, …)`
+    // 已把 channel `work-item-collaboration` 暴露在线路上，缺这一行 UI 拿不到该服务。
+    // 老 host 没有这个 channel 时方法调用走 RPC 失败（不是静默 undefined）。
+    Object.defineProperty(this, "workItemCollaborationService", {
+      value: ProxyChannel.toService<IWorkItemCollaborationServiceShape>(
+        channelClient.getChannel(IWorkItemCollaborationService.channelName),
       ),
       enumerable: false,
     });

@@ -58,6 +58,7 @@ export function WorkItemsPage({
   workspaceIdentity,
   focusWorkItemId,
   onFocusConsumed,
+  onOpenWorkItemDetail,
   onOpenSession,
 }: {
   workspacePath: string;
@@ -72,6 +73,9 @@ export function WorkItemsPage({
   focusWorkItemId?: string | null;
   /** 看板消费完聚焦意图后的回调（清掉意图，避免每次回到本页再聚焦一次）。 */
   onFocusConsumed?: () => void;
+  /** B5.1：打开某条工作项的详情页（由 shell 注入；返回目标由 App 的意图态决定 = 本页）。
+      必填而不是可选：可选会留下「行点得开、点了没反应」的静默路径。 */
+  onOpenWorkItemDetail: (workItemId: string) => void;
   /** 打开某个 run 的独立会话（由 shell 注入：目标 workspace 就是本页那个）。
       必填而不是可选：可选会留下"按钮在、点了没反应"的静默路径（onOpenSession?.(…) 无声吞掉）
       —— shell 恒会传（`handleSelectTaskInChat` 接线），把契约钉在类型上。 */
@@ -365,6 +369,7 @@ export function WorkItemsPage({
               setDiscardConfirm(requestSquadDiscard(workItemId));
             }}
             onToggleTimeline={toggleTimeline}
+            onOpenWorkItemDetail={onOpenWorkItemDetail}
             workspacePath={workspacePath}
             workspaceIdentity={workspaceIdentity}
             onOpenSession={onOpenSession}
