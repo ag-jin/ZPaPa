@@ -26,12 +26,18 @@ import type {
   WorkItemCommentRecord,
   WorkItemCommentRepo,
 } from "./workItemCommentRepo.js";
+import type {
+  WorkItemCommentReactionRecord,
+  WorkItemCommentReactionRepo,
+} from "./workItemCommentReactionRepo.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
-/* 协作域 X1.2：CommentService 的编排层。两半：
+/* 协作域 X1.2：CommentService 的编排层。三半：
    ① `resolveCommentTrigger`——**纯函数**（无 IO/无时钟）的七级隐式路由级联（spec §4.5，命中即止）。
       X1.3/X2.x 复用同一份判据，不得在 receipt 层重写一套。
    ② `createComment`——写评论事实 + Activity + 按队列状态窗裁决落 receipt（本文件下半部）。
+   ③ 三件套动作（X1.3 修复轮补）：`softDeleteComment` / `setCommentResolved` / `addCommentReaction`
+      ——各自落存储事实 + 一枚 Activity（§3.2），且**永不触发派发**（§4.4）。
    §5.2 明令：本文件**不得**调小队开跑 / 队长登记 / 派发规划等生命周期写入口——评论只产生
    派发**请求事实**，实际开 run 归 X2.1 的 host 接线（结构守卫见测试）。 */
 
@@ -172,6 +178,8 @@ export type CommentServiceDeps = {
   comments: WorkItemCommentRepo;
   activities: WorkItemActivityRepo;
   receipts: CommentDispatchReceiptRepo;
+  /** 表情回应存储面（§3.2 裁定#5；轻实体，永不触发派发——本服务不读它做任何路由）。 */
+  reactions: WorkItemCommentReactionRepo;
   runs: SquadRunRepo;
   deferred: SquadDeferredDispatchRepo;
   workItems: WorkItemRepo;
@@ -218,8 +226,43 @@ export type CreateCommentResult = {
   dispatches: CommentDispatchReport[];
 };
 
+/** 软删入参（§3.2 裁定#3）：墓碑 + comment_deleted Activity，绝不触发派发（§4.4）。 */
+export type SoftDeleteCommentInput = {
+  commentId: string;
+  workspaceKey: string;
+  /** 执行删除的主体（human/agent）：actor 是「谁做了」（§3.1），必填——归因不猜。 */
+  actor: AuthorRef;
+  /** 顶层人类归因；缺省同 actor（人类直接操作时二者同体）。 */
+  initiatedBy?: AuthorRef;
+};
+
+/** 线程解决态入参（§3.2 裁定#4）：仅线程根可置/消；置与消各写一条 comment_resolved Activity。 */
+export type SetCommentResolvedInput = {
+  commentId: string;
+  workspaceKey: string;
+  resolved: boolean;
+  actor: AuthorRef;
+  initiatedBy?: AuthorRef;
+};
+
+/** 表情回应入参（§3.2 裁定#5）：轻实体幂等落盘 + comment_reaction_added Activity；永不触发派发（§4.4）。 */
+export type AddCommentReactionInput = {
+  /** 可选预生成 id；幂等键是 (workspace, commentId, author, emoji)，不是 id。 */
+  id?: string;
+  commentId: string;
+  workspaceKey: string;
+  /** 回应作者：既进幂等键，也是 Activity 的 actor。 */
+  author: AuthorRef;
+  emoji: string;
+  /** 顶层人类归因；缺省沿回应作者。 */
+  initiatedBy?: AuthorRef;
+};
+
 export interface CommentService {
   createComment(input: CreateCommentInput): CreateCommentResult;
+  softDeleteComment(input: SoftDeleteCommentInput): WorkItemCommentRecord;
+  setCommentResolved(input: SetCommentResolvedInput): WorkItemCommentRecord;
+  addCommentReaction(input: AddCommentReactionInput): WorkItemCommentReactionRecord;
 }
 
 type BuiltRoster = {
@@ -377,7 +420,111 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       });
       return { comment, dispatches };
     },
+
+    softDeleteComment(input) {
+      const comment = readCommentForAction(deps, input.commentId, input.workspaceKey);
+      deps.comments.softDelete(comment.id); // 墓碑：只写 deletedAt（repo 幂等，正文/作者不动）
+      const deleted = deps.comments.get(comment.id)!;
+      const timestamp = now();
+      deps.activities.add({
+        id: `activity-${comment.id}-deleted`,
+        workspaceKey: comment.workspaceKey,
+        workspacePath: comment.workspacePath,
+        workItemId: comment.workItemId,
+        kind: "comment_deleted",
+        occurredAt: timestamp,
+        actor: input.actor,
+        initiatedBy: input.initiatedBy ?? input.actor,
+        commentId: comment.id,
+        payload: { deletedAt: deleted.deletedAt },
+        dedupKey: `comment:${comment.id}:deleted`,
+        createdAt: timestamp,
+      });
+      return deleted;
+    },
+
+    setCommentResolved(input) {
+      const comment = readCommentForAction(deps, input.commentId, input.workspaceKey);
+      // §3.2 裁定#4：解决态仅线程根可置/消。回复行也能成功会让「线程是否已解决」变成
+      // 每条回复各自一票的漂移语义，故在写任何事实之前响亮拒绝（repo 层另有同款守卫双保险）。
+      if (comment.threadId !== comment.id) {
+        throw new Error(
+          `评论「${comment.id}」不是线程根（threadId=${comment.threadId}）：解决态仅线程根可置/消（§3.2），` +
+            "一律响亮拒绝。",
+        );
+      }
+      deps.comments.setResolved(comment.id, input.resolved); // 状态一致时 repo no-op（不重写时间戳）
+      const updated = deps.comments.get(comment.id)!;
+      const timestamp = now();
+      // 置/消各一条：dedupKey 带状态后缀——同键重投不写第二条（§8.1），置↔消互不吞并。
+      const state = input.resolved ? "set" : "cleared";
+      deps.activities.add({
+        id: `activity-${comment.id}-resolved-${state}`,
+        workspaceKey: comment.workspaceKey,
+        workspacePath: comment.workspacePath,
+        workItemId: comment.workItemId,
+        kind: "comment_resolved",
+        occurredAt: timestamp,
+        actor: input.actor,
+        initiatedBy: input.initiatedBy ?? input.actor,
+        commentId: comment.id,
+        payload: { resolved: input.resolved },
+        dedupKey: `comment:${comment.id}:resolved:${state}`,
+        createdAt: timestamp,
+      });
+      return updated;
+    },
+
+    addCommentReaction(input) {
+      const comment = readCommentForAction(deps, input.commentId, input.workspaceKey);
+      const timestamp = now();
+      // 幂等落盘（INSERT OR IGNORE）：同 (workspace, comment, author, emoji) 返回既存行。
+      const reaction = deps.reactions.add({
+        id: input.id ?? newId(),
+        workspaceKey: comment.workspaceKey,
+        commentId: comment.id,
+        author: input.author,
+        emoji: input.emoji,
+        createdAt: timestamp,
+      });
+      deps.activities.add({
+        id: `activity-${comment.id}-reaction-${input.author.kind}-${input.author.id}-${reaction.emoji}`,
+        workspaceKey: comment.workspaceKey,
+        workspacePath: comment.workspacePath,
+        workItemId: comment.workItemId,
+        kind: "comment_reaction_added",
+        occurredAt: timestamp,
+        actor: input.author,
+        initiatedBy: input.initiatedBy ?? input.author,
+        commentId: comment.id,
+        payload: { emoji: reaction.emoji },
+        dedupKey: `reaction:${comment.id}:${input.author.kind}:${input.author.id}:${reaction.emoji}`,
+        createdAt: timestamp,
+      });
+      // §4.4：回应永不触发派发——本方法结构上不碰 receipts / runs / deferred（负向断言见测试）。
+      return reaction;
+    },
   };
+}
+
+/** 三件套动作的前置读：不存在 / 跨 workspace 一律响亮拒绝（§3.2 / §8.5）——
+    动作不得落在空气上，也不得跨 workspace 引用（workspacePath 不是逻辑身份）。 */
+function readCommentForAction(
+  deps: CommentServiceDeps,
+  commentId: string,
+  workspaceKey: string,
+): WorkItemCommentRecord {
+  const comment = deps.comments.get(commentId);
+  if (comment === null) {
+    throw new Error(`评论「${commentId}」不存在：动作必须指向已存在的评论（§3.2），一律响亮拒绝。`);
+  }
+  if (comment.workspaceKey !== workspaceKey) {
+    throw new Error(
+      `评论「${commentId}」属于 workspace「${comment.workspaceKey}」，与传入的「${workspaceKey}」不一致：` +
+        "跨 workspace 引用一律响亮拒绝（§8.5）。",
+    );
+  }
+  return comment;
 }
 
 /**
@@ -415,12 +562,14 @@ function adjudicateQueueWindow(
   if (deps.runs.hasActiveRunForPair(input.workspaceKey, input.workItemId, input.targetAgentId)) {
     // 运行中不排队不注入：登记完成后重放义务（义务 id = 请求身份，重投不新增义务）。
     // dispatchCause 传 null：评论成因的闭集扩展属 C2（§5.2 明令不得把 @ 伪装成 user_reassign）。
+    // G4：origin='comment' 与 R2 义务判别（同一张表两条通道，claimDue 消费者据此分流——X2.1）。
     deps.deferred.insertIfAbsent({
       runId: input.dispatchKey,
       workspaceKey: input.workspaceKey,
       workItemId: input.workItemId,
       agentId: input.targetAgentId,
       dispatchCause: null,
+      origin: "comment",
       createdAt: input.timestamp,
       updatedAt: input.timestamp,
     });

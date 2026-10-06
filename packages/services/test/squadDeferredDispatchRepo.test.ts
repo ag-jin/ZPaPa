@@ -26,6 +26,7 @@ const obligation = (over: Partial<SquadDeferredDispatchRecord> = {}): SquadDefer
   workItemId: "wi-1",
   agentId: "ta-a",
   dispatchCause: null,
+  origin: "reassign",
   createdAt: 1,
   updatedAt: 1,
   ...over,
@@ -85,6 +86,40 @@ test("跨重启持久：义务事实不靠内存", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/* ---------- G4（X1.3 阻塞项）：义务来源判别列 origin ---------- */
+
+test("G4｜origin：评论义务与 R2 义务可判别；缺省 'reassign' 向后兼容；枚举外值读写双闸响亮抛", () => {
+  const { repo, db } = setup();
+  // 缺省（既有 R2 写入方/历史行语义）：'reassign'。
+  assert.equal(repo.insertIfAbsent(obligation({ runId: "obl-r2" })), true);
+  assert.equal(repo.find("ws", "wi-1", "ta-a")!.origin, "reassign", "缺省 = R2，向后兼容");
+  // 评论义务显式标注：'comment'。
+  assert.equal(
+    repo.insertIfAbsent(obligation({ runId: "obl-c", workItemId: "wi-2", origin: "comment" })),
+    true,
+  );
+  assert.equal(repo.find("ws", "wi-2", "ta-a")!.origin, "comment");
+  // 台账序同为 created_at=1 ⇒ 按 run_id 兜底：obl-c 在前（排序口径与 list/claimDue 一致）。
+  assert.deepEqual(
+    repo.list("ws").map((o) => [o.runId, o.origin]),
+    [["obl-c", "comment"], ["obl-r2", "reassign"]],
+  );
+  // claimDue 读回带 origin：X2.1 的 host 消费者据此分流（评论义务不得当 eventKey 重放）。
+  assert.deepEqual(
+    repo.claimDue("ws").map((o) => [o.runId, o.origin]),
+    [["obl-c", "comment"], ["obl-r2", "reassign"]],
+  );
+  // 写入口闸：枚举外值响亮抛（不静默落库）。
+  assert.throws(
+    () => repo.insertIfAbsent(obligation({ runId: "obl-bad", workItemId: "wi-3", origin: "bogus" as never })),
+    /origin/,
+  );
+  // 读回闸：列被写坏一律抛（readStatus 纪律）。
+  repo.insertIfAbsent(obligation({ runId: "obl-bad2", workItemId: "wi-4" }));
+  db.prepare("UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-bad2'").run();
+  assert.throws(() => repo.find("ws", "wi-4", "ta-a"), /origin/);
 });
 
 /* ---------- C4b：到期认领（恰一次；到期 = 目标对离开活跃集） ---------- */

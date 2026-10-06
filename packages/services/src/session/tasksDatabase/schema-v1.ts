@@ -458,6 +458,21 @@ export const WORK_ITEM_COLLABORATION_SQL_2 = `
     ON work_item_decisions(workspace_key, work_item_id, effective_at, id);
 `;
 
+/* 0013（协作域 X1.3 修复轮）：
+   ① work_item_activities 补 sourceRun 全形状三列——0011 只存了 source_run_id，读回曾硬编码
+      role="member"（队长 run 的 Activity 读回变队员，agentId/squadId 一并丢失）：静默失真。
+      0011 的 SQL 已发布冻结（checksum 不可改），按 0008/0009 的加法纪律追加新迁移。
+   ② squad_run_deferred_dispatches 加 origin（义务来源闭集 'reassign'|'comment'）：评论 deferred
+      义务与 R2 义务同表且无来源判别列，claimDue 一视同仁认领后 host 会把评论 dispatchKey
+      当 eventKey 重放。NOT NULL DEFAULT 'reassign' ⇒ 历史行与未标注写入方保持 R2 语义（向后兼容）。
+   只加列、不改既有列/表；SQL 冻结后不得再改（改了老库升级会抛 checksum_mismatch）。 */
+export const WORK_ITEM_COLLABORATION_SQL_3 = `
+  ALTER TABLE work_item_activities ADD COLUMN source_run_agent_id TEXT;
+  ALTER TABLE work_item_activities ADD COLUMN source_run_squad_id TEXT;
+  ALTER TABLE work_item_activities ADD COLUMN source_run_role TEXT;
+  ALTER TABLE squad_run_deferred_dispatches ADD COLUMN origin TEXT NOT NULL DEFAULT 'reassign';
+`;
+
 /* 0012（协作域 X1.2）：评论派发 receipt 表。一行 = 一次「评论请求某目标 agent」的事实。
    · dispatch_key 是**请求身份**（`computeCommentDispatchKey` 独立构造，§8.1：不复用 eventKey
      拼接格式）；主键唯一 ⇒ 同键重投由存储层兜住，不需要先查后插。

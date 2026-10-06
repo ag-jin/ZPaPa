@@ -405,10 +405,15 @@ test("行14 软删父评论不算 thread_parent：线程内回复不升格，根
   assert.deepEqual(deep.comment.parentCommentId, "m-r2");
 });
 
-test("行15/16 结构面：服务只暴露 createComment 一个入口；Activity 事实本身不产生派发", () => {
+test("行15/16 结构面：服务入口是闭集（评论写事实 + 三件套动作，无派发/生命周期写入口）；Activity 事实本身不产生派发", () => {
   const h = matrixHarness();
   putItem(h, "wi-11");
-  assert.deepEqual(Object.keys(h.service), ["createComment"], "共享沟通会话/系统事实没有第二条写入口经此服务");
+  // 闭集断言：新入口只能经批准名单加入（X1.3 修复轮补三件套动作入口；仍无开 run / 派发 / 会话写入口）。
+  assert.deepEqual(
+    Object.keys(h.service).sort(),
+    ["addCommentReaction", "createComment", "setCommentResolved", "softDeleteComment"],
+    "共享沟通会话/系统事实没有第二条写入口经此服务",
+  );
   // 行16：直接写系统类 Activity（run/状态/合并事实）——不产生 receipt、不开 run。
   h.activities.add({
     id: "act-sys-1",
@@ -706,12 +711,12 @@ test("迁移 0012 从零建库：receipt 表形状 + 两索引 + 主键唯一 + 
   assert.throws(() => raw("dup-key"), /UNIQUE|constraint/i, "主键唯一是存储层最后一道幂等");
 });
 
-test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-0012、结构一致、既有数据一字未动", () => {
+test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-0013、结构一致、既有数据一字未动", () => {
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
   const fullLedger = db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>;
-  assert.equal(fullLedger.at(-1)?.id, "0012_comment_dispatch_receipts");
-  // 退库：用登记的反向 DDL 把 0009 起（含 0012）建出的对象逐条撤掉 + 删账本行。
+  assert.equal(fullLedger.at(-1)?.id, "0013_collaboration_source_run_and_origin");
+  // 退库：用登记的反向 DDL 把 0009 起（含 0013）建出的对象逐条撤掉 + 删账本行。
   const reverse: Record<string, string[]> = {
     "0009_squad_run_queue": [
       "DROP INDEX idx_squad_runs_one_queued_per_item_agent",
@@ -737,9 +742,17 @@ test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-00
       "DROP INDEX idx_comment_dispatch_receipts_item",
       "DROP TABLE comment_dispatch_receipts",
     ],
+    // 0013（X1.3 修复）：往 0009/0011 建的表上加列，反向 DDL 逐列 DROP。
+    "0013_collaboration_source_run_and_origin": [
+      "ALTER TABLE squad_run_deferred_dispatches DROP COLUMN origin",
+      "ALTER TABLE work_item_activities DROP COLUMN source_run_role",
+      "ALTER TABLE work_item_activities DROP COLUMN source_run_squad_id",
+      "ALTER TABLE work_item_activities DROP COLUMN source_run_agent_id",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
-  for (const row of fullLedger.slice(fromIndex)) {
+  // 逆序退库（最后应用的最先撤）：0013 的反向 DDL 引用的表会被 0009/0011 整表 drop。
+  for (const row of fullLedger.slice(fromIndex).reverse()) {
     for (const sql of reverse[row.id] ?? []) db.exec(sql);
     db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
   }
@@ -767,6 +780,16 @@ test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-00
     "idx_comment_dispatch_receipts_item",
     "idx_comment_dispatch_receipts_outcome",
   ]);
+  // 0013（X1.3 修复）：Activity 补出 sourceRun 全形状三列、义务表补出 origin——老库升级后
+  // 与从零建库同形状（列序 = ALTER 追加序）。
+  assert.deepEqual(
+    tableColumns(db, "work_item_activities").filter((name) => name.startsWith("source_run_")),
+    ["source_run_id", "source_run_agent_id", "source_run_squad_id", "source_run_role"],
+  );
+  assert.ok(
+    tableColumns(db, "squad_run_deferred_dispatches").includes("origin"),
+    "0013 必须给义务表补出 origin 来源判别列",
+  );
   // 既有数据一字未动 + receipt 表在升级后可写。
   assert.equal((db.prepare("SELECT title FROM work_items WHERE id = 'legacy-wi'").get() as { title: string }).title, "老项");
   const receipts = createCommentDispatchReceiptRepo(db);
@@ -812,10 +835,12 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   const receipts = createCommentDispatchReceiptRepo(db);
   const comments = createWorkItemCommentRepo(db);
   const activities = createWorkItemActivityRepo(db);
+  const reactions = createWorkItemCommentReactionRepo(db);
   const service = createCommentService({
     comments,
     activities,
     receipts,
+    reactions,
     runs: runtime.squadRunRepo,
     deferred: runtime.squadDeferredDispatchRepo,
     workItems: runtime.workItemRepo,
@@ -847,8 +872,9 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   assert.equal(result.dispatches[0]?.outcome, "deferred");
   const key = dispatchKey(item.id, agent.id, "m-cross");
   const obligation = runtime.squadDeferredDispatchRepo.list(WS)[0]!;
-  assert.equal(obligation.runId, key, "义务 id 直接就是评论请求身份（无来源判别列）");
-  assert.equal(obligation.dispatchCause, null, "评论成因未扩展（C2 前为 NULL）——与遗留/未知 R2 义务在列上不可区分");
+  assert.equal(obligation.runId, key, "义务 id 直接就是评论请求身份（来源由 origin 判别）");
+  assert.equal(obligation.origin, "comment", "G4 修复后：评论义务带来源判别列（X2.1 据此分流）");
+  assert.equal(obligation.dispatchCause, null, "评论成因未扩展（C2 前为 NULL）——判别位是 origin");
   assert.deepEqual(runtime.squadDeferredDispatchRepo.claimDue(WS), [], "活跃 run 占树 ⇒ 不到期（与 R2 判据同一条 SQL）");
 
   // R2 请求后到（同 (workItem,agent) 已有评论义务）：并入既有义务 —— 留痕指向 comment 请求身份。
@@ -872,6 +898,7 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   const claimed = runtime.squadDeferredDispatchRepo.claimDue(WS);
   assert.deepEqual(claimed.map((record) => record.runId), [key], "认领无来源过滤：评论义务与 R2 义务同判据");
   assert.equal(claimed[0]?.dispatchCause, null);
+  assert.equal(claimed[0]?.origin, "comment", "认领读回亦带来源判别（消费者不猜）");
   assert.equal(runtime.squadRunRepo.get(key), null, "该身份在 run 台账里没有行：重放只能用 eventKey 现造一条");
   assert.equal(receipts.get(key)?.outcome, "deferred", "认领不清账：receipt 仍停在 deferred（回写归 X2.1）");
 });

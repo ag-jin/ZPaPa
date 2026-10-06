@@ -123,7 +123,8 @@ interface CommentRow {
 }
 
 const AUTHOR_KINDS = ["human", "agent", "system"] as const;
-const RUN_ROLES = ["leader", "member", "standalone"] as const;
+/** SourceRunRef.role 的取值域（§3.1 闭集）：评论与 Activity 两面共用同一常量，防止两侧守卫分叉。 */
+export const SOURCE_RUN_ROLES = ["leader", "member", "standalone"] as const;
 const MENTION_TYPES = ["agent", "squad", "human", "all"] as const;
 
 /* 读回闸（readStatus 纪律）：枚举外值/坏 JSON 响亮抛——静默按默认处理会让
@@ -166,7 +167,7 @@ function rowToComment(row: CommentRow): WorkItemCommentRecord {
           ...(row.source_run_agent_id !== null ? { agentId: row.source_run_agent_id } : {}),
           ...(row.source_run_squad_id !== null ? { squadId: row.source_run_squad_id } : {}),
           role: ((): SourceRunRef["role"] => {
-            if (!(RUN_ROLES as readonly string[]).includes(row.source_run_role ?? "")) {
+            if (!(SOURCE_RUN_ROLES as readonly string[]).includes(row.source_run_role ?? "")) {
               throw new Error(
                 `work_item_comments.source_run_role 读回非法值「${row.source_run_role}」：一律抛。`,
               );
@@ -307,11 +308,18 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
     },
 
     setResolved(id, resolved) {
-      const row = db.prepare("SELECT resolved_at FROM work_item_comments WHERE id = ?").get(id) as
-        | { resolved_at: number | null }
-        | undefined;
+      const row = db
+        .prepare("SELECT thread_id, resolved_at FROM work_item_comments WHERE id = ?")
+        .get(id) as { thread_id: string; resolved_at: number | null } | undefined;
       if (!row) {
         throw new Error(`work_item_comments 没有 id=「${id}」的行，无法置解决态：一律抛。`);
+      }
+      // §3.2 裁定#4「仅根可置/消」——存储面同步守卫（服务层同款守卫是第一道；直接调 repo 的
+      // 调用方（测试/未来入口）也不能把回复置成已解决，否则语义在绕过服务层时静默漂移）。
+      if (row.thread_id !== id) {
+        throw new Error(
+          `work_item_comments 的「${id}」不是线程根（thread_id=${row.thread_id}）：解决态仅根可置/消（§3.2），一律抛。`,
+        );
       }
       if (resolved === (row.resolved_at !== null)) return; // 状态已一致 ⇒ no-op。
       db.prepare(

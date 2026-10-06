@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AuthorRef, SourceRunRef } from "./workItemCommentRepo.js";
+import { SOURCE_RUN_ROLES, type AuthorRef, type SourceRunRef } from "./workItemCommentRepo.js";
 
 /* 协作域 X0.2：工作项活动事实的存储面（spec §3.3）。**唯一写者面**（CommentService 在 X1.2）。
    两条铁律：
@@ -92,6 +92,10 @@ interface ActivityRow {
   actor_id: string;
   actor_display_name: string | null;
   source_run_id: string | null;
+  /* 0013 追加的三列：sourceRun 全形状（0011 只存 runId，读回曾硬编码 role="member"——X1.3 B2）。 */
+  source_run_agent_id: string | null;
+  source_run_squad_id: string | null;
+  source_run_role: string | null;
   initiated_by_kind: string;
   initiated_by_id: string;
   comment_id: string | null;
@@ -124,6 +128,29 @@ function readAuthorKind(value: string): AuthorRef["kind"] {
   return value as AuthorRef["kind"];
 }
 
+/* B2 读回纪律：**不猜**。runId 有值就必须有合法角色——缺失（0013 之前的历史行只存了 runId，
+   角色无从得知）或枚举外值一律响亮抛；静默按 "member" 处理会把队长 run 的 Activity 读成队员，
+   正是 X1.3 独立验收抓到的静默失真。 */
+function readSourceRunRole(value: string | null): SourceRunRef["role"] {
+  if (value === null || !(SOURCE_RUN_ROLES as readonly string[]).includes(value)) {
+    throw new Error(
+      `work_item_activities.source_run_role 读回非法值「${value}」：有 source_run_id 就必须有合法角色` +
+        "（leader|member|standalone），历史行角色无从得知也不得猜，一律抛。",
+    );
+  }
+  return value as SourceRunRef["role"];
+}
+
+function rowToSourceRun(row: ActivityRow): SourceRunRef | null {
+  if (row.source_run_id === null) return null;
+  return {
+    runId: row.source_run_id,
+    ...(row.source_run_agent_id !== null ? { agentId: row.source_run_agent_id } : {}),
+    ...(row.source_run_squad_id !== null ? { squadId: row.source_run_squad_id } : {}),
+    role: readSourceRunRole(row.source_run_role),
+  };
+}
+
 function rowToActivity(row: ActivityRow): WorkItemActivityRecord {
   let payload: Record<string, unknown>;
   try {
@@ -144,10 +171,7 @@ function rowToActivity(row: ActivityRow): WorkItemActivityRecord {
       id: row.actor_id,
       ...(row.actor_display_name !== null ? { displayName: row.actor_display_name } : {}),
     },
-    sourceRun:
-      row.source_run_id === null
-        ? null
-        : { runId: row.source_run_id, role: "member" }, // role 列历史值简化：X1.2 写入时总是全形状。
+    sourceRun: rowToSourceRun(row),
     initiatedBy: { kind: readAuthorKind(row.initiated_by_kind), id: row.initiated_by_id },
     commentId: row.comment_id,
     decisionId: row.decision_id,
@@ -171,12 +195,13 @@ export function createWorkItemActivityRepo(db: DatabaseSync): WorkItemActivityRe
           `INSERT OR IGNORE INTO work_item_activities (
             id, workspace_key, workspace_path, work_item_id, kind, sequence, occurred_at,
             actor_kind, actor_id, actor_display_name, source_run_id,
+            source_run_agent_id, source_run_squad_id, source_run_role,
             initiated_by_kind, initiated_by_id,
             comment_id, decision_id, dispatch_event_id, payload_json, dedup_key,
             created_at, updated_at
           )
           SELECT ?, ?, ?, ?, ?, COALESCE((SELECT MAX(sequence) FROM work_item_activities
-                                          WHERE workspace_key = ? AND work_item_id = ?), 0) + 1,  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`,
+                                          WHERE workspace_key = ? AND work_item_id = ?), 0) + 1,  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`,
         )
         .run(
           input.id,
@@ -191,6 +216,9 @@ export function createWorkItemActivityRepo(db: DatabaseSync): WorkItemActivityRe
           input.actor.id,
           input.actor.displayName ?? null,
           input.sourceRun?.runId ?? null,
+          input.sourceRun?.agentId ?? null,
+          input.sourceRun?.squadId ?? null,
+          input.sourceRun?.role ?? null,
           input.initiatedBy.kind,
           input.initiatedBy.id,
           input.commentId ?? null,

@@ -459,6 +459,8 @@ export function createRunLifecycle(deps: {
           workItemId: request.workItemId,
           agentId: request.agentId,
           dispatchCause: request.dispatchCause ?? null,
+          // G4：R2 通道登记的义务来源 = 'reassign'（显式标注，不依赖列默认值——分流位必须是事实）。
+          origin: "reassign",
           createdAt: now,
           updatedAt: now,
         });

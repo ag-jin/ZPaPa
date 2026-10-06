@@ -152,3 +152,61 @@ test("重启稳定：close 后重开读回同一序与内容", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* ---------- B2（X1.3 阻塞项）：sourceRun 全形状保真，读回不猜 ---------- */
+
+test("B2｜sourceRun 全形状往返：role/agentId/squadId 逐字段保真（队长 run 不得读回 member）", () => {
+  const { repo } = setup();
+  const leader = { kind: "agent" as const, id: "ta-lead" };
+  repo.add(
+    input({
+      id: "a-leader",
+      dedupKey: "d-leader",
+      actor: leader,
+      sourceRun: { runId: "run-lead", agentId: "ta-lead", squadId: "sq-core", role: "leader" },
+    }),
+  );
+  repo.add(
+    input({
+      id: "a-member",
+      dedupKey: "d-member",
+      actor: leader,
+      sourceRun: { runId: "run-m", agentId: "ta-m", role: "member" },
+    }),
+  );
+  assert.deepEqual(repo.get("a-leader")!.sourceRun, {
+    runId: "run-lead",
+    agentId: "ta-lead",
+    squadId: "sq-core",
+    role: "leader",
+  });
+  assert.deepEqual(repo.get("a-member")!.sourceRun, { runId: "run-m", agentId: "ta-m", role: "member" });
+  // 无 sourceRun 仍读回 null（人手工事实）。
+  repo.add(input({ id: "a-none", dedupKey: "d-none" }));
+  assert.equal(repo.get("a-none")!.sourceRun, null);
+  // 重启后逐字节一致（列值持久化，不是内存补的）。
+  assert.deepEqual(repo.listByWorkItem("ws", "wi-1")[0]!.sourceRun, {
+    runId: "run-lead",
+    agentId: "ta-lead",
+    squadId: "sq-core",
+    role: "leader",
+  });
+});
+
+test("B2｜读回不猜：runId 有值但角色列缺失/非法 ⇒ 响亮抛（不得静默当 member）", () => {
+  const { repo, db } = setup();
+  const agent = { kind: "agent" as const, id: "ta-a" };
+  repo.add(
+    input({
+      id: "a-legacy",
+      dedupKey: "d-legacy",
+      actor: agent,
+      sourceRun: { runId: "run-x", agentId: "ta-a", role: "standalone" },
+    }),
+  );
+  // 模拟 0013 之前的历史行：只有 source_run_id，角色无从得知。
+  db.prepare("UPDATE work_item_activities SET source_run_role = NULL WHERE id = 'a-legacy'").run();
+  assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
+  db.prepare("UPDATE work_item_activities SET source_run_role = 'bogus' WHERE id = 'a-legacy'").run();
+  assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
+});

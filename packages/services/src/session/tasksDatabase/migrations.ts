@@ -10,6 +10,7 @@ import {
   SQUAD_RUN_QUEUE_SQL,
   WORK_ITEM_COLLABORATION_SQL,
   WORK_ITEM_COLLABORATION_SQL_2,
+  WORK_ITEM_COLLABORATION_SQL_3,
   SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
@@ -117,6 +118,12 @@ const definitions = [
     id: "0012_comment_dispatch_receipts",
     checksumInput: [COMMENT_DISPATCH_RECEIPT_SQL],
   },
+  /* 0013（协作域 X1.3 修复）：Activity 补 sourceRun 全形状三列（读回不再硬编码 role="member"）
+     + deferred 义务表加 origin 来源判别列（评论义务与 R2 义务分流）。只加列，不改既有列/表。 */
+  {
+    id: "0013_collaboration_source_run_and_origin",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL_3],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -177,6 +184,8 @@ export function runTasksDatabaseMigrations(
         db.exec(WORK_ITEM_COLLABORATION_SQL_2);
       else if (migration.id === "0012_comment_dispatch_receipts")
         db.exec(COMMENT_DISPATCH_RECEIPT_SQL);
+      else if (migration.id === "0013_collaboration_source_run_and_origin")
+        db.exec(WORK_ITEM_COLLABORATION_SQL_3);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

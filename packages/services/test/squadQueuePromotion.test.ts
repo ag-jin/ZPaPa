@@ -122,6 +122,8 @@ test("R2：同 (workItem,agent) 已有活跃 run ⇒ deferred（义务一行、�
   assert.equal(runtime.squadRunRepo.get("run-2"), null, "不落排队行（义务≠排队：等的判据不同）");
   const obligations = runtime.squadDeferredDispatchRepo.list("ws");
   assert.deepEqual(obligations.map((o) => o.runId), ["run-2"]);
+  // G4：R2 臂写的义务来源 = 'reassign'（与评论臂的 'comment' 判别，claimDue 消费者据此分流）。
+  assert.deepEqual(obligations.map((o) => o.origin), ["reassign"]);
 
   // 同 pair 第三次 ⇒ 并入既存义务（留痕），义务表仍一行。
   const third = await open("run-3", "wi-1");

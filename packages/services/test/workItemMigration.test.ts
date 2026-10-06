@@ -93,6 +93,14 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP INDEX idx_comment_dispatch_receipts_item",
     "DROP TABLE comment_dispatch_receipts",
   ],
+  // 0013（协作域 X1.3 修复）：Activity 补 sourceRun 全形状三列 + 义务表加 origin 来源列。
+  // 列级追加（不改表），反向 DDL 是逐列 DROP；列名与 0013 的 ALTER 一一对应。
+  "0013_collaboration_source_run_and_origin": [
+    "ALTER TABLE squad_run_deferred_dispatches DROP COLUMN origin",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_role",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_squad_id",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_agent_id",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
@@ -138,7 +146,9 @@ test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库�
   // 自适配：0008 之后若再添迁移，本用例按同一条路逐条退回「0008 之前」。
   const from008 = fullLedger.findIndex((row) => row.id === "0008_squad_run_cause");
   assert.ok(from008 > 0, "账本里没有 0008（迁移没挂上）");
-  for (const row of fullLedger.slice(from008)) {
+  /* 逐条退回必须**逆序**（最后应用的最先撤）：0013 这类「往 0009/0011 建的表上加列」的迁移，
+     其反向 DDL 引用的表会被 0009/0011 自己的反向 DDL 整表 drop——正序执行会撞 no such table。 */
+  for (const row of fullLedger.slice(from008).reverse()) {
     for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
     db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
   }

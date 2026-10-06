@@ -13,7 +13,11 @@ import {
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
-import { createWorkItemCommentRepo, type AuthorRef } from "../src/workitem/workItemCommentRepo.js";
+import {
+  createWorkItemCommentRepo,
+  type AuthorRef,
+} from "../src/workitem/workItemCommentRepo.js";
+import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
 /* 协作域 X1.2：评论派发请求的稳定键（§8.1：**不得复用**既有 eventKey 拼接格式）。
@@ -387,6 +391,7 @@ function harness(over: Partial<CommentServiceDeps> = {}): Harness {
   const comments = createWorkItemCommentRepo(db);
   const activities = createWorkItemActivityRepo(db);
   const receipts = createCommentDispatchReceiptRepo(db);
+  const reactions = createWorkItemCommentReactionRepo(db);
   const runs = createSquadRunRepo(db);
   const deferred = createSquadDeferredDispatchRepo(db);
   const workItems = createWorkItemRepo(db);
@@ -395,6 +400,7 @@ function harness(over: Partial<CommentServiceDeps> = {}): Harness {
     comments,
     activities,
     receipts,
+    reactions,
     runs,
     deferred,
     workItems,

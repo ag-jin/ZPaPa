@@ -9,6 +9,14 @@ import { DISPATCH_CAUSES, type DispatchCause } from "./squadDispatchRequests.js"
    唯一公开入口纪律：与 squadRunRepo 同款——不进 services 导出面，服务层组合根才可消费；
    写入/推进/履约的**调用方**（闸与重放）在 C3/C4 落地。 */
 
+/* G4（X1.3 阻塞项）：义务**来源**闭集——评论 deferred 义务与 R2（改派）义务同表。
+   没有判别列时 claimDue 一视同仁认领，host 会把评论 dispatchKey 当 eventKey 重放（X2.1 归属前的
+   静默撞车）。origin 与 dispatch_cause 是两件事：cause 是「这次派发因何而起」（受 C2 闭集约束，
+   评论成因尚未扩展所以为 NULL），origin 是「这条义务由哪条通道登记」（本轮只落数据面，
+   分流消费在 X2.1 的 host 侧）。 */
+export const DEFERRED_DISPATCH_ORIGINS = ["reassign", "comment"] as const;
+export type DeferredDispatchOrigin = (typeof DEFERRED_DISPATCH_ORIGINS)[number];
+
 export type SquadDeferredDispatchRecord = {
   /** 义务 id（= 触发它的派发请求 runId：一行 = 一条「目标收尾后要重放」的事实）。 */
   runId: string;
@@ -17,8 +25,15 @@ export type SquadDeferredDispatchRecord = {
   agentId: string;
   /** 派发成因（闭集见 DispatchCause；NULL = 遗留/未知，读回不得猜）。 */
   dispatchCause: DispatchCause | null;
+  /** 义务来源（闭集，非空）：'reassign' = R2 改派；'comment' = 评论派发请求。 */
+  origin: DeferredDispatchOrigin;
   createdAt: number;
   updatedAt: number;
+};
+
+/** 写入形状：origin 缺省 'reassign'（与列默认值同源）——既有 R2 写入方/历史调用不必改。 */
+export type SquadDeferredDispatchInput = Omit<SquadDeferredDispatchRecord, "origin"> & {
+  origin?: DeferredDispatchOrigin;
 };
 
 export interface SquadDeferredDispatchRepo {
@@ -27,7 +42,7 @@ export interface SquadDeferredDispatchRepo {
    * 同 `(workspace, workItem, agent)` 已有义务 ⇒ **不写第二行**、返回 `false`（本次并入，
    * 调用方走合并留痕）；返回 `true` = 本次真的登记了。UNIQUE 约束在语句前置之外兜并发。
    */
-  insertIfAbsent(record: SquadDeferredDispatchRecord): boolean;
+  insertIfAbsent(record: SquadDeferredDispatchInput): boolean;
   /** 按键取既存义务（并入时拿目标 runId 用）；无 ⇒ null。 */
   find(workspaceKey: string, workItemId: string, agentId: string): SquadDeferredDispatchRecord | null;
   /** 本 workspace 全部义务（启动扫描/重放遍历用），按 created_at 序。 */
@@ -51,6 +66,7 @@ interface DeferredRow {
   work_item_id: string;
   agent_id: string;
   dispatch_cause: string | null;
+  origin: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -77,6 +93,27 @@ function assertDispatchCause(cause: DispatchCause | null): DispatchCause | null 
   return cause;
 }
 
+/* 来源读写闸（与 dispatch_cause 同款纪律；列 NOT NULL DEFAULT 'reassign'，NULL 只可能是列被写坏）：
+   来源决定「这条义务该由哪条重放通道消费」，静默按默认处理会把评论义务当 R2 重放。 */
+function readOrigin(value: string | null): DeferredDispatchOrigin {
+  if (value === null || !(DEFERRED_DISPATCH_ORIGINS as readonly string[]).includes(value)) {
+    throw new Error(
+      `squad_run_deferred_dispatches.origin 读回非法值「${value}」：列被写坏或闭集被改小，一律抛。`,
+    );
+  }
+  return value as DeferredDispatchOrigin;
+}
+
+function assertOrigin(origin: DeferredDispatchOrigin | undefined): DeferredDispatchOrigin {
+  const value = origin ?? "reassign";
+  if (!(DEFERRED_DISPATCH_ORIGINS as readonly string[]).includes(value)) {
+    throw new Error(
+      `squad_run_deferred_dispatches.origin 拒绝写入非法值「${String(origin)}」（不在闭集内）`,
+    );
+  }
+  return value;
+}
+
 function rowToRecord(row: DeferredRow): SquadDeferredDispatchRecord {
   return {
     runId: row.run_id,
@@ -84,6 +121,7 @@ function rowToRecord(row: DeferredRow): SquadDeferredDispatchRecord {
     workItemId: row.work_item_id,
     agentId: row.agent_id,
     dispatchCause: readDispatchCause(row.dispatch_cause),
+    origin: readOrigin(row.origin),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -93,12 +131,13 @@ export function createSquadDeferredDispatchRepo(db: DatabaseSync): SquadDeferred
   return {
     insertIfAbsent(record) {
       assertDispatchCause(record.dispatchCause);
+      const origin = assertOrigin(record.origin);
       const changes = db
         .prepare(
           `INSERT INTO squad_run_deferred_dispatches (
-            run_id, workspace_key, work_item_id, agent_id, dispatch_cause, created_at, updated_at
+            run_id, workspace_key, work_item_id, agent_id, dispatch_cause, origin, created_at, updated_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_run_deferred_dispatches
               WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ?
@@ -110,6 +149,7 @@ export function createSquadDeferredDispatchRepo(db: DatabaseSync): SquadDeferred
           record.workItemId,
           record.agentId,
           record.dispatchCause,
+          origin,
           record.createdAt,
           record.updatedAt,
           record.workspaceKey,
