@@ -199,6 +199,7 @@ export function SquadAgentsPage({
       permissionMode?: TeamAgent["permissionMode"];
       tools?: string[];
       disallowedTools?: string[];
+      maxConcurrentRuns?: number;
     }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
@@ -358,6 +359,9 @@ export function SquadAgentsPage({
             ...(dialog.agent.tools !== undefined ? { tools: dialog.agent.tools } : {}),
             ...(dialog.agent.disallowedTools !== undefined
               ? { disallowedTools: dialog.agent.disallowedTools }
+              : {}),
+            ...(dialog.agent.maxConcurrentRuns !== undefined
+              ? { maxConcurrentRuns: dialog.agent.maxConcurrentRuns }
               : {}),
           }}
         />

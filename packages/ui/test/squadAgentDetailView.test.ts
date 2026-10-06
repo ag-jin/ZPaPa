@@ -110,3 +110,63 @@ test("守卫｜详情页骨架：概览区 + 并展示（resolve 单源）+ i18n
   const ph = (v: string) => [...v.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
   assert.equal(ph(zhCN["squad.agentDetail.capacity"] ?? ""), ph(enUS["squad.agentDetail.capacity"] ?? ""));
 });
+
+/* ---------- 4b：三区齐 + DM 直通 + 并发编辑 ---------- */
+
+test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史截断 50、DM 复用 startDraft+预填、并发输入 1-16", () => {
+  const page = readSource("squad/SquadAgentDetailPage.tsx");
+  assert.ok(page.includes('data-testid="squad-agent-detail-tasks"'), "任务表 testid");
+  assert.ok(
+    page.includes("item.assignee.type === \"agent\" && item.assignee.id === agentId"),
+    "任务表按 assignee 过滤（快照前端过滤口径）",
+  );
+  assert.ok(page.includes('data-testid="squad-agent-detail-runs"'), "运行区 testid");
+  assert.ok(
+    page.includes("const RUN_HISTORY_LIMIT = 50") && page.includes("slice(0, RUN_HISTORY_LIMIT)"),
+    "全历史 + 截断 50（用户裁定④）",
+  );
+  assert.ok(
+    page.includes("right.createdAt - left.createdAt"),
+    "倒序（最新在前）",
+  );
+  assert.ok(
+    page.includes('data-testid="squad-agent-detail-start-conversation"'),
+    "DM 入口 testid",
+  );
+  const shell = readSource("app-shell/WorkspaceShellLayout.tsx");
+  assert.ok(
+    shell.includes("handleStartAgentConversation") &&
+      shell.includes("handleStartDraftInWorkspaceInChat(workspaceAbsPath, workspaceIdentity)") &&
+      shell.includes("requestComposerTextInsert"),
+    "DM 必须复用 startDraft + 预填既有通路（零新通路）",
+  );
+  assert.ok(
+    shell.includes("canStartConversation={") &&
+      shell.includes("workspaceReadOnlyReason"),
+    "只读 workspace 时 DM 入口隐藏",
+  );
+  const dialog = readSource("squad/SquadCreateDialogs.tsx");
+  assert.ok(
+    dialog.includes('data-testid="squad-agent-max-concurrent-runs"'),
+    "并发输入控件存在",
+  );
+  // 输入解析：空/非法 = undefined 不提交；合法 1–16 提交。
+  assert.ok(
+    dialog.includes("if (trimmed === \"\") return undefined;") &&
+      dialog.includes("!Number.isInteger(value) || value < 1 || value > 16"),
+    "空/非法输入按不提交处理（服务面 schema 是最终闸）",
+  );
+  // i18n 两语齐 + 计数键占位符成对。
+  const ph = (v: string) => [...v.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
+  for (const key of [
+    "squad.agentDetail.tasksTitle", "squad.agentDetail.runsTitle",
+    "squad.agentDetail.startConversation", "squad.common.maxConcurrentRuns",
+  ]) {
+    assert.ok(zhCN[key] && enUS[key], `两语缺 ${key}`);
+  }
+  assert.equal(
+    ph(zhCN["squad.agentDetail.runsOverflow"] ?? ""),
+    ph(enUS["squad.agentDetail.runsOverflow"] ?? ""),
+    "runsOverflow 占位符成对",
+  );
+});

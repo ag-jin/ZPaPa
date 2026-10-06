@@ -1,7 +1,8 @@
 /* oxlint-disable eslint(max-lines) -- 创建/编辑双用表单：TeamAgent 与 Squad 两个对话框刻意同文件（两份表单会分叉）；字段区按服务面白名单一一对应。 */
 import { useRef, useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
-import { TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
+import {
+  resolveTeamAgentMaxConcurrentRuns, TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import {
@@ -70,6 +71,8 @@ export function TeamAgentDialog({
     tools?: string[];
     /** ③b：禁用工具令牌（空 = 不提交）。 */
     disallowedTools?: string[];
+    /** 4b（裁定⑤）：并发上限 1–16（空输入 = 不提交保持原值）。 */
+    maxConcurrentRuns?: number;
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
   initial?: {
@@ -83,6 +86,7 @@ export function TeamAgentDialog({
     permissionMode?: TeamAgent["permissionMode"];
     tools?: string[];
     disallowedTools?: string[];
+    maxConcurrentRuns?: number;
   };
   /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
       模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
@@ -124,6 +128,9 @@ export function TeamAgentDialog({
     (initial?.tools ?? []).filter((tool) => !(TOOL_OPTIONS as readonly string[]).includes(tool)),
   );
   const [disallowedText, setDisallowedText] = useState(initial?.disallowedTools?.join(", ") ?? "");
+  const [maxConcurrentRunsText, setMaxConcurrentRunsText] = useState(
+    initial?.maxConcurrentRuns !== undefined ? String(initial.maxConcurrentRuns) : "",
+  );
   /** 令牌化：逗号/空白分隔、去空、去重保序。空结果 = 不提交（保持原值）。 */
   const parsedDisallowed = (): string[] | null => {
     const tokens = disallowedText
@@ -152,6 +159,13 @@ export function TeamAgentDialog({
       onSubmit={() => {
         const skillsTokens = parsedSkills();
         const disallowedTokens = parsedDisallowed();
+        const maxConcurrentRunsParsed = (() => {
+          const trimmed = maxConcurrentRunsText.trim();
+          if (trimmed === "") return undefined;
+          const value = Number(trimmed);
+          if (!Number.isInteger(value) || value < 1 || value > 16) return undefined;
+          return value;
+        })();
         onSubmit({
           name: name.trim(),
           systemPrompt,
@@ -178,6 +192,7 @@ export function TeamAgentDialog({
             ? { tools: [] }
             : { tools: [...selectedTools, ...preservedToolsRef.current] }),
           ...(disallowedTokens !== null ? { disallowedTools: disallowedTokens } : {}),
+          ...(maxConcurrentRunsParsed !== undefined ? { maxConcurrentRuns: maxConcurrentRunsParsed } : {}),
         });
       }}
     >
@@ -311,6 +326,22 @@ export function TeamAgentDialog({
               </SelectItem>
             </SelectContent>
           </Select>
+        )}
+      </Field>
+      <Field labelId="squad.common.maxConcurrentRuns">
+        {(controlId) => (
+          /* 4b（裁定⑤）：并发上限 1–16（空 = 不提交保持原值；非法输入按空处理——
+             服务面 schema 是最终闸，非法值落盘前会被拒）。 */
+          <Input
+            id={controlId}
+            type="number"
+            min={1}
+            max={16}
+            value={maxConcurrentRunsText}
+            placeholder={String(resolveTeamAgentMaxConcurrentRuns({ maxConcurrentRuns: undefined }))}
+            onChange={(event) => setMaxConcurrentRunsText(event.target.value)}
+            data-testid="squad-agent-max-concurrent-runs"
+          />
         )}
       </Field>
       <Field labelId="squad.common.tools">

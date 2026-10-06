@@ -1159,6 +1159,22 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     },
     [handleStartDraftInWorkspace, showChatMainView],
   );
+
+  /* 4b DM 直通（用户裁定③：新建+预填）：切会话视图新建草稿 + 预填「@名字 」——
+     复用 startDraft 与 requestComposerTextInsert 既有通路（协作域 §5「与头像簇穿透同一条路」）。 */
+  const handleStartAgentConversation = useCallback(
+    (agentName: string) => {
+      handleStartDraftInWorkspaceInChat(workspaceAbsPath, workspaceIdentity);
+      useZCodeSessionStore
+        .getState()
+        .requestComposerTextInsert(
+          workspaceAbsPath,
+          `@${agentName} `,
+          workspaceIdentity,
+        );
+    },
+    [handleStartDraftInWorkspaceInChat, workspaceAbsPath, workspaceIdentity],
+  );
   const handleCreateProjectDraft = useCallback(
     (path: string, identity?: string) =>
       handleStartDraftInWorkspaceInChat(path, identity, undefined, "project"),
@@ -2001,6 +2017,11 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                     workspaceIdentity={workspaceIdentity}
                                     agentId={agentDetailId}
                                     onBack={handleBackFromAgentDetail}
+                                    onStartConversation={handleStartAgentConversation}
+                                    canStartConversation={
+                                      workspaceReadOnlyReason === null ||
+                                      workspaceReadOnlyReason === undefined
+                                    }
                                   />
                                 </div>
                               </ScopedErrorBoundary>
