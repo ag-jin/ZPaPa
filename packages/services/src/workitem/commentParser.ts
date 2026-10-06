@@ -53,8 +53,6 @@ export const EMPTY_ROSTER_INDEX: RosterIndex = {
 /** 已知 slash 命令闭集（§4.2：未知命令不得静默降级）。 */
 const KNOWN_COMMANDS = ["note"] as const;
 
-const NOTE_PREFIX = "/note";
-
 function resolveToken(token: string, roster: RosterIndex): ParsedMention {
   if (token === "all") return { kind: "all" };
   if (roster.ambiguousAgentNames.has(token)) {
