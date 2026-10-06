@@ -4100,7 +4100,7 @@ const zhCN: Record<string, string> = {
   "squad.agents.editTitle": "编辑协作智能体",
   "squad.agents.archiveConfirmTitle": "归档协作智能体「{name}」？",
   "squad.agents.archiveConfirmDescription":
-    "归档后它不再出现在派发候选里；定义与记忆都会保留，不会删除任何数据。此操作不可撤销。",
+    "归档后它不再出现在派发候选里；定义与记忆都会保留，不会删除任何数据。归档可随时恢复（⑤刀）。",
   "squad.agents.archiveSucceeded": "已归档",
   "squad.agents.updated": "已保存",
   "squad.agents.enabledToast": "已启用",
@@ -4114,7 +4114,7 @@ const zhCN: Record<string, string> = {
   "squad.squads.editTitle": "编辑小队",
   "squad.squads.archiveConfirmTitle": "归档小队「{name}」？",
   "squad.squads.archiveConfirmDescription":
-    "归档后它不再出现在派发候选里；指派给该小队的工作项会转交给队长；花名册与指令都会保留，不会删除任何数据。此操作不可撤销。",
+    "归档后它不再出现在派发候选里；指派给该小队的工作项会转交给队长；花名册与指令都会保留，不会删除任何数据。归档可随时恢复（⑤刀）。",
   "squad.squads.archiveSucceeded": "已归档",
   "squad.squads.updated": "已保存",
   "squad.squads.enabledToast": "已启用",
@@ -4156,6 +4156,9 @@ const zhCN: Record<string, string> = {
   "squad.common.toolsMode.all": "允许全部",
   "squad.common.toolsMode.custom": "自定义",
   "squad.common.disallowedTools": "禁用工具",
+  "squad.common.restore": "恢复",
+  "squad.agents.restoredToast": "已恢复",
+  "squad.squads.restoredToast": "已恢复",
   "squad.agentDetail.back": "返回智能体列表",
   "squad.agentDetail.noSelection": "未选择智能体",
   "squad.agentDetail.loading": "读取中…",

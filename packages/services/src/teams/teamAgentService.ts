@@ -75,6 +75,8 @@ export interface TeamAgentService {
   update(id: string, patch: TeamAgentEditablePatch): TeamAgent;
   /** 归档而非硬删：只写 archivedAt，定义与记忆都保留。 */
   archive(id: string): void;
+  /** ⑤刀（矩阵裁定#2）：归档可恢复——清 archivedAt，其余字段一字不动；未归档 = 幂等 no-op。 */
+  restore(id: string): void;
   /** 只改 enabled，其余字段（含 archivedAt）原样保留。 */
   setEnabled(id: string, enabled: boolean): void;
 }
@@ -230,6 +232,13 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。
         return changed ? next : agent;
       });
+    },
+
+    restore(id) {
+      // 幂等：未归档的行 restore 是 no-op（不重写盘）；id 不存在响亮抛（与 archive 同口径）。
+      update(root, id, (agent) =>
+        agent.archivedAt === undefined ? agent : { ...agent, archivedAt: undefined },
+      );
     },
 
     archive(id) {

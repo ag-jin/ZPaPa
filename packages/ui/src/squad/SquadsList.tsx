@@ -29,6 +29,7 @@ export function SquadsList({
   onEdit,
   onToggle,
   onArchive,
+  onRestore,
 }: {
   squads: Squad[];
   /** 用来解析队长 / 队员的显示名（`resolveTeamAgentName` 查不到时回落 id）。 */
@@ -38,6 +39,8 @@ export function SquadsList({
   onEdit: (squad: Squad) => void;
   onToggle: (squad: Squad) => void;
   onArchive: (squad: Squad) => void;
+  /** ⑤刀：恢复已归档小队（归档行唯一动作）。 */
+  onRestore: (squad: Squad) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
@@ -155,8 +158,7 @@ export function SquadsList({
               ) : null}
             </span>
             <span className="flex shrink-0 items-center gap-2">
-              {/* 已归档 ⇒ 三个动作都不给（归档是终态，仓库里没有"取消归档"）——
-                  判据在共享的 rosterRowActions，本层只照它画。 */}
+              {/* ⑤刀（裁定#2）：归档可恢复——归档行的唯一动作是「恢复」。 */}
               {actions.canEdit ? (
                 <Button
                   size="sm"
@@ -177,6 +179,17 @@ export function SquadsList({
                   onClick={() => onToggle(squad)}
                 >
                   {squad.enabled ? t("squad.common.disable") : t("squad.common.enable")}
+                </Button>
+              ) : null}
+              {actions.canRestore ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="squad-row-restore"
+                  onClick={() => onRestore(squad)}
+                >
+                  {t("squad.common.restore")}
                 </Button>
               ) : null}
               {actions.canArchive ? (

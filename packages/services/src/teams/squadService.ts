@@ -66,6 +66,8 @@ export interface SquadService {
   updateRoster(id: string, patch: SquadRosterPatch): Squad;
   /** 归档而非硬删：只写 `archivedAt`，花名册与指令都保留。重复归档保留原时间戳。 */
   archive(id: string): Squad;
+  /** ⑤刀（矩阵裁定#2）：归档可恢复（与智能体同口径）——清 archivedAt；未归档 = 幂等 no-op。 */
+  restore(id: string): void;
 }
 
 export interface SquadServiceDeps {
@@ -207,6 +209,13 @@ export function createSquadService(deps: SquadServiceDeps): SquadService {
        （`workitem/squadRuntime.ts`）在做完归档侧的组合后执行：`SquadService` 保持无依赖，
        转交逻辑也不必为了拿到 workItemRepo 而把本服务改造成「什么都懂」的服务。
        若把转交塞进本方法的早退分支里，「已归档但漏转交」的残局就再也修不回来。 */
+    restore(id) {
+      const squad = readSquad(root, id);
+      if (!squad) throw new Error(`小队不存在：${id}`);
+      if (squad.archivedAt === undefined) return;
+      writeSquad(root, { ...squad, archivedAt: undefined });
+    },
+
     archive(id) {
       const current = readSquad(root, id);
       if (!current) throw new Error(`小队不存在：${id}`);

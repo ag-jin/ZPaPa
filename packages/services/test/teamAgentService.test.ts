@@ -26,6 +26,23 @@ test("预填只拷贝字段，不建立引用", () => {
   assert.equal("modelSelection" in draft, true);
 });
 
+// ⑤刀剩余半边（矩阵裁定#2：归档可恢复，智能体与小队同口径）。
+test("归档后可恢复（restore 清 archivedAt，定义与记忆保留）", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  svc.archive(a.id);
+  assert.ok(svc.get(a.id)!.archivedAt !== undefined);
+  svc.restore(a.id);
+  const restored = svc.get(a.id)!;
+  assert.equal(restored.archivedAt, undefined, "恢复 = 清归档时间戳（其余字段一字不动）");
+  assert.equal(restored.name, "a");
+  assert.equal(restored.enabled, true);
+  // 未归档的行再恢复 = no-op（不重写盘；幂等）；不存在的 id 响亮抛（与 archive 同口径）。
+  svc.restore(a.id);
+  assert.equal(svc.get(a.id)!.archivedAt, undefined);
+  assert.throws(() => svc.restore("nope"), /不存在/);
+});
+
 test("新建后可归档（归档而非硬删）", () => {
   const svc = setup();
   const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });

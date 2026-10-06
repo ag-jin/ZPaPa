@@ -172,6 +172,19 @@ export function SquadsPage({
     [intl, runAction, target],
   );
 
+  /** 恢复（⑤刀裁定#2）：归档非终态——直接动作（恢复无转交：转交只发生在归档时）。 */
+  const restoreSquadAction = useCallback(
+    async (squad: Squad) => {
+      if (!target) return;
+      await runAction(
+        squad.id,
+        (service) => service.restoreSquad(target, { id: squad.id }),
+        "squad.squads.restoredToast",
+      );
+    },
+    [runAction, target],
+  );
+
   /** 启用 / 停用：直接动作（无二次确认 —— 可逆，且归档才是有终态语义的那件事）。 */
   const toggleSquad = useCallback(
     async (squad: Squad) => {
@@ -323,6 +336,9 @@ export function SquadsPage({
           }}
           onArchive={(squad) => {
             void requestArchive(squad);
+          }}
+          onRestore={(squad) => {
+            void restoreSquadAction(squad);
           }}
         />
       ) : null}

@@ -145,33 +145,36 @@ test("状态机：快照 enabled=false ⇒ ready + experimentDisabled 横幅", (
 
 // ---------- ② 行动作判据（归档是终态）----------
 
-test("行动作：未归档（启用中 / 停用）⇒ 三个都可用", () => {
+test("行动作：未归档（启用中 / 停用）⇒ 编辑/启停/归档可用，恢复不给", () => {
   assert.deepEqual(rosterRowActions(anAgent), {
     canEdit: true,
     canToggle: true,
     canArchive: true,
+    canRestore: false,
   });
   // canToggle 同时覆盖两个方向：停用中的行也要给"启用"（不许按方向拆成两个字段）。
   assert.deepEqual(rosterRowActions({ ...anAgent, enabled: false }), {
     canEdit: true,
     canToggle: true,
     canArchive: true,
+    canRestore: false,
   });
 });
 
-// 归档是**终态**：仓库里没有"取消归档"（teamAgentService 只有 archive 一个方向），
-// 给了按钮也解决不了用户想解决的问题（把智能体弄回来）—— 比不给按钮更糟。
-test("行动作：已归档 ⇒ 三个都 false（归档行只显示徽标）", () => {
+// ⑤刀（矩阵裁定#2）：归档**可恢复**——归档行的唯一动作是「恢复」，其余三个不给。
+test("行动作：已归档 ⇒ 编辑/启停/归档不给，恢复给（归档非终态）", () => {
   assert.deepEqual(rosterRowActions({ ...anAgent, archivedAt: 1 }), {
     canEdit: false,
     canToggle: false,
     canArchive: false,
+    canRestore: true,
   });
-  // 已归档 + 已停用（两个都叠上）同样是三个 false：归档压过 enabled。
+  // 已归档 + 已停用（两个都叠上）同样：归档压过 enabled，恢复仍是唯一动作。
   assert.deepEqual(rosterRowActions({ ...anAgent, archivedAt: 1, enabled: false }), {
     canEdit: false,
     canToggle: false,
     canArchive: false,
+    canRestore: true,
   });
 });
 
@@ -524,4 +527,24 @@ test("守卫｜③b 工具编辑器：all/custom 两态（[]=全部）、复选�
     page.includes("dialog.agent.tools") && page.includes("dialog.agent.disallowedTools"),
     "编辑初值回填 tools/disallowedTools",
   );
+});
+
+/* ---------- ⑤刀剩余半边：归档可恢复 ---------- */
+
+test("守卫｜归档可恢复：canRestore 判据、恢复按钮、确认文案无「不可撤销」、服务面 restore", () => {
+  const roster = readSource("squad/squadSurfaceViewModel.ts");
+  assert.ok(
+    roster.includes("canRestore: archived"),
+    "canRestore = archived（归档行唯一动作；非归档行不给恢复）",
+  );
+  const agentList = readSource("squad/SquadAgentsList.tsx");
+  const squadList = readSource("squad/SquadsList.tsx");
+  assert.ok(agentList.includes('data-testid="squad-agent-restore"'), "智能体恢复按钮 testid");
+  assert.ok(squadList.includes('data-testid="squad-row-restore"'), "小队恢复按钮 testid");
+  // 确认文案不再出现「不可撤销」（两语）。
+  assert.ok(!zhCN["squad.agents.archiveConfirmDescription"]?.includes("不可撤销"), "智能体文案已改可恢复");
+  assert.ok(!zhCN["squad.squads.archiveConfirmDescription"]?.includes("不可撤销"), "小队文案已改可恢复");
+  assert.ok(!enUS["squad.agents.archiveConfirmDescription"]?.includes("cannot be undone"), "EN 文案已改");
+  assert.ok(!enUS["squad.squads.archiveConfirmDescription"]?.includes("cannot be undone"), "EN 小队文案已改");
+  assert.ok(zhCN["squad.common.restore"] && enUS["squad.common.restore"], "restore 键两语齐");
 });

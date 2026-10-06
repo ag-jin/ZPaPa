@@ -65,6 +65,21 @@ test("create 缺收手条件/轮次上限则抛错", () => {
   );
 });
 
+// ⑤刀剩余半边（矩阵裁定#2：归档可恢复，与智能体同口径）。
+test("归档后可恢复（restore 清 archivedAt；未知 id 响亮抛）", () => {
+  const svc = setup();
+  const s0 = svc.create({ name: "sq", leaderAgentId: "ta-1", members: ["ta-1"], instructions: { stopCondition: "x", maxRounds: "3" } });
+  svc.archive(s0.id);
+  assert.ok(svc.get(s0.id)?.archivedAt !== undefined);
+  svc.restore(s0.id);
+  const restored = svc.get(s0.id)!;
+  assert.equal(restored.archivedAt, undefined, "恢复 = 清归档时间戳（花名册与指令保留）");
+  assert.equal(restored.name, "sq");
+  svc.restore(s0.id); // 幂等 no-op
+  assert.equal(svc.get(s0.id)?.archivedAt, undefined);
+  assert.throws(() => svc.restore("nope"), /不存在/);
+});
+
 test("归档写 archivedAt 而非删除，且 list 仍含它", () => {
   const svc = setup();
   const s = svc.create({

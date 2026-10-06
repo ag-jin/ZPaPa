@@ -186,21 +186,24 @@ test("编辑候选：成员已停用 / 已归档 ⇒ 仍在勾选源里（能被
 
 // ---------- ② 行动作：小队对象走共享的同一函数 ----------
 
-test("行动作：小队对象走共享 rosterRowActions（未归档三 true / 已归档三 false）", () => {
+test("行动作：小队对象走共享 rosterRowActions（未归档三 true；已归档唯一动作=恢复）", () => {
   assert.deepEqual(rosterRowActions(aSquad), {
     canEdit: true,
     canToggle: true,
     canArchive: true,
+    canRestore: false,
   });
   assert.deepEqual(rosterRowActions({ ...aSquad, enabled: false }), {
     canEdit: true,
     canToggle: true,
     canArchive: true,
+    canRestore: false,
   });
   assert.deepEqual(rosterRowActions({ ...aSquad, archivedAt: 1 }), {
     canEdit: false,
     canToggle: false,
     canArchive: false,
+    canRestore: true,
   });
 });
 

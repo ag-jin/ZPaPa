@@ -4382,7 +4382,7 @@ const enUS: Record<string, string> = {
   "squad.agents.editTitle": "Edit team agent",
   "squad.agents.archiveConfirmTitle": "Archive team agent “{name}”?",
   "squad.agents.archiveConfirmDescription":
-    "Once archived it no longer appears as a dispatch candidate; its definition and memory are kept and no data is deleted. This action cannot be undone.",
+    "Once archived it no longer appears as a dispatch candidate; its definition and memory are kept and no data is deleted. Archiving is reversible at any time.",
   "squad.agents.archiveSucceeded": "Archived",
   "squad.agents.updated": "Saved",
   "squad.agents.enabledToast": "Enabled",
@@ -4396,7 +4396,7 @@ const enUS: Record<string, string> = {
   "squad.squads.editTitle": "Edit squad",
   "squad.squads.archiveConfirmTitle": "Archive squad “{name}”?",
   "squad.squads.archiveConfirmDescription":
-    "Once archived it no longer appears as a dispatch candidate; work items assigned to the squad transfer to the leader; the roster and instructions are kept and no data is deleted. This action cannot be undone.",
+    "Once archived it no longer appears as a dispatch candidate; work items assigned to the squad transfer to the leader; the roster and instructions are kept and no data is deleted. Archiving is reversible at any time.",
   "squad.squads.archiveSucceeded": "Archived",
   "squad.squads.updated": "Saved",
   "squad.squads.enabledToast": "Enabled",
@@ -4440,6 +4440,9 @@ const enUS: Record<string, string> = {
   "squad.common.toolsMode.all": "Allow all",
   "squad.common.toolsMode.custom": "Custom",
   "squad.common.disallowedTools": "Disallowed tools",
+  "squad.common.restore": "Restore",
+  "squad.agents.restoredToast": "Restored",
+  "squad.squads.restoredToast": "Restored",
   "squad.agentDetail.back": "Back to agents",
   "squad.agentDetail.noSelection": "No agent selected",
   "squad.agentDetail.loading": "Loading…",

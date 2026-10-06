@@ -78,6 +78,8 @@ export type RosterRowActions = {
   canEdit: boolean;
   canToggle: boolean;
   canArchive: boolean;
+  /** ⑤刀（裁定#2）：归档行可恢复（归档非终态——定义与记忆都在，一键回在用名单）。 */
+  canRestore: boolean;
 };
 
 /**
@@ -95,5 +97,5 @@ export type RosterRowActions = {
  */
 export function rosterRowActions<T extends { archivedAt?: number }>(entry: T): RosterRowActions {
   const archived = entry.archivedAt !== undefined;
-  return { canEdit: !archived, canToggle: !archived, canArchive: !archived };
+  return { canEdit: !archived, canToggle: !archived, canArchive: !archived, canRestore: archived };
 }

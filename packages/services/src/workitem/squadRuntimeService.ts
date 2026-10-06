@@ -199,6 +199,10 @@ export interface ISquadRuntimeService {
    * **唯一写者**：只经注入的 `teamAgentService.archive`。**目标显式**：同 `updateTeamAgent`。
    */
   archiveTeamAgent(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /** ⑤刀（裁定#2）：恢复已归档智能体（清 archivedAt；服务层同口径幂等）。 */
+  restoreTeamAgent(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /** ⑤刀（裁定#2）：恢复已归档小队（清 archivedAt；恢复无转交——转交只发生在归档时）。 */
+  restoreSquad(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   createSquad(target: SquadWorkspaceTarget, input: CreateSquadInput): Promise<Squad>;
   /**
    * 编辑小队的**可改定义字段**（名字 / 队长 / 名册 / 指令槽位），返回写盘后的实体
@@ -809,6 +813,16 @@ export function createSquadRuntimeService(deps: {
 
     async setTeamAgentEnabled(target, input) {
       await (await deps.createRuntime(target)).teamAgentService.setEnabled(input.id, input.enabled);
+    },
+
+    async restoreTeamAgent(target, input) {
+      const runtime = await deps.createRuntime(target);
+      runtime.teamAgentService.restore(input.id);
+    },
+
+    async restoreSquad(target, input) {
+      const runtime = await deps.createRuntime(target);
+      runtime.squadService.restore(input.id);
     },
 
     async archiveTeamAgent(target, input) {

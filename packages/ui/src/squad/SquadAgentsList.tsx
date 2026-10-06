@@ -52,6 +52,7 @@ export function SquadAgentsList({
   onEdit,
   onToggle,
   onArchive,
+  onRestore,
   onOpenDetail,
 }: {
   agents: TeamAgent[];
@@ -66,6 +67,8 @@ export function SquadAgentsList({
   onEdit: (agent: TeamAgent) => void;
   onToggle: (agent: TeamAgent) => void;
   onArchive: (agent: TeamAgent) => void;
+  /** ⑤刀：恢复已归档智能体（归档行唯一动作）。 */
+  onRestore: (agent: TeamAgent) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
@@ -182,8 +185,8 @@ export function SquadAgentsList({
               />
             ) : null}
             <span className="relative z-10 flex shrink-0 items-center gap-2">
-              {/* 已归档 ⇒ 三个动作都不给（归档是终态，仓库里没有"取消归档"）——
-                  判据在共享的 rosterRowActions，本层只照它画。 */}
+              {/* ⑤刀（裁定#2）：归档可恢复——归档行的唯一动作是「恢复」；
+                  其余三个动作仍不给（恢复前不该编辑/启停/再归档）。 */}
               {actions.canEdit ? (
                 <Button
                   size="sm"
@@ -204,6 +207,17 @@ export function SquadAgentsList({
                   onClick={() => onToggle(agent)}
                 >
                   {agent.enabled ? t("squad.common.disable") : t("squad.common.enable")}
+                </Button>
+              ) : null}
+              {actions.canRestore ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="squad-agent-restore"
+                  onClick={() => onRestore(agent)}
+                >
+                  {t("squad.common.restore")}
                 </Button>
               ) : null}
               {actions.canArchive ? (

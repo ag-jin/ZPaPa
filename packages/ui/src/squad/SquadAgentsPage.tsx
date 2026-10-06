@@ -144,7 +144,7 @@ export function SquadAgentsPage({
     [notify, reload, services, target],
   );
 
-  /** 归档：破坏性且**不可撤销** ⇒ 必须二次确认（仓里既有的确认对话框单例）。 */
+  /** 归档：破坏性（转交/退候选）⇒ 二次确认（⑤刀起**可恢复**——文案已改，确认保留）。 */
   const requestArchive = useCallback(
     async (agent: TeamAgent) => {
       const confirmed = await useConfirmDialogStore.getState().requestConfirmation({
@@ -163,6 +163,19 @@ export function SquadAgentsPage({
       );
     },
     [intl, runAction, target],
+  );
+
+  /** 恢复（⑤刀裁定#2）：归档非终态——直接动作（可逆方向，无二次确认）。 */
+  const restoreAgent = useCallback(
+    async (agent: TeamAgent) => {
+      if (!target) return;
+      await runAction(
+        agent.id,
+        (service) => service.restoreTeamAgent(target, { id: agent.id }),
+        "squad.agents.restoredToast",
+      );
+    },
+    [runAction, target],
   );
 
   /** 启用 / 停用：直接动作（无二次确认 —— 可逆，且归档才是有终态语义的那件事）。 */
@@ -318,6 +331,9 @@ export function SquadAgentsPage({
           }}
           onArchive={(agent) => {
             void requestArchive(agent);
+          }}
+          onRestore={(agent) => {
+            void restoreAgent(agent);
           }}
         />
       ) : null}
