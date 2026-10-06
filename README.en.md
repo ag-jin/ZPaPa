@@ -183,6 +183,19 @@ git push origin main v3.16.4-preview.1
 - Acceptance: after pushing the tag, confirm the Release carries the **Pre-release badge**, is **not Latest**, and includes `latest-mac.yml`; then open `https://github.com/ag-jin/ZPaPa/releases/latest` and confirm it **still points at the stable release**.
 - Note: **already-installed stable builds (`3.16.3` and earlier) do not honour the toggle** — switching channel at runtime only exists from `3.16.4-preview.1` onward. Entering the preview channel the first time requires **installing a preview build manually once**.
 
+### Post-release checks: experiment switch (A1)
+
+The default of the squad experiment switch `experimentalAgentSquadsEnabled` **follows the package identity** (the flavor injected at build time) and is unrelated to the "Receive preview updates early" setting: preview builds default to on, stable builds to off, and an **explicit value is never rewritten by the channel default** (source commit `ee14604`). All four checks require **real packaged artifacts** — a local dev build or an artifact older than that commit is not evidence:
+
+| #      | Scenario                        | Steps                                                                                                                                                                  | Pass criteria                                                                                      |
+| ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| R-A1-1 | I1: preview cold start          | Install the preview build → clear or remove `experimentalAgentSquadsEnabled` from settings (or use a fresh profile) → cold start                                       | The AI Team group and both entries are visible with no configuration; the settings toggle reads on |
+| R-A1-2 | I3: explicit off persists       | Turn the switch off explicitly in the same instance as R-A1-1 → quit → cold start                                                                                      | The entries stay hidden (the channel default must not flip it back)                                |
+| R-A1-3 | I2: stable cold start           | Install the stable build → fresh profile → cold start                                                                                                                  | The entries are hidden; enabling the switch explicitly makes them visible (explicit value wins)    |
+| R-A1-4 | Build-time anchor (automatable) | Assert the flavor literal on the packaged artifacts, or run the define-based unit test in CI (the §2 injection script in the T8 report can be promoted to a CI script) | Preview artifacts default to `true`, stable artifacts to `false`                                   |
+
+Invariants (I1–I4): I1 = key missing and the flavor is preview (the define is injected) ⇒ default `true`; I2 = key missing in every other case (production injected or no injection fallback) ⇒ default `false`; I3 = key `false` (any source, any channel, any upgrade) ⇒ never rewritten by the default logic; I4 = key `true` ⇒ never rewritten.
+
 ### In-app auto-update
 
 All three platforms update in-app from GitHub Releases (`ag-jin/ZPaPa`): a check on startup, an hourly poll, and a "Restart to update" menu entry once the download finishes. macOS relies on the designated requirement provided by the ad-hoc signature (see above); if a build shape cannot obtain a DR, the app falls back to opening the releases page from "Check for Updates" instead of silently doing nothing.
