@@ -352,7 +352,10 @@ function notify(workItemId: string, reason: string): DispatchEvent {
 function planLeaderRunEvents(workItemId: string, squad: Squad | null): DispatchEvent[] {
   if (squad === null) {
     return [
-      notify(workItemId, "指派的小队不存在（已被删除或指派引用失效）：跳过本次派发，等人在 Inbox 处理"),
+      notify(
+        workItemId,
+        "指派的小队不存在（已被删除或指派引用失效）：跳过本次派发，等人在 Inbox 处理",
+      ),
     ];
   }
   if (squad.archivedAt !== undefined) {
@@ -360,10 +363,7 @@ function planLeaderRunEvents(workItemId: string, squad: Squad | null): DispatchE
   }
   if (squad.enabled === false) {
     return [
-      notify(
-        workItemId,
-        "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发",
-      ),
+      notify(workItemId, "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发"),
     ];
   }
   return [

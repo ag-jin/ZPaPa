@@ -131,7 +131,8 @@ export function commentReceiptSquadId(
   );
 }
 
-interface ReceiptRow {  dispatch_key: string;
+interface ReceiptRow {
+  dispatch_key: string;
   workspace_key: string;
   work_item_id: string;
   target_agent_id: string;
