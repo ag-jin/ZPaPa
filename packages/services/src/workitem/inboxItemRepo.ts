@@ -26,7 +26,7 @@ export const INBOX_ITEM_KINDS = [
   "member_failed",
   /** 启动和解收掉的残留 run（宿主已消失、不会有人再把它推向终态）。 */
   "run_orphaned",
-  /** `planDispatch` 的四条 skip（指派给人 / 小队不存在 / 已归档 / 已停用）——只是通知。 */
+  /** `planDispatch` 的 skip 族：指派给人 / 小队不存在 / 小队已归档 / 目标 agent 已归档或停用（后两类 X2.1-D 起含 targetOverride 点名目标）——skip 不是失败，只是通知等人处理。 */
   "dispatch_skipped",
 ] as const;
 
