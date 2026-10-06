@@ -122,7 +122,7 @@ test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史截断 50�
   );
   assert.ok(page.includes('data-testid="squad-agent-detail-runs"'), "运行区 testid");
   assert.ok(
-    page.includes("const RUN_HISTORY_LIMIT = 50") && page.includes("slice(0, RUN_HISTORY_LIMIT)"),
+    /RUN_HISTORY_LIMIT = 50;/.test(page) && page.includes("slice(0, RUN_HISTORY_LIMIT)"),
     "全历史 + 截断 50（用户裁定④）",
   );
   assert.ok(
