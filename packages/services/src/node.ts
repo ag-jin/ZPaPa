@@ -467,6 +467,16 @@ import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 import { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
 // X2.1：评论派发 receipt 的懒取口（与 inboxItemRepo 同款：库就绪后在调用时取）。
 import { createCommentDispatchReceiptRepo } from "./workitem/commentDispatchReceiptRepo.js";
+/* B5.1：工作项协作**读门面**的注册（任务卡 §2.4-2）。四个协作 repo 与 receipt repo 同款懒取
+   （库走过迁移后才拿到同一条连接）；描述符本身从根入口出（renderer 侧取值），这里只装配实现。 */
+import {
+  IWorkItemCollaborationService,
+  createWorkItemCollaborationService,
+} from "./workitem/workItemCollaborationService.js";
+import { createWorkItemCommentRepo } from "./workitem/workItemCommentRepo.js";
+import { createWorkItemActivityRepo } from "./workitem/workItemActivityRepo.js";
+import { createWorkItemDecisionRepo } from "./workitem/workItemDecisionRepo.js";
+import { createWorkItemCommentReactionRepo } from "./workitem/workItemCommentReactionRepo.js";
 import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
@@ -3021,7 +3031,26 @@ export function createLocalServices(options: {
     .register(IProviderSettingsService, providerRuntime.providerSettings)
     .register(IModelSelectionService, providerRuntime.modelSelection)
     // 小队运行时：UI / host / 工具三处都经它取数或触发派发，门禁判据只有 runtime 里那一处。
-    .register(ISquadRuntimeService, squadRuntimeService);
+    .register(ISquadRuntimeService, squadRuntimeService)
+    /* B5.1：工作项协作读门面（独立描述符，不扩 ISquadRuntimeService / 快照）。五个 repo 全部
+       懒取（`ensureReady()` 之后才拿到同一条走过迁移的连接）；`createRuntime` 复用同一个按目标
+       现构的工厂 —— workspace 身份与「工作项在不在」的唯一权威。 */
+    .register(
+      IWorkItemCollaborationService,
+      createWorkItemCollaborationService({
+        createRuntime: createSquadRuntimeFor,
+        getRepos: () => {
+          const db = taskIndexRepo.openSharedDatabase();
+          return {
+            comments: createWorkItemCommentRepo(db),
+            activities: createWorkItemActivityRepo(db),
+            decisions: createWorkItemDecisionRepo(db),
+            reactions: createWorkItemCommentReactionRepo(db),
+            receipts: createCommentDispatchReceiptRepo(db),
+          };
+        },
+      }),
+    );
   if (
     shouldRegisterProviderProvisioningTarget({
       serviceAuthorityMode: options.serviceAuthorityMode,
