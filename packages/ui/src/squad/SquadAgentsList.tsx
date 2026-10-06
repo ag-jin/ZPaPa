@@ -52,6 +52,7 @@ export function SquadAgentsList({
   onEdit,
   onToggle,
   onArchive,
+  onOpenDetail,
 }: {
   agents: TeamAgent[];
   /** 有请求在飞的行 id（照 SquadMinimalView 的 busyRunId 形态）：该行动作按钮全部禁用。 */
@@ -60,6 +61,8 @@ export function SquadAgentsList({
   runs: SquadRunRecord[];
   /** 排队 run（snapshot.queuedRuns）：排队的**唯一合法数据源**（C5 契约）。 */
   queuedRuns: SquadRunRecord[];
+  /** ④刀：行级点击进详情（透明覆盖按钮先例——行内已有独立按钮，整行 button 嵌套非法）。 */
+  onOpenDetail?: (agentId: string) => void;
   onEdit: (agent: TeamAgent) => void;
   onToggle: (agent: TeamAgent) => void;
   onArchive: (agent: TeamAgent) => void;
@@ -88,7 +91,7 @@ export function SquadAgentsList({
           <li
             key={agent.id}
             data-agent-id={agent.id}
-            className={cn(ROW_CLASSNAME, "flex items-start justify-between gap-3")}
+            className={cn(ROW_CLASSNAME, "relative flex items-start justify-between gap-3")}
           >
             {/* 左：身份 + 配置 + 说明。竖排两行 —— 名字行带徽标，描述行弱化。 */}
             <span className="flex min-w-0 flex-col gap-0.5">
@@ -167,7 +170,18 @@ export function SquadAgentsList({
                 </span>
               ) : null}
             </span>
-            <span className="flex shrink-0 items-center gap-2">
+            {onOpenDetail ? (
+              /* 透明覆盖按钮（ConversationStatusPanel 同构）：整行可点进详情，且不嵌套
+                 行内动作按钮的合法形态；z 序在动作按钮之下（按钮仍可点）。 */
+              <button
+                type="button"
+                aria-label={t("squad.agentDetail.open", { name: agent.name })}
+                data-testid="squad-agent-row-open-detail"
+                className="absolute inset-0 z-0 cursor-pointer rounded-lg"
+                onClick={() => onOpenDetail(agent.id)}
+              />
+            ) : null}
+            <span className="relative z-10 flex shrink-0 items-center gap-2">
               {/* 已归档 ⇒ 三个动作都不给（归档是终态，仓库里没有"取消归档"）——
                   判据在共享的 rosterRowActions，本层只照它画。 */}
               {actions.canEdit ? (

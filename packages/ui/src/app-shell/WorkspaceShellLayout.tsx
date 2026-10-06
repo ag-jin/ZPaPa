@@ -47,6 +47,7 @@ import type {
 import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadcrumbFrame.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { SquadsPage } from "@/squad/SquadsPage.js";
+import { SquadAgentDetailPage } from "@/squad/SquadAgentDetailPage.js";
 import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
 import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
 import { InboxPage } from "@/squad/InboxPage.js";
@@ -207,6 +208,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   handleOpenAutomations,
   handleOpenPluginStore,
   handleOpenSquadAgents,
+    agentDetailId,
+    onOpenAgentDetail,
   handleOpenInbox,
   handleOpenSquads,
   handleOpenWorkItems,
@@ -814,9 +817,17 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   const showChatMainView = useCallback(() => {
     onWorkspaceMainViewChange("chat");
   }, [onWorkspaceMainViewChange]);
+  const handleBackFromAgentDetail = useCallback(() => {
+    onWorkspaceMainViewChange("agents");
+  }, [onWorkspaceMainViewChange]); // MUT-S5
   const primaryNavigationBack =
-    workspaceMainView === "plugin-store" ? handleManageInstalledPlugins : handleTaskNavBack;
-  const canPrimaryNavigationBack = workspaceMainView === "plugin-store" || canTaskNavBack;
+    workspaceMainView === "plugin-store"
+      ? handleManageInstalledPlugins
+      : workspaceMainView === "agent-detail"
+        ? handleBackFromAgentDetail
+        : handleTaskNavBack;
+  const canPrimaryNavigationBack =
+    workspaceMainView === "plugin-store" || workspaceMainView === "agent-detail" || canTaskNavBack;
   const handleCreateTaskInChat = useCallback(
     (request?: Parameters<typeof onCreateTask>[0]) => {
       // workspaceReadOnlyReason 判定的是活动 workspace；当 request 显式带 targetWorkspace 时
@@ -1541,7 +1552,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // 手机远控无 active task 时仍不渲染桌面 chrome，继续遵守 replayable overlay 边界。
   //
   // 「整页主视图」= 自带面包屑框架（AutomationsMainBreadcrumbFrame）的扁平页面：
-  // automations / plugin-store / inbox / agents / squads / work-items。这六处共用一个具名判据
+  // automations / plugin-store / inbox / agents / squads / work-items / agent-detail。这七处共用一个具名判据
   // （header 渲染、终端面板显隐）；各写一份字面量判断迟早漂移 —— 漏一处就是某个入口多一层
   // header 或终端面板，且不报错。
   const isFullPageMainView =
@@ -1550,7 +1561,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
     workspaceMainView === "inbox" ||
     workspaceMainView === "agents" ||
     workspaceMainView === "squads" ||
-    workspaceMainView === "work-items";
+    workspaceMainView === "work-items" ||
+    workspaceMainView === "agent-detail";
   const shouldRenderMainViewHeader = !isFullPageMainView;
   const shouldRenderWorkspaceHeader =
     shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
@@ -1657,7 +1669,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     onOpenPluginStore={handleOpenPluginStore}
                     pluginStoreActive={workspaceMainView === "plugin-store"}
                     onOpenSquadAgents={handleOpenSquadAgents}
-                    squadAgentsActive={workspaceMainView === "agents"}
+                    squadAgentsActive={
+                    workspaceMainView === "agents" || workspaceMainView === "agent-detail"
+                  }
                     onOpenInbox={handleOpenInbox}
                     inboxActive={workspaceMainView === "inbox"}
                     onOpenSquads={handleOpenSquads}
@@ -1953,6 +1967,40 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                   <SquadAgentsPage
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}
+                                    onOpenAgentDetail={onOpenAgentDetail}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "agent-detail" ? (
+                        /* ④刀（用户 2026-10-06 裁定①：新独立视图）：agent 详情页——概览+任务表+运行数据
+                           三区一体（multica agents/:id 形态）。骨架逐句对齐「智能体」分支；
+                           `ScopedErrorBoundary` scope 独立（"squad-agent-detail"）。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openSquadAgents",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="squad-agent-detail"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <SquadAgentDetailPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    agentId={agentDetailId}
+                                    onBack={handleBackFromAgentDetail}
                                   />
                                 </div>
                               </ScopedErrorBoundary>

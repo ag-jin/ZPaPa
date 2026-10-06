@@ -827,6 +827,9 @@ export function App({
   useTestActions(testActions);
   const [workspaceMainView, setWorkspaceMainView] = useState<WorkspaceMainView>("chat");
   const [openAutomationId, setOpenAutomationId] = useState<string | null>(null);
+  /* ④刀（2026-10-06 裁定①：新独立视图）：agent 详情页的 id 寻址态——
+     与 openAutomationId 同款「App 级意图」形态（带参视图在当前机制下只能并列状态携带）。 */
+  const [agentDetailId, setAgentDetailId] = useState<string | null>(null);
   const [openAutomationTab, setOpenAutomationTab] = useState<NonNullable<
     AutomationsNavigationTarget["automationTab"]
   > | null>(null);
@@ -848,6 +851,11 @@ export function App({
   // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
   const handleOpenSquadAgentsMain = useCallback(() => {
     setWorkspaceMainView("agents");
+  }, []);
+  /* ④刀：列表行点击 → 详情页（切视图 + 记 id；每次打开都刷新 id——陈旧 id 不残留）。 */
+  const handleOpenAgentDetail = useCallback((agentId: string) => {
+    setAgentDetailId(agentId);
+    setWorkspaceMainView("agent-detail");
   }, []);
   // 侧栏一级入口「小队」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图，
   // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
@@ -978,9 +986,20 @@ export function App({
     });
     openSettingsTab();
   }, [openSettingsTab, pluginStoreReturnScopeKey]);
+  /* ④刀：详情页返回 = 回智能体列表（与 shell 侧同一条判据，S6 同步点）。 */
+  const handleBackFromAgentDetailApp = useCallback(() => {
+    setWorkspaceMainView("agents");
+  }, []);
   const handlePrimaryNavigationBack =
-    workspaceMainView === "plugin-store" ? handleManageInstalledPlugins : handleTaskNavBack;
-  const canPrimaryNavigationBack = workspaceMainView === "plugin-store" || canTaskNavBack;
+    workspaceMainView === "plugin-store"
+      ? handleManageInstalledPlugins
+      : workspaceMainView === "agent-detail"
+        ? handleBackFromAgentDetailApp
+        : handleTaskNavBack;
+  const canPrimaryNavigationBack =
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "agent-detail" ||
+    canTaskNavBack;
   const shellPanelIds = useMemo(() => ["sidebar", "content"], []);
 
   useAppKeyboard({
@@ -1171,6 +1190,8 @@ export function App({
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
         handleOpenSquadAgents={handleOpenSquadAgentsMain}
+        agentDetailId={agentDetailId}
+        onOpenAgentDetail={handleOpenAgentDetail}
         handleOpenInbox={handleOpenInboxMain}
         handleOpenSquads={handleOpenSquadsMain}
         handleOpenWorkItems={handleOpenWorkItemsMain}

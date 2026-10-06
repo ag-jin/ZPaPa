@@ -125,7 +125,8 @@ export type WorkspaceMainView =
   | "inbox"
   | "agents"
   | "squads"
-  | "work-items";
+  | "work-items"
+  | "agent-detail";
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
   workspaceReadOnlyReason?: string;
@@ -146,6 +147,10 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenPluginStore: () => void;
   /** 打开侧栏一级入口「智能体」（照 handleOpenPluginStore 的形态）。 */
   handleOpenSquadAgents: () => void;
+  /** ④刀：当前详情页的 agent id（agent-detail 视图渲染时消费；null = 未打开）。 */
+  agentDetailId: string | null;
+  /** ④刀：打开某 agent 的详情页（切主视图 + 记 id）。 */
+  onOpenAgentDetail: (agentId: string) => void;
   /** 打开侧栏一级入口「收件箱」（照 handleOpenSquadAgents 的形态）。 */
   handleOpenInbox: () => void;
   /** 打开侧栏一级入口「小队」（照 handleOpenSquadAgents 的形态）。 */

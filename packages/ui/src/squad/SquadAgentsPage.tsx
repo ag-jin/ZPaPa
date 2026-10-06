@@ -47,9 +47,12 @@ import {
 export function SquadAgentsPage({
   workspacePath,
   workspaceIdentity,
+  onOpenAgentDetail,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
+  /** ④刀：列表行点击进详情页（shell 注入；缺省时行不可点——不猜导航）。 */
+  onOpenAgentDetail?: (agentId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const services = useServices();
@@ -306,6 +309,7 @@ export function SquadAgentsPage({
           agents={state.snapshot.teamAgents}
           runs={state.snapshot.runs}
           queuedRuns={state.snapshot.queuedRuns}
+          onOpenDetail={onOpenAgentDetail}
           busyAgentId={busyAgentId}
           onEdit={(agent) => setDialog({ kind: "edit", agent })}
           onToggle={(agent) => {
