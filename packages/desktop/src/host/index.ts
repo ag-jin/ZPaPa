@@ -91,8 +91,10 @@ import {
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import {
   commentObligationReplayFacts,
+  commentReceiptObligationPairKey,
   commentReceiptSettlementFor,
   decideSquadDispatch,
+  decideUnsettledReceiptRedispatch,
   isSquadDispatchDisabledError,
   isUnsettledCommentDispatchReceipt,
   ledgerActionForRunClass,
@@ -100,6 +102,7 @@ import {
   selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
+  WORK_ITEM_MISSING_REASON,
   type SquadDispatchBridgeResult,
   type SquadDispatchKind,
   type SquadMemberRunTerminalOutcome,
@@ -2903,7 +2906,13 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     const snapshot = await squadRuntime.getSnapshot(target);
     const workItem = snapshot.workItems.find((candidate) => candidate.id === msg.workItemId);
     if (!workItem) {
-      return failPermanent(`work item not found: ${msg.workItemId}`);
+      /* X2.2 §7：同一事实同一终局 —— 「工作项查不到」是受限状态（可审计、不可派发），
+         在线入口与义务重放/补投扫描统一落 `blocked`（此前在线入口记 `failed`，同一事实两种结论；
+         且重投不会自愈，落 failed 会让人去查一个并不存在的执行错误）。 */
+      return failPermanent(`work item not found: ${msg.workItemId}`, {
+        kind: "blocked",
+        reason: WORK_ITEM_MISSING_REASON,
+      });
     }
     const squad =
       workItem.assignee.type === "squad"
@@ -3089,12 +3098,19 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         }
         if (openOutcome.kind === "deferred") {
           /* R2（用户 2026-10-05 裁定）：同 (workItem,agent) 已有活跃 run ⇒ 登记完成后重放义务
-             （原「撞分支名」失败路径退役）。不建会话、不发 prompt，回执 ok + 可见日志；重放接线在 C4b。 */
+             （原「撞分支名」失败路径退役）。不建会话、不发 prompt，回执 ok + 可见日志；重放接线在 C4b。
+             X2.2：`coalescedInto` 指向**别的**请求（同键已有义务）⇒ 本次请求已并入那次执行 ——
+             对评论 receipt 是**终局 coalesced**（与 CommentService 源头修同一语义），不是 deferred：
+             停在 deferred 会让它等一个永远不来的重放（义务行是别人的 runId）。
+             指向**自己**（同键重投命中自己登记的义务）⇒ 语义仍是「等这条义务重放」，保持 deferred。 */
           logger.info(
             `[squad] dispatch deferred ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}` +
               (openOutcome.coalescedInto ? ` coalescedInto=${openOutcome.coalescedInto}` : ""),
           );
-          return { ok: true, bridge: { kind: "deferred" } };
+          const coalescedInto = openOutcome.coalescedInto;
+          return coalescedInto !== undefined && coalescedInto !== eventKey
+            ? { ok: true, bridge: { kind: "coalesced", coalescedInto } }
+            : { ok: true, bridge: { kind: "deferred" } };
         }
         if (openOutcome.kind === "already_registered") {
           ledgerRowRegistered = true;
@@ -3603,6 +3619,117 @@ async function advanceSquadQueueAfterSettlement(
       );
     }
   }
+
+  /* ③ X2.2：**未收敛评论 receipt 的补投**（与在线入口共用 `runCommentDispatch`）。
+     为什么挂在这一段而不是另开「启动第 5 步」：结算 hub 每次结算都会调本函数（node.ts 的常驻订阅），
+     启动第四步也走同一个实现 —— 一个落点同时覆盖「同进程内收敛」与「重启兜底」，
+     两处各写一套判据迟早分叉（分叉的表现是「重启能收、跑着收不了」且不报错）。
+     为什么排在排队臂/义务臂之后：前两段刚释放容量、认领到期义务，第三段读到的是最新事实
+     （刚被认领的评论义务若重放失败会落 blocked，扫描不会再碰它）。
+     为什么**不过滤 agentFilter**：结算事件带 agent 是为了「只推进该 agent 的排队行/义务」，
+     而未收敛 receipt 是 workspace 级收敛面，判据全持久（与该 receipt 自己的 run/义务有关，
+     与本次是谁结算无关）；按 agent 过滤会让别的 agent 留下的 pending 只能等重启。 */
+  await redispatchUnsettledCommentReceipts(services, squadRuntime, target);
+}
+
+/**
+ * X2.2：把本 workspace 的**未收敛评论 receipt** 补投一次（结算事件 / 启动扫描的唯一实现）。
+ *
+ * 逐条走 `decideUnsettledReceiptRedispatch` 的持久事实判据（派发目标对的 run 行 / 会话执行 /
+ * 义务表），只有「安全」的格才重投；重投 = 经 `runCommentDispatch` 走**唯一派发实现**
+ * （身份、目标、工作项全部取自 receipt），不另写「建会话 + 发 prompt」。
+ *
+ * A1 重验（工作项存在 / 未终态 / 未归档，与义务重放同一处判据）：不过 ⇒ receipt 落 blocked（可审计
+ * 收敛，不复活 —— S6 §8.4-4 / §12.1-12）。**刻意不校验 assignee**：评论目标可以不是负责人（B-1）。
+ *
+ * 全量台账（含终态）只在**确实存在未收敛行**时读：常态下 receipt 全部落定，本函数一行就走完。
+ */
+async function redispatchUnsettledCommentReceipts(
+  services: ServiceCollection | null,
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+): Promise<void> {
+  const receipts = await squadRuntime.listUnsettledCommentDispatchReceipts(target);
+  if (receipts.length === 0) return;
+  const snapshot = await squadRuntime.getSnapshot(target);
+  const obligations = await squadRuntime.listSquadDeferredObligations(target);
+  const obligationsByPair = new Map(
+    obligations.map((row) => [
+      commentReceiptObligationPairKey(row.workItemId, row.agentId),
+      row.runId,
+    ]),
+  );
+  const runHistory = await squadRuntime.listSquadRuns(target);
+  /* 执行中的会话：只探「候选自己 run 行」的绑定会话（逐个探一次）。探测能力不可得时
+     `sessionProbeAvailable=false` —— 判据里有绑定会话的行一律跳过（不可知不重发）。 */
+  const agentService = services?.getOptional(IZCodeAgentService);
+  const probe = agentService
+    ? createBoundSessionExecutingProbe({
+        agentService,
+        logWarn: (message, error) => logger.warn(message, error),
+      })
+    : undefined;
+  const executingSessionIds = new Set<string>();
+  const probedSessions = new Set<string>();
+  for (const receipt of receipts) {
+    const own = runHistory.find((run) => run.runId === receipt.dispatchKey);
+    if (own === undefined || own.sessionId === null || probedSessions.has(own.sessionId)) continue;
+    probedSessions.add(own.sessionId);
+    if (!probe) continue;
+    if (await probe({ sessionId: own.sessionId, workspacePath: own.workspacePath })) {
+      executingSessionIds.add(own.sessionId);
+    }
+  }
+  for (const receipt of receipts) {
+    const workItem = snapshot.workItems.find((item) => item.id === receipt.workItemId);
+    const rejection = commentReplayRejectionReason(workItem);
+    if (rejection !== null) {
+      await settleCommentReceipt(squadRuntime, target, receipt, {
+        outcome: "blocked",
+        detail: { reason: rejection },
+      });
+      logger.error(
+        `[squad] comment receipt 补投丢弃（A1 重验不过）dispatchKey=${receipt.dispatchKey}` +
+          ` workItem=${receipt.workItemId} reason=${rejection}`,
+      );
+      continue;
+    }
+    const decision = decideUnsettledReceiptRedispatch({
+      receipt,
+      runHistory,
+      executingSessionIds,
+      sessionProbeAvailable: probe !== undefined,
+      obligationsByPair,
+    });
+    if (decision.action === "skip") {
+      logger.info(
+        `[squad] comment receipt 补投跳过 dispatchKey=${receipt.dispatchKey} reason=${decision.reason}`,
+      );
+      continue;
+    }
+    if (decision.action === "settle_coalesced") {
+      await settleCommentReceipt(squadRuntime, target, receipt, {
+        outcome: "coalesced",
+        detail: { coalescedInto: decision.coalescedInto },
+      });
+      continue;
+    }
+    await runCommentDispatch(squadRuntime, target, receipt.dispatchKey);
+  }
+}
+
+/**
+ * 评论请求的 **A1 重验**（评论版）：返回拒绝原因（`null` = 通过）。三处共用同一判据与同一原因文案
+ * —— 在线入口（D5 统一 blocked）/ 到期义务重放 / 未收敛补投扫描：
+ * · 工作项存在、未终态、未归档（§8.4-4 / §12.1-12「可审计不可派发」）；
+ * · **刻意不校验 assignee**：评论目标可以不是负责人（B-1 判定的常态格），
+ *   目标 agent 的归档/停用由 `planDispatch` 的判据统一处置（skip ⇒ receipt blocked）。
+ */
+function commentReplayRejectionReason(workItem: WorkItem | undefined): string | null {
+  if (workItem === undefined) return WORK_ITEM_MISSING_REASON;
+  if (isTerminalWorkItemStatus(workItem.status)) return `work_item_terminal:${workItem.status}`;
+  if (workItem.archivedAt !== undefined) return "work_item_archived";
+  return null;
 }
 
 /* ───────────────── X2.1：评论派发通道（B/C 的执行侧）─────────────────
@@ -3642,13 +3769,42 @@ async function dispatchCommentDispatch(request: SquadCommentDispatchRequest): Pr
 }
 
 /**
- * 评论派发的唯一执行体（在线入口与义务重放**共用**）：按请求身份读 receipt 事实 → 走
- * `runSquadDispatch` 的 comment 变体（目标覆盖 + 成因 comment + eventKey=dispatchKey）→ 回写 receipt。
+ * 同一 `dispatchKey` 的**在途去重**（X2.2）：在线入口 / 义务重放 / 补投扫描三处都汇到
+ * `runCommentDispatch`，而它们的触发源（hub 重投、结算事件扇出、启动扫描）可以同时读到同一条
+ * 未收敛 receipt —— 两条并发 `openMemberRun` 会一条成功、一条撞主键（permanent ⇒ receipt 落
+ * `failed`，而 run 其实已经起来了）。进程内的后来者在这里只留痕、直接返回；真正的落定仍由
+ * 存储面的条件更新裁决（跨进程窗口不变，那是既有边界）。
+ */
+const commentDispatchInFlight = new Set<string>();
+
+/**
+ * 评论派发的**唯一入口**（在线入口 / 义务重放 / 补投扫描共用）：在途去重后转唯一执行体。
+ */
+async function runCommentDispatch(
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+  dispatchKey: string,
+): Promise<void> {
+  if (commentDispatchInFlight.has(dispatchKey)) {
+    logger.info(`[squad] comment dispatch 已在途，跳过重复执行 dispatchKey=${dispatchKey}`);
+    return;
+  }
+  commentDispatchInFlight.add(dispatchKey);
+  try {
+    await performCommentDispatch(squadRuntime, target, dispatchKey);
+  } finally {
+    commentDispatchInFlight.delete(dispatchKey);
+  }
+}
+
+/**
+ * 评论派发的唯一执行体：按请求身份读 receipt 事实 → 走 `runSquadDispatch` 的 comment 变体
+ * （目标覆盖 + 成因 comment + eventKey=dispatchKey）→ 回写 receipt。
  *
  * 为什么按 receipt 取数而不是信调用方：请求身份（dispatchKey）与事实（目标/工作项）都可能被重投，
  * receipt 是**首写即事实**的那一份；凭调用方载荷现造 run 会让重投后的派发与首发不一致。
  */
-async function runCommentDispatch(
+async function performCommentDispatch(
   squadRuntime: ISquadRuntimeService,
   target: { path: string; identity: string },
   dispatchKey: string,
@@ -3766,21 +3922,13 @@ async function replayCommentObligation(
     );
     return;
   }
-  /* A1 重验的**评论版**：工作项存在、未终态、未归档 —— **刻意不校验 assignee**（评论目标可以不是
+  /* A1 重验的**评论版**（判据与原因文案的唯一实现是 `commentReplayRejectionReason`，
+     补投扫描共用）：工作项存在、未终态、未归档 —— **刻意不校验 assignee**（评论目标可以不是
      负责人，那正是 B-1 的常态格）。目标 agent 的归档/停用由 `planDispatch` 的判据统一处置
      （skip ⇒ receipt blocked），不在这里写第二份名册判据。 */
   const workItem = snapshot.workItems.find((item) => item.id === facts.workItemId);
-  if (
-    workItem === undefined ||
-    isTerminalWorkItemStatus(workItem.status) ||
-    workItem.archivedAt !== undefined
-  ) {
-    const reason =
-      workItem === undefined
-        ? "work_item_missing"
-        : isTerminalWorkItemStatus(workItem.status)
-          ? `work_item_terminal:${workItem.status}`
-          : "work_item_archived";
+  const reason = commentReplayRejectionReason(workItem);
+  if (reason !== null) {
     /* 不复活（S6 §8.4-4 / §12.1-12）：丢弃 + error 留痕，并把 receipt 落 blocked（可审计）——
        否则这条请求会永远停在 deferred 上被反复认领（义务已删，重放无出口）。 */
     if (receipt !== null) {

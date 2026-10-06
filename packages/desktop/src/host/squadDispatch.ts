@@ -415,7 +415,9 @@ export function replayChannelForObligationOrigin(
 export type SquadDispatchBridgeResult =
   | { kind: "dispatched" }
   | { kind: "queued" }
-  | { kind: "coalesced" }
+  /** 并入既有执行载体（排队行 / **义务行**）。`coalescedInto` = 被并入的 runId（X2.2：R2 义务
+   *  分支的并入窗口 —— receipt 必须落终局 coalesced，而不是停在 deferred 等一个不会来的重放）。 */
+  | { kind: "coalesced"; coalescedInto?: string }
   | { kind: "deferred" }
   /** 受限状态（门禁关闭 / planDispatch 的 skip：归档、停用、无人可派…）：可审计、不可派发。 */
   | { kind: "blocked"; reason: string }
@@ -442,7 +444,10 @@ export function commentReceiptSettlementFor(
     case "queued":
       return { outcome: "queued" };
     case "coalesced":
-      return { outcome: "coalesced" };
+      // 并入目标随 detail 落回收据（与源头修同一形状：并入是终局事实，读据要能回答「并进了哪一次」）。
+      return result.coalescedInto !== undefined
+        ? { outcome: "coalesced", detail: { coalescedInto: result.coalescedInto } }
+        : { outcome: "coalesced" };
     case "deferred":
       return { outcome: "deferred" };
     case "blocked":
@@ -457,6 +462,103 @@ export function commentReceiptSettlementFor(
 /** receipt 是否**未收敛**（可被本次执行认领回写）：判据与存储面的条件更新同源（常量同出一处）。 */
 export function isUnsettledCommentDispatchReceipt(outcome: CommentDispatchOutcome): boolean {
   return (COMMENT_DISPATCH_UNSETTLED_OUTCOMES as readonly string[]).includes(outcome);
+}
+
+/* ───────────────── X2.2：未收敛 receipt 的补投判据（结算事件 / 启动扫描共用）─────────────────
+
+   补投 = 对「还没有执行者 / 还在等义务重放」的评论请求再走一次评论派发入口。它必须**幂等**
+   （不重复建 run、不重复发 prompt、不从队列/义务通道手里抢执行），因为触发源是
+   「workspace 里某条 run 结算了」与「进程启动」——两者都不携带「这条 receipt 现在该不该投」的判据，
+   判据只能由持久事实（receipt 状态 + 台账 run 行 + 义务表）现算。三条错法的共同后果是
+   「同一条请求跑两次」或「回执永停未收敛」，且都不报错。
+   故本判据抽成纯函数：入参全是事实快照，结论是可直接断言的判别值。 */
+
+/**
+ * 义务表唯一键 `(workspace, workItem, agent)` 在内存里的投影（只取对内的两列）：
+ * 补投判据与 host 的取数面共用这一处拼法 —— 两处各拼一份字符串迟早漂移，
+ * 而漂移的表现是「义务归属判错」（把别的请求的义务当成自己的）且不报错。
+ */
+export function commentReceiptObligationPairKey(workItemId: string, agentId: string): string {
+  return `${workItemId}\u0000${agentId}`;
+}
+
+/**
+ * 「工作项查不到」的**稳定原因码**（X2.2 §7 统一终局）：在线入口、到期义务重放、补投扫描三处
+ * 对同一事实必须给同一结论 —— `blocked`（受限状态：可审计、不可派发）。此前在线入口记 `failed`，
+ * 而义务重放记 `blocked`：同一事实两种终局，重投行为与界面读法都不一致。
+ */
+export const WORK_ITEM_MISSING_REASON = "work_item_missing";
+
+/** 一条未收敛 receipt 此刻的补投结论（判别值，无副作用）。 */
+export type UnsettledReceiptRedispatchDecision =
+  /** 安全：走评论派发入口重投（入口按 receipt 事实取数，派发桥负责幂等与落定）。 */
+  | { action: "redispatch" }
+  /** 跳过（本轮不再执行它）：reason 说明是哪条持久事实挡住了。 */
+  | {
+      action: "skip";
+      reason:
+        /** 该请求身份的 run 正在执行（重发会重复一次 prompt —— 复验 §5.4-5）。 */
+        | "session_executing"
+        /** 有绑定会话但探测能力不可得（agent 服务未注册）：不可知时不重发（不猜）。 */
+        | "session_unprobeable"
+        /** 该请求身份已有非 open 的 run 行（排队/已产出/被打回/终态）：执行已发生或已排上，重投会重复。 */
+        | "own_run_not_open"
+        /** 该请求自己的义务还挂在义务表上：重放通道拥有这次执行（扫描不得抢跑）。 */
+        | "own_obligation_pending";
+    }
+  /** 同键义务属于**另一个请求**（历史行 / 并入窗口）：按 B-3「同键合并 = 一次执行」终局收敛。 */
+  | { action: "settle_coalesced"; coalescedInto: string };
+
+/**
+ * 判据次序（自上而下，每一格都有专门的静默失败形态）：
+ *
+ * 1. **自己的 run 行**（`runId === dispatchKey`，取全量台账而非仅活跃集 —— 终态行同样是
+ *    「这条请求已经有 run 身份」的证据）：
+ *    · 非 `open`（queued / produced / rejected / merged / discarded）⇒ skip：执行已发生或已排上，
+ *      重投会重复建会话/重复发 prompt（排队行的推进由结算回调的排队臂负责，不在这里抢）；
+ *    · `open` 且绑定了会话：探测在执行 ⇒ skip；探测不可得 ⇒ skip（不猜）；否则**重投**
+ *      （进程在「登记台账 → 建会话 / 发 prompt」之间中断时，重投正是续完那次派发的路径）；
+ *    · `open` 且未绑会话 ⇒ 重投（崩溃恢复：续建会话并绑定）。
+ * 2. 没有自己的 run 行时看义务表：自己的义务在表上 ⇒ skip（重放通道拥有执行）；
+ *    同键但**别的**请求的义务 ⇒ 终局 coalesced（并入那次执行，与 X2.2 源头修同语义）。
+ * 3. 都没有 ⇒ 重投（transient 失败 / 桥不可用留下的 pending 就是这一格）。
+ */
+export function decideUnsettledReceiptRedispatch(input: {
+  receipt: Pick<CommentDispatchReceiptRecord, "dispatchKey" | "workItemId" | "targetAgentId">;
+  /**
+   * 本 workspace 的**全量** run 行（`listSquadRuns` 口径，含终态）：只读 runId/status/sessionId
+   * 三列。为什么不用活跃快照：非活跃行（queued / 终态）同样是「该身份已有 run」的证据，
+   * 拿掉它们会把「已完成/已排队」的请求判成可重投（重复执行）。
+   */
+  runHistory: ReadonlyArray<{ runId: string; status: string; sessionId: string | null }>;
+  /** 此刻确证在执行中的会话 id（host 强探测结论；探测不可得的**不得**放进来自证清白）。 */
+  executingSessionIds: ReadonlySet<string>;
+  /** 探测能力是否可用（agent 服务是否注册）；不可用时有绑定会话的行一律跳过。 */
+  sessionProbeAvailable: boolean;
+  /** 本 workspace 全部义务行按 (workItem, agent) 的投影（值 = 义务 runId）。 */
+  obligationsByPair: ReadonlyMap<string, string>;
+}): UnsettledReceiptRedispatchDecision {
+  const own = input.runHistory.find((run) => run.runId === input.receipt.dispatchKey);
+  if (own !== undefined && own.status !== "open") {
+    return { action: "skip", reason: "own_run_not_open" };
+  }
+  if (own !== undefined && own.sessionId !== null) {
+    if (!input.sessionProbeAvailable) return { action: "skip", reason: "session_unprobeable" };
+    if (input.executingSessionIds.has(own.sessionId)) {
+      return { action: "skip", reason: "session_executing" };
+    }
+  }
+  if (own === undefined) {
+    const obligationRunId = input.obligationsByPair.get(
+      commentReceiptObligationPairKey(input.receipt.workItemId, input.receipt.targetAgentId),
+    );
+    if (obligationRunId !== undefined) {
+      return obligationRunId === input.receipt.dispatchKey
+        ? { action: "skip", reason: "own_obligation_pending" }
+        : { action: "settle_coalesced", coalescedInto: obligationRunId };
+    }
+  }
+  return { action: "redispatch" };
 }
 
 /**
