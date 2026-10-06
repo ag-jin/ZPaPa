@@ -317,6 +317,10 @@ export type { DispatchCause, UserDispatchCause } from "./workitem/squadDispatchR
    · CommentDispatchOutcome：receipt 七值闭集（回写落定的取值域）；
    · DeferredDispatchOrigin：义务来源闭集（R2 / 评论两条重放账的分流位）。 */
 export { COMMENT_DISPATCH_UNSETTLED_OUTCOMES } from "./workitem/commentDispatchReceiptRepo.js";
+/* D6：receipt 里「哪支小队」（队长目标的简报来源）的**唯一读法**。host 据此做身份核对
+   （目标是该队队长 ⇒ 走 `planDispatch.leaderOverride`，与「指派给小队」同形）。读法收在服务面一处：
+   就地读 `detail["squadId"]` 会把写坏的列静默读成 undefined（队长 run 静默降级成 standalone）。 */
+export { commentReceiptSquadId } from "./workitem/commentDispatchReceiptRepo.js";
 export type {
   CommentDispatchOutcome,
   CommentDispatchReceiptRecord,

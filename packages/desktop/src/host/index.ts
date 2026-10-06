@@ -69,6 +69,9 @@ import {
   planDispatch,
   declaredRunClassFor,
   hasInProgressLeaderRun,
+  /* D6：receipt 里「哪支小队」（队长目标的简报来源）的唯一读法 —— 评论派发据此做身份核对，
+     目标是队长时走 `planDispatch.leaderOverride`（与「指派给小队」同形：简报 + 队长台账行 + §5.7(1) 合并）。 */
+  commentReceiptSquadId,
   /* 「该工作项上活跃的队长 run 是**哪一条**」——台账 `caused_by_run_id` 的唯一读法
      （与 `hasInProgressLeaderRun` 同一份「进行中」投影的两面）。 */
   findActiveLeaderRunId,
@@ -99,6 +102,7 @@ import {
   isUnsettledCommentDispatchReceipt,
   ledgerActionForRunClass,
   replayChannelForObligationOrigin,
+  resolveCommentLeaderOverride,
   selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
@@ -2783,8 +2787,11 @@ type SquadDispatchTrigger =
   /** X2.1：评论触发（host 评论派发入口调用）。与 `user` 的差别是**目标显式**：
       `@agent` 是运行请求而非改派（§5.2），目标可以不是 assignee ⇒ 由 `planDispatch` 的
       `targetOverride` 覆盖 assignee 推导（B-1 裁定）。成因由本变体携带（评论通道给 "comment"，
-      派发桥只搬运，缺省 ⇒ 落 NULL —— 与 replay 携带台账原成因同款，不在桥里写死档位）。 */
-  | { trigger: "comment"; targetAgentId: string; cause?: DispatchCause };
+      派发桥只搬运，缺省 ⇒ 落 NULL —— 与 replay 携带台账原成因同款，不在桥里写死档位）。
+      D6：`squadId` = receipt 记下的「目标是从哪支小队解析出来的」（缺席 = 目标不是队长）。
+      派发桥拿它与**当前名册**核对（`resolveCommentLeaderOverride`）：确实是该队队长 ⇒ 走
+      `planDispatch.leaderOverride`（leader 类 run），否则退回既有 `targetOverride`。 */
+  | { trigger: "comment"; targetAgentId: string; squadId?: string; cause?: DispatchCause };
 
 /** 一次派发的请求：消息形状的两路入口共用（`eventKey` 是幂等键里稳定的那一半，也是台账 runId）。 */
 type SquadDispatchRequestMsg = SquadDispatchTrigger & {
@@ -2946,6 +2953,21 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        覆盖值直接取自派发消息（入口已按 receipt 事实构造；本层不重新解析目标）。 */
     const targetOverride =
       msg.trigger === "comment" ? ({ type: "agent", id: msg.targetAgentId } as const) : undefined;
+    /* D6（§6/§11-C2）：**目标是不是队长** —— 评论通道与「指派给小队」必须产出同形的 run
+       （leader 类：带简报、登记队长台账行、参与 §5.7(1) 合并），否则同一对象两条路径形态不一致。
+       判据是**两份事实的对表**：① receipt 记下的 squadId（这条请求从哪支小队解析出来）；
+       ② **当前**名册里该小队的 leaderAgentId 是不是就是这次的目标（receipt 落库后队长可能换人 /
+       小队可能被删 ⇒ 那时绝不夹带简报，退回下面的普通 agent 覆盖）。
+       身份核对只此一处实现（`resolveCommentLeaderOverride`，纯函数）；本层不复制判据。
+       两支互斥：`leaderOverride` 命中就不再传 `targetOverride`（planDispatch 同时收到两个会响亮抛）。 */
+    const leaderSquad =
+      msg.trigger === "comment"
+        ? resolveCommentLeaderOverride({
+            targetAgentId: msg.targetAgentId,
+            squadId: msg.squadId,
+            squads: snapshot.squads,
+          })
+        : null;
     /* #4 修复（用户 2026-10-06 裁定）：目标智能体的**名册事实** —— `planDispatch` 用它把
        「已归档 / 已停用」按 skip 处置（`inbox.notified` ⇒ 下面 skip 分支落 `dispatch_skipped` Inbox）。
        目标 = 评论点名者，或 agent 指派项的 assignee（其余负责人类型由各自分支判，不传）。
@@ -2969,7 +2991,13 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         parentWorkItem,
         ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
         ...(targetAgent !== undefined ? { targetAgent } : {}),
-        ...(targetOverride !== undefined ? { targetOverride } : {}),
+        /* D6：队长支与普通覆盖支**互斥**（同一处入参对象里只可能给一个）——同时给会被
+           `planDispatch` 响亮拒绝，故这里按身份核对的结论分流。 */
+        ...(leaderSquad !== null
+          ? { leaderOverride: { squad: leaderSquad } }
+          : targetOverride !== undefined
+            ? { targetOverride }
+            : {}),
         /* replay 与 comment 都是**用户侧收口**（没有规则到点）：planDispatch 只按 trigger 区分
            「是否留 wake.rule_fired」，规则那一档才需要 trigger:"rule"；成因的分流在
            `dispatchCause` 那一处，不在这里按触发源反推。 */
@@ -3836,6 +3864,10 @@ async function performCommentDispatch(
     cause: "comment",
     // 目标取 receipt（B-1）：可以是 assignee 之外的人；assignee 一字不动（§5.2）。
     targetAgentId: receipt.targetAgentId,
+    /* D6：**目标是不是队长**也是 receipt 事实（`detail.squadId` 落库口）——它决定派发桥走
+       leader 支还是普通 agent 支；读法只有 `commentReceiptSquadId` 一处（写坏的列响亮抛，
+       不得静默读成 undefined —— 那会把队长 run 降级成 standalone 且不报错）。 */
+    squadId: commentReceiptSquadId(receipt),
     workItemId: receipt.workItemId,
     workspacePath: target.path,
     ...(target.identity !== "" ? { workspaceIdentity: target.identity } : {}),
@@ -3865,12 +3897,21 @@ async function settleCommentReceipt(
     detail?: Record<string, unknown>;
   },
 ): Promise<void> {
+  /* 小队来源（D6）：从**本行 receipt 事实**读一次，回写时原样带上（见下面的 detail）。 */
+  const squadId = commentReceiptSquadId(receipt);
   try {
     const settled = await squadRuntime.settleCommentDispatchReceipt(target, {
       dispatchKey: receipt.dispatchKey,
       outcome: settlement.outcome,
-      // 触发源随 detail 落回：receipt 的时间线读法要能回答「是谁触发的」（§4.5 五源）。
-      detail: { triggerSource: receipt.source, ...settlement.detail },
+      /* 触发源随 detail 落回：receipt 的时间线读法要能回答「是谁触发的」（§4.5 五源）。
+         D6：**小队来源同样是请求身份的一部分**（回写是整份 detail 覆盖，不带上它就会被抹掉）——
+         抹掉的表现是「deferred 重放那一次降级成普通 agent run」（队长少了简报与队长台账行），
+         而 receipt 里看不出少了什么。读法与派发侧同一处（`commentReceiptSquadId`）。 */
+      detail: {
+        triggerSource: receipt.source,
+        ...(squadId !== undefined ? { squadId } : {}),
+        ...settlement.detail,
+      },
     });
     if (!settled) {
       logger.warn(

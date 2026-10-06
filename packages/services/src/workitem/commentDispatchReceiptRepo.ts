@@ -109,8 +109,29 @@ export interface CommentDispatchReceiptRepo {
   }): boolean;
 }
 
-interface ReceiptRow {
-  dispatch_key: string;
+/**
+ * receipt.detail 里的 `squadId`（D6）：这条请求的目标是**哪支小队**解析出来的（队长目标专用）。
+ *
+ * 为什么读法要收在这一处：`detail_json` 是自由形状的列（并入目标 / 抑制原因 / 触发源都住在这里），
+ * 各调用方自己 `detail["squadId"] as string` 会把「列被写坏」静默读成 `undefined` —— 表现是
+ * 「同一支小队的请求有时带简报、有时被当普通智能体派发」，而两条路都不报错。故：
+ * · 缺席 ⇒ `undefined`（历史行 / 非队长目标：正常语义，不是错误）；
+ * · 字符串且非空白 ⇒ 原值；
+ * · 其余（数字 / 对象 / 空串）⇒ **响亮抛**（列被写坏或写入方绕过了本模块）。
+ */
+export function commentReceiptSquadId(
+  receipt: Pick<CommentDispatchReceiptRecord, "dispatchKey" | "detail">,
+): string | undefined {
+  const value = receipt.detail["squadId"];
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && value.trim() !== "") return value;
+  throw new Error(
+    `comment_dispatch_receipts.dispatchKey=「${receipt.dispatchKey}」的 detail.squadId 非法` +
+      `（${JSON.stringify(value)}）：队长目标的简报来源读不出来，静默按普通智能体派发会把队长 run 降级`,
+  );
+}
+
+interface ReceiptRow {  dispatch_key: string;
   workspace_key: string;
   work_item_id: string;
   target_agent_id: string;

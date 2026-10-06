@@ -43,8 +43,24 @@ import type { WorkItemRepo } from "./workItemRepo.js";
    §5.2 明令：本文件**不得**调小队开跑 / 队长登记 / 派发规划等生命周期写入口——评论只产生
    派发**请求事实**，实际开 run 归 X2.1 的 host 接线（结构守卫见测试）。 */
 
-/** 触发目标：谁 + 哪一源（五源闭集，§4.5）。 */
-export type CommentTriggerTarget = { agentId: string; source: CommentDispatchSource };
+/**
+ * 触发目标：谁 + 哪一源（五源闭集，§4.5）+ **目标是怎么解析出来的**（哪支小队，仅队长目标有）。
+ *
+ * 为什么要有 `squadId`（D6，§6/§11-C2）：`source` 只说「这次命中哪一级」，而「目标是某支小队的队长」
+ * 需要**哪支小队**才能重建简报（队长 run 的三段简报由 `buildBriefing` 从 Squad 定义渲染）。
+ * 缺了它，host 只能把评论解析出的队长当普通 agent 派发 —— 无简报、无队长台账行、
+ * 不参与 §5.7(1) 合并，而「指派给小队」那条路径同一对象却是 leader 类 run：同一对象两条路径
+ * 形态不一致且不报错。故它随 receipt 落库（请求事实的一部分），重放/补投都读这一份。
+ *
+ * 只对**队长目标**有值：`mention_squad_leader`（显式 @小队）与 assignee=squad 的 ④ 兜底。
+ * 其余三源（@agent / 回复父评论 / 线程根 / ⑦ agent 兜底）解析出的都是「普通智能体」，
+ * 附一个 squad 只会让下游误以为该起队长 run。
+ */
+export type CommentTriggerTarget = {
+  agentId: string;
+  source: CommentDispatchSource;
+  squadId?: string;
+};
 
 /** 抑制（有明确「不派发」语义，写 comment_dispatch_suppressed Activity）。 */
 export type CommentSuppressReason = "note" | "all_mention" | "human_mention";
@@ -104,7 +120,12 @@ export function resolveCommentTrigger(context: CommentTriggerContext): CommentTr
       const leaderAgentId = context.squadLeaders.get(mention.squadId);
       // 小队定义已不存在 ⇒ 解析不出目标：不猜、也不占位（继续看后面是否还有可命中的显式项）。
       if (leaderAgentId !== undefined) {
-        targets.push({ agentId: leaderAgentId, source: "mention_squad_leader" });
+        targets.push({
+          agentId: leaderAgentId,
+          source: "mention_squad_leader",
+          // 被点名的那支小队：队长 run 的简报来源（见 CommentTriggerTarget 注释）。
+          squadId: mention.squadId,
+        });
       }
     }
   }
@@ -125,7 +146,17 @@ export function resolveCommentTrigger(context: CommentTriggerContext): CommentTr
   if (context.assignee?.type === "squad") {
     const leaderAgentId = context.squadLeaders.get(context.assignee.id);
     if (leaderAgentId !== undefined) {
-      return { kind: "targets", targets: [{ agentId: leaderAgentId, source: "issue_assignee" }] };
+      return {
+        kind: "targets",
+        targets: [
+          {
+            agentId: leaderAgentId,
+            source: "issue_assignee",
+            // 指派的那支小队：与显式 @小队 是**同一个**事实（目标 = 该队队长），故带同一种字段。
+            squadId: context.assignee.id,
+          },
+        ],
+      };
     }
     // 小队定义已不存在 ⇒ 解析不出队长：继续往下，不猜。
   }
@@ -559,10 +590,17 @@ function adjudicateQueueWindow(
     workItemId: string;
     targetAgentId: string;
     source: CommentDispatchSource;
+    /** 目标解析出来的小队（仅队长目标有）：随 detail 落库，见 `CommentTriggerTarget.squadId`。 */
+    squadId?: string;
     timestamp: number;
   },
 ): { outcome: CommentDispatchOutcome; detail: Record<string, unknown> } {
-  const baseDetail: Record<string, unknown> = { triggerSource: input.source };
+  /* 请求事实（触发源 + 队长目标的小队）随每一次裁决落进 detail：两者都是**请求身份**的一部分，
+     与 outcome 无关（并入/义务/pending 三格都要能回答「这是谁触发的、哪支小队的简报」）。 */
+  const baseDetail: Record<string, unknown> = {
+    triggerSource: input.source,
+    ...(input.squadId !== undefined ? { squadId: input.squadId } : {}),
+  };
   if (deps.runs.hasQueuedRunForPair(input.workspaceKey, input.workItemId, input.targetAgentId)) {
     const queued = deps.runs
       .listQueued(input.workspaceKey)
@@ -690,6 +728,7 @@ function writeDispatchReceipts(
         workItemId: context.comment.workItemId,
         targetAgentId: target.agentId,
         source: target.source,
+        ...(target.squadId !== undefined ? { squadId: target.squadId } : {}),
         timestamp: context.timestamp,
       }));
     }

@@ -1004,10 +1004,14 @@ test("X2.1 接线：评论变体的成因只搬运（msg.cause），派发桥不
   );
   assert.doesNotMatch(branch, /dispatchCause\s*=\s*"(?:leader_tool|user_reassign|rule|comment)"/);
   // 评论变体必须带显式目标（B-1 的目标覆盖入参），否则会退回 assignee 推导。
+  /* D6 起这一格分成**互斥的两支**（身份核对后只可能走其中一支）：队长 ⇒ `leaderOverride`
+     （带简报、leader 类 run，与「指派给小队」同形）；普通智能体 ⇒ 既有 `targetOverride`。
+     断言比修前**更强**：修前只钉「有 targetOverride 这一行」，现在同时钉两支与互斥写法
+     （摘掉任一支、或把两支并列传，都会在这里变红）。 */
   assert.match(
     branch,
-    /\.\.\.\(targetOverride !== undefined \? \{ targetOverride \} : \{\}\),/,
-    "评论派发必须把 targetAgentId 交给 planDispatch 的覆盖入参（只声明不用 = 目标退回 assignee）",
+    /\.\.\.\(leaderSquad !== null\s*\?\s*\{ leaderOverride: \{ squad: leaderSquad \} \}\s*:\s*targetOverride !== undefined\s*\?\s*\{ targetOverride \}\s*:\s*\{\}\),/,
+    "评论派发必须把目标交给 planDispatch 的覆盖入参（队长支 leaderOverride / 普通支 targetOverride，互斥；只声明不用 = 目标退回 assignee）",
   );
 });
 

@@ -171,8 +171,11 @@ test("级联①：显式 mention 优先于一切（@agent 直指；@squad 直指
         assignee: { type: "agent", id: "ta-other" },
       }),
     ),
-    { kind: "targets", targets: [{ agentId: "ta-leader", source: "mention_squad_leader" }] },
-    "@squad 的目标 = 该小队的 leaderAgentId",
+    {
+      kind: "targets",
+      targets: [{ agentId: "ta-leader", source: "mention_squad_leader", squadId: "sq-1" }],
+    },
+    "@squad 的目标 = 该小队的 leaderAgentId（D6：事实附带「哪支小队」——队长 run 的简报来源）",
   );
   assert.deepEqual(
     resolveCommentTrigger(
@@ -187,7 +190,7 @@ test("级联①：显式 mention 优先于一切（@agent 直指；@squad 直指
       kind: "targets",
       targets: [
         { agentId: "ta-ann", source: "mention_agent" },
-        { agentId: "ta-leader", source: "mention_squad_leader" },
+        { agentId: "ta-leader", source: "mention_squad_leader", squadId: "sq-1" },
       ],
     },
     "多个显式目标各自成目标（按出现顺序）",
@@ -307,7 +310,10 @@ test("级联④-⑦优先级：assignee 小队 > thread_parent > conversation_co
         threadRoot: agentRoot,
       }),
     ),
-    { kind: "targets", targets: [{ agentId: "ta-leader", source: "issue_assignee" }] },
+    {
+      kind: "targets",
+      targets: [{ agentId: "ta-leader", source: "issue_assignee", squadId: "sq-1" }],
+    },
   );
   // ⑤ 父评论作者为 agent 且未软删 ⇒ 压过⑥⑦。
   assert.deepEqual(
@@ -499,7 +505,7 @@ test("显式 @agent/@squad：pending receipt + comment_dispatch_requested；本�
       targetAgentId: "ta-leader",
       source: "mention_squad_leader",
       outcome: "pending",
-      detail: { triggerSource: "mention_squad_leader" },
+      detail: { triggerSource: "mention_squad_leader", squadId: "sq-1" },
     },
   ]);
   const first = h.receipts.get(
@@ -641,7 +647,7 @@ test("五源经服务命中：assignee agent/squad、thread_parent、conversatio
       targetAgentId: "ta-leader",
       source: "issue_assignee",
       outcome: "pending",
-      detail: { triggerSource: "issue_assignee" },
+      detail: { triggerSource: "issue_assignee", squadId: "sq-1" },
     },
   ]);
 

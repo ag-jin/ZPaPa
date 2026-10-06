@@ -464,6 +464,42 @@ export function isUnsettledCommentDispatchReceipt(outcome: CommentDispatchOutcom
   return (COMMENT_DISPATCH_UNSETTLED_OUTCOMES as readonly string[]).includes(outcome);
 }
 
+/* ───────────────── D6（§6/§11-C2）：评论目标的身份核对（队长 vs 普通智能体）─────────────────
+
+   评论请求从 D6 起携带「这条请求的目标是哪支小队解析出来的」（receipt.detail.squadId）——
+   但**是不是队长**还必须与**当前名册**对表：receipt 是首写事实，而小队可能在那之后换队长 /
+   被删。核不出队长就退回既有的 agent 覆盖（旧契约），绝不夹带简报：
+   简报是「你是队长，去派单」的机制段（`LEADER_PROTOCOL_TEXT`），发给一个不是队长的人 = 让它去派单。 */
+
+/**
+ * 评论目标是否是**该小队的队长**（是 ⇒ 返回那支小队，供 host 交给 `planDispatch.leaderOverride`；
+ * 否 ⇒ `null`，host 走既有的 `targetOverride` 普通智能体覆盖）。
+ *
+ * 三条事实（全部是持久/名册事实，不从 `source` 反推）：
+ * · `squadId`：receipt 记下的「哪支小队」（D6 起落库；缺席 = 目标不是从小队解析出来的）；
+ * · `targetAgentId`：这次要跑的智能体（点名者 = 队长解析出来的那个 id）；
+ * · `squads`：**当前**名册里的小队（host 从派发快照取，与工作项/小队用同一份快照）。
+ * 判据 = `squad.leaderAgentId === targetAgentId`。
+ *
+ * 为什么「查不到小队」也退回普通覆盖（而不是跳过这条请求）：目标是一个**真实存在的智能体**
+ * （它是 receipt 里的点名者），小队被删只说明「简报来源没了」；把请求丢掉会让一条评论请求
+ * 无声消失，而按普通 agent 起 run 至少执行了用户点名的那个人（D6 之前的行为）。
+ */
+export function resolveCommentLeaderOverride<
+  TSquad extends { id: string; leaderAgentId: string },
+>(input: {
+  targetAgentId: string;
+  /** receipt.detail.squadId（读法只有 `commentReceiptSquadId` 一处；这里只收结果值）。 */
+  squadId: string | undefined;
+  /** 当前名册里的小队（结构子集：只用到 id 与 leaderAgentId 两条事实）。 */
+  squads: readonly TSquad[];
+}): TSquad | null {
+  if (input.squadId === undefined) return null;
+  const squad = input.squads.find((candidate) => candidate.id === input.squadId);
+  if (squad === undefined) return null;
+  return squad.leaderAgentId === input.targetAgentId ? squad : null;
+}
+
 /* ───────────────── X2.2：未收敛 receipt 的补投判据（结算事件 / 启动扫描共用）─────────────────
 
    补投 = 对「还没有执行者 / 还在等义务重放」的评论请求再走一次评论派发入口。它必须**幂等**

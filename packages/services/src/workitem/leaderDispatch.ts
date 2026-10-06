@@ -153,6 +153,30 @@ export function planDispatch(input: {
    */
   targetOverride?: { type: "agent"; id: string };
   /**
+   * **队长目标覆盖**（D6，§6 / §11-C2；评论通道专用）：本次派发的目标是**某支小队的队长**，
+   * 且这条事实的**小队来源**（哪支小队）由调用方一并给出 —— 派发结论与「指派给小队」那一支
+   * **完全同形**（`isLeaderTask` / `runClass:"leader"` / `squadId` / 三段简报）。
+   *
+   * 为什么必须是**独立分支**、而不是放宽 `targetOverride`：`targetOverride` 的契约是
+   * 「派给某个普通智能体」（不带队长标记、不夹带花名册简报 —— 被点名的智能体不该以为自己要去派单）。
+   * 评论通道解析出的目标是队长时（`@小队` / 指派给小队 ⇒ 队长），按 `targetOverride` 派发就得到
+   * 一条 standalone 形态的 run：无简报、无队长台账行、不参与 §5.7(1) 合并 —— 而同一对象经规则/改派
+   * 路径却是 leader 类 run，**两条路径形态不一致且全程不报错**。把两件事塞进一个字段（例如给
+   * `targetOverride` 加一个 `isLeader` 布尔）会让「谁负责注入简报」变成可选路径上的分支，
+   * 故新增一支、旧契约一字不动。
+   *
+   * 「目标确实是该队队长」这条**身份核对**不在这里做：本函数拿到的是一份已核对过的小队事实
+   * （调用方与名册对表：`leaderAgentId === 目标`，实现在 host 侧的纯函数 `resolveCommentLeaderOverride`）。
+   * 这里只回答「已知目标就是队长时，派发长什么样」——判据不复制第二份。
+   *
+   * 小队归档 / 停用的判据**复用** `case "squad"` 那一处（同一个 `planLeaderRunEvents`）：
+   * 两条入口对同一支小队必须给出同一个结论，各写一份迟早分叉。
+   *
+   * 与 `targetOverride` **互斥**：两个同时给是接线违例（调用方得先答出「这次派的是队长还是普通
+   * 智能体」），静默取其一会让另一个分支的契约看起来还活着，故响亮抛。
+   */
+  leaderOverride?: { squad: Squad };
+  /**
    * **目标智能体的名册事实**（#4 修复，用户 2026-10-06 裁定）：本次要派的那个 agent
    * （`agent` 指派的 assignee，或 `targetOverride` 的点名者）在名册里的定义。
    *
@@ -189,6 +213,28 @@ export function planDispatch(input: {
       );
     }
     events.push({ kind: "wake.rule_fired", workItemId: workItem.id, ruleId: input.ruleId });
+  }
+
+  /* D6：**队长目标覆盖优先于普通目标覆盖**（两者互斥，见 `leaderOverride` 的注释）。
+     位置与 `targetOverride` 并列、排在它之前：它同样是「这次派给谁」的完整答案 ⇒ 不再进入按
+     assignee 类型分流的 switch。事件形状与「指派给小队」走**同一个** helper（归档/停用判据一处）。 */
+  if (input.targetOverride !== undefined && input.leaderOverride !== undefined) {
+    throw new Error(
+      `工作项 ${workItem.id} 同时给出 targetOverride（普通智能体）与 leaderOverride（队长）：` +
+        "两者互斥 —— 一次派发的目标只可能是其中一类，先答出是哪一类再派发。" +
+        "静默取其一会让另一条分支的契约（带不带简报/队长标记）看起来还活着，而实际上不可达。",
+    );
+  }
+  if (input.leaderOverride !== undefined) {
+    /* 目标智能体的名册事实照旧先判（评论通道的既有语义）：被点名的队长若已归档 / 停用，
+       按同一条 skip 处置 —— 不能因为「这次的目标是队长」就跳过名册判据（那是**放宽**既有守卫）。 */
+    const unavailable = unavailableAgentReason(input.targetAgent);
+    if (unavailable !== null) {
+      events.push(notify(workItem.id, unavailable));
+      return events;
+    }
+    events.push(...planLeaderRunEvents(workItem.id, input.leaderOverride.squad));
+    return events;
   }
 
   /* B-1：**显式目标覆盖优先于 assignee 推导**（评论 `@agent` 派给点名者、不动 assignee，§5.2）。
@@ -256,51 +302,10 @@ export function planDispatch(input: {
       break;
     }
 
-    /* 指派给小队：解析 `leaderAgentId` 并注入简报（spec §3.3）。三条触发路径共用本分支。 */
+    /* 指派给小队：解析 `leaderAgentId` 并注入简报（spec §3.3）。规则 / 队长工具 / 评论三条触发路径
+       共用本分支（评论通道走 `leaderOverride`，落到**同一个** `planLeaderRunEvents`）。 */
     case "squad": {
-      /* 小队拿不到（被删或指派引用失效）→ 只通知，**不降级**：把 squad.id 当普通 agentId
-         起一次 run 会去唤醒一个不存在的智能体，人还得从一份看不懂的运行里反推真相。 */
-      if (squad === null) {
-        events.push(
-          notify(
-            workItem.id,
-            "指派的小队不存在（已被删除或指派引用失效）：跳过本次派发，等人在 Inbox 处理",
-          ),
-        );
-        break;
-      }
-      /* 已归档的小队按 **skip（非失败）** 处理（spec §3.10 / S10）：归档是「停止使用」，
-         花名册与指令都还在，只是不再接新派发；报成失败会让人去查一个并不存在的错误。 */
-      if (squad.archivedAt !== undefined) {
-        events.push(
-          notify(workItem.id, "指派的小队已归档：按归档语义跳过本次派发，等人在 Inbox 处理"),
-        );
-        break;
-      }
-      /* 已停用（`enabled: false`）与已归档是 spec §3.3 并列的**两条状态**，必须一样处理：
-         两者都是「这个小队现在不接新派发」，只判 archivedAt 会让停用形同虚设——用户以为停用了，
-         队长仍被唤醒派单（`WakeRule.enabled` 被 `listReady` 真实消费，两实体口径不能不对称）。
-         reason 文案**必须与「已归档」区分**：归档是长期退出（花名册还在但不再使用），停用是可随时
-         重新打开的临时开关，让接线方与用户一眼能分辨该去「取消归档」还是「重新启用」。
-         次序上归档先判：两者同时命中时报「已归档」（更强的终态结论），不掩盖既有语义。 */
-      if (squad.enabled === false) {
-        events.push(
-          notify(
-            workItem.id,
-            "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发",
-          ),
-        );
-        break;
-      }
-      events.push({
-        kind: "run.enqueued",
-        workItemId: workItem.id,
-        agentId: squad.leaderAgentId,
-        isLeaderTask: true,
-        runClass: "leader",
-        squadId: squad.id,
-        briefing: buildBriefing(squad),
-      });
+      events.push(...planLeaderRunEvents(workItem.id, squad));
       break;
     }
 
@@ -322,6 +327,56 @@ export function planDispatch(input: {
 
 function notify(workItemId: string, reason: string): DispatchEvent {
   return { kind: "inbox.notified", workItemId, reason };
+}
+
+/**
+ * 「目标是这支小队的队长」这一格的**唯一**规划（D6）：指派给小队的项与评论解析出的队长目标
+ * （`leaderOverride`）都从这里出去 —— 两条入口对小队的归档 / 停用 / 正常三态必须给出**同一个**结论。
+ *
+ * 为什么抽成一处：把这段复制到评论分支就等于埋了第二份判据，而分叉的表现是
+ * 「同一支已停用的小队，改派被拦住、评论点名却照跑」——两种入口对同一事实给出不同结论且不报错。
+ *
+ * 三态（次序与文案都是既有契约，原样保留）：
+ * · 小队拿不到（被删或指派引用失效）→ 只通知，**不降级**：把 squad.id 当普通 agentId 起一次 run
+ *   会去唤醒一个不存在的智能体，人还得从一份看不懂的运行里反推真相。
+ * · 已归档的小队按 **skip（非失败）** 处理（spec §3.10 / S10）：归档是「停止使用」，花名册与指令
+ *   都还在，只是不再接新派发；报成失败会让人去查一个并不存在的错误。
+ * · 已停用（`enabled: false`）与已归档是 spec §3.3 并列的**两条状态**，必须一样处理：两者都是
+ *   「这个小队现在不接新派发」，只判 archivedAt 会让停用形同虚设——用户以为停用了，队长仍被唤醒
+ *   派单（`WakeRule.enabled` 被 `listReady` 真实消费，两实体口径不能不对称）。
+ *   reason 文案**必须与「已归档」区分**：归档是长期退出（花名册还在但不再使用），停用是可随时
+ *   重新打开的临时开关，让接线方与用户一眼能分辨该去「取消归档」还是「重新启用」。
+ *   次序上归档先判：两者同时命中时报「已归档」（更强的终态结论），不掩盖既有语义。
+ * · 否则 ⇒ 一条队长 run 事件（`isLeaderTask` / `runClass:"leader"` / `squadId` / 三段简报）。
+ */
+function planLeaderRunEvents(workItemId: string, squad: Squad | null): DispatchEvent[] {
+  if (squad === null) {
+    return [
+      notify(workItemId, "指派的小队不存在（已被删除或指派引用失效）：跳过本次派发，等人在 Inbox 处理"),
+    ];
+  }
+  if (squad.archivedAt !== undefined) {
+    return [notify(workItemId, "指派的小队已归档：按归档语义跳过本次派发，等人在 Inbox 处理")];
+  }
+  if (squad.enabled === false) {
+    return [
+      notify(
+        workItemId,
+        "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发",
+      ),
+    ];
+  }
+  return [
+    {
+      kind: "run.enqueued",
+      workItemId,
+      agentId: squad.leaderAgentId,
+      isLeaderTask: true,
+      runClass: "leader",
+      squadId: squad.id,
+      briefing: buildBriefing(squad),
+    },
+  ];
 }
 
 /**

@@ -475,7 +475,7 @@ test("多目标并存：@Ann @Bob @Core 三个显式目标三条 receipt；同�
   assert.deepEqual(three.dispatches, [
     { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
     { targetAgentId: BOB, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
-    { targetAgentId: LEAD, source: "mention_squad_leader", outcome: "pending", detail: { triggerSource: "mention_squad_leader" } },
+    { targetAgentId: LEAD, source: "mention_squad_leader", outcome: "pending", detail: { triggerSource: "mention_squad_leader", squadId: SQUAD } },
   ]);
   assert.equal(h.receipts.listByWorkItem(WS, "wi-13").length, 3, "每目标一条 receipt（§4.3 合并键含目标 agent）");
   assert.equal(rowCount(h, "squad_runs"), 0);
