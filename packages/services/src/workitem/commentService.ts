@@ -10,8 +10,10 @@ import {
   type RosterIndex,
 } from "./commentParser.js";
 import { computeCommentDispatchKey } from "./commentDispatchKey.js";
+import type { SquadDispatchRequest } from "./squadDispatchRequests.js";
 import type {
   CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
   CommentDispatchReceiptRepo,
   CommentDispatchSource,
 } from "./commentDispatchReceiptRepo.js";
@@ -191,6 +193,19 @@ export type CommentServiceDeps = {
   readDispatchEnabled: () => boolean;
   /** 已知人类成员名（@人名抑制的判定输入）；本轮没有人类名册来源，缺省为空集。 */
   humanNames?: ReadonlySet<string>;
+  /**
+   * **评论派发请求出口**（X2.1 接线）：把「本评论请求某目标 agent 处理」这条**事实**交给常驻侧
+   * （组合根注入的派发请求 hub → host 评论派发入口）。
+   *
+   * 为什么是出口而不是在本服务里执行：§5.2 明令评论链**不得**调用小队开跑 / 队长登记 /
+   * 派发规划这几类生命周期写入口 —— 本服务只产生派发**请求事实**，开 run（门禁/幂等/合并/排队）
+   * 归 host 的唯一派发实现。**只有 `pending` 的请求外发**：queued/coalesced/deferred/blocked 已被队列状态窗
+   * 或义务表收口（再外发一次就是重复执行），pending 才是「还没有东西会执行它」。
+   *
+   * 缺省（未注入）= 不外发（加法：既有调用方与测试不受影响；缺它的表现是 host 不会收到评论派发，
+   * 组合根必须注入 —— 生产装配在 node.ts）。
+   */
+  publishDispatchRequest?: (request: SquadDispatchRequest) => void;
   /** id 生成（测试可注入确定性 id）；缺省 randomUUID。 */
   newId?: () => string;
   /** 时钟（测试可注入）；缺省 Date.now。 */
@@ -614,6 +629,8 @@ function writeDispatchReceipts(
     return [];
   }
   const dispatches: CommentDispatchReport[] = [];
+  /** 未收敛（pending）的请求：循环后经出口外发（含同键重投时仍 pending 的行 —— 它还没有执行者）。 */
+  const pendingRequests: SquadDispatchRequest[] = [];
   const blocked: Array<{ targetAgentId: string; source: CommentDispatchSource; reason: string }> =
     [];
   for (const target of context.resolution.targets) {
@@ -627,6 +644,11 @@ function writeDispatchReceipts(
     // （否则一次重投会在窗口变化后凭空长出一条 deferred 义务，而 receipt 仍写着 pending）。
     const existing = deps.receipts.get(dispatchKey);
     if (existing !== null) {
+      // 同键重投且仍停在 pending（host 那一次没执行成 / 桥不可用）⇒ 重新外发：pending 的意义就是
+      // 「还没有东西会执行它」。已收敛的行（queued/coalesced/deferred/...）不再外发（首写即事实）。
+      if (existing.outcome === "pending") {
+        pendingRequests.push(buildCommentDispatchRequest(context.comment, existing));
+      }
       dispatches.push({
         targetAgentId: existing.targetAgentId,
         source: existing.source,
@@ -667,6 +689,9 @@ function writeDispatchReceipts(
       detail,
       createdAt: context.timestamp,
     });
+    if (receipt.outcome === "pending") {
+      pendingRequests.push(buildCommentDispatchRequest(context.comment, receipt));
+    }
     dispatches.push({
       targetAgentId: target.agentId,
       source: target.source,
@@ -707,7 +732,27 @@ function writeDispatchReceipts(
       createdAt: context.timestamp,
     });
   }
+  /* 请求事实已全部落库（receipt + Activity 之后）才外发：出口的消费者（host 派发入口）读库取事实，
+     先发后写会让它读到一条不存在的 receipt。只发 pending（见 deps.publishDispatchRequest 的理由）。 */
+  for (const request of pendingRequests) deps.publishDispatchRequest?.(request);
   return dispatches;
+}
+
+/** 评论派发请求的形状**只在 buildCommentDispatchRequest 一处拼**（出口/host 两侧读到的身份一致）。 */
+function buildCommentDispatchRequest(
+  comment: WorkItemCommentRecord,
+  receipt: Pick<CommentDispatchReceiptRecord, "dispatchKey" | "targetAgentId">,
+): SquadDispatchRequest {
+  return {
+    kind: "comment",
+    // 成因是请求形状本身的事实（§5.2 明文评论成因另行扩展，不得伪装成 user_reassign）。
+    cause: "comment",
+    workItemId: comment.workItemId,
+    dispatchKey: receipt.dispatchKey,
+    targetAgentId: receipt.targetAgentId,
+    workspacePath: comment.workspacePath,
+    workspaceIdentity: comment.workspaceKey,
+  };
 }
 
 /** comment_created 必写；mention 命中加 comment_mention_parsed（dedupKey 幂等：重投不重复写）。

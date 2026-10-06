@@ -152,6 +152,11 @@ function resolveMemberEdge(
     case "user_reassign":
     case "rule":
       return null; // B 格：不是队长派的。
+    /* X2.1 成因闭集扩展（§5.2）：评论触发的 run 同样**不是队长派的** —— 评论派发的
+       `caused_by_run_id` 恒为 NULL（§5.6：评论入口不解析队长入边），画实线弧就是在编事实；
+       与 B 格同处置（null），需要弧线时由 C 格的推断启发承担。 */
+    case "comment":
+      return null;
     case "leader_tool": {
       // 入边非空且在站点集里定位到**队长站** ⇒ 事实；否则（缺失 / 定位不到 / 指向非队长站）
       // 回落 C 格 —— 防御坏输入，不抛、不画到违例目标。

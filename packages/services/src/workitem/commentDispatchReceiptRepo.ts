@@ -29,6 +29,15 @@ export const COMMENT_DISPATCH_SOURCES = [
 ] as const;
 export type CommentDispatchSource = (typeof COMMENT_DISPATCH_SOURCES)[number];
 
+/**
+ * **未收敛**的 outcome（X2.1 的回写口据此认领）：
+ * · `pending`：评论已落事实，但 host 派发入口还没执行（桥不可用 / 进程重启 ⇒ 重投）；
+ * · `deferred`：已登记完成重放义务，等义务到期由评论重放通道回写。
+ * 其余五值（opened/queued/coalesced/blocked/failed）是**终局**：首写结论即事实，不得被迟到的重投覆写。
+ */
+export const COMMENT_DISPATCH_UNSETTLED_OUTCOMES = ["pending", "deferred"] as const;
+export type CommentDispatchUnsettledOutcome = (typeof COMMENT_DISPATCH_UNSETTLED_OUTCOMES)[number];
+
 export type CommentDispatchReceiptRecord = {
   dispatchKey: string;
   workspaceKey: string;
@@ -69,6 +78,27 @@ export interface CommentDispatchReceiptRepo {
   get(dispatchKey: string): CommentDispatchReceiptRecord | null;
   /** 某工作项下的 receipt（时间线口径，created_at ASC → dispatch_key ASC）。 */
   listByWorkItem(workspaceKey: string, workItemId: string): CommentDispatchReceiptRecord[];
+  /**
+   * **回写口**（X2.1 新增；文件头的「只增」纪律在此**有意开了唯一的推进口**）：
+   * host 评论派发通道执行完一次派发后，把当时的队列状态窗结论写回 receipt。
+   *
+   * 为什么是**条件更新**（`WHERE outcome IN ('pending','deferred')`）：回写不是普通覆盖，
+   * 而是「认领这次执行」——两条并发路径（在线派发入口 / 义务重放通道）可能同时读到同一条未收敛行，
+   * 条件更新让**恰一个赢家**（`changes === 1`）把结论落定，输家拿到 `false` 后只留痕、不改写。
+   * 同时保证首写即事实的另一半：已终局的行（opened/queued/coalesced/blocked/failed）绝不因
+   * 迟到的重投被改写成别的结论（`insertIfAbsent` 的幂等语义在推进面上同样成立）。
+   *
+   * 只改 `outcome / detail / attempt_count / updated_at` 四列：`dispatch_key / workspace_key /
+   * work_item_id / target_agent_id / comment_id / thread_id / source / created_at` 是**请求身份**
+   * 与首写时间戳，任何推进都不得改写。未命中（dispatchKey 不存在，或已是终局）⇒ `false`，不造行。
+   */
+  settleIfUnsettled(input: {
+    dispatchKey: string;
+    outcome: CommentDispatchOutcome;
+    detail?: Record<string, unknown>;
+    /** 回写时刻（显式传入：存储面不自己读时钟，测试与回放口径同源）。 */
+    updatedAt: number;
+  }): boolean;
 }
 
 interface ReceiptRow {
@@ -199,6 +229,25 @@ export function createCommentDispatchReceiptRepo(db: DatabaseSync): CommentDispa
         )
         .all(workspaceKey, workItemId) as unknown as ReceiptRow[];
       return rows.map(rowToReceipt);
+    },
+
+    settleIfUnsettled(input) {
+      // 写路径闸与 insertIfAbsent 同款：闭集外 outcome 绝不落盘（别把失败推迟到读回）。
+      assertOutcome(input.outcome);
+      const changes = db
+        .prepare(
+          `UPDATE comment_dispatch_receipts
+              SET outcome = ?, detail_json = ?, attempt_count = attempt_count + 1, updated_at = ?
+            WHERE dispatch_key = ?
+              AND outcome IN ('pending', 'deferred')`,
+        )
+        .run(
+          input.outcome,
+          JSON.stringify(input.detail ?? {}),
+          input.updatedAt,
+          input.dispatchKey,
+        ).changes;
+      return changes === 1;
     },
   };
 }

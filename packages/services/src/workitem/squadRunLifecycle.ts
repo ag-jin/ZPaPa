@@ -38,6 +38,18 @@ export type MemberRunRequest = {
    */
   dispatchCause?: DispatchCause;
   /**
+   * 本次请求登记的 deferred 义务**来源**（G4/X2.1）：`reassign`（缺省，R2 改派通道）或
+   * `comment`（评论派发通道）。
+   *
+   * 为什么必须由调用方声明而不是在本层推断：条目「由哪条通道登记」是**调用方才知道的事实**
+   * （评论派发入口 vs 改派的 openMemberRun 调用点）；在本层按成因/调用者反推就是二次判定，
+   * 判错的表现是评论义务被 R2 重放回路认领（它以 assignee 为派发目标重新验证），
+   * 而评论目标 ≠ assignee 是常态格 ⇒ 义务被静默丢弃。
+   *
+   * 缺席 ⇒ `reassign`（列默认值与既有 R2 写入方语义不变，加法）。
+   */
+  origin?: import("./squadDeferredDispatchRepo.js").DeferredDispatchOrigin;
+  /**
    * 派发这条队员 run 的**队长 run**（台账 `caused_by_run_id` 列）：仅当
    * `dispatchCause === "leader_tool"` 且派发时刻该批根工作项上确有活跃队长 run 时，由 host 在
    * **派发时刻**解析并传入（见 `findActiveLeaderRunId`）；其余成因一律缺席 ⇒ 落 NULL（不猜）。
@@ -459,8 +471,9 @@ export function createRunLifecycle(deps: {
           workItemId: request.workItemId,
           agentId: request.agentId,
           dispatchCause: request.dispatchCause ?? null,
-          // G4：R2 通道登记的义务来源 = 'reassign'（显式标注，不依赖列默认值——分流位必须是事实）。
-          origin: "reassign",
+          /* G4/X2.1：义务来源**由调用方声明**（评论派发入口传 'comment'，改派路径缺省 'reassign'）
+             —— 分流位必须是事实，不在本层按成因/调用者反推（判错会让评论义务被 R2 通道重放）。 */
+          origin: request.origin ?? "reassign",
           createdAt: now,
           updatedAt: now,
         });

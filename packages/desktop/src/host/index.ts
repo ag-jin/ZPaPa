@@ -79,7 +79,9 @@ import {
   buildOrphanedRunInboxItem,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
-  type SquadDispatchRequest,
+  type SquadAssignmentDispatchRequest,
+  type SquadCommentDispatchRequest,
+  type SquadDeferredDispatchRecord,
   type DeclaredRunClass,
   /* 派发**成因**（2026-10-04）：三条入口在派发桥归并成 `DispatchCause` 落台账
      （`squad_runs.dispatch_cause`）；人发起那支的成因由服务面在事件源头给出（`UserDispatchCause`）。 */
@@ -88,12 +90,17 @@ import {
 } from "@zcode/services/node";
 import { createHostResourceUsageResponder } from "./hostResourceUsage.js";
 import {
+  commentObligationReplayFacts,
+  commentReceiptSettlementFor,
   decideSquadDispatch,
   isSquadDispatchDisabledError,
+  isUnsettledCommentDispatchReceipt,
   ledgerActionForRunClass,
+  replayChannelForObligationOrigin,
   selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
+  type SquadDispatchBridgeResult,
   type SquadDispatchKind,
   type SquadMemberRunTerminalOutcome,
 } from "./squadDispatch.js";
@@ -2769,7 +2776,12 @@ type SquadDispatchTrigger =
   | { trigger: "user"; cause: UserDispatchCause }
   /** C4b：队列推进/义务重放（结算事实或启动扫描触发）。不是人发起、也没有规则到点——
       语义是「把一条已经登记的派发意图继续执行」，幂等键 = 既存排队行/义务的 runId。 */
-  | { trigger: "replay"; replayCause?: DispatchCause };
+  | { trigger: "replay"; replayCause?: DispatchCause }
+  /** X2.1：评论触发（host 评论派发入口调用）。与 `user` 的差别是**目标显式**：
+      `@agent` 是运行请求而非改派（§5.2），目标可以不是 assignee ⇒ 由 `planDispatch` 的
+      `targetOverride` 覆盖 assignee 推导（B-1 裁定）。成因由本变体携带（评论通道给 "comment"，
+      派发桥只搬运，缺省 ⇒ 落 NULL —— 与 replay 携带台账原成因同款，不在桥里写死档位）。 */
+  | { trigger: "comment"; targetAgentId: string; cause?: DispatchCause };
 
 /** 一次派发的请求：消息形状的两路入口共用（`eventKey` 是幂等键里稳定的那一半，也是台账 runId）。 */
 type SquadDispatchRequestMsg = SquadDispatchTrigger & {
@@ -2786,6 +2798,12 @@ type SquadDispatchReport = {
   failureKind?: "transient" | "permanent" | "deferred";
   taskId?: string;
   sessionId?: string;
+  /**
+   * 本次执行的**落点**（X2.1）：评论派发入口据此回写 receipt outcome（七值闭集）。
+   * 每个 return 出口都必须如实标注 —— 也**只**服务这一件事（线上回执 `SquadWakeResult` 不含它，
+   * 故它只进日志与 receipt 回写，不加进线上契约）。
+   */
+  bridge: SquadDispatchBridgeResult;
   /** 本次派发的 run 种类：**只进日志**，不上线（线上契约里没有这一维）。 */
   kind?: SquadDispatchKind;
 };
@@ -2801,7 +2819,13 @@ type SquadDispatchReport = {
  */
 async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDispatchReport> {
   if (databaseStartup?.coordinator.snapshot.phase !== "ready") {
-    return { ok: false, error: "Local database startup is not ready", failureKind: "transient" };
+    return {
+      ok: false,
+      error: "Local database startup is not ready",
+      failureKind: "transient",
+      // 库没就绪是**等待型**：评论 receipt 保持未收敛，等下次重投（不得记 failed）。
+      bridge: { kind: "retry" },
+    };
   }
   const eventKey = msg.eventKey;
   /** 日志里的触发源标签：规则触发要指名规则；**人发起**（队长派单）没有规则（spec §5.5）。 */
@@ -2810,7 +2834,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       ? `rule=${msg.ruleId}`
       : msg.trigger === "replay"
         ? "trigger=replay"
-        : "trigger=user";
+        : msg.trigger === "comment"
+          ? "trigger=comment"
+          : "trigger=user";
   /** planDispatch 的 ruleId 只在规则触发时给（人发起不写、也不要求任何规则）。 */
   const ruleId = msg.trigger === "rule" ? msg.ruleId : undefined;
   /* 本次派发是否**已经**在台账里留下自己的行（队员：`openMemberRun`；队长：`recordLeaderRun`）：
@@ -2835,11 +2861,17 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     workspaceIdentity: target.identity,
   });
   let squadRuntimeRef: ISquadRuntimeService | undefined;
-  /** 确定性失败（重试不会自愈）的结论：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。 */
-  const failPermanent = (error: string): SquadDispatchReport => ({
+  /** 确定性失败（重试不会自愈）的结论：门禁关闭 / 运行时未注册 / 开树失败 / 数据契约违例。
+      `bridge` 由调用点给：受限状态（门禁关闭）是 `blocked`，其余契约违例是 `failed` —— 两者
+      在评论 receipt 上是不同的终局（可审计不可派发的格不得记成执行失败）。 */
+  const failPermanent = (
+    error: string,
+    bridge: SquadDispatchBridgeResult = { kind: "failed", error },
+  ): SquadDispatchReport => ({
     ok: false,
     error,
     failureKind: "permanent",
+    bridge,
   });
   try {
     const targetServices = resolveAutomationTargetServices(msg);
@@ -2859,7 +2891,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     } catch (error) {
       if (isSquadDispatchDisabledError(error)) {
         // permanent：关闭实验是确定性状态，重试不会自愈 —— 别让调度器按 transient 空转退避。
-        return failPermanent(error instanceof Error ? error.message : String(error));
+        // 对评论派发通道：这是「受限状态（可审计不可派发）」⇒ receipt 落 blocked（不是 failed）。
+        const reason = error instanceof Error ? error.message : String(error);
+        return failPermanent(reason, { kind: "blocked", reason });
       }
       throw error;
     }
@@ -2895,9 +2929,14 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        只对 `agent` 指派传：`user` / `squad` 的类别由负责人类型本身唯一决定（人不排队 / 小队即队长），
        `runClass` 在那两支里没有信息量，传了反而误导读者。 */
     const declaredRunClass: DeclaredRunClass | undefined =
-      workItem.assignee.type === "agent"
+      workItem.assignee.type === "agent" || msg.trigger === "comment"
         ? declaredRunClassFor({ parentId: workItem.parentId, parent: parentWorkItem })
         : undefined;
+    /* X2.1（B-1 裁定）：评论触发把**点名者**作为显式目标覆盖交给 `planDispatch` ——
+       `@agent` 是运行请求而非改派（§5.2），目标可以不是 assignee（常态格），且**不改 assignee**。
+       覆盖值直接取自派发消息（入口已按 receipt 事实构造；本层不重新解析目标）。 */
+    const targetOverride =
+      msg.trigger === "comment" ? ({ type: "agent", id: msg.targetAgentId } as const) : undefined;
     let events: ReturnType<typeof planDispatch>;
     try {
       events = planDispatch({
@@ -2905,7 +2944,11 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         squad,
         parentWorkItem,
         ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
-        trigger: msg.trigger === "replay" ? "user" : msg.trigger,
+        ...(targetOverride !== undefined ? { targetOverride } : {}),
+        /* replay 与 comment 都是**用户侧收口**（没有规则到点）：planDispatch 只按 trigger 区分
+           「是否留 wake.rule_fired」，规则那一档才需要 trigger:"rule"；成因的分流在
+           `dispatchCause` 那一处，不在这里按触发源反推。 */
+        trigger: msg.trigger === "rule" ? "rule" : "user",
         ...(ruleId !== undefined ? { ruleId } : {}),
       });
     } catch (error) {
@@ -2927,9 +2970,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       /* 没有 run（inbox.notified：指派给人 / 小队不存在 / 已归档 / 已停用）⇒ **skip 不是失败**。
          spec §3.9 的 dispatch_skipped 不进失败率：报成失败会让人去查一个并不存在的错误。 */
       const skip = events.find((event) => event.kind === "inbox.notified");
+      const skipReason = skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event";
       logger.info(
-        `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId}` +
-          ` reason=${skip?.kind === "inbox.notified" ? skip.reason : "no dispatch event"}`,
+        `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=${skipReason}`,
       );
       /* P2c（产生点 ④）：skip 也是「需人介入」的一种（指派给人 = 等人自己动手；小队不接新派发 =
          等人处置）—— 登记一条 InboxItem，让「跳过」从日志里的一行变成界面上可查的一条。
@@ -2951,7 +2994,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
             logger.warn(`[squad] skip 未能登记 Inbox：workItem=${msg.workItemId}`, error),
           );
       }
-      return { ok: true };
+      /* 评论通道据此把 receipt 落 blocked（「评论已发、目标未触发」的如实回传，§12.1-12）——
+         skip **不是失败**：bridge 给 blocked 而不是 failed。 */
+      return { ok: true, bridge: { kind: "blocked", reason: skipReason } };
     }
 
     const kind: SquadDispatchKind = enqueued.runClass;
@@ -2960,8 +3005,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        规则到点的消息形状里**没有** cause（它是 host 自己的入口，不经服务面事件链）。
        本层只归并、**不二次判定**（按调用者反推成因就是推断，推断错会往台账里落一个错的成因，
        而读回不报错）。 */
-    /* replay 携带台账里存的原始成因；原始行没有（遗留 NULL）⇒ undefined 落 NULL（遗留/未知语义，
-       读回不得猜）——不在本层写死任何一档（守卫钉住「只搬运」）。 */
+    /* replay 携带台账里存的原始成因，comment 变体携带评论通道给的成因（都是调用方给的**事实**）；
+       原始行没有 / 变体没给（遗留 NULL）⇒ undefined 落 NULL（遗留/未知语义，读回不得猜）——
+       不在本层写死任何一档（守卫钉住「只搬运」）。user 与 comment 两支都用 `msg.cause`。 */
     const dispatchCause: DispatchCause | undefined =
       msg.trigger === "rule"
         ? "rule"
@@ -2979,6 +3025,11 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       kind === "member" && dispatchCause === "leader_tool" && parentWorkItem
         ? findActiveLeaderRunId(snapshot.runs, parentWorkItem.id)
         : null;
+    /* G4/X2.1：评论通道登记的义务来源标 'comment'（分流位是**事实**，缺省 ⇒ R2 的 'reassign'）。
+       单拆成常量而不是内联进队员台账调用块：那块已被既有结构守卫的窗口钉住（调用块到入边那一行的
+       距离），内联会把窗口挤爆。 */
+    const memberRunOrigin =
+      msg.trigger === "comment" ? ({ origin: "comment" as const } as const) : {};
     /* 台账 / 开树这一格按**类别**分流（`runClass` 是 `planDispatch` 给的显式判别字段）。为什么必须是
        显式三分类、不能靠 `isLeaderTask` 二分：那样**单独安排的智能体**（不在小队里的 agent，
        spec §6.1）会落进「非队长 ⇒ 开树」那条腿 —— 于是它也被塞进一条分支，而那条分支
@@ -2999,6 +3050,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           isLeaderTask: false,
           // 派发时刻的既成事实，原样落台账（不在这里推断）：见上面 `dispatchCause` / `causedByRunId`。
           dispatchCause,
+          ...memberRunOrigin,
           ...(causedByRunId !== null ? { causedByRunId } : {}),
         });
         /* C3 并发闸的三种「未开跑」结论（回执一律 ok + 可见日志；推进/重放在 C4）：
@@ -3014,7 +3066,10 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
                 ? ` coalescedInto=${openOutcome.targetRunId}`
                 : ""),
           );
-          return { ok: true };
+          return {
+            ok: true,
+            bridge: openOutcome.kind === "queued" ? { kind: "queued" } : { kind: "coalesced" },
+          };
         }
         if (openOutcome.kind === "deferred") {
           /* R2（用户 2026-10-05 裁定）：同 (workItem,agent) 已有活跃 run ⇒ 登记完成后重放义务
@@ -3023,7 +3078,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
             `[squad] dispatch deferred ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}` +
               (openOutcome.coalescedInto ? ` coalescedInto=${openOutcome.coalescedInto}` : ""),
           );
-          return { ok: true };
+          return { ok: true, bridge: { kind: "deferred" } };
         }
         if (openOutcome.kind === "already_registered") {
           ledgerRowRegistered = true;
@@ -3064,12 +3119,14 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
             logger.info(
               `[squad] dispatch queued (leader) ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}`,
             );
-            return { ok: true };
+            return { ok: true, bridge: { kind: "queued" } };
           }
           logger.info(
             `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=leader_run_merged`,
           );
-          return { ok: true };
+          /* 并入进行中的队长 run（§5.7(1)/S13 的合并）⇒ 对评论请求是 coalesced（逻辑派发已收敛），
+             不是 skip、更不是 failed。 */
+          return { ok: true, bridge: { kind: "coalesced" } };
         }
         ledgerRowRegistered = true;
       } catch (error) {
@@ -3145,7 +3202,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       logger.info(
         `[squad] wake skipped ${triggerLabel} workItem=${msg.workItemId} reason=${decision.reason}`,
       );
-      return { ok: true };
+      return { ok: true, bridge: { kind: "blocked", reason: decision.reason } };
     }
 
     const zcodeTaskService = targetServices.getOptional(IZCodeTaskService);
@@ -3331,7 +3388,8 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       `[squad] dispatch completed ${triggerLabel} workItem=${msg.workItemId} kind=${kind}` +
         ` eventKey=${eventKey} task=${task.taskId}`,
     );
-    return { ok: true, taskId: task.taskId, sessionId: task.taskId, kind };
+    // 会话已发出（成员/队长已登记台账行）⇒ 评论 receipt 落 opened（run 身份 = dispatchKey）。
+    return { ok: true, taskId: task.taskId, sessionId: task.taskId, kind, bridge: { kind: "dispatched" } };
   } catch (error) {
     /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
        回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
@@ -3389,6 +3447,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       ok: false,
       error: error instanceof Error ? error.message : String(error),
       failureKind: error instanceof BoundSessionBusyError ? "deferred" : "transient",
+      /* 评论 receipt 的落点：忙是**等待型**（会话在跑，等它收尾/重投）⇒ deferred；
+         其余抛错按 transient 收口 ⇒ retry（保持 pending，等重投 —— 不得记 failed）。 */
+      bridge: error instanceof BoundSessionBusyError ? { kind: "deferred" } : { kind: "retry" },
     };
   }
 }
@@ -3473,7 +3534,7 @@ async function advanceSquadQueueAfterSettlement(
     }
   }
 
-  // ② 到期义务（恰一次认领）：A1 重验 → 用义务 runId 开新行（容量满则自然重新排队，语义自洽）。
+  // ② 到期义务（恰一次认领）：**按 origin 分流**（G4 消费契约，X2.1 修 O1），各自 A1 重验后重投。
   for (const obligation of await squadRuntime.claimDueSquadDeferredObligations(target)) {
     if (agentFilter !== undefined && obligation.agentId !== agentFilter) {
       // 过滤不符的义务已从表里认领删除——这是实现缺陷（认领不该带过滤），响亮留痕。
@@ -3481,6 +3542,15 @@ async function advanceSquadQueueAfterSettlement(
         `[squad] deferred obligation claimed but filtered out (BUG) workItem=${obligation.workItemId}` +
           ` agent=${obligation.agentId} runId=${obligation.runId}`,
       );
+      continue;
+    }
+    /* **分流**（X2.1 修 O1）：`comment` 义务**不得**走下面那条 R2 重放 —— R2 以 assignee 为目标
+       重投（A1 重验要求 `assignee.id === agentId`），而评论目标 ≠ assignee 是常态格（B-1）：
+       走 R2 会先在重验处被丢弃（义务已被认领删除 ⇒ 静默蒸发）或把请求派给错的人。
+       评论义务走**评论重放通道**：重投评论派发入口，目标/工作项/请求身份全部从 receipt 事实取。
+       R2 义务（`reassign`）行为**一字未动**（eventKey=obligation.runId，既有实现）。 */
+    if (replayChannelForObligationOrigin(obligation.origin) === "comment_replay") {
+      await replayCommentObligation(squadRuntime, target, obligation, snapshot);
       continue;
     }
     const workItem = snapshot.workItems.find((item) => item.id === obligation.workItemId);
@@ -3519,6 +3589,199 @@ async function advanceSquadQueueAfterSettlement(
   }
 }
 
+/* ───────────────── X2.1：评论派发通道（B/C 的执行侧）─────────────────
+
+   评论触发的派发与规则/改派**共用**下面那个唯一实现 `runSquadDispatch`（不另写「建会话 + 发 prompt」），
+   本区只补三件事：① 在线入口（组合根 hub 的 comment 请求转到这里）；② 到期评论义务的重放
+   （`replayCommentObligation`，从 receipt 事实重投评论入口）；③ 每个结局把 receipt outcome 回写
+   （七值闭集，落定映射在 `commentReceiptSettlementFor` 纯函数里）。 */
+
+/**
+ * 评论派发入口（组合根 hub 的 comment 请求）。
+ *
+ * 与 `dispatchSquadAssignment` 同形：先解析目标服务集合。差别是**目标来源**：改派入口派 assignee
+ * （服务面刚写下的负责人），评论入口派 receipt 里的 `targetAgentId`（`@agent` 不是改派，§5.2）。
+ */
+async function dispatchCommentDispatch(request: SquadCommentDispatchRequest): Promise<void> {
+  const target = { path: request.workspacePath, identity: request.workspaceIdentity };
+  let squadRuntime: ISquadRuntimeService | undefined;
+  try {
+    squadRuntime = resolveAutomationTargetServices(request).getOptional(ISquadRuntimeService);
+  } catch (error) {
+    logger.error(
+      `[squad] comment dispatch 目标服务解析失败 workItem=${request.workItemId}` +
+        ` dispatchKey=${request.dispatchKey}`,
+      error,
+    );
+    return;
+  }
+  if (!squadRuntime) {
+    logger.error(
+      `[squad] comment dispatch dropped: squad runtime service is not registered` +
+        ` dispatchKey=${request.dispatchKey}`,
+    );
+    return;
+  }
+  await runCommentDispatch(squadRuntime, target, request.dispatchKey);
+}
+
+/**
+ * 评论派发的唯一执行体（在线入口与义务重放**共用**）：按请求身份读 receipt 事实 → 走
+ * `runSquadDispatch` 的 comment 变体（目标覆盖 + 成因 comment + eventKey=dispatchKey）→ 回写 receipt。
+ *
+ * 为什么按 receipt 取数而不是信调用方：请求身份（dispatchKey）与事实（目标/工作项）都可能被重投，
+ * receipt 是**首写即事实**的那一份；凭调用方载荷现造 run 会让重投后的派发与首发不一致。
+ */
+async function runCommentDispatch(
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+  dispatchKey: string,
+): Promise<void> {
+  let receipt: import("@zcode/services/node").CommentDispatchReceiptRecord | null;
+  try {
+    receipt = await squadRuntime.getCommentDispatchReceipt(target, dispatchKey);
+  } catch (error) {
+    logger.error(`[squad] comment dispatch receipt 读取失败 dispatchKey=${dispatchKey}`, error);
+    return;
+  }
+  if (receipt === null) {
+    // 请求身份对不上任何 receipt：不凭调用方载荷现造 run（那会造一条没有请求事实的 run）。
+    logger.error(`[squad] comment dispatch dropped: receipt 不存在 dispatchKey=${dispatchKey}`);
+    return;
+  }
+  /* 已终局的行**不再执行**（首写结论即事实；存储面的条件更新也会拒绝覆写）——重投只留一条 info。 */
+  if (!isUnsettledCommentDispatchReceipt(receipt.outcome)) {
+    logger.info(
+      `[squad] comment dispatch skipped: receipt 已落定 outcome=${receipt.outcome}` +
+        ` dispatchKey=${dispatchKey}`,
+    );
+    return;
+  }
+  const report = await runSquadDispatch({
+    trigger: "comment",
+    /* 成因**由本通道给**（就是「评论触发」这条事实），派发桥只搬运 ⇒ 台账 `dispatch_cause="comment"`
+       （§5.2 明文不得伪装成 user_reassign）。 */
+    cause: "comment",
+    // 目标取 receipt（B-1）：可以是 assignee 之外的人；assignee 一字不动（§5.2）。
+    targetAgentId: receipt.targetAgentId,
+    workItemId: receipt.workItemId,
+    workspacePath: target.path,
+    ...(target.identity !== "" ? { workspaceIdentity: target.identity } : {}),
+    /* run 身份 = 评论**请求身份**：同一评论重投落回同一条 run（`openMemberRun` 的 already_registered
+       幂等臂承担），而不是每次重投现造一个新身份。 */
+    eventKey: receipt.dispatchKey,
+  });
+  const settlement = commentReceiptSettlementFor(report.bridge);
+  if (settlement === null) {
+    // retry：保持未收敛，等重投（X2.2 的启动扫描 / 下一次事件）。**不得**记 failed（可重试不是终局）。
+    logger.warn(
+      `[squad] comment dispatch 未收敛（保持 pending，等重投）workItem=${receipt.workItemId}` +
+        ` dispatchKey=${dispatchKey}${report.error !== undefined ? ` error=${report.error}` : ""}`,
+    );
+    return;
+  }
+  await settleCommentReceipt(squadRuntime, target, receipt, settlement);
+}
+
+/** receipt 回写的**唯一落点**（三处调用共用）：条件认领失败只留痕、不改写（首写即事实）。 */
+async function settleCommentReceipt(
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+  receipt: import("@zcode/services/node").CommentDispatchReceiptRecord,
+  settlement: {
+    outcome: import("@zcode/services/node").CommentDispatchOutcome;
+    detail?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    const settled = await squadRuntime.settleCommentDispatchReceipt(target, {
+      dispatchKey: receipt.dispatchKey,
+      outcome: settlement.outcome,
+      // 触发源随 detail 落回：receipt 的时间线读法要能回答「是谁触发的」（§4.5 五源）。
+      detail: { triggerSource: receipt.source, ...settlement.detail },
+    });
+    if (!settled) {
+      logger.warn(
+        `[squad] comment receipt 未认领（已被别处落定，本次不覆写）` +
+          ` dispatchKey=${receipt.dispatchKey} outcome=${settlement.outcome}`,
+      );
+      return;
+    }
+    logger.info(
+      `[squad] comment receipt 落定 dispatchKey=${receipt.dispatchKey}` +
+        ` outcome=${settlement.outcome} workItem=${receipt.workItemId} target=${receipt.targetAgentId}`,
+    );
+  } catch (error) {
+    // 回写失败不阻断主流程（run 已经开出去了），但必须响亮：receipt 停在 pending 会被下次重投复用。
+    logger.error(
+      `[squad] comment receipt 回写失败（停在未收敛，等重投）dispatchKey=${receipt.dispatchKey}`,
+      error,
+    );
+  }
+}
+
+/**
+ * 到期**评论**义务的重放（X2.1 修 O1 的评论半边）：claimDue 已把义务行认领删除，本函数据此把
+ * 评论请求**重投评论派发入口** —— 目标/工作项/身份全部取自 receipt 事实，**不**把义务行当 R2
+ * 请求现造 run（评论目标 ≠ assignee 是常态格，R2 的 A1 会先把义务丢掉）。
+ */
+async function replayCommentObligation(
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+  obligation: SquadDeferredDispatchRecord,
+  snapshot: Awaited<ReturnType<ISquadRuntimeService["getSnapshot"]>>,
+): Promise<void> {
+  let receipt: import("@zcode/services/node").CommentDispatchReceiptRecord | null;
+  try {
+    receipt = await squadRuntime.getCommentDispatchReceipt(target, obligation.runId);
+  } catch (error) {
+    logger.error(
+      `[squad] comment obligation receipt 读取失败 runId=${obligation.runId}` +
+        ` agent=${obligation.agentId}`,
+      error,
+    );
+    return;
+  }
+  // 三条恒等式（事实校验，纯函数）：对不上不派发 —— 凭义务行现造 run 会把评论派给错的人/挂错工作项。
+  const facts = commentObligationReplayFacts({ receipt, obligation });
+  if (!facts.ok) {
+    logger.error(
+      `[squad] comment obligation replay rejected runId=${obligation.runId}: ${facts.error}`,
+    );
+    return;
+  }
+  /* A1 重验的**评论版**：工作项存在、未终态、未归档 —— **刻意不校验 assignee**（评论目标可以不是
+     负责人，那正是 B-1 的常态格）。目标 agent 的归档/停用由 `planDispatch` 的判据统一处置
+     （skip ⇒ receipt blocked），不在这里写第二份名册判据。 */
+  const workItem = snapshot.workItems.find((item) => item.id === facts.workItemId);
+  if (
+    workItem === undefined ||
+    isTerminalWorkItemStatus(workItem.status) ||
+    workItem.archivedAt !== undefined
+  ) {
+    const reason =
+      workItem === undefined
+        ? "work_item_missing"
+        : isTerminalWorkItemStatus(workItem.status)
+          ? `work_item_terminal:${workItem.status}`
+          : "work_item_archived";
+    /* 不复活（S6 §8.4-4 / §12.1-12）：丢弃 + error 留痕，并把 receipt 落 blocked（可审计）——
+       否则这条请求会永远停在 deferred 上被反复认领（义务已删，重放无出口）。 */
+    if (receipt !== null) {
+      await settleCommentReceipt(squadRuntime, target, receipt, {
+        outcome: "blocked",
+        detail: { reason },
+      });
+    }
+    logger.error(
+      `[squad] comment obligation dropped (A1 re-verify failed) workItem=${facts.workItemId}` +
+        ` agent=${facts.targetAgentId} runId=${obligation.runId} reason=${reason}`,
+    );
+    return;
+  }
+  await runCommentDispatch(squadRuntime, target, facts.dispatchKey);
+}
+
 /**
  * 队长派单（`squad/assign-work-item`）与 UI 改派（`reassignWorkItem`）产生的派发请求 ——
  * **与「人手动触发」同一条路径**（spec §5.5：人发起豁免三道闸，故 `trigger: "user"`、不写任何唤醒规则；
@@ -3539,7 +3802,7 @@ async function advanceSquadQueueAfterSettlement(
  * **结果必须可见**（不得静默吞掉）：成功/跳过/失败都留一条带 `workItemId` 的日志。这条路径**没有**
  * 调度器的重投表可回执，也不自动重试 —— 那条 error 日志就是人（或下一次工具调用）据以动手的依据。
  */
-async function dispatchSquadAssignment(request: SquadDispatchRequest): Promise<void> {
+async function dispatchSquadAssignment(request: SquadAssignmentDispatchRequest): Promise<void> {
   /* `eventKey` 是这次派发的身份（台账 runId / trace）：人发起没有规则 tick，故这里**现造**一个。
      身份里**补上 assignee 的类型**（`agent:` / `squad:` 段）：两个 id 空间彼此独立，「智能体 X」与
      「小队 X」在台账/日志里不得被同一个身份字符串代表（旧形态只有裸 agentId，改派到小队后同一个 id
@@ -4244,6 +4507,9 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                  服务面的派发 hub 由组合根订一次，转到这里 —— 走**与规则到点同一条**派发路径
                  （`runSquadDispatch`，只是 `trigger: "user"`），不写任何唤醒规则。 */
               onSquadDispatchRequested: dispatchSquadAssignment,
+              /* X2.1：评论派发请求（同一条 hub 的 comment 变体）转到这里 —— 与改派入口**共用**
+                 `runSquadDispatch`，差别只在 trigger/cause/目标来源（receipt 的点名者，B-1）。 */
+              onCommentDispatchRequested: dispatchCommentDispatch,
               /* C4b：结算事实 → 队列推进/义务重放（组合根 hub 订一次转到这里）。
                  异步不阻塞结算扇出；异常由组合根订阅侧统一留痕。 */
               onSquadRunSettled: (settlement) =>

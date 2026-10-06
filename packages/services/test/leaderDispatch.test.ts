@@ -840,3 +840,107 @@ test("user / squad 指派的类别由负责人类型决定，runClass 不参与"
     "声明不得让「指派给人」起 run",
   );
 });
+
+/* ---------- 5.9 B-1 裁定（2026-10-06）：显式目标覆盖 targetOverride ----------
+
+   §5.2 明文「`@agent` ≠ 改派」（assignee 保持不变），而 §4.2 要求显式 @ 是一次运行请求 ——
+   于是「评论目标 ≠ assignee」是**常态格**。`planDispatch` 的 agent 分支此前只派 assignee
+   （规则/队长工具/UI 改派三路共用同一处解析），评论触发接不进来。这里钉覆盖的全部格子：
+   派给点名者、不动 assignee（纯函数）、负责人是人/小队时同样成立、类别仍按本项父项事实声明。 */
+
+test("targetOverride：@agent Z 而 assignee=A ⇒ 派给 Z（不是 A），且不挂队长标记/简报", () => {
+  const workItem = agentItem(undefined);
+  const before = JSON.stringify(workItem);
+  const events = planDispatch({
+    workItem,
+    squad: null,
+    trigger: "user",
+    runClass: "standalone",
+    targetOverride: { type: "agent", id: "ta_mentioned" },
+  });
+  const run = events.find((e) => e.kind === "run.enqueued");
+  assert.ok(run && run.kind === "run.enqueued");
+  assert.equal(run.agentId, "ta_mentioned", "派给点名者（B-1：评论目标 ≠ assignee 是常态格）");
+  assert.equal(run.isLeaderTask, false);
+  assert.equal(run.squadId, undefined);
+  assert.equal(run.briefing, undefined, "被点名的普通智能体不得拿到队长简报（会以为自己该去派单）");
+  assert.equal(JSON.stringify(workItem), before, "planDispatch 只读不写：入参一字不动（@ ≠ 改派，§5.2）");
+});
+
+test("targetOverride：负责人是 user / squad 时同样派给点名者（评论不依赖 assignee）", () => {
+  for (const assignee of [
+    { type: "user", id: "u_1" },
+    { type: "squad", id: "sq_1" },
+  ] as const) {
+    const events = planDispatch({
+      workItem: wi(assignee),
+      squad,
+      trigger: "user",
+      runClass: "standalone",
+      targetOverride: { type: "agent", id: "ta_mentioned" },
+    });
+    const run = events.find((e) => e.kind === "run.enqueued");
+    assert.ok(run && run.kind === "run.enqueued", `assignee=${assignee.type} 时覆盖必须仍然起 run`);
+    assert.equal(run.agentId, "ta_mentioned");
+    assert.equal(
+      events.some((e) => e.kind === "inbox.notified"),
+      false,
+      "覆盖生效时不得再走 assignee 的 skip 分支",
+    );
+  }
+});
+
+test("targetOverride：类别仍须显式声明（漏声明 / 声明与父项事实矛盾一律响亮抛）", () => {
+  // 漏声明：与 agent 分支同一条纪律（否则静默落 standalone，队员丢工作树隔离）。
+  assert.throws(
+    () =>
+      planDispatch({
+        workItem: agentItem(undefined),
+        squad: null,
+        trigger: "user",
+        targetOverride: { type: "agent", id: "ta_mentioned" },
+      }),
+    /runClass/,
+  );
+  // 声明 member 但父项证据是小队之外（覆盖不得把校验短路掉）。
+  assert.throws(
+    () =>
+      planDispatch({
+        workItem: agentItem("wi_parent"),
+        squad: null,
+        parentWorkItem: wi({ type: "agent", id: "ta_p" }),
+        runClass: "member",
+        trigger: "user",
+        targetOverride: { type: "agent", id: "ta_mentioned" },
+      }),
+    /矛盾/,
+  );
+});
+
+test("targetOverride：声明 member + 父项是小队 ⇒ 覆盖目标仍按批次成员开树（类别与目标无关）", () => {
+  const events = planDispatch({
+    workItem: agentItem("wi_parent"),
+    squad: null,
+    parentWorkItem: squadParent(),
+    runClass: "member",
+    trigger: "user",
+    targetOverride: { type: "agent", id: "ta_mentioned" },
+  });
+  const run = events.find((e) => e.kind === "run.enqueued");
+  assert.ok(run && run.kind === "run.enqueued");
+  assert.equal(run.agentId, "ta_mentioned");
+  assert.equal(run.runClass, "member", "类别按本项父项事实推导 —— 与派给谁无关（§7.1 方案 A）");
+});
+
+test("targetOverride：trigger=rule 时仍先留痕 wake.rule_fired（规则幂等键不因覆盖丢失）", () => {
+  const events = planDispatch({
+    workItem: agentItem(undefined),
+    squad: null,
+    trigger: "rule",
+    ruleId: RULE_ID,
+    runClass: "standalone",
+    targetOverride: { type: "agent", id: "ta_mentioned" },
+  });
+  assert.deepEqual(events[0], { kind: "wake.rule_fired", workItemId: "wi_1", ruleId: RULE_ID });
+  assert.equal(events[1]?.kind, "run.enqueued");
+});

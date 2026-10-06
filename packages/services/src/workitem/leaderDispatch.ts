@@ -134,6 +134,24 @@ export function planDispatch(input: {
    */
   runClass?: DeclaredRunClass;
   trigger: "user" | "leader" | "rule";
+  /**
+   * **显式目标覆盖**（B-1 裁定，2026-10-06；spec §5.2/§4.2）：本次派发**派给谁**。
+   *
+   * 为什么必须有这一格：`@agent` 评论是「一次运行请求」而**不是改派**（§5.2 明文「`@agent` 不等于改派，
+   * assignee 保持不变」）⇒「评论目标 ≠ assignee」是**常态格**。而没有覆盖时，`agent` 分支只派
+   * `workItem.assignee.id`（规则 / 队长工具 / UI 改派三路共用的既有语义）—— 评论触发接不进来；
+   * 让接线方自己改 assignee 再派发则是伪造用户改派（`user_reassign` 成因 + 负责人被改写），
+   * 正是 §5.2 禁止的「把 `@` 伪装成 `user_reassign`」。
+   *
+   * 语义（逐条）：
+   * · 覆盖命中时**跳过 assignee 推导**：`user` / `squad` 负责人也照样给覆盖目标起一次 agent run
+   *   （评论不依赖 assignee；`@agent` 在指派给人的项上同样是运行请求）；
+   * · `runClass` **仍按本项自身的父项事实**声明与校验（§7.1 方案 A：类别是「本次运行」的属性，
+   *   与派给谁无关）—— 覆盖不短路 `resolveAgentRunClass` 的「声明↔证据」对表；
+   * · 覆盖目标**不带**队长标记、不夹带花名册简报（被点名的普通智能体不该以为自己要去派单）；
+   * · 只描述**派给谁**，不写任何状态：`assignee`/`status` 一字不动（纯函数，§5.2）。
+   */
+  targetOverride?: { type: "agent"; id: string };
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
      缺失、空串、或**纯空白**一律抛错，见下面的 if 分支。 */
@@ -156,6 +174,27 @@ export function planDispatch(input: {
       );
     }
     events.push({ kind: "wake.rule_fired", workItemId: workItem.id, ruleId: input.ruleId });
+  }
+
+  /* B-1：**显式目标覆盖优先于 assignee 推导**（评论 `@agent` 派给点名者、不动 assignee，§5.2）。
+     为什么放在 trigger 留痕**之后**、switch **之前**：① 规则幂等键的留痕与「派给谁」无关，
+     丢了它 `(workItemId, ruleId, revision, eventKey)` 四元组会退化；② 覆盖是「这次派给谁」的
+     完整答案 ⇒ 不再进入按 assignee 类型分流的 switch（负责人是人/小队时也照样起 agent run）。
+     类别仍走 `resolveAgentRunClass` 的「声明 ↔ 父项证据」对表：覆盖只换目标，不换类别判据。 */
+  if (input.targetOverride !== undefined) {
+    events.push({
+      kind: "run.enqueued",
+      workItemId: workItem.id,
+      agentId: input.targetOverride.id,
+      isLeaderTask: false,
+      runClass: resolveAgentRunClass({
+        declared: input.runClass,
+        parent: input.parentWorkItem,
+        workItemId: workItem.id,
+        parentId: workItem.parentId,
+      }),
+    });
+    return events;
   }
 
   /* 原始值另存一份，只为下面 default 的错误信息：进了 switch 之后 `assignee.type` 会被收窄成

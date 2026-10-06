@@ -1,5 +1,12 @@
 import { SQUAD_DISPATCH_DISABLED_CODE } from "@zcode/services";
-import type { RunClass } from "@zcode/services/node";
+import {
+  COMMENT_DISPATCH_UNSETTLED_OUTCOMES,
+  type CommentDispatchOutcome,
+  type CommentDispatchReceiptRecord,
+  type DeferredDispatchOrigin,
+  type RunClass,
+  type SquadDeferredDispatchRecord,
+} from "@zcode/services/node";
 
 /* 小队派发的**决策**（spec §5.7.6 门禁 / §6.1 隔离承诺 / 硬约束 1 忙检查）。
 
@@ -361,4 +368,143 @@ export function watchLeaderRunSettlement(params: {
     logInfo: params.logInfo,
     logError: params.logError,
   });
+}
+
+/* ───────────────────────── X2.1：评论派发通道（B/C） ─────────────────────────
+
+   评论触发的派发与规则/改派共用**唯一**派发实现（`runSquadDispatch`），本模块只放两件
+   可独立断言的东西：① 重放回路按义务 `origin` 的**分流判据**；② 一次派发落点 → receipt
+   outcome 的**落定映射**。放在这里而不是散在 host 的 async 分支里：这两处各有一个静默失败形态
+   （评论义务被 R2 账重放 ⇒ 目标被换回 assignee / 义务静默丢弃；queued 记成 failed ⇒
+   可推进的排队被写成终局失败），抽成纯函数才能被穷举钉住。 */
+
+/**
+ * 重放通道（`advanceSquadQueueAfterSettlement` 的 `claimDue` 结果分流）：
+ * · `reassign_replay`：既有 R2 回路（改派义务）—— 以 `obligation.runId` 为 eventKey 重投，
+ *   派发目标仍是 assignee（A1 重验要求 `assignee.id === agentId`）；
+ * · `comment_replay`：评论重放账 —— **重投评论派发入口**（按 receipt 事实：目标、工作项、
+ *   dispatchKey 都从 receipt 取，再走 `targetOverride`），**不得**把义务行当 R2 请求现造 run
+ *   （评论目标 ≠ assignee 是常态格，走 R2 会先被 A1 重验丢弃）。
+ */
+export type DeferredReplayChannel = "reassign_replay" | "comment_replay";
+
+export function replayChannelForObligationOrigin(
+  origin: DeferredDispatchOrigin,
+): DeferredReplayChannel {
+  switch (origin) {
+    case "reassign":
+      return "reassign_replay";
+    case "comment":
+      return "comment_replay";
+    default: {
+      /* 闭集外来源**响亮抛**（读回闸已在 repo 层拦一道，这里是不依赖 DB 的第二道）：
+         静默落到任何一条通道都意味着「评论义务被 R2 重放」或反之 —— 两者都不报错。 */
+      const raw: never = origin;
+      throw new Error(
+        `未知的 deferred 义务来源「${String(raw)}」：origin 闭集只有 reassign/comment，` +
+          "静默按某条通道重放会让评论义务走 R2 账（目标被换回 assignee / 义务静默丢弃）。",
+      );
+    }
+  }
+}
+
+/**
+ * 派发桥执行一次的**落点**（`runSquadDispatch` 在每个出口如实标注）——
+ * 评论 receipt 的回写判据面。`retry` = 本次未收敛（transient / 桥不可用 / 库未就绪）。
+ */
+export type SquadDispatchBridgeResult =
+  | { kind: "dispatched" }
+  | { kind: "queued" }
+  | { kind: "coalesced" }
+  | { kind: "deferred" }
+  /** 受限状态（门禁关闭 / planDispatch 的 skip：归档、停用、无人可派…）：可审计、不可派发。 */
+  | { kind: "blocked"; reason: string }
+  /** 确定性失败（数据/接线违例）：重投不自愈。 */
+  | { kind: "failed"; error: string }
+  /** 等待型：保持 receipt 未收敛，等重投（不得记 failed）。 */
+  | { kind: "retry" };
+
+/**
+ * 落点 → 评论 receipt outcome（七值闭集；`null` = **不落定**，保持 pending 等重投）。
+ *
+ * 逐格口径（§5.6 用例 4/7 与 §12.1-12）：
+ * · 已派出会话 ⇒ `opened`；容量满 ⇒ `queued`；并入既有待开 ⇒ `coalesced`；登记完成重放 ⇒ `deferred`；
+ * · skip / 门禁关闭 ⇒ `blocked`（评论已发、目标未触发，如实回传，**不是**失败）；
+ * · 其它确定性失败 ⇒ `failed`；`retry` ⇒ `null`（transient 记 failed 会把可重试写成终局失败，
+ *   并把这条请求从重投面里摘掉）。
+ */
+export function commentReceiptSettlementFor(
+  result: SquadDispatchBridgeResult,
+): { outcome: CommentDispatchOutcome; detail?: Record<string, unknown> } | null {
+  switch (result.kind) {
+    case "dispatched":
+      return { outcome: "opened" };
+    case "queued":
+      return { outcome: "queued" };
+    case "coalesced":
+      return { outcome: "coalesced" };
+    case "deferred":
+      return { outcome: "deferred" };
+    case "blocked":
+      return { outcome: "blocked", detail: { reason: result.reason } };
+    case "failed":
+      return { outcome: "failed", detail: { reason: result.error } };
+    case "retry":
+      return null;
+  }
+}
+
+/** receipt 是否**未收敛**（可被本次执行认领回写）：判据与存储面的条件更新同源（常量同出一处）。 */
+export function isUnsettledCommentDispatchReceipt(outcome: CommentDispatchOutcome): boolean {
+  return (COMMENT_DISPATCH_UNSETTLED_OUTCOMES as readonly string[]).includes(outcome);
+}
+
+/**
+ * 评论义务重放的**事实校验**（三条恒等式）：义务行与 receipt 是同一条请求的两个面，
+ * 对不上就**不派发**（响亮留痕）—— 凭义务行现造 run 会把评论派给一个不是 receipt 里那个目标的人，
+ * 或把请求挂到别的工作项上，而两条路径都不报错。
+ */
+export type CommentObligationReplayFacts =
+  | { ok: true; dispatchKey: string; targetAgentId: string; workItemId: string }
+  | { ok: false; error: string };
+
+export function commentObligationReplayFacts(input: {
+  receipt: Pick<CommentDispatchReceiptRecord, "dispatchKey" | "workItemId" | "targetAgentId"> | null;
+  obligation: Pick<SquadDeferredDispatchRecord, "runId" | "workItemId" | "agentId">;
+}): CommentObligationReplayFacts {
+  const { receipt, obligation } = input;
+  if (receipt === null) {
+    return {
+      ok: false,
+      error: `评论派发义务「${obligation.runId}」找不到 receipt（数据被清 / 取错 workspace）：不得凭义务行现造 run`,
+    };
+  }
+  if (receipt.dispatchKey !== obligation.runId) {
+    return {
+      ok: false,
+      error: `义务 id「${obligation.runId}」与 receipt 主键「${receipt.dispatchKey}」不一致：两者必须是同一条请求`,
+    };
+  }
+  if (receipt.targetAgentId !== obligation.agentId) {
+    return {
+      ok: false,
+      error:
+        `评论派发目标不一致（receipt=${receipt.targetAgentId}、义务=${obligation.agentId}）：` +
+        "派发目标必须取 receipt 里点名的那个人",
+    };
+  }
+  if (receipt.workItemId !== obligation.workItemId) {
+    return {
+      ok: false,
+      error:
+        `评论派发工作项不一致（receipt=${receipt.workItemId}、义务=${obligation.workItemId}）：` +
+        "请求不得挂到别的工作项上",
+    };
+  }
+  return {
+    ok: true,
+    dispatchKey: receipt.dispatchKey,
+    targetAgentId: receipt.targetAgentId,
+    workItemId: receipt.workItemId,
+  };
 }

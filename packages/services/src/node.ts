@@ -302,11 +302,28 @@ export {
 export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
 /** 派发请求 hub（轮 2 裁定落点 ii）：组合根建**一份**、注入给每个 runtime 并订**一次**。 */
 export { createSquadDispatchRequestHub } from "./workitem/squadDispatchRequests.js";
-export type { SquadDispatchRequest } from "./workitem/squadDispatchRequests.js";
+export type {
+  SquadAssignmentDispatchRequest,
+  SquadCommentDispatchRequest,
+  SquadDispatchRequest,
+} from "./workitem/squadDispatchRequests.js";
 /* 派发**成因**（2026-10-04）：host 派发桥要把三路成因归并进台账（`squad_runs.dispatch_cause`），
    故类型与常量都与请求同源出（调用方就地抄一份三值联合，改了那边忘了这边不会有编译错）。 */
 export { DISPATCH_CAUSES } from "./workitem/squadDispatchRequests.js";
 export type { DispatchCause, UserDispatchCause } from "./workitem/squadDispatchRequests.js";
+/* X2.1：评论派发通道的判据面（host 派发桥按 outcome 回写 receipt、按 origin 分流重放通道）。
+   三样都与服务面**同源**出，调用方不得就地抄一份联合/常量（抄一份改了那边忘了这边不会有编译错）：
+   · COMMENT_DISPATCH_UNSETTLED_OUTCOMES：receipt 的「未收敛」格（回写认领的判据）；
+   · CommentDispatchOutcome：receipt 七值闭集（回写落定的取值域）；
+   · DeferredDispatchOrigin：义务来源闭集（R2 / 评论两条重放账的分流位）。 */
+export { COMMENT_DISPATCH_UNSETTLED_OUTCOMES } from "./workitem/commentDispatchReceiptRepo.js";
+export type {
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  CommentDispatchSource,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export type { DeferredDispatchOrigin } from "./workitem/squadDeferredDispatchRepo.js";
+export type { SquadDeferredDispatchRecord } from "./workitem/squadDeferredDispatchRepo.js";
 // 批次编排工厂：desktop 侧（Wave 2 的组合根装配）只能经本入口取它（packages/services/package.json#exports）。
 export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
@@ -448,6 +465,8 @@ import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 // 收件箱台账（P2c）：跨 workspace 的读取面要一条 repo，由组合根**懒取**注入给服务面
 // （见 createSquadRuntimeService 的 deps.getInboxItemRepo 注释：库就绪前服务面已构造）。
 import { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
+// X2.1：评论派发 receipt 的懒取口（与 inboxItemRepo 同款：库就绪后在调用时取）。
+import { createCommentDispatchReceiptRepo } from "./workitem/commentDispatchReceiptRepo.js";
 import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
@@ -1452,7 +1471,21 @@ export function createLocalServices(options: {
    *
    * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
    */
-  onSquadDispatchRequested?: (request: SquadDispatchRequest) => Promise<void> | void;
+  onSquadDispatchRequested?: (
+    request: import("./workitem/squadDispatchRequests.js").SquadAssignmentDispatchRequest,
+  ) => Promise<void> | void;
+  /**
+   * X2.1：**评论派发请求**的常驻订阅口（形态与 `onSquadDispatchRequested` 同款，同一条 hub 按 kind 分流）。
+   *
+   * 与改派请求的关键差别：派发目标**不是 assignee**（`@agent` 是一次运行请求、不是改派，§5.2），
+   * 故请求自带 `dispatchKey`（请求身份 / run 身份）与 `targetAgentId`；host 执行体据此读 receipt
+   * 事实、走 `planDispatch` 的 `targetOverride` 覆盖与 receipt 回写。
+   *
+   * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见订阅处）。
+   */
+  onCommentDispatchRequested?: (
+    request: import("./workitem/squadDispatchRequests.js").SquadCommentDispatchRequest,
+  ) => Promise<void> | void;
   /**
    * C4b：run 结算事实的常驻订阅口（形态与 onSquadDispatchRequested 同款）：组合根建一份
    * settlement hub、每个 runtime 收尾后 publish；host 注入本回调做队列推进/义务重放。
@@ -2644,6 +2677,28 @@ export function createLocalServices(options: {
      **不静默**：没有执行体（如 remote host / 单测装配）时，请求发出去却没人接也必须能被看见。 */
   const squadDispatchRequests = createSquadDispatchRequestHub();
   squadDispatchRequests.subscribe((request: SquadDispatchRequest) => {
+    /* X2.1：评论请求与改派请求**按 kind 分流到两个执行体**（同一个常驻订阅口，身份在请求里）。
+       为什么不做成同一个执行体：两者的派发目标来源不同 —— 改派请求派 assignee（服务面刚写下的
+       负责人），评论请求派点名者（`@agent` 不是改派，assignee 保持不变，§5.2）。混在一起就必须
+       在执行体内按 kind 反推目标，那正是「一条请求两种含义」的静默漂移形态。 */
+    if (request.kind === "comment") {
+      const dispatchComment = options?.onCommentDispatchRequested;
+      if (!dispatchComment) {
+        squadRuntimeLog.warn(
+          "评论派发请求已发出，但本组合根没有注入 onCommentDispatchRequested（不会开出 run）",
+          { workItemId: request.workItemId, dispatchKey: request.dispatchKey },
+        );
+        return;
+      }
+      void Promise.resolve(dispatchComment(request)).catch((error: unknown) =>
+        squadRuntimeLog.error("评论派发执行体抛错", {
+          workItemId: request.workItemId,
+          dispatchKey: request.dispatchKey,
+          error,
+        }),
+      );
+      return;
+    }
     const dispatchAssigned = options?.onSquadDispatchRequested;
     if (!dispatchAssigned) {
       squadRuntimeLog.warn(
@@ -2755,6 +2810,10 @@ export function createLocalServices(options: {
        与 createSquadRuntimeFor 里 openSharedDatabase() 同一条口径 —— `ensureReady()` 之后才拿得到
        同一条（走过迁移与回填的）连接；未就绪时它自己响亮抛（不静默给空表）。 */
     getInboxItemRepo: () => createInboxItemRepo(taskIndexRepo.openSharedDatabase()),
+    /* X2.1：评论派发 receipt 的懒取口（与收件箱同款口径与理由）：host 的评论派发入口按
+       dispatchKey 读事实、按条件更新回写 outcome；未注入时服务面两个 receipt 方法响亮抛。 */
+    getCommentDispatchReceiptRepo: () =>
+      createCommentDispatchReceiptRepo(taskIndexRepo.openSharedDatabase()),
     // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
     logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
   });

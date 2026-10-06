@@ -15,9 +15,13 @@ import { createSquadRuntime } from "@zcode/services/node";
 import { runTasksDatabaseMigrations } from "../../services/src/session/tasksDatabase/migrations.js";
 import { createBoundSessionExecutingProbe } from "../src/host/boundSessionBusyGate.js";
 import {
+  commentObligationReplayFacts,
+  commentReceiptSettlementFor,
   decideSquadDispatch,
   isSquadDispatchDisabledError,
+  isUnsettledCommentDispatchReceipt,
   ledgerActionForRunClass,
+  replayChannelForObligationOrigin,
   selectStaleLeaderRuns,
   watchLeaderRunSettlement,
   watchMemberRunSettlement,
@@ -859,4 +863,146 @@ test("守卫｜队列推进回路接线齐全：结算回调 → advanceSquadQue
   const settleIdx = host.indexOf("await settleStaleLeaderRunsBestEffort(activeServices, candidates);");
   const queueIdx = host.indexOf('"queue reconciliation"');
   assert.ok(settleIdx >= 0 && queueIdx > settleIdx, "启动扫描第四步必须排在队长和解（第三步）之后");
+});
+
+/* ═══════════════ X2.1：评论派发通道（B/C） ═══════════════
+
+   host 的派发桥不可在测试进程里整体运行（Electron parentPort / git / 会话），故这一轮把
+   **分流判据与落定映射**抽成纯函数（可行为断言），接线（谁调谁、以什么身份调）用源码守卫钉。
+   本节的每条断言都对应一个具体缺陷形态：评论义务走错重放账、queued 记成 failed、
+   评论入口把 assignee 当目标、分流被摘除。 */
+
+test("X2.1 重放分流：origin 决定重放通道（comment 不得走 R2 通道）", () => {
+  assert.equal(replayChannelForObligationOrigin("reassign"), "reassign_replay");
+  assert.equal(
+    replayChannelForObligationOrigin("comment"),
+    "comment_replay",
+    "评论义务必须走评论重放账（目标可从 receipt 取，不必等于 assignee）",
+  );
+  assert.throws(
+    () => replayChannelForObligationOrigin("bogus" as never),
+    /origin/,
+    "闭集外来源不得静默落到某条通道（静默 = 评论义务被 R2 重放）",
+  );
+});
+
+test("X2.1 落定映射：四类派发结论如实映射（queued/coalesced/deferred 不得记 failed）", () => {
+  assert.deepEqual(commentReceiptSettlementFor({ kind: "dispatched" }), { outcome: "opened" });
+  assert.deepEqual(commentReceiptSettlementFor({ kind: "queued" }), { outcome: "queued" });
+  assert.deepEqual(commentReceiptSettlementFor({ kind: "coalesced" }), { outcome: "coalesced" });
+  assert.deepEqual(commentReceiptSettlementFor({ kind: "deferred" }), { outcome: "deferred" });
+});
+
+test("X2.1 落定映射：skip/门禁 ⇒ blocked（受限状态可审计）；其它失败按 permanent 分格；transient 不落定", () => {
+  assert.deepEqual(
+    commentReceiptSettlementFor({ kind: "blocked", reason: "指派的小队已归档：按归档语义跳过本次派发" }),
+    { outcome: "blocked", detail: { reason: "指派的小队已归档：按归档语义跳过本次派发" } },
+  );
+  assert.deepEqual(commentReceiptSettlementFor({ kind: "failed", error: "work item not found: wi-x" }), {
+    outcome: "failed",
+    detail: { reason: "work item not found: wi-x" },
+  });
+  assert.equal(
+    commentReceiptSettlementFor({ kind: "retry" }),
+    null,
+    "transient / 桥不可用 ⇒ 保持 pending 等重投，不得记 failed（那会把可重试写成终局失败）",
+  );
+});
+
+test("X2.1 未收敛判定：pending/deferred 可认领；五个终局值不再执行", () => {
+  assert.equal(isUnsettledCommentDispatchReceipt("pending"), true);
+  assert.equal(isUnsettledCommentDispatchReceipt("deferred"), true);
+  for (const terminal of ["opened", "queued", "coalesced", "blocked", "failed"] as const) {
+    assert.equal(isUnsettledCommentDispatchReceipt(terminal), false, `${terminal} 是终局，不得重发执行`);
+  }
+});
+
+test("X2.1 义务重放的事实校验：receipt 与义务必须同源（缺失/目标不符/工作项不符一律拒）", () => {
+  const obligation = { runId: "cdk-1", workItemId: "wi-1", agentId: "ta-z" };
+  const receipt = {
+    dispatchKey: "cdk-1",
+    workItemId: "wi-1",
+    targetAgentId: "ta-z",
+    outcome: "deferred" as const,
+  };
+  assert.deepEqual(commentObligationReplayFacts({ receipt, obligation }), {
+    ok: true,
+    dispatchKey: "cdk-1",
+    targetAgentId: "ta-z",
+    workItemId: "wi-1",
+  });
+  // receipt 缺失（数据被清 / 取错 workspace）：不得凭义务行现造 run。
+  assert.equal(commentObligationReplayFacts({ receipt: null, obligation }).ok, false);
+  // 目标与义务不符：不得把评论请求派给一个不是 receipt 里那个目标的人。
+  assert.equal(
+    commentObligationReplayFacts({
+      receipt: { ...receipt, targetAgentId: "ta-other" },
+      obligation,
+    }).ok,
+    false,
+  );
+  // 工作项不符：不得把评论请求挂到别的工作项上。
+  assert.equal(
+    commentObligationReplayFacts({ receipt: { ...receipt, workItemId: "wi-2" }, obligation }).ok,
+    false,
+  );
+  // 身份不符：义务 id 与 receipt 主键必须同源（同一条请求的两个面）。
+  assert.equal(
+    commentObligationReplayFacts({
+      receipt: { ...receipt, dispatchKey: "cdk-2" },
+      obligation,
+    }).ok,
+    false,
+  );
+});
+
+const hostSource = (): string =>
+  readFileSync(
+    join(resolve(dirname(fileURLToPath(import.meta.url)), "../src"), "host/index.ts"),
+    "utf8",
+  );
+
+test("X2.1 接线：评论派发入口走唯一派发实现，eventKey=dispatchKey、目标来自 receipt", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function dispatchCommentDispatch(");
+  assert.ok(start >= 0, "host 没有评论派发入口（dispatchCommentDispatch）");
+  const end = host.indexOf("async function dispatchSquadAssignment(", start);
+  assert.ok(end > start, "找不到评论派发入口的结束边界");
+  const body = host.slice(start, end);
+  assert.match(body, /await runSquadDispatch\(/, "评论派发必须共用唯一派发实现（不另写建会话+发 prompt）");
+  assert.match(body, /trigger: "comment"/, "评论派发必须用自己的 trigger 变体分流");
+  assert.match(body, /targetAgentId: receipt\.targetAgentId/, "目标取自 receipt（B-1：可以是 assignee 之外的人）");
+  assert.match(body, /eventKey: receipt\.dispatchKey/, "run 身份 = 评论 dispatchKey（同一评论重投落同一条 run）");
+  assert.match(body, /settleCommentDispatchReceipt\(/, "每个结局都要回写 receipt outcome（七值闭集）");
+  assert.match(body, /getCommentDispatchReceipt\(/, "评论派发入口按身份读 receipt 事实（不凭请求现造）");
+});
+
+test("X2.1 接线：义务重放的 origin 分流在 R2 重放之前（摘除 ⇒ 评论义务被 R2 通道重放）", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function advanceSquadQueueAfterSettlement(");
+  const end = host.indexOf("async function dispatchCommentDispatch(", start);
+  assert.ok(start >= 0 && end > start, "找不到推进函数边界");
+  const loop = host.slice(start, end);
+  const splitAt = loop.indexOf("replayChannelForObligationOrigin(");
+  const r2At = loop.indexOf("eventKey: obligation.runId");
+  const commentCallAt = loop.indexOf("replayCommentObligation(");
+  assert.ok(splitAt >= 0, "义务重放必须按 origin 分流（claimDue 读回的来源）");
+  assert.ok(commentCallAt > splitAt, "comment 义务必须先进入评论重放通道");
+  assert.ok(r2At > splitAt, "R2 重放（eventKey=obligation.runId）只属于 reassign 通道");
+  assert.ok(commentCallAt < r2At, "分流必须发生在 R2 重放之前（否则评论义务先被 R2 消费）");
+});
+
+test("X2.1 接线：评论变体的成因只搬运（msg.cause），派发桥不写死任何成因档位", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function runSquadDispatch(");
+  const end = host.indexOf('parentPort.on("message",', start);
+  const branch = host.slice(start, end);
+  // 既有守卫的表达式原样保留（rule 就地、replay 带台账原成因、user/comment 搬运 msg.cause）。
+  assert.match(
+    branch,
+    /msg\.trigger === "rule"\s*\?\s*"rule"\s*:\s*msg\.trigger === "replay"\s*\?\s*msg\.replayCause\s*:\s*msg\.cause/,
+  );
+  assert.doesNotMatch(branch, /dispatchCause\s*=\s*"(?:leader_tool|user_reassign|rule|comment)"/);
+  // 评论变体必须带显式目标（B-1 的目标覆盖入参），否则会退回 assignee 推导。
+  assert.match(branch, /targetOverride/, "评论派发必须把 targetAgentId 交给 planDispatch 的覆盖入参");
 });

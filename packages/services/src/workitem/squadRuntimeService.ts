@@ -9,6 +9,11 @@ import {
   type WorkItem,
 } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
+import type {
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  CommentDispatchReceiptRepo,
+} from "./commentDispatchReceiptRepo.js";
 import type { CreateSquadInput, SquadRosterPatch } from "../teams/squadService.js";
 import type { CreateTeamAgentInput, TeamAgentEditablePatch } from "../teams/teamAgentService.js";
 import type { ReapOutcome } from "../worktree/orphanReaper.js";
@@ -370,6 +375,39 @@ export interface ISquadRuntimeService {
   listSquadDeferredObligations(
     target: SquadWorkspaceTarget,
   ): Promise<import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRecord[]>;
+  /**
+   * **X2.1：评论派发 receipt 的取数口**（host 评论派发入口 / 义务重放通道的唯一读法）。
+   *
+   * 为什么在服务面上：receipt 是本域存储事实（0012），host 不直连 repo（「UI/host 不直接访问
+   * Repo」的边界纪律，与 `listSquadRuns` / `listInboxItems` 同款）。为什么**按 dispatchKey 单取**
+   * 而不是全量扫描：在线入口（hub 请求携带 dispatchKey）与重放通道（义务 id = dispatchKey）
+   * 都**已经带着身份**，按身份取数是「先有事实、再读事实」；扫描未完成 receipt 属 X2.2 的启动重投面。
+   *
+   * **workspace 隔离**：取到的行必须属于本 target 绑定的 workspace（§8.5）；异己行**响亮抛**
+   * （不静默当不存在 —— 那会把「取错了目标」伪装成「没有这条请求」）。未命中 ⇒ `null`。
+   */
+  getCommentDispatchReceipt(
+    target: SquadWorkspaceTarget,
+    dispatchKey: string,
+  ): Promise<CommentDispatchReceiptRecord | null>;
+  /**
+   * **X2.1：评论派发 receipt 的条件回写口**（host 执行一次派发后落定当时的队列状态窗结论）。
+   *
+   * 语义由存储面单点给出（`CommentDispatchReceiptRepo.settleIfUnsettled`）：只认领**未收敛**的行
+   * （pending/deferred），已终局的行不得被迟到的重投覆写；`changes === 1` 才算认领，返回 `false`
+   * = 已被别的路径落定（调用方据此留痕、不改写）。**不新增第二份判据**：服务面只做 workspace 校验
+   * 与转发，不做 outcome 映射（映射是 host 派发桥的结论，见 desktop 侧）。
+   *
+   * 时间戳在服务面边界取（`Date.now()`）：repo 显式收时间戳是为了可测/回放，调用方给时钟。
+   */
+  settleCommentDispatchReceipt(
+    target: SquadWorkspaceTarget,
+    input: {
+      dispatchKey: string;
+      outcome: CommentDispatchOutcome;
+      detail?: Record<string, unknown>;
+    },
+  ): Promise<boolean>;
   /** 起新 run ⇒ **入口过门禁**（入口① 的队员段与入口③ 都汇到这里）。 */
   openMemberRun(
     target: SquadWorkspaceTarget,
@@ -707,6 +745,13 @@ export function createSquadRuntimeService(deps: {
    * 根本没接上收件箱台账，静默 no-op 会让界面显示「空收件箱」而库里其实有东西。
    */
   getInboxItemRepo?: () => InboxItemRepo;
+  /**
+   * 评论派发 receipt 的**懒取 repo 口**（X2.1；与 `getInboxItemRepo` 同款理由与形态）：
+   * 组合根在 `ensureReady()` 之后才拿得到同一条（走过迁移的）db 连接，而服务面在库就绪前就已构造。
+   * 未注入 ⇒ 两个 receipt 方法**响亮抛**（静默返回 null/false 会把「这份服务面没接 receipt」
+   * 伪装成「没有这条请求」/「已被别处落定」——两种误读都会让评论派发静默消失）。
+   */
+  getCommentDispatchReceiptRepo?: () => CommentDispatchReceiptRepo;
 }): ISquadRuntimeService {
   /** 本 runtime 的 `workspace_key`（C14 口径）：台账与快照都按它过滤。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -731,6 +776,31 @@ export function createSquadRuntimeService(deps: {
       );
     }
     return deps.getInboxItemRepo();
+  };
+
+  /** 评论 receipt repo 的懒取（与 `requireInboxItemRepo` 同款：未注入 ⇒ 响亮抛，不静默返回空）。 */
+  const requireCommentDispatchReceiptRepo = (): CommentDispatchReceiptRepo => {
+    if (!deps.getCommentDispatchReceiptRepo) {
+      throw new Error(
+        "评论派发 receipt 未接通：组合根没有注入 getCommentDispatchReceiptRepo（懒取 repo 口）。" +
+          "静默返回 null/false 会把「这份服务面没接 receipt」伪装成「没有这条请求」/「已被别处落定」，故一律抛。",
+      );
+    }
+    return deps.getCommentDispatchReceiptRepo();
+  };
+
+  /**
+   * receipt 的 workspace 隔离（§8.5）：行不属于本 target 绑定的 workspace ⇒ **响亮抛**。
+   * 不静默当「没有」：那会把「取错了目标（接线 bug）」伪装成「这条请求不存在」（一条正常的返回），
+   * 两种情形的处置完全不同（前者要查接线，后者是重投/丢弃的正常分格）。
+   */
+  const assertReceiptOwnWorkspace = (receipt: CommentDispatchReceiptRecord, workspaceKey: string): void => {
+    if (receipt.workspaceKey !== workspaceKey) {
+      throw new Error(
+        `评论派发 receipt「${receipt.dispatchKey}」属于 workspace「${receipt.workspaceKey}」，` +
+          `与本次目标的「${workspaceKey}」不一致：跨 workspace 引用一律响亮拒绝（§8.5）。`,
+      );
+    }
   };
 
   /**
@@ -885,6 +955,31 @@ export function createSquadRuntimeService(deps: {
     async listSquadDeferredObligations(target) {
       const runtime = await deps.createRuntime(target);
       return runtime.squadDeferredDispatchRepo.list(keyOf(runtime));
+    },
+
+    /* X2.1 评论派发 receipt 的两个口（见接口注释）：取数与条件回写都经懒取 repo（与收件箱同款）。
+       **workspace 校验**在取数口做：异己行响亮抛（§8.5 的既有纪律，不静默当不存在）；
+       回写口同样先校验再转发（不同 workspace 的行不得被本 target 的 host 落定）。 */
+    async getCommentDispatchReceipt(target, dispatchKey) {
+      const runtime = await deps.createRuntime(target);
+      const receipt = requireCommentDispatchReceiptRepo().get(dispatchKey);
+      if (receipt === null) return null;
+      assertReceiptOwnWorkspace(receipt, keyOf(runtime));
+      return receipt;
+    },
+
+    async settleCommentDispatchReceipt(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const receipt = requireCommentDispatchReceiptRepo().get(input.dispatchKey);
+      if (receipt === null) return false; // 未命中：不造行（调用方据 false 留痕）
+      assertReceiptOwnWorkspace(receipt, keyOf(runtime));
+      return requireCommentDispatchReceiptRepo().settleIfUnsettled({
+        dispatchKey: input.dispatchKey,
+        outcome: input.outcome,
+        ...(input.detail !== undefined ? { detail: input.detail } : {}),
+        // 服务面是时间戳边界：repo 显式收时间戳（可测/回放），时钟由调用层给。
+        updatedAt: Date.now(),
+      });
     },
 
     async openMemberRun(target, input) {
