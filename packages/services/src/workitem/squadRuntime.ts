@@ -228,6 +228,18 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
           },
           runSettlementHub: deps.runSettlementHub,
           squadDeferredDispatchRepo,
+          /* C1：残行判据要的 git 事实（「这条 run 的分支上有没有活树」）——工作树的唯一所有者是
+             `WorktreeManager`，故只从它取，不在台账上推断（见 `listWorktrees` 的接口注释）。 */
+          listWorktrees: () => worktreeManager.list(),
+          /* C1：分支 ref 是否已存在（「残枝」= 有分支没工作树）。`rev-parse -q --verify` 的退出码
+             就是答案：0 = 存在；非 0 = 不存在（**不猜**：命令本身失败也按 false 之外的处理没有意义，
+             这里只回答存在性，git 层异常在 code!=0 上无法与「不存在」区分，故用 --verify 的语义）。 */
+          branchRefExists: async (branch) => {
+            const result = await git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
+              cwd: workspacePath,
+            });
+            return result.code === 0;
+          },
         });
         return { baseBranch, integrationMerger, lifecycle };
       })();

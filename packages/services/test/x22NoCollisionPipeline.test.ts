@@ -263,8 +263,14 @@ test("X2.2 复验发现：残枝未回收时同对重放确定性失败，台账
     "receipt 仍停 deferred：下次扫描仍会读到它",
   );
 
-  /* 再扫一次：同 runId 命中「已登记」幂等臂（不再建树、也不再撞名）——
-     此后 host 手里没有工作树，队员 run 的缺树判据会把它判失败（另见 desktop 用例的组合推定）。 */
-  assert.deepEqual(await f.openFor(f.dispatchKey, "comment"), { kind: "already_registered" });
+  /* 再扫一次：残行（有行无树）+ 分支仍被未回收的活树占着 ⇒ **等待型结论**（C1 插队轮修）：
+     既不复用别人的树，也不把这条请求结算掉（结算是终局 ⇒ 它从此没有可执行的 run 身份）。
+     修前这里返回 `{ kind: "already_registered" }`，host 手里没有工作树 ⇒ 按队员缺树判
+     **permanent 失败** ⇒ 评论 receipt 落终局 failed —— 即使回收器随后会清残枝，请求也永不执行。
+     修后 receipt 保持未收敛，等回收器清残枝后重投自愈（那时残行按 `opened` 重开新树）。 */
+  assert.deepEqual(await f.openFor(f.dispatchKey, "comment"), {
+    kind: "residual_blocked",
+    branch: f.otherBranch,
+  });
   assert.equal(await f.branchExists(f.otherBranch), true, "幂等臂不回补残枝：残枝只能等回收器");
 });

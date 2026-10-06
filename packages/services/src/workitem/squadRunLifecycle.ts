@@ -1,3 +1,8 @@
+/* oxlint-disable eslint(max-lines) -- squad_runs 台账生命周期的**唯一写者面**：开树 / 收尾 / 审查 /
+   抛弃 / 启动回收，以及 C1 的残行判据与结算次序，都必须读同一份状态机（`SQUAD_RUN_ACTIVE_STATUSES`
+   与「行还能不能被推进」的判据）。拆文件会把这些次序判断切成几处 —— 而「什么时候可以结算一行」
+   一旦出现第二份判据，两条路就会分叉（分叉的表现是「该结算的被当成在进行中」或反之，都不报错），
+   与 `squadRunRepo.ts` / `commentService.ts` 的同款例外同一理由。 */
 import { resolveWorkspaceKey } from "@zcode/shared";
 import {
   memberDirName,
@@ -73,7 +78,62 @@ export type OpenMemberRunResult =
   /** R2（S6 §12.1-2，2026-10-05 用户裁定）：同 (workItem,agent) 已有活跃 run ⇒ 不开第二条
    *  （撞分支）也不排队（排队等容量、义务等「目标对离开活跃集」），登记完成后重放义务。
    *  `coalescedInto` = 并入的既存义务行（同目标已有义务时）。 */
-  | { kind: "deferred"; runId: string; coalescedInto?: string };
+  | { kind: "deferred"; runId: string; coalescedInto?: string }
+  /** C1（§8-P1）：本请求的台账行是**残行**（有行无树），而该分支此刻仍被占着 —— 要么挂着
+   *  另一棵活工作树（别的 run 未回收的残树），要么只有同名的分支 ref（「残枝」：建树失败时
+   *  git 先把分支建出来了）。两种都不能靠「再建一次」解决（`worktree add -b` 撞名），
+   *  也都**不得**直接复用那棵树（可能是别人的，P2a 教训：判定按分支、动作用目录名不成对时
+   *  会静默毁掉别人的工作面）；更不得结算本行（结算是终局 ⇒ receipt 的 own-run 不再是 open，
+   *  这条请求永远不再执行）⇒ **等待型**结论：调用方保持请求未收敛，等回收器清掉残枝后重投
+   *  （那时残行按 `opened` 重开新树）。 */
+  | { kind: "residual_blocked"; branch: string };
+
+/**
+ * 「有行无树」——这条 run 开了台账行却**从来没有**得到过工作树（残行的**行级事实**）。
+ *
+ * 三个条件缺一不可：
+ * · `isLeaderTask` 为真 ⇒ 不适用：队长行本来就没有树（`branch === null`）；
+ * · `status === "open"`：produced/rejected 意味着它已经产出过（树必然存在过），
+ *   merged/discarded/queued 都不该有树；
+ * · `sessionId === null`：会话是在**建树之后**才建的（host 派发桥的顺序）⇒ 有会话 = 那条派发
+ *   至少走过了建树那一步，不是「从未建过树」的残行；
+ * · 分支不在活工作树集合里：分支还挂着活树时，那条树可能是**本 run** 崩溃前建好的
+ *   （会话没来得及绑），也可能是**另一个 run** 的未回收残树 —— 两种都不是「从未建过树」。
+ *
+ * 注意它**不是**「可结算」的判据（那只在 `isSettleableResidualMemberRun`）：一个从未建过树的 run
+ * 仍然可能卡在「分支名被占」上（残枝或别人的活树），那时结算它并不会让它跑起来。
+ */
+export function isTreelessOpenMemberRun(
+  record: Pick<SquadRunRecord, "status" | "sessionId" | "branch" | "isLeaderTask">,
+  liveTreeBranches: ReadonlySet<string>,
+): boolean {
+  if (record.isLeaderTask) return false;
+  if (record.status !== "open") return false;
+  if (record.sessionId !== null) return false;
+  if (record.branch === null) return false;
+  return !liveTreeBranches.has(record.branch);
+}
+
+/**
+ * 「**可结算**的残行」（C1，§8-P1 的修法判据）：有行无树（`isTreelessOpenMemberRun`），
+ * 且该分支上**没有任何占用** —— 既没有活工作树（`liveTreeBranches`），也没有同名分支 ref
+ * （`branchRefExists`，即那条「残枝」本身）。
+ *
+ * 为什么必须再要 `branchRefExists` 这一条：`git worktree add -b <branch>` 在**分支已存在**时
+ * 必然报「a branch named '…' already exists」（哪怕那条分支没挂在任何工作树上 —— 实测过）。
+ * 少了这一条，「结算 + 重开」会在分支名还被残枝占着时白结算一趟：台账被翻成 discarded 又被翻回
+ * open，而树照样建不出来（白翻 = 每次扫描都空转一遍，且结算事实会重复扇出）。
+ * 反过来，`branchRefExists` 的两种取值都指向**明确**的处置：
+ * · false ⇒ 什么都没占着 ⇒ 结算 + 重开一定能成（失败只可能是 git 层的其它错，走既有失败出口）；
+ * · true  ⇒ 等回收器清掉残枝（它按「不在活跃集」回收，`discarded` 或结算后的行正是它的对象），
+ *           之后重投走上面那条（调用方保持请求未收敛即可，见 `residual_blocked`）。
+ */
+export function isSettleableResidualMemberRun(
+  record: Pick<SquadRunRecord, "status" | "sessionId" | "branch" | "isLeaderTask">,
+  facts: { liveTreeBranches: ReadonlySet<string>; branchRefExists: boolean },
+): boolean {
+  return isTreelessOpenMemberRun(record, facts.liveTreeBranches) && !facts.branchRefExists;
+}
 
 /**
  * 队长 run 的**登记**入参（`recordLeaderRun`）。
@@ -288,6 +348,24 @@ export function createRunLifecycle(deps: {
   runSettlementHub?: SquadRunSettlementHub;
   /** R2：deferred 重放义务表（不注入 ⇒ 遇到「活跃 run 已存在」时响亮抛，不静默降级）。 */
   squadDeferredDispatchRepo?: import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRepo;
+  /**
+   * C1：**此刻活着的**工作树（`WorktreeManager.list` 口径：路径存在、分支可能是 null=detached）。
+   *
+   * 为什么必须由外部注入而不是本层自己问 git：本层只与 `squad_runs` 台账打交道，工作树的**唯一所有者**
+   * 是 `WorktreeManager`（建/删/列都在它那里）。残行判据要回答的是「这条 run 的分支上有没有活树」，
+   * 那是 git 事实、不是台账事实 —— 在台账里推断（例如「有没有 sessionId」）会漏掉
+   * 「树建好了但会话没绑上」这一格，而那正是残行判据要分辨的另一半。
+   */
+  listWorktrees: () => Promise<ReadonlyArray<{ path: string; branch: string | null }>>;
+  /**
+   * C1：分支 ref 是否**已存在**（`refs/heads/<branch>`；「残枝」就是「有分支、没工作树」这一格）。
+   *
+   * 为什么它不能由 `listWorktrees` 代答：工作树列表只报还活着的树，而 `git worktree add -b`
+   * 的失败条件里**还有一条**「同名分支已存在」—— 建树因目录冲突失败时 git 会先把分支建出来，
+   * 于是留下一条无工作树的残枝，下一次再挂必然撞它。少了这一格，「结算 + 重开」会在残枝
+   * 还没被回收时白翻一趟台账（见 `isSettleableResidualMemberRun`）。
+   */
+  branchRefExists: (branch: string) => Promise<boolean>;
 }): SquadRunLifecycle {
   const {
     squadRunRepo,
@@ -341,6 +419,54 @@ export function createRunLifecycle(deps: {
       workItemSlug: slugForId(record.workItemId),
       agentSlug: slugForId(record.agentId),
     });
+  }
+
+  /** 此刻活着的分支（`WorktreeManager.list` 的投影）：残行判据的 git 事实面（`isResidualMemberRun`）。 */
+  async function liveBranchSet(): Promise<Set<string>> {
+    const entries = await deps.listWorktrees();
+    return new Set(
+      entries.map((entry) => entry.branch).filter((branch): branch is string => branch !== null),
+    );
+  }
+
+  /**
+   * C1：把同一 (workItem, agent) 上**别的 run** 留下的残行结算掉（`discarded` + 结算事实扇出）。
+   *
+   * 为什么必须清：残行在活跃集里（`open ∈ SQUAD_RUN_ACTIVE_STATUSES`）⇒ `hasActiveRunForPair` 为真
+   * ⇒ 后续同对的派发一律被判成「已有活跃 run」⇒ 登记 deferred 义务（R2）⇒ 义务到期靠「目标对离开
+   * 活跃集」，而那条残行的树永远不会自己变出来 ⇒ **请求永远不执行**（既不失败、也不推进）。
+   * 结算它才是如实处置：那条 run 已经没有产出可言，它占着的容量与活跃集该释放。
+   *
+   * 判据用**行级**事实 `isTreelessOpenMemberRun`（有行无树）：这类行不会再产出，与分支上还有没有
+   * 别的占用无关（占用是**本请求**要面对的事，不是这行该不该结算的事）。
+   *
+   * 一次为限（防死循环）：本函数一次调用**只扫一轮**、每个候选结算一次；结算后本次新开的新行若
+   * 也建树失败（留成残行），不在本次调用里二次结算重试。
+   */
+  async function settlePairResidualRuns(
+    workItemId: string,
+    agentId: string,
+    ownRunId: string,
+  ): Promise<void> {
+    /* 先按台账筛候选（零 git 成本）：常态下同对没有别的 open 行 ⇒ 直接返回，不走 git。 */
+    const candidates = squadRunRepo
+      .listActive(boundWorkspaceKey)
+      .filter(
+        (row) =>
+          row.runId !== ownRunId &&
+          row.workItemId === workItemId &&
+          row.agentId === agentId &&
+          row.status === "open" &&
+          row.sessionId === null &&
+          row.branch !== null,
+      );
+    if (candidates.length === 0) return;
+    const live = await liveBranchSet();
+    for (const row of candidates) {
+      if (!isTreelessOpenMemberRun(row, live)) continue;
+      // 唯一写者（`settleStatus`）+ 结算事实扇出：容量与活跃集从这里释放（排队行/义务的推进靠它）。
+      settleStatus(row.runId, "discarded");
+    }
   }
 
   /**
@@ -399,6 +525,69 @@ export function createRunLifecycle(deps: {
       const existing = squadRunRepo.get(request.runId);
       if (existing !== null) {
         if (existing.status !== "queued") {
+          /* C1（§8-P1）：本请求的行存在，但**从来没有建出过树**（open + 未绑会话）。
+             这正是「台账先行」留下的残行形态（建树失败 / 建树后崩溃），若不处置就会一直撞
+             「已登记」幂等臂 ⇒ 调用方手里永远没有工作树 ⇒ 队员 run 被判 permanent 失败，
+             而底层原因（分支被残枝占着）往往只是等回收器 —— 一条本可自愈的请求被判死刑。 */
+          if (
+            !existing.isLeaderTask &&
+            existing.status === "open" &&
+            existing.sessionId === null &&
+            existing.branch !== null
+          ) {
+            const live = await liveBranchSet();
+            const branchIsLive = existing.branch !== null && live.has(existing.branch);
+            /* 「有行无树」的三种格，按**该分支上有没有占用**分流（都不复用、不删别人的工作面）：
+               · 无任何占用 ⇒ **可结算**（`isSettleableResidualMemberRun`）：结算 + 同一 runId 重开新树；
+               · 只有同名分支 ref（残枝，无活树）⇒ **等待型**：`worktree add -b` 会撞名，结算只是
+                 把台账翻了又翻（还会重复扇出结算事实），等回收器按「不在活跃集」回收它；
+               · 挂着活工作树 ⇒ 分两种事实（见下，判据是**同对有没有别的 run 行**）：
+                 那棵树可能是**别的 run** 未回收的残树（⇒ 等待型），也可能是**本 run 自己**的树
+                 （建树成功、但绑会话之前就崩了/还在进行中 ⇒ 保持既有 R5 语义 `already_registered`，
+                 由调用方走既有忙探测/绑定会话路径）。 */
+            const branchRefExists = branchIsLive ? false : await deps.branchRefExists(existing.branch);
+            if (
+              !isSettleableResidualMemberRun(existing, {
+                liveTreeBranches: live,
+                branchRefExists,
+              })
+            ) {
+              /* 活树占着分支，且同一对**还**有别的 run 行 ⇒ 那棵树不可能是本行的（每条 run 都写自己的
+                 台账行，而分支计划是 pair 的函数）⇒ 等待型：不结算本行（结算是终局 ⇒ receipt 的
+                 own-run 不再是 open，这条请求永远不再执行）、不复用那棵树（可能是别人的工作面）。 */
+              const otherRunExists = squadRunRepo
+                .listByWorkspace(boundWorkspaceKey)
+                .some(
+                  (row) =>
+                    row.runId !== existing.runId &&
+                    row.workItemId === existing.workItemId &&
+                    row.agentId === existing.agentId,
+                );
+              if (!branchIsLive || otherRunExists) {
+                return { kind: "residual_blocked", branch: plan.member };
+              }
+            } else {
+              /* 残行 + 分支无任何占用 ⇒ 可结算：先结算（释放容量/活跃集，结算事实扇出），
+                 再**同一 runId** 重开新树。
+                 为什么 runId 不能换（结构事实）：runId = 请求身份（`eventKey` = receipt.dispatchKey），
+                 host 的 `bindMemberRunSession` / 终态收口 / 失败出口与补投扫描的「自己的 run 行」
+                 查找全按它定位 —— 换一个新 runId 会让 receipt 的 own-run 不再是 open，
+                 扫描从此跳过这条请求（请求永远不执行，且没有任何一格报错）。 */
+              settleStatus(existing.runId, "discarded");
+              squadRunRepo.setStatus(existing.runId, "open", {
+                branch: plan.member,
+                dirName: memberDirName(plan),
+                sessionId: null,
+              });
+              /* 重开新树：失败**原样抛**（既有失败出口）。结算与重开在本次调用内**只做一轮**
+                 （一次为限）：不得为了「再试一次」而二次结算重试 —— 那会在占用不消失时
+                 变成每次扫描都翻一遍台账的空转。 */
+              const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
+              return { kind: "opened", branch: plan.member, worktreePath: memberPath };
+            }
+          }
+          /* R5 收口（C3）：同 runId 重投、「已经跑过」的行（有会话 / 已产出…）⇒ 不重复建树/登记，
+             交回 `already_registered` 让调用方走既有忙探测/绑定会话路径。 */
           return { kind: "already_registered" };
         }
         /* C4 推进：排队行的「重放同 runId」就是推进入口（host 收到结算事件后按 runId 重投——
@@ -420,6 +609,13 @@ export function createRunLifecycle(deps: {
         }
         return { kind: "queued", runId: request.runId };
       }
+
+      /* C1（§8-P1，「该 pair 的 open 行」那一半）：本请求要新开一行之前，先把**同一对**上别的 run
+         留下的残行结算掉。不清的话，那条残行会以「已有活跃 run」之名把本次派发钉成 deferred 义务
+         （R2），而它的树永远不会出现 ⇒ 义务永远等不到到期条件（「目标对离开活跃集」）⇒ 请求永不执行。
+         结算 = `discarded` + 结算事实扇出：容量与活跃集在这里如实释放。
+         一次为限：本处**只扫一轮**；本次新开的新行若也建树失败（留成残行），不在本次调用里再结算重试。 */
+      await settlePairResidualRuns(request.workItemId, request.agentId, request.runId);
 
       /* **先落台账、后建树**（顺序不可颠倒）。
          反过来（树建好了而台账里没有这一行）时若在两者之间崩溃：下一次启动的回收
