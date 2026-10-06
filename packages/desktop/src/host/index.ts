@@ -3560,6 +3560,29 @@ async function advanceSquadQueueAfterSettlement(
   const snapshot = await squadRuntime.getSnapshot(target);
 
   // ① 排队行：A1 重验 → 重放同 runId（推进臂在 openMemberRun 内认领，容量仍满则回排队结论）。
+  /* ── 已登记卡（P1-risk，2026-10-06 D6+C1 复验 §7；走查级，**未修**）────────────────────────
+     触发面：队长并发满（默认 6）+ 评论 @小队 ⇒ 一条**排队队长行**（`recordLeaderRun` 的
+     `capacity_full_queued`）。本臂对它的两格都不成立，且都是「不报错」的形态：
+
+     · ① `assignee.type === "squad"` 的排队队长行：下面的 A1 重验要求 `assignee.type === "agent"`
+       且 `assignee.id === queued.agentId` ⇒ 必败 ⇒ `discardQueuedSquadRun` 丢弃。评论 receipt 停
+       终局 `queued`、请求永不执行（留痕只有一行 error 日志）。
+       修向：A1 对**队长行**（`row.isLeaderTask`）改判「该队现任队长是否仍是这条行的 agent」
+       （receipt.detail.squadId → 名册），而不是 assignee 直等。
+     · ② 队长 agent 项（`assignee.type === "agent"`，A1 能过）：重放走 `trigger: "replay"`，
+       **不带** leader 身份（`replay` 变体没有 `squadId`）⇒ `planDispatch` 按 assignee/父项事实重规划
+       ⇒ 落 `member`/`standalone` 而不是 `leader`：`ledgerAction` 与这条**队长行**（`is_leader_task=1`）
+       不匹配 —— 轻则 `none`（不绑会话、不订阅终态，队长行永留 `queued` ⇒ 每次启动/结算事件重复建会话
+       发 prompt），重则按队员臂给队长行挂分支/工作树（行形态被写坏：`completeLeaderRun` 之后会
+       因 `branch` 非空响亮抛）。
+       修向：推进臂重放队长身份时也走 `commentReceiptSquadId → resolveCommentLeaderOverride` 同一
+       核对（身份判据只有那一处实现，不复制第二份），并按 `recordLeaderRun` 的形状重放。
+
+     为什么本轮**不修**（triage 结论：牵扯大）：两格都要动 A1 重验这条**三处共用**的公共判据
+     （队列推进 / 义务重放 / 补投扫描），且要给 `replay` 触发补「队长身份」这一维（`SquadDispatchTrigger`
+     契约 + `planDispatch` 的 replay 支 + 推进臂取 receipt 的接线），改动面跨 host/squadDispatch/
+     leaderDispatch 与四个既有用例文件 ⇒ 归 **C4 host 行为级专项池**（需要 host 行为级夹具，走查级证据
+     不足以下刀）。上面两格的代码事实：A1 判据在本循环内，重放在 `runSquadDispatch({trigger:"replay"…})`。 */
   for (const queued of await squadRuntime.listQueuedSquadRuns(target)) {
     if (agentFilter !== undefined && queued.agentId !== agentFilter) continue;
     const workItem = snapshot.workItems.find((item) => item.id === queued.workItemId);
