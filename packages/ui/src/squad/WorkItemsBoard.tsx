@@ -85,6 +85,7 @@ export function WorkItemsBoard({
   onReassign,
   onDiscard,
   onToggleTimeline,
+  onOpenWorkItemDetail,
   workspacePath,
   workspaceIdentity,
   onOpenSession,
@@ -107,6 +108,8 @@ export function WorkItemsBoard({
   onDiscard: (workItemId: string) => void;
   /** 点「时间线」⇒ 交给页面切换展开态（同一条再点 = 收起；本层不持有状态）。 */
   onToggleTimeline: (item: WorkItem) => void;
+  /** B5.1：打开这条工作项的详情页（页面 → App 的意图态；本层不持有导航状态）。 */
+  onOpenWorkItemDetail: (workItemId: string) => void;
   /** 展开的时间线要查哪个 workspace（页面把 shell 给的目标原样透传）。 */
   workspacePath: string;
   workspaceIdentity?: string;
@@ -187,8 +190,21 @@ export function WorkItemsBoard({
               highlightedWorkItemId === item.id && "ring-2 ring-brand",
             )}
           >
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex min-w-0 items-center gap-2">
+            {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
+                覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
+                点击命中是硬要求，不是样式偏好。 */}
+            <div className="relative flex items-center justify-between gap-3">
+              <button
+                type="button"
+                aria-label={intl.formatMessage(
+                  { id: "squad.workItemDetail.activity.open" },
+                  { title: item.title },
+                )}
+                data-testid="work-item-row-open-detail"
+                onClick={() => onOpenWorkItemDetail(item.id)}
+                className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
+              />
+              <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
                 <span className="break-words text-ui-base text-foreground">{item.title}</span>
                 {/* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */}
                 <span className="shrink-0 text-ui-xs text-foreground-subtle">
@@ -200,7 +216,7 @@ export function WorkItemsBoard({
                   {assigneeName ?? t("squad.common.assignee.user")}
                 </span>
               </span>
-              <span className="flex shrink-0 items-center gap-2">
+              <span className="relative z-10 flex shrink-0 items-center gap-2">
                 {/* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。
                     展开的内容在行下方（同一个 <li> 内），收起即卸载（数据丢弃，无展开态记忆）。 */}
                 {isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
