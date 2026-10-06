@@ -79,6 +79,14 @@ export interface CommentDispatchReceiptRepo {
   /** 某工作项下的 receipt（时间线口径，created_at ASC → dispatch_key ASC）。 */
   listByWorkItem(workspaceKey: string, workItemId: string): CommentDispatchReceiptRecord[];
   /**
+   * **X2.2：本 workspace 的未收敛 receipt**（补投扫描的取数面；时间线口径同 `listByWorkItem`）。
+   *
+   * 判据取 `COMMENT_DISPATCH_UNSETTLED_OUTCOMES` 常量（与存储面的条件回写、host 的未收敛判据
+   * 同源）——SQL 里写死字面量会让「闭集加值」时扫描面静默漏读。只读不写：
+   * 「哪些请求还没有执行者 / 还在等义务重放」是 host 补投的**唯一**取数口。
+   */
+  listUnsettledByWorkspace(workspaceKey: string): CommentDispatchReceiptRecord[];
+  /**
    * **回写口**（X2.1 新增；文件头的「只增」纪律在此**有意开了唯一的推进口**）：
    * host 评论派发通道执行完一次派发后，把当时的队列状态窗结论写回 receipt。
    *
@@ -228,6 +236,17 @@ export function createCommentDispatchReceiptRepo(db: DatabaseSync): CommentDispa
           `SELECT * FROM comment_dispatch_receipts WHERE workspace_key = ? AND work_item_id = ? ${ORDER}`,
         )
         .all(workspaceKey, workItemId) as unknown as ReceiptRow[];
+      return rows.map(rowToReceipt);
+    },
+
+    listUnsettledByWorkspace(workspaceKey) {
+      // IN 子句由闭集常量生成（见接口注释：写死字面量会在闭集加值时静默漏读）。
+      const placeholders = COMMENT_DISPATCH_UNSETTLED_OUTCOMES.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM comment_dispatch_receipts WHERE workspace_key = ? AND outcome IN (${placeholders}) ${ORDER}`,
+        )
+        .all(workspaceKey, ...COMMENT_DISPATCH_UNSETTLED_OUTCOMES) as unknown as ReceiptRow[];
       return rows.map(rowToReceipt);
     },
 

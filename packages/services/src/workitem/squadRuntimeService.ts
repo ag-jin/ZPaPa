@@ -391,6 +391,19 @@ export interface ISquadRuntimeService {
     dispatchKey: string,
   ): Promise<CommentDispatchReceiptRecord | null>;
   /**
+   * **X2.2：本 workspace 未收敛 receipt 的读取口**（host 补投扫描的唯一取数面）。
+   *
+   * 覆盖「重启 / 桥不可用 / transient 失败」留下的 pending 与「等义务重放」的 deferred：
+   * host 在结算事件与启动扫描两处按这张表补投（挂进既有 `advanceSquadQueueAfterSettlement`）。
+   * 与 `getCommentDispatchReceipt` 一样是**只读**（读不是新派发：关掉实验开关后补投由派发桥
+   * 内部的门禁兜底，本层不写第二份开关判据）；workspace 过滤由 repo 单源给出
+   * （`listUnsettledByWorkspace`，未收敛集合取 `COMMENT_DISPATCH_UNSETTLED_OUTCOMES` 常量），
+   * 本层不重排、不再筛（第二份判据会与 repo 漂移）。
+   */
+  listUnsettledCommentDispatchReceipts(
+    target: SquadWorkspaceTarget,
+  ): Promise<CommentDispatchReceiptRecord[]>;
+  /**
    * **X2.1：评论派发 receipt 的条件回写口**（host 执行一次派发后落定当时的队列状态窗结论）。
    *
    * 语义由存储面单点给出（`CommentDispatchReceiptRepo.settleIfUnsettled`）：只认领**未收敛**的行
@@ -966,6 +979,13 @@ export function createSquadRuntimeService(deps: {
       if (receipt === null) return null;
       assertReceiptOwnWorkspace(receipt, keyOf(runtime));
       return receipt;
+    },
+
+    async listUnsettledCommentDispatchReceipts(target) {
+      const runtime = await deps.createRuntime(target);
+      // workspace 过滤是查询的一部分（repo 单源）：异己行结构上读不到，不需要逐行比对。
+      // keyOf(runtime) 取 runtime 的绑定值 —— 与 getCommentDispatchReceipt 同一条式子。
+      return requireCommentDispatchReceiptRepo().listUnsettledByWorkspace(keyOf(runtime));
     },
 
     async settleCommentDispatchReceipt(target, input) {

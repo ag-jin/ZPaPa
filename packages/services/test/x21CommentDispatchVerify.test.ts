@@ -7,9 +7,10 @@
       assignee 那一支，**覆盖分支的名册判据没有用例**（分叉的表现正是「改派被拦、评论点名照跑」）；
       并补「归档先判」（两者同时命中时报归档 —— 实现者只各测了单条状态）；
    ③ 评论出口的「同键重投且仍 pending ⇒ 重新外发」这一格（实现者只测了首次 pending 与不发的补集）；
-   ④ **§5.2 缺口复现**（登记未决项）：队列状态窗的 deferred 分支忽略 `insertIfAbsent` 的 false 返回
-      —— 同对第二条评论的 receipt 停在 deferred，而义务表里只有第一条的 dispatchKey ⇒ 无回写通道。
-      本用例落的是**现状事实**（不是期望行为），供 X2.2 简报与验收对表。 */
+   ④ **§5.2 修复（X2.2 更新）**：同对第二条评论并入既存义务 ⇒ receipt 落**终局 coalesced** +
+      `detail.coalescedInto` = 既存义务 runId + 并入留痕（与排队分支同语义）。
+      复验当时（X2.1）此处钉的是**修复前现状**（第二条永停 deferred、义务表无承载）；X2.2 源头修后
+      按新契约更新 —— 属预期内改动，语义见 commentService.adjudicateQueueWindow 的并入分支。 */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
@@ -308,19 +309,16 @@ test("X2.1 出口：同一评论重投且 receipt 仍 pending ⇒ 重新外发�
   assert.equal(h.published.length, 2, "已终局的 receipt 不再外发（收敛后重投只读回事实）");
 });
 
-/* ---------- ④ §5.2 缺口复现（现状事实，供 X2.2 对表） ---------- */
+/* ---------- ④ §5.2 修复后的新契约（X2.2 更新本用例，原为复验的「缺口复现」） ---------- */
 
-/* 现象：同对第二条评论的 receipt 停在 deferred，而义务表里只有**第一条**的 dispatchKey。
-   为什么无回写通道（三条事实一起断）：
-   · 义务表按 (workspace, workItem, agent) 唯一 ⇒ 第二条的 `insertIfAbsent` 返回 false，
-     而 `adjudicateQueueWindow` 的 deferred 分支**丢弃了这个返回值**（也没记并入留痕，区别于
-     排队分支：那里会 `recordCoalescedRequest`）⇒ 第二条没有自己的义务行；
-   · receipt 停在 deferred（不是 pending）⇒ 不外发（出口只发 pending）⇒ host 从没收到过它；
-   · 重放通道按义务逐条走（义务 id = dispatchKey）⇒ 第一条重放/落定与第二条无关。
-   期望修法（复验建议，二选一）：并入时把 receipt 落 **coalesced**（终局 + detail.coalescedInto，
-   与排队分支同语义）—— 比「让启动扫描去补投」更早收敛，也不会在过后凭空多跑一次；或退一步，
-   在义务行/并入表留痕，让义务重放时一并落定并入的 dispatchKey。 */
-test("§5.2 缺口复现：队列状态窗 deferred 分支的并入被丢弃 ⇒ 第二条评论 receipt 无回写通道", () => {
+/* 复验当时（X2.1 交付）这里钉的是**修复前现状**：义务表按 (workspace, workItem, agent) 唯一 ⇒
+   第二条评论的 `insertIfAbsent` 返回 false，而 deferred 分支丢弃了它 ⇒ 第二条 receipt 永停
+   deferred、义务表无承载、出口只发 pending ⇒ 没有任何一格会碰它。
+   X2.2 源头修（`adjudicateQueueWindow` 并入分支 + host 的 coalescedInto 落定）后按**新契约**更新：
+   并入 = 终局 coalesced + `detail.coalescedInto` = 既存义务 runId + 并入留痕（与排队分支同语义，
+   依据 B-3「同键合并 = 一次执行」）。本用例同时证明：并入不新增义务、终局不可覆写、
+   真实重放通道只认领第一条（并入者不需要、也不会有第二次执行）。 */
+test("§5.2 修复（X2.2）：同对第二条评论并入既存义务 ⇒ receipt 终局 coalesced + coalescedInto", () => {
   const h = harness();
   // 目标对已有活跃 run（占树）⇒ 队列状态窗落 deferred（并对**本条**登记义务）。
   h.runs.insert({
@@ -363,56 +361,71 @@ test("§5.2 缺口复现：队列状态窗 deferred 分支的并入被丢弃 ⇒
     commentId: "v21-g2",
   });
   assert.notEqual(k1, k2, "两条评论是两个请求身份");
-  assert.equal(post("v21-g1").dispatches[0]?.outcome, "deferred");
-  assert.equal(post("v21-g2").dispatches[0]?.outcome, "deferred");
+  const first = post("v21-g1");
+  assert.equal(first.dispatches[0]?.outcome, "deferred", "第一条：活跃 run ⇒ deferred + 义务");
+  const second = post("v21-g2");
+  assert.equal(
+    second.dispatches[0]?.outcome,
+    "coalesced",
+    "第二条：insertIfAbsent 返回 false（并入）⇒ 终局 coalesced（不得再停 deferred）",
+  );
+  assert.deepEqual(
+    second.dispatches[0]?.detail,
+    { triggerSource: "mention_agent", coalescedInto: k1 },
+    "并入目标 = 既存义务的 runId（读据要能回答「并进了哪一次」）",
+  );
 
-  // 事实①：义务表只有第一条的 dispatchKey（第二条的并入被丢弃）。
+  // 事实①：义务表只有第一条的 dispatchKey（并入 = 执行归既存义务，不另立一条）。
   const obligations = h.deferred.list(WS);
   assert.deepEqual(
     obligations.map((row) => row.runId),
     [k1],
-    "第二条的 insertIfAbsent 返回 false（并入）——义务表里不得出现第二条",
+    "第二条并入既存义务 —— 义务表里不得出现第二条",
   );
   assert.equal(obligations[0]?.origin, "comment", "评论义务来源必须是 comment（不能落回 R2）");
-  // 事实②：两条 receipt 都停在 deferred（未收敛），但只有第一条有义务行可依。
+  // 事实②：k1 未收敛（等重放）；k2 已终局（并入结论，不再需要任何回写通道）。
   assert.deepEqual(
     h.receipts.listByWorkItem(WS, h.itemId).map((row) => [row.dispatchKey, row.outcome]),
     [
       [k1, "deferred"],
-      [k2, "deferred"],
+      [k2, "coalesced"],
     ],
   );
-  // 事实③：两条都没外发（deferred 不外发）⇒ host 从没见过 k2；k2 也不在并入留痕/run 台账里。
-  assert.deepEqual(h.published, [], "deferred 的请求不外发（出口只发 pending）");
-  const coalesced = h.db
-    .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details")
-    .all() as Array<{ request_run_id: string; target_run_id: string }>;
-  assert.deepEqual(coalesced, [], "deferred 分支没有并入留痕（排队分支才有）");
+  assert.equal(
+    h.receipts.settleIfUnsettled({ dispatchKey: k2, outcome: "opened", updatedAt: CLOCK + 1 }),
+    false,
+    "coalesced 是终局：迟到的回写必须被条件更新拒绝",
+  );
+  // 事实③：两条都没外发（deferred/coalesced 都不外发）⇒ 不会有第二次执行；
+  //        并入留痕记下 (k2 → k1)，与排队分支同一张表同一语义。
+  assert.deepEqual(h.published, [], "未收敛/已并入的请求都不外发（出口只发 pending）");
+  const coalesced = (
+    h.db
+      .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details")
+      .all() as Array<{ request_run_id: string; target_run_id: string }>
+  ).map((row) => ({ request_run_id: row.request_run_id, target_run_id: row.target_run_id }));
+  assert.deepEqual(coalesced, [{ request_run_id: k2, target_run_id: k1 }], "并入留痕必须落表");
   assert.deepEqual(
     h.runs.listActive(WS).map((row) => row.runId),
     ["v21-active"],
-    "评论服务不开 run（§5.2），k2 也没有台账行",
+    "评论服务不开 run（§5.2），并入也不新增台账行",
   );
 
-  // 事实④：走一遍**真实的**义务重放通道（占树的 run 离开活跃集 ⇒ claimDue 恰一次认领 ⇒ 回写 receipt）
-  // 之后，第二条仍停在 deferred —— 没有任何一格会碰它。
+  // 事实④：真实义务重放通道（占树 run 离开活跃集 ⇒ claimDue 恰一次认领 ⇒ 回写 receipt）只认领
+  // 第一条并把 k1 落定；k2 早已是终局 —— 并入者**不需要**第二次执行，也不会被重放通道碰到。
   h.runs.setStatus("v21-active", "discarded"); // 目标对离开活跃集（claimDue 的到期判据）
   const claimed = h.deferred.claimDue(WS);
   assert.deepEqual(
     claimed.map((row) => row.runId),
     [k1],
-    "重放通道只认领得到第一条的义务",
+    "重放通道只认领得到第一条的义务（并入者不另立义务）",
   );
   assert.equal(
     h.receipts.settleIfUnsettled({ dispatchKey: k1, outcome: "opened", updatedAt: CLOCK + 1 }),
     true,
     "第一条被重放通道回写终止",
   );
-  assert.equal(h.receipts.get(k2)!.outcome, "deferred", "第二条仍在未收敛态，且无义务行承载它");
-  assert.deepEqual(
-    h.deferred.list(WS),
-    [],
-    "第一条义务被认领删除后义务表空 —— 第二条没有任何重放载体（只能靠 X2.2 的未收敛扫描）",
-  );
-  assert.deepEqual(h.runs.listActive(WS), [], "评论服务不开 run；第二条的请求也没有任何台账行");
+  assert.equal(h.receipts.get(k2)!.outcome, "coalesced", "第二条保持终局结论（并入），不依赖重放");
+  assert.deepEqual(h.deferred.list(WS), [], "义务表在第一条被认领后为空 —— 并入者不留任何重放载体");
+  assert.deepEqual(h.runs.listActive(WS), [], "评论服务不开 run；并入也不产生第二条台账行");
 });

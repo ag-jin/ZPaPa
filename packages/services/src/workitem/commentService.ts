@@ -547,6 +547,8 @@ function readCommentForAction(
  * 复用既有闸，**绝不自己开 run**——本服务只回答「这条请求此刻落在哪一格」：
  *  · 已有排队行（同 (workspace, workItem, agent)，部分唯一索引兜底）⇒ 并入 + 留痕 ⇒ coalesced；
  *  · 已有活跃 run（open/produced/rejected 仍占树）⇒ 登记完成重放义务 ⇒ deferred；
+ *  · 已有活跃 run **且同键已有义务**（insertIfAbsent=false）⇒ 并入既存义务 + 留痕 ⇒ coalesced
+ *    （X2.2 §5.2 源头修：并入必须终局，否则该 receipt 永停 deferred 无回写通道）；
  *  · 都没有 ⇒ pending（实际派发由 X2.1 的 host 接线做，本卡不写 squad_runs）。
  */
 function adjudicateQueueWindow(
@@ -578,7 +580,7 @@ function adjudicateQueueWindow(
     // 运行中不排队不注入：登记完成后重放义务（义务 id = 请求身份，重投不新增义务）。
     // dispatchCause 传 null：评论成因的闭集扩展属 C2（§5.2 明令不得把 @ 伪装成 user_reassign）。
     // G4：origin='comment' 与 R2 义务判别（同一张表两条通道，claimDue 消费者据此分流——X2.1）。
-    deps.deferred.insertIfAbsent({
+    const inserted = deps.deferred.insertIfAbsent({
       runId: input.dispatchKey,
       workspaceKey: input.workspaceKey,
       workItemId: input.workItemId,
@@ -588,7 +590,21 @@ function adjudicateQueueWindow(
       createdAt: input.timestamp,
       updatedAt: input.timestamp,
     });
-    return { outcome: "deferred", detail: baseDetail };
+    /* X2.2 §5.2 源头修：义务表按 (workspace, workItem, agent) 唯一 ⇒ 同键第二条请求并入**既存义务**。
+       丢弃 false 会让第二条 receipt 永停 deferred（义务表没有承载它的行、出口只发 pending、
+       重放通道按义务逐条走 ⇒ 没有任何一格会碰它）。按 B-3 裁定「同键合并 = 一次执行」，
+       并入与排队分支同语义：终局 coalesced + coalescedInto 指向既存义务 + 并入留痕
+       （留痕表与 R2/排队共用一张，request_run_id 主键保幂等）。 */
+    if (inserted) return { outcome: "deferred", detail: baseDetail };
+    const existing = deps.deferred.find(input.workspaceKey, input.workItemId, input.targetAgentId);
+    if (existing === null) {
+      throw new Error(
+        `insertIfAbsent 返回 false 但 find 找不到 (workspace=${input.workspaceKey}, ` +
+          `workItem=${input.workItemId}, agent=${input.targetAgentId}) 的义务行：不可达态，须查库。`,
+      );
+    }
+    deps.runs.recordCoalescedRequest(input.dispatchKey, existing.runId);
+    return { outcome: "coalesced", detail: { ...baseDetail, coalescedInto: existing.runId } };
   }
   return { outcome: "pending", detail: baseDetail };
 }
