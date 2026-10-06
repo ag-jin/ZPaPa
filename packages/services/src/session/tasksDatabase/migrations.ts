@@ -7,6 +7,7 @@ import {
   OFF_PEAK_SCHEMA,
   SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_QUEUE_SQL,
+  WORK_ITEM_COLLABORATION_SQL,
   SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
@@ -98,6 +99,12 @@ const definitions = [
     id: "0009_squad_run_queue",
     checksumInput: [SQUAD_RUN_QUEUE_SQL],
   },
+  /* 0010（协作域 X0.1）：评论 + 表情回应两张表（Activity/Decision 在 X0.2 追加 0011）。
+     只加新对象，不改既有表——checksum 纪律同 0008/0009。 */
+  {
+    id: "0010_workitem_collaboration",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -153,6 +160,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0007_inbox_items") db.exec(INBOX_ITEM_SCHEMA);
       else if (migration.id === "0008_squad_run_cause") db.exec(SQUAD_RUN_CAUSE_SQL);
       else if (migration.id === "0009_squad_run_queue") db.exec(SQUAD_RUN_QUEUE_SQL);
+      else if (migration.id === "0010_workitem_collaboration") db.exec(WORK_ITEM_COLLABORATION_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

@@ -72,6 +72,14 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP TABLE squad_run_coalesced_details",
     "DROP TABLE squad_run_deferred_dispatches",
   ],
+  // 0010（协作域 X0.1）：评论 + 表情回应两张表（Activity/Decision 在 X0.2/0011）。
+  "0010_workitem_collaboration": [
+    "DROP INDEX idx_work_item_comment_reactions_comment",
+    "DROP INDEX idx_work_item_comments_thread",
+    "DROP INDEX idx_work_item_comments_item",
+    "DROP TABLE work_item_comment_reactions",
+    "DROP TABLE work_item_comments",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
@@ -138,11 +146,9 @@ test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库�
   });
   // 补跑了两条（0008 + 0009）：`lastAppliedMigrationId` 在循环前只取一次基线，
   // 两条 migrating 回调带的是**同一个基线 id**（B1：0009 落地后本断言必须随之改为 2 条同基线）。
-  assert.deepEqual(
-    migrated,
-    [fullLedger[from008 - 1]?.id ?? null, fullLedger[from008 - 1]?.id ?? null],
-    "老库升级补跑 0008 与 0009（基线 id 相同，各出现一次）",
-  );
+  // 补跑条数 = 从 0008 起的所有迁移（含未来新增——结构性解耦，X0.1 推荐方案落地）。
+  const expected = fullLedger.slice(from008).map(() => fullLedger[from008 - 1]?.id ?? null);
+  assert.deepEqual(migrated, expected, "补跑 0008 起的全部迁移（基线 id 相同，各出现一次）");
   assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
   const columns = squadRunColumns(db);
   assert.deepEqual(

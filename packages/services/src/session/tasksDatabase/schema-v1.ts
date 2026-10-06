@@ -344,3 +344,55 @@ export const SQUAD_RUN_QUEUE_SQL = `
     created_at       INTEGER NOT NULL
   );
 `;
+
+/* 0010（协作域 X0.1）：四张表——work_item_comments（含软删/解决态墓碑、raw+normalized 双正文、
+   clientRequestId 幂等键）、work_item_comment_reactions（轻实体，INSERT OR IGNORE 幂等）。
+   Activity/Decision 两表在 X0.2 追加（同迁移号内不混轮次——0010 只加本卡的对象）。
+   不给 work_items/squad_runs 建外键（只归档不硬删，同 WORK_ITEM_SCHEMA 理由）。 */
+export const WORK_ITEM_COLLABORATION_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_comments (
+    id                    TEXT PRIMARY KEY,
+    workspace_key         TEXT NOT NULL,
+    workspace_path        TEXT NOT NULL,
+    work_item_id          TEXT NOT NULL,
+    thread_id             TEXT NOT NULL,
+    parent_comment_id     TEXT,
+    author_kind           TEXT NOT NULL,
+    author_id             TEXT NOT NULL,
+    author_display_name   TEXT,
+    source_run_id         TEXT,
+    source_run_agent_id   TEXT,
+    source_run_squad_id   TEXT,
+    source_run_role       TEXT,
+    initiated_by_kind     TEXT NOT NULL,
+    initiated_by_id       TEXT NOT NULL,
+    body                  TEXT NOT NULL,
+    normalized_body       TEXT NOT NULL,
+    mentions_json         TEXT NOT NULL DEFAULT '[]',
+    command               TEXT NOT NULL DEFAULT 'none',
+    inline_json           TEXT,
+    client_request_id     TEXT,
+    revision              INTEGER NOT NULL DEFAULT 1,
+    deleted_at            INTEGER,
+    resolved_at           INTEGER,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    UNIQUE (workspace_key, author_kind, author_id, client_request_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_comments_item
+    ON work_item_comments(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_comments_thread
+    ON work_item_comments(workspace_key, thread_id, created_at, id);
+  CREATE TABLE IF NOT EXISTS work_item_comment_reactions (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    comment_id    TEXT NOT NULL,
+    author_kind   TEXT NOT NULL,
+    author_id     TEXT NOT NULL,
+    emoji         TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    UNIQUE (workspace_key, comment_id, author_kind, author_id, emoji)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_comment_reactions_comment
+    ON work_item_comment_reactions(comment_id);
+`;
