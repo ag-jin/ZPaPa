@@ -8,6 +8,7 @@ import {
   SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_QUEUE_SQL,
   WORK_ITEM_COLLABORATION_SQL,
+  WORK_ITEM_COLLABORATION_SQL_2,
   SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
@@ -105,6 +106,11 @@ const definitions = [
     id: "0010_workitem_collaboration",
     checksumInput: [WORK_ITEM_COLLABORATION_SQL],
   },
+  /* 0011（协作域 X0.2）：Activity（sequence 原子生成）+ Decision。 */
+  {
+    id: "0011_workitem_activity_decision",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL_2],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -161,6 +167,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0008_squad_run_cause") db.exec(SQUAD_RUN_CAUSE_SQL);
       else if (migration.id === "0009_squad_run_queue") db.exec(SQUAD_RUN_QUEUE_SQL);
       else if (migration.id === "0010_workitem_collaboration") db.exec(WORK_ITEM_COLLABORATION_SQL);
+      else if (migration.id === "0011_workitem_activity_decision") db.exec(WORK_ITEM_COLLABORATION_SQL_2);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

@@ -80,6 +80,13 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP TABLE work_item_comment_reactions",
     "DROP TABLE work_item_comments",
   ],
+  // 0011（协作域 X0.2）：Activity + Decision。
+  "0011_workitem_activity_decision": [
+    "DROP INDEX idx_work_item_decisions_item",
+    "DROP INDEX idx_work_item_activities_item",
+    "DROP TABLE work_item_decisions",
+    "DROP TABLE work_item_activities",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [

@@ -396,3 +396,60 @@ export const WORK_ITEM_COLLABORATION_SQL = `
   CREATE INDEX IF NOT EXISTS idx_work_item_comment_reactions_comment
     ON work_item_comment_reactions(comment_id);
 `;
+
+/* 0011（协作域 X0.2）：Activity（每 WorkItem 单调 sequence——INSERT…SELECT COALESCE(MAX)+1 原子生成，
+   多窗口 Host 共用同一 tasks-index 库文件，禁止 JS 先查后插/内存 counter）与 Decision（只增不改）。
+   不给 work_items 建外键（只归档不硬删，同前）。 */
+export const WORK_ITEM_COLLABORATION_SQL_2 = `
+  CREATE TABLE IF NOT EXISTS work_item_activities (
+    id                TEXT PRIMARY KEY,
+    workspace_key     TEXT NOT NULL,
+    workspace_path    TEXT NOT NULL,
+    work_item_id      TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    sequence          INTEGER NOT NULL,
+    occurred_at       INTEGER NOT NULL,
+    actor_kind        TEXT NOT NULL,
+    actor_id          TEXT NOT NULL,
+    actor_display_name TEXT,
+    source_run_id     TEXT,
+    initiated_by_kind TEXT NOT NULL,
+    initiated_by_id   TEXT NOT NULL,
+    comment_id        TEXT,
+    decision_id       TEXT,
+    dispatch_event_id TEXT,
+    payload_json      TEXT NOT NULL DEFAULT '{}',
+    dedup_key         TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, sequence),
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_activities_item
+    ON work_item_activities(workspace_key, work_item_id, sequence);
+  CREATE TABLE IF NOT EXISTS work_item_decisions (
+    id                  TEXT PRIMARY KEY,
+    workspace_key       TEXT NOT NULL,
+    workspace_path      TEXT NOT NULL,
+    work_item_id        TEXT NOT NULL,
+    thread_id           TEXT,
+    parent_decision_id  TEXT,
+    author_kind         TEXT NOT NULL,
+    author_id           TEXT NOT NULL,
+    source_run_id       TEXT,
+    initiated_by_kind   TEXT NOT NULL,
+    initiated_by_id     TEXT NOT NULL,
+    kind                TEXT NOT NULL,
+    subject             TEXT NOT NULL,
+    selection_json      TEXT NOT NULL DEFAULT '{}',
+    rationale           TEXT,
+    evidence_json       TEXT NOT NULL DEFAULT '[]',
+    effective_at        INTEGER NOT NULL,
+    dedup_key           TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_decisions_item
+    ON work_item_decisions(workspace_key, work_item_id, effective_at, id);
+`;
