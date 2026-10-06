@@ -58,17 +58,18 @@ function rowToReaction(row: ReactionRow): WorkItemCommentReactionRecord {
 export function createWorkItemCommentReactionRepo(db: DatabaseSync): WorkItemCommentReactionRepo {
   return {
     add(input) {
+      // 注意：0010 表没有 author_display_name 列（回应轻实体不存展示名快照——
+      // 曾误写过该列导致调用即抛 SQL logic error，X1.2 评审发现，本轮修复）。
       db.prepare(
         `INSERT OR IGNORE INTO work_item_comment_reactions (
-          id, workspace_key, comment_id, author_kind, author_id, author_display_name, emoji, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, workspace_key, comment_id, author_kind, author_id, emoji, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         input.id,
         input.workspaceKey,
         input.commentId,
         input.author.kind,
         input.author.id,
-        input.author.displayName ?? null,
         input.emoji,
         input.createdAt,
       );
