@@ -26,6 +26,13 @@ export interface WorkItemRepo {
   /** 写入一行。调用方必须已校验环与深度（WORK_ITEM_MAX_DEPTH / 祖父链），本层不查父链。 */
   insert(item: WorkItem): void;
   get(id: string): WorkItem | null;
+  /**
+   * 含归档读回（协作域 §12.1-12：归档工作项仍允许评论写入，但派发必须被拒并**如实上报**）。
+   * `get` 把归档行当不存在，调用方拿不到「归档」与「不存在」的区别，也读不到归档行的 assignee——
+   * 于是「评论照写 + blocked receipt」里那个被拒的目标就无从谈起。此法只读，不改归档语义。
+   * 旧库/归档行仍是同一张表，无迁移。
+   */
+  getIncludingArchived(id: string): WorkItem | null;
   listChildren(parentId: string): WorkItem[];
   /** 本 workspace 的全部在用工作项（不含归档）**：最小视图快照与「这批子项都完事了吗」的取数口。 */
   listByWorkspace(workspaceKey: string): WorkItem[];
@@ -117,6 +124,13 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
       const row = db
         .prepare("SELECT * FROM work_items WHERE id = ? AND archived_at IS NULL")
         .get(id) as WorkItemRow | undefined;
+      return row ? rowToWorkItem(row) : null;
+    },
+
+    getIncludingArchived(id) {
+      const row = db.prepare("SELECT * FROM work_items WHERE id = ?").get(id) as
+        | WorkItemRow
+        | undefined;
       return row ? rowToWorkItem(row) : null;
     },
 

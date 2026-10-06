@@ -1,3 +1,7 @@
+/* oxlint-disable eslint(max-lines) -- 冻结 SQL 累积文件：每条迁移按「只加不改、SQL 冻结」纪律
+   在同文件追加 DDL（0012 起过 400 行门槛）。拆文件会改动已发布迁移的 import 路径（迁移账本
+   checksum 绑定的是 SQL 文本，与文件位置无关，但拆分的收益只是行数）——本条理由与
+   squadRunRepo 的 max-lines 例外同款：文件本身就是按顺序累积的单一对象集。 */
 // 0001 接管已有分散建表；发布后保持声明不变，后续变更新增 migration。
 export const TASK_INDEX_SCHEMA = `
       CREATE TABLE IF NOT EXISTS tasks (
@@ -452,4 +456,33 @@ export const WORK_ITEM_COLLABORATION_SQL_2 = `
   );
   CREATE INDEX IF NOT EXISTS idx_work_item_decisions_item
     ON work_item_decisions(workspace_key, work_item_id, effective_at, id);
+`;
+
+/* 0012（协作域 X1.2）：评论派发 receipt 表。一行 = 一次「评论请求某目标 agent」的事实。
+   · dispatch_key 是**请求身份**（`computeCommentDispatchKey` 独立构造，§8.1：不复用 eventKey
+     拼接格式）；主键唯一 ⇒ 同键重投由存储层兜住，不需要先查后插。
+   · outcome 闭集读写双闸（见 commentDispatchReceiptRepo 的 readOutcome/assertOutcome）：
+     枚举外值读回/写入一律抛，静默按默认处理会让「这条请求到底派没派出去」变成没人知道的事。
+   · 两个索引都服务读路径：item 索引给时间线取某工作项的 receipt；outcome 索引给启动重投
+     （§8.4-1 扫描未完成 receipt）按 workspace + 状态取数。
+   · 不给 work_items 建外键（只归档不硬删，同前）。 */
+export const COMMENT_DISPATCH_RECEIPT_SQL = `
+  CREATE TABLE IF NOT EXISTS comment_dispatch_receipts (
+    dispatch_key     TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    work_item_id     TEXT NOT NULL,
+    target_agent_id  TEXT NOT NULL,
+    comment_id       TEXT NOT NULL,
+    thread_id        TEXT NOT NULL,
+    source           TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    detail_json      TEXT NOT NULL DEFAULT '{}',
+    attempt_count    INTEGER NOT NULL DEFAULT 1,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_comment_dispatch_receipts_item
+    ON comment_dispatch_receipts(workspace_key, work_item_id, created_at, dispatch_key);
+  CREATE INDEX IF NOT EXISTS idx_comment_dispatch_receipts_outcome
+    ON comment_dispatch_receipts(workspace_key, outcome);
 `;

@@ -87,6 +87,12 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP TABLE work_item_decisions",
     "DROP TABLE work_item_activities",
   ],
+  // 0012（协作域 X1.2）：评论派发 receipt（两索引先于表 drop）。
+  "0012_comment_dispatch_receipts": [
+    "DROP INDEX idx_comment_dispatch_receipts_outcome",
+    "DROP INDEX idx_comment_dispatch_receipts_item",
+    "DROP TABLE comment_dispatch_receipts",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [

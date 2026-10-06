@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   AUTOMATION_SCHEMA,
+  COMMENT_DISPATCH_RECEIPT_SQL,
   INBOX_ITEM_SCHEMA,
   OFF_PEAK_SCHEMA,
   SQUAD_RUN_CAUSE_SQL,
@@ -111,6 +112,11 @@ const definitions = [
     id: "0011_workitem_activity_decision",
     checksumInput: [WORK_ITEM_COLLABORATION_SQL_2],
   },
+  /* 0012（协作域 X1.2）：评论派发 receipt（dispatch_key 主键 + outcome 闭集）。 */
+  {
+    id: "0012_comment_dispatch_receipts",
+    checksumInput: [COMMENT_DISPATCH_RECEIPT_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -167,7 +173,10 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0008_squad_run_cause") db.exec(SQUAD_RUN_CAUSE_SQL);
       else if (migration.id === "0009_squad_run_queue") db.exec(SQUAD_RUN_QUEUE_SQL);
       else if (migration.id === "0010_workitem_collaboration") db.exec(WORK_ITEM_COLLABORATION_SQL);
-      else if (migration.id === "0011_workitem_activity_decision") db.exec(WORK_ITEM_COLLABORATION_SQL_2);
+      else if (migration.id === "0011_workitem_activity_decision")
+        db.exec(WORK_ITEM_COLLABORATION_SQL_2);
+      else if (migration.id === "0012_comment_dispatch_receipts")
+        db.exec(COMMENT_DISPATCH_RECEIPT_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

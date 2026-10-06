@@ -62,6 +62,8 @@ export type AddWorkItemCommentInput = {
   workspaceKey: string;
   workspacePath: string;
   workItemId: string;
+  /** 线程根 id：回复 = 父评论的 threadId（由服务层从父评论带过来，§3.2）；缺省 = 本评论 id（根评论）。 */
+  threadId?: string;
   parentCommentId?: string;
   author: AuthorRef;
   sourceRun?: SourceRunRef;
@@ -211,7 +213,8 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
         throw new Error("评论正文不得为空白（spec §3.2）：空白评论没有可审计的沟通内容。");
       }
       const now = input.createdAt;
-      const threadId = input.id; // 根评论 threadId = id（§3.2）；回复的 threadId 由服务层（X1.2）从父评论带过来。
+      // 根评论 threadId = id（§3.2）；回复的 threadId 由服务层（X1.2）从父评论带过来（input.threadId）。
+      const threadId = input.threadId ?? input.id;
       // 幂等（唯一索引 + 存在性返回，§8.1）：重试返回既存行，不写第二行。
       const existing = input.clientRequestId
         ? (db
