@@ -156,10 +156,10 @@ test("C1 同对别的 run 的残行：先结算它（释放活跃集/容量）�
   assert.equal(trees[0]!.branch, f.branch);
 });
 
-test("C1 分支被别的 run 的活树占着：等待型结论（不结算、不复用别人的树、不建第二行）", async () => {
+test("C1+P2-1 分支被别的 run 的活树占着：结算本行并释放分支占位（不结算别人的活树、不复用、不建第二行）", async () => {
   const f = await setup();
 
-  /* ① 别的 run 开了树后失败（树未回收 = 残枝），本请求随后建树失败 ⇒ 本请求留下残行。 */
+  /* ① 别的 run 开了树后失败（树未回收 = 占位），本请求随后建树失败 ⇒ 本请求留下残行。 */
   const other = await f.openFor("c1-other");
   assert.equal(other.kind, "opened");
   await f.runtime.lifecycle.failMemberRun({ runId: "c1-other", reason: "c1-fixture" });
@@ -167,7 +167,8 @@ test("C1 分支被别的 run 的活树占着：等待型结论（不结算、不
   assert.equal(f.row("c1-run")?.status, "open");
   assert.equal((await f.trees()).length, 1, "前置：那棵树是 c1-other 的（未回收）");
 
-  /* ② 重投：分支上仍挂着活树 ⇒ 等待型（既不复用、也不结算、也不响亮失败）。 */
+  /* ② 重投：分支上仍挂着活树 ⇒ 等待型；但本行**从未建出过树**（同一对还有 c1-other 那条行 ⇒
+     那棵活树另有来路）⇒ P2-1 修法①：结算本行 + 释放分支占位（请求身份保留在 open 行上）。 */
   const outcome = await f.openFor("c1-run");
   assert.deepEqual(
     outcome,
@@ -176,10 +177,16 @@ test("C1 分支被别的 run 的活树占着：等待型结论（不结算、不
   );
   assert.deepEqual(
     f.settled.filter((event) => event.runId === "c1-run"),
-    [],
-    "本行不得被结算（结算是终局 ⇒ 这条请求从此没有可执行的 run 身份）",
+    [{ runId: "c1-run", status: "discarded" }],
+    "等待行结算恰一次（容量与活跃集如实释放；修前这里不结算 ⇒ 占位永不被收）",
   );
-  assert.equal(f.row("c1-run")?.status, "open", "台账一行不动（等回收器清掉残枝后重投自愈）");
+  assert.deepEqual(
+    f.settled.filter((event) => event.runId === "c1-other"),
+    [{ runId: "c1-other", status: "discarded" }],
+    "别人的行只被它自己的失败出口结算一次（清扫不得二次动它）",
+  );
+  assert.equal(f.row("c1-run")?.branch, null, "分支占位已释放（本行不持有任何树 ⇒ 不再钉住别人的占位）");
+  assert.equal(f.row("c1-run")?.status, "open", "请求身份保留：行仍在 open（runId = 请求身份，不换）");
   assert.equal((await f.trees()).length, 1, "不得复用别人的树、也不得再建一棵");
   assert.deepEqual(
     f.runtime.squadRunRepo.listByWorkspace(WS).map((r) => [r.runId, r.status]),
@@ -191,7 +198,7 @@ test("C1 分支被别的 run 的活树占着：等待型结论（不结算、不
   );
 });
 
-test("C1 只有同名残枝（无活树）也不白结算：占着名字就等待型，残枝清掉后自愈成 opened", async () => {
+test("C1+P2-1 只有同名残枝（无活树）：结算一次并释放占位；之后再重投只读等待，不重复扇出结算事实", async () => {
   const f = await setup();
 
   /* ① 残枝占着分支名（先建分支、再让它挡住建树）⇒ 本请求留下残行。 */
@@ -199,59 +206,123 @@ test("C1 只有同名残枝（无活树）也不白结算：占着名字就等�
   await assert.rejects(() => f.openFor("c1-run"));
   assert.deepEqual(await f.trees(), [], "前置：残枝没有工作树（只有分支 ref）");
 
-  /* ② 残枝还在 ⇒ 等待型；**不得**结算（结算 + 重开必然撞名，白翻一趟台账还会重复扇出结算事实）。 */
+  /* ② 残枝还在 ⇒ 等待型：结算本行（恰一次）+ 释放分支占位（不白翻台账：结算后不重开，
+        因为现在一定建不出树来 —— 等回收器把残枝收掉）。 */
   assert.deepEqual(
     await f.openFor("c1-run"),
     { kind: "residual_blocked", branch: f.branch },
-    "分支名被残枝占着 ⇒ 等待型（等回收器按「不在活跃集」回收它）",
+    "分支名被残枝占着 ⇒ 等待型（回收器第二遍按「不在活跃集」把残枝收掉）",
   );
-  assert.deepEqual(
-    f.settled.filter((event) => event.runId === "c1-run"),
-    [],
-    "建不出树就不结算：结算一次为限，不得把台账翻了又翻（重复扇出会让排队推进空转）",
-  );
-  assert.equal(f.row("c1-run")?.status, "open");
-
-  /* ③ 回收器清掉残枝 ⇒ 重投自愈：结算一次 + 同一 runId 重开新树。 */
-  assert.equal((await f.git(["branch", "-D", f.branch])).code, 0);
-  const healed = await f.openFor("c1-run");
-  assert.equal(healed.kind, "opened", "残枝清掉后同一条重投必须自愈（不再停留等待型）");
   assert.deepEqual(
     f.settled,
     [{ runId: "c1-run", status: "discarded" }],
-    "自愈那一次恰结算一次（结算事实只在真正重开时扇出）",
+    "结算一次为限（重复扇出会让排队推进空转）",
   );
+  assert.equal(f.row("c1-run")?.branch, null);
+  assert.equal(f.row("c1-run")?.status, "open");
+
+  /* ③ 占位没消失之前再重投：只读等待（同一行、同一结论、零新结算）。 */
+  assert.deepEqual(await f.openFor("c1-run"), { kind: "residual_blocked", branch: f.branch });
+  assert.deepEqual(f.settled, [{ runId: "c1-run", status: "discarded" }], "等待态重投幂等");
+
+  /* ④ 回收器清掉残枝（本行已不钉住它）⇒ 重投自愈：结算 + 同一 runId 重开新树。 */
+  const reaped = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
+  assert.deepEqual(reaped.reclaimedBranches, [f.branch], "残枝进回收面（修前被等待行钉住 ⇒ 不收）");
+  const healed = await f.openFor("c1-run");
+  assert.equal(healed.kind, "opened", "残枝清掉后同一条重投必须自愈（不再停留等待型）");
   assert.equal((await f.trees()).length, 1, "恰一棵树");
 });
 
-test("C1 判据（纯函数）：有行无树的四条件 + 「可结算」还要分支上无任何占用", async () => {
+test("C1+P2-1 判据（纯函数）：有行无树的四条件 + 「活树另有来路」的扩展 + 「可结算后立刻重开」还要分支无占用", async () => {
   const live = new Set(["squad/member/wi/a"]);
   const row = (over: Record<string, unknown> = {}) =>
     ({ status: "open", sessionId: null, branch: "squad/member/wi/a", isLeaderTask: false, ...over }) as never;
-  assert.equal(isTreelessOpenMemberRun(row(), live), false, "分支挂着活树 ⇒ 不是「从未建过树」");
-  assert.equal(isTreelessOpenMemberRun(row({ branch: "squad/member/wi/free" }), live), true);
-  assert.equal(isTreelessOpenMemberRun(row({ sessionId: "s-1", branch: "squad/member/wi/free" }), live), false,
-    "有会话 = 至少走过了建树那一步");
-  assert.equal(isTreelessOpenMemberRun(row({ status: "produced", branch: "squad/member/wi/free" }), live), false,
-    "produced 意味着产出过（树必然存在过）");
-  assert.equal(isTreelessOpenMemberRun(row({ isLeaderTask: true, branch: null }), live), false,
-    "队长行本来就没有树（branch=null），不适用本判据");
-  assert.equal(isTreelessOpenMemberRun(row({ branch: null }), live), false, "没有分支计划的行不是残行");
+
+  assert.equal(
+    isTreelessOpenMemberRun(row(), { liveTreeBranches: live, liveTreeOfOtherRow: false }),
+    false,
+    "只有本行一条 run 行时，分支挂着活树 ⇒ 可能是本行崩溃前建的树 ⇒ 不是「从未建过树」",
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row(), { liveTreeBranches: live, liveTreeOfOtherRow: true }),
+    true,
+    "P2-1 扩展：同一对还有别的 run 行 ⇒ 那棵活树另有来路（一行一树）⇒ 本行仍是无树残行",
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row({ branch: "squad/member/wi/free" }), {
+      liveTreeBranches: live,
+      liveTreeOfOtherRow: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row({ sessionId: "s-1", branch: "squad/member/wi/free" }), {
+      liveTreeBranches: live,
+      liveTreeOfOtherRow: true,
+    }),
+    false,
+    "有会话 = 至少走过了建树那一步（「别的行」这条旁证翻不动它）",
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row({ status: "produced", branch: "squad/member/wi/free" }), {
+      liveTreeBranches: live,
+      liveTreeOfOtherRow: true,
+    }),
+    false,
+    "produced 意味着产出过（树必然存在过）",
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row({ isLeaderTask: true, branch: null }), {
+      liveTreeBranches: live,
+      liveTreeOfOtherRow: true,
+    }),
+    false,
+    "队长行本来就没有树（branch=null），不适用本判据",
+  );
+  assert.equal(
+    isTreelessOpenMemberRun(row({ branch: null }), {
+      liveTreeBranches: live,
+      liveTreeOfOtherRow: true,
+    }),
+    false,
+    "没有分支计划的行不是残行",
+  );
 
   const free = row({ branch: "squad/member/wi/free" });
   assert.equal(
-    isSettleableResidualMemberRun(free, { liveTreeBranches: live, branchRefExists: false }),
+    isSettleableResidualMemberRun(free, {
+      liveTreeBranches: live,
+      branchRefExists: false,
+      liveTreeOfOtherRow: false,
+    }),
     true,
     "无活树 + 无同名分支 ⇒ 结算后重开一定建得出树",
   );
   assert.equal(
-    isSettleableResidualMemberRun(free, { liveTreeBranches: live, branchRefExists: true }),
+    isSettleableResidualMemberRun(free, {
+      liveTreeBranches: live,
+      branchRefExists: true,
+      liveTreeOfOtherRow: false,
+    }),
     false,
     "只剩残枝也算占用：`worktree add -b` 撞名 ⇒ 白结算一趟",
   );
   assert.equal(
-    isSettleableResidualMemberRun(row(), { liveTreeBranches: live, branchRefExists: false }),
+    isSettleableResidualMemberRun(row(), {
+      liveTreeBranches: live,
+      branchRefExists: false,
+      liveTreeOfOtherRow: false,
+    }),
     false,
-    "活树占着 ⇒ 不可结算（复用/删除别人工作面的风险都在这一格）",
+    "活树占着 ⇒ 不可「结算后立刻重开」（复用/删除别人工作面的风险都在这一格）",
+  );
+  assert.equal(
+    isSettleableResidualMemberRun(row(), {
+      liveTreeBranches: live,
+      branchRefExists: false,
+      liveTreeOfOtherRow: true,
+    }),
+    false,
+    "即便活树另有来路（本行确实无树），分支上还挂着树 ⇒ 建不出树来 ⇒ 走「结算 + 释放占位 + 等待」那条臂",
   );
 });

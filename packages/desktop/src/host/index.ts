@@ -3141,11 +3141,15 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
             : { ok: true, bridge: { kind: "deferred" } };
         }
         if (openOutcome.kind === "residual_blocked") {
-          /* C1（§8-P1）：本请求的台账行是残行（有行无树），而该分支**还被占着**——挂着别的 run
-             未回收的活树，或只剩同名的分支 ref（残枝）。既不能复用那棵树（可能是别人的工作面，
-             P2a 教训），也不能把请求判死：**等待型**（不建会话、不发 prompt）⇒ 评论 receipt 保持
-             未收敛（retry），等启动回收器清掉残枝后重投；那时同一入口会把残行结算并重开新树
-             （`opened`）而自愈。记 failed 会把一条本可自愈的请求写成终局失败（旧行为）。 */
+          /* C1（§8-P1）等待型；P2-1 修复轮改写了处置（结论不变）：本请求的台账行是残行（有行无树），
+             而该分支**还被占着**——挂着别的 run 未回收的活树，或只剩同名的分支 ref（残枝）。
+             既不能复用那棵树（可能是别人的工作面，P2a 教训），也不能把请求判死：**等待型**（不建会话、
+             不发 prompt）⇒ 评论 receipt 保持未收敛（retry），等启动回收器清掉占位后重投。
+             P2-1：这条等待型**不再把占位钉死** —— 本行从未建出过树时（同一对还有别的 run 行，
+             分支上的活树另有来路；或只有同名残枝），生命周期层会**结算本行并释放分支占位**
+             （行仍在 open：runId = `receipt.dispatchKey` 是请求身份，不换），于是分支离开活跃集 ⇒
+             回收器能收净占位/残枝 ⇒ 同一条重投随后重新挂计划 + 建树（`opened`）自愈。
+             记 failed 会把一条本可自愈的请求写成终局失败（旧行为）。 */
           const reason = `member run 的分支上还有未回收的工作树：${openOutcome.branch}`;
           logger.info(
             `[squad] dispatch waiting ${triggerLabel} workItem=${msg.workItemId}` +

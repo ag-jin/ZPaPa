@@ -263,14 +263,22 @@ test("X2.2 复验发现：残枝未回收时同对重放确定性失败，台账
     "receipt 仍停 deferred：下次扫描仍会读到它",
   );
 
-  /* 再扫一次：残行（有行无树）+ 分支仍被未回收的活树占着 ⇒ **等待型结论**（C1 插队轮修）：
-     既不复用别人的树，也不把这条请求结算掉（结算是终局 ⇒ 它从此没有可执行的 run 身份）。
-     修前这里返回 `{ kind: "already_registered" }`，host 手里没有工作树 ⇒ 按队员缺树判
+  /* 再扫一次：残行（有行无树）+ 分支仍被未回收的活树占着 ⇒ **等待型结论**（C1 插队轮修；P2-1
+     修复轮改写了处置）：既不复用别人的树，也不把这条请求结算掉（结算是终局 ⇒ 它从此没有可执行的
+     run 身份）。修前这里返回 `{ kind: "already_registered" }`，host 手里没有工作树 ⇒ 按队员缺树判
      **permanent 失败** ⇒ 评论 receipt 落终局 failed —— 即使回收器随后会清残枝，请求也永不执行。
-     修后 receipt 保持未收敛，等回收器清残枝后重投自愈（那时残行按 `opened` 重开新树）。 */
+     P2-1：结论不变（仍是等待型），但这一格**不再钉住占位** —— 本行从未建出过树（同一对还有别的
+     run 行 ⇒ 那棵活树另有来路），故按行级判据**结算本行并释放分支占位**：分支离开活跃集 ⇒
+     回收器能把占位/残枝收净 ⇒ 同一条重投随后重开新树（回路闭合，见
+     p21ResidualWaitSelfHealing.test.ts 与 c1WaitExitAndRepeatSettlement.test.ts 的 P2-1 用例）。 */
   assert.deepEqual(await f.openFor(f.dispatchKey, "comment"), {
     kind: "residual_blocked",
     branch: f.otherBranch,
   });
-  assert.equal(await f.branchExists(f.otherBranch), true, "幂等臂不回补残枝：残枝只能等回收器");
+  assert.equal(await f.branchExists(f.otherBranch), true, "本次调用不自行回收：残枝/占位归回收器（它在活跃集外了）");
+  assert.equal(
+    f.runtime.squadRunRepo.get(f.dispatchKey)?.branch,
+    null,
+    "等待行已释放分支占位（结算过）⇒ 回收器下一轮收得掉残枝（修前：挂在 open 行上，永不被收）",
+  );
 });

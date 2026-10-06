@@ -1,11 +1,15 @@
 /* C1 插队轮独立复验（test-verifier）：**「等待型」的出口** 与 **跨调用重复结算** 两个判据面。
 
    本文件只回答三个问题（不重复实现者用例的功能面）：
-   ① 等待型（`residual_blocked`）真的是「可自愈」的吗 —— 实现者与用例注释都写
-      「等回收器按『不在活跃集』回收它 / 清掉残枝后重投自愈」，这里把**回收器放进这条序列**实测；
+   ① 等待型（`residual_blocked`）的**自愈出口**在哪里 —— 复验登记时这条回路不成立（等待行把分支
+      钉在活跃集里 ⇒ 占位永不被收），**P2-1 修复轮已改写这两条用例**：现在等待行会按**行级判据**
+      结算并**释放分支占位**（本行从未建出过树时），占位随之可被回收器收净、同一条重投重开新树；
    ② 「一次为限」在**跨调用**尺度上的边界：同一行会不会被两次调用各结算一次、后果是什么；
    ③ 矩阵里还没被走到的两格：分支上挂着**本请求自己**的活树（同对无别的 run 行）⇒ R5 保真；
       以及 A5（名册缺席）路径下 C1 的残行臂照旧。
+
+   两条带「P2-1（复验改写）」标记的用例是复验登记的「自愈不成立」两格的**改写版**（修法①落地后
+   断言新行为）；本文件其余用例的断言一个未动。
 
    期望值全部取契约面可观察事实：`OpenMemberRunResult` 判别值、`squad_runs` 行、结算 hub 事件、
    `WorktreeManager.list`、分支 ref（真 git 命令）、`reapStartupOrphans` 的 reclaimed/kept/
@@ -111,9 +115,9 @@ test("C1 矩阵（未被走到的格）：分支上挂着**本请求自己**的�
   assert.deepEqual(f.ledger(), [["c1-own", "open"]]);
 });
 
-test("C1 等待型自愈主张**不成立**（复验登记）：占位是别人的活树时，回收器收不掉它 —— 等待行把分支钉在活跃集里", async () => {
+test("P2-1（复验改写）：占位是别人的活树 ⇒ 重投结算本行并释放占位 ⇒ 回收器收净 ⇒ 后续重投重开新树", async () => {
   const f = await setup();
-  /* ① 别的 run 开了树后失败收口：行离开活跃集，但树按 spec §6.6 留给启动回收器。 */
+  /* ① 别的 run 开了树后失败收口：行离开活跃集，但树按 spec §6.6 留给启动回收器（占位）。 */
   const other = await f.openFor("c1-other");
   assert.equal(other.kind, "opened");
   await f.runtime.lifecycle.failMemberRun({ runId: "c1-other", reason: "c1-verify-fixture" });
@@ -123,66 +127,81 @@ test("C1 等待型自愈主张**不成立**（复验登记）：占位是别人�
   await assert.rejects(() => f.openFor("c1-run"), /已被另一工作树占用|already exists/);
   assert.equal(f.row("c1-run")?.status, "open");
 
-  /* ③ 重投 ⇒ 等待型（活树占着，且同对还有别的 run 行 ⇒ 不是本行的树）。 */
+  /* ③ 重投 ⇒ 等待型；P2-1 修法①：本行**从未建出过树**（同一对还有 c1-other 那条行 ⇒ 挂着的活树
+     另有来路）⇒ 结算本行（恰一次）+ **释放分支占位**（行仍在 open：runId = 请求身份，不换）。 */
   assert.deepEqual(await f.openFor("c1-run"), { kind: "residual_blocked", branch: f.branch });
-
-  /* ④ 关键：等待型声称「等回收器清掉占位后重投自愈」——把回收器放进这条序列实测。
-     等待行（status=open、branch=f.branch）本身把该分支钉在 `computeActiveBranches` 里
-     （SQUAD_RUN_ACTIVE_STATUSES 含 open），而回收器的保留判据恰是「分支在活跃集里」
-     ⇒ 占位树与分支一个字节都不会被动。 */
-  const reap = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
-  assert.deepEqual(reap.kept, [f.dirName], "占位树进 kept（活跃分支）：回收器按设计不碰它");
-  assert.deepEqual(reap.reclaimed, [], "回收面为空：没有「不在活跃集」的树");
-  assert.equal(await f.branchExists(f.branch), true, "分支也收不掉（第二遍按 active.has(branch) 跳过）");
-  assert.ok(
-    !reap.reclaimedBranches.includes(f.branch),
-    `分支不在回收面（reclaimedBranches=${JSON.stringify(reap.reclaimedBranches)}）`,
-  );
-  assert.equal((await f.trees()).length, 1, "占位树仍在");
   assert.deepEqual(
-    await f.openFor("c1-run"),
-    { kind: "residual_blocked", branch: f.branch },
-    "回收之后重投仍是等待型：这条回路**不会**自己走通（没有自愈出口）",
+    f.settled,
+    [
+      { runId: "c1-other", status: "discarded" },
+      { runId: "c1-run", status: "discarded" },
+    ],
+    "两条行各结算一次：占树行由失败出口、等待行由「释放占位」那一次扇出",
   );
+  assert.equal(f.row("c1-run")?.status, "open", "请求身份保留（runId = receipt.dispatchKey）");
+  assert.equal(f.row("c1-run")?.branch, null, "分支占位已释放 ⇒ 分支离开活跃集");
 
-  /* ⑤ 唯一能解开钉住的动作是「把那行移出活跃集」——但生产里没有任何角色会对这条等待行做这件事
-     （它没有会话 ⇒ 永远等不到终态出口；A2 只兜排队行）。这里只用来证明「钉住」的因果：
-     行一离开活跃集，回收器下一轮就把占位收干净。 */
-  await f.runtime.lifecycle.failMemberRun({ runId: "c1-run", reason: "c1-verify-only-exit" });
-  const reapAfter = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
-  assert.deepEqual(reapAfter.reclaimed, [f.dirName], "行离开活跃集 ⇒ 占位树才进回收面");
-  assert.deepEqual(reapAfter.reclaimedBranches, [f.branch], "连带分支一起收（清理是重派发的前置）");
+  /* ④ 关键（修前这一段的断言全部相反：kept 不动、一个字节不收）：
+     等待行不再把占位钉在活跃集里 ⇒ 回收器能收净占位树与分支。 */
+  const reap = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
+  assert.deepEqual(reap.reclaimed, [f.dirName], "占位树进回收面");
+  assert.deepEqual(reap.reclaimedBranches, [f.branch], "分支连带一起收（清理是重派发的前置）");
+  assert.deepEqual(reap.kept, [], "没有留在原地的东西");
   assert.equal(await f.branchExists(f.branch), false);
+  assert.deepEqual(await f.trees(), []);
+
+  /* ⑤ 后续重投（同一条行、同一个 runId）：分支空出 ⇒ 重新挂计划 + 建树 ⇒ 回路闭合。 */
+  const opened = await f.openFor("c1-run");
+  assert.equal(opened.kind, "opened", "占位被收净后同一条重投必须能开新树（自愈出口存在）");
+  assert.equal(opened.kind === "opened" ? opened.branch : "", f.branch);
+  assert.equal(f.row("c1-run")?.status, "open");
+  assert.equal((await f.trees()).length, 1, "恰一棵新树");
+  assert.deepEqual(
+    f.settled,
+    [
+      { runId: "c1-other", status: "discarded" },
+      { runId: "c1-run", status: "discarded" },
+    ],
+    "重开不再扇出结算事实（结算只发生在释放占位那一次）",
+  );
 });
 
-test("C1 等待型自愈主张**不成立**（复验登记）：只有同名残枝时，回收器第二遍同样按活跃集跳过它", async () => {
+test("P2-1（复验改写）：只有同名残枝 ⇒ 重投结算本行并释放占位 ⇒ 回收器第二遍收掉残枝 ⇒ 后续重投重开新树", async () => {
   const f = await setup();
   const made = await f.git(["branch", f.branch, "main"]);
   assert.equal(made.code, 0, `前置：先落一条残枝（stderr=${made.stderr}）`);
   await assert.rejects(() => f.openFor("c1-run"), /已被另一工作树占用|already exists/);
   assert.deepEqual(await f.trees(), [], "前置：残枝没有工作树");
 
+  /* 残枝占着名字 ⇒ 等待型：结算本行（恰一次）+ 释放分支占位（现在建不出树来，不白重开）。 */
   assert.deepEqual(
     await f.openFor("c1-run"),
     { kind: "residual_blocked", branch: f.branch },
     "残枝占着名字 ⇒ 等待型（`worktree add -b` 必然撞名）",
   );
-  assert.equal(f.row("c1-run")?.status, "open", "等待行留在活跃集");
-
-  const reap = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
-  assert.equal(await f.branchExists(f.branch), true, "残枝不被回收：该分支挂在一条 open 行上 ⇒ active.has(branch) ⇒ skip");
-  assert.ok(!reap.reclaimedBranches.includes(f.branch));
   assert.deepEqual(
-    await f.openFor("c1-run"),
-    { kind: "residual_blocked", branch: f.branch },
-    "下一轮启动重投仍是等待型（自愈回路未闭合）",
+    f.settled,
+    [{ runId: "c1-run", status: "discarded" }],
+    "等待行按行级判据结算恰一次",
   );
+  assert.equal(f.row("c1-run")?.status, "open", "请求身份保留（行仍在 open）");
+  assert.equal(f.row("c1-run")?.branch, null, "分支占位已释放");
 
-  /* 反向半边（把这一格的可解条件钉住）：只有把等待行移出活跃集，残枝才会被清掉。 */
-  await f.runtime.lifecycle.failMemberRun({ runId: "c1-run", reason: "c1-verify-only-exit" });
-  const reapAfter = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
-  assert.deepEqual(reapAfter.reclaimedBranches, [f.branch], "行离开活跃集 ⇒ 残枝才回收");
-  assert.equal(await f.branchExists(f.branch), false);
+  /* 关键（修前：残枝挂在 open 行上 ⇒ active.has(branch) ⇒ 第二遍永不被收）。 */
+  const reap = await f.runtime.lifecycle.reapStartupOrphans({ workspaceKey: WS });
+  assert.deepEqual(reap.reclaimedBranches, [f.branch], "残枝进回收面并删除");
+  assert.equal(await f.branchExists(f.branch), false, "分支名已释放");
+
+  /* 后续重投（同一条行、同一个 runId）：残枝清掉 ⇒ 重开新树。 */
+  const opened = await f.openFor("c1-run");
+  assert.equal(opened.kind, "opened", "残枝清掉后同一条重投必须能开新树（回路闭合）");
+  assert.equal(f.row("c1-run")?.branch, f.branch);
+  assert.equal((await f.trees()).length, 1, "恰一棵树");
+  assert.deepEqual(
+    f.settled,
+    [{ runId: "c1-run", status: "discarded" }],
+    "重开不再扇出结算事实",
+  );
 });
 
 test("C1 跨调用结算（a）：残行被别的请求清扫一次后，不再被第二次结算；同一请求重投只命中 R5", async () => {
