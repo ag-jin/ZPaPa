@@ -245,3 +245,36 @@ test("读历史不过门禁：实验关掉后 listSquadRuns 照常读到（同�
     "读历史不是新派发：开关关闭不拦读取",
   );
 });
+
+// ---------- ④ 第三个口径（欠账 #13，2026-10-07 裁定）----------
+
+/* **只加不改**：呈现用分页历史（`listSquadRunHistory`）是**第三口径**，它的加入不得动上面
+   两条口径的任何语义。本用例把「三个口径各自显式」钉在同一份台账上：全量 = 全状态 ASC、
+   活跃集 = 只未合并、分页 = 一页 + 游标且最新在前。 */
+test("三口径共存：分页历史加入后，全量（listSquadRuns）与活跃集（快照）逐字不变", async () => {
+  const { squadRuntimeService, makeRuntime } = await makeService();
+  const runtime = await makeRuntime(WS);
+  runtime.squadRunRepo.insert(run({ runId: "run-open", status: "open", createdAt: 1 }));
+  runtime.squadRunRepo.insert(run({ runId: "run-merged", status: "merged", createdAt: 2 }));
+
+  assert.deepEqual(
+    (await squadRuntimeService.listSquadRuns(WS)).map((record) => record.runId),
+    ["run-open", "run-merged"],
+    "全量口径：全状态、created_at ASC（宿主判定与批内时间线要全集）",
+  );
+  assert.deepEqual(
+    (await squadRuntimeService.getSnapshot(WS)).runs.map((record) => record.runId),
+    ["run-open"],
+    "活跃集口径：只列未合并的 run",
+  );
+
+  const page = await squadRuntimeService.listSquadRunHistory(WS, { limit: 1 });
+  assert.deepEqual(page.runs.map((record) => record.runId), ["run-merged"]);
+  assert.ok(page.nextCursor !== null, "还有下一页 ⇒ 给不透明游标");
+  const second = await squadRuntimeService.listSquadRunHistory(WS, {
+    limit: 1,
+    cursor: page.nextCursor,
+  });
+  assert.deepEqual(second.runs.map((record) => record.runId), ["run-open"]);
+  assert.equal(second.nextCursor, null, "到底");
+});

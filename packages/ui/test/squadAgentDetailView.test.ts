@@ -113,7 +113,7 @@ test("守卫｜详情页骨架：概览区 + 并展示（resolve 单源）+ i18n
 
 /* ---------- 4b：三区齐 + DM 直通 + 并发编辑 ---------- */
 
-test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史截断 50、DM 复用 startDraft+预填、并发输入 1-16", () => {
+test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史按页大小分页、DM 复用 startDraft+预填、并发输入 1-16", () => {
   const page = readSource("squad/SquadAgentDetailPage.tsx");
   assert.ok(page.includes('data-testid="squad-agent-detail-tasks"'), "任务表 testid");
   assert.ok(
@@ -121,13 +121,21 @@ test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史截断 50�
     "任务表按 assignee 过滤（快照前端过滤口径）",
   );
   assert.ok(page.includes('data-testid="squad-agent-detail-runs"'), "运行区 testid");
+  /* 欠账 #13（2026-10-07 裁定）：运行历史从「全量 + 前端过滤截断 50」改成**服务面分页**
+     （agentId 下推 SQL、游标翻页）。常量随语义改名（页大小，值仍 50），前端不再 slice；
+     倒序由服务面的 DESC 口径给出，比较器搬进 `squadRunHistoryViewModel.mergeRunHistoryPages`
+     （其逐格用例在同名的分页测试文件里）。 */
   assert.ok(
-    /RUN_HISTORY_LIMIT = 50;/.test(page) && page.includes("slice(0, RUN_HISTORY_LIMIT)"),
-    "全历史 + 截断 50（用户裁定④）",
+    /const RUN_HISTORY_PAGE_SIZE = 50;/.test(page) && page.includes("limit: RUN_HISTORY_PAGE_SIZE"),
+    "页大小 50（语义 = 一次取多少行，由游标继续）",
   );
   assert.ok(
-    page.includes("right.createdAt - left.createdAt"),
-    "倒序（最新在前）",
+    page.includes("mergeRunHistoryPages("),
+    "「加载更多」的追加走纯函数（按 runId 去重 + 保持倒序）",
+  );
+  assert.ok(
+    page.includes("runSettleReasonMessageId("),
+    "结算原因呈现走映射表（码值本地化、非闭集原文原样）",
   );
   assert.ok(
     page.includes('data-testid="squad-agent-detail-start-conversation"'),
@@ -165,8 +173,8 @@ test("守卫｜4b 三区与 DM：任务表只读过滤、运行历史截断 50�
     assert.ok(zhCN[key] && enUS[key], `两语缺 ${key}`);
   }
   assert.equal(
-    ph(zhCN["squad.agentDetail.runsOverflow"] ?? ""),
-    ph(enUS["squad.agentDetail.runsOverflow"] ?? ""),
-    "runsOverflow 占位符成对",
+    ph(zhCN["squad.agentDetail.runsLoaded"] ?? ""),
+    ph(enUS["squad.agentDetail.runsLoaded"] ?? ""),
+    "分页计数文案占位符成对",
   );
 });

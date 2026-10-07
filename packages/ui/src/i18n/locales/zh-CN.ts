@@ -4196,7 +4196,17 @@ const zhCN: Record<string, string> = {
   "squad.agentDetail.tasksOpen": "未终态",
   "squad.agentDetail.runsTitle": "运行历史",
   "squad.agentDetail.runsEmpty": "暂无运行记录",
-  "squad.agentDetail.runsOverflow": "（共 {count} 条，显示前 50）",
+  // 分页（欠账 #13）：旧的「共 {count} 条，显示前 50」被删除 —— 分页后它是一句不再成立的话。
+  "squad.agentDetail.runsMore": "加载更多",
+  "squad.agentDetail.runsMoreLoading": "加载中…",
+  "squad.agentDetail.runsMoreFailed": "加载更多失败",
+  "squad.agentDetail.runsLoaded": "已加载 {count} 条（还有更多）",
+  "squad.agentDetail.runsAllLoaded": "已全部加载",
+  // 结算原因：已知码值本地化；非闭集原文由界面原样显示（不经这里）。
+  "squad.agentDetail.settleReason.watchdogDeadSession": "看门狗：会话已消失",
+  "squad.agentDetail.settleReason.watchdogTtl": "看门狗：超时未收尾",
+  "squad.agentDetail.settleReason.watchdogIdleGrace": "看门狗：空闲宽限到期",
+  "squad.agentDetail.settleReason.userCancel": "用户取消",
   "squad.agentDetail.runsLeader": "队长",
   "squad.agentDetail.startConversation": "发起会话",
   "squad.common.maxConcurrentRuns": "并发上限",

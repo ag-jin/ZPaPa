@@ -4480,7 +4480,18 @@ const enUS: Record<string, string> = {
   "squad.agentDetail.tasksOpen": "Open",
   "squad.agentDetail.runsTitle": "Run history",
   "squad.agentDetail.runsEmpty": "No runs yet",
-  "squad.agentDetail.runsOverflow": " ({count} total, showing first 50)",
+  // Paging (#13): the old "({count} total, showing first 50)" line is gone — with paging it
+  // would be a lie.
+  "squad.agentDetail.runsMore": "Load more",
+  "squad.agentDetail.runsMoreLoading": "Loading…",
+  "squad.agentDetail.runsMoreFailed": "Failed to load more",
+  "squad.agentDetail.runsLoaded": "{count} loaded (more available)",
+  "squad.agentDetail.runsAllLoaded": "All loaded",
+  // Settle reasons: known codes are localized here; non-closed-set text is shown verbatim by the UI.
+  "squad.agentDetail.settleReason.watchdogDeadSession": "Watchdog: session disappeared",
+  "squad.agentDetail.settleReason.watchdogTtl": "Watchdog: timed out before wrap-up",
+  "squad.agentDetail.settleReason.watchdogIdleGrace": "Watchdog: idle grace expired",
+  "squad.agentDetail.settleReason.userCancel": "Cancelled by user",
   "squad.agentDetail.runsLeader": "Leader",
   "squad.agentDetail.startConversation": "Start conversation",
   "squad.common.maxConcurrentRuns": "Max concurrent runs",

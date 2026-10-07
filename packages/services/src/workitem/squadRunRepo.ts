@@ -212,6 +212,29 @@ export interface SquadRunRepo {
    */
   listByWorkspace(workspaceKey: string): SquadRunRecord[];
   /**
+   * **呈现用分页历史**（欠账 #13，2026-10-07 裁定）：keyset 翻页，**最新在前**（DESC）。
+   *
+   * 这是台账的**第三个读口径**，与前两个各自显式、**不得互相替代**：
+   * · `listByWorkspace` / `listByParent` 是**全量**台账（宿主判定与批内时间线要全集）；
+   * · `listActive` 是「还欠收尾」的活跃集（快照/回收）；
+   * · 本方法只为一件事存在：把「一个 agent 最近的运行」**有界**地交给界面，且 `agentId` 过滤
+   *   **下推 SQL**。若在服务面/界面拉全量再前端过滤，一旦读口变成有界分页，第一页就可能
+   *   一条该 agent 的行都不含 ⇒ 界面显示「暂无运行记录」而库里明明有，且**不报错**（假空）。
+   *
+   * 为什么 keyset 而不是 offset：台账在运行期**持续插入新行**（每次派发/重试都新增）。offset
+   * 会因新行前插而重复/漏行，且同样不报错；keyset 的谓词与既有排序同键（`(created_at, run_id)`），
+   * 不需要新语义。同刻多行靠 `run_id` tie-break（复合比较显式展开，不依赖 row-value 语法）。
+   *
+   * 游标是**不透明**字符串（`v1:<created_at>:<run_id>`），编解码只在**本文件内**（单源）：
+   * 非法游标**响亮抛**，不回落第一页 —— 回落会把分页 bug 伪装成「又刷了一遍」，没人看得出来。
+   * `limit` 必须是 ≥1 且 ≤200 的整数，否则抛（防「一次请求拉全量」，也防 0/负数/NaN 变成怪查询）。
+   * 取 `limit + 1` 行判有无下一页；`nextCursor === null` 表示到底（**不返回** count(*)）。
+   */
+  listHistoryPage(
+    workspaceKey: string,
+    query: { agentId?: string; limit: number; cursor?: string },
+  ): { rows: SquadRunRecord[]; nextCursor: string | null };
+  /**
    * **熔断窗口计数**（W3 §3.6 的派生判据，零状态）：本 workspace 下 `settle_reason` ∈ **看门狗族**
    * （`SQUAD_RUN_WATCHDOG_SETTLE_REASONS`，含空闲宽限摊牌）且 `updated_at > sinceMs` 的行，
    * 按 agent 分组计数；没有命中的 agent **不出现**在结果里（缺省 = 0，不在查询里编造零行）。
@@ -377,6 +400,61 @@ const WATCHDOG_REASON_PLACEHOLDERS = SQUAD_RUN_WATCHDOG_SETTLE_REASONS.map(() =>
 // 排序统一按 created_at、再按 run_id：批次处理顺序必须确定，否则同刻写入的 run
 // 会随存储顺序漂移，让「谁先被合并 / 回收」变得不可复现。
 const ORDER_BY_CREATED = "ORDER BY created_at ASC, run_id ASC";
+
+/* 呈现用分页历史（欠账 #13）的**游标编解码**：只在本文件内（单源）。
+   形状 `v1:<created_at>:<run_id>`：自描述、带版本位（将来改算子时旧游标能响亮被拒，
+   而不是被当成另一种东西解释）。**不透明**是给调用方的契约：服务面与界面都不得解析它
+   （解析 = 第二份判据，且会随格式一起漂移）—— 它们只负责把 nextCursor 原样带回来。 */
+const RUN_HISTORY_CURSOR_VERSION = "v1";
+/** 一次最多取多少行：上限存在的意义是挡住「一次请求拉全量」（那正是本方法要取代的形态）。 */
+const RUN_HISTORY_MAX_LIMIT = 200;
+
+function encodeRunHistoryCursor(row: { createdAt: number; runId: string }): string {
+  return `${RUN_HISTORY_CURSOR_VERSION}:${row.createdAt}:${row.runId}`;
+}
+
+/* 非法游标**一律抛**（不回落第一页）：回落会把一个分页 bug 伪装成「又刷了一遍第一页」——
+   用户与开发者都看不出少了东西。校验把 `decode(encode(x)) === x` 作为不变式：手改过的
+   数值（`01`）、带分隔符的 id、少位/多位片段都会被拒。 */
+function decodeRunHistoryCursor(cursor: string): { createdAt: number; runId: string } {
+  const parts = cursor.split(":");
+  if (parts.length !== 3) {
+    throw new Error(`squad_runs 分页游标非法「${cursor}」：形状应为 v1:<created_at>:<run_id>。`);
+  }
+  const [version, rawCreatedAt, runId] = parts as [string, string, string];
+  if (version !== RUN_HISTORY_CURSOR_VERSION) {
+    throw new Error(
+      `squad_runs 分页游标版本不认识「${version}」（当前 ${RUN_HISTORY_CURSOR_VERSION}）：` +
+        "宁可响亮拒绝，也不按旧/新格式猜着解释。",
+    );
+  }
+  if (!/^\d+$/.test(rawCreatedAt)) {
+    throw new Error(`squad_runs 分页游标的时间非法「${rawCreatedAt}」：应为毫秒整数。`);
+  }
+  const createdAt = Number(rawCreatedAt);
+  if (!Number.isSafeInteger(createdAt)) {
+    throw new Error(`squad_runs 分页游标的时间超出安全整数范围「${rawCreatedAt}」。`);
+  }
+  const decoded = { createdAt, runId };
+  if (cursor !== encodeRunHistoryCursor(decoded)) {
+    throw new Error(
+      `squad_runs 分页游标非法「${cursor}」：不能原样读回（手改或格式漂移），` +
+        "拒绝按它翻页 —— 猜着翻会把「漏了一页」变成没人知道的事。",
+    );
+  }
+  return decoded;
+}
+
+/** 页大小闸：非整数 / <1 / >上限一律抛（`0`、负数、`NaN` 静默变成怪查询是最坏的一种）。 */
+function assertRunHistoryLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit < 1 || limit > RUN_HISTORY_MAX_LIMIT) {
+    throw new Error(
+      `squad_runs 分页 limit 非法「${String(limit)}」：必须是 1..${RUN_HISTORY_MAX_LIMIT} 的整数` +
+        "（上限存在的意义是挡住「一次请求拉全量」）。",
+    );
+  }
+  return limit;
+}
 
 export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
   return {
@@ -806,6 +884,38 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         .prepare(`SELECT * FROM squad_runs WHERE workspace_key = ? ${ORDER_BY_CREATED}`)
         .all(workspaceKey) as unknown as SquadRunRow[];
       return rows.map(rowToSquadRun);
+    },
+
+    /* 呈现用分页历史（欠账 #13）：与上面的全量口径**刻意不共用 SQL 前缀** —— 本方法的排序方向
+       相反（DESC）且带游标谓词，共用前缀最容易在「顺手复用」时把方向搞反（而方向错了不报错，
+       只是把最老的一页当最新的一页给人看）。过滤与排序都在这一条语句里：服务面/界面不重写、不重排。 */
+    listHistoryPage(workspaceKey, query) {
+      const limit = assertRunHistoryLimit(query.limit);
+      const cursor = query.cursor === undefined ? null : decodeRunHistoryCursor(query.cursor);
+      const conditions = ["workspace_key = ?"];
+      const args: Array<string | number> = [workspaceKey];
+      // agentId **下推 SQL**（不是前端过滤）：见接口注释的「假空」。
+      if (query.agentId !== undefined) {
+        conditions.push("agent_id = ?");
+        args.push(query.agentId);
+      }
+      // keyset 谓词：(created_at, run_id) 严格小于游标所指的行（与 DESC 同一比较方向）。
+      if (cursor) {
+        conditions.push("(created_at < ? OR (created_at = ? AND run_id < ?))");
+        args.push(cursor.createdAt, cursor.createdAt, cursor.runId);
+      }
+      const rows = db
+        .prepare(
+          `SELECT * FROM squad_runs WHERE ${conditions.join(" AND ")}
+          ORDER BY created_at DESC, run_id DESC LIMIT ?`,
+        )
+        .all(...args, limit + 1) as unknown as SquadRunRow[];
+      const page = rows.slice(0, limit).map(rowToSquadRun);
+      // 多取的一行只用来回答「还有没有下一页」；末页的游标必须是 null（给了会让界面出现一个
+      // 点不出东西的「加载更多」）。有下一页时游标指向**本页最后一行**（下一段从它之后继续）。
+      const last = page[page.length - 1];
+      const nextCursor = rows.length > limit && last ? encodeRunHistoryCursor(last) : null;
+      return { rows: page, nextCursor };
     },
 
     countWatchdogSettlementsByAgent(workspaceKey, sinceMs) {

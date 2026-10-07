@@ -392,6 +392,16 @@ export type { DispatchCause } from "./workitem/squadDispatchRequests.js";
 export type { ReapOutcome } from "./worktree/orphanReaper.js";
 export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
 export type { SquadRunRecord, SquadRunRepo, SquadRunStatus } from "./workitem/squadRunRepo.js";
+/* `settle_reason` 的**码值单源**（W1 的 0014 列）也要从这里出**值**：agent 详情页要把
+   「为什么结束」本地化呈现（欠账 #13），而 UI 侧**不得内联** `watchdog_ttl` 这类字面量 ——
+   抄错一个字，一次看门狗结算会被显示成别的原因，且不报错。`squadRunRepo` 只 type-import
+   `node:sqlite`，故这些常量（与已在此处的 `createSquadRunRepo` 同链）是浏览器安全的。 */
+export {
+  SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+} from "./workitem/squadRunRepo.js";
 /* 收件箱（P2c）**只出类型**：`inboxItemRepo` 值导入 `node:crypto`（id 生成），从本入口出值会让
    renderer 整包失败（browserSafeRootEntry.test.ts 守这条）；值（repo 工厂 / 构建件）只从
    `@zcode/services/node` 出。类型是擦除的，UI 侧要能命名这些形状。 */

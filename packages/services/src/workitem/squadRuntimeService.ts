@@ -225,6 +225,27 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input?: { parentWorkItemId?: string },
   ): Promise<SquadRunRecord[]>;
+  /**
+   * **呈现用的分页历史**（欠账 #13，2026-10-07 裁定）：**第三个口径**，与上面两个各自显式、
+   * **不得互相替代**。
+   *
+   * · `listSquadRuns(target, {parentWorkItemId?})`：**全量**台账（宿主三处消费 —— 评论补投判据、
+   *   补投判据、看门狗 tick 要终态行；批内时间线也要**整批**才画得对）；
+   * · `getSnapshot().runs`：`listActive` 的活跃集（还欠收尾）；
+   * · 本方法：给界面「一个 agent 最近的运行」的**有界**一页 + 不透明 `nextCursor`。
+   *
+   * 为什么必须是新方法、而不是给 `listSquadRuns` 加分页参数：把「宿主读全量」与「界面读一页」
+   * 揉进同一个名字，正是本仓反复禁止的「两种口径合流」—— 宿主拿到一页会静默漏判（补投少投、
+   * 看门狗漏结算），而那不是任何断言能看见的错。
+   *
+   * `agentId` 过滤**下推 SQL**（由 repo 单源给出）：见 `SquadRunRepo.listHistoryPage` 的「假空」。
+   * 游标是不透明字符串（服务面**不解析**、原样带回）；非法游标 / 非法 limit 由 repo **响亮抛**。
+   * **只读、不过门禁**（读历史不是新派发，与 `listSquadRuns` 同款理由）。
+   */
+  listSquadRunHistory(
+    target: SquadWorkspaceTarget,
+    input: { agentId?: string; limit: number; cursor?: string },
+  ): Promise<{ runs: SquadRunRecord[]; nextCursor: string | null }>;
   createTeamAgent(target: SquadWorkspaceTarget, input: CreateTeamAgentInput): Promise<TeamAgent>;
   /**
    * 编辑协作智能体的**可编辑定义字段**（名字 / 系统提示词 / 记忆作用域），返回写盘后的实体
@@ -1005,6 +1026,20 @@ export function createSquadRuntimeService(deps: {
       return input?.parentWorkItemId
         ? runtime.squadRunRepo.listByParent(input.parentWorkItemId)
         : runtime.squadRunRepo.listByWorkspace(keyOf(runtime));
+    },
+
+    /* 呈现用分页历史（欠账 #13）：**第三个口径**（见接口注释）。
+       纪律与 `listSquadRuns` 同款：不过门禁（读历史不是新派发）、目标显式（`keyOf(runtime)` 取自
+       runtime 的绑定值）、过滤与排序由 repo 单源给出 —— 本层**不解析游标、不重排、不加 LIMIT**，
+       只把三个入参原样转交、把 repo 的结论原样交回（少一层解释 = 少一处漂移）。 */
+    async listSquadRunHistory(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const page = runtime.squadRunRepo.listHistoryPage(keyOf(runtime), {
+        ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+        limit: input.limit,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+      return { runs: page.rows, nextCursor: page.nextCursor };
     },
 
     async createTeamAgent(target, input) {
