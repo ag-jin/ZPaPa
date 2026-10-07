@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { MS_PER_MINUTE } from "@zcode/shared";
 import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE, type ISquadRuntimeService } from "@zcode/services";
 import { createInboxItemRepo } from "@zcode/services/node";
 import { createSquadRuntimeService } from "@zcode/services/node";
@@ -236,6 +237,62 @@ test("在线 tick｜死会话的队员行：结算 discarded（settle_reason=wat
     (await f.service.listInboxItems()).filter((item) => item.kind === "run_stalled").length,
     1,
     "重复扫描不得刷屏（dedupKey 按 runId 收敛）",
+  );
+});
+
+test("在线 tick｜失败重试：看门狗结算 ⇒ 登记恰一条 origin=watchdog 义务（新 runId）；再结算不再登记", async () => {
+  const f = await setup();
+  const runId = "w3-retry-first";
+  const { itemId, agentId } = await openBoundMemberRun(f, { runId, sessionId: "sess-dead" });
+
+  const first = await sweep(f);
+  assert.deepEqual(first, { settled: 1, stopped: 0, skipped: 0, failed: 0 }, "先结算这一条");
+
+  const obligations = f.runtime.squadDeferredDispatchRepo.list(WS);
+  assert.equal(obligations.length, 1, "看门狗结算 ⇒ 自动登记一次重试（预算未用）");
+  assert.equal(obligations[0]?.origin, "watchdog", "重试义务的来源分流位");
+  assert.equal(obligations[0]?.workItemId, itemId, "重试仍打在同一工作项上");
+  assert.equal(obligations[0]?.agentId, agentId, "重试仍打给同一个 agent（对的身份是预算的键）");
+  assert.notEqual(
+    obligations[0]?.runId,
+    runId,
+    "重试是**新**派发决策 ⇒ 新 runId（复用被结算行的 id 会撞 already_registered，重试静默丢失）",
+  );
+  assert.equal(
+    f.runtime.squadRunRepo.get(runId)?.status,
+    "discarded",
+    "重试登记不得把已结算的行改回 open（它是另一条 run，不是这一条复活）",
+  );
+
+  /* 第二次看门狗结算（同 pair 的另一条 run）⇒ 预算已用 ⇒ **不再**登记。
+     「第二次」用直插的 open 行（真树会与第一条撞同名分支，而本格只关心结算后的预算判据）。 */
+  const secondRunId = "w3-retry-second";
+  const now = Date.now();
+  f.runtime.squadRunRepo.insert({
+    runId: secondRunId,
+    workspaceKey: WS,
+    workspacePath: f.repoRoot,
+    workItemId: itemId,
+    parentWorkItemId: itemId,
+    agentId,
+    isLeaderTask: false,
+    branch: null,
+    dirName: null,
+    status: "open",
+    sessionId: "sess-dead-2",
+    dispatchCause: null,
+    causedByRunId: null,
+    openedAt: now,
+    settleReason: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await sweep(f);
+  assert.equal(f.runtime.squadRunRepo.get(secondRunId)?.status, "discarded", "第二条同样被结算");
+  assert.equal(
+    f.runtime.squadDeferredDispatchRepo.list(WS).length,
+    1,
+    "预算用尽（同对已有一次看门狗结算）⇒ 不再登记：重试恰一次，闭环有界",
   );
 });
 
@@ -795,5 +852,158 @@ test("接线｜验收条款「stop 发起后 run 不得走成功入账」：只�
     HOST_SOURCE,
     /if \(outcome\.inputId === traceId && outcome\.outcome !== "succeeded"\) \{/,
     "host 的失败出口必须由「不是 succeeded」触发（stopped 与 failed 同路 ⇒ failMemberRun）",
+  );
+});
+
+/* ───────────────── W3 工具臂（口径 A：检测 + 提醒；不结算、不 stop） ─────────────────
+
+   用户 2026-10-07 裁定：信号源 = `readSession` 的 `projection.activeToolCalls`（R-1 替代读口），
+   命中 ⇒ **只落 Inbox 提醒**；run 台账一个字不写、**绝不调 stop**（协议 stop 只能 abort 整个前台执行，
+   会把 run 的活杀掉 —— R-1 三条证据）。信号不可得 ⇒ 整体降级 no-op + 首见一次日志。 */
+
+/** 捕获日志的 logger（工具臂的可观测面就是「提醒 + 留痕 + 首见一次日志」）。 */
+function capturingLogger(): { logger: SquadWatchdogLogger; lines: string[] } {
+  const lines: string[] = [];
+  return {
+    lines,
+    logger: {
+      info: (message) => lines.push(message),
+      warn: (message) => lines.push(message),
+    },
+  };
+}
+
+test("在线 tick｜工具臂：单工具超阈值 ⇒ 恰一条 Inbox 提醒；run 台账零动作、不调 stop", async () => {
+  const f = await setup({ probe: "executing" });
+  const runId = "w3-tool-stall";
+  const { itemId } = await openBoundMemberRun(f, { runId, sessionId: "sess-tool" });
+  const stops: string[] = [];
+  const { logger, lines } = capturingLogger();
+  const ports = createSquadWatchdogSweepPorts({
+    squadRuntime: f.service,
+    agentService: {
+      async readSession() {
+        // 会话在跑一轮 turn（探测 = executing），且有一条已经跑了 6 分钟的工具调用。
+        return {
+          runtime: { activeTurnId: "turn-live" },
+          projection: {
+            activeToolCalls: [
+              {
+                toolCallId: "tc-stalled",
+                toolName: "bash",
+                status: "running",
+                startedAt: NOW - 6 * MS_PER_MINUTE,
+              },
+            ],
+          },
+        };
+      },
+    } as never,
+    stopSession: async (input) => {
+      stops.push(input.runId);
+      return true;
+    },
+    logger,
+  });
+
+  await sweep(f, { ports, logger });
+
+  assert.equal(
+    f.runtime.squadRunRepo.get(runId)?.status,
+    "open",
+    "工具臂**不动 run**（口径 A：只提醒）——结算会把一次「慢工具」判成失败，那是没证据的结论",
+  );
+  const stalled = (await f.service.listInboxItems()).filter((item) => item.kind === "run_stalled");
+  assert.equal(stalled.length, 1, "命中 ⇒ 恰一条 run_stalled 提醒");
+  assert.equal(stalled[0]?.runId, runId);
+  assert.equal(stalled[0]?.workItemId, itemId);
+  assert.match(
+    String(stalled[0]?.detail.reason),
+    /tc-stalled|bash/,
+    "提醒要点名是哪一次工具调用（人要知道去看什么）",
+  );
+  assert.deepEqual(stops, [], "绝不调 stop：协议 stop 会 abort 整个前台执行（R-1 实证）");
+
+  // 二次扫描：同一条 run 不再多出 Inbox（dedupKey 按 runId 收敛），也不重复刷日志。
+  const before = lines.length;
+  await sweep(f, { ports, logger });
+  assert.equal(
+    (await f.service.listInboxItems()).filter((item) => item.kind === "run_stalled").length,
+    1,
+    "重复扫描不得刷屏（Inbox dedup 按 runId）",
+  );
+  assert.ok(
+    lines.slice(before).every((line) => !line.includes("工具看门狗")),
+    "同一工具的首见留痕只一条：第二轮的同一观察不再重复打印",
+  );
+});
+
+test("在线 tick｜工具臂：信号不可得 ⇒ 整体降级 no-op（日志恰一条，不刷屏；台账零动作）", async () => {
+  const f = await setup();
+  const runId = "w3-tool-nosignal";
+  await openBoundMemberRun(f, { runId, sessionId: "sess-nosignal" });
+  const { logger, lines } = capturingLogger();
+  const ports = createSquadWatchdogSweepPorts({
+    squadRuntime: f.service,
+    agentService: {
+      async readSession() {
+        // 探测本身失败（既不是「不在执行」，也不是「在执行」）⇒ 工具信号同样不可得。
+        throw new Error("readSession 探测异常");
+      },
+    } as never,
+    stopSession: null,
+    logger,
+  });
+
+  /* 首见记忆由**调用方**持有（在线 tick 的句柄一份、进程内有效；启动和解只扫一轮）——
+     这里照 tick 的持有形态给一份，跨两轮验证「只打一次」。 */
+  const toolSignalLogged = new Set<string>();
+  await sweep(f, { ports, logger, toolSignalLogged });
+  await sweep(f, { ports, logger, toolSignalLogged });
+
+  assert.equal(
+    f.runtime.squadRunRepo.get(runId)?.status,
+    "open",
+    "信号不可得 ⇒ 不猜（不结算、不提醒）",
+  );
+  assert.equal(
+    (await f.service.listInboxItems()).filter((item) => item.kind === "run_stalled").length,
+    0,
+    "降级路径不落 Inbox（暂态结论：下次读成功就可能有结论，Inbox 的 dedup 会被它永久占位）",
+  );
+  assert.equal(
+    lines.filter((line) => line.includes("工具看门狗无信号")).length,
+    1,
+    "「工具看门狗此刻不工作」必须可见，且**首见一次**（每轮 60s 各打一遍就是刷屏）",
+  );
+});
+
+test("接线｜工具臂（口径 A）：提醒是唯一动作 —— 不结算、不 stop（R-1：stop 会 abort 整个前台执行）", () => {
+  const start = TICK_SOURCE.indexOf("async function runToolWatchdogArm(");
+  const end = TICK_SOURCE.indexOf("export function startSquadWatchdogTick(");
+  assert.ok(start >= 0 && end > start, "找不到工具臂的执行体");
+  const arm = TICK_SOURCE.slice(start, end);
+  for (const forbidden of [
+    "ports.settleRun(",
+    "settleRun(",
+    "stopSession(",
+    "setStatus(",
+    "failMemberRun(",
+  ])
+    assert.ok(
+      !arm.includes(forbidden),
+      `工具臂不得出现「${forbidden}」（口径 A：单次工具慢不是失败 —— 结算会杀掉活着的 run）`,
+    );
+  assert.ok(arm.includes("decideSquadToolWatchdog("), "工具臂必须读判定面（判据不在 host 复写）");
+  assert.ok(arm.includes("recordInbox("), "命中必须落 Inbox 提醒（提醒是它的唯一动作）");
+  assert.match(
+    TICK_SOURCE,
+    /readSessionTools/,
+    "工具信号端口必须接上（漏接 = 整轮读到 undefined ⇒ 功能整块空转）",
+  );
+  assert.doesNotMatch(
+    TICK_SOURCE,
+    /stopTargetKind|expectedForegroundExecutionId/,
+    "工具臂不得引入协议级定向 stop（R-1：本仓库没有 tool 级取消域，写它只会得到「停整个前台执行」）",
   );
 });

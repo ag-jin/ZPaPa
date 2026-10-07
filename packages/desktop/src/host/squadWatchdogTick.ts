@@ -8,6 +8,7 @@ import {
   MS_PER_MINUTE,
   resolveTeamAgentIdleTimeoutMinutes,
   resolveTeamAgentRunTtlMinutes,
+  resolveTeamAgentToolTimeoutMinutes,
   resolveWorkspaceKey,
 } from "@zcode/shared";
 import {
@@ -17,12 +18,17 @@ import {
   type SquadRunRecord,
 } from "@zcode/services";
 import {
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
   buildRunStalledInboxItem,
+  decideSquadToolWatchdog,
   decideSquadWatchdog,
   hasOtherRunRowForPair,
   type InboxItemInput,
+  type SquadToolWatchdogObservation,
   type SquadWatchdogGitFacts,
   type SquadWatchdogRun,
+  type SquadWatchdogToolCall,
+  type WatchdogRetryOutcome,
 } from "@zcode/services/node";
 
 /* W2（看门狗六件套）：**执行臂**——把 W1 的判定面接到真实台账上。
@@ -68,8 +74,19 @@ export type SquadWatchdogWorkspaceFacts = {
   rows: readonly SquadRunRecord[];
   ttlMinutesFor(agentId: string): number;
   idleTimeoutMinutesFor(agentId: string): number;
+  /** 工具臂的单次工具墙钟（W3：per-agent 解析，缺省语义只有 shared 一处）。 */
+  toolTimeoutMinutesFor(agentId: string): number;
   workItemTitleFor(workItemId: string): string | null;
 };
+
+/**
+ * 工具信号的读数（W3 工具臂的输入口）：
+ * · `unavailable`：读不到（异常 / 服务缺件）⇒ 判定面按「无信号」降级（no-op + 首见留痕）；
+ * · `tools`：会话的活跃工具调用投影（`projection.activeToolCalls`；可能为空数组 = 确实没有在跑的工具）。
+ */
+export type SquadWatchdogToolSignal =
+  | { kind: "unavailable" }
+  | { kind: "tools"; activeToolCalls: readonly SquadWatchdogToolCall[] };
 
 /** 一次 stop 的注入形态（唯一调用点是 `createSquadRunSessionStopper`，见 squadDispatch.ts）。 */
 export type SquadSessionStopFn = (input: {
@@ -89,10 +106,31 @@ export type SquadWatchdogSweepPorts = {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<SquadSessionExecutingState>;
+  /**
+   * **工具信号读数**（W3 工具臂）：与 `probeSession` 同源（都读 `readSession`），但消费的是
+   * `projection.activeToolCalls`（R-1 的替代读口，与 `boundSessionBusyGate` 同款先例）。
+   * 读失败 ⇒ `unavailable`（判定面按降级 no-op 处理，绝不猜）。
+   */
+  readSessionTools(input: {
+    sessionId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<SquadWatchdogToolSignal>;
   settleRun(
     target: SquadWatchdogTickTarget,
     input: { runId: string; reason: string },
   ): Promise<void>;
+  /**
+   * **看门狗结算后的自动重试登记**（W3 §3.5）：服务面自行判预算（派生 EXISTS）并铸新 runId；
+   * 本层只搬运结论（登记 / 预算已用 / 并入既有义务）——判据不在 host 复写（第二份预算判据一旦
+   * 分叉，表现是「重试多一次/少一次」，不报错）。
+   *
+   * 只在**结算成功之后**调用（结算失败 ⇒ 目标对仍活跃 ⇒ 义务不会到期，登记只会留一条永不重放的账）。
+   */
+  registerRetry(
+    target: SquadWatchdogTickTarget,
+    input: { settledRunId: string },
+  ): Promise<WatchdogRetryOutcome>;
   recordInbox(target: SquadWatchdogTickTarget, item: InboxItemInput): Promise<void>;
   /** 缺席 ⇒ 空闲档只发决策不动作？（不，见 `stopSession` 的注释：缺席时该档一律不动作并留痕。） */
   stopSession: SquadSessionStopFn | null;
@@ -129,6 +167,8 @@ export function createSquadWatchdogSweepPorts(params: {
         ttlMinutesFor: (agentId) => resolveTeamAgentRunTtlMinutes(agentById.get(agentId) ?? {}),
         idleTimeoutMinutesFor: (agentId) =>
           resolveTeamAgentIdleTimeoutMinutes(agentById.get(agentId) ?? {}),
+        toolTimeoutMinutesFor: (agentId) =>
+          resolveTeamAgentToolTimeoutMinutes(agentById.get(agentId) ?? {}),
         workItemTitleFor: (workItemId) => titleById.get(workItemId) ?? null,
       };
     },
@@ -167,6 +207,47 @@ export function createSquadWatchdogSweepPorts(params: {
     },
     settleRun: (target, input) =>
       squadRuntime.failMemberRun({ path: target.path, identity: target.identity }, input),
+    /* **工具信号**（W3，口径 A）：与上面的探测**同一次读的消费面**（都读 `readSession`，只是取
+       `projection.activeToolCalls`）。刻意不复用探测的返回值：探测的失败极性是给「会话死没死」用的
+       （`not_executing` 是**明确结论**），而工具信号的失败必须是 `unavailable`（不可得 ⇒ 降级）。
+       两个问题不同 → 两个读数；共用 `agentService` 这一处事实来源。 */
+    async readSessionTools({ sessionId, workspacePath, workspaceIdentity }) {
+      if (!agentService) return { kind: "unavailable" };
+      try {
+        const snapshot = await agentService.readSession({
+          workspacePath,
+          ...(workspaceIdentity ? { workspaceIdentity } : {}),
+          sessionId,
+          // existing-only：不为读工具信号拉起 Agent（拉起 = 让它继续跑）。
+          runtimePolicy: "existing-only",
+        });
+        /* 形状搬运（协议 `startedAt?` → 判定面的 `number | null`）：`undefined` 在这里**不是**
+           「刚开始」，而是「没有这个时钟事实」⇒ 显式落 `null`（判定面据此不 alert）。少这一步映射，
+           下游就会拿 `undefined` 去算时长（NaN），而 NaN 的比较恒 false ⇒ **静默不提醒**。 */
+        return {
+          kind: "tools",
+          activeToolCalls: snapshot.projection.activeToolCalls.map((call) => ({
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            status: call.status,
+            startedAt: call.startedAt ?? null,
+          })),
+        };
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          (error as { code?: unknown }).code === ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE
+        ) {
+          // runtime 不在 ⇒ 没有东西在执行 ⇒ 也就不可能有「在跑的工具」（明确结论，不是不可得）。
+          return { kind: "tools", activeToolCalls: [] };
+        }
+        // 读不到 + 不知道原因 ⇒ **不可得**（降级 no-op；绝不按「没有在跑的工具」处理）。
+        return { kind: "unavailable" };
+      }
+    },
+    registerRetry: (target, input) =>
+      squadRuntime.registerWatchdogRetry({ path: target.path, identity: target.identity }, input),
     recordInbox: (target, item) =>
       squadRuntime.recordInboxItem({ path: target.path, identity: target.identity }, item),
     stopSession: params.stopSession,
@@ -191,16 +272,32 @@ export type SquadWatchdogSweepSummary = {
  */
 export const SQUAD_WATCHDOG_IDLE_STOP_GRACE_MS = 5 * MS_PER_MINUTE;
 
-/**
- * 空闲档宽限兜底的结算原因（**自由文本列**，不是看门狗族的码值）：会话**活着**（探测说在执行），
- * 只是静默超阈值且 stop 发出后宽限内没有终态回调 —— 与「死会话」「TTL 到期」都不同因，
- * 混用码值会让 W3 的熔断窗口计数/重试预算把三种原因算成一种。
- */
-export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE = "watchdog_idle_stop_grace_expired";
+/* 空闲档宽限兜底的**结算原因码值单源在服务面**（`squadRunRepo.SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE`，
+   经 `@zcode/services/node` 出值，见上面的 import）：它属于**看门狗族**（W3 的熔断窗口计数与重试预算
+   按族派生 SQL），故本文件不再另写一份字面量 —— 抄错一个字，一次宽限摊牌就不计入窗口，而熔断只会
+   「晚一轮生效」，不报错。 */
 
 /** C1 领地 skip 的留痕原因（首见一次；`c1Case` 是本行此刻在哪一格的**判别值**，见 W1 决策类型）。 */
 export function squadWatchdogC1SkipReason(c1Case: string): string {
   return `watchdog_c1_owned_${c1Case}`;
+}
+
+/**
+ * 工具臂提醒的原因原文（**不是**看门狗族的结算码值）：本件**不结算任何东西**，故 `watchdog_tool_timeout`
+ * 不进 `SQUAD_RUN_WATCHDOG_SETTLE_REASONS`（进了会让熔断窗口把「工具慢」算成一次结算失败、
+ * 让重试预算凭空少一次 —— 两种都静默）。它落在 Inbox 的 detail 里，供人复看是哪个工具、超了多久。
+ */
+export function squadWatchdogToolTimeoutReason(input: {
+  toolName: string;
+  toolCallId: string;
+  elapsedMs: number;
+  thresholdMs: number;
+}): string {
+  return (
+    `watchdog_tool_timeout：工具「${input.toolName}」(${input.toolCallId}) 已运行 ` +
+    `${Math.round(input.elapsedMs / MS_PER_MINUTE)} 分钟，超过阈值 ` +
+    `${Math.round(input.thresholdMs / MS_PER_MINUTE)} 分钟（口径 A：只提醒不处置）`
+  );
 }
 
 /** 一轮扫描的输入。 */
@@ -215,9 +312,55 @@ export type SquadWatchdogSweepInput = {
   runScope: "member" | "all";
   /** 已发出 stop 的 runId → 发出时刻（**进程内**状态；跨重启无意义，故不落盘）。 */
   pendingStops: Map<string, number>;
+  /**
+   * 工具臂**首见留痕**的记忆（W3）：键见 `toolSignalLogKey` —— 同一观察只在第一次打印，
+   * 之后每轮静默（tick 是 60s 一拍，逐轮打印就是刷屏）。**进程内**状态（跨重启无意义）。
+   */
+  toolSignalLogged?: Set<string>;
   now?: () => number;
   idleStopGraceMs?: number;
 };
+
+/**
+ * 结算成功之后的**自动重试登记**（W3 §3.5；best-effort 但绝不静默）。
+ *
+ * 为什么 best-effort：结算是这条路径上**必达**的那一半（行离开活跃集 ⇒ 容量释放），重试是增强 ——
+ * 登记失败（库瞬时不可用等）只 warn，**不得**把它回报成「这条 run 结算失败」（那会让人去查一个
+ * 已经收口了的 run）。反过来，三种**拒绝**（预算已用）与**并入**都必须留一行 info：
+ * 「结算了但没重试」与「本来就没人重试」在日志里长得一样，是本项目反复消灭的形态。
+ */
+async function registerRetryBestEffort(
+  params: {
+    target: SquadWatchdogTickTarget;
+    ports: SquadWatchdogSweepPorts;
+    logger: SquadWatchdogLogger;
+  },
+  settledRunId: string,
+): Promise<void> {
+  try {
+    const outcome = await params.ports.registerRetry(params.target, { settledRunId });
+    if (outcome.kind === "registered") {
+      params.logger.info(
+        `[squad] watchdog 自动重试已登记：settled=${settledRunId} retry=${outcome.runId}` +
+          "（结算事实经 hub 推进 ⇒ 目标对离开活跃集 ⇒ 义务到期即重放）",
+      );
+      return;
+    }
+    if (outcome.kind === "coalesced") {
+      params.logger.info(
+        `[squad] watchdog 重试并入既有义务：settled=${settledRunId} target=${outcome.targetRunId}`,
+      );
+      return;
+    }
+    // 预算已用 ⇒ 不再重试（设计 §3.5 的防环判据）：不是错误，但必须可见。
+    params.logger.info(`[squad] watchdog 不重试（同对预算已用）：run=${settledRunId}`);
+  } catch (error) {
+    params.logger.warn(
+      `[squad] watchdog 自动重试登记失败（结算已落地，重试缺失）：run=${settledRunId}`,
+      error,
+    );
+  }
+}
 
 /** 逐条执行一个决策；返回这一条是否被计数（`settled` / `stopped` / `skipped` / `failed`）。 */
 async function executeDecision(params: {
@@ -258,6 +401,7 @@ async function executeDecision(params: {
       } catch (error) {
         params.logger.warn(`[squad] watchdog 未能登记 Inbox：run=${decision.runId}`, error);
       }
+      await registerRetryBestEffort(params, decision.runId);
       return "settled";
     }
     case "stop_then_wait_idle": {
@@ -278,6 +422,7 @@ async function executeDecision(params: {
         } catch (error) {
           params.logger.warn(`[squad] watchdog 未能登记 Inbox：run=${decision.runId}`, error);
         }
+        await registerRetryBestEffort(params, decision.runId);
         return "settled";
       }
       if (!ports.stopSession) {
@@ -463,12 +608,163 @@ export async function runSquadWatchdogSweep(
       for (const runId of input.pendingStops.keys()) {
         if (!openRunIds.has(runId)) input.pendingStops.delete(runId);
       }
+
+      /* W3 工具臂（口径 A：检测 + 提醒）。排在本轮 run 判定/执行**之后**：本轮已被判结算的行不再
+         去看它的工具（那条行正在离开活跃集，对它的提醒没有意义）。工具臂**只提醒** —— 它不产结算、
+         不产 stop，故与上面的决策顺序没有相互影响。 */
+      await runToolWatchdogArm({
+        target,
+        ports: input.ports,
+        facts,
+        logger: input.logger,
+        now,
+        rows: candidates,
+        /* 只排除**本轮真被判结算**的行（它们正在离开活跃集，提醒没有意义）。**不排除 skip 档**：
+           `skip_probe_unavailable` / `skip_unclassified` 是暂态结论，那条 run 仍在跑 ——
+           它的工具信号照样要看（否则探测坏了就等于把工具臂一起关掉，而这两件事的可用性无关）。 */
+        settledRunIds: new Set(
+          decisions
+            .filter(
+              (decision) =>
+                decision.kind === "settle_dead_session" || decision.kind === "settle_ttl",
+            )
+            .map((decision) => decision.runId),
+        ),
+        toolSignalLogged: input.toolSignalLogged,
+      });
     } catch (error) {
       summary.failed += 1;
       input.logger.warn(`[squad] watchdog 扫描失败 workspace=${target.path}`, error);
     }
   }
   return summary;
+}
+
+/**
+ * 工具臂的**首见留痕键**：`no-signal:<runId>` / `alert:<runId>:<toolCallId>`。
+ * 为什么 key 里带 toolCallId（而不是只认 run）：同一个 run 上第二个工具超时是**新事实**，值得再响一次；
+ * 而同一个工具每轮都报一遍就是刷屏（tick 是 60s 一拍）。
+ */
+function toolSignalLogKey(decision: ReturnType<typeof decideSquadToolWatchdog>[number]): string {
+  return decision.kind === "skip_tool_no_signal"
+    ? `no-signal:${decision.runId}`
+    : `alert:${decision.runId}:${decision.toolCallId}`;
+}
+
+/**
+ * 工具臂执行（W3 口径 A）：逐候选 run 读工具信号 → 判定 → **只登记 Inbox 提醒**。
+ *
+ * 三条纪律：
+ * · **绝不调 stop**（R-1 实证：协议 stop 只能 abort **整个前台执行**，会把这条 run 的活连带杀掉，
+ *   而「单次工具慢」根本不是失败）；本函数连 `ports.stopSession` 都不碰；
+ * · **不动 run 台账**（不结算、不改状态）：口径 A 是提醒而不是处置 —— 处置留给墙钟 TTL 与人工；
+ * · **逐条容错**：一条 run 的读数失败不得停掉整轮（与 run 判定同一形态）。
+ */
+async function runToolWatchdogArm(params: {
+  target: SquadWatchdogTickTarget;
+  ports: SquadWatchdogSweepPorts;
+  facts: SquadWatchdogWorkspaceFacts;
+  logger: SquadWatchdogLogger;
+  now: number;
+  rows: readonly SquadRunRecord[];
+  /** 本轮已被判为结算的 run：不再对它们读工具（它们正在离开活跃集）。 */
+  settledRunIds: ReadonlySet<string>;
+  toolSignalLogged: Set<string> | undefined;
+}): Promise<void> {
+  const candidates = params.rows.filter(
+    (row) =>
+      row.status === "open" && row.sessionId !== null && !params.settledRunIds.has(row.runId),
+  );
+  if (candidates.length === 0) return;
+
+  /* 每个会话读一次（同一会话被多条行引用时省一次读数）；读失败 ⇒ unavailable（降级 no-op）。 */
+  const signalBySession = new Map<string, SquadWatchdogToolSignal>();
+  const observations: SquadToolWatchdogObservation[] = [];
+  for (const row of candidates) {
+    const sessionId = row.sessionId;
+    if (sessionId === null) continue;
+    let signal = signalBySession.get(sessionId);
+    if (signal === undefined) {
+      try {
+        signal = await params.ports.readSessionTools({
+          sessionId,
+          workspacePath: params.target.path,
+          ...(params.target.identity ? { workspaceIdentity: params.target.identity } : {}),
+        });
+      } catch (error) {
+        params.logger.warn(
+          `[squad] watchdog 工具信号读取失败 session=${sessionId}（本行降级 no-op）`,
+          error,
+        );
+        signal = { kind: "unavailable" };
+      }
+      signalBySession.set(sessionId, signal);
+    }
+    observations.push({
+      runId: row.runId,
+      agentId: row.agentId,
+      sessionId,
+      activeToolCalls: signal.kind === "tools" ? signal.activeToolCalls : null,
+    });
+  }
+
+  const decisions = decideSquadToolWatchdog({
+    observations,
+    now: params.now,
+    toolTimeoutMinutesFor: params.facts.toolTimeoutMinutesFor,
+  });
+  const rowByRunId = new Map(candidates.map((row) => [row.runId, row]));
+  for (const decision of decisions) {
+    const row = rowByRunId.get(decision.runId);
+    if (!row) continue; // 防御性：判定只可能来自本轮候选
+    const key = toolSignalLogKey(decision);
+    const firstSeen = params.toolSignalLogged === undefined || !params.toolSignalLogged.has(key);
+    params.toolSignalLogged?.add(key);
+
+    if (decision.kind === "skip_tool_no_signal") {
+      /* 降级 no-op：**不登记 Inbox**（暂态结论 —— Inbox 的 dedup 按 runId 收敛，一条暂态留痕会永久
+         占住这条 run 的留痕位，把后来真正的结算留痕挤掉），只在**首见**时打一行，让
+         「工具看门狗此刻不工作」可见而不刷屏。 */
+      if (firstSeen) {
+        params.logger.warn(
+          `[squad] watchdog 工具看门狗无信号（本件降级为 no-op，等信号恢复）：run=${decision.runId} session=${decision.sessionId}`,
+        );
+      }
+      continue;
+    }
+
+    if (firstSeen) {
+      params.logger.warn(
+        `[squad] watchdog 工具超时提醒：run=${decision.runId}` +
+          ` tool=${decision.toolName}(${decision.toolCallId})` +
+          ` 已运行 ${Math.round(decision.elapsedMs / MS_PER_MINUTE)} 分钟 > 阈值 ` +
+          `${Math.round(decision.thresholdMs / MS_PER_MINUTE)} 分钟` +
+          "（口径 A：只提醒，不 stop、不结算 —— 台账零动作）",
+      );
+    }
+    /* Inbox 每轮都尝试登记（`insertIfAbsent` 幂等，dedupKey 按 runId）：首见那次若登记失败，
+       下一轮还能补上 —— 只用「首见」闸门时，一次瞬时失败会让这条提醒永久消失。 */
+    try {
+      await params.ports.recordInbox(
+        params.target,
+        buildRunStalledInboxItem({
+          workspaceKey: resolveWorkspaceKey({
+            workspacePath: params.target.path,
+            workspaceIdentity: params.target.identity,
+          }),
+          workspacePath: params.target.path,
+          workItemId: row.workItemId,
+          workItemTitle: params.facts.workItemTitleFor(row.workItemId),
+          runId: row.runId,
+          agentId: row.agentId,
+          sessionId: decision.sessionId,
+          reason: squadWatchdogToolTimeoutReason(decision),
+        }),
+      );
+    } catch (error) {
+      params.logger.warn(`[squad] watchdog 未能登记 Inbox：run=${decision.runId}`, error);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -534,6 +830,8 @@ export function startSquadWatchdogTick(params: {
 
   /** 已发出 stop 的 runId → 时刻（**进程内**：跨重启无意义，重启后会话皆死，走探测档）。 */
   const pendingStops = new Map<string, number>();
+  /** 工具臂的首见留痕记忆（**进程内**：跨重启重新首见一次是合理的——新进程就是新的观察者）。 */
+  const toolSignalLogged = new Set<string>();
   let ticking = false;
   let stopped = false;
 
@@ -558,6 +856,7 @@ export function startSquadWatchdogTick(params: {
         logger: params.logger,
         runScope: "all",
         pendingStops,
+        toolSignalLogged,
         ...(params.now ? { now: params.now } : {}),
         ...(params.idleStopGraceMs !== undefined
           ? { idleStopGraceMs: params.idleStopGraceMs }
@@ -588,6 +887,7 @@ export function startSquadWatchdogTick(params: {
       stopped = true;
       timer.clearInterval(handle);
       pendingStops.clear();
+      toolSignalLogged.clear();
     },
   };
 }
