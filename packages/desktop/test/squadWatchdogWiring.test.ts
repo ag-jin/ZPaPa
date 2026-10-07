@@ -1007,3 +1007,34 @@ test("接线｜工具臂（口径 A）：提醒是唯一动作 —— 不结算�
     "工具臂不得引入协议级定向 stop（R-1：本仓库没有 tool 级取消域，写它只会得到「停整个前台执行」）",
   );
 });
+
+test("在线 tick｜工具臂：端口本身抛错 ⇒ 逐条容错（该行降级、其余行照常、台账零动作）", async () => {
+  // 探测说会话在执行（否则 run 会被死会话档结算掉，本用例就测不到工具臂的读数失败）。
+  const f = await setup({ probe: "executing" });
+  const runId = "w3-tool-port-throws";
+  await openBoundMemberRun(f, { runId, sessionId: "sess-port-throws" });
+  const { logger, lines } = capturingLogger();
+  const ports = {
+    ...f.ports,
+    readSessionTools: async () => {
+      throw new Error("工具信号端口异常");
+    },
+  };
+
+  const summary = await sweep(f, { ports, logger });
+
+  assert.deepEqual(
+    summary,
+    { settled: 0, stopped: 0, skipped: 0, failed: 0 },
+    "端口抛错不得把整轮计成 failed（逐条容错：一条读数失败不停整轮）",
+  );
+  assert.equal(
+    f.runtime.squadRunRepo.get(runId)?.status,
+    "open",
+    "台账零动作（工具臂只提醒；读数失败更没有可做的事）",
+  );
+  assert.ok(
+    lines.some((line) => line.includes("工具信号读取失败")),
+    "读数失败必须响亮留痕（带 session），否则「工具臂不工作」与「工具都很健康」长得一模一样",
+  );
+});

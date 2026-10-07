@@ -285,3 +285,46 @@ test("熔断判据（纯函数）：计数 < 阈值 ⇒ 放行；= 阈值 ⇒ sk
     );
   assert.match(tripped, /熔断/, "文案必须能被 Inbox 的 kind/reason 一眼读出是熔断");
 });
+
+test("失败重试：同对已有别的通道的义务 ⇒ 并入它（义务表「每对至多一行」的不变式，不新增第二行）", async () => {
+  const f = await setup();
+  // 前置：该 (workItem, agent) 已有一条 R2（改派）义务 —— 义务表的唯一约束在这一对上。
+  const inserted = f.runtime.squadDeferredDispatchRepo.insertIfAbsent({
+    runId: "w3-existing-obligation",
+    workspaceKey: WS,
+    workItemId: f.itemId,
+    agentId: f.agentId,
+    dispatchCause: null,
+    origin: "reassign",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  assert.equal(inserted, true, "前置：既有义务已登记");
+
+  f.insertRun({ runId: "w3-coalesce-run", settleReason: null });
+  f.runtime.squadRunRepo.setStatus("w3-coalesce-run", "open", { sessionId: "sess-c" });
+  await f.runtime.lifecycle.failMemberRun({
+    runId: "w3-coalesce-run",
+    reason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+  });
+
+  const outcome = await f.service.registerWatchdogRetry(f.target, {
+    settledRunId: "w3-coalesce-run",
+  });
+  assert.deepEqual(
+    outcome,
+    { kind: "coalesced", targetRunId: "w3-existing-obligation" },
+    "同对已有义务 ⇒ 并入它（重放机制不分来源都能把这一对再派一次；另起一行会破坏「每对至多一行」）",
+  );
+  assert.equal(f.runtime.squadDeferredDispatchRepo.list(WS).length, 1, "不得新增第二行");
+});
+
+test("失败重试：被结算行不存在 ⇒ 响亮抛（调用方拿错 runId 是 bug，不得静默登记）", async () => {
+  const f = await setup();
+  await assert.rejects(
+    () => f.service.registerWatchdogRetry(f.target, { settledRunId: "w3-not-a-run" }),
+    /w3-not-a-run/,
+    "runId 不存在时静默 no-op 会让「这条 run 被结算过、但没人重试」变成没人知道的事",
+  );
+  assert.equal(f.runtime.squadDeferredDispatchRepo.list(WS).length, 0);
+});
