@@ -761,3 +761,20 @@ test("接线｜阈值单源：tick 文件里没有分钟/小时的散值换算",
     "探测缺席的兜底墙钟取 shared 常量",
   );
 });
+
+test("接线｜看门狗的两个执行臂在自动路径上不碰 discardBatch（沿用既有禁令）", () => {
+  /* `discardBatch` 是**用户显式**的整批放弃（git 破坏性、三道前置闸）。自动路径（启动和解 / tick）
+     一旦调它，就变成「宿主自己删掉用户还没看过的一批成果」—— 看门狗只许**结算台账**（failMemberRun），
+     树与分支一律交给回收器按活跃集口径收（spec §6.2/S5）。 */
+  for (const [name, source] of [
+    ["host/index.ts", HOST_SOURCE],
+    ["host/squadWatchdogTick.ts", TICK_SOURCE],
+    ["host/squadDispatch.ts", DISPATCH_SOURCE],
+  ] as const) {
+    assert.doesNotMatch(
+      source,
+      /discardBatch/,
+      `${name} 不得调用/引入 discardBatch（自动路径禁令）`,
+    );
+  }
+});
