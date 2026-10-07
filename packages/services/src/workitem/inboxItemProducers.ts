@@ -1,11 +1,11 @@
 import type { InboxItemInput } from "./inboxItemRepo.js";
 
-/* 四个产生点的**纯构建件**（spec §5.7.4 冲突 / §6.2 队员失败 / §6.6 启动和解 / §3.9 四条 skip）。
+/* 五个产生点的**纯构建件**（spec §5.7.4 冲突 / §6.2 队员失败 / §6.6 启动和解 / §3.9 四条 skip / W1 看门狗 run_stalled）。
 
    为什么单独一个文件、且**纯函数**（不碰 IO、不 import node 侧）：
    1. **dedupKey 的唯一形状**在这里（`computeInboxDedupKey`）：产生点各拼一份串，拼错了不报错，
       只会表现成「同一件事反复出现在收件箱里」或「两件事被当成一件」；
-   2. `title` / `detail` 的组成规则只有一处：四个产生点只回答「事实是什么」，
+   2. `title` / `detail` 的组成规则只有一处：各产生点只回答「事实是什么」，
       不决定「人看到什么」（句式与本地化由 UI 按 `kind` 决定，见下）；
    3. 纯函数 ⇒ 可直接断言（squadInbox.test.ts 的构建件用例），不需要起 git 或库。
 
@@ -53,6 +53,7 @@ export type InboxDedupFact =
   | { kind: "merge_conflict"; parentWorkItemId: string }
   | { kind: "member_failed"; runId: string }
   | { kind: "run_orphaned"; runId: string }
+  | { kind: "run_stalled"; runId: string }
   | { kind: "dispatch_skipped"; workItemId: string; reason: string };
 
 export function computeInboxDedupKey(fact: InboxDedupFact): string {
@@ -63,6 +64,11 @@ export function computeInboxDedupKey(fact: InboxDedupFact): string {
       return `member_failed:${fact.runId}`;
     case "run_orphaned":
       return `run_orphaned:${fact.runId}`;
+    /* W1：按 **run** 去重（与 member_failed / run_orphaned 同款）。看门狗每 tick 都会对同一条卡住的
+       run 再产一次决策，若按「原因」或加时间戳去重，收件箱会被同一件事按 tick 刷屏 ——
+       而事实自始至终只有一个：这条 run 卡住了。原因变了（探测死会话 → TTL）也仍是同一件事。 */
+    case "run_stalled":
+      return `run_stalled:${fact.runId}`;
     case "dispatch_skipped":
       return `dispatch_skipped:${fact.workItemId}:${fact.reason}`;
   }
@@ -175,6 +181,46 @@ export function buildOrphanedRunInboxItem(input: {
     workspacePath: input.workspacePath,
     kind: "run_orphaned",
     dedupKey: computeInboxDedupKey({ kind: "run_orphaned", runId: input.runId }),
+    title: input.workItemTitle ?? input.workItemId,
+    detail: {
+      workItemId: input.workItemId,
+      runId: input.runId,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      reason: input.reason,
+    },
+    workItemId: input.workItemId,
+    runId: input.runId,
+  };
+}
+
+/**
+ * 宿主活着、run 卡住（W1 看门狗的留痕出口）：`run_stalled` / `attention`。
+ *
+ * 与 `buildOrphanedRunInboxItem` 的分界：`run_orphaned` = 宿主已消失（跨重启和解，没有东西会再推进
+ * 它）；本构建件 = 宿主活着而这条 run 停在原地（探测死会话 / TTL / 探测不可得 / C1 领地 skip 的
+ * 首见留痕）—— 处置动作不同（前者等人清理残留，后者要人看会话/调阈值/查 C1 的自愈回路）。
+ *
+ * `sessionId` 允许 `null`（无会话的队长行 / 探测不可得的队员行）；`reason` 用**结算码或判定原文**
+ * （看门狗族码值单源在 `squadRunRepo.ts`）。`title` 拿不到工作项标题时回落 `workItemId`（同前三个构建件）。
+ */
+export function buildRunStalledInboxItem(input: {
+  workspaceKey: string;
+  workspacePath: string;
+  workItemId: string;
+  /** 工作项标题；`null` = 拿不到 ⇒ 回落 `workItemId`。 */
+  workItemTitle: string | null;
+  runId: string;
+  agentId: string;
+  sessionId: string | null;
+  /** 判定原因原文（看门狗族的码值 / C1 领地的 c1Case）。 */
+  reason: string;
+}): InboxItemInput {
+  return {
+    workspaceKey: input.workspaceKey,
+    workspacePath: input.workspacePath,
+    kind: "run_stalled",
+    dedupKey: computeInboxDedupKey({ kind: "run_stalled", runId: input.runId }),
     title: input.workItemTitle ?? input.workItemId,
     detail: {
       workItemId: input.workItemId,
