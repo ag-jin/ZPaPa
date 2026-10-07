@@ -8,6 +8,7 @@ import {
 } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
 import type { UserDispatchCause } from "./squadDispatchRequests.js";
+import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
 /* 工作项事件：状态的每次真实变迁、「父项子项全部终态」，以及「请把这条工作项派给这个对象」。
@@ -67,8 +68,16 @@ export interface WorkItemService {
 export function createWorkItemService(deps: {
   repo: WorkItemRepo;
   emit: (event: WorkItemEvent) => void;
+  /**
+   * 状态变迁的 Activity 投影（C3b.1，**可选加法**）：装配方（`createSquadRuntime`）恒传入，
+   * 测试装配**不传也不报错**（缺省 = 不投影，行为与加法前逐字一致）。
+   *
+   * 为什么投影在**这里**：`transition` 是全仓 `status` 的唯一写者，三个生产调用点
+   * （编排器父项流转 / 队员完成 / 子项收尾）自动全覆盖，零新增判据 —— 投影跟随事实的唯一写者。
+   */
+  activityProjector?: WorkItemActivityProjector;
 }): WorkItemService {
-  const { repo, emit } = deps;
+  const { repo, emit, activityProjector } = deps;
 
   // 父链体检：父必须存在且未归档（repo.get 会过滤归档行），沿 parentId 上溯查环并计深度。
   // 环与深度都必须在这里拦下——Repo.insert 明确不查父链，漏检会把损坏的树写进库。
@@ -128,11 +137,22 @@ export function createWorkItemService(deps: {
     transition(id, next, expect) {
       // CAS 未命中说明前置已变（并发派发）——此时不得发事件，否则下游会重复动作。
       if (!repo.updateStatus(id, next, expect)) return false;
+
+      /* 投影（C3b.1）：**记录先于驱动**。CAS 已命中 ⇒ 变迁是既成事实，先在时间线留下回声，
+         再把事件交给订阅者 —— 订阅者抛错不得让一条已经落地的事实失去时间线记录。
+         投影自身**不会抛**（模块内 catch + logWarn，见 workItemActivityProjector 的失败面论证），
+         且缺失投影面时整条 transition 行为与加法前逐字一致（`activityProjector` 可选）。
+         末次 `repo.get` 的返回值同时供投影与父链判定用：CAS 命中后该行必然存在且未归档。 */
+      const item = repo.get(id);
+      if (item && activityProjector) {
+        activityProjector.statusChanged({ item, from: expect, to: next });
+      }
+
       emit({ kind: "workitem.status_changed", id, from: expect, to: next });
 
       // 终态判定不比较键名：repo.areAllChildrenTerminal 内部按 category（isTerminalWorkItemStatus）
       // 判定，本层只消费它。零子项返回 false，所以无子项的父项不会被自身的流转误判为子项完成。
-      const parentId = repo.get(id)?.parentId;
+      const parentId = item?.parentId;
       if (parentId && repo.areAllChildrenTerminal(parentId)) {
         emit({ kind: "workitem.child_completed", parentId });
       }

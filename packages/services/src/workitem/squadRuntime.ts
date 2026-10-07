@@ -19,6 +19,8 @@ import { createRunLifecycle } from "./squadRunLifecycle.js";
 import { createSquadRunRepo } from "./squadRunRepo.js";
 import { createSquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js";
 import { SquadDispatchDisabledError } from "./squadRuntimeService.js";
+import { createWorkItemActivityRepo } from "./workItemActivityRepo.js";
+import { createWorkItemActivityProjector } from "./workItemActivityProjector.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
 import { createWorkItemService, type WorkItemEvent } from "./workItemService.js";
 import { createWakeRuleRepo } from "./wakeRuleRepo.js";
@@ -260,6 +262,12 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
   // 服务面经注入的懒取 repo 读写 —— 两处是**同一个** createInboxItemRepo，唯一写者不变。
   const inboxItemRepo = createInboxItemRepo(db);
+  /* Activity 投影器（C3b.1）：`work_item_activities` 的第三个写者（前两个：CommentService / DecisionService），
+     与它们共用同一份 repo 契约（dedupKey 幂等 + 闭集双闸 + sequence 原子）—— repo 仍是唯一存储写者。
+     **恒构造**（接线钉死测试钉住）：漏接的表现是「时间线永远只有评论」，而一路不报错。 */
+  const activityProjector = createWorkItemActivityProjector({
+    activities: createWorkItemActivityRepo(db),
+  });
 
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
@@ -272,6 +280,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   const workItemService = createWorkItemService({
     repo: workItemRepo,
     emit: fanout,
+    // 状态变迁的投影跟随唯一写者（C3b.1）：三个生产调用点自动全覆盖，零新增判据。
+    activityProjector,
   });
 
   // ⑥ 拼成 runtime。定义根都从目标 workspace 派生（实验命名空间 `<ws>/.zcode/squad/`）。
@@ -336,6 +346,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     squadDeferredDispatchRepo,
     inboxItemRepo,
     workItemService,
+    activityProjector,
     teamAgentService,
     squadService,
     git,
@@ -436,6 +447,13 @@ export async function archiveSquadAndTransfer(
           "此时它对已归档小队的指派仍然存在",
       );
     }
+    /* 投影（C3b.1）：与 `applyWorkItemAssignee` **共用同一份判据**（两处写者、一份形状）。
+       `from` 是转交前拿在手里的旧值；**不带 cause** —— 归档转交不是派发，不发明闭集外的成因。 */
+    runtime.activityProjector.assigneeChanged({
+      item,
+      from: item.assignee,
+      to: { type: "agent", id: squad.leaderAgentId },
+    });
   }
 
   runtime.squadService.archive(squadId);

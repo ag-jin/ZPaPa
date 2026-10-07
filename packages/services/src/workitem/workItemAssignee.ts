@@ -60,6 +60,15 @@ export function applyWorkItemAssignee(
         "静默 no-op 会让调用方以为派单成功了，而库里仍指着旧负责人。",
     );
   }
+  /* 投影（C3b.1）：**记录先于驱动**（与 `transition` 同款次序）。`from` 是本函数开头读到的旧值
+     （写之前的行），`cause` 是调用面给的既成事实，投影只搬运。写失败不抛（模块内 catch+logWarn）：
+     一次成功的改派不因时间线回声丢失被翻转成调用方异常。 */
+  runtime.activityProjector.assigneeChanged({
+    item,
+    from: item.assignee,
+    to: input.assignee,
+    cause: options.cause,
+  });
   /* **指派给人（= 等人自己动手）只写负责人，不发派发事件**：
      人不需要被派 run（`planDispatch` 的 user 支路同样只通知、不排队）。除 user 外的两类都发 ——
      `agent` 起队员 / 单独安排 run，`squad` 由派发路径解析出队长 run（载荷 `assignee` 带类型）。

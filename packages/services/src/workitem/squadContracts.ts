@@ -12,6 +12,7 @@ import type { SquadRunLifecycle } from "./squadRunLifecycle.js";
 import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
 import type { WakeRuleRepo } from "./wakeRuleRepo.js";
+import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
 import type { WorkItemEvent, WorkItemService } from "./workItemService.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
@@ -84,6 +85,13 @@ export type SquadRuntime = {
    */
   inboxItemRepo: InboxItemRepo;
   workItemService: WorkItemService;
+  /**
+   * 工作项 Activity 的投影器（**加法**，C3b.1）：状态/负责人两个写者与 runtime 共用**同一份**判据
+   * （键形状、payload、actor 全在投影模块内）。为什么放在 runtime 上而不是每处现建：`applyWorkItemAssignee`
+   * 与 `archiveSquadAndTransfer` 只拿得到 runtime 这一件东西；投影器本身**拿不到派发面**
+   * （依赖集封顶为 activities + 注入），放在这里不会给协作链任何驱动力。
+   */
+  activityProjector: WorkItemActivityProjector;
   teamAgentService: TeamAgentService;
   squadService: SquadService;
   git: GitRunner;
