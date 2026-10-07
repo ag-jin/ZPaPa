@@ -1,5 +1,7 @@
 import { useMemo, useRef } from "react";
 import type {
+  AuthorRef,
+  CommentDispatchReceiptRecord,
   WorkItemActivityKind,
   WorkItemCollaborationRead,
   WorkItemCommentReactionRecord,
@@ -36,7 +38,7 @@ import {
   type MentionRoster,
 } from "./workItemCollaborationViewModel.js";
 
-/* B5.1 轮 1：**唯一混排**的活动时间线（设计案 §2.2）。
+/* B5.1 轮 1 / B5.2 轮 2：**唯一混排**的活动时间线（设计案 §2.2）。
 
    不设「评论 / 活动 / 决定」分区：分区会切断「提出评论 → 请求派发 → Run 开始 → 决定 → 状态改变」
    的审计因果链。主序 = `WorkItemActivity.sequence`（由 `buildWorkItemTimelineEntries` 投影，
@@ -69,14 +71,29 @@ const ICONS: Record<WorkItemActivityKind, LucideIcon> = {
 export function WorkItemCollaborationTimeline({
   read,
   reactionsByComment,
+  receiptsByComment,
   roster,
+  viewerActor,
+  pendingCommentId,
   onReply,
+  onDelete,
+  onResolve,
+  onReact,
 }: {
   /** 协作读模型（页面的唯一数据源）：投影只在这里做一次，组件不重新推导领域语义。 */
   read: WorkItemCollaborationRead;
   reactionsByComment: ReadonlyMap<string, WorkItemCommentReactionRecord[]>;
+  /** 派发 receipt 按评论分组（只读插槽的输入；本条没有 ⇒ 空数组 ⇒ 插槽不渲染）。 */
+  receiptsByComment: ReadonlyMap<string, CommentDispatchReceiptRecord[]>;
   roster: MentionRoster;
+  /** 本地人类身份（D1-A，读面带回）：`mine` 的判据。 */
+  viewerActor: AuthorRef | null;
+  /** 有一次写在这条评论上在途（按钮禁用，避免重复提交）。 */
+  pendingCommentId: string | null;
   onReply: (comment: WorkItemCommentRecord) => void;
+  onDelete: (comment: WorkItemCommentRecord) => void;
+  onResolve: (comment: WorkItemCommentRecord, resolved: boolean) => void;
+  onReact: (comment: WorkItemCommentRecord, emoji: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
@@ -120,10 +137,17 @@ export function WorkItemCollaborationTimeline({
                 <WorkItemCommentEntry
                   comment={entry.comment}
                   reactions={reactionsByComment.get(entry.comment.id) ?? []}
+                  receipts={receiptsByComment.get(entry.comment.id) ?? []}
+                  activities={read.activities}
                   indent={commentIndentLevel(entry.comment, commentsById)}
                   parent={commentReplyParent(entry.comment, commentsById)}
                   roster={roster}
+                  viewerActor={viewerActor}
+                  pending={pendingCommentId === entry.comment.id}
                   onReply={onReply}
+                  onDelete={onDelete}
+                  onResolve={onResolve}
+                  onReact={onReact}
                 />
               </li>
             );

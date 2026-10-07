@@ -477,10 +477,14 @@ import {
   IWorkItemCollaborationService,
   createWorkItemCollaborationService,
 } from "./workitem/workItemCollaborationService.js";
-import { createWorkItemCommentRepo } from "./workitem/workItemCommentRepo.js";
+import { createWorkItemCommentRepo, type AuthorRef } from "./workitem/workItemCommentRepo.js";
 import { createWorkItemActivityRepo } from "./workitem/workItemActivityRepo.js";
 import { createWorkItemDecisionRepo } from "./workitem/workItemDecisionRepo.js";
 import { createWorkItemCommentReactionRepo } from "./workitem/workItemCommentReactionRepo.js";
+/* B5.2 轮 2：评论服务（写事实 + 队列状态窗裁决 + receipt）——**组合根唯一构造点**（见下面
+   `createCommentServiceFor`）：门面的四个写入口只转发到它，评论链自己不碰生命周期写接口。
+   X2.1 已落 host 侧的评论派发入口，但组合根这一半（构造 + 请求出口）此前未落，本轮补齐。 */
+import { createCommentService, type CommentService } from "./workitem/commentService.js";
 import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
@@ -2737,10 +2741,11 @@ export function createLocalServices(options: {
   squadRunSettlements.subscribe((settlement: SquadRunSettlement) => {
     const runSettled = options?.onSquadRunSettled;
     if (!runSettled) {
-      squadRuntimeLog.warn(
-        "run 已结算，但本组合根没有注入 onSquadRunSettled（排队行不会被推进）",
-        { runId: settlement.runId, agentId: settlement.agentId, status: settlement.status },
-      );
+      squadRuntimeLog.warn("run 已结算，但本组合根没有注入 onSquadRunSettled（排队行不会被推进）", {
+        runId: settlement.runId,
+        agentId: settlement.agentId,
+        status: settlement.status,
+      });
       return;
     }
     void Promise.resolve(runSettled(settlement)).catch((error: unknown) =>
@@ -2834,6 +2839,49 @@ export function createLocalServices(options: {
   // 回写前向引用：zcodeAgentService 的 `squad/*` 三个分支经它拿到服务面
   //（队长工具的每次调用都会走到这里；注册缺失时那条分支回 -32601，见 squadProtocolMethods.ts）。
   squadRuntimeServiceForAgent = squadRuntimeService;
+
+  /* B5.2 轮 2（D1-A）：**本地人类身份的定义点，全仓只此一处**。
+     `AuthorRef` 是审计事实（§3.1「谁写了这条评论」），所以它既不能由 UI 拼（设计案 §12-2：
+     「不应在 UI 自行决定权限/身份」），也不能每个入口各自造一个 —— 两处身份不一致时，
+     「同一个人写的评论」在库里长成两个作者，而任何地方都不会报错。
+
+     为什么是**常量**而不是取系统用户名/邮箱：审计事实要稳定可重放，且当前版本没有人类名册
+     （人类名册 + 权限归 C4）。换机、改名不该让历史评论换一个作者。
+     显示名留空：界面用「人类」徽标兜底（`comment.author.human`），不拿 id 当名字。 */
+  const LOCAL_HUMAN_ACTOR: AuthorRef = { kind: "human", id: "local-user" };
+
+  /* 评论服务的**唯一构造点**：门面的四个写入口经它拿到实现体（任务卡 §5.2「若 X2.1 已构造则只
+     消费，不第二次构造」——X2.1 只落了 host 侧的派发入口，组合根这一半在本轮补齐）。
+
+     为什么按 `runtime` 装、而不是在组合根里建一个跨目标单例：名册（agent / 小队）与
+     workItem / run / 义务三个 repo 都是**按 workspace** 的，而 runtime 是按目标现构、不缓存的
+     （见上面「小队 runtime 不做长期单例」）。跨目标单例会让名册与 repo 落到第一个用它的 workspace 上
+     ——表现在「在 A 项目评论却触发了 B 项目的 agent」，且不报错。
+     连接取 `openSharedDatabase()`：与其余协作 repo 同一条（走过迁移的那一条）；调用点在
+     `createRuntime` 之后，库已 `ensureReady()`。 */
+  const createCommentServiceFor = (runtime: SquadRuntime): CommentService => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return createCommentService({
+      comments: createWorkItemCommentRepo(db),
+      activities: createWorkItemActivityRepo(db),
+      receipts: createCommentDispatchReceiptRepo(db),
+      reactions: createWorkItemCommentReactionRepo(db),
+      runs: runtime.squadRunRepo,
+      deferred: runtime.squadDeferredDispatchRepo,
+      workItems: runtime.workItemRepo,
+      roster: {
+        listAgents: () => runtime.teamAgentService.list(),
+        listSquads: () => runtime.squadService.list(),
+      },
+      /* 门禁读**同一份**同步快照（就是上面那个 `squadsEnabled`）：呈现与门禁两份判据会漂移，
+         表现为「入口看得见、点了没反应」或「门关着照旧派发」。 */
+      readDispatchEnabled: () => squadsEnabled,
+      /* 评论派发请求的出口：**只发 pending**（见 CommentServiceDeps.publishDispatchRequest 的理由），
+         由组合根那份 hub 转给 host 注入的评论派发入口（X2.1）。缺这一半 ⇒ 评论永久停在 pending，
+         没有任何东西会执行它，而界面会如实显示「等待派发」—— 一条看起来正常的死路。 */
+      publishDispatchRequest: (request) => squadDispatchRequests.publish(request),
+    });
+  };
 
   const services = new ServiceCollection()
     .register(IFileService, fileService)
@@ -3038,7 +3086,12 @@ export function createLocalServices(options: {
     .register(ISquadRuntimeService, squadRuntimeService)
     /* B5.1：工作项协作读门面（独立描述符，不扩 ISquadRuntimeService / 快照）。五个 repo 全部
        懒取（`ensureReady()` 之后才拿到同一条走过迁移的连接）；`createRuntime` 复用同一个按目标
-       现构的工厂 —— workspace 身份与「工作项在不在」的唯一权威。 */
+       现构的工厂 —— workspace 身份与「工作项在不在」的唯一权威。
+
+       B5.2：同一门面再挂**四个写入口**（创建/软删/解决/回应）。两处注入是这一格的全部接线：
+       · `localHumanActor` —— 本地人类身份（上面那一处常量，D1-A）；
+       · `createCommentService` —— 按本次 runtime 装的评论服务（上面那一个构造点）。
+       门面自己不碰 run / receipt / 义务：它只决定「写到哪、谁写的」，别的照 CommentService 的判据。 */
     .register(
       IWorkItemCollaborationService,
       createWorkItemCollaborationService({
@@ -3053,6 +3106,8 @@ export function createLocalServices(options: {
             receipts: createCommentDispatchReceiptRepo(db),
           };
         },
+        localHumanActor: () => LOCAL_HUMAN_ACTOR,
+        createCommentService: createCommentServiceFor,
       }),
     );
   if (

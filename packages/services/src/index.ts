@@ -414,7 +414,12 @@ export type {
   WorkItemCollaborationRead,
   WorkItemCollaborationRepos,
   WorkItemCollaborationServiceDeps,
+  /* B5.2 轮 2：四个写入口的**入参形状**（编译擦除；UI 只命名它，不构造身份 —— D1-A）。 */
+  CreateWorkItemCommentRequest,
 } from "./workitem/workItemCollaborationService.js";
+/* 写入口的返回形状 = CommentService 的返回形状（门面不二次包装，故 UI 命名的是**同一份**类型）。
+   `export type` 擦除：commentService.ts 值导入 node:crypto，只有**值**导出才会把 node 侧带进 renderer。 */
+export type { CreateCommentResult, CommentDispatchReport } from "./workitem/commentService.js";
 /* 协作域的三张**运行时闭集**从根入口出值（浏览器安全：三个模块对 node 侧只用 `import type`）。
    UI 的穷尽映射守卫必须拿**同一份**闭集做 deepEqual —— 硬编码 18 / 7 / 5 会在闭集增删时静默漂移
    （界面少一个 kind 的文案而仍显示，永不报错）。 */

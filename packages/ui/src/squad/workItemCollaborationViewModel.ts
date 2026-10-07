@@ -1,6 +1,10 @@
 import type { Squad, TeamAgent, WorkItem } from "@zcode/shared";
 import type {
   AuthorRef,
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  IWorkItemCollaborationServiceShape,
+  SquadWorkspaceTarget,
   MentionRef,
   SquadSnapshot,
   WorkItemActivityKind,
@@ -337,7 +341,6 @@ export function workItemDetailAssigneeLabel(
 /* ---------- `/note` 显式模式（设计案 §4.3） ---------- */
 
 const NOTE_PREFIX = "/note";
-
 /**
  * 草稿是否已是 `/note` 模式：**以前缀为准**（用户手打 `/note` 时开关跟着亮），
  * 不靠开关自己记住 —— 两处状态各自记忆迟早分叉（开关说关、草稿其实带前缀）。
@@ -358,4 +361,206 @@ export function toggleNotePrefix(draft: string, nextOn: boolean): string {
   }
   if (draft === NOTE_PREFIX) return `${NOTE_PREFIX} `;
   return draftHasNotePrefix(draft) ? draft : `${NOTE_PREFIX} ${draft}`;
+}
+
+/* ---------- 轮 2 · 派发 receipt 的**只读**插槽（设计案 §5） ---------- */
+
+/**
+ * 七个 outcome 各自的文案键（**闭集穷尽**）：`Record<CommentDispatchOutcome, string>` 让将来
+ * 新增 outcome 直接**编译失败**（响亮），而不是界面上少一句话而仍显示。
+ * 运行时 key 集合 == `COMMENT_DISPATCH_OUTCOMES`（UI 测试用服务面导出的同一份闭集 deepEqual）。
+ */
+export const COMMENT_DISPATCH_OUTCOME_MESSAGE_IDS: Record<CommentDispatchOutcome, string> = {
+  pending: "squad.workItemDetail.dispatch.pending",
+  opened: "squad.workItemDetail.dispatch.opened",
+  queued: "squad.workItemDetail.dispatch.queued",
+  coalesced: "squad.workItemDetail.dispatch.coalesced",
+  deferred: "squad.workItemDetail.dispatch.deferred",
+  blocked: "squad.workItemDetail.dispatch.blocked",
+  failed: "squad.workItemDetail.dispatch.failed",
+};
+
+/**
+ * 语义色调（设计案 §6：状态绝不能只由色相表达 ⇒ 组件同时给图标 + 文案，这里只定色调）。
+ * `pending`/`coalesced` 是**等待**，不是失败；`queued`/`deferred` 是**排期**；只有
+ * `blocked`/`failed` 用 destructive。
+ */
+export type CommentDispatchTone = "neutral" | "emphasis" | "warning" | "destructive";
+
+export const COMMENT_DISPATCH_OUTCOME_TONES: Record<CommentDispatchOutcome, CommentDispatchTone> = {
+  pending: "neutral",
+  opened: "emphasis",
+  queued: "warning",
+  coalesced: "neutral",
+  deferred: "warning",
+  blocked: "destructive",
+  failed: "destructive",
+};
+
+/** 插槽里最多 inline 显示几项（设计案 §5：「最多两项 inline status；超过两项收进『另 N 个目标』」）。 */
+export const COMMENT_DISPATCH_INLINE_LIMIT = 2;
+
+export type CommentDispatchInlineItem = {
+  dispatchKey: string;
+  targetAgentId: string;
+  outcome: CommentDispatchOutcome;
+  messageId: string;
+  tone: CommentDispatchTone;
+  attemptCount: number;
+};
+
+export type CommentDispatchPresentation = {
+  /** 保持 repo 给的顺序（createdAt ASC → dispatchKey ASC）——UI 不重排（第二份判据会漂移）。 */
+  inline: CommentDispatchInlineItem[];
+  /** 收起来的项数（`0` ⇒ 不渲染「另 N 个目标」）。 */
+  moreCount: number;
+};
+
+/**
+ * 一条评论的 receipt 投影：**只读**、只切前 N 项，不做任何派发推断。
+ * 空输入 ⇒ 空插槽（组件据此**不渲染**容器，连空卡片都不留 —— 设计案 §5）。
+ */
+export function summarizeCommentDispatches(
+  receipts: CommentDispatchReceiptRecord[],
+): CommentDispatchPresentation {
+  const inline = receipts.slice(0, COMMENT_DISPATCH_INLINE_LIMIT).map((receipt) => ({
+    dispatchKey: receipt.dispatchKey,
+    targetAgentId: receipt.targetAgentId,
+    outcome: receipt.outcome,
+    messageId: COMMENT_DISPATCH_OUTCOME_MESSAGE_IDS[receipt.outcome],
+    tone: COMMENT_DISPATCH_OUTCOME_TONES[receipt.outcome],
+    attemptCount: receipt.attemptCount,
+  }));
+  return { inline, moreCount: Math.max(0, receipts.length - COMMENT_DISPATCH_INLINE_LIMIT) };
+}
+
+/** 「不请求派发」的三个抑制原因（CommentService 的 `CommentSuppressReason`）。 */
+const NOT_REQUESTED_SUPPRESS_REASONS: ReadonlySet<string> = new Set([
+  "note",
+  "all_mention",
+  "human_mention",
+]);
+/** 被拒目标写的抑制 Activity（原因 `blocked`）：它由 **receipt 插槽**承接，不是「未请求派发」。 */
+const BLOCKED_SUPPRESS_REASON = "blocked";
+
+/**
+ * 抑制注记（设计案 §5 末段）：`/note`、`@all`、`@人名` ⇒ 低强调的「未请求派发」。
+ *
+ * **与 receipt 插槽互斥**（同一条事实不得说两遍，且其中一句必是错的）：有 receipt 就直接返回
+ * `null` —— 互斥判据在**这里**（纯函数、受测），不是组件里的一个 if。
+ * `blocked` 原因也返回 `null`：它是「被拦下」而不是「没请求」，由 receipt 的 `blocked` 如实承接。
+ * 闭集外的 reason ⇒ **响亮抛**（猜一个「大概没派发」的下场是界面说错话且不报错）。
+ */
+export function commentDispatchNote(input: {
+  commentId: string;
+  /** 本工作项的全部活动（本函数自己按 commentId 取本条的那几枚）。 */
+  activities: WorkItemActivityRecord[];
+  /** 本条评论的 receipt（已按评论分组）。 */
+  receipts: CommentDispatchReceiptRecord[];
+}): string | null {
+  if (input.receipts.length > 0) return null;
+  const suppressed = input.activities.filter(
+    (activity) =>
+      activity.kind === "comment_dispatch_suppressed" && activity.commentId === input.commentId,
+  );
+  let notRequested = false;
+  for (const activity of suppressed) {
+    const reason = activity.payload["reason"];
+    if (reason === BLOCKED_SUPPRESS_REASON) continue;
+    if (typeof reason === "string" && NOT_REQUESTED_SUPPRESS_REASONS.has(reason)) {
+      notRequested = true;
+      continue;
+    }
+    throw new Error(
+      `comment_dispatch_suppressed 的 payload.reason 读回非法值「${JSON.stringify(reason)}」` +
+        `（Activity ${activity.id}）：抑制原因闭集外一律抛，不猜「大概没派发」。`,
+    );
+  }
+  return notRequested ? "squad.workItemDetail.dispatch.suppressed" : null;
+}
+
+/** receipt 目标名（名册解析；名册已不含该 agent ⇒ 退回 id，不编一个名字）。 */
+export function receiptTargetLabel(targetAgentId: string, roster: MentionRoster): string {
+  return roster.agents.find((agent) => agent.id === targetAgentId)?.name ?? targetAgentId;
+}
+
+/**
+ * 回应的可选项（设计案 §3.3「常用五项可先支持」）。
+ * 为什么是固定五项、而不是一个任意 emoji picker：回应是「轻实体 + 幂等键 (comment, author, emoji)」，
+ * 任意输入会让同一个意思在输入法/肤色修饰下长出多种码位 —— 同一枚表情分成两行，计数各自为政。
+ */
+export const COMMENT_REACTION_EMOJIS = ["👍", "🎉", "👀", "🙏", "✅"] as const;
+
+/* ---------- 轮 2 · 写路径的本地状态（设计案 §3.4 / §4.1） ---------- */
+
+/**
+ * 提交幂等键（§8.1）的状态机：**一次提交动作内稳定**，成功后换新。
+ *
+ * 为什么把它做成转移函数而不是 `useState` 里的三行：`clientRequestId` 的稳定性是**幂等性的全部**——
+ * 重试时换一个键，库里就长成两条评论（用户看到自己说了两遍），而两条都是「成功」的。
+ * 三个事件：
+ * · `send`：提交（首次生成键；重试沿用**已有**键 —— 这就是幂等的那一半）；
+ * · `failed`：失败保留键（草稿也保留，重试才有意义）；
+ * · `sent`：成功后清空 ⇒ 下一条评论是一次**新的**提交动作，用新键（复用旧键会把两条评论并成一条）。
+ */
+export type SubmitIdEvent = "send" | "sent" | "failed";
+
+export function resolveSubmitId(
+  current: string | null,
+  event: SubmitIdEvent,
+  generate: () => string,
+): string | null {
+  switch (event) {
+    case "send":
+      return current ?? generate();
+    case "sent":
+      return null;
+    case "failed":
+      return current;
+  }
+}
+
+/**
+ * 提交判据（§6.3 的 `comment.submitDisabled.empty`）：`/note` 前缀之后的正文为空 ⇒ 没有内容可发。
+ * 词边界与 `draftHasNotePrefix` 同一份判据（两处各写一遍迟早分叉，分叉的表现是「开关说开着、
+ * 提交却说空」）。
+ */
+export function draftHasContent(draft: string): boolean {
+  const body = draftHasNotePrefix(draft) ? draft.slice(NOTE_PREFIX.length) : draft;
+  return body.trim().length > 0;
+}
+
+/* ---------- 轮 2 · 破坏性动作的确认态（形态抄 `confirmSquadDiscard` / `executeSquadDiscard`） ---------- */
+
+export type CommentDeleteConfirmState = { pendingCommentId: string | null };
+
+export const COMMENT_DELETE_CONFIRM_IDLE: CommentDeleteConfirmState = { pendingCommentId: null };
+
+/**
+ * 确认态 → 可执行的那一条。返回 `commentId === null` 表示**没确认过**；
+ * 状态与执行分离（先把待确认态收回空闲再执行），所以重复点确认不会执行第二次。
+ */
+export function confirmCommentDelete(state: CommentDeleteConfirmState): {
+  next: CommentDeleteConfirmState;
+  commentId: string | null;
+} {
+  return { next: COMMENT_DELETE_CONFIRM_IDLE, commentId: state.pendingCommentId };
+}
+
+/**
+ * 执行软删（**UI 侧唯一**会调 `softDeleteWorkItemComment` 的地方）。
+ *
+ * 形态逐句抄 `executeSquadDiscard`：未确认（`commentId === null`）⇒ **一级都不执行**并原样返回
+ * —— 走到那里说明调用方接线错了，但代价可能是一次不可撤销的删除，宁可「什么都没发生」，
+ * 也绝不让未确认的意图变成一次误删。组件里连这个服务方法的名字都不出现（结构守卫盯这条）。
+ */
+export async function executeCommentDelete(input: {
+  service: Pick<IWorkItemCollaborationServiceShape, "softDeleteWorkItemComment">;
+  target: SquadWorkspaceTarget;
+  decision: ReturnType<typeof confirmCommentDelete>;
+}): Promise<{ deleted: boolean }> {
+  const { commentId } = input.decision;
+  if (commentId === null) return { deleted: false };
+  await input.service.softDeleteWorkItemComment(input.target, { commentId });
+  return { deleted: true };
 }

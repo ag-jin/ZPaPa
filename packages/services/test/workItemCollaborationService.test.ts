@@ -28,6 +28,8 @@ import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
 const WORKSPACE = { path: "/tmp/ws-a", identity: "ws-a" };
 const OTHER_WORKSPACE = { path: "/tmp/ws-other", identity: "ws-other" };
+/** B5.2（D1-A）：读面带回的**观察者身份** = 组合根注入值（测试里的独立真源）。 */
+const LOCAL_HUMAN = { kind: "human" as const, id: "local-user" };
 
 function workItemRow(
   id: string,
@@ -98,6 +100,8 @@ function setup() {
   const service = createWorkItemCollaborationService({
     createRuntime: async () => currentRuntime,
     getRepos: () => ({ comments, activities, decisions, reactions, receipts }),
+    /* B5.2（D1-A）：读面现在带回**观察者身份**（C5 的「我已回应」判据），故身份是必填注入。 */
+    localHumanActor: () => LOCAL_HUMAN,
   });
   return {
     db,
@@ -136,8 +140,10 @@ test("服务面：空工作项 ⇒ 六个字段齐备，除 workItem 外全为�
     "decisions",
     "reactions",
     "receipts",
+    "viewerActor",
     "workItem",
   ]);
+  assert.deepEqual(read.viewerActor, LOCAL_HUMAN, "观察者身份 = 组合根注入值（D1-A）");
   assert.equal(read.workItem.id, "wi-1");
   assert.equal(read.workItem.title, "标题 wi-1");
   assert.equal(read.comments.length, 0);
@@ -319,6 +325,7 @@ test("服务面：repo 懒取口未注入 ⇒ 响亮抛（不静默返回空表�
   const service = createWorkItemCollaborationService({
     createRuntime: async () => f.runtime(),
     getRepos: undefined as unknown as WorkItemCollaborationServiceDeps["getRepos"],
+    localHumanActor: () => LOCAL_HUMAN,
   });
 
   await assert.rejects(
