@@ -38,11 +38,21 @@ export type SquadRunStatus = (typeof SQUAD_RUN_STATUSES)[number];
    列本身**不是**闭集（失败原因原文也落这一列），故这里只钉「码值」不钉取值域。 */
 export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION = "watchdog_dead_session";
 export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL = "watchdog_ttl";
+/**
+ * 空闲档 stop 后**宽限到期仍无终态回调** ⇒ 兜底结算的码值（W2 的落点，W3 并入本族）。
+ *
+ * 它由 host 的 tick 执行臂写盘（`squadWatchdogTick` 的 `stop_then_wait_idle` 宽限分支），却必须与
+ * 另两个码值**同源出**：用户 2026-10-07 裁定「空闲宽限到期结算计入熔断窗口 —— 与 watchdog 族同口径
+ * （它就是看门狗结算）」。码值若留在 host、族留在 services，两边各有一份「哪些算看门狗结算」的答案，
+ * 而分叉**不报错**：一次宽限摊牌不计入窗口 ⇒ 熔断晚一轮生效、重试预算也少认一次。
+ */
+export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE = "watchdog_idle_stop_grace_expired";
 export const SQUAD_RUN_SETTLE_REASON_USER_CANCEL = "user_cancel";
 /** 看门狗族（W3 的 EXISTS / count 只认这一族；用户取消**不计入**）。 */
 export const SQUAD_RUN_WATCHDOG_SETTLE_REASONS = [
   SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
   SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
 ] as const;
 
 /** `insertMemberRunOrQueue` 的判别结论（C0 2.2-I；生命周期/host 的接线在 C3）：
@@ -202,6 +212,34 @@ export interface SquadRunRepo {
    */
   listByWorkspace(workspaceKey: string): SquadRunRecord[];
   /**
+   * **熔断窗口计数**（W3 §3.6 的派生判据，零状态）：本 workspace 下 `settle_reason` ∈ **看门狗族**
+   * （`SQUAD_RUN_WATCHDOG_SETTLE_REASONS`，含空闲宽限摊牌）且 `updated_at > sinceMs` 的行，
+   * 按 agent 分组计数；没有命中的 agent **不出现**在结果里（缺省 = 0，不在查询里编造零行）。
+   *
+   * 为什么时间取 `updated_at`：终态迁移的 `setStatus` 恰好把它刷成结算时刻（`setStatus` 的实现），
+   * 于是「窗口内的看门狗结算」不需要任何额外时间列。窗口起点由调用方给（服务面算，见
+   * `ISquadRuntimeService.countWatchdogSettlementsByAgent`）—— 本层不取时钟。
+   *
+   * 为什么族**只认常量**：窗口口径是「多少次看门狗结算」，用户取消（`user_cancel`）不是看门狗结算，
+   * 把它算进来会让「连续取消几次」变成熔断，而这不报错。判定与 SQL 必须读同一个族常量（此处）。
+   */
+  countWatchdogSettlementsByAgent(workspaceKey: string, sinceMs: number): Map<string, number>;
+  /**
+   * **重试预算**（W3 §3.5 的派生判据，零状态）：同 `(workspace, workItem, agent)` 是否已有
+   * **另一次**看门狗结算（`run_id <> excludeRunId`）？
+   *
+   * 「另一次」是本判据的全部要点：被结算的那一条正是**触发**重试的那一行，若把它自己算进预算，
+   * 第一次结算就永远不重试 —— 而且是静默的（预算是派生判据，没有任何地方会报「预算算错了」）。
+   * 预算按 (workItem, agent) 对、**不设时间窗**（设计 §3.5：每对恰一次，防重试风暴/死循环），
+   * 故它是「这一对是否已经用掉过重试」的终身口径，不受窗口滑动影响。
+   */
+  hasOtherWatchdogSettledRunForPair(
+    workspaceKey: string,
+    workItemId: string,
+    agentId: string,
+    excludeRunId: string,
+  ): boolean;
+  /**
    * 推进状态，可顺带 patch 工作树 / 会话列。
    *
    * 未找到该 runId 时**抛错**而不是静默 no-op：调用方（生命周期）以为自己在推进某个 run，
@@ -326,6 +364,10 @@ function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
 // 由 SQUAD_RUN_ACTIVE_STATUSES 拼占位符而不是写 SQL 字面量：活跃集合只有一处定义，
 // 将来改集合不会出现「常量改了、SQL 还认旧状态」的静默不一致。
 const ACTIVE_STATUS_PLACEHOLDERS = SQUAD_RUN_ACTIVE_STATUSES.map(() => "?").join(", ");
+
+// 同款：看门狗族（W3 的窗口计数）的占位符由族常量拼 —— 族里加一值（如空闲宽限摊牌）时，
+// 窗口口径自动跟上；反之若 SQL 里写死两个字面量，加值只改常量而查询照旧只认两个，且不报错。
+const WATCHDOG_REASON_PLACEHOLDERS = SQUAD_RUN_WATCHDOG_SETTLE_REASONS.map(() => "?").join(", ");
 
 // 排序统一按 created_at、再按 run_id：批次处理顺序必须确定，否则同刻写入的 run
 // 会随存储顺序漂移，让「谁先被合并 / 回收」变得不可复现。
@@ -759,6 +801,40 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         .prepare(`SELECT * FROM squad_runs WHERE workspace_key = ? ${ORDER_BY_CREATED}`)
         .all(workspaceKey) as unknown as SquadRunRow[];
       return rows.map(rowToSquadRun);
+    },
+
+    countWatchdogSettlementsByAgent(workspaceKey, sinceMs) {
+      /* 零状态派生判据（设计 §3.6）：不加表、不加列、不加内存状态 —— 没有状态可漂移、没有 reset
+         可忘记。`updated_at` 是结算时刻（终态迁移必过 `setStatus`，它无条件刷这一列）。
+         族由常量拼占位符（见文件头的 `WATCHDOG_REASON_PLACEHOLDERS`）：用户取消不在族内，
+         故「窗口内连续取消几次」不会被算成熔断。 */
+      const rows = db
+        .prepare(
+          `SELECT agent_id, count(*) AS n FROM squad_runs
+            WHERE workspace_key = ? AND settle_reason IN (${WATCHDOG_REASON_PLACEHOLDERS})
+              AND updated_at > ?
+            GROUP BY agent_id`,
+        )
+        .all(workspaceKey, ...SQUAD_RUN_WATCHDOG_SETTLE_REASONS, sinceMs) as unknown as Array<{
+        agent_id: string;
+        n: number;
+      }>;
+      return new Map(rows.map((row) => [row.agent_id, row.n]));
+    },
+
+    hasOtherWatchdogSettledRunForPair(workspaceKey, workItemId, agentId, excludeRunId) {
+      /* 派生 EXISTS（设计 §3.5 的预算判据）：`run_id <> ?` 排除**触发重试的那一行**，
+         见接口注释的「另一次」。族由常量拼占位符 —— 用户取消不在族内（取消不重试）。 */
+      const row = db
+        .prepare(
+          `SELECT 1 FROM squad_runs
+            WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ?
+              AND run_id <> ?
+              AND settle_reason IN (${WATCHDOG_REASON_PLACEHOLDERS})
+            LIMIT 1`,
+        )
+        .get(workspaceKey, workItemId, agentId, excludeRunId, ...SQUAD_RUN_WATCHDOG_SETTLE_REASONS);
+      return row !== undefined;
     },
 
     setStatus(runId, status, patch) {

@@ -378,6 +378,16 @@ export {
    `squadWatchdog` 引 `squadRunLifecycle`（经 Repo 触到 node:sqlite），从浏览器安全入口出**值**会整包炸）。
    决策自带结算码值（`settle_reason` 单源在 squadRunRepo）：host 侧不得再写一张 kind→码值 的映射表。 */
 export { decideSquadWatchdog } from "./workitem/squadWatchdog.js";
+/* W3：熔断判据（策略单源）——host 的派发桥（四出口）与推进臂（排队行/义务）都读它，
+   两处各写一份 `count >= 3` 会在改阈值时漏改一处，而漏改的表现只是「某个入口照常派发」。 */
+export { squadAgentBreakerSkipReason } from "./workitem/squadWatchdog.js";
+/* W3：工具臂判定（口径 A：检测 + 提醒；不结算、不 stop）——执行臂（tick 与启动和解共用）读它。 */
+export { decideSquadToolWatchdog } from "./workitem/squadWatchdog.js";
+export type {
+  SquadToolWatchdogDecision,
+  SquadToolWatchdogObservation,
+  SquadWatchdogToolCall,
+} from "./workitem/squadWatchdog.js";
 export type {
   SquadWatchdogC1Case,
   SquadWatchdogDecision,
@@ -390,7 +400,21 @@ export type {
    就是第二份判据：抄错一格的表现是「把别人的活树当成本行的」（请求永远等待占位）或反之
    （把本行崩溃前建的树当别人的 ⇒ 误判无树），两者都不报错。同门理由与上面的判定面相同。 */
 export { hasOtherRunRowForPair } from "./workitem/squadRunLifecycle.js";
+/* W3（看门狗六件套）：`settle_reason` 的**码值单源**（在 `squadRunRepo`）——host 的 tick 执行臂要落
+   「空闲宽限摊牌」的码值，而 W3 的熔断窗口计数 / 重试预算按**看门狗族**派生 SQL。
+   两者若各持一份答案（host 一个字符串、services 一个族列表），分叉**不报错**：一次宽限摊牌不计入
+   窗口 ⇒ 熔断晚一轮生效。故码值只从这一处出值；沿用 W1 的同门理由（这条链触 repo，不进浏览器安全入口）。 */
+export {
+  SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+  SQUAD_RUN_WATCHDOG_SETTLE_REASONS,
+} from "./workitem/squadRunRepo.js";
 export type { CancelSquadRunInput, SquadWatchdogGitFacts } from "./workitem/squadRuntimeService.js";
+/* W3：自动重试登记的结论类型（host 的 tick 执行臂读它决定留痕：「登记 / 预算已用 / 并入既有义务」
+   三件不同的事，压成布尔就没人能回答「为什么没重试」）。 */
+export type { WatchdogRetryOutcome } from "./workitem/squadRuntimeService.js";
 export type {
   InboxItem,
   InboxItemInput,

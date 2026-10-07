@@ -2,7 +2,9 @@
    （门禁/快照/台账/花名册/收件箱/队列读取都从这一处出），拆分会在描述符与协议两侧各留一份影子。 */
 import {
   isTerminalWorkItemStatus,
+  MS_PER_MINUTE,
   resolveWorkspaceKey,
+  SQUAD_BREAKER_WINDOW_MINUTES,
   type Squad,
   type TeamAgent,
   type WakeRule,
@@ -27,9 +29,12 @@ import type {
   ReviewOutcome,
 } from "./squadRunLifecycle.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
-// 用户取消的 `settle_reason` 码值（单源；W3 的「取消不计入熔断」判别位）。值导入安全：
-// `squadRunRepo` 只 type-import node:sqlite，值导入链不触达 node:*（本文件必须浏览器安全）。
-import { SQUAD_RUN_SETTLE_REASON_USER_CANCEL } from "./squadRunRepo.js";
+// 用户取消的 `settle_reason` 码值 + 看门狗族（单源；W3 的「取消不计入熔断」判别位与重试触发面）。
+// 值导入安全：`squadRunRepo` 只 type-import node:sqlite，值导入链不触达 node:*（本文件必须浏览器安全）。
+import {
+  SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  SQUAD_RUN_WATCHDOG_SETTLE_REASONS,
+} from "./squadRunRepo.js";
 // 「改负责人 + 发派发事件」的**唯一实现**（唯一写者纪律 / 同值处置 / 事件出口全在其中）。
 // 单拆成文件是为了浏览器安全（本文件被根入口值导出）+ 400 行 lint 门槛，详见该文件的头部注释。
 import { applyWorkItemAssignee } from "./workItemAssignee.js";
@@ -61,6 +66,21 @@ export type SquadWorkspaceTarget = { path: string; identity: string };
  * 不自动重试」的判别位——抄错一个字，一次用户取消会被算成一次看门狗失败，且不报错。
  */
 export type CancelSquadRunInput = { runId: string; reason?: string };
+
+/**
+ * **看门狗自动重试**的登记结论（W3 §3.5；`registerWatchdogRetry` 的返回）。
+ *
+ * 三种结论**判别联合**而不是布尔的理由：`false` 会把三件不同的事（预算已用 / 并入既有义务 /
+ * 被本方法拒绝）压成一个值，而看门狗的重试是**自动**动作 —— 没人盯着的路径上，「为什么没重试」
+ * 必须能从返回值一句话读出来（含被并入到了哪条义务）。
+ */
+export type WatchdogRetryOutcome =
+  /** 新登记一条 `origin="watchdog"` 的义务；`runId` 即重试 run 的身份（新 id，不复用被结算行）。 */
+  | { kind: "registered"; runId: string }
+  /** 预算已用：同 `(workItem, agent)` 另有**一次**看门狗结算 ⇒ 不再重试（防重试风暴/死循环）。 */
+  | { kind: "budget_exhausted" }
+  /** 同对已有别的通道的义务（R2/评论）⇒ 并入它（义务表的不变式是「每对至多一行」）。 */
+  | { kind: "coalesced"; targetRunId: string };
 
 /**
  * 看门狗判定所需的 **git 事实**（只读口，W1 交付 / W2 的在线 tick 与启动和解臂消费）。
@@ -622,6 +642,41 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { branches: readonly string[] },
   ): Promise<SquadWatchdogGitFacts>;
+  /**
+   * **熔断窗口计数**（W3 §3.6 的唯一读口）：本 workspace 下、最近 `SQUAD_BREAKER_WINDOW_MINUTES`
+   * 分钟内**看门狗族**结算（`SQUAD_RUN_WATCHDOG_SETTLE_REASONS`，含空闲宽限摊牌）逐 agent 的条数。
+   *
+   * 为什么是**数组**而不是 Map：服务面跨 RPC 边界（远端 workspace 的目标服务是代理），Map 不是可
+   * 序列化形状 —— 同 `SquadWatchdogGitFacts` 用 `string[]` 的理由。没有命中的 agent **不出现**（缺省 = 0）。
+   *
+   * 为什么窗口起点在**本层**算：窗口是这条判据的一部分（`SQUAD_BREAKER_WINDOW_MINUTES` 单源在 shared），
+   * 让每个消费点各自算 `Date.now() − W × MS_PER_MINUTE` 就是第二份判据；服务面是时间戳边界。
+   * **不过门禁**（只读不是新派发，与 `listSquadRuns` 同款）。
+   */
+  countWatchdogSettlementsByAgent(
+    target: SquadWorkspaceTarget,
+  ): Promise<Array<{ agentId: string; count: number }>>;
+  /**
+   * **看门狗结算后的自动重试登记**（W3 §3.5）：给被看门狗结算的 run 的同 `(workItem, agent)` 对
+   * 登记一条 `origin="watchdog"` 的 deferred 义务 —— 目标对已离开活跃集 ⇒ 义务立即到期 ⇒
+   * 推进臂按既有重放机制用**新 runId** 开一条新 run（重试是新派发决策，见 `WatchdogRetryOutcome`）。
+   *
+   * 三条纪律：
+   * 1. **只由看门狗族结算触发**（`SQUAD_RUN_WATCHDOG_SETTLE_REASONS`）：用户取消 / 普通失败不自动
+   *    重试（用户/闸已表态）。调用方拿一条非看门狗结算来登记是**接线 bug** ⇒ **响亮抛**，
+   *    不静默 no-op（静默会让「为什么没重试」无人能答）。
+   * 2. **预算派生**（零状态）：同对已有**另一次**看门狗结算 ⇒ `budget_exhausted`。判据在 repo
+   *    （`hasOtherWatchdogSettledRunForPair`，排除本次这一行），本层不重写。
+   * 3. **不过门禁**（登记义务不是新派发，与 `failMemberRun` / `cancelSquadRun` 同款理由）：
+   *    门禁只管新派发；重试的派发本身仍走 host 的派发桥（那里过门禁）。
+   *
+   * 被结算行的 `dispatchCause` **原样继承**（G8：不扩 `DISPATCH_CAUSES` 闭集，纯搬运）——
+   * 「这条重试因何而起」与被它重试的那条是同一个成因。
+   */
+  registerWatchdogRetry(
+    target: SquadWorkspaceTarget,
+    input: { settledRunId: string },
+  ): Promise<WatchdogRetryOutcome>;
   /**
    * 启动**重驱**未收尾的批次（裁定 Important-2）：对「子项全部终态、但该批尚未 finalize」的父项
    * 再跑一次 `advanceAfterChildrenDone`。**幂等**（沿用编排层的 CAS / 前置读当时状态 / 重放闸）；
@@ -1235,6 +1290,89 @@ export function createSquadRuntimeService(deps: {
         if (result.code === 0) existingBranchRefs.push(branch);
       }
       return { liveTreeBranches, existingBranchRefs };
+    },
+
+    /* W3：熔断窗口计数（唯一读口，见接口注释）。窗口起点在本层算（`SQUAD_BREAKER_WINDOW_MINUTES`
+       单源在 shared）：消费点各自算一次就是第二份判据，而窗口算错只会让熔断早/晚一轮生效，
+       不报错。过滤与分组由 repo 单源给出（本层不重写 SQL、不读回后重排）。 */
+    async countWatchdogSettlementsByAgent(target) {
+      const runtime = await deps.createRuntime(target);
+      const sinceMs = Date.now() - SQUAD_BREAKER_WINDOW_MINUTES * MS_PER_MINUTE;
+      const counts = runtime.squadRunRepo.countWatchdogSettlementsByAgent(keyOf(runtime), sinceMs);
+      /* Map → 可序列化数组（服务面跨 RPC 边界）：顺序按 agentId 定序，读两次同一份结果逐字一致
+         （服务面的确定性纪律；也免得调用方从一个无序形状里读顺序）。 */
+      return [...counts.entries()]
+        .map(([agentId, count]) => ({ agentId, count }))
+        .sort((a, b) => a.agentId.localeCompare(b.agentId));
+    },
+
+    /* W3：自动重试登记（见接口注释的三条纪律）。写路径只有 `insertIfAbsent`（义务表的唯一写者面），
+       本层不碰 SQL、不碰 run 台账 —— 重试 run 由 host 的推进臂按义务重放开出来。 */
+    async registerWatchdogRetry(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const settled = runtime.squadRunRepo.get(input.settledRunId);
+      if (settled === null) {
+        throw new Error(
+          `登记看门狗重试失败：squad_runs 里没有 runId=「${input.settledRunId}」的行。` +
+            "静默 no-op 会让「这条 run 被结算过、但没人重试」变成没人知道的事。",
+        );
+      }
+      const reason = settled.settleReason ?? null;
+      if (
+        reason === null ||
+        !(SQUAD_RUN_WATCHDOG_SETTLE_REASONS as readonly string[]).includes(reason)
+      ) {
+        throw new Error(
+          `登记看门狗重试被拒：runId=「${settled.runId}」的 settle_reason 是「${reason ?? "（空）"}」，` +
+            "不在看门狗族（" +
+            `${SQUAD_RUN_WATCHDOG_SETTLE_REASONS.join(" / ")}）内。` +
+            "只有看门狗结算才自动重试 —— 用户取消与审查打回都不重试（用户/闸已表态），" +
+            "静默登记等于替用户做了一次他没同意的重派发。",
+        );
+      }
+      const workspaceKey = keyOf(runtime);
+      if (
+        runtime.squadRunRepo.hasOtherWatchdogSettledRunForPair(
+          workspaceKey,
+          settled.workItemId,
+          settled.agentId,
+          settled.runId,
+        )
+      ) {
+        // 预算已用（终身口径）：同对已经有过一次看门狗结算 ⇒ 这次是第二次 ⇒ 不再重试。
+        return { kind: "budget_exhausted" };
+      }
+      const now = Date.now();
+      // 重试 run 的身份在**登记时**铸定（`globalThis.crypto`：本文件必须浏览器安全，不引 node:crypto）。
+      const retryRunId = globalThis.crypto.randomUUID();
+      const inserted = runtime.squadDeferredDispatchRepo.insertIfAbsent({
+        runId: retryRunId,
+        workspaceKey,
+        workItemId: settled.workItemId,
+        agentId: settled.agentId,
+        // 成因继承被结算行（G8）：本层不推断、不二次判定。
+        dispatchCause: settled.dispatchCause,
+        origin: "watchdog",
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (inserted) return { kind: "registered", runId: retryRunId };
+      /* 同对已有义务（R2 / 评论 / 另一次重试）⇒ 并入它：义务表的不变式是「每对至多一行」，
+         重放机制不分来源都能把这一对再派一次，故并入不是丢失 —— 但必须**说出来**（返回值 + host 日志），
+         否则「重试登记的 runId 去哪了」就成了无从回答的事。 */
+      const existing = runtime.squadDeferredDispatchRepo.find(
+        workspaceKey,
+        settled.workItemId,
+        settled.agentId,
+      );
+      if (existing === null) {
+        // insertIfAbsent=false 却找不到行：与 X2.2 的不可达态同一处置（不得把「找不到」当「没有」）。
+        throw new Error(
+          `登记看门狗重试不可达态：insertIfAbsent 返回 false，但 (workItem=${settled.workItemId}, ` +
+            `agent=${settled.agentId}) 查不到义务行。`,
+        );
+      }
+      return { kind: "coalesced", targetRunId: existing.runId };
     },
 
     async replayUnfinalizedBatches(target) {

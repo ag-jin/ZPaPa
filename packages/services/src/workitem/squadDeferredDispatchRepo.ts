@@ -13,8 +13,11 @@ import { DISPATCH_CAUSES, type DispatchCause } from "./squadDispatchRequests.js"
    没有判别列时 claimDue 一视同仁认领，host 会把评论 dispatchKey 当 eventKey 重放（X2.1 归属前的
    静默撞车）。origin 与 dispatch_cause 是两件事：cause 是「这次派发因何而起」（受 C2 闭集约束，
    评论成因尚未扩展所以为 NULL），origin 是「这条义务由哪条通道登记」（本轮只落数据面，
-   分流消费在 X2.1 的 host 侧）。 */
-export const DEFERRED_DISPATCH_ORIGINS = ["reassign", "comment"] as const;
+   分流消费在 X2.1 的 host 侧）。
+   W3 追加第三值 `watchdog`：看门狗结算后的**自动重试**义务（设计 §3.5）。它与 R2 义务共用
+   「目标对离开活跃集 ⇒ 到期 ⇒ 重放」的机制，但重放的**派发成因与身份**都来自被结算的那条 run，
+   故必须能与 R2/评论两支分流（混用会把一次重试记成改派重放）。列是 TEXT（0013），加值零迁移。 */
+export const DEFERRED_DISPATCH_ORIGINS = ["reassign", "comment", "watchdog"] as const;
 export type DeferredDispatchOrigin = (typeof DEFERRED_DISPATCH_ORIGINS)[number];
 
 export type SquadDeferredDispatchRecord = {
@@ -25,7 +28,7 @@ export type SquadDeferredDispatchRecord = {
   agentId: string;
   /** 派发成因（闭集见 DispatchCause；NULL = 遗留/未知，读回不得猜）。 */
   dispatchCause: DispatchCause | null;
-  /** 义务来源（闭集，非空）：'reassign' = R2 改派；'comment' = 评论派发请求。 */
+  /** 义务来源（闭集，非空）：'reassign' = R2 改派；'comment' = 评论派发请求；'watchdog' = 看门狗自动重试。 */
   origin: DeferredDispatchOrigin;
   createdAt: number;
   updatedAt: number;

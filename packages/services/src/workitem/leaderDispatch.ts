@@ -1,4 +1,8 @@
 import type { Squad, TeamAgent, WorkItem } from "@zcode/shared";
+/* W3：熔断判据（策略单源在 `squadWatchdog`；派发规划、推进臂两处消费共用一份阈值与文案口径）。
+   `squadWatchdog` 经 C1 判据触到 `squadRunLifecycle`（→ `node:crypto`），故本模块是**node 侧**
+   模块（与既有事实一致：`leaderDispatch` 只从 `services/node` 入口出值，不进浏览器安全面）。 */
+import { squadAgentBreakerSkipReason } from "./squadWatchdog.js";
 
 /* 队长角色 run 的派发（spec §3.3 指派语义 / §5.1 三路输入一处写入 / §5.7.2 队长不改父项状态）。
 
@@ -191,6 +195,20 @@ export function planDispatch(input: {
    * 「已归档 / 已停用」是两种事实，不合并。
    */
   targetAgent?: Pick<TeamAgent, "id" | "enabled" | "archivedAt"> | null;
+  /**
+   * **熔断事实**（W3 §3.6，用户 2026-10-07 裁定）：熔断窗口内逐 agent 的看门狗结算数
+   * （服务面派生 SQL 给的事实；缺席 / 空表 = **没有熔断证据** ⇒ 不拦任何派发）。
+   *
+   * 为什么是「逐 agent 计数」而不是一个布尔：熔断按**目标** agent 判（同一次派发里可能的三个目标：
+   * assignee、`targetOverride` 的点名者、队长），一个「有谁熔断」的布尔会让一次派发因为**无关** agent
+   * 熔断而被拦下（那会把局部故障放大成全局停摆，且不报错）。判据本体（几次算熔断）在
+   * `squadWatchdog.squadAgentBreakerSkipReason`（同一处策略，三处消费共用），本函数只把每个出口的
+   * 目标 agent 喂进去 —— 本层**不得**新增任何 I/O（纯函数纪律：事实全注入）。
+   *
+   * 驳回方向**必须**是「缺证据 ⇒ 放行」：熔断的证据只来自派生计数，把「没查/查不到」当成「熔断」
+   * 会让派发在无人察觉的情况下整块停掉。
+   */
+  agentBreakerCounts?: readonly { agentId: string; count: number }[] | null;
   /* 规则触发时的规则 id。brief 的 Interfaces 只写了触发源种类、没写 id 的来路，而 `wake.rule_fired`
      事件必须带上它，所以这里补一个可选入参（**不凭空编一个 id**）。`trigger === "rule"` 时它是必填：
      缺失、空串、或**纯空白**一律抛错，见下面的 if 分支。 */
@@ -198,6 +216,18 @@ export function planDispatch(input: {
 }): DispatchEvent[] {
   const { workItem, squad, trigger } = input;
   const events: DispatchEvent[] = [];
+
+  /* W3：熔断判据的**接入点唯一**——四次查表（本项 assignee / 点名者 / 队长两条腿共用）都走这个闭包，
+     判据本体在 `squadAgentBreakerSkipReason`（策略单源）。表在这里建一次：四条出口可能问同一个
+     agent（如 leaderOverride 与 assignee=squad 都问队长），不重复扫入参。 */
+  const breakerCountByAgent = new Map(
+    (input.agentBreakerCounts ?? []).map((entry) => [entry.agentId, entry.count]),
+  );
+  const breakerSkipReasonFor = (agentId: string): string | null =>
+    squadAgentBreakerSkipReason({
+      agentId,
+      watchdogSettlementsInWindow: breakerCountByAgent.get(agentId) ?? 0,
+    });
 
   /* 触发源只留痕、不参与解析：痕迹放在结论**之前**，消费方按序读到的是因果顺序
      （先「某条规则到点了」，再「派发结论是什么」）。 */
@@ -233,7 +263,9 @@ export function planDispatch(input: {
       events.push(notify(workItem.id, unavailable));
       return events;
     }
-    events.push(...planLeaderRunEvents(workItem.id, input.leaderOverride.squad));
+    events.push(
+      ...planLeaderRunEvents(workItem.id, input.leaderOverride.squad, breakerSkipReasonFor),
+    );
     return events;
   }
 
@@ -246,6 +278,13 @@ export function planDispatch(input: {
     const unavailable = unavailableAgentReason(input.targetAgent);
     if (unavailable !== null) {
       events.push(notify(workItem.id, unavailable));
+      return events;
+    }
+    /* W3：熔断出现在**名册判据之后**（已归档/停用是更强的终态结论：那个 agent 永远不接新派发），
+       而在产出 run 之前（skip = 本轮不派、自动愈合；不是失败、也不丢弃任何东西）。 */
+    const breaker = breakerSkipReasonFor(input.targetOverride.id);
+    if (breaker !== null) {
+      events.push(notify(workItem.id, breaker));
       return events;
     }
     events.push({
@@ -287,6 +326,12 @@ export function planDispatch(input: {
         events.push(notify(workItem.id, unavailable));
         break;
       }
+      // W3：熔断（同上——名册判据之后、产出 run 之前）。
+      const breaker = breakerSkipReasonFor(workItem.assignee.id);
+      if (breaker !== null) {
+        events.push(notify(workItem.id, breaker));
+        break;
+      }
       events.push({
         kind: "run.enqueued",
         workItemId: workItem.id,
@@ -305,7 +350,7 @@ export function planDispatch(input: {
     /* 指派给小队：解析 `leaderAgentId` 并注入简报（spec §3.3）。规则 / 队长工具 / 评论三条触发路径
        共用本分支（评论通道走 `leaderOverride`，落到**同一个** `planLeaderRunEvents`）。 */
     case "squad": {
-      events.push(...planLeaderRunEvents(workItem.id, squad));
+      events.push(...planLeaderRunEvents(workItem.id, squad, breakerSkipReasonFor));
       break;
     }
 
@@ -348,8 +393,16 @@ function notify(workItemId: string, reason: string): DispatchEvent {
  *   重新打开的临时开关，让接线方与用户一眼能分辨该去「取消归档」还是「重新启用」。
  *   次序上归档先判：两者同时命中时报「已归档」（更强的终态结论），不掩盖既有语义。
  * · 否则 ⇒ 一条队长 run 事件（`isLeaderTask` / `runClass:"leader"` / `squadId` / 三段简报）。
+ * · **熔断命中**（W3 §3.6，`breakerSkipReasonFor` 给文案）⇒ 同样 skip（窗口滑出自动愈合，
+ *   不结算任何行、不丢弃任何排队/义务）：两条入口（指派给小队 / 评论点名队长）的目标都是
+ *   `squad.leaderAgentId`，熔断判据**只能在这一处**——各写一份迟早分叉（一条入口照常派队长）。
  */
-function planLeaderRunEvents(workItemId: string, squad: Squad | null): DispatchEvent[] {
+function planLeaderRunEvents(
+  workItemId: string,
+  squad: Squad | null,
+  /** 熔断查表（`planDispatch` 内建的闭包；本函数不自己读计数 —— 事实全注入的纯函数纪律）。 */
+  breakerSkipReasonFor: (agentId: string) => string | null,
+): DispatchEvent[] {
   if (squad === null) {
     return [
       notify(
@@ -365,6 +418,11 @@ function planLeaderRunEvents(workItemId: string, squad: Squad | null): DispatchE
     return [
       notify(workItemId, "指派的小队已停用（enabled=false）：按停用语义跳过本次派发，启用后再派发"),
     ];
+  }
+  /* W3 熔断：排在三条小队状态判据**之后**（归档/停用/不存在都是更强的终态结论），在产出 run 之前。 */
+  const breaker = breakerSkipReasonFor(squad.leaderAgentId);
+  if (breaker !== null) {
+    return [notify(workItemId, breaker)];
   }
   return [
     {

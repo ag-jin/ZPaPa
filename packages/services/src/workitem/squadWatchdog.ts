@@ -27,7 +27,12 @@ import {
   isSettleableResidualMemberRun,
   isTreelessOpenMemberRun,
 } from "./squadRunLifecycle.js";
-import { MS_PER_HOUR, MS_PER_MINUTE } from "@zcode/shared";
+import {
+  MS_PER_HOUR,
+  MS_PER_MINUTE,
+  SQUAD_BREAKER_THRESHOLD,
+  SQUAD_BREAKER_WINDOW_MINUTES,
+} from "@zcode/shared";
 
 /**
  * 判定输入的一行（**看门狗自己的形状**，不直接吃 `SquadRunRecord`）：调用方（W2 的启动臂 / tick）
@@ -260,6 +265,130 @@ export function decideSquadWatchdog(input: SquadWatchdogInput): SquadWatchdogDec
         openedAt,
         thresholdMs: ttlMs,
         reason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+      });
+    }
+  }
+  return decisions;
+}
+
+/* ───────────────────────── W3：熔断（设计 §3.6，零状态派生判据的**判定半**） ───────────────────────── */
+
+/**
+ * **熔断判据**（W3 §3.6，纯函数、事实全注入）：窗口内该 agent 的看门狗结算数达阈值 ⇒ 返回 skip 文案，
+ * 否则 `null`。
+ *
+ * 为什么判据在这里、而**计数**在 repo：计数是派生 SQL（`count(*) WHERE settle_reason IN 看门狗族
+ * AND updated_at > now−窗口`，零状态 —— 没有状态可漂移、没有 reset 可忘记）；判据是「几次算熔断」
+ * 这条**策略**，必须单源 —— 派发规划（`planDispatch` 四条出口）与推进臂（①排队行 / ②义务）
+ * 三处消费若各写一次 `count >= 3`，改阈值就会漏改一处，而漏改的表现只是「某个入口还照常派发」，
+ * 不报错。
+ *
+ * 文案**带本次计数**（不是归一化的枚举）：人要能一眼看出「烧到第几次了」；去重键含文案（
+ * `dispatch_skipped:${workItemId}:${reason}`），故计数增长会被如实记成**新的一条**（同一工作项在
+ * 更严重的事态下再报一次是真事实，不是刷屏 —— 每次增长至少隔一次看门狗结算）。
+ *
+ * 阈值与窗口从 shared 的单源常量取（消费点不得写散值，见 `squad.ts` 的注释）。
+ */
+export function squadAgentBreakerSkipReason(input: {
+  /** 要看的目标 agent（熔断按**目标**判：不是「有谁熔断就全停」）。 */
+  agentId: string;
+  /** 熔断窗口内该 agent 的看门狗结算数（缺项 = 0；事实来自 repo 的派生计数或测试注入）。 */
+  watchdogSettlementsInWindow: number;
+}): string | null {
+  if (input.watchdogSettlementsInWindow < SQUAD_BREAKER_THRESHOLD) return null;
+  return (
+    `智能体「${input.agentId}」已熔断：最近 ${SQUAD_BREAKER_WINDOW_MINUTES} 分钟内有 ` +
+    `${input.watchdogSettlementsInWindow} 次看门狗结算（阈值 ${SQUAD_BREAKER_THRESHOLD}）——` +
+    "按熔断语义跳过本次派发，窗口滑出后自动恢复（人工出路：改派 / 调 TTL / 修该智能体的定义）"
+  );
+}
+
+/* ───────────────── W3：工具看门狗（口径 A：检测 + 提醒；不结算、不 stop） ─────────────────
+
+   用户 2026-10-07 裁定（R-1 事实调查之后）：协议 activeWorks **没有** tool 这一 kind，而唯一的 stop
+   只能 abort **整个前台执行** —— 设计 §3.3 的「只打断该工具、run 继续」在当前链路无证据支持。
+   故本件按**口径 A** 交付：检出「单次工具调用超阈值」⇒ 落一条 Inbox 提醒，**不动 run、绝不调 stop**
+   （协议只是 abort 整个前台执行，会连带杀掉正在跑的一轮 run 的成果）。
+   信号不可得 ⇒ 整体降级 no-op + **首见一次**日志（设计 §3.3 的降级条款）：拿不到 `startedAt` 就没有
+   时钟事实，按它结算/提示都是猜。 */
+
+/** 一次工具调用的**时钟事实**（`readSession` → `projection.activeToolCalls` 的投影）。 */
+export type SquadWatchdogToolCall = {
+  toolCallId: string;
+  toolName: string;
+  /** 与协议同取值域（`zcodeActiveToolCallSchema`）：只有 `running` 在计时（pending 还没跑）。 */
+  status: "pending" | "running" | "completed" | "failed" | "denied";
+  /** 开始时刻；`null` / 缺席 = 没有这个事实 ⇒ 不 alert（不猜，见 `SquadWatchdogRun.openedAt` 同款纪律）。 */
+  startedAt: number | null;
+};
+
+/** 一个候选 run 的工具信号：`activeToolCalls === null` = **信号不可得**（读失败 / 服务缺件）。 */
+export type SquadToolWatchdogObservation = {
+  runId: string;
+  agentId: string;
+  sessionId: string;
+  activeToolCalls: readonly SquadWatchdogToolCall[] | null;
+};
+
+/** 工具臂结论：**提醒**或**无信号降级**——刻意没有「stop」这一档（口径 A，见文件段注释）。 */
+export type SquadToolWatchdogDecision =
+  | {
+      kind: "alert_tool_timeout";
+      runId: string;
+      agentId: string;
+      sessionId: string;
+      toolCallId: string;
+      toolName: string;
+      startedAt: number;
+      elapsedMs: number;
+      thresholdMs: number;
+    }
+  | { kind: "skip_tool_no_signal"; runId: string; agentId: string; sessionId: string };
+
+/**
+ * 工具臂判定（纯函数、事实全注入）：逐 observation 给出提醒或 no_signal。
+ *
+ * 逐格：
+ * · `activeToolCalls === null` ⇒ `skip_tool_no_signal`（执行臂据此**首见一次**留痕）；
+ * · 只有 `status === "running"` **且**有 `startedAt` **且** `now − startedAt > 阈值` 的调用命中：
+ *   `pending` 还没开始跑（没有「跑多久」可言）、`completed/failed/denied` 已经结束、
+ *   缺 `startedAt` 则我们**没有**它跑了多久的事实 —— 三者都不产提醒（不猜）；
+ * · 同一 run 上多个调用各自命中 ⇒ 逐条提醒（执行臂按 (run, toolCallId) 首见留痕；Inbox 的 dedup
+ *   按 runId 收敛，同一 run 只会有一条，见 `computeInboxDedupKey`）。
+ *
+ * 阈值按 agent 解析（`toolTimeoutMinutesFor`：消费点不得写 `?? 5`，缺省语义只有一处）。
+ */
+export function decideSquadToolWatchdog(input: {
+  observations: readonly SquadToolWatchdogObservation[];
+  now: number;
+  toolTimeoutMinutesFor: (agentId: string) => number;
+}): SquadToolWatchdogDecision[] {
+  const decisions: SquadToolWatchdogDecision[] = [];
+  for (const observation of input.observations) {
+    if (observation.activeToolCalls === null) {
+      decisions.push({
+        kind: "skip_tool_no_signal",
+        runId: observation.runId,
+        agentId: observation.agentId,
+        sessionId: observation.sessionId,
+      });
+      continue;
+    }
+    const thresholdMs = input.toolTimeoutMinutesFor(observation.agentId) * MS_PER_MINUTE;
+    for (const call of observation.activeToolCalls) {
+      if (call.status !== "running" || call.startedAt === null) continue;
+      const elapsedMs = input.now - call.startedAt;
+      if (elapsedMs <= thresholdMs) continue;
+      decisions.push({
+        kind: "alert_tool_timeout",
+        runId: observation.runId,
+        agentId: observation.agentId,
+        sessionId: observation.sessionId,
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        startedAt: call.startedAt,
+        elapsedMs,
+        thresholdMs,
       });
     }
   }

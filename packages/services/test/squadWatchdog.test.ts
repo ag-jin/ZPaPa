@@ -21,6 +21,7 @@ import {
   MS_PER_MINUTE,
   resolveTeamAgentIdleTimeoutMinutes,
   resolveTeamAgentRunTtlMinutes,
+  resolveTeamAgentToolTimeoutMinutes,
 } from "@zcode/shared";
 import { planBranches } from "../src/worktree/branchNaming.js";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
@@ -44,6 +45,7 @@ import {
 import { slugForId } from "../src/workitem/slug.js";
 import { makeRepo } from "./helpers/gitFixture.js";
 import {
+  decideSquadToolWatchdog,
   decideSquadWatchdog,
   type SquadWatchdogInput,
   type SquadWatchdogRun,
@@ -1088,4 +1090,123 @@ test("守卫｜阈值单源：workitem 域内不得出现手写的分钟换算�
   // 正向：判定面确实用单源换算常量（不自己写 60_000）。
   const watchdog = sourceOf("workitem/squadWatchdog.ts");
   assert.ok(watchdog.includes("MS_PER_MINUTE") && watchdog.includes("MS_PER_HOUR"));
+});
+
+/* ───────────────── W3 工具臂（口径 A：检测 + 提醒；不结算、不 stop） ─────────────────
+
+   用户 2026-10-07 裁定：信号源 = 轮询 `readSession` 的 `projection.activeToolCalls`（R-1 的替代读口，
+   `boundSessionBusyGate` 同款先例）；命中 ⇒ **只落 Inbox 提醒**，run 台账一个字不写。
+   R-1 实证「只停该工具、run 继续」不可交付（协议 stop 只能 abort 整个前台执行），故本件**绝不调 stop**：
+   判定面连 stop 这个动作类型都不产出，执行臂也就无从调它。 */
+test("工具臂（口径 A）：单工具 > 阈值 ⇒ alert；未超 ⇒ 不动作；信号不可得 ⇒ no_signal", () => {
+  const running = (
+    startedAt: number | null,
+    over: Partial<{
+      toolCallId: string;
+      toolName: string;
+      status: "pending" | "running" | "completed" | "failed" | "denied";
+    }> = {},
+  ) => ({
+    toolCallId: "tc-1",
+    toolName: "bash",
+    status: "running" as const,
+    startedAt,
+    ...over,
+  });
+  const decisions = decideSquadToolWatchdog({
+    observations: [
+      // 6 分钟 > 5 分钟（缺省 toolTimeoutMinutes）：命中。
+      {
+        runId: "run-over",
+        agentId: "ta-a",
+        sessionId: "s-over",
+        activeToolCalls: [running(NOW - 6 * MS_PER_MINUTE)],
+      },
+      // 4 分钟 < 5 分钟：不动作（阈值两侧结论相反）。
+      {
+        runId: "run-under",
+        agentId: "ta-a",
+        sessionId: "s-under",
+        activeToolCalls: [running(NOW - 4 * MS_PER_MINUTE)],
+      },
+      // 信号不可得：不猜、不动作，但要产一条 no_signal（执行臂据此首见留痕）。
+      { runId: "run-nosignal", agentId: "ta-a", sessionId: "s-none", activeToolCalls: null },
+      // 已结束的工具 / 没有开始时刻的调用都不是「超时的在跑工具」。
+      {
+        runId: "run-stale",
+        agentId: "ta-a",
+        sessionId: "s-stale",
+        activeToolCalls: [
+          running(NOW - 60 * MS_PER_MINUTE, { status: "completed" }),
+          running(null, { toolCallId: "tc-2" }),
+          running(NOW - 60 * MS_PER_MINUTE, { toolCallId: "tc-3", status: "pending" }),
+        ],
+      },
+    ],
+    now: NOW,
+    toolTimeoutMinutesFor: () => 5,
+  });
+
+  assert.deepEqual(
+    decisions.map((decision) => [decision.kind, decision.runId]),
+    [
+      ["alert_tool_timeout", "run-over"],
+      ["skip_tool_no_signal", "run-nosignal"],
+    ],
+    "只有「在跑且超阈值」的调用命中；不可得 ⇒ no_signal；其余一律不产决策（健康行不刷屏）",
+  );
+  const alert = decisions[0];
+  assert.ok(alert.kind === "alert_tool_timeout");
+  assert.equal(alert.toolCallId, "tc-1", "提醒要能指出是哪一次工具调用");
+  assert.equal(alert.toolName, "bash");
+  assert.equal(alert.sessionId, "s-over", "提醒要带会话（人要去会话里看/收）");
+  assert.equal(
+    alert.thresholdMs,
+    5 * MS_PER_MINUTE,
+    "阈值进入决策（文案与审计要能说出「超了多少」）",
+  );
+});
+
+test("工具臂：阈值按 agent 解析（per-agent 覆盖），同一时长在两个 agent 上结论相反", () => {
+  const observations = [
+    {
+      runId: "run-a",
+      agentId: "ta-fast",
+      sessionId: "s-a",
+      activeToolCalls: [
+        {
+          toolCallId: "tc-a",
+          toolName: "bash",
+          status: "running" as const,
+          startedAt: NOW - 2 * MS_PER_MINUTE,
+        },
+      ],
+    },
+    {
+      runId: "run-b",
+      agentId: "ta-slow",
+      sessionId: "s-b",
+      activeToolCalls: [
+        {
+          toolCallId: "tc-b",
+          toolName: "bash",
+          status: "running" as const,
+          startedAt: NOW - 2 * MS_PER_MINUTE,
+        },
+      ],
+    },
+  ];
+  const thresholds: Record<string, number> = { "ta-fast": 1, "ta-slow": 5 };
+  const decisions = decideSquadToolWatchdog({
+    observations,
+    now: NOW,
+    // 解析入口是 shared 的 resolve helper（消费点不得各写一份 `?? 5`）——这里直接给已解析值。
+    toolTimeoutMinutesFor: (agentId) =>
+      resolveTeamAgentToolTimeoutMinutes({ toolTimeoutMinutes: thresholds[agentId] }),
+  });
+  assert.deepEqual(
+    decisions.map((decision) => decision.runId),
+    ["run-a"],
+    "2 分钟的工具：阈值 1 分钟的 agent 命中、阈值 5 分钟的不命中（阈值必须按行上的 agent 取）",
+  );
 });

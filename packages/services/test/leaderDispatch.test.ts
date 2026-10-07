@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import { SQUAD_BREAKER_THRESHOLD } from "@zcode/shared";
 import {
   LEADER_PROTOCOL_TEXT,
   declaredRunClassFor,
@@ -1026,4 +1029,121 @@ test("#4：targetOverride 目标已归档 / 已停用 ⇒ 同样 skip（评论�
     assert.ok(skip?.kind === "inbox.notified");
     assert.match(skip.reason, pattern);
   }
+});
+
+// ---------- 6. W3 熔断 skip（§3.6 的消费点：派发规划） ----------
+
+/* 熔断命中 ⇒ 四条 `run.enqueued` 出口**逐格**都不产出 run。为什么必须穷举：`planDispatch` 有四条
+   产出 run 的腿（assignee=agent / targetOverride / leaderOverride / assignee=squad），而**队长那两条
+   的目标不经过 `targetAgent` 入参**（`:307-310` 只传 squad）——按「哪里加了归档 skip 就跟着加」的
+   直觉补，会正好漏掉队长两支，于是「熔断」对一半派发入口形同虚设，且不报错。
+
+   反方向同样断言（计数 < 阈值 ⇒ 四条腿照常产出 run）：只断言「熔断 ⇒ 无 run」的用例会被一个
+   「永远 skip」的实现骗过，那不是熔断而是把派发整个关掉。 */
+const breakerCounts = (agentId: string, count: number) => [{ agentId, count }];
+
+test("W3 熔断 skip：窗口计数 ≥ 阈值 ⇒ 四条 run.enqueued 出口逐格产出 skip（穷举矩阵）", () => {
+  const exits: Array<{
+    name: string;
+    trippedAgentId: string;
+    dispatch: (
+      counts: Array<{ agentId: string; count: number }>,
+    ) => ReturnType<typeof planDispatch>;
+  }> = [
+    {
+      name: "① assignee=agent",
+      trippedAgentId: "ta_a",
+      dispatch: (agentBreakerCounts) =>
+        planDispatch({
+          workItem: agentItem(undefined),
+          squad: null,
+          trigger: "user",
+          runClass: "standalone",
+          agentBreakerCounts,
+        }),
+    },
+    {
+      name: "② targetOverride（评论点名者）",
+      trippedAgentId: "ta_mentioned",
+      dispatch: (agentBreakerCounts) =>
+        planDispatch({
+          workItem: wi({ type: "user", id: "u_1" }),
+          squad: null,
+          trigger: "user",
+          runClass: "standalone",
+          targetOverride: { type: "agent", id: "ta_mentioned" },
+          agentBreakerCounts,
+        }),
+    },
+    {
+      name: "③ leaderOverride（评论点名队长）",
+      trippedAgentId: "ta_lead",
+      dispatch: (agentBreakerCounts) =>
+        planDispatch({
+          workItem: wi({ type: "user", id: "u_1" }),
+          squad: null,
+          trigger: "user",
+          leaderOverride: { squad },
+          agentBreakerCounts,
+        }),
+    },
+    {
+      name: "④ assignee=squad（指派给小队 ⇒ 队长）",
+      trippedAgentId: "ta_lead",
+      dispatch: (agentBreakerCounts) =>
+        planDispatch({
+          workItem: wi({ type: "squad", id: "sq_1" }),
+          squad,
+          trigger: "user",
+          agentBreakerCounts,
+        }),
+    },
+  ];
+
+  for (const exit of exits) {
+    // 命中：窗口内计数 = 阈值 ⇒ 不算「这次」，但已经不接新派发。
+    const tripped = exit.dispatch(breakerCounts(exit.trippedAgentId, SQUAD_BREAKER_THRESHOLD));
+    assert.equal(
+      tripped.some((event) => event.kind === "run.enqueued"),
+      false,
+      `${exit.name}：熔断命中 ⇒ 不得产出 run.enqueued（漏这一支 = 熔断形同虚设）`,
+    );
+    const skip = tripped.find((event) => event.kind === "inbox.notified");
+    assert.ok(skip?.kind === "inbox.notified", `${exit.name}：skip 必须留痕（inbox.notified）`);
+    assert.match(skip.reason, /熔断/, `${exit.name}：skip 文案必须点名熔断（人要知道为什么没派）`);
+
+    // 边界反证：差一次（阈值 − 1）⇒ 照常产出 run。
+    const below = exit.dispatch(breakerCounts(exit.trippedAgentId, SQUAD_BREAKER_THRESHOLD - 1));
+    assert.equal(
+      below.some((event) => event.kind === "run.enqueued"),
+      true,
+      `${exit.name}：计数 < 阈值 ⇒ 必须照常派发（否则「熔断」变成了把派发整个关掉）`,
+    );
+
+    // 别的 agent 熔断 ⇒ 本出口不受影响（熔断按**目标** agent 判，不是「有谁熔断就全停」）。
+    const otherTripped = exit.dispatch(breakerCounts("ta_someone_else", SQUAD_BREAKER_THRESHOLD));
+    assert.equal(
+      otherTripped.some((event) => event.kind === "run.enqueued"),
+      true,
+      `${exit.name}：别的 agent 熔断不得拦下本出口`,
+    );
+  }
+});
+
+test("守卫｜熔断判据不引入 I/O：planDispatch 只吃注入的计数（事实全注入的纯函数纪律）", () => {
+  const source = readFileSync(
+    join(import.meta.dirname, "..", "src", "workitem", "leaderDispatch.ts"),
+    "utf8",
+  );
+  // 判据本体只在 squadWatchdog 一处（本模块只把每个出口的目标 agent 喂进去）。
+  assert.ok(
+    source.includes('from "./squadWatchdog.js"'),
+    "熔断判据必须来自单源（第二份「几次算熔断」= 改阈值漏一处）",
+  );
+  for (const forbidden of ["createSquadRunRepo", "DatabaseSync", "readFileSync", "await "])
+    assert.ok(
+      !source.includes(forbidden),
+      `planDispatch 是纯函数：不得出现「${forbidden}」（计数必须由调用方注入，本层不查库）`,
+    );
+  assert.ok(source.includes("agentBreakerCounts"), "熔断事实必须经入参注入（不是模块级缓存）");
 });
