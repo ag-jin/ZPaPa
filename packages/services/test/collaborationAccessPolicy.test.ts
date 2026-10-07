@@ -306,6 +306,18 @@ test("结构守卫：判据模块不读 author（顶层人类归因的主体不�
   );
 });
 
+test("结构守卫（§9 第 4 条）：判据模块结构上不认识 system —— 不存在「system ⇒ 放行」的捷径", () => {
+  /* §9 第 4 条（system 不得以 system 身份绕过 canInvoke）在 v1 的形态：`AccessSubject` 与审计身份同形
+     （system 作者今天照样可写评论，见 commentTriggerMatrix 的「system 作者：评论可写（可审计）」，
+     把它从取值域里摘掉就会在缺省策略下新增一条拒绝路径 ⇒ 既有行为逐格不变这条验收会破）。
+     于是这条约束落成**结构事实**：判据模块里没有任何 `system` 分支 —— system 只能作为普通主体值流过
+     同一条判据，连「按 kind 特判」的代码位置都不存在。 */
+  assert.ok(
+    !/system/.test(POLICY_CODE),
+    "判据模块（去注释）不得出现 system：一旦出现，就意味着 system 有自己的分支/捷径（§9 第 4 条）",
+  );
+});
+
 test("结构守卫 G4/G6：判据模块零写口、零生命周期、零 steering、零 node 侧 IO", () => {
   for (const forbidden of [
     ".add(",
