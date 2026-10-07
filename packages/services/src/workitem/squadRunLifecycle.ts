@@ -12,6 +12,11 @@ import {
 import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper, ReapOutcome } from "../worktree/orphanReaper.js";
 import type { WorkItemService } from "./workItemService.js";
+import {
+  runSettleIntentForFailureReason,
+  type RunSettleIntent,
+  type WorkItemActivityProjector,
+} from "./workItemActivityProjector.js";
 import { slugForId } from "./slug.js";
 import type { DispatchCause } from "./squadDispatchRequests.js";
 import type { SquadRunRecord, SquadRunRepo, SquadRunStatusPatch } from "./squadRunRepo.js";
@@ -438,6 +443,13 @@ export function createRunLifecycle(deps: {
   resolveAgentMaxConcurrentRuns?: (agentId: string) => number | undefined;
   /** C4：收尾迁移之后的结算事实扇出（不注入 ⇒ 不发布）。 */
   runSettlementHub?: SquadRunSettlementHub;
+  /**
+   * C3b.2：run / worktree 七枚事实的 Activity 投影面（**可选加法**，组合根恒传入；缺省 = 不投影，
+   * 与加法前逐字一致）。为什么由 deps 注入而不是本层现建：投影器的**唯一构造点**在组合根
+   * （接线钉死测试钉住）—— lifecycle 只负责在**事实落地之后**把「已经拿在手里的行 + 一个意图」
+   * 交给它，不持有键形状 / payload 判据的任何一份副本。
+   */
+  activityProjector?: WorkItemActivityProjector;
   /** R2：deferred 重放义务表（不注入 ⇒ 遇到「活跃 run 已存在」时响亮抛，不静默降级）。 */
   squadDeferredDispatchRepo?: import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRepo;
   /**
@@ -600,23 +612,47 @@ export function createRunLifecycle(deps: {
       .filter((branch): branch is string => branch !== null && branch !== "");
   }
 
+  /**
+   * **开跑**这条事实的唯一投影点（C3b.2）：`openMemberRun` 的四个 `opened` 出口与队长 run 的
+   * `recorded:true` 出口都在**建树成功之后**调它 —— `run_started`（leader/member 通用）与
+   * `worktree_created`（member 才有树）两枚由投影模块一并落账（它按 `branch` 判有无树，本层不判）。
+   *
+   * `queued / coalesced / deferred / residual_blocked / already_registered` 出口**不调它**：
+   * 还没开跑（排队 / 等分支 / 义务）或重投（已登记），投影它们就是写「这条 run 开跑了」这句谎话。
+   * 时序硬约束：投影在树建好之后（`occurredAt` = opened 返回前）；建树失败原样抛 ⇒ 不留投影。
+   */
+  function noteRunOpened(record: SquadRunRecord): void {
+    deps.activityProjector?.runStarted(record);
+  }
+
   /* C4：唯一写者在每个收尾迁移之后发布结算事实（覆盖 host 闭包/UI 审查/编排器全部路径——
      分散挂会漏，C0 2.4 事实 2）。settled 行读不到（理论不可达）时用绑定 workspaceKey、
      agentId 置空串——发布事实仍要发出（订阅方按 runId 也能定位）。
 
      0014 起多一个可选 `reason`：写进 `settle_reason`（TTL 审计 / 熔断窗口计数 / 重试预算三处消费）。
      **所有**结算路径都能带（单点纪律不破：不给看门狗开第二道后门）；缺省 ⇒ 不动该列
-     （C1 的两处常规结算与审查/合并路径即此格，列保持 NULL = 「常规结算」）。 */
+     （C1 的两处常规结算与审查/合并路径即此格，列保持 NULL = 「常规结算」）。
+
+     `0014+` 起多一个可选 `activity`（C3b.2）：**投影意图由调用方声明**，缺省 = **不投影**。
+     为什么意图不能从 `(status, reason)` 反推：残行清扫 / 等待臂 / 重开臂三臂同样是 `discarded`
+     且无 reason，但那些行从未开跑、没有树 —— 反推必然写出「这条 run 开跑了/失败了」的谎话
+     （设计 §5.2 判定矩阵；三臂各有用例钉住「不投影」）。 */
   const settleStatus = (
     runId: string,
     status: "produced" | "rejected" | "merged" | "discarded",
-    options?: { patch?: SquadRunStatusPatch; reason?: string },
+    options?: { patch?: SquadRunStatusPatch; reason?: string; activity?: RunSettleIntent },
   ): void => {
     const settled = squadRunRepo.get(runId);
     squadRunRepo.setStatus(runId, status, {
       ...options?.patch,
       ...(options?.reason === undefined ? {} : { settleReason: options.reason }),
     });
+    /* C3b.2：投影挂在**唯一收口**上（一条路径覆盖全部收尾：host 闭包 / UI 审查 / 编排器 / 看门狗），
+       且**记录先于驱动**（与 `transition` 同款次序）——先留时间线回声，再把结算事实扇给推进执行体。
+       投影自身不抛（模块内 catch + logWarn）：一次成功的收口不因回声丢失翻转成调用方异常。 */
+    if (settled !== null && options?.activity !== undefined) {
+      deps.activityProjector?.runSettled(settled, options.activity);
+    }
     deps.runSettlementHub?.publish({
       runId,
       workspaceKey: settled?.workspaceKey ?? boundWorkspaceKey,
@@ -666,6 +702,9 @@ export function createRunLifecycle(deps: {
               openedAt: Date.now(),
             });
             const { memberPath } = await branchAllocator.allocate(rowPlan, baseBranch);
+            /* C3b.2：重开（同 runId 再次进入 open）也是「开跑」这条事实 ⇒ 投影。
+               行由 `setStatus` 刚写过（取回的就是它此刻的真相，不手拼第二份形状）。 */
+            noteRunOpened(requireRun(existing.runId));
             return { kind: "opened", branch: rowPlan.member, worktreePath: memberPath };
           }
           /* C1（§8-P1）：本请求的行存在，但**从来没有建出过树**（open + 未绑会话）。
@@ -716,6 +755,9 @@ export function createRunLifecycle(deps: {
                  （一次为限）：不得为了「再试一次」而二次结算重试 —— 那会在占用不消失时
                  变成每次扫描都翻一遍台账的空转。 */
               const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
+              /* C3b.2：同 runId 重开 = 新的开跑 ⇒ 投影 run_started + worktree_created。
+                 上面那条结算（`discarded`）**不带意图 ⇒ 不投影**：它是内部处置，不是用户可见的终态事实。 */
+              noteRunOpened(requireRun(existing.runId));
               return { kind: "opened", branch: plan.member, worktreePath: memberPath };
             }
             if (isTreelessOpenMemberRun(existing, facts)) {
@@ -761,6 +803,8 @@ export function createRunLifecycle(deps: {
             branch: plan.member,
             dirName: memberDirName(plan),
           });
+          // C3b.2：认领升级（queued→open + 建树）就是「开跑」这条事实（排队那一步不投影）。
+          noteRunOpened(requireRun(request.runId));
           return { kind: "opened", branch: plan.member, worktreePath: memberPath };
         }
         return { kind: "queued", runId: request.runId };
@@ -856,6 +900,8 @@ export function createRunLifecycle(deps: {
       // 建树失败（分支残枝 / base 不存在 / 目录冲突）**原样抛出**：上面的台账行保留，
       // 那是「这条 run 已经开过」的事实，不该被下面的失败抹掉（台账没有删除路径，也不该有）。
       const { memberPath } = await branchAllocator.allocate(plan, baseBranch);
+      // C3b.2：直开出口（树已建好）——`record` 就是刚写入的行，原样交给投影面。
+      noteRunOpened(record);
       return { kind: "opened", branch: plan.member, worktreePath: memberPath };
     },
 
@@ -896,14 +942,21 @@ export function createRunLifecycle(deps: {
          C3 起（A8「吸收优先于排队」）：有名册上限时改走 `insertLeaderRunOrQueue`——语句同持
          「无活跃队长行 + 容量未满」两前置；容量满 ⇒ 队长排队行；已有排队行 ⇒ 并入留痕。 */
       const leaderLimit = deps.resolveAgentMaxConcurrentRuns?.(request.agentId);
+      let recorded = false;
       if (leaderLimit !== undefined) {
         const gated = squadRunRepo.insertLeaderRunOrQueue(record, leaderLimit);
-        if (gated.kind === "recorded") return { recorded: true };
         if (gated.kind === "queued" || gated.kind === "coalesced") {
           return { recorded: false, reason: "capacity_full_queued" };
         }
-        // absorbed ⇒ 落到下方与「读一次再决定」窗口同一口径的收口（runId 复用检查 + 吸收结论）。
-      } else if (squadRunRepo.insertLeaderRunIfNotInProgress(record)) {
+        // `recorded` ⇒ 本次真的登记了；`absorbed` ⇒ 落到下方与「读一次再决定」窗口同一口径的收口。
+        recorded = gated.kind === "recorded";
+      } else {
+        recorded = squadRunRepo.insertLeaderRunIfNotInProgress(record);
+      }
+      if (recorded) {
+        // C3b.2：队长 run 的起点（**无树**）⇒ 只 run_started 一枚；`worktree_created` 由投影模块
+        // 按 `branch === null` 跳过，本层不判（判据只有投影模块一份）。
+        noteRunOpened(record);
         return { recorded: true };
       }
       /* 走到这里说明**这次没写进去**。先把「runId 复用」这一格翻回**响亮错误**：
@@ -946,7 +999,8 @@ export function createRunLifecycle(deps: {
         );
       }
       // 只动台账状态这一列（队长无工作树、无分支：没有任何东西要动）：**不碰 git、不碰工作项状态**。
-      settleStatus(runId, "merged");
+      // C3b.2：队长成功收口 = `run_completed`（payload.status 由投影模块按 isLeaderTask 定为 merged）。
+      settleStatus(runId, "merged", { activity: { kind: "run_completed" } });
     },
 
     async completeMemberRun({ runId }) {
@@ -971,7 +1025,8 @@ export function createRunLifecycle(deps: {
         );
       }
       // 台账状态：产出即 `produced`（该分支从此算「活跃」——已产出未合并，spec §6.2 要求它活到合并）。
-      settleStatus(runId, "produced");
+      // C3b.2：产出入账 = `run_completed` 这条事实（payload 的 status 由投影模块按 isLeaderTask 定）。
+      settleStatus(runId, "produced", { activity: { kind: "run_completed" } });
       /* 工作项推进到 `in_review` 走**工作项服务**（唯一写者不变）。
          CAS 未命中**不抛**（spec §5.7 第 5 项「不匹配则丢弃并记事件，不报错」）：
          产物已经产出了，若因为父项状态被别人改过就抛，队员的成果会连状态一起丢掉。 */
@@ -1015,7 +1070,11 @@ export function createRunLifecycle(deps: {
       });
 
       if (outcome.ok) {
-        settleStatus(runId, "merged");
+        // C3b.2：「合一个队员进集成分支」的唯一实现 ⇒ `worktree_merged`（branch 由投影模块从行取，
+        // integration 是本次合入目标的既成事实，原样交给它，本层不组装 payload）。
+        settleStatus(runId, "merged", {
+          activity: { kind: "worktree_merged", integration: plan.integration },
+        });
         return { ok: true, merged: true };
       }
 
@@ -1034,7 +1093,8 @@ export function createRunLifecycle(deps: {
       }
       // 摘树 + 删分支（顺序与配对校验都在 discardMember 内部）。
       await integrationMerger.discardMember({ branch: record.branch, dirName: record.dirName });
-      settleStatus(runId, "discarded");
+      // C3b.2：摘树删分支的唯一实现 ⇒ `worktree_discarded`（branch / dirName 由投影模块从行取）。
+      settleStatus(runId, "discarded", { activity: { kind: "worktree_discarded" } });
     },
 
     async bindMemberRunSession({ runId, sessionId }) {
@@ -1066,7 +1126,13 @@ export function createRunLifecycle(deps: {
       // 只改台账，**不碰 git**：树与分支的清理交给启动回收器（它们已不在活跃集，spec §6.6/S15）。
       // 0014：失败原因**落盘**（`settle_reason`）——它此前被丢弃，而 TTL 审计 / 熔断窗口计数 /
       // 重试预算三处派生判据都读它；看门狗族与 user_cancel 的**码值**单源在 `squadRunRepo.ts`。
-      settleStatus(runId, "discarded", { reason });
+      /* C3b.2：原因 → 投影意图的判定**只在 `runSettleIntentForFailureReason` 一处**
+         （user_cancel ⇒ run_cancelled；看门狗族与其余 ⇒ run_failed）：若在这里内联比较
+         「哪些原因算看门狗结算」，同一判据就有两份、漂移不报错（族里加一个码值时时间线静默分叉）。 */
+      settleStatus(runId, "discarded", {
+        reason,
+        activity: runSettleIntentForFailureReason(reason),
+      });
     },
   };
 }

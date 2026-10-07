@@ -227,6 +227,9 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
             return agent === undefined ? undefined : resolveTeamAgentMaxConcurrentRuns(agent);
           },
           runSettlementHub: deps.runSettlementHub,
+          /* C3b.2：run / worktree 七枚的投影面 —— 与工作项族共用**同一个**投影器（同一条 db）：
+             lifecycle 在 opened 出口与 settleStatus 收口之后把「行 + 意图」交给它，键形状只在它那里。 */
+          activityProjector,
           squadDeferredDispatchRepo,
           /* C1：残行判据要的 git 事实（「这条 run 的分支上有没有活树」）——工作树的唯一所有者是
              `WorktreeManager`，故只从它取，不在台账上推断（见 `listWorktrees` 的接口注释）。 */
