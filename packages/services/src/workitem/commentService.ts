@@ -7,6 +7,7 @@ import {
   SINGLE_USER_ACCESS_POLICY,
   collaborationAccessDeniedMessage,
   resolveAccessSubject,
+  type CollaborationAccessDenyReason,
   type CollaborationAccessPolicy,
   type WorkItemAccessContext,
 } from "./collaborationAccessPolicy.js";
@@ -73,11 +74,14 @@ export type CommentTriggerTarget = {
 export type CommentSuppressReason = "note" | "all_mention" | "human_mention";
 /** 不触发也不抑制（矩阵里 A 列只有 comment_created 的格子，不写 suppressed Activity）。 */
 export type CommentNoTriggerReason = "non_human_author" | "human_to_human" | "no_agent_context";
-/** 受限状态（可审计不可派发，§12.1-12）：评论照写、派发被拒并如实上报原因。 */
-export type CommentRestrictReason =
-  | "dispatch_disabled"
-  | "work_item_archived"
-  | "agent_not_in_roster";
+/**
+ * 受限状态（可审计不可派发，§12.1-12）：评论照写、派发被拒并如实上报原因。
+ *
+ * **C4.2 起是判据模块拒绝原因的别名**（不再是内联字面量联合）：原因词汇只有一处实现
+ * （`COLLABORATION_ACCESS_DENY_REASONS`），本文件内**零字面量**（结构守卫见测试）——
+ * 两份词表各自演化会让 receipt 的 `detail.reason` 与判据结论悄悄漂移。
+ */
+export type CommentRestrictReason = CollaborationAccessDenyReason;
 
 export type CommentTriggerResolution =
   | { kind: "targets"; targets: CommentTriggerTarget[] }
@@ -386,8 +390,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       const roster = buildRoster(deps.roster, deps.humanNames);
       // 未知 slash 命令由解析器响亮抛出（不静默降级）——发生在写任何事实之前。
       const parsed = parseComment(input.body, roster.index, input.inline ?? null);
-      // 受限状态（§12.1-12）：评论照写，但派发被拒并如实上报原因。
-      let restriction: CommentRestrictReason | null = null;
+      // 归档行等同不存在（get 过滤）：读含归档拿到真值，受限状态（§12.1-12）才能如实上报。
       let workItem = deps.workItems.get(input.workItemId);
       if (!workItem) {
         // get 把归档行当不存在：读含归档拿「归档 vs 根本不存在」的区别（§12.1-12）。
@@ -406,8 +409,8 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         }
         // 归档：评论照写、派发被拒（可审计不可派发）。归档行的 assignee 仍用来解析目标，
         // 这样 blocked receipt 能如实回答「哪个目标被拒了」——否则「归档」格只有一个空结论。
+        // 归档事实由 `workItem.archivedAt` 承载（下面构一次 accessContext），不再另存一份字符串。
         workItem = anyRow;
-        restriction = "work_item_archived";
       }
       if (workItem.workspaceIdentity !== input.workspaceKey) {
         throw new Error(
@@ -440,11 +443,14 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         actor: input.author,
         initiatedBy: input.initiatedBy,
       });
-      const commentAccess = accessPolicy.canCommentWorkItem(
-        subject,
-        { workItemId: input.workItemId, archivedAt: workItem.archivedAt ?? null },
-        "create",
-      );
+      /* 判据的工作项上下文**只在这里构一次**：创建型已有真值（归档分支把归档行读了回来，不是
+         `accessContextOf` 那种「评论反查一次」），同一份上下文同时喂 canComment（上面那句）与
+         canInvoke（下面逐目标裁决）——两轴读到的归档态不可能不一致。 */
+      const accessContext: WorkItemAccessContext = {
+        workItemId: workItem.id,
+        archivedAt: workItem.archivedAt ?? null,
+      };
+      const commentAccess = accessPolicy.canCommentWorkItem(subject, accessContext, "create");
       if (!commentAccess.allowed) {
         throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
       }
@@ -488,12 +494,16 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
             : { author: threadRoot.author, deletedAt: threadRoot.deletedAt },
         squadLeaders: roster.squadLeaders,
       });
-      // 门禁关闭同样是受限状态（工作项更具体的原因优先保留）。
-      if (!deps.readDispatchEnabled()) restriction ??= "dispatch_disabled";
+      /* 门禁快照**取一次**，位置与次数与既有实现逐字对齐（这行原样就是无条件读一次）：门禁判定搬进
+         canInvokeTarget 之后不得改成「只对目标读」——那会让 readDispatchEnabled 的调用次数随级联结论
+         变化，既有行为就不再逐格中立。优先序仍由判据给出：**归档 > 门禁 > 名册**（= `restriction ?? 名册`）。 */
+      const dispatchEnabled = deps.readDispatchEnabled();
       const dispatches = writeDispatchReceipts(deps, {
         comment,
         resolution,
-        restriction,
+        accessContext,
+        dispatchEnabled,
+        accessPolicy,
         knownAgentIds: roster.knownAgentIds,
         timestamp,
       });
@@ -741,7 +751,11 @@ function writeDispatchReceipts(
   context: {
     comment: WorkItemCommentRecord;
     resolution: CommentTriggerResolution;
-    restriction: CommentRestrictReason | null;
+    /** 判据的工作项上下文（归档态真值）与门禁快照：目标可调性的**全部**输入（由调用面各读一次）。 */
+    accessContext: WorkItemAccessContext;
+    dispatchEnabled: boolean;
+    /** §9 三轴的判据面：本函数只取 `canInvokeTarget` 一轴（四写方法的 canComment 在各自方法内）。 */
+    accessPolicy: CollaborationAccessPolicy;
     knownAgentIds: ReadonlySet<string>;
     timestamp: number;
   },
@@ -771,6 +785,12 @@ function writeDispatchReceipts(
   const pendingRequests: SquadDispatchRequest[] = [];
   const blocked: Array<{ targetAgentId: string; source: CommentDispatchSource; reason: string }> =
     [];
+  /* A2A 归因单源（§9 第 3 条）：一次评论一个主体，恒取顶层人类 `initiatedBy`（agent 作者顶不掉）。
+     v1 的判据不读主体（结论只由归档/门禁/名册给出）——主体在这里是**结构保证**，不是分流开关。 */
+  const subject = resolveAccessSubject({
+    actor: context.comment.author,
+    initiatedBy: context.comment.initiatedBy,
+  });
   for (const target of context.resolution.targets) {
     const dispatchKey = computeCommentDispatchKey({
       workspaceKey: context.comment.workspaceKey,
@@ -795,10 +815,22 @@ function writeDispatchReceipts(
       });
       continue;
     }
-    // 受限状态（门禁关闭 / 工作项归档）与名册缺席：可审计不可派发——评论已落库，这里只如实回传 blocked。
-    const blockedReason: CommentRestrictReason | null =
-      context.restriction ??
-      (context.knownAgentIds.has(target.agentId) ? null : "agent_not_in_roster");
+    /* 受限状态（门禁关闭 / 工作项归档）与名册缺席：可审计不可派发——评论已落库，这里只如实回传 blocked。
+       三条原因与优先序（归档 > 门禁 > 名册）**单源**在判据模块：本文件不再内联判一次（否则两份判据
+       各自演化，receipt detail 与判据结论会悄悄漂移）。 */
+    const invokeAccess = context.accessPolicy.canInvokeTarget(
+      subject,
+      context.accessContext,
+      {
+        kind: target.squadId !== undefined ? "squad" : "agent",
+        id: target.agentId,
+        inRoster: context.knownAgentIds.has(target.agentId),
+      },
+      { dispatchEnabled: context.dispatchEnabled },
+    );
+    const blockedReason: CommentRestrictReason | null = invokeAccess.allowed
+      ? null
+      : invokeAccess.reason;
     let outcome: CommentDispatchOutcome;
     let detail: Record<string, unknown>;
     if (blockedReason !== null) {

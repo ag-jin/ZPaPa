@@ -166,18 +166,27 @@ test("canInvokeTarget 优先级与既有实现逐格同序，且不扩成「目�
 // 原因闭集（单源，不产生第二套词汇）
 // ---------------------------------------------------------------------------
 
-test("原因闭集：三值字面量与 commentService 既有 receipt detail 逐字相同（单源，不产生第二套词汇）", () => {
+test("原因闭集：三值字面量与既有 receipt detail 逐字相同（单源，不产生第二套词汇）", () => {
   assert.deepEqual(
     [...COLLABORATION_ACCESS_DENY_REASONS],
     ["work_item_archived", "agent_not_in_roster", "dispatch_disabled"],
+    "三值就是既有 receipt detail 的词汇（commentService.test.ts「受限可审计」逐格断言、b52 门禁格）",
   );
+  /* C4.2 接线后方向反转：commentService **不得**再内联这三个字面量，它必须从本模块取原因类型 ——
+     词汇单源在本模块，写者只做引用（结构守卫 I1 同一断言，见 collaborationInvokePolicy.test.ts）。
+     「既有词汇未变」由行为面保证：既有 receipt 逐格用例（commentService / commentTriggerMatrix /
+     b52）里手写的三个字面量原样断言，漂移必红。 */
   const commentServiceCode = stripComments(
     readFileSync(resolve(WORKITEM_DIR, "commentService.ts"), "utf8"),
   );
+  assert.ok(
+    commentServiceCode.includes("CollaborationAccessDenyReason"),
+    "commentService 的原因类型必须引用本模块（否则它又有了自己的一份词表）",
+  );
   for (const reason of COLLABORATION_ACCESS_DENY_REASONS) {
     assert.ok(
-      commentServiceCode.includes(`"${reason}"`),
-      `既有词汇里必须有 ${reason}：本模块是它们的轴语言单源，不是新造一套`,
+      !commentServiceCode.includes(`"${reason}"`),
+      `C4.2 起 commentService 不得内联 ${reason}：原因词汇单源在本模块，内联即第二套词汇`,
     );
   }
   assert.equal(new Set(COLLABORATION_ACCESS_DENY_REASONS).size, 3, "闭集三值两两互异");

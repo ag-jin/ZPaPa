@@ -531,7 +531,7 @@ test("注入恒放行策略 ⇒ 每个写入口恰调用一次判据，且主体
     sourceRequestId: "req-a2a",
   });
   assert.deepEqual(
-    calls,
+    calls.filter((call) => call.startsWith("comment:")),
     [
       "comment:create:human:local-user",
       "comment:delete:human:local-user",
@@ -539,6 +539,11 @@ test("注入恒放行策略 ⇒ 每个写入口恰调用一次判据，且主体
       "comment:react:human:local-user",
       "comment:decide:human:local-user",
     ],
-    "五入口各恰一次判据调用，action 逐一对应；主体是 initiatedBy（A2A 的 agent 作者顶不掉人类归因）",
+    "五入口各恰一次 canComment 判据调用，action 逐一对应；主体是 initiatedBy（A2A 的 agent 作者顶不掉人类归因）",
+  );
+  assert.deepEqual(
+    calls.filter((call) => !call.startsWith("comment:")),
+    ["invoke"],
+    "C4.2 接线后 canInvokeTarget 逐目标恰一次（本条评论一个目标）：判据面调用不重复（防双判）",
   );
 });
