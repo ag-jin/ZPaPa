@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DEFAULT_SQUAD_FALLBACK_WALL_CLOCK_HOURS,
+  DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES,
+  DEFAULT_SQUAD_RUN_TTL_MINUTES,
+  DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES,
+  MS_PER_HOUR,
+  MS_PER_MINUTE,
+  SQUAD_BREAKER_THRESHOLD,
+  SQUAD_BREAKER_WINDOW_MINUTES,
   SQUAD_INSTRUCTION_SLOTS,
   SQUAD_REQUIRED_INSTRUCTION_SLOTS,
+  SQUAD_RETRY_BUDGET,
   squadSchema,
   validateSquad,
 } from "../src/squad.js";
@@ -137,4 +146,19 @@ test("成员 role 可省且缺省为 undefined", () => {
   const parsed = squadSchema.parse(base);
   assert.equal(parsed.members[1]!.role, undefined);
   assert.equal(parsed.members[0]!.role, "leader");
+});
+
+/* 看门狗阈值是**用户裁定的契约值**（2026-10-07），单源在 shared：这里用字面量逐条钉住，
+   防止有人「顺手」把它们改成别的数而没有任何用例变红（消费点（services/host）不得写散值，
+   由 services 侧的结构守卫再钉一次）。 */
+test("看门狗阈值六值 + 毫秒换算：单源常量逐条钉住（裁定值，不得静默改动）", () => {
+  assert.equal(DEFAULT_SQUAD_RUN_TTL_MINUTES, 30, "TTL 缺省 30 分钟");
+  assert.equal(DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES, 10, "空闲阈值缺省 10 分钟");
+  assert.equal(DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES, 5, "工具阈值缺省 5 分钟");
+  assert.equal(DEFAULT_SQUAD_FALLBACK_WALL_CLOCK_HOURS, 24, "探测缺席兜底墙钟 24 小时");
+  assert.equal(SQUAD_RETRY_BUDGET, 1, "重试预算 1 次");
+  assert.equal(SQUAD_BREAKER_WINDOW_MINUTES, 30, "熔断窗口 30 分钟");
+  assert.equal(SQUAD_BREAKER_THRESHOLD, 3, "熔断阈值 3 次");
+  assert.equal(MS_PER_MINUTE, 60_000, "分钟 ⇒ 毫秒");
+  assert.equal(MS_PER_HOUR, 3_600_000, "小时 ⇒ 毫秒");
 });
