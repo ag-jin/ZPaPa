@@ -28,12 +28,16 @@ import { makeRepo } from "./helpers/gitFixture.js";
    · **既有两个口径逐字不变**：`listSquadRuns`（全量 ASC）以**直接 SQL** 为独立基准，
      `getSnapshot().runs`（活跃集）只含 `SQUAD_RUN_ACTIVE_STATUSES` 三态。
 
-   **已知缺口（2026-10-07 独立复验发现，尚未修复，故本文件不把它写成期望）**：
+   **缺口已修复（2026-10-07 P1 闭环重验；被验提交 `7c24463`）**：本文件上一版记的缺口是
    生产环境的 `runId` = host 的 `eventKey`（`assign:<wi>:<type>:<id>:<uuid>` /
-   `comment-dispatch:v1:…`），**含冒号**；而游标格式 `v1:<created_at>:<run_id>` 用 `:` 作分隔、
+   `comment-dispatch:v1:…`）**含冒号**，而旧游标 `v1:<created_at>:<run_id>` 用 `:` 作分隔、
    解码要求恰好三段 ⇒ 页边界行是这类 id 时，**本实现给出的 nextCursor 自己读不回**（响亮抛
-   「游标非法」），「加载更多」在真实台账上失败。修复时应同时补上「含冒号 run_id 的游标往返」
-   回归用例（复现脚本见复验报告）。本文件只覆盖游标在**无冒号 id** 上的穷举行为。 */
+   「游标非法」），「加载更多」在真实台账上失败。修复把游标升为 `v2` **长度前缀**
+   （`<版本>:<created_at 位数>:<created_at>:<run_id 位数>:<run_id>`），旧 v1 形状一律响亮抛。
+   本文件仍只覆盖**无冒号 id**：它的 16 个非法游标样本改前改后都抛、其余用例的字节级结论
+   两种格式同款（旧实现下本文件整份全绿）—— 也就是说本文件**不能**自证 P1 已修；含冒号
+   runId 的往返 / 翻页并集 / 拒绝语义由 `squadRunCursorP1ClosureVerification.test.ts` 独立承重
+   （该文件在旧实现下 4/4 全红）。 */
 
 const target = (identity: string): SquadWorkspaceTarget => ({ path: `/tmp/${identity}`, identity });
 
