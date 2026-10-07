@@ -96,6 +96,7 @@ import {
   commentObligationReplayFacts,
   commentReceiptObligationPairKey,
   commentReceiptSettlementFor,
+  createSquadRunSessionStopper,
   decideSquadDispatch,
   decideUnsettledReceiptRedispatch,
   isSquadDispatchDisabledError,
@@ -112,6 +113,15 @@ import {
   type SquadMemberRunTerminalOutcome,
 } from "./squadDispatch.js";
 import { listSquadWorkspaceTargets } from "./squadWorkspaceBinding.js";
+/* W2（看门狗六件套）：执行臂 —— 启动和解的队员臂与在线 tick **共用**同一份扫描实现
+   （判定只在 W1 的 `decideSquadWatchdog`，结算只经服务面 `failMemberRun`）。 */
+import {
+  createSquadWatchdogSweepPorts,
+  runSquadWatchdogSweep,
+  startSquadWatchdogTick,
+  type SquadWatchdogSweepPorts,
+  type SquadWatchdogTickHandle,
+} from "./squadWatchdogTick.js";
 import {
   assertBoundSessionDispatchable,
   resolveOffPeakDispatchKind,
@@ -829,6 +839,83 @@ function buildStandaloneRunPrompt(workItem: WorkItem): string {
 let squadStartupRecoveryStarted = false;
 
 /**
+ * 在线看门狗 tick 的句柄（W2）。**启动一次、释放时必停**：定时器不随进程退出自动消失，
+ * `disposeHostResources*` 两条释放路径都要调 `stopSquadWatchdogTick`（见其注释）。
+ */
+let squadWatchdogTick: SquadWatchdogTickHandle | null = null;
+
+/**
+ * 扫描端口（**懒取**：每轮现取，服务面在 host 生命周期内可达/可缺件）。
+ *
+ * 三个 `getOptional` 的缺件语义各自明确：squad runtime 缺席 ⇒ 整轮不扫（返回 null，tick 留痕）；
+ * agent 探针缺席 ⇒ 判定面按「探测不可得」不猜会话状态（只走兜底墙钟）；task service 缺席 ⇒
+ * 空闲档不动作（**不得**当成「跳过 stop 直接结算」）。
+ */
+function resolveSquadWatchdogSweepPorts(): SquadWatchdogSweepPorts | null {
+  const services = activeServices;
+  if (!services) return null;
+  const squadRuntime = services.getOptional(ISquadRuntimeService);
+  if (!squadRuntime) return null;
+  return createSquadWatchdogSweepPorts({
+    squadRuntime,
+    agentService: services.getOptional(IZCodeAgentService) ?? null,
+    stopSession: createSquadRunSessionStopper({
+      taskService: services.getOptional(IZCodeTaskService) ?? null,
+      logWarn: (message, error) => logger.warn(message, error),
+    }),
+    logger,
+  });
+}
+
+/** 停掉在线 tick（**两条释放路径都要调**；幂等：重复调只记一次）。 */
+function stopSquadWatchdogTick(reason: string): void {
+  if (!squadWatchdogTick) return;
+  const handle = squadWatchdogTick;
+  squadWatchdogTick = null;
+  handle.stop();
+  logger.info(`[squad] watchdog tick stopped reason=${reason}`);
+}
+
+/**
+ * 启动**和解的队员臂**（W2；设计 §3.1 的跨重启形态）：把 `open` 且「没有东西会再推进它」的
+ * **队员行**收口 —— 与在线 tick 共用同一份扫描实现，差别只有两处：
+ * · 只看**队员行**（`runScope: "member"`）：队长行由紧随其后的既有队长臂当场收口（不同判据来源，
+ *   见 `settleStaleLeaderRunsBestEffort`），两边都收一遍是重复动作；
+ * · **没有静默信号**（启动时读不到会话活动流）⇒ 空闲档天然不动作，只剩探测 / 树事实 / TTL 兜底。
+ *
+ * 次序上它排在**回收之前**（`host/index.ts` 的启动链）：队员臂结算 ⇒ 僵尸 run 离开活跃集 ⇒
+ * **同一次启动**的回收就能把它的树与分支收掉（放在回收之后就得多等一次完整启动周期，
+ * 而僵尸树占着分支名会让重派发一直撞「分支已被占用」）。
+ * 「重驱先于回收」的既有契约不受影响：和解与重驱都不碰 git、不动批次收尾。
+ */
+async function settleStaleMemberRunsBestEffort(
+  services: ServiceCollection | null,
+  candidates: ReadonlyArray<{ path: string; identity: string }>,
+): Promise<void> {
+  await forEachSquadWorkspaceTarget(candidates, "member-run reconciliation", async (target) => {
+    try {
+      const ports = resolveSquadWatchdogSweepPorts();
+      if (!ports || !services) return;
+      const summary = await runSquadWatchdogSweep({
+        targets: [{ path: target.path, identity: target.identity }],
+        ports,
+        logger,
+        runScope: "member",
+        // 启动形态没有「已发起 stop」的行：进程内的停止表随上一次进程一起消失（重启后会话皆死）。
+        pendingStops: new Map<string, number>(),
+      });
+      logger.info(
+        `[squad] startup member-run reconciliation done workspace=${target.path}` +
+          ` settled=${summary.settled} skipped=${summary.skipped} failed=${summary.failed}`,
+      );
+    } catch (error) {
+      // 响亮（带原文）：best-effort 不等于静默。
+      logger.warn(`[squad] startup member-run reconciliation failed workspace=${target.path}`, error);
+    }
+  });
+}
+
+/**
  * 启动回收（spec §6.4 / §6.6）—— **best-effort，但绝不静默**。
  *
  * 为什么必须做：孤儿工作树会**占住分支名**，下次对同一 (工作项, 队员) 再派发时开树会撞
@@ -876,8 +963,10 @@ async function reapStartupOrphansBestEffort(
  * 收口走**服务面的 `failMemberRun`**（唯一写者；队长行不碰 git、不碰工作项），每一条都记日志 ——
  * 「收了几条、哪几条」必须能从日志里读出来，否则「和解没跑」与「本来就没有残留」长得一模一样。
  *
- * 次序上排在「重驱 → 回收」之后：它只动队长行（无树无枝），与那两步没有共享资源，
- * 放最后是为了**不遮住**那两步之间「重驱必须先于回收」的既有契约。
+ * 次序（W2 契约修订）：排在**重驱之后、回收之前**，与新的队员臂相邻（`settleStaleMemberRunsBestEffort`）。
+ * 为什么不再放最后：队员臂结算出的僵尸行要在**同一次启动**里被回收取树，两步和解必须都在回收之前；
+ * 队长臂本身只动队长行（无树无枝），前移对它无害。两步和解都**不碰 git**（树的清理只属于回收器），
+ * 故「重驱必须先于回收」那条既有契约照旧成立 —— 它约束的是**重驱与回收**的相对次序，不是和解的位置。
  */
 async function settleStaleLeaderRunsBestEffort(
   services: ServiceCollection | null,
@@ -2617,6 +2706,8 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
   disposeHostResourcesInFlight = (async () => {
     logger.info(`disposing host resources, reason=${reason}`);
 
+    // 定时器不随进程退出自动消失：在线看门狗 tick 必须在两条释放路径上都停（见 stopSquadWatchdogTick）。
+    stopSquadWatchdogTick(`dispose:${reason}`);
     stopHostNetworkTelemetry();
     hostSelfResourceTelemetry.stop();
     disposeLocalResourceTelemetry();
@@ -2690,6 +2781,8 @@ function disposeHostResourcesBestEffort(reason: string): void {
   hasDisposedHostResources = true;
 
   logger.info(`disposing host resources, reason=${reason}`);
+  // 与 `disposeHostResources` 同款：best-effort 释放路径同样要摘掉在线看门狗 tick 的定时器。
+  stopSquadWatchdogTick(`disposeBestEffort:${reason}`);
   stopHostNetworkTelemetry();
   disposeLocalResourceTelemetry();
   disposeAttachedServicePorts();
@@ -2863,6 +2956,10 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
      · `squadRuntimeRef` 在 try 里拿到服务后回填；
      · `ledgerRowRegistered` 在队员开树 / 队长登记成功后回填（失败出口对两者都生效）。 */
   const target = { path: msg.workspacePath, identity: msg.workspaceIdentity ?? "" };
+  /* 在线看门狗 tick 的**候选累积**（W2）：本次派发出现的 workspace 从此刻起纳入扫描 ——
+     只按启动 warm 名单扫会整块漏掉「启动后新派发过」的 workspace，而僵尸 run 恰恰最可能出在那里。
+     纯内存登记、不抛错（tick 未启动时是 no-op），故不影响派发路径的任何判定。 */
+  squadWatchdogTick?.track(target);
   /* 本目标的 `workspace_key`（C14 口径：identity 非空白优先，否则 path）——收件箱记录的 workspace 列
      用它，与服务层（runtime/snapshot/台账）算出来的是**同一条规则**（`resolveWorkspaceKey` 的唯一实现）。
      纯计算，故与 `target` 一样声明在 try 之外、失败分支也能用。 */
@@ -4682,10 +4779,18 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                重驱随后撞「分支不存在」而失败（§6.6/S15 要救的那批成果就真没了）。 */
             void (async () => {
               await replayUnfinalizedBatchesBestEffort(activeServices, candidates);
-              await reapStartupOrphansBestEffort(activeServices, candidates);
-              /* 第三步：和解**残留的队长 run**（`open` 卡住的行会把该工作项后续指派永久静默吃掉）。
-                 放最后只为不遮住「重驱必须先于回收」那条既有契约；它只动队长行（无树无枝）。 */
+              /* 第二步（W2 契约修订）：**run 和解** —— 队长臂（前移）+ 队员臂（新增）。
+                 为什么整块前移到回收之前：队员臂会结算「会话已死」的队员行（跨重启形态下探测恒可靠）
+                 ⇒ 那些僵尸 run 离开活跃集 ⇒ **同一次启动**的回收就能把它们的树与分支收掉。
+                 放在回收之后就得多等一次完整启动周期，而僵尸树占着分支名会让重派发一直撞
+                 「分支已被占用」（§6.6/S15）。两步和解都**不碰 git、不动批次收尾**，
+                 故「重驱必须先于回收」那条既有契约（下面注释）不受影响。
+                 队长臂只动队长行（无树无枝）；队员臂看 `sessionId !== null` 的队员行与 TTL 兜底。 */
               await settleStaleLeaderRunsBestEffort(activeServices, candidates);
+              await settleStaleMemberRunsBestEffort(activeServices, candidates);
+
+              /* 第三步：回收（prune + branch -D 不在活跃集的孤儿）。 */
+              await reapStartupOrphansBestEffort(activeServices, candidates);
 
               /* 第四步（C4b，v2.1 C4-1）：排队行与到期义务的全量扫描推进（与在线同一实现；
                  判据全持久无 timer；不通过 ⇒ 收口+留痕，S6 §8.4-4/§12.1-12）。 */
@@ -4693,6 +4798,18 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 await advanceSquadQueueAfterSettlement(activeServices, target);
               });
             })();
+
+            /* 在线看门狗 tick（W2；设计 §6.2）：与启动维护同处起停 —— database ready 之后启动，
+               释放路径调 `stopSquadWatchdogTick`。候选 workspace 以本次启动的预热名单为起点，
+               运行期由派发桥经 `track()` 累积（见 `runSquadDispatch`）。
+               放这里是刻意的：库没就绪时扫描只会空转/报错，且启动维护本身也在这个 ready 回调里。 */
+            if (!squadWatchdogTick) {
+              squadWatchdogTick = startSquadWatchdogTick({
+                targets: candidates,
+                resolvePorts: resolveSquadWatchdogSweepPorts,
+                logger,
+              });
+            }
           }
         }
       },
