@@ -60,13 +60,35 @@ function squadDispatchBridgeSource(): string {
   return host.slice(implAt, handlerAt) + host.slice(branchAt, branchAt + 4_000);
 }
 
+/**
+ * 启动维护**异步链**的源码区域（W2 契约修订时加）：从「启动恢复只跑一次」那道闸到该异步链闭合。
+ *
+ * 为什么不再用「`void` 之后 200 字符内出现某函数名」这种字节窗口：窗口是**脆**的 —— 任何一次
+ * 正当的次序调整（本轮就调整了：run 和解整块前移到回收之前）都会把断言变成假红，而假红最终
+ * 会被「再放宽一点」，守卫随之失效。这里改用**结构边界**：启动链只有这一段
+ * （闸 + 候选计算 + 四步），四步（及两步和解）都必须出现在这段里、且次序可断言。
+ */
+function startupMaintenanceChainSource(): string {
+  const host = read("packages/desktop/src/host/index.ts");
+  const start = host.indexOf("if (!squadStartupRecoveryStarted) {");
+  assert.ok(start >= 0, "host 里没有启动恢复的「只跑一次」闸（找不到启动链起点）");
+  const end = host.indexOf("})();", start);
+  assert.ok(end > start, "找不到启动维护异步链的结尾");
+  return host.slice(start, end);
+}
+
 // 启动回收是 spec §6.4 / §6.6 的**正确性前置**（孤儿占住分支会让重派发撞「分支已存在」）。
 // 只写在文档里不算：本用例把「host 启动路径上真的调了它」钉成断言。
 test("host 启动路径调用 reapStartupOrphans", () => {
   const host = read("packages/desktop/src/host/index.ts");
   assert.match(host, /reapStartupOrphans/, "host 未调用启动回收；孤儿会占住分支名");
-  // 必须是**异步不阻塞 UI** 的调用（spec §11.4「孤儿清理在启动时异步」）。
-  assert.match(host, /void\s+[\s\S]{0,200}reapStartupOrphans/);
+  // 必须是**异步不阻塞 UI** 的调用（spec §11.4「孤儿清理在启动时异步」）：调用点落在启动维护的
+  // 异步链里（该链整体被 `void` 掉 —— 边界见 `startupMaintenanceChainSource`）。
+  assert.match(
+    startupMaintenanceChainSource(),
+    /reapStartupOrphansBestEffort\(activeServices, candidates\);/,
+    "回收必须落在启动维护的异步链里（不阻塞 UI），而不是被挪成同步调用或另起一处",
+  );
   // 加强那两条 grep 的力度：被 `void` 的那个调用**真的**把服务面方法调了
   //（否则「void 一个恰好叫 reapStartupOrphans 的名字」也能通过）。
   assert.match(
@@ -408,19 +430,78 @@ test("派发桥：台账会话回写覆盖队长行（按「有没有台账行�
   );
 });
 
-test("启动路径调用队长行和解，且排在「重驱 → 回收」之后", () => {
-  const host = read("packages/desktop/src/host/index.ts");
-  assert.match(
-    host,
-    /replayUnfinalizedBatchesBestEffort\(activeServices, candidates\);[\s\S]{0,400}?reapStartupOrphansBestEffort\(activeServices, candidates\);[\s\S]{0,400}?settleStaleLeaderRunsBestEffort\(activeServices, candidates\);/,
-    "启动链必须是「重驱 → 回收 → 队长行和解」，且三步都真的被调",
+/* ---- 启动链的**次序契约**（W2 契约修订：旧次序是「重驱 → 回收 → 队长和解」，现为
+   「重驱 → run 和解（队长臂 + 队员臂）→ 回收 → 队列全量推进」）----
+
+   为什么次序是契约（不是风格）：队员和解臂结算僵尸 run ⇒ 它们离开活跃集 ⇒ **同一次启动**的回收
+   才收得掉它们的树与分支。若和解仍在回收之后，僵尸树要等到**下一次完整启动**才被收，而它占着分支名
+   会让重派发一直撞「分支已被占用」（§6.6/S15）。
+   为什么「重驱必须先于回收」照旧（本轮只前插、不动这一对相对次序）：重驱会把未收尾的批 finalize
+   （清掉它的集成分支与已 `merged` 的队员分支），而 `merged` 恰不在活跃集 ⇒ 先回收会把这批的成果分支
+   删掉，重驱随后撞「分支不存在」而失败。
+   强度不降：**四步（+两步和解）仍须全部被调用、次序逐条断言、failMemberRun 仍是唯一写者**。 */
+
+test("启动链次序：重驱 → run 和解（队长臂、队员臂）→ 回收 → 队列全量推进", () => {
+  const chain = startupMaintenanceChainSource();
+
+  // ① 四步 + 两个和解臂**全部**被调（少任何一步 = 那条恢复线整块空转且不报错）。
+  const steps: Array<[string, RegExp]> = [
+    ["重驱", /replayUnfinalizedBatchesBestEffort\(activeServices, candidates\);/],
+    ["队长和解臂", /settleStaleLeaderRunsBestEffort\(activeServices, candidates\);/],
+    ["队员和解臂", /settleStaleMemberRunsBestEffort\(activeServices, candidates\);/],
+    ["回收", /reapStartupOrphansBestEffort\(activeServices, candidates\);/],
+    ["队列全量推进", /advanceSquadQueueAfterSettlement\(activeServices, target\)/],
+  ];
+  const positions = steps.map(([name, pattern]) => {
+    const match = chain.match(pattern);
+    assert.ok(match, `启动链缺少「${name}」这一步（漏接 = 这条恢复线空转且不报错）`);
+    return { name, at: chain.indexOf(match[0]) };
+  });
+
+  // ② 次序逐条断言（相邻两步 + 关键的总关系）。
+  for (let i = 1; i < positions.length; i += 1) {
+    assert.ok(
+      positions[i]!.at > positions[i - 1]!.at,
+    `${positions[i - 1]!.name} 必须先于 ${positions[i]!.name}（新契约：和解整块前移到回收之前）`,
+    );
+  }
+  // 「重驱先于回收」这条**既有**契约单独再钉一次（本轮只前插，不得动这一对的相对次序）。
+  const replayAt = positions[0]!.at;
+  const reapAt = positions[3]!.at;
+  assert.ok(
+    reapAt > replayAt,
+    "重驱必须先于回收：重驱要 finalize 的批次分支（merged）不在活跃集，先回收会把成果删掉",
   );
-  // 收口必须走**服务面的唯一写者**（`failMemberRun`），不得在 host 自造一条状态写路径。
+});
+
+test("启动链的两个和解臂收口都走 failMemberRun（唯一写者），host 里没有第二种改台账状态的手段", () => {
+  const host = read("packages/desktop/src/host/index.ts");
+  const tick = read("packages/desktop/src/host/squadWatchdogTick.ts");
+  // 队长臂：`selectStaleLeaderRuns` 之后逐条 `failMemberRun`（既有形态不变）。
   assert.match(
     host,
     /const stale = selectStaleLeaderRuns\(\{[\s\S]{0,900}?failMemberRun\(target, \{/,
-    "收口要走 failMemberRun（唯一写者）；host 里没有第二种改台账状态的手段",
+    "队长行收口要走 failMemberRun（唯一写者）",
   );
+  // 队员臂：结算走 `runSquadWatchdogSweep` 的执行臂，而执行臂只经注入的 `settleRun` 端口 ——
+  // 端口的唯一实现必须落到服务面 `failMemberRun`。
+  assert.match(
+    tick,
+    /settleRun: \(target, input\) =>\s*\n?\s*squadRuntime\.failMemberRun\(\{ path: target\.path, identity: target\.identity \}, input\)/,
+    "队员臂的结算端口必须接服务面 failMemberRun（唯一写者）",
+  );
+  // 反向：两处都不得出现「直接写状态」的手段（`setStatus` / 裸 UPDATE）——
+  // 那会绕开结算事实扇出（容量释放与队列推进都靠它）。
+  for (const [name, source] of [
+    ["host/index.ts", host],
+    ["host/squadWatchdogTick.ts", tick],
+  ] as const) {
+    assert.doesNotMatch(
+      source,
+      /squadRunRepo\.setStatus\(|UPDATE squad_runs/,
+      `${name} 里不得出现第二种改台账状态的手段（只经服务面方法）`,
+    );
+  }
 });
 
 /* 「派发时的事实」与「类别**声明**」必须**一起**进规划：类别不再由父项的有无**推断** ——
