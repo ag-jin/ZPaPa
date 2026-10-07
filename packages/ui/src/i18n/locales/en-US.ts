@@ -4540,6 +4540,19 @@ const enUS: Record<string, string> = {
   "squad.workItems.labelsTooMany": "At most {max} labels allowed (currently {count})",
   "squad.workItems.labelsTooLong": "Each label can be at most {max} characters",
   "squad.workItems.labelsMore": "+{count}",
+  // Board lanes (#15): closed set of dimensions = no grouping / status category (4-lane skeleton) /
+  // assignee (user first, then first appearance).
+  "squad.workItems.lane.dimension": "Group by",
+  "squad.workItems.lane.dimension.none": "No grouping",
+  "squad.workItems.lane.dimension.statusCategory": "By status",
+  "squad.workItems.lane.dimension.assignee": "By assignee",
+  "squad.workItems.lane.statusCategory.unstarted": "Not started",
+  "squad.workItems.lane.statusCategory.started": "In progress",
+  "squad.workItems.lane.statusCategory.done": "Done",
+  "squad.workItems.lane.statusCategory.closed": "Closed",
+  "squad.workItems.lane.assignee.user": "Me",
+  "squad.workItems.lane.assignee.unknownSuffix": " (no longer in the roster)",
+  "squad.workItems.lane.count": "{count} items",
 
   "squad.runs.title": "Runs awaiting wrap-up",
   "squad.runs.empty": "No runs awaiting wrap-up",

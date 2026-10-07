@@ -30,7 +30,7 @@ import {
 import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
-import { workItemCreateEnabled } from "./workItemsViewModel.js";
+import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
 
 /* 「工作项」一级入口的**完整功能面**（用户 2026-10-03 裁定：入口不藏设置；「UI 功能需要打磨
    完整，不要缺少东西」）。树形看板（父项批次 → 子项）/ 新建 / 编辑 / 改派 / 放弃整批 / 待收尾
@@ -108,6 +108,10 @@ export function WorkItemsPage({
   /* 展开了时间线的**那一条**批根（一次只展开一批：状态就是一个 id）。收起/切换都只改这一处，
      不做展开态记忆；SquadTimelineSection 随条件渲染挂载/卸载，数据随之丢弃。 */
   const [expandedTimelineWorkItemId, setExpandedTimelineWorkItemId] = useState<string | null>(null);
+  /* 看板分组维度（欠账 #15，2026-10-07 裁定 Q2/Q4）：**会话内**状态（与展开态同类），
+     默认 `none` = 现状视图。刻意**不持久化**：本域无偏好持久化先例，新增 store/设置项
+     就是一个新真相源 + 广播回环风险（口径裁定的默认值就是「不持久化」）。 */
+  const [laneDimension, setLaneDimension] = useState<WorkItemLaneDimension>("none");
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
@@ -347,6 +351,8 @@ export function WorkItemsPage({
         targetAvailable={target !== null}
         loading={loading}
         createDisabled={createDisabled}
+        laneDimension={laneDimension}
+        onLaneDimensionChange={setLaneDimension}
         t={t}
         onReload={() => void reload()}
         onCreate={() => setDialog({ kind: "create" })}
@@ -362,6 +368,7 @@ export function WorkItemsPage({
             discardableIds={discardableIds}
             busyWorkItemId={discardingId ?? busyWorkItemId}
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
+            laneDimension={laneDimension}
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}

@@ -4253,6 +4253,18 @@ const zhCN: Record<string, string> = {
   "squad.workItems.labelsTooMany": "标签最多 {max} 个（当前 {count} 个）",
   "squad.workItems.labelsTooLong": "单个标签最多 {max} 个字符",
   "squad.workItems.labelsMore": "+{count}",
+  // 看板泳道（欠账 #15）：维度闭集 = 不分组 / 状态 category（4 类骨架） / 指派对象。
+  "squad.workItems.lane.dimension": "分组",
+  "squad.workItems.lane.dimension.none": "不分组",
+  "squad.workItems.lane.dimension.statusCategory": "按状态",
+  "squad.workItems.lane.dimension.assignee": "按指派",
+  "squad.workItems.lane.statusCategory.unstarted": "未开始",
+  "squad.workItems.lane.statusCategory.started": "进行中",
+  "squad.workItems.lane.statusCategory.done": "已完成",
+  "squad.workItems.lane.statusCategory.closed": "已关闭",
+  "squad.workItems.lane.assignee.user": "我",
+  "squad.workItems.lane.assignee.unknownSuffix": "（已不在名册）",
+  "squad.workItems.lane.count": "{count} 项",
 
   "squad.runs.title": "待收尾的运行",
   "squad.runs.empty": "没有待收尾的运行",

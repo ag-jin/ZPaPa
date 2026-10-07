@@ -143,17 +143,26 @@ export function runReviewable(run: Pick<SquadRunRecord, "status">): boolean {
 
 // ---------- 显示名解析 ----------
 
-/** 智能体显示名。查不到就原样显示 id：显示空会让「队长是谁」变成未知，比显示 id 更糟。 */
-export function resolveTeamAgentName(snapshot: SquadSnapshot, agentId: string): string {
+/** 智能体显示名。查不到就原样显示 id：显示空会让「队长是谁」变成未知，比显示 id 更糟。
+    入参同样收窄到名册那一段（理由见 `resolveAssigneeName`）。 */
+export function resolveTeamAgentName(
+  snapshot: Pick<SquadSnapshot, "teamAgents">,
+  agentId: string,
+): string {
   return snapshot.teamAgents.find((agent) => agent.id === agentId)?.name ?? agentId;
 }
 
 /**
  * 工作项的指派显示名。`null` 表示**当前用户**（`type: "user"`），由视图用本地化文案补上
  * —— 纯函数不碰 i18n。其它类型查不到对象时回落到 id（同上：不显示空）。
+ *
+ * 入参收窄成 `Pick<SquadSnapshot, "teamAgents" | "squads">`：它只读这两处名册，而泳道分组
+ * （`workItemsViewModel.workItemLaneAssigneeName`）手里只有名册两段、没有整份快照。
+ * 收窄后无需为凑类型造一份假快照（那会掩盖「它其实只读名册」这件事）；全量快照是它的子类型，
+ * 既有调用方零改动。
  */
 export function resolveAssigneeName(
-  snapshot: SquadSnapshot,
+  snapshot: Pick<SquadSnapshot, "teamAgents" | "squads">,
   assignee: WorkItem["assignee"],
 ): string | null {
   if (assignee.type === "user") return null;

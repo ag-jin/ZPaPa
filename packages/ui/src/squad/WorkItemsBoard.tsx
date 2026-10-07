@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { WorkItem } from "@zcode/shared";
+import type { WorkItem, WorkItemStatusCategory } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { isSquadBatchRoot } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
@@ -7,8 +7,17 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { SquadTimelineSection } from "./SquadTimelineSection.js";
-import { resolveAssigneeName } from "./squadEntryViewModel.js";
-import { flattenWorkItemBoard, workItemLabelChips, workItemStatusMessageId } from "./workItemsViewModel.js";
+import { parseAssigneeValue, resolveAssigneeName } from "./squadEntryViewModel.js";
+import {
+  WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS,
+  flattenWorkItemBoard,
+  groupWorkItemBoard,
+  workItemLabelChips,
+  workItemLaneAssigneeName,
+  workItemStatusMessageId,
+  type WorkItemBoardRow,
+  type WorkItemLaneDimension,
+} from "./workItemsViewModel.js";
 
 /* 「工作项」页面的**纯呈现**看板（取数与动作都在 WorkItemsPage）。
 
@@ -99,6 +108,7 @@ export function WorkItemsBoard({
   discardableIds,
   busyWorkItemId,
   timelineExpandedWorkItemId,
+  laneDimension,
   focusWorkItemId,
   onFocusConsumed,
   onEdit,
@@ -117,6 +127,8 @@ export function WorkItemsBoard({
   busyWorkItemId: string | null;
   /** 当前展开了时间线的那条批根（页面的**单一**状态：一次只展开一批，见 WorkItemsPage）。 */
   timelineExpandedWorkItemId: string | null;
+  /** 分组维度（看板泳道，欠账 #15）：`none` = 现状（单 ul）；其余按泳道分组（只切根）。 */
+  laneDimension: WorkItemLaneDimension;
   /** 收件箱穿透的**一次性聚焦意图**：哪一行要被滚到视野里 + 短暂高亮（`null` = 没有意图）。 */
   focusWorkItemId?: string | null;
   /** 聚焦消费回调：找到就滚 + 高亮后调；**目标不在列表也调**（父项被归档等 —— 不留悬挂意图）。 */
@@ -185,138 +197,191 @@ export function WorkItemsBoard({
 
   // 「是不是批根」的唯一输入：本 workspace 的 run 行按 parentWorkItemId 归拢（与页面
   // squadDiscardableWorkItemIds 同一份口径 —— 从 snapshot.runs 取，不另查一次）。
+  // **只算一次**：两种视图（不分组 / 泳道）共用同一份判据输入。
   const runParentWorkItemIds = snapshot.runs.map((run) => run.parentWorkItemId);
 
-  return (
-    <ul className={LIST_CLASSNAME} data-testid="work-items-list">
-      {flattenWorkItemBoard(workItems).map(({ item, depth }) => {
-        const assigneeName = resolveAssigneeName(snapshot, item.assignee);
-        const busy = busyWorkItemId === item.id;
-        const timelineExpanded = timelineExpandedWorkItemId === item.id;
-        const labelChips = workItemLabelChips(item.labels);
-        return (
-          <li
-            key={item.id}
-            data-work-item-id={item.id}
-            data-depth={depth}
-            ref={(element) => {
-              if (element) rowElementsRef.current.set(item.id, element);
-              else rowElementsRef.current.delete(item.id);
-            }}
-            style={{ paddingLeft: `${depth * 12 + 8}px` }}
-            className={cn(
-              ROW_CLASSNAME,
-              "flex flex-col gap-2",
-              // 聚焦高亮：**语义色 token**（brand 环，照 WhiteboardPane 的既有手法），
-              // 不引九色板、不编码状态 —— 它只回答"刚才是这一条"。
-              highlightedWorkItemId === item.id && "ring-2 ring-brand",
+  /**
+   * 行渲染**单点**（欠账 #15 的硬守卫，2026-10-07）：不分组与泳道两个分支渲染的是**同一个**
+   * 函数，行 JSX（含 `rowElementsRef` 注册、`data-work-item-id`、时间线钮、动作按钮、透明覆盖）
+   * 只出现一次。复制一份「泳道版行渲染」能通过 typecheck，却会让焦点注册在其中一条路径上
+   * 静默缺失 —— 收件箱「打开工作项」的滚动 + 高亮当场失效，而且不报错。
+   */
+  const renderRow = ({ item, depth }: WorkItemBoardRow) => {
+    const assigneeName = resolveAssigneeName(snapshot, item.assignee);
+    const busy = busyWorkItemId === item.id;
+    const timelineExpanded = timelineExpandedWorkItemId === item.id;
+    const labelChips = workItemLabelChips(item.labels);
+    return (
+      <li
+        key={item.id}
+        data-work-item-id={item.id}
+        data-depth={depth}
+        ref={(element) => {
+          if (element) rowElementsRef.current.set(item.id, element);
+          else rowElementsRef.current.delete(item.id);
+        }}
+        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        className={cn(
+          ROW_CLASSNAME,
+          "flex flex-col gap-2",
+          // 聚焦高亮：**语义色 token**（brand 环，照 WhiteboardPane 的既有手法），
+          // 不引九色板、不编码状态 —— 它只回答"刚才是这一条"。
+          highlightedWorkItemId === item.id && "ring-2 ring-brand",
+        )}
+      >
+        {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
+            覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
+            点击命中是硬要求，不是样式偏好。 */}
+        <div className="relative flex items-center justify-between gap-3">
+          <button
+            type="button"
+            aria-label={intl.formatMessage(
+              { id: "squad.workItemDetail.activity.open" },
+              { title: item.title },
             )}
-          >
-            {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
-                覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
-                点击命中是硬要求，不是样式偏好。 */}
-            <div className="relative flex items-center justify-between gap-3">
-              <button
-                type="button"
-                aria-label={intl.formatMessage(
-                  { id: "squad.workItemDetail.activity.open" },
-                  { title: item.title },
-                )}
-                data-testid="work-item-row-open-detail"
-                onClick={() => onOpenWorkItemDetail(item.id)}
-                className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
-              />
-              <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
-                <span className="break-words text-ui-base text-foreground">{item.title}</span>
-                {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
-                    放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
-                {labelChips.shown.length > 0 ? (
-                  <span className="flex shrink-0 items-center gap-1">
-                    {labelChips.shown.map((label) => (
-                      <WorkItemLabelChip key={label} label={label} />
-                    ))}
-                    {labelChips.hiddenCount > 0 ? (
-                      <span
-                        className={WORK_ITEM_LABEL_CHIP_CLASSNAME}
-                        data-testid="work-item-label-more"
-                      >
-                        {t("squad.workItems.labelsMore", { count: labelChips.hiddenCount })}
-                      </span>
-                    ) : null}
+            data-testid="work-item-row-open-detail"
+            onClick={() => onOpenWorkItemDetail(item.id)}
+            className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
+          />
+          <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
+            <span className="break-words text-ui-base text-foreground">{item.title}</span>
+            {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
+                放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
+            {labelChips.shown.length > 0 ? (
+              <span className="flex shrink-0 items-center gap-1">
+                {labelChips.shown.map((label) => (
+                  <WorkItemLabelChip key={label} label={label} />
+                ))}
+                {labelChips.hiddenCount > 0 ? (
+                  <span
+                    className={WORK_ITEM_LABEL_CHIP_CLASSNAME}
+                    data-testid="work-item-label-more"
+                  >
+                    {t("squad.workItems.labelsMore", { count: labelChips.hiddenCount })}
                   </span>
                 ) : null}
-                {/* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */}
-                <span className="shrink-0 text-ui-xs text-foreground-subtle">
-                  {t(workItemStatusMessageId(item.status))}
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
-                  <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
-                  {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
-                  {assigneeName ?? t("squad.common.assignee.user")}
-                </span>
               </span>
-              <span className="relative z-10 flex shrink-0 items-center gap-2">
-                {/* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。
-                    展开的内容在行下方（同一个 <li> 内），收起即卸载（数据丢弃，无展开态记忆）。 */}
-                {isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-expanded={timelineExpanded}
-                    data-testid="work-item-timeline-toggle"
-                    onClick={() => onToggleTimeline(item)}
-                  >
-                    {t("squad.timeline.toggle")}
-                  </Button>
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  data-testid="work-item-edit"
-                  onClick={() => onEdit(item)}
-                >
-                  {t("squad.common.edit")}
-                </Button>
-                {/* 改派：**所有行都给**（含子项）—— 改负责人是派发语义（改派 = 新派发），
-                    与"改个错别字"（编辑）是两类动作，故单列一个钮；点它只把意图交给页面。 */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  data-testid="work-item-reassign"
-                  onClick={() => onReassign(item)}
-                >
-                  {t("squad.workItems.reassign")}
-                </Button>
-                {/* 放弃整批：只给判据（纯函数）认下的行；点它**只进入待确认态**。 */}
-                {discardableIds.has(item.id) ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    data-testid="work-item-discard"
-                    onClick={() => onDiscard(item.id)}
-                  >
-                    {t("squad.discard.action")}
-                  </Button>
-                ) : null}
-              </span>
-            </div>
-            {/* 内联展开：本批历史（listSquadRuns by parentWorkItemId）的泳道时间线。 */}
-            {timelineExpanded ? (
-              <SquadTimelineSection
-                workItemId={item.id}
-                workspacePath={workspacePath}
-                workspaceIdentity={workspaceIdentity}
-                teamAgents={snapshot.teamAgents}
-                workItems={snapshot.workItems}
-                onOpenSession={onOpenSession}
-              />
             ) : null}
-          </li>
-        );
-      })}
-    </ul>
+            {/* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */}
+            <span className="shrink-0 text-ui-xs text-foreground-subtle">
+              {t(workItemStatusMessageId(item.status))}
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
+              <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
+              {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
+              {assigneeName ?? t("squad.common.assignee.user")}
+            </span>
+          </span>
+          <span className="relative z-10 flex shrink-0 items-center gap-2">
+            {/* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。
+                展开的内容在行下方（同一个 <li> 内），收起即卸载（数据丢弃，无展开态记忆）。 */}
+            {isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-expanded={timelineExpanded}
+                data-testid="work-item-timeline-toggle"
+                onClick={() => onToggleTimeline(item)}
+              >
+                {t("squad.timeline.toggle")}
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              data-testid="work-item-edit"
+              onClick={() => onEdit(item)}
+            >
+              {t("squad.common.edit")}
+            </Button>
+            {/* 改派：**所有行都给**（含子项）—— 改负责人是派发语义（改派 = 新派发），
+                与"改个错别字"（编辑）是两类动作，故单列一个钮；点它只把意图交给页面。 */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              data-testid="work-item-reassign"
+              onClick={() => onReassign(item)}
+            >
+              {t("squad.workItems.reassign")}
+            </Button>
+            {/* 放弃整批：只给判据（纯函数）认下的行；点它**只进入待确认态**。 */}
+            {discardableIds.has(item.id) ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                data-testid="work-item-discard"
+                onClick={() => onDiscard(item.id)}
+              >
+                {t("squad.discard.action")}
+              </Button>
+            ) : null}
+          </span>
+        </div>
+        {/* 内联展开：本批历史（listSquadRuns by parentWorkItemId）的泳道时间线。 */}
+        {timelineExpanded ? (
+          <SquadTimelineSection
+            workItemId={item.id}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            teamAgents={snapshot.teamAgents}
+            workItems={snapshot.workItems}
+            onOpenSession={onOpenSession}
+          />
+        ) : null}
+      </li>
+    );
+  };
+
+  /* 不分组 = **现状 DOM 逐字保留**（单 `<ul data-testid="work-items-list">`，无泳道壳）：
+     默认维度下所有既有用户看到的界面零变化 —— 「给出泳道」不等于「换掉看板」。 */
+  if (laneDimension === "none") {
+    return (
+      <ul className={LIST_CLASSNAME} data-testid="work-items-list">
+        {flattenWorkItemBoard(workItems).map(renderRow)}
+      </ul>
+    );
+  }
+
+  /** 泳道名：状态维度走穷尽的 category 文案；指派维度走 `resolveAssigneeName` 单源
+      （`null` = 当前用户，由本地化文案补；未知对象的 id 后面补一句说明，避免被读成「没指派」）。 */
+  const laneTitle = (key: string): string => {
+    if (laneDimension === "statusCategory") {
+      return t(WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS[key as WorkItemStatusCategory]);
+    }
+    if (key === "user") return t("squad.workItems.lane.assignee.user");
+    const resolved = workItemLaneAssigneeName(snapshot, parseAssigneeValue(key));
+    if (resolved.name === null) return t("squad.workItems.lane.assignee.user");
+    return resolved.known
+      ? resolved.name
+      : resolved.name + t("squad.workItems.lane.assignee.unknownSuffix");
+  };
+
+  /* 泳道视图：只加「外层容器 + 头部」，行仍是上面那一个 renderRow（单点）。
+     泳道**不做折叠**（v1）：行全部挂载 ⇒ `rowElementsRef` 完整，收件箱聚焦/高亮在任一视图下
+     逐字不变（折叠会让「滚到目标行」在收起的目标上静默失效）。 */
+  return (
+    <div className="flex flex-col gap-3" data-testid="work-items-lanes">
+      {groupWorkItemBoard({ items: workItems, dimension: laneDimension, roster: snapshot }).map(
+        (lane) => (
+          <section
+            key={lane.key}
+            className="flex flex-col gap-1"
+            data-testid="work-items-lane"
+            data-lane-key={lane.key}
+          >
+            <span className="flex items-center gap-2 px-1 text-ui-xs text-foreground-subtle">
+              <span className="font-medium">{laneTitle(lane.key)}</span>
+              <span className="text-foreground-subtlest">
+                {t("squad.workItems.lane.count", { count: lane.count })}
+              </span>
+            </span>
+            <ul className={LIST_CLASSNAME}>{lane.rows.map(renderRow)}</ul>
+          </section>
+        ),
+      )}
+    </div>
   );
 }

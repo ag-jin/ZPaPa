@@ -8,6 +8,7 @@ import type { SquadSnapshot } from "@zcode/services";
 import {
   WORK_ITEM_STATUS_MESSAGE_IDS,
   flattenWorkItemBoard,
+  groupWorkItemBoard,
   workItemCreateEnabled,
   workItemStatusMessageId,
 } from "../src/squad/workItemsViewModel.js";
@@ -386,6 +387,39 @@ test("运行可审查性：produced / rejected 可审，其余三态（open / me
   assert.equal(runReviewable({ status: "open" }), false, "还在跑的 run 没有可裁决的产出");
   assert.equal(runReviewable({ status: "merged" }), false);
   assert.equal(runReviewable({ status: "discarded" }), false);
+});
+
+/* 守卫 g（L1 泳道回归，2026-10-07）：看板新增分组视图后，**默认（不分组）**路径的既有锚点、
+   行序与 DOM 形状零回归 —— 「给出泳道」不等于「换掉看板」。
+   变异（L1-3）：把默认维度改成 `statusCategory`（或不分组也套泳道壳）⇒ 第一 / 四 / 五条必红。 */
+test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
+  const board = readSource("squad/WorkItemsBoard.tsx");
+  assert.ok(board.includes('data-testid="work-items-list"'), "不分组仍是单 ul（现状 DOM 逐字保留）");
+  assert.ok(
+    board.includes("flattenWorkItemBoard(workItems).map(renderRow)"),
+    "不分组走 flattenWorkItemBoard（行序判据不变）",
+  );
+  const page = readSource("squad/WorkItemsPage.tsx");
+  assert.ok(
+    page.includes('useState<WorkItemLaneDimension>("none")'),
+    "默认维度必须是 none（默认改泳道 = 改掉所有既有用户看到的界面）",
+  );
+  const actions = readSource("squad/WorkItemsPageActions.tsx");
+  assert.ok(
+    actions.includes('data-testid="work-items-lane-dimension"'),
+    "分组选择器常驻动作行（不是藏起来的设置项）",
+  );
+  assert.ok(
+    page.includes("onLaneDimensionChange={setLaneDimension}"),
+    "选择器与页面状态同源（组件不持有第二份维度状态）",
+  );
+  // 等价性回归（纯函数层）：`none` 的输出与 flattenWorkItemBoard 逐格相同。
+  const items = [wi("p"), wi("c", "p"), wi("orphan", "gone")];
+  assert.deepEqual(
+    groupWorkItemBoard({ items, dimension: "none", roster: { teamAgents: [], squads: [] } })[0]?.rows,
+    flattenWorkItemBoard(items),
+    "none 分支不得改变行序与深度（同一份 DFS 实现）",
+  );
 });
 
 /* 守卫 f：设置卡**终态**（本轮收尾）：只留总开关 + 一行指引，不再渲染任何小队视图。
