@@ -126,3 +126,42 @@ test("update 白名单含 maxConcurrentRuns；白名单外字段（enabled/archi
   assert.equal(smuggled.archivedAt, undefined, "update 不得写 archivedAt（入口是 archive）");
   assert.equal(smuggled.name, "a2", "白名单内字段正常生效");
 });
+
+// ---------- mcpServers（multica 欠账 #2）：编辑白名单第 13 字段 ----------
+
+/* 与 modelSelection 同款的「整体替换 + JSON 判等 + 拷贝」三件套：
+   语义是**替换**不是并入 —— 并入会让人删不掉一个 server（旧条目永远留着），
+   而「删掉某个 MCP」正是这个字段最常见的编辑动作。 */
+test("create 透传 mcpServers（省略不落盘）；update 整体替换、{} 清空、undefined 保持原值", () => {
+  const svc = setup();
+  const omitted = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  assert.equal(
+    "mcpServers" in (svc.get(omitted.id) ?? {}),
+    false,
+    "省略不落盘：缺省 = 该 agent 不覆盖任何 server（存量定义零改写）",
+  );
+
+  const created = svc.create({
+    name: "b",
+    systemPrompt: "s",
+    memoryScope: "project",
+    mcpServers: { "code-search": { command: "npx", args: ["-y", "code-search-mcp"] } },
+  });
+  assert.deepEqual(svc.get(created.id)?.mcpServers, {
+    "code-search": { command: "npx", args: ["-y", "code-search-mcp"] },
+  });
+
+  const replaced = svc.update(created.id, {
+    mcpServers: { "docs-http": { url: "https://docs.test/sse", type: "sse" } },
+  });
+  assert.deepEqual(
+    replaced.mcpServers,
+    { "docs-http": { url: "https://docs.test/sse", type: "sse" } },
+    "整体替换：patch 就是这份定义的新值（并入会让人删不掉 server）",
+  );
+  assert.equal(replaced.name, "b", "白名单外的字段一字不动");
+
+  // {} 是**合法值**（该 agent 不再有自有 server，回到「不覆盖」）；undefined = 保持原值（不是清空）。
+  assert.deepEqual(svc.update(created.id, { mcpServers: {} }).mcpServers, {});
+  assert.deepEqual(svc.update(created.id, {}).mcpServers, {});
+});

@@ -20,6 +20,11 @@ export interface CreateTeamAgentInput {
   tools?: string[];
   disallowedTools?: string[];
   permissionMode?: TeamAgent["permissionMode"];
+  /**
+   * 该智能体自有的 MCP servers（名字 → 完整配置）。省略即不落盘 ⇒ 这个 agent 不覆盖任何 server
+   * （派发时按「user 级 + workspace 级」的基准挂载，见 `@zcode/shared` 的 team-agent-mcp）。
+   */
+  mcpServers?: TeamAgent["mcpServers"];
   /** 记忆作用域必须显式给出：它决定记忆写到哪个命名空间，猜错会把记忆写串。 */
   memoryScope: TeamAgent["memoryScope"];
   /** 每 agent 最大并发 run 数（C1）：省略即不落盘，读数方经 resolve 拿缺省 6。 */
@@ -52,6 +57,7 @@ export type TeamAgentEditablePatch = Partial<
       | "tools"
       | "disallowedTools"
       | "permissionMode"
+      | "mcpServers"
   >
 >;
 
@@ -115,6 +121,7 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         tools: input.tools,
         disallowedTools: input.disallowedTools,
         permissionMode: input.permissionMode,
+        mcpServers: input.mcpServers,
         memoryScope: input.memoryScope,
         maxConcurrentRuns: input.maxConcurrentRuns,
         enabled: input.enabled ?? true,
@@ -227,6 +234,21 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         }
         if (patch.permissionMode !== undefined && patch.permissionMode !== agent.permissionMode) {
           next.permissionMode = patch.permissionMode;
+          changed = true;
+        }
+        // mcpServers（multica 欠账 #2）：与 modelSelection 同款 —— JSON 判等 + 拷贝。
+        // 语义是**整体替换**（不是按 server 名并入）：并入会让「删掉一个 server」永远做不到，
+        // 而删正是这个字段最常见的编辑动作。`{}` 是合法值（不再有自有 server ⇒ 回到「不覆盖」），
+        // 与 `undefined`（保持原值）严格区分。
+        if (
+          patch.mcpServers !== undefined &&
+          JSON.stringify(patch.mcpServers) !== JSON.stringify(agent.mcpServers)
+        ) {
+          // 拷贝而非赋值：不让调用方的可变对象与定义共享引用（prefillFrom 同款纪律）。
+          // 逐条浅拷贝（与 shared 的合并函数同深度）：条目里的 env/headers 不被本层改写，无需更深。
+          next.mcpServers = Object.fromEntries(
+            Object.entries(patch.mcpServers).map(([name, config]) => [name, { ...config }]),
+          );
           changed = true;
         }
         // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。

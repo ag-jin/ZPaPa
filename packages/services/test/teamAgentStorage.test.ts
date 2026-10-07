@@ -131,3 +131,49 @@ test("listTeamAgents 不受畸形文件名影响，好定义照常返回", () =>
     ["ta_ok"],
   );
 });
+
+/* mcpServers 的校验在 schema 上（shared），写入收口 `writeTeamAgent` 先 parse ⇒ 畸形配置在
+   **落盘前**被拒、且不留半截文件；没有该字段的存量定义零改写、零迁移。 */
+test("writeTeamAgent 落盘前拒绝畸形 mcpServers；存量定义（无该字段）照旧合法", () => {
+  const ws = mkdtempSync(join(tmpdir(), "ws-"));
+  const root = resolveSquadAgentRoot(ws);
+  for (const broken of [
+    { broken: "npx" },
+    { broken: { args: ["-y"] } },
+    { "": { command: "npx" } },
+  ]) {
+    assert.throws(
+      () =>
+        writeTeamAgent(root, {
+          id: "ta_bad",
+          name: "a",
+          systemPrompt: "s",
+          memoryScope: "project",
+          enabled: true,
+          mcpServers: broken,
+        }),
+      `mcpServers=${JSON.stringify(broken)} 必须在写盘前被拒`,
+    );
+  }
+  assert.equal(existsSync(join(root, "ta_bad.json")), false, "被拒的定义不得留下任何文件");
+
+  // 空 map 是**合法值**（v1 不做「空 map = 严格空集/屏蔽继承」，设计 §3.1）：落盘、读回都是空表。
+  writeTeamAgent(root, {
+    id: "ta_empty",
+    name: "e",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+    mcpServers: {},
+  });
+  assert.deepEqual(readTeamAgent(root, "ta_empty")?.mcpServers, {});
+
+  writeTeamAgent(root, {
+    id: "ta_old",
+    name: "o",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
+  assert.equal("mcpServers" in (readTeamAgent(root, "ta_old") ?? {}), false, "存量定义零改写");
+});
