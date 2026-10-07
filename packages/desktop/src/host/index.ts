@@ -847,12 +847,16 @@ let squadWatchdogTick: SquadWatchdogTickHandle | null = null;
 /**
  * 扫描端口（**懒取**：每轮现取，服务面在 host 生命周期内可达/可缺件）。
  *
+ * `services` 显式传入（而不是闭包读模块变量）：两条执行臂各自拿着**它自己那一刻**的服务集合，
+ * 免得「启动臂拿着旧集合、tick 现取新集合」这种隐式分叉。
+ *
  * 三个 `getOptional` 的缺件语义各自明确：squad runtime 缺席 ⇒ 整轮不扫（返回 null，tick 留痕）；
  * agent 探针缺席 ⇒ 判定面按「探测不可得」不猜会话状态（只走兜底墙钟）；task service 缺席 ⇒
  * 空闲档不动作（**不得**当成「跳过 stop 直接结算」）。
  */
-function resolveSquadWatchdogSweepPorts(): SquadWatchdogSweepPorts | null {
-  const services = activeServices;
+function resolveSquadWatchdogSweepPorts(
+  services: ServiceCollection | null,
+): SquadWatchdogSweepPorts | null {
   if (!services) return null;
   const squadRuntime = services.getOptional(ISquadRuntimeService);
   if (!squadRuntime) return null;
@@ -894,8 +898,8 @@ async function settleStaleMemberRunsBestEffort(
 ): Promise<void> {
   await forEachSquadWorkspaceTarget(candidates, "member-run reconciliation", async (target) => {
     try {
-      const ports = resolveSquadWatchdogSweepPorts();
-      if (!ports || !services) return;
+      const ports = resolveSquadWatchdogSweepPorts(services);
+      if (!ports) return;
       const summary = await runSquadWatchdogSweep({
         targets: [{ path: target.path, identity: target.identity }],
         ports,
@@ -4809,7 +4813,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
             if (!squadWatchdogTick) {
               squadWatchdogTick = startSquadWatchdogTick({
                 targets: candidates,
-                resolvePorts: resolveSquadWatchdogSweepPorts,
+                resolvePorts: () => resolveSquadWatchdogSweepPorts(activeServices),
                 logger,
               });
             }
