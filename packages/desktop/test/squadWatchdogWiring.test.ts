@@ -778,3 +778,22 @@ test("接线｜看门狗的两个执行臂在自动路径上不碰 discardBatch�
     );
   }
 });
+
+test("接线｜验收条款「stop 发起后 run 不得走成功入账」：只有 succeeded 才进成功臂，stopped/failed 一律 failMemberRun", () => {
+  /* 这条链的每一段都各有一处判据（本轮只管中间一段：会话被 stop 打断 ⇒ outcome=stopped）：
+     · syncer：completedInterrupted ⇒ `turn.interrupted`（服务面测试钉）；
+     · adapter：`turn.interrupted` ⇒ `"stopped"`（服务面测试钉）；
+     · 骨架 `watchRunSettlement`：**非 succeeded ⇒ 不调 settleOnSuccess**（下面第一条断言）；
+     · host 闭包：`outcome !== "succeeded"` ⇒ `failMemberRun`（下面第二条断言）。
+     合起来 = 「看门狗/取消自己发出的 stop」不会把 run 入账成 `produced`（工作项也不会回 in_review）。 */
+  assert.match(
+    DISPATCH_SOURCE,
+    /if \(outcome\.outcome !== "succeeded"\) \{[\s\S]{0,160}?return;\s*\}\s*void params\.settleOnSuccess\(params\.runId\)/,
+    "非 succeeded 的终态必须在成功入账**之前**返回（否则 stopped 也会走 completeMemberRun）",
+  );
+  assert.match(
+    HOST_SOURCE,
+    /if \(outcome\.inputId === traceId && outcome\.outcome !== "succeeded"\) \{/,
+    "host 的失败出口必须由「不是 succeeded」触发（stopped 与 failed 同路 ⇒ failMemberRun）",
+  );
+});
