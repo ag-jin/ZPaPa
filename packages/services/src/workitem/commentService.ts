@@ -4,6 +4,13 @@
 import { randomUUID } from "node:crypto";
 import type { WorkItem } from "@zcode/shared";
 import {
+  SINGLE_USER_ACCESS_POLICY,
+  collaborationAccessDeniedMessage,
+  resolveAccessSubject,
+  type CollaborationAccessPolicy,
+  type WorkItemAccessContext,
+} from "./collaborationAccessPolicy.js";
+import {
   parseComment,
   toMentionRefs,
   type ParsedMention,
@@ -225,6 +232,15 @@ export type CommentServiceDeps = {
   /** 已知人类成员名（@人名抑制的判定输入）；本轮没有人类名册来源，缺省为空集。 */
   humanNames?: ReadonlySet<string>;
   /**
+   * **§9 三轴的判据面**（C4.1）：本服务的**四个写方法各恰一处**并列调用它，且都在第一次写之前
+   * （结构守卫见 collaborationWriteGate.test.ts）。主体恒取 `initiatedBy`（A2A 红线）。
+   *
+   * 缺省 = `SINGLE_USER_ACCESS_POLICY`（单人产品策略：人类恒可读可写、canInvoke 判目标与门禁）——
+   * 缺省是**当前产品的正确策略**，不是「没接线的占位」，故不必填也不会静默漏接。
+   * 测试注入替代策略是本轮唯一的拒绝路径来源（§11.5「权限失败不写半条 Comment」的测法）。
+   */
+  accessPolicy?: CollaborationAccessPolicy;
+  /**
    * **评论派发请求出口**（X2.1 接线）：把「本评论请求某目标 agent 处理」这条**事实**交给常驻侧
    * （组合根注入的派发请求 hub → host 评论派发入口）。
    *
@@ -362,6 +378,8 @@ function buildRoster(source: CommentRosterSource, humanNames?: ReadonlySet<strin
 export function createCommentService(deps: CommentServiceDeps): CommentService {
   const newId = deps.newId ?? (() => randomUUID());
   const now = deps.now ?? (() => Date.now());
+  /* 判据面**取一次**：五个入口共用同一份策略对象（双判/漂移都无处藏）。 */
+  const accessPolicy = deps.accessPolicy ?? SINGLE_USER_ACCESS_POLICY;
 
   return {
     createComment(input) {
@@ -414,6 +432,21 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
           `父评论「${parent.id}」属于 (workspace=${parent.workspaceKey}, workItem=${parent.workItemId})，` +
             `与本次回复的 (workspace=${input.workspaceKey}, workItem=${input.workItemId}) 不一致：一律响亮拒绝（§3.2）。`,
         );
+      }
+      /* §9 三轴的 canComment 判据（C4.1）：主体恒取顶层人类 `initiatedBy`（A2A 红线），工作项上下文带
+         真实归档态（归档项照可写——可审计不可派发）。**写在第一次 `deps.comments.add(` 之前**：拒绝 ⇒
+         响亮抛，绝不留下半条评论/活动/receipt（§11.5）。 */
+      const subject = resolveAccessSubject({
+        actor: input.author,
+        initiatedBy: input.initiatedBy,
+      });
+      const commentAccess = accessPolicy.canCommentWorkItem(
+        subject,
+        { workItemId: input.workItemId, archivedAt: workItem.archivedAt ?? null },
+        "create",
+      );
+      if (!commentAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
       }
       const timestamp = now();
       const comment = deps.comments.add({
@@ -469,6 +502,19 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
 
     softDeleteComment(input) {
       const comment = readCommentForAction(deps, input.commentId, input.workspaceKey);
+      // §9 的 canComment 判据（C4.1）：三件套动作与创建型**并列**过同一份判据面，且在第一次写之前。
+      const subject = resolveAccessSubject({
+        actor: input.actor,
+        initiatedBy: input.initiatedBy ?? input.actor,
+      });
+      const commentAccess = accessPolicy.canCommentWorkItem(
+        subject,
+        accessContextOf(deps, comment.workItemId),
+        "delete",
+      );
+      if (!commentAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
+      }
       deps.comments.softDelete(comment.id); // 墓碑：只写 deletedAt（repo 幂等，正文/作者不动）
       const deleted = deps.comments.get(comment.id)!;
       const timestamp = now();
@@ -499,6 +545,19 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
             "一律响亮拒绝。",
         );
       }
+      // §9 的 canComment 判据（C4.1）：与另三个入口并列，且在第一次写之前。
+      const subject = resolveAccessSubject({
+        actor: input.actor,
+        initiatedBy: input.initiatedBy ?? input.actor,
+      });
+      const commentAccess = accessPolicy.canCommentWorkItem(
+        subject,
+        accessContextOf(deps, comment.workItemId),
+        "resolve",
+      );
+      if (!commentAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
+      }
       deps.comments.setResolved(comment.id, input.resolved); // 状态一致时 repo no-op（不重写时间戳）
       const updated = deps.comments.get(comment.id)!;
       const timestamp = now();
@@ -523,6 +582,19 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
 
     addCommentReaction(input) {
       const comment = readCommentForAction(deps, input.commentId, input.workspaceKey);
+      // §9 的 canComment 判据（C4.1）：回应也过同一判据面（Q2：决定写与四评论入口并列，不发明第四轴）。
+      const subject = resolveAccessSubject({
+        actor: input.author,
+        initiatedBy: input.initiatedBy ?? input.author,
+      });
+      const commentAccess = accessPolicy.canCommentWorkItem(
+        subject,
+        accessContextOf(deps, comment.workItemId),
+        "react",
+      );
+      if (!commentAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
+      }
       const timestamp = now();
       // 幂等落盘（INSERT OR IGNORE）：同 (workspace, comment, author, emoji) 返回既存行。
       const reaction = deps.reactions.add({
@@ -551,6 +623,18 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       return reaction;
     },
   };
+}
+
+/**
+ * 判据的工作项上下文（含归档读回）：三件套动作只带 `commentId`，工作项上下文由评论反查一次。
+ *
+ * 为什么读真值而不是默认「未归档」：上下文是判据的输入事实，「读不到就假设未归档」会把一个
+ * 没有出处的事实喂给判据（本仓反复禁止的静默默认）；这里 `getIncludingArchived` 拿到的就是
+ * 归档行本身。读不到（不该发生：评论必指向存在的行）⇒ `null`（= 未知），不猜。
+ */
+function accessContextOf(deps: CommentServiceDeps, workItemId: string): WorkItemAccessContext {
+  const item = deps.workItems.getIncludingArchived(workItemId);
+  return item === null ? null : { workItemId: item.id, archivedAt: item.archivedAt ?? null };
 }
 
 /** 三件套动作的前置读：不存在 / 跨 workspace 一律响亮拒绝（§3.2 / §8.5）——

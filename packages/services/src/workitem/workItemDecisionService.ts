@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  SINGLE_USER_ACCESS_POLICY,
+  collaborationAccessDeniedMessage,
+  resolveAccessSubject,
+  type CollaborationAccessPolicy,
+} from "./collaborationAccessPolicy.js";
 import type { WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type { AuthorRef } from "./workItemCommentRepo.js";
 import type {
@@ -89,14 +95,23 @@ export interface WorkItemDecisionService {
 }
 
 /**
- * **依赖集封顶**（结构红线）：只有决定/活动/工作项三个 repo 与两个注入口。
+ * **依赖集封顶**（结构红线）：三个 repo + **一个判据口** + 两个注入口（`now`/`newId`）。
  * 改这个类型即编译错——这正是「决定链拿不到 runs/receipts/状态机」的技术保证。
+ *
+ * `accessPolicy` 是**判据口不是新 repo**（C4.1：决定写与四评论入口并列过 §9 的同一判据面，
+ * 即 C3 交接义务的落点）：它只有三个纯函数，拿不到任何存储面。
  */
 export type WorkItemDecisionServiceDeps = {
   decisions: WorkItemDecisionRepo;
   activities: WorkItemActivityRepo;
   /** 工作项存在性/归档判定（归档项允许写决定——写事实不因归档被拒，与评论「可审计不可派发」同族）。 */
   workItems: WorkItemRepo;
+  /**
+   * §9 三轴的判据面（C4.1）；缺省 = `SINGLE_USER_ACCESS_POLICY`（单人产品策略，见该模块的 doc）。
+   * 注入替代策略是本服务唯一的拒绝路径来源（`accessPolicy` 进 deps 而不进服务实现，理由同
+   * CommentServiceDeps.accessPolicy）。
+   */
+  accessPolicy?: CollaborationAccessPolicy;
   /** 时钟（测试可注入）；缺省 Date.now。 */
   now?: () => number;
   /** id 生成（测试可注入）；缺省 randomUUID。 */
@@ -108,6 +123,7 @@ export function createWorkItemDecisionService(
 ): WorkItemDecisionService {
   const newId = deps.newId ?? (() => randomUUID());
   const now = deps.now ?? (() => Date.now());
+  const accessPolicy = deps.accessPolicy ?? SINGLE_USER_ACCESS_POLICY;
 
   return {
     createDecision(input) {
@@ -175,7 +191,22 @@ export function createWorkItemDecisionService(
           );
         }
       }
-      // ③ 写决定行（dedupKey 幂等）→ ④ 写带 decisionId 锚的活动行。
+      /* ③ §9 的 canComment 判据（C4.1；Q2 裁定：决定写与四评论入口**并列**纳入同一判据面）——
+         位次在闭集/父规则校验之后、`decisions.add` 之前：拒绝 ⇒ 响亮抛，绝不留下半条决定/活动。
+         主体恒取顶层人类 `initiatedBy`（A2A 红线：agent 代人类写决定时按那个人类判）。 */
+      const subject = resolveAccessSubject({
+        actor: input.author,
+        initiatedBy: input.initiatedBy ?? input.author,
+      });
+      const decisionAccess = accessPolicy.canCommentWorkItem(
+        subject,
+        { workItemId: workItem.id, archivedAt: workItem.archivedAt ?? null },
+        "decide",
+      );
+      if (!decisionAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(decisionAccess.reason, subject));
+      }
+      // ④ 写决定行（dedupKey 幂等）→ ⑤ 写带 decisionId 锚的活动行。
       const timestamp = input.effectiveAt ?? now();
       const initiatedBy = input.initiatedBy ?? input.author;
       const decision = deps.decisions.add({

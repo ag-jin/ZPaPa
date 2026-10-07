@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { createCommentDispatchReceiptRepo } from "../src/workitem/commentDispatchReceiptRepo.js";
 import { createCommentService, type CreateCommentInput } from "../src/workitem/commentService.js";
+import type {
+  AccessDecision,
+  AccessSubject,
+  CollaborationAccessDenyReason,
+  CollaborationAccessPolicy,
+} from "../src/workitem/collaborationAccessPolicy.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
@@ -566,5 +572,114 @@ test("组合根接线｜DecisionService 只构造一次、依赖集封顶（deci
     register,
     /createDecisionService:\s*createDecisionServiceFor/,
     "门面必须拿到决定服务的构造口（漏接 ⇒ 第五写入口响亮抛，界面点了没反应）",
+  );
+});
+
+/* ---------- C4.1：读面 canView 判据（§9 的三轴里唯一落在门面的一处） ---------- */
+
+function denyPolicy(reason: CollaborationAccessDenyReason): CollaborationAccessPolicy {
+  const deny = (): AccessDecision => ({ allowed: false, reason });
+  return { canViewWorkItem: deny, canCommentWorkItem: deny, canInvokeTarget: deny };
+}
+
+/** 读面夹具：一条在读项 + 一条归档项；runtime 绑定值可换（用于 §8.5 与 §9 两条抛的分界）。 */
+function readFixture(
+  options: {
+    accessPolicy?: CollaborationAccessPolicy;
+    boundWorkspace?: { path: string; identity: string };
+  } = {},
+) {
+  const db = new DatabaseSync(":memory:");
+  runTasksDatabaseMigrations(db);
+  const workItemRepo = createWorkItemRepo(db);
+  workItemRepo.insert(workItemRow("wi-1"));
+  workItemRepo.insert({ ...workItemRow("wi-arch"), archivedAt: 1234 });
+  const service = createWorkItemCollaborationService({
+    createRuntime: async () =>
+      ({
+        workItemRepo,
+        boundWorkspace: options.boundWorkspace ?? WORKSPACE,
+      }) as unknown as SquadRuntime,
+    getRepos: () => ({
+      comments: createWorkItemCommentRepo(db),
+      activities: createWorkItemActivityRepo(db),
+      decisions: createWorkItemDecisionRepo(db),
+      reactions: createWorkItemCommentReactionRepo(db),
+      receipts: createCommentDispatchReceiptRepo(db),
+    }),
+    localHumanActor: () => LOCAL_HUMAN,
+    ...(options.accessPolicy !== undefined ? { accessPolicy: options.accessPolicy } : {}),
+  });
+  return { service };
+}
+
+test("读面｜canView 判据（C4.1）：注入拒绝策略 ⇒ 响亮抛（点名原因与主体），不返回 null", async () => {
+  const { service } = readFixture({ accessPolicy: denyPolicy("work_item_archived") });
+  await assert.rejects(
+    () => service.getWorkItemCollaboration(WORKSPACE, "wi-1"),
+    (error: Error) =>
+      error.message.includes("协作访问判据拒绝") &&
+      error.message.includes("work_item_archived") &&
+      error.message.includes(LOCAL_HUMAN.id),
+    "读面被拒必须响亮抛：返回 null 会把「权限被拒」显示成「这条工作项不存在」",
+  );
+});
+
+test("读面｜缺省策略下 canView 恒放行：归档项照返回、不存在仍 null，且与 §8.5 的跨 workspace 抛是两条不同的抛", async () => {
+  const { service } = readFixture();
+  const archived = await service.getWorkItemCollaboration(WORKSPACE, "wi-arch");
+  assert.equal(archived?.workItem.id, "wi-arch", "归档项仍可寻址（归档 ≠ 不存在）");
+  assert.equal(await service.getWorkItemCollaboration(WORKSPACE, "wi-missing"), null);
+  // 跨 workspace：runtime 绑在别的 workspace，工作项属本 workspace ⇒ §8.5 响亮抛（与 §9 的拒绝不同源）。
+  const other = readFixture({ boundWorkspace: OTHER_WORKSPACE });
+  await assert.rejects(
+    () => other.service.getWorkItemCollaboration(WORKSPACE, "wi-1"),
+    (error: Error) => error.message.includes("§8.5") && !error.message.includes("协作访问判据拒绝"),
+    "跨 workspace 拒绝必须保留原有文案（不得被 canView 的拒绝文案顶替）",
+  );
+});
+
+test("读面｜判据只在服务层判：门面读面恰一次 canView（主体 = 注入身份），门面写入口零判据调用", async () => {
+  const calls: string[] = [];
+  const tagged = (subject: AccessSubject) => `${subject.kind}:${subject.id}`;
+  const policy: CollaborationAccessPolicy = {
+    canViewWorkItem: (subject: AccessSubject) => {
+      calls.push(`view:${tagged(subject)}`);
+      return { allowed: true };
+    },
+    canCommentWorkItem: () => {
+      calls.push("comment");
+      return { allowed: true };
+    },
+    canInvokeTarget: () => ({ allowed: true }),
+  };
+  const { service } = readFixture({ accessPolicy: policy });
+  await service.getWorkItemCollaboration(WORKSPACE, "wi-1");
+  assert.deepEqual(
+    calls,
+    [`view:${tagged(LOCAL_HUMAN)}`],
+    "读面恰一次 canView，主体 = 组合根注入的本地人类",
+  );
+  // 门面写入口**零判据**：判据在服务层（门面再判一份就是第二份判据，漂移不报错）。
+  const forwarding = createWorkItemCollaborationService({
+    createRuntime: async () => ({ boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+    getRepos: () => {
+      throw new Error("写路径不得读 repo");
+    },
+    localHumanActor: () => LOCAL_HUMAN,
+    accessPolicy: policy,
+    createCommentService: () =>
+      ({ createComment: () => ({ comment: { id: "c-1" }, dispatches: [] }) }) as never,
+    createDecisionService: () => ({ createDecision: () => ({ id: "dec-1" }) }) as never,
+  });
+  await forwarding.createWorkItemComment(WORKSPACE, {
+    workItemId: "wi-1",
+    body: "正文",
+    clientRequestId: "req-1",
+  });
+  assert.deepEqual(
+    calls,
+    [`view:${tagged(LOCAL_HUMAN)}`],
+    "门面写入口不得调用判据（判据面在服务层）",
   );
 });

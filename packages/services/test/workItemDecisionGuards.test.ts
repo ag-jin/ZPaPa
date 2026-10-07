@@ -139,7 +139,7 @@ test("G6｜dedupKey 单源：两个纯函数在 workitem/** 各只有一处定�
   );
 });
 
-test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisions/activities/workItems/now/newId", () => {
+test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisions/activities/workItems/accessPolicy/now/newId", () => {
   const block = DECISION_SERVICE_SRC.slice(
     DECISION_SERVICE_SRC.indexOf("export type WorkItemDecisionServiceDeps = {"),
   );
@@ -148,8 +148,9 @@ test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisio
   const names = [...block.slice(0, end).matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => match[1]);
   assert.deepEqual(
     [...new Set(names)].sort(),
-    ["activities", "decisions", "newId", "now", "workItems"],
-    "依赖集封顶是结构红线：加 runs/receipts/deferred/workItemService 即编译错 + 本守卫红",
+    ["accessPolicy", "activities", "decisions", "newId", "now", "workItems"],
+    "依赖集封顶是结构红线：加 runs/receipts/deferred/workItemService 即编译错 + 本守卫红。" +
+      "accessPolicy 是 C4.1 的判据口（纯函数面，不是新 repo）——决定写与四评论入口并列过同一判据",
   );
 });
 

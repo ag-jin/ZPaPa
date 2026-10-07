@@ -48,10 +48,12 @@ import {
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
-/** 依赖集封顶的类型层断言：加 runs/receipts 到 deps ⇒ `pnpm typecheck` 在本文件报错（编译期红线）。 */
+/** 依赖集封顶的类型层断言：加 runs/receipts 到 deps ⇒ `pnpm typecheck` 在本文件报错（编译期红线）。
+    C4.1 把键集扩为「三 repo + `accessPolicy`（§9 判据口，纯函数面）+ 两注入口」——
+    这是任务卡 §4.4-G7 明文的封顶更新，故本断言随之更新（红线本身不移交）。 */
 type DepsCapHolds = Equal<
   keyof WorkItemDecisionServiceDeps,
-  "activities" | "decisions" | "newId" | "now" | "workItems"
+  "accessPolicy" | "activities" | "decisions" | "newId" | "now" | "workItems"
 >;
 const DEPS_CAP_HOLDS: DepsCapHolds = true;
 /** 判据自检（保证上面的 Equal 会真的区分）：若 Equal 退化成恒 true，下面这行赋值即编译错。 */

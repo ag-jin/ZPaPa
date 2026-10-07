@@ -4,6 +4,14 @@ import type {
   CommentDispatchReceiptRepo,
   CommentDispatchReceiptRecord,
 } from "./commentDispatchReceiptRepo.js";
+/* C4.1：判据面是**值导入**（读面 canView 判据在这里调用）——该模块保持浏览器安全，
+   故不会把 node 侧带进 renderer 包（browserSafeRootEntry.test.ts 的传递可达检查守这条）。 */
+import {
+  SINGLE_USER_ACCESS_POLICY,
+  collaborationAccessDeniedMessage,
+  resolveAccessSubject,
+  type CollaborationAccessPolicy,
+} from "./collaborationAccessPolicy.js";
 import type { CommentService, CreateCommentResult } from "./commentService.js";
 import type { SquadRuntime } from "./squadContracts.js";
 import type { SquadWorkspaceTarget } from "./squadRuntimeService.js";
@@ -53,7 +61,9 @@ import type { WorkItemDecisionService } from "./workItemDecisionService.js";
       归档行**照返回**（否则设计案 §4.1 的归档态不可达）；
    ③ **排序零重排**：五个数组原样来自 repo（本层不 sort、不 filter、不 derive —— 第二份判据
       与 repo 漂移时不报错，时间线会静默换序）；
-   ④ **不过门禁**：读不是新派发（与 listSquadRuns / listWakeRules / listInboxItems 同款理由）；
+   ④ **读不是新派发，但读仍是 §9 的一轴**：读面过 `canView` 判据（C4.1）——缺省策略恒放行（单人产品），
+      注入拒绝 ⇒ 响亮抛；「不过派遣门禁」的理由（与 listSquadRuns / listWakeRules / listInboxItems 同款）
+      讲的是「门禁（派发开关）不管读」，与 §9 的 canView 不是一件事；
    ⑤ **写只经 CommentService**：门面不碰 receipt/run/义务三个面，也不存在 `.add(` / `UPDATE`；
    ⑥ 响应分组在 UI（`reactions` 扁平返回，`groupCommentReactions` 是 UI 受测纯函数）；
    ⑦ 懒取 repo、未注入 ⇒ 响亮抛（同 `requireInboxItemRepo` 的理由：静默空表会把
@@ -190,6 +200,14 @@ export type WorkItemCollaborationServiceDeps = {
   /** 懒取（`getInboxItemRepo` / `getCommentDispatchReceiptRepo` 同款：库在 ensureReady 后就绪）。 */
   getRepos: () => WorkItemCollaborationRepos;
   /**
+   * §9 三轴的判据面（C4.1）：读面 `getWorkItemCollaboration` 用它做 **canView** 判据。
+   *
+   * 缺省 = `SINGLE_USER_ACCESS_POLICY`（单人产品策略：人类恒可读，归档项照可读）——与两个写服务同款：
+   * 缺省值就是当前产品的正确策略，不是「没接线的占位」。注入替代策略是读面唯一的拒绝路径来源
+   * （注入拒绝 ⇒ 响亮抛，不返回 `null`：`null` 已被「本 workspace 没有这条」占用）。
+   */
+  accessPolicy?: CollaborationAccessPolicy;
+  /**
    * **本地人类身份的唯一来源**（D1-A：组合根注入**一次**）。
    *
    * 为什么必填而不是可选：可选会让「没接身份」表现成 `undefined` 被当作一个 id 写进审计列
@@ -299,12 +317,28 @@ export function createWorkItemCollaborationService(
             "跨 workspace 引用一律响亮拒绝（§8.5）。",
         );
       }
+      /* §9 的 canView 判据（C4.1）：读面与五个写入口**并列**过同一份判据面（主体同源 =
+         组合根注入的本地人类，经唯一的 `resolveAccessSubject` 派生）。位次在取任何 repo 之前：
+         拒绝 ⇒ 响亮抛（**不返回 `null`**——`null` 已被「本 workspace 没有这条」占用，混用会把
+         「权限被拒」显示成「工作项不存在」）。缺省策略恒放行，故本判据不改变任何既有读行为。 */
+      const viewerActor = requireLocalHumanActor();
+      const accessSubject = resolveAccessSubject({
+        actor: viewerActor,
+        initiatedBy: viewerActor,
+      });
+      const viewAccess = (deps.accessPolicy ?? SINGLE_USER_ACCESS_POLICY).canViewWorkItem(
+        accessSubject,
+        { workItemId, archivedAt: workItem.archivedAt ?? null },
+      );
+      if (!viewAccess.allowed) {
+        throw new Error(collaborationAccessDeniedMessage(viewAccess.reason, accessSubject));
+      }
       const repos = requireRepos();
       const comments = repos.comments.listByWorkItem(workspaceKey, workItemId);
       return {
         workItem,
         // 观察者身份与写入口的 actor 同源（同一次 requireLocalHumanActor 调用口径）。
-        viewerActor: requireLocalHumanActor(),
+        viewerActor,
         comments,
         activities: repos.activities.listByWorkItem(workspaceKey, workItemId),
         decisions: repos.decisions.listByWorkItem(workspaceKey, workItemId),
