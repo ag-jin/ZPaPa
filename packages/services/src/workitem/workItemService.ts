@@ -1,6 +1,8 @@
 import {
   WORK_ITEM_MAX_CHILDREN,
   WORK_ITEM_MAX_DEPTH,
+  parseWorkItemLabels,
+  workItemLabelsErrorMessage,
   type WorkItem,
   type WorkItemStatusKey,
 } from "@zcode/shared";
@@ -46,6 +48,12 @@ export interface CreateWorkItemInput {
   parentId?: string;
   stage?: number;
   assignee: WorkItem["assignee"];
+  /**
+   * 标签原文（可选，`#11` v1）：按 `,` / 换行切分后交由 shared 的 `parseWorkItemLabels`
+   * **归一化**（去重保序、上限 10 条 / 32 字符）。超限**响亮抛**且不落盘 —— 静默截断会让用户
+   * 以为全部写进去了。规则不在这里写第二遍。
+   */
+  labels?: readonly string[];
   /** 可选：测试与幂等场景可自带 id；缺省时生成。 */
   id?: string;
 }
@@ -91,6 +99,14 @@ export function createWorkItemService(deps: {
       const id = input.id ?? randomUUID();
       if (input.parentId !== undefined) validateParent(input.parentId, id);
 
+      // 标签在**落盘之前**过归一化闸（`parseWorkItemLabels` 是唯一判据）：非 ok ⇒ 抛，
+      // 于是超限输入不会留下一条「标签被悄悄砍掉」的行。`properties` 仍写 `{}`（v1 只读呈现，
+      // 今天没有任何写者 —— 不在这里替设计造一个没裁过的类型契约）。
+      const parsedLabels = parseWorkItemLabels(input.labels ?? []);
+      if (parsedLabels.kind !== "ok") {
+        throw new Error(workItemLabelsErrorMessage(parsedLabels));
+      }
+
       const item: WorkItem = {
         id,
         workspaceIdentity: input.workspaceIdentity,
@@ -101,7 +117,7 @@ export function createWorkItemService(deps: {
         body: input.body ?? "",
         status: "todo",
         assignee: input.assignee,
-        labels: [],
+        labels: parsedLabels.labels,
         properties: {},
         position: 0,
       };

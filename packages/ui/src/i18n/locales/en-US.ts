@@ -4533,6 +4533,13 @@ const enUS: Record<string, string> = {
   "squad.workItems.status.blocked": "Blocked",
   "squad.workItems.status.done": "Done",
   "squad.workItems.status.cancelled": "Cancelled",
+  // Labels (#11 v1): a purely descriptive field (no dispatch / status / filtering); input is
+  // comma- or newline-separated text.
+  "squad.workItems.labels": "Labels",
+  "squad.workItems.labelsPlaceholder": "Separate with commas or new lines, up to 10",
+  "squad.workItems.labelsTooMany": "At most {max} labels allowed (currently {count})",
+  "squad.workItems.labelsTooLong": "Each label can be at most {max} characters",
+  "squad.workItems.labelsMore": "+{count}",
 
   "squad.runs.title": "Runs awaiting wrap-up",
   "squad.runs.empty": "No runs awaiting wrap-up",
@@ -4703,6 +4710,8 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.activity.open": 'Open work item "{title}"',
   "squad.workItemDetail.overview.bodyShow": "Show description",
   "squad.workItemDetail.overview.bodyHide": "Hide description",
+  "squad.workItemDetail.overview.labels": "Labels",
+  "squad.workItemDetail.overview.labelsEmpty": "No labels",
   "squad.workItemDetail.comment.add": "Add comment",
   "squad.workItemDetail.comment.placeholder": "Add a comment",
   "squad.workItemDetail.comment.replyingTo": "Replying to {name}",

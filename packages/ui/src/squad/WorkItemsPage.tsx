@@ -263,13 +263,15 @@ export function WorkItemsPage({
               body: input.body,
               parentId: input.parentId,
               assignee: input.assignee,
+              labels: input.labels,
             }),
           "squad.workItems.created",
         );
         return;
       }
-      // 编辑：只把标题 / 正文交给服务面（`updateWorkItem` 的白名单就只有这两个）——
-      // 指派与父项不在编辑里（理由见 WorkItemDialog 的注释）。
+      // 编辑：只把标题 / 正文 / 标签交给服务面（`updateWorkItem` 的白名单就只有这三个）——
+      // 指派与父项不在编辑里（理由见 WorkItemDialog 的注释）。标签**必传**：它是表单的当前值
+      // （空文本 = 清空标签），漏传会被服务面读成「没提这个字段」而保留旧值，界面与库就不一致。
       if (dialog?.kind !== "edit") return;
       const id = dialog.item.id;
       void runAction(
@@ -277,7 +279,7 @@ export function WorkItemsPage({
         (service) =>
           service.updateWorkItem(target, {
             id,
-            patch: { title: input.title, body: input.body },
+            patch: { title: input.title, body: input.body, labels: input.labels },
           }),
         "squad.workItems.updated",
       );

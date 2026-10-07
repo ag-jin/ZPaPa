@@ -50,7 +50,7 @@ export interface WorkItemRepo {
    */
   updateAssignee(id: string, assignee: WorkItem["assignee"]): boolean;
   /**
-   * 改写工作项**内容**（title / body）—— 不含 `status`（唯一写者是 `WorkItemService` 的
+   * 改写工作项**内容**（title / body / labels）—— 不含 `status`（唯一写者是 `WorkItemService` 的
    * `transition`）与 `assignee`（另有 `updateAssignee`）。CAS 式：`id` 存在、未归档、
    * **且给了至少一个字段**才写；恰命中一行返回 `true`。
    *
@@ -58,15 +58,22 @@ export interface WorkItemRepo {
    * 派发竞态，也会把「这一行已经不存在了」伪装成一次成功的改写 —— 未命中必须返回 `false`
    * 而不是静默 no-op，否则调用方以为「改成功了」而库里仍是旧标题。
    *
-   * 为什么空 patch（两个字段都 `undefined`）**直接返回 false**：一次不 SET 任何列的
+   * 为什么空 patch（三个字段都 `undefined`）**直接返回 false**：一次不 SET 任何列的
    * `UPDATE` 没有语义（等于「改了什么？什么都没改」），若放行则调用方传空 patch 会得到
    * 「成功」，把接线错误静默成一次空写。返回 `false` 让空 patch 落到调用方的响亮错误路径。
+   * 注意 `labels: []` **不是**空 patch：它是「清空标签」这个合法动作（给了字段就 SET）。
    *
    * SET 子句**逐字段拼接**（patch 里出现哪个字段才 SET 哪个），不做整包展开：运行期多带的
    * 键必须被忽略 —— 否则 `patch` 上恰好同名于别的列（`status` / `archived_at`）的键就能
    * 绕开白名单写到不该写的列上。
+   *
+   * `labels` 入参是**已归一化**的字符串数组（判据单源 = shared 的 `parseWorkItemLabels`，
+   * 由调用方在写之前过闸）：本层不再做第二份去重 / 截断 —— 存储格式照旧是 JSON 文本。
    */
-  updateContent(id: string, patch: { title?: string; body?: string }): boolean;
+  updateContent(
+    id: string,
+    patch: { title?: string; body?: string; labels?: string[] },
+  ): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
   areAllChildrenTerminal(parentId: string): boolean;
 }
@@ -192,6 +199,12 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
       if (patch.body !== undefined) {
         assignments.push("body=?");
         values.push(patch.body);
+      }
+      // labels 是 JSON 文本列：序列化在写入口本来就做（insert 同款），本层不做归一化
+      // （规则单源 = shared 的 parseWorkItemLabels，调用方已过闸）；`[]` 是合法值（清空标签）。
+      if (patch.labels !== undefined) {
+        assignments.push("labels=?");
+        values.push(JSON.stringify(patch.labels));
       }
       // 空 patch：没有任何要写的列 ⇒ 不执行空 UPDATE，直接未命中（响亮错误留给调用方）。
       if (assignments.length === 0) return false;

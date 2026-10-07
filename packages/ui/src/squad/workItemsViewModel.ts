@@ -97,6 +97,24 @@ export function workItemStatusMessageId(status: WorkItemStatusKey): string {
   return WORK_ITEM_STATUS_MESSAGE_IDS[status];
 }
 
+/** 看板行上标签 chip 的显示上限：超出的折成「+N」（行是窄的，标签会把状态与指派人挤出去）。 */
+export const WORK_ITEM_LABEL_CHIP_MAX = 3;
+
+/**
+ * 看板行的标签 chip 投影：`shown` = 前 `max` 个，`hiddenCount` = 被折进「+N」的个数。
+ *
+ * 为什么截断投影也要在纯函数里：它是**呈现判据**（显示几个、还剩几个），组件里算就等于不可测；
+ * 而且它与详情页的「全量呈现」是两件不同的事（详情页不调本函数）—— 两处的差别必须显式。
+ * 空数组 ⇒ `{shown: [], hiddenCount: 0}`（调用方据此整块不渲染，不留一个空 chip 行）。
+ */
+export function workItemLabelChips(
+  labels: readonly string[],
+  max: number = WORK_ITEM_LABEL_CHIP_MAX,
+): { shown: string[]; hiddenCount: number } {
+  const shown = labels.slice(0, max);
+  return { shown, hiddenCount: labels.length - shown.length };
+}
+
 /**
  * 「新建工作项」按钮**可点**吗：有目标 + **已成功取到快照**。
  *

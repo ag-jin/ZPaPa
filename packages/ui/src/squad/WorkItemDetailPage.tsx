@@ -15,6 +15,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { resolveSquadRuntimeService, squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import { resolveWorkItemCollaborationService } from "./workItemCollaborationAccess.js";
+import { WorkItemLabelChip } from "./WorkItemsBoard.js";
 import { WorkItemCollaborationTimeline } from "./WorkItemCollaborationTimeline.js";
 import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
@@ -274,6 +275,24 @@ export function WorkItemDetailPage({
           {workItem.archivedAt === undefined ? null : <span>{t("squad.common.archived")}</span>}
         </span>
         <h1 className="text-ui-lg font-medium text-foreground">{workItem.title}</h1>
+        {/* 标签（#11 v1）：**全量**呈现、不截断（看板行的 3 个上限是行的约束，不是这条记录的约束），
+            取自 `state.read.workItem`（协作读模型含归档行 —— 用快照的话归档项的标签会凭空消失）。
+            空标签给一句「无标签」而不是整块消失：字段是这一轮新加的，什么都没有会被读成「页面坏了」。 */}
+        <span
+          className="flex flex-wrap items-center gap-1"
+          data-testid="work-item-detail-labels"
+        >
+          <span className="text-ui-xs text-foreground-subtle">
+            {t("squad.workItemDetail.overview.labels")}
+          </span>
+          {workItem.labels.length === 0 ? (
+            <span className="text-ui-xs text-foreground-subtlest">
+              {t("squad.workItemDetail.overview.labelsEmpty")}
+            </span>
+          ) : (
+            workItem.labels.map((label) => <WorkItemLabelChip key={label} label={label} />)
+          )}
+        </span>
         {workItem.body.trim().length === 0 ? null : (
           <>
             <Button

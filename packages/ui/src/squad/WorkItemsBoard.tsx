@@ -8,7 +8,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { SquadTimelineSection } from "./SquadTimelineSection.js";
 import { resolveAssigneeName } from "./squadEntryViewModel.js";
-import { flattenWorkItemBoard, workItemStatusMessageId } from "./workItemsViewModel.js";
+import { flattenWorkItemBoard, workItemLabelChips, workItemStatusMessageId } from "./workItemsViewModel.js";
 
 /* 「工作项」页面的**纯呈现**看板（取数与动作都在 WorkItemsPage）。
 
@@ -35,9 +35,29 @@ import { flattenWorkItemBoard, workItemStatusMessageId } from "./workItemsViewMo
 const LIST_CLASSNAME = "flex flex-col gap-2";
 /** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
 const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/* 标签 chip 的**中性**外观（#11 v1）：只用 `border` / `foreground-subtlest` ——
+   标签是**描述**，不是状态（spec §11.3：状态只由语义色表达；借 success / destructive 上色
+   会让「这个标签」被读成「这件事成了 / 出事了」）。常量一处定义，看板与详情页共用同一个组件。 */
+const WORK_ITEM_LABEL_CHIP_CLASSNAME =
+  "shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest";
 /* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
    不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
 const FOCUS_HIGHLIGHT_MS = 1600;
+
+/**
+ * 工作项标签 chip（**一处定义，两个面共用**：看板行与详情页概览）。
+ *
+ * 为什么放在本文件：chip 的外观属于「工作项行的呈现词汇」，而看板是这套词汇的拥有者
+ * （`.zcode` 里第二个面 —— 详情页 —— 只该复用它，不得自带第二份 class 常量：两份外观迟早
+ * 长得不一样，且不会有人发现）。它是**纯呈现**（无状态、无判据），故不违反「本文件是纯呈现层」。
+ */
+export function WorkItemLabelChip({ label }: { label: string }) {
+  return (
+    <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label">
+      {label}
+    </span>
+  );
+}
 
 /**
  * 指派人前面的圆点（**只表达身份，不编码状态**，spec §11.3）：
@@ -117,7 +137,8 @@ export function WorkItemsBoard({
   onOpenSession?: (sessionId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const t = (id: string) => intl.formatMessage({ id });
+  const t = (id: string, values?: Record<string, string | number>) =>
+    intl.formatMessage({ id }, values);
 
   /* 聚焦（收件箱「打开工作项」的落点）：行 DOM 引用按 id 收在 ref 里（不用 querySelector：
      它是字符串拼选择器，id 里将来出现特殊字符就静默找不到）。 */
@@ -172,6 +193,7 @@ export function WorkItemsBoard({
         const assigneeName = resolveAssigneeName(snapshot, item.assignee);
         const busy = busyWorkItemId === item.id;
         const timelineExpanded = timelineExpandedWorkItemId === item.id;
+        const labelChips = workItemLabelChips(item.labels);
         return (
           <li
             key={item.id}
@@ -206,6 +228,23 @@ export function WorkItemsBoard({
               />
               <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
                 <span className="break-words text-ui-base text-foreground">{item.title}</span>
+                {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
+                    放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
+                {labelChips.shown.length > 0 ? (
+                  <span className="flex shrink-0 items-center gap-1">
+                    {labelChips.shown.map((label) => (
+                      <WorkItemLabelChip key={label} label={label} />
+                    ))}
+                    {labelChips.hiddenCount > 0 ? (
+                      <span
+                        className={WORK_ITEM_LABEL_CHIP_CLASSNAME}
+                        data-testid="work-item-label-more"
+                      >
+                        {t("squad.workItems.labelsMore", { count: labelChips.hiddenCount })}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {/* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */}
                 <span className="shrink-0 text-ui-xs text-foreground-subtle">
                   {t(workItemStatusMessageId(item.status))}

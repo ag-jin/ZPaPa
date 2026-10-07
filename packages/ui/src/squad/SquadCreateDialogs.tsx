@@ -2,12 +2,17 @@
 import { useRef, useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
 import {
+  parseWorkItemLabels,
   resolveTeamAgentMaxConcurrentRuns,
   TEAM_AGENT_COLORS,
   type McpServerConfig,
   type TeamAgent,
   type WorkItem,
+  type WorkItemLabelsParseResult,
 } from "@zcode/shared";
+
+/** 标签预检的**失败**结论（`ok` 不进状态：表单只在非 ok 时留文案）。 */
+type WorkItemLabelsFailure = Exclude<WorkItemLabelsParseResult, { kind: "ok" }>;
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import {
@@ -570,8 +575,11 @@ export function SquadDialog({
 
 /**
  * 「新建工作项」对话框提交的形状（**带 mode 的判别联合**）：create 带全部字段，
- * edit **只能**带标题 / 正文 —— 指派人与父项**不是**可编辑字段（见下），让它们
+ * edit **只能**带标题 / 正文 / 标签 —— 指派人与父项**不是**可编辑字段（见下），让它们
  * 在类型上就不存在比"界面上藏起来、回调里其实能传"更强。
+ *
+ * `labels` 两支都**必带**（不是可选）：编辑不带标签等于「提交空标签」，会把库里已有的标签
+ * 清掉 —— 那是一次静默的数据丢失。必带让「随手漏传」在编译期就过不去。
  */
 export type WorkItemDialogSubmitInput =
   | {
@@ -580,18 +588,22 @@ export type WorkItemDialogSubmitInput =
       body?: string;
       parentId?: string;
       assignee: WorkItem["assignee"];
+      labels: string[];
     }
-  | { mode: "edit"; title: string; body?: string };
+  | { mode: "edit"; title: string; body?: string; labels: string[] };
 
 /** 工作项表单：**创建 / 编辑两用**（只有这一份实现 —— 另抄一份编辑表单会让两个表单
     在字段与校验上陆续分叉，而分叉不报错）。`mode` 默认 `"create"`（显示全部字段，现状）；
-    `"edit"` 只显示标题 / 正文：
+    `"edit"` 只显示标题 / 正文 / 标签：
     ① **指派人不在编辑里** —— 改负责人是**派发语义**（改派 = 新派发），与"改个错别字"不是一类动作：
        它有自己的入口（看板行「改派」钮 → `ReassignWorkItemDialog` → 服务面 `reassignWorkItem`，
        支持 user / agent / squad，同值短路），故这份表单**不做**第二遍改派；
-    ② **父项不在编辑里** —— 服务面 `updateContent` 只写 title / body，移动父项没有路径，
+    ② **父项不在编辑里** —— 服务面 `updateContent` 只写 title / body / labels，移动父项没有路径，
        给一个提交后不生效的下拉比不给更糟。
-    编辑成功与新建成功的回调形状因此不同（判别联合），由页面按 `mode` 分流。 */
+    编辑成功与新建成功的回调形状因此不同（判别联合），由页面按 `mode` 分流。
+
+    标签（#11 v1）：一个文本框（逗号 / 换行分隔），提交前经 shared 的 `parseWorkItemLabels` 预检
+    —— **非 ok 就地显示文案并拦下提交**（不静默截断后提交：那会变成「界面说成功、库里少几个」）。 */
 export function WorkItemDialog({
   snapshot,
   onClose,
@@ -604,10 +616,10 @@ export function WorkItemDialog({
   snapshot: SquadSnapshot;
   onClose: () => void;
   onSubmit: (input: WorkItemDialogSubmitInput) => void;
-  /** `create`（默认）显示全部字段；`edit` 只显示标题 / 正文（理由见上）。 */
+  /** `create`（默认）显示全部字段；`edit` 只显示标题 / 正文 / 标签（理由见上）。 */
   mode?: "create" | "edit";
-  /** 编辑既有工作项时的初值（标题 / 正文）；省略 = 空白（仅 create 用得到）。 */
-  initial?: { title: string; body: string };
+  /** 编辑既有工作项时的初值（标题 / 正文 / 标签）；省略 = 空白（仅 create 用得到）。 */
+  initial?: { title: string; body: string; labels?: string[] };
   /** 标题文案键；省略即「新建工作项」。 */
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
@@ -616,12 +628,24 @@ export function WorkItemDialog({
   const { intl } = useZCodeIntl();
   const [title, setTitle] = useState(initial?.title ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
+  /* 标签初值用**同一个解析函数**能读懂的形状回填（逗号分隔）：回填与解析是同一条语法，
+     否则「编辑一次、没动标签、标签变了」会成为一个没人能一眼看出的 bug。 */
+  const [labelsText, setLabelsText] = useState((initial?.labels ?? []).join(", "));
+  /** 非 ok 的解析结论（超限）：**显示文案并拦下提交**，不静默截断（截断后提交 = 界面说成功、库里少几个）。 */
+  const [labelsError, setLabelsError] = useState<WorkItemLabelsFailure | null>(null);
   const [assigneeValue, setAssigneeValue] = useState("user");
   const [parentValue, setParentValue] = useState(NO_PARENT_VALUE);
 
   // 候选只含**可派发**的智能体 / 小队（停用与归档的不给：给了再被拒等于替用户制造一次失败）。
   const assigneeOptions = workItemAssigneeOptions(snapshot);
   const isEdit = mode === "edit";
+  const labelsErrorText = (result: WorkItemLabelsFailure): string =>
+    result.kind === "too_many"
+      ? intl.formatMessage(
+          { id: "squad.workItems.labelsTooMany" },
+          { max: result.max, count: result.count },
+        )
+      : intl.formatMessage({ id: "squad.workItems.labelsTooLong" }, { max: result.max });
 
   return (
     <CreateDialogShell
@@ -630,10 +654,18 @@ export function WorkItemDialog({
       onClose={onClose}
       canSubmit={title.trim().length > 0}
       onSubmit={() => {
+        /* 标签预检：判据只有一处（shared 的纯函数），非 ok ⇒ **拦在提交之前**并留下文案。
+           不静默截断后提交 —— 那会让界面显示「已保存」而库里少了几个标签。 */
+        const parsedLabels = parseWorkItemLabels([labelsText]);
+        if (parsedLabels.kind !== "ok") {
+          setLabelsError(parsedLabels);
+          return;
+        }
+        setLabelsError(null);
         if (isEdit) {
           // 编辑：body **总是**提交（哪怕用户清空成 ""）—— 传 undefined 会被服务面当成
-          // "没提这个字段"而保留旧正文，用户以为删掉了、盘上还在。
-          onSubmit({ mode: "edit", title: title.trim(), body });
+          // "没提这个字段"而保留旧正文，用户以为删掉了、盘上还在。标签同理（空文本 = 清空）。
+          onSubmit({ mode: "edit", title: title.trim(), body, labels: parsedLabels.labels });
           return;
         }
         onSubmit({
@@ -643,6 +675,7 @@ export function WorkItemDialog({
           body: body.trim() ? body : undefined,
           parentId: parentValue === NO_PARENT_VALUE ? undefined : parentValue,
           assignee: parseAssigneeValue(assigneeValue),
+          labels: parsedLabels.labels,
         });
       }}
     >
@@ -666,6 +699,23 @@ export function WorkItemDialog({
           />
         )}
       </Field>
+      {/* 标签（#11 v1）：创建与编辑**都给**（它属「改个错别字」那一类内容编辑，与改派/移动父项不同）。
+          输入法就是文本（逗号 / 换行分隔）—— 不造标签表、不造建议列表（v1 的取值域是开放字符串）。 */}
+      <Field labelId="squad.workItems.labels">
+        {(controlId) => (
+          <Input
+            id={controlId}
+            value={labelsText}
+            placeholder={intl.formatMessage({ id: "squad.workItems.labelsPlaceholder" })}
+            onChange={(event) => setLabelsText(event.target.value)}
+          />
+        )}
+      </Field>
+      {labelsError ? (
+        <p className="text-ui-xs text-destructive" data-testid="work-item-labels-error">
+          {labelsErrorText(labelsError)}
+        </p>
+      ) : null}
       {/* 指派人与父项**只在创建时**出现（编辑为何不带它们见函数头注释）。 */}
       {!isEdit ? (
         <>

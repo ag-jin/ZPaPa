@@ -4247,6 +4247,12 @@ const zhCN: Record<string, string> = {
   "squad.workItems.status.blocked": "已阻塞",
   "squad.workItems.status.done": "已完成",
   "squad.workItems.status.cancelled": "已取消",
+  // 标签（#11 v1）：纯描述字段（不参与派发 / 状态 / 过滤），输入为逗号或换行分隔的文本。
+  "squad.workItems.labels": "标签",
+  "squad.workItems.labelsPlaceholder": "用逗号或换行分隔，最多 10 个",
+  "squad.workItems.labelsTooMany": "标签最多 {max} 个（当前 {count} 个）",
+  "squad.workItems.labelsTooLong": "单个标签最多 {max} 个字符",
+  "squad.workItems.labelsMore": "+{count}",
 
   "squad.runs.title": "待收尾的运行",
   "squad.runs.empty": "没有待收尾的运行",
@@ -4403,6 +4409,8 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.activity.open": "打开工作项「{title}」",
   "squad.workItemDetail.overview.bodyShow": "展开描述",
   "squad.workItemDetail.overview.bodyHide": "收起描述",
+  "squad.workItemDetail.overview.labels": "标签",
+  "squad.workItemDetail.overview.labelsEmpty": "无标签",
   "squad.workItemDetail.comment.add": "发表评论",
   "squad.workItemDetail.comment.placeholder": "添加评论",
   "squad.workItemDetail.comment.replyingTo": "回复给 {name}",

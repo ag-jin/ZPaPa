@@ -67,7 +67,7 @@ export function WorkItemsPageDialogs({
           mode="edit"
           titleId="squad.workItems.editTitle"
           submitLabelId="squad.common.save"
-          initial={{ title: dialog.item.title, body: dialog.item.body }}
+          initial={{ title: dialog.item.title, body: dialog.item.body, labels: dialog.item.labels }}
         />
       ) : null}
 

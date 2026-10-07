@@ -3,9 +3,11 @@
 import {
   isTerminalWorkItemStatus,
   MS_PER_MINUTE,
+  parseWorkItemLabels,
   resolveWorkspaceKey,
   SQUAD_BREAKER_WINDOW_MINUTES,
   SQUAD_RETRY_BUDGET,
+  workItemLabelsErrorMessage,
   type Squad,
   type TeamAgent,
   type WakeRule,
@@ -118,6 +120,12 @@ export type CreateWorkItemRequest = {
   body?: string;
   parentId?: string;
   assignee: WorkItem["assignee"];
+  /**
+   * 标签原文（`#11` v1，加法）：**原样透传**给 `workItemService.create` —— 归一化与上限判据的
+   * 唯一实现在 shared 的 `parseWorkItemLabels`（本层不写第二份规则，也不在这里预校验：
+   * 预校验只是把同一件事做两遍，两遍迟早分叉）。超限 ⇒ 该入口响亮抛且不落盘。
+   */
+  labels?: readonly string[];
 };
 
 /** 稳定错误码：跨 RPC 传到上层后按码分流（照 AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE 的做法）。 */
@@ -385,8 +393,8 @@ export interface ISquadRuntimeService {
    */
   deleteWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   /**
-   * 编辑工作项的**内容字段**（标题 / 正文），返回写盘后的实体（**加法**，2026-10-03：
-   * 工作项看板要求编辑可用）。
+   * 编辑工作项的**内容字段**（标题 / 正文 / 标签），返回写盘后的实体（**加法**，2026-10-03：
+   * 工作项看板要求编辑可用；2026-10-07 `#11` v1 把标签并进同一条白名单）。
    *
    * 三条纪律（与 `updateTeamAgent` / `updateSquad` 同款）：
    * 1. **唯一写者**：`status` 仍只经 `workItemService.transition`（本条不碰它）；内容经 repo 的
@@ -395,9 +403,13 @@ export interface ISquadRuntimeService {
    *    「界面看着改了、库里没改」或反过来，两处都不报错。
    * 2. **目标显式**：`target` 是**唯一权威**（没有隐式默认 workspace），runtime 按目标现构、
    *    不缓存 —— 与 `createWorkItem` 同款。
-   * 3. **不过门禁**：改标题 / 正文**不产生新派发**（§5.7.6 只停新派发），与 `updateTeamAgent`
+   * 3. **不过门禁**：改标题 / 正文 / 标签**不产生新派发**（§5.7.6 只停新派发），与 `updateTeamAgent`
    *    同款理由 —— 关掉实验开关后不该连改个字都不让。**本层不得写任何第二份开关判据**；
    *    界面侧入口的显隐由 `squadEntryVisible` 负责（呈现，不是门禁）。
+   *
+   * **标签归一化**：`patch.labels` 是**原文**，本层先经 shared 的 `parseWorkItemLabels`
+   * （去重保序 / 上限 10 条 · 32 字符）再落 patch —— 非 ok ⇒ **在写之前**抛，库里保持上一次的值
+   * （不得先写后校验）。规则只有那一处实现，本层不复制。
    *
    * **未命中 / 空 patch ⇒ 响亮抛**（照 `assignWorkItem` 的既有口径）：未命中 = id 算错或该行
    * 已被归档，空 patch = 调用方没给任何要改的字段 —— 静默 no-op 会让界面以为改成功了，
@@ -406,7 +418,7 @@ export interface ISquadRuntimeService {
    */
   updateWorkItem(
     target: SquadWorkspaceTarget,
-    input: { id: string; patch: { title?: string; body?: string } },
+    input: { id: string; patch: { title?: string; body?: string; labels?: readonly string[] } },
   ): Promise<WorkItem>;
   /** C4b：排队行读取口（推进扫描/快照计数共用；ORDER_BY_CREATED）。 */
   listQueuedSquadRuns(target: SquadWorkspaceTarget): Promise<SquadRunRecord[]>;
@@ -1063,6 +1075,8 @@ export function createSquadRuntimeService(deps: {
         body: input.body,
         parentId: input.parentId,
         assignee: input.assignee,
+        // 标签原样透传：归一化与上限判据的单源在 workItemService.create（它调 shared 的纯函数）。
+        labels: input.labels,
       });
     },
 
@@ -1126,16 +1140,27 @@ export function createSquadRuntimeService(deps: {
       return runtime.lifecycle.openMemberRun(input);
     },
 
-    /* 工作项**内容**编辑（**加法**）：不调 `assertEnabled` —— 改标题 / 正文不产生新派发
+    /* 工作项**内容**编辑（**加法**）：不调 `assertEnabled` —— 改标题 / 正文 / 标签不产生新派发
        （§5.7.6 只停新派发），与 `updateTeamAgent` / `updateSquad` 同款理由。
        写者纪律：只经 repo 的专用写入口 `workItemRepo.updateContent`（status 的唯一写者仍是
        `workItemService.transition`，本方法不碰它）；调用方不接触 repo。
        未命中（含空 patch：repo 直接 false）⇒ 响亮抛，照 `assignWorkItem` 的既有口径 ——
        静默 no-op 会让界面以为改成功了，而库里仍是旧标题。目标 `target` 原样交给
-       `createRuntime`（唯一权威，没有隐式默认 workspace）。 */
+       `createRuntime`（唯一权威，没有隐式默认 workspace）。
+       标签：**写之前**经 shared 的 `parseWorkItemLabels` 归一化（规则单源；`labels: []` 是
+       「清空」这个合法动作，不是空 patch）；非 ok ⇒ 抛在写之前，库里保持上一次的值。 */
     async updateWorkItem(target, input) {
       const runtime = await deps.createRuntime(target);
-      if (!runtime.workItemRepo.updateContent(input.id, input.patch)) {
+      let patch: { title?: string; body?: string; labels?: string[] } = {
+        title: input.patch.title,
+        body: input.patch.body,
+      };
+      if (input.patch.labels !== undefined) {
+        const parsed = parseWorkItemLabels(input.patch.labels);
+        if (parsed.kind !== "ok") throw new Error(workItemLabelsErrorMessage(parsed));
+        patch = { ...patch, labels: parsed.labels };
+      }
+      if (!runtime.workItemRepo.updateContent(input.id, patch)) {
         throw new Error(
           `编辑工作项失败：工作项「${input.id}」不存在、已归档、或没有给任何要改的字段（空 patch）——` +
             "静默 no-op 会让界面以为改成功了，而库里仍是旧内容。",
