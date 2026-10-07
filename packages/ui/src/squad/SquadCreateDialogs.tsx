@@ -2,7 +2,12 @@
 import { useRef, useState } from "react";
 import type { SquadSnapshot } from "@zcode/services";
 import {
-  resolveTeamAgentMaxConcurrentRuns, TEAM_AGENT_COLORS, type TeamAgent, type WorkItem } from "@zcode/shared";
+  resolveTeamAgentMaxConcurrentRuns,
+  TEAM_AGENT_COLORS,
+  type McpServerConfig,
+  type TeamAgent,
+  type WorkItem,
+} from "@zcode/shared";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import {
@@ -22,6 +27,8 @@ import { cn } from "@/components/lib/utils.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
+import { TeamAgentMcpSection } from "./TeamAgentMcpSection.js";
+import { mcpServersSubmitPatch } from "./teamAgentMcpViewModel.js";
 import type { SquadDialogInitial } from "./squadsViewModel.js";
 
 /* 本阶段的三个「最小」创建表单（协作智能体 / 小队 / 工作项）。
@@ -73,6 +80,8 @@ export function TeamAgentDialog({
     disallowedTools?: string[];
     /** 4b（裁定⑤）：并发上限 1–16（空输入 = 不提交保持原值）。 */
     maxConcurrentRuns?: number;
+    /** per-agent MCP（multica 欠账 #2）：整张 map 替换；空 map = 清空全部覆盖项（见提交语义）。 */
+    mcpServers?: Record<string, McpServerConfig>;
   }) => void;
   /** 编辑既有智能体时的初值；省略 = 新建。 */
   initial?: {
@@ -87,6 +96,8 @@ export function TeamAgentDialog({
     tools?: string[];
     disallowedTools?: string[];
     maxConcurrentRuns?: number;
+    /** per-agent MCP：既有定义的 server map（缺席 = 该 agent 不覆盖任何 server）。 */
+    mcpServers?: Record<string, McpServerConfig>;
   };
   /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
       模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
@@ -130,6 +141,12 @@ export function TeamAgentDialog({
   const [disallowedText, setDisallowedText] = useState(initial?.disallowedTools?.join(", ") ?? "");
   const [maxConcurrentRunsText, setMaxConcurrentRunsText] = useState(
     initial?.maxConcurrentRuns !== undefined ? String(initial.maxConcurrentRuns) : "",
+  );
+  /* per-agent MCP：分区是**受控**的（值只有这一份），编辑对话框的草稿留在分区内部。
+     空 map 与「没有这个字段」在挂载语义上等价，但落盘语义不同 —— 提交时由
+     `mcpServersSubmitPatch` 决定（编辑时删光要显式写 `{}`，新建时不落盘）。 */
+  const [mcpServers, setMcpServers] = useState<Record<string, McpServerConfig>>(
+    initial?.mcpServers ?? {},
   );
   /** 令牌化：逗号/空白分隔、去空、去重保序。空结果 = 不提交（保持原值）。 */
   const parsedDisallowed = (): string[] | null => {
@@ -193,6 +210,8 @@ export function TeamAgentDialog({
             : { tools: [...selectedTools, ...preservedToolsRef.current] }),
           ...(disallowedTokens !== null ? { disallowedTools: disallowedTokens } : {}),
           ...(maxConcurrentRunsParsed !== undefined ? { maxConcurrentRuns: maxConcurrentRunsParsed } : {}),
+          // per-agent MCP：有配置 ⇒ 整张 map；编辑时删光 ⇒ 显式 `{}`；本来没有 ⇒ 不带字段。
+          ...mcpServersSubmitPatch(mcpServers, initial?.mcpServers !== undefined),
         });
       }}
     >
@@ -397,6 +416,9 @@ export function TeamAgentDialog({
           />
         )}
       </Field>
+      {/* per-agent MCP（multica 欠账 #2，设计 §3.6）：逐 server 行 + 「名字 + JSON」对话框。
+          分区自带组标签与两条安全提示，值是本表单受控的（见上面的 mcpServers 状态）。 */}
+      <TeamAgentMcpSection servers={mcpServers} onChange={setMcpServers} />
     </CreateDialogShell>
   );
 }
