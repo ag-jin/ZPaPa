@@ -910,7 +910,10 @@ async function settleStaleMemberRunsBestEffort(
       );
     } catch (error) {
       // 响亮（带原文）：best-effort 不等于静默。
-      logger.warn(`[squad] startup member-run reconciliation failed workspace=${target.path}`, error);
+      logger.warn(
+        `[squad] startup member-run reconciliation failed workspace=${target.path}`,
+        error,
+      );
     }
   });
 }

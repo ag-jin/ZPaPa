@@ -462,7 +462,7 @@ test("启动链次序：重驱 → run 和解（队长臂、队员臂）→ 回�
   for (let i = 1; i < positions.length; i += 1) {
     assert.ok(
       positions[i]!.at > positions[i - 1]!.at,
-    `${positions[i - 1]!.name} 必须先于 ${positions[i]!.name}（新契约：和解整块前移到回收之前）`,
+      `${positions[i - 1]!.name} 必须先于 ${positions[i]!.name}（新契约：和解整块前移到回收之前）`,
     );
   }
   // 「重驱先于回收」这条**既有**契约单独再钉一次（本轮只前插，不得动这一对的相对次序）。

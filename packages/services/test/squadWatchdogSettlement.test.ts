@@ -89,7 +89,7 @@ async function setup(): Promise<Fixture> {
         agentId: agent.id,
         isLeaderTask: false,
       }),
-    captureWarn: async <T,>(run: () => Promise<T>) => {
+    captureWarn: async <T>(run: () => Promise<T>) => {
       const warns: string[] = [];
       const original = console.warn;
       console.warn = (...args: unknown[]) => {
@@ -115,9 +115,7 @@ test("取消后迟到成功：completeMemberRun 对 discarded 行 no-op（台账
   assert.equal(f.runtime.squadRunRepo.get(runId)?.status, "discarded", "取消后是 discarded");
 
   // 迟到成功：会话最终跑完了才把「成功」送到成功臂。
-  const { warns } = await f.captureWarn(() =>
-    f.runtime.lifecycle.completeMemberRun({ runId }),
-  );
+  const { warns } = await f.captureWarn(() => f.runtime.lifecycle.completeMemberRun({ runId }));
 
   assert.equal(
     f.runtime.squadRunRepo.get(runId)?.status,
@@ -130,7 +128,11 @@ test("取消后迟到成功：completeMemberRun 对 discarded 行 no-op（台账
     "工作项不得被推回 in_review：取消是用户表态，迟到产出不该让它重新进审查",
   );
   assert.equal(warns.length, 1, `no-op 必须留**一条** warn（实际 ${warns.length} 条）`);
-  assert.match(warns[0] ?? "", /discarded/, "warn 文案要点名当时的终态（否则人无从判断被丢弃的是什么）");
+  assert.match(
+    warns[0] ?? "",
+    /discarded/,
+    "warn 文案要点名当时的终态（否则人无从判断被丢弃的是什么）",
+  );
 });
 
 test("跨终态改写响亮抛：produced / rejected 行上再调 completeMemberRun ⇒ 抛且不动任何实体状态", async () => {
@@ -159,7 +161,11 @@ test("跨终态改写响亮抛：produced / rejected 行上再调 completeMember
   const rejectedItem = "w2-wi-rejected";
   f.createItem(rejectedItem);
   await f.openFor(rejected, rejectedItem);
-  assert.equal(f.runtime.workItemRepo.get(rejectedItem)?.status, "in_progress", "前置：新工作项在 in_progress");
+  assert.equal(
+    f.runtime.workItemRepo.get(rejectedItem)?.status,
+    "in_progress",
+    "前置：新工作项在 in_progress",
+  );
   await f.runtime.lifecycle.completeMemberRun({ runId: rejected });
   assert.equal(
     f.runtime.workItemRepo.get(rejectedItem)?.status,
@@ -230,7 +236,11 @@ test("stop 的会话终态：adapter 出口把 turn.interrupted 映射为 stoppe
 
 test("stop 的会话终态：相位 → kind 的映射在 syncer 里只有一处（发射点不得再写内联三元）", () => {
   // 行为面：六个相位逐个钉（期望值取自协议相位语义，不是实现里抄一遍的表达式）。
-  assert.equal(terminalKindForPhase("completedSuccess"), "turn.completed", "跑完了 ⇒ turn.completed");
+  assert.equal(
+    terminalKindForPhase("completedSuccess"),
+    "turn.completed",
+    "跑完了 ⇒ turn.completed",
+  );
   assert.equal(
     terminalKindForPhase("completedInterrupted"),
     "turn.interrupted",

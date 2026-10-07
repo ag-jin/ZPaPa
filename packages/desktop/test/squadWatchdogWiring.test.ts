@@ -125,9 +125,7 @@ async function setup(options?: {
     runtime,
     service,
     target,
-    ports: idle
-      ? { ...ports, readIdleMsByRunId: async () => new Map(idle) }
-      : ports,
+    ports: idle ? { ...ports, readIdleMsByRunId: async () => new Map(idle) } : ports,
   };
 }
 
@@ -289,7 +287,11 @@ test("在线 tick｜探测不可得：不猜会话状态 —— 不结算、该�
     "open",
     "探测抛错 ≠ 会话死了：探针不可得时结算会把一条活着的 run 判死（W1 档 2 的在线护栏）",
   );
-  assert.deepEqual(summary, { settled: 0, stopped: 0, skipped: 1, failed: 0 }, "记一条 skip（可见，不静默）");
+  assert.deepEqual(
+    summary,
+    { settled: 0, stopped: 0, skipped: 1, failed: 0 },
+    "记一条 skip（可见，不静默）",
+  );
 });
 
 /* ---- 空闲档：先 stop 再等回调；宽限到期仍 open ⇒ 兜底结算（设计 §3.1 档 3）---- */
@@ -352,13 +354,21 @@ test("在线 tick｜空闲档：先 stop（台账一个字不写）；宽限到�
   // 宽限内（再扫一次）：不得重复 stop、也不得结算。
   clock.now += SQUAD_WATCHDOG_IDLE_STOP_GRACE_MS - 1;
   const duringGrace = await sweep(f, { now: () => clock.now, pendingStops });
-  assert.deepEqual(duringGrace, { settled: 0, stopped: 0, skipped: 1, failed: 0 }, "宽限内只等，不动作");
+  assert.deepEqual(
+    duringGrace,
+    { settled: 0, stopped: 0, skipped: 1, failed: 0 },
+    "宽限内只等，不动作",
+  );
   assert.equal(stops.length, 1, "同一行不得重复发起 stop（同一 tick 一轮也只发一次）");
 
   // 宽限到期仍停在 open（回调没来）⇒ 兜底结算，否则这条行永远占着容量槽。
   clock.now += 2;
   const afterGrace = await sweep(f, { now: () => clock.now, pendingStops });
-  assert.deepEqual(afterGrace, { settled: 1, stopped: 0, skipped: 0, failed: 0 }, "宽限到期 ⇒ 兜底结算");
+  assert.deepEqual(
+    afterGrace,
+    { settled: 1, stopped: 0, skipped: 0, failed: 0 },
+    "宽限到期 ⇒ 兜底结算",
+  );
   assert.equal(f.runtime.squadRunRepo.get(runId)?.status, "discarded", "兜底结算后离开活跃集");
   assert.equal(
     f.runtime.squadRunRepo.get(runId)?.settleReason,
@@ -474,7 +484,11 @@ test("启动队员臂：僵尸 run（死会话 + 真实树）⇒ 和解结算 �
     agentSlug: slugForId(agentId),
   }).member;
   const git = (args: string[]) => f.runtime.git(args, { cwd: f.repoRoot });
-  assert.equal((await git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`])).code, 0, "前置：树与分支都在");
+  assert.equal(
+    (await git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`])).code,
+    0,
+    "前置：树与分支都在",
+  );
 
   // 另一条工作项的派发在容量满（maxConcurrentRuns = 1）时排队 —— 它要靠这次结算才能被推进。
   const queuedId = "w2-startup-queued";
@@ -613,7 +627,10 @@ test("取消 L2｜stop 的唯一调用点：`stopGeneration` 收到的是该 run
   );
 
   // 任务服务缺件 / 调用抛错 ⇒ false + 一条 warn（best-effort，不把取消变成失败）。
-  const noService = createSquadRunSessionStopper({ taskService: null, logWarn: (m) => warns.push(m) });
+  const noService = createSquadRunSessionStopper({
+    taskService: null,
+    logWarn: (m) => warns.push(m),
+  });
   assert.equal(
     await noService({ target: { path: "/ws", identity: "ws-1" }, runId: "r-2", sessionId: "s-2" }),
     false,
@@ -654,7 +671,10 @@ test("接线｜在线 tick 在 database ready 之后启动，且两条释放路�
   const readyAt = HOST_SOURCE.indexOf('if (state.phase === "ready")');
   assert.ok(readyAt >= 0, "host 里没有 database ready 分支");
   const startAt = HOST_SOURCE.indexOf("squadWatchdogTick = startSquadWatchdogTick({");
-  assert.ok(startAt > readyAt, "tick 必须在 database ready 之后启动（库没就绪时扫描只会空转/报错）");
+  assert.ok(
+    startAt > readyAt,
+    "tick 必须在 database ready 之后启动（库没就绪时扫描只会空转/报错）",
+  );
   assert.ok(startAt - readyAt < 6_000, "tick 启动点必须就在 ready 分支里，而不是文件另一处");
   assert.equal(
     (HOST_SOURCE.match(/startSquadWatchdogTick\(/g) ?? []).length,
@@ -694,7 +714,11 @@ test("接线｜派发桥把出现过的 workspace 交给 tick 累积（启动后
 
 test("接线｜host 里 `stopGeneration` 调用点唯一（防第二套停会话路径）", () => {
   const occurrences = (DISPATCH_SOURCE.match(/\.stopGeneration\(/g) ?? []).length;
-  assert.equal(occurrences, 1, `squadDispatch.ts 里 .stopGeneration( 应恰 1 处（实际 ${occurrences}）`);
+  assert.equal(
+    occurrences,
+    1,
+    `squadDispatch.ts 里 .stopGeneration( 应恰 1 处（实际 ${occurrences}）`,
+  );
   assert.equal(
     (HOST_SOURCE.match(/\.stopGeneration\(/g) ?? []).length,
     0,

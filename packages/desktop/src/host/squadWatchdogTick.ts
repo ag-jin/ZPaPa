@@ -89,7 +89,10 @@ export type SquadWatchdogSweepPorts = {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<SquadSessionExecutingState>;
-  settleRun(target: SquadWatchdogTickTarget, input: { runId: string; reason: string }): Promise<void>;
+  settleRun(
+    target: SquadWatchdogTickTarget,
+    input: { runId: string; reason: string },
+  ): Promise<void>;
   recordInbox(target: SquadWatchdogTickTarget, item: InboxItemInput): Promise<void>;
   /** 缺席 ⇒ 空闲档只发决策不动作？（不，见 `stopSession` 的注释：缺席时该档一律不动作并留痕。） */
   stopSession: SquadSessionStopFn | null;
@@ -253,10 +256,7 @@ async function executeDecision(params: {
       try {
         await ports.recordInbox(target, inboxFor(decision.reason));
       } catch (error) {
-        params.logger.warn(
-          `[squad] watchdog 未能登记 Inbox：run=${decision.runId}`,
-          error,
-        );
+        params.logger.warn(`[squad] watchdog 未能登记 Inbox：run=${decision.runId}`, error);
       }
       return "settled";
     }
@@ -274,10 +274,7 @@ async function executeDecision(params: {
         });
         pendingStops.delete(decision.runId);
         try {
-          await ports.recordInbox(
-            target,
-            inboxFor(SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE),
-          );
+          await ports.recordInbox(target, inboxFor(SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE));
         } catch (error) {
           params.logger.warn(`[squad] watchdog 未能登记 Inbox：run=${decision.runId}`, error);
         }
@@ -395,7 +392,10 @@ export async function runSquadWatchdogSweep(
       const c1Branches = rows
         .filter(
           (row) =>
-            !row.isLeaderTask && row.sessionId === null && row.status === "open" && row.branch !== null,
+            !row.isLeaderTask &&
+            row.sessionId === null &&
+            row.status === "open" &&
+            row.branch !== null,
         )
         .map((row) => row.branch)
         .filter((branch): branch is string => branch !== null);
@@ -465,10 +465,7 @@ export async function runSquadWatchdogSweep(
       }
     } catch (error) {
       summary.failed += 1;
-      input.logger.warn(
-        `[squad] watchdog 扫描失败 workspace=${target.path}`,
-        error,
-      );
+      input.logger.warn(`[squad] watchdog 扫描失败 workspace=${target.path}`, error);
     }
   }
   return summary;
@@ -562,7 +559,9 @@ export function startSquadWatchdogTick(params: {
         runScope: "all",
         pendingStops,
         ...(params.now ? { now: params.now } : {}),
-        ...(params.idleStopGraceMs !== undefined ? { idleStopGraceMs: params.idleStopGraceMs } : {}),
+        ...(params.idleStopGraceMs !== undefined
+          ? { idleStopGraceMs: params.idleStopGraceMs }
+          : {}),
       });
     } finally {
       ticking = false;
