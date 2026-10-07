@@ -43,6 +43,9 @@ import {
   IZCodeAgentService,
   IZCodeTaskService,
   IZCodeSessionService,
+  /* per-agent MCP 的**基准读取器**（multica 欠账 #2）：workspace 级 + user 级目录记录的
+     服务面唯一实现 —— host 不自己读 config.json（那会是第二份「在哪 / 怎么算 enabled」的判据）。 */
+  IMcpSyncService,
   ICuaPipSessionService,
   IProviderProvisioningTargetService,
   ISquadRuntimeService,
@@ -116,6 +119,9 @@ import {
   type SquadMemberRunTerminalOutcome,
 } from "./squadDispatch.js";
 import { listSquadWorkspaceTargets } from "./squadWorkspaceBinding.js";
+/* per-agent MCP 的**挂载点**（multica 欠账 #2）：把「目录基准 + agent 自有配置」合并成
+   `createTask({ mcpServers })` 的载荷。合并次序/三态/跳过规则在那个模块里（可注入假读取器直接断言）。 */
+import { createSquadMcpMountResolver } from "./squadMcpMount.js";
 /* W2（看门狗六件套）：执行臂 —— 启动和解的队员臂与在线 tick **共用**同一份扫描实现
    （判定只在 W1 的 `decideSquadWatchdog`，结算只经服务面 `failMemberRun`）。 */
 import {
@@ -3432,13 +3438,61 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       logger.error("[squad] ZCode task service is not initialized; squad wake dropped");
       return failPermanent("ZCode task service is not initialized.");
     }
+
+    /* **挂载基准的读取器 + 装配点**（per-agent MCP，multica 欠账 #2）：
+       基准（user 级 + workspace 级，enabled）由**服务面的目录读取器**给（唯一实现：host 不自己读
+       config.json、也不自己算 enabled —— 那是第二份判据）；读取器作为参数注入挂载模块
+       （accept dependencies, don't create them），故合并/转换逻辑不依赖本文件、可直接单测。
+       每次派发**现读**（与「改完配置下一个任务生效」同语义，无需重启）。
+       缺服务是**确定性**状态（服务注册表在进程生命周期内不会长出这个服务）⇒ 响亮 + permanent：
+       按 transient 退避只会一直空转，而静默降级会让这次 run 悄悄少一整层 server。 */
+    const mcpSyncService = targetServices.getOptional(IMcpSyncService);
+    if (!mcpSyncService) {
+      logger.error("[squad] MCP directory service is not initialized; squad wake dropped");
+      return failPermanent("MCP directory service is not initialized.");
+    }
+    const resolveSquadMcpServers = createSquadMcpMountResolver({
+      loadBase: async ({ workspacePath }) =>
+        (await mcpSyncService.loadMcpFromUserDirectory({ workspacePath })).servers,
+    });
+
     // 幂等键的稳定一半当 trace：同一 eventKey 的重投落回同一个 trace，不会变成两次「新执行」。
     const traceId = eventKey as TraceId;
+    /* 本次派发的**那个 agent 的定义**：它的 `mcpServers` 是这次 run 的 agent 级覆盖项。
+       按 `enqueued.agentId` 取（三类 run 都成立：队员/单独安排是负责人或评论点名者，队长 run 是队长本人）
+       —— 不得用 `targetAgent`：它只在「负责人是显式指定的 agent / 评论点名」时才被解析，
+       队长 run 下恒为 `undefined`，表现是「给队长配的 server 只有队员跑得上」，且不报错。 */
+    const dispatchedAgent = snapshot.teamAgents.find((entry) => entry.id === enqueued.agentId);
+    /* 本次 run 的**挂载集**（设计 §3.8 的 ④⑤⑥，在一次调用里完成）：
+         · 基准读的是**主工作区**路径（`msg.workspacePath`），不是会话所在的工作树路径 ——
+           队员 run 的会话落在 `<repo>/.worktree/<dir>`（新检出目录），主工作区未跟踪的
+           `.zcode/config.json` 不在那棵树里；不显式传就等于「workspace 级 MCP 到不了队员 run」；
+         · 基准读失败**不兜底**（不在这一层 try/catch）：错误冒泡到外层 → 既有 transient 出口
+           （响亮 + 修好配置文件后重投自愈）。吞掉的表现是「这次 run 悄悄少了一整层 server」；
+         · 绑定会话（重投）**不重挂**：MCP 是 runtime 启动期配置，随会话创建一次性写入，
+           恢复会话沿用既有 runtimeConfig（设计 §3.3）。 */
+    const mcpServers = boundSessionId
+      ? undefined
+      : await resolveSquadMcpServers({
+          workspacePath: msg.workspacePath,
+          ...(dispatchedAgent?.mcpServers ? { agentMcpServers: dispatchedAgent.mcpServers } : {}),
+          /* 逐条转换失败只跳过那一条（其余照挂），留痕**只给 server 名** —— 配置里可能有
+             env/headers 凭据，内容绝不进日志（设计 §3.5 的敏感面纪律）。 */
+          onSkippedServer: (name) =>
+            logger.warn(`[squad] MCP server 配置无法识别传输形态，已跳过：${name}`),
+        });
+    /* 完成日志里的挂载名单：只记名字与计数，不记配置内容；绑定会话记 resumed
+       （它不是「没有 MCP」，而是沿用会话创建时冻结的那一份）。 */
+    const mcpServerNames =
+      mcpServers?.map((server) => server.name).join(",") ?? (boundSessionId ? "resumed" : "none");
     const task = boundSessionId
       ? { taskId: boundSessionId }
       : await zcodeTaskService.createTask({
           workspacePath: sessionWorkspacePath,
           ...(msg.workspaceIdentity ? { workspaceIdentity: msg.workspaceIdentity } : {}),
+          /* **有值才传**（三态）：不传 ⇒ CLI 按 config 文件原生继承（含 plugin 底座）；
+             显式传入的集合是**覆盖集** —— 空集合走「不传」那一态，不靠下游把空数组归一。 */
+          ...(mcpServers ? { mcpServers } : {}),
         });
     if (boundSessionId) {
       // 绑定会话在 app 重启 / 切 workspace 后通常不在 active：先冷恢复再发 prompt，
@@ -3605,7 +3659,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        失败/中止只有前两类走 `failMemberRun` 移出活跃集（第三类没有行可移）。 */
     logger.info(
       `[squad] dispatch completed ${triggerLabel} workItem=${msg.workItemId} kind=${kind}` +
-        ` eventKey=${eventKey} task=${task.taskId}`,
+        ` eventKey=${eventKey} task=${task.taskId} mcp=${mcpServerNames}`,
     );
     // 会话已发出（成员/队长已登记台账行）⇒ 评论 receipt 落 opened（run 身份 = dispatchKey）。
     return { ok: true, taskId: task.taskId, sessionId: task.taskId, kind, bridge: { kind: "dispatched" } };

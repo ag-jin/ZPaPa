@@ -636,3 +636,88 @@ test("派发桥两处台账调用都传 dispatchCause；队员处传 causedByRun
     "队长 run 无入边：recordLeaderRun 不得传 causedByRunId",
   );
 });
+
+/* ---- per-agent MCP（multica 欠账 #2）：挂载点在 createTask，基准来自服务面的目录读取器 ----
+
+   一个 run 挂的 MCP 集合 = 「user 级 + workspace 级（enabled）」+「该 agent 自有的 mcpServers」，
+   同名时后者赢，结论**显式**传进 `createTask({ mcpServers })`。为什么必须显式传（而不是靠 CLI 原生读）：
+   队员 run 的会话落在 `<repo>/.worktree/<dir>`（新检出目录），主工作区未跟踪的 `.zcode/config.json`
+   不在那棵树里 ⇒ 原生读取拿不到 workspace 级 server，**队长读得到、队员读不到且不报错**。
+   显式传入的代价是「覆盖集语义」：既然替换掉原生读取，就必须由 host 把基准补齐（下面第 ① 条）。
+   漏接的表现同样是 C6 那种静默跑掉一整层 server。 */
+test("派发桥在 createTask 处显式传 mcpServers；基准经服务面目录读取器、agent 自有合并", () => {
+  // 断言面用**丢掉整行注释**的源码：注释里提到 `catch`/字段名是合法的（本仓踩过「注释还在、代码被删」的假绿）。
+  const branch = withoutCommentLines(squadDispatchBridgeSource());
+  // ① 基准读取归属**服务面**（唯一实现）：host 不自己读 config.json、也不自己算 enabled。
+  assert.match(
+    branch,
+    /getOptional\(IMcpSyncService\)/,
+    "基准读取必须取服务面的目录读取器（自己读 = 第二份「在哪 / 怎么算 enabled」的判据）",
+  );
+  assert.match(
+    branch,
+    /loadMcpFromUserDirectory\(\{ workspacePath \}\)/,
+    "基准必须逐次派发现读（改完配置下一个任务生效，无需重启）",
+  );
+  // ② 合并/转换由注入的装配点做（accept dependencies, don't create them）。
+  assert.match(branch, /createSquadMcpMountResolver\(\{/, "挂载解析必须经注入装配点");
+  // ③ 结论进 createTask 载荷；**没有可挂的 server 时不传该字段**（三态：不传 = CLI 原生继承，
+  //    显式传入的集合是覆盖集 —— 空集合走「不传」那一态，不靠下游归一空数组）。
+  assert.match(
+    branch,
+    /\.\.\.\(mcpServers \? \{ mcpServers \} : \{\}\),/,
+    "mcpServers 必须按「有值才传」的三态进 createTask 载荷",
+  );
+  // ④ 基准读的是**主工作区**路径（msg.workspacePath），不是会话所在的工作树路径 —— 这正是缺口修复：
+  //    工作树里没有主工作区的 .zcode/config.json。
+  assert.match(
+    branch,
+    /workspacePath: msg\.workspacePath,[\s\S]{0,240}?agentMcpServers/,
+    "基准必须按主工作区路径读取（工作树路径读不到主工作区的 .zcode/config.json）",
+  );
+  assert.doesNotMatch(
+    branch,
+    /workspacePath: sessionWorkspacePath,[\s\S]{0,240}?agentMcpServers/,
+    "基准不得按会话（工作树）路径读取",
+  );
+  // ⑤ agent 自有配置取自**本次派发的那个 agent**（按 `enqueued.agentId` 在名册里查名册行），
+  //    三类 run 都成立 —— 用 `targetAgent` 会漏掉队长 run（队长 run 的 targetAgent 恒为 undefined），
+  //    表现是「给队长配的 server 只有队员跑得上」，且不报错。
+  assert.match(
+    branch,
+    /const dispatchedAgent = snapshot\.teamAgents\.find\([\s\S]{0,40}?entry\.id === enqueued\.agentId/,
+    "agent 自有配置必须按本次派发的 agentId 取名册行（队长 run 也要带上队长自己的 server）",
+  );
+  assert.match(
+    branch,
+    /agentMcpServers: dispatchedAgent\.mcpServers/,
+    "agentMcpServers 必须来自上一步取到的那个 agent 定义（不得改用 targetAgent）",
+  );
+  // ⑥ 绑定会话（重投）**不重挂**：挂载只在新建会话那一支取值（MCP 是 runtime 启动期配置，
+  //    随会话创建冻结；恢复会话沿用既有 runtimeConfig）。
+  assert.match(
+    branch,
+    /boundSessionId\s*\?\s*undefined\s*:\s*await resolveSquadMcpServers\(/,
+    "绑定会话那一支不得取值挂载集（重投不重挂）",
+  );
+  // ⑦ 日志只记 server 名单与计数（配置里可能有凭据，绝不记配置内容）。
+  assert.match(branch, /mcp=\$\{mcpServerNames/, "派发完成日志必须留一行 server 名单");
+  assert.doesNotMatch(
+    branch,
+    /logger\.(?:info|warn|error)\([^)]*JSON\.stringify\(mcpServers/,
+    "日志不得序列化挂载集（含 env/headers 凭据）",
+  );
+  // ⑧ 基准读失败**不得就地兜底**（裁定 B）：从取读取器到进 createTask 这一段里不许出现 catch ——
+  //    吞掉的表现是「这次 run 悄悄少了一整层 server」，比失败更坏；冒泡出去走既有 **transient** 出口
+  //    （派发中途抛错的统一归宿：响亮 + 重投，配置文件修好后自愈）。
+  const mountAt = branch.indexOf(
+    "const mcpSyncService = targetServices.getOptional(IMcpSyncService);",
+  );
+  const createTaskAt = branch.indexOf("zcodeTaskService.createTask({");
+  assert.ok(mountAt >= 0 && createTaskAt > mountAt, "取读取器到 createTask 之间必须相连");
+  assert.doesNotMatch(
+    branch.slice(mountAt, createTaskAt),
+    /catch/,
+    "基准读取/转换不得就地 catch（吞错 = 静默跑掉一层 server；必须冒泡到外层 transient 出口）",
+  );
+});
