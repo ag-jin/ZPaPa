@@ -177,7 +177,57 @@ test("守卫｜结算原因呈现走映射表（码值本地化、原文原样�
   );
 });
 
-// ---------- ④ i18n 成对 ----------
+// ---------- ④ 「加载更多」的接线：第二页请求必须带**第一页给的**游标 ----------
+
+/* P1 接线断言（复验报告 §5-P1 / §7-1）：详情页的两处取数——
+   ① 第一页**不带**游标（换 agent / 重载都从最新一条开始，带旧游标会把旧页冒充新页）；
+   ② 第二页**必须**带第一页响应里的 nextCursor，且是同一个 agentId 与同一个页大小。
+   漏掉 ② 的形态是静默的：服务面把第一页又发一遍，`mergeRunHistoryPages` 去重后界面
+   「点了没反应」——不报错、也没有新行（游标不透明，界面不解析、也不重拼）。 */
+test("守卫｜接线：「加载更多」第二页请求带第一页游标（同 agentId、同页大小；不解析不重拼）", () => {
+  const page = readSource("squad/SquadAgentDetailPage.tsx");
+  const calls = [...page.matchAll(/listSquadRunHistory\(target, \{([\s\S]*?)\}\)/g)];
+  assert.equal(calls.length, 2, "详情页只有两处取数：第一页（reload）+ 加载更多（loadMore）");
+  const firstPageRequest = calls[0]![1]!;
+  const secondPageRequest = calls[1]![1]!;
+
+  assert.ok(
+    !/\bcursor\b/.test(firstPageRequest),
+    "第一页请求不得带游标（否则重载会把旧页当成新的）",
+  );
+  assert.match(
+    secondPageRequest,
+    /cursor(?:\s*:\s*[A-Za-z_$][\w$]*)?\s*,/,
+    "第二页请求必须带游标（漏掉：服务面再发一遍第一页，界面去重后「点了没反应」）",
+  );
+  assert.match(
+    secondPageRequest,
+    /agentId:\s*current\.agentId/,
+    "第二页必须仍是同一个 agent（换页不得跨 agent 取值）",
+  );
+  assert.match(
+    secondPageRequest,
+    /limit:\s*RUN_HISTORY_PAGE_SIZE/,
+    "第二页用同一个页大小常量",
+  );
+
+  const loadMore = page.slice(
+    page.indexOf("const loadMore = useCallback("),
+    page.indexOf("if (agentId === null)"),
+  );
+  assert.ok(loadMore.length > 0, "loadMore 回调区必须可定位");
+  assert.match(
+    loadMore,
+    /const cursor = current\.nextCursor;/,
+    "第二页的游标只能来自上一页响应（不透明契约：原样带回，不解析、不重拼）",
+  );
+  assert.ok(
+    !/cursor\s*[+.]/.test(page),
+    "界面不得重拼 / 解析游标（游标格式属于服务面单源）",
+  );
+});
+
+// ---------- ⑤ i18n 成对 ----------
 
 test("守卫｜运行历史分页与结算原因文案两语成对（含占位符一致）", () => {
   const placeholders = (value: string) =>

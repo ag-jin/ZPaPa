@@ -225,7 +225,10 @@ export interface SquadRunRepo {
    * 会因新行前插而重复/漏行，且同样不报错；keyset 的谓词与既有排序同键（`(created_at, run_id)`），
    * 不需要新语义。同刻多行靠 `run_id` tie-break（复合比较显式展开，不依赖 row-value 语法）。
    *
-   * 游标是**不透明**字符串（`v1:<created_at>:<run_id>`），编解码只在**本文件内**（单源）：
+   * 游标是**不透明**字符串（`v2` 长度前缀：`<版本>:<created_at 位数>:<created_at>:<run_id 位数>:<run_id>`），
+   * 编解码只在**本文件内**（单源）。长度前缀而非分隔符切片：生产 `run_id` = host 的 `eventKey`
+   * （`assign:…` / `comment-dispatch:v1:…`）**含冒号是常态**，用 `:` 切分会让页边界行的游标被
+   * 本实现自己拒收 —— 「加载更多」在第一页之后必失败（复验 §5-P1）：
    * 非法游标**响亮抛**，不回落第一页 —— 回落会把分页 bug 伪装成「又刷了一遍」，没人看得出来。
    * `limit` 必须是 ≥1 且 ≤200 的整数，否则抛（防「一次请求拉全量」，也防 0/负数/NaN 变成怪查询）。
    * 取 `limit + 1` 行判有无下一页；`nextCursor === null` 表示到底（**不返回** count(*)）。
@@ -402,39 +405,80 @@ const WATCHDOG_REASON_PLACEHOLDERS = SQUAD_RUN_WATCHDOG_SETTLE_REASONS.map(() =>
 const ORDER_BY_CREATED = "ORDER BY created_at ASC, run_id ASC";
 
 /* 呈现用分页历史（欠账 #13）的**游标编解码**：只在本文件内（单源）。
-   形状 `v1:<created_at>:<run_id>`：自描述、带版本位（将来改算子时旧游标能响亮被拒，
-   而不是被当成另一种东西解释）。**不透明**是给调用方的契约：服务面与界面都不得解析它
-   （解析 = 第二份判据，且会随格式一起漂移）—— 它们只负责把 nextCursor 原样带回来。 */
-const RUN_HISTORY_CURSOR_VERSION = "v1";
+   形状 `v2:<created_at 位数>:<created_at 原文>:<run_id 位数>:<run_id 原文>`：自描述、带版本位，
+   且**长度前缀**（先例：本仓 computeCommentDispatchKey，X1.2 的稳定键）。
+   为什么从 v1 的 `v1:<created_at>:<run_id>` 升级（2026-10-07 P1 修复）：`:` 当字段分隔符时，
+   生产 runId（= host 的 eventKey：`assign:wi-1:agent:ta-1:<uuid>` / `comment-dispatch:v1:…`）
+   自带的冒号与结构冲突 —— 页边界行是这类 id 时，编出的 nextCursor 被**本实现自己**判非法，
+   「加载更多」翻不过第一页（复验报告 §5-P1，已实际复现）。长度前缀让原文里的任何字符
+   （含 `:` 与 `|`）都只是原文，不再与结构冲突。
+   **不透明**是给调用方的契约：服务面与界面都不得解析它（解析 = 第二份判据，且会随格式一起漂移）
+   —— 它们只负责把 nextCursor 原样带回来。版本位升到 v2 后旧 v1 游标**一律判非法**
+   （不猜着解释：v1 形状在含冒号 id 上本就是坏的）。 */
+const RUN_HISTORY_CURSOR_VERSION = "v2";
 /** 一次最多取多少行：上限存在的意义是挡住「一次请求拉全量」（那正是本方法要取代的形态）。 */
 const RUN_HISTORY_MAX_LIMIT = 200;
 
 function encodeRunHistoryCursor(row: { createdAt: number; runId: string }): string {
-  return `${RUN_HISTORY_CURSOR_VERSION}:${row.createdAt}:${row.runId}`;
+  const createdAt = String(row.createdAt);
+  return (
+    `${RUN_HISTORY_CURSOR_VERSION}:${createdAt.length}:${createdAt}:` +
+    `${row.runId.length}:${row.runId}`
+  );
 }
 
 /* 非法游标**一律抛**（不回落第一页）：回落会把一个分页 bug 伪装成「又刷了一遍第一页」——
-   用户与开发者都看不出少了东西。校验把 `decode(encode(x)) === x` 作为不变式：手改过的
-   数值（`01`）、带分隔符的 id、少位/多位片段都会被拒。 */
+   用户与开发者都看不出少了东西。校验把 `decode(encode(x)) === x` 作为不变式：长度位写错、
+   手改过的数值（`01`）、截断或多出字符的片段都会被拒（末尾的原样读回再兜一遍）。 */
 function decodeRunHistoryCursor(cursor: string): { createdAt: number; runId: string } {
-  const parts = cursor.split(":");
-  if (parts.length !== 3) {
-    throw new Error(`squad_runs 分页游标非法「${cursor}」：形状应为 v1:<created_at>:<run_id>。`);
-  }
-  const [version, rawCreatedAt, runId] = parts as [string, string, string];
-  if (version !== RUN_HISTORY_CURSOR_VERSION) {
+  const versionEnd = cursor.indexOf(":");
+  if (!cursor.startsWith(`${RUN_HISTORY_CURSOR_VERSION}:`)) {
+    const version = versionEnd === -1 ? cursor : cursor.slice(0, versionEnd);
     throw new Error(
       `squad_runs 分页游标版本不认识「${version}」（当前 ${RUN_HISTORY_CURSOR_VERSION}）：` +
         "宁可响亮拒绝，也不按旧/新格式猜着解释。",
     );
   }
-  if (!/^\d+$/.test(rawCreatedAt)) {
+  let position = versionEnd + 1;
+  /* `<位数>:<原文>`：长度位是十进制位数（无前导零），原文按位数**恰好**取下 —— 原文里再出现
+     多少个冒号都不影响切分（这正是 P1 的修法：切分不再依赖分隔符不出现在内容里）。 */
+  const readLengthPrefixed = (field: string): string => {
+    const separator = cursor.indexOf(":", position);
+    if (separator === -1) {
+      throw new Error(`squad_runs 分页游标非法「${cursor}」：${field}缺少「<位数>:<原文>」段。`);
+    }
+    const rawLength = cursor.slice(position, separator);
+    const length = Number(rawLength);
+    if (!/^\d+$/.test(rawLength) || !Number.isSafeInteger(length) || String(length) !== rawLength) {
+      throw new Error(
+        `squad_runs 分页游标非法「${cursor}」：${field}的位数「${rawLength}」应为十进制整数（无前导零）。`,
+      );
+    }
+    const valueStart = separator + 1;
+    const valueEnd = valueStart + length;
+    if (valueEnd > cursor.length) {
+      throw new Error(
+        `squad_runs 分页游标非法「${cursor}」：${field}的位数「${rawLength}」与实际内容不符（被截断）。`,
+      );
+    }
+    position = valueEnd;
+    return cursor.slice(valueStart, valueEnd);
+  };
+
+  const rawCreatedAt = readLengthPrefixed("时间");
+  if (!/^\d+$/.test(rawCreatedAt) || String(Number(rawCreatedAt)) !== rawCreatedAt) {
     throw new Error(`squad_runs 分页游标的时间非法「${rawCreatedAt}」：应为毫秒整数。`);
   }
   const createdAt = Number(rawCreatedAt);
   if (!Number.isSafeInteger(createdAt)) {
     throw new Error(`squad_runs 分页游标的时间超出安全整数范围「${rawCreatedAt}」。`);
   }
+  if (cursor[position] !== ":") {
+    throw new Error(`squad_runs 分页游标非法「${cursor}」：时间与 run_id 之间缺少「:」分隔。`);
+  }
+  position += 1;
+  const runId = readLengthPrefixed("run_id");
+
   const decoded = { createdAt, runId };
   if (cursor !== encodeRunHistoryCursor(decoded)) {
     throw new Error(
