@@ -1,4 +1,4 @@
-import { SQUAD_DISPATCH_DISABLED_CODE } from "@zcode/services";
+import { SQUAD_DISPATCH_DISABLED_CODE, type IZCodeTaskService } from "@zcode/services";
 import {
   COMMENT_DISPATCH_UNSETTLED_OUTCOMES,
   type CommentDispatchOutcome,
@@ -156,8 +156,12 @@ export function decideSquadDispatch(input: {
  * **未绑会话的行**（`sessionId === null`：本次改动之前登记的历史行）同样按「没有东西会推进它」处置
  * —— 启动时刻它们只可能来自上一个进程。
  *
- * **只收队长行**：队员行的归宿是它自己的终态回调 + 启动回收器（它有树有枝，规则不同），
- * 在这里顺手收会绕开「产出必须活到合并」（§6.2 / S5）——那正是回收器按命名空间限域要保护的东西。
+ * **只收队长行**（W2 契约修订：这段注释此前写的是「队员行的归宿是它自己的终态回调 + 启动回收器」，
+ * 而 W2 之后队员行多了一个**合法归宿**）：队员行的结算约束 = **只经 `failMemberRun`**（唯一写者）
+ * **+ 树/分支归回收器**（按活跃集口径收，spec §6.2/S5）。**看门狗结算**（启动队员臂 / 在线 tick）
+ * 是第二个合法归宿 —— 它同样只经 `failMemberRun`、同样不碰 git。换言之这条注释真正排除的从来不是
+ * 「谁结算」，而是「绕开 `failMemberRun` 去删树」：那会绕开 S5（产出必须活到合并）。
+ * 队长行仍在这里收：它无树无枝，判据「不在执行」在启动时刻恒可靠（见上面两段）。
  */
 export function selectStaleLeaderRuns(input: {
   activeRuns: ReadonlyArray<{ runId: string; isLeaderTask: boolean; sessionId: string | null }>;
@@ -644,5 +648,124 @@ export function commentObligationReplayFacts(input: {
     dispatchKey: receipt.dispatchKey,
     targetAgentId: receipt.targetAgentId,
     workItemId: receipt.workItemId,
+  };
+}
+
+/* ------------------------------------------------------------------------------------------------
+   取消 / 停会话（L2 半边，W2）：**唯一**一处把协议 stop 发给某个会话（host 全树 `stopGeneration(` 恰 1 处）。
+   ------------------------------------------------------------------------------------------------ */
+
+export type SquadRunSessionStopTarget = { path: string; identity: string };
+
+/** L2 停会话的注入形态（实现只有 `createSquadRunSessionStopper` 一处）。 */
+export type SquadSessionStop = (input: {
+  target: SquadRunSessionStopTarget;
+  runId: string;
+  sessionId: string;
+}) => Promise<boolean>;
+
+/**
+ * **唯一的** `IZCodeTaskService.stopGeneration` 调用点（R-2 的结论：服务面早有这个方法，
+ * host 侧只缺一个调用点 —— 0 新传输层、0 新协议）。
+ *
+ * 为什么必须是**一处**：停会话有两个消费者（看门狗空闲档 / 用户取消的 L2），它们对「停谁」的判据
+ * 必须一致（都是「这条 run 绑定的那个会话」）。各写一份的下场是「一处补了 workspaceIdentity、
+ * 另一处没补」，在远端 workspace 上表现为「stop 发了但打到了别的会话」，且两端都不报错。
+ *
+ * 失败语义：**best-effort**（返回 `false` + 一条 warn）。理由（R-2 / 设计 §3.4）：L1 台账结算才是
+ * 取消的必达半边；stop 只是让会话早点停，失败不该把「已取消」变成「取消失败」。看门狗空闲档同理 ——
+ * stop 失败由宽限后的兜底结算接住。
+ *
+ * 无栅栏是**刻意的**（R-1/R-2）：带 `expectedForegroundExecutionId` 的定向 stop 需要中间层拿不到的
+ * 栅栏值（UI 的 activeWorks 不进 services），而「停当前前台执行」正是这里要的语义。
+ */
+export function createSquadRunSessionStopper(params: {
+  taskService: Pick<IZCodeTaskService, "stopGeneration"> | null;
+  logWarn: (message: string, error?: unknown) => void;
+}): SquadSessionStop {
+  return async ({ target, runId, sessionId }) => {
+    if (!params.taskService) {
+      params.logWarn(
+        `[squad] stop 会话失败：code task service 未注册 run=${runId} session=${sessionId}`,
+      );
+      return false;
+    }
+    try {
+      await params.taskService.stopGeneration({
+        taskId: sessionId,
+        workspacePath: target.path,
+        ...(target.identity ? { workspaceIdentity: target.identity } : {}),
+      });
+      return true;
+    } catch (error) {
+      // ACK 被拒 / 会话已终结都到这里：只 warn（L1 已生效；空闲档由宽限兜底）。
+      params.logWarn(`[squad] stop 会话未成功 run=${runId} session=${sessionId}`, error);
+      return false;
+    }
+  };
+}
+
+/** 取消的结论：`stop` 如实上报 L2 的结果（`skipped` = 这条 run 不需要停会话）。 */
+export type SquadRunCancelOutcome = {
+  status: "settled";
+  stop: "skipped" | "stopped" | "failed";
+};
+
+/**
+ * **per-run 取消的 host 半边**（设计 §3.4 的分层：L1 必达 + L2 best-effort）。
+ *
+ * 次序是契约：**先 L1 再 L2**。L1（服务面 `cancelSquadRun` ⇒ `failMemberRun`）把行移出活跃集，
+ * 于是「会话随后跑到自然终态」这类迟到回写会被跨终态守卫（W2 / R-3 修复①）接住 —— 与
+ * `offPeakTaskService` 既有的「先落终态再停 loop」同一条理由。反过来（先 stop 再结算）会留出
+ * 「stop 到结算之间会话成功收口 ⇒ run 走成功入账」的窗口。
+ *
+ * L2 只在「读到的行是 open 且有绑定会话」时发起：已 `discarded`（重复取消）不重复 stop、
+ * 已 `produced` / `merged` 的行由 L1 响亮拒绝（保护已产出的活）时也不会去停会话 —— 用户要的是
+ * 「别再等它」，不是「把已经做出来的东西停掉」。
+ *
+ * **入口留 UI 轮（Q2 裁定）**：今日没有 UI/工具触发通路，故本函数在 host 里**没有调用点**，
+ * 由接缝用例直接驱动。接线时（UI 轮）只需：取到 target + runId，调本函数，把结论回给界面。
+ */
+export function createSquadRunCanceller(params: {
+  /** 读该 run 的当时状态（服务面 `listSquadRuns` 口径：全量台账）。 */
+  readRun: (
+    target: SquadRunSessionStopTarget,
+    runId: string,
+  ) => Promise<{ status: string; sessionId: string | null } | null>;
+  /** L1：服务面 `cancelSquadRun`（queued ⇒ 丢弃 / open ⇒ failMemberRun(user_cancel) / 其余响亮抛）。 */
+  cancelRun: (
+    target: SquadRunSessionStopTarget,
+    input: { runId: string; reason?: string },
+  ) => Promise<void>;
+  stopSession: SquadSessionStop;
+  logInfo: (message: string) => void;
+  logWarn: (message: string, error?: unknown) => void;
+}): (
+  target: SquadRunSessionStopTarget,
+  input: { runId: string; reason?: string },
+) => Promise<SquadRunCancelOutcome> {
+  return async (target, input) => {
+    /* 读一次当时状态（L2 要用 sessionId；「要不要 stop」也按读到的状态定 —— 不猜）。 */
+    const run = await params.readRun(target, input.runId);
+    const sessionId = run?.status === "open" ? run.sessionId : null;
+
+    // L1：必达半边（失败会响亮抛给调用方 —— 取消没生效不能装成功）。
+    await params.cancelRun(target, {
+      runId: input.runId,
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    });
+
+    if (sessionId === null) {
+      params.logInfo(
+        `[squad] 取消 run=${input.runId}：L1 已结算；该行无需停会话（无绑定会话 / 已收口）`,
+      );
+      return { status: "settled", stop: "skipped" };
+    }
+    // L2：best-effort（失败只如实上报，不回滚 L1）。
+    const stopped = await params.stopSession({ target, runId: input.runId, sessionId });
+    params.logInfo(
+      `[squad] 取消 run=${input.runId}：L1 已结算；L2 stop session=${sessionId} = ${stopped ? "已发出" : "未成功"}`,
+    );
+    return { status: "settled", stop: stopped ? "stopped" : "failed" };
   };
 }
