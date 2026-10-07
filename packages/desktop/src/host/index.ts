@@ -80,6 +80,9 @@ import {
   buildDispatchSkippedInboxItem,
   buildMemberFailedInboxItem,
   buildOrphanedRunInboxItem,
+  /* W3：熔断判据（策略单源在服务面的 `squadWatchdog`）—— 派发桥把计数交给 `planDispatch` 逐出口判，
+     推进臂（①排队行 / ②义务）用同一个函数取 skip 文案。host 侧**不得**写第二份「几次算熔断」。 */
+  squadAgentBreakerSkipReason,
   type HostApiNetworkTransport,
   type OffPeakRequestAuthBuilder,
   type SquadAssignmentDispatchRequest,
@@ -837,6 +840,40 @@ function buildStandaloneRunPrompt(workItem: WorkItem): string {
 
 /** 启动恢复只该跑一次（`publish` 在重试/重复发布时会多次带 `phase: "ready"`）。两件事共用这一道闸。 */
 let squadStartupRecoveryStarted = false;
+
+/**
+ * **`dispatch_skipped` 登记的唯一落点**（P2c 产生点 ④；W3 起有三个调用方：派发桥的 skip 分支、
+ * 推进臂的①排队行熔断 skip 与②义务熔断 skip）。
+ *
+ * 为什么收成一处（而不是每处各写一遍 `recordInboxItem(...).catch(...)`）：
+ * · 三处的**语义完全相同**（skip 不是失败：登记失败只 warn，不得翻案），抄三遍就迟早有一处忘记
+ *   包 best-effort，而那处的表现是「库一卡就把一次派发/推进整个抛掉」，且不报错；
+ * · dedupKey / title / workspace 列的**形状**只该由构建件与这一处决定（产生点只管「事实是什么」）。
+ * 结构守卫（`squadInboxWiring.test.ts`）钉的正是「构建件在 host 里只出现一次」这条。
+ */
+function recordDispatchSkippedBestEffort(
+  squadRuntime: ISquadRuntimeService,
+  target: { path: string; identity: string },
+  input: { workItemId: string; workItemTitle: string | null; reason: string },
+): void {
+  void squadRuntime
+    .recordInboxItem(
+      target,
+      buildDispatchSkippedInboxItem({
+        workspaceKey: resolveWorkspaceKey({
+          workspacePath: target.path,
+          workspaceIdentity: target.identity,
+        }),
+        workspacePath: target.path,
+        workItemId: input.workItemId,
+        workItemTitle: input.workItemTitle,
+        reason: input.reason,
+      }),
+    )
+    .catch((error: unknown) =>
+      logger.warn(`[squad] skip 未能登记 Inbox：workItem=${input.workItemId}`, error),
+    );
+}
 
 /**
  * 在线看门狗 tick 的句柄（W2）。**启动一次、释放时必停**：定时器不随进程退出自动消失，
@@ -3015,6 +3052,12 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     // 规划（**唯一一处**）：工作项与小队都从服务面读，派发结论由 planDispatch 给
     // （用户指派 / 队长派单 / 规则触发三路共用同一处解析，spec §5.1）。
     const snapshot = await squadRuntime.getSnapshot(target);
+    /* W3：熔断计数（派生判据的唯一读口，**每次派发现取**）。为什么放在这里、而不是让各入口自己带：
+       熔断要挡住的是「**所有**新派发」——四种触发源（规则/用户/评论/重放）与四条出口（assignee /
+       targetOverride / leaderOverride / squad）都必须过同一道判据；把它放在派发桥内部，任何一条
+       入口都**没有机会忘记**（放在入口侧 = 漏一条就有一个入口绕过熔断，且不报错）。
+       缺证据（空表）⇒ 判定面按 0 处理 ⇒ 不拦任何派发（熔断的证据只有这一处来源）。 */
+    const breakerCounts = await squadRuntime.countWatchdogSettlementsByAgent(target);
     const workItem = snapshot.workItems.find((candidate) => candidate.id === msg.workItemId);
     if (!workItem) {
       /* X2.2 §7：同一事实同一终局 —— 「工作项查不到」是受限状态（可审计、不可派发），
@@ -3095,6 +3138,9 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         parentWorkItem,
         ...(declaredRunClass !== undefined ? { runClass: declaredRunClass } : {}),
         ...(targetAgent !== undefined ? { targetAgent } : {}),
+        /* W3：熔断事实（逐 agent 计数）。四条出口的目标各异（assignee / 点名者 / 队长），
+           故这里是**事实表**而不是一个布尔；判据本体在 `planDispatch` 内（策略单源）。 */
+        agentBreakerCounts: breakerCounts,
         /* D6：队长支与普通覆盖支**互斥**（同一处入参对象里只可能给一个）——同时给会被
            `planDispatch` 响亮拒绝，故这里按身份核对的结论分流。 */
         ...(leaderSquad !== null
@@ -3134,22 +3180,14 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
       /* P2c（产生点 ④）：skip 也是「需人介入」的一种（指派给人 = 等人自己动手；小队不接新派发 =
          等人处置）—— 登记一条 InboxItem，让「跳过」从日志里的一行变成界面上可查的一条。
          `reason` 用**事件原文**：去重键含它（同工作项 + 同原因 = 同一事实；原因变了 ⇒ 新的一条）。
-         best-effort：登记失败只 warn，**不得**把「skip 不是失败」的结论翻成失败（上面那行 info 已留痕）。 */
+         best-effort 包裹在唯一登记落点里（`recordDispatchSkippedBestEffort`，W3 起推进臂的熔断 skip
+         也走它）：登记失败只 warn，**不得**把「skip 不是失败」的结论翻成失败（上面那行 info 已留痕）。 */
       if (skip?.kind === "inbox.notified") {
-        void squadRuntime
-          .recordInboxItem(
-            target,
-            buildDispatchSkippedInboxItem({
-              workspaceKey: targetWorkspaceKey,
-              workspacePath: target.path,
-              workItemId: msg.workItemId,
-              workItemTitle: workItem.title,
-              reason: skip.reason,
-            }),
-          )
-          .catch((error: unknown) =>
-            logger.warn(`[squad] skip 未能登记 Inbox：workItem=${msg.workItemId}`, error),
-          );
+        recordDispatchSkippedBestEffort(squadRuntime, target, {
+          workItemId: msg.workItemId,
+          workItemTitle: workItem.title,
+          reason: skip.reason,
+        });
       }
       /* 评论通道据此把 receipt 落 blocked（「评论已发、目标未触发」的如实回传，§12.1-12）——
          skip **不是失败**：bridge 给 blocked 而不是 failed。 */
@@ -3662,6 +3700,20 @@ async function advanceSquadQueueAfterSettlement(
     return;
   }
   const snapshot = await squadRuntime.getSnapshot(target);
+  /* W3：熔断计数（本臂的两个消费点共用一份读数：①排队行 / ②到期义务）。判据本体在
+     `squadAgentBreakerSkipReason`（策略单源，与派发桥共用同一份阈值与文案口径）。
+     **每次推进现取**：熔断是零状态派生判据，缓存一份内存副本就多一个会漂移的状态。 */
+  const breakerCountByAgent = new Map(
+    (await squadRuntime.countWatchdogSettlementsByAgent(target)).map((entry) => [
+      entry.agentId,
+      entry.count,
+    ]),
+  );
+  const breakerSkipReasonFor = (agentId: string): string | null =>
+    squadAgentBreakerSkipReason({
+      agentId,
+      watchdogSettlementsInWindow: breakerCountByAgent.get(agentId) ?? 0,
+    });
 
   // ① 排队行：A1 重验 → 重放同 runId（推进臂在 openMemberRun 内认领，容量仍满则回排队结论）。
   /* ── 已登记卡（P1-risk，2026-10-06 D6+C1 复验 §7；走查级，**未修**）────────────────────────
@@ -3708,6 +3760,24 @@ async function advanceSquadQueueAfterSettlement(
       );
       continue;
     }
+    /* W3：**熔断 skip**（设计 §3.6 的显式偏离 —— 与上面 A1 的分界）：A1 是「永久失效 ⇒ 丢弃」
+       （工作项终态 / 负责人改掉 / agent 归档或停用：重投也不会成立）；熔断是「**临时条件** ⇒ 跳过」
+       （窗口滑出自动愈合）⇒ **行留 queued**，本轮的推进放弃。丢弃会把用户还在等的派发永久损失，
+       而我们没有别的路径把它找回来（义务表只有「已离开活跃集」这一条，排队行被丢 = 请求消失）。
+       留痕两路：error 行（为什么没推进）+ Inbox `dispatch_skipped`（人在界面上也能看见）。 */
+    const queuedBreakerSkip = breakerSkipReasonFor(queued.agentId);
+    if (queuedBreakerSkip !== null) {
+      logger.error(
+        `[squad] queued dispatch skipped (agent breaker tripped) workItem=${queued.workItemId}` +
+          ` agent=${queued.agentId} runId=${queued.runId}（行留 queued，不丢弃：窗口滑出后自动恢复）`,
+      );
+      recordDispatchSkippedBestEffort(squadRuntime, target, {
+        workItemId: queued.workItemId,
+        workItemTitle: workItem.title,
+        reason: queuedBreakerSkip,
+      });
+      continue;
+    }
     const report = await runSquadDispatch({
       trigger: "replay",
       replayCause: queued.dispatchCause ?? undefined,
@@ -3748,13 +3818,38 @@ async function advanceSquadQueueAfterSettlement(
       );
       continue;
     }
-    /* **分流**（X2.1 修 O1）：`comment` 义务**不得**走下面那条 R2 重放 —— R2 以 assignee 为目标
-       重投（A1 重验要求 `assignee.id === agentId`），而评论目标 ≠ assignee 是常态格（B-1）：
+    /* **分流**（X2.1 修 O1；W3 加第三支）：`comment` 义务**不得**走下面那条 R2 重放 —— R2 以 assignee
+       为目标重投（A1 重验要求 `assignee.id === agentId`），而评论目标 ≠ assignee 是常态格（B-1）：
        走 R2 会先在重验处被丢弃（义务已被认领删除 ⇒ 静默蒸发）或把请求派给错的人。
        评论义务走**评论重放通道**：重投评论派发入口，目标/工作项/请求身份全部从 receipt 事实取。
-       R2 义务（`reassign`）行为**一字未动**（eventKey=obligation.runId，既有实现）。 */
-    if (replayChannelForObligationOrigin(obligation.origin) === "comment_replay") {
+       `watchdog`（W3 §3.5 的自动重试）与 `reassign` 走**同一个** R2 形态实现（设计明文「与既有义务
+       重放同一实现」：A1 重验 + `trigger:"replay"`、eventKey=义务 runId —— 重试的 runId 在登记时
+       铸定、与被结算行不同，故这是**新**派发决策而不是复活旧行）；两者的差别只在**归属留痕**：
+       一次自动重试与一次用户改派重放在日志里必须能分辨（否则「谁重试了」无从回答）。 */
+    const replayChannel = replayChannelForObligationOrigin(obligation.origin);
+    if (replayChannel === "comment_replay") {
       await replayCommentObligation(squadRuntime, target, obligation, snapshot);
+      continue;
+    }
+    /* W3：**熔断 skip**（义务段）。刻意排在**认领之后**（`claimDue` 恰一次、不可回滚）：认领已经发生，
+       这里的跳过意味着这条义务**损失一次** —— 设计 §3.6 明文接受（可审计不可挽回），故**响亮留痕**
+       （error 行点名「义务损失一次」+ Inbox）。不要试图「把义务还回去」：义务表只有登记/认领两个
+       动作，补一条 = 第二处派发待办真相（设计 §5 拒绝的新表）。 */
+    const obligationBreakerSkip = breakerSkipReasonFor(obligation.agentId);
+    if (obligationBreakerSkip !== null) {
+      logger.error(
+        `[squad] deferred obligation skipped (agent breaker tripped) workItem=${obligation.workItemId}` +
+          ` agent=${obligation.agentId} runId=${obligation.runId} origin=${obligation.origin}` +
+          "（义务已认领 ⇒ 本次数重放损失一次；窗口滑出后由下一次派发/推进恢复）",
+      );
+      const workItemForSkip = snapshot.workItems.find(
+        (item) => item.id === obligation.workItemId,
+      );
+      recordDispatchSkippedBestEffort(squadRuntime, target, {
+        workItemId: obligation.workItemId,
+        workItemTitle: workItemForSkip?.title ?? null,
+        reason: obligationBreakerSkip,
+      });
       continue;
     }
     const workItem = snapshot.workItems.find((item) => item.id === obligation.workItemId);
@@ -3771,7 +3866,10 @@ async function advanceSquadQueueAfterSettlement(
     ) {
       logger.error(
         `[squad] deferred obligation dropped (A1 re-verify failed) workItem=${obligation.workItemId}` +
-          ` agent=${obligation.agentId} runId=${obligation.runId}`,
+          ` agent=${obligation.agentId} runId=${obligation.runId}` +
+          (replayChannel === "watchdog_replay"
+            ? "（看门狗自动重试：本 pair 已不再可派发，重试放弃）"
+            : ""),
       );
       continue;
     }
@@ -3786,8 +3884,14 @@ async function advanceSquadQueueAfterSettlement(
     if (!report.ok) {
       logger.error(
         `[squad] deferred obligation replay failed workItem=${obligation.workItemId}` +
-          ` runId=${obligation.runId} failureKind=${report.failureKind ?? "unknown"}`,
+          ` runId=${obligation.runId} failureKind=${report.failureKind ?? "unknown"}` +
+          (replayChannel === "watchdog_replay" ? "（看门狗自动重试）" : ""),
         report.error,
+      );
+    } else if (replayChannel === "watchdog_replay") {
+      logger.info(
+        `[squad] watchdog 自动重试已重放 workItem=${obligation.workItemId}` +
+          ` agent=${obligation.agentId} retry=${obligation.runId}`,
       );
     }
   }

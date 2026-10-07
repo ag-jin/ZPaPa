@@ -108,14 +108,30 @@ test("host 产生点 ③：启动和解循环里登记 run_orphaned 且在 try/c
 });
 
 // P4（产生点 ④，spec §3.9）：planDispatch 的四条 skip ⇒ 登记 dispatch_skipped（reason 用事件原文）。
-test("host 产生点 ④：skip 分支里登记 dispatch_skipped 且链 .catch(", () => {
+/* W3 契约修订（强度不降）：产生点 ④ 的 best-effort 包裹从「每个调用点各写一遍」收成**唯一登记落点**
+   （`recordDispatchSkippedBestEffort`）—— 因为 W3 的推进臂又多了两个 skip 落点（①排队行熔断 / ②义务
+   熔断），三处各写一遍就是三份「忘记包 best-effort」的机会。本断言随之从「这个区域里有构建件调用」
+   改为「这个区域经唯一落点登记」+「落点本身链 .catch(」：两条合起来与原来钉的是同一件事
+   （best-effort 包裹存在），且把「落点唯一」也钉住了（见文件开头的计数守卫）。 */
+test("host 产生点 ④：skip 分支经唯一登记落点（best-effort 在落点内）且 reason 用事件原文", () => {
   const skipBranch = region(
     'const enqueued = events.find((event) => event.kind === "run.enqueued");',
     "const kind: SquadDispatchKind = enqueued.runClass;",
   );
   assert.match(skipBranch, /inbox\.notified/, "区域应先证明取到 skip 分支（reason 来自该事件）");
   assert.match(skipBranch, /reason: skip\.reason/, "reason 必须用事件原文（去重键含它）");
-  assertRecordWrappedByCatch(skipBranch, "buildDispatchSkippedInboxItem(");
+  assert.match(
+    skipBranch,
+    /recordDispatchSkippedBestEffort\(/,
+    "skip 必须经唯一登记落点（各处自拼 recordInboxItem 就是 N 份 best-effort 的机会）",
+  );
+  // 落点本身仍必须链 `.catch(`（best-effort 的唯一实现处）。
+  const helper = region(
+    "function recordDispatchSkippedBestEffort(",
+    "function resolveSquadWatchdogSweepPorts(",
+  );
+  assert.ok(helper.includes("buildDispatchSkippedInboxItem("), "落点里必须调构建件");
+  assertRecordWrappedByCatch(helper, "buildDispatchSkippedInboxItem(");
 });
 
 // 三个落点的共同纪律：`recordInboxItem` 经**服务面**（不是 host 自己开库 / 拼 SQL）——

@@ -886,6 +886,28 @@ test("X2.1 重放分流：origin 决定重放通道（comment 不得走 R2 通�
   );
 });
 
+test("W3 重放分流：watchdog 义务有自己的第三支（三值互不混用；闭集外仍响亮抛）", () => {
+  assert.equal(
+    replayChannelForObligationOrigin("watchdog"),
+    "watchdog_replay",
+    "看门狗自动重试的义务必须能被推进臂认出来（否则它会静默落进 R2 支，重试的身份/留痕就没了）",
+  );
+  assert.equal(
+    new Set([
+      replayChannelForObligationOrigin("reassign"),
+      replayChannelForObligationOrigin("comment"),
+      replayChannelForObligationOrigin("watchdog"),
+    ]).size,
+    3,
+    "三个 origin 必须映到三条不同通道（任一重合 = 两支的重放语义被静默合并）",
+  );
+  assert.throws(
+    () => replayChannelForObligationOrigin("bogus" as never),
+    /origin/,
+    "闭集外来源一律抛：never 守卫是「加 origin 必须同步加分支」的编译期保险",
+  );
+});
+
 test("X2.1 落定映射：四类派发结论如实映射（queued/coalesced/deferred 不得记 failed）", () => {
   assert.deepEqual(commentReceiptSettlementFor({ kind: "dispatched" }), { outcome: "opened" });
   assert.deepEqual(commentReceiptSettlementFor({ kind: "queued" }), { outcome: "queued" });
@@ -990,6 +1012,106 @@ test("X2.1 接线：义务重放的 origin 分流在 R2 重放之前（摘除 �
   assert.ok(commentCallAt > splitAt, "comment 义务必须先进入评论重放通道");
   assert.ok(r2At > splitAt, "R2 重放（eventKey=obligation.runId）只属于 reassign 通道");
   assert.ok(commentCallAt < r2At, "分流必须发生在 R2 重放之前（否则评论义务先被 R2 消费）");
+});
+
+test("W3 接线：派发桥把熔断计数交给 planDispatch（四条出口逐格判；缺证据 ⇒ 不拦）", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function runSquadDispatch(");
+  const end = host.indexOf('parentPort.on("message",', start);
+  assert.ok(start >= 0 && end > start, "找不到派发桥边界");
+  const bridge = host.slice(start, end);
+  assert.ok(
+    bridge.includes("countWatchdogSettlementsByAgent("),
+    "派发桥必须**现取**熔断计数（派生判据零状态：不缓存、不信任何内存副本）",
+  );
+  assert.match(
+    bridge,
+    /agentBreakerCounts:\s*breakerCounts/,
+    "计数必须交给 planDispatch 的熔断入参 —— 只查不传 = 四条出口一条都不判（功能整块空转且不报错）",
+  );
+});
+
+test("W3 接线：推进臂的熔断 skip（①排队行留 queued 不丢弃 / ②义务认领后响亮留痕）", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function advanceSquadQueueAfterSettlement(");
+  const end = host.indexOf("async function dispatchCommentDispatch(", start);
+  assert.ok(start >= 0 && end > start, "找不到推进函数边界");
+  const loop = host.slice(start, end);
+  /* 判据的**接入点**：一个闭包定义（判据本体在服务面，host 只查表）+ 两个消费点（①排队行 / ②义务）。
+     少于 2 个消费点说明有一段没判，而「漏一段」的表现只是「那个入口照常重投」，不报错。 */
+  assert.equal(
+    (loop.match(/squadAgentBreakerSkipReason\(/g) ?? []).length,
+    1,
+    "推进臂只有一个判据闭包（策略单源在服务面；第二处直调 = 两处阈值口径）",
+  );
+  assert.equal(
+    (loop.match(/breakerSkipReasonFor\(/g) ?? []).length,
+    2,
+    "推进臂必须 ①排队行 / ②义务 两段各判一次（漏一段 = 那一类派发绕过熔断）",
+  );
+
+  const queueLoopAt = loop.indexOf("for (const queued of await squadRuntime.listQueuedSquadRuns(");
+  assert.ok(queueLoopAt > 0, "找不到 ①排队行循环");
+  const firstCheck = loop.indexOf("breakerSkipReasonFor(", queueLoopAt);
+  assert.ok(firstCheck > queueLoopAt, "①段必须判熔断（否则排队行会被照常重投，熔断只挡住「新派发」）");
+  const discardAt = loop.indexOf("discardQueuedSquadRun(", queueLoopAt);
+  assert.ok(
+    firstCheck > discardAt,
+    "熔断判定必须在 A1 重验**之后**（A1 = 永久失效 ⇒ 丢弃；熔断 = 临时条件 ⇒ 跳过，次序反了会先丢弃）",
+  );
+  /* ①段的熔断分支只能「留行 + 留痕 + continue」：切片取到下一个 `continue;` 为止，里面**不得**出现
+     丢弃出口。丢弃会把用户还在等的排队派发永久损失（熔断是自动愈合的临时条件）。 */
+  const firstBranch = loop.slice(firstCheck, loop.indexOf("continue;", firstCheck));
+  assert.doesNotMatch(
+    firstBranch,
+    /discardQueuedSquadRun\(/,
+    "熔断 skip 不得丢弃排队行（与 A1「永久失效 ⇒ 丢弃」的显式分界；丢弃 = 永久损失等待中的派发）",
+  );
+
+  const secondCheck = loop.indexOf("breakerSkipReasonFor(", firstCheck + 1);
+  assert.ok(secondCheck > firstCheck, "②段（义务）同样要判熔断：认领后重投前");
+  const replayAt = loop.indexOf("runSquadDispatch({", secondCheck);
+  assert.ok(
+    replayAt > secondCheck,
+    "义务段的熔断判定必须在重投**之前**（claimDue 恰一次不可回滚 ⇒ 认领后才发现熔断 = 义务损失一次，设计明文接受但必须响亮）",
+  );
+  const secondBranch = loop.slice(secondCheck, loop.indexOf("continue;", secondCheck));
+  assert.match(
+    secondBranch,
+    /义务/,
+    "义务段的熔断留痕必须点名「义务损失一次」（可审计不可挽回，日志要能回答「那次重放去哪了」）",
+  );
+});
+
+test("W3 接线：watchdog 义务在推进臂里有自己的第三支（归属留痕；仍走唯一派发实现 + A1 重验）", () => {
+  const host = hostSource();
+  const start = host.indexOf("async function advanceSquadQueueAfterSettlement(");
+  const end = host.indexOf("async function dispatchCommentDispatch(", start);
+  assert.ok(start >= 0 && end > start, "找不到推进函数边界");
+  const loop = host.slice(start, end);
+  const splitAt = loop.indexOf("replayChannelForObligationOrigin(");
+  assert.ok(splitAt >= 0, "义务重放必须按 origin 分流");
+  const watchdogAt = loop.indexOf('"watchdog_replay"');
+  assert.ok(
+    watchdogAt > splitAt,
+    "watchdog 义务必须被推进臂**认出来**（第三支）；否则它与 R2 重放在日志里一模一样，" +
+      "一次自动重试会被读成一次用户改派重放",
+  );
+  assert.match(
+    loop,
+    /[A-Za-z]*[Cc]hannel === "watchdog_replay"/,
+    "第三支必须是**对分流结论的比较**（不是只把字符串写在注释/日志里）",
+  );
+  // 重放仍只有一个实现：A1 重验 + `runSquadDispatch`（trigger:"replay"）——不新增第二条派发路径。
+  assert.ok(
+    loop.indexOf("runSquadDispatch({", splitAt) > splitAt,
+    "watchdog 重试必须复用唯一派发实现（第二处「建会话 + 发 prompt」迟早与闸/门禁分叉）",
+  );
+  assert.match(
+    loop,
+    /workItem\.assignee\.type !== "agent"[\s\S]{0,120}?workItem\.assignee\.id !== obligation\.agentId/,
+    "A1 重验（assignee 仍指向该 agent）必须在重投之前——重试打的是同一个 (工作项, agent) 对",
+  );
 });
 
 test("X2.1 接线：评论变体的成因只搬运（msg.cause），派发桥不写死任何成因档位", () => {

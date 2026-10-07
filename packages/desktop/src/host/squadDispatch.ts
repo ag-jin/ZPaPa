@@ -388,9 +388,13 @@ export function watchLeaderRunSettlement(params: {
  *   派发目标仍是 assignee（A1 重验要求 `assignee.id === agentId`）；
  * · `comment_replay`：评论重放账 —— **重投评论派发入口**（按 receipt 事实：目标、工作项、
  *   dispatchKey 都从 receipt 取，再走 `targetOverride`），**不得**把义务行当 R2 请求现造 run
- *   （评论目标 ≠ assignee 是常态格，走 R2 会先被 A1 重验丢弃）。
+ *   （评论目标 ≠ assignee 是常态格，走 R2 会先被 A1 重验丢弃）；
+ * · `watchdog_replay`：看门狗**自动重试**义务（W3 §3.5）—— 与被结算的那条 run 同 `(workItem, agent)` 对，
+ *   重放用**新 runId**（义务登记时铸定）作 eventKey：重试是**新**派发决策，与既有义务重放同一实现
+ *   （A1 重验 + `trigger:"replay"`）。它的独立分支值不是装饰：重放的**归属留痕**必须能说出
+ *   「这是看门狗自动重试」而不是「有人改派了」，否则一次自动重试与一次用户改派重放在日志里一模一样。
  */
-export type DeferredReplayChannel = "reassign_replay" | "comment_replay";
+export type DeferredReplayChannel = "reassign_replay" | "comment_replay" | "watchdog_replay";
 
 export function replayChannelForObligationOrigin(
   origin: DeferredDispatchOrigin,
@@ -400,12 +404,15 @@ export function replayChannelForObligationOrigin(
       return "reassign_replay";
     case "comment":
       return "comment_replay";
+    case "watchdog":
+      return "watchdog_replay";
     default: {
       /* 闭集外来源**响亮抛**（读回闸已在 repo 层拦一道，这里是不依赖 DB 的第二道）：
-         静默落到任何一条通道都意味着「评论义务被 R2 重放」或反之 —— 两者都不报错。 */
+         静默落到任何一条通道都意味着「评论义务被 R2 重放」或反之 —— 两者都不报错。
+         `never` 守卫同时是**编译期**保险：origin 闭集加值而这里没加分支 ⇒ 编译错。 */
       const raw: never = origin;
       throw new Error(
-        `未知的 deferred 义务来源「${String(raw)}」：origin 闭集只有 reassign/comment，` +
+        `未知的 deferred 义务来源「${String(raw)}」：origin 闭集只有 reassign/comment/watchdog，` +
           "静默按某条通道重放会让评论义务走 R2 账（目标被换回 assignee / 义务静默丢弃）。",
       );
     }
