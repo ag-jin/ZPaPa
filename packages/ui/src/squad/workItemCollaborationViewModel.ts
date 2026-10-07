@@ -494,6 +494,22 @@ export const COMMENT_REACTION_EMOJIS = ["👍", "🎉", "👀", "🙏", "✅"] a
 /* ---------- 轮 2 · 写路径的本地状态（设计案 §3.4 / §4.1） ---------- */
 
 /**
+ * 写面不可用的原因（设计案 §4.1 + §3.4）：归档 > 刷新失败 > 可写（`null`）。
+ *
+ * **评论与决定共用这一条判据**（只换文案族）：两个面各写一份「先看归档再看刷新」的优先级，
+ * 迟早在某一面上漏掉一格 —— 而漏掉的表现是「入口亮着，点了必失败」。
+ */
+export function writeDisabledReason(
+  surface: "comment" | "decision",
+  workItem: { archivedAt?: number },
+  refreshFailure: string | null,
+): string | null {
+  if (workItem.archivedAt !== undefined) return `squad.workItemDetail.${surface}.disabled.archived`;
+  if (refreshFailure !== null) return `squad.workItemDetail.${surface}.disabled.readFailed`;
+  return null;
+}
+
+/**
  * 提交幂等键（§8.1）的状态机：**一次提交动作内稳定**，成功后换新。
  *
  * 为什么把它做成转移函数而不是 `useState` 里的三行：`clientRequestId` 的稳定性是**幂等性的全部**——

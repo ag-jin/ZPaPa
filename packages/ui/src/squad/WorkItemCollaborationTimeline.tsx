@@ -37,6 +37,11 @@ import {
   WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS,
   type MentionRoster,
 } from "./workItemCollaborationViewModel.js";
+import {
+  DECISION_PARENT_PREFIX_MESSAGE_IDS,
+  decisionKindMessageId,
+  decisionParentReference,
+} from "./workItemDecisionViewModel.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：**唯一混排**的活动时间线（设计案 §2.2）。
 
@@ -103,6 +108,11 @@ export function WorkItemCollaborationTimeline({
     () => new Map(read.comments.map((comment) => [comment.id, comment])),
     [read.comments],
   );
+  /** 决定的父链解析面（父在本工作项内；不可解析时只显示 id —— 见 decisionParentReference）。 */
+  const decisionsById = useMemo(
+    () => new Map(read.decisions.map((decision) => [decision.id, decision])),
+    [read.decisions],
+  );
   const entries = useMemo(
     () =>
       buildWorkItemTimelineEntries({
@@ -159,7 +169,7 @@ export function WorkItemCollaborationTimeline({
                 data-testid="timeline-entry-decision"
                 className="border-t border-border py-3 first:border-t-0"
               >
-                <DecisionEntry decision={entry.decision} />
+                <DecisionEntry decision={entry.decision} decisionsById={decisionsById} />
               </li>
             );
           }
@@ -211,31 +221,59 @@ export function WorkItemCollaborationTimeline({
   );
 }
 
-/** 结构化裁决事实行（设计案 §2.4）：弱表面 + 图标，不用成功/失败大色块；本轮只读。 */
-function DecisionEntry({ decision }: { decision: WorkItemDecisionRecord }) {
+/**
+ * 结构化裁决事实行（设计案 §2.4）：弱表面 + 图标，不用成功/失败大色块；本轮只读。
+ *
+ * C3.2 起它要回答 §3.4 的那两个问题：**谁作的裁决**（作者 byline，复用 comment.author.* 词）、
+ * **后来由什么取代**（父引用行：可解析 ⇒「取代了/重新审议：{父 kind} · {父 subject}」；
+ * 不可解析 ⇒ **只显示 id**，不编名字 —— 编出来的名字是时间线上一句确定的假话）。
+ * kind 标签只经 `decisionKindMessageId`（闭集穷尽映射）：B5.1 的 if/else 链最后一个 else
+ * 会把未知 kind 说成「已重新审议」，而这里宁可不显示也不可能说错。
+ */
+function DecisionEntry({
+  decision,
+  decisionsById,
+}: {
+  decision: WorkItemDecisionRecord;
+  decisionsById: ReadonlyMap<string, WorkItemDecisionRecord>;
+}) {
   const { intl } = useZCodeIntl();
-  const t = (id: string) => intl.formatMessage({ id });
-  const kindMessageId =
-    decision.kind === "proposal"
-      ? "squad.workItemDetail.decision.proposal"
-      : decision.kind === "accepted"
-        ? "squad.workItemDetail.decision.accepted"
-        : decision.kind === "rejected"
-          ? "squad.workItemDetail.decision.rejected"
-          : decision.kind === "superseded"
-            ? "squad.workItemDetail.decision.superseded"
-            : "squad.workItemDetail.decision.reopened";
+  const t = (id: string, values?: Record<string, string | number>) =>
+    intl.formatMessage({ id }, values);
+  const parent = decisionParentReference(decision, decisionsById);
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border bg-accent px-3 py-2">
-      <span className="flex items-center gap-2 text-ui-xs text-foreground-subtle">
+      <span className="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">
         <Scale aria-hidden className="size-4" />
         {t("squad.workItemDetail.decision.label")}
-        <span>{t(kindMessageId)}</span>
+        <span>{t(decisionKindMessageId(decision.kind))}</span>
+        <span>{decision.author.displayName ?? decision.author.id}</span>
+        <span>
+          {decision.author.kind === "human"
+            ? t("squad.workItemDetail.comment.author.human")
+            : t("squad.workItemDetail.comment.author.agent")}
+        </span>
+        <time
+          className="text-ui-xs text-foreground-subtlest"
+          dateTime={new Date(decision.effectiveAt).toISOString()}
+        >
+          {new Date(decision.effectiveAt).toLocaleString()}
+        </time>
       </span>
       <p className="text-ui-base font-medium text-foreground">{decision.subject}</p>
       {decision.rationale ? (
         <p className="text-ui-sm text-foreground-subtle">{decision.rationale}</p>
       ) : null}
+      {parent === null ? null : (
+        <p data-testid="timeline-decision-parent" className="text-ui-xs text-foreground-subtle">
+          {parent.kind === "resolved"
+            ? t(DECISION_PARENT_PREFIX_MESSAGE_IDS[decision.kind], {
+                kind: t(decisionKindMessageId(parent.parent.kind)),
+                subject: parent.parent.subject,
+              })
+            : t("squad.workItemDetail.decision.parentUnresolved", { id: parent.id })}
+        </p>
+      )}
     </div>
   );
 }

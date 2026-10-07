@@ -4782,6 +4782,31 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.decision.rejected": "Rejected",
   "squad.workItemDetail.decision.superseded": "Superseded",
   "squad.workItemDetail.decision.reopened": "Reopened",
+  /* C3.2: decision surface (write entry + parent-chain presentation). Besides the two parent
+     prefixes (supersede / reopen), the three kinds with an optional parent share one "About"
+     key: the v1 form does not offer a selector for them, but an existing parent chain must not
+     be displayed as if it were absent. */
+  "squad.workItemDetail.decision.record": "Record decision",
+  "squad.workItemDetail.decision.dialogTitle": "Record a decision",
+  "squad.workItemDetail.decision.field.kind": "Kind",
+  "squad.workItemDetail.decision.field.subject": "Subject",
+  "squad.workItemDetail.decision.field.rationale": "Rationale (optional)",
+  "squad.workItemDetail.decision.field.parent": "Parent decision",
+  "squad.workItemDetail.decision.parentEmpty": "No parent decision available",
+  "squad.workItemDetail.decision.parentRequired": "This kind requires a parent decision",
+  "squad.workItemDetail.decision.subjectRequired": "Describe the subject",
+  "squad.workItemDetail.decision.submit": "Record",
+  "squad.workItemDetail.decision.sending": "Recording",
+  "squad.workItemDetail.decision.failed": "Decision not recorded",
+  "squad.workItemDetail.decision.retry": "Retry",
+  "squad.workItemDetail.decision.disabled.archived":
+    "This work item is archived; decisions cannot be recorded",
+  "squad.workItemDetail.decision.disabled.readFailed":
+    "Activity failed to load; decisions cannot be recorded",
+  "squad.workItemDetail.decision.parentSuperseded": "Supersedes: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentReopened": "Reopens: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentRelated": "About: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentUnresolved": "Parent decision unavailable: {id}",
   "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
   "squad.workItemDetail.dispatch.opened": "Run opened",
   "squad.workItemDetail.dispatch.queued": "Queued",

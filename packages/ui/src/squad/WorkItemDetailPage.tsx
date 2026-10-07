@@ -19,12 +19,14 @@ import { WorkItemLabelChip } from "./WorkItemsBoard.js";
 import { WorkItemCollaborationTimeline } from "./WorkItemCollaborationTimeline.js";
 import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
+import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDecisionDialog.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
 import {
   COMMENT_DELETE_CONFIRM_IDLE,
   confirmCommentDelete,
   executeCommentDelete,
   workItemDetailAssigneeLabel,
+  writeDisabledReason,
   type CommentDeleteConfirmState,
 } from "./workItemCollaborationViewModel.js";
 import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsViewModel.js";
@@ -43,8 +45,9 @@ import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsV
    轮 2 的两条结构纪律：
    ① **一次动作只刷新一个事实源**：写入成功后只调 `reload()`（协作读模型）；快照只供名册，
       写入路径里**不出现** `getSnapshot(`（第二次取快照会让名册与协作数据各自漂移）；
-   ② 写入调用只在下面的 `runCommentAction` 一处：模板与子组件都拿到「做什么」的回调，
-      而不是拿到服务对象自己调（要能一眼看出「谁在写」）。 */
+   ② 写入调用只在下面的 `runCollaborationAction` 一处：模板与子组件都拿到「做什么」的回调，
+      而不是拿到服务对象自己调（要能一眼看出「谁在写」）。C3.2 起它同时承载**决定**的写入
+      （评论与决定的失败域相同：动作错误条 / 就地失败提示），唯一执行器仍是这一处。 */
 
 export function WorkItemDetailPage({
   workspacePath,
@@ -104,22 +107,24 @@ export function WorkItemDetailPage({
   const workItemIdForWrite = state.status === "ready" ? (state.read?.workItem.id ?? null) : null;
 
   /**
-   * 页面里**唯一**的评论动作执行点：写 → 只刷新协作读模型。
+   * 页面里**唯一**的协作动作执行点（评论四入口 + C3.2 的决定写入）：写 → 只刷新协作读模型。
    *
-   * 失败一律**留痕并抛回调用方**：提交（composer）就地显示「未发送 + 重试」，其余动作落到
-   * 上面的动作错误条。两条路都不吞异常 —— 一次「点了没反应」的动作在这个页面里凑不出来。
-   * `commentId` 只是「禁用哪一条的动作」，与「写什么」无关（写什么由调用方给的函数决定）。
+   * 失败一律**留痕并抛回调用方**：提交（composer / 决定对话框）就地显示「未发送/未记录 + 重试」，
+   * 其余动作落到上面的动作错误条。两条路都不吞异常 —— 一次「点了没反应」的动作在这个页面里凑不出来。
+   * `commentId` 只是「禁用哪一条评论的动作」，与「写什么」无关（写什么由调用方给的函数决定；
+   * 决定写入传 `null`）。
    */
-  const runCommentAction = useCallback(
+  const runCollaborationAction = useCallback(
     async (
-      commentId: string | null,
+      /** 有写在途的那条评论的 id（决定写入传 `null`：没有评论条目要禁用）。 */
+      pendingCommentId: string | null,
       run: (
         service: IWorkItemCollaborationServiceShape,
         target: SquadWorkspaceTarget,
       ) => Promise<unknown>,
     ): Promise<void> => {
       if (!target) return;
-      setPendingCommentId(commentId);
+      setPendingCommentId(pendingCommentId);
       setActionError(null);
       try {
         await run(resolveWorkItemCollaborationService(services), target);
@@ -142,7 +147,7 @@ export function WorkItemDetailPage({
       const id = workItemIdForWrite;
       // 没有工作项就不能提交：抛出去让 composer 显示「未发送」，**不**假装写成功。
       if (id === null) throw new Error("工作项尚未读出，无法提交评论。");
-      await runCommentAction(null, (service, currentTarget) =>
+      await runCollaborationAction(null, (service, currentTarget) =>
         service.createWorkItemComment(currentTarget, {
           workItemId: id,
           body: input.body,
@@ -153,7 +158,23 @@ export function WorkItemDetailPage({
         }),
       );
     },
-    [runCommentAction, workItemIdForWrite],
+    [runCollaborationAction, workItemIdForWrite],
+  );
+
+  /**
+   * 提交一条决定（C3.2）：与评论提交同一条执行器（写 → 只刷新协作读模型）。
+   * `workItemId` 由读面带回的工作项补上（UI 不自己造 id，也不传身份/workspace —— D1-A）。
+   */
+  const submitDecision = useCallback(
+    async (input: DecisionSubmitInput) => {
+      const id = workItemIdForWrite;
+      // 没有工作项就不能提交：抛出去让对话框显示「未记录」，**不**假装写成功。
+      if (id === null) throw new Error("工作项尚未读出，无法记录决定。");
+      await runCollaborationAction(null, (service, currentTarget) =>
+        service.createWorkItemDecision(currentTarget, { ...input, workItemId: id }),
+      );
+    },
+    [runCollaborationAction, workItemIdForWrite],
   );
 
   const requestDelete = useCallback((comment: WorkItemCommentRecord) => {
@@ -168,30 +189,30 @@ export function WorkItemDetailPage({
       logger.warn("[WorkItemDetailPage] 删除未确认：一级都不执行");
       return;
     }
-    void runCommentAction(decision.commentId, (service, currentTarget) =>
+    void runCollaborationAction(decision.commentId, (service, currentTarget) =>
       executeCommentDelete({ service, target: currentTarget, decision }),
     ).catch(() => undefined);
-  }, [deleteConfirm, runCommentAction]);
+  }, [deleteConfirm, runCollaborationAction]);
 
   const runResolve = useCallback(
     (comment: WorkItemCommentRecord, resolved: boolean) => {
-      void runCommentAction(comment.id, (service, currentTarget) =>
+      void runCollaborationAction(comment.id, (service, currentTarget) =>
         service.setWorkItemCommentResolved(currentTarget, {
           commentId: comment.id,
           resolved,
         }),
       ).catch(() => undefined);
     },
-    [runCommentAction],
+    [runCollaborationAction],
   );
 
   const runReact = useCallback(
     (comment: WorkItemCommentRecord, emoji: string) => {
-      void runCommentAction(comment.id, (service, currentTarget) =>
+      void runCollaborationAction(comment.id, (service, currentTarget) =>
         service.addWorkItemCommentReaction(currentTarget, { commentId: comment.id, emoji }),
       ).catch(() => undefined);
     },
-    [runCommentAction],
+    [runCollaborationAction],
   );
 
   const backButton = (
@@ -253,6 +274,8 @@ export function WorkItemDetailPage({
     t("squad.common.assignee.user");
   const reactionsByComment = buildReactionsByComment(read.reactions);
   const receiptsByComment = buildReceiptsByComment(read.receipts);
+  /** 决定写入的禁用原因（与评论同一条判据，只换文案族）：归档 > 刷新失败 > 可写。 */
+  const decisionDisabledReason = writeDisabledReason("decision", workItem, state.refreshFailure);
 
   return (
     <div data-testid="work-item-detail-page" className="flex flex-col gap-4 py-2">
@@ -340,9 +363,18 @@ export function WorkItemDetailPage({
         data-testid="work-item-collaboration"
         className={cn("flex flex-col gap-3 rounded-xl border border-card-border bg-card px-4 py-4")}
       >
-        <h2 className="text-ui-base font-medium text-foreground">
-          {t("squad.workItemDetail.activity.title")}
-        </h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-ui-base font-medium text-foreground">
+            {t("squad.workItemDetail.activity.title")}
+          </h2>
+          {/* C3.2 写入入口（Q5 裁定：挂协作区标题行）。归档 / 读取失败时**禁用并给原因**，
+              不静默消失 —— 入口消失会让「为什么不能记录」变成只能靠猜的问题。 */}
+          <WorkItemDecisionRecorder
+            decisions={read.decisions}
+            disabledReasonMessageId={decisionDisabledReason}
+            onSubmit={submitDecision}
+          />
+        </div>
         {state.refreshFailure === null ? null : (
           <Alert variant="destructive" data-testid="work-item-collaboration-failure">
             <AlertTitle>{t("squad.workItemDetail.activity.loadFailed")}</AlertTitle>
@@ -382,7 +414,7 @@ export function WorkItemDetailPage({
           roster={roster === null ? null : { agents: roster.teamAgents, squads: roster.squads }}
           replyTarget={replyTarget}
           onCancelReply={() => setReplyTarget(null)}
-          disabledReasonMessageId={composerDisabledReason(workItem, state.refreshFailure)}
+          disabledReasonMessageId={writeDisabledReason("comment", workItem, state.refreshFailure)}
           onSubmit={submitComment}
         />
       </section>
@@ -396,16 +428,6 @@ export function WorkItemDetailPage({
       )}
     </div>
   );
-}
-
-/** 提交不可用的原因（设计案 §4.1 + §3.4）：归档 > 刷新失败 > 可写（`null`）。 */
-function composerDisabledReason(
-  workItem: { archivedAt?: number },
-  refreshFailure: string | null,
-): string | null {
-  if (workItem.archivedAt !== undefined) return "squad.workItemDetail.comment.disabled.archived";
-  if (refreshFailure !== null) return "squad.workItemDetail.comment.disabled.readFailed";
-  return null;
 }
 
 /** 回应按评论分组（一次遍历；分组语义在纯函数 `groupCommentReactions` 里）。 */
