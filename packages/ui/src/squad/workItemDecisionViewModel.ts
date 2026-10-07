@@ -126,6 +126,20 @@ export function canSubmitDecision(form: DecisionFormState): boolean {
   return true;
 }
 
+/**
+ * 提交载荷里真正要带的父：**只有必填 kind 才带**。
+ *
+ * 为什么不让表单态直接落进载荷：用户先在 superseded 下选好父、再把 kind 切成 proposal 时，
+ * 那个父选择**从界面上消失了**（字段不再渲染）却仍留在组件状态里 —— 直通就会把一条「关于 X」
+ * 写进一条用户以为没有父的决定行。审计事实不接受「界面上看不见的残留选择」。
+ */
+export function decisionSubmitParentId(
+  kind: WorkItemDecisionKind,
+  parentDecisionId: string | null,
+): string | null {
+  return PARENT_REQUIRED_KINDS.has(kind) ? parentDecisionId : null;
+}
+
 /* ---------- 幂等键的生成（§8.1） ---------- */
 
 /**

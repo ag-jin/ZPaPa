@@ -33,6 +33,7 @@ import {
   decisionNeedsParent,
   decisionParentCandidates,
   decisionParentReference,
+  decisionSubmitParentId,
   newDecisionRequestId,
 } from "../src/squad/workItemDecisionViewModel.js";
 import { writeDisabledReason } from "../src/squad/workItemCollaborationViewModel.js";
@@ -248,6 +249,19 @@ test("提交判据：subject 空白 ⇒ false（trim 判据与 C3.1 同义）；
   );
 });
 
+test("提交载荷：只有必填 kind 才带父（切过 kind 留下的隐藏选择不得混进审计事实）", () => {
+  assert.equal(decisionSubmitParentId("superseded", "d-1"), "d-1");
+  assert.equal(decisionSubmitParentId("reopened", "d-2"), "d-2");
+  assert.equal(decisionSubmitParentId("superseded", null), null);
+  for (const kind of ["proposal", "accepted", "rejected"] as const) {
+    assert.equal(
+      decisionSubmitParentId(kind, "d-1"),
+      null,
+      `${kind} 的父是可选的、v1 表单不给选择器：残留的选中值不得写进决定行`,
+    );
+  }
+});
+
 /* ---------- 写面禁用原因（设计案 §4.1；任务卡 §5.4 N6 的「归档项不静默消失」判据本体） ---------- */
 
 test("写面禁用原因：归档 > 刷新失败 > 可写（null）；评论与决定共用同一判据，只换文案族", () => {
@@ -461,6 +475,12 @@ test("对话框结构｜testid 全表与「父选择仅在必填 kind 下渲染�
   assert.ok(
     dialog.includes("canSubmitDecision(form)"),
     "提交判据经纯函数（不在组件里重写一遍 trim/父规则）",
+  );
+  assert.ok(
+    dialog.includes("decisionSubmitParentId(kind, parentDecisionId)") &&
+      dialog.includes("{ parentDecisionId: parentForSubmit }") &&
+      !dialog.includes("{ parentDecisionId }"),
+    "提交载荷的父经纯函数裁剪（切过 kind 的残留选择不得混进审计事实）",
   );
 });
 

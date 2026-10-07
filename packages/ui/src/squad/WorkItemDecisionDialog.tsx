@@ -27,6 +27,7 @@ import {
   decisionKindMessageId,
   decisionNeedsParent,
   decisionParentCandidates,
+  decisionSubmitParentId,
   newDecisionRequestId,
   type DecisionFormState,
 } from "./workItemDecisionViewModel.js";
@@ -145,6 +146,8 @@ export function WorkItemDecisionDialog({
   const submit = useCallback(async () => {
     if (!canSubmit) return;
     const requestId = resolveSubmitId(sourceRequestId, "send", newDecisionRequestId);
+    /* 父只带「必填 kind 且用户选过」的那个：切过 kind 的残留选择不得混进审计事实。 */
+    const parentForSubmit = decisionSubmitParentId(kind, parentDecisionId);
     setSourceRequestId(requestId);
     setSending(true);
     setFailed(false);
@@ -153,7 +156,7 @@ export function WorkItemDecisionDialog({
         kind,
         subject,
         ...(rationale.trim() === "" ? {} : { rationale }),
-        ...(parentDecisionId === null ? {} : { parentDecisionId }),
+        ...(parentForSubmit === null ? {} : { parentDecisionId: parentForSubmit }),
         sourceRequestId: requestId!,
       });
       // 成功：换新键、清草稿、收起对话框（那条决定已经在时间线上，页面无需刷新）。
