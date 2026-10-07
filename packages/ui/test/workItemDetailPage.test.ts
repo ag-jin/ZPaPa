@@ -189,7 +189,8 @@ test("装载态机：刷新失败 ⇒ **保留上次数据** + 区域告警，�
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
-/** B-5 线两个轮次的 UI 源码文件（反向断言的扫描面；轮 2 追加两个新组件）。 */
+/** B-5 线两个轮次的 UI 源码文件（反向断言的扫描面；轮 2 追加两个新组件；
+    C3.2 再追加决定面的两个文件 —— R1/R2 的禁用词对它同样生效）。 */
 const ROUND_ONE_SOURCES = [
   "squad/WorkItemDetailPage.tsx",
   "squad/WorkItemCollaborationTimeline.tsx",
@@ -200,8 +201,10 @@ const ROUND_ONE_SOURCES = [
   "squad/WorkItemMentionMenu.tsx",
   "squad/workItemCollaborationViewModel.ts",
   "squad/workItemMentionViewModel.ts",
+  "squad/workItemDecisionViewModel.ts",
   "squad/workItemCollaborationAccess.ts",
   "squad/useWorkItemCollaboration.ts",
+  "squad/WorkItemDecisionDialog.tsx",
 ];
 
 test("守卫｜详情页四态与协作区 testid 齐备（页根 / 返回 / 概览 / 加载 / 失败 / 不存在 / 协作区）", () => {

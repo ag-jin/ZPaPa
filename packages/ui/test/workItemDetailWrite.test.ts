@@ -240,7 +240,8 @@ test("提交判据：空草稿与只有 /note 前缀的草稿都不可提交（�
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
-/** B-5 线的全部 UI 源码（反向断言的扫描面，与轮 1 文件保持同一份名单）。 */
+/** B-5 线的全部 UI 源码（反向断言的扫描面，与轮 1 文件保持同一份名单）。
+    C3.2 追加决定面的两个文件：新文件**自动**进入 D1-A 身份扫描与 lucide 图标扫描。 */
 const COLLABORATION_SOURCES = [
   "squad/WorkItemDetailPage.tsx",
   "squad/WorkItemCollaborationTimeline.tsx",
@@ -253,6 +254,8 @@ const COLLABORATION_SOURCES = [
   "squad/workItemMentionViewModel.ts",
   "squad/workItemCollaborationAccess.ts",
   "squad/useWorkItemCollaboration.ts",
+  "squad/WorkItemDecisionDialog.tsx",
+  "squad/workItemDecisionViewModel.ts",
 ];
 
 test("四入口接线｜页面执行三个非破坏性写、视图模型执行软删（各自唯一入口）", () => {
@@ -276,6 +279,28 @@ test("四入口接线｜页面执行三个非破坏性写、视图模型执行�
   assert.ok(
     vm.includes("await input.service.softDeleteWorkItemComment(input.target, { commentId })"),
     "唯一的软删调用点在 executeCommentDelete 里",
+  );
+});
+
+test("五入口接线｜决定写经同一执行器且恰一处（C3.2；形状对齐 CreateWorkItemDecisionRequest）", () => {
+  const page = readSource("squad/WorkItemDetailPage.tsx");
+  assert.ok(
+    page.includes("await runCollaborationAction(null, (service, currentTarget) =>") &&
+      page.includes("service.createWorkItemDecision(currentTarget, {"),
+    "决定提交必须走唯一执行器 runCollaborationAction（写 → 只刷新协作读模型）",
+  );
+  assert.equal(
+    page.split("service.createWorkItemDecision(currentTarget, {").length - 1,
+    1,
+    "决定写入调用恰一处（对话框只拿回调：N5 的变异形态是对话框自己调服务）",
+  );
+  assert.ok(
+    page.includes("decisions={read.decisions}"),
+    "父候选来自读面的 decisions（零新读调用）",
+  );
+  assert.ok(
+    !page.includes("actor") && !page.includes("workspaceKey") && !page.includes("initiatedBy"),
+    "页面不得出现身份 / workspace 字段（D1-A：由服务面派生）",
   );
 });
 
