@@ -209,7 +209,7 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 | 未知 slash command | 是或拒绝，取决于 parser；不得静默降级 | 若接受则 `comment_created` | 否，除非明确解析为已知触发命令 | N | 规格要求响亮错误或明确普通文本策略，不能让客户端各自猜 |
 | 内联评论，无 mention | 是 | `comment_created`（含 `inline`） | 按级联 | 同普通人类评论（§4.5） | 行锚点只提供上下文，不改变触发语义 |
 | 内联评论 `@agent` | 是 | 评论三件套 | 是，一次 | D 后按普通 `@agent` 规则 | 内联不抑制触发 |
-| 同一作者连续普通评论 | 每条均是 | 每条均写 | 否 | N | 评论事实不合并、不丢原文 |
+| 同一作者连续普通评论 | 每条均是 | 每条均写 | 否 | N | 评论事实不合并、不丢原文（**口径备注 2026-10-07 裁定**：本行「否」＝不因连续而各自独立派发——首条评论仍按 §4.5 级联进入触发解析（含兜底），后续同对评论按 §4.3 合并窗口并入同一派发决策） |
 | 同一 agent 连续 `@agent` 评论 | 每条均是 | 每条均写 | 合并为一个逻辑 dispatch event | 目标相同且合并窗口内时只 R 一次 | “连续评论合并”只合并派发，不合并 Comment/Activity |
 | 不同 agent 连续评论 | 每条均是 | 每条均写 | 分别按目标去重 | 不得因时间接近而跨作者合并 | 合并键至少包含 workItem、目标 agent、thread、窗口/代次 |
 | 评论回复 `parentCommentId` | 是 | `comment_created` | 由级联决定 | N 或 D | mention 优先；否则 thread_parent / conversation_continuation 规则（§4.5）；人回人不触发、不落兜底 |
@@ -249,7 +249,7 @@ Decision 只增不改。`superseded` 是一条新决定，不能把旧决定更�
 6. **conversation_continuation**：回复线程的根所有者 agent ⇒ 触发之；人回人（父作者为人类）⇒ 不触发，也不落到指派兜底；
 7. **issue_assignee 兜底**：以上未命中且指派为 agent ⇒ 触发该 agent。
 
-约束：agent 评论不参与本级联（显式 @ 才触发）；触发源为五源闭集 `issue_assignee | mention_agent | mention_squad_leader | thread_parent | conversation_continuation`，派发事实与 Activity 必须带源；命中目标后的合并/排队/重放仍按 §12.1-1/2 执行（队列状态窗、并入待开 Run、完成重放义务）。
+约束：agent 评论不参与本级联（显式 @ 才触发）；触发源为五源闭集 `issue_assignee | mention_agent | mention_squad_leader | thread_parent | conversation_continuation`，派发事实与 Activity 必须带源；命中目标后的合并/排队/重放仍按 §12.1-1/2 执行（队列状态窗、并入待开 Run、完成重放义务）。**system 锚点口径（2026-10-07 裁定）**：线程锚点是 system 事实（system 作者的父评论/根评论，无论是否已软删）⇒ 本级联**不触发也不落到 issue_assignee 兜底**——system 既非人类亦非 agent，兜底会把对系统事实的回复误路由给 assignee（软删父「不算」的既有规则只解除 thread_parent 命中，不授予兜底资格）。
 
 ## 5. 状态与唯一写者
 
