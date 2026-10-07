@@ -361,7 +361,7 @@ export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";
 // 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
 export { slugForId } from "./workitem/slug.js";
 export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
-/* 收件箱（P2c）：repo 工厂与四个产生点的**纯构建件**只从这里出值 ——
+/* 收件箱（P2c/W1）：repo 工厂与各个产生点的**纯构建件**只从这里出值 ——
    `inboxItemRepo` 值导入 `node:crypto`（id 生成），从浏览器安全入口出值会让 renderer 整包失败
    （browserSafeRootEntry.test.ts 守这条）；构建件虽纯，但只有 desktop host 用得到，同门出即可。
    `computeInboxDedupKey` 故意不再单独出：产生点不得自己拼键（构建件内部已消费它）。 */
@@ -371,7 +371,20 @@ export {
   buildMemberFailedInboxItem,
   buildMergeConflictInboxItem,
   buildOrphanedRunInboxItem,
+  buildRunStalledInboxItem,
 } from "./workitem/inboxItemProducers.js";
+/* W1（看门狗六件套）：判定面 + 决策类型 + `cancelSquadRun` 的入参类型（W2 的 host 接线唯一入口）。
+   **刻意不经 `index.ts` 导出**（与 B5.1/B5.2 的 `index.ts` 改动面解耦；理由同 `hasInProgressLeaderRun`：
+   `squadWatchdog` 引 `squadRunLifecycle`（经 Repo 触到 node:sqlite），从浏览器安全入口出**值**会整包炸）。
+   决策自带结算码值（`settle_reason` 单源在 squadRunRepo）：host 侧不得再写一张 kind→码值 的映射表。 */
+export { decideSquadWatchdog } from "./workitem/squadWatchdog.js";
+export type {
+  SquadWatchdogC1Case,
+  SquadWatchdogDecision,
+  SquadWatchdogInput,
+  SquadWatchdogRun,
+} from "./workitem/squadWatchdog.js";
+export type { CancelSquadRunInput, SquadWatchdogGitFacts } from "./workitem/squadRuntimeService.js";
 export type {
   InboxItem,
   InboxItemInput,

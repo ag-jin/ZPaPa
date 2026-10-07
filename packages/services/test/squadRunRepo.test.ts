@@ -32,6 +32,9 @@ const row = (over: Partial<SquadRunRecord> = {}): SquadRunRecord => ({
   // 缺省 = NULL（遗留行 / 未知成因语义）：用例只覆写自己关心的那一档。
   dispatchCause: null,
   causedByRunId: null,
+  // 0014 两列：缺省 = 与 createdAt 同刻（直开行的常态形态；queued 行由语句强制 NULL，见队列用例）。
+  openedAt: 1,
+  settleReason: null,
   createdAt: 1,
   updatedAt: 1,
   ...over,
@@ -306,7 +309,8 @@ test("dispatch_cause / caused_by_run_id 写读往返（含 NULL 与三档枚举�
 
 // 队长行的写路径是另一条语句（`INSERT … SELECT`，值的最多、最易错位）——成因两列同样要落台。
 // `assert.deepEqual(读回, 写入)` 是**参数错位**的直接证据：错位时会有别的值落在 dispatch_cause 上。
-test("insertLeaderRunIfNotInProgress 的成因列同样落台（15 值占位逐参对齐）", () => {
+// 0014 加两列后占位从 15 变 17：这条断言同时钉住「两条语句的占位与参数个数逐参对齐」。
+test("insertLeaderRunIfNotInProgress 的成因列同样落台（17 值占位逐参对齐）", () => {
   const { repo } = setup();
   const leader = row({
     runId: "r-lead",
@@ -386,8 +390,9 @@ test("listByWorkItem 只取该工作项的 run", () => {
 
 // 台账是**逐字段落盘**：表少一列不会报错，只在写入 / 读回时静默丢字段。故列名逐一比对，
 // 并配一条「写入 → 读回」的往返断言（含队长 run 的空 branch / dirName 与 0/1 布尔列）。
-// 0008 追加的两列（`dispatch_cause` / `caused_by_run_id`）必须在清单里，且**在末尾**
-//（与 ALTER TABLE 追加的位置一致）—— 少登记一列就会出现「写了没读回」的静默丢字段。
+// 0008 追加的两列（`dispatch_cause` / `caused_by_run_id`）与 0014 追加的两列
+//（`opened_at` / `settle_reason`）必须在清单里，且**在末尾**（与 ALTER TABLE 追加的位置一致）
+// —— 少登记一列就会出现「写了没读回」的静默丢字段。
 test("squad_runs 的列与 SquadRunRecord 逐字段对齐", () => {
   const { db } = setup();
   const columns = (
@@ -409,6 +414,8 @@ test("squad_runs 的列与 SquadRunRecord 逐字段对齐", () => {
     "updated_at",
     "dispatch_cause",
     "caused_by_run_id",
+    "opened_at",
+    "settle_reason",
   ]);
 });
 

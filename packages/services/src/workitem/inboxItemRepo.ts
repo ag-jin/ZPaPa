@@ -26,6 +26,12 @@ export const INBOX_ITEM_KINDS = [
   "member_failed",
   /** 启动和解收掉的残留 run（宿主已消失、不会有人再把它推向终态）。 */
   "run_orphaned",
+  /**
+   * 宿主活着、run 卡住（W1 看门狗：探测死会话 / TTL / 探测不可得 / C1 领地 skip 的首见留痕）。
+   * 与 `run_orphaned` 的语义分界：`run_orphaned` = 宿主已消失（跨重启和解，含既有队长臂）；
+   * 本 kind = 宿主活着而这条 run 停在原地（在线 tick 与启动和解的看门狗段）。
+   */
+  "run_stalled",
   /** `planDispatch` 的 skip 族：指派给人 / 小队不存在 / 小队已归档 / 目标 agent 已归档或停用（后两类 X2.1-D 起含 targetOverride 点名目标）——skip 不是失败，只是通知等人处理。 */
   "dispatch_skipped",
 ] as const;
@@ -44,6 +50,7 @@ export const INBOX_SEVERITY_BY_KIND: Record<InboxItemKind, InboxItemSeverity> = 
   merge_conflict: "action_required",
   member_failed: "attention",
   run_orphaned: "attention",
+  run_stalled: "attention",
   dispatch_skipped: "info",
 };
 
@@ -66,7 +73,7 @@ export type InboxItem = {
  * 登记入参。**`severity` 刻意不在入参里**：它由 repo 从 `INBOX_SEVERITY_BY_KIND` 补 —— 产生点只管
  * `kind`，映射只有一处（若让调用方传 severity，「冲突有多急」就会有第二份判据）。
  *
- * `dedupKey` **必须**由 `inboxItemProducers.computeInboxDedupKey` 算（四个 kind 的唯一形状），
+ * `dedupKey` **必须**由 `inboxItemProducers.computeInboxDedupKey` 算（五个 kind 的唯一形状），
  * 产生点不得自己拼串：拼错了不报错，只会表现成「同一件事反复出现在收件箱里」。
  */
 export type InboxItemInput = {

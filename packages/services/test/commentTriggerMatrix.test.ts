@@ -711,11 +711,11 @@ test("迁移 0012 从零建库：receipt 表形状 + 两索引 + 主键唯一 + 
   assert.throws(() => raw("dup-key"), /UNIQUE|constraint/i, "主键唯一是存储层最后一道幂等");
 });
 
-test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-0013、结构一致、既有数据一字未动", () => {
+test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补回、结构一致、既有数据一字未动", () => {
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
   const fullLedger = db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>;
-  assert.equal(fullLedger.at(-1)?.id, "0013_collaboration_source_run_and_origin");
+  // 本用例只关心「0009 起（含后续新增，如 0014 看门狗）的迁移能完整补跑」：不再钉「最后一条是谁」。
   // 退库：用登记的反向 DDL 把 0009 起（含 0013）建出的对象逐条撤掉 + 删账本行。
   const reverse: Record<string, string[]> = {
     "0009_squad_run_queue": [
@@ -749,8 +749,17 @@ test("迁移 0012 老库补跑（退到 0008 之前形态）：只补跑 0009-00
       "ALTER TABLE work_item_activities DROP COLUMN source_run_squad_id",
       "ALTER TABLE work_item_activities DROP COLUMN source_run_agent_id",
     ],
+    // 0014（看门狗 W1）：squad_runs 加 opened_at / settle_reason 两列 + 回填。
+    "0014_squad_run_watchdog": [
+      "ALTER TABLE squad_runs DROP COLUMN settle_reason",
+      "ALTER TABLE squad_runs DROP COLUMN opened_at",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
+  /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整
+     （重跑会撞「duplicate column / table already exists」）——新增迁移忘了登记时先红的是这里。 */
+  for (const row of fullLedger.slice(fromIndex))
+    assert.ok(reverse[row.id], `迁移 ${row.id} 缺反向 DDL 登记（退库不完整）`);
   // 逆序退库（最后应用的最先撤）：0013 的反向 DDL 引用的表会被 0009/0011 整表 drop。
   for (const row of fullLedger.slice(fromIndex).reverse()) {
     for (const sql of reverse[row.id] ?? []) db.exec(sql);

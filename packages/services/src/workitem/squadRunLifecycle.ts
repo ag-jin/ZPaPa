@@ -575,14 +575,21 @@ export function createRunLifecycle(deps: {
 
   /* C4：唯一写者在每个收尾迁移之后发布结算事实（覆盖 host 闭包/UI 审查/编排器全部路径——
      分散挂会漏，C0 2.4 事实 2）。settled 行读不到（理论不可达）时用绑定 workspaceKey、
-     agentId 置空串——发布事实仍要发出（订阅方按 runId 也能定位）。 */
+     agentId 置空串——发布事实仍要发出（订阅方按 runId 也能定位）。
+
+     0014 起多一个可选 `reason`：写进 `settle_reason`（TTL 审计 / 熔断窗口计数 / 重试预算三处消费）。
+     **所有**结算路径都能带（单点纪律不破：不给看门狗开第二道后门）；缺省 ⇒ 不动该列
+     （C1 的两处常规结算与审查/合并路径即此格，列保持 NULL = 「常规结算」）。 */
   const settleStatus = (
     runId: string,
     status: "produced" | "rejected" | "merged" | "discarded",
-    patch?: SquadRunStatusPatch,
+    options?: { patch?: SquadRunStatusPatch; reason?: string },
   ): void => {
     const settled = squadRunRepo.get(runId);
-    squadRunRepo.setStatus(runId, status, patch);
+    squadRunRepo.setStatus(runId, status, {
+      ...options?.patch,
+      ...(options?.reason === undefined ? {} : { settleReason: options.reason }),
+    });
     deps.runSettlementHub?.publish({
       runId,
       workspaceKey: settled?.workspaceKey ?? boundWorkspaceKey,
@@ -627,6 +634,9 @@ export function createRunLifecycle(deps: {
               branch: rowPlan.member,
               dirName: memberDirName(rowPlan),
               sessionId: null,
+              /* 0014：同 runId 重开 = **新的开跑** ⇒ 起算点跟着重开时刻走（与下面那条结算+重开臂
+                 同一条理由：不刷会让下一次 tick 拿旧起算点把刚重开的 run 立刻 TTL 误杀）。 */
+              openedAt: Date.now(),
             });
             const { memberPath } = await branchAllocator.allocate(rowPlan, baseBranch);
             return { kind: "opened", branch: rowPlan.member, worktreePath: memberPath };
@@ -670,6 +680,10 @@ export function createRunLifecycle(deps: {
                 branch: plan.member,
                 dirName: memberDirName(plan),
                 sessionId: null,
+                /* 0014（delta 修正）：同 runId 重开 = **新的开跑** —— 起算点必须跟着重开时刻走。
+                   不补刷的话这条重开行带着**旧起算点**回来，下一次看门狗 tick 会立刻按 TTL 把它
+                   收掉（表现是「刚重开的 run 凭空消失」，且不报错）。 */
+                openedAt: Date.now(),
               });
               /* 重开新树：失败**原样抛**（既有失败出口）。结算与重开在本次调用内**只做一轮**
                  （一次为限）：不得为了「再试一次」而二次结算重试 —— 那会在占用不消失时
@@ -757,6 +771,9 @@ export function createRunLifecycle(deps: {
         // 缺席（历史调用方）⇒ NULL = 遗留行/未知成因，读回不得猜。
         dispatchCause: request.dispatchCause ?? null,
         causedByRunId: request.causedByRunId ?? null,
+        // 0014：直开行的起算点 = 登记时刻（同一个 now）；容量满转排队时由 repo 的排队语句写 NULL。
+        openedAt: now,
+        settleReason: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -839,6 +856,9 @@ export function createRunLifecycle(deps: {
         // 同 `openMemberRun`：成因/入边原样透传（队长这一支 host 不传 `causedByRunId` ⇒ NULL）。
         dispatchCause: request.dispatchCause ?? null,
         causedByRunId: request.causedByRunId ?? null,
+        // 0014：队长直登行的起算点 = 登记时刻（容量满转排队时由 repo 的排队语句写 NULL）。
+        openedAt: now,
+        settleReason: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -998,7 +1018,9 @@ export function createRunLifecycle(deps: {
         );
       }
       // 只改台账，**不碰 git**：树与分支的清理交给启动回收器（它们已不在活跃集，spec §6.6/S15）。
-      settleStatus(runId, "discarded");
+      // 0014：失败原因**落盘**（`settle_reason`）——它此前被丢弃，而 TTL 审计 / 熔断窗口计数 /
+      // 重试预算三处派生判据都读它；看门狗族与 user_cancel 的**码值**单源在 `squadRunRepo.ts`。
+      settleStatus(runId, "discarded", { reason });
     },
   };
 }

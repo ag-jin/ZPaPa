@@ -27,6 +27,9 @@ import type {
   ReviewOutcome,
 } from "./squadRunLifecycle.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
+// 用户取消的 `settle_reason` 码值（单源；W3 的「取消不计入熔断」判别位）。值导入安全：
+// `squadRunRepo` 只 type-import node:sqlite，值导入链不触达 node:*（本文件必须浏览器安全）。
+import { SQUAD_RUN_SETTLE_REASON_USER_CANCEL } from "./squadRunRepo.js";
 // 「改负责人 + 发派发事件」的**唯一实现**（唯一写者纪律 / 同值处置 / 事件出口全在其中）。
 // 单拆成文件是为了浏览器安全（本文件被根入口值导出）+ 400 行 lint 门槛，详见该文件的头部注释。
 import { applyWorkItemAssignee } from "./workItemAssignee.js";
@@ -49,6 +52,30 @@ import {
    这与既有约定一致：描述符可从根入口取，实现从 `@zcode/services/node` 取。 */
 
 export type SquadWorkspaceTarget = { path: string; identity: string };
+
+/**
+ * `cancelSquadRun` 的入参（**加法**，2026-10-07 裁定；L1 半边）。
+ *
+ * `reason` 可选 = 写进台账 `settle_reason` 的**码值**（缺省 `SQUAD_RUN_SETTLE_REASON_USER_CANCEL`）。
+ * 类型与常量同源出（调用方不得就地抄一份字面量）：它是 W3 的「用户取消不计入熔断窗口 /
+ * 不自动重试」的判别位——抄错一个字，一次用户取消会被算成一次看门狗失败，且不报错。
+ */
+export type CancelSquadRunInput = { runId: string; reason?: string };
+
+/**
+ * 看门狗判定所需的 **git 事实**（只读口，W1 交付 / W2 的在线 tick 与启动和解臂消费）。
+ *
+ * 为什么收在服务面：host 侧不得自己碰 git（「UI/host 不直接访问 Repo」的边界纪律，
+ * 与 `listSquadRuns` / `listInboxItems` 同款）；而这两项事实的唯一所有者是
+ * `WorktreeManager`（活树）与 git（分支 ref）——方法体复用 lifecycle 注入面**同一对调用**，
+ * 不新写 git 判据（第二份判据会与 C1 的 `listWorktrees` / `branchRefExists` 注入面漂移）。
+ */
+export type SquadWatchdogGitFacts = {
+  /** 此刻**活着**的工作树分支（`WorktreeManager.list` 投影；detached 树不贡献分支、主工作树不算）。 */
+  liveTreeBranches: string[];
+  /** 入参 `branches` 里**确有 ref** 的那些（顺序 = 入参顺序；「残枝」= 有 ref 没树）。 */
+  existingBranchRefs: string[];
+};
 
 export type SquadSnapshot = {
   /** **只读呈现用**（UI 据此隐藏 / 禁用入口）——**它不是门禁**；门禁是下面的 assertDispatchEnabled。 */
@@ -563,6 +590,38 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { runId: string; sessionId: string },
   ): Promise<void>;
+  /**
+   * **per-run 取消的台账半边（L1）**（设计 §3.4 / W1 卡）：把一条 run 立刻移出活跃集 ——
+   * 容量释放 ⇒ 结算事实经 hub 扇出 ⇒ 队列推进 / 义务重放自动发生（不新写一行推进代码）。
+   *
+   * 分格（按**当时状态**分流，状态读自台账而不是调用方声明）：
+   * · `queued` ⇒ `discardQueuedRun`（无会话无树：排队取消 = 丢弃，不是「失败」）；
+   * · `open` ⇒ `failMemberRun`（reason = `user_cancel`，落 `settle_reason`）；
+   * · `discarded` ⇒ **幂等 no-op**（同 runId 重复取消第二次 = 成功；也涵盖「这条 run 早已失败收口」
+   *   —— 取消一个已经不跑的 run 没有可做的事，报错只会让界面把「没事了」显示成「出错了」）；
+   * · `produced` / `rejected` / `merged` ⇒ **响亮抛**：它们都意味着**已经产出了东西**（或成果已落地），
+   *   按取消丢弃会丢掉队员的活 —— 文案把用户分流到「审查」与「整批放弃」两条正当路径；
+   * · runId 不存在 ⇒ **响亮抛**（静默 no-op 会让界面以为取消了，而那条 run 仍在跑）。
+   *
+   * 三条纪律：**唯一写路径**（只经 `failMemberRun` / `discardQueuedRun`，本层不碰 repo 的状态列）；
+   * **不过门禁**（取消是收尾不是新派发，与 `failMemberRun` 同款理由 —— 关掉实验开关后仍必须能取消
+   * 在途 run）；**不碰 git**（树的清理交给启动回收器，与 `failMemberRun` 同一条纪律）。
+   *
+   * L2（对 bound session 发协议 stop）在 host 侧接线（W2）；L1 先落地 ⇒ 无论 L2 成败，
+   * 台账都已如实收口（双路径任意次序安全：终态回调再调 `failMemberRun`/`completeMemberRun` 时
+   * 前者幂等、后者由 W2 的跨终态守卫拦住）。
+   */
+  cancelSquadRun(target: SquadWorkspaceTarget, input: CancelSquadRunInput): Promise<void>;
+  /**
+   * 看门狗判定所需的 **git 事实**（只读口；见 `SquadWatchdogGitFacts` 的形状与理由）。
+   *
+   * **不过门禁**（只读不是新派发，与 `listSquadRuns` 同款）；`branches` 由调用方按判定候选给出
+   * （本层不猜该问哪些分支——那是判定面的事）。入参去重后**按序**逐分支问一次 `rev-parse -q --verify`。
+   */
+  getSquadWatchdogGitFacts(
+    target: SquadWorkspaceTarget,
+    input: { branches: readonly string[] },
+  ): Promise<SquadWatchdogGitFacts>;
   /**
    * 启动**重驱**未收尾的批次（裁定 Important-2）：对「子项全部终态、但该批尚未 finalize」的父项
    * 再跑一次 `advanceAfterChildrenDone`。**幂等**（沿用编排层的 CAS / 前置读当时状态 / 重放闸）；
@@ -1125,6 +1184,57 @@ export function createSquadRuntimeService(deps: {
         runId: input.runId,
         sessionId: input.sessionId,
       });
+    },
+
+    /* W1：per-run 取消的 L1 半边（分格表见接口注释）。按**当时状态**分流；状态写路径只有两条
+       （`discardQueuedRun` / `failMemberRun`），本层不碰任何台账列、不碰 git。 */
+    async cancelSquadRun(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const record = runtime.squadRunRepo.get(input.runId);
+      if (record === null) {
+        throw new Error(
+          `取消 run 失败：squad_runs 里没有 runId=「${input.runId}」的行（目标 workspace=${keyOf(runtime)}）。` +
+            "静默 no-op 会让界面以为取消了，而那条 run 仍可能停在 open。",
+        );
+      }
+      const reason = input.reason ?? SQUAD_RUN_SETTLE_REASON_USER_CANCEL;
+      if (record.status === "queued") {
+        // 排队取消 = 丢弃（无会话无树）；同样落用户取消的码值（审计口径一致）。
+        runtime.squadRunRepo.discardQueuedRun(input.runId, reason);
+        return;
+      }
+      if (record.status === "open") {
+        // L1 台账结算：出活跃集 ⇒ 容量释放 ⇒ 结算事实经 hub 扇出（队列推进零新代码）。
+        await runtime.lifecycle.failMemberRun({ runId: input.runId, reason });
+        return;
+      }
+      // `discarded` 幂等早退：重复取消第二次是成功（也涵盖「这条 run 早已失败收口」）。
+      if (record.status === "discarded") return;
+      throw new Error(
+        `取消 run 失败：runId=「${input.runId}」当前状态是「${record.status}」而不是 open/queued —— ` +
+          "它已经产出了东西（produced / rejected）或成果已落地（merged），按取消丢弃会丢掉队员的活。" +
+          "要退回产出去「审查」（reviewMemberRun），要放弃整批走「整批放弃」（discardBatch）。",
+      );
+    },
+
+    /* W1：看门狗判定所需的 git 事实（只读口，见 `SquadWatchdogGitFacts`）。与 lifecycle 的
+       注入面**同一对调用**（`worktreeManager.list()` + `git rev-parse -q --verify refs/heads/<b>`）：
+       看门狗族不得新写 git 判据（第二份判据会与 C1 的注入面漂移，而漂移不报错 —— 表现是
+       「看门狗以为分支空闲而 C1 建不出树」或反之）。 */
+    async getSquadWatchdogGitFacts(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const liveTreeBranches = (await runtime.worktreeManager.list())
+        .map((entry) => entry.branch)
+        .filter((branch): branch is string => branch !== null);
+      const existingBranchRefs: string[] = [];
+      // 入参去重（同分支问一次即可），保持调用方给的顺序：判定面按它建集合/查表。
+      for (const branch of new Set(input.branches)) {
+        const result = await runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
+          cwd: runtime.boundWorkspace.path,
+        });
+        if (result.code === 0) existingBranchRefs.push(branch);
+      }
+      return { liveTreeBranches, existingBranchRefs };
     },
 
     async replayUnfinalizedBatches(target) {

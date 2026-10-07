@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { modelSelectionSchema } from "./model-selection.js";
+import {
+  DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES,
+  DEFAULT_SQUAD_RUN_TTL_MINUTES,
+  DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES,
+} from "./squad.js";
 import type { AgentColor, AgentPermissionMode } from "./subagents-types.js";
 
 /* 协作智能体（TeamAgent）的域模型：一等独立实体，与现有 subagent 完全分开
@@ -45,6 +50,31 @@ export function resolveTeamAgentMaxConcurrentRuns(
   return agent.maxConcurrentRuns ?? DEFAULT_TEAM_AGENT_MAX_CONCURRENT_RUNS;
 }
 
+/**
+ * 看门狗三个**可按 agent 覆盖**的阈值（用户 2026-10-07 裁定）：单位都是**分钟**，缺省值在
+ * `squad.ts`（阈值单源）。形态与 `resolveTeamAgentMaxConcurrentRuns` 完全同款——可选字段
+ * （缺省不落盘、存量文件零改写）+ 唯一的解析入口（消费点不得各写一份 `?? 30`：缺省语义一旦分叉，
+ * 表现是「判定面按 30 分钟收、别处按 10 分钟留痕」，且不报错）。
+ *
+ * 为什么**不**给解析结果加下限/上限校验：这是恢复阈值，不是容量界——显式写一个很大的 TTL
+ * （例如「这台机器上的长跑 agent 别自动收」）是合法配置，闸门不在这里。
+ */
+export function resolveTeamAgentRunTtlMinutes(agent: Pick<TeamAgent, "runTtlMinutes">): number {
+  return agent.runTtlMinutes ?? DEFAULT_SQUAD_RUN_TTL_MINUTES;
+}
+
+export function resolveTeamAgentIdleTimeoutMinutes(
+  agent: Pick<TeamAgent, "idleTimeoutMinutes">,
+): number {
+  return agent.idleTimeoutMinutes ?? DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES;
+}
+
+export function resolveTeamAgentToolTimeoutMinutes(
+  agent: Pick<TeamAgent, "toolTimeoutMinutes">,
+): number {
+  return agent.toolTimeoutMinutes ?? DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES;
+}
+
 /** 预填来源留痕：只记「从哪来」，不建立引用（spec §3.2「此后无持续引用」）。 */
 export const teamAgentProvenanceSchema = z
   .object({
@@ -81,6 +111,12 @@ export const teamAgentSchema = z
       .min(1)
       .max(TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT)
       .optional(),
+    /** 看门狗 TTL（分钟，0014 判据 / W1）：可选——缺省不落盘，读数经 resolveTeamAgentRunTtlMinutes。 */
+    runTtlMinutes: z.number().int().min(1).optional(),
+    /** 看门狗空闲阈值（分钟）：可选——缺省不落盘，读数经 resolveTeamAgentIdleTimeoutMinutes。 */
+    idleTimeoutMinutes: z.number().int().min(1).optional(),
+    /** 工具看门狗阈值（分钟，W3 消费）：可选——缺省不落盘，读数经 resolveTeamAgentToolTimeoutMinutes。 */
+    toolTimeoutMinutes: z.number().int().min(1).optional(),
     enabled: z.boolean(),
     /** 归档时间戳（毫秒）：归档而非硬删，定义与记忆都不丢（Task 8 的 archive 写入）。 */
     archivedAt: z.number().int().nonnegative().optional(),

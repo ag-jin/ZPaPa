@@ -3,6 +3,36 @@ import { z } from "zod";
 /* Squad（小队）域模型（spec §3.3）：一支小队 = 一个队长 + 花名册 + 队长指令。
    与 TeamAgent 一样走 strict schema：未知字段直接拒绝，让「多写一个字段」无法静默落盘。 */
 
+/* ------------------------------------------------------------------------------------------------
+   看门狗六件套的**阈值单源**（用户 2026-10-07 裁定；全部在 shared，消费点不得写散值）。
+
+   为什么必须单源：这些值同时被判定面（`squadWatchdog`）、执行面（host 启动和解 / tick）与派生
+   SQL（熔断计数 / 重试预算）消费；任何一处就地写 30 / 10 / 5 / 24 都会立刻分叉，而分叉**不报错**
+   —— 表现是「台账按 30 分钟收、Inbox 文案说 10 分钟」这类无人能复现的不一致。
+   per-agent 覆盖字段在 `team-agent.ts`（`runTtlMinutes?` 等 + resolve helper），缺省值取这里的常量。
+   ------------------------------------------------------------------------------------------------ */
+
+/** `squad_runs.opened_at` 起算的单次墙钟上限（分钟）：超过即 `watchdog_ttl` 结算（根因②）。 */
+export const DEFAULT_SQUAD_RUN_TTL_MINUTES = 30;
+/** 会话活着但**静默**超此值（分钟）⇒ 先 stop 再等回调；宽限内无回调退回结算（根因①档 3）。 */
+export const DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES = 10;
+/** 工具看门狗的单次工具墙钟（分钟；W3 消费；R-1 已裁定按「降级 no-op + 留痕」交付时仅留痕）。 */
+export const DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES = 5;
+/**
+ * **探测不可得**时的兜底墙钟（小时）：探针缺席时看门狗不猜会话状态，只按这个超长墙钟结算
+ * （设计 §3.2 的退化路径）。取 24h 是为了「宁慢勿误杀」——探测不可得期间唯一可靠的事实是时间。
+ */
+export const DEFAULT_SQUAD_FALLBACK_WALL_CLOCK_HOURS = 24;
+/** 失败重试预算（次）：每 (workItem,agent) 至多自动重试 1 次（W3 的 EXISTS 派生判据）。 */
+export const SQUAD_RETRY_BUDGET = 1;
+/** 熔断窗口（分钟）与阈值（次）：窗口内同 agent 的看门狗结算数达阈值 ⇒ 该 agent 熔断（W3）。 */
+export const SQUAD_BREAKER_WINDOW_MINUTES = 30;
+export const SQUAD_BREAKER_THRESHOLD = 3;
+
+/** 分钟 / 小时的毫秒换算单源：消费点不得写 `* 60_000` 这类散值（阈值常量只在上方一处）。 */
+export const MS_PER_MINUTE = 60_000;
+export const MS_PER_HOUR = 3_600_000;
+
 /** 队长指令的 8 个槽位：**固定全集**（spec §5.4 表）。
     写错槽位名等于指令静默丢失——队长会照旧派单，但派单规则其实是空的，所以键必须限定在这 8 个里。 */
 export const SQUAD_INSTRUCTION_SLOTS = [
