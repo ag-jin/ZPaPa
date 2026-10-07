@@ -4704,9 +4704,6 @@ const enUS: Record<string, string> = {
     "This work item is archived; commenting is read-only",
   "squad.workItemDetail.comment.disabled.readFailed":
     "Activity failed to load; commenting is unavailable",
-  /* Round 1 only: the write facade is not wired yet (removed in round 2 to avoid a dead key). */
-  "squad.workItemDetail.comment.disabled.writeUnavailable":
-    "Commenting is not available in this version yet",
   "squad.workItemDetail.comment.submitDisabled.empty": "Write something first",
   "squad.workItemDetail.mention.all": "@all",
   "squad.workItemDetail.mention.allHint": "Suppresses automatic routing only",

@@ -4401,8 +4401,6 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.comment.sourceRole.standalone": "独立运行",
   "squad.workItemDetail.comment.disabled.archived": "工作项已归档，评论只读",
   "squad.workItemDetail.comment.disabled.readFailed": "读取活动失败，暂时无法评论",
-  /* 轮 1 专用：写入门面未接通时的明确不可用原因（轮 2 接线后删除，避免死键）。 */
-  "squad.workItemDetail.comment.disabled.writeUnavailable": "当前版本暂不支持在此发表评论",
   "squad.workItemDetail.comment.submitDisabled.empty": "先写点内容再发表",
   "squad.workItemDetail.mention.all": "@all",
   "squad.workItemDetail.mention.allHint": "仅抑制自动路由",
