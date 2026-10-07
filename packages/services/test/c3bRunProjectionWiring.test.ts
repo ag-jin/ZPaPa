@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { memberDirName, planBranches } from "../src/worktree/branchNaming.js";
+import { createSquadOrchestrator } from "../src/workitem/squadOrchestrator.js";
 import { createSquadRunSettlementHub } from "../src/workitem/squadRunSettlementHub.js";
 import {
   SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
@@ -42,11 +43,16 @@ async function setup() {
     memoryScope: "project",
     maxConcurrentRuns: 1,
   });
-  const insertItem = (id: string, status: "todo" | "in_progress" = "in_progress"): void => {
+  const insertItem = (
+    id: string,
+    status: "todo" | "in_progress" = "in_progress",
+    parentId?: string,
+  ): void => {
     runtime.workItemRepo.insert({
       id,
       workspaceIdentity: WS,
       workspacePath: repoRoot,
+      ...(parentId !== undefined ? { parentId } : {}),
       title: `C3b.2 ${id}`,
       body: "",
       status,
@@ -66,14 +72,16 @@ async function setup() {
       actor: row.actor,
       occurredAt: row.occurredAt,
     }));
-  const openFor = (runId: string, workItemId: string) =>
+  const openWith = (runId: string, workItemId: string, parentWorkItemId: string, agentId: string) =>
     runtime.lifecycle.openMemberRun({
       runId,
       workItemId,
-      parentWorkItemId: workItemId,
-      agentId: agent.id,
+      parentWorkItemId,
+      agentId,
       isLeaderTask: false,
     });
+  const openFor = (runId: string, workItemId: string) =>
+    openWith(runId, workItemId, workItemId, agent.id);
   const planFor = (workItemId: string) =>
     planBranches({ workItemSlug: slugForId(workItemId), agentSlug: slugForId(agent.id) });
   const git = (args: string[]) => runtime.git(args, { cwd: repoRoot });
@@ -87,6 +95,7 @@ async function setup() {
     timeline,
     insertItem,
     openFor,
+    openWith,
     planFor,
     git,
     reap,
@@ -596,4 +605,58 @@ test("C3b.2-⑫ 演示终点：派发→开跑→完成→审查合并→清树 
     0,
   );
   assert.equal(f.runtime.squadRunRepo.get("run-chain")?.status, "discarded");
+});
+
+test("C3b.2-⑬ 整批放弃（编排器 discardBatch）：逐 run worktree_discarded + 父项 status_changed(cancelled)", async () => {
+  const f = await setup();
+  f.insertItem("wi-parent");
+  f.insertItem("wi-child-a", "in_progress", "wi-parent");
+  f.insertItem("wi-child-b", "in_progress", "wi-parent");
+  const agentB = f.runtime.teamAgentService.create({
+    name: "c3b2-agent-b",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 1,
+  });
+
+  // 两名队员（各自的工作项）各开一棵树并产出入账 ⇒ 批进行到一半。
+  assert.equal(
+    (await f.openWith("run-batch-a", "wi-child-a", "wi-parent", f.agent.id)).kind,
+    "opened",
+  );
+  assert.equal(
+    (await f.openWith("run-batch-b", "wi-child-b", "wi-parent", agentB.id)).kind,
+    "opened",
+  );
+  await f.runtime.lifecycle.completeMemberRun({ runId: "run-batch-a" });
+  await f.runtime.lifecycle.completeMemberRun({ runId: "run-batch-b" });
+
+  // 用户整批放弃：弃树走 `discardMemberRun`（唯一实现）、父项 cancelled 走 `transition`（唯一写者）。
+  await createSquadOrchestrator({ runtime: f.runtime }).discardBatch({
+    workspaceKey: WS,
+    parentWorkItemId: "wi-parent",
+  });
+
+  for (const [runId, itemId] of [
+    ["run-batch-a", "wi-child-a"],
+    ["run-batch-b", "wi-child-b"],
+  ] as const) {
+    assert.deepEqual(
+      f.timeline(itemId).map((row) => [row.kind, row.sourceRun?.runId ?? null]),
+      [
+        ["run_started", runId],
+        ["worktree_created", runId],
+        ["run_completed", runId],
+        ["status_changed", null],
+        ["worktree_discarded", runId],
+      ],
+      `${runId}：弃树必须逐 run 落在它自己工作项的时间线上`,
+    );
+  }
+  assert.deepEqual(
+    f.timeline("wi-parent").map((row) => [row.kind, row.payload]),
+    [["status_changed", { from: "in_progress", to: "cancelled" }]],
+    "父项整批放弃的状态流转同线可见（经唯一写者 transition）",
+  );
+  assert.deepEqual(await f.runtime.worktreeManager.list(), [], "两棵树都已摘（真 git）");
 });
