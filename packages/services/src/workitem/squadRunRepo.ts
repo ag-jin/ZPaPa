@@ -32,6 +32,19 @@ export const SQUAD_RUN_ACTIVE_STATUSES = ["open", "produced", "rejected"] as con
 
 export type SquadRunStatus = (typeof SQUAD_RUN_STATUSES)[number];
 
+/* 0014（看门狗 W1）`settle_reason` 的**码值单源**：看门狗族（W3 的熔断窗口计数与重试预算
+   按它们派生 SQL）+ 用户取消。写成常量而不是内联字面量：派生 SQL、判定面与取消路径三处若各自
+   写串，「熔断窗口算哪几条」就会静默分叉（用户在窗口内取消几次被误算成熔断，或反之）。
+   列本身**不是**闭集（失败原因原文也落这一列），故这里只钉「码值」不钉取值域。 */
+export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION = "watchdog_dead_session";
+export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL = "watchdog_ttl";
+export const SQUAD_RUN_SETTLE_REASON_USER_CANCEL = "user_cancel";
+/** 看门狗族（W3 的 EXISTS / count 只认这一族；用户取消**不计入**）。 */
+export const SQUAD_RUN_WATCHDOG_SETTLE_REASONS = [
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+] as const;
+
 /** `insertMemberRunOrQueue` 的判别结论（C0 2.2-I；生命周期/host 的接线在 C3）：
  *  - `opened`：容量未满且无既存排队行 ⇒ 本次直接开 run（行照既有 open 形态落盘）；
  *  - `queued`：容量已满 ⇒ 本 runId 落为排队行（至多一个待开 per (workspace,workItem,agent)）；
@@ -72,12 +85,32 @@ export type SquadRunRecord = {
    * 一律 NULL（队长 run 是批次起点，无入边）。自由字符串列（不枚举），故无守卫。
    */
   causedByRunId: string | null;
+  /**
+   * **本次进入 open** 的时刻（0014；TTL 的起算点，语义见 `SQUAD_RUN_WATCHDOG_SQL`）：
+   * 直开 = insert 时刻、认领升级（queued→open）= 认领时刻（`claimQueuedRunForPromotion` 语句内写）、
+   * C1 的「结算 + 同 runId 重开」臂 = 重开时刻；**queued 行恒 NULL**（还没开跑）。
+   *
+   * **可选（`?`）是给「行字面量」留的加法位**：读回恒有值（`rowToSquadRun` 原样映射列），
+   * 写入走 `record.openedAt ?? null`——存量调用方（含不在本卡文件集里的 UI/host 夹具）不因加列
+   * 而全体改字面量。**不得据此猜值**：读回 NULL 只表示「这一行从未进入过 open / 是排队行」，
+   * 看门狗对 open 且 NULL 的行**不结算**（不按编造的起算点动手）。
+   */
+  openedAt?: number | null;
+  /**
+   * 结算原因（0014，自由文本列）：NULL = 常规结算 / 遗留行。看门狗族与用户取消的**码值**
+   * 见 `SQUAD_RUN_SETTLE_REASON_*`（不得内联字面量）；`failMemberRun` 的失败原因原文也落这一列
+   * （设计 §5 的「让它终于落盘」——三处消费：TTL 审计 / 熔断计数 / 重试预算）。
+   * 可选的理由与 `openedAt` 同：读回恒有值，写入缺省不动该列。
+   */
+  settleReason?: string | null;
   createdAt: number;
   updatedAt: number;
 };
 
 /** `setStatus` 允许顺带补齐的列。身份列（runId / workItemId / …）不在其中：改身份不是「推进状态」。 */
-export type SquadRunStatusPatch = Partial<Pick<SquadRunRecord, "branch" | "dirName" | "sessionId">>;
+export type SquadRunStatusPatch = Partial<
+  Pick<SquadRunRecord, "branch" | "dirName" | "sessionId" | "openedAt" | "settleReason">
+>;
 
 export interface SquadRunRepo {
   /** 写入一行。createdAt / updatedAt 由调用方给定（记录即真相，不在落盘时改写时刻）。 */
@@ -119,8 +152,12 @@ export interface SquadRunRepo {
   /**
    * 排队丢弃出口（queued → discarded 终态）。只收 queued 行：对 open 行或已终态行调用
    * **响亮抛**——静默 no-op 会让「这条排队派发到底还跑不跑」变成没人知道的事。
+   *
+   * `reason`（0014 加法）：可选，写进 `settle_reason`（用户取消走
+   * `SQUAD_RUN_SETTLE_REASON_USER_CANCEL`）。缺省**不动该列**——本方法有多个调用方
+   * （A1 失效丢弃 / 批次放弃 / 取消），只有知道「为什么丢」的调用方该传码值（不猜）。
    */
-  discardQueuedRun(runId: string): void;
+  discardQueuedRun(runId: string, reason?: string): void;
   /**
    * 并入留痕（R3 裁定：明细表 `INSERT OR IGNORE` 幂等）：`requestRunId` = 本次被并入的请求，
    * `targetRunId` = 它并入的排队行/义务行。同一请求重投不产生第二行（主键即请求 id）。
@@ -196,6 +233,8 @@ interface SquadRunRow {
   session_id: string | null;
   dispatch_cause: string | null;
   caused_by_run_id: string | null;
+  opened_at: number | null;
+  settle_reason: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -277,6 +316,8 @@ function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
     sessionId: row.session_id,
     dispatchCause: readDispatchCause(row.dispatch_cause),
     causedByRunId: row.caused_by_run_id,
+    openedAt: row.opened_at,
+    settleReason: row.settle_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -301,8 +342,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         `INSERT INTO squad_runs (
           run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
           is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-          dispatch_cause, caused_by_run_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          dispatch_cause, caused_by_run_id, opened_at, settle_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.runId,
         record.workspaceKey,
@@ -319,6 +360,10 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         record.updatedAt,
         record.dispatchCause,
         record.causedByRunId,
+        // 0014 两列：字面量缺省（老调用方）⇒ NULL（`openedAt` 的 NULL 只该出现在 queued 行上，
+        // 由 open 的写点各自负责填——不变式用例在 squadWatchdog.test.ts 逐条钉住五类写点）。
+        record.openedAt ?? null,
+        record.settleReason ?? null,
       );
     },
 
@@ -332,9 +377,9 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
@@ -357,6 +402,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.updatedAt,
           record.dispatchCause,
           record.causedByRunId,
+          record.openedAt ?? null,
+          record.settleReason ?? null,
           record.workspaceKey,
           record.workItemId,
           ...SQUAD_RUN_ACTIVE_STATUSES,
@@ -386,9 +433,9 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE (SELECT COUNT(*) FROM squad_runs
                    WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?
              AND NOT EXISTS (
@@ -412,6 +459,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.updatedAt,
           record.dispatchCause,
           record.causedByRunId,
+          record.openedAt ?? null,
+          record.settleReason ?? null,
           record.workspaceKey,
           record.agentId,
           maxConcurrentRuns,
@@ -422,14 +471,16 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
       if (opened === 1) return { kind: "opened" };
 
       // 语句二：插排队行——branch/dir_name 一律 NULL（实体不变式，语句层强制，record 带了也不落）。
+      // opened_at 同样一律 NULL：排队行还没开跑，起算点不存在（拿 created_at 冒充会把「排队久」
+      // 误判成「跑得久」——TTL 判据的起算点语义见 `SQUAD_RUN_WATCHDOG_SQL`）。
       const queued = db
         .prepare(
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
@@ -485,12 +536,18 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
       return rows.map(rowToSquadRun);
     },
 
-    discardQueuedRun(runId) {
+    discardQueuedRun(runId, reason) {
+      // 0014：reason 给了才写 settle_reason（缺省不动该列——调用方不知道「为什么丢」时不得猜）。
+      const sets = ["status = 'discarded'", "branch = NULL", "dir_name = NULL", "updated_at = ?"];
+      const args: Array<string | number> = [Date.now()];
+      if (reason !== undefined) {
+        sets.push("settle_reason = ?");
+        args.push(reason);
+      }
+      args.push(runId);
       const result = db
-        .prepare(
-          "UPDATE squad_runs SET status = 'discarded', branch = NULL, dir_name = NULL, updated_at = ? WHERE run_id = ? AND status = 'queued'",
-        )
-        .run(Date.now(), runId);
+        .prepare(`UPDATE squad_runs SET ${sets.join(", ")} WHERE run_id = ? AND status = 'queued'`)
+        .run(...args);
       if (result.changes !== 1) {
         throw new Error(
           `squad_runs 没有 runId=「${runId}」的 queued 行，无法丢弃：行不存在、已推进为 open、或已终态。` +
@@ -528,14 +585,17 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         .prepare("SELECT workspace_key AS workspaceKey, agent_id AS agentId FROM squad_runs WHERE run_id = ? AND status = 'queued'")
         .get(runId) as { workspaceKey: string; agentId: string } | undefined;
       if (row === undefined) return false;
+      // 认领即**进入 open**：`opened_at` 在语句内写成认领时刻（TTL 起算点 = 开跑时刻，不是排队登记
+      // 时刻——排队等待不占容量也不算「跑得久」，见 `SQUAD_RUN_WATCHDOG_SQL` 的语义）。
+      const now = Date.now();
       const changes = db
         .prepare(
-          `UPDATE squad_runs SET status = 'open', updated_at = ?
+          `UPDATE squad_runs SET status = 'open', opened_at = ?, updated_at = ?
              WHERE run_id = ? AND status = 'queued'
                AND (SELECT COUNT(*) FROM squad_runs
                      WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?`,
         )
-        .run(Date.now(), runId, row.workspaceKey, row.agentId, maxConcurrentRuns).changes;
+        .run(now, now, runId, row.workspaceKey, row.agentId, maxConcurrentRuns).changes;
       return changes === 1;
     },
 
@@ -559,9 +619,9 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
@@ -586,6 +646,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.updatedAt,
           record.dispatchCause,
           record.causedByRunId,
+          record.openedAt ?? null,
+          record.settleReason ?? null,
           record.workspaceKey,
           record.workItemId,
           ...SQUAD_RUN_ACTIVE_STATUSES,
@@ -607,15 +669,15 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         .get(record.workspaceKey, record.workItemId, ...SQUAD_RUN_ACTIVE_STATUSES);
       if (activeLeader !== undefined) return { kind: "absorbed" };
 
-      // 容量满且无活跃队长行 ⇒ 尝试排队行（branch/dir_name 一律 NULL）。
+      // 容量满且无活跃队长行 ⇒ 尝试排队行（branch/dir_name / opened_at 一律 NULL，理由同语句二）。
       const queued = db
         .prepare(
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
@@ -711,6 +773,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         ["branch", "branch"],
         ["dir_name", "dirName"],
         ["session_id", "sessionId"],
+        ["opened_at", "openedAt"],
+        ["settle_reason", "settleReason"],
       ] as const) {
         if (patch && key in patch) {
           sets.push(`${column} = ?`);

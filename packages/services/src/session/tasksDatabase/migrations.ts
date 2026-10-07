@@ -8,6 +8,7 @@ import {
   OFF_PEAK_SCHEMA,
   SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_QUEUE_SQL,
+  SQUAD_RUN_WATCHDOG_SQL,
   WORK_ITEM_COLLABORATION_SQL,
   WORK_ITEM_COLLABORATION_SQL_2,
   WORK_ITEM_COLLABORATION_SQL_3,
@@ -124,6 +125,12 @@ const definitions = [
     id: "0013_collaboration_source_run_and_origin",
     checksumInput: [WORK_ITEM_COLLABORATION_SQL_3],
   },
+  /* 0014（看门狗 W1）：squad_runs 加 `opened_at`（TTL 起算点）/ `settle_reason`（结算原因）
+     两列 + 非 queued 行回填。只加列，不改既有列/表——checksum 纪律同 0008/0009/0013。 */
+  {
+    id: "0014_squad_run_watchdog",
+    checksumInput: [SQUAD_RUN_WATCHDOG_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -186,6 +193,7 @@ export function runTasksDatabaseMigrations(
         db.exec(COMMENT_DISPATCH_RECEIPT_SQL);
       else if (migration.id === "0013_collaboration_source_run_and_origin")
         db.exec(WORK_ITEM_COLLABORATION_SQL_3);
+      else if (migration.id === "0014_squad_run_watchdog") db.exec(SQUAD_RUN_WATCHDOG_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

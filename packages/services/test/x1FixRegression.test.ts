@@ -517,6 +517,9 @@ test("B3：根可置/消（各一条 Activity）；回复置/消在 service 与 
 
 /* ---------- ⑤ 迁移 0013 三路径 ---------- */
 
+/* 本文件只对 0013 负责：`LATEST` 是「本文件关心的那条迁移」，**不是**「全库最后一条」——
+   0014（看门狗 W1）之后它后面还有迁移，故断言一律问「0013 在不在账本里 / 恰一行」，
+   不问 `at(-1)`（写死「最后一条是谁」会让本用例在下一条迁移落地时假红）。 */
 const LATEST = "0013_collaboration_source_run_and_origin";
 const REVERSE_0013 = [
   "ALTER TABLE squad_run_deferred_dispatches DROP COLUMN origin",
@@ -541,7 +544,7 @@ function objectNames(db: DatabaseSync, table: string): string[] {
 
 test("0013 路径① 全新库：列/默认值齐备、账本收尾、读写即刻可用", () => {
   const db = openDb();
-  assert.equal(ledgerIds(db).at(-1), LATEST);
+  assert.equal(ledgerIds(db).filter((id) => id === LATEST).length, 1, "0013 已应用且恰一行");
   assert.deepEqual(
     tableColumns(db, "work_item_activities").filter((name) => name.startsWith("source_run_")),
     ["source_run_id", "source_run_agent_id", "source_run_squad_id", "source_run_role"],
@@ -585,11 +588,11 @@ test("0013 路径② 从 0012 升级：退到 0012 形态 ⇒ 重跑迁移只补
     tableColumns(db, "work_item_activities").filter((name) => name.startsWith("source_run_")),
     ["source_run_id"],
   );
-  assert.equal(ledgerIds(db).at(-1), "0012_comment_dispatch_receipts");
+  assert.ok(!ledgerIds(db).includes(LATEST), "退库后 0013 不在账本里（等价于老库停在 0012）");
 
   // 升级：只应补跑 0013（其余条目 checksum 未变 ⇒ 不会 checksum_mismatch）。
   runTasksDatabaseMigrations(db);
-  assert.equal(ledgerIds(db).at(-1), LATEST);
+  assert.equal(ledgerIds(db).filter((id) => id === LATEST).length, 1, "0013 已应用且恰一行");
   assert.deepEqual(
     tableColumns(db, "work_item_activities").filter((name) => name.startsWith("source_run_")),
     ["source_run_id", "source_run_agent_id", "source_run_squad_id", "source_run_role"],
@@ -626,7 +629,7 @@ test("0013 路径③ 反向退库：列撤净、无残留对象，再升级可�
   assert.ok(!tableColumns(db, "squad_run_deferred_dispatches").includes("origin"));
   // 1:1 复原。
   runTasksDatabaseMigrations(db);
-  assert.equal(ledgerIds(db).at(-1), LATEST);
+  assert.ok(ledgerIds(db).includes(LATEST), "再升级后 0013 复原");
   assert.ok(tableColumns(db, "work_item_activities").includes("source_run_role"));
   assert.ok(tableColumns(db, "squad_run_deferred_dispatches").includes("origin"));
 });

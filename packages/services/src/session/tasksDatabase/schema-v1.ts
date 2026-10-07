@@ -501,3 +501,20 @@ export const COMMENT_DISPATCH_RECEIPT_SQL = `
   CREATE INDEX IF NOT EXISTS idx_comment_dispatch_receipts_outcome
     ON comment_dispatch_receipts(workspace_key, outcome);
 `;
+
+/* 0014（看门狗 W1）：squad_runs 加两列 + 一条回填。只加列、不改既有列/表；
+   0006 的 `SQUAD_RUN_SCHEMA` 与 0008/0009/0013 的 SQL 一字不动（checksum 冻结）。
+   · `opened_at`：**本次进入 open** 的时刻（0001 起算点的唯一来源）。直开 = insert 时刻、
+     认领升级 = 认领时刻；queued 行恒 NULL（它还没开跑）。刻意不用 created_at（排队久 ≠ 跑得久）
+     与 updated_at（bindSession 等每次 patch 都动它）。
+   · `settle_reason`：结算原因（自由文本列）。TTL 审计、熔断窗口计数、重试预算三处消费；
+     NULL = 常规结算 / 遗留行。看门狗与取消路径的**码值**是单源常量
+     （`squadRunRepo.ts` 的 `SQUAD_RUN_SETTLE_REASON_*`），列本身不建闭集约束
+     （`failMemberRun` 的失败原因原文也落这里）。
+   · 回填：非 queued 行都进过 open，`created_at` 是唯一可用的近似起点（遗留直开行 created=open）；
+     回填消解读侧猜测——回填后 NULL 只剩 queued 行，语义完备。 */
+export const SQUAD_RUN_WATCHDOG_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN opened_at INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN settle_reason TEXT;
+  UPDATE squad_runs SET opened_at = created_at WHERE status != 'queued' AND opened_at IS NULL;
+`;

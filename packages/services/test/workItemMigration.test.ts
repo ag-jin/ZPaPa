@@ -101,6 +101,12 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "ALTER TABLE work_item_activities DROP COLUMN source_run_squad_id",
     "ALTER TABLE work_item_activities DROP COLUMN source_run_agent_id",
   ],
+  // 0014（看门狗 W1）：squad_runs 加 `opened_at` / `settle_reason` 两列（列级追加 ⇒ 反向 DDL 逐列 DROP）
+  // + 一条回填 UPDATE。反向 DDL 只还原**结构**：行数据由用例自己造（见 0014 的专条用例）。
+  "0014_squad_run_watchdog": [
+    "ALTER TABLE squad_runs DROP COLUMN settle_reason",
+    "ALTER TABLE squad_runs DROP COLUMN opened_at",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
@@ -174,10 +180,22 @@ test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库�
   assert.deepEqual(migrated, expected, "补跑 0008 起的全部迁移（基线 id 相同，各出现一次）");
   assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
   const columns = squadRunColumns(db);
+  /* 本用例只对 0008 的契约负责：既有 13 列**逐字未动**（前缀相等），0008 的两列紧随其后。
+     刻意不再断言「总列数 = 15」：0008 之后的新迁移（0014 的 opened_at / settle_reason 即一例）
+     可以继续在末尾追加列——把总数写死会让本用例在下一条加法迁移落地时假红，
+     而它要守的是「老库升级不得改动既有列」（各条迁移的新增列由各自的专条用例断言）。 */
   assert.deepEqual(
-    columns,
-    [...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008, "dispatch_cause", "caused_by_run_id"],
-    "只加两列（在末尾），既有 13 列一字未动",
+    columns.slice(0, EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length),
+    EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
+    "既有 13 列一字未动（前缀逐字相等）",
+  );
+  assert.deepEqual(
+    columns.slice(
+      EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length,
+      EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length + 2,
+    ),
+    ["dispatch_cause", "caused_by_run_id"],
+    "0008 的两列紧随其后",
   );
   // 既有行读回两列 = NULL：加列不猜值（遗留行语义），读回不得把 NULL 当成某一档成因。
   const legacy = db
@@ -190,6 +208,66 @@ test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库�
   const fresh = openFreshDb();
   runTasksDatabaseMigrations(fresh);
   assert.deepEqual(squadRunColumns(fresh), columns);
+});
+
+/* 0014（看门狗 W1）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0013、库里还有行）补跑 ⇒ 只加 `opened_at` / `settle_reason` 两列，
+     既有列一字未动，且**回填** `opened_at = created_at`（非 queued 行：它进过 open，created_at
+     是唯一可用的近似起点）；queued 行**恒 NULL**（它还没开跑，起算点不存在——不得拿 created_at
+     冒充，否则「排队久」会被 TTL 误判成「跑得久」）；
+   · 从零建库同一形状（0014 的 ALTER 是唯一列来源，0006 的建表 SQL 已冻结）。 */
+test("0014：老库补跑只加两列并回填 opened_at = created_at（queued 行 NULL）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from014 = fullLedger.findIndex((row) => row.id === "0014_squad_run_watchdog");
+  assert.ok(from014 > 0, "账本里没有 0014（迁移没挂上）");
+  // 逐条退回（逆序）到「0014 之前」：结构与 0013 之后一模一样。
+  for (const row of fullLedger.slice(from014).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  // 造两条遗留行（旧列集可写）：一条直开的 open 行、一条排队行。
+  const insertLegacy = (runId: string, status: string, createdAt: number) =>
+    db
+      .prepare(
+        `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+           parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+           created_at, updated_at, dispatch_cause, caused_by_run_id)
+         VALUES (?, 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, ?, NULL, ?, ?, NULL, NULL)`,
+      )
+      .run(runId, status, createdAt, createdAt);
+  insertLegacy("legacy-open", "open", 111);
+  insertLegacy("legacy-queued", "queued", 222);
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  assert.deepEqual(
+    squadRunColumns(db),
+    [
+      ...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
+      "dispatch_cause",
+      "caused_by_run_id",
+      "opened_at",
+      "settle_reason",
+    ],
+    "只加两列（在末尾），既有 15 列一字未动",
+  );
+  // 回填语义：非 queued ⇒ created_at；queued ⇒ NULL（不猜起算点）；settle_reason 一律 NULL。
+  const backfilled = (
+    db
+      .prepare("SELECT run_id, opened_at, settle_reason FROM squad_runs ORDER BY run_id")
+      .all() as Array<{ run_id: string; opened_at: number | null; settle_reason: string | null }>
+  ).map((row) => ({ runId: row.run_id, openedAt: row.opened_at, settleReason: row.settle_reason }));
+  assert.deepEqual(backfilled, [
+    { runId: "legacy-open", openedAt: 111, settleReason: null },
+    { runId: "legacy-queued", openedAt: null, settleReason: null },
+  ]);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), squadRunColumns(db));
 });
 
 // 迁移必须幂等：老库升级与重放都不能报错、不能改动结构。
