@@ -167,7 +167,8 @@ export function isSettleableResidualMemberRun(
 
 /**
  * 「**等待分支空出**」的队员行（P2-1 修法①的落地形态）：结算过（`discarded` 结算事实扇出一次、
- * 容量如实释放）却**保住了请求身份**的行 —— 分支占位已释放（`branch` / `dir_name` 为 NULL），
+ * **分支活跃集**如实释放——注意 agent 容量槽按 `status='open'` 计数，等待行仍占槽直到重开或另行终态）
+ * 却**保住了请求身份**的行 —— 分支占位已释放（`branch` / `dir_name` 为 NULL），
  * 行仍在 `open`，等回收器把不属于任何活跃行的占位树/残枝收净。
  *
  * 为什么必须同时是「结算过」与「请求身份还在」：结算是终局 ⇒ 若行停在 `discarded`，补投判据
@@ -683,7 +684,8 @@ export function createRunLifecycle(deps: {
                  （回收器的保留判据恰是「分支在活跃集」）⇒「等回收器清掉后重投自愈」永远等不到：
                  重投永远等待型、receipt 永挂 pending（比修前的**可见** failed 更坏）。
                  处置（裁定 ① 的行级判据 + 落地细化）：**结算本行**（`discarded` 扇出一次：
-                 容量与活跃集如实释放）**并释放分支占位**（同一 runId 回写为「等待分支空出」），
+                 **分支活跃集**如实释放；agent 容量槽仍由等待行占着，随重开后的真实 run 或终态收口）
+                 **并释放分支占位**（同一 runId 回写为「等待分支空出」），
                  之后回收器能把占位树/残枝收净；分支空出后同一条重投重新挂计划 + 建树（`opened`）
                  —— 回路闭合。为什么行仍留在 `open`：结算是终局 ⇒ 补投判据 `own_run_not_open`
                  会让 receipt 永停未收敛，而 runId = 请求身份（`receipt.dispatchKey`）不得更换。 */

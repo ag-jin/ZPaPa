@@ -114,7 +114,11 @@ test("P2-1 等待型（占位树属别的 run 行）：重投结算本行并释�
     [{ runId: "p21-run", status: "discarded" }],
     "等待行必须恰结算一次（结算事实扇出：容量释放 + 推进回路被触发）",
   );
-  assert.equal(f.row("p21-run")?.status, "open", "请求身份保留：行仍在 open（runId = receipt.dispatchKey）");
+  assert.equal(
+    f.row("p21-run")?.status,
+    "open",
+    "请求身份保留：行仍在 open（runId = receipt.dispatchKey）",
+  );
   assert.equal(f.row("p21-run")?.branch, null, "分支占位已释放：本行不再把别人的占位钉在活跃集里");
   assert.equal(f.row("p21-run")?.sessionId, null, "仍无会话（没有执行过）");
   assert.equal((await f.trees()).length, 1, "不得复用别人的树、也不得再建一棵");
@@ -161,7 +165,11 @@ test("P2-1 等待型（只有同名残枝、无活树）：重投结算并释放
 
   const reaped = await f.reap();
   assert.deepEqual(reaped.reclaimed, [], "残枝没有工作树（第一遍为空）");
-  assert.deepEqual(reaped.reclaimedBranches, [f.branch], "残枝被第二遍收掉（修前：挂在本行的活跃分支上，不收）");
+  assert.deepEqual(
+    reaped.reclaimedBranches,
+    [f.branch],
+    "残枝被第二遍收掉（修前：挂在本行的活跃分支上，不收）",
+  );
   assert.equal(await f.branchExists(f.branch), false);
 
   const opened = await f.openFor("p21-run");

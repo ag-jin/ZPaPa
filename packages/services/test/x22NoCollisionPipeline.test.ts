@@ -275,7 +275,11 @@ test("X2.2 复验发现：残枝未回收时同对重放确定性失败，台账
     kind: "residual_blocked",
     branch: f.otherBranch,
   });
-  assert.equal(await f.branchExists(f.otherBranch), true, "本次调用不自行回收：残枝/占位归回收器（它在活跃集外了）");
+  assert.equal(
+    await f.branchExists(f.otherBranch),
+    true,
+    "本次调用不自行回收：残枝/占位归回收器（它在活跃集外了）",
+  );
   assert.equal(
     f.runtime.squadRunRepo.get(f.dispatchKey)?.branch,
     null,
