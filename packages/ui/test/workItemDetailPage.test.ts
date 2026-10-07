@@ -21,6 +21,7 @@ import {
   collaborationLoadSucceeded,
   WORK_ITEM_COLLABORATION_IDLE,
 } from "../src/squad/useWorkItemCollaboration.js";
+import { COMMENT_DISPATCH_OUTCOME_MESSAGE_IDS } from "../src/squad/workItemCollaborationViewModel.js";
 
 /** 详情页命名空间的全键（任务卡 §6.1 的 53 键 + §6.3 的 9 条差额；手抄自设计案表，独立真源）。 */
 const WORK_ITEM_DETAIL_MESSAGE_IDS = [
@@ -84,7 +85,6 @@ const WORK_ITEM_DETAIL_MESSAGE_IDS = [
   "squad.workItemDetail.overview.bodyHide",
   "squad.workItemDetail.comment.disabled.archived",
   "squad.workItemDetail.comment.disabled.readFailed",
-  "squad.workItemDetail.comment.disabled.writeUnavailable",
   "squad.workItemDetail.comment.submitDisabled.empty",
   "squad.workItemDetail.mention.rosterUnavailable",
 ] as const;
@@ -115,6 +115,7 @@ function read(): WorkItemCollaborationRead {
     decisions: [],
     reactions: [],
     receipts: [],
+    viewerActor: { kind: "human", id: "local-user" },
   };
 }
 
@@ -188,12 +189,14 @@ test("装载态机：刷新失败 ⇒ **保留上次数据** + 区域告警，�
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
-/** 本轮新增的 UI 源码文件（反向断言的扫描面）。 */
+/** B-5 线两个轮次的 UI 源码文件（反向断言的扫描面；轮 2 追加两个新组件）。 */
 const ROUND_ONE_SOURCES = [
   "squad/WorkItemDetailPage.tsx",
   "squad/WorkItemCollaborationTimeline.tsx",
   "squad/WorkItemCommentEntry.tsx",
   "squad/WorkItemCommentComposer.tsx",
+  "squad/WorkItemCommentDeleteDialog.tsx",
+  "squad/WorkItemCommentDispatchSummary.tsx",
   "squad/WorkItemMentionMenu.tsx",
   "squad/workItemCollaborationViewModel.ts",
   "squad/workItemMentionViewModel.ts",
@@ -272,7 +275,7 @@ test("守卫｜评论条目：锚点/墓碑/解决态/回复入口/回应容器/
   );
 });
 
-test("守卫｜composer：外壳 + 不可用态 + Note mode + 回复上下文 + 提交恒不可点（轮 1 写面未接通）", () => {
+test("守卫｜composer：外壳齐备 + Note mode + 回复上下文 + 提交真的可点（轮 2 写面已接通）", () => {
   const composer = readSource("squad/WorkItemCommentComposer.tsx");
   for (const testId of [
     "work-item-comment-composer",
@@ -284,21 +287,26 @@ test("守卫｜composer：外壳 + 不可用态 + Note mode + 回复上下文 + 
   ]) {
     assert.ok(composer.includes(`data-testid="${testId}"`), `composer 缺 testid ${testId}`);
   }
+  /* 轮 2：写面接通 ⇒ 唯一开关位打开；禁用理由改由「归档 / 读取失败 / 内容为空」三格给出
+     （不再有「当前版本暂不支持」这个死键 —— 它已在两个 locale 删除）。 */
   assert.ok(
-    composer.includes("comment.disabled.writeUnavailable"),
-    "轮 1 必须给出「明确不可用」的原因文案（不静默禁用）",
+    composer.includes("export const WORK_ITEM_COMMENT_SUBMIT_ENABLED = true;"),
+    "轮 2 的写面开关位必须是打开的常量（回退整条写入面时只改这一处）",
   );
-  // 提交恒不可点：可点性判据是**单一常量**，且该常量为 false（轮 2 接线只改这一处 + onSubmit）。
   assert.ok(
-    composer.includes("export const WORK_ITEM_COMMENT_SUBMIT_ENABLED = false;"),
-    "轮 1 的提交可点性判据必须是显式常量且为 false",
+    !composer.includes("comment.disabled.writeUnavailable"),
+    "死键（轮 1 专用的「暂不支持」原因）不得残留",
   );
   const submitMarker = composer.indexOf('data-testid="work-item-comment-submit"');
+  const submitCall = composer.slice(submitMarker - 400, submitMarker);
   assert.ok(
-    composer
-      .slice(submitMarker - 400, submitMarker)
-      .includes("disabled={!WORK_ITEM_COMMENT_SUBMIT_ENABLED}"),
-    "提交按钮的 disabled 必须绑定到那一个常量（不在别处再判一次可点性）",
+    submitCall.includes("disabled={!canSubmit}"),
+    "提交按钮的 disabled 绑定到唯一判据 canSubmit",
+  );
+  assert.ok(
+    composer.includes("WORK_ITEM_COMMENT_SUBMIT_ENABLED &&") &&
+      composer.includes("comment.submitDisabled.empty"),
+    "canSubmit 由写面开关 + 内容非空 + 非发送中共同决定，且空内容有理由文案",
   );
 });
 
@@ -352,12 +360,20 @@ test("反向断言｜R2：UI 源码不出现 Run 创建 / 派发写入调用（�
 });
 
 test("反向断言｜R6：@all 不映射为任何 receipt outcome；mention.all 与 dispatch.* 两组键不交叉", () => {
+  /* 轮 2 起 receipt 映射就在 view model 里（R7 要求它穷尽），故这一条不再用「文件里不出现闭集名」
+     这种粗代理，而是直接钉**映射的值**：七值全部属派发族，且没有任何一条是 mention 族。 */
+  const values = Object.values(COMMENT_DISPATCH_OUTCOME_MESSAGE_IDS);
+  assert.equal(new Set(values).size, COMMENT_DISPATCH_OUTCOMES.length);
+  for (const value of values) {
+    assert.ok(value.startsWith("squad.workItemDetail.dispatch."), `${value} 必须是派发族文案`);
+    assert.ok(!value.includes("mention."), `${value} 不得是 mention 族文案（@all 不是派发状态）`);
+  }
+  assert.ok(
+    !values.includes("squad.workItemDetail.mention.all"),
+    "@all 的文案键不得出现在任何 receipt outcome 上",
+  );
   for (const file of [...ROUND_ONE_SOURCES, "squad/WorkItemMentionMenu.tsx"]) {
     const source = readSource(file);
-    assert.ok(
-      !source.includes("COMMENT_DISPATCH_OUTCOMES"),
-      `${file} 的 @all 处置不得引用派发闭集`,
-    );
     for (const outcome of COMMENT_DISPATCH_OUTCOMES) {
       assert.ok(
         !new RegExp(`mention\\.all[\\s\\S]{0,120}dispatch\\.${outcome}`).test(source),
@@ -367,35 +383,78 @@ test("反向断言｜R6：@all 不映射为任何 receipt outcome；mention.all 
   }
 });
 
-test("反向断言｜R8：轮 1 不渲染任何派发 receipt 插槽/抑制注记；提交恒不可点", () => {
+test("反向断言｜R8：receipt 插槽只在**有 receipt** 时渲染，且没有任何「重试派发」入口", () => {
+  const summary = readSource("squad/WorkItemCommentDispatchSummary.tsx");
+  assert.ok(
+    summary.includes('data-testid="work-item-comment-dispatch-summary"'),
+    "插槽容器由 receipt 投影驱动",
+  );
+  assert.ok(
+    summary.includes("data-testid={`work-item-comment-dispatch-${item.outcome}`}"),
+    "七值各自的锚点由 outcome 生成（穷尽由纯函数映射保证）",
+  );
+  assert.ok(
+    summary.includes('data-testid="work-item-comment-suppressed"'),
+    "抑制注记与 receipt 分离，各有自己的锚点",
+  );
+  // 空插槽不渲染：组件在投影为空时直接返回 null（不留空卡片）。
+  assert.ok(
+    /summary\.inline\.length === 0 && noteMessageId === null[\s\S]{0,120}return null/.test(summary),
+    "没有 receipt 也没有抑制事实 ⇒ 不渲染（连空壳都不留）",
+  );
+  // 只读：UI 里没有任何派发写入/推进调用（重试派发归 host 的补投通道）。
   for (const file of ROUND_ONE_SOURCES) {
     const source = readSource(file);
-    for (const forbidden of [
-      "work-item-comment-dispatch-summary",
-      "work-item-comment-dispatch-",
-      "work-item-comment-suppressed",
-    ]) {
-      assert.ok(!source.includes(forbidden), `${file} 轮 1 不得渲染 ${forbidden}（插槽归轮 2）`);
+    for (const forbidden of ["settleCommentDispatchReceipt", "settleIfUnsettled"]) {
+      assert.ok(!source.includes(forbidden), `${file} 不得出现 ${forbidden}（插槽是只读的）`);
     }
   }
 });
 
-test("反向断言｜R9：轮 1 无乐观插入、无任何写入口调用（写入只在轮 2 接）", () => {
-  for (const file of ROUND_ONE_SOURCES) {
-    const source = readSource(file);
-    for (const writeCall of [
-      "createWorkItemComment",
-      "softDeleteWorkItemComment",
-      "setWorkItemCommentResolved",
-      "addWorkItemCommentReaction",
-      "setOptimistic",
-    ]) {
+test("反向断言｜R9：写入只在页面的唯一执行点出现，且全 UI 无乐观插入、无第二个事实源刷新", () => {
+  const page = readSource("squad/WorkItemDetailPage.tsx");
+  // 三个写入口只在页面出现（组件拿到的是回调，不是服务对象）。
+  for (const writeCall of [
+    "createWorkItemComment",
+    "setWorkItemCommentResolved",
+    "addWorkItemCommentReaction",
+  ]) {
+    assert.ok(page.includes(writeCall), `${writeCall} 必须由页面执行（不在子组件里直接调服务）`);
+    for (const file of ROUND_ONE_SOURCES.filter(
+      (entry) => entry !== "squad/WorkItemDetailPage.tsx",
+    )) {
       assert.ok(
-        !source.includes(writeCall),
-        `${file} 轮 1 不得调用 ${writeCall}（写面未接通，不本地模拟落盘）`,
+        !readSource(file).includes(writeCall),
+        `${file} 不得直接调 ${writeCall}（子组件只拿到回调）`,
       );
     }
   }
+  // 破坏性动作**只有一个**执行点，且它只接受确认态产出的目标（形态抄 executeSquadDiscard）。
+  const vm = readSource("squad/workItemCollaborationViewModel.ts");
+  const occurrences = ROUND_ONE_SOURCES.flatMap((file) =>
+    readSource(file).includes("softDeleteWorkItemComment") ? [file] : [],
+  );
+  assert.deepEqual(
+    occurrences,
+    ["squad/workItemCollaborationViewModel.ts"],
+    "softDeleteWorkItemComment 只允许在 executeCommentDelete 里出现（组件/页面都不得直接调）",
+  );
+  assert.ok(
+    /commentId === null\) return \{ deleted: false \}/.test(vm),
+    "未确认（commentId === null）⇒ 一级都不执行",
+  );
+  // 无乐观插入；写入成功后只刷新协作读模型（不重取快照）。
+  for (const file of ROUND_ONE_SOURCES) {
+    const source = readSource(file);
+    for (const forbidden of ["setOptimistic", "optimisticComment"]) {
+      assert.ok(!source.includes(forbidden), `${file} 不得本地模拟落盘`);
+    }
+  }
+  const afterLoad = page.slice(page.indexOf("const runCommentAction"));
+  assert.ok(
+    !afterLoad.slice(0, 1600).includes("getSnapshot("),
+    "写入路径不得再取一次快照（一次动作只刷新一个事实源）",
+  );
 });
 
 test("接线守卫｜R4：三处接线成对——index 导出描述符 + node 注册 + client 代理（enumerable:false）", () => {

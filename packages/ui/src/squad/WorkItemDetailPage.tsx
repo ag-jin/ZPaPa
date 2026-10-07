@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  CommentDispatchReceiptRecord,
+  IWorkItemCollaborationServiceShape,
   SquadSnapshot,
+  SquadWorkspaceTarget,
   WorkItemCommentReactionRecord,
   WorkItemCommentRecord,
 } from "@zcode/services";
@@ -11,25 +14,36 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { resolveSquadRuntimeService, squadWorkspaceTarget } from "./squadRuntimeAccess.js";
+import { resolveWorkItemCollaborationService } from "./workItemCollaborationAccess.js";
 import { WorkItemCollaborationTimeline } from "./WorkItemCollaborationTimeline.js";
 import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
+import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
-import { workItemDetailAssigneeLabel } from "./workItemCollaborationViewModel.js";
+import {
+  COMMENT_DELETE_CONFIRM_IDLE,
+  confirmCommentDelete,
+  executeCommentDelete,
+  workItemDetailAssigneeLabel,
+  type CommentDeleteConfirmState,
+} from "./workItemCollaborationViewModel.js";
 import { workItemStatusMessageId } from "./workItemsViewModel.js";
 
-/* B5.1 轮 1：工作项**详情页**（设计案 §2.1 的挂载点结论：独立页，不是抽屉/对话框）。
+/* B5.1 轮 1 / B5.2 轮 2：工作项**详情页**（设计案 §2.1 的挂载点结论：独立页，不是抽屉/对话框）。
 
    导航语义（§1.3）：详情页**不猜历史**，返回只调 `onBack` —— 回哪个视图由 App 的
    `returnView` 决定（从看板进 ⇒ 回看板；从 agent 任务表进 ⇒ 回 agent 详情）。
 
-   两个**失败域**分开（§3.4）：
+   三个**失败域**分开（§3.4）：
    · 协作读整体失败 ⇒ 本页全页失败分支（没有工作项本体可说，故不硬撑概览）；
-   · 刷新失败 ⇒ 旧数据照常可读 + 协作区一条区域告警（不把已读到的正文清空）。
-   名册（快照）是**第三个**、辅助的失败域：读不到 ⇒ 名册为 null ⇒ mention 菜单明确说
-   「名册不可用」，而不是静默不出菜单（也很可能只是这一条读不到）。
+   · 刷新失败 ⇒ 旧数据照常可读 + 协作区一条区域告警（不把已读到的正文清空）；
+   · **动作失败** ⇒ 协作区的动作错误条（写入的失败不改变已经读到的事实，也不清空草稿：
+     提交失败另有 composer 的就地提示与「重试发送」）。
 
-   **本轮不写任何行**：composer 是明确不可用态（写面未接通），概览动作区只给工作项页已有的
-   入口语义（编辑 / 改派仍在看板，不在此页重复造一份写路径）。 */
+   轮 2 的两条结构纪律：
+   ① **一次动作只刷新一个事实源**：写入成功后只调 `reload()`（协作读模型）；快照只供名册，
+      写入路径里**不出现** `getSnapshot(`（第二次取快照会让名册与协作数据各自漂移）；
+   ② 写入调用只在下面的 `runCommentAction` 一处：模板与子组件都拿到「做什么」的回调，
+      而不是拿到服务对象自己调（要能一眼看出「谁在写」）。 */
 
 export function WorkItemDetailPage({
   workspacePath,
@@ -57,6 +71,14 @@ export function WorkItemDetailPage({
   const [replyTarget, setReplyTarget] = useState<WorkItemCommentRecord | null>(null);
   /* 概览正文**可折叠**（设计案 §2.1：避免长描述把协作入口推离首屏）——默认收起。 */
   const [bodyExpanded, setBodyExpanded] = useState(false);
+  /** 待确认的删除（破坏性动作的**唯一**入口是确认对话框；见 confirmCommentDelete）。 */
+  const [deleteConfirm, setDeleteConfirm] = useState<CommentDeleteConfirmState>(
+    COMMENT_DELETE_CONFIRM_IDLE,
+  );
+  /** 有写在途的那条评论（按钮禁用；`null` = 空闲）。 */
+  const [pendingCommentId, setPendingCommentId] = useState<string | null>(null);
+  /** 动作失败的原因（区域错误条）：删除/解决/回应失败时显示；提交失败另有就地提示。 */
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!target) return;
@@ -77,6 +99,99 @@ export function WorkItemDetailPage({
       cancelled = true;
     };
   }, [services, target]);
+
+  const workItemIdForWrite = state.status === "ready" ? (state.read?.workItem.id ?? null) : null;
+
+  /**
+   * 页面里**唯一**的评论动作执行点：写 → 只刷新协作读模型。
+   *
+   * 失败一律**留痕并抛回调用方**：提交（composer）就地显示「未发送 + 重试」，其余动作落到
+   * 上面的动作错误条。两条路都不吞异常 —— 一次「点了没反应」的动作在这个页面里凑不出来。
+   * `commentId` 只是「禁用哪一条的动作」，与「写什么」无关（写什么由调用方给的函数决定）。
+   */
+  const runCommentAction = useCallback(
+    async (
+      commentId: string | null,
+      run: (
+        service: IWorkItemCollaborationServiceShape,
+        target: SquadWorkspaceTarget,
+      ) => Promise<unknown>,
+    ): Promise<void> => {
+      if (!target) return;
+      setPendingCommentId(commentId);
+      setActionError(null);
+      try {
+        await run(resolveWorkItemCollaborationService(services), target);
+        // 一次动作只刷新一个事实源：协作读模型。快照（名册）不因评论动作失效 —— 评论不改名册。
+        await reload();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn("[WorkItemDetailPage] 评论动作失败", { error: message });
+        setActionError(message);
+        throw error;
+      } finally {
+        setPendingCommentId(null);
+      }
+    },
+    [services, target, reload],
+  );
+
+  const submitComment = useCallback(
+    async (input: { body: string; parentCommentId?: string; clientRequestId: string }) => {
+      const id = workItemIdForWrite;
+      // 没有工作项就不能提交：抛出去让 composer 显示「未发送」，**不**假装写成功。
+      if (id === null) throw new Error("工作项尚未读出，无法提交评论。");
+      await runCommentAction(null, (service, currentTarget) =>
+        service.createWorkItemComment(currentTarget, {
+          workItemId: id,
+          body: input.body,
+          ...(input.parentCommentId === undefined
+            ? {}
+            : { parentCommentId: input.parentCommentId }),
+          clientRequestId: input.clientRequestId,
+        }),
+      );
+    },
+    [runCommentAction, workItemIdForWrite],
+  );
+
+  const requestDelete = useCallback((comment: WorkItemCommentRecord) => {
+    setDeleteConfirm({ pendingCommentId: comment.id });
+  }, []);
+
+  /** 确认分支的执行：可执行的那一条**只能**来自确认态（`confirmCommentDelete`）。 */
+  const runDelete = useCallback(() => {
+    const decision = confirmCommentDelete(deleteConfirm);
+    setDeleteConfirm(decision.next);
+    if (decision.commentId === null) {
+      logger.warn("[WorkItemDetailPage] 删除未确认：一级都不执行");
+      return;
+    }
+    void runCommentAction(decision.commentId, (service, currentTarget) =>
+      executeCommentDelete({ service, target: currentTarget, decision }),
+    ).catch(() => undefined);
+  }, [deleteConfirm, runCommentAction]);
+
+  const runResolve = useCallback(
+    (comment: WorkItemCommentRecord, resolved: boolean) => {
+      void runCommentAction(comment.id, (service, currentTarget) =>
+        service.setWorkItemCommentResolved(currentTarget, {
+          commentId: comment.id,
+          resolved,
+        }),
+      ).catch(() => undefined);
+    },
+    [runCommentAction],
+  );
+
+  const runReact = useCallback(
+    (comment: WorkItemCommentRecord, emoji: string) => {
+      void runCommentAction(comment.id, (service, currentTarget) =>
+        service.addWorkItemCommentReaction(currentTarget, { commentId: comment.id, emoji }),
+      ).catch(() => undefined);
+    },
+    [runCommentAction],
+  );
 
   const backButton = (
     <Button size="sm" variant="outline" data-testid="work-item-detail-back" onClick={onBack}>
@@ -136,6 +251,7 @@ export function WorkItemDetailPage({
     (roster ? workItemDetailAssigneeLabel(workItem, roster) : null) ??
     t("squad.common.assignee.user");
   const reactionsByComment = buildReactionsByComment(read.reactions);
+  const receiptsByComment = buildReceiptsByComment(read.receipts);
 
   return (
     <div data-testid="work-item-detail-page" className="flex flex-col gap-4 py-2">
@@ -199,42 +315,81 @@ export function WorkItemDetailPage({
             </AlertDescription>
           </Alert>
         )}
+        {actionError === null ? null : (
+          /* 动作失败**不清空已经读到的事实**，只加一条可关闭的区域告警（设计案 §3.4 的失败域分离）。 */
+          <Alert variant="destructive" data-testid="work-item-collaboration-action-failure">
+            <AlertTitle>{t("squad.common.operationFailed")}</AlertTitle>
+            <AlertDescription className="flex flex-col gap-2">
+              <span className="text-ui-xs">{actionError}</span>
+              <Button size="sm" variant="outline" onClick={() => setActionError(null)}>
+                {t("squad.common.cancel")}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
         <WorkItemCollaborationTimeline
           read={read}
           reactionsByComment={reactionsByComment}
+          receiptsByComment={receiptsByComment}
           roster={{ agents: roster?.teamAgents ?? [], squads: roster?.squads ?? [] }}
+          viewerActor={read.viewerActor}
+          pendingCommentId={pendingCommentId}
           onReply={setReplyTarget}
+          onDelete={requestDelete}
+          onResolve={runResolve}
+          onReact={runReact}
         />
         <WorkItemCommentComposer
           roster={roster === null ? null : { agents: roster.teamAgents, squads: roster.squads }}
           replyTarget={replyTarget}
           onCancelReply={() => setReplyTarget(null)}
           disabledReasonMessageId={composerDisabledReason(workItem, state.refreshFailure)}
+          onSubmit={submitComment}
         />
       </section>
+
+      {deleteConfirm.pendingCommentId === null ? null : (
+        <WorkItemCommentDeleteDialog
+          pending={pendingCommentId !== null}
+          onCancel={() => setDeleteConfirm(COMMENT_DELETE_CONFIRM_IDLE)}
+          onConfirm={runDelete}
+        />
+      )}
     </div>
   );
 }
 
-/** 提交不可用的原因（设计案 §4.1 + §3.4）：归档 > 刷新失败 > 写面未接通（轮 1 的默认）。 */
+/** 提交不可用的原因（设计案 §4.1 + §3.4）：归档 > 刷新失败 > 可写（`null`）。 */
 function composerDisabledReason(
   workItem: { archivedAt?: number },
   refreshFailure: string | null,
-): string {
+): string | null {
   if (workItem.archivedAt !== undefined) return "squad.workItemDetail.comment.disabled.archived";
   if (refreshFailure !== null) return "squad.workItemDetail.comment.disabled.readFailed";
-  return "squad.workItemDetail.comment.disabled.writeUnavailable";
+  return null;
 }
 
 /** 回应按评论分组（一次遍历；分组语义在纯函数 `groupCommentReactions` 里）。 */
 function buildReactionsByComment(
   reactions: WorkItemCommentReactionRecord[],
 ): Map<string, WorkItemCommentReactionRecord[]> {
-  const grouped = new Map<string, WorkItemCommentReactionRecord[]>();
-  for (const reaction of reactions) {
-    const bucket = grouped.get(reaction.commentId);
-    if (bucket) bucket.push(reaction);
-    else grouped.set(reaction.commentId, [reaction]);
+  return groupBy(reactions, (reaction) => reaction.commentId);
+}
+
+/** receipt 按评论分组（同上；顺序原样保留 —— repo 已按 createdAt ASC → dispatchKey ASC 给）。 */
+function buildReceiptsByComment(
+  receipts: CommentDispatchReceiptRecord[],
+): Map<string, CommentDispatchReceiptRecord[]> {
+  return groupBy(receipts, (receipt) => receipt.commentId);
+}
+
+function groupBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(item);
+    else grouped.set(key, [item]);
   }
   return grouped;
 }
