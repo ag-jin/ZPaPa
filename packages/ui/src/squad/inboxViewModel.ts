@@ -71,6 +71,7 @@ export const INBOX_KIND_MESSAGE_IDS: Record<InboxItemKind, string> = {
   member_failed: "squad.inbox.kind.member_failed",
   run_orphaned: "squad.inbox.kind.run_orphaned",
   dispatch_skipped: "squad.inbox.kind.dispatch_skipped",
+  run_stalled: "squad.inbox.kind.run_stalled",
 };
 
 /**
@@ -168,6 +169,13 @@ export function inboxItemDetailLine(item: InboxItem): string | null {
     }
     case "dispatch_skipped": {
       // 四条 skip 的 reason 原文点名的就是处置方向（指派给人 / 小队不存在 / 已归档 / 已停用）。
+      push(readDetailString(item.detail, "reason"));
+      break;
+    }
+    case "run_stalled": {
+      // 看门狗/W1：宿主活着但 run 卡住（detail 带 sessionId 可能缺失——未绑会话的死行同样收）。
+      push(readDetailString(item.detail, "agentId"));
+      push(readDetailString(item.detail, "sessionId"));
       push(readDetailString(item.detail, "reason"));
       break;
     }

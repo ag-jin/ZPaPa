@@ -4294,6 +4294,7 @@ const zhCN: Record<string, string> = {
   "squad.inbox.kind.member_failed": "运行失败",
   "squad.inbox.kind.run_orphaned": "残留的运行",
   "squad.inbox.kind.dispatch_skipped": "派发被跳过",
+  "squad.inbox.kind.run_stalled": "运行卡住",
   "squad.inbox.severity.action_required": "需处理",
   "squad.inbox.severity.attention": "需关注",
   "squad.inbox.severity.info": "通知",

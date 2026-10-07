@@ -4588,6 +4588,7 @@ const enUS: Record<string, string> = {
   "squad.inbox.kind.member_failed": "Run failed",
   "squad.inbox.kind.run_orphaned": "Orphaned run",
   "squad.inbox.kind.dispatch_skipped": "Dispatch skipped",
+  "squad.inbox.kind.run_stalled": "Stalled run",
   "squad.inbox.severity.action_required": "Action required",
   "squad.inbox.severity.attention": "Attention",
   "squad.inbox.severity.info": "Notice",

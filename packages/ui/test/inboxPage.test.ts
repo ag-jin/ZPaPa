@@ -41,6 +41,7 @@ const EXPECTED_KINDS: readonly InboxItemKind[] = [
   "member_failed",
   "run_orphaned",
   "dispatch_skipped",
+  "run_stalled",
 ];
 const EXPECTED_SEVERITIES: readonly InboxItemSeverity[] = ["action_required", "attention", "info"];
 
@@ -124,7 +125,7 @@ test("状态机：ready + 刷新失败 ⇒ 数据**不清空** + loadFailure 横
 
 // ---------- ② 文案表 + 中性断言 ----------
 
-test("文案表：kind 键集 = 4、severity 键集 = 3，且两语齐全", () => {
+test("文案表：kind 键集 = 5、severity 键集 = 3，且两语齐全", () => {
   assert.deepEqual(
     Object.keys(INBOX_KIND_MESSAGE_IDS).sort(),
     [...EXPECTED_KINDS].sort(),
