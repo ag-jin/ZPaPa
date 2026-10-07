@@ -35,6 +35,7 @@ import {
   decisionKindMessageId,
   decisionParentCandidates,
   decisionParentReference,
+  decisionSubmitParentId,
 } from "../src/squad/workItemDecisionViewModel.js";
 
 /* C3 线独立复验（test-verifier）：C3.2 决定面。
@@ -634,5 +635,57 @@ test("结构红线（编译期）｜WorkItemDecisionServiceDeps 的键集恰好�
     EQUAL_DISCRIMINATES,
     false,
     "Equal 自检：它必须能区分不等的键集（否则上面的断言是空转）",
+  );
+});
+
+/* ---------- 9：提交载荷（C3 线收尾修复 3bf42e4 的独立复验） ---------- */
+
+test("提交载荷（收尾修复复验）｜切 kind 留下的父选择不得混进审计事实：15 格 + 真服务落地复核", async () => {
+  // 15 格：五键 × {未选 / 选 d-parent / 选 d-other}。
+  const selections: (string | null)[] = [null, "d-parent", "d-other"];
+  const parentRequired = new Set<WorkItemDecisionKind>(["superseded", "reopened"]);
+  let cells = 0;
+  for (const kind of WORK_ITEM_DECISION_KINDS) {
+    for (const selection of selections) {
+      const payloadParent = decisionSubmitParentId(kind, selection);
+      assert.equal(
+        payloadParent,
+        parentRequired.has(kind) ? selection : null,
+        `${kind} + 选中「${selection ?? "无"}」⇒ 载荷父 = ${
+          parentRequired.has(kind) ? "选中值" : "null（残留选择必须被剥掉）"
+        }`,
+      );
+      cells += 1;
+    }
+  }
+  assert.equal(cells, 15, "15 格全部跑到");
+
+  // 真服务落地复核：剥掉父之后的 payload（proposal + 残留选择）在库里就是 parentDecisionId=null。
+  const f = setupChain();
+  const written = await f.facade.createWorkItemDecision(CHAIN_WS, {
+    workItemId: "wi-chain",
+    kind: "proposal",
+    subject: "残留父选择的提议",
+    // 按 decisionSubmitParentId 的结论：不带 parentDecisionId。
+    sourceRequestId: "stale-parent-1",
+  });
+  assert.equal(
+    written.parentDecisionId,
+    null,
+    "UI 剥掉残留父后，库里那条提议的决定行没有父引用（审计事实不接受看不见的选择）",
+  );
+
+  // 源码传递链：对话框必须经决策函数产出载荷父，不得直传 state。
+  const dialog = UI_SOURCES.find(({ relative }) =>
+    relative.endsWith("WorkItemDecisionDialog.tsx"),
+  )!.source;
+  assert.equal(
+    dialog.split("decisionSubmitParentId(kind, parentDecisionId)").length - 1,
+    1,
+    "载荷父必须经 decisionSubmitParentId 计算（恰一处）",
+  );
+  assert.ok(
+    dialog.includes("...(parentForSubmit === null ? {} : { parentDecisionId: parentForSubmit })"),
+    "载荷只在必填 kind 且选过父时才带 parentDecisionId",
   );
 });
