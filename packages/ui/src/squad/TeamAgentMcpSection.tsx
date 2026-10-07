@@ -56,7 +56,10 @@ export function TeamAgentMcpSection({
   const rows = listMcpServerEntries(servers);
   const [editor, setEditor] = useState<EditorTarget | null>(null);
 
-  const saveEntry = (originalName: string | null, entry: { name: string; config: McpServerConfig }) => {
+  const saveEntry = (
+    originalName: string | null,
+    entry: { name: string; config: McpServerConfig },
+  ) => {
     const next: Record<string, McpServerConfig> = { ...servers };
     // 改名 = 删旧键 + 写新键；同名覆盖 = 直接写（同名行的「更新」只有这一条路径）。
     if (originalName !== null && originalName !== entry.name) delete next[originalName];
@@ -206,9 +209,7 @@ function McpServerEditorDialog({
             ) : null}
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor={configControlId}>
-              {t("squad.agentMcp.dialog.config")}
-            </Label>
+            <Label htmlFor={configControlId}>{t("squad.agentMcp.dialog.config")}</Label>
             <Textarea
               id={configControlId}
               rows={6}

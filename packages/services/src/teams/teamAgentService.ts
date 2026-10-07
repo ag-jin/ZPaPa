@@ -47,17 +47,17 @@ export type TeamAgentEditablePatch = Partial<
   Pick<
     TeamAgent,
     | "name"
-      | "systemPrompt"
-      | "memoryScope"
-      | "maxConcurrentRuns"
-      | "description"
-      | "color"
-      | "modelSelection"
-      | "skills"
-      | "tools"
-      | "disallowedTools"
-      | "permissionMode"
-      | "mcpServers"
+    | "systemPrompt"
+    | "memoryScope"
+    | "maxConcurrentRuns"
+    | "description"
+    | "color"
+    | "modelSelection"
+    | "skills"
+    | "tools"
+    | "disallowedTools"
+    | "permissionMode"
+    | "mcpServers"
   >
 >;
 

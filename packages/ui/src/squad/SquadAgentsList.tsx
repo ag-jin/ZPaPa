@@ -135,11 +135,21 @@ export function SquadAgentsList({
                         : presence.workload === "queued"
                           ? "squad.sidebar.queued"
                           : "squad.sidebar.idle",
-                      { count: presence.workload === "idle" ? 0 : presence.workload === "queued" ? presence.queuedCount : presence.runningCount },
+                      {
+                        count:
+                          presence.workload === "idle"
+                            ? 0
+                            : presence.workload === "queued"
+                              ? presence.queuedCount
+                              : presence.runningCount,
+                      },
                     )}
                   >
                     <span
-                      className={cn("inline-block size-1.5 rounded-full align-middle", PRESENCE_DOT_CLASSNAME[presence.workload])}
+                      className={cn(
+                        "inline-block size-1.5 rounded-full align-middle",
+                        PRESENCE_DOT_CLASSNAME[presence.workload],
+                      )}
                       aria-hidden
                     />
                     {presence.workload === "working" ? (

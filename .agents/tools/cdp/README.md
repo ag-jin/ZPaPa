@@ -35,17 +35,23 @@ node .agents/tools/cdp/cdp.mjs "$WS" "
 `useTabStore` 是 hook，不能在 React 外调。从 TabStoreProvider 的 fiber 取 store 实例：
 
 ```js
-const rootEl = document.getElementById('root');
-const ck = Object.keys(rootEl).find(k => k.startsWith('__reactContainer'));
-let fiber = rootEl[ck], seen = new Set(), provider = null;
+const rootEl = document.getElementById("root");
+const ck = Object.keys(rootEl).find((k) => k.startsWith("__reactContainer"));
+let fiber = rootEl[ck],
+  seen = new Set(),
+  provider = null;
 (function walk(f, d) {
   if (!f || d > 120 || seen.has(f) || provider) return;
   seen.add(f);
-  const n = typeof f.type === 'function' ? (f.type.displayName || f.type.name) : '';
-  if (n === 'TabStoreProvider') { provider = f; return; }
-  walk(f.child, d + 1); walk(f.sibling, d);
+  const n = typeof f.type === "function" ? f.type.displayName || f.type.name : "";
+  if (n === "TabStoreProvider") {
+    provider = f;
+    return;
+  }
+  walk(f.child, d + 1);
+  walk(f.sibling, d);
 })(fiber, 0);
-const store = provider.memoizedState.memoizedState.current;  // useRef
+const store = provider.memoizedState.memoizedState.current; // useRef
 store.getState().tabs;
 ```
 

@@ -747,10 +747,7 @@ export function openFileTreeSidePane(
     ...(options.temporaryExternalDirectory ? { temporaryExternalDirectory: true } : {}),
   };
   const withoutExisting = (current?.tabs ?? []).filter((tab) => tab.type !== "file-tree");
-  return activateSidePaneTab(
-    current ? { ...current, tabs: withoutExisting } : current,
-    next,
-  );
+  return activateSidePaneTab(current ? { ...current, tabs: withoutExisting } : current, next);
 }
 
 function createTerminalSidePaneTab(options: {

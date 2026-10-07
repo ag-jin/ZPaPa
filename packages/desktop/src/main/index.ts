@@ -143,10 +143,7 @@ import {
   handleDesktopWindowCloseRequest,
 } from "./desktopWindowLifecycle.js";
 import { resolveZCodeBuiltinProviderConfigFilePath } from "./desktopProviderConfig.js";
-import {
-  spawnResidentHost,
-  type ResidentHostHandle,
-} from "./desktopResidentHost.js";
+import { spawnResidentHost, type ResidentHostHandle } from "./desktopResidentHost.js";
 import {
   getCredentialsDir,
   isDockerDaemonAvailable,

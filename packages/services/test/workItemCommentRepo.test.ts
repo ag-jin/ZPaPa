@@ -35,7 +35,10 @@ test("写读往返：全字段一致（mentions JSON / inline 锚点 / sourceRun
   const { repo } = setup();
   repo.add(
     input({
-      mentions: [{ type: "agent", id: "ta-1" }, { type: "all", id: "all" }],
+      mentions: [
+        { type: "agent", id: "ta-1" },
+        { type: "all", id: "all" },
+      ],
       command: "note",
       inline: { path: "a.ts", startLine: 3, baseRevision: "abc123" },
       sourceRun: { runId: "r-1", role: "member", agentId: "ta-9" },
@@ -45,7 +48,10 @@ test("写读往返：全字段一致（mentions JSON / inline 锚点 / sourceRun
   const read = repo.get("c-1")!;
   assert.equal(read.body, "原文");
   assert.equal(read.command, "note");
-  assert.deepEqual(read.mentions, [{ type: "agent", id: "ta-1" }, { type: "all", id: "all" }]);
+  assert.deepEqual(read.mentions, [
+    { type: "agent", id: "ta-1" },
+    { type: "all", id: "all" },
+  ]);
   assert.deepEqual(read.inline, { path: "a.ts", startLine: 3, baseRevision: "abc123" });
   assert.deepEqual(read.sourceRun, { runId: "r-1", role: "member", agentId: "ta-9" });
   assert.equal(read.author.displayName, "队员");
@@ -127,12 +133,12 @@ test("Reaction：同 (comment,author,emoji) 幂等；不写派发相关列", () 
     `INSERT OR IGNORE INTO work_item_comment_reactions (id, workspace_key, comment_id, author_kind, author_id, emoji, created_at)
      VALUES ('r-2', 'ws', 'c-1', 'human', 'hu-1', '👍', 2)`,
   ).run();
-  const count = db
-    .prepare("SELECT COUNT(*) AS n FROM work_item_comment_reactions")
-    .get() as { n: number };
+  const count = db.prepare("SELECT COUNT(*) AS n FROM work_item_comment_reactions").get() as {
+    n: number;
+  };
   assert.equal(count.n, 1, "同键重投不产生第二行");
-  const cols = (db.prepare("PRAGMA table_info(work_item_comment_reactions)").all() as Array<{ name: string }>).map(
-    (c) => c.name,
-  );
+  const cols = (
+    db.prepare("PRAGMA table_info(work_item_comment_reactions)").all() as Array<{ name: string }>
+  ).map((c) => c.name);
   assert.ok(!cols.some((c) => c.includes("dispatch")), "回应表无派发列（永不触发，§4.4）");
 });

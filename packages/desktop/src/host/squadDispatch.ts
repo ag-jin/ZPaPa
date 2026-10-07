@@ -618,7 +618,10 @@ export type CommentObligationReplayFacts =
   | { ok: false; error: string };
 
 export function commentObligationReplayFacts(input: {
-  receipt: Pick<CommentDispatchReceiptRecord, "dispatchKey" | "workItemId" | "targetAgentId"> | null;
+  receipt: Pick<
+    CommentDispatchReceiptRecord,
+    "dispatchKey" | "workItemId" | "targetAgentId"
+  > | null;
   obligation: Pick<SquadDeferredDispatchRecord, "runId" | "workItemId" | "agentId">;
 }): CommentObligationReplayFacts {
   const { receipt, obligation } = input;

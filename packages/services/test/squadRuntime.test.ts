@@ -16,7 +16,10 @@ import {
   createSquadRuntime,
   renderLeaderBriefingPrompt,
 } from "../src/workitem/squadRuntime.js";
-import { findActiveLeaderRunId, hasInProgressLeaderRun } from "../src/workitem/squadRunLifecycle.js";
+import {
+  findActiveLeaderRunId,
+  hasInProgressLeaderRun,
+} from "../src/workitem/squadRunLifecycle.js";
 import type { SquadRunRecord } from "../src/workitem/squadRunRepo.js";
 import { slugForId } from "../src/workitem/slug.js";
 import type { WorkItemEvent } from "../src/workitem/workItemService.js";

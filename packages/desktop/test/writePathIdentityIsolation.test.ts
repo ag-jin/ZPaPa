@@ -129,7 +129,11 @@ const remoteAddress = {
 const mutations: Array<{ name: string; mutation: unknown; expectMethod: string }> = [
   { name: "pin", mutation: { kind: "pin", pinned: true }, expectMethod: "setTaskPinned" },
   { name: "archive", mutation: { kind: "archive", archived: true }, expectMethod: "archiveTask" },
-  { name: "unarchive", mutation: { kind: "archive", archived: false }, expectMethod: "unarchiveTask" },
+  {
+    name: "unarchive",
+    mutation: { kind: "archive", archived: false },
+    expectMethod: "unarchiveTask",
+  },
   { name: "delete", mutation: { kind: "delete" }, expectMethod: "deleteTask" },
   { name: "mark-read", mutation: { kind: "mark-read" }, expectMethod: "setTaskUnread" },
 ];
@@ -144,7 +148,10 @@ for (const { name, mutation, expectMethod } of mutations) {
     });
 
     const target = calls.find((call) => call.method === expectMethod);
-    assert.ok(target, `应调用对端 ${expectMethod}（实际调用: ${calls.map((c) => c.method).join(", ")}）`);
+    assert.ok(
+      target,
+      `应调用对端 ${expectMethod}（实际调用: ${calls.map((c) => c.method).join(", ")}）`,
+    );
     assert.equal(
       target.request.workspaceIdentity,
       undefined,
@@ -197,7 +204,11 @@ test("本地写操作仍原样保留 identity（剥离只作用于远程 source�
     resolveSource: (scope) =>
       scope.workspaceIdentity === localIdentity
         ? {
-            scope: { kind: "local" as const, workspacePath: "/local/project", workspaceIdentity: localIdentity },
+            scope: {
+              kind: "local" as const,
+              workspacePath: "/local/project",
+              workspaceIdentity: localIdentity,
+            },
             taskService: localTaskService as never,
             sourceAvailability: "online" as const,
           }

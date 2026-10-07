@@ -64,7 +64,9 @@ const deviceChannel = {
   listRegisteredProjects: async (): Promise<string[]> => {
     const settings = await conn.services.settingService.get();
     const recent = settings.recentProjects ?? [];
-    return recent.filter((item: unknown): item is string => typeof item === "string" && item.length > 0);
+    return recent.filter(
+      (item: unknown): item is string => typeof item === "string" && item.length > 0,
+    );
   },
   getSettings: async (): Promise<Record<string, unknown>> =>
     (await conn.services.settingService.get()) as unknown as Record<string, unknown>,
@@ -106,7 +108,12 @@ const settings = await deviceChannel.getSettings();
 const entries = pickProjectableSettings(settings);
 console.log(`\n── 设备设置投射（白名单）──`);
 console.log(`   可投射字段: ${entries.length} 个`);
-console.log(`   示例: ${entries.slice(0, 5).map((e: { key: string }) => e.key).join(", ")}\n`);
+console.log(
+  `   示例: ${entries
+    .slice(0, 5)
+    .map((e: { key: string }) => e.key)
+    .join(", ")}\n`,
+);
 check("可读到设备设置白名单字段", entries.length > 0, `${entries.length} 个`);
 check(
   "敏感字段未被投射",

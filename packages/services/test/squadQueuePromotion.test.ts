@@ -3,7 +3,10 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { createSquadRuntime } from "../src/workitem/squadRuntime.js";
-import { createSquadRunSettlementHub, type SquadRunSettlement } from "../src/workitem/squadRunSettlementHub.js";
+import {
+  createSquadRunSettlementHub,
+  type SquadRunSettlement,
+} from "../src/workitem/squadRunSettlementHub.js";
 import { makeRepo } from "./helpers/gitFixture.js";
 
 /* C4a：排队行的认领升级（推进入口 = 重放同 runId）与结算事实发布。
@@ -29,11 +32,18 @@ async function promotionSetup(maxConcurrentRuns = 1) {
     runSettlementHub: hub,
   });
   const agent = runtime.teamAgentService.create({
-    name: "p-agent", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns,
+    name: "p-agent",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns,
   });
   const open = (runId: string, workItemId: string) =>
     runtime.lifecycle.openMemberRun({
-      runId, workItemId, parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+      runId,
+      workItemId,
+      parentWorkItemId: "wi-p",
+      agentId: agent.id,
+      isLeaderTask: false,
     });
   return { runtime, agentId: agent.id, open, settlements };
 }
@@ -75,7 +85,11 @@ test("认领原子性：容量仍满时重放 ⇒ 仍排队（不偷跑、不建
 test("结算发布：failMemberRun / completeLeaderRun 之后 hub 收到事实（含 agentId）", async () => {
   const { runtime, agentId, settlements } = await promotionSetup(6);
   await runtime.lifecycle.openMemberRun({
-    runId: "run-1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId, isLeaderTask: false,
+    runId: "run-1",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId,
+    isLeaderTask: false,
   });
   await runtime.lifecycle.failMemberRun({ runId: "run-1", reason: "test" });
   assert.deepEqual(
@@ -98,13 +112,22 @@ test("不注入 hub ⇒ 不发布也不影响收尾（可选加法，向后兼�
   const repoRoot = await makeRepo();
   const db = await makeDb();
   const runtime = await createSquadRuntime({
-    db, workspacePath: repoRoot, workspaceIdentity: "ws", readExperimentEnabled: () => true,
+    db,
+    workspacePath: repoRoot,
+    workspaceIdentity: "ws",
+    readExperimentEnabled: () => true,
   });
   const agent = runtime.teamAgentService.create({
-    name: "n-agent", systemPrompt: "s", memoryScope: "project",
+    name: "n-agent",
+    systemPrompt: "s",
+    memoryScope: "project",
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "run-1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "run-1",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   await runtime.lifecycle.failMemberRun({ runId: "run-1", reason: "test" });
   assert.equal(runtime.squadRunRepo.get("run-1")!.status, "discarded");
@@ -121,9 +144,15 @@ test("R2：同 (workItem,agent) 已有活跃 run ⇒ deferred（义务一行、�
   assert.equal(second.kind === "deferred" && second.coalescedInto, undefined, "首条义务无并入目标");
   assert.equal(runtime.squadRunRepo.get("run-2"), null, "不落排队行（义务≠排队：等的判据不同）");
   const obligations = runtime.squadDeferredDispatchRepo.list("ws");
-  assert.deepEqual(obligations.map((o) => o.runId), ["run-2"]);
+  assert.deepEqual(
+    obligations.map((o) => o.runId),
+    ["run-2"],
+  );
   // G4：R2 臂写的义务来源 = 'reassign'（与评论臂的 'comment' 判别，claimDue 消费者据此分流）。
-  assert.deepEqual(obligations.map((o) => o.origin), ["reassign"]);
+  assert.deepEqual(
+    obligations.map((o) => o.origin),
+    ["reassign"],
+  );
 
   // 同 pair 第三次 ⇒ 并入既存义务（留痕），义务表仍一行。
   const third = await open("run-3", "wi-1");
@@ -148,19 +177,32 @@ test("R2 不注入义务表 repo ⇒ 响亮抛（不静默降级）", async () =
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
   const runtime = await createSquadRuntime({
-    db, workspacePath: repoRoot, workspaceIdentity: "ws", readExperimentEnabled: () => true,
+    db,
+    workspacePath: repoRoot,
+    workspaceIdentity: "ws",
+    readExperimentEnabled: () => true,
     // 刻意不注入 runSettlementHub 与义务 repo 的场景由下层单测覆盖；这里用 runtime 直接验证：
   });
   const agent = runtime.teamAgentService.create({
-    name: "r2-agent", systemPrompt: "s", memoryScope: "project",
+    name: "r2-agent",
+    systemPrompt: "s",
+    memoryScope: "project",
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "run-1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "run-1",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   // runtime 组合根总是注入义务 repo（squadRuntime.ts 建一份）——注入路径下 R2 正常生效；
   // 「未注入 ⇒ 抛」的分支由类型可选性保证（组合根唯一装配点已覆盖），此处断言组合根行为即可。
   const second = await runtime.lifecycle.openMemberRun({
-    runId: "run-2", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "run-2",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   assert.equal(second.kind, "deferred", "组合根装配下 R2 生效");
 });
@@ -170,18 +212,38 @@ test("R2 次序（直插构造）：同 pair 既有活跃行又有排队行 ⇒ 
   // 经公开流程到不了「同 pair 活跃+排队并存」（R2 先拦），但统一裁决表钉了次序——
   // 用 repo 直插构造该状态，钉住判据次序不被将来改坏。
   runtime.squadRunRepo.insert({
-    runId: "act-1", workspaceKey: "ws", workspacePath: "/tmp/ws", workItemId: "wi-7",
-    parentWorkItemId: "wi-p", agentId, isLeaderTask: false,
-    branch: "squad/member/aaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbb", dirName: null,
-    status: "open", sessionId: null, dispatchCause: null, causedByRunId: null,
-    createdAt: 1, updatedAt: 1,
+    runId: "act-1",
+    workspaceKey: "ws",
+    workspacePath: "/tmp/ws",
+    workItemId: "wi-7",
+    parentWorkItemId: "wi-p",
+    agentId,
+    isLeaderTask: false,
+    branch: "squad/member/aaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbb",
+    dirName: null,
+    status: "open",
+    sessionId: null,
+    dispatchCause: null,
+    causedByRunId: null,
+    createdAt: 1,
+    updatedAt: 1,
   });
   runtime.squadRunRepo.insert({
-    runId: "q-1", workspaceKey: "ws", workspacePath: "/tmp/ws", workItemId: "wi-7",
-    parentWorkItemId: "wi-p", agentId, isLeaderTask: false,
-    branch: null, dirName: null,
-    status: "queued", sessionId: null, dispatchCause: null, causedByRunId: null,
-    createdAt: 2, updatedAt: 2,
+    runId: "q-1",
+    workspaceKey: "ws",
+    workspacePath: "/tmp/ws",
+    workItemId: "wi-7",
+    parentWorkItemId: "wi-p",
+    agentId,
+    isLeaderTask: false,
+    branch: null,
+    dirName: null,
+    status: "queued",
+    sessionId: null,
+    dispatchCause: null,
+    causedByRunId: null,
+    createdAt: 2,
+    updatedAt: 2,
   });
   const out = await open("run-9", "wi-7");
   assert.equal(out.kind, "coalesced", "已有排队行 ⇒ 并入（第 1 行裁决），不得登记义务");

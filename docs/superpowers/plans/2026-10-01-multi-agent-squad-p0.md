@@ -40,11 +40,13 @@
 ### Task 1: 实验开关（settings 布尔）
 
 **Files:**
+
 - Modify: `packages/shared/src/validationAppSettings.ts`（`appSettingsObjectSchema` 与 `appSettingsPatchSchema` 两处都要加）
 - Modify: `packages/shared/src/protocol.ts`（`AppSettings` 接口加同名字段）
 - Test: `packages/shared/test/experimentalSquadFlag.test.ts`
 
 **Interfaces:**
+
 - Produces: `AppSettings.experimentalAgentSquadsEnabled: boolean`（默认 `false`）
 
 - [ ] **Step 1: 写失败测试**
@@ -106,7 +108,7 @@ Expected: PASS（3 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §12 反查：*开关关闭时，新功能是否**整体消失**、现有功能是否**不受影响**？* 现阶段尚无功能可关，只需确认：①默认值为 `false`（测试已锁）；②patch 可写（测试已锁）；③**没有**改动任何既有字段的默认值。三点都成立则通过；任一条不成立则先修再进下一任务。
+对着 spec §12 反查：_开关关闭时，新功能是否**整体消失**、现有功能是否**不受影响**？_ 现阶段尚无功能可关，只需确认：①默认值为 `false`（测试已锁）；②patch 可写（测试已锁）；③**没有**改动任何既有字段的默认值。三点都成立则通过；任一条不成立则先修再进下一任务。
 
 - [ ] **Step 6: 提交**
 
@@ -120,6 +122,7 @@ git commit -m "feat(squad): 新增多智能体小队实验开关（默认关闭�
 ### Task 2: 「实验功能」设置分区
 
 **Files:**
+
 - Modify: `packages/ui/src/lib/settingsNavigation.ts`（`SettingsSectionId` 联合、`isSettingsSectionId`、**不要**加进 `HIDDEN_SETTINGS_SECTIONS`）
 - Modify: `packages/ui/src/settings/settingsPageConfig.ts`（`BASE_SETTINGS_SECTIONS` 加一项）
 - Create: `packages/ui/src/settings/ExperimentsSection.tsx`
@@ -128,6 +131,7 @@ git commit -m "feat(squad): 新增多智能体小队实验开关（默认关闭�
 - Test: `packages/ui/test/settingsExperimentsSection.test.ts`
 
 **Interfaces:**
+
 - Consumes: `experimentalAgentSquadsEnabled`（Task 1）
 - Produces: `SettingsSectionId` 新增取值 `"experiments"`
 
@@ -201,7 +205,7 @@ Expected: PASS（2 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §11.1 与 §12 反查：*开关是否**真的能开到**？* 逐条核对——①分区**不在**隐藏集（测试已锁）；②`isSettingsSectionId` 认它，否则从别的入口跳转会回落（代码已加）；③渲染分支已接；④locale 两语都有（缺一会在另一种语言下显示 key）；⑤写的是**运行期** appSettings 而不是编译期常量。任一条缺口先补。
+对着 spec §11.1 与 §12 反查：_开关是否**真的能开到**？_ 逐条核对——①分区**不在**隐藏集（测试已锁）；②`isSettingsSectionId` 认它，否则从别的入口跳转会回落（代码已加）；③渲染分支已接；④locale 两语都有（缺一会在另一种语言下显示 key）；⑤写的是**运行期** appSettings 而不是编译期常量。任一条缺口先补。
 
 - [ ] **Step 6: 提交**
 
@@ -215,11 +219,13 @@ git commit -m "feat(squad): 新增「实验功能」设置分区与小队开关"
 ### Task 3: 工作项域模型（状态 + schema）
 
 **Files:**
+
 - Create: `packages/shared/src/work-item.ts`
 - Modify: `packages/shared/src/index.ts`（导出）
 - Test: `packages/shared/test/workItemDomain.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type WorkItemStatusKey = "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled"`
   - `type WorkItemStatusCategory = "unstarted" | "started" | "done" | "closed"`
@@ -355,7 +361,7 @@ Expected: PASS（4 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §4 与 §5.7 反查：*将来用 category 做聚合的地方会不会被迫比较键名？* 检查——①`isTerminalWorkItemStatus` 已提供，且**内部**走 category；②`category` 映射表是**穷举**的（Record 键类型保证）；③schema 拒绝未知状态（否则脏数据会带崩映射表）；④`in_review` 被断定为非终态（这条最容易写反）。缺一先补。
+对着 spec §4 与 §5.7 反查：_将来用 category 做聚合的地方会不会被迫比较键名？_ 检查——①`isTerminalWorkItemStatus` 已提供，且**内部**走 category；②`category` 映射表是**穷举**的（Record 键类型保证）；③schema 拒绝未知状态（否则脏数据会带崩映射表）；④`in_review` 被断定为非终态（这条最容易写反）。缺一先补。
 
 - [ ] **Step 6: 提交**
 
@@ -369,11 +375,13 @@ git commit -m "feat(squad): 工作项域模型（4 category / 6 键 + schema + �
 ### Task 4: 工作项表迁移（只追加）
 
 **Files:**
+
 - Modify: `packages/services/src/session/tasksDatabase/schema-v1.ts`（新增 `WORK_ITEM_SCHEMA`）
 - Modify: `packages/services/src/session/tasksDatabase/migrations.ts`（追加迁移项）
 - Test: `packages/services/test/workItemMigration.test.ts`
 
 **Interfaces:**
+
 - Consumes: 无（纯 DDL）
 - Produces: 表 `work_items`，索引 `idx_work_items_parent`、`idx_work_items_status`、`idx_work_items_workspace`
 
@@ -465,7 +473,7 @@ Expected: PASS（2 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §3.8 与 Global Constraints 反查：*老库升级会不会被这条迁移弄坏？* 核对——①新表用 `IF NOT EXISTS`，重复应用安全（测试已锁）；②**没有**触碰既有表（逐行 diff 确认只增）；③索引是**部分索引**（`archived_at IS NULL`），归档项不拖慢列表；④`assignee_type` 无外键，避免归档对象导致写入失败（这是 spec §3.10「只归档不硬删」的必然要求）。
+对着 spec §3.8 与 Global Constraints 反查：_老库升级会不会被这条迁移弄坏？_ 核对——①新表用 `IF NOT EXISTS`，重复应用安全（测试已锁）；②**没有**触碰既有表（逐行 diff 确认只增）；③索引是**部分索引**（`archived_at IS NULL`），归档项不拖慢列表；④`assignee_type` 无外键，避免归档对象导致写入失败（这是 spec §3.10「只归档不硬删」的必然要求）。
 
 - [ ] **Step 6: 提交**
 
@@ -479,10 +487,12 @@ git commit -m "feat(squad): 追加 work_items 表与索引（只追加迁移）"
 ### Task 5: 工作项 Repo（CRUD + 父树 + 聚合）
 
 **Files:**
+
 - Create: `packages/services/src/workitem/workItemRepo.ts`
 - Test: `packages/services/test/workItemRepo.test.ts`
 
 **Interfaces:**
+
 - Consumes: `WORK_ITEM_SCHEMA`（Task 4）、`WorkItem` / `WorkItemStatusKey`（Task 3）
 - Produces（真实签名，后续任务依赖）:
   - `createWorkItemRepo(db: DatabaseSync): WorkItemRepo`
@@ -584,7 +594,9 @@ return result.changes === 1;
 - `areAllChildrenTerminal` 在 **SQL 只取 status**，再在内存用 `isTerminalWorkItemStatus` 判定，**不要**把状态键名写进 SQL：
 
 ```ts
-const rows = db.prepare("SELECT status FROM work_items WHERE parent_id=? AND archived_at IS NULL").all(parentId);
+const rows = db
+  .prepare("SELECT status FROM work_items WHERE parent_id=? AND archived_at IS NULL")
+  .all(parentId);
 if (rows.length === 0) return false;
 return rows.every((r) => isTerminalWorkItemStatus(r.status as WorkItemStatusKey));
 ```
@@ -596,7 +608,7 @@ Expected: PASS（5 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §3.10（限额、环）与 §5.7（聚合用 category）反查：*这层缺了什么会导致上层写错？* 检查——①聚合**空子项返回 false**（已测，否则空父项会被误判完成）；②CAS 真的不写入（已测）；③**环与深度的校验还没做**——它属于服务层（Task 6），本任务只需在 `insert` 的注释里写明「调用方必须已校验环与深度」，并在 Task 6 落地该校验。若发现本层也能低成本防住（如在 `insert` 时检查 parent 链），则在此补一个规模测试。
+对着 spec §3.10（限额、环）与 §5.7（聚合用 category）反查：_这层缺了什么会导致上层写错？_ 检查——①聚合**空子项返回 false**（已测，否则空父项会被误判完成）；②CAS 真的不写入（已测）；③**环与深度的校验还没做**——它属于服务层（Task 6），本任务只需在 `insert` 的注释里写明「调用方必须已校验环与深度」，并在 Task 6 落地该校验。若发现本层也能低成本防住（如在 `insert` 时检查 parent 链），则在此补一个规模测试。
 
 - [ ] **Step 6: 提交**
 
@@ -610,10 +622,12 @@ git commit -m "feat(squad): 工作项 Repo（CRUD + 父树聚合 + CAS 流转）
 ### Task 6: 工作项服务（唯一写者 + 环/深度校验 + 派发事件）
 
 **Files:**
+
 - Create: `packages/services/src/workitem/workItemService.ts`
 - Test: `packages/services/test/workItemService.test.ts`
 
 **Interfaces:**
+
 - Consumes: `WorkItemRepo`（Task 5）、`isTerminalWorkItemStatus` / 限额（Task 3）
 - Produces:
   - `createWorkItemService(deps: { repo: WorkItemRepo; emit: (event: WorkItemEvent) => void }): WorkItemService`
@@ -641,13 +655,21 @@ function setup() {
   });
   return { service, events };
 }
-const base = { workspaceIdentity: "ws", workspacePath: "/tmp/ws", body: "", assignee: { type: "user" as const, id: "u1" } };
+const base = {
+  workspaceIdentity: "ws",
+  workspacePath: "/tmp/ws",
+  body: "",
+  assignee: { type: "user" as const, id: "u1" },
+};
 
 test("成环被拒绝", () => {
   const { service } = setup();
   const a = service.create({ ...base, title: "a" });
   const b = service.create({ ...base, title: "b", parentId: a.id });
-  assert.throws(() => service.create({ ...base, title: "x", parentId: b.id, id: a.id }), /环|cycle/i);
+  assert.throws(
+    () => service.create({ ...base, title: "x", parentId: b.id, id: a.id }),
+    /环|cycle/i,
+  );
 });
 
 test("超过深度上限被拒绝", () => {
@@ -661,7 +683,10 @@ test("超过子项上限被拒绝", () => {
   const { service } = setup();
   const p = service.create({ ...base, title: "p" });
   for (let i = 0; i < 50; i++) service.create({ ...base, title: `c${i}`, parentId: p.id });
-  assert.throws(() => service.create({ ...base, title: "overflow", parentId: p.id }), /子项|children/i);
+  assert.throws(
+    () => service.create({ ...base, title: "overflow", parentId: p.id }),
+    /子项|children/i,
+  );
 });
 
 // 唯一写者：改状态必须经服务，且产生事件。
@@ -669,7 +694,12 @@ test("状态流转产生事件；CAS 失败不发事件", () => {
   const { service, events } = setup();
   const a = service.create({ ...base, title: "a" });
   assert.equal(service.transition(a.id, "in_progress", "todo"), true);
-  assert.deepEqual(events.at(-1), { kind: "workitem.status_changed", id: a.id, from: "todo", to: "in_progress" });
+  assert.deepEqual(events.at(-1), {
+    kind: "workitem.status_changed",
+    id: a.id,
+    from: "todo",
+    to: "in_progress",
+  });
   assert.equal(service.transition(a.id, "done", "todo"), false); // 前置已不是 todo
   assert.equal(events.filter((e) => e.kind === "workitem.status_changed").length, 1);
 });
@@ -701,7 +731,7 @@ Expected: PASS（5 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §4.3（唯一写者）、§3.10（环/限额）、§5.7（幂等、child_completed）反查：*还有谁能绕过服务写 status？* 逐项核对——①`repo.updateStatus` 仍是公开方法，**UI 若直接拿到 repo 就能绕过**：本任务要确认服务层是该 repo 的**唯一对外暴露者**（repo 不进 `packages/services/src/index.ts` 的公开导出）；②环检测有测试；③深度与子项上限有测试；④CAS 失败**不发**事件（已测）；⑤`child_completed` 只在**全部**子项终态时发（已测的是单子项；补一个「还有一个 in_review 时不发」的断言，避免提前触发队长）。⑤若缺则补齐再提交。
+对着 spec §4.3（唯一写者）、§3.10（环/限额）、§5.7（幂等、child*completed）反查：*还有谁能绕过服务写 status？\_ 逐项核对——①`repo.updateStatus` 仍是公开方法，**UI 若直接拿到 repo 就能绕过**：本任务要确认服务层是该 repo 的**唯一对外暴露者**（repo 不进 `packages/services/src/index.ts` 的公开导出）；②环检测有测试；③深度与子项上限有测试；④CAS 失败**不发**事件（已测）；⑤`child_completed` 只在**全部**子项终态时发（已测的是单子项；补一个「还有一个 in_review 时不发」的断言，避免提前触发队长）。⑤若缺则补齐再提交。
 
 - [ ] **Step 6: 提交**
 
@@ -715,12 +745,14 @@ git commit -m "feat(squad): 工作项服务（唯一写者 + 环/深度/配额�
 ### Task 7: 协作智能体域模型 + 实验命名空间存储
 
 **Files:**
+
 - Create: `packages/shared/src/team-agent.ts`
 - Create: `packages/services/src/teams/teamAgentStorage.ts`
 - Modify: `packages/shared/src/index.ts`（导出）
 - Test: `packages/shared/test/teamAgentDomain.test.ts`、`packages/services/test/teamAgentStorage.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `teamAgentSchema`（zod，**strict**）与 `type TeamAgent`，字段含 `id`（稳定 id）、`name`、`description?`、`color?`、`systemPrompt`、`skills: string[]`、`modelSelection?`、`tools?`、`disallowedTools?`、`permissionMode?`、`memoryScope: "user" | "project" | "local"`、`enabled`、`archivedAt?`、`provenance?`
   - `resolveSquadAgentRoot(workspacePath: string): string` → `<workspacePath>/.zcode/squad/agents`
@@ -737,14 +769,23 @@ import { teamAgentSchema } from "../src/team-agent.js";
 
 // 记忆用稳定 id 做 key，因此 id 必填且不得为空（空 id 会让记忆跨智能体串台）。
 test("teamAgent 必须有非空稳定 id", () => {
-  const bad = teamAgentSchema.safeParse({ name: "a", systemPrompt: "s", memoryScope: "project", enabled: true });
+  const bad = teamAgentSchema.safeParse({
+    name: "a",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
   assert.equal(bad.success, false);
 });
 
 // strict schema：多余字段直接拒绝——这是「不绑 host」的机器化证明（决策 E）。
 test("strict schema 拒绝 hostBinding 等未知字段", () => {
   const parsed = teamAgentSchema.safeParse({
-    id: "ta_1", name: "a", systemPrompt: "s", memoryScope: "project", enabled: true,
+    id: "ta_1",
+    name: "a",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
     hostBinding: "h1", // 多余字段
   });
   assert.equal(parsed.success, false);
@@ -760,14 +801,24 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  deleteTeamAgent, listTeamAgents, readTeamAgent, resolveSquadAgentRoot, writeTeamAgent,
+  deleteTeamAgent,
+  listTeamAgents,
+  readTeamAgent,
+  resolveSquadAgentRoot,
+  writeTeamAgent,
 } from "../src/teams/teamAgentStorage.js";
 
 test("定义落在实验命名空间，可写可读可删", () => {
   const ws = mkdtempSync(join(tmpdir(), "ws-"));
   const root = resolveSquadAgentRoot(ws);
   assert.ok(root.endsWith(join(".zcode", "squad", "agents")));
-  writeTeamAgent(root, { id: "ta_1", name: "审查者", systemPrompt: "s", memoryScope: "project", enabled: true });
+  writeTeamAgent(root, {
+    id: "ta_1",
+    name: "审查者",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
   assert.equal(readTeamAgent(root, "ta_1")?.name, "审查者");
   assert.equal(listTeamAgents(root).length, 1);
   deleteTeamAgent(root, "ta_1");
@@ -799,7 +850,7 @@ Expected: PASS（4 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §3.2 与 §7 反查：*这层会不会让两套 agent 互相污染？* 核对——①存储路径与 `<ws>/.zcode/agents` **不同**（测试已锁）；②`id` 非空（记忆 key 依赖它）；③schema **strict**，`hostBinding` 之类被拒（决策 E 已定不绑 host）；④坏 JSON 不让列表崩。另需确认：`.zcode/squad/` 已进**排除清单**（spec §13 C10）——若本任务引入该目录而排除清单尚未集中，则在本任务内把 `.zcode/squad/` 加入现有排除/忽略处，并记录位置。
+对着 spec §3.2 与 §7 反查：_这层会不会让两套 agent 互相污染？_ 核对——①存储路径与 `<ws>/.zcode/agents` **不同**（测试已锁）；②`id` 非空（记忆 key 依赖它）；③schema **strict**，`hostBinding` 之类被拒（决策 E 已定不绑 host）；④坏 JSON 不让列表崩。另需确认：`.zcode/squad/` 已进**排除清单**（spec §13 C10）——若本任务引入该目录而排除清单尚未集中，则在本任务内把 `.zcode/squad/` 加入现有排除/忽略处，并记录位置。
 
 - [ ] **Step 6: 提交**
 
@@ -813,10 +864,12 @@ git commit -m "feat(squad): 协作智能体域模型与实验命名空间存储"
 ### Task 8: 协作智能体服务（含一次性预填）
 
 **Files:**
+
 - Create: `packages/services/src/teams/teamAgentService.ts`
 - Test: `packages/services/test/teamAgentService.test.ts`
 
 **Interfaces:**
+
 - Consumes: `teamAgentStorage`（Task 7）、现有 `AgentSummary`（`packages/shared/src/subagents-types.ts`）
 - Produces:
   - `createTeamAgentService(deps: { root: string }): TeamAgentService`
@@ -845,8 +898,14 @@ function setup() {
 test("预填只拷贝字段，不建立引用", () => {
   const svc = setup();
   const source = {
-    id: "user:user:reviewer", name: "审查者", description: "d", systemPrompt: "sp",
-    path: "/tmp/x.md", scope: "user", source: "user", enabled: true,
+    id: "user:user:reviewer",
+    name: "审查者",
+    description: "d",
+    systemPrompt: "sp",
+    path: "/tmp/x.md",
+    scope: "user",
+    source: "user",
+    enabled: true,
     modelSelection: { providerId: "p", modelId: "m" },
   } as never;
   const draft = svc.prefillFrom(source);
@@ -892,7 +951,7 @@ Expected: PASS（3 passed）
 
 - [ ] **Step 5: 逆推审查**
 
-对着 spec §3.2（定义来源=拷贝，无持续引用）与 §13.2（与现有 subagent 并存）反查：*预填会不会变成隐式引用？* 核对——①预填结果**不含** `id` / `path`（已测，这条是「无引用」的机器化证明）；②归档是加时间戳而非删除文件；③`setEnabled` 不触碰现有 `agents-state.json`（两套存储彻底分开）；④删除整个 `.zcode/squad/` 目录后，Task 1 的开关关闭状态下现有 subagent 仍可用——若本任务新增了任何**共享**读写路径，必须先证明它不会回写现有 subagent 存储。
+对着 spec §3.2（定义来源=拷贝，无持续引用）与 §13.2（与现有 subagent 并存）反查：_预填会不会变成隐式引用？_ 核对——①预填结果**不含** `id` / `path`（已测，这条是「无引用」的机器化证明）；②归档是加时间戳而非删除文件；③`setEnabled` 不触碰现有 `agents-state.json`（两套存储彻底分开）；④删除整个 `.zcode/squad/` 目录后，Task 1 的开关关闭状态下现有 subagent 仍可用——若本任务新增了任何**共享**读写路径，必须先证明它不会回写现有 subagent 存储。
 
 - [ ] **Step 6: 提交**
 
@@ -906,6 +965,7 @@ git commit -m "feat(squad): 协作智能体服务（一次性预填 + 归档 + �
 ## 计划的自我审查（Self-Review）
 
 **1. Spec 覆盖**：P0 范围（spec §15）为「工作项实体 + 完整父子树 + 生命周期（唯一写者）+ 协作智能体实体（含 memoryScope）+ 实验分区开关」。
+
 - 工作项实体 → Task 3、4、5
 - 完整父子树 → Task 3（`parentId` / `stage`）、Task 5（聚合）、Task 6（环/深度校验）
 - 生命周期 + 唯一写者 → Task 3（状态与 category）、Task 5（CAS）、Task 6（唯一写者）

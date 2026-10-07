@@ -48,7 +48,9 @@ if (devices.length === 0) {
 }
 const device = devices[0];
 const target = device.target;
-console.log(`   目标: ${target.kind === "ssh" ? `${target.username}@${target.host}` : target.kind}`);
+console.log(
+  `   目标: ${target.kind === "ssh" ? `${target.username}@${target.host}` : target.kind}`,
+);
 
 // 2) 连接（不选目录）
 const t0 = Date.now();
@@ -70,7 +72,9 @@ const [registeredProjects, tasks] = await Promise.all([
   access.access.listAllTasks(),
 ]);
 const allProjects = buildProjectedProjectList({ registeredProjects, tasks });
-console.log(`3) 设备访问: 已登记 ${registeredProjects.length} / 会话 ${tasks.length} / 项目 ${allProjects.length}`);
+console.log(
+  `3) 设备访问: 已登记 ${registeredProjects.length} / 会话 ${tasks.length} / 项目 ${allProjects.length}`,
+);
 
 // 4) 投射同步（含显示偏好过滤）
 const visible = filterProjectsByVisibility(allProjects, device.visibleProjects);
@@ -80,7 +84,9 @@ const syncResult = computeProjectionSync({
   deviceProjects: visible,
   existingTabs: [],
 });
-console.log(`4) 投射: 应创建 ${syncResult.toCreate.length} 个条目（偏好过滤后 ${visible.length}/${allProjects.length}）`);
+console.log(
+  `4) 投射: 应创建 ${syncResult.toCreate.length} 个条目（偏好过滤后 ${visible.length}/${allProjects.length}）`,
+);
 
 // 5) 重复同步应零变更
 const existingTabs = syncResult.toCreate.map((project: { path: string }, index: number) => ({
@@ -89,7 +95,9 @@ const existingTabs = syncResult.toCreate.map((project: { path: string }, index: 
   projection: { deviceSessionId },
 }));
 const second = computeProjectionSync({ deviceSessionId, deviceProjects: visible, existingTabs });
-console.log(`5) 重复同步: 创建 ${second.toCreate.length} / 移除 ${second.toRemoveTabIds.length}（应均为 0）`);
+console.log(
+  `5) 重复同步: 创建 ${second.toCreate.length} / 移除 ${second.toRemoveTabIds.length}（应均为 0）`,
+);
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });
 
@@ -103,7 +111,11 @@ console.log("\n=== 验收结论（设备连接完整生命周期）===");
 console.log(`读设备配置:   ✅（${devices.length} 台）`);
 console.log(`连接(无目录): ✅（${Date.now() - t0}ms）`);
 console.log(`设备访问:     ✅（${allProjects.length} 项目 / ${tasks.length} 会话）`);
-console.log(`投射同步:     ${syncResult.toCreate.length === visible.length ? "✅" : "❌"}（建 ${syncResult.toCreate.length} 个）`);
-console.log(`幂等性:       ${second.toCreate.length === 0 && second.toRemoveTabIds.length === 0 ? "✅" : "❌"}`);
+console.log(
+  `投射同步:     ${syncResult.toCreate.length === visible.length ? "✅" : "❌"}（建 ${syncResult.toCreate.length} 个）`,
+);
+console.log(
+  `幂等性:       ${second.toCreate.length === 0 && second.toRemoveTabIds.length === 0 ? "✅" : "❌"}`,
+);
 console.log(`只读验证:     ✅ 未写入对端数据`);
 process.exit(ok ? 0 : 1);

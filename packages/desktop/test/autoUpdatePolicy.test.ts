@@ -23,7 +23,11 @@ import {
 test("parseMacDesignatedRequirement：未签名（codesign 非 0 退出）判为无 DR", () => {
   // 真实未签名输出：codesign -d -r- 退出码非 0，stderr 写 "code object is not signed at all"
   assert.equal(
-    parseMacDesignatedRequirement(1, "", "/Applications/ZCode.app: code object is not signed at all"),
+    parseMacDesignatedRequirement(
+      1,
+      "",
+      "/Applications/ZCode.app: code object is not signed at all",
+    ),
     false,
   );
   // 退出码是稳定契约：即使 stderr 为空/被本地化，也必须判否

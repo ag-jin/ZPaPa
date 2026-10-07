@@ -2,12 +2,7 @@ import type { IGitService } from "../git/git.js";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 import { readBestWiki, resolveWikiStorePaths } from "./wikiStore.js";
 import { buildWikiRenderTree, countWikiPageNodes } from "./wikiTypes.js";
-import type {
-  WikiProjectStatus,
-  WikiRenderNode,
-  WikiSummary,
-  WikiTaskState,
-} from "./wikiTypes.js";
+import type { WikiProjectStatus, WikiRenderNode, WikiSummary, WikiTaskState } from "./wikiTypes.js";
 
 /** 读取渲染树（供服务层调用）。 */
 export async function readWikiRenderTree(workspacePath: string): Promise<{

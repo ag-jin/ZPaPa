@@ -48,15 +48,12 @@ export function WorkItemsPageDialogs({
           workItem={discardTargetItem}
           pending={discarding}
           onCancel={onCancelDiscard}
-          onConfirm={onConfirmDiscard}        />
+          onConfirm={onConfirmDiscard}
+        />
       ) : null}
 
       {canRenderDialogs && dialog?.kind === "create" ? (
-        <WorkItemDialog
-          snapshot={snapshot}
-          onClose={onCloseWorkItem}
-          onSubmit={onSubmitWorkItem}
-        />
+        <WorkItemDialog snapshot={snapshot} onClose={onCloseWorkItem} onSubmit={onSubmitWorkItem} />
       ) : null}
 
       {canRenderDialogs && dialog?.kind === "edit" ? (

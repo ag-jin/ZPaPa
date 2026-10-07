@@ -24,7 +24,10 @@ test("守卫｜MCP 分区：逐行（名字 + 传输徽标 + 编辑/删除）、
     "squad-agent-mcp-add",
     "squad-agent-mcp-empty",
   ]) {
-    assert.ok(section.includes(`data-testid="${testId}"`), `缺 ${testId}（少一个就是少一件可见能力）`);
+    assert.ok(
+      section.includes(`data-testid="${testId}"`),
+      `缺 ${testId}（少一个就是少一件可见能力）`,
+    );
   }
   assert.ok(
     section.includes("listMcpServerEntries("),
@@ -42,7 +45,7 @@ test("守卫｜MCP 分区：逐行（名字 + 传输徽标 + 编辑/删除）、
   assert.equal(
     (section.match(/<Button/g) ?? []).length,
     (section.match(/type="button"/g) ?? []).length,
-    "本文件每个 Button 都必须显式 type=\"button\"",
+    '本文件每个 Button 都必须显式 type="button"',
   );
   assert.ok(!section.includes("<form"), "分区不得自带 form（没有第二个提交入口）");
 });
@@ -73,7 +76,10 @@ test("守卫｜MCP 对话框：名字 + JSON 两个控件、行内错误、保�
     section.includes("mcpServerNameErrorMessageId("),
     "名字错误文案走 view model 的键生成器（档位改名时不会留下写死的旧键）",
   );
-  assert.ok(section.includes("configMessageId"), "配置错误文案走 i18n 键（schema 的 detail 只作副行）");
+  assert.ok(
+    section.includes("configMessageId"),
+    "配置错误文案走 i18n 键（schema 的 detail 只作副行）",
+  );
   // 安全提示（设计 §3.5 的 R4/R5 文案落点）。
   assert.ok(section.includes("squad.agentMcp.securityHint"), "凭据扩散提示在场（R4）");
   assert.ok(section.includes("squad.agentMcp.oauthHint"), "oauth 无头超时提示在场（R5）");
@@ -96,7 +102,11 @@ test("守卫｜TeamAgentDialog 接线：分区进表单、map 受控、提交经
     "提交语义走 view model（空 map 清空 vs 不落盘的两义不能写错在表单里）",
   );
   // 变异：initial 类型里不放 mcpServers ⇒ 编辑既有 agent 时配置读不进来（一保存就清空）。
-  assert.match(dialog, /mcpServers\?: Record<string, McpServerConfig>/, "initial / 提交入参形状含该字段");
+  assert.match(
+    dialog,
+    /mcpServers\?: Record<string, McpServerConfig>/,
+    "initial / 提交入参形状含该字段",
+  );
   assert.ok(dialog.includes("initial?.mcpServers"), "初值来自既有定义");
 });
 
@@ -108,10 +118,7 @@ test("守卫｜SquadAgentsPage 接线：编辑回填 mcpServers、提交入参�
     page.includes("dialog.agent.mcpServers !== undefined"),
     "编辑初值回填 mcpServers（缺失时传 undefined 会被服务面当成「没提」——回填必须条件化）",
   );
-  assert.ok(
-    page.includes("mcpServers: dialog.agent.mcpServers"),
-    "初值把既有 map 交给对话框",
-  );
+  assert.ok(page.includes("mcpServers: dialog.agent.mcpServers"), "初值把既有 map 交给对话框");
   assert.match(
     page,
     /mcpServers\?: TeamAgent\["mcpServers"\]/,

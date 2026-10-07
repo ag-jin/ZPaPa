@@ -92,9 +92,5 @@ test("keepFocus：投射条目仍带全 remoteTarget / projection（断开降级
   assert.equal(tab.remoteSessionId, "sess-1");
   assert.deepEqual(tab.remoteTarget, target, "缺 remoteTarget 会让断开降级后认不出这是远程条目");
   assert.deepEqual(tab.projection, { deviceSessionId: "sess-1" });
-  assert.equal(
-    tab.workspaceIdentity,
-    undefined,
-    "投射条目是 transient、不绑工作目录（ADR 0001）",
-  );
+  assert.equal(tab.workspaceIdentity, undefined, "投射条目是 transient、不绑工作目录（ADR 0001）");
 });

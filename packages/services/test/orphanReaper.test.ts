@@ -390,7 +390,11 @@ test("detached 工作树（branch 为 null）：不能证明归属 ⇒ 不碰、
   // 代价是这类树会一直留在 `.worktree/` 下；但它每轮都出现在 `kept` 里（可见），不是静默。
   assert.deepEqual(out.reclaimed, []);
   assert.deepEqual(out.kept, ["det"]);
-  assert.deepEqual(deleted, [], "没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」");
+  assert.deepEqual(
+    deleted,
+    [],
+    "没有分支可删：把 null 喂给 deleteBranch 会变成「删一个叫 null 的分支」",
+  );
   assert.equal(existsSync(worktreePath(f, "det")), true, "摘不了归属就一个字节都不动");
 
   rmSync(worktreePath(f, "det"), { recursive: true, force: true });

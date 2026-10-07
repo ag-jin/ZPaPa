@@ -9,15 +9,25 @@ function setup() {
   runTasksDatabaseMigrations(db);
   return { db, repo: createWakeRuleRepo(db) };
 }
-const rule = (over = {}) => ({
-  id: "w1", workItemId: "wi_1", kind: "every", mode: "continuous",
-  intervalSeconds: 60, fireCount: 0, revision: 0, enabled: true, ...over,
-} as never);
+const rule = (over = {}) =>
+  ({
+    id: "w1",
+    workItemId: "wi_1",
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    fireCount: 0,
+    revision: 0,
+    enabled: true,
+    ...over,
+  }) as never;
 
 test("迁移建出 wake_rules 表", () => {
   const { db } = setup();
   assert.equal(
-    db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'").get().c,
+    db
+      .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'")
+      .get().c,
     1,
   );
 });
@@ -27,7 +37,10 @@ test("listReady 只取到期且 enabled 的规则", () => {
   repo.insert(rule({ id: "w_due", nextFireAt: 100 }));
   repo.insert(rule({ id: "w_future", nextFireAt: 999 }));
   repo.insert(rule({ id: "w_off", nextFireAt: 50, enabled: false }));
-  assert.deepEqual(repo.listReady(200, 10).map((r) => r.id), ["w_due"]);
+  assert.deepEqual(
+    repo.listReady(200, 10).map((r) => r.id),
+    ["w_due"],
+  );
 });
 
 // revision fencing：过期 revision 的推进必须失败，防止编辑后旧派发覆盖新状态。
@@ -79,7 +92,10 @@ test("listReady 遵守 limit 且按 next_fire_at 升序", () => {
   repo.insert(rule({ id: "w2", nextFireAt: 20 }));
   repo.insert(rule({ id: "w1", nextFireAt: 10 }));
   repo.insert(rule({ id: "w3", nextFireAt: 30 }));
-  assert.deepEqual(repo.listReady(100, 2).map((r) => r.id), ["w1", "w2"]);
+  assert.deepEqual(
+    repo.listReady(100, 2).map((r) => r.id),
+    ["w1", "w2"],
+  );
 });
 
 // listByWorkItem 是接口方法之一，且工作项删除/编辑时要按它清理规则，不能只靠全表扫。
@@ -88,7 +104,10 @@ test("listByWorkItem 只返回该工作项的规则", () => {
   repo.insert(rule({ id: "a", workItemId: "wi_1" }));
   repo.insert(rule({ id: "b", workItemId: "wi_2" }));
   repo.insert(rule({ id: "c", workItemId: "wi_1" }));
-  assert.deepEqual(repo.listByWorkItem("wi_1").map((r) => r.id), ["a", "c"]);
+  assert.deepEqual(
+    repo.listByWorkItem("wi_1").map((r) => r.id),
+    ["a", "c"],
+  );
 });
 
 // 表列对齐：① PRAGMA 钉死列名全集(19 个 WakeRule 字段 → 19 列 + created_at/updated_at)。
@@ -156,8 +175,12 @@ test("全部字段往返不丢：表列与 WakeRule 逐字段对齐", () => {
 // 拆列会把合法参数当未知列拒掉。这里直接看库里存的是字符串。
 test("condition/filters/eventTypes 以文本 JSON 存取", () => {
   const { db, repo } = setup();
-  repo.insert(rule({ id: "w1", condition: { type: "children_done" }, eventTypes: ["a"], filters: { k: 1 } }));
-  const row = db.prepare("SELECT condition, event_types, filters FROM wake_rules WHERE id='w1'").get() as {
+  repo.insert(
+    rule({ id: "w1", condition: { type: "children_done" }, eventTypes: ["a"], filters: { k: 1 } }),
+  );
+  const row = db
+    .prepare("SELECT condition, event_types, filters FROM wake_rules WHERE id='w1'")
+    .get() as {
     condition: unknown;
     event_types: unknown;
     filters: unknown;
@@ -186,7 +209,9 @@ test("迁移可重复应用（同一库跑两次）", () => {
   const { db } = setup();
   runTasksDatabaseMigrations(db);
   assert.equal(
-    db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'").get().c,
+    db
+      .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'")
+      .get().c,
     1,
   );
 });
@@ -246,7 +271,8 @@ test("读回抛错不写回：非法行仍在表中原样未动", () => {
   rawInsert(db, { id: "bad_kind", kind: "sometimes", mode: "once" });
   assert.throws(() => repo.get("bad_kind"));
   assert.equal(
-    (db.prepare("SELECT kind FROM wake_rules WHERE id = 'bad_kind'").get() as { kind: string }).kind,
+    (db.prepare("SELECT kind FROM wake_rules WHERE id = 'bad_kind'").get() as { kind: string })
+      .kind,
     "sometimes",
   );
 });

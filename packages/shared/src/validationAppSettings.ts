@@ -429,7 +429,10 @@ const wikiModelSelectionSchema = z
   .object({
     providerId: z.string().trim().min(1),
     modelId: z.string().trim().min(1),
-    options: z.object({ reasoningLevel: z.string().trim().min(1).optional() }).strict().optional(),
+    options: z
+      .object({ reasoningLevel: z.string().trim().min(1).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -563,7 +566,6 @@ const appSettingsObjectSchema = z.object({
   wikiSettings: wikiSettingsSchema.optional(),
 });
 
-
 export const appSettingsSchema = z.preprocess(
   (value) =>
     sanitizeEmbeddedBrowserViewportPreference(
@@ -579,7 +581,6 @@ export const appSettingsSchema = z.preprocess(
     ),
   appSettingsObjectSchema,
 );
-
 
 export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
@@ -664,5 +665,3 @@ export const appSettingsPatchSchema = z.object({
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
   wikiSettings: wikiSettingsSchema.optional(),
 });
-
-

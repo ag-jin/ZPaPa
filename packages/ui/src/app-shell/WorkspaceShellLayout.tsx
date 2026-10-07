@@ -1201,11 +1201,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       handleStartDraftInWorkspaceInChat(workspaceAbsPath, workspaceIdentity);
       useZCodeSessionStore
         .getState()
-        .requestComposerTextInsert(
-          workspaceAbsPath,
-          `@${agentName} `,
-          workspaceIdentity,
-        );
+        .requestComposerTextInsert(workspaceAbsPath, `@${agentName} `, workspaceIdentity);
     },
     [handleStartDraftInWorkspaceInChat, workspaceAbsPath, workspaceIdentity],
   );

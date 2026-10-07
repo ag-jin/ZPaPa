@@ -24,7 +24,9 @@ import { listWikisForWorkspace } from "../src/wiki/wikiRead.js";
 const SAMPLES_ROOT = "/Users/linguojin/Downloads/WIKI";
 
 /** 把某个样本目录搬进 <tmp>/.wiki/，模拟正式产物布局。 */
-async function stageSample(sampleDir: string): Promise<{ workspace: string; cleanup: () => Promise<void> }> {
+async function stageSample(
+  sampleDir: string,
+): Promise<{ workspace: string; cleanup: () => Promise<void> }> {
   const workspace = await mkdtemp(join(tmpdir(), "wiki-sample-"));
   const target = join(workspace, WIKI_DIR_RELATIVE_PATH);
   await mkdir(target, { recursive: true });

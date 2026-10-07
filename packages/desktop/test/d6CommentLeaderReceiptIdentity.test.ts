@@ -13,7 +13,10 @@ import { createCommentService } from "../../services/src/workitem/commentService
 import { createSquadDeferredDispatchRepo } from "../../services/src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../../services/src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../../services/src/workitem/workItemActivityRepo.js";
-import { createWorkItemCommentRepo, type AuthorRef } from "../../services/src/workitem/workItemCommentRepo.js";
+import {
+  createWorkItemCommentRepo,
+  type AuthorRef,
+} from "../../services/src/workitem/workItemCommentRepo.js";
 import { createWorkItemCommentReactionRepo } from "../../services/src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemRepo } from "../../services/src/workitem/workItemRepo.js";
 import {
@@ -146,12 +149,20 @@ test("D6 身份核对：只有「receipt 记的小队在册、且该队队长正
   );
   /* 否定格二：receipt 里没有小队（@普通智能体 / 回复锚点 / ⑦ 兜底）。 */
   assert.equal(
-    resolveCommentLeaderOverride({ targetAgentId: target, squadId: undefined, squads: rosterSquads }),
+    resolveCommentLeaderOverride({
+      targetAgentId: target,
+      squadId: undefined,
+      squads: rosterSquads,
+    }),
     null,
   );
   /* 否定格三：小队不在名册（已删 / 指派引用失效）。 */
   assert.equal(
-    resolveCommentLeaderOverride({ targetAgentId: target, squadId: "d6v2-gone", squads: rosterSquads }),
+    resolveCommentLeaderOverride({
+      targetAgentId: target,
+      squadId: "d6v2-gone",
+      squads: rosterSquads,
+    }),
     null,
     "小队查不到 ⇒ 退回普通 agent 覆盖（目标本身是真实智能体，请求不丢）",
   );
@@ -165,7 +176,10 @@ test("D6 身份核对：只有「receipt 记的小队在册、且该队队长正
     null,
   );
   /* 边角：名册为空 / squadId 为空串（receipt 侧读法会先抛，这里是防御性的第二道）。 */
-  assert.equal(resolveCommentLeaderOverride({ targetAgentId: target, squadId: SQUAD, squads: [] }), null);
+  assert.equal(
+    resolveCommentLeaderOverride({ targetAgentId: target, squadId: SQUAD, squads: [] }),
+    null,
+  );
   assert.equal(
     resolveCommentLeaderOverride({ targetAgentId: target, squadId: "", squads: rosterSquads }),
     null,
@@ -254,10 +268,16 @@ test("D6 端到端缝合（三条评论路径共用的事实面）：真 receipt
     initiatedBy: HUMAN,
     body: "@队员 看一下",
   });
-  const plain = h.receipts.listByWorkItem(WS, ITEM_AGENT).find((row) => row.commentId === "d6v2-c-agent");
+  const plain = h.receipts
+    .listByWorkItem(WS, ITEM_AGENT)
+    .find((row) => row.commentId === "d6v2-c-agent");
   assert.ok(plain !== undefined);
   const plainSquadId = commentReceiptSquadId(plain);
-  assert.equal(plainSquadId, undefined, "@agent 的请求事实里没有小队（附一个会让下游误起队长 run）");
+  assert.equal(
+    plainSquadId,
+    undefined,
+    "@agent 的请求事实里没有小队（附一个会让下游误起队长 run）",
+  );
   const plainTarget = resolveCommentLeaderOverride({
     targetAgentId: plain.targetAgentId,
     squadId: plainSquadId,
@@ -399,22 +419,41 @@ test("D6 同形性（台账行/执行形状那一格）：leader 事件 ⇒ 台�
 
 test("D6 偏差一致性（结构面）：run 身份贯穿绑定/收口/失败/重投四处 —— 同 runId 重开是唯一可行形态", () => {
   const source = readFileSync(
-    join(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."), "packages/desktop/src/host/index.ts"),
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+      "packages/desktop/src/host/index.ts",
+    ),
     "utf8",
   );
   const dispatchStart = source.indexOf("async function runSquadDispatch(");
   const dispatchEnd = source.indexOf('parentPort.on("message",', dispatchStart);
   const dispatchBody = source.slice(dispatchStart, dispatchEnd);
   /* 开树（台账行 runId）与绑定会话都按 eventKey：换 runId 重开会让绑定落到一条不存在的行上。 */
-  assert.match(dispatchBody, /openMemberRun\(target,\s*\{\s*runId:\s*eventKey,/, "开树按 eventKey 落台账");
-  assert.match(dispatchBody, /bindMemberRunSession\(target,\s*\{[\s\S]{0,120}runId:\s*eventKey,/,
-    "会话回写按 eventKey（换 runId ⇒ requireRun 抛，会话与台账对不上）");
-  assert.match(dispatchBody, /failMemberRun\(target,\s*\{[\s\S]{0,120}runId:\s*eventKey,/,
-    "失败出口按 eventKey（换 runId ⇒ 失败收不到那条行上）");
-  assert.match(dispatchBody, /watchMemberRunSettlement\(\{[\s\S]{0,160}runId:\s*eventKey,/,
-    "终态收口订阅按 eventKey");
-  assert.match(dispatchBody, /const boundSessionId\s*=\s*\n?\s*snapshot\.runs\.find\(\(record\) => record\.runId === eventKey\)/,
-    "忙探测读的也是 eventKey 那条行（换 runId ⇒ 重投永远另建会话）");
+  assert.match(
+    dispatchBody,
+    /openMemberRun\(target,\s*\{\s*runId:\s*eventKey,/,
+    "开树按 eventKey 落台账",
+  );
+  assert.match(
+    dispatchBody,
+    /bindMemberRunSession\(target,\s*\{[\s\S]{0,120}runId:\s*eventKey,/,
+    "会话回写按 eventKey（换 runId ⇒ requireRun 抛，会话与台账对不上）",
+  );
+  assert.match(
+    dispatchBody,
+    /failMemberRun\(target,\s*\{[\s\S]{0,120}runId:\s*eventKey,/,
+    "失败出口按 eventKey（换 runId ⇒ 失败收不到那条行上）",
+  );
+  assert.match(
+    dispatchBody,
+    /watchMemberRunSettlement\(\{[\s\S]{0,160}runId:\s*eventKey,/,
+    "终态收口订阅按 eventKey",
+  );
+  assert.match(
+    dispatchBody,
+    /const boundSessionId\s*=\s*\n?\s*snapshot\.runs\.find\(\(record\) => record\.runId === eventKey\)/,
+    "忙探测读的也是 eventKey 那条行（换 runId ⇒ 重投永远另建会话）",
+  );
 
   const performStart = source.indexOf("async function performCommentDispatch(");
   const performEnd = source.indexOf("async function settleCommentReceipt(", performStart);

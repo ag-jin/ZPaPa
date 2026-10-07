@@ -80,10 +80,7 @@ function compareItems(
  * 剥离只作用于"发给对端的参数"：对端返回的条目仍由 normalizeTaskMeta 按 scope
  * 重新贴上本端 identity，UI 侧的身份语义不受影响。
  */
-function mutationParams(
-  address: WindowHostTaskAddress,
-  scope: WindowHostControllerSourceScope,
-) {
+function mutationParams(address: WindowHostTaskAddress, scope: WindowHostControllerSourceScope) {
   const workspaceIdentity = scope.kind === "remote" ? undefined : address.workspaceIdentity;
   return {
     taskId: address.taskId,

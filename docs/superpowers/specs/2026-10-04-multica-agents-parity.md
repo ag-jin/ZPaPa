@@ -18,16 +18,16 @@
 
 ## 1. 逐格对照矩阵
 
-| # | multica 的格（用户口述） | 我们的数据/服务层 | 我们的 UI 现状 | 吸收判定 | 状态 |
-|---|---|---|---|---|---|
-| 1 | 指令（systemPrompt） | `systemPrompt`（schema 必填） | 表单可编辑 | 已吸收 | ✅ |
-| 2 | skill | `skills[]`（schema 有 default []） | **不可见、不可编辑** | 吸收：表单技能选择 + 列表徽标 | 待实现（第③刀） |
-| 3 | MCP | 无对应字段 | 无 | **待用户确认**：TeamAgent 是否需要 per-agent MCP 配置（涉及 host 层 MCP 挂载，超出小队域现状） | ❓ |
-| 4 | 集成（integrations） | 无（spec §13 PR 集成是批次级，不是 agent 级） | 无 | **待用户确认**：agent 级集成指什么（GitHub 账号绑定？webhook？） | ❓ |
-| 5 | 工作任务表（该 agent 的任务） | `work_items.assignee={type:"agent"}` + `getSnapshot().workItems` 可过滤 | 智能体页**不显示**该 agent 的任务（工作项页有全局看板） | 吸收：agent 卡片/详情里给「指派给它的任务」列表 | 待实现（需先定呈现位） |
-| 6 | 智能体概览 | `description` / `color` / `enabled` | 描述+色块+徽标（第 52 轮已上）；**选色/编辑描述不可**（第②刀） | 吸收 | 第②刀 |
-| 7 | 运行数据（该 agent 跑过什么） | `squad_runs.agentId` + `listSquadRuns`（服务面已有，按 workspace） | 智能体页**不显示**该 agent 的 run 历史 | 吸收：agent 维度的 run 计数/最近 run（数据已齐，纯 UI） | 待实现 |
-| 8 | 设置的参数（模型等） | `modelSelection` / `tools[]` / `disallowedTools[]` / `permissionMode` / `memoryScope` | 列表有模型徽标（第 52 轮）；**编辑白名单只有 3 字段**（name/systemPrompt/memoryScope） | 吸收：编辑白名单扩 `description`/`color`/`modelSelection`（第②刀）；tools/permissionMode（第③刀） | 第②③刀 |
+| #   | multica 的格（用户口述）      | 我们的数据/服务层                                                                     | 我们的 UI 现状                                                                         | 吸收判定                                                                                          | 状态                   |
+| --- | ----------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------- |
+| 1   | 指令（systemPrompt）          | `systemPrompt`（schema 必填）                                                         | 表单可编辑                                                                             | 已吸收                                                                                            | ✅                     |
+| 2   | skill                         | `skills[]`（schema 有 default []）                                                    | **不可见、不可编辑**                                                                   | 吸收：表单技能选择 + 列表徽标                                                                     | 待实现（第③刀）        |
+| 3   | MCP                           | 无对应字段                                                                            | 无                                                                                     | **待用户确认**：TeamAgent 是否需要 per-agent MCP 配置（涉及 host 层 MCP 挂载，超出小队域现状）    | ❓                     |
+| 4   | 集成（integrations）          | 无（spec §13 PR 集成是批次级，不是 agent 级）                                         | 无                                                                                     | **待用户确认**：agent 级集成指什么（GitHub 账号绑定？webhook？）                                  | ❓                     |
+| 5   | 工作任务表（该 agent 的任务） | `work_items.assignee={type:"agent"}` + `getSnapshot().workItems` 可过滤               | 智能体页**不显示**该 agent 的任务（工作项页有全局看板）                                | 吸收：agent 卡片/详情里给「指派给它的任务」列表                                                   | 待实现（需先定呈现位） |
+| 6   | 智能体概览                    | `description` / `color` / `enabled`                                                   | 描述+色块+徽标（第 52 轮已上）；**选色/编辑描述不可**（第②刀）                         | 吸收                                                                                              | 第②刀                  |
+| 7   | 运行数据（该 agent 跑过什么） | `squad_runs.agentId` + `listSquadRuns`（服务面已有，按 workspace）                    | 智能体页**不显示**该 agent 的 run 历史                                                 | 吸收：agent 维度的 run 计数/最近 run（数据已齐，纯 UI）                                           | 待实现                 |
+| 8   | 设置的参数（模型等）          | `modelSelection` / `tools[]` / `disallowedTools[]` / `permissionMode` / `memoryScope` | 列表有模型徽标（第 52 轮）；**编辑白名单只有 3 字段**（name/systemPrompt/memoryScope） | 吸收：编辑白名单扩 `description`/`color`/`modelSelection`（第②刀）；tools/permissionMode（第③刀） | 第②③刀                 |
 
 ## 1.1 「一 agent 一 CLI」的核对（用户 2026-10-04 两轮问答，已证实并精确化）
 
@@ -62,6 +62,7 @@ runtime/CLI 选择**维度；后续轮次不得把「不能选 CLI」当缺失�
 （private|workspace|members）/ `member_ids[]` / `team_ids[]`。
 
 **详情页结构**（i18n `inspector.*` 键表）：
+
 - Profile：头像（可换）/ 名字（重命名）/ 描述；
 - Execution：**Runtime 选择器**（online/offline 状态、owned by）· Model（Default /
   Managed by runtime / 搜索或直输 model ID / **动态发现**）· Thinking · Speed ·
@@ -82,6 +83,7 @@ runtime 才能跑」横幅；DM 私聊入口 + Assign work 直接指派。
 AgentBuilder**，含草稿持久化 + 中途切换 runtime；另有内置「Chief of Staff」agent Mika）。
 
 **MCP / 集成的实际形态**（修正矩阵 #3 #4）：
+
 - MCP 是 **workspace 级** `mcp_config`（对话框带名字/JSON 校验），任务启动时按任务开关传入
   （daemon 日志 E4 `mcp_config=false`）——**不是 per-agent 独立 MCP 定义**；
 - 集成 = workspace 设置里的 composio/apps 连接管理（feature flag `composio_mcp_apps` 控制），
@@ -92,14 +94,14 @@ kind（event/at/every/cron）+ mode（once/continuous）。
 
 ### 对矩阵 #1–#8 的修正与新格
 
-| 格 | 修正/结论 |
-|---|---|
-| #3 MCP | 语义已清：workspace 级配置 + 任务级开关 ⇒ 对应到我们 = workspace 的 MCP 设置（已有），agent 页只需呈现；**不做 per-agent MCP** |
-| #4 集成 | 语义已清：外部服务连接（composio 一类，workspace 级）⇒ 我们暂无此层，**不吸收**（登记为远期） |
-| #8 设置参数 | 新增发现：**Concurrency（每 agent 最大并发 run 数）**我们完全没有——多队员同时派发时的防失控手段，值得吸收（需裁定默认值与上限） |
-| 新格 | **archive 可 Restore**：multica 归档可恢复；我们是终态不可逆——差异真实存在，是否补「恢复」待用户裁定 |
-| 新格 | **AI 对话式创建**（AgentBuilder）：先登记待定，不建议本阶段吸收（依赖聊天面） |
-| 新格 | conversation_starters / avatar 上传 / permission_scope：与我们聊天复用、九色板、协作域权限占位的既有取舍不同，**按既有裁定不吸收**（permission_scope 与协作域 canView/canInvoke 预留同向，实现时对齐） |
+| 格          | 修正/结论                                                                                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #3 MCP      | 语义已清：workspace 级配置 + 任务级开关 ⇒ 对应到我们 = workspace 的 MCP 设置（已有），agent 页只需呈现；**不做 per-agent MCP**                                                                         |
+| #4 集成     | 语义已清：外部服务连接（composio 一类，workspace 级）⇒ 我们暂无此层，**不吸收**（登记为远期）                                                                                                          |
+| #8 设置参数 | 新增发现：**Concurrency（每 agent 最大并发 run 数）**我们完全没有——多队员同时派发时的防失控手段，值得吸收（需裁定默认值与上限）                                                                        |
+| 新格        | **archive 可 Restore**：multica 归档可恢复；我们是终态不可逆——差异真实存在，是否补「恢复」待用户裁定                                                                                                   |
+| 新格        | **AI 对话式创建**（AgentBuilder）：先登记待定，不建议本阶段吸收（依赖聊天面）                                                                                                                          |
+| 新格        | conversation_starters / avatar 上传 / permission_scope：与我们聊天复用、九色板、协作域权限占位的既有取舍不同，**按既有裁定不吸收**（permission_scope 与协作域 canView/canInvoke 预留同向，实现时对齐） |
 
 ## 2. 实现次序（沿台账第 52 轮的三刀，并入本矩阵；§1.2 实地取证后修订）
 
@@ -128,6 +130,7 @@ Status / **MaxConcurrentTasks** / Instructions / **CustomEnv** / **CustomArgs** 
 Model / ThinkingLevel / ServiceTier / **ConversationStarters** / **ComposioToolkitAllowlist**。
 
 **对 §1.2（bundle 推断）的三处源码修正**：
+
 1. **MCP 是 per-agent 的**：`agent.mcp_config` 是真实列（Claude 风格 `{"mcpServers":…}`），
    且任务领取时 `mergeMCPOverlay` 把**每任务 overlay** 叠加在 agent 配置上（mcp_overlay.go）。
    §1.2 「不做 per-agent MCP」的结论**作废**，该格重回待裁定。
@@ -141,17 +144,18 @@ CLI 参数）——我们完全没有；派发链路要透传，吸收需动 hos
 
 ## 4. 用户逐项裁定（2026-10-04，七格全部定案）
 
-| # | 格 | 裁定 |
-|---|---|---|
-| 1 | Concurrency（每 agent 最大并发 run） | **要**：字段 + 服务层派发闸（完整吸收，默认值实现时定） |
-| 2 | 归档可恢复（Restore） | **要**：归档从终态改为可逆（智能体与小队同口径；定义与记忆本就保留） |
-| 3 | CustomEnv / CustomArgs | **缓**：等真实场景（动派发链路透传，成本高） |
-| 4 | per-agent MCP | **要**：agent 级独立 MCP 配置；涉及 host 层挂载合并，**实现前先出设计细节** |
-| 5 | AI 对话式创建（AgentBuilder） | **要**：依赖聊天面，排期靠后，方向定了 |
-| 6 | 任务表呈现位 | **独立详情页**（同 multica agents/:id 形态，新增路由） |
-| 7 | 运行数据呈现位 | **进详情页**（与任务表同页分区/页签） |
+| #   | 格                                   | 裁定                                                                        |
+| --- | ------------------------------------ | --------------------------------------------------------------------------- |
+| 1   | Concurrency（每 agent 最大并发 run） | **要**：字段 + 服务层派发闸（完整吸收，默认值实现时定）                     |
+| 2   | 归档可恢复（Restore）                | **要**：归档从终态改为可逆（智能体与小队同口径；定义与记忆本就保留）        |
+| 3   | CustomEnv / CustomArgs               | **缓**：等真实场景（动派发链路透传，成本高）                                |
+| 4   | per-agent MCP                        | **要**：agent 级独立 MCP 配置；涉及 host 层挂载合并，**实现前先出设计细节** |
+| 5   | AI 对话式创建（AgentBuilder）        | **要**：依赖聊天面，排期靠后，方向定了                                      |
+| 6   | 任务表呈现位                         | **独立详情页**（同 multica agents/:id 形态，新增路由）                      |
+| 7   | 运行数据呈现位                       | **进详情页**（与任务表同页分区/页签）                                       |
 
 **裁定后的实现次序（取代 §2 中被影响的部分）**：
+
 1. 第②刀（不变）：表单扩 description / color 选色器 / modelSelection + 服务面编辑白名单（TDD）。
 2. 第③刀（不变）：skills / tools / permissionMode 编辑。
 3. **第④刀（新）**：agent 独立详情页——概览 + 任务表（#6）+ 运行数据（#7）三区一体；含路由与导航接线。

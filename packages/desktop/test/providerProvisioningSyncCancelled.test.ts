@@ -49,9 +49,8 @@ const targetModulePromise = tsImport(
   import.meta.url,
 );
 const executorModulePromise = tsImport(
-  pathToFileURL(
-    join(repoRoot, "packages/desktop/src/host/remoteProviderProvisioningService.ts"),
-  ).href,
+  pathToFileURL(join(repoRoot, "packages/desktop/src/host/remoteProviderProvisioningService.ts"))
+    .href,
   import.meta.url,
 );
 

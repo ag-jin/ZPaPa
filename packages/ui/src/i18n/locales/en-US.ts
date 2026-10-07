@@ -4458,12 +4458,15 @@ const enUS: Record<string, string> = {
     "Names allow letters, digits, underscores and hyphens; the config is a JSON object that must provide at least a command (stdio) or a url (http/sse).",
   "squad.agentMcp.dialog.config": "Config (JSON)",
   "squad.agentMcp.nameError.required": "Enter a name",
-  "squad.agentMcp.nameError.format": "Only letters, digits, underscores and hyphens are allowed ([A-Za-z0-9_-])",
+  "squad.agentMcp.nameError.format":
+    "Only letters, digits, underscores and hyphens are allowed ([A-Za-z0-9_-])",
   "squad.agentMcp.nameError.duplicate": "An MCP server with this name already exists",
   "squad.agentMcp.jsonError.invalidJson": "Not valid JSON",
   "squad.agentMcp.jsonError.notObject": "The config must be a JSON object",
-  "squad.agentMcp.jsonError.missingTransport": "Provide at least a command (stdio) or a url (http/sse)",
-  "squad.agentMcp.jsonError.invalidShape": "A config field has a type the MCP server schema does not accept",
+  "squad.agentMcp.jsonError.missingTransport":
+    "Provide at least a command (stdio) or a url (http/sse)",
+  "squad.agentMcp.jsonError.invalidShape":
+    "A config field has a type the MCP server schema does not accept",
   "squad.agentMcp.transport.stdio": "stdio",
   "squad.agentMcp.transport.http": "http",
   "squad.agentMcp.transport.sse": "sse",

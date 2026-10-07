@@ -42,7 +42,11 @@ export function mcpServerNameErrorMessageId(issue: McpServerNameIssue): string {
 }
 
 /** 配置浅校验的失败档位（i18n 键后缀：`squad.agentMcp.jsonError.<issue>`）。 */
-export type McpServerConfigIssue = "invalidJson" | "notObject" | "missingTransport" | "invalidShape";
+export type McpServerConfigIssue =
+  | "invalidJson"
+  | "notObject"
+  | "missingTransport"
+  | "invalidShape";
 
 export type McpServerConfigParseResult =
   | { ok: true; config: McpServerConfig }
@@ -92,7 +96,11 @@ export function parseMcpServerConfigText(text: string): McpServerConfigParseResu
   const issue = result.error.issues[0];
   if (!issue) return configFailure("invalidShape");
   const kind: McpServerConfigIssue =
-    issue.code === "custom" ? "missingTransport" : issue.path.length === 1 ? "notObject" : "invalidShape";
+    issue.code === "custom"
+      ? "missingTransport"
+      : issue.path.length === 1
+        ? "notObject"
+        : "invalidShape";
   return configFailure(kind, issue.message);
 }
 

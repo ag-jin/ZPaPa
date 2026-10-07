@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  buildTunnelUrl,
-  resolveRemoteLoopbackTarget,
-} from "../src/lib/remoteLoopbackPreview.js";
+import { buildTunnelUrl, resolveRemoteLoopbackTarget } from "../src/lib/remoteLoopbackPreview.js";
 
 /**
  * 远程项目回环预览的判定契约（工单 08）。

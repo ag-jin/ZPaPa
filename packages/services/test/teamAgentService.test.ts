@@ -13,8 +13,14 @@ function setup() {
 test("预填只拷贝字段，不建立引用", () => {
   const svc = setup();
   const source = {
-    id: "user:user:reviewer", name: "审查者", description: "d", systemPrompt: "sp",
-    path: "/tmp/x.md", scope: "user", source: "user", enabled: true,
+    id: "user:user:reviewer",
+    name: "审查者",
+    description: "d",
+    systemPrompt: "sp",
+    path: "/tmp/x.md",
+    scope: "user",
+    source: "user",
+    enabled: true,
     modelSelection: { providerId: "p", modelId: "m" },
   } as never;
   const draft = svc.prefillFrom(source);
@@ -65,7 +71,10 @@ test("create 省略 maxConcurrentRuns ⇒ 盘上无该键（存量零改写）�
   // 缺省不落盘：读数方经 resolve 拿 6，盘上缺键让「未设置」与「显式 6」可区分。
   assert.equal("maxConcurrentRuns" in (svc.get(omitted.id) ?? {}), false);
   const explicit = svc.create({
-    name: "b", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 10,
+    name: "b",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 10,
   });
   assert.equal(svc.get(explicit.id)?.maxConcurrentRuns, 10);
 });
@@ -112,7 +121,12 @@ test("update 白名单含 description/color/modelSelection（②刀）；越界�
 
 test("update 白名单含 maxConcurrentRuns；白名单外字段（enabled/archivedAt）原样保留", () => {
   const svc = setup();
-  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 2 });
+  const a = svc.create({
+    name: "a",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 2,
+  });
   const updated = svc.update(a.id, { maxConcurrentRuns: 5 });
   assert.equal(updated.maxConcurrentRuns, 5);
   // 运行期越界键不得生效：patch 对象多带 enabled/archivedAt（反序列化载荷场景），

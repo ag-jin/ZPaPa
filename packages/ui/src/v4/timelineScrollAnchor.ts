@@ -323,8 +323,7 @@ export function resolvePrependViewportAdjustment(input: PrependViewportInput): n
   if (input.restoreOwnsAnchor) return null;
   if (input.nextFirstRowId === null) return null;
 
-  const rowIdPrepend =
-    input.prevFirstRowId !== null && input.nextFirstRowId < input.prevFirstRowId;
+  const rowIdPrepend = input.prevFirstRowId !== null && input.nextFirstRowId < input.prevFirstRowId;
   const firstFramePrepend = input.prevFirstRowId === null;
   if (!rowIdPrepend && !firstFramePrepend) return null;
 

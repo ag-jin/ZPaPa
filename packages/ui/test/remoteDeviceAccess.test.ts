@@ -130,5 +130,8 @@ test("投影项目清单按会话数降序，同数按路径排序", () => {
       { taskId: "c", workspacePath: "/p/many" },
     ],
   });
-  assert.deepEqual(list.map((item) => item.path), ["/p/many", "/p/few"]);
+  assert.deepEqual(
+    list.map((item) => item.path),
+    ["/p/many", "/p/few"],
+  );
 });

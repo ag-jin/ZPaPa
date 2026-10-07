@@ -59,9 +59,7 @@ export function computeProjectionSync(params: {
     existingByPath.set(tab.workspacePath, tab.id);
   }
 
-  const toCreate = params.deviceProjects.filter(
-    (project) => !existingByPath.has(project.path),
-  );
+  const toCreate = params.deviceProjects.filter((project) => !existingByPath.has(project.path));
 
   return { toCreate, toRemoveTabIds };
 }
@@ -243,7 +241,10 @@ export function projectDisplayName(projectPath: string): string {
  */
 export function findDeviceSessionId(
   sessionsById: Readonly<
-    Record<string, { sessionId: string; target?: { kind: string; host?: string; username?: string } }>
+    Record<
+      string,
+      { sessionId: string; target?: { kind: string; host?: string; username?: string } }
+    >
   >,
   target: { kind: string; host?: string; username?: string } | null | undefined,
 ): string | undefined {
@@ -278,9 +279,11 @@ export function markProjectionTabsDisconnected(
   store: TabStoreApiLike,
   deviceSessionId: string,
 ): number {
-  const matched = store.getState().tabs.filter(
-    (tab) => isWorkspaceTab(tab) && tab.projection?.deviceSessionId === deviceSessionId,
-  );
+  const matched = store
+    .getState()
+    .tabs.filter(
+      (tab) => isWorkspaceTab(tab) && tab.projection?.deviceSessionId === deviceSessionId,
+    );
   if (matched.length === 0) return 0;
   const ids = new Set(matched.map((tab) => tab.id));
   store.setState((state) => ({
@@ -438,8 +441,6 @@ export function findProjectionTabsForDevice(
   if (!target) return [];
   return tabs.filter(
     (tab): tab is WorkspaceTabState =>
-      isWorkspaceTab(tab) &&
-      tab.projection != null &&
-      isSameDeviceTarget(tab.remoteTarget, target),
+      isWorkspaceTab(tab) && tab.projection != null && isSameDeviceTarget(tab.remoteTarget, target),
   );
 }

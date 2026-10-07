@@ -57,9 +57,7 @@ export function SquadAgentsPage({
   const { intl } = useZCodeIntl();
   const services = useServices();
   // ②b：模型选择视图（ModelPickerRow 的数据源；服务缺失 ⇒ 控件禁用态，不阻塞表单其余字段）。
-  const { state: modelView } = useModelSelectionServiceView(
-    services.modelSelectionService ?? null,
-  );
+  const { state: modelView } = useModelSelectionServiceView(services.modelSelectionService ?? null);
 
   const target = useMemo(
     () => squadWorkspaceTarget(workspacePath, workspaceIdentity),

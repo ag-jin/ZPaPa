@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  isProjectableSetting,
-  pickProjectableSettings,
-} from "../src/lib/remoteDeviceSettings.js";
+import { isProjectableSetting, pickProjectableSettings } from "../src/lib/remoteDeviceSettings.js";
 
 /**
  * 远程设备设置投射走**排除法**（`EXCLUDED_KEY_PATTERNS` 黑名单），不是白名单：

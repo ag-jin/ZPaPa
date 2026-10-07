@@ -39,7 +39,9 @@ interface ReactionRow {
 
 function rowToReaction(row: ReactionRow): WorkItemCommentReactionRecord {
   if (!["human", "agent", "system"].includes(row.author_kind)) {
-    throw new Error(`work_item_comment_reactions.author_kind 读回非法值「${row.author_kind}」：一律抛。`);
+    throw new Error(
+      `work_item_comment_reactions.author_kind 读回非法值「${row.author_kind}」：一律抛。`,
+    );
   }
   return {
     id: row.id,

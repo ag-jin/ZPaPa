@@ -110,7 +110,11 @@ function putItem(
 
 /** 三动作的负向基线口径：receipt / run / deferred 三张表的行数快照。 */
 function dispatchCounts(h: Harness): [number, number, number] {
-  return [count(h.db, "comment_dispatch_receipts"), count(h.db, "squad_runs"), count(h.db, "squad_run_deferred_dispatches")];
+  return [
+    count(h.db, "comment_dispatch_receipts"),
+    count(h.db, "squad_runs"),
+    count(h.db, "squad_run_deferred_dispatches"),
+  ];
 }
 
 function kinds(h: Harness, workItemId: string): string[] {
@@ -122,15 +126,35 @@ function kinds(h: Harness, workItemId: string): string[] {
 test("G4 枚举①：合法两值（reassign|comment）经 insertIfAbsent → find/list/claimDue 原样往返", () => {
   const db = openDb();
   const repo = createSquadDeferredDispatchRepo(db);
-  const base = { workspaceKey: WS, workItemId: "wi-o", agentId: ANN, dispatchCause: null, createdAt: 1, updatedAt: 1 };
+  const base = {
+    workspaceKey: WS,
+    workItemId: "wi-o",
+    agentId: ANN,
+    dispatchCause: null,
+    createdAt: 1,
+    updatedAt: 1,
+  };
   assert.equal(repo.insertIfAbsent({ ...base, runId: "obl-c", origin: "comment" }), true);
-  assert.equal(repo.insertIfAbsent({ ...base, runId: "obl-r", workItemId: "wi-o2", origin: "reassign" }), true);
+  assert.equal(
+    repo.insertIfAbsent({ ...base, runId: "obl-r", workItemId: "wi-o2", origin: "reassign" }),
+    true,
+  );
   assert.equal(repo.find(WS, "wi-o", ANN)!.origin, "comment");
   assert.equal(repo.find(WS, "wi-o2", ANN)!.origin, "reassign");
   // list / claimDue 是 X2.1 host 的分流读面：认领时来源必须一起带出（否则消费者只能猜）。
-  assert.deepEqual(repo.list(WS).map((o) => o.origin), ["comment", "reassign"]);
-  assert.deepEqual(repo.claimDue(WS).map((o) => o.origin), ["comment", "reassign"]);
-  assert.equal(count(db, "squad_run_deferred_dispatches"), 0, "claimDue 是认领（删除）语义：读回来源后行即被领走");
+  assert.deepEqual(
+    repo.list(WS).map((o) => o.origin),
+    ["comment", "reassign"],
+  );
+  assert.deepEqual(
+    repo.claimDue(WS).map((o) => o.origin),
+    ["comment", "reassign"],
+  );
+  assert.equal(
+    count(db, "squad_run_deferred_dispatches"),
+    0,
+    "claimDue 是认领（删除）语义：读回来源后行即被领走",
+  );
 });
 
 test("G4 枚举②：缺省回退 'reassign'（写入方省略 origin 与「0013 之前写法的裸 SQL」都回退）", () => {
@@ -195,7 +219,9 @@ test("G4 枚举③：枚举外值写入响亮抛且不落库；读回（find/lis
     createdAt: 1,
     updatedAt: 1,
   });
-  db.prepare("UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-wire'").run();
+  db.prepare(
+    "UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-wire'",
+  ).run();
   assert.throws(() => repo.find(WS, "wi-b2", ANN), /origin/);
   assert.throws(() => repo.list(WS), /origin/);
   assert.throws(() => repo.claimDue(WS), /origin/, "认领前必须验来源：不得把坏行交给重放通道");
@@ -236,7 +262,11 @@ test("G4 枚举④：commentedSvc 的 deferred 义务在真实写路径上落 'c
     body: "@Ann 处理一下",
   });
   assert.equal(result.dispatches[0]?.outcome, "deferred");
-  assert.equal(h.deferred.list(WS)[0]!.origin, "comment", "评论通道来源 = 'comment'（X2.1 据此分流）");
+  assert.equal(
+    h.deferred.list(WS)[0]!.origin,
+    "comment",
+    "评论通道来源 = 'comment'（X2.1 据此分流）",
+  );
 });
 
 test("G4 枚举⑤：R2 通道（squadRunLifecycle 活跃 run 臂）在真实 runtime 上落 'reassign'", async () => {
@@ -315,7 +345,11 @@ test("§4.4 负向：软删/解决态/表情回应三动作对 receipt、run、d
     body: "回复",
   });
   const before = dispatchCounts(h);
-  assert.deepEqual(before, [1, 1, 1], "前置对照：评论本身落了 1 receipt / 1 run（我插入的活跃行）/ 1 义务");
+  assert.deepEqual(
+    before,
+    [1, 1, 1],
+    "前置对照：评论本身落了 1 receipt / 1 run（我插入的活跃行）/ 1 义务",
+  );
 
   const afterSoftDelete = (() => {
     h.service.softDeleteComment({ commentId: "c-neg-reply", workspaceKey: WS, actor: HUMAN });
@@ -324,13 +358,23 @@ test("§4.4 负向：软删/解决态/表情回应三动作对 receipt、run、d
   assert.deepEqual(afterSoftDelete, before, "软删零副作用（§4.4）");
 
   const afterResolve = (() => {
-    h.service.setCommentResolved({ commentId: "c-neg", workspaceKey: WS, resolved: true, actor: HUMAN });
+    h.service.setCommentResolved({
+      commentId: "c-neg",
+      workspaceKey: WS,
+      resolved: true,
+      actor: HUMAN,
+    });
     return dispatchCounts(h);
   })();
   assert.deepEqual(afterResolve, before, "解决态零副作用（§4.4）");
 
   const afterReaction = (() => {
-    h.service.addCommentReaction({ commentId: "c-neg", workspaceKey: WS, author: HUMAN, emoji: "👍" });
+    h.service.addCommentReaction({
+      commentId: "c-neg",
+      workspaceKey: WS,
+      author: HUMAN,
+      emoji: "👍",
+    });
     return dispatchCounts(h);
   })();
   assert.deepEqual(afterReaction, before, "表情回应零副作用（§4.4）");
@@ -351,22 +395,43 @@ test("§4.4 负向：软删/解决态/表情回应三动作对 receipt、run、d
   assert.deepEqual(byKind("comment_reaction_added"), ["reaction:c-neg:human:x1f-human:👍"]);
   // 重投同一事实：靠 dedupKey 幂等，不写第二条；换 emoji 才是新事实。
   h.service.softDeleteComment({ commentId: "c-neg-reply", workspaceKey: WS, actor: HUMAN });
-  h.service.setCommentResolved({ commentId: "c-neg", workspaceKey: WS, resolved: true, actor: HUMAN });
-  h.service.addCommentReaction({ commentId: "c-neg", workspaceKey: WS, author: HUMAN, emoji: "👍" });
-  h.service.addCommentReaction({ commentId: "c-neg", workspaceKey: WS, author: HUMAN, emoji: "🎉" });
+  h.service.setCommentResolved({
+    commentId: "c-neg",
+    workspaceKey: WS,
+    resolved: true,
+    actor: HUMAN,
+  });
+  h.service.addCommentReaction({
+    commentId: "c-neg",
+    workspaceKey: WS,
+    author: HUMAN,
+    emoji: "👍",
+  });
+  h.service.addCommentReaction({
+    commentId: "c-neg",
+    workspaceKey: WS,
+    author: HUMAN,
+    emoji: "🎉",
+  });
   const after = kinds(h, "wi-n");
   assert.equal(after.filter((kind) => kind === "comment_deleted").length, 1, "软删重投幂等");
   assert.equal(after.filter((kind) => kind === "comment_resolved").length, 1, "同状态重投幂等");
-  assert.equal(after.filter((kind) => kind === "comment_reaction_added").length, 2, "换 emoji = 新事实");
+  assert.equal(
+    after.filter((kind) => kind === "comment_reaction_added").length,
+    2,
+    "换 emoji = 新事实",
+  );
   assert.deepEqual(dispatchCounts(h), before, "重投与新增回应依旧零派发副作用（§4.4）");
 });
 
 test("§4.4 负向（结构面）：服务入口闭集仍是 4 个——三动作没有引入派发/生命周期写入口", () => {
   const h = makeHarness();
-  assert.deepEqual(
-    Object.keys(h.service).sort(),
-    ["addCommentReaction", "createComment", "setCommentResolved", "softDeleteComment"],
-  );
+  assert.deepEqual(Object.keys(h.service).sort(), [
+    "addCommentReaction",
+    "createComment",
+    "setCommentResolved",
+    "softDeleteComment",
+  ]);
 });
 
 /* ---------- ③ source_run_role 三态（B2） ---------- */
@@ -374,7 +439,12 @@ test("§4.4 负向（结构面）：服务入口闭集仍是 4 个——三动�
 test("B2①：合法角色端到端往返——队长 run 的评论与其 comment_created Activity 都读回 leader（不是 member）", () => {
   const h = makeHarness();
   putItem(h, "wi-s");
-  const sourceRun = { runId: "run-lead", agentId: "x1f-lead", squadId: "sq-core", role: "leader" as const };
+  const sourceRun = {
+    runId: "run-lead",
+    agentId: "x1f-lead",
+    squadId: "sq-core",
+    role: "leader" as const,
+  };
   const created = h.service.createComment({
     workspaceKey: WS,
     workspacePath: WSP,
@@ -387,8 +457,14 @@ test("B2①：合法角色端到端往返——队长 run 的评论与其 commen
   });
   // 评论行（0010 起就有全形状列）：往返只是对照——X1.3 B2 的失真点在 Activity。
   assert.deepEqual(created.comment.sourceRun, sourceRun);
-  const activity = h.activities.listByWorkItem(WS, "wi-s").find((a) => a.kind === "comment_created")!;
-  assert.deepEqual(activity.sourceRun, sourceRun, "X1.3 B2：Activity 读回不得把 leader 静默降成 member");
+  const activity = h.activities
+    .listByWorkItem(WS, "wi-s")
+    .find((a) => a.kind === "comment_created")!;
+  assert.deepEqual(
+    activity.sourceRun,
+    sourceRun,
+    "X1.3 B2：Activity 读回不得把 leader 静默降成 member",
+  );
   // 独立于 repo 映射的列级证据：三列真的落库（不是读回时补出来的）。
   const raw = rows(h.db, "SELECT * FROM work_item_activities WHERE id = ?", activity.id)[0]!;
   assert.equal(raw.source_run_role, "leader");
@@ -438,13 +514,21 @@ test("B2②：有 runId 而角色缺失/非法 ⇒ 读取响亮抛（历史行�
   // 缺失（= 0013 之前的历史行：只存了 source_run_id，角色无从得知）。
   db.prepare("UPDATE work_item_activities SET source_run_role = NULL WHERE id = 'a-legacy'").run();
   assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
-  assert.throws(() => repo.listByWorkItem(WS, "wi-h"), /source_run_role|角色/, "时间线读取同样不得静默");
+  assert.throws(
+    () => repo.listByWorkItem(WS, "wi-h"),
+    /source_run_role|角色/,
+    "时间线读取同样不得静默",
+  );
   // 非法（闭集外值）。
-  db.prepare("UPDATE work_item_activities SET source_run_role = 'leaderess' WHERE id = 'a-legacy'").run();
+  db.prepare(
+    "UPDATE work_item_activities SET source_run_role = 'leaderess' WHERE id = 'a-legacy'",
+  ).run();
   assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
   // 无 runId 的行不受牵连（role 列本就允许 NULL）。
   add("a-none", "dk-none");
-  db.prepare("UPDATE work_item_activities SET source_run_id = NULL, source_run_role = NULL WHERE id = 'a-none'").run();
+  db.prepare(
+    "UPDATE work_item_activities SET source_run_id = NULL, source_run_role = NULL WHERE id = 'a-none'",
+  ).run();
   assert.equal(repo.get("a-none")!.sourceRun, null, "人手工事实（无 run）照常可读");
 });
 
@@ -479,9 +563,19 @@ test("B3：根可置/消（各一条 Activity）；回复置/消在 service 与 
   const before = kinds(h, "wi-b3");
 
   // 根：置 → 消，各一条 Activity，互不吞并（dedupKey 带 set/cleared）。
-  const set = h.service.setCommentResolved({ commentId: "c-root", workspaceKey: WS, resolved: true, actor: HUMAN });
+  const set = h.service.setCommentResolved({
+    commentId: "c-root",
+    workspaceKey: WS,
+    resolved: true,
+    actor: HUMAN,
+  });
   assert.ok(set.resolvedAt !== null);
-  const cleared = h.service.setCommentResolved({ commentId: "c-root", workspaceKey: WS, resolved: false, actor: HUMAN });
+  const cleared = h.service.setCommentResolved({
+    commentId: "c-root",
+    workspaceKey: WS,
+    resolved: false,
+    actor: HUMAN,
+  });
   assert.equal(cleared.resolvedAt, null);
   const rootActivities = h.activities
     .listByWorkItem(WS, "wi-b3")
@@ -493,13 +587,25 @@ test("B3：根可置/消（各一条 Activity）；回复置/消在 service 与 
 
   // 回复：置位（service）→ 拒；失败后状态与事实面零变化。
   assert.throws(
-    () => h.service.setCommentResolved({ commentId: "c-reply", workspaceKey: WS, resolved: true, actor: HUMAN }),
+    () =>
+      h.service.setCommentResolved({
+        commentId: "c-reply",
+        workspaceKey: WS,
+        resolved: true,
+        actor: HUMAN,
+      }),
     /解决态仅线程根/,
   );
   assert.equal(h.comments.get("c-reply")!.resolvedAt, null, "拒后不落状态");
   // 回复：取消（service）→ 同款守卫（方向不影响「仅根」）。
   assert.throws(
-    () => h.service.setCommentResolved({ commentId: "c-reply", workspaceKey: WS, resolved: false, actor: HUMAN }),
+    () =>
+      h.service.setCommentResolved({
+        commentId: "c-reply",
+        workspaceKey: WS,
+        resolved: false,
+        actor: HUMAN,
+      }),
     /解决态仅线程根/,
   );
   // 回复：置/消（repo 直调）→ 双保险同样响亮。
@@ -529,9 +635,9 @@ const REVERSE_0013 = [
 ];
 
 function ledgerIds(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>).map(
-    (row) => row.id,
-  );
+  return (
+    db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>
+  ).map((row) => row.id);
 }
 
 function objectNames(db: DatabaseSync, table: string): string[] {
@@ -599,7 +705,8 @@ test("0013 路径② 从 0012 升级：退到 0012 形态 ⇒ 重跑迁移只补
   );
   assert.ok(tableColumns(db, "squad_run_deferred_dispatches").includes("origin"));
   assert.equal(
-    (db.prepare("SELECT title FROM work_items WHERE id = 'wi-legacy'").get() as { title: string }).title,
+    (db.prepare("SELECT title FROM work_items WHERE id = 'wi-legacy'").get() as { title: string })
+      .title,
     "老项",
     "既有数据一字未动",
   );

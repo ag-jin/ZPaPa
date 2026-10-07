@@ -54,10 +54,7 @@ test("标签 chip 投影：上限可注入（默认 3），且不改写入参", 
    变异：把 chip 的 class 常量复制一份到详情页（各自一套外观）⇒ 第二/三条必红。 */
 test("守卫｜看板行渲染标签 chip 与「+N」；chip 定义只有一处（详情页复用同一个组件）", () => {
   const board = readSource("squad/WorkItemsBoard.tsx");
-  assert.ok(
-    board.includes("workItemLabelChips("),
-    "看板行必须走纯函数投影（截断规则一处实现）",
-  );
+  assert.ok(board.includes("workItemLabelChips("), "看板行必须走纯函数投影（截断规则一处实现）");
   assert.ok(board.includes('data-testid="work-item-label"'), "chip 的 testid 锚点");
   assert.ok(board.includes('data-testid="work-item-label-more"'), "「+N」的 testid 锚点");
   assert.equal(
@@ -82,7 +79,14 @@ test("守卫｜标签 chip 只用中性 token，不含任何语义状态色", ()
   const classname = match[1]!;
   assert.ok(classname.includes("border-border"), "中性边框 token");
   assert.ok(classname.includes("text-foreground-subtlest"), "弱化文字 token");
-  for (const semantic of ["destructive", "success", "warning", "brand", "text-emerald", "bg-green"]) {
+  for (const semantic of [
+    "destructive",
+    "success",
+    "warning",
+    "brand",
+    "text-emerald",
+    "bg-green",
+  ]) {
     assert.ok(
       !classname.includes(semantic),
       `标签 chip 不得出现语义色 token「${semantic}」—— 标签不是状态，状态只由语义色表达`,
@@ -133,7 +137,8 @@ test("守卫｜表单单点预检：非 ok 显示文案并拦下提交（不静�
   assert.ok(branch.includes("setLabelsError("), "非 ok 必须留下可见文案");
   assert.ok(/return;/.test(branch), "非 ok 必须**拦下提交**（return 在 onSubmit 里）");
   assert.ok(
-    dialogs.includes("squad.workItems.labelsTooMany") && dialogs.includes("squad.workItems.labelsTooLong"),
+    dialogs.includes("squad.workItems.labelsTooMany") &&
+      dialogs.includes("squad.workItems.labelsTooLong"),
     "两种超限各有自己的文案（条数 / 长度），不得共用一句「输入非法」",
   );
   assert.ok(
@@ -168,9 +173,15 @@ test("守卫｜表单提交形状：create 与 edit 两支都带 labels（类型
    变异：edit 只传 title/body ⇒ 第二条必红（那是「编辑一次把标签清空」的形态）。 */
 test("守卫｜WorkItemsPage 把 labels 并进 create 与 edit 两条请求", () => {
   const page = readSource("squad/WorkItemsPage.tsx");
-  const createCall = page.slice(page.indexOf("service.createWorkItem("), page.indexOf("squad.workItems.created"));
+  const createCall = page.slice(
+    page.indexOf("service.createWorkItem("),
+    page.indexOf("squad.workItems.created"),
+  );
   assert.ok(createCall.includes("labels: input.labels"), "create 必须带上标签");
-  const editCall = page.slice(page.indexOf("service.updateWorkItem("), page.indexOf("squad.workItems.updated"));
+  const editCall = page.slice(
+    page.indexOf("service.updateWorkItem("),
+    page.indexOf("squad.workItems.updated"),
+  );
   assert.ok(
     editCall.includes("labels: input.labels"),
     "edit 必须带上标签（不带 = 把库里已有的标签清空）",
@@ -184,7 +195,10 @@ test("守卫｜编辑对话框的初值来自条目本身（title / body / label
   const initial = /initial=\{\{([^}]*)\}\}/.exec(assembly);
   assert.ok(initial, "编辑对话框必须给 initial");
   for (const field of ["title", "body", "labels"]) {
-    assert.ok(initial[1]!.includes(`${field}:`), `initial 缺 ${field}（缺 labels = 编辑即清空标签）`);
+    assert.ok(
+      initial[1]!.includes(`${field}:`),
+      `initial 缺 ${field}（缺 labels = 编辑即清空标签）`,
+    );
   }
 });
 
@@ -237,7 +251,11 @@ test("属性值文本：字符串原样、其余原样 JSON 文本（不猜类�
    （判据落在 WHERE / ORDER BY 的上下文里，而不是「文件里出现 labels= 」：更新 SET 里的
    `labels=?` 是**写**，与「按标签过滤」是两件事。） */
 test("守卫｜services 的 workitem 域内不存在按 labels 的 WHERE / ORDER BY", () => {
-  for (const file of ["workitem/workItemRepo.ts", "workitem/squadRuntimeService.ts", "workitem/workItemService.ts"]) {
+  for (const file of [
+    "workitem/workItemRepo.ts",
+    "workitem/squadRuntimeService.ts",
+    "workitem/workItemService.ts",
+  ]) {
     const source = readServicesSource(file);
     assert.ok(!/WHERE[\s\S]{0,160}?labels/i.test(source), `${file} 不得在 WHERE 里出现 labels`);
     assert.ok(!/ORDER BY[\s\S]{0,120}?labels/i.test(source), `${file} 不得按 labels 排序`);
@@ -280,7 +298,9 @@ test("守卫｜updateContent 的 SET 白名单只认 title / body / labels", () 
     repo.indexOf("updateContent(id, patch)"),
     repo.indexOf("updateStatus(id, next, expect)"),
   );
-  const pushed = [...body.matchAll(/assignments\.push\("([a-z_]+)=\?"\)/g)].map((match) => match[1]);
+  const pushed = [...body.matchAll(/assignments\.push\("([a-z_]+)=\?"\)/g)].map(
+    (match) => match[1],
+  );
   assert.deepEqual(pushed, ["title", "body", "labels"], "白名单集合是闭集，且顺序稳定");
   for (const column of ["status", "assignee_type", "assignee_id", "archived_at"]) {
     assert.ok(!pushed.includes(column), `白名单不得含 ${column}`);
@@ -291,7 +311,10 @@ test("守卫｜updateContent 的 SET 白名单只认 title / body / labels", () 
 
 test("守卫｜标签相关文案两语成对（含占位符一致）", () => {
   const placeholders = (value: string) =>
-    [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort().join(",");
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((match) => match[1])
+      .sort()
+      .join(",");
   for (const key of [
     "squad.workItems.labels",
     "squad.workItems.labelsPlaceholder",

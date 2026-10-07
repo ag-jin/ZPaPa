@@ -86,7 +86,11 @@ test("createWorkItem 带标签：归一化后落盘（逗号/换行切分、trim
     labels: ["  前端 , 紧急\n后端 ,, 前端 "],
   });
 
-  assert.deepEqual(item.labels, ["前端", "紧急", "后端"], "返回值即归一化结果（首次出现为准、保序）");
+  assert.deepEqual(
+    item.labels,
+    ["前端", "紧急", "后端"],
+    "返回值即归一化结果（首次出现为准、保序）",
+  );
   assert.equal(
     readLabelsColumn(db, item.id),
     JSON.stringify(["前端", "紧急", "后端"]),

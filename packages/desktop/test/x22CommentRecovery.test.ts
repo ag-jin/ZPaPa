@@ -119,7 +119,8 @@ test("X2.2 补投判据：可安全补投的两格（崩溃恢复 / 会话空闲
 /* ---------- ③ host 接线（结构守卫）：补投挂点、A1 统一、deferred 的并入窗口 ---------- */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const readHost = (): string => readFileSync(join(repoRoot, "packages/desktop/src/host/index.ts"), "utf8");
+const readHost = (): string =>
+  readFileSync(join(repoRoot, "packages/desktop/src/host/index.ts"), "utf8");
 
 test("X2.2 接线：未收敛补投挂进 advanceSquadQueueAfterSettlement（结算事件与启动第四步共用同一实现）", () => {
   const host = readHost();
@@ -130,16 +131,26 @@ test("X2.2 接线：未收敛补投挂进 advanceSquadQueueAfterSettlement（结
     "结算事件必须转到推进函数（补投挂在不变量处的前提）",
   );
   const advanceStart = host.indexOf("async function advanceSquadQueueAfterSettlement(");
-  const advanceEnd = host.indexOf("async function redispatchUnsettledCommentReceipts(", advanceStart);
+  const advanceEnd = host.indexOf(
+    "async function redispatchUnsettledCommentReceipts(",
+    advanceStart,
+  );
   assert.ok(advanceStart >= 0 && advanceEnd > advanceStart, "找不到 advance 函数的边界");
   const advance = host.slice(advanceStart, advanceEnd);
   const obligationAt = advance.indexOf("claimDueSquadDeferredObligations");
-  const scanAt = advance.indexOf("redispatchUnsettledCommentReceipts(services, squadRuntime, target);");
+  const scanAt = advance.indexOf(
+    "redispatchUnsettledCommentReceipts(services, squadRuntime, target);",
+  );
   assert.ok(obligationAt >= 0, "义务认领必须在推进函数里（既有回路）");
   assert.ok(scanAt > obligationAt, "补投段必须排在排队/义务臂之后（读到前两段释放后的最新事实）");
   // 启动第四步的落点（同一函数）排在队长和解之后 —— 既有次序契约不动。
-  const settleIdx = host.indexOf("await settleStaleLeaderRunsBestEffort(activeServices, candidates);");
-  const startupCallIdx = host.indexOf("advanceSquadQueueAfterSettlement(activeServices, target)", settleIdx);
+  const settleIdx = host.indexOf(
+    "await settleStaleLeaderRunsBestEffort(activeServices, candidates);",
+  );
+  const startupCallIdx = host.indexOf(
+    "advanceSquadQueueAfterSettlement(activeServices, target)",
+    settleIdx,
+  );
   assert.ok(
     settleIdx >= 0 && startupCallIdx > settleIdx,
     "启动兜底必须经同一实现、且仍在队长和解之后（不得另写一套启动专用补投）",
@@ -152,11 +163,31 @@ test("X2.2 接线：补投扫描只用服务面读口 + 唯一派发入口，A1 
   const end = host.indexOf("function commentReplayRejectionReason(", start);
   assert.ok(start >= 0 && end > start, "找不到补投扫描的边界");
   const scan = host.slice(start, end);
-  assert.match(scan, /listUnsettledCommentDispatchReceipts\(target\)/, "取数经服务面只读口（不直连 repo）");
-  assert.match(scan, /decideUnsettledReceiptRedispatch\(\{/, "跳过/重投必须走纯函数判据（不在扫描里手写）");
-  assert.match(scan, /sessionProbeAvailable: probe !== undefined/, "探测能力必须如实交给判据（不可得时不猜）");
-  assert.match(scan, /await runCommentDispatch\(squadRuntime, target, receipt\.dispatchKey\)/, "重投走评论派发唯一入口");
-  assert.doesNotMatch(scan, /runSquadDispatch\(/, "补投不得自己拼派发消息（绕过 receipt 事实与落定）");
+  assert.match(
+    scan,
+    /listUnsettledCommentDispatchReceipts\(target\)/,
+    "取数经服务面只读口（不直连 repo）",
+  );
+  assert.match(
+    scan,
+    /decideUnsettledReceiptRedispatch\(\{/,
+    "跳过/重投必须走纯函数判据（不在扫描里手写）",
+  );
+  assert.match(
+    scan,
+    /sessionProbeAvailable: probe !== undefined/,
+    "探测能力必须如实交给判据（不可得时不猜）",
+  );
+  assert.match(
+    scan,
+    /await runCommentDispatch\(squadRuntime, target, receipt\.dispatchKey\)/,
+    "重投走评论派发唯一入口",
+  );
+  assert.doesNotMatch(
+    scan,
+    /runSquadDispatch\(/,
+    "补投不得自己拼派发消息（绕过 receipt 事实与落定）",
+  );
   assert.match(scan, /outcome: "blocked"/, "A1 重验不过必须落 blocked（可审计收敛，不复活）");
   assert.match(scan, /reason: rejection/, "blocked 原因取 A1 判据的结论（同一事实同一文案）");
 
@@ -200,7 +231,11 @@ test("X2.2 接线：派发桥 deferred 分支按 coalescedInto 分流（并入�
     /coalescedInto !== undefined && coalescedInto !== eventKey/,
     "并入窗口必须区分「并入别的请求」与「命中自己登记的义务」",
   );
-  assert.match(bridge, /bridge: \{ kind: "coalesced", coalescedInto \}/, "并入别的请求 ⇒ 终局 coalesced 携带目标");
+  assert.match(
+    bridge,
+    /bridge: \{ kind: "coalesced", coalescedInto \}/,
+    "并入别的请求 ⇒ 终局 coalesced 携带目标",
+  );
   assert.match(
     bridge,
     /kind: "blocked",\s*reason: WORK_ITEM_MISSING_REASON/,

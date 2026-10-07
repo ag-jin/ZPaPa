@@ -120,10 +120,7 @@ export function SquadsList({
               {/* T6 聚合 presence：与智能体行同一套呈现（Σ 成员 count(open) / Σ queued）；
                   归档小队 workload=null ⇒ 不显示可运行状态（只留「已归档」）。 */}
               {presence.workload !== null ? (
-                <span
-                  className="text-ui-xs text-foreground-subtlest"
-                  data-testid="squad-presence"
-                >
+                <span className="text-ui-xs text-foreground-subtlest" data-testid="squad-presence">
                   <span
                     className={cn(
                       "mr-1 inline-block size-1.5 rounded-full align-middle",

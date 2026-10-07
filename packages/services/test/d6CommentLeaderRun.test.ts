@@ -16,10 +16,14 @@ import { DatabaseSync } from "node:sqlite";
 import { LEADER_PROTOCOL_TEXT } from "../src/workitem/leaderDispatch.js";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { computeCommentDispatchKey } from "../src/workitem/commentDispatchKey.js";
-import { createCommentDispatchReceiptRepo, commentReceiptSquadId } from "../src/workitem/commentDispatchReceiptRepo.js";
+import {
+  createCommentDispatchReceiptRepo,
+  commentReceiptSquadId,
+} from "../src/workitem/commentDispatchReceiptRepo.js";
 import { createCommentService, type CommentService } from "../src/workitem/commentService.js";
 import { planDispatch, type SquadBriefing } from "../src/workitem/leaderDispatch.js";
-import type { Squad } from "@zcode/shared";import type { SquadDispatchRequest } from "../src/workitem/squadDispatchRequests.js";
+import type { Squad } from "@zcode/shared";
+import type { SquadDispatchRequest } from "../src/workitem/squadDispatchRequests.js";
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
@@ -237,7 +241,11 @@ test("D6 leaderOverride 复用同一处小队归档/停用判据：与「指派�
   );
   const archivedReason = byOverride.find((event) => event.kind === "inbox.notified");
   assert.ok(archivedReason?.kind === "inbox.notified");
-  assert.match(archivedReason.reason, /已归档/, "归档原因要与停用可分辨（人去取消归档 vs 重新启用）");
+  assert.match(
+    archivedReason.reason,
+    /已归档/,
+    "归档原因要与停用可分辨（人去取消归档 vs 重新启用）",
+  );
 
   const disabled = squadFixture({ enabled: false });
   const disabledOverride = planDispatch({
@@ -280,10 +288,7 @@ test("D6 读回：squadId 缺席 = 不是队长目标（undefined）；写坏的
     undefined,
     "普通目标没有 squadId（历史行 / 非队长目标都是这一格）",
   );
-  assert.equal(
-    commentReceiptSquadId({ dispatchKey: "k-2", detail: { squadId: SQUAD } }),
-    SQUAD,
-  );
+  assert.equal(commentReceiptSquadId({ dispatchKey: "k-2", detail: { squadId: SQUAD } }), SQUAD);
   assert.throws(
     () => commentReceiptSquadId({ dispatchKey: "k-3", detail: { squadId: 7 } }),
     /squadId 非法/,

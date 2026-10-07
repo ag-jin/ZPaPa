@@ -221,9 +221,7 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
              不得凭空套缺省 6）。闭包前向引用下方 `teamAgentService`（:253 处 const）：
              本函数只在首个 lifecycle 调用时执行，那时构造已完成，无 TDZ 风险。 */
           resolveAgentMaxConcurrentRuns: (agentId) => {
-            const agent = teamAgentService
-              .list()
-              .find((candidate) => candidate.id === agentId);
+            const agent = teamAgentService.list().find((candidate) => candidate.id === agentId);
             return agent === undefined ? undefined : resolveTeamAgentMaxConcurrentRuns(agent);
           },
           runSettlementHub: deps.runSettlementHub,

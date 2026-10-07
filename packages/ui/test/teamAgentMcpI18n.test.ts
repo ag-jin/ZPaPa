@@ -38,7 +38,10 @@ test("i18n：MCP 分区与对话框的键两语成对，安全提示要点（R4 
   }
   // 带占位符的键：`{name}` 只译一侧会让用户看到原始花括号。
   const placeholdersOf = (value: string) =>
-    [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort().join(",");
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((match) => match[1])
+      .sort()
+      .join(",");
   assert.equal(placeholdersOf(zhCN["squad.agentMcp.removeAria"] ?? ""), "name");
   assert.equal(placeholdersOf(enUS["squad.agentMcp.removeAria"] ?? ""), "name");
 

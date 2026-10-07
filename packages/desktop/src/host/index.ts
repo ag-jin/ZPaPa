@@ -3210,11 +3210,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
        原始行没有 / 变体没给（遗留 NULL）⇒ undefined 落 NULL（遗留/未知语义，读回不得猜）——
        不在本层写死任何一档（守卫钉住「只搬运」）。user 与 comment 两支都用 `msg.cause`。 */
     const dispatchCause: DispatchCause | undefined =
-      msg.trigger === "rule"
-        ? "rule"
-        : msg.trigger === "replay"
-          ? msg.replayCause
-          : msg.cause;
+      msg.trigger === "rule" ? "rule" : msg.trigger === "replay" ? msg.replayCause : msg.cause;
     /* 入边 `caused_by_run_id`：**只在派发时刻**解析「这条队员 run 的上级队长 run」——
        ① 仅 `leader_tool` 派发（队长工具派单；用户改派/规则触发没有必然的上级队长）；
        ② 仅队员 run（队长 run 是批次起点，无入边；单独安排没有台账行）；
@@ -3263,9 +3259,7 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         if (openOutcome.kind === "queued" || openOutcome.kind === "coalesced") {
           logger.info(
             `[squad] dispatch queued ${triggerLabel} workItem=${msg.workItemId} agent=${enqueued.agentId} runId=${eventKey}` +
-              (openOutcome.kind === "coalesced"
-                ? ` coalescedInto=${openOutcome.targetRunId}`
-                : ""),
+              (openOutcome.kind === "coalesced" ? ` coalescedInto=${openOutcome.targetRunId}` : ""),
           );
           return {
             ok: true,
@@ -3662,7 +3656,13 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
         ` eventKey=${eventKey} task=${task.taskId} mcp=${mcpServerNames}`,
     );
     // 会话已发出（成员/队长已登记台账行）⇒ 评论 receipt 落 opened（run 身份 = dispatchKey）。
-    return { ok: true, taskId: task.taskId, sessionId: task.taskId, kind, bridge: { kind: "dispatched" } };
+    return {
+      ok: true,
+      taskId: task.taskId,
+      sessionId: task.taskId,
+      kind,
+      bridge: { kind: "dispatched" },
+    };
   } catch (error) {
     /* 派发中途失败（createTask / resumeTask / sendPrompt 抛）时的归宿：
        回执照旧发给调度器（transient ⇒ 它会重投同一条事实），但**台账侧**要留痕 ——
@@ -3726,7 +3726,6 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
     };
   }
 }
-
 
 /**
  * C4b：**队列推进与义务重放**（结算事实/启动扫描的共唯一实现）。
@@ -3849,7 +3848,10 @@ async function advanceSquadQueueAfterSettlement(
       );
       if (row === undefined) {
         await squadRuntime
-          .failMemberRun(target, { runId: queued.runId, reason: `replay failed: ${report.error ?? "unknown"}` })
+          .failMemberRun(target, {
+            runId: queued.runId,
+            reason: `replay failed: ${report.error ?? "unknown"}`,
+          })
           .catch((error: unknown) =>
             logger.error(`[squad] replay failure cleanup failed runId=${queued.runId}`, error),
           );
@@ -3896,9 +3898,7 @@ async function advanceSquadQueueAfterSettlement(
           ` agent=${obligation.agentId} runId=${obligation.runId} origin=${obligation.origin}` +
           "（义务已认领 ⇒ 本次数重放损失一次；窗口滑出后由下一次派发/推进恢复）",
       );
-      const workItemForSkip = snapshot.workItems.find(
-        (item) => item.id === obligation.workItemId,
-      );
+      const workItemForSkip = snapshot.workItems.find((item) => item.id === obligation.workItemId);
       recordDispatchSkippedBestEffort(squadRuntime, target, {
         workItemId: obligation.workItemId,
         workItemTitle: workItemForSkip?.title ?? null,
@@ -4959,9 +4959,13 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
 
               /* 第四步（C4b，v2.1 C4-1）：排队行与到期义务的全量扫描推进（与在线同一实现；
                  判据全持久无 timer；不通过 ⇒ 收口+留痕，S6 §8.4-4/§12.1-12）。 */
-              await forEachSquadWorkspaceTarget(candidates, "queue reconciliation", async (target) => {
-                await advanceSquadQueueAfterSettlement(activeServices, target);
-              });
+              await forEachSquadWorkspaceTarget(
+                candidates,
+                "queue reconciliation",
+                async (target) => {
+                  await advanceSquadQueueAfterSettlement(activeServices, target);
+                },
+              );
             })();
 
             /* 在线看门狗 tick（W2；设计 §6.2）：与启动维护同处起停 —— database ready 之后启动，

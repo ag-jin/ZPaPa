@@ -89,10 +89,9 @@ test("显示偏好关闭后，已有的投射条目被移除", () => {
   // 偏好过滤发生在设备项目列表上，因此关闭的项目"看起来"从设备消失了
   const result = computeProjectionSync({
     deviceSessionId,
-    deviceProjects: filterProjectsByVisibility(
-      [{ path: "/p/one", sessionCount: 1 }],
-      { "/p/one": false },
-    ),
+    deviceProjects: filterProjectsByVisibility([{ path: "/p/one", sessionCount: 1 }], {
+      "/p/one": false,
+    }),
     existingTabs: [projectionTab("tab-1", "/p/one")],
   });
   assert.deepEqual(result.toRemoveTabIds, ["tab-1"]);
@@ -107,11 +106,7 @@ test("不触碰其他设备的投射条目", () => {
       projectionTab("tab-mine", "/p/y", deviceSessionId),
     ],
   });
-  assert.deepEqual(
-    result.toRemoveTabIds,
-    ["tab-mine"],
-    "另一台设备的投射条目不受本设备断开影响",
-  );
+  assert.deepEqual(result.toRemoveTabIds, ["tab-mine"], "另一台设备的投射条目不受本设备断开影响");
 });
 
 test("非投射条目（常规 workspace tab）不参与同步", () => {
@@ -184,7 +179,10 @@ test("常规 workspace tab 永远不算孤儿", () => {
 test("按 target 找到在册的设备 session", () => {
   const sessions = {
     "sess-a": { sessionId: "sess-a", target: { kind: "ssh", host: "1.1.1.1", username: "u" } },
-    "sess-b": { sessionId: "sess-b", target: { kind: "ssh", host: "100.66.1.2", username: "linguojin" } },
+    "sess-b": {
+      sessionId: "sess-b",
+      target: { kind: "ssh", host: "100.66.1.2", username: "linguojin" },
+    },
   };
   assert.equal(
     findDeviceSessionId(sessions, { kind: "ssh", host: "100.66.1.2", username: "linguojin" }),
@@ -203,7 +201,6 @@ test("按 target 找到在册的设备 session", () => {
   );
   assert.equal(findDeviceSessionId(sessions, null), undefined, "未配置设备时不匹配");
 });
-
 
 /**
  * 断开态条目必须被保留 —— 它们是侧边栏的重连入口（规格 US 4/5/17）。
@@ -236,7 +233,6 @@ test("同一批里断开态保留、旧代活跃条目回收", () => {
   });
   assert.deepEqual(orphans, ["tab-stale-active"], "只回收旧代活跃条目，保留重连入口");
 });
-
 
 // ── 一台设备一代：跨代残留与当代重复（实测缺陷：正式版 3 代共存）────────────
 //

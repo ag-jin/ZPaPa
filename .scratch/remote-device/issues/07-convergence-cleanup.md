@@ -10,11 +10,11 @@
 
 统一入口：`node scripts/remote/regression.mjs`（npm: `pnpm remote:regression`）
 
-| 层 | 性质 | 数量 | 跑法 |
-|---|---|---|---|
-| 1 | 纯函数/契约，无设备无网络，约 4 秒 | 9 项 | `pnpm remote:regression:l1` |
-| 2 | 跨机只读，需 B 在线 | 5 项 | `pnpm remote:regression:l2` |
-| 3 | 跨机写带回滚，需 B 在线**且会写对端** | 1 项 | `--layer=3` 或 `--layer=all` |
+| 层  | 性质                                  | 数量 | 跑法                         |
+| --- | ------------------------------------- | ---- | ---------------------------- |
+| 1   | 纯函数/契约，无设备无网络，约 4 秒    | 9 项 | `pnpm remote:regression:l1`  |
+| 2   | 跨机只读，需 B 在线                   | 5 项 | `pnpm remote:regression:l2`  |
+| 3   | 跨机写带回滚，需 B 在线**且会写对端** | 1 项 | `--layer=3` 或 `--layer=all` |
 
 层 3 默认不跑：写测试必须是有意识的动作，而不是默认行为。
 

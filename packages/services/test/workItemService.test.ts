@@ -15,13 +15,21 @@ function setup() {
   });
   return { service, events };
 }
-const base = { workspaceIdentity: "ws", workspacePath: "/tmp/ws", body: "", assignee: { type: "user" as const, id: "u1" } };
+const base = {
+  workspaceIdentity: "ws",
+  workspacePath: "/tmp/ws",
+  body: "",
+  assignee: { type: "user" as const, id: "u1" },
+};
 
 test("成环被拒绝", () => {
   const { service } = setup();
   const a = service.create({ ...base, title: "a" });
   const b = service.create({ ...base, title: "b", parentId: a.id });
-  assert.throws(() => service.create({ ...base, title: "x", parentId: b.id, id: a.id }), /环|cycle/i);
+  assert.throws(
+    () => service.create({ ...base, title: "x", parentId: b.id, id: a.id }),
+    /环|cycle/i,
+  );
 });
 
 test("超过深度上限被拒绝", () => {
@@ -35,7 +43,10 @@ test("超过子项上限被拒绝", () => {
   const { service } = setup();
   const p = service.create({ ...base, title: "p" });
   for (let i = 0; i < 50; i++) service.create({ ...base, title: `c${i}`, parentId: p.id });
-  assert.throws(() => service.create({ ...base, title: "overflow", parentId: p.id }), /子项|children/i);
+  assert.throws(
+    () => service.create({ ...base, title: "overflow", parentId: p.id }),
+    /子项|children/i,
+  );
 });
 
 // 唯一写者：改状态必须经服务，且产生事件。
@@ -43,7 +54,12 @@ test("状态流转产生事件；CAS 失败不发事件", () => {
   const { service, events } = setup();
   const a = service.create({ ...base, title: "a" });
   assert.equal(service.transition(a.id, "in_progress", "todo"), true);
-  assert.deepEqual(events.at(-1), { kind: "workitem.status_changed", id: a.id, from: "todo", to: "in_progress" });
+  assert.deepEqual(events.at(-1), {
+    kind: "workitem.status_changed",
+    id: a.id,
+    from: "todo",
+    to: "in_progress",
+  });
   assert.equal(service.transition(a.id, "done", "todo"), false); // 前置已不是 todo
   assert.equal(events.filter((e) => e.kind === "workitem.status_changed").length, 1);
 });

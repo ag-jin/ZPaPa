@@ -231,9 +231,7 @@ export interface BuildPagePromptParams {
 /** 第二跳：逐页生成正文。 */
 export function buildPagePrompt(params: BuildPagePromptParams): string {
   const langLine =
-    params.language === "en-US"
-      ? "Write the page in English."
-      : "用简体中文撰写这一页。";
+    params.language === "en-US" ? "Write the page in English." : "用简体中文撰写这一页。";
 
   const diagramLine = params.generateDiagrams
     ? "需要时用 ```mermaid 代码块画图（0-3 个；没有合适的内容就不画）。"

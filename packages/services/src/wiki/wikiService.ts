@@ -93,7 +93,10 @@ export function createWikiService(options: CreateWikiServiceOptions): IWikiServi
         runUpdate: async (target, settings) => {
           // 自动更新走增量：复用已有目录树，只补缺失/失败的页，
           // 避免每次到点都重规划一篇 52 页的文档。
-          const existing = await listWikisForWorkspace(target.workspacePath, target.workspaceIdentity);
+          const existing = await listWikisForWorkspace(
+            target.workspacePath,
+            target.workspaceIdentity,
+          );
           const resumeOnly = existing.length > 0;
           await generator.generate({
             workspacePath: target.workspacePath,

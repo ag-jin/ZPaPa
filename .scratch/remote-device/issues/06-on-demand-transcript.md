@@ -14,17 +14,18 @@
 - [x] 已加载区间不重复拉取 —— `mergeOlderRows` 按 rowId 去重合并；`loadOlder` 有 `loadingOlder` 单飞保护
 - [x] 验证区间正确并与全量一致 —— acceptance-tail-parts-ordering.ts 覆盖 8 会话 × 7 种窗口共 56 项断言（尾部顺序一致 + 窗口内 parts 完整）
 
-
 ## 实施记录（2026-09-27）
 
 **先做的诊断**：结论是按需加载**早已实现**，用户感受到的"加载慢"另有其因。
 
 已存在（v4 协议）：
+
 - `conversationProjectionStore.ts:988` `loadOlder(limit)` → `rowsRange(beforeRowId)`
 - `core.ts:75` `snapshotTailWindowRows: 60`（首屏窗口）
 - `core.ts:76` `rowsRangeMaxLimit: 200`（单次分页上限）
 
 实测定位到真正的瓶颈（CLI 日志 `session snapshot slow` 的分阶段耗时）：
+
 - `buildSnapshot` 746ms（74%），其中 `persistedMessages` 263ms
 - 根因：`readSessionMessages` 读取**全部** 3137 条消息的 14556 块 parts，
   而调用方拿到后立刻按 messageLimit 裁剪 —— 前面几千条的 parts 白读

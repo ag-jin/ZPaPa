@@ -60,8 +60,14 @@ test("合并追加页：按 runId 去重、保持 (createdAt, runId) DESC 序", 
     ["c", "b", "a"],
     "重复的 runId 只留一条（已在屏上的那条不被顶掉，界面不闪）",
   );
-  assert.deepEqual(mergeRunHistoryPages([], page).map((record) => record.runId), ["b", "a"]);
-  assert.deepEqual(mergeRunHistoryPages(current, []).map((record) => record.runId), ["c", "b"]);
+  assert.deepEqual(
+    mergeRunHistoryPages([], page).map((record) => record.runId),
+    ["b", "a"],
+  );
+  assert.deepEqual(
+    mergeRunHistoryPages(current, []).map((record) => record.runId),
+    ["c", "b"],
+  );
   assert.deepEqual(mergeRunHistoryPages([], []), []);
 });
 
@@ -90,12 +96,15 @@ test("合并追加页：不就地改写入参（两份列表原样保留）", ()
    `settle_reason` **不是闭集**（失败原因原文也落这一列）：把它当枚举处理会让真实的失败原因
    在界面上消失 —— 而那正是用户最需要看到的一行。 */
 test("结算原因：4 个码值各有文案键；未知原文与空值返回 null（前者原样显示、后者不显示）", () => {
-  assert.deepEqual(Object.keys(RUN_SETTLE_REASON_MESSAGE_IDS).sort(), [
-    SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
-    SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
-    SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
-    SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
-  ].sort());
+  assert.deepEqual(
+    Object.keys(RUN_SETTLE_REASON_MESSAGE_IDS).sort(),
+    [
+      SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+      SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+      SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+      SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+    ].sort(),
+  );
   for (const code of Object.keys(RUN_SETTLE_REASON_MESSAGE_IDS)) {
     assert.ok(runSettleReasonMessageId(code)?.startsWith("squad.agentDetail.settleReason."), code);
   }
@@ -109,7 +118,12 @@ test("结算原因：4 个码值各有文案键；未知原文与空值返回 nu
 
 test("结算原因：码值必须引用 services 的常量（UI 不得内联字面量）", () => {
   const viewModel = readSource("squad/squadRunHistoryViewModel.ts");
-  for (const literal of ["watchdog_ttl", "watchdog_dead_session", "user_cancel", "watchdog_idle_stop_grace_expired"]) {
+  for (const literal of [
+    "watchdog_ttl",
+    "watchdog_dead_session",
+    "user_cancel",
+    "watchdog_idle_stop_grace_expired",
+  ]) {
     assert.ok(
       !viewModel.includes(`"${literal}"`),
       `UI 不得内联码值字面量「${literal}」—— 抄错一个字，一次看门狗结算会被显示成别的原因`,
@@ -140,10 +154,7 @@ test("守卫｜详情页只调分页口径：无前端 agentId 过滤、无前�
     /const RUN_HISTORY_PAGE_SIZE = 50;/.test(page) && page.includes("limit: RUN_HISTORY_PAGE_SIZE"),
     "页大小是唯一常量（值仍 50，但语义从「硬截断」变成「页大小」）",
   );
-  assert.ok(
-    !page.includes("RUN_HISTORY_LIMIT"),
-    "旧名必须消失：留着它就是在说一句不再成立的话",
-  );
+  assert.ok(!page.includes("RUN_HISTORY_LIMIT"), "旧名必须消失：留着它就是在说一句不再成立的话");
 });
 
 test("守卫｜「加载更多」只在有游标时给，加载中禁用，失败可见", () => {
@@ -157,7 +168,8 @@ test("守卫｜「加载更多」只在有游标时给，加载中禁用，失�
     "加载失败要可见（不吞错）",
   );
   assert.ok(
-    page.includes("squad.agentDetail.runsLoaded") || page.includes("squad.agentDetail.runsAllLoaded"),
+    page.includes("squad.agentDetail.runsLoaded") ||
+      page.includes("squad.agentDetail.runsAllLoaded"),
     "计数/到底两态文案要接上",
   );
   assert.ok(
@@ -169,12 +181,12 @@ test("守卫｜「加载更多」只在有游标时给，加载中禁用，失�
 test("守卫｜结算原因呈现走映射表（码值本地化、原文原样、空不显示）", () => {
   const page = readSource("squad/SquadAgentDetailPage.tsx");
   assert.ok(page.includes("runSettleReasonMessageId("), "必须经映射表（不得内联字面量比较）");
-  const block = page.slice(page.indexOf("runSettleReasonMessageId("), page.indexOf("</li>", page.indexOf("runSettleReasonMessageId(")));
-  assert.ok(block.length > 0, "结算原因必须渲染在某一行里");
-  assert.ok(
-    block.includes("settleReason"),
-    "渲染的文本取自 run.settleReason（未知原文原样显示）",
+  const block = page.slice(
+    page.indexOf("runSettleReasonMessageId("),
+    page.indexOf("</li>", page.indexOf("runSettleReasonMessageId(")),
   );
+  assert.ok(block.length > 0, "结算原因必须渲染在某一行里");
+  assert.ok(block.includes("settleReason"), "渲染的文本取自 run.settleReason（未知原文原样显示）");
 });
 
 // ---------- ④ 「加载更多」的接线：第二页请求必须带**第一页给的**游标 ----------
@@ -205,11 +217,7 @@ test("守卫｜接线：「加载更多」第二页请求带第一页游标（�
     /agentId:\s*current\.agentId/,
     "第二页必须仍是同一个 agent（换页不得跨 agent 取值）",
   );
-  assert.match(
-    secondPageRequest,
-    /limit:\s*RUN_HISTORY_PAGE_SIZE/,
-    "第二页用同一个页大小常量",
-  );
+  assert.match(secondPageRequest, /limit:\s*RUN_HISTORY_PAGE_SIZE/, "第二页用同一个页大小常量");
 
   const loadMore = page.slice(
     page.indexOf("const loadMore = useCallback("),
@@ -221,17 +229,17 @@ test("守卫｜接线：「加载更多」第二页请求带第一页游标（�
     /const cursor = current\.nextCursor;/,
     "第二页的游标只能来自上一页响应（不透明契约：原样带回，不解析、不重拼）",
   );
-  assert.ok(
-    !/cursor\s*[+.]/.test(page),
-    "界面不得重拼 / 解析游标（游标格式属于服务面单源）",
-  );
+  assert.ok(!/cursor\s*[+.]/.test(page), "界面不得重拼 / 解析游标（游标格式属于服务面单源）");
 });
 
 // ---------- ⑤ i18n 成对 ----------
 
 test("守卫｜运行历史分页与结算原因文案两语成对（含占位符一致）", () => {
   const placeholders = (value: string) =>
-    [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort().join(",");
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((match) => match[1])
+      .sort()
+      .join(",");
   for (const key of [
     "squad.agentDetail.runsMore",
     "squad.agentDetail.runsMoreLoading",
@@ -249,6 +257,10 @@ test("守卫｜运行历史分页与结算原因文案两语成对（含占位�
     assert.ok(en, `英文缺 ${key}`);
     assert.equal(placeholders(zh), placeholders(en), `${key} 的占位符必须两语一致`);
   }
-  assert.equal(zhCN["squad.agentDetail.runsOverflow"], undefined, "旧溢出文案必须删除（否则它在撒谎）");
+  assert.equal(
+    zhCN["squad.agentDetail.runsOverflow"],
+    undefined,
+    "旧溢出文案必须删除（否则它在撒谎）",
+  );
   assert.equal(enUS["squad.agentDetail.runsOverflow"], undefined);
 });

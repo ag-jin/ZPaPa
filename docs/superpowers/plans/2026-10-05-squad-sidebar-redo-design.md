@@ -10,12 +10,12 @@
 
 ### 1.1 必须解决的四项缺陷
 
-| 缺陷 | 本方案的验收结论 |
-|---|---|
-| 位置/形态不对 | 取消「toolbar 开关按钮 + 列表区顶部内嵌面板」。小队功能只作为侧栏纯导航分组中的直达入口；不把项目/工作区列表嵌入侧栏。 |
-| 信息密度太浅 | 侧栏提供入口名称及稳定的导航层级；列表页提供 enabled/archived、运行中数量、排队数量、头像堆叠等状态密度。可选 hover 预览只展示已有快照，不在侧栏复制完整 roster。 |
-| 交互路径太深 | 点击「智能体」或「小队」一次直接进入既有列表页，再从列表项进入详情；不经过开关、项目分组或中间面板。 |
-| 预览版默认打开实验开关 | 本设计假设架构线已提供该语义：预览版入口默认可见，正式版默认关闭；UI 不自行复制默认判定，只继续消费统一的 `squadEntryVisible(settings)`。 |
+| 缺陷                   | 本方案的验收结论                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 位置/形态不对          | 取消「toolbar 开关按钮 + 列表区顶部内嵌面板」。小队功能只作为侧栏纯导航分组中的直达入口；不把项目/工作区列表嵌入侧栏。                                            |
+| 信息密度太浅           | 侧栏提供入口名称及稳定的导航层级；列表页提供 enabled/archived、运行中数量、排队数量、头像堆叠等状态密度。可选 hover 预览只展示已有快照，不在侧栏复制完整 roster。 |
+| 交互路径太深           | 点击「智能体」或「小队」一次直接进入既有列表页，再从列表项进入详情；不经过开关、项目分组或中间面板。                                                              |
+| 预览版默认打开实验开关 | 本设计假设架构线已提供该语义：预览版入口默认可见，正式版默认关闭；UI 不自行复制默认判定，只继续消费统一的 `squadEntryVisible(settings)`。                         |
 
 ### 1.2 已有代码事实
 
@@ -112,11 +112,11 @@ AI Team                       [默认展开；不是实验开关]
 
 不命名为 runtime presence，避免暗示在线探测。建议在 view model 层定义 `SquadPresenceSummary`（设计概念，不是本轮新增服务协议）：
 
-| 维度 | 值 | 数据来源 | 视觉语义 |
-|---|---|---|---|
-| availability | `enabled` / `archived` | agent/squad 的 `enabled`、`archivedAt` | enabled=可派发；archived=历史保留、不可派发 |
-| workload | `working` / `queued` / `idle` | `squad_runs` 的现有 run 状态，按服务层 canonical 状态映射 | working=存在运行中 run；queued=无/少量运行中但存在排队 run；idle=无运行中、无排队 |
-| counts | `runningCount`、`queuedCount` | 同一 snapshot/run 查询聚合 | 只显示实际计数；不从列表长度猜测 |
+| 维度         | 值                            | 数据来源                                                  | 视觉语义                                                                          |
+| ------------ | ----------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| availability | `enabled` / `archived`        | agent/squad 的 `enabled`、`archivedAt`                    | enabled=可派发；archived=历史保留、不可派发                                       |
+| workload     | `working` / `queued` / `idle` | `squad_runs` 的现有 run 状态，按服务层 canonical 状态映射 | working=存在运行中 run；queued=无/少量运行中但存在排队 run；idle=无运行中、无排队 |
+| counts       | `runningCount`、`queuedCount` | 同一 snapshot/run 查询聚合                                | 只显示实际计数；不从列表长度猜测                                                  |
 
 约束：
 
@@ -130,14 +130,14 @@ AI Team                       [默认展开；不是实验开关]
 
 颜色必须使用语义 token，不直接写色值；状态点旁必须有可读文本或 `aria-label`，不能只靠颜色。
 
-| 状态 | 点色 token | zh-CN | en-US | 说明 |
-|---|---|---|---|---|
-| enabled + working | `--color-status-working`（建议复用现有 success/primary 语义） | 运行中 · {runningCount} | Working · {runningCount} | `runningCount > 0` 时显示 |
-| enabled + queued（且无 working） | `--color-status-queued`（warning） | 排队中 · +{queuedCount} | Queued · +{queuedCount} | `queuedCount > 0`；`+N` 代表等待中的 run |
-| enabled + idle | `--color-status-idle`（neutral） | 空闲 | Idle | 无 working/queued |
-| disabled | `--color-status-disabled`（neutral/subtle） | 已停用 | Disabled | 不可派发 |
-| archived | `--color-status-archived`（muted） | 已归档 | Archived | 历史条目 |
-| unknown/error | `--color-status-unknown`（danger/neutral，按现有 alert 语义） | 状态暂不可用 | Status unavailable | 读取失败或数据未齐 |
+| 状态                             | 点色 token                                                    | zh-CN                   | en-US                    | 说明                                     |
+| -------------------------------- | ------------------------------------------------------------- | ----------------------- | ------------------------ | ---------------------------------------- |
+| enabled + working                | `--color-status-working`（建议复用现有 success/primary 语义） | 运行中 · {runningCount} | Working · {runningCount} | `runningCount > 0` 时显示                |
+| enabled + queued（且无 working） | `--color-status-queued`（warning）                            | 排队中 · +{queuedCount} | Queued · +{queuedCount}  | `queuedCount > 0`；`+N` 代表等待中的 run |
+| enabled + idle                   | `--color-status-idle`（neutral）                              | 空闲                    | Idle                     | 无 working/queued                        |
+| disabled                         | `--color-status-disabled`（neutral/subtle）                   | 已停用                  | Disabled                 | 不可派发                                 |
+| archived                         | `--color-status-archived`（muted）                            | 已归档                  | Archived                 | 历史条目                                 |
+| unknown/error                    | `--color-status-unknown`（danger/neutral，按现有 alert 语义） | 状态暂不可用            | Status unavailable       | 读取失败或数据未齐                       |
 
 `runningCount` 规范：
 
@@ -252,30 +252,30 @@ Iconography
 
 保留现有导航键 `workspace.openSquadAgents`、`workspace.openSquads`、`workspace.openWorkItems`（zh-CN `packages/ui/src/i18n/locales/zh-CN.ts:1504-1507`；en-US `:1619-1622`，事实报告 `:206-215`）。建议新增/重命名为以下稳定命名；实现时不得保留同义重复键：
 
-| key | zh-CN | en-US |
-|---|---|---|
-| `squad.sidebar.aiTeam` | AI 团队 | AI Team |
-| `squad.sidebar.openAgents` | 智能体 | Agents |
-| `squad.sidebar.openSquads` | 小队 | Squads |
-| `squad.sidebar.statusUnavailable` | 状态暂不可用 | Status unavailable |
-| `squad.sidebar.enabled` | 已启用 | Enabled |
-| `squad.sidebar.disabled` | 已停用 | Disabled |
-| `squad.sidebar.archived` | 已归档 | Archived |
-| `squad.sidebar.idle` | 空闲 | Idle |
-| `squad.sidebar.working` | 运行中 · {count} | Working · {count} |
-| `squad.sidebar.queued` | 排队中 · +{count} | Queued · +{count} |
-| `squad.sidebar.queuedShort` | +{count} 排队 | +{count} queued |
-| `squad.sidebar.agentCount` | {count} 个智能体 | {count, plural, one {# agent} other {# agents}} |
-| `squad.sidebar.memberCount` | {count} 个成员 | {count, plural, one {# member} other {# members}} |
-| `squad.sidebar.moreMembers` | 还有 {count} 个 | +{count} more |
-| `squad.sidebar.openAgentsAria` | 打开智能体列表 | Open agents list |
-| `squad.sidebar.openSquadsAria` | 打开小队列表 | Open squads list |
-| `squad.sidebar.aiTeamExpand` | 展开 AI 团队 | Expand AI Team |
-| `squad.sidebar.aiTeamCollapse` | 收起 AI 团队 | Collapse AI Team |
-| `squad.sidebar.noAgents` | 暂无智能体 | No agents yet |
-| `squad.sidebar.noSquads` | 暂无小队 | No squads yet |
-| `squad.sidebar.partialStatus` | 部分状态暂不可用 | Some statuses unavailable |
-| `squad.sidebar.previewOpenList` | 打开列表 | Open list |
+| key                               | zh-CN             | en-US                                             |
+| --------------------------------- | ----------------- | ------------------------------------------------- |
+| `squad.sidebar.aiTeam`            | AI 团队           | AI Team                                           |
+| `squad.sidebar.openAgents`        | 智能体            | Agents                                            |
+| `squad.sidebar.openSquads`        | 小队              | Squads                                            |
+| `squad.sidebar.statusUnavailable` | 状态暂不可用      | Status unavailable                                |
+| `squad.sidebar.enabled`           | 已启用            | Enabled                                           |
+| `squad.sidebar.disabled`          | 已停用            | Disabled                                          |
+| `squad.sidebar.archived`          | 已归档            | Archived                                          |
+| `squad.sidebar.idle`              | 空闲              | Idle                                              |
+| `squad.sidebar.working`           | 运行中 · {count}  | Working · {count}                                 |
+| `squad.sidebar.queued`            | 排队中 · +{count} | Queued · +{count}                                 |
+| `squad.sidebar.queuedShort`       | +{count} 排队     | +{count} queued                                   |
+| `squad.sidebar.agentCount`        | {count} 个智能体  | {count, plural, one {# agent} other {# agents}}   |
+| `squad.sidebar.memberCount`       | {count} 个成员    | {count, plural, one {# member} other {# members}} |
+| `squad.sidebar.moreMembers`       | 还有 {count} 个   | +{count} more                                     |
+| `squad.sidebar.openAgentsAria`    | 打开智能体列表    | Open agents list                                  |
+| `squad.sidebar.openSquadsAria`    | 打开小队列表      | Open squads list                                  |
+| `squad.sidebar.aiTeamExpand`      | 展开 AI 团队      | Expand AI Team                                    |
+| `squad.sidebar.aiTeamCollapse`    | 收起 AI 团队      | Collapse AI Team                                  |
+| `squad.sidebar.noAgents`          | 暂无智能体        | No agents yet                                     |
+| `squad.sidebar.noSquads`          | 暂无小队          | No squads yet                                     |
+| `squad.sidebar.partialStatus`     | 部分状态暂不可用  | Some statuses unavailable                         |
+| `squad.sidebar.previewOpenList`   | 打开列表          | Open list                                         |
 
 已有 `squad.sidebar.noProjects/loadFailed/agentsEntry/squadsEntry` 四键及其结构守卫位于 `packages/ui/test/squadSidebarSection.test.ts:18-28`（事实报告 `:143-150`）。它们属于旧组件契约；重做删除旧组件后应删除旧键或迁移为上表键，并同步删除只为旧面板服务的守卫，不能让死键继续约束新结构。
 

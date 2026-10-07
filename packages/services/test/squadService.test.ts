@@ -68,7 +68,12 @@ test("create 缺收手条件/轮次上限则抛错", () => {
 // ⑤刀剩余半边（矩阵裁定#2：归档可恢复，与智能体同口径）。
 test("归档后可恢复（restore 清 archivedAt；未知 id 响亮抛）", () => {
   const svc = setup();
-  const s0 = svc.create({ name: "sq", leaderAgentId: "ta-1", members: ["ta-1"], instructions: { stopCondition: "x", maxRounds: "3" } });
+  const s0 = svc.create({
+    name: "sq",
+    leaderAgentId: "ta-1",
+    members: ["ta-1"],
+    instructions: { stopCondition: "x", maxRounds: "3" },
+  });
   svc.archive(s0.id);
   assert.ok(svc.get(s0.id)?.archivedAt !== undefined);
   svc.restore(s0.id);

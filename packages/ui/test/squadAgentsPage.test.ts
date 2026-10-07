@@ -359,11 +359,7 @@ test("守卫｜智能体列表呈现描述（有则一行截断，无则不渲�
     "描述必须条件渲染：有才画（空占位会让卡片看起来坏了一半）",
   );
   assert.match(list, /squad-agent-description/, "描述必须有稳定 testid");
-  assert.match(
-    list,
-    /truncate/,
-    "描述必须单行截断（长描述撑破卡片 = 布局缺陷，不是信息密度）",
-  );
+  assert.match(list, /truncate/, "描述必须单行截断（长描述撑破卡片 = 布局缺陷，不是信息密度）");
 });
 
 /* ---------- T5：presence 密度的结构守卫（判定矩阵见 squadPresenceViewModel.test.ts） ---------- */
@@ -371,11 +367,15 @@ test("守卫｜智能体列表呈现描述（有则一行截断，无则不渲�
 test("守卫｜presence 接线：列表消费 runs/queuedRuns 契约字段，计数 testid 齐全且不裸数字", () => {
   const page = readSource("squad/SquadAgentsPage.tsx");
   assert.ok(
-    page.includes("runs={state.snapshot.runs}") && page.includes("queuedRuns={state.snapshot.queuedRuns}"),
+    page.includes("runs={state.snapshot.runs}") &&
+      page.includes("queuedRuns={state.snapshot.queuedRuns}"),
     "页面必须把 snapshot 的 runs/queuedRuns 传进列表（排队的唯一合法数据源 = queuedRuns 契约字段）",
   );
   const list = readSource("squad/SquadAgentsList.tsx");
-  assert.ok(list.includes("buildAgentPresence("), "presence 判定必须走唯一实现（view model 纯函数）");
+  assert.ok(
+    list.includes("buildAgentPresence("),
+    "presence 判定必须走唯一实现（view model 纯函数）",
+  );
   assert.ok(list.includes('data-testid="squad-presence"'), "presence 行须有 squad-presence testid");
   assert.ok(list.includes('data-testid="squad-running-count"'), "运行计数 testid");
   assert.ok(list.includes('data-testid="squad-queued-count"'), "排队计数 testid");
@@ -394,7 +394,10 @@ test("守卫｜presence 接线：列表消费 runs/queuedRuns 契约字段，计
 
 test("i18n：presence 计数键占位符两语一致", () => {
   const placeholdersOf = (value: string) =>
-    [...value.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((m) => m[1])
+      .sort()
+      .join(",");
   for (const key of [
     "squad.sidebar.working",
     "squad.sidebar.queued",
@@ -411,7 +414,11 @@ test("i18n：presence 计数键占位符两语一致", () => {
     assert.equal(placeholdersOf(zhCN[key] ?? ""), "count", `${key} 只允许 {count} 一个占位符`);
   }
   // 非计数键不得带占位符（带了的渲染调用没传值会露原始花括号）。
-  for (const key of ["squad.sidebar.idle", "squad.sidebar.aiTeam", "squad.sidebar.statusUnavailable"]) {
+  for (const key of [
+    "squad.sidebar.idle",
+    "squad.sidebar.aiTeam",
+    "squad.sidebar.statusUnavailable",
+  ]) {
     assert.equal(placeholdersOf(zhCN[key] ?? ""), "", `${key} 不应带占位符`);
     assert.equal(placeholdersOf(enUS[key] ?? ""), "", `${key} 不应带占位符`);
   }
@@ -424,10 +431,7 @@ test("守卫｜表单含描述与身份色选色器：色板=TEAM_AGENT_COLORS �
   assert.ok(dialog.includes("TEAM_AGENT_COLORS.map"), "选色器必须走 shared 单源色板常量");
   assert.ok(dialog.includes('data-testid="squad-agent-color-picker"'), "选色器 testid");
   assert.ok(dialog.includes('role="radiogroup"'), "radio 组语义（可访问）");
-  assert.ok(
-    dialog.includes("aria-checked={color === candidate}"),
-    "单选语义（aria-checked）",
-  );
+  assert.ok(dialog.includes("aria-checked={color === candidate}"), "单选语义（aria-checked）");
   assert.ok(
     dialog.includes("setColor(color === candidate ? undefined : candidate)"),
     "再点同色可撤销回未选（undefined=不落盘）",
@@ -452,14 +456,22 @@ test("守卫｜表单含描述与身份色选色器：色板=TEAM_AGENT_COLORS �
 
 test("守卫｜模型选择走 ModelPickerRow 复用：受控值含推理档位、服务缺失不阻塞表单、编辑回填", () => {
   const dialog = readSource("squad/SquadCreateDialogs.tsx");
-  assert.ok(dialog.includes("<ModelPickerRow"), "模型选择必须复用 ModelPickerRow（清单/生效值/推理档位规则单点）");
+  assert.ok(
+    dialog.includes("<ModelPickerRow"),
+    "模型选择必须复用 ModelPickerRow（清单/生效值/推理档位规则单点）",
+  );
   assert.ok(dialog.includes('data-testid="squad-agent-model-picker"'), "选择器容器 testid");
   assert.ok(
-    dialog.includes("modelView ?? { status: \"unavailable\""),
+    dialog.includes('modelView ?? { status: "unavailable"'),
     "页面未传视图时禁用态降级，不阻塞表单其余字段",
   );
+  /* 源码文本守卫不钉死换行与缩进：该表达式是否折行由 oxfmt 按 printWidth 决定
+     （2026-10-08 全仓格式化把它折成一行），钉死缩进会让守卫随格式化失效。
+     断言的是同一段构造（含 `: {}` 回退），只忽略空白差异。 */
   assert.ok(
-    dialog.includes("...(reasoningLevel !== undefined\n                    ? { options: { reasoningLevel } }"),
+    dialog
+      .replace(/\s+/g, " ")
+      .includes("...(reasoningLevel !== undefined ? { options: { reasoningLevel } } : {})"),
     "推理档位并入 modelSelection.options（不另立字段）",
   );
   assert.ok(
@@ -504,24 +516,24 @@ test("守卫｜③a 表单：skills 令牌化（去空去重、空=不提交）�
 test("守卫｜③b 工具编辑器：all/custom 两态（[]=全部）、复选清单走 TOOL_OPTIONS 单源、禁用工具令牌", () => {
   const dialog = readSource("squad/SquadCreateDialogs.tsx");
   assert.ok(dialog.includes('data-testid="squad-agent-tools-mode"'), "工具模式 testid");
-  assert.ok(
-    dialog.includes('data-testid="squad-agent-tools-editor"'),
-    "编辑器容器 testid",
-  );
+  assert.ok(dialog.includes('data-testid="squad-agent-tools-editor"'), "编辑器容器 testid");
   assert.ok(
     dialog.includes("TOOL_OPTIONS.map") &&
       dialog.includes('import { TOOL_OPTIONS } from "@/settings/SubagentsSection.js"'),
     "复选清单必须走 SubagentsSection 的 TOOL_OPTIONS 单源（另抄一份会漂移）",
   );
   assert.ok(
-    dialog.includes('...(toolMode === "all"' + "\n" + '            ? { tools: [] }'),
+    dialog.includes('...(toolMode === "all"' + "\n" + "            ? { tools: [] }"),
     "「允许全部」显式提交 tools=[]（空数组=全部的既有口径；undefined 才是保持原值）",
   );
   assert.ok(
     dialog.includes("preservedToolsRef"),
     "未知工具名随提交原样保留（不因不在复选清单而丢失）",
   );
-  assert.ok(dialog.includes('data-testid="squad-agent-disallowed-input"'), "禁用工具令牌输入 testid");
+  assert.ok(
+    dialog.includes('data-testid="squad-agent-disallowed-input"'),
+    "禁用工具令牌输入 testid",
+  );
   const page = readSource("squad/SquadAgentsPage.tsx");
   assert.ok(
     page.includes("dialog.agent.tools") && page.includes("dialog.agent.disallowedTools"),
@@ -542,9 +554,21 @@ test("守卫｜归档可恢复：canRestore 判据、恢复按钮、确认文案
   assert.ok(agentList.includes('data-testid="squad-agent-restore"'), "智能体恢复按钮 testid");
   assert.ok(squadList.includes('data-testid="squad-row-restore"'), "小队恢复按钮 testid");
   // 确认文案不再出现「不可撤销」（两语）。
-  assert.ok(!zhCN["squad.agents.archiveConfirmDescription"]?.includes("不可撤销"), "智能体文案已改可恢复");
-  assert.ok(!zhCN["squad.squads.archiveConfirmDescription"]?.includes("不可撤销"), "小队文案已改可恢复");
-  assert.ok(!enUS["squad.agents.archiveConfirmDescription"]?.includes("cannot be undone"), "EN 文案已改");
-  assert.ok(!enUS["squad.squads.archiveConfirmDescription"]?.includes("cannot be undone"), "EN 小队文案已改");
+  assert.ok(
+    !zhCN["squad.agents.archiveConfirmDescription"]?.includes("不可撤销"),
+    "智能体文案已改可恢复",
+  );
+  assert.ok(
+    !zhCN["squad.squads.archiveConfirmDescription"]?.includes("不可撤销"),
+    "小队文案已改可恢复",
+  );
+  assert.ok(
+    !enUS["squad.agents.archiveConfirmDescription"]?.includes("cannot be undone"),
+    "EN 文案已改",
+  );
+  assert.ok(
+    !enUS["squad.squads.archiveConfirmDescription"]?.includes("cannot be undone"),
+    "EN 小队文案已改",
+  );
   assert.ok(zhCN["squad.common.restore"] && enUS["squad.common.restore"], "restore 键两语齐");
 });

@@ -1,9 +1,6 @@
 import type { SquadRunRecord, SquadRunStatus } from "@zcode/services";
 import type { Squad, TeamAgent } from "@zcode/shared";
-import {
-  SUBAGENT_COLOR_CLASS,
-  resolveSubagentColorFromName,
-} from "@/lib/subagentColors.js";
+import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 
 /* T5：presence 的**唯一判定实现**（纯函数，UI 归属——T4 裁定③「U」：判据不出 UI 层，
    零 services 导出面改动；先例 runReviewable）。
@@ -122,8 +119,7 @@ export function buildSquadPresence(
     activeMemberCount: activeMembers.length,
     avatarStack: activeMembers.slice(0, AVATAR_STACK_LIMIT).map((agent) => ({
       agentId: agent.id,
-      colorClass:
-        SUBAGENT_COLOR_CLASS[agent.color ?? resolveSubagentColorFromName(agent.name)],
+      colorClass: SUBAGENT_COLOR_CLASS[agent.color ?? resolveSubagentColorFromName(agent.name)],
     })),
     avatarOverflow: Math.max(0, activeMembers.length - AVATAR_STACK_LIMIT),
   };

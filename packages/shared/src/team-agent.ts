@@ -118,12 +118,7 @@ export const teamAgentSchema = z
     mcpServers: teamAgentMcpServersSchema.optional(),
     memoryScope: z.enum(TEAM_AGENT_MEMORY_SCOPES),
     /** 每 agent 最大并发 run 数（C1）：可选——缺省不落盘（存量文件零改写），读数经 resolveTeamAgentMaxConcurrentRuns。 */
-    maxConcurrentRuns: z
-      .number()
-      .int()
-      .min(1)
-      .max(TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT)
-      .optional(),
+    maxConcurrentRuns: z.number().int().min(1).max(TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT).optional(),
     /** 看门狗 TTL（分钟，0014 判据 / W1）：可选——缺省不落盘，读数经 resolveTeamAgentRunTtlMinutes。 */
     runTtlMinutes: z.number().int().min(1).optional(),
     /** 看门狗空闲阈值（分钟）：可选——缺省不落盘，读数经 resolveTeamAgentIdleTimeoutMinutes。 */

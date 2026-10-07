@@ -70,10 +70,7 @@ export interface WorkItemRepo {
    * `labels` 入参是**已归一化**的字符串数组（判据单源 = shared 的 `parseWorkItemLabels`，
    * 由调用方在写之前过闸）：本层不再做第二份去重 / 截断 —— 存储格式照旧是 JSON 文本。
    */
-  updateContent(
-    id: string,
-    patch: { title?: string; body?: string; labels?: string[] },
-  ): boolean;
+  updateContent(id: string, patch: { title?: string; body?: string; labels?: string[] }): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
   areAllChildrenTerminal(parentId: string): boolean;
 }

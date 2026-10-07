@@ -278,10 +278,7 @@ export function WorkItemDetailPage({
         {/* 标签（#11 v1）：**全量**呈现、不截断（看板行的 3 个上限是行的约束，不是这条记录的约束），
             取自 `state.read.workItem`（协作读模型含归档行 —— 用快照的话归档项的标签会凭空消失）。
             空标签给一句「无标签」而不是整块消失：字段是这一轮新加的，什么都没有会被读成「页面坏了」。 */}
-        <span
-          className="flex flex-wrap items-center gap-1"
-          data-testid="work-item-detail-labels"
-        >
+        <span className="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">
           <span className="text-ui-xs text-foreground-subtle">
             {t("squad.workItemDetail.overview.labels")}
           </span>
@@ -301,7 +298,9 @@ export function WorkItemDetailPage({
             className="flex flex-wrap items-center gap-2 text-ui-xs"
             data-testid="work-item-detail-properties"
           >
-            <span className="text-foreground-subtle">{t("squad.workItemDetail.overview.properties")}</span>
+            <span className="text-foreground-subtle">
+              {t("squad.workItemDetail.overview.properties")}
+            </span>
             {Object.entries(workItem.properties).map(([key, value]) => (
               <span
                 key={key}

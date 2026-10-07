@@ -50,25 +50,29 @@ console.log("✅ 已挂载 B 的常驻主机");
 // 缺少这一步 → createSession 以 requestRuntimePreferences 超时失败。
 const agentService = connection.services.zcodeAgentService;
 let bridgedCount = 0;
-agentService.onDynamicSessionRuntimePreferencesRequest()((request: { requestId: string; scope?: string }) => {
-  bridgedCount += 1;
-  console.log(`   [bridge] 应答 runtime preferences 请求 #${bridgedCount}（scope=${request.scope}）`);
-  // 结构必须与 host bridge 一致（见 host/remoteWorkspaceServiceCollection.ts）：
-  // status 是 "resolved"（不是 "ok"），且 preferences 必须含全部必需字段 ——
-  // 少一个字段，对端 createSession 会以 zod invalid_type 失败。
-  void agentService.respondSessionRuntimePreferences({
-    requestId: request.requestId,
-    resolution: {
-      status: "resolved",
-      preferences: {
-        askUserQuestionAutoResolutionEnabled: true,
-        nativeSearchEnhancementsEnabled: true,
-        memoryEnabled: false,
-        modelContextBudgetStrategy: "preflight-v1", // = DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY
+agentService.onDynamicSessionRuntimePreferencesRequest()(
+  (request: { requestId: string; scope?: string }) => {
+    bridgedCount += 1;
+    console.log(
+      `   [bridge] 应答 runtime preferences 请求 #${bridgedCount}（scope=${request.scope}）`,
+    );
+    // 结构必须与 host bridge 一致（见 host/remoteWorkspaceServiceCollection.ts）：
+    // status 是 "resolved"（不是 "ok"），且 preferences 必须含全部必需字段 ——
+    // 少一个字段，对端 createSession 会以 zod invalid_type 失败。
+    void agentService.respondSessionRuntimePreferences({
+      requestId: request.requestId,
+      resolution: {
+        status: "resolved",
+        preferences: {
+          askUserQuestionAutoResolutionEnabled: true,
+          nativeSearchEnhancementsEnabled: true,
+          memoryEnabled: false,
+          modelContextBudgetStrategy: "preflight-v1", // = DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY
+        },
       },
-    },
-  });
-});
+    });
+  },
+);
 
 const before = await connection.services.zcodeTaskService.listTasks({ workspacePath: projectPath });
 console.log(`[baseline] B 上该项目现有 ${before.length} 条未归档会话`);
@@ -94,7 +98,9 @@ const createdTaskId = created?.taskId ?? created?.sessionId;
 let visible = false;
 if (createdTaskId) {
   visible = after.some((task: { taskId: string }) => task.taskId === createdTaskId);
-  console.log(`新会话 ${createdTaskId} ${visible ? "✅ 已出现在 B 的列表里" : "❌ 未出现在 B 的列表里"}`);
+  console.log(
+    `新会话 ${createdTaskId} ${visible ? "✅ 已出现在 B 的列表里" : "❌ 未出现在 B 的列表里"}`,
+  );
 }
 
 // 护栏：只允许操作本次自建的会话。创建前无从预知 id，因此按「刚刚新建的这一个」
@@ -117,7 +123,9 @@ if (guard.allowed && createdTaskId) {
     const afterArchive = await connection.services.zcodeTaskService.listTasks({
       workspacePath: projectPath,
     });
-    const stillVisible = afterArchive.some((task: { taskId: string }) => task.taskId === createdTaskId);
+    const stillVisible = afterArchive.some(
+      (task: { taskId: string }) => task.taskId === createdTaskId,
+    );
     console.log(
       stillVisible
         ? `⚠️ 归档后仍在默认列表（基数应回到 ${before.length}）`

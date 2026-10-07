@@ -15,10 +15,10 @@ zcode-task.archiveTask FAIL {"message":"列表 mutation 与 remote attachment sc
   "stack":"... at Object.resolveTaskAddress ... at route ... at <archiveTask 代理分支>"}
 ```
 
-| 调用 | 成功 | 失败 |
-|---|---|---|
-| `archiveTask` | **0** | **2** |
-| `setTaskUnread`（打开会话即标已读） | 10 | **253** |
+| 调用                                | 成功  | 失败    |
+| ----------------------------------- | ----- | ------- |
+| `archiveTask`                       | **0** | **2**   |
+| `setTaskUnread`（打开会话即标已读） | 10    | **253** |
 
 UI 侧归档链（`TaskList.handleArchiveTask` → `WorkspaceSidebarItem` /
 `WorkspaceTimelineTasksSection`）**没有 catch**，拒绝被吞成 unhandled rejection ——
@@ -37,8 +37,10 @@ UI 侧归档链（`TaskList.handleArchiveTask` → `WorkspaceSidebarItem` /
 3. `resolveTaskAddress` 又把 attachmentScope 与请求参数做**严格相等**比较：
 
    ```ts
-   if (remoteAttachmentScope.workspacePath !== params.workspacePath ||
-       remoteAttachmentScope.workspaceIdentity !== params.workspaceIdentity)
+   if (
+     remoteAttachmentScope.workspacePath !== params.workspacePath ||
+     remoteAttachmentScope.workspaceIdentity !== params.workspaceIdentity
+   )
      throw new Error("列表 mutation 与 remote attachment scope 不匹配");
    ```
 
@@ -50,13 +52,13 @@ UI 侧归档链（`TaskList.handleArchiveTask` → `WorkspaceSidebarItem` /
 
 ## 修复（4 处）
 
-| # | 落点 | 改动 |
-|---|---|---|
-| F1 | `windowRemoteConnectionRegistry` | session 记住**绑定过的全部 workspace**（`boundWorkspaces` 映射），bind 由"覆盖"改为"增加"；`findSessionForWorkspace` 命中任一已绑定项目并返回**被请求的**上下文；`resolveScopedHandle` 接受任一已绑定项目（identity 优先），未绑定仍拒绝 |
-| F2 | `windowHostControllerService.resolveTaskAddress` | 远程 attachment 的校验**降到设备粒度**：只要求 `remoteSessionId` 相同；跨设备/未绑定/本地目标仍 fail-closed（由 `resolveSource` 决定，未命中即 null） |
-| F3 | `host/index.ts` bind 处理器 | **不再**在切项目时摘除上一个项目的 Controller source（Projection Scope：切走 ≠ 取消投射），否则它的条目会消失、写操作也失去落点 |
-| F4 | `host/index.ts` 收口路径 | 设备断开（`disconnectSource`）、session 释放（`removeSource`）、重连替换旧 session 时，按 `boundWorkspaces` **逐项收口**；重连匹配也改为"旧 session 绑定过本 workspace 即算被替换"，避免多绑定留下孤儿 source |
-| F5 | 新增 `windowRemoteControllerSource.ts` | 把 `resolveSource` 的胶水抽成可测模块（原先这段零覆盖，恰是修复的判决点） |
+| #   | 落点                                             | 改动                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | `windowRemoteConnectionRegistry`                 | session 记住**绑定过的全部 workspace**（`boundWorkspaces` 映射），bind 由"覆盖"改为"增加"；`findSessionForWorkspace` 命中任一已绑定项目并返回**被请求的**上下文；`resolveScopedHandle` 接受任一已绑定项目（identity 优先），未绑定仍拒绝 |
+| F2  | `windowHostControllerService.resolveTaskAddress` | 远程 attachment 的校验**降到设备粒度**：只要求 `remoteSessionId` 相同；跨设备/未绑定/本地目标仍 fail-closed（由 `resolveSource` 决定，未命中即 null）                                                                                    |
+| F3  | `host/index.ts` bind 处理器                      | **不再**在切项目时摘除上一个项目的 Controller source（Projection Scope：切走 ≠ 取消投射），否则它的条目会消失、写操作也失去落点                                                                                                          |
+| F4  | `host/index.ts` 收口路径                         | 设备断开（`disconnectSource`）、session 释放（`removeSource`）、重连替换旧 session 时，按 `boundWorkspaces` **逐项收口**；重连匹配也改为"旧 session 绑定过本 workspace 即算被替换"，避免多绑定留下孤儿 source                            |
+| F5  | 新增 `windowRemoteControllerSource.ts`           | 把 `resolveSource` 的胶水抽成可测模块（原先这段零覆盖，恰是修复的判决点）                                                                                                                                                                |
 
 `mutationParams`（写路径剥离本端 identity）与读路径（只按对端键查）**未动**，其不变量不回归。
 
@@ -64,27 +66,27 @@ UI 侧归档链（`TaskList.handleArchiveTask` → `WorkspaceSidebarItem` /
 
 ### 逆推（从领域承诺反推必须为真的条件）
 
-| # | 承诺（出处） | 反推出的要求 | 落点 |
-|---|---|---|---|
-| R1 | Projected Device：数据与执行都在被投射设备 | 写操作必须真到达对端、以对端自己的键落库 | F2 + J1–J3 |
-| R2 | Single Device Scope：**数据结构按列表存** | 设备的 workspace 绑定必须是列表，不能单值 | F1 |
-| R3 | Projection Scope：显示哪些项目由用户勾选 | 绑过的项目不因切项目被移除 | F3 |
-| R4 | Index Isolation | 写路径仍剥离本端 identity | I2/J2 + 矩阵每格 |
-| R5 | Device Boundary | 不新增对端写入 | 矩阵（只写目标会话） |
-| R6 | Local Continuation Independence | 本地路径不受影响（identity 原样保留） | 本地 attachment 三格 |
-| R7 | Disconnected Projection | 断开时该设备**所有**绑定项目一起收口 | F4 |
+| #   | 承诺（出处）                               | 反推出的要求                              | 落点                 |
+| --- | ------------------------------------------ | ----------------------------------------- | -------------------- |
+| R1  | Projected Device：数据与执行都在被投射设备 | 写操作必须真到达对端、以对端自己的键落库  | F2 + J1–J3           |
+| R2  | Single Device Scope：**数据结构按列表存**  | 设备的 workspace 绑定必须是列表，不能单值 | F1                   |
+| R3  | Projection Scope：显示哪些项目由用户勾选   | 绑过的项目不因切项目被移除                | F3                   |
+| R4  | Index Isolation                            | 写路径仍剥离本端 identity                 | I2/J2 + 矩阵每格     |
+| R5  | Device Boundary                            | 不新增对端写入                            | 矩阵（只写目标会话） |
+| R6  | Local Continuation Independence            | 本地路径不受影响（identity 原样保留）     | 本地 attachment 三格 |
+| R7  | Disconnected Projection                    | 断开时该设备**所有**绑定项目一起收口      | F4                   |
 
 ### 穷举（每一格直接是一个用例）
 
 新增 `packages/desktop/test/remoteMultiProjectWriteScope.test.ts`（24 格）：
 **目标归属 × 写操作**（远程 attachment）——
 
-| 目标归属 \ 操作 | pin | archive | unarchive | delete | mark-read | 期望 |
-|---|---|---|---|---|---|---|
-| 当前绑定项目 | ✅ | ✅ | ✅ | ✅ | ✅ | 放行；对端收到自己的键、无 identity |
-| 同设备**已绑定但非当前**项目 | ✅ | ✅ | ✅ | ✅ | ✅ | **放行（本缺陷格）** |
-| 同设备**从未绑定**项目 | ✅ | ✅ | ✅ | ✅ | ✅ | fail-closed 拒绝，且零对端写 |
-| 另一台设备的项目 | ✅ | ✅ | ✅ | ✅ | ✅ | fail-closed 拒绝，且零对端写 |
+| 目标归属 \ 操作              | pin | archive | unarchive | delete | mark-read | 期望                                |
+| ---------------------------- | --- | ------- | --------- | ------ | --------- | ----------------------------------- |
+| 当前绑定项目                 | ✅  | ✅      | ✅        | ✅     | ✅        | 放行；对端收到自己的键、无 identity |
+| 同设备**已绑定但非当前**项目 | ✅  | ✅      | ✅        | ✅     | ✅        | **放行（本缺陷格）**                |
+| 同设备**从未绑定**项目       | ✅  | ✅      | ✅        | ✅     | ✅        | fail-closed 拒绝，且零对端写        |
+| 另一台设备的项目             | ✅  | ✅      | ✅        | ✅     | ✅        | fail-closed 拒绝，且零对端写        |
 
 外加：本地 attachment × {本地项目 / 远程已绑定 / 远程未绑定}（identity 剥离不得扩大化）、
 以及归档删除（走同一个 `resolveTaskAddress`）。

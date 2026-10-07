@@ -353,7 +353,11 @@ test("测高二次修正：贴底、宽度重排、视口下方变化都不补�
   };
   assert.equal(shouldAdjustVirtualizerForItemSizeChange({ ...base, following: true }), false);
   assert.equal(
-    shouldAdjustVirtualizerForItemSizeChange({ ...base, following: false, contentWidthChanging: true }),
+    shouldAdjustVirtualizerForItemSizeChange({
+      ...base,
+      following: false,
+      contentWidthChanging: true,
+    }),
     false,
   );
   assert.equal(

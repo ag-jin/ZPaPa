@@ -566,10 +566,7 @@ parentPort?.on("message", (event: Electron.MessageEvent) => {
         );
         break;
       case "abandoned":
-        log(
-          "warn",
-          `squad wake dispatch abandoned (permanent) ${label}: ${outcome.error ?? "-"}`,
-        );
+        log("warn", `squad wake dispatch abandoned (permanent) ${label}: ${outcome.error ?? "-"}`);
         break;
       case "unknown":
         // 迟到回执（重启后 / 从未发出）：留痕即可，不能拿它去重投一条来路不明的请求。

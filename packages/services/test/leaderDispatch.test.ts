@@ -867,7 +867,11 @@ test("targetOverride：@agent Z 而 assignee=A ⇒ 派给 Z（不是 A），且�
   assert.equal(run.isLeaderTask, false);
   assert.equal(run.squadId, undefined);
   assert.equal(run.briefing, undefined, "被点名的普通智能体不得拿到队长简报（会以为自己该去派单）");
-  assert.equal(JSON.stringify(workItem), before, "planDispatch 只读不写：入参一字不动（@ ≠ 改派，§5.2）");
+  assert.equal(
+    JSON.stringify(workItem),
+    before,
+    "planDispatch 只读不写：入参一字不动（@ ≠ 改派，§5.2）",
+  );
 });
 
 test("targetOverride：负责人是 user / squad 时同样派给点名者（评论不依赖 assignee）", () => {
@@ -982,7 +986,10 @@ test("#4：targetAgent 已停用 ⇒ skip 且文案与归档可分辨", () => {
     runClass: "standalone",
     targetAgent: { id: "ta_a", enabled: false } as never,
   });
-  assert.equal(events.some((event) => event.kind === "run.enqueued"), false);
+  assert.equal(
+    events.some((event) => event.kind === "run.enqueued"),
+    false,
+  );
   const skip = events.find((event) => event.kind === "inbox.notified");
   assert.ok(skip?.kind === "inbox.notified");
   assert.match(skip.reason, /停用/, "停用是可随时重开的临时开关：文案不得与归档混用");
@@ -1024,7 +1031,10 @@ test("#4：targetOverride 目标已归档 / 已停用 ⇒ 同样 skip（评论�
       targetOverride: { type: "agent", id: "ta_mentioned" },
       targetAgent: agent as never,
     });
-    assert.equal(events.some((event) => event.kind === "run.enqueued"), false);
+    assert.equal(
+      events.some((event) => event.kind === "run.enqueued"),
+      false,
+    );
     const skip = events.find((event) => event.kind === "inbox.notified");
     assert.ok(skip?.kind === "inbox.notified");
     assert.match(skip.reason, pattern);

@@ -14,10 +14,10 @@ computer-use **本身没有缺陷**，是三个独立的环境问题叠加。三
 
 磁盘上的 helper 与 app 包内的 helper 版本不一致：
 
-| 位置 | 版本 | 启动协议 |
-|---|---|---|
-| `~/.zcode/computer-use/`（host 实际使用） | 3.12.3 | 要求拉起着铸造 `--token-file` |
-| `~/.zcode/computer-use/dev/` | 3.9.2 | 同上 |
+| 位置                                                             | 版本       | 启动协议                           |
+| ---------------------------------------------------------------- | ---------- | ---------------------------------- |
+| `~/.zcode/computer-use/`（host 实际使用）                        | 3.12.3     | 要求拉起着铸造 `--token-file`      |
+| `~/.zcode/computer-use/dev/`                                     | 3.9.2      | 同上                               |
 | `/Applications/ZCode.app/Contents/Resources/cua-helper/`（包内） | **3.14.1** | 用 `--launcher-pid` + 原生签名校验 |
 
 当前 host（`node-repl-host`）只发 `--launcher-pid`，不铸造 token-file，所以旧 helper
@@ -83,8 +83,8 @@ computer-use 行为时必须在官方包（或补齐资源的打包产物）里�
 2. **权限到底给没给** —— 不要猜，调 SDK 的权威接口：
    ```js
    const r = await agent.computerUse.requestAccess();
-   r.accessibility          // "granted" | "denied"
-   r.accessibility_probe    // { ok, ax_error, classification }
+   r.accessibility; // "granted" | "denied"
+   r.accessibility_probe; // { ok, ax_error, classification }
    ```
 3. **TCC 落盘记录**（需要完全磁盘访问）
    ```sh

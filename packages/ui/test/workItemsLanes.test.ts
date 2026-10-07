@@ -73,7 +73,10 @@ const roster = {
   squads: [squad("sq-1", "小队甲")],
 };
 
-const plan = (items: WorkItem[], dimension: Parameters<typeof groupWorkItemBoard>[0]["dimension"]) =>
+const plan = (
+  items: WorkItem[],
+  dimension: Parameters<typeof groupWorkItemBoard>[0]["dimension"],
+) =>
   groupWorkItemBoard({ items, dimension, roster }).map((lane) => ({
     key: lane.key,
     count: lane.count,
@@ -136,14 +139,32 @@ test("分组｜statusCategory 只切根：子项状态与根不同，也留在�
     wi("other", undefined, "in_progress"),
   ];
   const lanes = plan(items, "statusCategory");
-  assert.deepEqual(lanes[0]!.rows, [["root", 0], ["child", 1], ["grand", 2]], "根在 unstarted ⇒ 整棵子树跟着它");
+  assert.deepEqual(
+    lanes[0]!.rows,
+    [
+      ["root", 0],
+      ["child", 1],
+      ["grand", 2],
+    ],
+    "根在 unstarted ⇒ 整棵子树跟着它",
+  );
   assert.deepEqual(lanes[1]!.rows, [["other", 0]], "另一个根按自己的 category 落位");
   assert.deepEqual(lanes[2]!.rows, [], "done 泳道是空的：子项 grand 虽是 done，也不自成泳道");
 });
 
 test("分组｜statusCategory：同一泳道内多个根按输入顺序（不重排）", () => {
-  const lanes = plan([wi("b", undefined, "in_progress"), wi("a", undefined, "in_progress")], "statusCategory");
-  assert.deepEqual(lanes[1]!.rows, [["b", 0], ["a", 0]], "泳道内次序 = 输入次序（repo 已排好）");
+  const lanes = plan(
+    [wi("b", undefined, "in_progress"), wi("a", undefined, "in_progress")],
+    "statusCategory",
+  );
+  assert.deepEqual(
+    lanes[1]!.rows,
+    [
+      ["b", 0],
+      ["a", 0],
+    ],
+    "泳道内次序 = 输入次序（repo 已排好）",
+  );
 });
 
 /* category 是机器判据：6 个状态键必须各自落到它的 category 泳道；写死键名会让
@@ -191,20 +212,33 @@ test("分组｜assignee：子树随根落位（子项指派给别的对象也不
     wi("child", "root", "todo", { type: "agent", id: "ta-2" }),
   ];
   const lanes = plan(items, "assignee");
-  assert.deepEqual(lanes.map((lane) => lane.key), ["user"], "泳道集合只看根");
-  assert.deepEqual(lanes[0]!.rows, [["root", 0], ["child", 1]]);
+  assert.deepEqual(
+    lanes.map((lane) => lane.key),
+    ["user"],
+    "泳道集合只看根",
+  );
+  assert.deepEqual(lanes[0]!.rows, [
+    ["root", 0],
+    ["child", 1],
+  ]);
 });
 
 test("分组｜assignee：未知 id 原样成泳道（不合并、不消失），无数据的对象不产生空泳道", () => {
   const items = [wi("a", undefined, "todo", { type: "agent", id: "gone-agent" })];
-  assert.deepEqual(plan(items, "assignee").map((lane) => lane.key), ["agent:gone-agent"]);
+  assert.deepEqual(
+    plan(items, "assignee").map((lane) => lane.key),
+    ["agent:gone-agent"],
+  );
   const lanes = groupWorkItemBoard({ items, dimension: "assignee", roster });
   assert.deepEqual(
     workItemLaneAssigneeName(roster, { type: "agent", id: "gone-agent" }),
     { name: "gone-agent", known: false },
     "名册里没有 ⇒ 显示 id + 一个「已不在名册」后缀（不显示空 —— 空会被读成「没指派」）",
   );
-  assert.deepEqual(lanes.map((lane) => lane.count), [1]);
+  assert.deepEqual(
+    lanes.map((lane) => lane.count),
+    [1],
+  );
 });
 
 // ---------- ④ 确定性 ----------
@@ -304,7 +338,10 @@ test("守卫｜行渲染单点：data-work-item-id 与 rowElementsRef 注册各�
   const laneTag = board.indexOf('data-testid="work-items-lane"');
   assert.ok(listTag > 0 && laneTag > 0, "none 分支与泳道分支都要有各自的容器锚点");
   const rowFn = board.indexOf("const renderRow");
-  assert.ok(rowFn > 0 && rowFn < listTag && rowFn < laneTag, "行渲染函数在两条分支之前定义（一处）");
+  assert.ok(
+    rowFn > 0 && rowFn < listTag && rowFn < laneTag,
+    "行渲染函数在两条分支之前定义（一处）",
+  );
 });
 
 test("守卫｜none 分支保留现状 DOM（单 ul），泳道分支带 data-lane-key；泳道不做折叠", () => {
@@ -343,7 +380,11 @@ test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions �
   assert.ok(page.includes("onLaneDimensionChange={setLaneDimension}"), "选择器接线回页面状态");
   const actions = readSource("squad/WorkItemsPageActions.tsx");
   assert.ok(actions.includes('data-testid="work-items-lane-dimension"'), "选择器 testid 锚点");
-  for (const option of ["squad.workItems.lane.dimension.none", "squad.workItems.lane.dimension.statusCategory", "squad.workItems.lane.dimension.assignee"]) {
+  for (const option of [
+    "squad.workItems.lane.dimension.none",
+    "squad.workItems.lane.dimension.statusCategory",
+    "squad.workItems.lane.dimension.assignee",
+  ]) {
     assert.ok(actions.includes(option), `选择器必须给「${option}」这一项`);
   }
 });
@@ -351,7 +392,8 @@ test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions �
 test("守卫｜workItemsViewModel 只有一份根判据 / DFS（不得出现第二份 parentId 判据）", () => {
   const viewModel = readSource("squad/workItemsViewModel.ts");
   assert.ok(
-    (viewModel.match(/item\.parentId === undefined \|\| !byId\.has\(item\.parentId\)/g) ?? []).length === 1,
+    (viewModel.match(/item\.parentId === undefined \|\| !byId\.has\(item\.parentId\)/g) ?? [])
+      .length === 1,
     "根判据只此一处（分组与压平共用同一份实现）",
   );
 });
@@ -360,7 +402,10 @@ test("守卫｜workItemsViewModel 只有一份根判据 / DFS（不得出现第�
 
 test("守卫｜泳道文案两语成对（含占位符一致）", () => {
   const placeholders = (value: string) =>
-    [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort().join(",");
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((match) => match[1])
+      .sort()
+      .join(",");
   for (const key of [
     "squad.workItems.lane.dimension",
     "squad.workItems.lane.dimension.none",

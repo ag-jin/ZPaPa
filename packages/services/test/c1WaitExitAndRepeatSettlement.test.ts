@@ -197,11 +197,7 @@ test("P2-1（复验改写）：只有同名残枝 ⇒ 重投结算本行并释�
   assert.equal(opened.kind, "opened", "残枝清掉后同一条重投必须能开新树（回路闭合）");
   assert.equal(f.row("c1-run")?.branch, f.branch);
   assert.equal((await f.trees()).length, 1, "恰一棵树");
-  assert.deepEqual(
-    f.settled,
-    [{ runId: "c1-run", status: "discarded" }],
-    "重开不再扇出结算事实",
-  );
+  assert.deepEqual(f.settled, [{ runId: "c1-run", status: "discarded" }], "重开不再扇出结算事实");
 });
 
 test("C1 跨调用结算（a）：残行被别的请求清扫一次后，不再被第二次结算；同一请求重投只命中 R5", async () => {
@@ -264,7 +260,11 @@ test("C1 跨调用结算（b）：同一 runId 只有**重新回到残行态**�
   assert.deepEqual(f.ledger(), [["c1-run", "open"]], "runId 不换、不新增行（请求身份 = 台账身份）");
   assert.equal((await f.trees()).length, 1, "净效果仍是一条 run / 一棵树");
   /* 目录名是 pair 的确定性函数 ⇒ 重开落在同一个路径上；能证明「重开过」的是分支 ref 被重新建出来。 */
-  assert.equal(await f.branchExists(f.branch), true, "重开把分支 ref 重新建出来（旧的是外部删掉的）");
+  assert.equal(
+    await f.branchExists(f.branch),
+    true,
+    "重开把分支 ref 重新建出来（旧的是外部删掉的）",
+  );
 });
 
 test("C1 A5（名册缺席）：残行重开照旧直开 —— 不排队、不落义务、不因 C1 新增闸门", async () => {

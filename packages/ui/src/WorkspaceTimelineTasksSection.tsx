@@ -320,13 +320,7 @@ export function WorkspaceTimelineTasksSection({
         limit: visibleTaskLimit,
       });
     }
-  }, [
-    refreshGlobalTaskList,
-    taskSortBy,
-    visibleTaskLimit,
-    workspaceServiceLookup,
-    workspaceTabs,
-  ]);
+  }, [refreshGlobalTaskList, taskSortBy, visibleTaskLimit, workspaceServiceLookup, workspaceTabs]);
 
   useEffect(() => {
     const remoteTabs = workspaceTabs.filter(
@@ -424,7 +418,9 @@ export function WorkspaceTimelineTasksSection({
           return;
         }
         // 事件可能来自其它 workspace（同一 connection 上的多项目订阅），按 key 收敛。
-        if (buildTaskWorkspaceKey(event.workspacePath, event.workspaceIdentity) !== remoteWorkspaceKey) {
+        if (
+          buildTaskWorkspaceKey(event.workspacePath, event.workspaceIdentity) !== remoteWorkspaceKey
+        ) {
           return;
         }
         void useRemoteTimelineTaskStore.getState().refreshWorkspace({

@@ -41,11 +41,11 @@ ZCode.app (main)
 
 两条路的**用户可见结果相同**（B 只有一个运行时），但代价差一个数量级：
 
-| | 窗口 host 兼常驻 | UI 改连常驻主机 |
-|---|---|---|
-| 需迁移的职责 | **无**（窗口 host 本就是完整 host） | 14 项：DB 启动门禁、广播总线、任务实时总线、CUA 投影、agent 预热、feedback、deviceMid… |
-| CUA（电脑控制） | **不受影响**（仍是 desktop-local） | 会失效（常驻主机是 desktop-attached-remote） |
-| 常驻主机入口代码 | 保留 `residentHost/index.ts` 作为独立模式（可选） | 需扩展其注入面 |
+|                  | 窗口 host 兼常驻                                  | UI 改连常驻主机                                                                        |
+| ---------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 需迁移的职责     | **无**（窗口 host 本就是完整 host）               | 14 项：DB 启动门禁、广播总线、任务实时总线、CUA 投影、agent 预热、feedback、deviceMid… |
+| CUA（电脑控制）  | **不受影响**（仍是 desktop-local）                | 会失效（常驻主机是 desktop-attached-remote）                                           |
+| 常驻主机入口代码 | 保留 `residentHost/index.ts` 作为独立模式（可选） | 需扩展其注入面                                                                         |
 
 选择前者：**把常驻能力加到已经完整的 host 上，而不是把 UI 的依赖搬到不完整的 host 上**。
 
@@ -63,6 +63,7 @@ ZCode.app (main)
 ### 发现文件与端口
 
 窗口 host 启动后：
+
 1. 用 `createHttpServer(services, 0, { host: "127.0.0.1" })` 监听**临时端口**
 2. 把 `{host, port, pid, version, protocolVersion, startedAt}` 写入 `resident-host.json`
    —— 与现有 `RESIDENT_HOST_STATUS_REMOTE_PATH`（`~/.zcode/v2/resident-host.json`）同格式，

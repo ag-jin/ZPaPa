@@ -49,7 +49,11 @@ test("装配点：一次调用问一次读取器，问的就是给它的主工�
   const first = await resolveMount({ workspacePath: "/repo/主工作区" });
   const second = await resolveMount({ workspacePath: "/repo/另一个工作区" });
 
-  assert.deepEqual(loader.asked, ["/repo/主工作区", "/repo/另一个工作区"], "每次调用都必须现读一次");
+  assert.deepEqual(
+    loader.asked,
+    ["/repo/主工作区", "/repo/另一个工作区"],
+    "每次调用都必须现读一次",
+  );
   assert.deepEqual(byName(first), {
     "ws-mcp": { name: "ws-mcp", command: "ws-cmd", args: [], env: [] },
   });
@@ -113,12 +117,15 @@ test("装配点：坏条目留痕只给名字（配置里的凭据绝不进回�
   const servers = await resolveMount({
     workspacePath: "/repo/主工作区",
     agentMcpServers: {
-      "坏条目": { type: "carrier-pigeon", command: "bad", env: { TOKEN: secret } },
+      坏条目: { type: "carrier-pigeon", command: "bad", env: { TOKEN: secret } },
     },
     onSkippedServer: (...args) => seen.push(args),
   });
 
-  assert.deepEqual(servers?.map((server) => server.name), ["好条目"]);
+  assert.deepEqual(
+    servers?.map((server) => server.name),
+    ["好条目"],
+  );
   assert.deepEqual(seen, [["坏条目"]], "跳过回调只带 server 名");
   assert.doesNotMatch(JSON.stringify(seen), /tok-9d1f/, "留痕里不得出现配置内容");
 
@@ -218,7 +225,8 @@ const GUARDS: ReadonlyArray<{ id: string; label: string; check: (source: string)
   },
   {
     id: "②",
-    label: "读取器调用带工作区路径，且在派发函数体内（每次派发现建 = 现读；模块级缓存/丢路径都会失败）",
+    label:
+      "读取器调用带工作区路径，且在派发函数体内（每次派发现建 = 现读；模块级缓存/丢路径都会失败）",
     check: (source) =>
       /createSquadMcpMountResolver\(\{/.test(source) &&
       /loadMcpFromUserDirectory\(\{ workspacePath \}\)/.test(mountDepsRegion(source)),
@@ -242,7 +250,9 @@ const GUARDS: ReadonlyArray<{ id: string; label: string; check: (source: string)
     label: "基准读的是主工作区路径（msg.workspacePath），不是会话所在的工作树路径",
     check: (source) => {
       const mount = mountCallRegion(source);
-      return /workspacePath: msg\.workspacePath,/.test(mount) && !/sessionWorkspacePath/.test(mount);
+      return (
+        /workspacePath: msg\.workspacePath,/.test(mount) && !/sessionWorkspacePath/.test(mount)
+      );
     },
   },
   {
@@ -393,7 +403,11 @@ for (const mutation of MUTATIONS) {
     } catch {
       passed = false;
     }
-    assert.equal(passed, false, `守卫 ${mutation.guard} 对「${mutation.works}」的变异仍然通过 = 空跑`);
+    assert.equal(
+      passed,
+      false,
+      `守卫 ${mutation.guard} 对「${mutation.works}」的变异仍然通过 = 空跑`,
+    );
   });
 }
 

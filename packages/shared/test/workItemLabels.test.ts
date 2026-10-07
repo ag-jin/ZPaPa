@@ -40,7 +40,10 @@ test("标签解析：去重保序（首次出现为准）", () => {
 
 // 大小写不折叠：`Bug` 与 `bug` 是两个标签 —— 折叠等于替用户改数据，且不可逆（原始大小写丢了）。
 test("标签解析：大小写敏感（不折叠）", () => {
-  assert.deepEqual(parseWorkItemLabels(["Bug,bug,BUG"]), { kind: "ok", labels: ["Bug", "bug", "BUG"] });
+  assert.deepEqual(parseWorkItemLabels(["Bug,bug,BUG"]), {
+    kind: "ok",
+    labels: ["Bug", "bug", "BUG"],
+  });
 });
 
 test("标签解析：内部空格保留（只 trim 两端）", () => {

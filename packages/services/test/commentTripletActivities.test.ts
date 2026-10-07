@@ -14,10 +14,7 @@ import { createCommentService } from "../src/workitem/commentService.js";
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
-import {
-  createWorkItemCommentRepo,
-  type AuthorRef,
-} from "../src/workitem/workItemCommentRepo.js";
+import { createWorkItemCommentRepo, type AuthorRef } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
@@ -118,7 +115,11 @@ test("B1｜softDeleteComment：墓碑落盘 + comment_deleted Activity（actor/i
   assert.ok(activity, "comment_deleted 必须有写者（X1.3 B1）");
   assert.equal(activity.commentId, "c-root");
   assert.deepEqual(activity.actor, HUMAN, "actor = 调用方给的执行者");
-  assert.deepEqual(activity.initiatedBy, { kind: "human", id: HUMAN.id }, "initiatedBy 缺省同 actor");
+  assert.deepEqual(
+    activity.initiatedBy,
+    { kind: "human", id: HUMAN.id },
+    "initiatedBy 缺省同 actor",
+  );
   assert.equal(activity.sourceRun, null);
   assert.equal(activity.dedupKey, "comment:c-root:deleted");
   assert.equal(activity.occurredAt, CLOCK);
@@ -241,15 +242,16 @@ test("B1｜addCommentReaction：回应幂等落盘 + comment_reaction_added Acti
   assert.ok(activity, "comment_reaction_added 必须有写者（X1.3 B1）");
   assert.equal(activity.commentId, "c-rx");
   assert.deepEqual(activity.actor, HUMAN, "actor = 回应作者");
-  assert.deepEqual(activity.initiatedBy, { kind: "human", id: HUMAN.id }, "initiatedBy 缺省沿回应作者");
+  assert.deepEqual(
+    activity.initiatedBy,
+    { kind: "human", id: HUMAN.id },
+    "initiatedBy 缺省沿回应作者",
+  );
   assert.equal(activity.sourceRun, null);
   assert.equal(activity.dedupKey, "reaction:c-rx:human:tr-human:👍");
   assert.deepEqual(activity.payload, { emoji: "👍" });
   // 同键重投不写第二条 Activity。
-  assert.equal(
-    kinds(h, "wi-5").filter((kind) => kind === "comment_reaction_added").length,
-    1,
-  );
+  assert.equal(kinds(h, "wi-5").filter((kind) => kind === "comment_reaction_added").length, 1);
   // §4.4：表情回应永不触发派发——receipt 计数不变、零新 run、零义务。
   assert.equal(h.receipts.listByWorkItem(WS, "wi-5").length, receiptsBefore, "回应不产生 receipt");
   assert.equal(rowCount(h, "squad_runs"), 0, "回应不开 run");

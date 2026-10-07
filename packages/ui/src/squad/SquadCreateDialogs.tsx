@@ -200,9 +200,7 @@ export function TeamAgentDialog({
             ? {
                 modelSelection: {
                   ...modelSelection,
-                  ...(reasoningLevel !== undefined
-                    ? { options: { reasoningLevel } }
-                    : {}),
+                  ...(reasoningLevel !== undefined ? { options: { reasoningLevel } } : {}),
                 },
               }
             : {}),
@@ -214,7 +212,9 @@ export function TeamAgentDialog({
             ? { tools: [] }
             : { tools: [...selectedTools, ...preservedToolsRef.current] }),
           ...(disallowedTokens !== null ? { disallowedTools: disallowedTokens } : {}),
-          ...(maxConcurrentRunsParsed !== undefined ? { maxConcurrentRuns: maxConcurrentRunsParsed } : {}),
+          ...(maxConcurrentRunsParsed !== undefined
+            ? { maxConcurrentRuns: maxConcurrentRunsParsed }
+            : {}),
           // per-agent MCP：有配置 ⇒ 整张 map；编辑时删光 ⇒ 显式 `{}`；本来没有 ⇒ 不带字段。
           ...mcpServersSubmitPatch(mcpServers, initial?.mcpServers !== undefined),
         });
@@ -362,7 +362,9 @@ export function TeamAgentDialog({
             min={1}
             max={16}
             value={maxConcurrentRunsText}
-            placeholder={String(resolveTeamAgentMaxConcurrentRuns({ maxConcurrentRuns: undefined }))}
+            placeholder={String(
+              resolveTeamAgentMaxConcurrentRuns({ maxConcurrentRuns: undefined }),
+            )}
             onChange={(event) => setMaxConcurrentRunsText(event.target.value)}
             data-testid="squad-agent-max-concurrent-runs"
           />
@@ -371,7 +373,10 @@ export function TeamAgentDialog({
       <Field labelId="squad.common.tools">
         {() => (
           <div className="flex flex-col gap-2" data-testid="squad-agent-tools-editor">
-            <Select value={toolMode} onValueChange={(value) => setToolMode(value as "all" | "custom")}>
+            <Select
+              value={toolMode}
+              onValueChange={(value) => setToolMode(value as "all" | "custom")}
+            >
               <SelectTrigger className="w-fit" data-testid="squad-agent-tools-mode">
                 <SelectValue />
               </SelectTrigger>

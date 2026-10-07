@@ -269,12 +269,18 @@ test("三口径共存：分页历史加入后，全量（listSquadRuns）与活�
   );
 
   const page = await squadRuntimeService.listSquadRunHistory(WS, { limit: 1 });
-  assert.deepEqual(page.runs.map((record) => record.runId), ["run-merged"]);
+  assert.deepEqual(
+    page.runs.map((record) => record.runId),
+    ["run-merged"],
+  );
   assert.ok(page.nextCursor !== null, "还有下一页 ⇒ 给不透明游标");
   const second = await squadRuntimeService.listSquadRunHistory(WS, {
     limit: 1,
     cursor: page.nextCursor,
   });
-  assert.deepEqual(second.runs.map((record) => record.runId), ["run-open"]);
+  assert.deepEqual(
+    second.runs.map((record) => record.runId),
+    ["run-open"],
+  );
   assert.equal(second.nextCursor, null, "到底");
 });

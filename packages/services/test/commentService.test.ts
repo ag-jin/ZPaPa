@@ -13,10 +13,7 @@ import {
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
-import {
-  createWorkItemCommentRepo,
-  type AuthorRef,
-} from "../src/workitem/workItemCommentRepo.js";
+import { createWorkItemCommentRepo, type AuthorRef } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 

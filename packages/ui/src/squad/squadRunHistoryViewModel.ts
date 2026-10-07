@@ -42,7 +42,8 @@ export function mergeRunHistoryPages(
   // 同刻按 runId 降序：与 repo 的 tie-break 同向（比较器只对同 createdAt 的行起作用）。
   return merged.sort(
     (left, right) =>
-      right.createdAt - left.createdAt || (left.runId < right.runId ? 1 : left.runId > right.runId ? -1 : 0),
+      right.createdAt - left.createdAt ||
+      (left.runId < right.runId ? 1 : left.runId > right.runId ? -1 : 0),
   );
 }
 
@@ -54,7 +55,8 @@ export function mergeRunHistoryPages(
  * 为什么键用**常量**而不是字面量：抄错一个字符，一次看门狗结算会被显示成别的原因，且不报错。
  */
 export const RUN_SETTLE_REASON_MESSAGE_IDS: Record<string, string> = {
-  [SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION]: "squad.agentDetail.settleReason.watchdogDeadSession",
+  [SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION]:
+    "squad.agentDetail.settleReason.watchdogDeadSession",
   [SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL]: "squad.agentDetail.settleReason.watchdogTtl",
   [SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE]: "squad.agentDetail.settleReason.watchdogIdleGrace",
   [SQUAD_RUN_SETTLE_REASON_USER_CANCEL]: "squad.agentDetail.settleReason.userCancel",

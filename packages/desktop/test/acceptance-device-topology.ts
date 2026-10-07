@@ -112,7 +112,9 @@ check(
 check(
   "存在常驻主机（远程投射挂载用）",
   Boolean(residentPid),
-  residentPid ? `pid=${residentPid}（resident-host.json 声明）` : "未在 resident-host.json 找到 pid",
+  residentPid
+    ? `pid=${residentPid}（resident-host.json 声明）`
+    : "未在 resident-host.json 找到 pid",
 );
 const dualHost = localHost.length > 0 && Boolean(residentPid);
 if (dualHost) {
@@ -137,7 +139,12 @@ const runtimes = runtimeRaw
   .filter((l) => l.startsWith("RT "))
   .map((l) => {
     const parts = l.split(" ");
-    return { pid: parts[1]!, ppid: parts[2]!, rssKb: Number(parts[3] ?? 0), cwd: parts.slice(4).join(" ") };
+    return {
+      pid: parts[1]!,
+      ppid: parts[2]!,
+      rssKb: Number(parts[3] ?? 0),
+      cwd: parts.slice(4).join(" "),
+    };
   });
 
 console.log("\n=== T2/T3：runtime 分布 ===");
@@ -156,7 +163,11 @@ for (const [project, list] of byProject) {
   console.log(`  ${project || "(未知)"}  → ${list.length} 个 runtime（${tag}）`);
   for (const rt of list) {
     const who =
-      rt.ppid === localHost[0]?.pid ? "本机 host" : rt.ppid === residentPid ? "常驻主机" : `ppid=${rt.ppid}`;
+      rt.ppid === localHost[0]?.pid
+        ? "本机 host"
+        : rt.ppid === residentPid
+          ? "常驻主机"
+          : `ppid=${rt.ppid}`;
     console.log(`      pid=${rt.pid}  ${who}  RSS=${(rt.rssKb / 1024).toFixed(0)}MB`);
   }
   if (spansTwoHosts) splitProjects.push(project);

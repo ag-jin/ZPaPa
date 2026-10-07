@@ -497,16 +497,31 @@ test("getSnapshot 含 queuedRuns：无排队 ⇒ []（非 undefined）；排队�
   assert.deepEqual(empty.queuedRuns, [], "无排队 ⇒ 空数组（不是 undefined——UI 直接 .length 即可）");
 
   const agent = runtime.teamAgentService.create({
-    name: "c5", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 1,
+    name: "c5",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 1,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "c5-r1", workItemId: "wi-1", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "c5-r1",
+    workItemId: "wi-1",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "c5-q1", workItemId: "wi-2", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "c5-q1",
+    workItemId: "wi-2",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   await runtime.lifecycle.openMemberRun({
-    runId: "c5-q2", workItemId: "wi-3", parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+    runId: "c5-q2",
+    workItemId: "wi-3",
+    parentWorkItemId: "wi-p",
+    agentId: agent.id,
+    isLeaderTask: false,
   });
   const snap = await service.getSnapshot(target0);
   assert.deepEqual(

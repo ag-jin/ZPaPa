@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { McpServerConfig, NativeMcpServerRecord } from "../src/mcp.js";
-import { mergeTeamAgentMcpServers, teamAgentMcpServersSchema, toZCodeAgentMcpServers } from "../src/team-agent-mcp.js";
+import {
+  mergeTeamAgentMcpServers,
+  teamAgentMcpServersSchema,
+  toZCodeAgentMcpServers,
+} from "../src/team-agent-mcp.js";
 
 /* 独立复验（per-agent MCP 切片 1）：合并语义的**穷举矩阵**。
    本文件的期望值取自需求契约（不是实现），夹具与断言面**不复用**实现者的用例：
@@ -40,9 +44,7 @@ test("三层同名在场组合（2^3）全矩阵：赢家恒为在场的最强�
     const base = present
       .filter((layer) => layer !== "agent")
       .map((layer) => dirRecord(layer as DirScope, "dup", tagged(`${layer}-声明`)));
-    const agentServers = present.includes("agent")
-      ? { dup: tagged("agent-声明") }
-      : undefined;
+    const agentServers = present.includes("agent") ? { dup: tagged("agent-声明") } : undefined;
 
     const merged = mergeTeamAgentMcpServers(base, agentServers);
     const winner = present.at(-1); // 在场的最强层
@@ -126,7 +128,10 @@ test("enabled 过滤只作用于目录层：agent 自有条目（含配置里的
       dirRecord("user", "shared", tagged("user-声明")),
       dirRecord("workspace", "only-disabled", tagged("workspace-停用"), false),
     ],
-    { shared: tagged("agent-声明"), "own-flag": tagged("agent-带 enabled 字段", { enabled: false }) },
+    {
+      shared: tagged("agent-声明"),
+      "own-flag": tagged("agent-带 enabled 字段", { enabled: false }),
+    },
   );
 
   assert.deepEqual(Object.keys(merged).sort(), ["own-flag", "shared"], "目录停用条目仍在场外");

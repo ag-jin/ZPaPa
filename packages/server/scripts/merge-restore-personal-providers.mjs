@@ -60,7 +60,10 @@ let crossMachineHome = null;
 if (crossMachine) {
   crossMachineHome = join(tmpdir(), `zpapa-restore-${process.pid}`);
   await mkdir(join(crossMachineHome, ".zcode", "v2"), { recursive: true });
-  await copyFile(legacyArg.slice("--legacy=".length), join(crossMachineHome, ".zcode", "v2", "config.json"));
+  await copyFile(
+    legacyArg.slice("--legacy=".length),
+    join(crossMachineHome, ".zcode", "v2", "config.json"),
+  );
   process.env.ZCODE_DATA_BASE_DIR = crossMachineHome;
 } else if (home !== homedir()) {
   process.env.ZCODE_DATA_BASE_DIR = home;
@@ -101,7 +104,9 @@ if (crossMachine) {
     `[restore] cross-machine: ${importedRules.length} providers, ${(importedModels?.providerModelRules ?? []).length} model rules`,
   );
   await writeFile(target, JSON.stringify(importedFile, null, 2), { mode: 0o600 });
-  console.log(`[restore] ✅ wrote ${target}(拷到对端 ~/.zcode/v2/provider_config.json 后 chmod 600)`);
+  console.log(
+    `[restore] ✅ wrote ${target}(拷到对端 ~/.zcode/v2/provider_config.json 后 chmod 600)`,
+  );
   process.exit(0);
 }
 

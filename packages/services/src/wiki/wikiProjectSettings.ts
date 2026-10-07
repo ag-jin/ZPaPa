@@ -12,10 +12,7 @@ import {
 } from "./wikiSchedule.js";
 
 /** workspace 身份键：与 paths.ts / task-realtime-core 的约定一致。 */
-export function resolveWikiWorkspaceKey(
-  workspacePath: string,
-  workspaceIdentity?: string,
-): string {
+export function resolveWikiWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
   return workspaceIdentity?.trim() || workspacePath;
 }
 

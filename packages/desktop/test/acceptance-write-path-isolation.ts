@@ -117,7 +117,9 @@ try {
     title: testTitle,
   });
 } catch (error) {
-  console.log(`  ⚠️ 重命名失败（不影响断言）: ${error instanceof Error ? error.message : String(error)}`);
+  console.log(
+    `  ⚠️ 重命名失败（不影响断言）: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 // 基线：建会话不该产生 remote: 前缀行（对端只按自己的键记一次）
@@ -198,7 +200,9 @@ try {
     address: address as never,
     mutation: { kind: "pin", pinned: true } as never,
   });
-  console.log(`  pin 返回: ${pinned ? `pinned=${(pinned as { pinned?: boolean }).pinned}` : "null"}`);
+  console.log(
+    `  pin 返回: ${pinned ? `pinned=${(pinned as { pinned?: boolean }).pinned}` : "null"}`,
+  );
   // 返回值只说明代理层；写操作是否真的落到对端要看对端的库。
   pinnedInPeerDb = await readRemoteColumn(testSessionId, "pinned");
 
@@ -206,13 +210,21 @@ try {
     address: address as never,
     mutation: { kind: "pin", pinned: false } as never,
   });
-  console.log(`  unpin 返回: ${unpinned ? `pinned=${(unpinned as { pinned?: boolean }).pinned}` : "null"}`);
+  console.log(
+    `  unpin 返回: ${unpinned ? `pinned=${(unpinned as { pinned?: boolean }).pinned}` : "null"}`,
+  );
   unpinnedInPeerDb = await readRemoteColumn(testSessionId, "pinned");
 } catch (error) {
-  console.log(`  ⚠️ mutateTask 调用异常: ${error instanceof Error ? error.message : String(error)}`);
+  console.log(
+    `  ⚠️ mutateTask 调用异常: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 check("I5 pin 真的写进对端库（pinned=1）", pinnedInPeerDb === "1", `对端 pinned=${pinnedInPeerDb}`);
-check("I6 unpin 后对端库回到 pinned=0", unpinnedInPeerDb === "0", `对端 pinned=${unpinnedInPeerDb}`);
+check(
+  "I6 unpin 后对端库回到 pinned=0",
+  unpinnedInPeerDb === "0",
+  `对端 pinned=${unpinnedInPeerDb}`,
+);
 
 // 关键断言：写操作之后，对端库里该会话**仍然只有一条**、且不含本端 identity。
 const after = await countRemoteRowsFor(testSessionId);
@@ -260,10 +272,13 @@ async function projectExistsOnDevice(projectPath: string): Promise<boolean> {
 
 let otherTaskId: string | null = null;
 if (!(await projectExistsOnDevice(OTHER_PROJECT_PATH))) {
-  console.log(`\n⚠️ 跳过 J 段：设备上不存在 ${OTHER_PROJECT_PATH}（可用 ZPAPA_PROJECT_PATH_2 指定）`);
+  console.log(
+    `\n⚠️ 跳过 J 段：设备上不存在 ${OTHER_PROJECT_PATH}（可用 ZPAPA_PROJECT_PATH_2 指定）`,
+  );
 } else {
   const { createWindowRemoteConnectionRegistry } = await tsImport(
-    pathToFileURL(join(repoRoot, "packages/desktop/src/host/windowRemoteConnectionRegistry.ts")).href,
+    pathToFileURL(join(repoRoot, "packages/desktop/src/host/windowRemoteConnectionRegistry.ts"))
+      .href,
     import.meta.url,
   );
   const { resolveRemoteControllerSource } = await tsImport(
@@ -286,7 +301,9 @@ if (!(await projectExistsOnDevice(OTHER_PROJECT_PATH))) {
       title: buildTestSessionTitle("cross-project-scope"),
     })
     .catch((error: unknown) =>
-      console.log(`  ⚠️ 重命名失败（不影响断言）: ${error instanceof Error ? error.message : String(error)}`),
+      console.log(
+        `  ⚠️ 重命名失败（不影响断言）: ${error instanceof Error ? error.message : String(error)}`,
+      ),
     );
 
   const otherGuard = assertTestOwnedTarget({
@@ -393,7 +410,9 @@ for (const target of [
     await connection.services.zcodeTaskService.archiveTask(target);
     console.log(`  已归档测试会话 ${target.taskId}`);
   } catch (error) {
-    console.log(`  ⚠️ 归档失败（需手工清理）: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(
+      `  ⚠️ 归档失败（需手工清理）: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

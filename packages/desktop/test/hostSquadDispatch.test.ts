@@ -850,17 +850,36 @@ test("守卫｜队列推进回路接线齐全：结算回调 → advanceSquadQue
     host.indexOf("async function dispatchSquadAssignment"),
   );
   // 分段验：排队循环与义务循环**各自**要重验（全函数 includes 会被另一循环的同款调用误绿）。
-  const queuedLoop = advanceSlice.slice(0, advanceSlice.indexOf("claimDueSquadDeferredObligations"));
-  const obligationLoop = advanceSlice.slice(advanceSlice.indexOf("claimDueSquadDeferredObligations"));
-  for (const [name, loop] of [["排队行", queuedLoop], ["义务", obligationLoop]] as const) {
+  const queuedLoop = advanceSlice.slice(
+    0,
+    advanceSlice.indexOf("claimDueSquadDeferredObligations"),
+  );
+  const obligationLoop = advanceSlice.slice(
+    advanceSlice.indexOf("claimDueSquadDeferredObligations"),
+  );
+  for (const [name, loop] of [
+    ["排队行", queuedLoop],
+    ["义务", obligationLoop],
+  ] as const) {
     assert.ok(loop.includes("isTerminalWorkItemStatus("), `${name}推进必须重验工作项终态（A1）`);
-    assert.ok(loop.includes("archivedAt !== undefined"), `${name}推进必须重验归档（工作项与名册，A1）`);
+    assert.ok(
+      loop.includes("archivedAt !== undefined"),
+      `${name}推进必须重验归档（工作项与名册，A1）`,
+    );
   }
   assert.ok(advanceSlice.includes("discardQueuedSquadRun"), "重验不过必须收口排队行（不静默滞留）");
-  assert.ok(advanceSlice.includes("claimDueSquadDeferredObligations"), "义务到期认领必须走服务面（恰一次）");
-  assert.ok(advanceSlice.includes("failMemberRun"), "A2：认领后派发失败必须收口 open 行（防僵尸占容量）");
+  assert.ok(
+    advanceSlice.includes("claimDueSquadDeferredObligations"),
+    "义务到期认领必须走服务面（恰一次）",
+  );
+  assert.ok(
+    advanceSlice.includes("failMemberRun"),
+    "A2：认领后派发失败必须收口 open 行（防僵尸占容量）",
+  );
   // ④ 启动第四步（queue reconciliation）挂在第三步之后。
-  const settleIdx = host.indexOf("await settleStaleLeaderRunsBestEffort(activeServices, candidates);");
+  const settleIdx = host.indexOf(
+    "await settleStaleLeaderRunsBestEffort(activeServices, candidates);",
+  );
   const queueIdx = host.indexOf('"queue reconciliation"');
   assert.ok(settleIdx >= 0 && queueIdx > settleIdx, "启动扫描第四步必须排在队长和解（第三步）之后");
 });
@@ -917,13 +936,19 @@ test("X2.1 落定映射：四类派发结论如实映射（queued/coalesced/defe
 
 test("X2.1 落定映射：skip/门禁 ⇒ blocked（受限状态可审计）；其它失败按 permanent 分格；transient 不落定", () => {
   assert.deepEqual(
-    commentReceiptSettlementFor({ kind: "blocked", reason: "指派的小队已归档：按归档语义跳过本次派发" }),
+    commentReceiptSettlementFor({
+      kind: "blocked",
+      reason: "指派的小队已归档：按归档语义跳过本次派发",
+    }),
     { outcome: "blocked", detail: { reason: "指派的小队已归档：按归档语义跳过本次派发" } },
   );
-  assert.deepEqual(commentReceiptSettlementFor({ kind: "failed", error: "work item not found: wi-x" }), {
-    outcome: "failed",
-    detail: { reason: "work item not found: wi-x" },
-  });
+  assert.deepEqual(
+    commentReceiptSettlementFor({ kind: "failed", error: "work item not found: wi-x" }),
+    {
+      outcome: "failed",
+      detail: { reason: "work item not found: wi-x" },
+    },
+  );
   assert.equal(
     commentReceiptSettlementFor({ kind: "retry" }),
     null,
@@ -935,7 +960,11 @@ test("X2.1 未收敛判定：pending/deferred 可认领；五个终局值不再�
   assert.equal(isUnsettledCommentDispatchReceipt("pending"), true);
   assert.equal(isUnsettledCommentDispatchReceipt("deferred"), true);
   for (const terminal of ["opened", "queued", "coalesced", "blocked", "failed"] as const) {
-    assert.equal(isUnsettledCommentDispatchReceipt(terminal), false, `${terminal} 是终局，不得重发执行`);
+    assert.equal(
+      isUnsettledCommentDispatchReceipt(terminal),
+      false,
+      `${terminal} 是终局，不得重发执行`,
+    );
   }
 });
 
@@ -991,12 +1020,32 @@ test("X2.1 接线：评论派发入口走唯一派发实现，eventKey=dispatchK
   const end = host.indexOf("async function dispatchSquadAssignment(", start);
   assert.ok(end > start, "找不到评论派发入口的结束边界");
   const body = host.slice(start, end);
-  assert.match(body, /await runSquadDispatch\(/, "评论派发必须共用唯一派发实现（不另写建会话+发 prompt）");
+  assert.match(
+    body,
+    /await runSquadDispatch\(/,
+    "评论派发必须共用唯一派发实现（不另写建会话+发 prompt）",
+  );
   assert.match(body, /trigger: "comment"/, "评论派发必须用自己的 trigger 变体分流");
-  assert.match(body, /targetAgentId: receipt\.targetAgentId/, "目标取自 receipt（B-1：可以是 assignee 之外的人）");
-  assert.match(body, /eventKey: receipt\.dispatchKey/, "run 身份 = 评论 dispatchKey（同一评论重投落同一条 run）");
-  assert.match(body, /settleCommentDispatchReceipt\(/, "每个结局都要回写 receipt outcome（七值闭集）");
-  assert.match(body, /getCommentDispatchReceipt\(/, "评论派发入口按身份读 receipt 事实（不凭请求现造）");
+  assert.match(
+    body,
+    /targetAgentId: receipt\.targetAgentId/,
+    "目标取自 receipt（B-1：可以是 assignee 之外的人）",
+  );
+  assert.match(
+    body,
+    /eventKey: receipt\.dispatchKey/,
+    "run 身份 = 评论 dispatchKey（同一评论重投落同一条 run）",
+  );
+  assert.match(
+    body,
+    /settleCommentDispatchReceipt\(/,
+    "每个结局都要回写 receipt outcome（七值闭集）",
+  );
+  assert.match(
+    body,
+    /getCommentDispatchReceipt\(/,
+    "评论派发入口按身份读 receipt 事实（不凭请求现造）",
+  );
 });
 
 test("X2.1 接线：义务重放的 origin 分流在 R2 重放之前（摘除 ⇒ 评论义务被 R2 通道重放）", () => {
@@ -1053,7 +1102,10 @@ test("W3 接线：推进臂的熔断 skip（①排队行留 queued 不丢弃 / �
   const queueLoopAt = loop.indexOf("for (const queued of await squadRuntime.listQueuedSquadRuns(");
   assert.ok(queueLoopAt > 0, "找不到 ①排队行循环");
   const firstCheck = loop.indexOf("breakerSkipReasonFor(", queueLoopAt);
-  assert.ok(firstCheck > queueLoopAt, "①段必须判熔断（否则排队行会被照常重投，熔断只挡住「新派发」）");
+  assert.ok(
+    firstCheck > queueLoopAt,
+    "①段必须判熔断（否则排队行会被照常重投，熔断只挡住「新派发」）",
+  );
   const discardAt = loop.indexOf("discardQueuedSquadRun(", queueLoopAt);
   assert.ok(
     firstCheck > discardAt,

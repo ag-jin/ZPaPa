@@ -41,6 +41,5 @@ export interface IRemoteDeviceProjectsService {
   updateSetting(key: string, value: unknown): Promise<void>;
 }
 
-export const IRemoteDeviceProjectsService = createServiceDescriptor<IRemoteDeviceProjectsService>(
-  "remote-device-projects",
-);
+export const IRemoteDeviceProjectsService =
+  createServiceDescriptor<IRemoteDeviceProjectsService>("remote-device-projects");

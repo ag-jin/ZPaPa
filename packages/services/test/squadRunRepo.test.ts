@@ -168,10 +168,7 @@ test("insertMemberRunOrQueue：容量未满直开；满则排队；已有排队�
   assert.equal(repo.get("r-1")!.status, "open");
 
   // 容量满（count(open)≥1）且无排队行 ⇒ 新 runId 落 queued 行。
-  const second = repo.insertMemberRunOrQueue(
-    row({ runId: "r-2", workItemId: "wi-2" }),
-    1,
-  );
+  const second = repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1);
   assert.equal(second.kind, "queued");
   const queuedRow = repo.get("r-2")!;
   assert.equal(queuedRow.status, "queued");
@@ -180,10 +177,7 @@ test("insertMemberRunOrQueue：容量未满直开；满则排队；已有排队�
 
   // 容量满且已有 (workItem,agent) 之外……不——并入键是 (workspace,workItem,agent)：
   // 同 agent 的**另一个**工作项会各自排队；这里验「同 (workItem,agent) 第三次请求 ⇒ 并入既存排队行」。
-  const third = repo.insertMemberRunOrQueue(
-    row({ runId: "r-3", workItemId: "wi-2" }),
-    1,
-  );
+  const third = repo.insertMemberRunOrQueue(row({ runId: "r-3", workItemId: "wi-2" }), 1);
   assert.equal(third.kind, "coalesced");
   assert.equal(third.targetRunId, "r-2", "并入目标 = 既存排队行 r-2（至多一个待开）");
   // 排队行总数仍为 1（部分唯一索引在语句前置之外再兜一层）。
@@ -204,21 +198,40 @@ test("insertMemberRunOrQueue：容量未满直开；满则排队；已有排队�
 
 test("insertMemberRunOrQueue：不同工作项各自排队（唯一性按 (workspace,workItem,agent)）", () => {
   const { repo, db } = setup();
-  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 1).kind, "opened");
-  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind, "queued");
-  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-3", workItemId: "wi-3" }), 1).kind, "queued");
+  assert.equal(
+    repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 1).kind,
+    "opened",
+  );
+  assert.equal(
+    repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind,
+    "queued",
+  );
+  assert.equal(
+    repo.insertMemberRunOrQueue(row({ runId: "r-3", workItemId: "wi-3" }), 1).kind,
+    "queued",
+  );
   const queuedCount = db
     .prepare("SELECT COUNT(*) AS n FROM squad_runs WHERE status = 'queued'")
     .get() as { n: number };
-  assert.equal(queuedCount.n, 2, "不同 workItem 的排队行互不并入（键是 (workspace,workItem,agent)）");
+  assert.equal(
+    queuedCount.n,
+    2,
+    "不同 workItem 的排队行互不并入（键是 (workspace,workItem,agent)）",
+  );
 });
 
 test("insertMemberRunOrQueue：容量放宽后恢复直开；produced/rejected 不占容量", () => {
   const { repo } = setup();
-  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 2).kind, "opened");
+  assert.equal(
+    repo.insertMemberRunOrQueue(row({ runId: "r-1", workItemId: "wi-1" }), 2).kind,
+    "opened",
+  );
   // produced 仍占树但**不占并发容量**（计数口径 = count(open)，C0 十点之 10）。
   repo.setStatus("r-1", "produced");
-  assert.equal(repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind, "opened");
+  assert.equal(
+    repo.insertMemberRunOrQueue(row({ runId: "r-2", workItemId: "wi-2" }), 1).kind,
+    "opened",
+  );
 });
 
 test("listQueued：按台账序返回；跨重启持久", () => {
@@ -343,10 +356,7 @@ test("写入未知 dispatch_cause 抛错（不落盘）", () => {
     /dispatch_cause/,
   );
   // 「不落盘」是字面意思：闸在 SQL 之前，非法值根本没机会写进列（否则读回校验会在下次启动才炸）。
-  assert.equal(
-    (db.prepare("SELECT count(*) AS n FROM squad_runs").get() as { n: number }).n,
-    0,
-  );
+  assert.equal((db.prepare("SELECT count(*) AS n FROM squad_runs").get() as { n: number }).n, 0);
   // 队长那条写路径同一道闸。
   assert.throws(
     () =>

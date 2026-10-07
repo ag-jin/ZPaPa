@@ -78,7 +78,9 @@ await writeFile(
   JSON.stringify({ schemaVersion: 1, devices: [device, { target: null, broken: true }] }),
 );
 const resilient = await service.list();
-console.log(`V5 坏数据容错: ${resilient.length} 台 ${resilient.length === 1 ? "✅ 保留可解析项" : "❌"}`);
+console.log(
+  `V5 坏数据容错: ${resilient.length} 台 ${resilient.length === 1 ? "✅ 保留可解析项" : "❌"}`,
+);
 
 // V6 清空
 await service.save([]);
@@ -89,6 +91,8 @@ await rm(dir, { recursive: true, force: true });
 console.log("\n=== 验收结论（选项 A：设备配置独立存储）===");
 console.log(`独立文件存储:     ✅（remote-devices.json）`);
 console.log(`保存→读回:        ${roundTrip ? "✅" : "❌"}`);
-console.log(`与 settings 解耦: ${afterOtherVersionWroteSettings.length === 1 ? "✅" : "❌"}（其它版本写 settings 不影响设备配置）`);
+console.log(
+  `与 settings 解耦: ${afterOtherVersionWroteSettings.length === 1 ? "✅" : "❌"}（其它版本写 settings 不影响设备配置）`,
+);
 console.log(`坏数据容错:       ${resilient.length === 1 ? "✅" : "❌"}`);
 process.exit(roundTrip && afterOtherVersionWroteSettings.length === 1 ? 0 : 1);

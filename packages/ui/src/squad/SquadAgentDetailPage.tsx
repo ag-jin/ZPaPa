@@ -102,7 +102,9 @@ export function SquadAgentDetailPage({
     if (!current || current.nextCursor === null || current.loadingMore) return;
     const cursor = current.nextCursor;
     void (async () => {
-      setHistory((previous) => (previous ? { ...previous, loadingMore: true, moreFailure: null } : previous));
+      setHistory((previous) =>
+        previous ? { ...previous, loadingMore: true, moreFailure: null } : previous,
+      );
       try {
         const page = await resolveSquadRuntimeService(services).listSquadRunHistory(target, {
           agentId: current.agentId,
@@ -201,7 +203,10 @@ function OverviewZone({
   const mcpRows = listMcpServerEntries(agent.mcpServers);
 
   return (
-    <section className={cn(SECTION_CLASSNAME, "flex flex-col gap-2")} data-testid="squad-agent-detail-overview">
+    <section
+      className={cn(SECTION_CLASSNAME, "flex flex-col gap-2")}
+      data-testid="squad-agent-detail-overview"
+    >
       <span className="flex items-center gap-2">
         <span
           className={cn(
@@ -214,7 +219,9 @@ function OverviewZone({
         {agent.archivedAt !== undefined ? (
           <span className={BADGE_CLASSNAME}>{t("squad.common.archived")}</span>
         ) : null}
-        {!agent.enabled ? <span className={BADGE_CLASSNAME}>{t("squad.common.disabled")}</span> : null}
+        {!agent.enabled ? (
+          <span className={BADGE_CLASSNAME}>{t("squad.common.disabled")}</span>
+        ) : null}
       </span>
       {agent.description ? (
         <span className="text-ui-sm text-foreground-subtlest">{agent.description}</span>
@@ -296,9 +303,7 @@ function TasksZone({
   );
   return (
     <section className={SECTION_CLASSNAME} data-testid="squad-agent-detail-tasks">
-      <p className="text-ui-sm font-medium text-foreground">
-        {t("squad.agentDetail.tasksTitle")}
-      </p>
+      <p className="text-ui-sm font-medium text-foreground">{t("squad.agentDetail.tasksTitle")}</p>
       {assigned.length === 0 ? (
         <p className="text-ui-sm text-foreground-subtlest">{t("squad.agentDetail.tasksEmpty")}</p>
       ) : (
@@ -382,7 +387,10 @@ function RunsZone({
                     {run.branch ?? run.runId}
                   </span>
                   {run.settleReason ? (
-                    <span className={BADGE_CLASSNAME} data-testid="squad-agent-detail-run-settle-reason">
+                    <span
+                      className={BADGE_CLASSNAME}
+                      data-testid="squad-agent-detail-run-settle-reason"
+                    >
                       {reasonMessageId ? t(reasonMessageId) : run.settleReason}
                     </span>
                   ) : null}

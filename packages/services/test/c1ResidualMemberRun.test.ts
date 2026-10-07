@@ -101,7 +101,11 @@ test("C1 自身残行（分支空闲）：结算一次 + 同一 runId 重开新�
   /* ③ 重投同一 runId：残行按可结算处理 ⇒ 结算（释放容量+活跃集）后重开新树。 */
   const outcome = await f.openFor("c1-run");
   assert.equal(outcome.kind, "opened", "残行必须被重开成真 run（返回值是「已登记」= 请求被判死）");
-  assert.equal(outcome.kind === "opened" ? outcome.branch : "", f.branch, "重开的树挂在该对固有的分支名上");
+  assert.equal(
+    outcome.kind === "opened" ? outcome.branch : "",
+    f.branch,
+    "重开的树挂在该对固有的分支名上",
+  );
   assert.deepEqual(
     f.settled,
     [{ runId: "c1-run", status: "discarded" }],
@@ -133,8 +137,11 @@ test("C1 同对别的 run 的残行：先结算它（释放活跃集/容量）�
   await f.git(["branch", f.branch, "main"]);
   await assert.rejects(() => f.openFor("c1-old"));
   assert.equal(f.row("c1-old")?.status, "open");
-  assert.equal(f.runtime.squadRunRepo.hasActiveRunForPair(WS, f.itemId, f.agent.id), true,
-    "前置：残行占着活跃集（不清它 ⇒ 本请求会走 R2 登记义务，而义务永远等不到到期条件）");
+  assert.equal(
+    f.runtime.squadRunRepo.hasActiveRunForPair(WS, f.itemId, f.agent.id),
+    true,
+    "前置：残行占着活跃集（不清它 ⇒ 本请求会走 R2 登记义务，而义务永远等不到到期条件）",
+  );
 
   /* ② 回收器清残枝 ⇒ 分支空闲。 */
   await f.git(["branch", "-D", f.branch]);
@@ -185,8 +192,16 @@ test("C1+P2-1 分支被别的 run 的活树占着：结算本行并释放分支�
     [{ runId: "c1-other", status: "discarded" }],
     "别人的行只被它自己的失败出口结算一次（清扫不得二次动它）",
   );
-  assert.equal(f.row("c1-run")?.branch, null, "分支占位已释放（本行不持有任何树 ⇒ 不再钉住别人的占位）");
-  assert.equal(f.row("c1-run")?.status, "open", "请求身份保留：行仍在 open（runId = 请求身份，不换）");
+  assert.equal(
+    f.row("c1-run")?.branch,
+    null,
+    "分支占位已释放（本行不持有任何树 ⇒ 不再钉住别人的占位）",
+  );
+  assert.equal(
+    f.row("c1-run")?.status,
+    "open",
+    "请求身份保留：行仍在 open（runId = 请求身份，不换）",
+  );
   assert.equal((await f.trees()).length, 1, "不得复用别人的树、也不得再建一棵");
   assert.deepEqual(
     f.runtime.squadRunRepo.listByWorkspace(WS).map((r) => [r.runId, r.status]),
@@ -236,7 +251,13 @@ test("C1+P2-1 只有同名残枝（无活树）：结算一次并释放占位；
 test("C1+P2-1 判据（纯函数）：有行无树的四条件 + 「活树另有来路」的扩展 + 「可结算后立刻重开」还要分支无占用", async () => {
   const live = new Set(["squad/member/wi/a"]);
   const row = (over: Record<string, unknown> = {}) =>
-    ({ status: "open", sessionId: null, branch: "squad/member/wi/a", isLeaderTask: false, ...over }) as never;
+    ({
+      status: "open",
+      sessionId: null,
+      branch: "squad/member/wi/a",
+      isLeaderTask: false,
+      ...over,
+    }) as never;
 
   assert.equal(
     isTreelessOpenMemberRun(row(), { liveTreeBranches: live, liveTreeOfOtherRow: false }),

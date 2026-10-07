@@ -44,7 +44,10 @@ async function shutdown(): Promise<void> {
 }
 
 if (!builtinProviderConfigFilePath) {
-  post({ type: "resident-host-fatal", message: "ZCODE_RESIDENT_BUILTIN_PROVIDER_CONFIG is required" });
+  post({
+    type: "resident-host-fatal",
+    message: "ZCODE_RESIDENT_BUILTIN_PROVIDER_CONFIG is required",
+  });
   process.exit(1);
 }
 

@@ -56,7 +56,9 @@ test("名册解析：命中/重名/缺席/小队/@all/人名——重名缺席�
   assert.deepEqual(parseComment("@网关组 开工", roster).mentions, [
     { kind: "squad", name: "网关组", squadId: "sq-1" },
   ]);
-  assert.deepEqual(parseComment("@张三 你看看", roster).mentions, [{ kind: "human", name: "张三" }]);
+  assert.deepEqual(parseComment("@张三 你看看", roster).mentions, [
+    { kind: "human", name: "张三" },
+  ]);
   assert.deepEqual(parseComment("@重名 是谁", roster).mentions, [
     { kind: "unresolved", name: "重名", reason: "ambiguous" },
   ]);
@@ -67,10 +69,7 @@ test("名册解析：命中/重名/缺席/小队/@all/人名——重名缺席�
 
 test("去重与顺序：同 token 只出现一次；按出现顺序", () => {
   const r = parseComment("@ann @all @ann", roster);
-  assert.deepEqual(r.mentions, [
-    { kind: "agent", name: "ann", agentId: "ta-1" },
-    { kind: "all" },
-  ]);
+  assert.deepEqual(r.mentions, [{ kind: "agent", name: "ann", agentId: "ta-1" }, { kind: "all" }]);
 });
 
 test("纯函数性：同输入两次调用结果逐字节相同；空名册安全", () => {

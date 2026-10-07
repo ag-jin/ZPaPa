@@ -52,16 +52,18 @@ test("互斥②：event 带 timezone 被拒且点名字段", () => {
 // 补集方向：`timezone` **只对 event 禁**——三种排班 kind 都要它来确定触发时刻的时区，必须仍合法。
 // （只测「event 被拒」会漏掉「顺手把 timezone 也塞进互斥⑦」这个过度拦截的错误。）
 test("互斥②补集：at/every/cron 带 timezone 仍合法", () => {
-  assert.deepEqual(
-    problems({ kind: "at", mode: "once", at: 1, timezone: "Asia/Shanghai" }),
-    [],
-  );
+  assert.deepEqual(problems({ kind: "at", mode: "once", at: 1, timezone: "Asia/Shanghai" }), []);
   assert.deepEqual(
     problems({ kind: "every", mode: "continuous", intervalSeconds: 60, timezone: "Asia/Shanghai" }),
     [],
   );
   assert.deepEqual(
-    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", timezone: "Asia/Shanghai" }),
+    problems({
+      kind: "cron",
+      mode: "continuous",
+      cronExpression: "0 9 * * *",
+      timezone: "Asia/Shanghai",
+    }),
     [],
   );
 });
@@ -87,8 +89,7 @@ test("continuous 的 maxFires 越界被拒", () => {
     problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 0 }).length > 0,
   );
   assert.ok(
-    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length >
-      0,
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length > 0,
   );
 });
 
@@ -178,13 +179,25 @@ test("condition 四种类型：event 上全部合法，非 event 上一律被拒
 test("互斥⑦：每种 kind 只准带自己的调度字段，混装被拒且点名字段", () => {
   // 三个真实混装组合（穷举抓到的那三条）
   const mixed = [
-    { over: { kind: "every", mode: "continuous", intervalSeconds: 60, cronExpression: "0 9 * * *" }, field: "cronExpression" },
+    {
+      over: { kind: "every", mode: "continuous", intervalSeconds: 60, cronExpression: "0 9 * * *" },
+      field: "cronExpression",
+    },
     { over: { kind: "at", mode: "once", at: 1, intervalSeconds: 60 }, field: "intervalSeconds" },
     { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1 }, field: "at" },
     // 第三种混装：every 带 at
     { over: { kind: "every", mode: "continuous", intervalSeconds: 60, at: 1 }, field: "at" },
     // 三个字段一起上：cron 只该有 cronExpression，另两个都要点名
-    { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1, intervalSeconds: 60 }, field: "at" },
+    {
+      over: {
+        kind: "cron",
+        mode: "continuous",
+        cronExpression: "0 9 * * *",
+        at: 1,
+        intervalSeconds: 60,
+      },
+      field: "at",
+    },
   ] as const;
 
   for (const { over, field } of mixed) {
@@ -196,18 +209,9 @@ test("互斥⑦：每种 kind 只准带自己的调度字段，混装被拒且�
   }
 
   // 合法面：每种 kind 只带自己的那一个，必须零问题（互斥⑦不能误伤正常配置）
-  assert.deepEqual(
-    problems({ kind: "at", mode: "once", at: 1 }),
-    [],
-  );
-  assert.deepEqual(
-    problems({ kind: "every", mode: "continuous", intervalSeconds: 60 }),
-    [],
-  );
-  assert.deepEqual(
-    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" }),
-    [],
-  );
+  assert.deepEqual(problems({ kind: "at", mode: "once", at: 1 }), []);
+  assert.deepEqual(problems({ kind: "every", mode: "continuous", intervalSeconds: 60 }), []);
+  assert.deepEqual(problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" }), []);
 });
 
 // 互斥⑧：eventTypes/filters 与 condition 同构，只对 event 有调度意义。
@@ -233,10 +237,7 @@ test("互斥⑧：eventTypes/filters 在三种非 event 上都被拒，event 上
   }
 
   // event 上两者都合法（唯一消费它们的地方），否则订阅规则无从表达
-  assert.deepEqual(
-    problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }),
-    [],
-  );
+  assert.deepEqual(problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }), []);
 });
 
 // maxFires × {未给, 0, 1, 1000, 1001, 负数}。边界是 1 与 1000：两端合法、越界必须被拒（spec §5.5「1–1000」）。
@@ -415,8 +416,13 @@ test("timezone 被 schema 认识（承载在排班类规则上，非 event）", 
 // 三个调度字段都要被 schema 认识（缺一即整类规则无法落盘）：三种 kind 各解析一次。
 test("调度字段 at/intervalSeconds/cronExpression 都被 schema 认识", () => {
   assert.equal(
-    wakeRuleSchema.parse({ id: "w1", workItemId: "wi_1", kind: "at", mode: "once", at: 1_700_000_000_000 })
-      .at,
+    wakeRuleSchema.parse({
+      id: "w1",
+      workItemId: "wi_1",
+      kind: "at",
+      mode: "once",
+      at: 1_700_000_000_000,
+    }).at,
     1_700_000_000_000,
   );
   assert.equal(

@@ -197,7 +197,9 @@ test("P1 回归｜同刻（createdAt 全同）+ agentId 过滤下的含冒号 ru
 test("P1 回归｜非法游标一律响亮抛：旧 v1 形状不再被接受，新格式的邻近畸形也全部抛", async () => {
   const service = await makeService();
   const runtime = await service.createRuntime(WS);
-  runtime.squadRunRepo.insert(run({ runId: ASSIGN_A, agentId: "ta-1", createdAt: 105, updatedAt: 105 }));
+  runtime.squadRunRepo.insert(
+    run({ runId: ASSIGN_A, agentId: "ta-1", createdAt: 105, updatedAt: 105 }),
+  );
   runtime.squadRunRepo.insert(
     run({ runId: "plain-run", agentId: "ta-1", createdAt: 100, updatedAt: 100 }),
   );

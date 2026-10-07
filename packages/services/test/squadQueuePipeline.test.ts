@@ -29,11 +29,18 @@ test("队列链闭环：闸→排队→并入→R2 义务→结算→推进→�
     runSettlementHub: hub,
   });
   const agent = runtime.teamAgentService.create({
-    name: "pipeline", systemPrompt: "s", memoryScope: "project", maxConcurrentRuns: 1,
+    name: "pipeline",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 1,
   });
   const open = (runId: string, workItemId: string) =>
     runtime.lifecycle.openMemberRun({
-      runId, workItemId, parentWorkItemId: "wi-p", agentId: agent.id, isLeaderTask: false,
+      runId,
+      workItemId,
+      parentWorkItemId: "wi-p",
+      agentId: agent.id,
+      isLeaderTask: false,
     });
 
   // ① 闸未满 ⇒ 直开（真实树）。
@@ -66,7 +73,10 @@ test("队列链闭环：闸→排队→并入→R2 义务→结算→推进→�
 
   // ⑦ 义务恰一次：run-1 已终态 ⇒ (wi-1,agent) 离开活跃集 ⇒ 认领一次；重复认领为空。
   const claimed = runtime.squadDeferredDispatchRepo.claimDue("ws");
-  assert.deepEqual(claimed.map((o) => o.runId), ["run-3"]);
+  assert.deepEqual(
+    claimed.map((o) => o.runId),
+    ["run-3"],
+  );
   assert.deepEqual(runtime.squadDeferredDispatchRepo.claimDue("ws"), []);
   // ⑧ 认领后的重放走真实派发：此刻容量又被 run-2 占满 ⇒ 回到排队（义务已履行，事实入队）。
   assert.equal((await open("run-3", "wi-1")).kind, "queued");
@@ -83,6 +93,9 @@ test("队列链闭环：闸→排队→并入→R2 义务→结算→推进→�
   const details = db
     .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details")
     .all() as Array<{ request_run_id: string; target_run_id: string }>;
-  assert.deepEqual(details.map((d) => [d.request_run_id, d.target_run_id]), [["run-2b", "run-2"]]);
+  assert.deepEqual(
+    details.map((d) => [d.request_run_id, d.target_run_id]),
+    [["run-2b", "run-2"]],
+  );
   assert.equal(settlements.length, 1, "仅 run-1 收尾；promote/open 不是结算");
 });

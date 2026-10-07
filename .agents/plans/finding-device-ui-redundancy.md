@@ -7,12 +7,12 @@
 
 用户指出「设备区块 UI 冗余」，经核对**部分成立**：
 
-| 组成 | 判定 | 依据 |
-|---|---|---|
-| 连接表单（host/用户名/密钥路径） | **冗余** | 产品 `SSHDialog.tsx` 已有，且多一个 `privateKeyPassphrase` 字段 |
-| 免目录连接（设备级，不 bind 工作目录） | **不可省** | 产品向导 4 步固定 `kind → settings → connecting → directory`，必选目录；而需求明确要「不选目录直接连上 B 的 zcode」 |
-| 读设备项目清单（`recentProjects` + 会话数） | **不可省** | spec User Story 7/14；产品连接后只挂载单个项目，不枚举整机 |
-| `tabStore.projection` 透传修复 | **真 bug，独立成立** | `createWorkspaceTab`/`mergeWorkspaceTabOptions` 都漏传，投射条目会退化成普通 tab |
+| 组成                                        | 判定                 | 依据                                                                                                                |
+| ------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 连接表单（host/用户名/密钥路径）            | **冗余**             | 产品 `SSHDialog.tsx` 已有，且多一个 `privateKeyPassphrase` 字段                                                     |
+| 免目录连接（设备级，不 bind 工作目录）      | **不可省**           | 产品向导 4 步固定 `kind → settings → connecting → directory`，必选目录；而需求明确要「不选目录直接连上 B 的 zcode」 |
+| 读设备项目清单（`recentProjects` + 会话数） | **不可省**           | spec User Story 7/14；产品连接后只挂载单个项目，不枚举整机                                                          |
+| `tabStore.projection` 透传修复              | **真 bug，独立成立** | `createWorkspaceTab`/`mergeWorkspaceTabOptions` 都漏传，投射条目会退化成普通 tab                                    |
 
 ## 产品既有能力（不要重复造）
 

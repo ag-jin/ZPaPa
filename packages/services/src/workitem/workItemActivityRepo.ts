@@ -109,7 +109,9 @@ interface ActivityRow {
 
 function readKind(value: string): WorkItemActivityKind {
   if (!(WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes(value)) {
-    throw new Error(`work_item_activities.kind 读回非法值「${value}」：列被写坏或闭集被改小，一律抛。`);
+    throw new Error(
+      `work_item_activities.kind 读回非法值「${value}」：列被写坏或闭集被改小，一律抛。`,
+    );
   }
   return value as WorkItemActivityKind;
 }

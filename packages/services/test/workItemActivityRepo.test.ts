@@ -76,7 +76,10 @@ test("跨连接并发：两条连接交替插入 ⇒ sequence 集合 1..N 无重
       .listByWorkItem("ws", "wi-1")
       .map((a) => a.sequence)
       .sort((l, r) => l - r);
-    assert.deepEqual(sequences, Array.from({ length: total }, (_, i) => i + 1));
+    assert.deepEqual(
+      sequences,
+      Array.from({ length: total }, (_, i) => i + 1),
+    );
     db1.close();
     db2.close();
   } finally {
@@ -87,12 +90,17 @@ test("跨连接并发：两条连接交替插入 ⇒ sequence 集合 1..N 无重
 test("唯一兜底：人为写重复 sequence ⇒ 唯一索引抛（不静默）", () => {
   const { repo, db } = setup();
   repo.add(input());
-  assert.throws(() =>
-    db.prepare(
-      `INSERT INTO work_item_activities (id, workspace_key, workspace_path, work_item_id, kind, sequence, occurred_at,
+  assert.throws(
+    () =>
+      db
+        .prepare(
+          `INSERT INTO work_item_activities (id, workspace_key, workspace_path, work_item_id, kind, sequence, occurred_at,
          actor_kind, actor_id, initiated_by_kind, initiated_by_id, payload_json, dedup_key, created_at, updated_at)
        VALUES ('a-bad', 'ws', '/tmp/ws', 'wi-1', 'comment_created', 1, 1, 'human', 'hu', 'human', 'hu', '{}', 'd-bad', 1, 1)`,
-    ).run(), /UNIQUE/);
+        )
+        .run(),
+    /UNIQUE/,
+  );
 });
 
 test("dedupKey 幂等：同键重投返回既存行不产生第二行；关联列不补写（只增不改）", () => {
@@ -116,7 +124,10 @@ test("kind 闭集：18 值全通过；非法值读写双闸响亮抛", () => {
     i += 1;
   }
   assert.equal(repo.listByWorkItem("ws", "wi-1").length, 18);
-  assert.throws(() => repo.add(input({ id: "k-bad", dedupKey: "dk-bad", kind: "bogus" as never })), /kind/);
+  assert.throws(
+    () => repo.add(input({ id: "k-bad", dedupKey: "dk-bad", kind: "bogus" as never })),
+    /kind/,
+  );
   db.prepare("UPDATE work_item_activities SET kind = 'bogus2' WHERE id = 'k-0'").run();
   assert.throws(() => repo.get("k-0"), /kind/);
 });
@@ -145,7 +156,11 @@ test("重启稳定：close 后重开读回同一序与内容", () => {
     const repo2 = createWorkItemActivityRepo(db2);
     assert.deepEqual(
       repo2.listByWorkItem("ws", "wi-1").map((a) => [a.sequence, a.id]),
-      [[1, "r-0"], [2, "r-1"], [3, "r-2"]],
+      [
+        [1, "r-0"],
+        [2, "r-1"],
+        [3, "r-2"],
+      ],
     );
     db2.close();
   } finally {
@@ -180,7 +195,11 @@ test("B2｜sourceRun 全形状往返：role/agentId/squadId 逐字段保真（�
     squadId: "sq-core",
     role: "leader",
   });
-  assert.deepEqual(repo.get("a-member")!.sourceRun, { runId: "run-m", agentId: "ta-m", role: "member" });
+  assert.deepEqual(repo.get("a-member")!.sourceRun, {
+    runId: "run-m",
+    agentId: "ta-m",
+    role: "member",
+  });
   // 无 sourceRun 仍读回 null（人手工事实）。
   repo.add(input({ id: "a-none", dedupKey: "d-none" }));
   assert.equal(repo.get("a-none")!.sourceRun, null);
@@ -207,6 +226,8 @@ test("B2｜读回不猜：runId 有值但角色列缺失/非法 ⇒ 响亮抛（
   // 模拟 0013 之前的历史行：只有 source_run_id，角色无从得知。
   db.prepare("UPDATE work_item_activities SET source_run_role = NULL WHERE id = 'a-legacy'").run();
   assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
-  db.prepare("UPDATE work_item_activities SET source_run_role = 'bogus' WHERE id = 'a-legacy'").run();
+  db.prepare(
+    "UPDATE work_item_activities SET source_run_role = 'bogus' WHERE id = 'a-legacy'",
+  ).run();
   assert.throws(() => repo.get("a-legacy"), /source_run_role|角色/);
 });

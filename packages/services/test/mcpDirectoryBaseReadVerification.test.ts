@@ -68,10 +68,7 @@ test("真实读取器 → 合并 → 协议载荷：workspace 赢 user、停用�
 
     // ② 接合：真记录直接喂给合并层，同名由 workspace 赢（不是被 user 反压）。
     const merged = mergeTeamAgentMcpServers(servers, { 同名: { command: "agent-版" } });
-    assert.deepEqual(
-      Object.keys(merged).sort(),
-      sorted(["同名", "只在工作区级", "只在用户级"]),
-    );
+    assert.deepEqual(Object.keys(merged).sort(), sorted(["同名", "只在工作区级", "只在用户级"]));
     assert.deepEqual(merged["同名"], { command: "agent-版" }, "agent 覆盖赢两个目录层");
 
     const mergedWithoutAgent = mergeTeamAgentMcpServers(servers);

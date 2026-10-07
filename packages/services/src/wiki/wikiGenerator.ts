@@ -192,7 +192,8 @@ export class WikiGenerator {
       const existingById = new Map(pages.map((page) => [page.id, page]));
       // 续跑时已完成正文的页（含从 draft-pages 落盘的）直接跳过
       const doneIds = new Set(
-        pages.filter((page) => typeof page.markdown === "string" && page.markdown.length > 0)
+        pages
+          .filter((page) => typeof page.markdown === "string" && page.markdown.length > 0)
           .map((page) => page.id),
       );
 

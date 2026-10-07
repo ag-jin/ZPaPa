@@ -27,9 +27,9 @@ function rawDefinition(root: string, id: string): string {
 }
 
 const THREE_SERVERS: Record<string, McpServerConfig> = {
-  "搜索": { command: "npx", args: ["-y", "search-mcp"], env: { TOKEN: "tok-a" } },
-  "文档": { url: "https://docs.test/mcp", type: "http", headers: { Authorization: "Bearer b" } },
-  "内部": { command: "内部命令", args: [], isolation: "workspace" },
+  搜索: { command: "npx", args: ["-y", "search-mcp"], env: { TOKEN: "tok-a" } },
+  文档: { url: "https://docs.test/mcp", type: "http", headers: { Authorization: "Bearer b" } },
+  内部: { command: "内部命令", args: [], isolation: "workspace" },
 };
 
 test("create 透传：内存返回、get 读回、落盘原文三处一致（含 env/headers 内容）", () => {
@@ -71,11 +71,11 @@ test("update 是整体替换：patch 里没有的 server 会被删掉（并入�
   });
 
   const replaced = svc.update(agent.id, {
-    mcpServers: { "只留这一个": { command: "keep-cmd" } },
+    mcpServers: { 只留这一个: { command: "keep-cmd" } },
   });
 
-  assert.deepEqual(replaced.mcpServers, { "只留这一个": { command: "keep-cmd" } });
-  assert.deepEqual(svc.get(agent.id)?.mcpServers, { "只留这一个": { command: "keep-cmd" } });
+  assert.deepEqual(replaced.mcpServers, { 只留这一个: { command: "keep-cmd" } });
+  assert.deepEqual(svc.get(agent.id)?.mcpServers, { 只留这一个: { command: "keep-cmd" } });
   const onDisk = JSON.parse(rawDefinition(root, agent.id)).mcpServers;
   assert.deepEqual(Object.keys(onDisk), ["只留这一个"], "落盘也只剩 patch 里那一条");
   assert.equal(onDisk["搜索"], undefined, "旧条目不得残留（并入会让「删一个 server」永远做不到）");
@@ -195,7 +195,11 @@ test("存量定义（文件里没有该字段）经 update / setEnabled / archiv
   assert.equal(rawDefinition(root, "ta_legacy"), legacyBytes, "纯读取不该改盘");
 
   svc.update("ta_legacy", { name: "改个名" });
-  assert.equal(rawDefinition(root, "ta_legacy").includes("mcpServers"), false, "编辑不得迁移出新字段");
+  assert.equal(
+    rawDefinition(root, "ta_legacy").includes("mcpServers"),
+    false,
+    "编辑不得迁移出新字段",
+  );
   assert.equal(JSON.parse(rawDefinition(root, "ta_legacy")).name, "改个名");
 
   svc.archive("ta_legacy");

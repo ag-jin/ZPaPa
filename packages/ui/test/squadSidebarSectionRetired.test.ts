@@ -44,7 +44,11 @@ test("负向守卫｜旧接线形态的 testid 不回接（squad-sidebar- 前缀
     );
   }
   const sidebar = readFileSync(join(UI_SRC, "WorkspaceSidebar.tsx"), "utf8");
-  for (const legacy of ["squad-sidebar-group-header", "squad-sidebar-empty", "squad-sidebar-error"]) {
+  for (const legacy of [
+    "squad-sidebar-group-header",
+    "squad-sidebar-empty",
+    "squad-sidebar-error",
+  ]) {
     assert.ok(!sidebar.includes(legacy), `WorkspaceSidebar 不得再含旧形态标记 ${legacy}`);
   }
 });

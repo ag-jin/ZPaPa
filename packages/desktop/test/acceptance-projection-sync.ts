@@ -12,30 +12,66 @@ import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
 
 const repoRoot = "/Users/linguojin/Workspace/ZCode/ZPaPa";
-const { connectResidentRemote } = await tsImport(pathToFileURL(join(repoRoot, "packages/server/src/remote/connect-resident.ts")).href, import.meta.url);
-const { createRemoteBackend } = await tsImport(pathToFileURL(join(repoRoot, "packages/server/src/remote/create-backend.ts")).href, import.meta.url);
-const { createDeviceAccess, buildProjectedProjectList } = await tsImport(pathToFileURL(join(repoRoot, "packages/ui/src/lib/remoteDeviceAccess.ts")).href, import.meta.url);
-const { computeProjectionSync, filterProjectsByVisibility } = await tsImport(pathToFileURL(join(repoRoot, "packages/ui/src/lib/remoteDeviceProjection.ts")).href, import.meta.url);
+const { connectResidentRemote } = await tsImport(
+  pathToFileURL(join(repoRoot, "packages/server/src/remote/connect-resident.ts")).href,
+  import.meta.url,
+);
+const { createRemoteBackend } = await tsImport(
+  pathToFileURL(join(repoRoot, "packages/server/src/remote/create-backend.ts")).href,
+  import.meta.url,
+);
+const { createDeviceAccess, buildProjectedProjectList } = await tsImport(
+  pathToFileURL(join(repoRoot, "packages/ui/src/lib/remoteDeviceAccess.ts")).href,
+  import.meta.url,
+);
+const { computeProjectionSync, filterProjectsByVisibility } = await tsImport(
+  pathToFileURL(join(repoRoot, "packages/ui/src/lib/remoteDeviceProjection.ts")).href,
+  import.meta.url,
+);
 
-const backend = await createRemoteBackend({ kind: "ssh", host: "100.66.1.2", port: 22, username: "linguojin", privateKeyPath: join(homedir(), ".ssh/id_ed25519_imac") });
+const backend = await createRemoteBackend({
+  kind: "ssh",
+  host: "100.66.1.2",
+  port: 22,
+  username: "linguojin",
+  privateKeyPath: join(homedir(), ".ssh/id_ed25519_imac"),
+});
 const conn = await connectResidentRemote(backend, { onDidRemoteClose: () => {} });
-if (!conn) { console.error("❌ 连接失败"); process.exit(1); }
+if (!conn) {
+  console.error("❌ 连接失败");
+  process.exit(1);
+}
 const deviceSessionId = "verify-session";
 
-const access = await createDeviceAccess({ zcodeTaskService: conn.services.zcodeTaskService, settingService: conn.services.settingService });
+const access = await createDeviceAccess({
+  zcodeTaskService: conn.services.zcodeTaskService,
+  settingService: conn.services.settingService,
+});
 const registered = await access.access.listRegisteredProjects();
 const tasks = await access.access.listAllTasks();
 const allProjects = buildProjectedProjectList({ registeredProjects: registered, tasks });
 console.log(`设备项目: ${allProjects.length} 个`);
 
 // 1) 首次同步：应创建全部项目
-const first = computeProjectionSync({ deviceSessionId, deviceProjects: allProjects, existingTabs: [] });
+const first = computeProjectionSync({
+  deviceSessionId,
+  deviceProjects: allProjects,
+  existingTabs: [],
+});
 console.log(`首次同步: 创建 ${first.toCreate.length} / 移除 ${first.toRemoveTabIds.length}`);
 const ok1 = first.toCreate.length === allProjects.length;
 
 // 2) 模拟"已创建"后重复同步：应零变更(不重建)
-const existingTabs = first.toCreate.map((p: { path: string }, i: number) => ({ id: `tab-${i}`, workspacePath: p.path, projection: { deviceSessionId } }));
-const second = computeProjectionSync({ deviceSessionId, deviceProjects: allProjects, existingTabs });
+const existingTabs = first.toCreate.map((p: { path: string }, i: number) => ({
+  id: `tab-${i}`,
+  workspacePath: p.path,
+  projection: { deviceSessionId },
+}));
+const second = computeProjectionSync({
+  deviceSessionId,
+  deviceProjects: allProjects,
+  existingTabs,
+});
 console.log(`重复同步: 创建 ${second.toCreate.length} / 移除 ${second.toRemoveTabIds.length}`);
 const ok2 = second.toCreate.length === 0 && second.toRemoveTabIds.length === 0;
 

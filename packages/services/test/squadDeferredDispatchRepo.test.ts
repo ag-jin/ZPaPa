@@ -20,7 +20,9 @@ function setup() {
   return { db, repo: createSquadDeferredDispatchRepo(db) };
 }
 
-const obligation = (over: Partial<SquadDeferredDispatchRecord> = {}): SquadDeferredDispatchRecord => ({
+const obligation = (
+  over: Partial<SquadDeferredDispatchRecord> = {},
+): SquadDeferredDispatchRecord => ({
   runId: "obl-1",
   workspaceKey: "ws",
   workItemId: "wi-1",
@@ -40,10 +42,13 @@ test("原子登记：首条 true；同 (workspace,workItem,agent) 第二条 fals
     false,
     "同目标已有义务 ⇒ 并入既存行（义务键唯一，不产生第二行）",
   );
-  const rows = db
-    .prepare("SELECT run_id FROM squad_run_deferred_dispatches")
-    .all() as Array<{ run_id: string }>;
-  assert.deepEqual(rows.map((r) => r.run_id), ["obl-1"]);
+  const rows = db.prepare("SELECT run_id FROM squad_run_deferred_dispatches").all() as Array<{
+    run_id: string;
+  }>;
+  assert.deepEqual(
+    rows.map((r) => r.run_id),
+    ["obl-1"],
+  );
   // 不同目标各自成行。
   assert.equal(repo.insertIfAbsent(obligation({ runId: "obl-3", workItemId: "wi-2" })), true);
 });
@@ -104,21 +109,32 @@ test("G4｜origin：评论义务与 R2 义务可判别；缺省 'reassign' 向�
   // 台账序同为 created_at=1 ⇒ 按 run_id 兜底：obl-c 在前（排序口径与 list/claimDue 一致）。
   assert.deepEqual(
     repo.list("ws").map((o) => [o.runId, o.origin]),
-    [["obl-c", "comment"], ["obl-r2", "reassign"]],
+    [
+      ["obl-c", "comment"],
+      ["obl-r2", "reassign"],
+    ],
   );
   // claimDue 读回带 origin：X2.1 的 host 消费者据此分流（评论义务不得当 eventKey 重放）。
   assert.deepEqual(
     repo.claimDue("ws").map((o) => [o.runId, o.origin]),
-    [["obl-c", "comment"], ["obl-r2", "reassign"]],
+    [
+      ["obl-c", "comment"],
+      ["obl-r2", "reassign"],
+    ],
   );
   // 写入口闸：枚举外值响亮抛（不静默落库）。
   assert.throws(
-    () => repo.insertIfAbsent(obligation({ runId: "obl-bad", workItemId: "wi-3", origin: "bogus" as never })),
+    () =>
+      repo.insertIfAbsent(
+        obligation({ runId: "obl-bad", workItemId: "wi-3", origin: "bogus" as never }),
+      ),
     /origin/,
   );
   // 读回闸：列被写坏一律抛（readStatus 纪律）。
   repo.insertIfAbsent(obligation({ runId: "obl-bad2", workItemId: "wi-4" }));
-  db.prepare("UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-bad2'").run();
+  db.prepare(
+    "UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-bad2'",
+  ).run();
   assert.throws(() => repo.find("ws", "wi-4", "ta-a"), /origin/);
 });
 
@@ -131,11 +147,13 @@ test("G4｜origin：评论义务与 R2 义务可判别；缺省 'reassign' 向�
 test("F1｜claimDue 读回校验先于 DELETE：origin 坏值抛错且义务行保留（不蒸发）", () => {
   const { repo, db } = setup();
   repo.insertIfAbsent(obligation({ runId: "obl-origin-bad" }));
-  db.prepare("UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-origin-bad'").run();
+  db.prepare(
+    "UPDATE squad_run_deferred_dispatches SET origin = 'bogus' WHERE run_id = 'obl-origin-bad'",
+  ).run();
   assert.throws(() => repo.claimDue("ws"), /origin/);
-  const rows = db
-    .prepare("SELECT run_id FROM squad_run_deferred_dispatches")
-    .all() as Array<{ run_id: string }>;
+  const rows = db.prepare("SELECT run_id FROM squad_run_deferred_dispatches").all() as Array<{
+    run_id: string;
+  }>;
   assert.deepEqual(
     rows.map((row) => row.run_id),
     ["obl-origin-bad"],
@@ -146,12 +164,18 @@ test("F1｜claimDue 读回校验先于 DELETE：origin 坏值抛错且义务行�
 test("F1｜claimDue 同款顺序：dispatch_cause 坏值抛错且义务行保留", () => {
   const { repo, db } = setup();
   repo.insertIfAbsent(obligation({ runId: "obl-cause-bad" }));
-  db.prepare("UPDATE squad_run_deferred_dispatches SET dispatch_cause = 'bogus' WHERE run_id = 'obl-cause-bad'").run();
+  db.prepare(
+    "UPDATE squad_run_deferred_dispatches SET dispatch_cause = 'bogus' WHERE run_id = 'obl-cause-bad'",
+  ).run();
   assert.throws(() => repo.claimDue("ws"), /dispatch_cause/);
-  const rows = db
-    .prepare("SELECT run_id FROM squad_run_deferred_dispatches")
-    .all() as Array<{ run_id: string }>;
-  assert.deepEqual(rows.map((row) => row.run_id), ["obl-cause-bad"], "坏成因同样不得让行蒸发");
+  const rows = db.prepare("SELECT run_id FROM squad_run_deferred_dispatches").all() as Array<{
+    run_id: string;
+  }>;
+  assert.deepEqual(
+    rows.map((row) => row.run_id),
+    ["obl-cause-bad"],
+    "坏成因同样不得让行蒸发",
+  );
 });
 
 /* ---------- C4b：到期认领（恰一次；到期 = 目标对离开活跃集） ---------- */
@@ -169,11 +193,18 @@ test("claimDue：活跃 run 占树 ⇒ 不到期不认领；收尾（离开活�
   assert.deepEqual(repo.claimDue("ws"), [], "活跃 run 仍占树（撞分支风险）⇒ 义务不到期");
   // produced 仍在活跃集（占树待审）⇒ 仍不到期。
   db.prepare("UPDATE squad_runs SET status = 'produced' WHERE run_id = 'act-1'").run();
-  assert.deepEqual(repo.claimDue("ws"), [], "produced 仍占树 ⇒ 不到期（按离开活跃集判，不按离开 open 判）");
+  assert.deepEqual(
+    repo.claimDue("ws"),
+    [],
+    "produced 仍占树 ⇒ 不到期（按离开活跃集判，不按离开 open 判）",
+  );
   // merged（终态、树已收）⇒ 到期，认领恰一次。
   db.prepare("UPDATE squad_runs SET status = 'merged' WHERE run_id = 'act-1'").run();
   const claimed = repo.claimDue("ws");
-  assert.deepEqual(claimed.map((o) => o.runId), ["obl-1"]);
+  assert.deepEqual(
+    claimed.map((o) => o.runId),
+    ["obl-1"],
+  );
   assert.deepEqual(repo.claimDue("ws"), [], "认领即删除（恰一次；重复结算不重放第二次）");
   assert.equal(repo.find("ws", "wi-1", "ta-a"), null);
 });

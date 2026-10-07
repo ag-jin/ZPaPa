@@ -16,5 +16,7 @@ const rules = decoded.providers.toJSON();
 console.log(`[verify] ${target}`);
 console.log(`[verify] ✅ decoded ok, providers=${Object.keys(rules).length}`);
 for (const [id, rule] of Object.entries(rules)) {
-  console.log(`   - ${id} group=${rule.config?.group} models=${(rule.config?.personalModelIds ?? []).length}`);
+  console.log(
+    `   - ${id} group=${rule.config?.group} models=${(rule.config?.personalModelIds ?? []).length}`,
+  );
 }

@@ -17,7 +17,10 @@ import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrati
 import { computeCommentDispatchKey } from "../src/workitem/commentDispatchKey.js";
 import { createCommentDispatchReceiptRepo } from "../src/workitem/commentDispatchReceiptRepo.js";
 import { createCommentService, type CommentService } from "../src/workitem/commentService.js";
-import { DISPATCH_CAUSES, type SquadDispatchRequest } from "../src/workitem/squadDispatchRequests.js";
+import {
+  DISPATCH_CAUSES,
+  type SquadDispatchRequest,
+} from "../src/workitem/squadDispatchRequests.js";
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
@@ -229,7 +232,8 @@ test("X2.1 服务面：receipt 读口与条件回写口（终局不覆写、异 
   const service = createSquadRuntimeService({
     createRuntime: async () => runtime,
     readExperimentEnabled: async () => true,
-    archiveSquadAndTransfer: async (t, id) => archiveSquadAndTransfer(await Promise.resolve(runtime), id),
+    archiveSquadAndTransfer: async (t, id) =>
+      archiveSquadAndTransfer(await Promise.resolve(runtime), id),
     createOrchestrator: createSquadOrchestrator,
     getCommentDispatchReceiptRepo: () => receipts,
   });
@@ -273,7 +277,10 @@ test("X2.1 服务面：receipt 读口与条件回写口（终局不覆写、异 
   // 未命中 ⇒ null / false（不造行、不静默成功）。
   assert.equal(await service.getCommentDispatchReceipt(target, "cd-none"), null);
   assert.equal(
-    await service.settleCommentDispatchReceipt(target, { dispatchKey: "cd-none", outcome: "failed" }),
+    await service.settleCommentDispatchReceipt(target, {
+      dispatchKey: "cd-none",
+      outcome: "failed",
+    }),
     false,
   );
 });

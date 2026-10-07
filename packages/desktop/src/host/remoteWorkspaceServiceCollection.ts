@@ -387,14 +387,15 @@ export function createRemoteWorkspaceServiceCollection(params: {
       listRegisteredProjects: async (): Promise<string[]> => {
         const settings = await params.connectionServices.settingService.get();
         const recent = settings.recentProjects ?? [];
-        return recent.filter(
-          (item): item is string => typeof item === "string" && item.length > 0,
-        );
+        return recent.filter((item): item is string => typeof item === "string" && item.length > 0);
       },
       // 设备设置投射的读写也必须打对端：上面的 ISettingService 是本机实现。
       // 写操作由调用方保证「改前记录 → 写入 → 读回确认」。
       getSettings: async (): Promise<Record<string, unknown>> =>
-        (await params.connectionServices.settingService.get()) as unknown as Record<string, unknown>,
+        (await params.connectionServices.settingService.get()) as unknown as Record<
+          string,
+          unknown
+        >,
       updateSetting: async (key: string, value: unknown): Promise<void> => {
         await params.connectionServices.settingService.update({ [key]: value });
       },

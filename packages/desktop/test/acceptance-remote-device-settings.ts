@@ -83,20 +83,28 @@ const writeOk = afterWrite === nextValue;
 console.log(`  写入 ${nextValue} → 读回 ${afterWrite} ${writeOk ? "✅ 生效" : "❌ 未生效"}`);
 
 await settingService.update({ [targetKey]: originalValue });
-const afterRollback = Object.entries(await settingService.get()).find(([k]) => k === targetKey)?.[1];
+const afterRollback = Object.entries(await settingService.get()).find(
+  ([k]) => k === targetKey,
+)?.[1];
 const rollbackOk = afterRollback === originalValue;
-console.log(`  回滚 ${originalValue} → 读回 ${afterRollback} ${rollbackOk ? "✅ 已还原" : "❌ 还原失败"}`);
+console.log(
+  `  回滚 ${originalValue} → 读回 ${afterRollback} ${rollbackOk ? "✅ 已还原" : "❌ 还原失败"}`,
+);
 
 // ── V3：被排除字段确实不可见 ──
 console.log("\n=== V3：敏感/本地字段不暴露 ===");
 const projectableKeys = new Set(entries.map((e: { key: string }) => e.key));
 const leaked = excluded.filter(([k]) => projectableKeys.has(k));
-console.log(`被排除字段泄漏进可投射列表: ${leaked.length === 0 ? "0 个 ✅" : `${leaked.length} 个 ❌`}`);
+console.log(
+  `被排除字段泄漏进可投射列表: ${leaked.length === 0 ? "0 个 ✅" : `${leaked.length} 个 ❌`}`,
+);
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });
 
 console.log("\n=== 验收结论（标准 4）===");
-console.log(`V1 远端设置读取:      ✅（${Object.keys(settings).length} 字段，可投射 ${entries.length}）`);
+console.log(
+  `V1 远端设置读取:      ✅（${Object.keys(settings).length} 字段，可投射 ${entries.length}）`,
+);
 console.log(`V2 远程修改并生效:    ${writeOk ? "✅" : "❌"}（读回确认 ${afterWrite}）`);
 console.log(`V2 回滚还原:          ${rollbackOk ? "✅" : "❌"}（当前 ${afterRollback}）`);
 console.log(`V3 敏感字段不泄漏:    ${leaked.length === 0 ? "✅" : "❌"}`);

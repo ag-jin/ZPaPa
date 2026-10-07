@@ -47,7 +47,11 @@ export interface SquadDeferredDispatchRepo {
    */
   insertIfAbsent(record: SquadDeferredDispatchInput): boolean;
   /** 按键取既存义务（并入时拿目标 runId 用）；无 ⇒ null。 */
-  find(workspaceKey: string, workItemId: string, agentId: string): SquadDeferredDispatchRecord | null;
+  find(
+    workspaceKey: string,
+    workItemId: string,
+    agentId: string,
+  ): SquadDeferredDispatchRecord | null;
   /** 本 workspace 全部义务（启动扫描/重放遍历用），按 created_at 序。 */
   list(workspaceKey: string): SquadDeferredDispatchRecord[];
   /**

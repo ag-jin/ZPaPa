@@ -273,7 +273,9 @@ test("守卫｜shell 有 work-items 分支且渲染 WorkItemsPage；全页判据
   assert.ok(
     // B5.1（S4）把该判据从「只看板」扩到「看板 + 工作项详情页」：详情页同属这个侧栏入口，
     // 漏掉详情 ⇒ 进详情后侧栏失焦（静默）。断言相应加宽为**两个视图都覆盖**（比原来更强，不是放宽）。
-    layout.includes('workspaceMainView === "work-items" || workspaceMainView === "work-item-detail"'),
+    layout.includes(
+      'workspaceMainView === "work-items" || workspaceMainView === "work-item-detail"',
+    ),
     "侧栏入口的高亮态由同一个主视图判据给出（B5.1 起含工作项详情页）",
   );
   // 打开会话穿透：照 AutomationsSection 的形态经 shell 既有的 handleSelectTaskInChat
@@ -316,7 +318,10 @@ test("守卫｜WorkItemsPage 走响亮取数通路，写动作齐全，放弃整
   const dialogWiring = page.slice(page.indexOf("<WorkItemsPageDialogs"));
   assert.ok(dialogs.includes("<SquadDiscardDialog"), "必须渲染二次确认对话框");
   assert.ok(dialogs.includes("onConfirm={onConfirmDiscard}"), "确认动作不得在装配层变成 no-op");
-  assert.ok(dialogWiring.includes("onConfirmDiscard") && dialogWiring.includes("runDiscard()"), "确认动作必须回到页面唯一执行路径");
+  assert.ok(
+    dialogWiring.includes("onConfirmDiscard") && dialogWiring.includes("runDiscard()"),
+    "确认动作必须回到页面唯一执行路径",
+  );
   assert.ok(dialogWiring.includes("onSubmitReassign={submitReassign}"), "改派提交必须回到页面编排");
   assert.ok(
     page.includes("squadDiscardableWorkItemIds("),
@@ -394,7 +399,10 @@ test("运行可审查性：produced / rejected 可审，其余三态（open / me
    变异（L1-3）：把默认维度改成 `statusCategory`（或不分组也套泳道壳）⇒ 第一 / 四 / 五条必红。 */
 test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
   const board = readSource("squad/WorkItemsBoard.tsx");
-  assert.ok(board.includes('data-testid="work-items-list"'), "不分组仍是单 ul（现状 DOM 逐字保留）");
+  assert.ok(
+    board.includes('data-testid="work-items-list"'),
+    "不分组仍是单 ul（现状 DOM 逐字保留）",
+  );
   assert.ok(
     board.includes("flattenWorkItemBoard(workItems).map(renderRow)"),
     "不分组走 flattenWorkItemBoard（行序判据不变）",
@@ -416,7 +424,8 @@ test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 +
   // 等价性回归（纯函数层）：`none` 的输出与 flattenWorkItemBoard 逐格相同。
   const items = [wi("p"), wi("c", "p"), wi("orphan", "gone")];
   assert.deepEqual(
-    groupWorkItemBoard({ items, dimension: "none", roster: { teamAgents: [], squads: [] } })[0]?.rows,
+    groupWorkItemBoard({ items, dimension: "none", roster: { teamAgents: [], squads: [] } })[0]
+      ?.rows,
     flattenWorkItemBoard(items),
     "none 分支不得改变行序与深度（同一份 DFS 实现）",
   );

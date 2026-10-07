@@ -335,7 +335,11 @@ function assertStatus(status: SquadRunStatus): SquadRunStatus {
 /* 排队行实体不变式的写路径闸：queued ⇒ 无树无分支。排队占的只是「容量席位」，开树发生在
    推进（queued→open）之后；带 branch/dir_name 的 queued 行是把「已开树」与「未开树」混成一格，
    回收器按 branch 投影时会把它当成活树处理（或静默漏掉），两种都不可接受。 */
-function assertQueuedHasNoTree(record: { status: SquadRunStatus; branch: string | null; dirName: string | null }): void {
+function assertQueuedHasNoTree(record: {
+  status: SquadRunStatus;
+  branch: string | null;
+  dirName: string | null;
+}): void {
   if (record.status === "queued" && (record.branch !== null || record.dirName !== null)) {
     throw new Error(
       "squad_runs 拒绝写入带 branch/dir_name 的 queued 行：排队行无树无分支，开树发生在推进为 open 之后" +
@@ -751,7 +755,9 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         );
       }
       const row = db
-        .prepare("SELECT workspace_key AS workspaceKey, agent_id AS agentId FROM squad_runs WHERE run_id = ? AND status = 'queued'")
+        .prepare(
+          "SELECT workspace_key AS workspaceKey, agent_id AS agentId FROM squad_runs WHERE run_id = ? AND status = 'queued'",
+        )
         .get(runId) as { workspaceKey: string; agentId: string } | undefined;
       if (row === undefined) return false;
       // 认领即**进入 open**：`opened_at` 在语句内写成认领时刻（TTL 起算点 = 开跑时刻，不是排队登记

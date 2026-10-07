@@ -23,10 +23,10 @@ Windows 已经是这个形态（`initAutoUpdater` 配置 GitHub provider、启�
 仓库 `autoUpdater.ts` 的注释称「macOS 未签名 → Squirrel 静默安装会被签名校验拒绝」。
 用本机 Electron 41 直接探原生 `autoUpdater`，实测结论更精确：
 
-| 应用签名状态 | native `setFeedURL()` |
-|---|---|
-| 完全未签名（当前发布包） | ❌ 抛 `Could not get code signature for running application` |
-| ad-hoc 签名（`codesign -s -`，无 Team ID） | ✅ 成功 |
+| 应用签名状态                               | native `setFeedURL()`                                        |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| 完全未签名（当前发布包）                   | ❌ 抛 `Could not get code signature for running application` |
+| ad-hoc 签名（`codesign -s -`，无 Team ID） | ✅ 成功                                                      |
 
 机制：Squirrel.Mac 的 `SQRLCodeSignature currentApplicationSignature` 内部调用
 `SecCodeCopyDesignatedRequirement`；未签名应用取不到 designated requirement，
@@ -102,12 +102,12 @@ ad-hoc **自动生成**的 DR 是 `cdhash H"..."`（钉死代码哈希），跨�
 把 `mac.requirements` **无条件套给每个待签文件**，没有路径判断。而嵌套代码各有自己的
 identifier：
 
-| 嵌套项 | 自身 identifier |
-|---|---|
-| Squirrel.framework | `com.github.Squirrel` |
+| 嵌套项                       | 自身 identifier                 |
+| ---------------------------- | ------------------------------- |
+| Squirrel.framework           | `com.github.Squirrel`           |
 | Electron Framework.framework | `com.github.Electron.framework` |
-| Mantle.framework | `org.mantle.Mantle` |
-| Helper.app | `dev.zcode.app.helper` |
+| Mantle.framework             | `org.mantle.Mantle`             |
+| Helper.app                   | `dev.zcode.app.helper`          |
 
 给它们套上 `designated => identifier "dev.zcode.app"` 后，嵌套代码**无法满足自己的 DR**，
 osx-sign 结尾内置的 `codesign --verify --deep --strict` 立即报
@@ -121,11 +121,11 @@ osx-sign 结尾内置的 `codesign --verify --deep --strict` 立即报
 
 **实测验证**（真实配置模块 + 真实 osx-sign + Swift 探针复刻 Squirrel 校验）：
 
-| 形态 | 顶层 DR | osx-sign 内置 `--verify --deep --strict` | Squirrel 同款跨版本校验 |
-|---|---|---|---|
-| `requirements` 全局（原方案） | identifier ✓ | **失败** | — |
-| `requirements` 仅顶层（修复后） | identifier ✓ | 通过 | **通过** `status=0` |
-| 无 requirements（ad-hoc 默认） | cdhash | 通过 | **失败** `-67050` |
+| 形态                            | 顶层 DR      | osx-sign 内置 `--verify --deep --strict` | Squirrel 同款跨版本校验 |
+| ------------------------------- | ------------ | ---------------------------------------- | ----------------------- |
+| `requirements` 全局（原方案）   | identifier ✓ | **失败**                                 | —                       |
+| `requirements` 仅顶层（修复后） | identifier ✓ | 通过                                     | **通过** `status=0`     |
+| 无 requirements（ad-hoc 默认）  | cdhash       | 通过                                     | **失败** `-67050`       |
 
 验证方法本身也要注意：`probe` 探针必须让「新版」与「旧版」的代码**真正不同**
 （否则 cdhash 相同的两份拷贝会让 cdhash 型 DR 也「通过」，得出错误结论）。
@@ -144,7 +144,7 @@ ad-hoc 让当前发布形态可更新，但「签名不可用」这件事必须�
 不能靠平台判断一次性写死。分两层：
 
 - **进程启动时**：`initAutoUpdater` 在 darwin 上先探测原生 updater 能否初始化
-  （`setFeedURL` 是否抛错）。不能则记 warn 并保持「手动打开发布页」行为 —— 
+  （`setFeedURL` 是否抛错）。不能则记 warn 并保持「手动打开发布页」行为 ——
   即今天的行为成为**降级路径**，而不是唯一路径。
 - **事件回调里**：Squirrel 的 staging 失败（`SQRLUpdaterErrorDomain`）已有处理
   （`handleAutoUpdateFailure` 清 ready、退回可重试状态，并已有 dev 态豁免）。
@@ -163,16 +163,16 @@ ad-hoc 让当前发布形态可更新，但「签名不可用」这件事必须�
 
 ## 验收场景
 
-| # | 场景 | 期望 |
-|---|---|---|
-| A1 | mac 新版本发布后启动应用 | 自动检查发现新版（不再需要手动下载） |
-| A2 | 「检查更新」菜单 | 进入状态机（而非直接打开浏览器） |
-| A3 | 有新包 | 按设置项自动或手动下载 zip，进度可见 |
-| A4 | 下载完成 | 菜单显示「重启以更新」，点击后安装并重启到新版 |
-| A5 | 签名不可用（如未来换构建形态） | 回退 open-page，用户仍能手动下载，**不出现点了没反应** |
-| A6 | 版本不低于远端 | 报「已是最新」，状态复位 |
-| A7 | `latest-mac.yml` 缺失或格式坏 | 报错并复位，不挂死 |
-| A8 | 两个架构 | x64 与 arm64 各自拿到正确包（清单含两个 files[] 条目） |
+| #   | 场景                           | 期望                                                   |
+| --- | ------------------------------ | ------------------------------------------------------ |
+| A1  | mac 新版本发布后启动应用       | 自动检查发现新版（不再需要手动下载）                   |
+| A2  | 「检查更新」菜单               | 进入状态机（而非直接打开浏览器）                       |
+| A3  | 有新包                         | 按设置项自动或手动下载 zip，进度可见                   |
+| A4  | 下载完成                       | 菜单显示「重启以更新」，点击后安装并重启到新版         |
+| A5  | 签名不可用（如未来换构建形态） | 回退 open-page，用户仍能手动下载，**不出现点了没反应** |
+| A6  | 版本不低于远端                 | 报「已是最新」，状态复位                               |
+| A7  | `latest-mac.yml` 缺失或格式坏  | 报错并复位，不挂死                                     |
+| A8  | 两个架构                       | x64 与 arm64 各自拿到正确包（清单含两个 files[] 条目） |
 
 ## 验证方式
 

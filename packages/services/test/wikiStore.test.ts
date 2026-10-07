@@ -56,7 +56,12 @@ function makeLegacyWiki() {
     generationModel: { providerId: "builtin:x", providerName: "X", modelName: "M" },
     generationOptions: { generateDiagrams: true, thoughtLevel: "max", maxOutputTokens: 16384 },
     manifestHash: "hash-legacy",
-    context: { repoId: "/tmp/agent军团", workspaceKey: "/tmp/agent军团", name: "agent军团", rootPath: "/tmp/agent军团" },
+    context: {
+      repoId: "/tmp/agent军团",
+      workspaceKey: "/tmp/agent军团",
+      name: "agent军团",
+      rootPath: "/tmp/agent军团",
+    },
     catalogTree: legacyCatalog,
     // 旧样本实测：totalPages=14 但 pages 只有 10 条 —— 失败页不在 pages 里
     pages: [
@@ -141,10 +146,7 @@ test("flattenWikiPageNodes 只收集带 pageId 的节点（= totalPages 语义�
     ["page-1-aaaa1111", "page-2-bbbb2222"],
   );
   // 分组节点没有 pageId，不计入
-  assert.equal(
-    flattenWikiPageNodes([{ id: "n", title: "分组", order: 1 }]).length,
-    0,
-  );
+  assert.equal(flattenWikiPageNodes([{ id: "n", title: "分组", order: 1 }]).length, 0);
 });
 
 test("countWikiPageNodes 统计规划页数（含尚未生成正文的页）", () => {

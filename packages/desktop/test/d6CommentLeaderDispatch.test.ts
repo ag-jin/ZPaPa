@@ -66,7 +66,10 @@ test("D6 身份核对：无 squadId（@agent / 回复锚点）或小队已不存
 
 const hostSource = (): string =>
   readFileSync(
-    join(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."), "packages/desktop/src/host/index.ts"),
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+      "packages/desktop/src/host/index.ts",
+    ),
     "utf8",
   );
 

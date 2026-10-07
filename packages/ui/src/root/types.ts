@@ -83,7 +83,10 @@ export interface WorkspaceSettingsLayerProps {
    * 连接表单由该弹窗负责（SSH 全套字段 + 目录步的「作为设备连接」），
    * 设置页只呈现已连接设备与项目勾选。
    */
-  onOpenRemoteConnection?: (preference?: { preferredKind?: RemoteTarget["kind"]; preferredWslDistro?: string }) => void;
+  onOpenRemoteConnection?: (preference?: {
+    preferredKind?: RemoteTarget["kind"];
+    preferredWslDistro?: string;
+  }) => void;
   onLogin?: () => void;
   onLogout?: () => void;
   user?: UserInfo | null;

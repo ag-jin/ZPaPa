@@ -119,10 +119,7 @@ test("D6 同形性：规则 / 人改派（assignee=squad）与评论队长支（
   assert.ok(briefing !== undefined, "队长 run 必须带简报");
   assert.equal(briefing.squadId, SQUAD);
   assert.equal(briefing.leaderAgentId, LEAD);
-  assert.deepEqual(briefing.roster, [
-    { agentId: LEAD, role: "leader" },
-    { agentId: MEMBER },
-  ]);
+  assert.deepEqual(briefing.roster, [{ agentId: LEAD, role: "leader" }, { agentId: MEMBER }]);
   assert.equal(briefing.protocol, LEADER_PROTOCOL_TEXT);
   assert.deepEqual(briefing.instructions, { stopCondition: "全部 done 即收工", maxRounds: "5" });
 });
@@ -152,7 +149,11 @@ test("D6 同形性：host 真实传入的 runClass 声明（standalone / member�
       leaderOverride: { squad: squad() },
     }),
   );
-  assert.deepEqual(memberDeclared, standaloneDeclared, "两条评论格（顶层/队员子项）产出同一个 leader 事件");
+  assert.deepEqual(
+    memberDeclared,
+    standaloneDeclared,
+    "两条评论格（顶层/队员子项）产出同一个 leader 事件",
+  );
 });
 
 test("D6 互斥：同时给 targetOverride 与 leaderOverride ⇒ 响亮抛（不得静默取其一）", () => {
@@ -216,7 +217,7 @@ test("D6 三态同结论：正常 / 归档 / 停用 —— 评论队长支与 as
 });
 
 test("D6 旧契约负向半边：targetOverride 单走时事件形状与 D6 之前逐字相同（不带队长标记/简报/squadId）", () => {
-  /* 评论 @普通智能体：即使本项被指派给小队、即使小队已归档，也走普通 agent 覆盖 —— 
+  /* 评论 @普通智能体：即使本项被指派给小队、即使小队已归档，也走普通 agent 覆盖 ——
      被点名的智能体不该以为自己要去派单（简报是「你是队长」的机制段）。 */
   const run = runOf(
     planDispatch({

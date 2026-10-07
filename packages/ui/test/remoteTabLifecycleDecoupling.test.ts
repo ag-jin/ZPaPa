@@ -73,12 +73,7 @@ test("核心不变量：补释放路径也不碰设备会话", () => {
     },
   ];
   const remembered = new Map([["/vol/新赛马", DEVICE_SESSION]]);
-  const toDispose = collectClosedRemoteWorkspaceSessionIds(
-    previous,
-    [],
-    remembered,
-    isDeviceOwned,
-  );
+  const toDispose = collectClosedRemoteWorkspaceSessionIds(previous, [], remembered, isDeviceOwned);
   assert.deepEqual(toDispose, [], "记忆路径同样不能释放设备会话");
 });
 

@@ -57,7 +57,7 @@ agentService.onDynamicSessionRuntimePreferencesRequest()((request: { requestId: 
     .respondSessionRuntimePreferences({
       requestId: request.requestId,
       resolution: {
-      status: "resolved",
+        status: "resolved",
         preferences: {
           askUserQuestionAutoResolutionEnabled: true,
           nativeSearchEnhancementsEnabled: true,
@@ -68,7 +68,9 @@ agentService.onDynamicSessionRuntimePreferencesRequest()((request: { requestId: 
     })
     .then(() => console.log("   [bridge] runtime preferences 已应答"))
     .catch((error: unknown) => {
-      console.warn(`[t1] 应答 runtime preferences 失败: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `[t1] 应答 runtime preferences 失败: ${error instanceof Error ? error.message : String(error)}`,
+      );
     });
 });
 
@@ -234,7 +236,9 @@ try {
   const afterArchive = await connection.services.zcodeTaskService.listTasks({
     workspacePath: projectPath,
   });
-  const stillVisible = afterArchive.some((task: { taskId: string }) => task.taskId === target.taskId);
+  const stillVisible = afterArchive.some(
+    (task: { taskId: string }) => task.taskId === target.taskId,
+  );
   console.log(
     stillVisible
       ? "⚠️ 归档后仍出现在默认列表（对端行为可能不同）"

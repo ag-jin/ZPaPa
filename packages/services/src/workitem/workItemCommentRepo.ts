@@ -155,10 +155,13 @@ function rowToComment(row: CommentRow): WorkItemCommentRecord {
   const mentions = parseJson<MentionRef[]>(row.mentions_json, "mentions_json");
   for (const mention of mentions) {
     if (!(MENTION_TYPES as readonly string[]).includes(mention.type)) {
-      throw new Error(`work_item_comments.mentions_json 读回非法 mention 类型「${mention.type}」：一律抛。`);
+      throw new Error(
+        `work_item_comments.mentions_json 读回非法 mention 类型「${mention.type}」：一律抛。`,
+      );
     }
   }
-  const inline = row.inline_json === null ? null : parseJson<InlineAnchor>(row.inline_json, "inline_json");
+  const inline =
+    row.inline_json === null ? null : parseJson<InlineAnchor>(row.inline_json, "inline_json");
   const sourceRun: SourceRunRef | null =
     row.source_run_id === null
       ? null
@@ -223,12 +226,9 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
               `SELECT * FROM work_item_comments
                 WHERE workspace_key = ? AND author_kind = ? AND author_id = ? AND client_request_id = ?`,
             )
-            .get(
-              input.workspaceKey,
-              input.author.kind,
-              input.author.id,
-              input.clientRequestId,
-            ) as CommentRow | undefined)
+            .get(input.workspaceKey, input.author.kind, input.author.id, input.clientRequestId) as
+            | CommentRow
+            | undefined)
         : undefined;
       if (existing) return rowToComment(existing);
 
@@ -287,7 +287,9 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
 
     listByThread(workspaceKey, threadId) {
       const rows = db
-        .prepare(`SELECT * FROM work_item_comments WHERE workspace_key = ? AND thread_id = ? ${ORDER}`)
+        .prepare(
+          `SELECT * FROM work_item_comments WHERE workspace_key = ? AND thread_id = ? ${ORDER}`,
+        )
         .all(workspaceKey, threadId) as unknown as CommentRow[];
       return rows.map(rowToComment);
     },
@@ -322,9 +324,11 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
         );
       }
       if (resolved === (row.resolved_at !== null)) return; // 状态已一致 ⇒ no-op。
-      db.prepare(
-        "UPDATE work_item_comments SET resolved_at = ?, updated_at = ? WHERE id = ?",
-      ).run(resolved ? Date.now() : null, Date.now(), id);
+      db.prepare("UPDATE work_item_comments SET resolved_at = ?, updated_at = ? WHERE id = ?").run(
+        resolved ? Date.now() : null,
+        Date.now(),
+        id,
+      );
     },
   };
 }

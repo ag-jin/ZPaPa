@@ -103,20 +103,23 @@ test("Decision：dedupKey 幂等；superseded 走新行旧行不变；evidence/s
 
 test("Decision：非法 kind 读写双闸；坏 JSON 读回抛；排序 effective_at+id", () => {
   const { repo, db } = setup();
-  assert.throws(() =>
-    repo.add({
-      id: "dec-bad",
-      workspaceKey: "ws",
-      workspacePath: "/tmp/ws",
-      workItemId: "wi-1",
-      author: human,
-      initiatedBy: human,
-      kind: "bogus" as never,
-      subject: "x",
-      effectiveAt: 1,
-      dedupKey: "dd-bad",
-      createdAt: 1,
-    }), /kind/);
+  assert.throws(
+    () =>
+      repo.add({
+        id: "dec-bad",
+        workspaceKey: "ws",
+        workspacePath: "/tmp/ws",
+        workItemId: "wi-1",
+        author: human,
+        initiatedBy: human,
+        kind: "bogus" as never,
+        subject: "x",
+        effectiveAt: 1,
+        dedupKey: "dd-bad",
+        createdAt: 1,
+      }),
+    /kind/,
+  );
   repo.add({
     id: "dec-j",
     workspaceKey: "ws",

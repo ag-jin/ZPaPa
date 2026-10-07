@@ -176,7 +176,9 @@ export function groupWorkItemBoard(input: {
   }));
 
   if (dimension === "none") {
-    return [{ key: "none", count: rows.length, rows: rows.map(({ item, depth }) => ({ item, depth })) }];
+    return [
+      { key: "none", count: rows.length, rows: rows.map(({ item, depth }) => ({ item, depth })) },
+    ];
   }
 
   // 泳道顺序：statusCategory 是固定骨架；assignee 是「user 先、其余按首现」。

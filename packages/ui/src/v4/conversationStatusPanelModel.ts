@@ -70,7 +70,10 @@ export function mergeRunningSubagentsWithSquadRuns(
   const identities = new Set(subagents.map((subagent) => subagent.childSessionId));
   for (const run of snapshot?.runs ?? []) {
     if (run.status !== "open" && run.status !== "produced" && run.status !== "rejected") continue;
-    if (currentSessionId && (run.runId === currentSessionId || run.sessionId === currentSessionId)) {
+    if (
+      currentSessionId &&
+      (run.runId === currentSessionId || run.sessionId === currentSessionId)
+    ) {
       continue;
     }
     const identity = run.sessionId ?? run.runId;

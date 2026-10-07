@@ -141,7 +141,12 @@ test("X2.1 回写：pending/deferred 可收敛；终局 outcome 不得被覆写"
   assert.equal(settled.createdAt, 100, "created_at 不动（首写时间戳是事实）");
   // 已终局 ⇒ 迟到的第二路不得覆写（返回 false，调用方据此留痕）。
   assert.equal(
-    repo.settleIfUnsettled({ dispatchKey: "cd-1", outcome: "failed", detail: { late: true }, updatedAt: 300 }),
+    repo.settleIfUnsettled({
+      dispatchKey: "cd-1",
+      outcome: "failed",
+      detail: { late: true },
+      updatedAt: 300,
+    }),
     false,
     "opened 是终局：重投/并发第二路不得把它改写成 failed",
   );
@@ -153,7 +158,10 @@ test("X2.1 回写：pending/deferred 可收敛；终局 outcome 不得被覆写"
     true,
   );
   // 未命中的 dispatchKey ⇒ false（不静默造行）。
-  assert.equal(repo.settleIfUnsettled({ dispatchKey: "不存在", outcome: "opened", updatedAt: 1 }), false);
+  assert.equal(
+    repo.settleIfUnsettled({ dispatchKey: "不存在", outcome: "opened", updatedAt: 1 }),
+    false,
+  );
   const count = db.prepare("SELECT COUNT(*) AS n FROM comment_dispatch_receipts").get() as {
     n: number;
   };

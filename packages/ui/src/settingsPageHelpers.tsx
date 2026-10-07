@@ -79,7 +79,9 @@ function useUpdateChannelStatus(platform: IPlatformService | undefined): {
       setState((previous) => ({
         // 失败收敛出来的 idle 不带通道；保留上一次已知通道，避免标签闪回默认值。
         appliedChannel:
-          payload.kind === "idle" ? (payload.channel ?? previous.appliedChannel) : previous.appliedChannel,
+          payload.kind === "idle"
+            ? (payload.channel ?? previous.appliedChannel)
+            : previous.appliedChannel,
         // notice 只在「已确认无更新」的 idle 上有效；离开 idle 必须清掉，否则会残留一条过时解释。
         upToDateNotice: payload.kind === "idle" ? (payload.upToDateNotice ?? null) : null,
       }));

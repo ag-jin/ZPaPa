@@ -55,20 +55,24 @@ ZCode (pid 41003, B 的桌面 UI 主进程)
 
 1. **会话运行时是每进程一份内存 Map**
    `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts:260`
+
    ```ts
    sessions: new Map<string, ZCodeProtocolSessionRecord>(),
    ```
+
    两个 host 是两个进程 → 两个独立的 `context.sessions`。
 
 2. **resume 命中内存 record 就早退，不重读库**
    `server-operations.ts:1427-1431`
+
    ```ts
    const existing = context.sessions.get(params.sessionId);
    if (existing) {
-     return { record: existing };   // ← 命中即返回，不查 sessionStore
+     return { record: existing }; // ← 命中即返回，不查 sessionStore
    }
    let session = await getPersistedSession(context, params.sessionId);
    ```
+
    即：只有当会话**没被本进程载入过**时才从库读（冷恢复）；
    已经在跑的会话，后续轮次全部基于本进程内存态。
 
@@ -103,10 +107,10 @@ B 的 runtime 内存里仍然没有 A 写的消息，下一轮生成还是会基
 
 **分层看待这个缺陷**：它其实由两个独立的问题叠成，修法与成本完全不同：
 
-| 层 | 现象 | 根因 | 状态 |
-|---|---|---|---|
-| A. 列表刷新 | B 的 UI 看不到外部写入（标题/时间/状态停在原地） | 轮询兜底只覆盖远程 tab，本地 tab 从不兜底 | **已修**（`8c8d3fa`） |
-| B. 会话正文 | 已载入的会话，其内存态不含对方写入 | `context.sessions` 每进程一份 + resume 命中即早退 | 待决策（下述 1/2/3） |
+| 层          | 现象                                             | 根因                                              | 状态                  |
+| ----------- | ------------------------------------------------ | ------------------------------------------------- | --------------------- |
+| A. 列表刷新 | B 的 UI 看不到外部写入（标题/时间/状态停在原地） | 轮询兜底只覆盖远程 tab，本地 tab 从不兜底         | **已修**（`8c8d3fa`） |
+| B. 会话正文 | 已载入的会话，其内存态不含对方写入               | `context.sessions` 每进程一份 + resume 命中即早退 | 待决策（下述 1/2/3）  |
 
 **A 层已修**：列表数据本来就新鲜（`listTasks` 走 SQLite），缺的只是"何时重查"。
 去掉轮询的远程门槛后，本地项目同样每 60s 兜底一次 —— 双方 UI 都能看到对方的写入。
@@ -153,7 +157,7 @@ B 的 runtime 内存里仍然没有 A 写的消息，下一轮生成还是会基
 ## 复现方式（只读）
 
 ```sh
-ssh <B> 'ps -eo pid,ppid,command | grep -E "[z]code-cli|[z]code-host"' 
+ssh <B> 'ps -eo pid,ppid,command | grep -E "[z]code-cli|[z]code-host"'
 # 观察同一项目出现多个 zcode-cli，且 ppid 分属两个不同的 host
 ```
 

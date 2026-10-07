@@ -67,7 +67,8 @@ test("字符集常量与判据同源：pattern 拒空串、接受字符集内组
 
 test("配置浅校验：JSON 语法错误 ⇒ invalidJson，且结果里不回显输入内容", () => {
   // 这段输入里带了看起来像凭据的片段：错误结果**任何字段**都不得把它带出来。
-  const text = '{"url": "https://mcp.example.com/mcp", "headers": {"Authorization": "Bearer sk-SECRET"},,}';
+  const text =
+    '{"url": "https://mcp.example.com/mcp", "headers": {"Authorization": "Bearer sk-SECRET"},,}';
   const result = parseMcpServerConfigText(text);
   assert.equal(result.ok, false);
   assert.ok(!result.ok);
@@ -79,7 +80,8 @@ test("配置浅校验：JSON 语法错误 ⇒ invalidJson，且结果里不回�
     "JSON.parse 的消息会带输入片段（node: Unexpected token 'x', \"{...}\" is not valid JSON）⇒ 整条丢掉",
   );
   assert.ok(
-    !JSON.stringify(result).includes("sk-SECRET") && !JSON.stringify(result).includes("mcp.example.com"),
+    !JSON.stringify(result).includes("sk-SECRET") &&
+      !JSON.stringify(result).includes("mcp.example.com"),
     "错误结果不得回显配置内容（env/headers 里就是凭据）",
   );
 });
@@ -125,7 +127,9 @@ test("配置浅校验：合法配置原样读出（开放形状不剥字段—�
   assert.deepEqual(result.config, config, "未知/扩展字段（timeoutMs 等）不得在编辑往返中被剥掉");
 
   // url 家族同样放行（http / sse 由 url 承载）。
-  const urlResult = parseMcpServerConfigText('{"url": "https://mcp.example.com/sse", "headers": {}}');
+  const urlResult = parseMcpServerConfigText(
+    '{"url": "https://mcp.example.com/sse", "headers": {}}',
+  );
   assert.ok(urlResult.ok);
   assert.deepEqual(urlResult.config, { url: "https://mcp.example.com/sse", headers: {} });
 });

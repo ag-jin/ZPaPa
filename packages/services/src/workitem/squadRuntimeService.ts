@@ -957,7 +957,10 @@ export function createSquadRuntimeService(deps: {
    * 不静默当「没有」：那会把「取错了目标（接线 bug）」伪装成「这条请求不存在」（一条正常的返回），
    * 两种情形的处置完全不同（前者要查接线，后者是重投/丢弃的正常分格）。
    */
-  const assertReceiptOwnWorkspace = (receipt: CommentDispatchReceiptRecord, workspaceKey: string): void => {
+  const assertReceiptOwnWorkspace = (
+    receipt: CommentDispatchReceiptRecord,
+    workspaceKey: string,
+  ): void => {
     if (receipt.workspaceKey !== workspaceKey) {
       throw new Error(
         `评论派发 receipt「${receipt.dispatchKey}」属于 workspace「${receipt.workspaceKey}」，` +

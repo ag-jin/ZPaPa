@@ -83,10 +83,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import {
-  resolveSquadRuntimeService,
-  squadWorkspaceTarget,
-} from "@/squad/squadRuntimeAccess.js";
+import { resolveSquadRuntimeService, squadWorkspaceTarget } from "@/squad/squadRuntimeAccess.js";
 import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import type {
@@ -1003,7 +1000,7 @@ function buildRunningSubagentOpenRequest({
   rootSessionId?: string;
   subagent: ConversationStatusPanelRunningSubagent;
 }): OpenSubagentSideTabRequest | null {
-  if (!parentSessionId || (subagent.squadRunSessionId === null)) return null;
+  if (!parentSessionId || subagent.squadRunSessionId === null) return null;
   return {
     rootSessionId: rootSessionId ?? parentSessionId,
     parentSessionId,
@@ -1841,10 +1838,12 @@ function ConversationStatusPanelImpl({
       门禁仍是服务层单点，这里不判派发（与侧栏一级入口同一份语义、同一份纯函数）。 */
   const { settings } = useSettings();
   const services = useServices();
-  const taskListVersion = useZCodeSessionStore((state) =>
-    state.getWorkspaceState(workspacePath, workspaceIdentity).taskListVersion,
+  const taskListVersion = useZCodeSessionStore(
+    (state) => state.getWorkspaceState(workspacePath, workspaceIdentity).taskListVersion,
   );
-  const [squadSnapshot, setSquadSnapshot] = useState<import("@zcode/services").SquadSnapshot | null>(null);
+  const [squadSnapshot, setSquadSnapshot] = useState<
+    import("@zcode/services").SquadSnapshot | null
+  >(null);
   const squadTarget = useMemo(
     () => squadWorkspaceTarget(workspacePath, workspaceIdentity),
     [workspacePath, workspaceIdentity],

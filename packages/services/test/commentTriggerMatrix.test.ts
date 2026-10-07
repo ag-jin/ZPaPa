@@ -17,10 +17,7 @@ import { createCommentService } from "../src/workitem/commentService.js";
 import { createSquadDeferredDispatchRepo } from "../src/workitem/squadDeferredDispatchRepo.js";
 import { createSquadRunRepo } from "../src/workitem/squadRunRepo.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
-import {
-  createWorkItemCommentRepo,
-  type AuthorRef,
-} from "../src/workitem/workItemCommentRepo.js";
+import { createWorkItemCommentRepo, type AuthorRef } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 import { makeRepo } from "./helpers/gitFixture.js";
@@ -82,7 +79,10 @@ function matrixHarness(
 function putItem(
   h: Harness,
   id: string,
-  assignee: { type: "user"; id: string } | { type: "agent"; id: string } | { type: "squad"; id: string } = {
+  assignee:
+    | { type: "user"; id: string }
+    | { type: "agent"; id: string }
+    | { type: "squad"; id: string } = {
     type: "agent",
     id: ANN,
   },
@@ -103,7 +103,12 @@ function putItem(
 
 function putRun(
   h: Harness,
-  input: { runId: string; workItemId: string; agentId: string; status: "queued" | "open" | "produced" | "rejected" },
+  input: {
+    runId: string;
+    workItemId: string;
+    agentId: string;
+    status: "queued" | "open" | "produced" | "rejected";
+  },
 ): void {
   h.runs.insert({
     runId: input.runId,
@@ -125,7 +130,11 @@ function putRun(
 }
 
 /** 写入口的公共入参（每条用例自带 id/body）。 */
-function post(h: Harness, workItemId: string, over: Record<string, unknown>): ReturnType<typeof h.service.createComment> {
+function post(
+  h: Harness,
+  workItemId: string,
+  over: Record<string, unknown>,
+): ReturnType<typeof h.service.createComment> {
   return h.service.createComment({
     workspaceKey: WS,
     workspacePath: WSP,
@@ -160,7 +169,12 @@ test("行1 普通人类评论（无 mention、assignee=agent）：C+A+D(issue_as
   assert.deepEqual(result.comment.mentions, []);
   assert.deepEqual(result.comment.author, HUMAN, "author 展示名快照落库（author_display_name 列）");
   assert.deepEqual(result.dispatches, [
-    { targetAgentId: ANN, source: "issue_assignee", outcome: "pending", detail: { triggerSource: "issue_assignee" } },
+    {
+      targetAgentId: ANN,
+      source: "issue_assignee",
+      outcome: "pending",
+      detail: { triggerSource: "issue_assignee" },
+    },
   ]);
   assert.deepEqual(kinds(h, "wi-1"), ["comment_created", "comment_dispatch_requested"]);
   const receipt = h.receipts.get(dispatchKey("wi-1", ANN, "m-1"));
@@ -181,11 +195,19 @@ test("行2 普通 agent 评论（作者=assignee 本人，无 mention）：只�
     body: "进展：一半",
   });
   assert.deepEqual(result.dispatches, []);
-  assert.deepEqual(kinds(h, "wi-2"), ["comment_created"], "agent 评论不参与隐式路由，也没有隐式路由可抑制");
+  assert.deepEqual(
+    kinds(h, "wi-2"),
+    ["comment_created"],
+    "agent 评论不参与隐式路由，也没有隐式路由可抑制",
+  );
   assert.equal(h.receipts.listByWorkItem(WS, "wi-2").length, 0);
   assert.equal(rowCount(h, "squad_runs"), 0);
   assert.deepEqual(result.comment.sourceRun, { runId: "run-m2", agentId: ANN, role: "member" });
-  assert.deepEqual(result.comment.author, { kind: "agent", id: ANN }, "服务不替调用方补展示名：author 按入参原样落库");
+  assert.deepEqual(
+    result.comment.author,
+    { kind: "agent", id: ANN },
+    "服务不替调用方补展示名：author 按入参原样落库",
+  );
   // initiatedBy 只落 (kind, id)：displayName 不是身份键，读回不带展示名（X1.3 报告登记为展示面小缺口）。
   assert.deepEqual(result.comment.initiatedBy, { kind: "human", id: HUMAN.id });
 });
@@ -197,7 +219,10 @@ test("行5/6/7 /note、@all、@人名：抑制事实 + 零 receipt；/note 原�
   const noteOnly = post(h, "wi-3", { id: "m-note-only", body: "/note" });
   const all = post(h, "wi-3", { id: "m-all", body: "@all 周知" });
   const human = post(h, "wi-3", { id: "m-human", body: `@${HUMAN_NAME} 你看看` });
-  assert.deepEqual([note.dispatches, noteOnly.dispatches, all.dispatches, human.dispatches], [[], [], [], []]);
+  assert.deepEqual(
+    [note.dispatches, noteOnly.dispatches, all.dispatches, human.dispatches],
+    [[], [], [], []],
+  );
   assert.equal(note.comment.command, "note");
   assert.equal(note.comment.body, "/note @Ann 记一笔", "原文（含前缀）逐字节留存（§12.1-4）");
   assert.equal(note.comment.normalizedBody, "@Ann 记一笔", "normalized 去前缀供展示（§12.1-4）");
@@ -215,18 +240,30 @@ test("行5/6/7 /note、@all、@人名：抑制事实 + 零 receipt；/note 原�
       ["m-human", "human_mention"],
     ],
   );
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-3").length, 0, "§4.4：/note、@all、@人名绝不产生 dispatch event");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-3").length,
+    0,
+    "§4.4：/note、@all、@人名绝不产生 dispatch event",
+  );
   assert.equal(rowCount(h, "squad_runs"), 0);
   // @all 与显式目标并存：@all 只抑制隐式路由，不吞显式目标（§12.1-3）。
   const both = post(h, "wi-3", { id: "m-all-explicit", body: "@all @Ann 一起" });
   assert.deepEqual(both.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.equal(
     h.activities
       .listByWorkItem(WS, "wi-3")
-      .filter((activity) => activity.commentId === "m-all-explicit" && activity.kind === "comment_dispatch_suppressed")
-      .length,
+      .filter(
+        (activity) =>
+          activity.commentId === "m-all-explicit" &&
+          activity.kind === "comment_dispatch_suppressed",
+      ).length,
     0,
   );
 });
@@ -244,10 +281,19 @@ test("行4 队长/队员显式 @：三件套 + 一次请求；initiatedBy 沿顶
     body: "请 @Ann 接手",
   });
   assert.deepEqual(asked.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.deepEqual(asked.comment.sourceRun, sourceRun);
-  assert.deepEqual(asked.comment.initiatedBy, { kind: "human", id: HUMAN.id }, "顶层人类归因不得被最后一个 agent 覆盖");
+  assert.deepEqual(
+    asked.comment.initiatedBy,
+    { kind: "human", id: HUMAN.id },
+    "顶层人类归因不得被最后一个 agent 覆盖",
+  );
   const acts = h.activities.listByWorkItem(WS, "wi-4");
   assert.deepEqual(
     acts.map((activity) => activity.kind),
@@ -255,7 +301,11 @@ test("行4 队长/队员显式 @：三件套 + 一次请求；initiatedBy 沿顶
   );
   for (const activity of acts) {
     assert.deepEqual(activity.actor, { kind: "agent", id: BOB });
-    assert.deepEqual(activity.initiatedBy, { kind: "human", id: HUMAN.id }, "每条 Activity 都沿 initiatedBy 传递");
+    assert.deepEqual(
+      activity.initiatedBy,
+      { kind: "human", id: HUMAN.id },
+      "每条 Activity 都沿 initiatedBy 传递",
+    );
   }
   // Activity.sourceRun 目前只落 run_id（agent/squad/role 三列不存在，读回 role 恒为 "member"）——
   // 这是 X1.3 报告登记的 X0.2 存储面缺口（0011 反向形状），本用例只断言存活的那一半。
@@ -263,7 +313,13 @@ test("行4 队长/队员显式 @：三件套 + 一次请求；initiatedBy 沿顶
   assert.deepEqual(workItemRow(h, "wi-4"), before, "@ 不改负责人/状态（§5.2：@agent 不等于改派）");
 
   // 同一 agent 作者、同一线程回复（无 @）⇒ 不参与隐式路由（与 human 对照）。
-  post(h, "wi-4", { id: "m-a2a-root", author: { kind: "agent", id: ANN }, sourceRun, initiatedBy: HUMAN, body: "报告" });
+  post(h, "wi-4", {
+    id: "m-a2a-root",
+    author: { kind: "agent", id: ANN },
+    sourceRun,
+    initiatedBy: HUMAN,
+    body: "报告",
+  });
   const reply = post(h, "wi-4", {
     id: "m-a2a-reply",
     author: { kind: "agent", id: ANN },
@@ -297,7 +353,12 @@ test("行9/10 内联评论：无 mention 走级联、有 @ 走三件套；锚点
   assert.deepEqual(kinds(h, "wi-6"), ["comment_created"]);
   const mentioned = post(h, "wi-6", { id: "m-inline-at", body: "请 @Ann 看这行", inline: anchor });
   assert.deepEqual(mentioned.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.deepEqual(
     kinds(h, "wi-6").slice(1),
@@ -314,14 +375,29 @@ test("行11/12 连续评论合并（队列状态窗）：每条 C/A 均留，待
   const first = post(h, "wi-7", { id: "m-q1", body: "@Ann 第一条" });
   const second = post(h, "wi-7", { id: "m-q2", body: "@Ann 第二条" });
   assert.deepEqual(first.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "coalesced", detail: { triggerSource: "mention_agent", targetRunId: "run-q7" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "coalesced",
+      detail: { triggerSource: "mention_agent", targetRunId: "run-q7" },
+    },
   ]);
   assert.deepEqual(second.dispatches, first.dispatches, "窗口内第二条并入同一待开 run");
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-7").length, 2, "两条请求两条 receipt（请求身份各自独立）");
-  assert.equal(h.runs.listQueued(WS).filter((run) => run.agentId === ANN).length, 1, "待开行至多一个");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-7").length,
+    2,
+    "两条请求两条 receipt（请求身份各自独立）",
+  );
+  assert.equal(
+    h.runs.listQueued(WS).filter((run) => run.agentId === ANN).length,
+    1,
+    "待开行至多一个",
+  );
   assert.equal(rowCount(h, "squad_runs"), 1, "服务面不自开 run：行数仍是那条排队行");
   const details = h.db
-    .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details ORDER BY request_run_id")
+    .prepare(
+      "SELECT request_run_id, target_run_id FROM squad_run_coalesced_details ORDER BY request_run_id",
+    )
     .all() as Array<{ request_run_id: string; target_run_id: string }>;
   assert.deepEqual(
     details.map((detail) => detail.target_run_id),
@@ -355,7 +431,12 @@ test("行13 不同 agent 作者连续评论：按目标各自裁决，不因时�
   });
   assert.equal(byBob.dispatches[0]?.outcome, "coalesced", "目标已有待开 ⇒ 并入");
   assert.deepEqual(byLead.dispatches, [
-    { targetAgentId: BOB, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: BOB,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.equal(h.receipts.listByWorkItem(WS, "wi-8").length, 2);
   assert.equal(h.runs.listQueued(WS).length, 1, "另一目标不因时间接近被并进别人的待开");
@@ -364,42 +445,86 @@ test("行13 不同 agent 作者连续评论：按目标各自裁决，不因时�
 test("行14 回复：mention 优先于 thread_parent；人回人不触发也不落兜底", () => {
   const h = matrixHarness();
   putItem(h, "wi-9", { type: "agent", id: ANN });
-  post(h, "wi-9", { id: "m-root", author: { kind: "agent", id: ANN }, sourceRun: { runId: "run-9", agentId: ANN, role: "member" }, body: "报告：一半" });
-  const withMention = post(h, "wi-9", { id: "m-rep-mention", parentCommentId: "m-root", body: "@Bob 帮忙" });
+  post(h, "wi-9", {
+    id: "m-root",
+    author: { kind: "agent", id: ANN },
+    sourceRun: { runId: "run-9", agentId: ANN, role: "member" },
+    body: "报告：一半",
+  });
+  const withMention = post(h, "wi-9", {
+    id: "m-rep-mention",
+    parentCommentId: "m-root",
+    body: "@Bob 帮忙",
+  });
   assert.deepEqual(withMention.dispatches, [
-    { targetAgentId: BOB, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: BOB,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.equal(withMention.comment.threadId, "m-root", "回复落同一 thread（根 id）");
-  const withoutMention = post(h, "wi-9", { id: "m-rep-plain", parentCommentId: "m-root", body: "继续" });
+  const withoutMention = post(h, "wi-9", {
+    id: "m-rep-plain",
+    parentCommentId: "m-root",
+    body: "继续",
+  });
   assert.deepEqual(withoutMention.dispatches, [
-    { targetAgentId: ANN, source: "thread_parent", outcome: "pending", detail: { triggerSource: "thread_parent" } },
+    {
+      targetAgentId: ANN,
+      source: "thread_parent",
+      outcome: "pending",
+      detail: { triggerSource: "thread_parent" },
+    },
   ]);
   // 人回人：父作者为人类 ⇒ 零请求，且不落到 assignee 兜底（另起一个 assignee=user 的项，
   // 免得「人类根评论对 agent 指派项的兜底触发」混进本格）。
   putItem(h, "wi-9b", { type: "user", id: HUMAN.id });
   post(h, "wi-9b", { id: "m-human-root", body: "人的根" });
-  const humanToHuman = post(h, "wi-9b", { id: "m-h2h", parentCommentId: "m-human-root", body: "人回人" });
+  const humanToHuman = post(h, "wi-9b", {
+    id: "m-h2h",
+    parentCommentId: "m-human-root",
+    body: "人回人",
+  });
   assert.deepEqual(humanToHuman.dispatches, []);
   assert.equal(
     h.activities
       .listByWorkItem(WS, "wi-9b")
-      .some((activity) => activity.commentId === "m-h2h" && activity.kind === "comment_dispatch_suppressed"),
+      .some(
+        (activity) =>
+          activity.commentId === "m-h2h" && activity.kind === "comment_dispatch_suppressed",
+      ),
     false,
     "人回人是不触发（非抑制），不写 suppressed 事实",
   );
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-9").length, 2, "全库 receipt 只有 mention 与 thread_parent 两条");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-9").length,
+    2,
+    "全库 receipt 只有 mention 与 thread_parent 两条",
+  );
   assert.equal(h.receipts.listByWorkItem(WS, "wi-9b").length, 0, "人回人零 receipt");
 });
 
 test("行14 软删父评论不算 thread_parent：线程内回复不升格，根 owner agent 接管", () => {
   const h = matrixHarness();
   putItem(h, "wi-10");
-  post(h, "wi-10", { id: "m-r", author: { kind: "agent", id: ANN }, sourceRun: { runId: "run-10", agentId: ANN, role: "member" }, body: "根" });
+  post(h, "wi-10", {
+    id: "m-r",
+    author: { kind: "agent", id: ANN },
+    sourceRun: { runId: "run-10", agentId: ANN, role: "member" },
+    body: "根",
+  });
   post(h, "wi-10", { id: "m-r2", body: "回复", parentCommentId: "m-r" });
   h.comments.softDelete("m-r2");
   const deep = post(h, "wi-10", { id: "m-r3", body: "再问", parentCommentId: "m-r2" });
   assert.deepEqual(deep.dispatches, [
-    { targetAgentId: ANN, source: "conversation_continuation", outcome: "pending", detail: { triggerSource: "conversation_continuation" } },
+    {
+      targetAgentId: ANN,
+      source: "conversation_continuation",
+      outcome: "pending",
+      detail: { triggerSource: "conversation_continuation" },
+    },
   ]);
   assert.equal(deep.comment.threadId, "m-r", "已删父的回复仍是线程内回复，不升格为新请求");
   assert.deepEqual(deep.comment.parentCommentId, "m-r2");
@@ -441,7 +566,11 @@ test("行15/16 结构面：服务入口是闭集（评论写事实 + 三件套�
     dedupKey: "sys:status_changed:1",
     createdAt: CLOCK + 1,
   });
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-11").length, 0, "Activity 不是执行器：不产生任何 receipt");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-11").length,
+    0,
+    "Activity 不是执行器：不产生任何 receipt",
+  );
   assert.equal(rowCount(h, "squad_runs"), 0);
   assert.deepEqual(kinds(h, "wi-11"), ["run_completed", "status_changed"]);
 });
@@ -449,20 +578,54 @@ test("行15/16 结构面：服务入口是闭集（评论写事实 + 三件套�
 test("三件套动作（软删/解决态/表情回应）均不触发：receipt 与 run 零变化，解决态不动触发语义", () => {
   const h = matrixHarness();
   putItem(h, "wi-12");
-  post(h, "wi-12", { id: "m-t-root", author: { kind: "agent", id: ANN }, sourceRun: { runId: "run-12", agentId: ANN, role: "member" }, body: "根" });
-  const parentRoute = post(h, "wi-12", { id: "m-t-reply", parentCommentId: "m-t-root", body: "回复" });
+  post(h, "wi-12", {
+    id: "m-t-root",
+    author: { kind: "agent", id: ANN },
+    sourceRun: { runId: "run-12", agentId: ANN, role: "member" },
+    body: "根",
+  });
+  const parentRoute = post(h, "wi-12", {
+    id: "m-t-reply",
+    parentCommentId: "m-t-root",
+    body: "回复",
+  });
   assert.equal(parentRoute.dispatches[0]?.source, "thread_parent");
-  const before = { receipts: h.receipts.listByWorkItem(WS, "wi-12").length, runs: rowCount(h, "squad_runs") };
+  const before = {
+    receipts: h.receipts.listByWorkItem(WS, "wi-12").length,
+    runs: rowCount(h, "squad_runs"),
+  };
   // 线程解决态：置位/取消各一次——不影响任何触发语义（下面这条回复仍走 thread_parent）。
   h.comments.setResolved("m-t-root", true);
-  const afterResolved = post(h, "wi-12", { id: "m-t-reply-2", parentCommentId: "m-t-root", body: "解决后回复" });
+  const afterResolved = post(h, "wi-12", {
+    id: "m-t-reply-2",
+    parentCommentId: "m-t-root",
+    body: "解决后回复",
+  });
   assert.equal(afterResolved.dispatches[0]?.source, "thread_parent", "解决态不改触发");
   h.comments.setResolved("m-t-root", false);
   h.comments.softDelete("m-t-reply");
-  h.reactions.add({ id: "mx-rx-1", workspaceKey: WS, commentId: "m-t-root", author: HUMAN, emoji: "👍", createdAt: CLOCK });
-  h.reactions.add({ id: "mx-rx-2", workspaceKey: WS, commentId: "m-t-root", author: HUMAN, emoji: "👍", createdAt: CLOCK });
+  h.reactions.add({
+    id: "mx-rx-1",
+    workspaceKey: WS,
+    commentId: "m-t-root",
+    author: HUMAN,
+    emoji: "👍",
+    createdAt: CLOCK,
+  });
+  h.reactions.add({
+    id: "mx-rx-2",
+    workspaceKey: WS,
+    commentId: "m-t-root",
+    author: HUMAN,
+    emoji: "👍",
+    createdAt: CLOCK,
+  });
   assert.equal(h.reactions.listByComment("m-t-root").length, 1, "(commentId, author, emoji) 幂等");
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-12").length, before.receipts + 1, "新增的只是那条「解决后回复」的 receipt");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-12").length,
+    before.receipts + 1,
+    "新增的只是那条「解决后回复」的 receipt",
+  );
   assert.equal(rowCount(h, "squad_runs"), before.runs, "三件套不开 run");
 });
 
@@ -473,11 +636,30 @@ test("多目标并存：@Ann @Bob @Core 三个显式目标三条 receipt；同�
   putItem(h, "wi-13", { type: "user", id: HUMAN.id });
   const three = post(h, "wi-13", { id: "m-three", body: "@Ann @Bob @Core 看一下" });
   assert.deepEqual(three.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
-    { targetAgentId: BOB, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
-    { targetAgentId: LEAD, source: "mention_squad_leader", outcome: "pending", detail: { triggerSource: "mention_squad_leader", squadId: SQUAD } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
+    {
+      targetAgentId: BOB,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
+    {
+      targetAgentId: LEAD,
+      source: "mention_squad_leader",
+      outcome: "pending",
+      detail: { triggerSource: "mention_squad_leader", squadId: SQUAD },
+    },
   ]);
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-13").length, 3, "每目标一条 receipt（§4.3 合并键含目标 agent）");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-13").length,
+    3,
+    "每目标一条 receipt（§4.3 合并键含目标 agent）",
+  );
   assert.equal(rowCount(h, "squad_runs"), 0);
 
   // 同目标双源：小队的队长就是被显式 @ 的那个人 ⇒ 一份逻辑请求（一条 receipt、两次如实上报）。
@@ -492,7 +674,11 @@ test("多目标并存：@Ann @Bob @Core 三个显式目标三条 receipt；同�
   const dup = post(same, "wi-14", { id: "m-dup", body: "@Ann @Core 同一个人" });
   assert.equal(dup.dispatches.length, 2, "两条上报（逐目标）");
   assert.deepEqual(dup.dispatches[0], dup.dispatches[1], "同一目标只留一条事实");
-  assert.equal(same.receipts.listByWorkItem(WS, "wi-14").length, 1, "目标身份去重：不写第二条 receipt");
+  assert.equal(
+    same.receipts.listByWorkItem(WS, "wi-14").length,
+    1,
+    "目标身份去重：不写第二条 receipt",
+  );
 });
 
 test("R3 未解析 mention：缺席/重名都不猜身份、不指向任何一侧；显式目标照常命中", () => {
@@ -511,13 +697,24 @@ test("R3 未解析 mention：缺席/重名都不猜身份、不指向任何一�
   assert.deepEqual(absent.dispatches, [], "缺席 + 无 agent 语境 ⇒ 不触发");
   const mixed = post(h, "wi-15", { id: "m-mixed", body: "@Nobody @Ann 一起" });
   assert.deepEqual(mixed.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
-  assert.equal(h.receipts.listByWorkItem(WS, "wi-15").length, 1, "未解析项不写 receipt、也不写 suppressed");
+  assert.equal(
+    h.receipts.listByWorkItem(WS, "wi-15").length,
+    1,
+    "未解析项不写 receipt、也不写 suppressed",
+  );
   // 未解析项进 comment_mention_parsed 的 payload（解析事实），但不进快照。
   const parsedActivity = h.activities
     .listByWorkItem(WS, "wi-15")
-    .find((activity) => activity.kind === "comment_mention_parsed" && activity.commentId === "m-mixed");
+    .find(
+      (activity) => activity.kind === "comment_mention_parsed" && activity.commentId === "m-mixed",
+    );
   assert.ok(parsedActivity);
   assert.deepEqual(parsedActivity.payload["mentions"], [
     { kind: "unresolved", name: "Nobody", reason: "absent" },
@@ -532,15 +729,25 @@ test("system 作者：评论可写（可审计），但不参与任何隐式路�
   assert.deepEqual(root.dispatches, []);
   assert.deepEqual(kinds(h, "wi-16"), ["comment_created"]);
   // 系统作者带显式 @：与 agent 作者同规（显式命中仍产生一次请求）。
-  const explicit = post(h, "wi-16", { id: "m-sys-at", author: SYS, initiatedBy: HUMAN, body: "@Bob 处理" });
+  const explicit = post(h, "wi-16", {
+    id: "m-sys-at",
+    author: SYS,
+    initiatedBy: HUMAN,
+    body: "@Bob 处理",
+  });
   assert.deepEqual(explicit.dispatches, [
-    { targetAgentId: BOB, source: "mention_agent", outcome: "pending", detail: { triggerSource: "mention_agent" } },
+    {
+      targetAgentId: BOB,
+      source: "mention_agent",
+      outcome: "pending",
+      detail: { triggerSource: "mention_agent" },
+    },
   ]);
   assert.deepEqual(explicit.comment.initiatedBy, { kind: "human", id: HUMAN.id });
-  assert.deepEqual(
-    kinds(h, "wi-16").slice(2),
-    ["comment_mention_parsed", "comment_dispatch_requested"],
-  );
+  assert.deepEqual(kinds(h, "wi-16").slice(2), [
+    "comment_mention_parsed",
+    "comment_dispatch_requested",
+  ]);
 });
 
 test("门禁关→开（§12.1-12）：关时 blocked 可审计；开后新评论 pending；旧评论重投不改写既存结论", () => {
@@ -558,7 +765,12 @@ test("门禁关→开（§12.1-12）：关时 blocked 可审计；开后新评�
     clientRequestId: "mx-req-gate",
   });
   assert.deepEqual(blocked.dispatches, [
-    { targetAgentId: ANN, source: "mention_agent", outcome: "blocked", detail: { triggerSource: "mention_agent", reason: "dispatch_disabled" } },
+    {
+      targetAgentId: ANN,
+      source: "mention_agent",
+      outcome: "blocked",
+      detail: { triggerSource: "mention_agent", reason: "dispatch_disabled" },
+    },
   ]);
   assert.ok(h.comments.get("m-gate-1"), "评论照写（可审计不可派发）");
   assert.equal(rowCount(h, "squad_runs"), 0);
@@ -605,12 +817,20 @@ test("幂等（§8.1）：同 clientRequestId 重投（窗口已变为排队）�
   assert.equal(retry.comment.id, "m-18");
   assert.equal(retry.comment.body, "@Ann 第一次", "重投返回既存行，正文不被第二次入参覆盖");
   assert.deepEqual(retry.dispatches, first.dispatches, "既存 receipt 首写即事实，窗口变化不重裁决");
-  assert.equal(h.receipts.get(dispatchKey("wi-18", ANN, "m-18"))?.attemptCount, 1, "重复调用不累计尝试次数");
+  assert.equal(
+    h.receipts.get(dispatchKey("wi-18", ANN, "m-18"))?.attemptCount,
+    1,
+    "重复调用不累计尝试次数",
+  );
   assert.equal(h.receipts.listByWorkItem(WS, "wi-18").length, 1);
   assert.equal(rowCount(h, "work_item_comments"), 1);
   assert.equal(rowCount(h, "squad_run_deferred_dispatches"), 0, "重投不因窗口变化新增义务");
   assert.equal(rowCount(h, "squad_run_coalesced_details"), 0, "重投不新增并入留痕");
-  assert.deepEqual(kinds(h, "wi-18"), ["comment_created", "comment_mention_parsed", "comment_dispatch_requested"]);
+  assert.deepEqual(kinds(h, "wi-18"), [
+    "comment_created",
+    "comment_mention_parsed",
+    "comment_dispatch_requested",
+  ]);
 });
 
 test("行11 同一作者连续普通评论：每条 C/A 均写、不丢原文；服务面不开 run", () => {
@@ -618,7 +838,11 @@ test("行11 同一作者连续普通评论：每条 C/A 均写、不丢原文；
   putItem(h, "wi-19");
   const first = post(h, "wi-19", { id: "m-19a", body: "第一句" });
   const second = post(h, "wi-19", { id: "m-19b", body: "第二句" });
-  assert.deepEqual([first.comment.body, second.comment.body], ["第一句", "第二句"], "评论事实不合并、不丢原文");
+  assert.deepEqual(
+    [first.comment.body, second.comment.body],
+    ["第一句", "第二句"],
+    "评论事实不合并、不丢原文",
+  );
   assert.equal(rowCount(h, "work_item_comments"), 2);
   assert.equal(kinds(h, "wi-19").filter((kind) => kind === "comment_created").length, 2);
   assert.equal(rowCount(h, "squad_runs"), 0, "服务面绝不自开 run");
@@ -656,7 +880,9 @@ test("§8.5 workspace identity：跨 workspace 引用响亮拒绝，且不写任
 /* ---------- 迁移 0012 独立验证（从零 / 老库补跑 / 反向 DDL） ---------- */
 
 function tableColumns(db: DatabaseSync, table: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
+    (row) => row.name,
+  );
 }
 
 function indexNames(db: DatabaseSync, like: string): string[] {
@@ -664,7 +890,9 @@ function indexNames(db: DatabaseSync, like: string): string[] {
     db
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?")
       .all(like) as Array<{ name: string }>
-  ).map((row) => row.name).sort();
+  )
+    .map((row) => row.name)
+    .sort();
 }
 
 const RECEIPT_COLUMNS = [
@@ -690,7 +918,12 @@ test("迁移 0012 从零建库：receipt 表形状 + 两索引 + 主键唯一 + 
     "idx_comment_dispatch_receipts_item",
     "idx_comment_dispatch_receipts_outcome",
   ]);
-  const pk = (db.prepare("PRAGMA table_info(comment_dispatch_receipts)").all() as Array<{ name: string; pk: number }>)
+  const pk = (
+    db.prepare("PRAGMA table_info(comment_dispatch_receipts)").all() as Array<{
+      name: string;
+      pk: number;
+    }>
+  )
     .filter((column) => column.pk === 1)
     .map((column) => column.name);
   assert.deepEqual(pk, ["dispatch_key"], "主键兜同键重投（不靠先查后插）");
@@ -714,7 +947,9 @@ test("迁移 0012 从零建库：receipt 表形状 + 两索引 + 主键唯一 + 
 test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补回、结构一致、既有数据一字未动", () => {
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
-  const fullLedger = db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>;
+  const fullLedger = db
+    .prepare("SELECT id FROM tasks_schema_migration ORDER BY id")
+    .all() as Array<{ id: string }>;
   // 本用例只关心「0009 起（含后续新增，如 0014 看门狗）的迁移能完整补跑」：不再钉「最后一条是谁」。
   // 退库：用登记的反向 DDL 把 0009 起（含 0013）建出的对象逐条撤掉 + 删账本行。
   const reverse: Record<string, string[]> = {
@@ -768,7 +1003,11 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
   // 老库形态：receipt 相关对象必须全部消失（反向 DDL 无漏项），且还留着一条旧数据。
   assert.deepEqual(indexNames(db, "idx_comment_dispatch_receipts%"), []);
   assert.equal(
-    (db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'comment_dispatch_receipts'").get() as { n: number }).n,
+    (
+      db
+        .prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'comment_dispatch_receipts'")
+        .get() as { n: number }
+    ).n,
     0,
   );
   db.prepare(
@@ -780,7 +1019,9 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
 
   runTasksDatabaseMigrations(db);
   assert.deepEqual(
-    (db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>).map((row) => row.id),
+    (
+      db.prepare("SELECT id FROM tasks_schema_migration ORDER BY id").all() as Array<{ id: string }>
+    ).map((row) => row.id),
     fullLedger.map((row) => row.id),
     "补跑后账本与「一开始就完整跑满」逐行一致",
   );
@@ -800,7 +1041,11 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
     "0013 必须给义务表补出 origin 来源判别列",
   );
   // 既有数据一字未动 + receipt 表在升级后可写。
-  assert.equal((db.prepare("SELECT title FROM work_items WHERE id = 'legacy-wi'").get() as { title: string }).title, "老项");
+  assert.equal(
+    (db.prepare("SELECT title FROM work_items WHERE id = 'legacy-wi'").get() as { title: string })
+      .title,
+    "老项",
+  );
   const receipts = createCommentDispatchReceiptRepo(db);
   receipts.insertIfAbsent({
     dispatchKey: "legacy-upgrade-key",
@@ -860,13 +1105,15 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   });
   // 活跃 run 占树 ⇒ 评论登记完成重放义务。
   assert.equal(
-    (await runtime.lifecycle.openMemberRun({
-      runId: "run-active-shared",
-      workItemId: item.id,
-      parentWorkItemId: item.id,
-      agentId: agent.id,
-      isLeaderTask: false,
-    })).kind,
+    (
+      await runtime.lifecycle.openMemberRun({
+        runId: "run-active-shared",
+        workItemId: item.id,
+        parentWorkItemId: item.id,
+        agentId: agent.id,
+        isLeaderTask: false,
+      })
+    ).kind,
     "opened",
   );
   const result = service.createComment({
@@ -884,7 +1131,11 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   assert.equal(obligation.runId, key, "义务 id 直接就是评论请求身份（来源由 origin 判别）");
   assert.equal(obligation.origin, "comment", "G4 修复后：评论义务带来源判别列（X2.1 据此分流）");
   assert.equal(obligation.dispatchCause, null, "评论成因未扩展（C2 前为 NULL）——判别位是 origin");
-  assert.deepEqual(runtime.squadDeferredDispatchRepo.claimDue(WS), [], "活跃 run 占树 ⇒ 不到期（与 R2 判据同一条 SQL）");
+  assert.deepEqual(
+    runtime.squadDeferredDispatchRepo.claimDue(WS),
+    [],
+    "活跃 run 占树 ⇒ 不到期（与 R2 判据同一条 SQL）",
+  );
 
   // R2 请求后到（同 (workItem,agent) 已有评论义务）：并入既有义务 —— 留痕指向 comment 请求身份。
   const r2 = await runtime.lifecycle.openMemberRun({
@@ -897,17 +1148,35 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   });
   assert.equal(r2.kind, "deferred");
   const detail = db
-    .prepare("SELECT request_run_id, target_run_id FROM squad_run_coalesced_details WHERE request_run_id = 'run-r2-request'")
+    .prepare(
+      "SELECT request_run_id, target_run_id FROM squad_run_coalesced_details WHERE request_run_id = 'run-r2-request'",
+    )
     .get() as { request_run_id: string; target_run_id: string };
   assert.equal(detail.target_run_id, key, "R2 请求被并进评论请求身份：target 不是任何 run 行");
-  assert.equal(runtime.squadRunRepo.get("run-r2-request"), null, "R2 请求自身的 runId 从未落台账（身份丢失）");
+  assert.equal(
+    runtime.squadRunRepo.get("run-r2-request"),
+    null,
+    "R2 请求自身的 runId 从未落台账（身份丢失）",
+  );
 
   // 活跃 run 收尾 ⇒ 评论义务到期被认领：C 组重放回路会拿它当一次待重放的派发。
   runtime.squadRunRepo.setStatus("run-active-shared", "discarded");
   const claimed = runtime.squadDeferredDispatchRepo.claimDue(WS);
-  assert.deepEqual(claimed.map((record) => record.runId), [key], "认领无来源过滤：评论义务与 R2 义务同判据");
+  assert.deepEqual(
+    claimed.map((record) => record.runId),
+    [key],
+    "认领无来源过滤：评论义务与 R2 义务同判据",
+  );
   assert.equal(claimed[0]?.dispatchCause, null);
   assert.equal(claimed[0]?.origin, "comment", "认领读回亦带来源判别（消费者不猜）");
-  assert.equal(runtime.squadRunRepo.get(key), null, "该身份在 run 台账里没有行：重放只能用 eventKey 现造一条");
-  assert.equal(receipts.get(key)?.outcome, "deferred", "认领不清账：receipt 仍停在 deferred（回写归 X2.1）");
+  assert.equal(
+    runtime.squadRunRepo.get(key),
+    null,
+    "该身份在 run 台账里没有行：重放只能用 eventKey 现造一条",
+  );
+  assert.equal(
+    receipts.get(key)?.outcome,
+    "deferred",
+    "认领不清账：receipt 仍停在 deferred（回写归 X2.1）",
+  );
 });

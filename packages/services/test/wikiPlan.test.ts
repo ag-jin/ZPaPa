@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IFileService } from "../src/file/file.js";
-import { buildManifestDigest, scanWikiWorkspace, workspaceDisplayName } from "../src/wiki/wikiScan.js";
+import {
+  buildManifestDigest,
+  scanWikiWorkspace,
+  workspaceDisplayName,
+} from "../src/wiki/wikiScan.js";
 import {
   buildCatalogPrompt,
   buildPagePrompt,
@@ -94,7 +98,10 @@ test("扫描：统计语言与文件数，跳过 node_modules / dist", async () 
   assert.ok(!paths.some((path) => path.includes("node_modules")));
   assert.ok(!paths.some((path) => path.startsWith("dist/")));
   assert.equal(scan.fileCount, paths.length);
-  assert.equal(scan.languageStats.ts, "export const a = 1;".length + "export const b = 2;".length + "export const c = 3;".length);
+  assert.equal(
+    scan.languageStats.ts,
+    "export const a = 1;".length + "export const b = 2;".length + "export const c = 3;".length,
+  );
 });
 
 test("扫描：产物目录 .wiki 被跳过，不会被算进 manifestHash", async () => {
@@ -198,7 +205,11 @@ test("归一化目录：生成 id、区分分组与页面、清理非法路径",
       {
         title: "服务端",
         children: [
-          { title: "入口", description: "启动流程", filePaths: ["server/index.js", "../escape.js", "/abs.js"] },
+          {
+            title: "入口",
+            description: "启动流程",
+            filePaths: ["server/index.js", "../escape.js", "/abs.js"],
+          },
           { title: "存储", children: [{ title: "数据库", description: "d", filePaths: [] }] },
         ],
       },
@@ -326,5 +337,8 @@ test("推理档位：空白字符串视为未设置，回落到模型自带档�
   assert.deepEqual(resolveWikiModelSelection({ requested, reasoningLevel: "   " }), requested);
   // 模型也没带档位时，结果里不应出现空的 options
   const noOption = { providerId: "p", modelId: "m" };
-  assert.deepEqual(resolveWikiModelSelection({ requested: noOption, reasoningLevel: "" }), noOption);
+  assert.deepEqual(
+    resolveWikiModelSelection({ requested: noOption, reasoningLevel: "" }),
+    noOption,
+  );
 });

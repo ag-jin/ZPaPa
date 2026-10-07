@@ -61,7 +61,8 @@ export function deriveUpdateStatusViewModel({
   };
 }
 
-export function isUpdateActionCompleted(  action: UpdateActionInFlight,
+export function isUpdateActionCompleted(
+  action: UpdateActionInFlight,
   updateState: UpdateStatePayload | null,
 ) {
   return (

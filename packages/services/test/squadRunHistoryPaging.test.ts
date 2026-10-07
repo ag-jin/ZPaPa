@@ -135,7 +135,11 @@ test("listSquadRunHistory：25 行 limit=10 ⇒ 3 页，游标递进、并集 = 
 
   const { pages, cursors } = await readAllPages(service.squadRuntimeService, 10);
 
-  assert.deepEqual(pages.map((page) => page.length), [10, 10, 5], "每页页大小");
+  assert.deepEqual(
+    pages.map((page) => page.length),
+    [10, 10, 5],
+    "每页页大小",
+  );
   assert.equal(cursors[2], null, "末页 nextCursor = null（到底）");
   for (const cursor of cursors.slice(0, 2)) assert.ok(cursor, "非末页必须给游标");
   const ids = pages.flat();
@@ -153,7 +157,10 @@ test("listSquadRunHistory：第一页首条是**最新**的一条（DESC 呈现�
   const service = await makeService();
   await seedOtherRuns(service, 3); // created_at 1000 / 1001 / 1002
   const page = await service.squadRuntimeService.listSquadRunHistory(WS, { limit: 2 });
-  assert.deepEqual(page.runs.map((record) => record.runId), ["other-002", "other-001"]);
+  assert.deepEqual(
+    page.runs.map((record) => record.runId),
+    ["other-002", "other-001"],
+  );
 });
 
 /* 变异（P1-2）：游标谓词只比 created_at（丢掉 run_id tie-break）⇒ 本用例漏/重一行。 */
@@ -161,11 +168,17 @@ test("listSquadRunHistory：同刻多行（created_at 相同）靠 run_id 定序
   const service = await makeService();
   const runtime = await service.makeRuntime(WS);
   for (const runId of ["run-a", "run-b", "run-c"]) {
-    runtime.squadRunRepo.insert(run({ runId, isLeaderTask: false, createdAt: 777, updatedAt: 777 }));
+    runtime.squadRunRepo.insert(
+      run({ runId, isLeaderTask: false, createdAt: 777, updatedAt: 777 }),
+    );
   }
 
   const { pages } = await readAllPages(service.squadRuntimeService, 2);
-  assert.deepEqual(pages.map((page) => page.length), [2, 1], "第 2 页恰好补齐第 3 行");
+  assert.deepEqual(
+    pages.map((page) => page.length),
+    [2, 1],
+    "第 2 页恰好补齐第 3 行",
+  );
   assert.deepEqual(pages[0], ["run-c", "run-b"], "同刻按 run_id DESC 定序");
   assert.deepEqual(pages[1], ["run-a"]);
 });
@@ -186,7 +199,15 @@ test("listSquadRunHistory：行数恰好等于 limit ⇒ nextCursor = null（不
 test("listSquadRunHistory：非法游标 / 非法 limit ⇒ 响亮抛", async () => {
   const service = await makeService();
   await seedOtherRuns(service, 2);
-  const invalidCursors = ["", "v1", "v1:1", "v1:abc:run-a", "v2:1:run-a", "1:run-a", "v1:1:run-a:extra"];
+  const invalidCursors = [
+    "",
+    "v1",
+    "v1:1",
+    "v1:abc:run-a",
+    "v2:1:run-a",
+    "1:run-a",
+    "v1:1:run-a:extra",
+  ];
   for (const cursor of invalidCursors) {
     await assert.rejects(
       () => service.squadRuntimeService.listSquadRunHistory(WS, { limit: 2, cursor }),

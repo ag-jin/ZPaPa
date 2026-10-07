@@ -493,8 +493,5 @@ test("守卫｜小队卡片：头像堆叠可见3+溢出、成员计数、聚合
     list.includes("presence.workload !== null"),
     "归档/停用小队不显示聚合可运行状态（workload=null 省略）",
   );
-  assert.ok(
-    list.includes("snapshot.queuedRuns"),
-    "聚合排队数据只来自 queuedRuns 契约字段（C5）",
-  );
+  assert.ok(list.includes("snapshot.queuedRuns"), "聚合排队数据只来自 queuedRuns 契约字段（C5）");
 });

@@ -82,7 +82,7 @@ test("守卫｜分组挂 squadEntryVisible 唯一判据、分组切片内不按�
   );
 });
 
-test("守卫｜入口 active 语义带 aria-current=\"page\"（不只靠颜色/aria-pressed）", () => {
+test('守卫｜入口 active 语义带 aria-current="page"（不只靠颜色/aria-pressed）', () => {
   const sidebar = readSource("WorkspaceSidebar.tsx");
   const agentsIndex = sidebar.indexOf("ai-team-sidebar-agents");
   const squadsIndex = sidebar.indexOf("ai-team-sidebar-squads");
@@ -90,12 +90,12 @@ test("守卫｜入口 active 语义带 aria-current=\"page\"（不只靠颜色/a
   assert.match(
     sidebar.slice(agentsIndex, squadsIndex),
     /aria-current=\{squadAgentsActive \? "page" : undefined\}/,
-    "「智能体」入口 active 时必须带 aria-current=\"page\"",
+    '「智能体」入口 active 时必须带 aria-current="page"',
   );
   assert.match(
     sidebar.slice(squadsIndex, workItemsIndex),
     /aria-current=\{squadsActive \? "page" : undefined\}/,
-    "「小队」入口 active 时必须带 aria-current=\"page\"",
+    '「小队」入口 active 时必须带 aria-current="page"',
   );
 });
 
