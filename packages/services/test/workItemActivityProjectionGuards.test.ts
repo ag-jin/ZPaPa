@@ -119,7 +119,7 @@ test("G4｜kind 面不扩：投影只产九枚 kind（comment_*/decision_created
   );
 });
 
-test("G5｜接线钉死（结构面）：组合根恒构造投影器并交给工作项服务（防「忘了接线、只留 warn」）", () => {
+test("G5｜接线钉死（结构面）：组合根恒构造投影器并交给工作项服务与 run lifecycle（防「忘了接线、只留 warn」）", () => {
   const runtimeCode = stripComments(readSource("workitem/squadRuntime.ts"));
   assert.ok(
     runtimeCode.includes("createWorkItemActivityProjector("),
@@ -135,4 +135,75 @@ test("G5｜接线钉死（结构面）：组合根恒构造投影器并交给工
     /^\s+activityProjector,$/m,
     "投影器必须以**简写属性原样**交给 createWorkItemService（`activityProjector: undefined` 这类空接线不算接通）",
   );
+  // C3b.2：同一个投影器还要交给 run lifecycle（run / worktree 七枚的唯一投影入口）。
+  const lifecycleStart = runtimeCode.indexOf("const lifecycle = createRunLifecycle({");
+  assert.ok(lifecycleStart > 0, "组合根必须以 createRunLifecycle 装配生命周期");
+  const lifecycleDeps = runtimeCode.slice(
+    lifecycleStart,
+    runtimeCode.indexOf("\n        });", lifecycleStart),
+  );
+  assert.match(
+    lifecycleDeps,
+    /^\s+activityProjector,$/m,
+    "投影器必须以简写属性原样交给 createRunLifecycle（漏接的表现是 run 族时间线永远空白）",
+  );
+});
+
+/* ---------- C3b.2：run / worktree 族的结构守卫 ---------- */
+
+const LIFECYCLE_SRC = readSource("workitem/squadRunLifecycle.ts");
+const LIFECYCLE_CODE = stripComments(LIFECYCLE_SRC);
+
+test("G6｜run 族接线钉死（结构面）：投影调用恰经注入面 deps.activityProjector，构造点唯一在组合根", () => {
+  assert.ok(
+    LIFECYCLE_CODE.includes("deps.activityProjector"),
+    "squadRunLifecycle 必须从注入面取投影器（第二处构造会让键形状 / payload 判据分叉）",
+  );
+  assert.ok(
+    !LIFECYCLE_CODE.includes("createWorkItemActivityProjector("),
+    "lifecycle 不得自建投影器：唯一构造点在组合根（漏接的表现是 run 族时间线永远空白）",
+  );
+  // 两个落点：noteRunOpened 的 runStarted（开跑族）与 settleStatus 的 runSettled（终态族）。
+  assert.equal(
+    [...LIFECYCLE_CODE.matchAll(/deps\.activityProjector\?\.runStarted\(/g)].length,
+    1,
+    "runStarted 只准经 noteRunOpened 一个落点",
+  );
+  assert.equal(
+    [...LIFECYCLE_CODE.matchAll(/deps\.activityProjector\?\.runSettled\(/g)].length,
+    1,
+    "runSettled 只准落在 settleStatus 唯一收口（分散挂会漏掉编排器 / UI 审查路径）",
+  );
+  /* 开跑族的**五个出口**（四个 member `opened` + 队长 `recorded:true` 出口）都经 noteRunOpened：
+     5 处调用 + 1 处定义。少一处 = 某个出口静默不投影（时间线缺一枚且不报错）；
+     多一处 = 新出口必须显式回答「它算不算开跑」（排队 / 等待 / 重投都不算）。 */
+  assert.equal(
+    [...LIFECYCLE_CODE.matchAll(/noteRunOpened\(/g)].length,
+    6,
+    "noteRunOpened 恰五处调用 + 一处定义",
+  );
+});
+
+test("G7｜reason 映射单源：lifecycle 不内联 user_cancel / 看门狗族字面量，只经 runSettleIntentForFailureReason", () => {
+  for (const literal of [
+    '"user_cancel"',
+    '"watchdog_dead_session"',
+    '"watchdog_ttl"',
+    '"watchdog_idle_stop_grace_expired"',
+  ]) {
+    assert.ok(
+      !LIFECYCLE_CODE.includes(literal),
+      `squadRunLifecycle 不得内联 ${literal}：码值单源在 squadRunRepo、映射单源在投影模块，` +
+        "内联比较会让「哪些原因算看门狗结算」分叉而不报错",
+    );
+  }
+  assert.ok(
+    LIFECYCLE_CODE.includes("runSettleIntentForFailureReason("),
+    "失败出口必须经 runSettleIntentForFailureReason 声明意图（内联比较即第二份判据）",
+  );
+  const files = readdirSync(WORKITEM_DIR).filter((name) => name.endsWith(".ts"));
+  const defining = files.filter((file) =>
+    readSource(`workitem/${file}`).includes("export function runSettleIntentForFailureReason("),
+  );
+  assert.deepEqual(defining, ["workItemActivityProjector.ts"], "映射函数只准有一处定义");
 });
