@@ -9,6 +9,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { buildAgentPresence } from "./squadPresenceViewModel.js";
 import { resolveSquadRuntimeService } from "./squadRuntimeAccess.js";
+import { listMcpServerEntries, mcpTransportMessageId } from "./teamAgentMcpViewModel.js";
 import { logger } from "@/logger.js";
 
 /* ④刀（用户 2026-10-06 裁定①：新独立视图）——agent 详情页骨架（4a）：
@@ -131,6 +132,10 @@ function OverviewZone({
     intl.formatMessage({ id }, values);
   const presence = buildAgentPresence(agent, snapshot.runs, snapshot.queuedRuns);
   const capacity = resolveTeamAgentMaxConcurrentRuns(agent);
+  /* per-agent MCP（设计 §3.6）：只读呈现「名字 + 传输类型」。
+     无配置（字段缺席或空 map）**不渲染**这一行 —— 空徽标行是噪音，且「没有」这件事
+     已经在表单侧的「继承工作区/用户级配置」提示里说清了。 */
+  const mcpRows = listMcpServerEntries(agent.mcpServers);
 
   return (
     <section className={cn(SECTION_CLASSNAME, "flex flex-col gap-2")} data-testid="squad-agent-detail-overview">
@@ -192,6 +197,20 @@ function OverviewZone({
           <span className={BADGE_CLASSNAME}>{agent.skills.join(" · ")}</span>
         ) : null}
       </span>
+      {mcpRows.length > 0 ? (
+        <span className="flex flex-wrap items-center gap-2" data-testid="squad-agent-detail-mcp">
+          <span className={BADGE_CLASSNAME}>{t("squad.common.mcpServers")}</span>
+          {mcpRows.map((row) => (
+            <span
+              key={row.name}
+              className={BADGE_CLASSNAME}
+              data-testid="squad-agent-detail-mcp-server"
+            >
+              {row.name} · {t(mcpTransportMessageId(row.transport))}
+            </span>
+          ))}
+        </span>
+      ) : null}
     </section>
   );
 }

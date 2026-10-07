@@ -213,6 +213,8 @@ export function SquadAgentsPage({
       tools?: string[];
       disallowedTools?: string[];
       maxConcurrentRuns?: number;
+      /** per-agent MCP：字段缺席 = 不覆盖任何 server（服务面语义见 TeamAgentEditablePatch）。 */
+      mcpServers?: TeamAgent["mcpServers"];
     }) => {
       if (busyAgentId !== null || !target) return;
       if (dialog?.kind === "create") {
@@ -378,6 +380,11 @@ export function SquadAgentsPage({
               : {}),
             ...(dialog.agent.maxConcurrentRuns !== undefined
               ? { maxConcurrentRuns: dialog.agent.maxConcurrentRuns }
+              : {}),
+            // per-agent MCP：条件化回填 —— undefined 会被服务面当成「没提这个字段」而保留旧值，
+            // 那样用户删光 server 后保存会「看起来没生效」。
+            ...(dialog.agent.mcpServers !== undefined
+              ? { mcpServers: dialog.agent.mcpServers }
               : {}),
           }}
         />
