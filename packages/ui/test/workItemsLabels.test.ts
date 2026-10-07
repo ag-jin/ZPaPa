@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
-import { workItemLabelChips } from "../src/squad/workItemsViewModel.js";
+import { workItemLabelChips, workItemPropertyValueText } from "../src/squad/workItemsViewModel.js";
 
 /* 工作项**标签**（欠账 #11 的 v1 后半，2026-10-07 裁定）在 UI 面的用例：
    chip 截断投影逐格 + 三处呈现 / 一处编辑的结构守卫 + 两语文案成对。
@@ -188,8 +188,50 @@ test("守卫｜编辑对话框的初值来自条目本身（title / body / label
   }
 });
 
-// ---------- ⑤ 结构守卫：服务面（标签不进 WHERE / 不分叉规则） ----------
+/* 守卫 f2：properties 的 v1 是**只读呈现**（#11 的范围表；2026-10-07 裁定 Q1）：
+   零写者字段（`create` 恒写 `{}`）**不做编辑器**，但也必须**可看** —— 值域无类型契约，
+   故非字符串值原样显示 JSON 文本（不猜类型、不做控件）。
+   变异：把 properties 块改成只渲染字符串值（丢掉对象/数字）⇒ 第一条必红。 */
+test("守卫｜详情页只读呈现 properties：键值对全量、非字符串值原样 JSON 文本、空则不渲染", () => {
+  const detail = readSource("squad/WorkItemDetailPage.tsx");
+  assert.ok(
+    detail.includes('data-testid="work-item-detail-properties"'),
+    "属性区必须存在（v1 = 只读可看；零写者不等于零呈现）",
+  );
+  assert.ok(
+    detail.includes("workItemPropertyValueText("),
+    "值的呈现走纯函数（非字符串值 → JSON 文本；判据可被 node:test 钉住）",
+  );
+  assert.ok(
+    !detail.includes("properties: {") && !detail.includes("setProperties"),
+    "v1 不得出现 properties 写路径（零写者字段不做编辑器）",
+  );
+  const block = detail.slice(
+    detail.indexOf('data-testid="work-item-detail-properties"'),
+    detail.indexOf("</section>", detail.indexOf('data-testid="work-item-detail-properties"')),
+  );
+  for (const forbidden of ["snapshot", "roster"]) {
+    assert.ok(
+      !block.includes(forbidden),
+      `属性区不得出现「${forbidden}」：与标签同源，取自 state.read.workItem（协作读模型含归档行）`,
+    );
+  }
+  assert.ok(
+    /Object\.entries\(workItem\.properties\)/.test(block),
+    "键值对由 properties 全量展开（不挑键、不截断）",
+  );
+});
 
+test("属性值文本：字符串原样、其余原样 JSON 文本（不猜类型）", () => {
+  assert.equal(workItemPropertyValueText("已经是一个字符串"), "已经是一个字符串");
+  assert.equal(workItemPropertyValueText(42), "42");
+  assert.equal(workItemPropertyValueText(true), "true");
+  assert.equal(workItemPropertyValueText(null), "null");
+  assert.equal(workItemPropertyValueText({ a: 1 }), '{"a":1}');
+  assert.equal(workItemPropertyValueText([1, "b"]), '[1,"b"]');
+});
+
+// ---------- ⑤ 结构守卫：服务面（标签不进 WHERE / 不分叉规则） ----------
 /* 守卫 g：标签是**纯描述**（v1）：不得按它过滤或排序 —— 一旦进 SQL，标签就成了第二套机器判据。
    变异：给 `listByWorkspace` 加 `AND labels LIKE ?` ⇒ 本守卫必红。
    （判据落在 WHERE / ORDER BY 的上下文里，而不是「文件里出现 labels= 」：更新 SET 里的
@@ -258,6 +300,7 @@ test("守卫｜标签相关文案两语成对（含占位符一致）", () => {
     "squad.workItems.labelsMore",
     "squad.workItemDetail.overview.labels",
     "squad.workItemDetail.overview.labelsEmpty",
+    "squad.workItemDetail.overview.properties",
   ]) {
     const zh = zhCN[key];
     const en = enUS[key];

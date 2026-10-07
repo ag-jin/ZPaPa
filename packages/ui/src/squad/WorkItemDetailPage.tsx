@@ -27,7 +27,7 @@ import {
   workItemDetailAssigneeLabel,
   type CommentDeleteConfirmState,
 } from "./workItemCollaborationViewModel.js";
-import { workItemStatusMessageId } from "./workItemsViewModel.js";
+import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsViewModel.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：工作项**详情页**（设计案 §2.1 的挂载点结论：独立页，不是抽屉/对话框）。
 
@@ -293,6 +293,27 @@ export function WorkItemDetailPage({
             workItem.labels.map((label) => <WorkItemLabelChip key={label} label={label} />)
           )}
         </span>
+        {/* 自定义属性（#11 v1）：**只读**呈现（零写者字段不做编辑器 —— 值域没有类型契约，
+            先造编辑器就是替设计补一个没裁过的决定）。非字符串值原样显示 JSON 文本；
+            没有属性则整块不渲染（空行是噪音，与 MCP 徽标同一裁定）。 */}
+        {Object.entries(workItem.properties).length === 0 ? null : (
+          <span
+            className="flex flex-wrap items-center gap-2 text-ui-xs"
+            data-testid="work-item-detail-properties"
+          >
+            <span className="text-foreground-subtle">{t("squad.workItemDetail.overview.properties")}</span>
+            {Object.entries(workItem.properties).map(([key, value]) => (
+              <span
+                key={key}
+                className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5"
+                data-testid="work-item-detail-property"
+              >
+                <span className="text-foreground-subtle">{key}</span>
+                <span className="text-foreground-subtlest">{workItemPropertyValueText(value)}</span>
+              </span>
+            ))}
+          </span>
+        )}
         {workItem.body.trim().length === 0 ? null : (
           <>
             <Button

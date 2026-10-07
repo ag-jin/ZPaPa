@@ -244,6 +244,18 @@ export function workItemLabelChips(
 }
 
 /**
+ * `properties` 值的呈现文本（#11 v1 的只读呈现）：字符串**原样**，其余类型原样 `JSON.stringify`
+ * （对象 / 数组 / 数字 / 布尔 / null 都读得出来）。
+ *
+ * 为什么不按类型做控件（数字输入框 / 勾选框 …）：设计说 properties 是「**带类型**的自定义属性」，
+ * 而我们的字段是 `Record<string, unknown>` 且**今天没有任何写者**（create 恒写 `{}`）——
+ * 先给它造一套类型契约就是替设计补一个没裁过的决定。v1 只做「看得见」，不猜类型。
+ */
+export function workItemPropertyValueText(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/**
  * 「新建工作项」按钮**可点**吗：有目标 + **已成功取到快照**。
  *
  * 照 `squadCreateEnabled` 的判据形态（有目标 + 已取到快照）：新建对话框的**指派人 / 父项**

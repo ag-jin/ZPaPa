@@ -4736,6 +4736,7 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.overview.bodyHide": "Hide description",
   "squad.workItemDetail.overview.labels": "Labels",
   "squad.workItemDetail.overview.labelsEmpty": "No labels",
+  "squad.workItemDetail.overview.properties": "Properties",
   "squad.workItemDetail.comment.add": "Add comment",
   "squad.workItemDetail.comment.placeholder": "Add a comment",
   "squad.workItemDetail.comment.replyingTo": "Replying to {name}",

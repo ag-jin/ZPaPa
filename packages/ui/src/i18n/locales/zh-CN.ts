@@ -4433,6 +4433,7 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.overview.bodyHide": "收起描述",
   "squad.workItemDetail.overview.labels": "标签",
   "squad.workItemDetail.overview.labelsEmpty": "无标签",
+  "squad.workItemDetail.overview.properties": "属性",
   "squad.workItemDetail.comment.add": "发表评论",
   "squad.workItemDetail.comment.placeholder": "添加评论",
   "squad.workItemDetail.comment.replyingTo": "回复给 {name}",
