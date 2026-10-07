@@ -127,7 +127,7 @@ test("update 白名单含 maxConcurrentRuns；白名单外字段（enabled/archi
   assert.equal(smuggled.name, "a2", "白名单内字段正常生效");
 });
 
-// ---------- mcpServers（multica 欠账 #2）：编辑白名单第 13 字段 ----------
+// ---------- mcpServers（multica 欠账 #2）：编辑白名单第 12 字段（原 11+1） ----------
 
 /* 与 modelSelection 同款的「整体替换 + JSON 判等 + 拷贝」三件套：
    语义是**替换**不是并入 —— 并入会让人删不掉一个 server（旧条目永远留着），
