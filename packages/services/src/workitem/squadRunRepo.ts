@@ -48,7 +48,7 @@ export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL = "watchdog_ttl";
  */
 export const SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE = "watchdog_idle_stop_grace_expired";
 export const SQUAD_RUN_SETTLE_REASON_USER_CANCEL = "user_cancel";
-/** 看门狗族（W3 的 EXISTS / count 只认这一族；用户取消**不计入**）。 */
+/** 看门狗族（W3 的熔断窗口计数与重试预算计数只认这一族；用户取消**不计入**）。 */
 export const SQUAD_RUN_WATCHDOG_SETTLE_REASONS = [
   SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
   SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
@@ -225,19 +225,24 @@ export interface SquadRunRepo {
    */
   countWatchdogSettlementsByAgent(workspaceKey: string, sinceMs: number): Map<string, number>;
   /**
-   * **重试预算**（W3 §3.5 的派生判据，零状态）：同 `(workspace, workItem, agent)` 是否已有
-   * **另一次**看门狗结算（`run_id <> excludeRunId`）？
+   * **重试预算**（W3 §3.5 的派生判据，零状态）：同 `(workspace, workItem, agent)` **另有**的
+   * 看门狗族结算数是否已达 `budget`（`run_id <> excludeRunId` 只排除**触发本次重试的那一行**）？
    *
-   * 「另一次」是本判据的全部要点：被结算的那一条正是**触发**重试的那一行，若把它自己算进预算，
+   * 「另有」是本判据的全部要点：被结算的那一条正是**触发**重试的那一行，若把它自己算进预算，
    * 第一次结算就永远不重试 —— 而且是静默的（预算是派生判据，没有任何地方会报「预算算错了」）。
-   * 预算按 (workItem, agent) 对、**不设时间窗**（设计 §3.5：每对恰一次，防重试风暴/死循环），
-   * 故它是「这一对是否已经用掉过重试」的终身口径，不受窗口滑动影响。
+   * 预算按 (workItem, agent) 对、**不设时间窗**（设计 §3.5：每对至多重试有限次，防重试风暴/死循环），
+   * 故它是「这一对已经用掉几次重试」的终身口径，不受窗口滑动影响。
+   *
+   * **额度由调用方注入**（服务面传 shared 的 `SQUAD_RETRY_BUDGET` 单源常量）：本层不读策略常量
+   * —— 「预算是几次」是策略，「计数是否达标」是判据。把额度烧死在 SQL 里（早前是 EXISTS，等价于
+   * 恒为 1）会让改常量**静默无效**：改一行没人听，而两种口径都不报错。
    */
   hasOtherWatchdogSettledRunForPair(
     workspaceKey: string,
     workItemId: string,
     agentId: string,
     excludeRunId: string,
+    budget: number,
   ): boolean;
   /**
    * 推进状态，可顺带 patch 工作树 / 会话列。
@@ -822,19 +827,28 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
       return new Map(rows.map((row) => [row.agent_id, row.n]));
     },
 
-    hasOtherWatchdogSettledRunForPair(workspaceKey, workItemId, agentId, excludeRunId) {
-      /* 派生 EXISTS（设计 §3.5 的预算判据）：`run_id <> ?` 排除**触发重试的那一行**，
-         见接口注释的「另一次」。族由常量拼占位符 —— 用户取消不在族内（取消不重试）。 */
+    hasOtherWatchdogSettledRunForPair(workspaceKey, workItemId, agentId, excludeRunId, budget) {
+      /* 派生计数（设计 §3.5 的预算判据）：`run_id <> ?` 排除**触发重试的那一行**（见接口注释的
+         「另有」），故第 1 次结算时计数 = 0。族由常量拼占位符 —— 用户取消不在族内（取消不重试）。
+         为什么是 count 而不是 EXISTS：EXISTS 把额度钉死为「恰 1 次」，`SQUAD_RETRY_BUDGET` 改大也
+         静默无效；计数（>= 注入额度）让常量成为唯一决策处。budget=1 时两口径逐格一致。 */
       const row = db
         .prepare(
-          `SELECT 1 FROM squad_runs
+          `SELECT count(*) AS n FROM squad_runs
             WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ?
               AND run_id <> ?
-              AND settle_reason IN (${WATCHDOG_REASON_PLACEHOLDERS})
-            LIMIT 1`,
+              AND settle_reason IN (${WATCHDOG_REASON_PLACEHOLDERS})`,
         )
-        .get(workspaceKey, workItemId, agentId, excludeRunId, ...SQUAD_RUN_WATCHDOG_SETTLE_REASONS);
-      return row !== undefined;
+        .get(
+          workspaceKey,
+          workItemId,
+          agentId,
+          excludeRunId,
+          ...SQUAD_RUN_WATCHDOG_SETTLE_REASONS,
+        ) as {
+        n: number;
+      };
+      return row.n >= budget;
     },
 
     setStatus(runId, status, patch) {

@@ -5,6 +5,7 @@ import {
   MS_PER_MINUTE,
   resolveWorkspaceKey,
   SQUAD_BREAKER_WINDOW_MINUTES,
+  SQUAD_RETRY_BUDGET,
   type Squad,
   type TeamAgent,
   type WakeRule,
@@ -665,8 +666,10 @@ export interface ISquadRuntimeService {
    * 1. **只由看门狗族结算触发**（`SQUAD_RUN_WATCHDOG_SETTLE_REASONS`）：用户取消 / 普通失败不自动
    *    重试（用户/闸已表态）。调用方拿一条非看门狗结算来登记是**接线 bug** ⇒ **响亮抛**，
    *    不静默 no-op（静默会让「为什么没重试」无人能答）。
-   * 2. **预算派生**（零状态）：同对已有**另一次**看门狗结算 ⇒ `budget_exhausted`。判据在 repo
-   *    （`hasOtherWatchdogSettledRunForPair`，排除本次这一行），本层不重写。
+   * 2. **预算派生**（零状态）：同对**另有**的看门狗结算数 ≥ `SQUAD_RETRY_BUDGET` ⇒ `budget_exhausted`。
+   *    额度是 shared 的**单源常量**（用户 2026-10-07 裁定：阈值类值一处定义、消费点不得写散值），
+   *    由本层注入；判据（计数 ≥ 额度）在 repo（`hasOtherWatchdogSettledRunForPair`，排除本次这一行），
+   *    本层不重写 SQL、也不得把额度写死在这里（写死 = 改常量静默无效，正是 F1 的形态）。
    * 3. **不过门禁**（登记义务不是新派发，与 `failMemberRun` / `cancelSquadRun` 同款理由）：
    *    门禁只管新派发；重试的派发本身仍走 host 的派发桥（那里过门禁）。
    *
@@ -1337,9 +1340,12 @@ export function createSquadRuntimeService(deps: {
           settled.workItemId,
           settled.agentId,
           settled.runId,
+          /* 额度取 shared 单源常量（不写死数字）：repo 只回答「同对另有的结算数是否已达额度」，
+             改常量一处即调 —— 「预算几次」这个决策只该有一个落点。 */
+          SQUAD_RETRY_BUDGET,
         )
       ) {
-        // 预算已用（终身口径）：同对已经有过一次看门狗结算 ⇒ 这次是第二次 ⇒ 不再重试。
+        // 预算已用（终身口径）：同对已用掉 SQUAD_RETRY_BUDGET 次重试额度 ⇒ 不再登记。
         return { kind: "budget_exhausted" };
       }
       const now = Date.now();

@@ -23,7 +23,10 @@ export const DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES = 5;
  * （设计 §3.2 的退化路径）。取 24h 是为了「宁慢勿误杀」——探测不可得期间唯一可靠的事实是时间。
  */
 export const DEFAULT_SQUAD_FALLBACK_WALL_CLOCK_HOURS = 24;
-/** 失败重试预算（次）：每 (workItem,agent) 至多自动重试 1 次（W3 的 EXISTS 派生判据）。 */
+/** 失败重试预算（次）：每 (workItem,agent) 至多自动重试 `budget` 次——同对**另有**的看门狗族结算数
+    达本值即不再登记重试（唯一消费点 `squadRuntimeService.registerWatchdogRetry` 把它注入派生计数判据）。
+    本值必须**真实被读**：此前的判据是 EXISTS（隐含恒为 1），改这里一行不会改变任何行为 —— 文档与实现
+    静默分叉，且分叉不报错（F1）。 */
 export const SQUAD_RETRY_BUDGET = 1;
 /** 熔断窗口（分钟）与阈值（次）：窗口内同 agent 的看门狗结算数达阈值 ⇒ 该 agent 熔断（W3）。 */
 export const SQUAD_BREAKER_WINDOW_MINUTES = 30;

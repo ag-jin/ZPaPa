@@ -5,6 +5,7 @@ import {
   MS_PER_MINUTE,
   SQUAD_BREAKER_THRESHOLD,
   SQUAD_BREAKER_WINDOW_MINUTES,
+  SQUAD_RETRY_BUDGET,
 } from "@zcode/shared";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { createInboxItemRepo } from "../src/workitem/inboxItemRepo.js";
@@ -284,6 +285,119 @@ test("熔断判据（纯函数）：计数 < 阈值 ⇒ 放行；= 阈值 ⇒ sk
       `skip 文案必须点名事实（agent / 阈值 / 窗口）：人要知道为什么没派、多久后自愈（缺 ${fragment}）`,
     );
   assert.match(tripped, /熔断/, "文案必须能被 Inbox 的 kind/reason 一眼读出是熔断");
+});
+
+test("失败重试预算（派生判据）：预算是**注入的额度**，按同对另有的看门狗结算数 count>=budget 判（budget=2 三段）", async () => {
+  const f = await setup();
+  /* 本格刻意**不信** shared 的 `SQUAD_RETRY_BUDGET`（它是 1，与 EXISTS 口径的结果逐格重合，改错了也看不出来），
+     而是注入 budget=2 单独验口径：判据必须是「同对另有的看门狗结算**数** ≥ budget」，而不是 EXISTS 的
+     「有没有另一条」。三段 = 首次未用尽 / 第二次仍未用尽 / 第三次用尽 —— 只有计数口径能给出前两格的分界。 */
+  const budget = 2;
+  const hasOther = (excludeRunId: string) =>
+    f.runtime.squadRunRepo.hasOtherWatchdogSettledRunForPair(
+      WS,
+      f.itemId,
+      f.agentId,
+      excludeRunId,
+      budget,
+    );
+
+  f.insertRun({ runId: "b2-run-1", settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL });
+  assert.equal(
+    hasOther("b2-run-1"),
+    false,
+    "第 1 次结算：同对另有 0 次 < budget=2 ⇒ 未用尽（服务面据此登记重试）",
+  );
+
+  f.insertRun({ runId: "b2-run-2", settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION });
+  assert.equal(
+    hasOther("b2-run-2"),
+    false,
+    "第 2 次结算：同对另有 1 次 < budget=2 ⇒ **仍未**用尽（EXISTS 口径在这里会误判用尽 ⇒ 少重试一次）",
+  );
+
+  f.insertRun({ runId: "b2-run-3", settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE });
+  assert.equal(
+    hasOther("b2-run-3"),
+    true,
+    "第 3 次结算：同对另有 2 次 >= budget=2 ⇒ 用尽（不再登记）",
+  );
+
+  // 计数口径下族过滤必须仍在：同对两条行（看门狗 1 + 用户取消 1）时计数 = 1 < budget=2。
+  // 若把用户取消算进来就是 2 >= 2 ⇒ 提前用尽（静默少重试一次，无人能复现）。
+  const otherPairHasOther = (excludeRunId: string) =>
+    f.runtime.squadRunRepo.hasOtherWatchdogSettledRunForPair(
+      WS,
+      f.otherItemId,
+      f.otherAgentId,
+      excludeRunId,
+      budget,
+    );
+  f.insertRun({
+    runId: "b2-p2-watchdog",
+    workItemId: f.otherItemId,
+    agentId: f.otherAgentId,
+    settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+  });
+  f.insertRun({
+    runId: "b2-p2-cancel",
+    workItemId: f.otherItemId,
+    agentId: f.otherAgentId,
+    settleReason: SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  });
+  assert.equal(
+    otherPairHasOther("b2-p2-watchdog"),
+    false,
+    "预算计数只认看门狗族（用户取消不计入）：同对另有 1 次看门狗 + 1 次取消 ⇒ 计数 1 < budget=2",
+  );
+});
+
+test("失败重试预算：额度边界取自 shared 常量 —— 同对另有结算数 = SQUAD_RETRY_BUDGET−1 ⇒ 仍登记；= SQUAD_RETRY_BUDGET ⇒ budget_exhausted", async () => {
+  const f = await setup();
+  /* 本格写成**常量表达式**而不是字面量 0/1：它是「单源常量改一行即调」这条承诺的守卫 ——
+     服务面若把额度写死（或忘了注入），常量一改就会有**一侧**翻红；而按常量写，则常量怎么改都自洽
+     （判据侧由上一格的 budget=2 三段钉住「计数 ≥ 注入额度」）。两半：under 侧 = 同对另有 B−1 次；
+     at 侧 = 恰好 B 次。 */
+  const under = SQUAD_RETRY_BUDGET - 1;
+  for (let index = 0; index < under; index += 1) {
+    f.insertRun({
+      runId: `budget-edge-prior-${index}`,
+      settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+    });
+  }
+  f.insertRun({ runId: "budget-edge-under", settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL });
+  const underOutcome = await f.service.registerWatchdogRetry(f.target, {
+    settledRunId: "budget-edge-under",
+  });
+  assert.equal(
+    underOutcome.kind,
+    "registered",
+    `同对另有结算数 ${under} < budget=${SQUAD_RETRY_BUDGET} ⇒ 额度未尽 ⇒ 登记（差一次也必须登记）`,
+  );
+
+  // 另一对（别的 workItem）：另有结算数恰好 = 常量 ⇒ 用尽。
+  for (let index = 0; index < SQUAD_RETRY_BUDGET; index += 1) {
+    f.insertRun({
+      runId: `budget-edge-at-prior-${index}`,
+      workItemId: f.otherItemId,
+      agentId: f.otherAgentId,
+      settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+    });
+  }
+  f.insertRun({
+    runId: "budget-edge-at",
+    workItemId: f.otherItemId,
+    agentId: f.otherAgentId,
+    settleReason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+  });
+  const atOutcome = await f.service.registerWatchdogRetry(f.target, {
+    settledRunId: "budget-edge-at",
+  });
+  assert.deepEqual(
+    atOutcome,
+    { kind: "budget_exhausted" },
+    `同对另有结算数 = budget=${SQUAD_RETRY_BUDGET} ⇒ 额度用尽（额度由 shared 常量驱动，不是写死的 1）`,
+  );
 });
 
 test("失败重试：同对已有别的通道的义务 ⇒ 并入它（义务表「每对至多一行」的不变式，不新增第二行）", async () => {
