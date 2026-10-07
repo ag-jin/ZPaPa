@@ -361,6 +361,21 @@ export interface SquadRunLifecycle {
    * 成果在没落地的情况下被删，且不报错。
    */
   completeLeaderRun(input: { runId: string }): Promise<void>;
+  /**
+   * 队员 run 的**成功入账**：台账 `open ⇒ produced` + 工作项推进到 `in_review`（走工作项服务）。
+   *
+   * **跨终态保护（W2 / R-3 修复①；此前这条路径**没有任何守卫**）**：本方法是**成功臂**，
+   * 而成功可能**迟到**——取消（`user_cancel`）或看门狗结算（`watchdog_*`）已经把这条 run 送出活跃集，
+   * 会话随后才跑到自然终态。没有保护时的表现是**静默**的 `discarded → produced`：取消被改写，
+   * 分支回到活跃集、工作项被推回 `in_review`，而**没有任何一处报错**（R-3 报告 §5.4-1 点名的缺口）。
+   * 分格（与 `completeLeaderRun` / `failMemberRun` 同族：前置读当时状态、跨终态响亮）：
+   * · `discarded` ⇒ **no-op + 一条 warn**：取消/看门狗已收口，迟到成功**不得复活**它。
+   *   这里刻意**不抛**（与 `completeLeaderRun` 对 `discarded` 抛不同）：迟到成功是**已知会发生**
+   *   的正常时序（L2 只是 best-effort，会话可能继续跑到自然终态），把它变成错误日志会掩盖真正的
+   *   接线缺陷；留一条 warn 就足够复盘「这次产出为什么没入账」。
+   * · `produced` / `rejected` / `merged` / `queued` ⇒ **响亮抛**：全是跨终态改写
+   *   （重复入账 / 背叛待修结论 / 成果已落地 / 还没开跑），不做猜测。
+   */
   completeMemberRun(input: { runId: string }): Promise<void>;
   /** 硬约束 2 的**唯一**口径来源：未合并的队员分支（含被打回待修的）。 */
   computeActiveBranches(workspaceKey: string): Promise<string[]>;
@@ -443,6 +458,15 @@ export function createRunLifecycle(deps: {
    * 还没被回收时白翻一趟台账（见 `isSettleableResidualMemberRun`）。
    */
   branchRefExists: (branch: string) => Promise<boolean>;
+  /**
+   * 响亮留痕的唯一去处（**可选加法**，W2 / R-3 修复①）：目前只有一处消费 ——
+   * `completeMemberRun` 对 `discarded` 行 no-op 时的那**一条** warn。
+   *
+   * 为什么不抛：见该方法的接口注释（迟到成功是已知会发生**正常**时序，把它变成 error 会掩盖真正的
+   * 接线缺陷）。不注入 ⇒ 回落 `console.warn`（与 `squadRuntimeService` 的 `logWarn` 缺省同一手法：
+   * host 进程里 `console.warn` 已被 host 日志中继接管，故这条留痕在生产里看得见）。
+   */
+  logWarn?: (message: string, error?: unknown) => void;
 }): SquadRunLifecycle {
   const {
     squadRunRepo,
@@ -452,6 +476,9 @@ export function createRunLifecycle(deps: {
     integrationMerger,
     orphanReaper,
   } = deps;
+  /** 留痕口（缺省回落 console，见 `deps.logWarn` 的理由）。 */
+  const logWarn: (message: string, error?: unknown) => void =
+    deps.logWarn ?? ((message) => console.warn(message));
 
   // 台账行的 workspace_key 用与 Task/实时通道**同一处**口径（C14：identity 去空白优先，否则 path）。
   // 自己拼一遍会让「快照按 workspace 过滤」与「run 按 workspace 过滤」悄悄对不上。
@@ -924,6 +951,25 @@ export function createRunLifecycle(deps: {
 
     async completeMemberRun({ runId }) {
       const record = requireRun(runId);
+      /* R-3 修复①（W2）：跨终态保护 —— 成功臂此前无条件写 `produced`，于是「取消/看门狗已结算」
+         的行会在会话跑到自然终态时被**静默**改写成 produced（取消被吃掉、工作项被推回 in_review）。
+         `discarded` ⇒ no-op + 一条 warn（见接口注释：迟到的成功是正常时序，不是错误）；
+         其余非 open ⇒ 响亮抛（跨终态改写已产出/待修/已落地的成果）。 */
+      if (record.status === "discarded") {
+        logWarn(
+          `[squad] 迟到的成功入账被丢弃：runId=${runId} 已在先前收口为 discarded` +
+            "（取消 / 看门狗结算），本次产出入账不生效，工作项状态保持不动。",
+        );
+        return;
+      }
+      if (record.status !== "open") {
+        throw new Error(
+          `runId=「${runId}」当前状态是「${record.status}」而不是 open/discarded，` +
+            "不能按成功入账（跨终态改写）：只有 open 才允许前进到 produced。" +
+            "produced 说明这条 run 的产出已经入过账，rejected 说明它被判待修，" +
+            "merged 说明成果已落地，queued 说明它根本还没开跑。",
+        );
+      }
       // 台账状态：产出即 `produced`（该分支从此算「活跃」——已产出未合并，spec §6.2 要求它活到合并）。
       settleStatus(runId, "produced");
       /* 工作项推进到 `in_review` 走**工作项服务**（唯一写者不变）。

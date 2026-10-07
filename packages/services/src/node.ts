@@ -384,6 +384,12 @@ export type {
   SquadWatchdogInput,
   SquadWatchdogRun,
 } from "./workitem/squadWatchdog.js";
+/* W2：看门狗行级输入的**唯一读法** `hasOtherRunRowForPair`（`SquadWatchdogRun.liveTreeOfOtherRow`
+   的事实来源）。host 的执行臂（启动和解 / 在线 tick）把台账行映射成判定行时要算它 ——
+   在 host 侧自己写一遍 `some(row => row.runId !== ... && workItemId === ... && agentId === ...)`
+   就是第二份判据：抄错一格的表现是「把别人的活树当成本行的」（请求永远等待占位）或反之
+   （把本行崩溃前建的树当别人的 ⇒ 误判无树），两者都不报错。同门理由与上面的判定面相同。 */
+export { hasOtherRunRowForPair } from "./workitem/squadRunLifecycle.js";
 export type { CancelSquadRunInput, SquadWatchdogGitFacts } from "./workitem/squadRuntimeService.js";
 export type {
   InboxItem,

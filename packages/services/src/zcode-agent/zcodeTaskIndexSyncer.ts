@@ -81,8 +81,17 @@ interface WorkspaceBroadcastTarget {
 
 export interface ZCodeTaskIndexTerminalEvent {
   target: ZCodeAgentSessionTarget;
-  /** v4 phase 终态映射：completedSuccess/completedInterrupted → turn.completed；error → turn.failed。 */
-  kind: "turn.completed" | "turn.failed";
+  /**
+   * v4 phase 终态映射（唯一映射处 = `terminalKindForPhase`）：`completedSuccess → turn.completed`；
+   * `completedInterrupted → turn.interrupted`；`error → turn.failed`。
+   *
+   * 为什么「中断」必须有自己的 kind（W2 / R-3 修复②）：`completedInterrupted` 是**被 stop 打断**
+   * 的收口 —— 与「跑完了」在**终态语义**上不同（前者没有产出可入账）。此前两者共用 `turn.completed`，
+   * 于是 adapter 出口一律 `"succeeded"` ⇒ 看门狗/取消自己发出的 stop 反而把 run 送进**成功入账**
+   * （`completeMemberRun` ⇒ produced + 工作项回 `in_review`）。这不是展示问题：它把「已取消」
+   * 静默改写回「已产出」。
+   */
+  kind: "turn.completed" | "turn.interrupted" | "turn.failed";
 }
 
 export interface ZCodeTaskIndexReadyEvent {
@@ -179,6 +188,21 @@ interface CreateZCodeTaskIndexSyncerOptions {
 /** phase 终态集合（sessions-index 的 conflated 最新态里判定迁移用）。 */
 function isTerminalPhase(phase: SessionPhase): boolean {
   return phase === "completedSuccess" || phase === "completedInterrupted" || phase === "error";
+}
+
+/**
+ * **唯一的**「v4 相位 → 归一化终态 kind」映射（W2 / R-3 修复②）。
+ *
+ * 为什么抽成纯函数而不是留一个内联三元：这条映射的下游是**终态语义**（adapter 出口的
+ * `succeeded / failed / stopped` ⇒ host 的成功臂 / 失败臂）——`completedInterrupted`（被 stop 打断）
+ * 与 `completedSuccess`（跑完）一旦在这里合并，取消/看门狗发出的 stop 就会走成功入账，而
+ * **没有任何一处报错**（R-3 §4 的链：syncer → adapter:3078 → host:3243）。抽出来后它可被逐相位钉住，
+ * 且发射点只有这一个消费者（第二份 `phase === ...` 判断会在改动时静默漂移）。
+ */
+export function terminalKindForPhase(phase: SessionPhase): ZCodeTaskIndexTerminalEvent["kind"] {
+  if (phase === "error") return "turn.failed";
+  if (phase === "completedInterrupted") return "turn.interrupted";
+  return "turn.completed";
 }
 
 function resolveTerminalUnreadSignal(
@@ -555,8 +579,12 @@ export function createZCodeTaskIndexSyncer(
     // 顺序保持旧协议语义：先 turn 终态（收口当前 input），再 prompt ready（放行下一条）。
     terminalEventEmitter.fire({
       target,
-      kind: failed ? "turn.failed" : "turn.completed",
+      /* 相位 → kind 走**唯一映射**（`terminalKindForPhase`）：`completedInterrupted` 由此拿到
+         自己的 kind（`turn.interrupted`）而不再冒充「跑完了」——见该函数与 kind 字段的注释。 */
+      kind: terminalKindForPhase(phase),
     });
+    /* ready 的语义与 kind **不同轴**：被 stop 打断同样意味着「这条 input 已收口、可接受下一条」
+       （agent server 的 active lock 已释放），故 `completedInterrupted` 仍算 `prompt_completed`。 */
     readyEventEmitter.fire({
       target,
       reason: failed ? "prompt_failed" : "prompt_completed",
