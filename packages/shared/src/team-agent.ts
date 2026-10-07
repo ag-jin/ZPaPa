@@ -6,6 +6,7 @@ import {
   DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES,
 } from "./squad.js";
 import type { AgentColor, AgentPermissionMode } from "./subagents-types.js";
+import { teamAgentMcpServersSchema } from "./team-agent-mcp.js";
 
 /* 协作智能体（TeamAgent）的域模型：一等独立实体，与现有 subagent 完全分开
    （决策 C3 三重隔离：存储命名空间 / 设置分区 / 术语）。
@@ -103,6 +104,18 @@ export const teamAgentSchema = z
     tools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     permissionMode: z.enum(TEAM_AGENT_PERMISSION_MODES).optional(),
+    /**
+     * 该智能体**自有的 MCP servers**（名字 → 完整配置，multica 欠账 #2）：可选——缺省不落盘
+     * （存量定义零改写、零迁移），"没有这个字段" = 该 agent 不额外覆盖任何 server（三态的第一态）。
+     *
+     * 与既有 subagent 的 `mcpServers`（`readonly string[]`：父会话**已连** server 的名单）**同名不同义**：
+     * 这里是自足配置（本 agent 的 run 要挂什么），不是继承名单。术语撞车但域隔离（决策 C3），
+     * 不做兼容层 —— 形状与校验见 `team-agent-mcp.ts`。
+     *
+     * 敏感面：配置里可能带 env / headers / token。校验只看形状（不回显内容），
+     * 日志只记 server 名；落盘位置与 workspace 级 MCP 配置同信任域（`<ws>/.zcode/`）。
+     */
+    mcpServers: teamAgentMcpServersSchema.optional(),
     memoryScope: z.enum(TEAM_AGENT_MEMORY_SCOPES),
     /** 每 agent 最大并发 run 数（C1）：可选——缺省不落盘（存量文件零改写），读数经 resolveTeamAgentMaxConcurrentRuns。 */
     maxConcurrentRuns: z

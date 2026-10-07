@@ -103,3 +103,40 @@ test("看门狗阈值字段：可选、缺省不落盘；三个解析入口各�
     assert.equal(rejected.success, false, `runTtlMinutes=${JSON.stringify(bad)} 应被拒绝`);
   }
 });
+
+// ---------- mcpServers（multica 欠账 #2：per-agent MCP 配置）----------
+
+/* 字段形状与校验在 `team-agent-mcp.ts`（那里有形状/合并/转换的完整矩阵）；这里钉的是**它在定义里的位置**：
+   可选、缺省不落盘、形状错误由 strict schema 在写盘前拒掉（存储层 writeTeamAgent 先 parse ⇒ 全写路径自动收口）。
+   注意它与既有 subagent 的 `mcpServers`（`readonly string[]`，父会话已连 server 的**名单**）同名不同义：
+   这里是**自足配置**（名字 → 完整 config），两者域隔离，不做兼容层（设计 §2.5）。 */
+test("mcpServers 字段：可选（缺省不落盘）、合法 map 原样保留、形状错误被拒", () => {
+  const omitted = teamAgentSchema.parse(baseAgent);
+  assert.equal("mcpServers" in omitted, false, "缺省不落盘（存量定义零改写、零迁移）");
+
+  const parsed = teamAgentSchema.parse({
+    ...baseAgent,
+    mcpServers: {
+      "code-search": { command: "npx", args: ["-y", "code-search-mcp"] },
+      "docs-http": { url: "https://docs.test/sse", type: "sse" },
+    },
+  });
+  assert.deepEqual(
+    parsed.mcpServers,
+    {
+      "code-search": { command: "npx", args: ["-y", "code-search-mcp"] },
+      "docs-http": { url: "https://docs.test/sse", type: "sse" },
+    },
+    "合法 map 原样保留（校验只看形状，不剥字段）",
+  );
+
+  for (const bad of [
+    { "": { command: "npx" } },
+    { broken: {} },
+    { broken: { args: ["-y"] } },
+    { broken: "npx" },
+  ]) {
+    const rejected = teamAgentSchema.safeParse({ ...baseAgent, mcpServers: bad });
+    assert.equal(rejected.success, false, `mcpServers=${JSON.stringify(bad)} 应被拒绝`);
+  }
+});
