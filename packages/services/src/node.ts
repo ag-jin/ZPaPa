@@ -528,6 +528,13 @@ import { createWorkItemCommentReactionRepo } from "./workitem/workItemCommentRea
    `createCommentServiceFor`）：门面的四个写入口只转发到它，评论链自己不碰生命周期写接口。
    X2.1 已落 host 侧的评论派发入口，但组合根这一半（构造 + 请求出口）此前未落，本轮补齐。 */
 import { createCommentService, type CommentService } from "./workitem/commentService.js";
+/* C3.1：决定写入服务（1 行决定 + 1 枚带 decisionId 锚的 decision_created 活动）——
+   **组合根唯一构造点**（见下面 `createDecisionServiceFor`）：门面第五写入口只转发到它。
+   依赖集有意封顶（decisions/activities/workItems）：结构上碰不到 run / receipt / 义务表 / 状态机。 */
+import {
+  createWorkItemDecisionService,
+  type WorkItemDecisionService,
+} from "./workitem/workItemDecisionService.js";
 import {
   createSquadDispatchRequestHub,
   type SquadDispatchRequest,
@@ -2926,6 +2933,20 @@ export function createLocalServices(options: {
     });
   };
 
+  /* C3.1：决定服务的**唯一构造点**（门面第五写入口 `createWorkItemDecision` 经它拿到实现体）。
+     依赖集有意封顶为 decisions / activities / workItems（+ 服务内建的 now/newId）：
+     决定链**结构上**拿不到 run 台账、派发回执、完成重放义务与状态机 ——「决定不派发、不改状态」
+     因此不是纪律，而是依赖图上的不可能（守卫见 workItemDecisionGuards.test.ts）。
+     连接取 `openSharedDatabase()`：与其余协作 repo 同一条（走过迁移的那一条）。 */
+  const createDecisionServiceFor = (runtime: SquadRuntime): WorkItemDecisionService => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return createWorkItemDecisionService({
+      decisions: createWorkItemDecisionRepo(db),
+      activities: createWorkItemActivityRepo(db),
+      workItems: runtime.workItemRepo,
+    });
+  };
+
   const services = new ServiceCollection()
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
@@ -3151,6 +3172,7 @@ export function createLocalServices(options: {
         },
         localHumanActor: () => LOCAL_HUMAN_ACTOR,
         createCommentService: createCommentServiceFor,
+        createDecisionService: createDecisionServiceFor,
       }),
     );
   if (

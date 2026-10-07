@@ -426,6 +426,8 @@ export type {
   WorkItemCollaborationServiceDeps,
   /* B5.2 轮 2：四个写入口的**入参形状**（编译擦除；UI 只命名它，不构造身份 —— D1-A）。 */
   CreateWorkItemCommentRequest,
+  /* C3.1：第五写入口（决定）的入参形状。实现模块值导入 node 侧内建，只出类型（同款理由）。 */
+  CreateWorkItemDecisionRequest,
 } from "./workitem/workItemCollaborationService.js";
 /* 写入口的返回形状 = CommentService 的返回形状（门面不二次包装，故 UI 命名的是**同一份**类型）。
    `export type` 擦除：commentService.ts 值导入 node:crypto，只有**值**导出才会把 node 侧带进 renderer。 */

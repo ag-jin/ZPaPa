@@ -18,6 +18,10 @@ import {
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemCommentRepo } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
+import type {
+  CreateDecisionInput,
+  WorkItemDecisionRecord,
+} from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
 /* B5.2 轮 2：工作项协作门面的**四个写入口**（任务卡 §5.3-1）。
@@ -349,6 +353,7 @@ test("结构负向｜门面文件保持浏览器安全：CommentService / repo �
     "./workItemCommentRepo.js",
     "./workItemCommentReactionRepo.js",
     "./workItemDecisionRepo.js",
+    "./workItemDecisionService.js",
   ]) {
     const importing = SERVICE_SOURCE.split("\n").filter((line) =>
       line.includes(`from "${module}"`),
@@ -448,5 +453,118 @@ test("组合根接线｜评论派发请求接上 hub、门禁读同一份快照�
     body,
     /readDispatchEnabled:\s*\(\)\s*=>\s*squadsEnabled/,
     "门禁读组合根的**同一份**同步快照（另读一次 settingService 会与呈现漂移）",
+  );
+});
+
+/* ---------- C3.1：第五写入口（决定）——门面转发 + 组合根接线 ---------- */
+
+test("写入口｜createWorkItemDecision：workspace/身份由门面派生，形状原样透传（不二次包装）", async () => {
+  const calls: CreateDecisionInput[] = [];
+  // 返回值的独立真源：门面必须**原样**透传（不包装成别的形状）。
+  const serviceResult = { id: "dec-1" } as unknown as WorkItemDecisionRecord;
+  const decisionService = {
+    createDecision(input: CreateDecisionInput) {
+      calls.push(input);
+      return serviceResult;
+    },
+  };
+  const service = createWorkItemCollaborationService({
+    createRuntime: async () => ({ boundWorkspace: OTHER_WORKSPACE }) as unknown as SquadRuntime,
+    getRepos: () => {
+      throw new Error("写路径不得读 repo（读面是另一个口）");
+    },
+    localHumanActor: () => LOCAL_HUMAN,
+    createCommentService: () => {
+      throw new Error("决定写路径不得构造评论服务（两服务各自显式）");
+    },
+    createDecisionService: () => decisionService as never,
+  });
+
+  // 调用方传 ws-a 的 target，但 runtime 绑 ws-other（模拟「取错了目标」的接线 bug）。
+  const returned = await service.createWorkItemDecision(WORKSPACE, {
+    workItemId: "wi-1",
+    kind: "superseded",
+    subject: "方案 C",
+    rationale: "更省",
+    parentDecisionId: "dec-parent",
+    sourceRequestId: "req-1",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0]!.workspaceKey,
+    OTHER_WORKSPACE.identity,
+    "workspaceKey 必须是 runtime 的绑定身份（调用方 target 不参与 key 计算）",
+  );
+  assert.equal(calls[0]!.workspacePath, OTHER_WORKSPACE.path, "workspacePath 同源取自绑定值");
+  assert.equal(calls[0]!.workItemId, "wi-1");
+  assert.equal(calls[0]!.kind, "superseded");
+  assert.equal(calls[0]!.subject, "方案 C");
+  assert.equal(calls[0]!.rationale, "更省");
+  assert.equal(calls[0]!.parentDecisionId, "dec-parent");
+  assert.equal(calls[0]!.sourceRequestId, "req-1", "幂等键原样透传");
+  assert.deepEqual(calls[0]!.author, LOCAL_HUMAN, "作者由组合根注入（D1-A：UI 零身份拼装）");
+  assert.deepEqual(calls[0]!.initiatedBy, LOCAL_HUMAN, "initiatedBy 缺省 = 注入身份");
+  assert.ok(!("sourceRunId" in calls[0]!), "人类入口不伪造 run 归属");
+  assert.ok(!("threadId" in calls[0]!), "v1 不传 threadId（恒 null）");
+  assert.equal(returned, serviceResult, "返回形状原样透传（不二次包装、不吞异常）");
+
+  // 可选字段缺省 ⇒ 不构造 undefined 字段（服务面靠「字段缺席」判「没给父」）。
+  await service.createWorkItemDecision(WORKSPACE, {
+    workItemId: "wi-1",
+    kind: "proposal",
+    subject: "方案 B",
+    sourceRequestId: "req-2",
+  });
+  const bare = calls.at(-1)!;
+  assert.ok(!("rationale" in bare) && !("parentDecisionId" in bare), "可选字段缺席即缺席");
+
+  // 未注入工厂 ⇒ 响亮抛（不 no-op：静默会让用户以为决定已经记下来了）。
+  const missing = createWorkItemCollaborationService({
+    createRuntime: async () => ({ boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+    getRepos: () => {
+      throw new Error("写路径不得读 repo");
+    },
+    localHumanActor: () => LOCAL_HUMAN,
+  });
+  await assert.rejects(
+    () =>
+      missing.createWorkItemDecision(WORKSPACE, {
+        workItemId: "wi-1",
+        kind: "proposal",
+        subject: "方案 B",
+        sourceRequestId: "req-3",
+      }),
+    /createDecisionService|未接通/,
+  );
+});
+
+test("组合根接线｜DecisionService 只构造一次、依赖集封顶（decisions/activities/workItems）、门面注入工厂", () => {
+  const constructions = NODE_SOURCE.match(/createWorkItemDecisionService\(\{/g) ?? [];
+  assert.equal(constructions.length, 1, "组合根**唯一**构造点：第二次构造 = 两套判据");
+  const start = NODE_SOURCE.indexOf("createWorkItemDecisionService({");
+  const body = NODE_SOURCE.slice(start, start + 1200);
+  for (const [pattern, why] of [
+    [/decisions:\s*createWorkItemDecisionRepo\(db\)/, "决定 repo 缺 ⇒ 写不进去"],
+    [/activities:\s*createWorkItemActivityRepo\(db\)/, "活动 repo 缺 ⇒ 时间线没有锚"],
+    [/workItems:\s*runtime\.workItemRepo/, "工作项判定与门面同一份 repo（归档项仍允许写）"],
+  ] as const) {
+    assert.match(body, pattern, why);
+  }
+  for (const forbidden of ["runs:", "receipts:", "deferred:", "workItemService"]) {
+    assert.ok(
+      !body.includes(forbidden),
+      `DecisionService 依赖集封顶：组合根不得注入 ${forbidden}（决定链结构上碰不到派发/状态面）`,
+    );
+  }
+  const registerStart = NODE_SOURCE.indexOf(
+    "IWorkItemCollaborationService,\n      createWorkItemCollaborationService({",
+  );
+  assert.ok(registerStart >= 0, "找不到 IWorkItemCollaborationService 的注册块");
+  const register = NODE_SOURCE.slice(registerStart, registerStart + 2000);
+  assert.match(
+    register,
+    /createDecisionService:\s*createDecisionServiceFor/,
+    "门面必须拿到决定服务的构造口（漏接 ⇒ 第五写入口响亮抛，界面点了没反应）",
   );
 });

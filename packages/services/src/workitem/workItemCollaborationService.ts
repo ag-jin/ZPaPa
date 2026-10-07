@@ -18,10 +18,18 @@ import type {
   WorkItemCommentRepo,
   WorkItemCommentRecord,
 } from "./workItemCommentRepo.js";
-import type { WorkItemDecisionRepo, WorkItemDecisionRecord } from "./workItemDecisionRepo.js";
+import type {
+  WorkItemDecisionKind,
+  WorkItemDecisionRepo,
+  WorkItemDecisionRecord,
+} from "./workItemDecisionRepo.js";
+/* C3.1：决定写入服务的**类型**引用（`import type` 会被编译擦除——该模块值导入加密内建模块，
+   值导入会把 node 侧带进 renderer 包，browserSafeRootEntry.test.ts 守这条）。 */
+import type { WorkItemDecisionService } from "./workItemDecisionService.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：工作项**协作门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.3）。
-   —— 轮 1 落下**读**（`getWorkItemCollaboration`），轮 2 落下**四个写入口**（§5.2）。
+   —— 轮 1 落下**读**（`getWorkItemCollaboration`），轮 2 落下**四个写入口**（§5.2），
+   C3.1 再挂**第五个写入口**（决定）：实现是独立深模块 WorkItemDecisionService（决定不派发、不改状态）。
 
    为什么是**独立描述符**而不是往 `ISquadRuntimeService` 上加一个方法：
    · 语义上它是「按 (workspace, workItemId) 寻址的**一次聚合读**」，与 `getSnapshot` 的
@@ -97,6 +105,26 @@ export type CreateWorkItemCommentRequest = {
   clientRequestId: string;
 };
 
+/**
+ * 记录一条决定（C3.1，spec §3.4；任务卡 §4.2 冻结形状）。
+ *
+ * **不含 `actor`**（同评论入口的 D1-A 口径）：作者由组合根注入的本地人类身份自取，UI 只给
+ * 「写到哪、写什么、幂等键」。`selection` / `evidence` / `threadId` 不在 v1（恒 {} / [] / null）：
+ * 子类型闭集未裁，给它一个 JSON 输入框 = 把「本地用户输坏 JSON ⇒ 决定记不下来」变成常态。
+ */
+export type CreateWorkItemDecisionRequest = {
+  workItemId: string;
+  /** 五值闭集（proposal/accepted/rejected/superseded/reopened）；服务面校验。 */
+  kind: WorkItemDecisionKind;
+  /** 被裁决的事项（trim 后非空；无长度上限）。 */
+  subject: string;
+  rationale?: string;
+  /** superseded / reopened 必填，且父必须存在、同 workspace、同工作项、非自身。 */
+  parentDecisionId?: string;
+  /** **幂等键**（§8.1）：一次提交动作生成一次，失败重试沿用同一个（换新键会长出第二条决定）。 */
+  sourceRequestId: string;
+};
+
 export interface IWorkItemCollaborationService {
   /**
    * 按 (target, workItemId) 聚合读取。
@@ -131,6 +159,17 @@ export interface IWorkItemCollaborationService {
     target: SquadWorkspaceTarget,
     input: { commentId: string; emoji: string },
   ): Promise<WorkItemCommentReactionRecord>;
+
+  /* ---------- C3.1：第五个写入口（决定；任务卡 §4.1/§4.2） ---------- */
+
+  /**
+   * 记录一条决定：1 行决定 + 1 枚带 `decisionId` 锚的 `decision_created` 活动。
+   * 决定**不派发、不改状态**（结构上拿不到 runs/receipts/状态机——见 WorkItemDecisionService）。
+   */
+  createWorkItemDecision(
+    target: SquadWorkspaceTarget,
+    input: CreateWorkItemDecisionRequest,
+  ): Promise<WorkItemDecisionRecord>;
 }
 
 export const IWorkItemCollaborationService =
@@ -170,6 +209,17 @@ export type WorkItemCollaborationServiceDeps = {
    * （`requireCommentService`），而不是静默 no-op。
    */
   createCommentService?: (runtime: SquadRuntime) => CommentService;
+  /**
+   * C3.1 第五写入口（决定）的转发目标：**组合根构造的 `WorkItemDecisionService`**，按本次 runtime 装。
+   *
+   * 为什么同样走独立工厂注入、门面不自己 `new`：门面必须保持**零 SQL / 零 `.add(`**
+   * （b52FacadeWriteVerification.test.ts 的既存断言），且决定服务值导入加密内建模块
+   * （randomUUID）——门面是浏览器安全模块，不能值导入它。
+   *
+   * **可选**与 `createCommentService` 同理：缺它时第五写入口**响亮抛**（`requireDecisionService`），
+   * 不静默 no-op（静默会让用户以为决定已经记下来了）。
+   */
+  createDecisionService?: (runtime: SquadRuntime) => WorkItemDecisionService;
 };
 
 export function createWorkItemCollaborationService(
@@ -207,6 +257,17 @@ export function createWorkItemCollaborationService(
       );
     }
     return deps.createCommentService(runtime);
+  };
+
+  /** 第五写入口的同一道缺失守卫（C3.1；理由同上：静默 no-op 会让用户以为决定已经记下来了）。 */
+  const requireDecisionService = (runtime: SquadRuntime): WorkItemDecisionService => {
+    if (!deps.createDecisionService) {
+      throw new Error(
+        "工作项协作写门面未接通：组合根没有注入 createDecisionService。" +
+          "静默 no-op 会让用户以为决定已经记下来了（时间线上却什么都没有），故一律抛。",
+      );
+    }
+    return deps.createDecisionService(runtime);
   };
 
   /* workspace 的唯一口径与来源（读与写**共用这一条**式子）：runtime 的绑定值 ——
@@ -307,6 +368,29 @@ export function createWorkItemCollaborationService(
         workspaceKey,
         emoji: input.emoji,
         author: requireLocalHumanActor(),
+      });
+    },
+
+    /* C3.1：第五写入口。与四个评论入口同形——**现构 runtime → 取绑定 workspace → 交给
+       WorkItemDecisionService**；门面只定「写到哪、谁写的」，父规则/闭集/幂等键全在服务面。 */
+    async createWorkItemDecision(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey, workspacePath } = boundWorkspaceOf(runtime);
+      const actor = requireLocalHumanActor();
+      return requireDecisionService(runtime).createDecision({
+        workspaceKey,
+        workspacePath,
+        workItemId: input.workItemId,
+        kind: input.kind,
+        subject: input.subject,
+        author: actor,
+        initiatedBy: actor,
+        ...(input.rationale !== undefined ? { rationale: input.rationale } : {}),
+        ...(input.parentDecisionId !== undefined
+          ? { parentDecisionId: input.parentDecisionId }
+          : {}),
+        // 幂等键必带：缺了它重试就是第二条决定（§8.1）。
+        sourceRequestId: input.sourceRequestId,
       });
     },
   };
