@@ -4695,6 +4695,15 @@ const enUS: Record<string, string> = {
   "squad.inbox.openWorkItem": "Open work item",
   "squad.inbox.openSession": "Open session",
   "squad.inbox.openFailed": "Could not open: the project was not found or is no longer available",
+  // SUB.3a row-level unsubscribe ("stop notifying"): the two scope labels reuse
+  // `squad.workItemDetail.subscription.scope.*` (one vocabulary, two entry points); only the entry,
+  // title, description and success toast live here. The description must say that unsubscribing
+  // affects notifications only — users fear it deletes or mutates something.
+  "squad.inbox.unsubscribe": "Stop notifying",
+  "squad.inbox.unsubscribeTitle": "Stop notifying about “{title}”?",
+  "squad.inbox.unsubscribeDescription":
+    "Unsubscribing only affects notifications: the work item itself and existing inbox entries are untouched. Choosing “this item and its subtree” also mutes every descendant.",
+  "squad.inbox.unsubscribeSucceeded": "Unsubscribed — you will no longer be notified",
   "squad.inbox.experimentOff":
     "The multi-agent squad experiment is off: the sidebar entry is hidden and new dispatches are rejected by the service; existing inbox entries remain readable and archivable.",
   "squad.inbox.kind.merge_conflict": "Merge conflict",
@@ -4931,6 +4940,33 @@ const enUS: Record<string, string> = {
     "This work item is archived; inline editing is unavailable",
   "squad.workItemDetail.inlineEdit.disabled.readFailed":
     "Load failed; inline editing is temporarily unavailable",
+  // Notification / subscription surface (SUB.3a): the detail-page control and the inbox row's
+  // "stop notifying" share this vocabulary. Both status lines carry a placeholder — `{reason}` is
+  // "why I am here" (creator / assignee / commenter / mentioned / delegated / manual) and `{scope}`
+  // is "how far the opt-out reaches" (this item / this item and its subtree).
+  "squad.workItemDetail.subscription.title": "Notifications",
+  "squad.workItemDetail.subscription.status.none": "Not subscribed",
+  "squad.workItemDetail.subscription.status.subscribed": "Following ({reason})",
+  "squad.workItemDetail.subscription.status.unsubscribed": "Unsubscribed ({scope})",
+  "squad.workItemDetail.subscription.subscribe": "Subscribe",
+  "squad.workItemDetail.subscription.unsubscribe": "Unsubscribe",
+  "squad.workItemDetail.subscription.unsubscribeTitle": "Unsubscribe from this work item?",
+  "squad.workItemDetail.subscription.unsubscribeHint":
+    "Unsubscribing only affects notifications: the work item itself and existing inbox entries are untouched. Choosing “this item and its subtree” also mutes every descendant.",
+  "squad.workItemDetail.subscription.tombstoneHint":
+    "Unsubscribed: automatic rules will not add you back. Press Subscribe to receive notifications again.",
+  "squad.workItemDetail.subscription.reason.creator": "creator",
+  "squad.workItemDetail.subscription.reason.assignee": "assignee",
+  "squad.workItemDetail.subscription.reason.commenter": "commenter",
+  "squad.workItemDetail.subscription.reason.mentioned": "mentioned",
+  "squad.workItemDetail.subscription.reason.delegated": "delegated by the leader",
+  "squad.workItemDetail.subscription.reason.manual": "subscribed manually",
+  "squad.workItemDetail.subscription.scope.issue": "this item only",
+  "squad.workItemDetail.subscription.scope.subtree": "this item and its subtree",
+  "squad.workItemDetail.subscription.disabled.archived":
+    "This work item is archived; subscriptions cannot be changed",
+  "squad.workItemDetail.subscription.disabled.readFailed":
+    "Load failed; subscriptions cannot be changed right now",
   "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
   "squad.workItemDetail.dispatch.opened": "Run opened",
   "squad.workItemDetail.dispatch.queued": "Queued",

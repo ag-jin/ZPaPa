@@ -19,6 +19,11 @@ import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
 import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDecisionDialog.js";
 import { WorkItemDetailOverview } from "./WorkItemDetailOverview.js";
+import { WorkItemSubscriptionControl } from "./WorkItemSubscriptionControl.js";
+import {
+  subscriptionRequestFor,
+  type SubscriptionIntent,
+} from "./workItemSubscriptionViewModel.js";
 import { WorkItemDeliverablesSection } from "./WorkItemDeliverablesSection.js";
 import { WorkItemPullRequestsSection } from "./WorkItemPullRequestsSection.js";
 import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
@@ -294,6 +299,23 @@ export function WorkItemDetailPage({
     [runCollaborationAction],
   );
 
+  /**
+   * 手动订阅 / 退订（SUB.3a，第六写入口的 UI）：与其余写入口**同一条执行器**（写 → 只刷新协作
+   * 读模型）。请求形状由 `subscriptionRequestFor` 单源产出（判别联合不在页面里拼：「退订必带范围」
+   * 由类型保证，漏带是编译错而不是猜一个默认档）。失败经唯一执行器落动作错误条（不吞、不假装成功）。
+   */
+  const runSubscription = useCallback(
+    async (intent: SubscriptionIntent): Promise<void> => {
+      const id = workItemIdForWrite;
+      // 没有工作项就不能改订阅：与其余动作同一条「响亮不假成功」的口径（这里落动作错误条）。
+      if (id === null) return setActionError("工作项尚未读出，无法更新订阅。");
+      await runCollaborationAction(null, (service, currentTarget) =>
+        service.setWorkItemSubscription(currentTarget, subscriptionRequestFor(id, intent)),
+      ).catch(() => undefined);
+    },
+    [runCollaborationAction, workItemIdForWrite],
+  );
+
   const backButton = (
     <Button size="sm" variant="outline" data-testid="work-item-detail-back" onClick={onBack}>
       {t("squad.workItemDetail.back")}
@@ -306,13 +328,15 @@ export function WorkItemDetailPage({
     </div>
   );
 
-  if (workItemId === null) {
-    return (
-      <div data-testid="work-item-detail-page" className="flex flex-col gap-3 py-2">
-        {notFound}
-      </div>
-    );
-  }
+  /* 未选中（App 级意图态）与**读回 null**（本条不存在）在界面上是同一件事（「没有可显示的工作项」），
+     故共用同一份整页形态（`notFoundView`）—— 页根 testid 全域一处，改一处漏一处的经典形态。
+     判据分两处写：第一条是 id 意图，第二条在状态机收窄之后（`read === null`）。 */
+  const notFoundView = (
+    <div data-testid="work-item-detail-page" className="flex flex-col gap-3 py-2">
+      {notFound}
+    </div>
+  );
+  if (workItemId === null) return notFoundView;
   if (state.status === "idle" || state.status === "loading") {
     return (
       <div data-testid="work-item-detail-page" className="flex flex-col gap-3 py-2">
@@ -338,14 +362,7 @@ export function WorkItemDetailPage({
       </div>
     );
   }
-  if (state.read === null) {
-    return (
-      <div data-testid="work-item-detail-page" className="flex flex-col gap-3 py-2">
-        {notFound}
-      </div>
-    );
-  }
-
+  if (state.read === null) return notFoundView;
   const read = state.read;
   const workItem = read.workItem;
   const assigneeLabel =
@@ -355,6 +372,8 @@ export function WorkItemDetailPage({
   const receiptsByComment = buildReceiptsByComment(read.receipts);
   /** 决定写入的禁用原因（与评论同一条判据，只换文案族）：归档 > 刷新失败 > 可写。 */
   const decisionDisabledReason = writeDisabledReason("decision", workItem, state.refreshFailure);
+  /** 订阅写入的禁用原因（SUB.3a 同一判据只换面名；归档项在服务面被 `requireOwnedWorkItem` 拒）。 */
+  const subscriptionReason = writeDisabledReason("subscription", workItem, state.refreshFailure);
 
   return (
     <div data-testid="work-item-detail-page" className="flex flex-col gap-4 py-2">
@@ -372,6 +391,15 @@ export function WorkItemDetailPage({
         assigneeLabel={assigneeLabel}
         bodyExpanded={bodyExpanded}
         onToggleBody={() => setBodyExpanded((previous) => !previous)}
+      />
+
+      {/* SUB.3a：订阅控件（状态三态 + 两档退订确认）。它吃**读模型两格**（订阅行 + 观察者身份）
+          ——不新开取数、不自造身份；禁用原因复用 writeDisabledReason（归档 > 读取失败 > 可写）。 */}
+      <WorkItemSubscriptionControl
+        subscribers={read.subscribers}
+        viewerActor={read.viewerActor}
+        disabledReasonMessageId={subscriptionReason}
+        onSetSubscription={runSubscription}
       />
 
       <WorkItemDeliverablesSection

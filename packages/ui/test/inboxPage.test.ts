@@ -13,6 +13,7 @@ import {
   inboxItemDetailLine,
   inboxItemSessionId,
   inboxItemSessionTarget,
+  inboxItemUnsubscribeTarget,
   inboxItemWorkItemTarget,
   inboxRowActions,
   inboxViewState,
@@ -371,7 +372,85 @@ test("次要行｜SUB.2 三新 kind：作者 →（被点名者 / 收件人）�
   );
 });
 
-// ---------- ④ 行动作四格 ----------// 变异（M4）：让已归档行仍给动作（去掉 archivedAt 判断）⇒ 第三、四格必红。
+/* SUB.3a：收件箱行的**退订入口判据**（有 `workItemId` 且**未归档** ⇒ 给；其余一律不给）。
+   期望值直接对应服务面的写入门槛：`setWorkItemSubscription` → `requireOwnedWorkItem` 用
+   `workItemRepo.get`（归档行等同不存在）⇒ 归档行亮了就是「点了必失败」。
+   变异：去掉 archivedAt 判断 ⇒ 第二格必红；只判 workItemId 不判路径 ⇒ 第三格必红。 */
+test("订阅｜行退订入口：有 workItemId 且未归档且坐标推得出 ⇒ 目标；否则 null（不给死钮）", () => {
+  assert.deepEqual(
+    inboxItemUnsubscribeTarget(
+      inboxItem({ workItemId: "wi-1", workspaceKey: "ws-key", workspacePath: "/w/a" }),
+    ),
+    { target: { path: "/w/a", identity: "ws-key" }, workItemId: "wi-1" },
+    "identity 与 path 不同 ⇒ 按 C14 反推 identity（同穿透判据）",
+  );
+  assert.deepEqual(
+    inboxItemUnsubscribeTarget(inboxItem({ workItemId: "wi-1", workspaceKey: "/w/a" })),
+    { target: { path: "/w/a", identity: "" }, workItemId: "wi-1" },
+    "key == path ⇒ 条目没带 identity，只能给 path（拿 path 冒充 identity 会退订到别的 workspace）",
+  );
+  assert.equal(
+    inboxItemUnsubscribeTarget(inboxItem({ workItemId: "wi-1", archivedAt: 456 })),
+    null,
+    "**已归档**条目不退订：归档项在服务面不存在（入口亮着 = 点了必失败）",
+  );
+  assert.equal(
+    inboxItemUnsubscribeTarget(inboxItem({ workItemId: null })),
+    null,
+    "没有 workItemId（run 类条目 / 坏形状）⇒ 没有可退订的对象，不给钮",
+  );
+  assert.equal(
+    inboxItemUnsubscribeTarget(inboxItem({ workItemId: "wi-1", workspacePath: "" })),
+    null,
+    "项目坐标推不出（空 path）⇒ 不给钮（不猜一个 workspace）",
+  );
+});
+
+/* 结构守卫｜行退订的接线（实现侧证据；判据在上面那条）：
+   ① 行按钮只在判据给出目标时渲染，且把**条目**交回页面（页面才有服务）；
+   ② 页面写订阅**恰一处**、走服务面 resolver、请求经 `subscriptionRequestFor` 单源；
+   ③ 两档确认框是**共用件**（详情页控件与收件箱行同一份：档位/文案/确认态机不在两处各写一遍）；
+   ④ 无乐观更新（不本地改列表）。 */
+test("守卫｜收件箱行退订：按钮有判据 + 页面写恰一处（经单源请求）+ 两档框共用件", () => {
+  const list = readSource("squad/InboxList.tsx");
+  assert.ok(
+    list.includes("inboxItemUnsubscribeTarget("),
+    "行按钮必须走纯函数判据（不在组件里另判一遍归档/workItemId）",
+  );
+  const gateIndex = list.indexOf("{unsubscribeTarget ? (");
+  const buttonIndex = list.indexOf('data-testid="inbox-unsubscribe"');
+  assert.ok(
+    gateIndex >= 0 && buttonIndex > gateIndex,
+    "退订按钮必须在判据条件下（不得无条件渲染）",
+  );
+  assert.ok(list.includes("onUnsubscribe(item)"), "行只把条目交回页面（列表不拿服务、不拼请求）");
+
+  const page = readSource("squad/InboxPage.tsx");
+  assert.equal(
+    (page.match(/setWorkItemSubscription\(/g) ?? []).length,
+    1,
+    "订阅写入口在收件箱页恰一处（第二处 = 第二条写路径）",
+  );
+  assert.ok(
+    page.includes("resolveWorkItemCollaborationService("),
+    "写必须经取数通路 resolver（缺服务时响亮抛，不静默）",
+  );
+  assert.ok(
+    page.includes("subscriptionRequestFor("),
+    "请求形状经单源函数产出（页面不自己拼判别联合）",
+  );
+  assert.ok(
+    page.includes("<UnsubscribeScopeDialog"),
+    "两档确认框必须是共用件（详情页控件与收件箱行同一份判据与按钮）",
+  );
+  for (const forbidden of ["setOptimistic", "optimisticSubscription", "optimisticUnsubscribe"]) {
+    assert.ok(!page.includes(forbidden), `页面不得出现 ${forbidden}（无乐观更新）`);
+  }
+});
+
+// ---------- ④ 行动作四格 ----------
+
+// 变异（M4）：让已归档行仍给动作（去掉 archivedAt 判断）⇒ 第三、四格必红。
 test("行动作四格：未读未归档 / 已读未归档 / 未读已归档 / 已读已归档", () => {
   assert.deepEqual(
     inboxRowActions({ readAt: null, archivedAt: null }),
@@ -809,4 +888,28 @@ test("穿透文案三键两语齐全", () => {
     assert.ok((zhCN[id] ?? "").length > 0, `zh 缺 ${id}`);
     assert.ok((enUS[id] ?? "").length > 0, `en 缺 ${id}`);
   }
+});
+
+// SUB.3a：收件箱行退订的四键（入口 / 确认标题带 {title} / 说明 / 成功提示）。
+test("退订文案四键两语齐全且占位符成对（标题自报是哪条工作项）", () => {
+  const keys = [
+    "squad.inbox.unsubscribe",
+    "squad.inbox.unsubscribeTitle",
+    "squad.inbox.unsubscribeDescription",
+    "squad.inbox.unsubscribeSucceeded",
+  ];
+  const placeholders = (value: string) =>
+    [...value.matchAll(/\{(\w+)\}/g)]
+      .map((match) => match[1])
+      .sort()
+      .join(",");
+  for (const id of keys) {
+    assert.ok((zhCN[id] ?? "").length > 0, `zh 缺 ${id}`);
+    assert.ok((enUS[id] ?? "").length > 0, `en 缺 ${id}`);
+    assert.equal(placeholders(zhCN[id] ?? ""), placeholders(enUS[id] ?? ""), `${id} 占位符不成对`);
+  }
+  assert.ok(
+    (zhCN["squad.inbox.unsubscribeTitle"] ?? "").includes("{title}"),
+    "确认标题必须自报是哪条工作项（列表里点的那一行要说得出来）",
+  );
 });

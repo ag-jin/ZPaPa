@@ -513,9 +513,13 @@ export const COMMENT_REACTION_EMOJIS = ["👍", "🎉", "👀", "🙏", "✅"] a
  * `inlineEdit`（阶段一轮 D）：**看板行的行内编辑**用同一份判据（归档行不给入口）。
  * 它不是详情页的写面，但「归档 ⇒ 不可写」这件事只有这一个判据 —— 第二份迟早与这份分叉。
  * 看板没有「刷新失败」这个语义（取数失败由页面横幅表达），调用方传 `null`。
+ *
+ * `subscription`（SUB.3a）：详情页的**订阅控件**同理（服务面的 `setWorkItemSubscription` 经
+ * `requireOwnedWorkItem` 拒归档项，入口亮着就会点了必失败）。新面**只加面名、不另判一遍**
+ * 归档与读取失败 —— 这正是这条判据存在的理由。
  */
 export function writeDisabledReason(
-  surface: "comment" | "decision" | "deliverable" | "pullRequest" | "inlineEdit",
+  surface: "comment" | "decision" | "deliverable" | "pullRequest" | "inlineEdit" | "subscription",
   workItem: { archivedAt?: number },
   refreshFailure: string | null,
 ): string | null {

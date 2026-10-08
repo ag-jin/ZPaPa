@@ -44,7 +44,9 @@ test("独立复验｜Activity 文案映射：键集 = 服务面闭集（恰 21�
   );
 });
 
-test("独立复验｜Inbox 文案映射：六枚（手写表），pr_gate_degraded 的键独立核", () => {
+test("独立复验｜Inbox 文案映射：九枚（手写表），pr_gate_degraded 的键独立核", () => {
+  /* SUB.2 把服务面闭集从 6 扩到 9（点名 / 关注 / 决定），UI 映射随之穷尽 ——
+     手写表同步补三枚（这张表的意义就是「闭集增删时这里必须有人手动确认」）。 */
   const handWritten = [
     "merge_conflict",
     "member_failed",
@@ -52,6 +54,9 @@ test("独立复验｜Inbox 文案映射：六枚（手写表），pr_gate_degrad
     "dispatch_skipped",
     "run_stalled",
     "pr_gate_degraded",
+    "mention_action_required",
+    "comment_attention",
+    "decision_required",
   ];
   assert.deepEqual(Object.keys(INBOX_KIND_MESSAGE_IDS).sort(), [...handWritten].sort());
   assert.equal(INBOX_KIND_MESSAGE_IDS["pr_gate_degraded"], "squad.inbox.kind.pr_gate_degraded");

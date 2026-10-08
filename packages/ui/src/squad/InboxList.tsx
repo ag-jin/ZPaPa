@@ -10,6 +10,7 @@ import {
   INBOX_SEVERITY_MESSAGE_IDS,
   inboxItemDetailLine,
   inboxItemSessionTarget,
+  inboxItemUnsubscribeTarget,
   inboxItemWorkItemTarget,
   inboxRowActions,
   type InboxSessionTarget,
@@ -52,6 +53,7 @@ export function InboxList({
   onArchive,
   onOpenWorkItem,
   onOpenSession,
+  onUnsubscribe,
 }: {
   items: InboxItem[];
   /** 「显示已归档」开关的当前值：只影响空态那句提示（数据面的过滤在服务侧）。 */
@@ -64,6 +66,8 @@ export function InboxList({
   onOpenWorkItem: (target: InboxWorkItemTarget) => void;
   /** 「打开会话」⇒ 交给页面（run 类条目的会话穿透；同上）。 */
   onOpenSession: (target: InboxSessionTarget) => void;
+  /** 「不再通知」⇒ 交给页面（页面拿服务写退订；判据在纯函数 `inboxItemUnsubscribeTarget`）。 */
+  onUnsubscribe: (item: InboxItem) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -89,6 +93,8 @@ export function InboxList({
         // 穿透目标（判据在纯函数里，含 identity 的 C14 反推）：推不出 ⇒ 不给钮（不猜、不造死钮）。
         const workItemTarget = inboxItemWorkItemTarget(item);
         const sessionTarget = inboxItemSessionTarget(item);
+        // 退订目标（SUB.3a）：有 workItemId 且**未归档**才算（归档项在服务面不存在 ⇒ 点了必失败）。
+        const unsubscribeTarget = inboxItemUnsubscribeTarget(item);
         return (
           <li
             key={item.id}
@@ -181,6 +187,20 @@ export function InboxList({
                   onClick={() => onArchive(item)}
                 >
                   {t("squad.inbox.archive")}
+                </Button>
+              ) : null}
+              {/* SUB.3a：不再通知（退订）——两档由**确认框**给出（共用件），本层只把条目交回页面。
+                  归档行不给（服务面把归档项当不存在）；与 `inboxRowActions` 不是一回事：
+                  那是「这条通知处理完了没」，这是「以后还要不要收」。 */}
+              {unsubscribeTarget ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="inbox-unsubscribe"
+                  onClick={() => onUnsubscribe(item)}
+                >
+                  {t("squad.inbox.unsubscribe")}
                 </Button>
               ) : null}
             </span>

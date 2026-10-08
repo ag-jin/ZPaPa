@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { InboxItem, ISquadRuntimeServiceShape } from "@zcode/services";
+import type { InboxItem, ISquadRuntimeServiceShape, OptOutScope } from "@zcode/services";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
 import { Spinner } from "@/components/ui/spinner.js";
@@ -10,6 +10,9 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { InboxList } from "./InboxList.js";
+import { UnsubscribeScopeDialog } from "./WorkItemSubscriptionControl.js";
+import { subscriptionRequestFor } from "./workItemSubscriptionViewModel.js";
+import { resolveWorkItemCollaborationService } from "./workItemCollaborationAccess.js";
 import {
   squadEntryErrorFeedback,
   squadServiceUnavailableFeedback,
@@ -21,6 +24,7 @@ import {
 } from "./squadRuntimeAccess.js";
 import { squadEntryVisible } from "./squadEntryVisibility.js";
 import {
+  inboxItemUnsubscribeTarget,
   inboxViewState,
   type InboxSessionTarget,
   type InboxWorkItemTarget,
@@ -86,6 +90,10 @@ export function InboxPage({
   const [includeArchived, setIncludeArchived] = useState(false);
   /** 有请求在飞的条目 id（照 WorkItemsPage 的 busyWorkItemId 形态）。 */
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  /** 待确认退订的条目（SUB.3a：两档确认；`null` = 没有待确认的）。 */
+  const [unsubscribeItem, setUnsubscribeItem] = useState<InboxItem | null>(null);
+  /** 退订写在途（确认框禁用两个档：重复点 = 两次写入）。 */
+  const [unsubscribePending, setUnsubscribePending] = useState(false);
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
@@ -153,8 +161,48 @@ export function InboxPage({
     [notify, reload, services],
   );
 
-  const state = inboxViewState({ items, loading, failure });
+  /**
+   * 行「不再通知」的**唯一写入口**（SUB.3a）：与 `runAction` 同形（置忙 → 写 → 成功提示 + 重载 /
+   * 失败提示），但它打的是**协作门面**（订阅面在工作项协作域，`listInboxItems` 的运行时服务面
+   * 没有这个口）。请求经 `subscriptionRequestFor` 单源产出；`scope` 只来自确认框的确认态机。
+   *
+   * 为什么 `unsubscribeItem` 为 null 时**什么都不做**：待确认目标已被清掉（用户取消 / 上一次已完成）
+   * 就等于没有要退订的对象 —— 静默返回并留一条 warn，绝不猜一条最近的条目去退。
+   */
+  const runUnsubscribe = useCallback(
+    async (scope: OptOutScope) => {
+      const item = unsubscribeItem;
+      if (item === null) {
+        logger.warn("[InboxPage] 退订未确认：一级都不执行");
+        return;
+      }
+      const target = inboxItemUnsubscribeTarget(item);
+      if (target === null) {
+        logger.warn("[InboxPage] 退订目标推不出：一级都不执行");
+        return;
+      }
+      setUnsubscribePending(true);
+      try {
+        await resolveWorkItemCollaborationService(services).setWorkItemSubscription(
+          target.target,
+          subscriptionRequestFor(target.workItemId, { kind: "unsubscribe", scope }),
+        );
+        setUnsubscribeItem(null);
+        notify({ tone: "success", messageId: "squad.inbox.unsubscribeSucceeded" });
+        await reload();
+      } catch (error) {
+        logger.warn("[InboxPage] 退订失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        notify(squadEntryErrorFeedback(error));
+      } finally {
+        setUnsubscribePending(false);
+      }
+    },
+    [notify, reload, services, unsubscribeItem],
+  );
 
+  const state = inboxViewState({ items, loading, failure });
   /* 「当前开关为关」（呈现判据复用 squadEntryVisible —— 同一份语义，不新造判据）。
      额外要求 `settings !== null`：`squadEntryVisible(null)` 判"不可见"是为了**藏入口**
      （先藏后显可以接受），而横幅反过来 —— 设置还没读出来就挂"实验已关闭"会在每次进入页面时
@@ -264,8 +312,25 @@ export function InboxPage({
           }}
           onOpenWorkItem={onOpenWorkItem}
           onOpenSession={onOpenSession}
+          onUnsubscribe={setUnsubscribeItem}
         />
       ) : null}
+
+      {/* SUB.3a：两档退订确认（**共用件**：与详情页订阅控件同一份档位表与确认态机）。
+          标题自报是哪条工作项（列表里点的那一行要说得出来）；范围两档由按钮本身表达。 */}
+      {unsubscribeItem === null ? null : (
+        <UnsubscribeScopeDialog
+          testId="inbox-unsubscribe-confirm"
+          titleId="squad.inbox.unsubscribeTitle"
+          titleValues={{ title: unsubscribeItem.title }}
+          descriptionId="squad.inbox.unsubscribeDescription"
+          pending={unsubscribePending}
+          onCancel={() => setUnsubscribeItem(null)}
+          onConfirm={(scope) => {
+            void runUnsubscribe(scope);
+          }}
+        />
+      )}
     </div>
   );
 }

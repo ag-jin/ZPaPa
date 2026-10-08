@@ -4388,6 +4388,14 @@ const zhCN: Record<string, string> = {
   "squad.inbox.openWorkItem": "打开工作项",
   "squad.inbox.openSession": "打开会话",
   "squad.inbox.openFailed": "无法打开：找不到该项目或它已失效",
+  // SUB.3a 行退订（「不再通知」）：两档的范围文案**复用** `squad.workItemDetail.subscription.scope.*`
+  // （一份词表两个入口），这里只给入口 / 标题 / 说明 / 成功提示四句。
+  // ⚠️ 说明必须说清「退订只影响通知」：用户最怕的是「退订会不会把我的东西删了 / 改状态」。
+  "squad.inbox.unsubscribe": "不再通知",
+  "squad.inbox.unsubscribeTitle": "不再通知「{title}」？",
+  "squad.inbox.unsubscribeDescription":
+    "退订只影响通知：工作项本身与收件箱里已有的条目都不受影响。选「此条及子项」会连同它的全部后代一起静音。",
+  "squad.inbox.unsubscribeSucceeded": "已退订：不再通知这条工作项",
   "squad.inbox.experimentOff":
     "多智能体小队实验已关闭：侧栏入口已隐藏、新的派发会被服务层拒绝；收件箱里已有的条目仍可阅读与归档。",
   "squad.inbox.kind.merge_conflict": "合并冲突",
@@ -4601,6 +4609,33 @@ const zhCN: Record<string, string> = {
   // （writeDisabledReason 只换面名），故文案族同形。
   "squad.workItemDetail.inlineEdit.disabled.archived": "工作项已归档，不能行内编辑",
   "squad.workItemDetail.inlineEdit.disabled.readFailed": "读取失败，暂时不能行内编辑",
+  // 「通知 / 订阅」面（SUB.3a）：详情页的订阅控件 + 收件箱行的「不再通知」共用这套词。
+  // 两句状态文案**各带一个占位符**：`{reason}` = 「我为什么在这里」（创建者 / 负责人 / 评论者 /
+  // 被点名 / 队长派单 / 手动），`{scope}` = 「退订到哪一层」（只此条 / 此条及子项）——
+  // 不说清这两件事，订阅控件就只剩一个说不出来的开关。
+  // 六 reason 与两 scope 的**键集必须穷尽**（UI 侧 `Record<闭集, string>` 强制），
+  // 缺一格的表现是界面上出现一个裸键（或上一格的文案）而没有任何报错。
+  "squad.workItemDetail.subscription.title": "通知",
+  "squad.workItemDetail.subscription.status.none": "未订阅",
+  "squad.workItemDetail.subscription.status.subscribed": "关注中（{reason}）",
+  "squad.workItemDetail.subscription.status.unsubscribed": "已退订（{scope}）",
+  "squad.workItemDetail.subscription.subscribe": "订阅",
+  "squad.workItemDetail.subscription.unsubscribe": "退订",
+  "squad.workItemDetail.subscription.unsubscribeTitle": "退订这条工作项的通知？",
+  "squad.workItemDetail.subscription.unsubscribeHint":
+    "退订只影响通知：工作项本身与收件箱里已有的条目都不受影响。选「此条及子项」会连同它的全部后代一起静音。",
+  "squad.workItemDetail.subscription.tombstoneHint":
+    "已退订：自动规则不会再把你加回来；想继续收就点「订阅」。",
+  "squad.workItemDetail.subscription.reason.creator": "创建者",
+  "squad.workItemDetail.subscription.reason.assignee": "负责人",
+  "squad.workItemDetail.subscription.reason.commenter": "评论者",
+  "squad.workItemDetail.subscription.reason.mentioned": "被点名",
+  "squad.workItemDetail.subscription.reason.delegated": "队长派单",
+  "squad.workItemDetail.subscription.reason.manual": "手动订阅",
+  "squad.workItemDetail.subscription.scope.issue": "只此条",
+  "squad.workItemDetail.subscription.scope.subtree": "此条及子项",
+  "squad.workItemDetail.subscription.disabled.archived": "工作项已归档，不能改订阅",
+  "squad.workItemDetail.subscription.disabled.readFailed": "读取活动失败，暂时不能改订阅",
   "squad.workItemDetail.dispatch.pending": "等待派发",
   "squad.workItemDetail.dispatch.opened": "已创建运行",
   "squad.workItemDetail.dispatch.queued": "已排队",

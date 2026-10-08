@@ -1,4 +1,9 @@
-import type { InboxItem, InboxItemKind, InboxItemSeverity } from "@zcode/services";
+import type {
+  InboxItem,
+  InboxItemKind,
+  InboxItemSeverity,
+  SquadWorkspaceTarget,
+} from "@zcode/services";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
 
 /* 「收件箱」一级页面（InboxPage / InboxList）的**纯逻辑**（不 import React、不 import UI 原语
@@ -336,6 +341,38 @@ export function inboxItemSessionTarget(
   const sessionId = inboxItemSessionId(item);
   if (!workspace || sessionId === null) return null;
   return { ...workspace, sessionId };
+}
+
+/**
+ * 「不再通知」（退订）的可执行目标（SUB.3a）：条目带 `workItemId`、**未归档**、且项目坐标推得出。
+ *
+ * 为什么归档行不给：服务面的订阅写经 `requireOwnedWorkItem`（`workItemRepo.get`）**把归档行当
+ * 不存在** —— 入口亮着就是「点了必失败」，而失败文案只能说出「不存在或已归档」，用户看不出
+ * 「其实只是归档了」。判据收在这里，行与页面都照它画。
+ *
+ * 为什么带上 `workItemId` 而不是只给项目坐标：服务面的退订请求按工作项寻址
+ * （`SetWorkItemSubscriptionRequest`），两个事实必须一起给出去，调用方不必再回头读条目。
+ */
+export type InboxUnsubscribeTarget = {
+  /** 退订目标 workspace（C14 反推，与穿透同一条规则）。 */
+  target: SquadWorkspaceTarget;
+  workItemId: string;
+};
+
+export function inboxItemUnsubscribeTarget(
+  item: Pick<InboxItem, "workspacePath" | "workspaceKey" | "workItemId" | "archivedAt">,
+): InboxUnsubscribeTarget | null {
+  if (item.archivedAt !== null) return null;
+  const target = inboxItemWorkItemTarget(item);
+  return target === null
+    ? null
+    : {
+        target: {
+          path: target.workspacePath,
+          identity: target.workspaceIdentity ?? "",
+        },
+        workItemId: target.workItemId,
+      };
 }
 
 // ---------- 行动作 ----------
