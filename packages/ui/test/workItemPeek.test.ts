@@ -583,7 +583,9 @@ test("守卫｜同一读模型：取数只经 useWorkItemCollaboration（全树�
   );
 });
 
-/* 承重（卡面变异 1）：peek 内加评论提交（或任何写入口/写组件）⇒ 下面每一条都能咬住。 */
+/* 承重（卡面变异 1）：peek 内加评论提交（或任何写入口/写组件）⇒ 下面每一条都能咬住。
+   T-P3-R5u 追加：工作项级表情回应的**写**半边（方法 / 可写 hook / 写组件）同样一个都不许出现
+   —— 面板里的回应是只读 chip（读 hook 是允许的那一条，见下一条正向断言）。 */
 test("守卫｜零写调用：不 import 写方法、不挂任何写组件（peek 只读）", () => {
   const peek = stripComments(readSource("squad/WorkItemPeek.tsx"));
   for (const forbidden of [
@@ -599,10 +601,14 @@ test("守卫｜零写调用：不 import 写方法、不挂任何写组件（pee
     "refreshWorkItemPullRequests",
     "updateWorkItem",
     "createWorkItem",
+    "setWorkItemReaction",
     "runCollaborationAction",
     "WorkItemCommentComposer",
     "WorkItemDecisionRecorder",
     "WorkItemSubscriptionControl",
+    "useWorkItemReactions(",
+    "WorkItemReactionPicker",
+    "<WorkItemReactions",
   ]) {
     assert.ok(
       !peek.includes(forbidden),
@@ -612,6 +618,14 @@ test("守卫｜零写调用：不 import 写方法、不挂任何写组件（pee
   assert.ok(
     !/onSubmit|onClick=\{[^}]*service/.test(peek),
     "面板里不得有接服务的提交回调（写入入口一个都不给）",
+  );
+  /* 正向（否则上表可以被「干脆不画回应」空跑通过）：回应经**读** hook 取、以只读 chip 呈现，
+     且 chip 组**不传** `onToggle`（传了就丢掉无按钮形态）。 */
+  assert.ok(
+    peek.includes("useWorkItemReactionRows({") &&
+      peek.includes("<WorkItemReactionChips") &&
+      !peek.includes("onToggle"),
+    "回应的读挂载 = 读 hook + 无 toggle 的 chip 组",
   );
 });
 

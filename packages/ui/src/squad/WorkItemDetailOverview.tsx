@@ -2,6 +2,7 @@ import type { WorkItemCollaborationRead } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { WorkItemLabelChip, WorkItemPriorityBadge } from "./WorkItemRows.js";
+import { WorkItemReactions } from "./WorkItemReactions.js";
 import {
   workItemCreatorKindMessageId,
   workItemCreatorText,
@@ -17,7 +18,10 @@ import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsV
    挤压页面的行数余量（此前已 398/400 靠豁免）。
 
    三条纪律（与 WorkItemDeliverablesSection / WorkItemPullRequestsSection 同款）：
-   ① **纯呈现**：不取服务、不写任何东西 —— 写入只有页面那条执行器一条路；
+   ① **纯呈现**：不取服务、不写任何东西 —— 写入只有页面那条执行器一条路
+      （**唯一例外**是本轮挂上来的 `WorkItemReactions`：它是**自足**的（自带读/写通路与身份
+      取法），概览只把 `workItem` 交给它 —— 页面冻结（399/400）拿不到页面的 target 与读面的
+      `viewerActor`，详见该模块的文件头与交付报告的「viewer 身份取法」一段）；
    ② **状态所有者不变**：展开态仍由页面持有，这里只收受控值 `bodyExpanded` + `onToggleBody`；
    ③ **来源不换**：标签 / 自定义属性 / 正文都取自 `state.read.workItem`（协作读模型含**归档行**；
       改从快照取会让归档项的标签凭空消失，且不报错）。 */
@@ -161,6 +165,12 @@ export function WorkItemDetailOverview({
           ) : null}
         </>
       )}
+      {/* 表情回应（阶段三 · T-P3-R5u）：**概览尾部固定一行**（multica 的 issue-detail 同位：
+          描述块正下方）。本模块只把工作项本体交给它 —— 读/写通路、chips 与选择器都在那个自足
+          模块里（`WorkItemReactions` 的文件头写明为什么它是自足的：页面是冻结的 399/400，
+          概览拿不到读面的 `viewerActor`，身份由写返回学出）。首帧零字节由它保证
+          （读没回来就不渲染：本区的逐字节搬件基线因此不受影响）。 */}
+      <WorkItemReactions workItem={workItem} viewerActor={null} />
     </section>
   );
 }

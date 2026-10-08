@@ -4980,6 +4980,12 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.children.summary": "{terminal}/{total} closed out",
   "squad.workItemDetail.children.disabled.archived":
     "This work item is archived; cannot add sub-items",
+  /* Phase 3 · T-P3-R5u: work-item reactions (8 quick emojis + aggregated chips). Minimal set of 3:
+     the picker's accessible name, a chip's accessible name (emoji/count are placeholders),
+     and the peek's read-failure line. */
+  "squad.workItemDetail.reactions.add": "Add reaction",
+  "squad.workItemDetail.reactions.chip": "{emoji} {count} reactions",
+  "squad.workItemDetail.reactions.readFailed": "Could not read reactions",
   /* #7 D1b: deliverables section (design §3.4). The kind mapping is
      `Record<DeliverableKind, string>` (exhaustive over the closed set). */
   "squad.workItemDetail.deliverables.title": "Deliverables",

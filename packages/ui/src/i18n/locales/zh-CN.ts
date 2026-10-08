@@ -4651,6 +4651,11 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.children.rosterUnavailable": "名册读取失败，暂时看不到子项",
   "squad.workItemDetail.children.summary": "已收尾 {terminal}/{total}",
   "squad.workItemDetail.children.disabled.archived": "工作项已归档，不能添加子项",
+  /* 阶段三 · T-P3-R5u：工作项级表情回应（8 快捷表情 + 聚合 chip）。最小集 3 枚：
+     入口的可及名称 + chip 的可及名称（emoji 与计数走占位符）+ peek 的读失败行。 */
+  "squad.workItemDetail.reactions.add": "添加表情回应",
+  "squad.workItemDetail.reactions.chip": "{emoji} {count} 个回应",
+  "squad.workItemDetail.reactions.readFailed": "表情回应读取失败",
   /* #7 D1b：交付物区（设计 §3.4）。kind 映射是 `Record<DeliverableKind, string>`（闭集穷尽）。 */
   "squad.workItemDetail.deliverables.title": "交付物",
   "squad.workItemDetail.deliverables.empty":

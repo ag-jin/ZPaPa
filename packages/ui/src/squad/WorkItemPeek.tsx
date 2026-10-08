@@ -6,10 +6,13 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
+import { useWorkItemReactionRows, type WorkItemReactionRows } from "./useWorkItemReactionRows.js";
 import { workItemDetailAssigneeLabel } from "./workItemCollaborationViewModel.js";
 import { AssigneeMarker } from "./workItemRowParts.js";
 import { WorkItemLabelChip, WorkItemPriorityBadge } from "./WorkItemRows.js";
+import { WorkItemReactionChips } from "./WorkItemReactionChips.js";
 import { workItemPeekActivityLines, workItemPeekView } from "./workItemPeekViewModel.js";
+import { workItemReactionGroups } from "./workItemReactionsViewModel.js";
 import {
   workItemCreatorKindMessageId,
   workItemCreatorText,
@@ -26,6 +29,8 @@ import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsV
    1. **同一读模型**：取数经 `useWorkItemCollaboration`（详情页那一枚 hook：同一状态机、同一服务
       入口、同一三失败域）；本模块**不**出现第二份取数实现（守卫按全树扫描：`getWorkItemCollaboration(`
       只在 hook 模块里出现一次）。
+      T-P3-R5u 追加的例外只有**一处**：表情回应经 `useWorkItemReactionRows` 读（服务面另一个读面，
+      协作读模型不带它）—— 仍只挂**读** hook，可写 hook 与写方法在本文件里一个都不出现。
    2. **零写调用**：不 import 任何写方法、不拿服务对象 —— 结构上写不出去（守卫扫写方法名清单）。
    3. **关闭路径**：Esc（判据在 `workItemPeekKeyIntent`，由宿主的键盘层执行）、点击面板外部
       （下面的 pointerdown 监听：面板之外的任何一次按下即关）、头部关闭钮。三条都不写任何东西。
@@ -61,6 +66,14 @@ export function WorkItemPeek({
   );
   /* **同一读模型**（纪律 1）：与详情页同一个 hook —— 状态机、服务入口、过期响应丢弃、失败域全共用。 */
   const { state, reload } = useWorkItemCollaboration({ target, workItemId });
+  /* 表情回应：**只读**的第二条读数通路（T-P3-R5u；reactions 是服务面另一个读面，协作读模型
+     不带它）。本模块只挂读 hook —— 可写 hook / 写方法在本文件里一个都不出现（零写纪律按模块
+     咬住：见结构守卫）。归档行不读：服务面把归档视同不存在（读也抛）。 */
+  const archived = state.status === "ready" && state.read?.workItem.archivedAt !== undefined;
+  const reactions = useWorkItemReactionRows({
+    target,
+    workItemId: archived ? null : workItemId,
+  });
 
   /* 点击外部关闭（纪律 3）：面板之外的任何一次按下即关。用 `contains` 判内外（不拼选择器、
      不比较坐标）；面板内的事件（含内部滚动/选择文本）不关。 */
@@ -124,7 +137,12 @@ export function WorkItemPeek({
           {t("squad.workItemDetail.notFound")}
         </p>
       ) : (
-        <WorkItemPeekContent read={view.read} snapshot={snapshot} />
+        <WorkItemPeekContent
+          read={view.read}
+          snapshot={snapshot}
+          reactionRows={reactions.rows}
+          reactionsFailure={reactions.failure}
+        />
       )}
     </aside>
   );
@@ -143,11 +161,17 @@ export function WorkItemPeek({
 export function WorkItemPeekContent({
   read,
   snapshot,
+  reactionRows,
+  reactionsFailure,
 }: {
   /** 协作读模型（`workItemPeekView` 的 `ready` 支带回的同一条本体）。 */
   read: WorkItemCollaborationRead;
   /** 名册（只用于指派显示）。 */
   snapshot: SquadSnapshot;
+  /** 本工作项的反应行（宿主经 `useWorkItemReactionRows` 读回；**缺省/`null` = 还没读到**）。 */
+  reactionRows?: WorkItemReactionRows | null;
+  /** 反应读失败的原因（原样带出）；缺省 = 没失败。 */
+  reactionsFailure?: string | null;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -235,6 +259,27 @@ export function WorkItemPeekContent({
           workItem.labels.map((label) => <WorkItemLabelChip key={label} label={label} />)
         )}
       </span>
+      {/* 表情回应（阶段三 · T-P3-R5u）：**只读**挂在标签块之后（卡面口径）。
+          三条判据：①0 反应 / 还没读到 ⇒ 整块不渲染（速览不摆空壳，也不预判「没有人反应」）；
+          ②只画 chip、**不传 `onToggle`** —— 组件本身就是无按钮形态，写不出去；
+          ③读失败给一行原因（键 + 服务面原文）：不把「读不到」说成「没有人反应」。 */}
+      {reactionRows === undefined || reactionRows === null ? (
+        reactionsFailure === undefined || reactionsFailure === null ? null : (
+          <span
+            data-testid="work-item-peek-reactions-failure"
+            className="flex flex-col gap-0.5 text-ui-xs"
+          >
+            <span className="text-foreground-subtle">
+              {t("squad.workItemDetail.reactions.readFailed")}
+            </span>
+            <span className="break-words text-foreground-subtlest">{reactionsFailure}</span>
+          </span>
+        )
+      ) : reactionRows.length === 0 ? null : (
+        <WorkItemReactionChips
+          groups={workItemReactionGroups({ rows: reactionRows, viewerActor: read.viewerActor })}
+        />
+      )}
       {/* 自定义属性：只读呈现（零写者字段不给编辑器）；没有属性 ⇒ 整块不渲染。 */}
       {properties.length === 0 ? null : (
         <span
