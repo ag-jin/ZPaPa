@@ -30,6 +30,7 @@ import {
   computeRunCancelledDedupKey,
   computeRunCompletedDedupKey,
   computeRunFailedDedupKey,
+  computeRunRejectedDedupKey,
   computeRunStartedDedupKey,
   computeStatusChangedDedupKey,
   computeWorktreeCreatedDedupKey,
@@ -62,10 +63,10 @@ import { makeRepo } from "./helpers/gitFixture.js";
 const WS = "c3b-iv-ws";
 
 // =====================================================================================
-// A. 九枚 dedupKey 冻结（独立真源 = 设计 §5 表）
+// A. 十枚 dedupKey 冻结（独立真源 = 设计 §5 表 + 2026-10-08 第 19 枚裁定）
 // =====================================================================================
 
-test("A1｜九枚 dedupKey 形状逐段冻结（我的取值；含「身份段带冒号也不解析」边界）", () => {
+test("A1｜十枚 dedupKey 形状逐段冻结（我的取值；含「身份段带冒号也不解析」边界）", () => {
   // 工作项两枚：身份 = 工作项 + 事件，尾段毫秒区分两次合法的同向迁移。
   assert.equal(
     computeStatusChangedDedupKey({
@@ -86,11 +87,12 @@ test("A1｜九枚 dedupKey 形状逐段冻结（我的取值；含「身份段�
     "assignee:wi-verify-2:user:u-owner:squad:sq-alpha:1800000000456",
   );
 
-  // run / worktree 七枚：身份 = runId + 事件（一条 run 每类事实至多一枚 ⇒ 无毫秒段）。
+  // run / worktree 八枚：身份 = runId + 事件（一条 run 每类事实至多一枚 ⇒ 无毫秒段）。
   assert.equal(computeRunStartedDedupKey("run-verify-7"), "run:run-verify-7:started");
   assert.equal(computeRunCompletedDedupKey("run-verify-7"), "run:run-verify-7:completed");
   assert.equal(computeRunFailedDedupKey("run-verify-7"), "run:run-verify-7:failed");
   assert.equal(computeRunCancelledDedupKey("run-verify-7"), "run:run-verify-7:cancelled");
+  assert.equal(computeRunRejectedDedupKey("run-verify-7"), "run:run-verify-7:rejected");
   assert.equal(computeWorktreeCreatedDedupKey("run-verify-7"), "run:run-verify-7:worktree_created");
   assert.equal(computeWorktreeMergedDedupKey("run-verify-7"), "run:run-verify-7:worktree_merged");
   assert.equal(
@@ -395,9 +397,9 @@ test("B4｜排队臂负向（补测缺口）：排队与「容量仍满时重投
 });
 
 // =====================================================================================
-// C. settleStatus 意图矩阵：9 调用点 × 意图有无逐格
+// C. settleStatus 意图矩阵：9 调用点 × 意图有无逐格（打回原为登记格，2026-10-08 裁定后带意图）
 // =====================================================================================
-test("C1｜五处带意图 ⇒ 各落对应 kind（leader/member 完成、审查合并、弃树、失败分流全码值）", async () => {
+test("C1｜五处非打回带意图调用点 ⇒ 各落对应 kind（leader/member 完成、审查合并、弃树、失败分流全码值；打回见 C2）", async () => {
   const f = await makeFixture();
 
   // ① completeLeaderRun：merged（leader 无树）⇒ run_completed，payload.status = merged。
@@ -485,12 +487,12 @@ test("C1｜五处带意图 ⇒ 各落对应 kind（leader/member 完成、审查
   }
 });
 
-test("C2｜矩阵登记格·rejected（第四个内部无意图调用点）⇒ 零枚行", async () => {
+test("C2｜矩阵原登记格·打回（第六个带意图调用点）⇒ 恰一枚 run_rejected（真库 + 扇出瞬间已在库）", async () => {
   const f = await makeFixture();
   const item = f.makeItem("iv-reject", { type: "agent", id: f.agent.id });
   await f.openFor("iv-reject-run", item.id);
   const before = f.itemTimeline(item.id).map((row) => row.kind);
-  const rowsOfRunBefore = kindsOf(f.rowsOfRun(item.id, "iv-reject-run"));
+  assert.deepEqual(before, ["status_changed", "run_started", "worktree_created"]);
 
   assert.deepEqual(
     await f.runtime.lifecycle.reviewMemberRun({ runId: "iv-reject-run", verdict: "rejected" }),
@@ -505,16 +507,39 @@ test("C2｜矩阵登记格·rejected（第四个内部无意图调用点）⇒ �
     "rejected",
     "前置：打回是既成事实",
   );
+  /* 2026-10-08 用户裁定：第 19 枚 `run_rejected`（原 C2 的「零投影登记格」就此关闭）。
+     真库行序断言：打回**恰一枚**，落在开跑/建树之后，且分支/agent 与 worktree 族同形。 */
   assert.deepEqual(
-    f.itemTimeline(item.id).map((row) => row.kind),
-    before,
-    "18 值闭集没有「审查打回」这枚 kind：维持零投影（矩阵登记格）",
+    f.itemTimeline(item.id).map((row) => [row.kind, row.sourceRun?.runId ?? null]),
+    [
+      ["status_changed", null],
+      ["run_started", "iv-reject-run"],
+      ["worktree_created", "iv-reject-run"],
+      ["run_rejected", "iv-reject-run"],
+    ],
   );
+  const rejected = f.rowsOfRun(item.id, "iv-reject-run").at(-1)!;
+  assert.equal(rejected.dedupKey, "run:iv-reject-run:rejected");
+  assert.equal(rejected.actor.kind, "system");
+  assert.equal(rejected.payload.agentId, f.agent.id);
+  assert.equal(rejected.payload.branch, f.branchOf(item.id).member);
+  assert.equal("reason" in rejected.payload, false, "打回没有原因原文 ⇒ payload 不造 reason 键");
   assert.ok(f.settled.includes("iv-reject-run:rejected"), "前置：结算事实确实扇出过");
-  assert.deepEqual(f.kindsAtFanout.get("iv-reject-run"), rowsOfRunBefore, "扇出瞬间同样零新增");
+  // 记录先于驱动：hub 扇出那一刻 run_rejected 已在库（与 C3 的五个带意图臂同一观测面）。
+  assert.ok(
+    f.kindsAtFanout.get("iv-reject-run")?.includes("run_rejected"),
+    "扇出前必须已落 run_rejected",
+  );
+  // 同一条 run 再打回：一键一行 ⇒ 不落第二枚。
+  await f.runtime.lifecycle.reviewMemberRun({ runId: "iv-reject-run", verdict: "rejected" });
+  assert.deepEqual(
+    kindsOf(f.rowsOfRun(item.id, "iv-reject-run")),
+    ["run_started", "worktree_created", "run_rejected"],
+    "重投不翻倍：打回事实对一条 run 至多一枚",
+  );
 });
 
-test("C3｜记录先于驱动：五处带意图的收口，hub 扇出那一刻终止行已在库里", async () => {
+test("C3｜记录先于驱动：六处带意图的收口，hub 扇出那一刻终止行已在库里", async () => {
   const f = await makeFixture();
 
   // ① 队员完成（produced ⇒ run_completed）
@@ -557,6 +582,12 @@ test("C3｜记录先于驱动：五处带意图的收口，hub 扇出那一刻�
     reason: SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
   });
   assert.ok(f.kindsAtFanout.get("iv-ord-e")?.includes("run_cancelled"));
+
+  // ⑥ 打回（第 19 枚 ⇒ run_rejected；2026-10-08 裁定后不再是零投影格）
+  const wiF = f.makeItem("iv-ord-f", { type: "agent", id: f.agent.id });
+  await f.openFor("iv-ord-f", wiF.id);
+  await f.runtime.lifecycle.reviewMemberRun({ runId: "iv-ord-f", verdict: "rejected" });
+  assert.ok(f.kindsAtFanout.get("iv-ord-f")?.includes("run_rejected"));
 });
 
 test("C4｜失败原因 → 意图的映射单源（行为面）：user_cancel / 看门狗三码 / 其余逐格", () => {

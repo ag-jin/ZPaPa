@@ -1055,8 +1055,12 @@ export function createRunLifecycle(deps: {
 
       if (verdict === "rejected") {
         /* 打回待修：只改台账状态，**工作树一个字节不动**（spec §6.2「审查被拒时必须存活到合并」）。
-           删树/删分支要等到它被合并（或整批被放弃）时，由批次层的 discard 走。 */
-        settleStatus(runId, "rejected");
+           删树/删分支要等到它被合并（或整批被放弃）时，由批次层的 discard 走。
+           C3b 第 19 枚（2026-10-08 用户裁定）：打回此前是时间线唯一不可见的终态 ⇒ 这里声明
+           `run_rejected` 投影意图（第 19 枚 kind）。意图**由本处声明**而不是让投影从
+           `(status, reason)` 反推：rejected 与 produced 在载荷上分得开，但同一条 run 的
+           「打回」事实归属只有本行知道；键形状/payload 组装仍在投影模块。 */
+        settleStatus(runId, "rejected", { activity: { kind: "run_rejected" } });
         return { ok: true, merged: false, kept: true };
       }
 

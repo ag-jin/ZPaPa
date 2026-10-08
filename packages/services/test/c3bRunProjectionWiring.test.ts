@@ -305,7 +305,7 @@ test("C3b.2-⑤ 审查通过 ⇒ worktree_merged（branch + integration 字面�
   });
 });
 
-test("C3b.2-⑥ 摘树删分支 ⇒ worktree_discarded（branch + dirName 字面量）；打回（rejected）⇒ 零新活动", async () => {
+test("C3b.2-⑥ 摘树删分支 ⇒ worktree_discarded（branch + dirName 字面量）；打回 ⇒ 恰一枚 run_rejected", async () => {
   const f = await setup();
   f.insertItem("wi-discard");
   await f.openFor("run-discard", "wi-discard");
@@ -323,20 +323,48 @@ test("C3b.2-⑥ 摘树删分支 ⇒ worktree_discarded（branch + dirName 字面
   );
   assert.deepEqual(rows[2]!.payload, { branch: plan.member, dirName: memberDirName(plan) });
 
-  /* 打回臂（设计 §5.2 矩阵登记格）：18 值闭集没有「审查打回」这枚 kind ⇒ **不投影**。
-     这不是遗漏而是裁定（§10-2）：扩集需动 shared 闭集 + repo + UI 穷尽映射，另立轮次。 */
+  /* 打回臂（2026-10-08 用户裁定：第 19 枚 `run_rejected`，设计 §10-2 登记格就此关闭）：
+     打回待修 ⇒ 时间线**恰一枚** `run_rejected`；树一个字节不动（spec §6.2 要活到合并）
+     ⇒ 没有 worktree 事实。 */
   f.insertItem("wi-reject");
   await f.openFor("run-reject", "wi-reject");
-  await f.runtime.lifecycle.reviewMemberRun({ runId: "run-reject", verdict: "rejected" });
+  const rejectPlan = f.planFor("wi-reject");
+  assert.deepEqual(
+    await f.runtime.lifecycle.reviewMemberRun({ runId: "run-reject", verdict: "rejected" }),
+    {
+      ok: true,
+      merged: false,
+      kept: true,
+    },
+  );
   assert.equal(
     f.runtime.squadRunRepo.get("run-reject")?.status,
     "rejected",
     "前置：打回是既成事实",
   );
+  const rejectRows = f.timeline("wi-reject");
+  assert.deepEqual(
+    rejectRows.map((row) => [row.kind, row.dedupKey]),
+    [
+      ["run_started", "run:run-reject:started"],
+      ["worktree_created", "run:run-reject:worktree_created"],
+      ["run_rejected", "run:run-reject:rejected"],
+    ],
+    "打回落恰一枚 run_rejected，且排在开跑/建树之后（事实先落、投影随后）",
+  );
+  assert.deepEqual(rejectRows[2]!.payload, { branch: rejectPlan.member, agentId: f.agent.id });
+  assert.deepEqual(rejectRows[2]!.sourceRun, {
+    runId: "run-reject",
+    agentId: f.agent.id,
+    role: "member",
+  });
+  assert.ok(f.settled.includes("run-reject:rejected"), "结算事实扇出不变（投影只是回声）");
+  /* 同一条 run 再被打回一次（重投 / 双路径）：`run:<id>:rejected` 一键一行 ⇒ 不落第二枚。 */
+  await f.runtime.lifecycle.reviewMemberRun({ runId: "run-reject", verdict: "rejected" });
   assert.deepEqual(
     f.timeline("wi-reject").map((row) => row.kind),
-    ["run_started", "worktree_created"],
-    "打回在闭集内没有对应 kind：维持零投影（矩阵登记格）",
+    ["run_started", "worktree_created", "run_rejected"],
+    "同一条 run 的「被打回」事实至多一枚（键身份 = runId，不带毫秒段）",
   );
 });
 
