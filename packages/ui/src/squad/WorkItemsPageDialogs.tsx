@@ -64,7 +64,16 @@ export function WorkItemsPageDialogs({
           mode="edit"
           titleId="squad.workItems.editTitle"
           submitLabelId="squad.common.save"
-          initial={{ title: dialog.item.title, body: dialog.item.body, labels: dialog.item.labels }}
+          /* 初值来自**条目本身**（未设置 ⇒ undefined ⇒ 表单显示空白 /「未设置」）：
+             不回填等于「编辑一次就把库里已有的值清空」，且不报错。 */
+          initial={{
+            title: dialog.item.title,
+            body: dialog.item.body,
+            labels: dialog.item.labels,
+            priority: dialog.item.priority,
+            startDate: dialog.item.startDate,
+            dueDate: dialog.item.dueDate,
+          }}
         />
       ) : null}
 

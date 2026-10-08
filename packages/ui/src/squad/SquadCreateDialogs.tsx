@@ -5,10 +5,12 @@ import {
   parseWorkItemLabels,
   resolveTeamAgentMaxConcurrentRuns,
   TEAM_AGENT_COLORS,
+  WORK_ITEM_PRIORITY_KEYS,
   type McpServerConfig,
   type TeamAgent,
   type WorkItem,
   type WorkItemLabelsParseResult,
+  type WorkItemPriorityKey,
 } from "@zcode/shared";
 
 /** 标签预检的**失败**结论（`ok` 不进状态：表单只在非 ok 时留文案）。 */
@@ -31,6 +33,12 @@ import type { ModelSelection } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
+import {
+  WORK_ITEM_PRIORITY_MESSAGE_IDS,
+  parseWorkItemSurfaceFields,
+  workItemSurfaceFieldErrorMessageId,
+  type WorkItemSurfaceFieldsParseResult,
+} from "./workItemPropertiesViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
 import { TeamAgentMcpSection } from "./TeamAgentMcpSection.js";
 import { mcpServersSubmitPatch } from "./teamAgentMcpViewModel.js";
@@ -580,11 +588,15 @@ export function SquadDialog({
 
 /**
  * 「新建工作项」对话框提交的形状（**带 mode 的判别联合**）：create 带全部字段，
- * edit **只能**带标题 / 正文 / 标签 —— 指派人与父项**不是**可编辑字段（见下），让它们
- * 在类型上就不存在比"界面上藏起来、回调里其实能传"更强。
+ * edit **只能**带标题 / 正文 / 标签 / 三项 Surface 字段 —— 指派人与父项**不是**可编辑字段（见下），
+ * 让它们在类型上就不存在比"界面上藏起来、回调里其实能传"更强。
  *
  * `labels` 两支都**必带**（不是可选）：编辑不带标签等于「提交空标签」，会把库里已有的标签
  * 清掉 —— 那是一次静默的数据丢失。必带让「随手漏传」在编译期就过不去。
+ *
+ * 阶段一轮 C 的三项 Surface 字段（priority / startDate / dueDate）同理**两支都必带**：
+ * 服务面把 `undefined` 读成「没提这个字段」而保留旧值，`null` 才是「清回未设置」——
+ * 编辑表单里的空输入表达的正是后者，漏传会让「界面上清空了、库里还在」。
  */
 export type WorkItemDialogSubmitInput =
   | {
@@ -594,8 +606,19 @@ export type WorkItemDialogSubmitInput =
       parentId?: string;
       assignee: WorkItem["assignee"];
       labels: string[];
+      priority: WorkItemPriorityKey | null;
+      startDate: string | null;
+      dueDate: string | null;
     }
-  | { mode: "edit"; title: string; body?: string; labels: string[] };
+  | {
+      mode: "edit";
+      title: string;
+      body?: string;
+      labels: string[];
+      priority: WorkItemPriorityKey | null;
+      startDate: string | null;
+      dueDate: string | null;
+    };
 
 /** 工作项表单：**创建 / 编辑两用**（只有这一份实现 —— 另抄一份编辑表单会让两个表单
     在字段与校验上陆续分叉，而分叉不报错）。`mode` 默认 `"create"`（显示全部字段，现状）；
@@ -621,10 +644,18 @@ export function WorkItemDialog({
   snapshot: SquadSnapshot;
   onClose: () => void;
   onSubmit: (input: WorkItemDialogSubmitInput) => void;
-  /** `create`（默认）显示全部字段；`edit` 只显示标题 / 正文 / 标签（理由见上）。 */
+  /** `create`（默认）显示全部字段；`edit` 只显示标题 / 正文 / 标签 / 三项 Surface 字段（理由见上）。 */
   mode?: "create" | "edit";
-  /** 编辑既有工作项时的初值（标题 / 正文 / 标签）；省略 = 空白（仅 create 用得到）。 */
-  initial?: { title: string; body: string; labels?: string[] };
+  /** 编辑既有工作项时的初值（标题 / 正文 / 标签 / 优先级 / 起止日期）；省略 = 空白（仅 create 用得到）。 */
+  initial?: {
+    title: string;
+    body: string;
+    labels?: string[];
+    /** 三项 Surface 字段（阶段一轮 C）：`undefined` = 未设置（表单显示为空白 / 「未设置」）。 */
+    priority?: WorkItemPriorityKey;
+    startDate?: string;
+    dueDate?: string;
+  };
   /** 标题文案键；省略即「新建工作项」。 */
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
@@ -638,6 +669,16 @@ export function WorkItemDialog({
   const [labelsText, setLabelsText] = useState((initial?.labels ?? []).join(", "));
   /** 非 ok 的解析结论（超限）：**显示文案并拦下提交**，不静默截断（截断后提交 = 界面说成功、库里少几个）。 */
   const [labelsError, setLabelsError] = useState<WorkItemLabelsFailure | null>(null);
+  /* 三项 Surface 字段（阶段一轮 C）：优先级是**选择**（空 = 未设置），起止日期是 `YYYY-MM-DD` 文本。
+     状态是**输入原文**（不是解析后的值）：坏输入要原样留着让用户改，不能悄悄换成空。 */
+  const [priorityValue, setPriorityValue] = useState<string>(initial?.priority ?? "");
+  const [startDateText, setStartDateText] = useState(initial?.startDate ?? "");
+  const [dueDateText, setDueDateText] = useState(initial?.dueDate ?? "");
+  /** 非 ok 的解析结论（**指名到字段**）：同样拦下提交并留下文案。 */
+  const [surfaceFieldsError, setSurfaceFieldsError] = useState<{
+    messageId: string;
+    value: string;
+  } | null>(null);
   const [assigneeValue, setAssigneeValue] = useState("user");
   const [parentValue, setParentValue] = useState(NO_PARENT_VALUE);
 
@@ -667,10 +708,35 @@ export function WorkItemDialog({
           return;
         }
         setLabelsError(null);
+        /* 三项 Surface 字段预检：同样是**拦在提交之前**（判据单源在 shared，经
+           `parseWorkItemSurfaceFields` 翻译「空白 ⇒ 未设置」）。坏值原样留在输入框里，
+           文案指名是哪一项 —— 不静默折成未设置（那会让用户明确填过的一天凭空消失）。 */
+        const surfaceFields: WorkItemSurfaceFieldsParseResult = parseWorkItemSurfaceFields({
+          priority: priorityValue,
+          startDate: startDateText,
+          dueDate: dueDateText,
+        });
+        if (surfaceFields.kind !== "ok") {
+          setSurfaceFieldsError({
+            messageId: workItemSurfaceFieldErrorMessageId(surfaceFields.field),
+            value: surfaceFields.value,
+          });
+          return;
+        }
+        setSurfaceFieldsError(null);
         if (isEdit) {
           // 编辑：body **总是**提交（哪怕用户清空成 ""）—— 传 undefined 会被服务面当成
-          // "没提这个字段"而保留旧正文，用户以为删掉了、盘上还在。标签同理（空文本 = 清空）。
-          onSubmit({ mode: "edit", title: title.trim(), body, labels: parsedLabels.labels });
+          // "没提这个字段"而保留旧正文，用户以为删掉了、盘上还在。标签同理（空文本 = 清空）；
+          // 三项 Surface 字段同理（空输入 = 清回未设置，服务面把 null 与 undefined 分得很清）。
+          onSubmit({
+            mode: "edit",
+            title: title.trim(),
+            body,
+            labels: parsedLabels.labels,
+            priority: surfaceFields.patch.priority,
+            startDate: surfaceFields.patch.startDate,
+            dueDate: surfaceFields.patch.dueDate,
+          });
           return;
         }
         onSubmit({
@@ -681,6 +747,9 @@ export function WorkItemDialog({
           parentId: parentValue === NO_PARENT_VALUE ? undefined : parentValue,
           assignee: parseAssigneeValue(assigneeValue),
           labels: parsedLabels.labels,
+          priority: surfaceFields.patch.priority,
+          startDate: surfaceFields.patch.startDate,
+          dueDate: surfaceFields.patch.dueDate,
         });
       }}
     >
@@ -719,6 +788,61 @@ export function WorkItemDialog({
       {labelsError ? (
         <p className="text-ui-xs text-destructive" data-testid="work-item-labels-error">
           {labelsErrorText(labelsError)}
+        </p>
+      ) : null}
+      {/* 三项 Surface 字段（阶段一轮 C）：创建与编辑**都给** —— 都是「改个错别字」那一类内容编辑
+          （服务面 `createWorkItem` / `updateWorkItem` 的白名单都已开）。判据在纯函数里，控件只收集原文。 */}
+      <Field labelId="squad.workItems.priority">
+        {(controlId) => (
+          <Select value={priorityValue} onValueChange={setPriorityValue}>
+            <SelectTrigger id={controlId} data-testid="work-item-priority-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {/* 空值 = **未设置**（NULL）：它是「没人定过」，不是一个档位 —— 故它是默认项，
+                  但仍由用户显式选择（不替用户预选一个档位）。 */}
+              <SelectItem value="">
+                {intl.formatMessage({ id: "squad.workItems.priority.unset" })}
+              </SelectItem>
+              {WORK_ITEM_PRIORITY_KEYS.map((key) => (
+                <SelectItem key={key} value={key}>
+                  {intl.formatMessage({ id: WORK_ITEM_PRIORITY_MESSAGE_IDS[key] })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </Field>
+      {/* 起止日期：输入就是 `YYYY-MM-DD` **文本**（不用 `type="date"`：那会把值交给平台日期控件，
+          取值随 locale/时区漂移，而我们的契约是无时区的日历日）。占位符给形状提示。 */}
+      <Field labelId="squad.workItems.startDate">
+        {(controlId) => (
+          <Input
+            id={controlId}
+            data-testid="work-item-start-date"
+            value={startDateText}
+            placeholder={intl.formatMessage({ id: "squad.workItems.datePlaceholder" })}
+            onChange={(event) => setStartDateText(event.target.value)}
+          />
+        )}
+      </Field>
+      <Field labelId="squad.workItems.dueDate">
+        {(controlId) => (
+          <Input
+            id={controlId}
+            data-testid="work-item-due-date"
+            value={dueDateText}
+            placeholder={intl.formatMessage({ id: "squad.workItems.datePlaceholder" })}
+            onChange={(event) => setDueDateText(event.target.value)}
+          />
+        )}
+      </Field>
+      {surfaceFieldsError ? (
+        <p className="text-ui-xs text-destructive" data-testid="work-item-surface-fields-error">
+          {intl.formatMessage(
+            { id: surfaceFieldsError.messageId },
+            { value: surfaceFieldsError.value },
+          )}
         </p>
       ) : null}
       {/* 指派人与父项**只在创建时**出现（编辑为何不带它们见函数头注释）。 */}

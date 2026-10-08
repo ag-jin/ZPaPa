@@ -268,14 +268,19 @@ export function WorkItemsPage({
               parentId: input.parentId,
               assignee: input.assignee,
               labels: input.labels,
+              // 三项 Surface 字段（阶段一轮 C）：表单已经归一化（`null` = 未设置），服务面原样收下。
+              priority: input.priority,
+              startDate: input.startDate,
+              dueDate: input.dueDate,
             }),
           "squad.workItems.created",
         );
         return;
       }
-      // 编辑：只把标题 / 正文 / 标签交给服务面（`updateWorkItem` 的白名单就只有这三个）——
-      // 指派与父项不在编辑里（理由见 WorkItemDialog 的注释）。标签**必传**：它是表单的当前值
-      // （空文本 = 清空标签），漏传会被服务面读成「没提这个字段」而保留旧值，界面与库就不一致。
+      // 编辑：只把标题 / 正文 / 标签 / 三项 Surface 字段交给服务面（`updateWorkItem` 的白名单
+      // 就是这六个）——指派与父项不在编辑里（理由见 WorkItemDialog 的注释）。标签**必传**：它是
+      // 表单的当前值（空文本 = 清空标签），漏传会被服务面读成「没提这个字段」而保留旧值。
+      // 三项 Surface 字段同理（`null` = 清回未设置）
       if (dialog?.kind !== "edit") return;
       const id = dialog.item.id;
       void runAction(
@@ -283,7 +288,14 @@ export function WorkItemsPage({
         (service) =>
           service.updateWorkItem(target, {
             id,
-            patch: { title: input.title, body: input.body, labels: input.labels },
+            patch: {
+              title: input.title,
+              body: input.body,
+              labels: input.labels,
+              priority: input.priority,
+              startDate: input.startDate,
+              dueDate: input.dueDate,
+            },
           }),
         "squad.workItems.updated",
       );
