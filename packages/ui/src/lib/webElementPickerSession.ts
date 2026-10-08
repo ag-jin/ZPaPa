@@ -1,6 +1,7 @@
 import { logger } from "@/logger.js";
 import {
   dispatchWebElementContextAddToChat,
+  getWebElementContextDedupeKey,
   isWebElementContextPayload,
   normalizeWebElementComment,
   type WebElementContextPayload,
@@ -29,6 +30,7 @@ export interface WebElementPickerSession {
   chain: readonly WebElementAncestorStep[];
   chainTruncated: boolean;
   level: number;
+  /** 已确认元素的身份去重计数（与 chip 的身份合并口径一致）。 */
   pickedCount: number;
   lastSelected: WebElementContextPayload | null;
 }
@@ -310,6 +312,8 @@ export function createWebElementPickerSessionDriver(
       );
       // 首段是整脚本注入：失败必须冒泡，renderer 用它上 elementPickerFailed 横幅。
       let pickResult = await waitForPick(executeJs(injectionScript), runId, true);
+      // 计数与 chip 的身份合并同口径：同一元素重选只算一条，否则浮条会比 composer 多报。
+      const pickedKeys = new Set<string>();
       let pickedCount = 0;
 
       while (isCurrent(runId) && pickResult.status === "clicked") {
@@ -342,7 +346,8 @@ export function createWebElementPickerSessionDriver(
           }
 
           dispatchPayload(element);
-          pickedCount += 1;
+          pickedKeys.add(getWebElementContextDedupeKey(element));
+          pickedCount = pickedKeys.size;
           logger.info(`${LOG_PREFIX} 网页元素上下文已加入聊天`, {
             tagName: element.tagName,
             url: sanitizeUrlForLog(element.pageUrl),

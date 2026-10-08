@@ -118,7 +118,7 @@ interface ZcodeWebElementPickerHandle {
     | { status: "repick" }                                     // adjust 阶段 Esc / 重选
     | { status: "cancelled" }
   >;
-  showAncestor(level: number): { level: number; label: string } | null;  // 幂等，同步返回
+  showAncestor(level: number): { level: number; label: string } | null;  // 幂等，同步返回，但只是可选诊断返回：面包屑以 renderer 本地夹取为准，不消费它
   confirm(): void;      // 等价 Enter
   requestRepick(): void; // 等价 adjust 阶段 Esc（触发 beginAdjust resolve repick）
   cancel(): void;       // 任意阶段：pending promise 一律 resolve cancelled 并 cleanup（沿用现契约）
@@ -229,7 +229,7 @@ startPicking()
  ├─ setState(phase=adjust)               冻结绿框; 页内标签=buildAncestorLabel(chain,0)
  │
  ├─ ★executeJavaScript(showAncestor(3)) →→  重定位绿框到 chain[3]; 标签=`div table`
- │    (滑轨 onChange, rAF 节流; 同步返回 {level,label} 供面包屑校准)
+ │    (滑轨 onChange, rAF 节流; 返回 {level,label} 仅是可选的页内诊断返回，面包屑以本地夹取为准)
  │
  ├─ ★executeJavaScript(beginAdjust()) ─→  进入 adjusting; 挂 Enter/Esc 等待确认
  ├─ ★executeJavaScript(confirm())   ───→  collectElement(chain[level]) → resolve {selected, element}
