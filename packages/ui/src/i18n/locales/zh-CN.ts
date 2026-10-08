@@ -3714,8 +3714,6 @@ const zhCN: Record<string, string> = {
   "settings.subagents.form.disallowedTools.label": "禁用工具",
   "settings.subagents.form.skills.label": "技能",
   "settings.subagents.form.background.label": "后台派发",
-  "settings.subagents.form.background.description":
-    "该子智能体将始终作为后台任务派发，完成后自动通知。",
   "settings.subagents.form.injectAgentsMd.label": "注入 AGENTS.md",
   "settings.subagents.form.systemPrompt.label": "系统提示词",
   "settings.subagents.form.systemPrompt.placeholder": "描述这个子智能体的角色、边界和规则...",
