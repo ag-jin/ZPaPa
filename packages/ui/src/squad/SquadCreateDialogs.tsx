@@ -40,9 +40,13 @@ import {
   type WorkItemSurfaceFieldsParseResult,
 } from "./workItemPropertiesViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
+import type { TeamAgentDialogInitial } from "./teamAgentDialogInitial.js";
 import { TeamAgentMcpSection } from "./TeamAgentMcpSection.js";
 import { mcpServersSubmitPatch } from "./teamAgentMcpViewModel.js";
 import type { SquadDialogInitial } from "./squadsViewModel.js";
+
+/** 初值形状的再导出：表单文件是它的主要使用者，读者从这里找得到（单源在 teamAgentDialogInitial.ts）。 */
+export type { TeamAgentDialogInitial } from "./teamAgentDialogInitial.js";
 
 /* 本阶段的三个「最小」创建表单（协作智能体 / 小队 / 工作项）。
 
@@ -61,15 +65,16 @@ const NO_PARENT_VALUE = "__none__";
  * 协作智能体表单：**创建 / 编辑两用**（只有这一处实现 —— 另抄一份编辑表单会让两个表单
  * 在字段与校验上陆续分叉，而分叉不报错）。
  *
- * `initial` 省略即「新建」（空白表单）；给出即「编辑」（按既有值填初值，标题与提交按钮
- * 的文案由 `titleId` / `submitLabelId` 换）。提交的回调形状两者相同：三个可编辑字段
- * ——正是服务面 `updateTeamAgent` 的白名单（`TeamAgentEditablePatch`），不多不少。
+ * `initial` 省略即「新建」（空白表单）；给出即「编辑」或「按初值预填」（AI 访谈产物、
+ * 半途改手动创建都走这条）。提交的回调形状只有三个可编辑字段是**必填** ——
+ * 正是服务面 `updateTeamAgent` 的白名单（`TeamAgentEditablePatch`），不多不少。
  */
 export function TeamAgentDialog({
   onClose,
   onSubmit,
   initial,
   modelView,
+  aiGenerated = false,
   titleId = "squad.agents.create",
   submitLabelId = "squad.common.submit",
 }: {
@@ -96,25 +101,13 @@ export function TeamAgentDialog({
     /** per-agent MCP（multica 欠账 #2）：整张 map 替换；空 map = 清空全部覆盖项（见提交语义）。 */
     mcpServers?: Record<string, McpServerConfig>;
   }) => void;
-  /** 编辑既有智能体时的初值；省略 = 新建。 */
-  initial?: {
-    name: string;
-    systemPrompt: string;
-    memoryScope: TeamAgent["memoryScope"];
-    description?: string;
-    color?: TeamAgent["color"];
-    modelSelection?: ModelSelection;
-    skills?: string[];
-    permissionMode?: TeamAgent["permissionMode"];
-    tools?: string[];
-    disallowedTools?: string[];
-    maxConcurrentRuns?: number;
-    /** per-agent MCP：既有定义的 server map（缺席 = 该 agent 不覆盖任何 server）。 */
-    mcpServers?: Record<string, McpServerConfig>;
-  };
+  /** 编辑既有智能体（或按访谈草稿预填）时的初值；省略 = 全新。 */
+  initial?: TeamAgentDialogInitial;
   /** 模型选择视图（②b）：由页面持有 `useModelSelectionServiceView` 传入——dialog 保持纯受控，
       模型清单/生效值的取数不在表单里再起一份。undefined = 服务不可用（控件禁用态）。 */
   modelView?: ReturnType<typeof useModelSelectionServiceView>["state"];
+  /** 初值来自 AI 访谈（AgentBuilder）：系统提示词区挂「由 AI 生成，请审阅」标注（§4-D4）。 */
+  aiGenerated?: boolean;
   /** 标题文案键；省略即「新建协作智能体」。 */
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
@@ -240,12 +233,24 @@ export function TeamAgentDialog({
       </Field>
       <Field labelId="squad.common.systemPrompt">
         {(controlId) => (
-          <SettingsFormTextarea
-            id={controlId}
-            value={systemPrompt}
-            rows={4}
-            onChange={(event) => setSystemPrompt(event.target.value)}
-          />
+          <div className="flex flex-col gap-1">
+            <SettingsFormTextarea
+              id={controlId}
+              value={systemPrompt}
+              rows={4}
+              onChange={(event) => setSystemPrompt(event.target.value)}
+            />
+            {/* AI 访谈产物预填时的审阅提示（§4-D4）：系统提示词是敏感面，必须过用户的眼。
+                只有这一处实现 —— 编辑既有智能体或全手填时不出现（避免变成一句常驻噪音）。 */}
+            {aiGenerated ? (
+              <p
+                className="text-ui-xs text-foreground-subtle"
+                data-testid="squad-agent-ai-generated-notice"
+              >
+                {intl.formatMessage({ id: "squad.agentBuilder.systemPromptNotice" })}
+              </p>
+            ) : null}
+          </div>
         )}
       </Field>
       <Field labelId="squad.common.memoryScope">

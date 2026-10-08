@@ -96,7 +96,7 @@ test("枚举与类型：非法 memoryScope / permissionMode / 缺字段 / 错类
 /* 记忆作用域与落盘定义的取值域必须同源：草稿里写 "global" 通过了、落盘时被拒，
    会变成一次「表单说成功、服务拒了」的静默失败。 */
 test("memoryScope 取值域与 teamAgentSchema 同源", () => {
-  for (const scope of [...TEAM_AGENT_MEMORY_SCOPES]) {
+  for (const scope of TEAM_AGENT_MEMORY_SCOPES) {
     assert.equal(
       agentBuilderDraftSchema.safeParse({ ...emptyAgentBuilderDraft(), memoryScope: scope })
         .success,

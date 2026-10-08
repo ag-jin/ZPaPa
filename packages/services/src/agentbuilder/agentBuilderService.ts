@@ -8,11 +8,7 @@ import {
 import type { ZCodeWorkspaceModelMessage } from "@zcode/shared";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
-import {
-  AGENT_BUILDER_QUERY_SOURCE,
-  type AgentBuilderTurn,
-  type IAgentBuilderService,
-} from "./agentBuilder.js";
+import { AGENT_BUILDER_QUERY_SOURCE, type IAgentBuilderService } from "./agentBuilder.js";
 import { AgentBuilderError } from "./agentBuilderErrors.js";
 import { buildAgentBuilderMessages } from "./envelope.js";
 import { mergeAgentBuilderDraft, readAgentDraftBlock } from "./draftProtocol.js";
