@@ -484,7 +484,10 @@ test("listOpenByBranchPrefix｜GET 开着的 PR 列表，按 head 前缀过滤�
   });
   assert.equal(result.ok, true, JSON.stringify(result));
   if (!result.ok) return;
-  assert.equal(calls[0]!.url, "https://api.github.com/repos/acme/widget/pulls?state=open&per_page=100");
+  assert.equal(
+    calls[0]!.url,
+    "https://api.github.com/repos/acme/widget/pulls?state=open&per_page=100",
+  );
   assert.deepEqual(
     result.pullRequests.map((pull) => pull.number),
     [7],

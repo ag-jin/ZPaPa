@@ -615,6 +615,8 @@ test("零副作用｜经门面写 5 种 kind：work_items / runs / receipts / �
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(f.db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -704,6 +706,8 @@ test("零副作用｜读面闭合：门面读回 decisions 与锚 Activity 指�
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(f.db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

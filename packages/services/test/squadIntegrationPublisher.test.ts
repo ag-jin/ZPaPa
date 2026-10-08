@@ -244,9 +244,12 @@ test("发布成功｜真 push 到 origin（GitHub 形态）+ 开 PR + 登记行�
 
 test("降级①｜没配 token（null provider）：degraded=no_token，且**零远端写**（没 push、没开 PR、没登记行）", async () => {
   const f = await setup({ remote: "github" });
-  const { provider, creates, lists } = stubProvider({});
+  // 本用例要的是**真正的离线 adapter**（null provider）；stub 只用来记「有没有被调用」。
+  const { creates, lists } = stubProvider({});
   try {
-    const outcome = await f.publisher(createNullPullRequestProvider()).publishForReview(publishInput);
+    const outcome = await f
+      .publisher(createNullPullRequestProvider())
+      .publishForReview(publishInput);
     assert.equal(outcome.status, "degraded");
     if (outcome.status !== "degraded") return;
     assert.equal(outcome.code, "no_token");
@@ -377,7 +380,11 @@ test("崩溃窗口认回｜开 PR 返回 422（同 head 已存在）：按分支
   try {
     const outcome = await f.publisher(provider).publishForReview(publishInput);
     assert.equal(outcome.status, "published", JSON.stringify(outcome));
-    assert.deepEqual(lists, [INTEGRATION], "按集成分支前缀列举（精确等于集成分支的那条才是本批的）");
+    assert.deepEqual(
+      lists,
+      [INTEGRATION],
+      "按集成分支前缀列举（精确等于集成分支的那条才是本批的）",
+    );
     const row = f.repo.listByWorkItem(WS, "wi-p")[0]!;
     assert.equal(row.prNumber, 78, "认回的是 head == 集成分支的那条，不是别的分支的");
     assert.equal(row.snapshotHeadSha, "sha-int-9");

@@ -317,7 +317,9 @@ test("竞态｜同一 pin 的两次刷新都基于空 pin 首拉：第二次必�
 
 /* ---------------- ③ 回归面：读模型的八格（含 D1 交付物与 D2 的 PR 两格） ---------------- */
 
-test("读模型｜协作聚合读恰十键（workItem/viewerActor + 八格数据面），D1 交付物与 D2 PR 两格并存且离线缺省可读", async () => {
+/* D3 重算（2026-10-08）：读模型新增 `mergeMode` 一格（详情页 PR 区的 pr-gate 提示要读它）
+   ⇒ 十键 → **十一键**。这是有意的增长（不是漂移），按同一纪律重算写死键集。 */
+test("读模型｜协作聚合读恰十一键（workItem/viewerActor + 九格数据面），D1/D2/D3 三格并存且离线缺省可读", async () => {
   const workspacePath = mkdtempSync(join(tmpdir(), "d2-read-"));
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
@@ -365,6 +367,7 @@ test("读模型｜协作聚合读恰十键（workItem/viewerActor + 八格数据
         "comments",
         "decisions",
         "deliverables",
+        "mergeMode",
         "pullRequestProvider",
         "pullRequests",
         "reactions",
@@ -372,7 +375,7 @@ test("读模型｜协作聚合读恰十键（workItem/viewerActor + 八格数据
         "viewerActor",
         "workItem",
       ].sort(),
-      "D1 交付物格与 D2 PR 两格必须同时在读模型里（缺一格 ⇒ 详情页某区静默空转）",
+      "D1 交付物格、D2 PR 两格与 D3 模式格必须同时在读模型里（缺一格 ⇒ 详情页某区静默空转）",
     );
     assert.deepEqual(read!.deliverables, [], "D1 交付物格仍按 workspace+item 口径可读");
     assert.deepEqual(read!.pullRequests, [], "D2 PR 清单格可读（离线缺省下为空）");

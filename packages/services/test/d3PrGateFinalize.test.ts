@@ -37,7 +37,12 @@ const run = promisify(execFile);
  *  并记录每次调用（用例据此断言「有没有发出去」「发了几次」）。 */
 function githubStub(): {
   impl: typeof fetch;
-  calls: Array<{ method: string; url: string; op: string | null; body: Record<string, unknown> | null }>;
+  calls: Array<{
+    method: string;
+    url: string;
+    op: string | null;
+    body: Record<string, unknown> | null;
+  }>;
 } {
   const calls: Array<{
     method: string;
@@ -206,13 +211,15 @@ function runStatus(f: Fixture, runId: string): string {
 
 async function branchExists(f: Fixture, branch: string): Promise<boolean> {
   return (
-    (await f.runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
-      cwd: f.repoRoot,
-    })).code === 0
+    (
+      await f.runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
+        cwd: f.repoRoot,
+      })
+    ).code === 0
   );
 }
 
-function integrationBranchOf(f: Fixture): string {
+function integrationBranch(): string {
   return `squad/integration/${slugForId("wi-c")}`;
 }
 
@@ -236,7 +243,7 @@ test("pr-gate 发布｜push 集成分支 + 开 PR + 登记行；父项留 in_rev
       parentWorkItemId: parentId,
     });
 
-    const integration = integrationBranchOf(f);
+    const integration = integrationBranch();
     // ① 远端真有集成分支，sha 与本地一致（真 push）。
     assert.equal(
       await f.remoteBranchSha(integration),
@@ -303,7 +310,7 @@ test("pr-gate 重驱闸｜已发布的批被重投（同一次收尾再来一遍
       "关联行一字不动（不新增、不改写）",
     );
     assert.equal(status(f, parentId), "in_review", "重驱不得改状态");
-    assert.equal(await branchExists(f, integrationBranchOf(f)), true, "集成分支照旧保留");
+    assert.equal(await branchExists(f, integrationBranch()), true, "集成分支照旧保留");
   } finally {
     f.cleanup();
   }
@@ -311,7 +318,7 @@ test("pr-gate 重驱闸｜已发布的批被重投（同一次收尾再来一遍
 
 /** 降级三形态的公共断言：统一收尾为**本地形态**（成果落 target、父项 done、集成分支删）+ 一条留痕。 */
 async function expectDegradedToLocal(f: Fixture, expectedCode: string): Promise<void> {
-  const integration = integrationBranchOf(f);
+  const integration = integrationBranch();
   assert.equal(status(f, "wi-p"), "done", "降级 ⇒ 按本地形态收尾（批次照常落地）");
   assert.equal(await targetHasFile(f, "feature.txt"), true, "降级 ⇒ 成果合回本地 target");
   assert.equal(await branchExists(f, integration), false, "降级 ⇒ 集成分支照本地模式删掉");
@@ -374,7 +381,7 @@ test("降级③｜pr-gate 但远端不是 GitHub ⇒ 本地收尾 + pr_gate_degr
     });
     await expectDegradedToLocal(f, "remote_not_github");
     assert.equal(
-      await f.remoteBranchSha(integrationBranchOf(f)),
+      await f.remoteBranchSha(integrationBranch()),
       null,
       "降级在推送之前判定：本地远端（裸库）一个字节都不该写",
     );
@@ -399,7 +406,7 @@ test("pr-gate 真失败（push 被拒）⇒ 响亮抛；父项留 in_review、�
       "推送失败必须响亮（不降级：远端那条路已开始走，悄悄改回本地会让同一批成果两处落地）",
     );
     assert.equal(status(f, parentId), "in_review");
-    assert.equal(await branchExists(f, integrationBranchOf(f)), true);
+    assert.equal(await branchExists(f, integrationBranch()), true);
     assert.equal(await targetHasFile(f, "feature.txt"), false, "本地 target 一个字节不动");
     assert.equal(f.runtime.pullRequestRepo.listByWorkItem(WS, parentId).length, 0);
     assert.equal(

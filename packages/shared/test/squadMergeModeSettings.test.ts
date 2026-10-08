@@ -18,10 +18,7 @@ import { appSettingsPatchSchema, appSettingsSchema, resolveSquadMergeMode } from
 test("字段存在：缺省解析为 local（缺省不走向远端），显式值原样往返，闭集外响亮拒", () => {
   assert.equal(appSettingsSchema.parse({}).squadMergeMode, "local", "缺省必须是 local");
   assert.equal(appSettingsSchema.parse({ squadMergeMode: "local" }).squadMergeMode, "local");
-  assert.equal(
-    appSettingsSchema.parse({ squadMergeMode: "pr-gate" }).squadMergeMode,
-    "pr-gate",
-  );
+  assert.equal(appSettingsSchema.parse({ squadMergeMode: "pr-gate" }).squadMergeMode, "pr-gate");
   for (const bad of ["pr_gate", "prgate", "remote", "PR-GATE", "", 1, null]) {
     assert.throws(
       () => appSettingsSchema.parse({ squadMergeMode: bad as never }),

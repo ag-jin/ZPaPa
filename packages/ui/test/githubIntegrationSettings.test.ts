@@ -201,10 +201,7 @@ test("D3 模式行｜SEC 纪律不因新模式行松动：props 里仍没有 tok
   const html = renderWithMode({ mergeMode: "pr-gate", tokenConfigured: true });
   assert.equal(html.includes(TOKEN_LIKE), false);
   assert.equal(/ghp_[A-Za-z0-9]/.test(html), false, "任何 `ghp_` 前缀串都不得出现");
-  const component = readFileSync(
-    resolve(SRC, "settings/GitHubIntegrationSettingsRow.tsx"),
-    "utf8",
-  );
+  const component = readFileSync(resolve(SRC, "settings/GitHubIntegrationSettingsRow.tsx"), "utf8");
   // 模式行不得挟带 token 值：props 解构里仍只许 tokenConfigured 这个布尔事实
   //（判据与 SEC-③ 同一处写法；回调签名里的入参草稿不在 props 解构位，故不冲突）。
   const destructure = component.match(

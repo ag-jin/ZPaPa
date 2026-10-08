@@ -149,9 +149,5 @@ export function validateSquad(squad: Squad): SquadValidationResult {
    为什么是**码值**而不是原因原文：码值是「同一件事」的稳定判据（Inbox 去重键含它、UI 将来按它出
    两语文案），原文会随文案改写漂移；两者各司其职（code 判同一件事，reason 给人看）。
    ------------------------------------------------------------------------------------------------ */
-export const SQUAD_PR_GATE_DEGRADE_CODES = [
-  "no_token",
-  "no_remote",
-  "remote_not_github",
-] as const;
+export const SQUAD_PR_GATE_DEGRADE_CODES = ["no_token", "no_remote", "remote_not_github"] as const;
 export type SquadPrGateDegradeCode = (typeof SQUAD_PR_GATE_DEGRADE_CODES)[number];

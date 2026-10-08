@@ -98,6 +98,8 @@ function setup() {
          （缺了就等于读面被静默降级，本域明确拒绝那种形态）。 */
       pullRequestRepo: createWorkItemPullRequestRepo(db),
       pullRequestProvider: createNullPullRequestProvider(),
+      /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+      readSquadMergeMode: () => "local",
       boundWorkspace,
       async assertDispatchEnabled() {
         dispatchGateCalls += 1;
@@ -135,7 +137,7 @@ function countRows(db: DatabaseSync, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 }
 
-test("服务面：空工作项 ⇒ 八个字段齐备，除 workItem 外全为空数组，且门禁未被触碰", async () => {
+test("服务面：空工作项 ⇒ 九格数据面齐备（含 D3 模式），除 workItem 外全为空数组，且门禁未被触碰", async () => {
   const f = setup();
   f.workItemRepo.insert(workItemRow("wi-1"));
 
@@ -148,6 +150,8 @@ test("服务面：空工作项 ⇒ 八个字段齐备，除 workItem 外全为�
     "decisions",
     /* #7 D1b：交付物清单并入这一聚合读（只带行，正文按 id 按需取）。 */
     "deliverables",
+    /* #8 D3：整批收尾模式（详情页 PR 区的 pr-gate 提示读它；判据单源 = runtime 现判读取口）。 */
+    "mergeMode",
     /* #8 D2：PR 关联清单 + 读数面可用性（后者是同步判据：没配 token ⇒ available:false）。 */
     "pullRequestProvider",
     "pullRequests",
@@ -157,6 +161,7 @@ test("服务面：空工作项 ⇒ 八个字段齐备，除 workItem 外全为�
     "workItem",
   ]);
   assert.deepEqual(read.pullRequests, [], "没有登记过 PR ⇒ 空数组（不是 undefined）");
+  assert.equal(read.mergeMode, "local", "夹具未注入模式 ⇒ 缺省 local（缺省形态零出站）");
   assert.equal(
     read.pullRequestProvider.available,
     false,

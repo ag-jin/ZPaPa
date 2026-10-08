@@ -45,7 +45,11 @@ test("构建件｜三个码值各成一条（kind=pr_gate_degraded / attention /
       integrationBranch: "squad/integration/wi-plan",
       targetBranch: "main",
     });
-    assert.equal(INBOX_SEVERITY_BY_KIND[item.kind], "attention", "本地收尾照常、但模式没按用户选的走");
+    assert.equal(
+      INBOX_SEVERITY_BY_KIND[item.kind],
+      "attention",
+      "本地收尾照常、但模式没按用户选的走",
+    );
   }
   assert.equal(buildPrGateDegradedInboxItem(input({ parentTitle: null })).title, PARENT);
 });
@@ -65,7 +69,9 @@ test("去重键唯一形状｜同父项 + 同码 ⇒ 一条；同父项 + 换码
     "同一事实（同批 + 同因）重投不产生第二条",
   );
   assert.equal(
-    repo.insertIfAbsent(buildPrGateDegradedInboxItem(input({ code: "no_remote", reason: "没有 origin" }))),
+    repo.insertIfAbsent(
+      buildPrGateDegradedInboxItem(input({ code: "no_remote", reason: "没有 origin" })),
+    ),
     true,
     "换因（从没 token 变成没 remote）是新事实：新一条 —— 否则「先配 token 再发现没 remote」的第二次降级不可见",
   );

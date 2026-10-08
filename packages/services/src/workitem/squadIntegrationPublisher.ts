@@ -7,7 +7,11 @@ import type {
   PullRequestProvider,
   RemotePullRequestFact,
 } from "./pullRequestProvider.js";
-import { pullRequestLinkId, type PullRequestRecord, type WorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
+import {
+  pullRequestLinkId,
+  type PullRequestRecord,
+  type WorkItemPullRequestRepo,
+} from "./workItemPullRequestRepo.js";
 
 /* #8 D3 的**发布面**（设计 §4.4 的 `pr-gate` 行）：把一批已合入集成分支的成果发布成远端 PR。
 
@@ -80,7 +84,10 @@ export function parseGitHubRemoteUrl(url: string): { repoOwner: string; repoName
     } catch {
       return null;
     }
-    if (parsed.hostname.toLowerCase() !== "github.com" && parsed.hostname.toLowerCase() !== "www.github.com") {
+    if (
+      parsed.hostname.toLowerCase() !== "github.com" &&
+      parsed.hostname.toLowerCase() !== "www.github.com"
+    ) {
       return null;
     }
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:" && parsed.protocol !== "ssh:") {
@@ -167,9 +174,7 @@ export function createSquadIntegrationPublisher(deps: {
       );
       return null;
     }
-    return (
-      listed.pullRequests.find((fact) => fact.snapshot.branch === input.integration) ?? null
-    );
+    return listed.pullRequests.find((fact) => fact.snapshot.branch === input.integration) ?? null;
   }
 
   return {
@@ -278,7 +283,7 @@ export function createSquadIntegrationPublisher(deps: {
       });
       if (!written) {
         /* 已有更新过的快照（人工先登记过同一条 PR 并刷过）⇒ 不覆盖，等下一次刷新；
-           **不是失败**：关联行已在，收尾要的事实（「本批已发布」）成立，只是快照晚一格。 */
+         **不是失败**：关联行已在，收尾要的事实（「本批已发布」）成立，只是快照晚一格。 */
         logWarn(
           `[squad] pr-gate 登记后未写入首次快照（id=${row.id}）：库里已有更新的 pin，` +
             "按防陈旧写不动它（等下一次按需刷新）。",

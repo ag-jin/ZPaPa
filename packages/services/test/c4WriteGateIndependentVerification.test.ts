@@ -347,6 +347,8 @@ test("IV-READ｜读面 canView：注入拒绝 ⇒ 响亮抛且未取 repo（不�
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: WS,
       }) as unknown as SquadRuntime,
     getRepos: () => {

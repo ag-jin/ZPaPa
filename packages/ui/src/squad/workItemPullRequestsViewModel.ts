@@ -130,7 +130,8 @@ export function pullRequestGateNoticeMessageId(input: {
 }
 
 /** 一次刷新的摘要（组件按它渲染结果行；四类结局**各自可见**，不合并成「完成」）。 */
-export type PullRequestRefreshSummary = {  updated: number;
+export type PullRequestRefreshSummary = {
+  updated: number;
   discarded: number;
   unavailable: number;
   failed: number;

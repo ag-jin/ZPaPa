@@ -1,3 +1,5 @@
+/* oxlint-disable eslint(max-lines) -- 批次收尾的**两条路径（本地 / pr-gate）与崩溃窗口次序论证**必须同处一处可读：
+   「先写哪条落地事实、再做哪一步不可逆清理」的证明面一拆就碎（与 squadRunLifecycle / squadRuntimeService 同款理由）。 */
 import {
   isTerminalWorkItemStatus,
   resolveWorkspaceKey,

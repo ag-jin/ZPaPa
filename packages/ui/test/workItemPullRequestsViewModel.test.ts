@@ -177,7 +177,11 @@ test("呈现｜刷新结果摘要：四类结局各自计数，失败原因原�
 /* ---------- #8 D3：pr-gate 状态提示（等待 PR merge 的横幅 / 降级说明） ---------- */
 
 test("D3 提示｜pr-gate + 等验收 + 有未合并的 PR ⇒ 等 merge 横幅；已合并/已关闭/非 in_review 都不提示", () => {
-  const base = { workItemStatus: "in_review", mergeMode: "pr-gate" as const, providerAvailable: true };
+  const base = {
+    workItemStatus: "in_review",
+    mergeMode: "pr-gate" as const,
+    providerAvailable: true,
+  };
   assert.equal(
     pullRequestGateNoticeMessageId({ ...base, pullRequests: [record({ state: "open" })] }),
     "squad.workItemDetail.pullRequests.gate.awaitingMerge",
@@ -194,7 +198,11 @@ test("D3 提示｜pr-gate + 等验收 + 有未合并的 PR ⇒ 等 merge 横幅�
       `${String(state)} 不是「等合并」`,
     );
   }
-  assert.equal(pullRequestGateNoticeMessageId({ ...base, pullRequests: [] }), null, "没有 PR 就没有等待");
+  assert.equal(
+    pullRequestGateNoticeMessageId({ ...base, pullRequests: [] }),
+    null,
+    "没有 PR 就没有等待",
+  );
   assert.equal(
     pullRequestGateNoticeMessageId({
       ...base,

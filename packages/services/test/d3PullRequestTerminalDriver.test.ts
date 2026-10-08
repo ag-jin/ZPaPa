@@ -7,7 +7,6 @@ import test from "node:test";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { createCommentDispatchReceiptRepo } from "../src/workitem/commentDispatchReceiptRepo.js";
 import { createSquadRuntime } from "../src/workitem/squadRuntime.js";
-import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
 import { createWorkItemCollaborationService } from "../src/workitem/workItemCollaborationService.js";
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
@@ -131,7 +130,9 @@ function statusOf(f: Fixture, workItemId = "wi-terminal"): string {
 }
 
 function prMergedActivities(f: Fixture, workItemId = "wi-terminal") {
-  return f.repos.activities.listByWorkItem(WS, workItemId).filter((row) => row.kind === "pr_merged");
+  return f.repos.activities
+    .listByWorkItem(WS, workItemId)
+    .filter((row) => row.kind === "pr_merged");
 }
 
 async function refresh(f: Fixture, workItemId = "wi-terminal") {
@@ -149,7 +150,10 @@ test("终态驱动｜快照刷到 merged + 工作项 in_review ⇒ transition �
       [[7, "updated", "merged"]],
       "报告形状不变（D2 的四档 + merged 读出照旧）",
     );
-    assert.deepEqual(report.mergedPullRequests.map((fact) => fact.prNumber), [7]);
+    assert.deepEqual(
+      report.mergedPullRequests.map((fact) => fact.prNumber),
+      [7],
+    );
     assert.equal(statusOf(f), "done", "PR merged ⇒ 工作项 in_review→done（唯一写者不变）");
 
     const echoes = prMergedActivities(f);

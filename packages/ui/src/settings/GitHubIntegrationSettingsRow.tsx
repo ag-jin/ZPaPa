@@ -146,10 +146,7 @@ export function GitHubIntegrationSettingsRow({
         label={t("settings.experiments.githubIntegration.mergeMode.label")}
         description={t("settings.experiments.githubIntegration.mergeMode.description")}
         detail={
-          <div
-            data-testid="github-integration-merge-mode"
-            className="flex flex-col gap-2"
-          >
+          <div data-testid="github-integration-merge-mode" className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"

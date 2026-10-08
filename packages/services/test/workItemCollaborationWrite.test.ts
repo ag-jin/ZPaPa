@@ -96,7 +96,11 @@ test("写入口｜createWorkItemComment：workspaceKey/Path 取自 runtime 绑�
     },
   };
   const service = createWorkItemCollaborationService({
-    createRuntime: async () => ({ boundWorkspace: OTHER_WORKSPACE }) as unknown as SquadRuntime,
+    createRuntime: async () =>
+      ({
+        boundWorkspace: OTHER_WORKSPACE,
+        readSquadMergeMode: () => "local",
+      }) as unknown as SquadRuntime,
     getRepos: () => {
       throw new Error("写路径不得读 repo（读面是另一个口）");
     },
@@ -142,6 +146,8 @@ test("写入口｜读面 viewerActor = 组合根注入的本地人类身份（C5
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -181,6 +187,8 @@ test("写入口｜软删/解决/回应三入口走真实服务面：墓碑 + 根
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -312,6 +320,8 @@ test("写入口｜跨 workspace 的动作响亮拒绝（门面不把「写错的
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: OTHER_WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -499,7 +509,11 @@ test("写入口｜createWorkItemDecision：workspace/身份由门面派生，形
     },
   };
   const service = createWorkItemCollaborationService({
-    createRuntime: async () => ({ boundWorkspace: OTHER_WORKSPACE }) as unknown as SquadRuntime,
+    createRuntime: async () =>
+      ({
+        boundWorkspace: OTHER_WORKSPACE,
+        readSquadMergeMode: () => "local",
+      }) as unknown as SquadRuntime,
     getRepos: () => {
       throw new Error("写路径不得读 repo（读面是另一个口）");
     },
@@ -551,7 +565,8 @@ test("写入口｜createWorkItemDecision：workspace/身份由门面派生，形
 
   // 未注入工厂 ⇒ 响亮抛（不 no-op：静默会让用户以为决定已经记下来了）。
   const missing = createWorkItemCollaborationService({
-    createRuntime: async () => ({ boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+    createRuntime: async () =>
+      ({ boundWorkspace: WORKSPACE, readSquadMergeMode: () => "local" }) as unknown as SquadRuntime,
     getRepos: () => {
       throw new Error("写路径不得读 repo");
     },
@@ -626,6 +641,8 @@ function readFixture(
         /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
+        readSquadMergeMode: () => "local",
         boundWorkspace: options.boundWorkspace ?? WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -690,7 +707,8 @@ test("读面｜判据只在服务层判：门面读面恰一次 canView（主体
   );
   // 门面写入口**零判据**：判据在服务层（门面再判一份就是第二份判据，漂移不报错）。
   const forwarding = createWorkItemCollaborationService({
-    createRuntime: async () => ({ boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+    createRuntime: async () =>
+      ({ boundWorkspace: WORKSPACE, readSquadMergeMode: () => "local" }) as unknown as SquadRuntime,
     getRepos: () => {
       throw new Error("写路径不得读 repo");
     },

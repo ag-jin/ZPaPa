@@ -1,3 +1,6 @@
+/* oxlint-disable eslint(max-lines) -- 三个路径（读 / 写 / 列举）共用同一个适配器与同一套失败归一
+   （buildAuthHeaders 是凭据唯一出口、requestJson 是出站唯一收口）：拆文件会让 SEC 结构守卫（按本文件切片）
+   失去单点，且「三个路径的形状一致性」在文件边界上再也读不出来。 */
 import { isGithubPullRequestTokenConfigured } from "@zcode/shared";
 import type { PullRequestSnapshot, PullRequestState } from "./workItemPullRequestRepo.js";
 
@@ -520,7 +523,9 @@ export function createGitHubPullRequestProvider(deps: {
         );
         return {
           ok: true,
-          pullRequests: facts.filter((fact) => (fact.snapshot.branch ?? "").startsWith(input.prefix)),
+          pullRequests: facts.filter((fact) =>
+            (fact.snapshot.branch ?? "").startsWith(input.prefix),
+          ),
         };
       } catch (error) {
         return {
