@@ -401,6 +401,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     pullRequestRepo,
     pullRequestProvider,
     pullRequestSync,
+    /* #8 D3：整批收尾模式的现判读取口（缺省 local = 行为与改前一致）；编排器在收尾那一刻取一次。 */
+    readSquadMergeMode: () => deps.readSquadMergeMode?.() ?? "local",
     teamAgentService,
     squadService,
     git,

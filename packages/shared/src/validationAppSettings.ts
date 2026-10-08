@@ -1,6 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import type { AppSettings } from "./protocol.js";
+import { SQUAD_MERGE_MODES, type AppSettings, type SquadMergeMode } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
@@ -509,6 +509,23 @@ export function isGithubPullRequestTokenConfigured(token: string | null | undefi
   return typeof token === "string" && token.trim() !== "";
 }
 
+/* #8 D3：小队整批收尾的**模式**（闭集常量与类型在 protocol.ts —— AppSettings 的家）。
+ * 两值：`local`（缺省，离线唯一形态）与 `pr-gate`（push 集成分支 + 开 PR，终态交 PR merge）。 */
+const squadMergeModeSchema = z.enum(SQUAD_MERGE_MODES);
+
+/**
+ * 模式的**读出口唯一判据**（服务组合根的单点快照 + 将来任何消费方共用）：
+ * 闭集外的一切（undefined / 脏值 / 手改 setting.json 绕过 schema 的残留形态）一律收敛到 `local`。
+ *
+ * 为什么收敛方向是 `local` 而不是抛或走向 `pr-gate`：`local` 是**不动远端**的那一侧
+ * （无 push、无 PR、无网络）—— 数据损坏时把收尾留在本地是安全方向；反方向的静默收敛会让一个
+ * 配错的值变成一次远端写入。schema 已在读设置时拒绝闭集外值，这里是类型面的兜底
+ * （两道闸职责不同：schema 关「能不能存」，本函数关「读出来怎么用」）。
+ */
+export function resolveSquadMergeMode(value: unknown): SquadMergeMode {
+  return value === "pr-gate" ? "pr-gate" : "local";
+}
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -560,6 +577,9 @@ const appSettingsObjectSchema = z.object({
   /* #8 D2：GitHub PR 快照的访问令牌（明文，见上面的取舍说明）。**无默认值**：未配置就是 undefined
      —— 补一个空串默认值会让「有没有配」在设置文件里失去唯一的可判别形态。 */
   githubPullRequestToken: githubPullRequestTokenSchema.optional(),
+  /* #8 D3：小队整批收尾的模式。**有默认值**（与 token 相反的取舍）：模式必须有确定值
+     （缺省 local = 不动远端），undefined 的含糊态会让收尾方式变成一个「没人决定过」的选择。 */
+  squadMergeMode: squadMergeModeSchema.default("local"),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -668,6 +688,8 @@ export const appSettingsPatchSchema = z.object({
   experimentalAgentSquadsEnabled: z.boolean().optional(),
   /* #8 D2：token 的 patch 位（两处 schema 同步是既有纪律）。`""` = 显式清除，省略 = 不改这一格。 */
   githubPullRequestToken: githubPullRequestTokenSchema.optional(),
+  /* #8 D3：模式的 patch 位（两处同步同上）。省略 = 不改这一格（模式只有「选哪个」，没有「清除」）。 */
+  squadMergeMode: squadMergeModeSchema.optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),

@@ -50,6 +50,7 @@ export {
   isGithubPullRequestTokenConfigured,
   localeSchema,
   postUpdateReleaseNotesPayloadSchema,
+  resolveSquadMergeMode,
 } from "./validationAppSettings.js";
 
 export function formatZodError(error: z.ZodError): string {

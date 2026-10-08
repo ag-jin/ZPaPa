@@ -1,3 +1,4 @@
+import type { SquadMergeMode } from "@zcode/shared";
 import type { SquadRunSettlementHub } from "./squadRunSettlementHub.js";
 import type { TasksIndexDatabase } from "../session/taskIndexRepo.js";
 import type { SquadService } from "../teams/squadService.js";
@@ -88,6 +89,16 @@ export type SquadRuntimeDeps = {
    * 真实网络调用不做单测（无真实 token；真网络登记是人工演示项）。
    */
   githubFetch?: typeof fetch;
+  /**
+   * **整批收尾模式的读取口**（#8 D3，可选加法）：组合根维护的**单点同步快照**
+   * （与 `readExperimentEnabled` / `readGithubPullRequestToken` 同一手法——`ISettingService` 只有
+   * 异步 `get()`，而收尾路径上的判定是同步的）。
+   *
+   * 为什么传**读取函数**而不是模式值：runtime 按目标现构、不缓存，而模式是**运行期可改**的设置
+   * ——读函数让「设置里刚切成 pr-gate」在下一次收尾即生效，不必重建 runtime。
+   * 缺省（不注入）⇒ `local`：既有装配与既有用例零改动，且缺省形态零出站（pr-gate 才碰远端）。
+   */
+  readSquadMergeMode?: () => SquadMergeMode;
 };
 
 export type SquadRuntime = {
@@ -149,6 +160,12 @@ export type SquadRuntime = {
    * 「取哪张 workspace 的行」与其它零件同一口径；D3 的终态驱动消费它报出的 `mergedPullRequests`。
    */
   pullRequestSync: PullRequestSync;
+  /**
+   * **整批收尾模式**（#8 D3）的现判读取口：`local`（缺省，本地合回）/ `pr-gate`（push + 开 PR，
+   * 终态交 PR merge）。**每次调用现判**（转调注入的读函数；未注入恒 `local`）——
+   * 编排器在收尾那一刻取一次，不在构造期冻结。
+   */
+  readSquadMergeMode(): SquadMergeMode;
   teamAgentService: TeamAgentService;
   squadService: SquadService;
   git: GitRunner;

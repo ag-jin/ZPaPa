@@ -13,8 +13,10 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
+  resolveSquadMergeMode,
   resolveWorkspaceKey,
   type ProviderProvisioningTrigger,
+  type SquadMergeMode,
 } from "@zcode/shared";
 
 export {
@@ -2750,6 +2752,29 @@ export function createLocalServices(options: {
     refreshGithubPullRequestToken();
   });
 
+  /* #8 D3：整批收尾**模式**的单点同步快照（与上面两处同一手法与同一条理由）。
+     · 初值 `local`（**不走向远端**）：读设置是异步的，第一次读回来之前一律按本地收尾处理
+       —— 这一格是 fail-safe 方向（缺省形态零出站）；
+     · 之后只由 settingService 的变更事件刷新（切成 pr-gate 后下一次收尾即生效，不必重建 runtime）；
+     · 刷新失败**保留上一次结论**（与上面同款）：一次抖动不该把用户的模式静默切走
+       （pr-gate 被切回 local = 该开的 PR 没开；local 被切成 pr-gate = 一次非预期的远端写入）；
+     · 值的归一只有一处判据（`resolveSquadMergeMode`）：脏值收敛到 local，不在这里再判一次。 */
+  let squadMergeMode: SquadMergeMode = "local";
+  const refreshSquadMergeMode = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        squadMergeMode = resolveSquadMergeMode(settings.squadMergeMode);
+      },
+      (error: unknown) => {
+        squadRuntimeLog.warn("读取整批收尾模式失败：保留上一次结论", { error });
+      },
+    );
+  };
+  refreshSquadMergeMode();
+  settingService.onDidUpdate(() => {
+    refreshSquadMergeMode();
+  });
+
   /* 小队 runtime **不做长期单例、不缓存**（确认 3）：每个使用点带着自己的**目标 workspace** 进来，
      这里为它现构一个 runtime，方法返回后不再保留它。
 
@@ -2878,6 +2903,8 @@ export function createLocalServices(options: {
       workspaceIdentity: target.identity,
       // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
       readExperimentEnabled: () => squadsEnabled,
+      // #8 D3：整批收尾模式的读取口（上面那份单点同步快照；缺省 local ⇒ 零出站）。
+      readSquadMergeMode: () => squadMergeMode,
       // #8 D2：PR 快照的 token 读取口（上面那份单点同步快照；未配置 ⇒ null adapter）。
       readGithubPullRequestToken: () => githubPullRequestToken,
       // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
