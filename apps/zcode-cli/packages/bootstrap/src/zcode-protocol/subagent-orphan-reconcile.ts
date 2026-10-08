@@ -203,8 +203,10 @@ export async function reconcileSubagentOrphansOnActivation(
   const now = input.now ?? Date.now();
   const skipped: SubagentOrphanSkipEntry[] = [];
   const store: SessionStorePort | undefined = context.deps.sessionStore;
-  if (!store?.saveSessionEntry) {
-    // 没有持久落点（旧宿主 / 只读回放）就没有幂等闭环：不收敛，也不算失败。
+  // 绑到 store 上再调（adapter 的实现依赖 this）；取不到写入口就直接退场——没有持久落点
+  // （旧宿主 / 只读回放）就没有幂等闭环，不收敛也不算失败。
+  const persistOutcomeEntry = store?.saveSessionEntry?.bind(store);
+  if (!persistOutcomeEntry) {
     return { reconciled: 0, skipped };
   }
 
@@ -258,7 +260,7 @@ export async function reconcileSubagentOrphansOnActivation(
       reconciledAt: now,
     });
     try {
-      await store.saveSessionEntry?.(entry);
+      await persistOutcomeEntry(entry);
       reconciled += 1;
       logger?.warn("Subagent orphan reconciled as lost", {
         childSessionId: orphan.childSessionId,
