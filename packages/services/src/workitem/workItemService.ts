@@ -2,8 +2,14 @@ import {
   WORK_ITEM_MAX_CHILDREN,
   WORK_ITEM_MAX_DEPTH,
   parseWorkItemLabels,
+  resolveWorkItemDateOnly,
+  resolveWorkItemPriority,
+  workItemDateErrorMessage,
   workItemLabelsErrorMessage,
+  workItemPriorityErrorMessage,
   type WorkItem,
+  type WorkItemCreator,
+  type WorkItemPriorityKey,
   type WorkItemStatusKey,
 } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
@@ -55,6 +61,21 @@ export interface CreateWorkItemInput {
    * 以为全部写进去了。规则不在这里写第二遍。
    */
   labels?: readonly string[];
+  /* ---- Surface 对齐（0018）：新字段全部可选，缺省 = 未设置（NULL，不编默认值）---- */
+  /**
+   * 优先级（闭集 `urgent|high|medium|low`）。闭集外**响亮抛**且不落盘（`resolveWorkItemPriority`
+   * 是唯一判据）；`null` / 省略 = 未设置。
+   */
+  priority?: WorkItemPriorityKey | null;
+  /** 起始 / 截止：日历日期 `YYYY-MM-DD`（Q5）。坏日期**响亮抛**且不落盘。 */
+  startDate?: string | null;
+  dueDate?: string | null;
+  /**
+   * 创建人（谁按下创建）。**由服务入口注入**（组合根的本机操作者身份，`LOCAL_HUMAN_ACTOR` 先例），
+   * 不是从表单/UI 传进来的身份；`null` / 省略 = 未知 —— **绝不**拿 `assignee` 冒充（两件事）。
+   * 本层只负责落列，不做第二份身份判据。
+   */
+  creator?: WorkItemCreator | null;
   /** 可选：测试与幂等场景可自带 id；缺省时生成。 */
   id?: string;
 }
@@ -116,6 +137,16 @@ export function createWorkItemService(deps: {
         throw new Error(workItemLabelsErrorMessage(parsedLabels));
       }
 
+      /* 0018：优先级（闭集）与两个日历日期同样**先过闸、后落盘**，非 ok ⇒ 抛。
+         判据只有 shared 一处实现；本层不预校验「二次判断」，也不静默折算（把看不懂的优先级
+         当未设置、把不存在的日期落成空，都会让用户明确给过的值无声消失）。 */
+      const priority = resolveWorkItemPriority(input.priority);
+      if (priority.kind !== "ok") throw new Error(workItemPriorityErrorMessage(priority));
+      const startDate = resolveWorkItemDateOnly(input.startDate);
+      if (startDate.kind !== "ok") throw new Error(workItemDateErrorMessage(startDate));
+      const dueDate = resolveWorkItemDateOnly(input.dueDate);
+      if (dueDate.kind !== "ok") throw new Error(workItemDateErrorMessage(dueDate));
+
       const item: WorkItem = {
         id,
         workspaceIdentity: input.workspaceIdentity,
@@ -129,9 +160,18 @@ export function createWorkItemService(deps: {
         labels: parsedLabels.labels,
         properties: {},
         position: 0,
+        // 未设置（含显式 null）统一落成「不带这个键」：读取面只有 undefined 一种未设置形态。
+        ...(priority.priority !== null ? { priority: priority.priority } : {}),
+        ...(startDate.date !== null ? { startDate: startDate.date } : {}),
+        ...(dueDate.date !== null ? { dueDate: dueDate.date } : {}),
+        ...(input.creator !== undefined && input.creator !== null
+          ? { creator: input.creator }
+          : {}),
       };
-      repo.insert(item);
-      return item;
+      /* 序号由存储面语句内生成并回传（调用方**结构上无法传号**：CreateWorkItemInput 里没有
+         这个字段）。返回的实体带上真实号 —— 否则调用方拿到的实体缺一列而库里有一列，两处分叉。 */
+      const identifierSeq = repo.insert(item);
+      return { ...item, identifierSeq };
     },
 
     transition(id, next, expect) {

@@ -2937,6 +2937,11 @@ export function createLocalServices(options: {
       createCommentDispatchReceiptRepo(taskIndexRepo.openSharedDatabase()),
     // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
     logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
+    /* 0018（工作项 Surface 对齐 · 阶段一 R1）：新建工作项的**创建人**用料是下面那一处
+       `LOCAL_HUMAN_ACTOR`（协作文档已裁定的**唯一**身份定义点，D1-A）—— 这里只是把同一个人
+       再注入一条链路，**不新造第二份身份**（两处身份不一致时，同一个人写下的行会长成两个创建人，
+       而任何地方都不报错）。UI 建项走 `createWorkItem`，身份因此由组合根定义、而非界面自证。 */
+    localHumanActor: () => LOCAL_HUMAN_ACTOR,
   });
   // 回写前向引用：zcodeAgentService 的 `squad/*` 三个分支经它拿到服务面
   //（队长工具的每次调用都会走到这里；注册缺失时那条分支回 -32601，见 squadProtocolMethods.ts）。

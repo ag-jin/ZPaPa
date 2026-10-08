@@ -4,14 +4,20 @@ import {
   isTerminalWorkItemStatus,
   MS_PER_MINUTE,
   parseWorkItemLabels,
+  resolveWorkItemDateOnly,
+  resolveWorkItemPriority,
   resolveWorkspaceKey,
   SQUAD_BREAKER_WINDOW_MINUTES,
   SQUAD_RETRY_BUDGET,
+  workItemDateErrorMessage,
   workItemLabelsErrorMessage,
+  workItemPriorityErrorMessage,
   type Squad,
   type TeamAgent,
   type WakeRule,
   type WorkItem,
+  type WorkItemCreator,
+  type WorkItemPriorityKey,
 } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type {
@@ -126,6 +132,15 @@ export type CreateWorkItemRequest = {
    * 预校验只是把同一件事做两遍，两遍迟早分叉）。超限 ⇒ 该入口响亮抛且不落盘。
    */
   labels?: readonly string[];
+  /* ---- Surface 对齐（0018）：新字段可选，缺省 = 未设置（NULL，不编默认值）---- */
+  /** 优先级（闭集 `urgent|high|medium|low`）：原样透传给唯一创建入口，闭集外在那里响亮抛。 */
+  priority?: WorkItemPriorityKey | null;
+  /** 起始 / 截止：日历日期 `YYYY-MM-DD`（Q5），坏日期在唯一创建入口响亮抛。 */
+  startDate?: string | null;
+  dueDate?: string | null;
+  /* 创建人**刻意不在这里**：身份由组合根注入（`deps.localHumanActor`，见该字段注释）——
+     让调用方传身份就等于把「谁按下的创建」交给 UI 自证，而设计案 §12-2 明确
+     「不应在 UI 自行决定身份」。 */
 };
 
 /** 稳定错误码：跨 RPC 传到上层后按码分流（照 AUTOMATION_BOUND_SESSION_BUSY_ERROR_CODE 的做法）。 */
@@ -439,7 +454,22 @@ export interface ISquadRuntimeService {
    */
   updateWorkItem(
     target: SquadWorkspaceTarget,
-    input: { id: string; patch: { title?: string; body?: string; labels?: readonly string[] } },
+    input: {
+      id: string;
+      patch: {
+        title?: string;
+        body?: string;
+        labels?: readonly string[];
+        /* 0018（Surface 对齐 · 阶段一 R1）：优先级 / 起始 / 截止并入同一条内容白名单。
+           判据单源在 shared（`resolveWorkItemPriority` / `resolveWorkItemDateOnly`）：
+           闭集外优先级与坏日期在本层**响亮抛且写之前**；`null` = 清回未设置（合法动作，
+           与「没给这个字段」的 `undefined` 不是同一件事）。`creator_*` / `identifier_seq`
+           刻意**不在**白名单里 —— 它们没有更新面。 */
+        priority?: WorkItemPriorityKey | null;
+        startDate?: string | null;
+        dueDate?: string | null;
+      };
+    },
   ): Promise<WorkItem>;
   /** C4b：排队行读取口（推进扫描/快照计数共用；ORDER_BY_CREATED）。 */
   listQueuedSquadRuns(target: SquadWorkspaceTarget): Promise<SquadRunRecord[]>;
@@ -934,6 +964,19 @@ export function createSquadRuntimeService(deps: {
    * 伪装成「没有这条请求」/「已被别处落定」——两种误读都会让评论派发静默消失）。
    */
   getCommentDispatchReceiptRepo?: () => CommentDispatchReceiptRepo;
+  /**
+   * **本机操作者身份**（0018：谁是新建工作项的创建人）。注入形态与协作门面的
+   * `localHumanActor` 完全同款（`node.ts` 的 `LOCAL_HUMAN_ACTOR` —— 全仓唯一一处身份定义点），
+   * 理由也同款：身份是审计事实，**不能**由 UI/调用方自证，也不能每个入口各造一个
+   * （两处身份不一致时，同一个人写下的行会变成两个创建人，而任何地方都不报错）。
+   *
+   * 为什么在**服务面**注入而不是在 UI：设计案 §12-2「不应在 UI 自行决定权限/身份」；
+   * UI 建项走的就是这个方法，故 `createWorkItem` 落下的 `creator_*` 三列 = 组合根定义的那一份身份。
+   *
+   * **可选**：未注入 ⇒ 创建人三列保持 NULL（= 未知）—— 存量行与「这一份装配没接身份」都如实留空，
+   * **绝不**拿 `assignee` 冒充（指派是「派给谁」，创建人是「谁按下的创建」，两件事）。
+   */
+  localHumanActor?: () => WorkItemCreator;
 }): ISquadRuntimeService {
   /** 本 runtime 的 `workspace_key`（C14 口径）：台账与快照都按它过滤。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -1134,6 +1177,13 @@ export function createSquadRuntimeService(deps: {
         assignee: input.assignee,
         // 标签原样透传：归一化与上限判据的单源在 workItemService.create（它调 shared 的纯函数）。
         labels: input.labels,
+        // 0018 的三个新字段同样**原样透传**（闭集 / 日历日期判据的单源在唯一创建入口）。
+        priority: input.priority,
+        startDate: input.startDate,
+        dueDate: input.dueDate,
+        /* 创建人 = **组合根注入的本机操作者**（不是入参、不是 assignee）：未注入 ⇒ 不传这个键，
+           落 NULL（未知）。这里不做第二份身份判据，也不在缺身份时编一个。 */
+        creator: deps.localHumanActor?.() ?? null,
       });
     },
 
@@ -1208,7 +1258,14 @@ export function createSquadRuntimeService(deps: {
        「清空」这个合法动作，不是空 patch）；非 ok ⇒ 抛在写之前，库里保持上一次的值。 */
     async updateWorkItem(target, input) {
       const runtime = await deps.createRuntime(target);
-      let patch: { title?: string; body?: string; labels?: string[] } = {
+      let patch: {
+        title?: string;
+        body?: string;
+        labels?: string[];
+        priority?: WorkItemPriorityKey | null;
+        startDate?: string | null;
+        dueDate?: string | null;
+      } = {
         title: input.patch.title,
         body: input.patch.body,
       };
@@ -1216,6 +1273,24 @@ export function createSquadRuntimeService(deps: {
         const parsed = parseWorkItemLabels(input.patch.labels);
         if (parsed.kind !== "ok") throw new Error(workItemLabelsErrorMessage(parsed));
         patch = { ...patch, labels: parsed.labels };
+      }
+      /* 0018 的三个内容型新字段：判据（闭集 / 日历日期）单源在 shared 的纯函数，本层只消费；
+         非 ok ⇒ **在写之前**抛（先写后校验会留下一条「值被悄悄改过」的行）。`null` 是合法值
+         = 清回未设置（与「没给这个字段」区分开：后者是 `undefined`，不参与 SET）。 */
+      if (input.patch.priority !== undefined) {
+        const parsed = resolveWorkItemPriority(input.patch.priority);
+        if (parsed.kind !== "ok") throw new Error(workItemPriorityErrorMessage(parsed));
+        patch = { ...patch, priority: parsed.priority };
+      }
+      if (input.patch.startDate !== undefined) {
+        const parsed = resolveWorkItemDateOnly(input.patch.startDate);
+        if (parsed.kind !== "ok") throw new Error(workItemDateErrorMessage(parsed));
+        patch = { ...patch, startDate: parsed.date };
+      }
+      if (input.patch.dueDate !== undefined) {
+        const parsed = resolveWorkItemDateOnly(input.patch.dueDate);
+        if (parsed.kind !== "ok") throw new Error(workItemDateErrorMessage(parsed));
+        patch = { ...patch, dueDate: parsed.date };
       }
       if (!runtime.workItemRepo.updateContent(input.id, patch)) {
         throw new Error(
