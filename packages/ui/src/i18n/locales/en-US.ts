@@ -4603,6 +4603,9 @@ const enUS: Record<string, string> = {
   "squad.workItems.startDateInvalid":
     'Start date "{value}" is not a real calendar date (YYYY-MM-DD)',
   "squad.workItems.dueDateInvalid": 'Due date "{value}" is not a real calendar date (YYYY-MM-DD)',
+  // Inline editing (Surface round D): the title is the only inline-editable field with a value rule
+  // (blank = no title); the priority failure reuses the key above (same field, same sentence).
+  "squad.workItems.titleRequired": "Title cannot be empty",
   // Board lanes (#15): closed set of dimensions = no grouping / status category (4-lane skeleton) /
   // assignee (user first, then first appearance).
   "squad.workItems.lane.dimension": "Group by",
@@ -4919,6 +4922,12 @@ const enUS: Record<string, string> = {
     "This work item is archived; pull requests cannot be registered",
   "squad.workItemDetail.pullRequest.disabled.readFailed":
     "Activity failed to load; pull requests cannot be registered",
+  // Board-row **inline editing** (Surface round D): shares the single "archived ⇒ not writable"
+  // rule with the four write surfaces above (writeDisabledReason, only the surface name differs).
+  "squad.workItemDetail.inlineEdit.disabled.archived":
+    "This work item is archived; inline editing is unavailable",
+  "squad.workItemDetail.inlineEdit.disabled.readFailed":
+    "Load failed; inline editing is temporarily unavailable",
   "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
   "squad.workItemDetail.dispatch.opened": "Run opened",
   "squad.workItemDetail.dispatch.queued": "Queued",

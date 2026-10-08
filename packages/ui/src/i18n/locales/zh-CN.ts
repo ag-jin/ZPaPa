@@ -4305,6 +4305,9 @@ const zhCN: Record<string, string> = {
   "squad.workItems.priorityInvalid": "「{value}」不是可选优先级（紧急 / 高 / 中 / 低）",
   "squad.workItems.startDateInvalid": "起始日期「{value}」不是真实存在的日历日期（YYYY-MM-DD）",
   "squad.workItems.dueDateInvalid": "截止日期「{value}」不是真实存在的日历日期（YYYY-MM-DD）",
+  // 行内编辑（阶段一轮 D）：标题是行内唯一有「取值合法性」的字段（空白 = 没有标题）；
+  // 优先级的失败文案复用上面那一条（同一个字段同一句话）。
+  "squad.workItems.titleRequired": "标题不能为空",
   // 看板泳道（欠账 #15）：维度闭集 = 不分组 / 状态 category（4 类骨架） / 指派对象。
   "squad.workItems.lane.dimension": "分组",
   "squad.workItems.lane.dimension.none": "不分组",
@@ -4591,6 +4594,10 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.pullRequests.form.cancel": "取消",
   "squad.workItemDetail.pullRequest.disabled.archived": "工作项已归档，不能登记 PR",
   "squad.workItemDetail.pullRequest.disabled.readFailed": "读取活动失败，暂时不能登记 PR",
+  // 看板行的**行内编辑**（阶段一轮 D）：与上面四个写面共用同一条「归档 ⇒ 不可写」判据
+  // （writeDisabledReason 只换面名），故文案族同形。
+  "squad.workItemDetail.inlineEdit.disabled.archived": "工作项已归档，不能行内编辑",
+  "squad.workItemDetail.inlineEdit.disabled.readFailed": "读取失败，暂时不能行内编辑",
   "squad.workItemDetail.dispatch.pending": "等待派发",
   "squad.workItemDetail.dispatch.opened": "已创建运行",
   "squad.workItemDetail.dispatch.queued": "已排队",

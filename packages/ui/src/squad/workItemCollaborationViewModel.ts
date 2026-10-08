@@ -509,9 +509,13 @@ export const COMMENT_REACTION_EMOJIS = ["👍", "🎉", "👀", "🙏", "✅"] a
  *
  * **评论 / 决定 / 交付物 / PR 四个面共用这一条判据**（只换文案族）：各面各写一份「先看归档再看刷新」
  * 的优先级，迟早在某一面上漏掉一格 —— 而漏掉的表现是「入口亮着，点了必失败」。
+ *
+ * `inlineEdit`（阶段一轮 D）：**看板行的行内编辑**用同一份判据（归档行不给入口）。
+ * 它不是详情页的写面，但「归档 ⇒ 不可写」这件事只有这一个判据 —— 第二份迟早与这份分叉。
+ * 看板没有「刷新失败」这个语义（取数失败由页面横幅表达），调用方传 `null`。
  */
 export function writeDisabledReason(
-  surface: "comment" | "decision" | "deliverable" | "pullRequest",
+  surface: "comment" | "decision" | "deliverable" | "pullRequest" | "inlineEdit",
   workItem: { archivedAt?: number },
   refreshFailure: string | null,
 ): string | null {
