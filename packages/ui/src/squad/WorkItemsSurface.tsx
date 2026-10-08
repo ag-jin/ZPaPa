@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -7,6 +7,7 @@ import { squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import type { WorkItemRowSelection } from "./workItemBulkViewModel.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemListView } from "./WorkItemListView.js";
+import { WorkItemPeek } from "./WorkItemPeek.js";
 import { WorkItemQuickCreate } from "./WorkItemQuickCreate.js";
 import { useWorkItemRowFocus, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import { WorkItemTableView } from "./WorkItemTableView.js";
@@ -15,6 +16,7 @@ import { WorkItemsBoard } from "./WorkItemsBoard.js";
 import type { WorkItemRowReorder } from "./workItemRowParts.js";
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import { workItemBoardReorderEnabled } from "./workItemViewsViewModel.js";
+import { workItemPeekKeyIntent } from "./workItemPeekViewModel.js";
 import {
   workItemSurfaceEmptyKind,
   workItemSurfaceVisibleItems,
@@ -43,7 +45,13 @@ import type { WorkItemQuickCreateRequest } from "./workItemQuickCreateViewModel.
    快速创建（T-P3-R1）也由这里挂载：写入口 `onQuickCreate` **可选**（缺省 ⇒ 整块不渲染，
    三份逐字节基线不受影响），请求构造与可点性判据在下方的 `WorkItemQuickCreate` 与
    `workItemQuickCreateViewModel`；本宿主只做两件事 —— 把快照的**原始**列表给候选、
-   把"能不能建"的结论（`workItemCreateEnabled`）与"有没有写在飞"（`busyWorkItemId`）投给它。 */
+   把"能不能建"的结论（`workItemCreateEnabled`）与"有没有写在飞"（`busyWorkItemId`）投给它。
+
+   侧边 peek（T-P3-R2）同样由这里挂载：**打开态自持**（`peekWorkItemId`；页面已是 400/400 满线，
+   宿主没有别的注入方，见交付报告的「接线」段），行点击的预览意图经**行环境加法**
+   `environment.onOpenPeek` 传回来（缺省 ⇒ 行级「打开」仍是详情页导航、面板一个节点都不渲染）。
+   面板本身（`WorkItemPeek`）复用详情页的**同一读模型**、零写调用；本宿主只负责三件事 ——
+   打开/关闭、分栏壳与 Esc（判据在 `workItemPeekKeyIntent`）、把焦点还给触发行（验收 ③）。 */
 
 export function WorkItemsSurface({
   workItems,
@@ -127,6 +135,28 @@ export function WorkItemsSurface({
   });
   const inlineEdit = useWorkItemInlineEdit({ onInlineEdit });
 
+  /* 侧边 peek 的**打开态**（本宿主自持）：`null` = 没打开（默认路径的 DOM 因此逐槽不变）。
+     打开时记下当前焦点元素（= 行的透明覆盖按钮，行本身不可聚焦），关闭时原样还回去 ——
+     这就是验收 ③的「焦点回到触发行」。 */
+  const [peekWorkItemId, setPeekWorkItemId] = useState<string | null>(null);
+  const peekReturnFocusRef = useRef<HTMLElement | null>(null);
+  const openPeek = useCallback((workItemId: string) => {
+    const active = document.activeElement;
+    peekReturnFocusRef.current = active instanceof HTMLElement ? active : null;
+    setPeekWorkItemId(workItemId);
+  }, []);
+  const closePeek = useCallback(() => {
+    setPeekWorkItemId(null);
+    peekReturnFocusRef.current?.focus();
+    peekReturnFocusRef.current = null;
+  }, []);
+  /* 「打开完整详情页」：**先关面板、再交回页面导航**（否则详情页返回时还挂着一个旧预览）。 */
+  const openPeekDetail = useCallback(() => {
+    const id = peekWorkItemId;
+    closePeek();
+    if (id !== null) onOpenWorkItemDetail(id);
+  }, [peekWorkItemId, closePeek, onOpenWorkItemDetail]);
+
   /* 拖拽能力（T-P2-R6b）：**唯一判据**在 `workItemBoardReorderEnabled`（看板 + statusCategory +
      手动档 + 有写入口）。未启用 ⇒ 环境里没有这个键 ⇒ 行连把手都不渲染（结构槽位逐槽不变）。 */
   const reorderCapability: WorkItemRowReorder | undefined =
@@ -153,6 +183,7 @@ export function WorkItemsSurface({
     onDiscard,
     onToggleTimeline,
     onOpenWorkItemDetail,
+    onOpenPeek: openPeek,
     workspacePath,
     workspaceIdentity,
     onOpenSession,
@@ -216,12 +247,41 @@ export function WorkItemsSurface({
       />
     );
 
-  /* 没有写入口 ⇒ **原样返回**（不套壳）：默认路径的 DOM 逐槽与新增该能力之前相同。 */
-  if (quickCreate === null) return surfaceBody;
+  /* 没有写入口 ⇒ **原样返回**（不套壳）：默认路径的 DOM 逐槽与新增该能力之前相同。
+     有写入口但没有选中条目时同样不套壳（快速创建那一层已是既有形态）。 */
+  const body =
+    quickCreate === null ? (
+      surfaceBody
+    ) : (
+      <div className="flex flex-col gap-2">
+        {quickCreate}
+        {surfaceBody}
+      </div>
+    );
+  if (peekWorkItemId === null) return body;
+  /* 打开态 ⇒ **桌面分栏**：左侧是既有面（`min-w-0` 允许它被压窄、不给面板让位时溢出），
+     右侧是只读 peek。Esc 的键盘层挂在这个壳上（而不是 document）：全局 Esc 属于 App 的
+     键盘返回层（详情页返回就是它），peek 不该抢那一枚键；焦点在面内（打开时就在触发行上）时
+     Esc 到这里，行内编辑/下拉自己吃掉的键（`defaultPrevented`）不抢。 */
   return (
-    <div className="flex flex-col gap-2">
-      {quickCreate}
-      {surfaceBody}
+    <div
+      className="flex items-start gap-3"
+      data-testid="work-items-surface-split"
+      onKeyDown={(event) => {
+        if (event.defaultPrevented) return;
+        if (workItemPeekKeyIntent(event.key) !== "close") return;
+        closePeek();
+      }}
+    >
+      <div className="min-w-0 flex-1">{body}</div>
+      <WorkItemPeek
+        workItemId={peekWorkItemId}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        snapshot={snapshot}
+        onClose={closePeek}
+        onOpenDetail={openPeekDetail}
+      />
     </div>
   );
 }

@@ -4298,6 +4298,13 @@ const zhCN: Record<string, string> = {
   // 快速创建（T-P3-R1，视图顶部条）：占位即用法（必填仅标题；回车 = 建）。其余文案复用
   // squad.common.title / .parent / .parent.none / .submit 与失败四键（不新增第二套词汇）。
   "squad.workItems.quickCreate.placeholder": "输入标题，回车即建",
+  // 侧边 peek（T-P3-R2，行预览右侧轻量面板）：**恰四枚**键 —— 面板身份 / 通往完整详情页的唯一入口 /
+  // 关闭钮的可及名称 / 活动摘要标题。其余文案全部复用既有键（状态、优先级、标签、起止、创建人、
+  // 加载·失败·重试·不存在、活动 kind 与空态、「关联活动不可用」）。
+  "squad.workItems.peek.title": "工作项预览",
+  "squad.workItems.peek.openDetail": "打开完整详情页",
+  "squad.workItems.peek.close": "关闭",
+  "squad.workItems.peek.activity": "最近活动",
   "squad.workItems.created": "已创建工作项",
   "squad.workItems.updated": "已保存",
   "squad.workItems.editTitle": "编辑工作项",

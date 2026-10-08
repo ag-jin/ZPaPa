@@ -256,7 +256,10 @@ function WorkItemRow({
     onReassign,
     onDiscard,
     onToggleTimeline,
-    onOpenWorkItemDetail,
+    /* T-P3-R2：行级「打开」的**唯一**意图出口 —— 环境带了右侧预览（`onOpenPeek`）就用它，
+       缺省（`undefined`）仍是详情页导航（缺省零 peek）。回落取在解构的就地默认值上，故行渲染处
+       只有一枚 `onOpenRow`、零新增代码行（行模块 400 硬线：见文件头的结构纪律）。 */
+    onOpenPeek: onOpenRow = environment.onOpenWorkItemDetail,
     workspacePath,
     workspaceIdentity,
     onOpenSession,
@@ -281,7 +284,7 @@ function WorkItemRow({
   /* 行级「打开详情」的透明覆盖按钮（**一处定义，多面共用**的组件在这里挂载一次；
      表格布局由单元格模块挂载同一份组件）。抽成变量是为了让它与勾选件共用同一个槽位。 */
   const openDetailOverlay = (
-    <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenWorkItemDetail(item.id)} />
+    <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenRow(item.id)} />
   );
   /* 行内动作簇（编辑 / 改派 / 放弃整批 / 时间线）：**一处定义，两种布局共用** ——
      表格的动作列不是第二份动作簇，只是同一个簇换了个宿主格子（`<td data-column="actions">`）。 */

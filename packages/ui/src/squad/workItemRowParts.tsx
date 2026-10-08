@@ -58,6 +58,11 @@ export type WorkItemRowEnvironment = {
   onToggleTimeline: (item: WorkItem) => void;
   /** B5.1：打开这条工作项的详情页（页面 → App 的意图态；本层不持有导航状态）。 */
   onOpenWorkItemDetail: (workItemId: string) => void;
+  /** 侧边 peek（阶段三 · T-P3-R2）：行级「打开」的**预览意图** —— 存在时行打开的是右侧轻量面板
+      （面板里再经 `onOpenWorkItemDetail` 进完整详情页）；**缺省 ⇒ 保持既有详情页导航**（缺省零 peek），
+      于是"点得动但什么都不发生"在接线层面凑不出来（与 reorder 把手同款纪律）。
+      本层只把意图交回宿主：打开态属于宿主，行不持有任何面板状态。 */
+  onOpenPeek?: (workItemId: string) => void;
   /** 展开的时间线要查哪个 workspace（页面把 shell 给的目标原样透传）。 */
   workspacePath: string;
   workspaceIdentity?: string;

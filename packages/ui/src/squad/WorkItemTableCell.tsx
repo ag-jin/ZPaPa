@@ -66,6 +66,7 @@ export function WorkItemTableRowCells({
   columns,
   snapshot,
   onOpenWorkItemDetail,
+  onOpenPeek,
   actions,
   select,
 }: {
@@ -73,6 +74,9 @@ export function WorkItemTableRowCells({
   columns: readonly WorkItemSurfaceColumnKey[];
   snapshot: SquadSnapshot;
   onOpenWorkItemDetail: (workItemId: string) => void;
+  /** 侧边 peek（T-P3-R2）：与行模块**同一份**口径 —— 存在 ⇒ 标题格的「打开」打开预览，
+      缺省 ⇒ 既有详情页导航（表格不是第二套打开语义，只是换个宿主格子）。 */
+  onOpenPeek?: (workItemId: string) => void;
   /** 行级动作簇（行模块的单点实现，原样放进动作格）。 */
   actions: ReactNode;
   /** 行级勾选件（行模块的单点实现，原样放进首列格）；`null` = 批量模式未开启。 */
@@ -144,10 +148,11 @@ export function WorkItemTableRowCells({
         className={TABLE_TITLE_CELL_CLASSNAME}
       >
         <span className="relative flex items-center gap-2">
-          {/* 行级「打开详情」：与看板/列表**同一个**组件（透明覆盖层一处定义）。 */}
+          {/* 行级「打开详情」：与看板/列表**同一个**组件（透明覆盖层一处定义）；peek 能力存在时
+              打开的也是 peek（与行模块同一份回落口径，三视图不分叉）。 */}
           <WorkItemRowOpenDetailOverlay
             title={item.title}
-            onOpen={() => onOpenWorkItemDetail(item.id)}
+            onOpen={() => (onOpenPeek ?? onOpenWorkItemDetail)(item.id)}
           />
           <span className="pointer-events-none relative z-10 min-w-0 break-words">
             {item.title}
