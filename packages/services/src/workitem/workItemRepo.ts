@@ -1,4 +1,10 @@
-import { isTerminalWorkItemStatus, type WorkItem, type WorkItemStatusKey } from "@zcode/shared";
+import {
+  isTerminalWorkItemStatus,
+  type WorkItem,
+  type WorkItemCreator,
+  type WorkItemPriorityKey,
+  type WorkItemStatusKey,
+} from "@zcode/shared";
 import type { DatabaseSync } from "node:sqlite";
 
 /* 工作项仓库：work_items 表的读写。刻意不进 packages/services/src/index.ts——
@@ -20,11 +26,27 @@ interface WorkItemRow {
   archived_at: number | null;
   created_at: number;
   updated_at: number;
+  /* 0018（Surface 对齐）追加的 7 列：优先级 / 起始-截止（日历日期文本）/ 创建人三列 /
+     每 workspace 序号。前六列可空 = 未设置 / 迁移前未知（不编造值）。 */
+  priority: string | null;
+  start_date: string | null;
+  due_date: string | null;
+  creator_kind: string | null;
+  creator_id: string | null;
+  creator_display_name: string | null;
+  identifier_seq: number | null;
 }
 
 export interface WorkItemRepo {
-  /** 写入一行。调用方必须已校验环与深度（WORK_ITEM_MAX_DEPTH / 祖父链），本层不查父链。 */
-  insert(item: WorkItem): void;
+  /**
+   * 写入一行，返回语句内生成的 `identifier_seq`。
+   * 调用方必须已校验环与深度（WORK_ITEM_MAX_DEPTH / 祖父链），本层不查父链。
+   *
+   * 序号生成写在 INSERT 语句本身（`COALESCE((SELECT MAX(identifier_seq) …), 0) + 1`，
+   * 与 0011 Activity 序号同款）：多窗口 Host 共用同一 tasks-index 库文件，JS 先查后插 /
+   * 内存 counter 在跨连接并发下会重号 —— 而重号被唯一索引拒绝时，调用方那次创建已经失败。
+   */
+  insert(item: WorkItem): number;
   get(id: string): WorkItem | null;
   /**
    * 含归档读回（协作域 §12.1-12：归档工作项仍允许评论写入，但派发必须被拒并**如实上报**）。
@@ -69,8 +91,22 @@ export interface WorkItemRepo {
    *
    * `labels` 入参是**已归一化**的字符串数组（判据单源 = shared 的 `parseWorkItemLabels`，
    * 由调用方在写之前过闸）：本层不再做第二份去重 / 截断 —— 存储格式照旧是 JSON 文本。
+   *
+   * 0018 扩到 6 个字段：`priority` / `startDate` / `dueDate` 是**内容型**（与 title/body/labels 同列
+   * 白名单）；`null` 是合法值 = **清回未设置**（与 `labels: []` 同款：给了字段就 SET）。`creator_*`
+   * 与 `identifier_seq` **不在**白名单里：它们没有更新面（创建人与创建序号是既成事实，不可改）。
    */
-  updateContent(id: string, patch: { title?: string; body?: string; labels?: string[] }): boolean;
+  updateContent(
+    id: string,
+    patch: {
+      title?: string;
+      body?: string;
+      labels?: string[];
+      priority?: WorkItemPriorityKey | null;
+      startDate?: string | null;
+      dueDate?: string | null;
+    },
+  ): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
   areAllChildrenTerminal(parentId: string): boolean;
 }
@@ -90,36 +126,83 @@ function rowToWorkItem(row: WorkItemRow): WorkItem {
     properties: JSON.parse(row.properties) as Record<string, unknown>,
     position: row.position,
     archivedAt: row.archived_at ?? undefined,
+    /* 读回纪律：NULL ⇒ `undefined`（未设置 / 迁移前未知），**不猜**、不落默认值 ——
+       `priority: null` 与「显式选了某一档」不是同一态，编一个默认档位就是替用户做决定。 */
+    priority: row.priority === null ? undefined : (row.priority as WorkItemPriorityKey),
+    startDate: row.start_date ?? undefined,
+    dueDate: row.due_date ?? undefined,
+    /* 创建人三列是一件事：kind + id 齐备才算有创建人（写入口两者同写；只有一半的行不可达，
+       真出现时按「未知」读回，不返回半截对象）。 */
+    creator: readCreator(row),
+    identifierSeq: row.identifier_seq ?? undefined,
   };
+}
+
+function readCreator(row: WorkItemRow): WorkItemCreator | undefined {
+  if (row.creator_kind === null || row.creator_id === null) return undefined;
+  const creator: WorkItemCreator = {
+    kind: row.creator_kind as WorkItemCreator["kind"],
+    id: row.creator_id,
+  };
+  // 空串不落列（写入口给 null）：显示名缺失 = 没有这个名字，不是「名字是空字符串」。
+  if (row.creator_display_name !== null) creator.displayName = row.creator_display_name;
+  return creator;
 }
 
 export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
   return {
     insert(item) {
       const now = Date.now();
-      db.prepare(
-        `INSERT INTO work_items (
+      /* 列集与 16 列版逐字一致（既有列的写入口径不变），只是追加 0018 的 7 列；
+         `identifier_seq` 由 SELECT 里的 `COALESCE(MAX…)+1` **语句内**生成，`RETURNING`
+         把刚生成的号在**同一语句**里交回（没有「写入与读回之间」的窗口）——
+         参数列表里没有它，调用方结构上无法传号（见接口注释）。 */
+      const row = db
+        .prepare(
+          `INSERT INTO work_items (
           id, workspace_key, workspace_path, parent_id, stage, title, body, status,
-          assignee_type, assignee_id, labels, properties, position, archived_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        item.id,
-        item.workspaceIdentity,
-        item.workspacePath,
-        item.parentId ?? null,
-        item.stage ?? null,
-        item.title,
-        item.body,
-        item.status,
-        item.assignee.type,
-        item.assignee.id,
-        JSON.stringify(item.labels),
-        JSON.stringify(item.properties),
-        item.position,
-        item.archivedAt ?? null,
-        now,
-        now,
-      );
+          assignee_type, assignee_id, labels, properties, position, archived_at,
+          priority, start_date, due_date, creator_kind, creator_id, creator_display_name,
+          identifier_seq, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          COALESCE((SELECT MAX(identifier_seq) FROM work_items WHERE workspace_key = ?), 0) + 1,
+          ?, ?
+        RETURNING identifier_seq`,
+        )
+        .get(
+          item.id,
+          item.workspaceIdentity,
+          item.workspacePath,
+          item.parentId ?? null,
+          item.stage ?? null,
+          item.title,
+          item.body,
+          item.status,
+          item.assignee.type,
+          item.assignee.id,
+          JSON.stringify(item.labels),
+          JSON.stringify(item.properties),
+          item.position,
+          item.archivedAt ?? null,
+          item.priority ?? null,
+          item.startDate ?? null,
+          item.dueDate ?? null,
+          item.creator?.kind ?? null,
+          item.creator?.id ?? null,
+          item.creator?.displayName ?? null,
+          // MAX+1 的作用域参数：workspace_key（序号是每 workspace 的）。
+          item.workspaceIdentity,
+          now,
+          now,
+        ) as { identifier_seq: number } | undefined;
+      if (!row) {
+        throw new Error(
+          `工作项插入未回传 identifier_seq（id=${item.id}）：不可达态，须查库 —— ` +
+            "不返回一个猜出来的号（猜出来的号会与库里的真实号分叉）。",
+        );
+      }
+      return row.identifier_seq;
     },
 
     // 归档行等同不存在：updateStatus / listChildren 都过滤 archived_at IS NULL，
@@ -188,7 +271,7 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
     // 不发「不 SET 任何列」的 UPDATE）；运行期多带的键不参与拼接，故写不到白名单之外的列。
     updateContent(id, patch) {
       const assignments: string[] = [];
-      const values: Array<string | number> = [];
+      const values: Array<string | number | null> = [];
       if (patch.title !== undefined) {
         assignments.push("title=?");
         values.push(patch.title);
@@ -202,6 +285,20 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
       if (patch.labels !== undefined) {
         assignments.push("labels=?");
         values.push(JSON.stringify(patch.labels));
+      }
+      /* 0018 的三个内容型新字段：`null` 是合法值 = **清回未设置**（给了字段就 SET，不是空 patch）。
+         判据（闭集 / 日历日期）在写入口过闸，本层不做第二份校验（同 labels 的纪律）。 */
+      if (patch.priority !== undefined) {
+        assignments.push("priority=?");
+        values.push(patch.priority);
+      }
+      if (patch.startDate !== undefined) {
+        assignments.push("start_date=?");
+        values.push(patch.startDate);
+      }
+      if (patch.dueDate !== undefined) {
+        assignments.push("due_date=?");
+        values.push(patch.dueDate);
       }
       // 空 patch：没有任何要写的列 ⇒ 不执行空 UPDATE，直接未命中（响亮错误留给调用方）。
       if (assignments.length === 0) return false;
