@@ -9,6 +9,10 @@ import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subage
 import { SquadTimelineSection } from "./SquadTimelineSection.js";
 import { parseAssigneeValue, resolveAssigneeName } from "./squadEntryViewModel.js";
 import {
+  workItemIdentifierText,
+  workItemPriorityMessageId,
+} from "./workItemPropertiesViewModel.js";
+import {
   WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS,
   flattenWorkItemBoard,
   groupWorkItemBoard,
@@ -41,14 +45,25 @@ import {
    + 一条**短暂环形高亮**（语义色 token，§11.3；不是状态编码），然后调 `onFocusConsumed()`
    把意图清掉；**目标不在当前列表同样消费**（父项被归档等 —— 不留悬挂意图、不报错）。 */
 
-const LIST_CLASSNAME = "flex flex-col gap-2";
-/** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
-const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/** 行列表容器：**不留行间沟**（差距报告 §5 的密度口径）——分隔线相邻成列；
+    留沟会把行拆成一块块卡片，hover surface 也跟着断开。 */
+const LIST_CLASSNAME = "flex flex-col";
+/* 行容器（差距报告 §5 的视觉 token）：**细分隔线 + hover surface** 的高密度列表行，
+   不再是「一张小卡片」（`rounded-lg border border-border` 的包裹感 + 行间 gap 是低密度形态）；
+   行高不小于 44px（可点目标下限；行级「打开详情」是整行覆盖按钮，命中区域要够大）。
+   最后一行不给分隔线（列尾留一条悬空的线只在视觉上多余）。 */
+const ROW_CLASSNAME =
+  "flex min-h-11 flex-col justify-center gap-1.5 border-b border-border px-3 py-1.5 transition-colors last:border-b-0 hover:bg-hover";
 /* 标签 chip 的**中性**外观（#11 v1）：只用 `border` / `foreground-subtlest` ——
    标签是**描述**，不是状态（spec §11.3：状态只由语义色表达；借 success / destructive 上色
    会让「这个标签」被读成「这件事成了 / 出事了」）。常量一处定义，看板与详情页共用同一个组件。 */
 const WORK_ITEM_LABEL_CHIP_CLASSNAME =
   "shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest";
+/* 优先级徽标的**中性**外观（阶段一轮 C）：同样不借语义色 —— 优先级是**分类**，不是「成了/出事了」；
+   借用 success / destructive 让某一档「看起来更响」会把档位读成故障（DESIGN：语义色只编码状态）。
+   常量一处定义，看板行与详情概览共用同一个组件（见 `WorkItemPriorityBadge`）。 */
+const WORK_ITEM_PRIORITY_BADGE_CLASSNAME =
+  "rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle";
 /* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
    不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
 const FOCUS_HIGHLIGHT_MS = 1600;
@@ -64,6 +79,37 @@ export function WorkItemLabelChip({ label }: { label: string }) {
   return (
     <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label">
       {label}
+    </span>
+  );
+}
+
+/**
+ * 工作项优先级徽标（**一处定义，两个面共用**：看板行与详情概览）；未设置（NULL）⇒ 不渲染。
+ *
+ * 为什么也放在本文件：与标签 chip 同一条理由 —— 外观属于「工作项行的呈现词汇」，看板是这套
+ * 词汇的拥有者，详情页只该复用它（各写一份外观迟早长得不一样，且不会有人发现）。
+ * `testId` 由调用方给：两个面的稳定锚点不同（行锚 `work-item-priority` / 概览锚带 `-detail-`），
+ * 锚点是**面的属性**，不是徽标的属性。
+ *
+ * 三档语义在这里只说一件事：**档位文案**（闭集四档，映射穷尽在 `workItemPropertiesViewModel`）。
+ * 闭集外的值（坏数据 / 未来新增档位的旧界面）⇒ 整个徽标不渲染：显示一个看不懂的裸 key
+ * 只会让人以为那是个合法档位。
+ */
+export function WorkItemPriorityBadge({
+  priority,
+  testId,
+}: {
+  /** 工作项优先级原文（闭集判定在纯函数里；这里不猜、不折算）。 */
+  priority: unknown;
+  /** 本面的稳定锚点（e2e 依赖）。 */
+  testId: string;
+}) {
+  const { intl } = useZCodeIntl();
+  const messageId = workItemPriorityMessageId(priority);
+  if (messageId === null) return null;
+  return (
+    <span className={WORK_ITEM_PRIORITY_BADGE_CLASSNAME} data-testid={testId}>
+      {intl.formatMessage({ id: messageId })}
     </span>
   );
 }
@@ -211,6 +257,8 @@ export function WorkItemsBoard({
     const busy = busyWorkItemId === item.id;
     const timelineExpanded = timelineExpandedWorkItemId === item.id;
     const labelChips = workItemLabelChips(item.labels);
+    /* identifier（Q6：前缀不入库）：与详情概览**同一个**纯函数；未设置 ⇒ null ⇒ 不画。 */
+    const identifierText = workItemIdentifierText(item.identifierSeq);
     return (
       <li
         key={item.id}
@@ -244,6 +292,13 @@ export function WorkItemsBoard({
             className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
           />
           <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
+            {/* identifier 在标题**之前**（它是这条记录的编号，等宽字形；DESIGN：标识符用 font-mono）。
+                未设置（存量行）⇒ 不画，也不占位。 */}
+            {identifierText === null ? null : (
+              <span className="shrink-0 font-mono text-ui-xs text-foreground-subtlest">
+                {identifierText}
+              </span>
+            )}
             <span className="break-words text-ui-base text-foreground">{item.title}</span>
             {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
                 放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
@@ -266,6 +321,9 @@ export function WorkItemsBoard({
             <span className="shrink-0 text-ui-xs text-foreground-subtle">
               {t(workItemStatusMessageId(item.status))}
             </span>
+            {/* 优先级徽标（阶段一轮 C）：紧邻状态（都是「这一条现在怎么样」这一类信息）；
+                未设置 ⇒ 组件返回 null（不留空位）。 */}
+            <WorkItemPriorityBadge priority={item.priority} testId="work-item-priority" />
             <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
               <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
               {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}

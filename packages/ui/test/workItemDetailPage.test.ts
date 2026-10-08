@@ -223,7 +223,9 @@ const ROUND_ONE_SOURCES = [
 test("守卫｜详情页四态与协作区 testid 齐备（页根 / 返回 / 概览 / 加载 / 失败 / 不存在 / 协作区）", () => {
   const page = readSource("squad/WorkItemDetailPage.tsx");
   /* T-P1-R2 起概览 section 在独立模块里 ⇒ 扫描面 = 页面 + 概览模块（**只扩面**：
-     概览的四个 testid 仍必须存在，只是不再要求它们出现在页面文件本身）。 */
+     概览的四个 testid 仍必须存在，只是不再要求它们出现在页面文件本身）。
+     轮 C 再补四族新字段的锚点（优先级 / 起始 / 截止 / 创建人 / identifier）—— 它们**有值才渲染**，
+     故这里只钉「锚点确实在源码里」（空值不渲染由渲染用例与搬件基线守）。 */
   const detailSurface = page + readSource("squad/WorkItemDetailOverview.tsx");
   for (const testId of [
     "work-item-detail-page",
@@ -235,8 +237,20 @@ test("守卫｜详情页四态与协作区 testid 齐备（页根 / 返回 / 概
     "work-item-detail-load-failure",
     "work-item-collaboration",
     "work-item-collaboration-failure",
+    "work-item-detail-identifier",
+    "work-item-detail-priority",
+    "work-item-detail-start-date",
+    "work-item-detail-due-date",
+    "work-item-detail-creator",
   ]) {
-    assert.ok(detailSurface.includes(`data-testid="${testId}"`), `详情页缺 testid ${testId}`);
+    /* 锚点可以有两种写法：直接写在 JSX 上（`data-testid="…"`），或交给**共用组件**的
+       `testId` 参数（轮 C 的优先级徽标与看板行共用同一份外观，锚点由面自己给）。
+       两种都算「锚点存在」；不存在才是红。 */
+    assert.ok(
+      detailSurface.includes(`data-testid="${testId}"`) ||
+        detailSurface.includes(`testId="${testId}"`),
+      `详情页缺 testid ${testId}`,
+    );
   }
   assert.ok(
     page.includes("workItemId === null ? (") ||
@@ -703,6 +717,13 @@ const OVERVIEW_FULL_ITEM: WorkItemCollaborationRead["workItem"] = {
   labels: ["alpha", "beta"],
   properties: { env: "prod", retries: 3, nested: { a: 1 } },
   position: 0,
+  /* 阶段一轮 C：满字段夹具**真的满字段** —— 四族新字段各给一个有值的样本，于是「搬件基线」
+     同时钉住新字段的呈现（空值那一路由下面的 sparse 夹具逐字守着）。 */
+  priority: "high",
+  startDate: "2026-10-08",
+  dueDate: "2026-12-31",
+  creator: { kind: "human", id: "u-1", displayName: "本地用户" },
+  identifierSeq: 12,
 };
 
 const OVERVIEW_SPARSE_ITEM: WorkItemCollaborationRead["workItem"] = {
@@ -728,13 +749,37 @@ const OVERVIEW_SPARSE_ITEM: WorkItemCollaborationRead["workItem"] = {
 const OVERVIEW_FULL_COLLAPSED =
   '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
   '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  '<span class="font-mono text-foreground-subtlest" data-testid="work-item-detail-identifier">#12' +
+  "</span>" +
   "<span>进行中" +
+  "</span>" +
+  '<span class="rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle" data-testid="work-item-detail-priority">高' +
   "</span>" +
   "<span>智能体·甲" +
   "</span>" +
   "</span>" +
   '<h1 class="text-ui-lg font-medium text-foreground">把工作项详情页的概览抽成独立模块' +
   "</h1>" +
+  '<span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-ui-xs" data-testid="work-item-detail-attributes">' +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-start-date">' +
+  '<span class="text-foreground-subtle">起始' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">2026-10-08' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-due-date">' +
+  '<span class="text-foreground-subtle">截止' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">2026-12-31' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-creator">' +
+  '<span class="text-foreground-subtle">创建人' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">人类·本地用户' +
+  "</span>" +
+  "</span>" +
+  "</span>" +
   '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
   '<span class="text-ui-xs text-foreground-subtle">标签' +
   "</span>" +
@@ -772,13 +817,37 @@ const OVERVIEW_FULL_COLLAPSED =
 const OVERVIEW_FULL_EXPANDED =
   '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
   '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  '<span class="font-mono text-foreground-subtlest" data-testid="work-item-detail-identifier">#12' +
+  "</span>" +
   "<span>进行中" +
+  "</span>" +
+  '<span class="rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle" data-testid="work-item-detail-priority">高' +
   "</span>" +
   "<span>智能体·甲" +
   "</span>" +
   "</span>" +
   '<h1 class="text-ui-lg font-medium text-foreground">把工作项详情页的概览抽成独立模块' +
   "</h1>" +
+  '<span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-ui-xs" data-testid="work-item-detail-attributes">' +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-start-date">' +
+  '<span class="text-foreground-subtle">起始' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">2026-10-08' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-due-date">' +
+  '<span class="text-foreground-subtle">截止' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">2026-12-31' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1" data-testid="work-item-detail-creator">' +
+  '<span class="text-foreground-subtle">创建人' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">人类·本地用户' +
+  "</span>" +
+  "</span>" +
+  "</span>" +
   '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
   '<span class="text-ui-xs text-foreground-subtle">标签' +
   "</span>" +

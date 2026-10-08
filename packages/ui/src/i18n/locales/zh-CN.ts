@@ -4285,6 +4285,26 @@ const zhCN: Record<string, string> = {
   "squad.workItems.labelsTooMany": "标签最多 {max} 个（当前 {count} 个）",
   "squad.workItems.labelsTooLong": "单个标签最多 {max} 个字符",
   "squad.workItems.labelsMore": "+{count}",
+  // Surface 对齐（0018 · 阶段一轮 C）：优先级 / 起止日期 / 创建人 —— 字段词汇（表单与详情概览共用）。
+  // 除「未设置」这个下拉项外，不给 NULL 编第三种说法：它是「没人定过」，不是第五个档位。
+  "squad.workItems.priority": "优先级",
+  "squad.workItems.priority.urgent": "紧急",
+  "squad.workItems.priority.high": "高",
+  "squad.workItems.priority.medium": "中",
+  "squad.workItems.priority.low": "低",
+  "squad.workItems.priority.unset": "未设置",
+  "squad.workItems.startDate": "起始",
+  "squad.workItems.dueDate": "截止",
+  // 日期输入的形状提示（两语同形：它是**格式**，不是句子）。
+  "squad.workItems.datePlaceholder": "YYYY-MM-DD",
+  "squad.workItems.creator": "创建人",
+  "squad.workItems.creator.human": "人类",
+  "squad.workItems.creator.agent": "智能体",
+  "squad.workItems.creator.system": "系统",
+  // 表单预检文案（判据单源在 shared；坏值原样带出 —— 「哪里不对」比「输入非法」有用）。
+  "squad.workItems.priorityInvalid": "「{value}」不是可选优先级（紧急 / 高 / 中 / 低）",
+  "squad.workItems.startDateInvalid": "起始日期「{value}」不是真实存在的日历日期（YYYY-MM-DD）",
+  "squad.workItems.dueDateInvalid": "截止日期「{value}」不是真实存在的日历日期（YYYY-MM-DD）",
   // 看板泳道（欠账 #15）：维度闭集 = 不分组 / 状态 category（4 类骨架） / 指派对象。
   "squad.workItems.lane.dimension": "分组",
   "squad.workItems.lane.dimension.none": "不分组",

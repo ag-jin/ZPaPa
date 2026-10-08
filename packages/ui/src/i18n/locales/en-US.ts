@@ -4579,6 +4579,30 @@ const enUS: Record<string, string> = {
   "squad.workItems.labelsTooMany": "At most {max} labels allowed (currently {count})",
   "squad.workItems.labelsTooLong": "Each label can be at most {max} characters",
   "squad.workItems.labelsMore": "+{count}",
+  // Surface alignment (0018, stage-1 round C): priority / start-due dates / creator — the field
+  // vocabulary shared by the form and the detail overview. NULL means "nobody decided"; apart from
+  // the "not set" select option we never invent another word for it.
+  "squad.workItems.priority": "Priority",
+  "squad.workItems.priority.urgent": "Urgent",
+  "squad.workItems.priority.high": "High",
+  "squad.workItems.priority.medium": "Medium",
+  "squad.workItems.priority.low": "Low",
+  "squad.workItems.priority.unset": "Not set",
+  "squad.workItems.startDate": "Start",
+  "squad.workItems.dueDate": "Due",
+  // Shape hint for the date inputs (identical in both languages: it is a format, not a sentence).
+  "squad.workItems.datePlaceholder": "YYYY-MM-DD",
+  "squad.workItems.creator": "Created by",
+  "squad.workItems.creator.human": "Human",
+  "squad.workItems.creator.agent": "Agent",
+  "squad.workItems.creator.system": "System",
+  // Form pre-check copy (the rule lives in shared; the bad value is quoted verbatim — "what is
+  // wrong" beats "invalid input").
+  "squad.workItems.priorityInvalid":
+    '"{value}" is not a selectable priority (urgent / high / medium / low)',
+  "squad.workItems.startDateInvalid":
+    'Start date "{value}" is not a real calendar date (YYYY-MM-DD)',
+  "squad.workItems.dueDateInvalid": 'Due date "{value}" is not a real calendar date (YYYY-MM-DD)',
   // Board lanes (#15): closed set of dimensions = no grouping / status category (4-lane skeleton) /
   // assignee (user first, then first appearance).
   "squad.workItems.lane.dimension": "Group by",
