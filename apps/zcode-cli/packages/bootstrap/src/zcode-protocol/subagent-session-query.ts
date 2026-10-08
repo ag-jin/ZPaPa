@@ -16,6 +16,13 @@ import type { ZCodeSessionEndedSubagent, ZCodeSessionRunningSubagent } from "@zc
 const SUBAGENT_TOOL_NAMES = new Set(["Agent", "Task", "subagent"]);
 const CANCELLATION_PATTERN = /abort|cancel|interrupt|stop/i;
 
+/**
+ * 孤儿收敛 entry 的 session_entry 类型：child 的「不在运行但无 outcome」补洞事实。
+ * 唯一写方是 `subagent-orphan-reconcile.ts`（接管会话时），读面在这里——
+ * 本模块是 child session 终态事实的唯一解释者（`endedStatus` / hydration 同源）。
+ */
+export const SESSION_ENTRY_SUBAGENT_OUTCOME = "subagent_outcome" as const;
+
 interface SubagentCandidate {
   agentId?: string;
   childSessionId: string;
@@ -237,6 +244,50 @@ export function collectSubagentChildSessionIds(
   return collectCandidates(session, messages, parentEvents).map(
     (candidate) => candidate.childSessionId,
   );
+}
+
+/** spawn 候选的后台标记（`collectCandidates` 的公开投影）。 */
+export interface SubagentSpawnCandidate {
+  childSessionId: string;
+  runInBackground: boolean;
+}
+
+/**
+ * spawn 候选枚举的公开面（只暴露收敛判据所需的两个字段）。
+ *
+ * 孤儿收敛的 J1（后台启动）必须与 `projectSessionSubagents` 用同一个解读：谁是后台 spawn
+ * 只由持久化 spawn input 的 `run_in_background` 决定。收敛方另读一遍父 transcript 会造出
+ * 第二解读，所以这里把同一 enumerate 的结果按需投影出去。
+ */
+export function collectSubagentSpawnCandidates(
+  session: SessionInfo,
+  messages: readonly MessageWithParts[],
+  parentEvents?: readonly SessionEvent[],
+): SubagentSpawnCandidate[] {
+  return collectCandidates(session, messages, parentEvents).map((candidate) => ({
+    childSessionId: candidate.childSessionId,
+    runInBackground: candidate.runInBackground,
+  }));
+}
+
+/**
+ * child 的最后持久活动（毫秒）：session 的 `time.updated` 与最后一条消息时间的较大者。
+ *
+ * 消息写入本身会 touch session（adapter 的 `touchSession`），两者本应同步；取较大者是防御
+ * 旧数据里 time_updated 滞后于消息时间的情形。宽容期（J5）判据用它，宁可判「刚活动过」。
+ */
+export function lastChildActivityAt(
+  childSession: Pick<SessionInfo, "time">,
+  childMessages: readonly MessageWithParts[],
+): number {
+  const last = childMessages.at(-1);
+  if (!last) return childSession.time.updated;
+  const time = last.info.time;
+  const lastMessageAt =
+    "completed" in time && time.completed !== undefined
+      ? Math.max(time.created, time.completed)
+      : time.created;
+  return Math.max(childSession.time.updated, lastMessageAt);
 }
 
 function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
