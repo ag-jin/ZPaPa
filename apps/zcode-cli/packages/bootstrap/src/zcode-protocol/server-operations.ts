@@ -21,6 +21,7 @@ import {
   RewindStrategy,
   type EventId,
   type ExecutionShellSelection,
+  type Logger,
   type MessageWithParts,
   type ModelSelection,
   type MessageId,
@@ -31,6 +32,7 @@ import {
   SessionEventType,
   type SessionId,
   type SessionInfo,
+  type SessionStorePort,
   type SessionTaskType,
   type CollaborationMode,
   type TargetCompletionVerificationPayload,
@@ -115,7 +117,8 @@ import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js"
 import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
 import { projectIdFromDirectory } from "../app/paths.js";
 import {
-  collectSubagentChildSessionIds,
+  collectSubagentSpawnCandidates,
+  lastChildActivityAt,
   paginateEndedSubagents,
   projectSessionSubagents,
 } from "./subagent-session-query.js";
@@ -1676,9 +1679,30 @@ export interface SessionSubagentInventory {
   revision: number;
   /** 持久层可读、且 `taskType === "subagent_child"` 的 child session id。 */
   childSessionIds: string[];
+  /**
+   * 后台（async）spawn 的 child。与 running/ended 同一次读的同一候选枚举——孤儿收敛的 J1
+   * 判据要用它，第二次读父 transcript 会让「谁是后台」出现第二解读。
+   */
+  backgroundChildSessionIds: string[];
+  /**
+   * child 的最后持久活动（毫秒）：session `time.updated` 与最后消息时间的较大者。孤儿收敛的
+   * 宽容期（J5）判据用它；与 running/ended 来自同一批子查询，不再单独读一遍 child transcript。
+   */
+  childLastActivityAtMs: ReadonlyMap<string, number>;
   running: ZCodeSessionRunningSubagent[];
   /** 全量终态子会话（未分页；分页只属于 RPC 展示层）。 */
   ended: ZCodeSessionEndedSubagent[];
+}
+
+/**
+ * 权威清单读取的依赖窄面：只声明它真正读的字段（store / 本进程 live 记录 / logger）。
+ * 冷恢复的孤儿收敛只被注入这个窄面，多出来的依赖会让「它到底碰了什么」变得不可见
+ * （对齐 dynamic-workflow-run-reconcile.ts 的 deps 收窄）。
+ */
+export interface SessionSubagentInventoryReadContext {
+  deps: { sessionStore?: SessionStorePort };
+  sessions: ReadonlyMap<string, ZCodeProtocolSessionRecord>;
+  logger?: Logger;
 }
 
 /**
@@ -1690,7 +1714,7 @@ export interface SessionSubagentInventory {
  * row 状态重算 `subagents`，裂缝里输的永远是那份没写进 row 的结论。
  */
 export async function readSessionSubagentInventory(
-  context: ZCodeProtocolAgentServerContext,
+  context: SessionSubagentInventoryReadContext,
   sessionId: string,
   persistedMessages?: MessageWithParts[],
   operation = "session_subagents",
@@ -1701,6 +1725,8 @@ export async function readSessionSubagentInventory(
     return {
       revision: liveParent?.stateRevision ?? 0,
       childSessionIds: [],
+      backgroundChildSessionIds: [],
+      childLastActivityAtMs: new Map(),
       running: [],
       ended: [],
     };
@@ -1727,7 +1753,12 @@ export async function readSessionSubagentInventory(
   const parentEvents = liveParent
     ? await liveParent.eventStore.getEvents(parentSession.id).catch(() => [])
     : [];
-  const childSessionIds = collectSubagentChildSessionIds(parentSession, messages, parentEvents);
+  const spawnCandidates = collectSubagentSpawnCandidates(parentSession, messages, parentEvents);
+  const childSessionIds = spawnCandidates.map((candidate) => candidate.childSessionId);
+  const backgroundChildSessionIds = spawnCandidates
+    .filter((candidate) => candidate.runInBackground)
+    .map((candidate) => candidate.childSessionId);
+  const childLastActivityAtMs = new Map<string, number>();
   const childEntries = await Promise.all(
     childSessionIds.map(async (childSessionId) => {
       const childSession = await store.getSession(childSessionId as SessionId);
@@ -1739,6 +1770,9 @@ export async function readSessionSubagentInventory(
       const childProjection = liveChild
         ? await liveChild.app.runtime.getProjection().catch(() => undefined)
         : undefined;
+      // 孤儿收敛的宽容期判据（J5）在这批子查询里带出：收敛方在激活尾部复用同一次读，
+      // 不再单独读一遍 child transcript（激活路径的时延预算）。
+      childLastActivityAtMs.set(childSessionId, lastChildActivityAt(childSession, childMessages));
       return { childMessages, childProjection, childSession, childSessionId };
     }),
   );
@@ -1769,6 +1803,8 @@ export async function readSessionSubagentInventory(
   return {
     revision: projection.revision,
     childSessionIds: persistedChildren.map((entry) => entry.childSessionId),
+    backgroundChildSessionIds,
+    childLastActivityAtMs,
     running: projection.running,
     ended: projection.ended,
   };
