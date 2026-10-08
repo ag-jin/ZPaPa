@@ -11,6 +11,7 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import { WorkItemDeliverablesSection } from "../src/squad/WorkItemDeliverablesSection.js";
 import {
+  buildWorkItemTimelineEntries,
   WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS,
   writeDisabledReason,
 } from "../src/squad/workItemCollaborationViewModel.js";
@@ -276,6 +277,73 @@ test("UI-⑧ 登记闸（纯函数，独立字面量集）：非 http(s) 一律�
   assert.match(section, /const problemId = deliverableLinkDraftProblemId\(draft\);/);
   assert.match(section, /disabled=\{problemId !== null \|\| submitting\}/);
   assert.match(section, /if \(deliverableLinkDraftProblemId\(draft\) !== null\) return;/);
+});
+
+test("UI-⑩ 时间线条目：第 20 枚成主序一条、actor 原样保留（system / human 在界面上分得开）", () => {
+  const activity = (over: {
+    id: string;
+    sequence: number;
+    actor: { kind: "system" | "human"; id: string };
+    payload: Record<string, unknown>;
+  }) => ({
+    id: over.id,
+    workspaceKey: "ws",
+    workspacePath: "/tmp/ws",
+    workItemId: "wi-1",
+    kind: "deliverable_registered" as const,
+    sequence: over.sequence,
+    occurredAt: 1_000 + over.sequence,
+    actor: over.actor,
+    sourceRun: null,
+    initiatedBy: over.actor,
+    commentId: null,
+    decisionId: null,
+    dispatchEventId: null,
+    payload: over.payload,
+    dedupKey: `deliverable:${over.id}:registered`,
+    createdAt: 1_000 + over.sequence,
+    updatedAt: 1_000 + over.sequence,
+  });
+  const entries = buildWorkItemTimelineEntries({
+    comments: [],
+    decisions: [],
+    activities: [
+      activity({
+        id: "deliverable-auto",
+        sequence: 1,
+        actor: { kind: "system", id: "squad-runtime" },
+        payload: {
+          kind: "diff",
+          title: "队员 run 产出 diff（squad/member/wi-1/a）",
+          deliverableId: "deliverable-auto",
+        },
+      }),
+      activity({
+        id: "deliverable-manual",
+        sequence: 2,
+        actor: { kind: "human", id: "local-user" },
+        payload: { kind: "link", title: "PR #7", deliverableId: "deliverable-manual" },
+      }),
+    ],
+  });
+  assert.equal(entries.length, 2, "两枚都不是评论/决定的附注：各占一条主序");
+  assert.deepEqual(
+    entries.map((entry) => (entry.kind === "system" ? entry.activity.kind : entry.kind)),
+    ["deliverable_registered", "deliverable_registered"],
+  );
+  assert.deepEqual(
+    entries.map((entry) => (entry.kind === "system" ? entry.activity.actor : null)),
+    [
+      { kind: "system", id: "squad-runtime" },
+      { kind: "human", id: "local-user" },
+    ],
+    "actor 原样进条目：时间线上「谁登记的」可分辨",
+  );
+  // 主序原样保留（repo 已排序，UI 不得重排）。
+  assert.deepEqual(
+    entries.map((entry) => entry.sequence),
+    [1, 2],
+  );
 });
 
 test("UI-⑨ 行事实读取独立复核：缺字段读 null（不猜默认值），link 的 size 恒 null", () => {
