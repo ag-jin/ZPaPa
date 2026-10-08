@@ -18,6 +18,9 @@ import { createWorkItemCommentReactionRepo } from "../../services/src/workitem/w
 import { createWorkItemCommentRepo } from "../../services/src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../../services/src/workitem/workItemDecisionRepo.js";
 import { createWorkItemDeliverableRepo } from "../../services/src/workitem/workItemDeliverableRepo.js";
+/* #8 D2：读模型新增「PR 关联清单 + 读数面可用性」两格 —— 夹具按 runtime 契约补齐。 */
+import { createWorkItemPullRequestRepo } from "../../services/src/workitem/workItemPullRequestRepo.js";
+import { createNullPullRequestProvider } from "../../services/src/workitem/pullRequestProvider.js";
 import {
   createWorkItemDecisionService,
   type WorkItemDecisionServiceDeps,
@@ -475,6 +478,8 @@ function setupChain() {
       ({
         workItemRepo: workItems,
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: CHAIN_WS,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

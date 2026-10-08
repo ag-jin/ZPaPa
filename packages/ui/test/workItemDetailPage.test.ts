@@ -115,6 +115,9 @@ function read(): WorkItemCollaborationRead {
     decisions: [],
     /* #7 D1b：读模型多了交付物清单（详情页的交付物区读它）。 */
     deliverables: [],
+    /* #8 D2：读模型多了「PR 关联清单 + 读数面可用性」（详情页的 PR 区读它们）。 */
+    pullRequests: [],
+    pullRequestProvider: { available: false, reason: "未配置 token" },
     reactions: [],
     receipts: [],
     viewerActor: { kind: "human", id: "local-user" },

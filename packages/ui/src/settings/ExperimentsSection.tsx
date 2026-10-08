@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { isGithubPullRequestTokenConfigured } from "@zcode/shared";
 import { Switch } from "@/components/ui/switch.js";
 import { toast } from "@/components/ui/toast.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { GitHubIntegrationSettingsRow } from "@/settings/GitHubIntegrationSettingsRow.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 
@@ -42,6 +44,40 @@ export function ExperimentsSection() {
     }
   };
 
+  /* #8 D2：GitHub PAT 的读写（本仓第一个 secret 字段）。
+     · token 值**只**从这里流向 settings 与「是否已配置」这个布尔事实 —— 渲染层拿不到 token 本身
+       （`GitHubIntegrationSettingsRow` 的 props 里没有那个字段，回显在结构上不可能）；
+     · 清除 = 写空串（schema 允许；与 httpProxy 的「空串 = 显式清空」同款语义）；
+     · 失败：留痕 + toast + **抛回行内**（草稿保留，用户能直接重试）。 */
+  const saveGithubToken = async (token: string) => {
+    setSaving(true);
+    try {
+      await update({ githubPullRequestToken: token });
+    } catch (error) {
+      logger.warn("[ExperimentsSection] 保存 GitHub 访问令牌失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      toast(intl.formatMessage({ id: "settings.experiments.githubIntegration.saveFailed" }));
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const clearGithubToken = async () => {
+    setSaving(true);
+    try {
+      await update({ githubPullRequestToken: "" });
+    } catch (error) {
+      logger.warn("[ExperimentsSection] 清除 GitHub 访问令牌失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      toast(intl.formatMessage({ id: "settings.experiments.githubIntegration.saveFailed" }));
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <SettingsGroupCard>
       <SettingsRow
@@ -67,6 +103,13 @@ export function ExperimentsSection() {
           control={null}
         />
       ) : null}
+      {/* #8 D2：GitHub 集成（PAT）——传下去的**只有布尔事实**（token 值不进渲染层）。 */}
+      <GitHubIntegrationSettingsRow
+        tokenConfigured={isGithubPullRequestTokenConfigured(settings?.githubPullRequestToken)}
+        saving={saving}
+        onSave={saveGithubToken}
+        onClear={clearGithubToken}
+      />
     </SettingsGroupCard>
   );
 }

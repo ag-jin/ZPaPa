@@ -4084,6 +4084,17 @@ const zhCN: Record<string, string> = {
   "settings.experiments.squadToggle.label": "多智能体小队",
   "settings.experiments.squadToggle.description": "启用协作智能体、小队与工作树隔离",
   "settings.experiments.saveFailed": "保存失败，请重试",
+  /* #8 D2：GitHub 集成（PAT）——本仓第一个 secret 字段。description 里言明**明文保存**的取舍。 */
+  "settings.experiments.githubIntegration.label": "GitHub 集成（PR 快照）",
+  "settings.experiments.githubIntegration.description":
+    "配置个人访问令牌（PAT）后，工作项详情页的 PR 区可拉取快照状态（开放/已合并等）。令牌以**明文**保存在本机设置文件中（本地单机、单用户），请使用只读或最小权限的令牌。",
+  "settings.experiments.githubIntegration.tokenPlaceholder":
+    "粘贴 GitHub 访问令牌（不留空则不修改）",
+  "settings.experiments.githubIntegration.tokenConfigured": "已配置",
+  "settings.experiments.githubIntegration.tokenNotConfigured": "未配置",
+  "settings.experiments.githubIntegration.tokenSave": "保存",
+  "settings.experiments.githubIntegration.tokenClear": "清除",
+  "settings.experiments.githubIntegration.saveFailed": "保存 GitHub 访问令牌失败，请重试",
 
   // 侧栏一级入口「智能体」「小队」「工作项」三个页面（2026-10-03 起搬家：功能面从设置卡移到一级导航；
   // 设置区只留总开关 + 一行指引）。三面共用的文案放 squad.common.*：同一个词只有一份，改一处三面同步。
@@ -4520,6 +4531,34 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.deliverables.form.cancel": "取消",
   "squad.workItemDetail.deliverable.disabled.archived": "工作项已归档，不能登记交付物",
   "squad.workItemDetail.deliverable.disabled.readFailed": "读取活动失败，暂时不能登记交付物",
+  /* #8 D2：关联 PR 区（状态闭集四值 + 「未拉取」单独一档 + 离线缺省说明 + 刷新结果分档）。 */
+  "squad.workItemDetail.pullRequests.title": "关联 PR",
+  "squad.workItemDetail.pullRequests.empty":
+    "还没有关联 PR：贴一个 GitHub PR 地址即可登记（配了访问令牌后还会显示快照状态）。",
+  "squad.workItemDetail.pullRequests.state.open": "开放",
+  "squad.workItemDetail.pullRequests.state.closed": "已关闭",
+  "squad.workItemDetail.pullRequests.state.merged": "已合并",
+  "squad.workItemDetail.pullRequests.state.draft": "草稿",
+  "squad.workItemDetail.pullRequests.state.notFetched": "未拉取",
+  "squad.workItemDetail.pullRequests.tokenMissing":
+    "未配置 GitHub 访问令牌：只显示手动登记的链接（在设置 ▸ 实验功能里配置后即可拉取 PR 快照）。",
+  "squad.workItemDetail.pullRequests.refresh": "刷新快照",
+  "squad.workItemDetail.pullRequests.refreshResult":
+    "刷新完成：{updated} 条已更新、{discarded} 条按防陈旧写丢弃、{unavailable} 条未配置、{failed} 条失败",
+  "squad.workItemDetail.pullRequests.snapshot.at": "快照于 {time}",
+  "squad.workItemDetail.pullRequests.snapshot.never": "从未拉取",
+  "squad.workItemDetail.pullRequests.unlink": "解除关联",
+  "squad.workItemDetail.pullRequests.form.open": "登记 PR",
+  "squad.workItemDetail.pullRequests.form.urlPlaceholder":
+    "https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.titlePlaceholder": "标题（可省，默认 owner/repo#编号）",
+  "squad.workItemDetail.pullRequests.form.urlRequired": "请填写 GitHub PR 地址",
+  "squad.workItemDetail.pullRequests.form.urlInvalid":
+    "只支持 GitHub PR 地址，形如 https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.submit": "登记",
+  "squad.workItemDetail.pullRequests.form.cancel": "取消",
+  "squad.workItemDetail.pullRequest.disabled.archived": "工作项已归档，不能登记 PR",
+  "squad.workItemDetail.pullRequest.disabled.readFailed": "读取活动失败，暂时不能登记 PR",
   "squad.workItemDetail.dispatch.pending": "等待派发",
   "squad.workItemDetail.dispatch.opened": "已创建运行",
   "squad.workItemDetail.dispatch.queued": "已排队",

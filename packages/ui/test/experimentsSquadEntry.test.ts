@@ -61,7 +61,11 @@ test("工作项面文案两语齐全", () => {
 // （旧键删净），本命名空间**只剩确数 4 条**：总开关的 label / description、开关失败提示、
 // 分区标题。下限断言必须跟着重算成**确数**（空断言不算数）：写死这 4 条键名，
 // 多一条（例如旧键复活）或少一条都红。
-test("实验分区文案在命名空间级别两语齐平（只剩确数 4 条）", () => {
+//
+// 2026-10-08 再算（#8 D2）：本分区新增「GitHub 集成（PAT）」一行（8 条：label/description/
+// 占位/已配置/未配置/保存/清除/保存失败）⇒ 确数 4 → **12**。这是**有意的增长**（不是漂移），
+// 故按同一纪律把确数重算并写死新集合。
+test("实验分区文案在命名空间级别两语齐平（只剩确数 12 条）", () => {
   const prefix = "settings.experiments.";
   const keysWithPrefix = (locale: Record<string, string>) =>
     Object.keys(locale).filter((key) => key.startsWith(prefix));
@@ -72,13 +76,21 @@ test("实验分区文案在命名空间级别两语齐平（只剩确数 4 条�
   for (const key of enKeys) assert.ok(zhKeys.has(key), `zh-CN 缺少 ${key}`);
 
   const expected = [
+    "settings.experiments.githubIntegration.description",
+    "settings.experiments.githubIntegration.label",
+    "settings.experiments.githubIntegration.saveFailed",
+    "settings.experiments.githubIntegration.tokenClear",
+    "settings.experiments.githubIntegration.tokenConfigured",
+    "settings.experiments.githubIntegration.tokenNotConfigured",
+    "settings.experiments.githubIntegration.tokenPlaceholder",
+    "settings.experiments.githubIntegration.tokenSave",
     "settings.experiments.saveFailed",
     "settings.experiments.squadToggle.description",
     "settings.experiments.squadToggle.label",
     "settings.experiments.title",
   ];
-  assert.deepEqual([...zhKeys].sort(), expected, "zh-CN 的 settings.experiments.* 应恰为这 4 条");
-  assert.deepEqual([...enKeys].sort(), expected, "en-US 的 settings.experiments.* 应恰为这 4 条");
+  assert.deepEqual([...zhKeys].sort(), expected, "zh-CN 的 settings.experiments.* 应恰为这 12 条");
+  assert.deepEqual([...enKeys].sort(), expected, "en-US 的 settings.experiments.* 应恰为这 12 条");
 });
 
 // 旧命名空间**一条都不剩**（改名后不留孤儿）：`settings.experiments.squad.` 前缀在两侧

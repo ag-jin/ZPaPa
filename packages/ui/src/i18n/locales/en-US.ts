@@ -4364,6 +4364,19 @@ const enUS: Record<string, string> = {
   "settings.experiments.squadToggle.description":
     "Enable collaborative agents, squads, and worktree isolation",
   "settings.experiments.saveFailed": "Could not save. Please try again.",
+  /* #8 D2: GitHub integration (PAT) — this repo's first secret field; the description states the
+     plaintext-on-disk trade-off to the user. */
+  "settings.experiments.githubIntegration.label": "GitHub integration (PR snapshots)",
+  "settings.experiments.githubIntegration.description":
+    "With a personal access token (PAT), the pull requests area on a work item page can fetch snapshot state (open / merged / …). The token is stored in **plaintext** in the local settings file (single machine, single user); prefer a read-only token with the least privilege.",
+  "settings.experiments.githubIntegration.tokenPlaceholder":
+    "Paste a GitHub access token (leave empty to keep the current one)",
+  "settings.experiments.githubIntegration.tokenConfigured": "Configured",
+  "settings.experiments.githubIntegration.tokenNotConfigured": "Not configured",
+  "settings.experiments.githubIntegration.tokenSave": "Save",
+  "settings.experiments.githubIntegration.tokenClear": "Clear",
+  "settings.experiments.githubIntegration.saveFailed":
+    "Could not save the GitHub access token. Please try again.",
 
   // Sidebar first-level entries "Agents" / "Squads" / "Work items" pages (2026-10-03 move: the surfaces
   // left the settings card; only the master switch and one hint row remain in settings).
@@ -4839,6 +4852,37 @@ const enUS: Record<string, string> = {
     "This work item is archived; deliverables cannot be registered",
   "squad.workItemDetail.deliverable.disabled.readFailed":
     "Activity failed to load; deliverables cannot be registered",
+  /* #8 D2: linked pull requests section (state closed set + a separate "not fetched" case). */
+  "squad.workItemDetail.pullRequests.title": "Linked pull requests",
+  "squad.workItemDetail.pullRequests.empty":
+    "No pull requests linked yet: paste a GitHub PR URL to register one (snapshot state appears once an access token is configured).",
+  "squad.workItemDetail.pullRequests.state.open": "Open",
+  "squad.workItemDetail.pullRequests.state.closed": "Closed",
+  "squad.workItemDetail.pullRequests.state.merged": "Merged",
+  "squad.workItemDetail.pullRequests.state.draft": "Draft",
+  "squad.workItemDetail.pullRequests.state.notFetched": "Not fetched",
+  "squad.workItemDetail.pullRequests.tokenMissing":
+    "No GitHub access token configured: only manually registered links are shown (configure one under Settings ▸ Experiments to fetch PR snapshots).",
+  "squad.workItemDetail.pullRequests.refresh": "Refresh snapshots",
+  "squad.workItemDetail.pullRequests.refreshResult":
+    "Refresh finished: {updated} updated, {discarded} discarded as stale, {unavailable} not configured, {failed} failed",
+  "squad.workItemDetail.pullRequests.snapshot.at": "Snapshot at {time}",
+  "squad.workItemDetail.pullRequests.snapshot.never": "Never fetched",
+  "squad.workItemDetail.pullRequests.unlink": "Unlink",
+  "squad.workItemDetail.pullRequests.form.open": "Register pull request",
+  "squad.workItemDetail.pullRequests.form.urlPlaceholder":
+    "https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.titlePlaceholder":
+    "Title (optional; defaults to owner/repo#number)",
+  "squad.workItemDetail.pullRequests.form.urlRequired": "Enter a GitHub pull request URL",
+  "squad.workItemDetail.pullRequests.form.urlInvalid":
+    "Only GitHub pull request URLs are supported, e.g. https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.submit": "Register",
+  "squad.workItemDetail.pullRequests.form.cancel": "Cancel",
+  "squad.workItemDetail.pullRequest.disabled.archived":
+    "This work item is archived; pull requests cannot be registered",
+  "squad.workItemDetail.pullRequest.disabled.readFailed":
+    "Activity failed to load; pull requests cannot be registered",
   "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
   "squad.workItemDetail.dispatch.opened": "Run opened",
   "squad.workItemDetail.dispatch.queued": "Queued",

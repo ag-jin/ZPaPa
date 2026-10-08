@@ -1,6 +1,12 @@
+/* eslint-disable max-lines -- 详情页是**接线中心**：三个区（概览/协作/交付物+PR）的挂载与
+   「一次动作一个执行器」（runCollaborationAction）必须同处一屏才能被读出来 —— 各区自己取服务、
+   自己写，就会重新长出第二份「谁在写」的判据（B5.1/B5.2 的立身之本）。本体逻辑全在新模块里
+   （WorkItemDeliverablesSection / WorkItemPullRequestsSection / 各 viewmodel），本文件只做挂载
+   与回调转发。#8 D2 接 PR 区时本文件已 398/400 行（豁免先例：Root.tsx / squadRunLifecycle.ts）。 */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   IWorkItemCollaborationServiceShape,
+  PullRequestSyncReport,
   SquadSnapshot,
   SquadWorkspaceTarget,
   WorkItemCommentRecord,
@@ -19,6 +25,7 @@ import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
 import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDecisionDialog.js";
 import { WorkItemDeliverablesSection } from "./WorkItemDeliverablesSection.js";
+import { WorkItemPullRequestsSection } from "./WorkItemPullRequestsSection.js";
 import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
 import {
@@ -208,6 +215,47 @@ export function WorkItemDetailPage({
     },
     [services, target],
   );
+
+  /**
+   * 手动登记一条 **PR 关联**（#8 D2）：与交付物 link 同一条执行器（写 → 只刷新协作读模型）。
+   * owner/repo/编号由服务面从 URL 归一化出来，UI 只贴地址；非 GitHub 地址由服务面响亮拒。
+   */
+  const submitPullRequestLink = useCallback(
+    async (input: { url: string; title?: string }) => {
+      const id = workItemIdForWrite;
+      if (id === null) throw new Error("工作项尚未读出，无法登记 PR。");
+      await runCollaborationAction(null, (service, currentTarget) =>
+        service.linkWorkItemPullRequest(currentTarget, { workItemId: id, ...input }),
+      );
+    },
+    [runCollaborationAction, workItemIdForWrite],
+  );
+
+  /** 解除一条 PR 关联（真删；返回值只用于「删到了没有」，失败仍然走动作错误条）。 */
+  const unlinkPullRequest = useCallback(
+    async (pullRequestId: string) => {
+      await runCollaborationAction(null, (service, currentTarget) =>
+        service.unlinkWorkItemPullRequest(currentTarget, { pullRequestId }),
+      );
+    },
+    [runCollaborationAction],
+  );
+
+  /**
+   * 按需刷新 PR 快照（#8 D2）：**手动触发**（没有后台轮询），与其它写入口同一条执行器 ——
+   * 快照是写事实，刷完只刷新协作读模型。报告原样交给 PR 区呈现（四类结局各自可见）。
+   * 未配 token 时报告里每条都是 unavailable（**不是**失败，不抛）。
+   */
+  const refreshPullRequests = useCallback(async () => {
+    const id = workItemIdForWrite;
+    if (id === null) throw new Error("工作项尚未读出，无法刷新 PR 快照。");
+    let report: PullRequestSyncReport | null = null;
+    await runCollaborationAction(null, async (service, currentTarget) => {
+      report = await service.refreshWorkItemPullRequests(currentTarget, { workItemId: id });
+    });
+    if (report === null) throw new Error("刷新未执行（缺少目标 workspace）。");
+    return report;
+  }, [runCollaborationAction, workItemIdForWrite]);
 
   const requestDelete = useCallback((comment: WorkItemCommentRecord) => {
     setDeleteConfirm({ pendingCommentId: comment.id });
@@ -399,6 +447,20 @@ export function WorkItemDetailPage({
         )}
         onRegisterLink={submitDeliverableLink}
         onLoadContent={loadDeliverableContent}
+      />
+
+      {/* #8 D2：关联 PR 区**紧接**交付物区（同屏相邻）——「产出留痕」与「远端镜像」是一件事的两面。 */}
+      <WorkItemPullRequestsSection
+        pullRequests={read.pullRequests}
+        provider={read.pullRequestProvider}
+        registerDisabledReasonMessageId={writeDisabledReason(
+          "pullRequest",
+          workItem,
+          state.refreshFailure,
+        )}
+        onLink={submitPullRequestLink}
+        onUnlink={unlinkPullRequest}
+        onRefresh={refreshPullRequests}
       />
 
       <section
