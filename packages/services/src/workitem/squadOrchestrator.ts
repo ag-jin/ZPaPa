@@ -539,7 +539,9 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          （`integrationBranch` 只在有 run 时才有名字）—— 没有可落地的成果。
          不调 `finalize`（集成分支压根不存在，那会报「分支不存在」），直接把父项按「批已结算」收口。
          为什么是 `done` 而不是 `cancelled`：「父项该不该被放弃」是另一个语义（谁有权判定计划被放弃），
-         不由本层从子项 category 反推 —— 那会把一个策略决定藏进收尾路径。 */
+         不由本层从子项 category 反推 —— 那会把一个策略决定藏进收尾路径。
+         **与模式无关**（#8 D3）：没有成果 ⇒ 也没有可发布的 PR，pr-gate 在这里退化为同一结局
+         （集成分支名都不存在，发布面无从谈起）。 */
       if (integration === null) {
         transitionParent(input.parentWorkItemId, "done", "空批收口（无队员产出）");
         return;

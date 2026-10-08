@@ -107,6 +107,8 @@ function prSection(props: {
     pullRequests: props.pullRequests ?? [],
     provider: props.provider ?? NULL_PROVIDER,
     registerDisabledReasonMessageId: props.disabled ?? null,
+    // #8 D3：PR 区多了一格「pr-gate 状态提示」（纯函数算好；本文件不测它 ⇒ null）。
+    noticeMessageId: null,
     onLink: async () => {},
     onUnlink: async () => {},
     onRefresh: async () => emptyReport(),
@@ -199,8 +201,11 @@ test("SEC 注入式复跑（抽二）｜把 ghp_/github_pat_ 两种真凭据灌�
       createElement(GitHubIntegrationSettingsRow, {
         tokenConfigured: secret.trim() !== "",
         saving: false,
+        // #8 D3：模式行随之落在同一组件里（本用例只查凭据零回显 ⇒ 用缺省档）。
+        mergeMode: "local",
         onSave: async () => {},
         onClear: async () => {},
+        onSelectMergeMode: async () => {},
       }),
     );
     assert.equal(html.includes(secret), false, "整段 HTML 不得出现凭据明文");

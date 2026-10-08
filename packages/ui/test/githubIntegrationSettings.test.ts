@@ -30,8 +30,11 @@ function render(props: { tokenConfigured: boolean; saving?: boolean }): string {
       children: createElement(GitHubIntegrationSettingsRow, {
         tokenConfigured: props.tokenConfigured,
         saving: props.saving ?? false,
+        // #8 D3：模式行的缺省档（模式专项用例见本文件末两条）。
+        mergeMode: "local",
         onSave: async () => {},
         onClear: async () => {},
+        onSelectMergeMode: async () => {},
       }),
     }),
   );

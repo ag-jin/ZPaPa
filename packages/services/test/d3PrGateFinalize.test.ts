@@ -418,3 +418,32 @@ test("pr-gate 真失败（push 被拒）⇒ 响亮抛；父项留 in_review、�
     f.cleanup();
   }
 });
+
+test("local 模式（开关关闭态）｜有 GitHub remote 且配了 token：**零出站、零远端写**，本地收尾与改前一致", async () => {
+  /* 行为中立的锚点（简报的硬要求）：缺省/显式 local 时，pr-gate 的那条路一步都不该走 ——
+     配置齐备（token + GitHub remote）也不许发一个请求、不许往远端推一个字节。 */
+  const f = await setup({ mode: "local", token: TOKEN, remote: "github" });
+  try {
+    const { parentId } = await batchWithOneChild(f);
+    await produce(f);
+    finishChild(f);
+    await f.orchestrator.advanceAfterChildrenDone({
+      workspaceKey: WS,
+      parentWorkItemId: parentId,
+    });
+
+    assert.equal(f.fetchCalls.length, 0, "local 模式零出站（配置齐备也不许发请求）");
+    assert.equal(
+      await f.remoteBranchSha(integrationBranch()),
+      null,
+      "local 模式零远端写（不 push）",
+    );
+    assert.equal(status(f, parentId), "done", "本地收尾照旧：父项 done");
+    assert.equal(await targetHasFile(f, "feature.txt"), true, "成果合回本地 target");
+    assert.equal(await branchExists(f, integrationBranch()), false, "集成分支照旧删掉");
+    assert.equal(f.runtime.pullRequestRepo.listByWorkItem(WS, parentId).length, 0);
+    assert.equal(f.runtime.inboxItemRepo.listByWorkspace(WS).length, 0, "local 模式没有降级留痕");
+  } finally {
+    f.cleanup();
+  }
+});
