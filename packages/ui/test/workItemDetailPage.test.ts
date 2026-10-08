@@ -124,6 +124,8 @@ function read(): WorkItemCollaborationRead {
     pullRequestProvider: { available: false, reason: "未配置 token" },
     /* #8 D3：整批收尾模式随读面带出（PR 区的 pr-gate 提示读它）。 */
     mergeMode: "local",
+    /* SUB.1：读模型多了「本工作项的订阅行」（详情页的订阅呈现属 SUB.3a）——夹具按 runtime 契约补齐。 */
+    subscribers: [],
     reactions: [],
     receipts: [],
     viewerActor: { kind: "human", id: "local-user" },
