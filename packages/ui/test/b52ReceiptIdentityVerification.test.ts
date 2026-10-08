@@ -308,7 +308,11 @@ test("复验｜LOCAL_HUMAN_ACTOR 全仓（src 树）唯一定义点，且只被�
   const injections = hits.filter((hit) =>
     /localHumanActor:\s*\(\)\s*=>\s*LOCAL_HUMAN_ACTOR/.test(hit.line),
   );
-  assert.equal(injections.length, 1, "注入点必须唯一（门面那一处）");
+  assert.equal(
+    injections.length,
+    2,
+    "注入点=门面 viewerActor + 工作项创建人（0018 起）——两处注入的是同一个常量，身份仍单源不新造",
+  );
 });
 
 test("复验｜UI 源码零身份拼装（我的判定式）：不引用常量、不写身份字面量、不知道注入值", () => {

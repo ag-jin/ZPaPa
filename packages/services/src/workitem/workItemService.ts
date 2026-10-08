@@ -71,7 +71,7 @@ export interface CreateWorkItemInput {
   startDate?: string | null;
   dueDate?: string | null;
   /**
-   * 创建人（谁按下创建）。**由服务入口注入**（组合根的本机操作者身份，`LOCAL_HUMAN_ACTOR` 先例），
+   * 创建人（谁按下创建）。**由服务入口注入**（组合根的本机操作者身份常量——即 node.ts 的唯一身份定义点），
    * 不是从表单/UI 传进来的身份；`null` / 省略 = 未知 —— **绝不**拿 `assignee` 冒充（两件事）。
    * 本层只负责落列，不做第二份身份判据。
    */

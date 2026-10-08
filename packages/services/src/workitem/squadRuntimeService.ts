@@ -966,7 +966,7 @@ export function createSquadRuntimeService(deps: {
   getCommentDispatchReceiptRepo?: () => CommentDispatchReceiptRepo;
   /**
    * **本机操作者身份**（0018：谁是新建工作项的创建人）。注入形态与协作门面的
-   * `localHumanActor` 完全同款（`node.ts` 的 `LOCAL_HUMAN_ACTOR` —— 全仓唯一一处身份定义点），
+   * `localHumanActor` 完全同款（组合根 node.ts 的唯一身份定义点常量），
    * 理由也同款：身份是审计事实，**不能**由 UI/调用方自证，也不能每个入口各造一个
    * （两处身份不一致时，同一个人写下的行会变成两个创建人，而任何地方都不报错）。
    *
