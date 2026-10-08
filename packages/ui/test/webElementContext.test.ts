@@ -21,7 +21,7 @@ import {
 
 /** 设计 §7.2 的固定英文 directive（build-only：解析侧不认它）。 */
 const COMMENT_DIRECTIVE =
-  'Each element below may carry a "Comment" line. Treat every non-empty comment as the user\'s instruction for that element, process all of them, and never apply one element\'s comment to another.';
+  "Each element below may carry a \"Comment\" line. Treat every non-empty comment as the user's instruction for that element, process all of them, and never apply one element's comment to another.";
 
 function makeElement(
   overrides: Partial<WebElementContextComposerAttachment> = {},

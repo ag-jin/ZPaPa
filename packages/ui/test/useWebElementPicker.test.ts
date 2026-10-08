@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWebElementPickerSessionDriver } from "../src/hooks/useWebElementPicker.js";
+import { createWebElementPickerSessionDriver } from "../src/lib/webElementPickerSession.js";
 import type { WebElementContextPayload } from "../src/lib/webElementContext.js";
 import type { WebElementAncestorStep } from "../src/lib/webElementPickerScript.js";
 
@@ -130,7 +130,11 @@ test("会话循环：hover → adjust(滑轨) → comment → 再 pick 直到取
   );
 
   await flush();
-  const adjustSession = latestSession(sessions) as { phase: string; level: number; pickedCount: number };
+  const adjustSession = latestSession(sessions) as {
+    phase: string;
+    level: number;
+    pickedCount: number;
+  };
   assert.equal(adjustSession.phase, "adjust");
   assert.equal(adjustSession.level, 0, "进入层级调整时停在档位 0（被点元素）");
   assert.deepEqual(
@@ -157,11 +161,7 @@ test("会话循环：hover → adjust(滑轨) → comment → 再 pick 直到取
   driver.confirmSelection();
   await flush();
   assert.equal((latestSession(sessions) as { phase?: string }).phase, "comment");
-  assert.equal(
-    dispatched.length,
-    1,
-    "确认后先派发一次无评语元素，chip 立即可见",
-  );
+  assert.equal(dispatched.length, 1, "确认后先派发一次无评语元素，chip 立即可见");
   assert.equal(dispatched[0]?.type, ADD_EVENT);
   assert.equal(dispatched[0]?.detail.tagName, "th");
   assert.equal(dispatched[0]?.detail.workspacePath, "/workspace/project");

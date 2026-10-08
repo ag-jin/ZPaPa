@@ -89,9 +89,10 @@ test("祖先链：恰好 24 档且其上就是 body 时不算截断", () => {
 
 test("祖先链：单节点链与被点元素即 body 的退化情形", () => {
   const standalone = makeNode("article");
-  assert.deepEqual(computeAncestorChain(standalone).chain.map((step) => step.tagName), [
-    "article",
-  ]);
+  assert.deepEqual(
+    computeAncestorChain(standalone).chain.map((step) => step.tagName),
+    ["article"],
+  );
   assert.equal(computeAncestorChain(standalone).truncated, false);
 
   const body = makeNode("body", { parent: makeNode("html") });
