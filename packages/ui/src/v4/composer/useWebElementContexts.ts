@@ -7,6 +7,8 @@ import {
   isWebElementContextAddToChatEvent,
   isWebElementContextPayload,
   isWebElementContextRemoveFromChatEvent,
+  mergeWebElementContextAttachment,
+  normalizeWebElementComment,
   type WebElementContextComposerAttachment,
 } from "@/lib/webElementContext.js";
 
@@ -27,6 +29,7 @@ interface UseWebElementContextsResult {
   contexts: readonly WebElementContextComposerAttachment[];
   hasContexts: boolean;
   removeContext: (id: string) => void;
+  updateContext: (id: string, patch: { comment?: string }) => void;
   clearContexts: () => void;
 }
 
@@ -72,6 +75,25 @@ export function useWebElementContexts({
     setContexts((items) => items.filter((item) => item.id !== id));
   }, []);
 
+  // 评语写入点之一（另一处是拾取浮条）：在这里规范化，空评语视为清除该元素的评语。
+  const updateContext = useCallback((id: string, patch: { comment?: string }) => {
+    setContexts((items) =>
+      items.map((item) => {
+        if (item.id !== id) {
+          return item;
+        }
+        const comment = normalizeWebElementComment(patch.comment);
+        const next: WebElementContextComposerAttachment = { ...item };
+        if (comment) {
+          next.comment = comment;
+        } else {
+          delete next.comment;
+        }
+        return next;
+      }),
+    );
+  }, []);
+
   const clearContexts = useCallback(() => {
     setContexts([]);
   }, []);
@@ -97,13 +119,7 @@ export function useWebElementContexts({
         return;
       }
       event.preventDefault();
-      setContexts((items) => {
-        const existingIndex = items.findIndex((item) => item.id === attachment.id);
-        if (existingIndex < 0) {
-          return [...items, attachment];
-        }
-        return items.map((item) => (item.id === attachment.id ? attachment : item));
-      });
+      setContexts((items) => mergeWebElementContextAttachment(items, attachment));
     };
 
     const handleRemove = (event: Event) => {
@@ -137,8 +153,9 @@ export function useWebElementContexts({
       contexts,
       hasContexts: contexts.length > 0,
       removeContext,
+      updateContext,
       clearContexts,
     }),
-    [clearContexts, contexts, removeContext],
+    [clearContexts, contexts, removeContext, updateContext],
   );
 }
