@@ -59,7 +59,7 @@ export const SUBAGENT_ORPHAN_GRACE_MS = 10 * 60 * 1_000;
  * 收敛终态：`lost` =「不在运行但无 outcome」，与用户取消/模型侧停止语义可分辨
  * （侧栏词表已有「已丢失」，row 层按 `48f7f18` 定案收口成 failed）。不新造终态词。
  */
-export const SUBAGENT_ORPHAN_RECONCILE_STATUS = "lost" as const;
+const SUBAGENT_ORPHAN_RECONCILE_STATUS = "lost" as const;
 
 /** 收敛原因码：说明「进程死了」这一事实（对齐 dwf `stopReason=interrupted` 的思路）。 */
 export const SUBAGENT_ORPHAN_RECONCILE_REASON = "runtime_exit" as const;
@@ -147,7 +147,7 @@ export function subagentOutcomeEntryId(childSessionId: string): string {
  * 收敛事实的落盘形状（设计 §4.3）：写 child session 的 session entry，不合成父会话事件。
  * `runtimeInstance` 只带 pid（设计 §9-3）：审计够用，且不得写入用户目录等敏感信息。
  */
-export function buildSubagentOutcomeEntry(input: {
+function buildSubagentOutcomeEntry(input: {
   childSessionId: string;
   parentSessionId: string;
   reconciledAt: number;
