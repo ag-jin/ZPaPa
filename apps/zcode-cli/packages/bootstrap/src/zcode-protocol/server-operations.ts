@@ -72,6 +72,8 @@ import {
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeSessionCreateParams,
   type ZCodeDeliveryKind,
+  type ZCodeSessionEndedSubagent,
+  type ZCodeSessionRunningSubagent,
   type IntegratedTerminalShellSelection,
   type ZCodeSessionRuntimePreferencesScope,
   type ZCodeSessionRuntimePreferencesResult,
@@ -1670,24 +1672,41 @@ export async function listSessions(context: ZCodeProtocolAgentServerContext, raw
   return { sessions };
 }
 
-export async function listSessionSubagents(
+export interface SessionSubagentInventory {
+  revision: number;
+  /** 持久层可读、且 `taskType === "subagent_child"` 的 child session id。 */
+  childSessionIds: string[];
+  running: ZCodeSessionRunningSubagent[];
+  /** 全量终态子会话（未分页；分页只属于 RPC 展示层）。 */
+  ended: ZCodeSessionEndedSubagent[];
+}
+
+/**
+ * 子会话权威清单：child session 的持久记录是「仍在跑 / 已结束」的唯一事实。
+ *
+ * 冷恢复的 v4 bridge 与 RPC 共用同一次读。hydrate 的后台 Agent 终态判据
+ * （transcript hydration 的 `subagentChildFacts`）与 `subagentsSeed` 必须来自**同一个结论**：
+ * 各读一次会造出「种子说 running、合成事件说 ended」的裂缝，而投影每次 live 事件都会按
+ * row 状态重算 `subagents`，裂缝里输的永远是那份没写进 row 的结论。
+ */
+export async function readSessionSubagentInventory(
   context: ZCodeProtocolAgentServerContext,
-  rawParams: unknown,
+  sessionId: string,
   persistedMessages?: MessageWithParts[],
-) {
-  const params = parseParams(zcodeSessionSubagentsParamsSchema, rawParams ?? {});
+  operation = "session_subagents",
+): Promise<SessionSubagentInventory> {
   const store = context.deps.sessionStore;
-  const liveParent = context.sessions.get(params.sessionId);
+  const liveParent = context.sessions.get(sessionId);
   if (!store) {
     return {
       revision: liveParent?.stateRevision ?? 0,
       childSessionIds: [],
       running: [],
-      ended: { total: 0, items: [] },
+      ended: [],
     };
   }
 
-  const parentSession = await store.getSession(params.sessionId as SessionId);
+  const parentSession = await store.getSession(sessionId as SessionId);
   if (!parentSession) {
     // 诊断：hydrate 会复用子任务种子读取；若 task index/旧 ACP task 残留了无效 ID，
     // 这里会把“持久化记录不存在”包装成 v4.hydrate，必须记录调用阶段而不是只看错误文本。
@@ -1696,12 +1715,12 @@ export async function listSessionSubagents(
       activeSession: Boolean(liveParent),
       event: "zcode_protocol.session.persisted_missing",
       module: "bootstrap.zcode_protocol",
-      operation: "session_subagents",
-      sessionId: params.sessionId,
+      operation,
+      sessionId,
     });
     throw new ProtocolRequestError(
       zcodeProtocolErrorCodes.sessionUnavailable,
-      `Session not found: ${params.sessionId}`,
+      `Session not found: ${sessionId}`,
     );
   }
   const messages = persistedMessages ?? (await store.messages({ sessionID: parentSession.id }));
@@ -1747,16 +1766,35 @@ export async function listSessionSubagents(
     ...(parentProjection ? { parentProjection } : {}),
     ...(parentEvents.length > 0 ? { parentEvents } : {}),
   });
-  const ended = paginateEndedSubagents(projection.ended, {
-    cursor: params.endedCursor,
-    limit: params.endedLimit,
-  });
   return {
     revision: projection.revision,
     childSessionIds: persistedChildren.map((entry) => entry.childSessionId),
     running: projection.running,
+    ended: projection.ended,
+  };
+}
+
+export async function listSessionSubagents(
+  context: ZCodeProtocolAgentServerContext,
+  rawParams: unknown,
+  persistedMessages?: MessageWithParts[],
+) {
+  const params = parseParams(zcodeSessionSubagentsParamsSchema, rawParams ?? {});
+  const inventory = await readSessionSubagentInventory(
+    context,
+    params.sessionId,
+    persistedMessages,
+  );
+  const ended = paginateEndedSubagents(inventory.ended, {
+    cursor: params.endedCursor,
+    limit: params.endedLimit,
+  });
+  return {
+    revision: inventory.revision,
+    childSessionIds: inventory.childSessionIds,
+    running: inventory.running,
     ended: {
-      total: projection.ended.length,
+      total: inventory.ended.length,
       items: ended.items,
       ...(ended.nextCursor ? { nextCursor: ended.nextCursor } : {}),
     },
