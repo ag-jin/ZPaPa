@@ -907,6 +907,9 @@ const zhCN: Record<string, string> = {
   "subagentDirectory.status.failed": "失败",
   "subagentDirectory.status.cancelled": "已取消",
   "subagentDirectory.status.lost": "已丢失",
+  // 孤儿收敛（重启后接管会话时落盘 subagent_outcome）留下的 ended 条目摘要：解释「已丢失」
+  // 的成因。措辞与 lost 的语义一致（不在运行、但没有 outcome），不承诺「失败」。
+  "subagentDirectory.summary.reconciled": "运行时已退出，结果未知",
   "chat.statusPanel.endedAgents": "已结束",
   // workflow run 目录（任务页脚行 → 这一页 → 详情页）。状态词复用
   // chat.toolCall.workflow.run.status.*，这里只有页面自己的结构文案。
