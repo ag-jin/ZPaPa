@@ -779,6 +779,9 @@ test("D1｜全链（真派发驱动）：协议入口 → hub → 桥开跑 → 
   );
 
   const runId = `chain-${child.id}`;
+  /* 交付物 id 与它的 run 级 dedupKey 同源（D1a 冻结的键函数 + 机械替换）：
+     key=`deliverable:${runId}:diff` ⇒ id=`deliverable-` + key 的冒号全换连字符。 */
+  const runDiffDeliverableId = `deliverable-${`deliverable:${runId}:diff`.replaceAll(":", "-")}`;
   const plan = planBranches({
     workItemSlug: slugForId(child.id),
     agentSlug: slugForId(member.id),
@@ -801,6 +804,9 @@ test("D1｜全链（真派发驱动）：协议入口 → hub → 桥开跑 → 
       ["worktree_created", `run:${runId}:worktree_created`],
       ["run_completed", `run:${runId}:completed`],
       ["status_changed", `status:${child.id}:in_progress:in_review:<ms>`],
+      /* #7 D1b：合并成功臂在 settleStatus **之前**登记 run 级交付物 ⇒ 第 20 枚回声插在
+         merged 事实之前（设计 §3.3 的次序裁定）。 */
+      ["deliverable_registered", `deliverable:${runDiffDeliverableId}:registered`],
       ["worktree_merged", `run:${runId}:worktree_merged`],
       ["worktree_discarded", `run:${runId}:worktree_discarded`],
     ],
@@ -827,16 +833,22 @@ test("D1｜全链（真派发驱动）：协议入口 → hub → 桥开跑 → 
   });
   assert.deepEqual(rows[5]!.payload, { from: "in_progress", to: "in_review" });
   assert.deepEqual(rows[6]!.payload, {
+    kind: "diff",
+    title: `队员 run 产出 diff（${plan.member}）`,
+    deliverableId: runDiffDeliverableId,
+    runId,
+  });
+  assert.deepEqual(rows[7]!.payload, {
     branch: plan.member,
     integration: plan.integration,
     agentId: member.id,
   });
-  assert.deepEqual(rows[7]!.payload, { branch: plan.member, dirName: memberDirName(plan) });
+  assert.deepEqual(rows[8]!.payload, { branch: plan.member, dirName: memberDirName(plan) });
 
   // 排序与时刻：sequence 连号且严格递增；occurredAt 非降。
   assert.deepEqual(
     rows.map((row) => row.sequence),
-    [1, 2, 3, 4, 5, 6, 7, 8],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
   );
   for (let index = 1; index < rows.length; index += 1) {
     assert.ok(rows[index]!.occurredAt >= rows[index - 1]!.occurredAt, "occurredAt 不得倒流");

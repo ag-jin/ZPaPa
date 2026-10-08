@@ -13,6 +13,7 @@ import { createWorkItemDecisionService } from "../src/workitem/workItemDecisionS
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 
 /* C3.1：Decision 写入服务面（任务卡 §4.3 步骤 1/2/3/4/5/6）。
 
@@ -468,7 +469,11 @@ test("读面闭合｜经门面写入后读回：decisions 含新行、activities
   const f = setup();
   const service = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo: f.workItems, boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: f.workItems,
+        deliverableRepo: createWorkItemDeliverableRepo(f.db),
+        boundWorkspace: WORKSPACE,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments: createWorkItemCommentRepo(f.db),
       activities: f.activities,

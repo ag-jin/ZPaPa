@@ -433,7 +433,19 @@ export type {
   CreateWorkItemCommentRequest,
   /* C3.1：第五写入口（决定）的入参形状。实现模块值导入 node 侧内建，只出类型（同款理由）。 */
   CreateWorkItemDecisionRequest,
+  /* #7 D1b：交付物**手动登记**的入参形状（人工贴链；`kind` 不在其中 —— 手动只开 link）。 */
+  RegisterWorkItemDeliverableLinkRequest,
 } from "./workitem/workItemCollaborationService.js";
+/* #7 D1b：交付物的**类型面**（读模型与 UI 穷尽映射要能命名这些形状）。
+   只出类型：`workItemDeliverableRepo` 值导入 node:fs/node:crypto，出值会让 renderer 整包失败
+   （browserSafeRootEntry.test.ts 守这条）。`DeliverableKind` 是 v1 闭集的类型名 —— UI 的
+   `Record<DeliverableKind, …>` 穷尽映射靠它咬合（闭集一长，UI 侧直接编译失败）。 */
+export type {
+  DeliverableContent,
+  DeliverableKind,
+  WorkItemDeliverableDetail,
+  WorkItemDeliverableRecord,
+} from "./workitem/workItemDeliverableRepo.js";
 /* 写入口的返回形状 = CommentService 的返回形状（门面不二次包装，故 UI 命名的是**同一份**类型）。
    `export type` 擦除：commentService.ts 值导入 node:crypto，只有**值**导出才会把 node 侧带进 renderer。 */
 export type { CreateCommentResult, CommentDispatchReport } from "./workitem/commentService.js";

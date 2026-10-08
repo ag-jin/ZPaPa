@@ -13,6 +13,7 @@ import {
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemCommentRepo } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
+import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
 /* B5.1 轮 1：工作项协作读门面（`IWorkItemCollaborationService`）的服务面验收。
@@ -90,6 +91,7 @@ function setup() {
   const runtimeOf = (boundWorkspace = WORKSPACE): SquadRuntime =>
     ({
       workItemRepo,
+      deliverableRepo: createWorkItemDeliverableRepo(db),
       boundWorkspace,
       async assertDispatchEnabled() {
         dispatchGateCalls += 1;
@@ -138,6 +140,8 @@ test("服务面：空工作项 ⇒ 六个字段齐备，除 workItem 外全为�
     "activities",
     "comments",
     "decisions",
+    /* #7 D1b：交付物清单并入这一聚合读（只带行，正文按 id 按需取）。 */
+    "deliverables",
     "reactions",
     "receipts",
     "viewerActor",

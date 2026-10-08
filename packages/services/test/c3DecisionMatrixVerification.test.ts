@@ -20,6 +20,7 @@ import {
   createWorkItemDecisionService,
 } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 
 /* C3 线独立复验（test-verifier）：C3.1 决定写入服务面的**穷举矩阵 + 幂等 + 隔离 + 归档 + 零副作用**。
@@ -606,7 +607,11 @@ test("零副作用｜经门面写 5 种 kind：work_items / runs / receipts / �
 
   const facade = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo: f.workItems, boundWorkspace: WS_A }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: f.workItems,
+        deliverableRepo: createWorkItemDeliverableRepo(f.db),
+        boundWorkspace: WS_A,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments,
       activities: f.activities,
@@ -688,7 +693,11 @@ test("零副作用｜读面闭合：门面读回 decisions 与锚 Activity 指�
   const f = setup();
   const facade = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo: f.workItems, boundWorkspace: WS_A }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: f.workItems,
+        deliverableRepo: createWorkItemDeliverableRepo(f.db),
+        boundWorkspace: WS_A,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments: createWorkItemCommentRepo(f.db),
       activities: f.activities,

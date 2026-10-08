@@ -24,6 +24,7 @@ import {
 import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemCommentRepo } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
+import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import type {
   CreateDecisionInput,
   WorkItemDecisionRecord,
@@ -133,7 +134,11 @@ test("写入口｜读面 viewerActor = 组合根注入的本地人类身份（C5
 
   const service = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo, boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+      ({
+        workItemRepo,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: WORKSPACE,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments,
       activities: createWorkItemActivityRepo(db),
@@ -165,7 +170,11 @@ test("写入口｜软删/解决/回应三入口走真实服务面：墓碑 + 根
 
   const deps: WorkItemCollaborationServiceDeps = {
     createRuntime: async () =>
-      ({ workItemRepo, boundWorkspace: WORKSPACE }) as unknown as SquadRuntime,
+      ({
+        workItemRepo,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: WORKSPACE,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments,
       activities,
@@ -289,7 +298,11 @@ test("写入口｜跨 workspace 的动作响亮拒绝（门面不把「写错的
 
   const service = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo, boundWorkspace: OTHER_WORKSPACE }) as unknown as SquadRuntime,
+      ({
+        workItemRepo,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: OTHER_WORKSPACE,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments,
       activities,
@@ -598,6 +611,7 @@ function readFixture(
     createRuntime: async () =>
       ({
         workItemRepo,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
         boundWorkspace: options.boundWorkspace ?? WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

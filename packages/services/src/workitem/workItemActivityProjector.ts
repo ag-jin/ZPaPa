@@ -3,13 +3,16 @@ import type { UserDispatchCause } from "./squadDispatchRequests.js";
 import { SQUAD_RUN_SETTLE_REASON_USER_CANCEL, type SquadRunRecord } from "./squadRunRepo.js";
 import type { AddWorkItemActivityInput, WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type { AuthorRef, SourceRunRef } from "./workItemCommentRepo.js";
+/* 只取**类型**（`import type` 会被擦除）：交付物存储面值导入 node:fs/node:crypto，
+   值导入会把 node 侧带进投影模块的依赖图（本模块被 browserSafeRootEntry 的传递可达检查覆盖）。 */
+import type { DeliverableKind } from "./workItemDeliverableRepo.js";
 
 /* C3b.1：执行面向工作项时间线（append-only 事实账本）的**投影深模块**（设计报告 §7）。
 
    为什么是独立深模块而不是十个写点各自拼一行：
    · 调用方只交「已经拿在手里的行 + 一个意图」，键形状 / payload 组装 / actor / sourceRun / 时间戳
      全在模块内 —— 删掉它，十处调用点各自长出这些判据，复杂度在 N 个调用点重现（模块在赚自己的饭钱）。
-   · 幂等键形状**只有这一处**（十个导出纯函数）：C3b.2 只消费，不得再造第二份形状。
+   · 幂等键形状**只有这一处**（十一个导出纯函数）：C3b.2 只消费，不得再造第二份形状。
 
    **依赖集封顶**（结构红线，`workItemActivityProjectionGuards.test.ts` 的 G1/G2 钉住）：
    只有 `activities` + 注入的 `now` / `logWarn`。没有派发面（openMemberRun / planDispatch / …）、
@@ -92,7 +95,7 @@ export function computeWorktreeDiscardedDedupKey(runId: string): string {
 }
 
 /**
- * 第 20 枚 `deliverable_registered` 的**回声键**（#7 交付物 D1a 落键函数，投影接线归 D1b）：
+ * 第 20 枚 `deliverable_registered` 的**回声键**（#7 交付物 D1a 落键函数、D1b 接线投影臂）：
  * `deliverable:<deliverableId>:registered`（设计 §3.4）。
  *
  * 由**交付物 id** 派生而不是由 runId：一条交付物只登记一次，重投同键由唯一索引咬住
@@ -170,6 +173,24 @@ export interface WorkItemActivityProjector {
    * 不从 `(status, reason)` 反推（残行自愈臂与真弃树同形，反推必然说谎）。
    */
   runSettled(record: SquadRunRecord, intent: RunSettleIntent): void;
+  /**
+   * 第 20 枚 `deliverable_registered`（#7 D1b 接线：交付物**已落库**之后由登记面调用）。
+   *
+   * **actor 原样取交付物行的 actor**，不做系统主体兜底：自动捕获的行是 `system(squad-runtime)`，
+   * 手动登记的行是操作者 —— 回声若一律记成 system，时间线上就分不出「谁登记的」，
+   * 而「人工贴的链接被记成系统产物」正是审计链最不该有的那种失真。
+   */
+  deliverableRegistered(input: {
+    workspaceKey: string;
+    workspacePath: string;
+    workItemId: string;
+    deliverableId: string;
+    kind: DeliverableKind;
+    title: string;
+    /** NULL = 不挂 run（手动登记 / 批级 diff）。 */
+    runId: string | null;
+    actor: AuthorRef;
+  }): void;
 }
 
 /**
@@ -199,7 +220,10 @@ export function createWorkItemActivityProjector(deps: {
     payload: Record<string, unknown>;
     dedupKey: string;
     sourceRun?: SourceRunRef;
+    /** 缺省 = 系统主体（其余十枚投影的既有 actor）；只有交付物回声按行取 actor（见接口注释）。 */
+    actor?: AuthorRef;
   }): void {
+    const actor = input.actor ?? SYSTEM_ACTIVITY_ACTOR;
     try {
       deps.activities.add({
         id: `activity-${input.dedupKey.replaceAll(":", "-")}`,
@@ -208,9 +232,9 @@ export function createWorkItemActivityProjector(deps: {
         workItemId: input.workItemId,
         kind: input.kind,
         occurredAt: input.occurredAt,
-        actor: SYSTEM_ACTIVITY_ACTOR,
+        actor,
         ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
-        initiatedBy: SYSTEM_ACTIVITY_ACTOR,
+        initiatedBy: actor,
         payload: input.payload,
         dedupKey: input.dedupKey,
         createdAt: input.occurredAt,
@@ -366,6 +390,28 @@ export function createWorkItemActivityProjector(deps: {
           });
           return;
       }
+    },
+    deliverableRegistered(input) {
+      append({
+        kind: "deliverable_registered",
+        workspaceKey: input.workspaceKey,
+        workspacePath: input.workspacePath,
+        workItemId: input.workItemId,
+        occurredAt: now(),
+        /* payload 按设计 §3.4：`{kind, title, deliverableId, runId?}`。
+           `runId` 缺省不写（手动登记 / 批级 diff 本就不挂 run，写 null 会被读成「挂了一个空 run」）；
+           `sourceRun` 也不写：投影手里只有 runId 一个字符串，凑一个 role/agentId 出来就是造事实
+           （活动读回纪律要求「有 runId 就必须有合法角色」）。 */
+        payload: {
+          kind: input.kind,
+          title: input.title,
+          deliverableId: input.deliverableId,
+          ...(input.runId !== null ? { runId: input.runId } : {}),
+        },
+        dedupKey: computeDeliverableRegisteredDedupKey(input.deliverableId),
+        // actor **按行取**（见接口注释）：人工登记与自动捕获在时间线上必须分得开。
+        actor: input.actor,
+      });
     },
   };
 }

@@ -1,4 +1,4 @@
-import { resolveTeamAgentMaxConcurrentRuns } from "@zcode/shared";
+import { resolveTeamAgentMaxConcurrentRuns, resolveWorkspaceKey } from "@zcode/shared";
 import { createSquadService } from "../teams/squadService.js";
 import { resolveSquadDefinitionRoot } from "../teams/squadStorage.js";
 import { createTeamAgentService } from "../teams/teamAgentService.js";
@@ -21,6 +21,8 @@ import { createSquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js"
 import { SquadDispatchDisabledError } from "./squadRuntimeService.js";
 import { createWorkItemActivityRepo } from "./workItemActivityRepo.js";
 import { createWorkItemActivityProjector } from "./workItemActivityProjector.js";
+import { createWorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
+import { createWorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
 import { createWorkItemService, type WorkItemEvent } from "./workItemService.js";
 import { createWakeRuleRepo } from "./wakeRuleRepo.js";
@@ -230,6 +232,9 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
           /* C3b.2：run / worktree 七枚的投影面 —— 与工作项族共用**同一个**投影器（同一条 db）：
              lifecycle 在 opened 出口与 settleStatus 收口之后把「行 + 意图」交给它，键形状只在它那里。 */
           activityProjector,
+          /* #7 D1b：run 级交付物捕获的唯一调用点（approved 臂，合并成功后、分支被删之前）。
+             lifecycle 只交「拿到手的台账行 + base」，diff 怎么算/存哪/怎么回声全在登记面里。 */
+          deliverableRecorder,
           squadDeferredDispatchRepo,
           /* C1：残行判据要的 git 事实（「这条 run 的分支上有没有活树」）——工作树的唯一所有者是
              `WorktreeManager`，故只从它取，不在台账上推断（见 `listWorktrees` 的接口注释）。 */
@@ -270,6 +275,24 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
      **恒构造**（接线钉死测试钉住）：漏接的表现是「时间线永远只有评论」，而一路不报错。 */
   const activityProjector = createWorkItemActivityProjector({
     activities: createWorkItemActivityRepo(db),
+  });
+  /* #7 D1b：交付物**登记面**的唯一构造点（存储面 repo + git 侧捕获 + 第 20 枚回声三半在此装配）。
+     与投影器同一处口径（恒构造、只此一处）：漏接的表现是「合并照常、交付物永远没有」，
+     而全链不报错 —— 正是本域反复出现的静默缺口形态。 */
+  const deliverableRepo = createWorkItemDeliverableRepo(db);
+  const deliverableRecorder = createWorkItemDeliverableRecorder({
+    git,
+    repo: deliverableRepo,
+    workspace: {
+      /* workspace_key 口径与台账/快照**同一处**算法（C14：identity 去空白优先，否则 path），
+         自己拼一遍会让「交付物按 workspace 过滤」与其它面悄悄对不上。 */
+      key: resolveWorkspaceKey({
+        workspacePath,
+        workspaceIdentity,
+      }),
+      path: workspacePath,
+    },
+    projector: activityProjector,
   });
 
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
@@ -350,6 +373,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     inboxItemRepo,
     workItemService,
     activityProjector,
+    deliverableRepo,
+    deliverableRecorder,
     teamAgentService,
     squadService,
     git,

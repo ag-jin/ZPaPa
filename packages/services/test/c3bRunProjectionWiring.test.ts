@@ -290,15 +290,19 @@ test("C3b.2-⑤ 审查通过 ⇒ worktree_merged（branch + integration 字面�
     [
       ["run_completed", "run:run-merge:completed"],
       ["status_changed", "status:wi-merge:in_progress:in_review:<ms>"],
+      /* #7 D1b：合并成功 ⇒ 先登记 run 级交付物（第 20 枚回声），再落 merged 事实。
+         本用例的分支相对 base 没有提交（空 diff）——交付物照记一条：它是「这条 run 的产出」
+         这个事实的留痕，空 diff 表示产出为空，而不是「没发生」。 */
+      ["deliverable_registered", "deliverable:deliverable-deliverable-run-merge-diff:registered"],
       ["worktree_merged", "run:run-merge:worktree_merged"],
     ],
   );
-  assert.deepEqual(rows[4]!.payload, {
+  assert.deepEqual(rows[5]!.payload, {
     branch: plan.member,
     integration: plan.integration,
     agentId: f.agent.id,
   });
-  assert.deepEqual(rows[4]!.sourceRun, {
+  assert.deepEqual(rows[5]!.sourceRun, {
     runId: "run-merge",
     agentId: f.agent.id,
     role: "member",
@@ -606,25 +610,42 @@ test("C3b.2-⑫ 演示终点：派发→开跑→完成→审查合并→清树 
       ["worktree_created", "run:run-chain:worktree_created"],
       ["run_completed", "run:run-chain:completed"],
       ["status_changed", "status:wi-chain:in_progress:in_review:<ms>"],
+      /* #7 D1b：合并成功臂在 `settleStatus` **之前**登记 run 级交付物 ⇒ 第 20 枚回声插在
+         `worktree_merged` 之前（设计 §3.3 的次序裁定：merged 事实落地即保证交付物已在场）。 */
+      ["deliverable_registered", "deliverable:deliverable-deliverable-run-chain-diff:registered"],
       ["worktree_merged", "run:run-chain:worktree_merged"],
       ["worktree_discarded", "run:run-chain:worktree_discarded"],
     ],
     "全链后时间线 = 完整审计流（此前只有评论与决定）",
   );
   // 读回纪律抽查：run 族七枚必带合法角色与系统主体；工作项族不带 run 归属。
-  for (const row of rows.filter((candidate) => candidate.kind !== "status_changed")) {
+  /* 交付物回声**不在**这一组：它刻意不带 `sourceRun`（投影手里只有 runId 一个字符串，
+     凑一个 role/agentId 出来就是造事实），runId 落在 payload 里。 */
+  for (const row of rows.filter(
+    (candidate) =>
+      candidate.kind !== "status_changed" && candidate.kind !== "deliverable_registered",
+  )) {
     assert.deepEqual(row.sourceRun, { runId: "run-chain", agentId: f.agent.id, role: "member" });
     assert.deepEqual(row.actor, { kind: "system", id: "squad-runtime" });
     assert.deepEqual(row.initiatedBy, { kind: "system", id: "squad-runtime" });
   }
+  const echo = rows.find((row) => row.kind === "deliverable_registered");
+  assert.ok(echo, "合并成功必须留下第 20 枚回声");
+  assert.deepEqual(echo.sourceRun, null, "交付物回声不猜 run 角色（runId 在 payload 里）");
+  assert.deepEqual(echo.payload, {
+    kind: "diff",
+    title: `队员 run 产出 diff（${plan.member}）`,
+    deliverableId: "deliverable-deliverable-run-chain-diff",
+    runId: "run-chain",
+  });
   assert.equal(rows[3]!.sourceRun, null, "状态变迁没有 run 归属：不得猜 role");
   assert.deepEqual(rows[1]!.payload, { branch: plan.member, agentId: f.agent.id });
-  assert.deepEqual(rows[4]!.payload, {
+  assert.deepEqual(rows[5]!.payload, {
     branch: plan.member,
     integration: plan.integration,
     agentId: f.agent.id,
   });
-  assert.deepEqual(rows[5]!.payload, { branch: plan.member, dirName: memberDirName(plan) });
+  assert.deepEqual(rows[6]!.payload, { branch: plan.member, dirName: memberDirName(plan) });
 
   // 链真的走完了（真 git）：树已摘、分支已删、台账终态 discarded。
   assert.deepEqual(await f.runtime.worktreeManager.list(), []);

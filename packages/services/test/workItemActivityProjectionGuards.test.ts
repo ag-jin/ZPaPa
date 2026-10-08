@@ -103,7 +103,7 @@ test("G3｜十一枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处�
   );
 });
 
-test("G4｜kind 面按裁定扩至十枚：投影只产十枚 kind（comment_*/decision_created/wake_rule_fired 一律不得出现）", () => {
+test("G4｜kind 面按裁定扩至十一枚：投影只产十一枚 kind（comment_*/decision_created/wake_rule_fired 一律不得出现）", () => {
   // 只认**成行的** `kind: "<字面量>",`（append 的实参位）：系统主体的 `{ kind: "system" }` 在同行的
   // 单行字面量里，不该被算进「投影产出的 kind 面」。
   const kinds = [...PROJECTOR_CODE.matchAll(/^\s+kind: "([a-z_]+)"/gm)].map((match) => match[1]!);
@@ -111,6 +111,7 @@ test("G4｜kind 面按裁定扩至十枚：投影只产十枚 kind（comment_*/d
     [...new Set(kinds)].sort(),
     [
       "assignee_changed",
+      "deliverable_registered",
       "run_cancelled",
       "run_completed",
       "run_failed",
@@ -121,9 +122,10 @@ test("G4｜kind 面按裁定扩至十枚：投影只产十枚 kind（comment_*/d
       "worktree_discarded",
       "worktree_merged",
     ],
-    "投影的 kind 面 = 十枚（20 值闭集：第 19 枚 run_rejected 是 2026-10-08 用户裁定的加法，" +
-      "第 20 枚 deliverable_registered 的键函数已落地、**投影接线归 D1b**，故这里仍是十枚；" +
-      "仍不越界写评论/决定族的事实）",
+    "投影的 kind 面 = 十一枚（20 值闭集：第 19 枚 run_rejected 是 2026-10-08 用户裁定的加法，" +
+      "第 20 枚 deliverable_registered 由 #7 D1b 接上投影臂 —— 登记一条交付物即时间线一枚，" +
+      "actor 按交付物行取，人工登记与自动捕获在时间线上分得开）；" +
+      "仍不越界写评论/决定族的事实",
   );
   // 反向：投影产出的每枚 kind 都必须在服务面闭集内（扩了这里而忘了闭集 ⇒ 写入时响亮抛）。
   for (const kind of new Set(kinds)) {

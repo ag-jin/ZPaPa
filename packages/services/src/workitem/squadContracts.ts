@@ -13,6 +13,8 @@ import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
 import type { WakeRuleRepo } from "./wakeRuleRepo.js";
 import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
+import type { WorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
+import type { WorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import type { WorkItemEvent, WorkItemService } from "./workItemService.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
@@ -92,6 +94,25 @@ export type SquadRuntime = {
    * （依赖集封顶为 activities + 注入），放在这里不会给协作链任何驱动力。
    */
   activityProjector: WorkItemActivityProjector;
+  /**
+   * **工作项级交付物的存储面**（#7 D1b，`work_item_deliverables` 表，迁移 0016）：服务面的读模型
+   * （协作读的 `deliverables` + 单条正文三态）经它取数。
+   *
+   * 为什么放在 runtime 上：交付物是**按 workspace** 的事实（行里带 `workspace_key/path`，正文文件落
+   * `<workspace>/.zcode/squad/deliverables/`），而 runtime 正是「为某一个目标 workspace 现构」的那件
+   * 东西 —— 另建一个跨目标的 repo 单例会让读落到别的 workspace 上（与 `squadRunRepo` /
+   * `inboxItemRepo` 同一条理由）。
+   */
+  deliverableRepo: WorkItemDeliverableRepo;
+  /**
+   * **交付物登记面**（#7 D1b 的接线点）：两个自动捕获点（lifecycle 的 approved 臂 / 编排器的
+   * finalize 臂）与手动登记（服务面 link）**共用这一份实现**。
+   *
+   * 为什么必须由组合根造且只造一个：id/幂等键派生、正文落盘、表登记、第 20 枚回声五件事必须逐字
+   * 一致；两处各建一份的表现是「同一次合并产生两条交付物」或「人工登记被记成系统登记」，都不报错。
+   * 构造点唯一在组合根（接线钉死测试钉住）—— 调用方只经本字段用，不自建第二份。
+   */
+  deliverableRecorder: WorkItemDeliverableRecorder;
   teamAgentService: TeamAgentService;
   squadService: SquadService;
   git: GitRunner;

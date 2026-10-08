@@ -273,6 +273,27 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
     }).integration;
   }
 
+  /**
+   * 分支此刻的 sha（`git rev-parse refs/heads/<branch>`）——批级交付物的**前半个事实**（#7 D1b）。
+   *
+   * 读失败 ⇒ `null`（调用方跳过批级捕获并留一条 warn）。为什么**不抛**：这是纯读，而它唯一的下游
+   * 用途是**留痕**；为一次读失败把整批收尾变成响亮失败，正好违反「留痕不得翻转已落地事实」这条纪律
+   * （target 若真的不可用，紧随其后的 `finalize` 会自己响亮报错，那时才是它该报的地方）。
+   */
+  async function readBranchHeadSha(branch: string): Promise<string | null> {
+    const result = await runtime.git(["rev-parse", `refs/heads/${branch}`], {
+      cwd: runtime.boundWorkspace.path,
+    });
+    if (result.code !== 0) {
+      console.warn(
+        `[squad] 批级交付物：读 ${branch} 的 sha 失败（exit ${result.code}）：` +
+          `${result.stderr.trim() || "(no output)"} —— 这一批跳过留痕，收尾照常。`,
+      );
+      return null;
+    }
+    return result.stdout.trim();
+  }
+
   /** 分支是否存在的**只读**判断（不动 git 的任何登记/引用）。 */
   async function branchExists(branch: string): Promise<boolean> {
     const result = await runtime.git(["rev-parse", "-q", "--verify", `refs/heads/${branch}`], {
@@ -450,9 +471,14 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         );
       }
 
+      /* #7 D1b：批级交付物的**前半个事实** —— finalize 之前读一次 target 的 sha（纯读、零副作用）。
+         为什么必须在这里读：落地之后 target 已经带着本批的提交，`<旧 sha>..<新 sha>` 这个差再也
+         构造不出来（而集成分支随后会被删，按分支名捕获在这一步已不可能，设计 §3.3）。 */
+      const target = await resolveBase();
+      const batchBaseSha = await readBranchHeadSha(target);
       const landed = await integrationMerger.finalize({
         integration,
-        target: await resolveBase(),
+        target,
       });
       if (!landed.ok) {
         if (landed.reason === "conflict") {
@@ -494,6 +520,16 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          **待重试的清理**（重驱即补做，见「收尾崩溃」用例）。§6.3 的约束是「集成分支的删除只能在
          **整批合回主分支**之后」—— `finalize` 在其上，这里动的只是父项结算，与该约束无关；
          `discardIntegration` 内部「集成必须是 target 的祖先」那道闸照旧生效（本层不重复判定）。 */
+      /* #7 D1b：整批的**留痕** —— finalize 已落地、队员分支已删之后、父项收口之前，登记一条批级
+         diff（用「finalize 前后 target 的 sha 差」，不引用任何被删分支）。登记面内部失败只 warn
+         （`recordBatchDiff` 不抛）：已落地的整批不因留痕失败被翻转成失败（设计 §8）。 */
+      if (batchBaseSha !== null) {
+        await runtime.deliverableRecorder.recordBatchDiff({
+          parentWorkItemId: input.parentWorkItemId,
+          target,
+          baseSha: batchBaseSha,
+        });
+      }
       transitionParent(input.parentWorkItemId, "done", "整批合回主分支");
       await integrationMerger.discardIntegration({
         integration,

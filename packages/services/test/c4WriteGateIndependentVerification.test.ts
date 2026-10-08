@@ -23,6 +23,7 @@ import { createWorkItemCollaborationService } from "../src/workitem/workItemColl
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
 import { createWorkItemDecisionService } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 
 /* 协作域 C4 独立复验（test-verifier）：五写入口并列 + 读面 canView 的行为面复核。
  *
@@ -338,7 +339,11 @@ test("IV-READ｜读面 canView：注入拒绝 ⇒ 响亮抛且未取 repo（不�
   const LOCAL_HUMAN: AuthorRef = { kind: "human", id: "iv-local-human" };
   const base = {
     createRuntime: async () =>
-      ({ workItemRepo: createWorkItemRepo(db), boundWorkspace: WS }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: createWorkItemRepo(db),
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: WS,
+      }) as unknown as SquadRuntime,
     getRepos: () => {
       repoReads += 1;
       return repos;

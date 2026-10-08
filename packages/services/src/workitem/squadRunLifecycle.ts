@@ -21,6 +21,7 @@ import { slugForId } from "./slug.js";
 import type { DispatchCause } from "./squadDispatchRequests.js";
 import type { SquadRunRecord, SquadRunRepo, SquadRunStatusPatch } from "./squadRunRepo.js";
 import type { SquadRunSettlementHub } from "./squadRunSettlementHub.js";
+import type { WorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
 
 /* 小队运行生命周期的**机械半**（spec §6.1–§6.3）：开树 / 收尾 / 审查 / 抛弃 / 启动回收。
 
@@ -450,6 +451,14 @@ export function createRunLifecycle(deps: {
    * 交给它，不持有键形状 / payload 判据的任何一份副本。
    */
   activityProjector?: WorkItemActivityProjector;
+  /**
+   * #7 D1b：交付物的**登记面**（可选加法，组合根恒传入；缺省 = 不捕获）。
+   *
+   * 为什么由 deps 注入而不是本层现建：登记面的唯一构造点在组合根（与 `activityProjector` 同款
+   * 理由）—— 本层只负责在**合并成功之后、分支被删之前**这个唯一窗口里把「拿到手的台账行 + base」
+   * 交出去；diff 怎么算、存哪、怎么回声全是它的事（本层不持有键形状 / 归因的任何一份副本）。
+   */
+  deliverableRecorder?: WorkItemDeliverableRecorder;
   /** R2：deferred 重放义务表（不注入 ⇒ 遇到「活跃 run 已存在」时响亮抛，不静默降级）。 */
   squadDeferredDispatchRepo?: import("./squadDeferredDispatchRepo.js").SquadDeferredDispatchRepo;
   /**
@@ -1074,6 +1083,13 @@ export function createRunLifecycle(deps: {
       });
 
       if (outcome.ok) {
+        /* #7 D1b：run 级交付物捕获的**唯一窗口** —— 合并成功之后（成果已落在集成分支上）、
+           `settleStatus` 之前（设计 §3.3 的次序裁定）：此刻队员分支 ref 还在，随后编排器会连树带枝
+           丢弃它（spec §6.3「合并后分支删」），分支一删这份 diff 就再也捕不到了。
+           放 settle 之前是刻意的：merged 事实落地即保证「这次合并的交付物**已经在场**」，
+           回声不会引用一条没捕获到的交付物。捕获失败**不抛不阻断**（登记面内部收敛为 warn）——
+           已成功合并不因留痕失败被翻转。 */
+        await deps.deliverableRecorder?.recordRunDiff({ record, base: baseBranch });
         // C3b.2：「合一个队员进集成分支」的唯一实现 ⇒ `worktree_merged`（branch 由投影模块从行取，
         // integration 是本次合入目标的既成事实，原样交给它，本层不组装 payload）。
         settleStatus(runId, "merged", {

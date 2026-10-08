@@ -34,6 +34,12 @@ import type {
 /* C3.1：决定写入服务的**类型**引用（`import type` 会被编译擦除——该模块值导入加密内建模块，
    值导入会把 node 侧带进 renderer 包，browserSafeRootEntry.test.ts 守这条）。 */
 import type { WorkItemDecisionService } from "./workItemDecisionService.js";
+/* #7 D1b：交付物的两个**类型**引用（同款理由：交付物存储面值导入 node 侧内建模块
+   —— 文件系统与加密 —— 值导入会把 node 侧带进 renderer 包）。 */
+import type {
+  WorkItemDeliverableDetail,
+  WorkItemDeliverableRecord,
+} from "./workItemDeliverableRepo.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：工作项**协作门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.3）。
    —— 轮 1 落下**读**（`getWorkItemCollaboration`），轮 2 落下**四个写入口**（§5.2），
@@ -92,6 +98,18 @@ export type WorkItemCollaborationRead = {
   reactions: WorkItemCommentReactionRecord[];
   /** `CommentDispatchReceiptRepo.listByWorkItem` 口径（createdAt ASC, dispatchKey ASC）。 */
   receipts: CommentDispatchReceiptRecord[];
+  /**
+   * **交付物清单**（#7 D1b）：`WorkItemDeliverableRepo.listByWorkItem` 口径（createdAt ASC, id ASC），
+   * 含两型（自动捕获的 `diff` / 手动登记的 `link`）。
+   *
+   * 为什么并入这一读面（设计 §3.1「无新服务」）：交付物与评论/决定/活动同属「按 (workspace, workItemId)
+   * 寻址的一次聚合读」，失败域也同一族（协作读失败 ⇒ 概览照常，协作区降级）；另开一个描述符会让详情页
+   * 为同一屏付两次往返、两套失败域。
+   *
+   * 只带**行**不带正文：清单走库、正文按 ref 按需取（`getWorkItemDeliverable`）——
+   * diff 正文可达 MB 级，进读模型会让每次打开详情页都读一遍全部正文（设计 §3.2 的存储取舍）。
+   */
+  deliverables: WorkItemDeliverableRecord[];
 };
 
 /**
@@ -133,6 +151,23 @@ export type CreateWorkItemDecisionRequest = {
   parentDecisionId?: string;
   /** **幂等键**（§8.1）：一次提交动作生成一次，失败重试沿用同一个（换新键会长出第二条决定）。 */
   sourceRequestId: string;
+};
+
+/**
+ * 手动登记一条 **link** 交付物（#7 D1b，设计 §3.3「手动」）。
+ *
+ * **不含 `kind`**：手动登记只开 link 型（PR / 预览 / 文档 / 测试报告这类外部产物）；`diff` 型
+ * 只能由自动捕获产生（它必须挂在一次真实的 git 事实之后 —— 手填的 diff 没有任何东西背书）。
+ * 服务面在结构上就写不出「手动 diff」，不是靠运行时检查挡。
+ *
+ * **不含 `actor`**（同评论/决定入口的 D1-A 口径）：登记人由组合根注入的本地人类身份自取 ——
+ * UI 只给「挂到哪、叫什么、指向哪」。
+ */
+export type RegisterWorkItemDeliverableLinkRequest = {
+  workItemId: string;
+  title: string;
+  url: string;
+  note?: string;
 };
 
 export interface IWorkItemCollaborationService {
@@ -180,6 +215,34 @@ export interface IWorkItemCollaborationService {
     target: SquadWorkspaceTarget,
     input: CreateWorkItemDecisionRequest,
   ): Promise<WorkItemDecisionRecord>;
+
+  /* ---------- #7 D1b：交付物的读一条 + 手动登记（设计 §3.1「无新服务」的第二个面） ---------- */
+
+  /**
+   * 单条交付物的**正文读回**（三态：`file` 可读 / `missing` 正文缺失 / `external` 外部引用）。
+   *
+   * 为什么按需取而不是塞进读模型：diff 正文可达 MB 级，清单只需行；UI 展开某一条时才取它的正文
+   * （设计 §3.2「清单查询走库、正文读取按 ref」）。
+   * · id 不存在 ⇒ `null`（「没有这条」是正常状态，不是故障）；
+   * · **跨 workspace 引用 ⇒ 响亮抛**（§8.5：与读面同一条纪律，不静默当不存在）。
+   */
+  getWorkItemDeliverable(
+    target: SquadWorkspaceTarget,
+    deliverableId: string,
+  ): Promise<WorkItemDeliverableDetail | null>;
+
+  /**
+   * 手动登记一条 link 交付物：写交付物行 + 第 20 枚时间线回声（`deliverable_registered`，
+   * actor = 操作者 —— 与自动捕获的 `system` 在时间线上可分辨）。
+   *
+   * 三条纪律：**只开 link**（见 `RegisterWorkItemDeliverableLinkRequest`）；**工作项必须已存在**
+   * （静默建行会把链接挂到一个不存在的对象上 ⇒ 响亮抛）；**不做幂等**（人贴链接是意图行为，
+   * 同 URL 重复贴由 UI 确认，而不是被键约束静默吞掉 —— 设计 §3.2）。
+   */
+  registerWorkItemDeliverableLink(
+    target: SquadWorkspaceTarget,
+    input: RegisterWorkItemDeliverableLinkRequest,
+  ): Promise<WorkItemDeliverableRecord>;
 }
 
 export const IWorkItemCollaborationService =
@@ -344,6 +407,9 @@ export function createWorkItemCollaborationService(
         decisions: repos.decisions.listByWorkItem(workspaceKey, workItemId),
         reactions: comments.flatMap((comment) => repos.reactions.listByComment(comment.id)),
         receipts: repos.receipts.listByWorkItem(workspaceKey, workItemId),
+        /* #7 D1b：交付物清单随同一次聚合读返回（**只带行**，正文按 ref 按需取）——
+           口径与其它五面同一条：`workspaceKey` 取自本次 runtime 的绑定值，不取调用方传的 target。 */
+        deliverables: runtime.deliverableRepo.listByWorkItem(workspaceKey, workItemId),
       };
     },
 
@@ -425,6 +491,57 @@ export function createWorkItemCollaborationService(
           : {}),
         // 幂等键必带：缺了它重试就是第二条决定（§8.1）。
         sourceRequestId: input.sourceRequestId,
+      });
+    },
+
+    /* ---------- #7 D1b：交付物读一条 + 手动登记 ---------- */
+
+    async getWorkItemDeliverable(target, deliverableId) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      const detail = runtime.deliverableRepo.get(deliverableId);
+      if (!detail) return null;
+      /* 跨 workspace 引用 ⇒ 响亮抛（§8.5）：与读面同一条纪律 —— 静默返回别人 workspace 的正文，
+         或者把它折成 `null` 假装「没有这条」，都会让「取错了目标」这类接线 bug 无声通过。 */
+      if (detail.record.workspaceKey !== workspaceKey) {
+        throw new Error(
+          `交付物「${deliverableId}」属于 workspace「${detail.record.workspaceKey}」，` +
+            `与本次目标的「${workspaceKey}」不一致：跨 workspace 引用一律响亮拒绝（§8.5）。`,
+        );
+      }
+      return detail;
+    },
+
+    async registerWorkItemDeliverableLink(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      /* **工作项必须已存在**（按 CommentService 的「挂到哪」同一条口径）：静默建行会把一条链接
+         挂到一个不存在的对象上，而界面上它会显得「记下了」（归档项同样拒绝：写闸与评论一致）。 */
+      const item = runtime.workItemRepo.get(input.workItemId);
+      if (!item) {
+        throw new Error(
+          `登记交付物失败：工作项「${input.workItemId}」不存在或已归档 —— ` +
+            "链接必须挂在一条可寻址的工作项上，静默建行会让它看起来记下了却查不回。",
+        );
+      }
+      const itemKey = resolveWorkspaceKey({
+        workspacePath: item.workspacePath,
+        workspaceIdentity: item.workspaceIdentity,
+      });
+      if (itemKey !== workspaceKey) {
+        throw new Error(
+          `工作项「${input.workItemId}」属于 workspace「${itemKey}」，与本次目标的「${workspaceKey}」不一致：` +
+            "跨 workspace 引用一律响亮拒绝（§8.5）。",
+        );
+      }
+      /* 交付物登记面的唯一实现在 runtime 上（自动捕获与手动登记共用一份）：本层只定
+         「谁写的」（注入的本地人类）与「挂到哪」，id/键派生、落库、回声全在登记面里。 */
+      return runtime.deliverableRecorder.registerLink({
+        workItemId: input.workItemId,
+        title: input.title,
+        url: input.url,
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        actor: requireLocalHumanActor(),
       });
     },
   };
