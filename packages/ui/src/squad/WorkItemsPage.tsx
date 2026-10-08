@@ -10,6 +10,8 @@ import { WorkItemsPageDialogs } from "./WorkItemsPageDialogs.js";
 import { SquadRunsReview } from "./SquadRunsReview.js";
 import { WakeRulesSection } from "./WakeRulesSection.js";
 import { WorkItemsSurface } from "./WorkItemsSurface.js";
+import { WorkItemsViewsSection } from "./WorkItemsViewsSection.js";
+import { useWorkItemsViewsBridge } from "./useWorkItemsViewsBridge.js";
 import {
   SQUAD_DISCARD_CONFIRM_IDLE,
   cancelSquadDiscard,
@@ -34,9 +36,7 @@ import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
 import {
-  applyWorkItemSurfaceIntent,
   workItemSurfaceDefaultState,
-  type WorkItemSurfaceIntent,
   type WorkItemSurfaceState,
 } from "./workItemSurfaceViewModel.js";
 import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
@@ -126,10 +126,6 @@ export function WorkItemsPage({
      状态在这里（而不是宿主里）：控件带渲染在**动作行**（取数失败时也要常驻），宿主只消费。
      迁移只有一处实现（`applyWorkItemSurfaceIntent` 纯函数）—— 控件只回传意图，不自己 setState。 */
   const [surface, setSurface] = useState<WorkItemSurfaceState>(workItemSurfaceDefaultState);
-  const applySurfaceIntent = useCallback((intent: WorkItemSurfaceIntent) => {
-    setSurface((current) => applyWorkItemSurfaceIntent(current, intent));
-  }, []);
-
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
   /** 提示一律**响亮**：warning 走 toast 变体；失败额外带原始细节（不吞错）。 */
@@ -169,6 +165,22 @@ export function WorkItemsPage({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /* 保存视图 + 拖拽改序的**接线层**（T-P2-R6b）：服务访问点、状态机与页面状态的耦合都在
+     `useWorkItemsViewsBridge`（判据在纯函数、会话状态在 `useWorkItemViews`；本页只编排）。
+     接线层拿到的三个页面动作（Surface 意图折叠 / 换分组 / 拖拽落点）直接投影给控件带与宿主。 */
+  const viewsBridge = useWorkItemsViewsBridge({
+    services,
+    target,
+    surface,
+    laneDimension,
+    setSurface,
+    setLaneDimension,
+    notify,
+    reload,
+    markBusy: setBusyWorkItemId,
+  });
+  const views = viewsBridge.views;
 
   /**
    * 一次写动作的公共执行路径：置忙 → 调服务 → 成功提示 + 重载 / 失败提示（不吞错）→ 复位。
@@ -434,6 +446,9 @@ export function WorkItemsPage({
 
   return (
     <div data-testid="work-items-page" className="flex flex-col gap-4">
+      {/* 视图区（T-P2-R6b）：条 + 三个对话框（portal；装配区只投影状态机）。 */}
+      <WorkItemsViewsSection bridge={viewsBridge} />
+
       {/* Persistent actions stay above status projection so failure states keep the entry visible.
           The action component owns the single data-testid="work-items-create" button and its
           disabled={createDisabled} projection. */}
@@ -442,9 +457,10 @@ export function WorkItemsPage({
         loading={loading}
         createDisabled={createDisabled}
         laneDimension={laneDimension}
-        onLaneDimensionChange={setLaneDimension}
+        onLaneDimensionChange={viewsBridge.changeLaneDimension}
         surface={surface}
-        onSurfaceIntent={applySurfaceIntent}
+        onSurfaceIntent={viewsBridge.applySurfaceIntent}
+        baseline={views.baseline}
         bulk={bulk.toolbar}
         t={t}
         onReload={() => void reload()}
@@ -463,7 +479,7 @@ export function WorkItemsPage({
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
             laneDimension={laneDimension}
             surface={surface}
-            onSurfaceIntent={applySurfaceIntent}
+            onSurfaceIntent={viewsBridge.applySurfaceIntent}
             selection={bulk.selection}
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
@@ -479,6 +495,7 @@ export function WorkItemsPage({
             workspacePath={workspacePath}
             workspaceIdentity={workspaceIdentity}
             onOpenSession={onOpenSession}
+            onReorderPosition={viewsBridge.movePosition}
           />
           <SquadRunsReview
             runs={state.snapshot.runs}

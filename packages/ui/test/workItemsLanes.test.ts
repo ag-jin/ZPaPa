@@ -401,16 +401,36 @@ test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions �
     "默认维度是 none（给出泳道 ≠ 换掉看板：既有用户看到的界面零变化）",
   );
   assert.ok(page.includes("laneDimension={laneDimension}"), "页面把维度传给看板");
-  assert.ok(page.includes("onLaneDimensionChange={setLaneDimension}"), "选择器接线回页面状态");
+  /* T-P2-R6b 口径更新：选择器接线从 `setLaneDimension` 直连改成页面的 `changeLaneDimension`
+     （**换维度要先把排序档归一到新维度下可用的档** —— 手动档在按指派分组下不可用）。
+     断言因此要求：接线到页面那一处 + 那一处真的调归一纯函数（不得在组件里自己归一）。 */
+  assert.ok(
+    page.includes("onLaneDimensionChange={viewsBridge.changeLaneDimension}"),
+    "选择器接线回页面状态",
+  );
+  assert.ok(
+    readSource("squad/useWorkItemsViewsBridge.ts").includes(
+      "normalizeWorkItemSurfaceForLaneDimension(",
+    ),
+    "换维度必须经归一纯函数（否则控件里会留一个它自己列不出来的排序档）",
+  );
   const actions = readSource("squad/WorkItemsPageActions.tsx");
   assert.ok(actions.includes('data-testid="work-items-lane-dimension"'), "选择器 testid 锚点");
+  /* T-P2-R6b 口径更新：维度文案映射从 Actions 文件搬到**词汇层**（`workItemsViewModel`）——
+     保存视图的 display 摘要（T-P2-R6b 的对话框）也要按它渲染用户能读的词，两份映射迟早分叉。
+     断言因此分两处：键在词汇层**齐三档**，且选择器**真的消费**那一份映射（不抄第二份）。 */
+  const vocabulary = readSource("squad/workItemsViewModel.ts");
   for (const option of [
     "squad.workItems.lane.dimension.none",
     "squad.workItems.lane.dimension.statusCategory",
     "squad.workItems.lane.dimension.assignee",
   ]) {
-    assert.ok(actions.includes(option), `选择器必须给「${option}」这一项`);
+    assert.ok(vocabulary.includes(option), `维度文案必须给「${option}」这一项`);
   }
+  assert.ok(
+    actions.includes("WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS"),
+    "选择器必须消费词汇层那一份映射（不得自带第二份维度文案）",
+  );
 });
 
 test("守卫｜workItemsViewModel 只有一份根判据 / DFS（不得出现第二份 parentId 判据）", () => {

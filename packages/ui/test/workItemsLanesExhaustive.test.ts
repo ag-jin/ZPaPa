@@ -578,6 +578,9 @@ test("i18n｜映射表产出的每个文案键两语齐备、占位符一致（c
   for (const file of [
     "WorkItemsPageActions.tsx",
     "WorkItemsBoard.tsx",
+    /* T-P2-R6b：维度文案映射搬到**词汇层**（`workItemsViewModel.ts`）⇒ 扫描名单跟着扩
+       （判据不动：这些文件里出现的键必须两语齐备；名单只扩，不缩）。 */
+    "workItemsViewModel.ts",
     "WorkItemDetailPage.tsx",
     // T-P1-R2 起概览区在独立模块里（键字面量随之一并搬走 ⇒ 扫描名单只扩，判据不动）。
     "WorkItemDetailOverview.tsx",

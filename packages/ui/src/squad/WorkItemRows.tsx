@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
 import { isSquadBatchRoot } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
@@ -13,6 +13,8 @@ import {
 } from "./WorkItemInlineEditParts.js";
 import {
   AssigneeMarker,
+  WorkItemRowDragHandle,
+  type WorkItemTableRowInput,
   WorkItemRowSelect,
   WorkItemTableTimelineRow,
   type WorkItemRowEnvironment,
@@ -285,6 +287,10 @@ function WorkItemRow({
      表格的动作列不是第二份动作簇，只是同一个簇换了个宿主格子（`<td data-column="actions">`）。 */
   const actions = (
     <span className="relative z-10 flex shrink-0 items-center gap-2">
+      {/* 拖拽把手（T-P2-R6b）：只有看板在「statusCategory + 手动档」下注入 reorder 时才渲染 ——
+          未启用时**连元素都不挂**（多一个槽位会让同层兄弟的 useId 漂移，默认路径基线会红）。
+          判据在 workItemBoardReorderEnabled（宿主投影），本层不判一次。 */}
+      <WorkItemRowDragHandle itemId={item.id} reorder={environment.reorder} />
       {/* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。 */}
       {isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
         <Button
@@ -495,20 +501,6 @@ function WorkItemRow({
     </>
   );
 }
-
-/**
- * 表格布局下每行的**内容**（列目录与可见列是视图的状态，故由视图投影）：`actions` 是行模块
- * 交给它的**动作簇**、`select` 是行模块交给它的**勾选件**（两者都只有一个实现，只是换个宿主格子）。
- * `select === null` = 未进入批量选择模式 ⇒ 那个格子（连同列）**整格不渲染**。
- */
-export type WorkItemTableCells = (
-  row: WorkItemBoardRow,
-  actions: ReactNode,
-  select: ReactNode,
-) => ReactNode;
-
-/** 表格布局的入参：有它 = 行元素是 `<tr>`、容器是 `<tbody>`（没有 = 列表/看板的原样）。 */
-export type WorkItemTableRowInput = { cells: WorkItemTableCells; columnCount: number };
 
 /**
  * 行列表（三视图**共用**的容器）：`testId` 由调用方给（board 的既有锚点 `work-items-list` /

@@ -10,6 +10,9 @@ import { useWorkItemRowFocus, type WorkItemRowEnvironment } from "./WorkItemRows
 import { WorkItemTableView } from "./WorkItemTableView.js";
 import { useWorkItemInlineEdit } from "./useWorkItemInlineEdit.js";
 import { WorkItemsBoard } from "./WorkItemsBoard.js";
+import type { WorkItemRowReorder } from "./workItemRowParts.js";
+import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
+import { workItemBoardReorderEnabled } from "./workItemViewsViewModel.js";
 import {
   workItemSurfaceEmptyKind,
   workItemSurfaceVisibleItems,
@@ -55,6 +58,7 @@ export function WorkItemsSurface({
   workspacePath,
   workspaceIdentity,
   onOpenSession,
+  onReorderPosition,
 }: {
   /** 页面的原始投影（`snapshot.workItems`）：过滤/搜索/排序由本宿主按 `surface` 应用。 */
   workItems: WorkItem[];
@@ -88,6 +92,8 @@ export function WorkItemsSurface({
   workspacePath: string;
   workspaceIdentity?: string;
   onOpenSession?: (sessionId: string) => void;
+  /** 拖拽改序的写入口（页面注入；缺省 ⇒ 不给拖拽把手 —— 点得动但写不下去的入口比没有更糟）。 */
+  onReorderPosition?: (plan: WorkItemPositionPlan) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -107,6 +113,19 @@ export function WorkItemsSurface({
   });
   const inlineEdit = useWorkItemInlineEdit({ onInlineEdit });
 
+  /* 拖拽能力（T-P2-R6b）：**唯一判据**在 `workItemBoardReorderEnabled`（看板 + statusCategory +
+     手动档 + 有写入口）。未启用 ⇒ 环境里没有这个键 ⇒ 行连把手都不渲染（结构槽位逐槽不变）。 */
+  const reorderCapability: WorkItemRowReorder | undefined =
+    onReorderPosition === undefined ||
+    !workItemBoardReorderEnabled({
+      view: surface.view,
+      laneDimension,
+      sortKey: surface.sort.key,
+      hasWriter: true,
+    })
+      ? undefined
+      : { onPlan: onReorderPosition };
+
   const environment: WorkItemRowEnvironment = {
     snapshot,
     discardableIds,
@@ -123,6 +142,7 @@ export function WorkItemsSurface({
     workspacePath,
     workspaceIdentity,
     onOpenSession,
+    reorder: reorderCapability,
   };
 
   const emptyKind = workItemSurfaceEmptyKind({

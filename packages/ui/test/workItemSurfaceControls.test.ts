@@ -718,7 +718,10 @@ test("控件带｜排序两个下拉常驻：取值表引用 R1 闭集，方向�
   );
   const source = stripComments(readSource("squad/WorkItemsPageActions.tsx"));
   for (const needle of [
-    "WORK_ITEM_SORT_KEYS.map(",
+    /* T-P2-R6b 口径更新：键下拉的**档位清单随分组维度走**（按指派分组不给 Manual）——
+       断言从「直接铺 R1 的 WORK_ITEM_SORT_KEYS」改为「经可用档位的纯函数取」，
+       并要求那一份判据来自 views 视图模型（不得在组件里自己筛）。 */
+    "workItemSortKeysForLaneDimension(laneDimension).map(",
     "WORK_ITEM_SORT_MESSAGE_IDS[key]",
     "WORK_ITEM_SORT_DIRECTIONS.map(",
     "WORK_ITEM_SORT_DIRECTION_MESSAGE_IDS[direction]",
@@ -728,8 +731,10 @@ test("控件带｜排序两个下拉常驻：取值表引用 R1 闭集，方向�
     assert.ok(source.includes(needle), `排序控件必须经 ${needle} 接线（闭集与文案都来自 R1 单源）`);
   }
   assert.ok(
-    !source.includes('sort.key === "manual"') && !source.includes("compareWorkItem"),
-    "组件里不得出现排序判据（比较只在 workItemSurfaceViewModel 一处）",
+    !source.includes("WORK_ITEM_SORT_KEYS") &&
+      !source.includes('"manual"') &&
+      !source.includes("compareWorkItem"),
+    "组件里不得出现排序档位判据（可用档位在 workItemViewsViewModel、比较在 workItemSurfaceViewModel）",
   );
 });
 

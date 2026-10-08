@@ -291,18 +291,22 @@ test("接线：页面渲染宿主一次、把 Surface 状态与意图交给动�
   const page = stripComments(readSource("squad/WorkItemsPage.tsx"));
   assert.ok(page.includes("<WorkItemsSurface"), "页面必须渲染 Surface 宿主（唯一接线点）");
   assert.ok(!page.includes("<WorkItemsBoard"), "页面不得直接渲染看板（否则 list/table 不可达）");
+  /* T-P2-R6b 口径更新：意图折叠从页面搬到**视图接线层**（`useWorkItemsViewsBridge`，页面的
+     max-lines 硬线）—— 判据不变：默认值来自纯函数、意图折叠仍走纯函数，页面仍持有那两份状态。 */
+  assert.ok(page.includes("workItemSurfaceDefaultState"), "默认 Surface 状态来自纯函数");
+  const bridge = stripComments(readSource("squad/useWorkItemsViewsBridge.ts"));
   assert.ok(
-    page.includes("workItemSurfaceDefaultState") && page.includes("applyWorkItemSurfaceIntent"),
-    "页面持有 Surface 状态：默认值来自纯函数、意图折叠走纯函数",
+    bridge.includes("applyWorkItemSurfaceIntentWithBaseline("),
+    "意图折叠走纯函数（有视图时 clearQuery 回视图条件）",
   );
-  for (const needle of [
-    "surface={surface}",
-    "onSurfaceIntent={applySurfaceIntent}",
-    "onInlineEdit={submitInlineEdit}",
-    "laneDimension={laneDimension}",
-  ]) {
+  for (const needle of ["surface={surface}", "onSurfaceIntent={viewsBridge.applySurfaceIntent}"]) {
     assert.ok(page.includes(needle), `页面接线缺 ${needle}`);
   }
+  assert.ok(
+    page.includes("onInlineEdit={submitInlineEdit}") &&
+      page.includes("laneDimension={laneDimension}"),
+    "页面仍持有行内编辑与分组维度的接线",
+  );
   const actions = stripComments(readSource("squad/WorkItemsPageActions.tsx"));
   assert.ok(
     actions.includes('data-testid="work-items-view-mode"') && actions.includes("onSurfaceIntent("),

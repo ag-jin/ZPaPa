@@ -435,8 +435,10 @@ test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 +
     actions.includes('data-testid="work-items-lane-dimension"'),
     "分组选择器常驻动作行（不是藏起来的设置项）",
   );
+  /* T-P2-R6b 口径更新：接线目标从直连 setter 改为页面的 `changeLaneDimension`
+     （换维度时顺带把排序档归一到新维度下可用的档）—— "组件不持有第二份维度状态"这条判据不变。 */
   assert.ok(
-    page.includes("onLaneDimensionChange={setLaneDimension}"),
+    page.includes("onLaneDimensionChange={viewsBridge.changeLaneDimension}"),
     "选择器与页面状态同源（组件不持有第二份维度状态）",
   );
   // 等价性回归（纯函数层）：`none` 的输出与 flattenWorkItemBoard 逐格相同。

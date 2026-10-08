@@ -1,10 +1,15 @@
 import type { ReactNode } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
+import { useSortable } from "@dnd-kit/sortable";
+import { GripVertical } from "lucide-react";
+import { Button } from "@/components/ui/button.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
+import type { WorkItemBoardRow } from "./workItemsViewModel.js";
+import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import type { WorkItemInlineEditApi } from "./useWorkItemInlineEdit.js";
 import { workItemBulkSelectable, type WorkItemRowSelection } from "./workItemBulkViewModel.js";
 
@@ -41,6 +46,9 @@ export type WorkItemRowEnvironment = {
   /** 批量选择（阶段二 · T-P2-R5）：`undefined` = 未进入批量选择模式 ⇒ 行**不渲染**勾选件
       （默认界面的行结构因此逐槽不变，见 `WorkItemRows` 的结构纪律）。 */
   selection?: WorkItemRowSelection;
+  /** 拖拽改序（阶段二 · T-P2-R6b）：`undefined` = 不给把手（非看板 / 非状态分组 / 非手动档 /
+      页面没接写入口）。判据在 `workItemBoardReorderEnabled`（宿主投影，行与视图不各判一遍）。 */
+  reorder?: WorkItemRowReorder;
   onEdit: (item: WorkItem) => void;
   /** 点「改派」⇒ 交给页面打开改派对话框（本层不持有状态、也不执行服务调用）。 */
   onReassign: (item: WorkItem) => void;
@@ -164,3 +172,72 @@ export function WorkItemTableTimelineRow({
     </tr>
   );
 }
+
+/**
+ * 行**拖拽把手**（阶段二 · T-P2-R6b）：看板在 statusCategory 泳道 + 手动排序下给的行级控件。
+ *
+ * 为什么放在行零件的家（与勾选件同一条理由）：`WorkItemRows` 是行渲染的单点实现且有 `max-lines`
+ * 硬线；**单点性质不变** —— 全 `src` 树只有这一处产出拖拽把手，行模块是它唯一的消费方。
+ *
+ * 为什么未启用时不渲染整个组件（而不是渲染一个禁用钮）：行容器的**孩子槽位**是行为的一部分
+ * （见 `WorkItemRows` 的结构纪律）—— 多一个槽位（哪怕渲染成 null）会让同层兄弟的 `useId` 漂移，
+ * 默认路径的逐字节基线当场红。这里的两段式（外层判启用 → 内层才 `useSortable`）同时满足：
+ * 未启用 ⇒ 连元素都不挂；启用 ⇒ 才接 dnd-kit 的上下文（钩子不在条件分支里）。
+ */
+export function WorkItemRowDragHandle({
+  itemId,
+  reorder,
+}: {
+  itemId: string;
+  /** `undefined` = 不启用（非看板 / 非状态分组 / 非手动档 / 页面没接写入口）。 */
+  reorder?: WorkItemRowReorder;
+}) {
+  if (reorder === undefined) return null;
+  return <SortableRowDragHandle itemId={itemId} />;
+}
+
+/** 内层：只有启用时才挂载 ⇒ `useSortable` 的上下文一定在（或安全缺席 —— 无 DndContext 时它是 no-op）。 */
+function SortableRowDragHandle({ itemId }: { itemId: string }) {
+  const { intl } = useZCodeIntl();
+  /* 无 SortableContext / DndContext 时 dnd-kit 返回安全缺省（实测其 context 有 default 值，
+     不抛）—— 这让"某个视图忘了包上下文"退化成"拖不动"，而不是整页崩。 */
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({ id: itemId });
+  return (
+    <Button
+      ref={setNodeRef}
+      type="button"
+      size="icon-sm"
+      variant="ghost"
+      data-testid="work-item-drag-handle"
+      data-dragging={isDragging ? "true" : "false"}
+      aria-label={intl.formatMessage({ id: "squad.workItems.sort.manual" })}
+      {...attributes}
+      {...listeners}
+    >
+      <GripVertical aria-hidden className="size-3.5" />
+    </Button>
+  );
+}
+
+/**
+ * 表格布局下每行的**内容**（列目录与可见列是视图的状态，故由视图投影）：`actions` 是行模块
+ * 交给它的**动作簇**、`select` 是行模块交给它的**勾选件**（两者都只有一个实现，只是换个宿主格子）。
+ * `select === null` = 未进入批量选择模式 ⇒ 那个格子（连同列）**整格不渲染**。
+ *
+ * 住在行零件文件里（T-P2-R6b 搬来换余量）：这两个类型**没有守卫锚点**，而 `WorkItemRows`
+ * 的 `max-lines = 400` 是硬线 —— 与 R3/R5 把零散件搬到这里同款，行的契约入口不变。
+ */
+export type WorkItemTableCells = (
+  row: WorkItemBoardRow,
+  actions: ReactNode,
+  select: ReactNode,
+) => ReactNode;
+
+/** 表格布局的入参：有它 = 行元素是 `<tr>`、容器是 `<tbody>`（没有 = 列表/看板的原样）。 */
+export type WorkItemTableRowInput = { cells: WorkItemTableCells; columnCount: number };
+
+/** 行拖拽的能力对象：行只据此决定"挂不挂把手"，落点由看板算好后**经这一份**交回页面写库。 */
+export type WorkItemRowReorder = {
+  /** 一次拖拽的落点计划（位置值已按纯函数算好；页面是唯一写入口）。 */
+  onPlan: (plan: WorkItemPositionPlan) => void;
+};

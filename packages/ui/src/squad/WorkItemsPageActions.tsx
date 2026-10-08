@@ -23,7 +23,6 @@ import {
   WORK_ITEM_PRIORITY_FILTER_VALUES,
   WORK_ITEM_SORT_DIRECTIONS,
   WORK_ITEM_SORT_DIRECTION_MESSAGE_IDS,
-  WORK_ITEM_SORT_KEYS,
   WORK_ITEM_SORT_MESSAGE_IDS,
   WORK_ITEM_STATUS_FILTER_MESSAGE_IDS,
   WORK_ITEM_STATUS_FILTER_VALUES,
@@ -39,14 +38,15 @@ import {
   type WorkItemSurfaceState,
   type WorkItemViewMode,
 } from "./workItemSurfaceViewModel.js";
-import type { WorkItemLaneDimension } from "./workItemsViewModel.js";
-
-/** 三个维度的文案键（闭集：加维度时这里必须跟着改 —— 与 `WorkItemLaneDimension` 同源）。 */
-const LANE_DIMENSION_MESSAGE_IDS: Record<WorkItemLaneDimension, string> = {
-  none: "squad.workItems.lane.dimension.none",
-  statusCategory: "squad.workItems.lane.dimension.statusCategory",
-  assignee: "squad.workItems.lane.dimension.assignee",
-};
+import {
+  WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS,
+  type WorkItemLaneDimension,
+} from "./workItemsViewModel.js";
+import {
+  workItemSortKeysForLaneDimension,
+  workItemViewHasIncrement,
+  type WorkItemViewBaseline,
+} from "./workItemViewsViewModel.js";
 
 /** Persistent page actions. Visibility is independent of snapshot readiness. */
 export function WorkItemsPageActions({
@@ -57,6 +57,7 @@ export function WorkItemsPageActions({
   onLaneDimensionChange,
   surface,
   onSurfaceIntent,
+  baseline = null,
   bulk,
   t,
   onReload,
@@ -73,6 +74,10 @@ export function WorkItemsPageActions({
       宿主与页面因此不是并行作业的写入点（阶段二 §6.3 串行点纪律）。 */
   surface: WorkItemSurfaceState;
   onSurfaceIntent: (intent: WorkItemSurfaceIntent) => void;
+  /** 保存视图的基准态（T-P2-R6b）：固定值锁定 + 「清除筛选」回视图条件。
+      **可选**：缺省 = 没有打开视图（内建锚）⇒ 逐格走 R1 的既有行为 —— 既有调用方（测试与
+      将来的其它宿主）不必为了"没有视图"多传一个 `null`。 */
+  baseline?: WorkItemViewBaseline | null;
   /** 批量工具栏（T-P2-R5）：状态与草稿都在页面（本组件只**挂载**它，并把手里那份置灰原因
       传下去 —— 「取数不可用 = 置灰 + 原因」只有 `workItemSurfaceControlsDisabledReason` 一份判据）。 */
   bulk: WorkItemBulkToolbarInput;
@@ -144,6 +149,17 @@ export function WorkItemsPageActions({
   /** 「清除」只在真有可清的文本时出现（只空格 = 不是生效查询，与 `hasActiveQuery` 同一条口径）。 */
   const searchClearVisible = workItemSurfaceSearchText(searchDraft).length > 0;
 
+  /* 保存视图（T-P2-R6b）的两处投影，判据全在纯函数里：
+     · 固定值锁定：视图真的约束了某一维 ⇒ 该维下拉**勾选且禁用**（multica baseline 同款）；
+     · 「清除筛选」的可点性：有视图时问"相对视图有没有增量"（视图固定值不是增量 ——
+       打开一个视图就让清除钮常亮，用户点了什么也不会变）。 */
+  const lockedStatus = baseline?.locked.statusCategory === true;
+  const lockedPriority = baseline?.locked.priority === true;
+  const clearEnabled =
+    baseline === null
+      ? workItemSurfaceHasActiveQuery(surface)
+      : workItemViewHasIncrement(surface, baseline);
+
   /* 取数不可用时：控件**不消失**，只是置灰 + 给出原因（与刷新 / 新建同一条姿态）。
      判据在纯函数里；组件只把结论投影到每个控件上。视图切换与分组**不在**这个范围里：
      它们是纯视图设置（不需要读到数据），置灰范围只覆盖「需要数据的控件」。 */
@@ -196,7 +212,7 @@ export function WorkItemsPageActions({
         >
           <SelectTrigger
             size="sm"
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || lockedStatus}
             title={disabledTitle}
             aria-label={t("squad.workItems.field.status")}
             data-testid="work-items-status-filter"
@@ -224,7 +240,7 @@ export function WorkItemsPageActions({
         >
           <SelectTrigger
             size="sm"
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || lockedPriority}
             title={disabledTitle}
             aria-label={t("squad.workItems.priority")}
             data-testid="work-items-priority-filter"
@@ -321,7 +337,7 @@ export function WorkItemsPageActions({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {WORK_ITEM_SORT_KEYS.map((key) => (
+          {workItemSortKeysForLaneDimension(laneDimension).map((key) => (
             <SelectItem key={key} value={key}>
               {t(WORK_ITEM_SORT_MESSAGE_IDS[key])}
             </SelectItem>
@@ -360,7 +376,7 @@ export function WorkItemsPageActions({
       <Button
         variant="outline"
         size="sm"
-        disabled={controlsDisabled || !workItemSurfaceHasActiveQuery(surface)}
+        disabled={controlsDisabled || !clearEnabled}
         title={disabledTitle}
         data-testid="work-items-filter-clear"
         onClick={() => onSurfaceIntent({ kind: "clearQuery" })}
@@ -381,11 +397,13 @@ export function WorkItemsPageActions({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {(Object.keys(LANE_DIMENSION_MESSAGE_IDS) as WorkItemLaneDimension[]).map((dimension) => (
-            <SelectItem key={dimension} value={dimension}>
-              {t(LANE_DIMENSION_MESSAGE_IDS[dimension])}
-            </SelectItem>
-          ))}
+          {(Object.keys(WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS) as WorkItemLaneDimension[]).map(
+            (dimension) => (
+              <SelectItem key={dimension} value={dimension}>
+                {t(WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS[dimension])}
+              </SelectItem>
+            ),
+          )}
         </SelectContent>
       </Select>
       {/* 批量工具栏（T-P2-R5）：挂在动作行里（与视图切换 / 过滤同排）—— 它是**当前视图的动作面**，

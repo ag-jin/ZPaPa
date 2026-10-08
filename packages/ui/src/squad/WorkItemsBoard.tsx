@@ -1,12 +1,29 @@
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import type { WorkItem, WorkItemStatusCategory } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { parseAssigneeValue } from "./squadEntryViewModel.js";
+import { workItemPositionPlan } from "./workItemPositionViewModel.js";
 import { WorkItemRowList, type WorkItemRowEnvironment } from "./WorkItemRows.js";
+import type { WorkItemRowReorder } from "./workItemRowParts.js";
 import {
   WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS,
   flattenWorkItemBoard,
   groupWorkItemBoard,
   workItemLaneAssigneeName,
+  type WorkItemBoardLane,
   type WorkItemLaneDimension,
 } from "./workItemsViewModel.js";
 
@@ -22,7 +39,13 @@ import {
    （与「放弃整批」、启动重驱同一份定义）—— 行模块不得另写一份"什么是批"。
 
    泳道分组只切根、子树整体随根落位（见 `groupWorkItemBoard`）；泳道 v1 不做折叠，行全部挂载
-   ⇒ 聚焦/高亮在任一视图下语义相同。 */
+   ⇒ 聚焦/高亮在任一视图下语义相同。
+
+   **拖拽改序（T-P2-R6b）**：只在宿主给了 `environment.reorder` 时包一层 `DndContext`
+   （宿主按 `workItemBoardReorderEnabled` 投影：看板 + statusCategory + 手动档 + 页面接了写入口）。
+   未启用时**零 DOM 变化**（不分组与泳道两条既有路径的逐字节基线因此不受影响）。落点的
+   **位置值**由纯函数 `workItemPositionPlan` 算（本层不算数），算好后连同计划交回页面写库 ——
+   "拖拽写什么"只有一处实现。 */
 
 export function WorkItemsBoard({
   workItems,
@@ -39,6 +62,13 @@ export function WorkItemsBoard({
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
     intl.formatMessage({ id }, values);
+  /* 传感器**无条件**创建（钩子不得在分支里）：未启用拖拽时没有 DndContext，它们不接任何东西。
+     指针需 4px 位移才起拖（点击行内按钮/拖动滚动条不会误触起拖）；键盘走 dnd-kit 的坐标读取器
+     （把键盘可达性交给库的既有实现，不自造一套）。 */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   /* 不分组 = **现状 DOM 逐字保留**（单 `<ul data-testid="work-items-list">`，无泳道壳）：
      默认维度下所有既有用户看到的界面零变化 —— 「给出泳道」不等于「换掉看板」。 */
@@ -66,30 +96,74 @@ export function WorkItemsBoard({
       : resolved.name + t("squad.workItems.lane.assignee.unknownSuffix");
   };
 
+  const reorder = environment.reorder;
+  const lanes = groupWorkItemBoard({
+    items: workItems,
+    dimension: laneDimension,
+    roster: environment.snapshot,
+  });
+
+  /** 一次拖拽的落点：找到被拖行所在的泳道 ⇒ 纯函数算计划 ⇒ 交回页面（本层不写库、不算数）。 */
+  const handleDragEnd = (event: DragEndEvent, reorderCapability: WorkItemRowReorder) => {
+    const activeId = String(event.active.id);
+    const overId = event.over === null ? null : String(event.over.id);
+    if (overId === null) return;
+    const lane = lanes.find((entry) => entry.rows.some((row) => row.item.id === activeId));
+    if (lane === undefined) return;
+    const plan = workItemPositionPlan({
+      rows: lane.rows.map((row) => row.item),
+      activeId,
+      overId,
+    });
+    // `none`（落点是自己 / 目标不在这一列）⇒ 不写库：等值写会让每次误触都产生一次写盘。
+    if (plan.kind === "none") return;
+    reorderCapability.onPlan(plan);
+  };
+
   /* 泳道视图：只加「外层容器 + 头部」，行仍由共用行模块渲染（单点）。
      泳道**不做折叠**（v1）：行全部挂载 ⇒ 聚焦注册完整，收件箱聚焦/高亮在任一视图下逐字不变。 */
-  return (
+  const laneShell = (
     <div className="flex flex-col gap-3" data-testid="work-items-lanes">
-      {groupWorkItemBoard({
-        items: workItems,
-        dimension: laneDimension,
-        roster: environment.snapshot,
-      }).map((lane) => (
-        <section
-          key={lane.key}
-          className="flex flex-col gap-1"
-          data-testid="work-items-lane"
-          data-lane-key={lane.key}
-        >
-          <span className="flex items-center gap-2 px-1 text-ui-xs text-foreground-subtle">
-            <span className="font-medium">{laneTitle(lane.key)}</span>
-            <span className="text-foreground-subtlest">
-              {t("squad.workItems.lane.count", { count: lane.count })}
+      {lanes.map((lane: WorkItemBoardLane) => {
+        const rows = <WorkItemRowList rows={lane.rows} environment={environment} />;
+        return (
+          <section
+            key={lane.key}
+            className="flex flex-col gap-1"
+            data-testid="work-items-lane"
+            data-lane-key={lane.key}
+          >
+            <span className="flex items-center gap-2 px-1 text-ui-xs text-foreground-subtle">
+              <span className="font-medium">{laneTitle(lane.key)}</span>
+              <span className="text-foreground-subtlest">
+                {t("squad.workItems.lane.count", { count: lane.count })}
+              </span>
             </span>
-          </span>
-          <WorkItemRowList rows={lane.rows} environment={environment} />
-        </section>
-      ))}
+            {/* 拖拽启用时给每一条泳道包一层 `SortableContext`（items = 这一列的行 id）：
+                跨列拖拽的落点不在本列 ⇒ 纯函数给 `none`（v1 不做跨列，= 改状态语义，不发明）。 */}
+            {reorder === undefined ? (
+              rows
+            ) : (
+              <SortableContext
+                items={lane.rows.map((row) => row.item.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {rows}
+              </SortableContext>
+            )}
+          </section>
+        );
+      })}
     </div>
+  );
+  if (reorder === undefined) return laneShell;
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={(event) => handleDragEnd(event, reorder)}
+    >
+      {laneShell}
+    </DndContext>
   );
 }
