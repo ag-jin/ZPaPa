@@ -264,6 +264,8 @@ function renderBoard(workItems: WorkItemCollaborationRead["workItem"][]): string
         timelineExpandedWorkItemId: null,
         laneDimension: "none",
         onEdit: () => {},
+        // 阶段一轮 D：看板新增**必填**的行内写回调（页面注入；这里只渲染，不需要它被调到）。
+        onInlineEdit: async () => null,
         onReassign: () => {},
         onDiscard: () => {},
         onToggleTimeline: () => {},

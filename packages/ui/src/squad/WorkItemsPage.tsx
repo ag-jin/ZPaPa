@@ -28,6 +28,7 @@ import {
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
 import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
+import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
 import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
@@ -303,6 +304,37 @@ export function WorkItemsPage({
     [busyWorkItemId, dialog, runAction, target],
   );
 
+  /**
+   * 行内编辑的提交路径（阶段一轮 D）：**写路径与对话框那条同源**（都是 `updateWorkItem`），
+   * 但失败归宿不同 —— 行内编辑失败要**就地**说（保留用户的输入、不清行），不是「关掉对话框 +
+   * 一条 toast」。所以它自成一条（照 `submitReassign` 的先例），**不揉进 `runAction`**。
+   *
+   * 三条纪律：
+   * ① patch 是看板经纯函数产出的形状（`{title}` / `{priority}`），这里**原样**并入请求 ——
+   *   不做第二次字段名映射（多一次映射就多一次「界面改 A、请求里发 B」的机会）；
+   * ② **无乐观更新**：成功之后才 `reload()`，行上显示的值永远来自服务回读；
+   * ③ 失败返回原因（不吞），由看板就地显示；返回 `null` = 成功，看板据此收起草稿。
+   */
+  const submitInlineEdit = useCallback(
+    async (item: WorkItem, patch: WorkItemInlineEditPatch): Promise<SquadEntryFeedback | null> => {
+      if (!target) return squadServiceUnavailableFeedback();
+      setBusyWorkItemId(item.id);
+      try {
+        await resolveSquadRuntimeService(services).updateWorkItem(target, { id: item.id, patch });
+        await reload();
+        return null;
+      } catch (error) {
+        logger.warn("[WorkItemsPage] 行内编辑失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return squadEntryErrorFeedback(error);
+      } finally {
+        setBusyWorkItemId(null);
+      }
+    },
+    [reload, services, target],
+  );
+
   /* 新建可不可点：纯函数 workItemCreateEnabled（有目标 + 已取到快照）。
      快照没读到（加载中/失败）时置灰 —— 对话框的指派人 / 父项候选来自快照，读不到就开不出
      有选择的表单（「点得开但通往死路」比置灰更糟）；按钮本身**始终渲染**。 */
@@ -384,6 +416,7 @@ export function WorkItemsPage({
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}
+            onInlineEdit={submitInlineEdit}
             onReassign={(item) => setReassignTarget(item)}
             onDiscard={(workItemId) => {
               // **只进入待确认态**：真正的删除必须经对话框确认（不得一键即毁）。

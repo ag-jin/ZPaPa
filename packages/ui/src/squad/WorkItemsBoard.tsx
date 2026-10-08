@@ -3,11 +3,22 @@ import type { WorkItem, WorkItemStatusCategory } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { isSquadBatchRoot } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
+import { Input } from "@/components/ui/input.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { SquadTimelineSection } from "./SquadTimelineSection.js";
 import { parseAssigneeValue, resolveAssigneeName } from "./squadEntryViewModel.js";
+import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
+import {
+  WorkItemInlineEditFailureLine,
+  WorkItemPriorityPicker,
+} from "./WorkItemInlineEditParts.js";
+import { useWorkItemInlineEdit } from "./useWorkItemInlineEdit.js";
+import {
+  workItemInlineEditUnavailableReason,
+  type WorkItemInlineEditPatch,
+} from "./workItemInlineEditViewModel.js";
 import {
   workItemIdentifierText,
   workItemPriorityMessageId,
@@ -158,6 +169,7 @@ export function WorkItemsBoard({
   focusWorkItemId,
   onFocusConsumed,
   onEdit,
+  onInlineEdit,
   onReassign,
   onDiscard,
   onToggleTimeline,
@@ -180,6 +192,13 @@ export function WorkItemsBoard({
   /** 聚焦消费回调：找到就滚 + 高亮后调；**目标不在列表也调**（父项被归档等 —— 不留悬挂意图）。 */
   onFocusConsumed?: () => void;
   onEdit: (item: WorkItem) => void;
+  /** 行内编辑提交（阶段一轮 D）：**唯一写路径在页面** —— 本层不 import 服务、不拼请求，
+      只把纯函数产出的 patch 交出去。返回 `null` = 写成功（页面已以服务回读刷新）；
+      非 null = 就地失败原因（本层不清行、保留用户输入）。 */
+  onInlineEdit: (
+    item: WorkItem,
+    patch: WorkItemInlineEditPatch,
+  ) => Promise<SquadEntryFeedback | null>;
   /** 点「改派」⇒ 交给页面打开改派对话框（本层不持有状态、也不执行服务调用）。 */
   onReassign: (item: WorkItem) => void;
   /** 点「放弃整批」⇒ **只进入待确认态**（本层拿不到服务，结构上不可能直接执行）。 */
@@ -232,6 +251,10 @@ export function WorkItemsBoard({
     [],
   );
 
+  /* 行内编辑态（阶段一轮 D）：**整块看板一份**（交互状态在 useWorkItemInlineEdit 里），
+     且只在 `renderRow` 里被消费 —— 编辑器的 JSX 因此只出现一次（行渲染单点守卫继续成立）。 */
+  const inlineEdit = useWorkItemInlineEdit({ onInlineEdit });
+
   if (workItems.length === 0) {
     return (
       <div className="flex flex-col gap-1" data-testid="work-items-empty">
@@ -259,6 +282,11 @@ export function WorkItemsBoard({
     const labelChips = workItemLabelChips(item.labels);
     /* identifier（Q6：前缀不入库）：与详情概览**同一个**纯函数；未设置 ⇒ null ⇒ 不画。 */
     const identifierText = workItemIdentifierText(item.identifierSeq);
+    /* 归档行不给行内编辑入口：判据复用详情写面同一份（`writeDisabledReason`），本层不写第二份。 */
+    const inlineEditUnavailableReason = workItemInlineEditUnavailableReason(item);
+    const titleDraft = inlineEdit.titleDraftOf(item);
+    const inlineFailure = inlineEdit.failureOf(item);
+    const priorityValue = inlineEdit.priorityValueOf(item);
     return (
       <li
         key={item.id}
@@ -299,7 +327,44 @@ export function WorkItemsBoard({
                 {identifierText}
               </span>
             )}
-            <span className="break-words text-ui-base text-foreground">{item.title}</span>
+            {/* 标题（阶段一轮 D）：**行内编辑入口** —— 普通行是可点按钮（点开即编辑），
+                归档行是纯文本（连入口都不给，且把原因写在 title 上）。
+                编辑态在同一个位置换成输入框：blur / Enter 提交、Escape 恢复，期间事件不冒泡
+                （行导航与全局快捷键不该吃这几个键；点进标题也不再打开详情 —— 这就是原文语义）。 */}
+            {titleDraft !== null ? (
+              <Input
+                value={titleDraft}
+                data-testid="work-item-title-input"
+                aria-label={t("squad.common.title")}
+                size="sm"
+                autoFocus
+                className="pointer-events-auto relative z-10 min-w-0"
+                onChange={(event) => inlineEdit.changeTitleDraft(event.target.value)}
+                {...inlineEdit.titleCompositionHandlers}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => inlineEdit.handleTitleKeyDown(item, event)}
+                onBlur={() => inlineEdit.commitTitleEdit(item)}
+              />
+            ) : inlineEditUnavailableReason === null ? (
+              <button
+                type="button"
+                data-testid="work-item-title-edit"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  inlineEdit.beginTitleEdit(item);
+                }}
+                className="pointer-events-auto relative z-10 min-w-0 rounded-sm text-left break-words text-ui-base text-foreground hover:bg-hover focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                {item.title}
+              </button>
+            ) : (
+              <span
+                className="break-words text-ui-base text-foreground"
+                title={t(inlineEditUnavailableReason)}
+              >
+                {item.title}
+              </span>
+            )}
             {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
                 放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
             {labelChips.shown.length > 0 ? (
@@ -321,9 +386,20 @@ export function WorkItemsBoard({
             <span className="shrink-0 text-ui-xs text-foreground-subtle">
               {t(workItemStatusMessageId(item.status))}
             </span>
-            {/* 优先级徽标（阶段一轮 C）：紧邻状态（都是「这一条现在怎么样」这一类信息）；
-                未设置 ⇒ 组件返回 null（不留空位）。 */}
-            <WorkItemPriorityBadge priority={item.priority} testId="work-item-priority" />
+            {/* 优先级（阶段一轮 C 的徽标 + 阶段一轮 D 的**行内 picker**）：点徽标即入口。
+                未设置给一枚中性占位 chip（不给入口就永远设不上这一档）；归档行只读（不给入口）。 */}
+            {inlineEditUnavailableReason === null ? (
+              <WorkItemPriorityPicker
+                priority={priorityValue}
+                busy={busy}
+                onPick={(value) => inlineEdit.commitPriorityEdit(item, value)}
+                unsetClassName={WORK_ITEM_PRIORITY_BADGE_CLASSNAME}
+              >
+                <WorkItemPriorityBadge priority={priorityValue} testId="work-item-priority" />
+              </WorkItemPriorityPicker>
+            ) : (
+              <WorkItemPriorityBadge priority={item.priority} testId="work-item-priority" />
+            )}
             <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
               <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
               {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
@@ -378,6 +454,8 @@ export function WorkItemsBoard({
             ) : null}
           </span>
         </div>
+        {/* 行内编辑的**就地**失败原因（阶段一轮 D）：不清行 —— 用户能在原处改完再提交。 */}
+        {inlineFailure === null ? null : <WorkItemInlineEditFailureLine failure={inlineFailure} />}
         {/* 内联展开：本批历史（listSquadRuns by parentWorkItemId）的泳道时间线。 */}
         {timelineExpanded ? (
           <SquadTimelineSection
