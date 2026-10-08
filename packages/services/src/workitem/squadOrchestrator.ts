@@ -6,7 +6,12 @@ import {
 import { planBranches } from "../worktree/branchNaming.js";
 import { ensureGitRunSucceeded } from "../worktree/gitRunner.js";
 import { deleteBranch } from "../worktree/integrationMerge.js";
-import { buildMergeConflictInboxItem, type MergeConflictFacts } from "./inboxItemProducers.js";
+import {
+  buildMergeConflictInboxItem,
+  buildPrGateDegradedInboxItem,
+  type MergeConflictFacts,
+} from "./inboxItemProducers.js";
+import { createSquadIntegrationPublisher } from "./squadIntegrationPublisher.js";
 import type { SquadBatchOrchestrator, SquadRuntime } from "./squadContracts.js";
 import type { SquadRunRecord } from "./squadRunRepo.js";
 import { slugForId } from "./slug.js";
@@ -145,6 +150,89 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
     serializeOnRepo(runtime.boundWorkspace.path, task);
 
   /**
+   * **pr-gate 的发布面**（#8 D3，设计 §4.4 的 `pr-gate` 行）：把已合入集成分支的整批发布成远端 PR。
+   *
+   * 构造点就在这里而不是新增 runtime 字段：发布面要的零件全在 runtime 上（git / provider / repo /
+   * 绑定 workspace），而编排器本来就是「拿 runtime 的零件做批次策略」的那一层；加一个 runtime 字段
+   * 只会让「谁在发布」多一个可注入面（那是给测试用的口子，不是设计需要的口子）。
+   *
+   * 幂等与次序在发布面内部（`squadIntegrationPublisher` 的注释）：push → 开 PR（已存在则认回）→
+   * **先写本地关联行**。本层只消费三档结果。
+   */
+  function publishBatchForReview(input: {
+    parentWorkItemId: string;
+    integration: string;
+    target: string;
+  }) {
+    const publisher = createSquadIntegrationPublisher({
+      git: runtime.git,
+      repoRoot: runtime.boundWorkspace.path,
+      workspace: { key: boundWorkspaceKey, path: runtime.boundWorkspace.path },
+      provider: runtime.pullRequestProvider,
+      repo: runtime.pullRequestRepo,
+    });
+    return publisher.publishForReview({
+      workItemId: input.parentWorkItemId,
+      workItemTitle: workItemRepo.get(input.parentWorkItemId)?.title ?? null,
+      integration: input.integration,
+      target: input.target,
+    });
+  }
+
+  /**
+   * pr-gate **降级**的留痕（best-effort，理由与 `recordConflictInboxItem` 同款）：写失败只 warn，
+   * **绝不**把一次已完成的**本地**收尾翻成失败。
+   *
+   * 为什么必须留痕：降级 = 「用户选了 pr-gate，但这次按本地形态收的尾」。没有这条记录，
+   * 用户能看到的只有「工作项 done 了」——而「PR 为什么没开」在界面上无处可查（静默降级是最坏的一种）。
+   * 去重键按（父项 + 码值）由构建件算，本层不拼串。
+   */
+  function recordPrGateDegradedInboxItem(input: {
+    parentWorkItemId: string;
+    code: "no_token" | "no_remote" | "remote_not_github";
+    reason: string;
+    integrationBranch: string;
+    targetBranch: string;
+  }): void {
+    try {
+      const parent = workItemRepo.get(input.parentWorkItemId);
+      runtime.inboxItemRepo.insertIfAbsent(
+        buildPrGateDegradedInboxItem({
+          workspaceKey: boundWorkspaceKey,
+          workspacePath: runtime.boundWorkspace.path,
+          parentWorkItemId: input.parentWorkItemId,
+          parentTitle: parent?.title ?? null,
+          code: input.code,
+          reason: input.reason,
+          integrationBranch: input.integrationBranch,
+          targetBranch: input.targetBranch,
+        }),
+      );
+      // 返回 false（同一事实已登记过，含已归档那格）= 幂等重投的结论，不是错误：静默返回。
+    } catch (error) {
+      console.warn(
+        `[squad] pr-gate 已降级为本地收尾，但未能登记 Inbox（父项=${input.parentWorkItemId}、` +
+          `码值=${input.code}）：这次降级的原因在收件箱里不可见。`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * 「**本批已经发布过 PR**」的判据（pr-gate 重驱闸，D3）：该父项下存在 head **等于本批集成分支**的关联行。
+   *
+   * 为什么按分支精确匹配，而不是「有没有关联行」：用户可以把别的 PR 手工挂到这个工作项上
+   * （D2 的手动 link）——按「有没有 PR」判会让那种形状被误判成「本批已发布」⇒ 静默跳过整个收尾
+   * （一整批成果没人合、还不报错）。分支名是本批的确定性身份（`planBranches` 派生），只有
+   * 「本批那条 PR」或「用户显式从集成分支开的 PR」会命中，两种命中都该让重驱闸关闭。
+   */
+  function isBatchPublished(parentWorkItemId: string, integration: string): boolean {
+    return runtime.pullRequestRepo
+      .listByWorkItem(boundWorkspaceKey, parentWorkItemId)
+      .some((row) => row.branch === integration);
+  }
+
+  /**
    * 读父项的**当时**状态；取不到（不存在或已归档）就响亮抛。
    *
    * 为什么不能静默当成某个默认状态：CAS 的前置必须来自**当时的真实值**。猜一个前置（例如写死
@@ -232,7 +320,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
   }
 
   /**
-   * 本批的**队员** run（按 `createdAt` 升序 —— 串行次序必须确定，否则「谁先被合并」会随存储顺序漂移）。
+   * 「本批的**队员** run（按 `createdAt` 升序 —— 串行次序必须确定，否则「谁先被合并」会随存储顺序漂移）」
    *
    * 只取 `branch !== null` 的：队长 run 也写台账（`is_leader_task=1`），但它不建树、不产分支，
    * 既没有可合并的成果，也没有可抛弃的工作面（spec §6.1：队长 run 直接在目标工作区执行）。
@@ -244,6 +332,21 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       .listByParent(parentWorkItemId)
       .filter((record) => record.branch !== null)
       .sort((left, right) => left.createdAt - right.createdAt);
+  }
+
+  /**
+   * 抛弃集合 = **已 merged 的**（含本批刚合的与更早经审查合过的）——本地与 pr-gate 两条收尾路径共用。
+   *
+   * 不抛 `rejected`：spec §6.2 / §16 S5 要求被打回待修的工作树**存活到修复并合并**，
+   * 提前删就是丢掉一个队员的活（而它的产出不在集成分支上，删了也换不回任何东西）。
+   * `discarded` 早已无树无枝，跳过即可。
+   */
+  async function discardMergedMembers(parentWorkItemId: string): Promise<void> {
+    for (const record of await squadRunRepo.listByParent(parentWorkItemId)) {
+      if (record.branch !== null && record.status === "merged") {
+        await lifecycle.discardMemberRun({ runId: record.runId });
+      }
+    }
   }
 
   /**
@@ -409,13 +512,21 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
       const integration = runs.length === 0 ? null : integrationBranch(runs);
       const pending = runs.filter((record) => record.status === "produced");
 
-      /* 幂等重放闸：本批没有待合队员、且集成分支已经不在（上一次收尾把它删了）⇒ 已经收过尾，空转返回。
+      /* 幂等重驱闸：本批没有待合队员、且**上一次收尾已经把它收干净了** ⇒ 空转返回。
+         两种收尾形态各有一条判据（D3）：
+         · 本地模式：集成分支**已经不在**（上一次收尾先转 done、再把它删了）；
+         · pr-gate 模式：集成分支**还在**（它是 PR 的 head）而本批**已发布过 PR**（关联行在）。
+         第二条判据按「**本地既成事实**」读（关联行），**不读当前模式**：模式是运行期可改的设置，
+         若让它决定「本批算不算收过尾」，用户把模式切回 local 之后的一次重投就会把已发布的批
+         再合进本地 target —— 同一批成果两处落地。收没收到尾必须由事实决定，不由设置决定。
+         判据的零副作用性：branchExists 与 isBatchPublished 都是纯读（ref / 库），故放在写工作项之前。
          为什么必须有它：`child_completed` 是**事件驱动**的（host 订阅后转发），同一事实重复投递
          （重连 / 重复挂订阅 / 调用方重试）会让本方法被同一批调用两次；第二次若照旧走 `finalize`，
-         会拿到「集成分支不存在」而抛 —— 把一次幂等重放变成一次响亮失败，与 §5.7.5 的幂等口径相反。
-         纯读（branchExists 只问 ref），故放在写工作项之前。 */
-      if (integration !== null && pending.length === 0 && !(await branchExists(integration)))
-        return;
+         会拿到「集成分支不存在」而抛 —— 把一次幂等重放变成一次响亮失败，与 §5.7.5 的幂等口径相反。 */
+      if (integration !== null && pending.length === 0) {
+        if (!(await branchExists(integration))) return;
+        if (isBatchPublished(input.parentWorkItemId, integration)) return;
+      }
 
       /* **前置条件**（spec §5.7.2）：父项推进到 `in_review`。这一步必须在任何父项流转**之前**，
          否则写死的前置 `in_review` 会因父项实际停在 `todo`/`in_progress` 而**静默未命中**。
@@ -471,10 +582,60 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
         );
       }
 
+      const target = await resolveBase();
+
+      /* ── 模式分派（#8 D3，设计 §4.4 的合并模式表）─────────────────────────────────────────
+         `local`（缺省）与 `pr-gate` 的差别**只在「整批合到哪里、终态由谁给」**：
+         · local：合回本地 target，父项随即 `done`，集成分支删（下面那条既有链，一个字不动）；
+         · pr-gate：push 集成分支 + 开 PR，**本地 target 不动**，父项**留在 `in_review`** 等 PR merge，
+           集成分支**保留**（它就是 PR 的 head）—— 终态由 `workItemPullRequestEntry.refresh` 的终态驱动给
+           （快照发现 merged ⇒ `transition(done, expect=in_review)`，唯一写者不变）。
+         模式在**收尾那一刻现判**（`readSquadMergeMode`）：设置可改，不在构造期冻结结论。
+
+         降级（设计 §4.1 失败面「不静默」的家门口一次应用）：pr-gate 的前置不满足（没 token /
+         没远端 / 远端不是 GitHub）⇒ **改走本地形态照常收尾**（下面的既有链），并登记一条
+         `pr_gate_degraded` 收件箱记录说明为什么 —— 静默降级会让用户以为 PR 已经开了。
+         真失败（push 被拒 / 开 PR 非 2xx）**不降级**：那说明远端这条路已经走了一半
+         （远端可能已经有了分支/PR），悄悄改回本地会把同一批成果**两处落地** ⇒ 响亮抛，
+         父项留在 `in_review`、集成分支保留，由人处置后重驱（重驱闸认「已发布」那条事实）。 */
+      if (runtime.readSquadMergeMode() === "pr-gate") {
+        const published = await publishBatchForReview({
+          parentWorkItemId: input.parentWorkItemId,
+          integration,
+          target,
+        });
+        if (published.status === "failed") {
+          throw new Error(
+            `pr-gate 发布失败（父项 ${input.parentWorkItemId}、集成分支 ${integration}）：` +
+              `${published.reason} —— 本地 target 未动、集成分支保留；修好后重驱即可（发布是幂等的）。`,
+          );
+        }
+        if (published.status === "published") {
+          /* 次序（崩溃窗口，与本地模式**同一条纪律**）：先写「本批已发布」这条**本地既成事实**
+             （发布面内部：push → 开 PR → 登记关联行），再做不可逆的清理（抛队员树/枝）。
+             反过来的话，两步之间崩溃会留下「远端有 PR、本地没有关联行」的残局 —— 那也是可收敛的
+             （重驱会再推一次并拿到 422，按 head 认回那条 PR，见发布面），只是多一次往返。
+             本次序下，两步之间崩溃只留下「已发布 + 队员树还在」：重驱闸认「已发布」直接放行，
+             残留只是**待重试的清理**（与本地模式的「父项 done + 集成分支还在」同款残局）。
+             注：pr-gate 模式**不捕获批级 diff**（#7 D1b 那条）—— 批级 diff 的输入是「finalize 前后
+             target 的 sha 差」，而这一模式本地 target 根本没被合过，没有那个事实可捕（run 级 diff
+             早在 `reviewMemberRun` 的合并臂捕过，留痕不空）。 */
+          await discardMergedMembers(input.parentWorkItemId);
+          return;
+        }
+        // degraded：留痕 + 落到下面的本地收尾（模式没生效，但批次照常收干净）。
+        recordPrGateDegradedInboxItem({
+          parentWorkItemId: input.parentWorkItemId,
+          code: published.code,
+          reason: published.reason,
+          integrationBranch: integration,
+          targetBranch: target,
+        });
+      }
+
       /* #7 D1b：批级交付物的**前半个事实** —— finalize 之前读一次 target 的 sha（纯读、零副作用）。
          为什么必须在这里读：落地之后 target 已经带着本批的提交，`<旧 sha>..<新 sha>` 这个差再也
          构造不出来（而集成分支随后会被删，按分支名捕获在这一步已不可能，设计 §3.3）。 */
-      const target = await resolveBase();
       const batchBaseSha = await readBranchHeadSha(target);
       const landed = await integrationMerger.finalize({
         integration,
@@ -504,11 +665,7 @@ export function createSquadOrchestrator(deps: { runtime: SquadRuntime }): SquadB
          不抛 `rejected`：spec §6.2 / §16 S5 要求被打回待修的工作树**存活到修复并合并**，
          提前删就是丢掉一个队员的活（而它的产出不在集成分支上，删了也换不回任何东西）。
          `discarded` 早已无树无枝，跳过即可。 */
-      for (const record of await squadRunRepo.listByParent(input.parentWorkItemId)) {
-        if (record.branch !== null && record.status === "merged") {
-          await lifecycle.discardMemberRun({ runId: record.runId });
-        }
-      }
+      await discardMergedMembers(input.parentWorkItemId);
       /* 次序（崩溃窗口）：**先把「落地事实」写下（父项 → done），再做不可逆的清理（删集成分支）**。
          反过来的话，两步之间崩溃会留下一个**无法判决**的残局：父项未终态 + 集成分支已不在 +
          队员 run 全 `discarded`。它与「用户放弃的批」形状**完全一样**（`discardBatch` 只删不合并），

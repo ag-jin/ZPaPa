@@ -139,3 +139,19 @@ export function validateSquad(squad: Squad): SquadValidationResult {
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }
+
+/* ------------------------------------------------------------------------------------------------
+   #8 D3：pr-gate 收尾**降级**的三档码值（闭集单源）。
+
+   降级 = 模式选了 pr-gate，但前置条件不满足（没 token / 没远端 / 远端不是 GitHub）⇒ 收尾改走
+   **本地形态**（批次照常落地），但必须留痕说明为什么 —— 静默降级会让用户以为 PR 已经开了。
+
+   为什么是**码值**而不是原因原文：码值是「同一件事」的稳定判据（Inbox 去重键含它、UI 将来按它出
+   两语文案），原文会随文案改写漂移；两者各司其职（code 判同一件事，reason 给人看）。
+   ------------------------------------------------------------------------------------------------ */
+export const SQUAD_PR_GATE_DEGRADE_CODES = [
+  "no_token",
+  "no_remote",
+  "remote_not_github",
+] as const;
+export type SquadPrGateDegradeCode = (typeof SQUAD_PR_GATE_DEGRADE_CODES)[number];

@@ -34,6 +34,14 @@ export const INBOX_ITEM_KINDS = [
   "run_stalled",
   /** `planDispatch` 的 skip 族：指派给人 / 小队不存在 / 小队已归档 / 目标 agent 已归档或停用（后两类 X2.1-D 起含 targetOverride 点名目标）——skip 不是失败，只是通知等人处理。 */
   "dispatch_skipped",
+  /**
+   * pr-gate 收尾**降级为本地收尾**（#8 D3）：模式选了 pr-gate，但前置不满足
+   * （没 token / 没远端 / 远端不是 GitHub）——批次照常落地，但**不是按用户选的模式**收的尾。
+   *
+   * 为什么要专门一条：静默降级是最坏的一种（用户以为 PR 已经开了，而实际什么都没推）；
+   * 这条记录同时携带**为什么**（`detail.code` 是闭集码值）+ 这次降级涉及的集成分支。
+   */
+  "pr_gate_degraded",
 ] as const;
 
 /** 一条 InboxItem **多急**（枚举，不是自由文本）——spec §3.x 的三个严重级。 */
@@ -52,6 +60,9 @@ export const INBOX_SEVERITY_BY_KIND: Record<InboxItemKind, InboxItemSeverity> = 
   run_orphaned: "attention",
   run_stalled: "attention",
   dispatch_skipped: "info",
+  /* pr-gate 降级：没有东西坏掉（批次已按本地形态落地），但**用户选的模式没生效** ——
+     要人看一眼（配 token / 换远端 / 或改回 local 模式），故 attention 而不是 info。 */
+  pr_gate_degraded: "attention",
 };
 
 export type InboxItem = {

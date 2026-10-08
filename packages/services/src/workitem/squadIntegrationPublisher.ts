@@ -1,3 +1,4 @@
+import type { SquadPrGateDegradeCode } from "@zcode/shared";
 import type { GitRunner } from "../worktree/gitRunner.js";
 import { assertSafeSlug } from "../worktree/branchNaming.js";
 import { SYSTEM_ACTIVITY_ACTOR } from "./workItemActivityProjector.js";
@@ -30,13 +31,8 @@ import { pullRequestLinkId, type PullRequestRecord, type WorkItemPullRequestRepo
    （幂等，ref 更新为同一个值）并拿到 422，此时按 head 前缀**认回**那条已存在的 PR（见 `recoverExisting`）
    —— 收尾因此是收敛的，而不是每次重驱都响亮报错。 */
 
-/** 降级的三档**码值**（闭集：进 Inbox 去重键，不随文案漂移）。 */
-export const INTEGRATION_PUBLISH_DEGRADE_CODES = [
-  "no_token",
-  "no_remote",
-  "remote_not_github",
-] as const;
-export type IntegrationPublishDegradeCode = (typeof INTEGRATION_PUBLISH_DEGRADE_CODES)[number];
+/** 降级的三档**码值**：闭集单源在 `@zcode/shared` 的 squad 域（Inbox 去重键与 UI 文案共用同一份）。 */
+export type IntegrationPublishDegradeCode = SquadPrGateDegradeCode;
 
 export type PublishIntegrationOutcome =
   | { status: "published"; pullRequest: PullRequestRecord }

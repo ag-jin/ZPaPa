@@ -1,3 +1,4 @@
+import type { SquadPrGateDegradeCode } from "@zcode/shared";
 import type { InboxItemInput } from "./inboxItemRepo.js";
 
 /* 五个产生点的**纯构建件**（spec §5.7.4 冲突 / §6.2 队员失败 / §6.6 启动和解 / §3.9 四条 skip / W1 看门狗 run_stalled）。
@@ -54,7 +55,10 @@ export type InboxDedupFact =
   | { kind: "member_failed"; runId: string }
   | { kind: "run_orphaned"; runId: string }
   | { kind: "run_stalled"; runId: string }
-  | { kind: "dispatch_skipped"; workItemId: string; reason: string };
+  | { kind: "dispatch_skipped"; workItemId: string; reason: string }
+  /* #8 D3：pr-gate 降级按「父项 + **码值**」去重（同 dispatch_skipped 的「原因变了就是新事实」口径，
+     但用**闭集码值**而不是原因原文：码值是稳定判别，原文会随文案改写而漂移）。 */
+  | { kind: "pr_gate_degraded"; parentWorkItemId: string; code: SquadPrGateDegradeCode };
 
 export function computeInboxDedupKey(fact: InboxDedupFact): string {
   switch (fact.kind) {
@@ -71,6 +75,8 @@ export function computeInboxDedupKey(fact: InboxDedupFact): string {
       return `run_stalled:${fact.runId}`;
     case "dispatch_skipped":
       return `dispatch_skipped:${fact.workItemId}:${fact.reason}`;
+    case "pr_gate_degraded":
+      return `pr_gate_degraded:${fact.parentWorkItemId}:${fact.code}`;
   }
 }
 
@@ -265,5 +271,46 @@ export function buildDispatchSkippedInboxItem(input: {
       reason: input.reason,
     },
     workItemId: input.workItemId,
+  };
+}
+
+/**
+ * pr-gate 收尾**降级为本地收尾**（#8 D3）：`pr_gate_degraded` / `attention`。
+ *
+ * 与 `dispatch_skipped` 的分界：那个是「这条派发没发生」（没有东西被改变）；本构建件是
+ * 「**批次已按本地形态收尾**，但用户选的是 pr-gate」—— 有真实产出落地，只是没走用户选的那条路。
+ * 三条码值（`SQUAD_PR_GATE_DEGRADE_CODES`）分别对应三档前置不满足；`reason` 是给人看的原文。
+ * `title` 拿不到父项标题时回落 id（同前几个构建件）。
+ */
+export function buildPrGateDegradedInboxItem(input: {
+  workspaceKey: string;
+  workspacePath: string;
+  parentWorkItemId: string;
+  /** 父项标题；`null` = 拿不到 ⇒ 回落 `parentWorkItemId`。 */
+  parentTitle: string | null;
+  code: SquadPrGateDegradeCode;
+  /** 降级原因原文（发布面给的哪一句，原样带出 —— 不在这里改写成另一套说法）。 */
+  reason: string;
+  integrationBranch: string;
+  targetBranch: string;
+}): InboxItemInput {
+  return {
+    workspaceKey: input.workspaceKey,
+    workspacePath: input.workspacePath,
+    kind: "pr_gate_degraded",
+    dedupKey: computeInboxDedupKey({
+      kind: "pr_gate_degraded",
+      parentWorkItemId: input.parentWorkItemId,
+      code: input.code,
+    }),
+    title: input.parentTitle ?? input.parentWorkItemId,
+    detail: {
+      parentWorkItemId: input.parentWorkItemId,
+      code: input.code,
+      reason: input.reason,
+      integrationBranch: input.integrationBranch,
+      targetBranch: input.targetBranch,
+    },
+    workItemId: input.parentWorkItemId,
   };
 }
