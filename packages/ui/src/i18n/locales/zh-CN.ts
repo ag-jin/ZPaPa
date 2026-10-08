@@ -907,6 +907,9 @@ const zhCN: Record<string, string> = {
   "subagentDirectory.status.failed": "失败",
   "subagentDirectory.status.cancelled": "已取消",
   "subagentDirectory.status.lost": "已丢失",
+  // 孤儿收敛（重启后接管会话时落盘 subagent_outcome）留下的 ended 条目摘要：解释「已丢失」
+  // 的成因。措辞与 lost 的语义一致（不在运行、但没有 outcome），不承诺「失败」。
+  "subagentDirectory.summary.reconciled": "运行时已退出，结果未知",
   // 会话「智能体目录」侧栏里的「小队运行（本项目）」分区（spec §11.1 决策 C11 的合并入口）：
   // 只列本项目在跑的 run，点开是它的独立会话。标题里的「（本项目）」是刻意的 —— 目录属于会话，
   // 而 run 属于项目，不写会让人以为这批 run 跟着这条会话走。

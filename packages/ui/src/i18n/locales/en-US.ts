@@ -990,6 +990,9 @@ const enUS: Record<string, string> = {
   "subagentDirectory.status.failed": "Failed",
   "subagentDirectory.status.cancelled": "Cancelled",
   "subagentDirectory.status.lost": "Lost",
+  // Summary for ended entries produced by orphan reconciliation (subagent_outcome entry written
+  // when a restarted runtime takes over the session). Same semantics as lost: not running, no outcome.
+  "subagentDirectory.summary.reconciled": "Runtime exited, result unknown",
   // Squad runs (this project) section in the subagent directory side pane (spec §11.1 decision C11).
   "subagentDirectory.squadRuns.title": "Squad runs (this project)",
   "subagentDirectory.squadRuns.empty": "No squad runs in this project right now",
