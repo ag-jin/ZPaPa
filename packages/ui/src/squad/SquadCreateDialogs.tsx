@@ -5,7 +5,6 @@ import {
   parseWorkItemLabels,
   resolveTeamAgentMaxConcurrentRuns,
   TEAM_AGENT_COLORS,
-  WORK_ITEM_PRIORITY_KEYS,
   type McpServerConfig,
   type TeamAgent,
   type WorkItem,
@@ -34,11 +33,13 @@ import { cn } from "@/components/lib/utils.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { parseAssigneeValue, workItemAssigneeOptions } from "./squadEntryViewModel.js";
 import {
-  WORK_ITEM_PRIORITY_MESSAGE_IDS,
   parseWorkItemSurfaceFields,
   workItemSurfaceFieldErrorMessageId,
   type WorkItemSurfaceFieldsParseResult,
 } from "./workItemPropertiesViewModel.js";
+/* 轮 D 缺陷修复：优先级字段（哨兵 + 选项表单源）与两处取值翻译都在独立模块里。 */
+import { WorkItemPriorityField, workItemPriorityFieldInput } from "./WorkItemPriorityField.js";
+import { workItemInlinePrioritySelectValue } from "./workItemInlineEditViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
 import { TeamAgentMcpSection } from "./TeamAgentMcpSection.js";
 import { mcpServersSubmitPatch } from "./teamAgentMcpViewModel.js";
@@ -669,9 +670,13 @@ export function WorkItemDialog({
   const [labelsText, setLabelsText] = useState((initial?.labels ?? []).join(", "));
   /** 非 ok 的解析结论（超限）：**显示文案并拦下提交**，不静默截断（截断后提交 = 界面说成功、库里少几个）。 */
   const [labelsError, setLabelsError] = useState<WorkItemLabelsFailure | null>(null);
-  /* 三项 Surface 字段（阶段一轮 C）：优先级是**选择**（空 = 未设置），起止日期是 `YYYY-MM-DD` 文本。
-     状态是**输入原文**（不是解析后的值）：坏输入要原样留着让用户改，不能悄悄换成空。 */
-  const [priorityValue, setPriorityValue] = useState<string>(initial?.priority ?? "");
+  /* 三项 Surface 字段（阶段一轮 C）：优先级是**选择**（哨兵 = 未设置），起止日期是 `YYYY-MM-DD` 文本。
+     状态是**输入原文**（不是解析后的值）：坏输入要原样留着让用户改，不能悄悄换成空。
+     优先级初值经 `workItemInlinePrioritySelectValue`：未设置 ⇒ **哨兵**（空串是 Radix 的 placeholder
+     语义，`SelectItem` 拿到它直接抛 —— 轮 D 的缺陷就出在这里，见 `WorkItemPriorityField`）。 */
+  const [priorityValue, setPriorityValue] = useState<string>(
+    workItemInlinePrioritySelectValue(initial?.priority),
+  );
   const [startDateText, setStartDateText] = useState(initial?.startDate ?? "");
   const [dueDateText, setDueDateText] = useState(initial?.dueDate ?? "");
   /** 非 ok 的解析结论（**指名到字段**）：同样拦下提交并留下文案。 */
@@ -712,7 +717,8 @@ export function WorkItemDialog({
            `parseWorkItemSurfaceFields` 翻译「空白 ⇒ 未设置」）。坏值原样留在输入框里，
            文案指名是哪一项 —— 不静默折成未设置（那会让用户明确填过的一天凭空消失）。 */
         const surfaceFields: WorkItemSurfaceFieldsParseResult = parseWorkItemSurfaceFields({
-          priority: priorityValue,
+          // 下拉取值的哨兵 → 表单口径的空串（唯一的翻译处；纯函数再把空白读成 null = 清回未设置）。
+          priority: workItemPriorityFieldInput(priorityValue),
           startDate: startDateText,
           dueDate: dueDateText,
         });
@@ -791,28 +797,9 @@ export function WorkItemDialog({
         </p>
       ) : null}
       {/* 三项 Surface 字段（阶段一轮 C）：创建与编辑**都给** —— 都是「改个错别字」那一类内容编辑
-          （服务面 `createWorkItem` / `updateWorkItem` 的白名单都已开）。判据在纯函数里，控件只收集原文。 */}
-      <Field labelId="squad.workItems.priority">
-        {(controlId) => (
-          <Select value={priorityValue} onValueChange={setPriorityValue}>
-            <SelectTrigger id={controlId} data-testid="work-item-priority-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {/* 空值 = **未设置**（NULL）：它是「没人定过」，不是一个档位 —— 故它是默认项，
-                  但仍由用户显式选择（不替用户预选一个档位）。 */}
-              <SelectItem value="">
-                {intl.formatMessage({ id: "squad.workItems.priority.unset" })}
-              </SelectItem>
-              {WORK_ITEM_PRIORITY_KEYS.map((key) => (
-                <SelectItem key={key} value={key}>
-                  {intl.formatMessage({ id: WORK_ITEM_PRIORITY_MESSAGE_IDS[key] })}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </Field>
+          （服务面 `createWorkItem` / `updateWorkItem` 的白名单都已开）。判据在纯函数里，控件只收集原文。
+          优先级字段自轮 D 缺陷修复起独立成模块（哨兵 + 选项表单源，见 `WorkItemPriorityField`）。 */}
+      <WorkItemPriorityField value={priorityValue} onChange={setPriorityValue} />
       {/* 起止日期：输入就是 `YYYY-MM-DD` **文本**（不用 `type="date"`：那会把值交给平台日期控件，
           取值随 locale/时区漂移，而我们的契约是无时区的日历日）。占位符给形状提示。 */}
       <Field labelId="squad.workItems.startDate">
