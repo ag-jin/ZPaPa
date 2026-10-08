@@ -4,8 +4,7 @@
   <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
 </div>
 <p align="center">
-  <a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&amp;qr_code=true">飞书社群</a> ·
-  <a href="https://discord.gg/z9aBcQXZQ3">Discord</a>
+  <a href="https://github.com/ag-jin/ZPaPa/discussions">用户社群 / Discussions</a>
 </p>
 <p align="center">
   简体中文 | <a href="README.en.md">English</a>
