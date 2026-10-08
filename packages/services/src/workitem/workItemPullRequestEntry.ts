@@ -1,4 +1,4 @@
-import { resolveWorkspaceKey } from "@zcode/shared";
+import { isTerminalWorkItemStatus, resolveWorkspaceKey } from "@zcode/shared";
 import { normalizeGitHubPullRequestUrl } from "./pullRequestProvider.js";
 import type { PullRequestSyncReport } from "./pullRequestSync.js";
 import type { SquadRuntime } from "./squadContracts.js";
@@ -70,8 +70,65 @@ export interface WorkItemPullRequestEntry {
   link(input: { workItemId: string; url: string; title?: string }): PullRequestRecord;
   /** 解除一条关联（真删）。`false` = 本来就没有（不是错误）；跨 workspace ⇒ 响亮抛。 */
   unlink(input: { pullRequestId: string }): boolean;
-  /** 按需刷新该工作项下全部已链接 PR 的快照（唯一快照写入口；不做终态迁移）。 */
+  /**
+   * 按需刷新该工作项下全部已链接 PR 的快照（唯一快照写入口），随后执行**终态驱动**（#8 D3）。
+   * 报告形状不变（D2 的四档 + `mergedPullRequests` 读出）；状态迁移不经报告返回 ——
+   * 读的人（UI）在动作之后重读工作项即可。
+   */
   refresh(input: { workItemId: string }): Promise<PullRequestSyncReport>;
+}
+
+/**
+ * **PR merge 驱动终态**（#8 D3，设计 §4.2 的次序硬约束）：快照刷新之后，若报出 merged 事实、
+ * 且工作项正等验收（`in_review`）⇒ 经 `WorkItemService.transition` 转 `done`
+ * （**唯一写者不变**：本模块不碰 repo 的 `updateStatus`，也不自己拼状态）。
+ *
+ * 四条边界（都在代码里看得见）：
+ * ① **已终态**（done/cancelled）：跳过终态判定（快照照刷）—— 终态不因外部信号回退或改写；
+ * ② **非终态但不是 in_review**（todo/in_progress/blocked）：**不动**。PR merged 只对「等验收」的工作项
+ *    构成终态信号；把 `todo` 的工作项直接送 `done` 会跨过整条执行链（谁做的、做完了吗，无人回答）；
+ * ③ **CAS 未命中**（读到 in_review、写入时已被别的写者改动 —— 多窗口 Host 共库的真实形态）：
+ *    **不抛、不覆盖**，留一条 warn。同 `completeMemberRun` 的纪律（spec §5.7 第 5 项「不匹配则丢弃」）：
+ *    库里已经有一份合理的结论，抢写会把别人的结算次序抹掉；
+ * ④ **多条 merged PR 同时在报**：只由**第一条**驱动（`mergedPullRequests` 按 `created_at, id` 主序），
+ *    其余不各留一枚回声 —— 回声是「谁驱动了终态」的证据，一次终态只有一个驱动者。
+ *
+ * 回声（`pr_merged`）**只在 CAS 命中时**写：它是「这枚 PR 的合并驱动了这一格终态」的证据，
+ * 不是「这条 PR merged」的复述（复述由快照列如实承载）。
+ */
+function driveWorkItemFromMergedPullRequests(deps: {
+  runtime: SquadRuntime;
+  workItemId: string;
+  report: PullRequestSyncReport;
+  logWarn: (message: string, error?: unknown) => void;
+}): void {
+  const { runtime, workItemId, report } = deps;
+  if (report.mergedPullRequests.length === 0) return;
+
+  /* 读**当时**状态（与 `requireOwnedWorkItem` 是两次读：这里要的是「此刻」的值，而 CAS 前置
+     必须来自当时事实）。刷新入口已经校验过「存在且同 workspace」，这里的 null 只可能是
+     刷新往返期间被归档/删除 —— 静默返回：那是别人的动作，本函数不该抢一个结论。 */
+  const item = runtime.workItemRepo.get(workItemId);
+  if (!item) return;
+  if (isTerminalWorkItemStatus(item.status)) return;
+  if (item.status !== "in_review") return;
+
+  const driving = report.mergedPullRequests[0]!;
+  if (!runtime.workItemService.transition(workItemId, "done", "in_review")) {
+    deps.logWarn(
+      `[pull-request] PR #${driving.prNumber} 已合并，但工作项 ${workItemId} 的终态 CAS 未命中：` +
+        "读到前置「in_review」，写入时该行已被别的写者改动（多窗口共库）。丢弃这次判定、不覆盖别人的结论。",
+    );
+    return;
+  }
+  runtime.activityProjector.pullRequestMerged({
+    workspaceKey: item.workspaceIdentity,
+    workspacePath: item.workspacePath,
+    workItemId,
+    pullRequestId: driving.pullRequestId,
+    prNumber: driving.prNumber,
+    url: driving.htmlUrl,
+  });
 }
 
 export function createWorkItemPullRequestEntry(deps: {
@@ -82,8 +139,13 @@ export function createWorkItemPullRequestEntry(deps: {
   actor: () => AuthorRef;
   /** 登记时刻（门面注入的时钟；缺省 Date.now 在门面侧定）。 */
   now: () => number;
+  /** 失败留痕口（缺省回落 `console.warn`，与投影模块同款手法）：目前只有终态 CAS 竞态用它。 */
+  logWarn?: (message: string, error?: unknown) => void;
 }): WorkItemPullRequestEntry {
   const { runtime, workspaceKey } = deps;
+  // 缺省落 console.warn（服务日志面不是本模块依赖）；第二参数透传原始错误（同款纪律）。
+  const logWarn =
+    deps.logWarn ?? ((message: string, error?: unknown) => console.warn(message, error));
 
   return {
     link({ workItemId, url, title }) {
@@ -127,12 +189,16 @@ export function createWorkItemPullRequestEntry(deps: {
       return runtime.pullRequestRepo.unlink(pullRequestId);
     },
 
-    refresh({ workItemId }) {
+    async refresh({ workItemId }) {
       // 刷新前先确认工作项可寻址且同 workspace（否则「刷了但什么都没有」会看起来像「没有 PR」）。
       requireOwnedWorkItem(runtime, workspaceKey, workItemId, "刷新 PR 快照");
       /* 快照的写与读全在同步模块里（head-SHA 防陈旧写、按需触发、不静默）；
          本层只定「刷哪个工作项」，并把报告原样交给调用方（UI 的失败域与 D3 的口都吃它）。 */
-      return runtime.pullRequestSync.refreshForWorkItem({ workItemId });
+      const report = await runtime.pullRequestSync.refreshForWorkItem({ workItemId });
+      /* #8 D3：快照刷完之后的**终态驱动**（次序硬约束：先刷事实、再由事实推动状态；
+         判定与边界见上面的函数注释）。报告不变 —— 状态迁移的读法是「重读工作项」。 */
+      driveWorkItemFromMergedPullRequests({ runtime, workItemId, report, logWarn });
+      return report;
     },
   };
 }

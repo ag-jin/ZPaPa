@@ -294,7 +294,7 @@ test("门面 refresh｜配了 token：真出站形状（Bearer + 规范 API 地�
   }
 });
 
-test("门面 refresh｜merged 读出（D3 的口）从库读回；D2 不驱动工作项状态（仍 in_review）", async () => {
+test("门面 refresh｜merged 读出（D3 的口）从库读回；D3 起同一调用驱动终态（in_review→done + 回声）", async () => {
   const f = setup({
     token: "ghp_facade_token",
     fetchImpl: (async () =>
@@ -330,8 +330,9 @@ test("门面 refresh｜merged 读出（D3 的口）从库读回；D2 不驱动�
     assert.equal(read?.pullRequests[0]!.apiMergeStateStatus, "DIRTY");
     assert.equal(
       (await f.runtimeOf()).workItemRepo.get("wi-pr")!.status,
-      "in_review",
-      "D2 只报出 merged 事实，终态迁移是 D3 的事（唯一写者仍是 WorkItemService.transition）",
+      "done",
+      "D3 起：协作门面这条调用链上的终态驱动（merged + in_review ⇒ done；唯一写者仍是 " +
+        "WorkItemService.transition）—— D2 的「只报事实」由上面的 report.mergedPullRequests 承载",
     );
   } finally {
     f.cleanup();

@@ -37,6 +37,11 @@ export const WORK_ITEM_ACTIVITY_KINDS = [
      存储形态（同 Comment/Decision 先例），不改变它作为时间线回声的身份。
      键形状 `deliverable:<deliverableId>:registered`（由交付物 id 派生，见投影模块）。 */
   "deliverable_registered",
+  /* 第 21 枚（#8 D3）：一条已链接的 PR 被快照发现 merged，且**由它驱动**工作项转入终态。
+     为什么它必须是时间线事实：这一格终态不是本地收尾给的（pr-gate 模式与外链 PR 的形态都如此）——
+     没有回声，`done` 在审计流里凭空出现（谁推的、哪枚 PR 推的，无从回答）。
+     键形状 `pr:<pullRequestId>:merged`（由关联行 id 派生；同一条 PR 只留一枚，见投影模块）。 */
+  "pr_merged",
 ] as const;
 export type WorkItemActivityKind = (typeof WORK_ITEM_ACTIVITY_KINDS)[number];
 

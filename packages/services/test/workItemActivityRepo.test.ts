@@ -115,12 +115,16 @@ test("dedupKey 幂等：同键重投返回既存行不产生第二行；关联�
   assert.equal(count.n, 1);
 });
 
-test("kind 闭集：20 值全通过（含第 20 枚 deliverable_registered）；非法值读写双闸响亮抛", () => {
+test("kind 闭集：21 值全通过（含第 21 枚 pr_merged）；非法值读写双闸响亮抛", () => {
   const { repo, db } = setup();
-  assert.equal(WORK_ITEM_ACTIVITY_KINDS.length, 20);
+  assert.equal(WORK_ITEM_ACTIVITY_KINDS.length, 21);
   assert.ok(
-    (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("run_rejected"),
-    "第 19 枚 = run_rejected（2026-10-08 用户裁定：审查打回必须时间线可见）",
+    (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("deliverable_registered"),
+    "第 20 枚 = deliverable_registered（#7 交付物 D1a：登记一条交付物须时间线可见）",
+  );
+  assert.ok(
+    (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("pr_merged"),
+    "第 21 枚 = pr_merged（#8 D3：外链 PR 的合并驱动终态时，这一格必须在审计流里有出处）",
   );
   assert.ok(
     (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("deliverable_registered"),
@@ -131,7 +135,7 @@ test("kind 闭集：20 值全通过（含第 20 枚 deliverable_registered）；
     repo.add(input({ id: `k-${i}`, dedupKey: `dk-${i}`, kind }));
     i += 1;
   }
-  assert.equal(repo.listByWorkItem("ws", "wi-1").length, 20);
+  assert.equal(repo.listByWorkItem("ws", "wi-1").length, 21);
   assert.throws(
     () => repo.add(input({ id: "k-bad", dedupKey: "dk-bad", kind: "bogus" as never })),
     /kind/,

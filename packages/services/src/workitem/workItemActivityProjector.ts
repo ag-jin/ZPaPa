@@ -108,6 +108,19 @@ export function computeDeliverableRegisteredDedupKey(deliverableId: string): str
 }
 
 /**
+ * 第 21 枚 `pr_merged` 的**回声键**（#8 D3）：`pr:<pullRequestId>:merged`（设计 §4.2 的 payload
+ * `{prNumber, url}`）。
+ *
+ * 由**关联行 id** 派生而不是由工作项/PR 号：一条关联只对应一枚「它驱动了终态」的事实，
+ * 重投同键由唯一索引咬住（与 `deliverable:<id>:registered` 同族）；键**永不解析**（只作等值与唯一索引）。
+ * 带 `<ms>` 的形态在这里是错的：同一条 PR 合并只可能驱动一次终态（工作项一旦 done，后面的刷新
+ * 连判定都不做），不需要毫秒位来区分「两次合法的同向迁移」——那是状态/改派两枚的形态。
+ */
+export function computePullRequestMergedDedupKey(pullRequestId: string): string {
+  return `pr:${pullRequestId}:merged`;
+}
+
+/**
  * 终态迁移的**投影意图**（调用方声明，不从 `(status, reason)` 反推 —— 反推在残行自愈臂上必然说谎：
  * 那些行同样是 `discarded`+无 reason，却从未开跑、没有树，投影它们就是写谎话）。
  * 判据矩阵见设计 §5.2；缺省 = 不投影（残行三臂依赖它）。
@@ -190,6 +203,24 @@ export interface WorkItemActivityProjector {
     /** NULL = 不挂 run（手动登记 / 批级 diff）。 */
     runId: string | null;
     actor: AuthorRef;
+  }): void;
+  /**
+   * 第 21 枚 `pr_merged`（#8 D3 接线：`workItemPullRequestEntry.refresh` 的终态驱动在
+   * `transition` **命中**之后调用）。
+   *
+   * **只在 CAS 命中时调用**：这条回声是「这枚 PR 的合并驱动了本工作项的终态」的证据，
+   * 不是「这条 PR merged」的复述（复述由快照列如实承载）—— 未命中的那次不该留下它。
+   * actor = 系统主体（外部信号驱动，不是某个人的动作）；不挂 `sourceRun`（合并发生在远端，
+   * 没有任何一条本机 run 是它的来源）。
+   */
+  pullRequestMerged(input: {
+    workspaceKey: string;
+    workspacePath: string;
+    workItemId: string;
+    /** 关联行 id（回声键由它派生：同一枚 PR 只留一条）。 */
+    pullRequestId: string;
+    prNumber: number;
+    url: string;
   }): void;
 }
 
@@ -411,6 +442,20 @@ export function createWorkItemActivityProjector(deps: {
         dedupKey: computeDeliverableRegisteredDedupKey(input.deliverableId),
         // actor **按行取**（见接口注释）：人工登记与自动捕获在时间线上必须分得开。
         actor: input.actor,
+      });
+    },
+    pullRequestMerged(input) {
+      append({
+        kind: "pr_merged",
+        workspaceKey: input.workspaceKey,
+        workspacePath: input.workspacePath,
+        workItemId: input.workItemId,
+        occurredAt: now(),
+        /* payload 按设计 §4.2：`{prNumber, url}`。不写 mergedAt：调用点是**快照刷新之后**，
+           这里多带一个时刻只是把快照列里已有的事实抄第二份（两份迟早对不上）。 */
+        payload: { prNumber: input.prNumber, url: input.url },
+        dedupKey: computePullRequestMergedDedupKey(input.pullRequestId),
+        // actor 缺省 = 系统主体（外部信号驱动，不是某人的动作）——见接口注释。
       });
     },
   };

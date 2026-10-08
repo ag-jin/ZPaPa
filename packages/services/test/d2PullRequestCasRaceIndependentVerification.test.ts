@@ -420,9 +420,16 @@ test("读模型｜协作聚合读恰十键（workItem/viewerActor + 八格数据
   }
 });
 
-/* ---------------- ④ D2/D3 边界（装配级）：快照刷新不得动工作项状态 ---------------- */
+/* ---------------- ④ D2/D3 边界（装配级）：**D2 只报事实**，D3 起在调用点做终态驱动 ----------------
+ *
+ * 本用例写于 D2（那时终态驱动还没接）：它钉的是「`pullRequestSync` 报出 merged 事实」这条缝。
+ * D3（完整 pr-gate）落地后，**协作门面这个调用点**开始按设计 §4.2 的次序硬约束驱动终态 ——
+ * 于是本用例的末条断言从「状态一字不动」改成「in_review → done」（D3 的完整契约：回声、CAS 竞态、
+ * 终态/非 in_review 各档，见 d3PullRequestTerminalDriver.test.ts）。
+ * 「同步深模块不碰状态机」这条边界**没有松动**：它由 `pullRequestSync.ts` 的结构守卫
+ * （pullRequestSync.test.ts 末条）钉住 —— D3 的判定落在**调用点**，不在同步模块里。 */
 
-test("边界｜配 token 真刷到 merged：mergedPullRequests 报出，但工作项状态一字不动（终态判定是 D3）", async () => {
+test("边界｜配 token 真刷到 merged：mergedPullRequests 报出**库里事实**，且 D3 起由调用点驱动 in_review→done", async () => {
   const workspacePath = mkdtempSync(join(tmpdir(), "d2-boundary-"));
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
@@ -494,8 +501,9 @@ test("边界｜配 token 真刷到 merged：mergedPullRequests 报出，但工�
     );
     assert.equal(
       runtime.workItemRepo.get("wi-boundary")!.status,
-      "in_review",
-      "D2 不做终态判定：工作项状态必须一字不动（唯一写者仍是 WorkItemService.transition，D3 在调用点做）",
+      "done",
+      "D3 起：调用点做终态驱动（merged + in_review ⇒ done；唯一写者仍是 WorkItemService.transition）" +
+        "—— D2 的「只报事实」由 report.mergedPullRequests 那条读出承载（上面的断言）",
     );
   } finally {
     rmSync(workspacePath, { recursive: true, force: true });
