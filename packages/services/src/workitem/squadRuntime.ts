@@ -13,6 +13,7 @@ import { createIntegrationMerger, deleteBranch } from "../worktree/integrationMe
 import { createOrphanReaper } from "../worktree/orphanReaper.js";
 import { createWorktreeManager } from "../worktree/worktreeManager.js";
 import type { SquadBriefing } from "./leaderDispatch.js";
+import { createInboxChannelDelivery } from "./inboxChannelDelivery.js";
 import { createInboxItemRepo } from "./inboxItemRepo.js";
 import { createDefaultPullRequestProvider } from "./pullRequestProvider.js";
 import { createPullRequestSync } from "./pullRequestSync.js";
@@ -50,6 +51,10 @@ import { createWakeRuleRepo } from "./wakeRuleRepo.js";
 
 /* SUB.1：订阅事实落库失败的留痕口（订阅行是派生投影，失败只 warn、不回滚主事实）。 */
 const subscriberLogger = createServiceLogger("work-item-subscribers");
+
+/* SUB.3b：渠道推送失败的留痕口（推送是 Inbox 行的副本，失败只 warn、不回滚登记）。
+   与 bots 域的 warn-once 各司其职：那一层记「跳过的原因」，这一层记「编排/解析这一步的异常」。 */
+const inboxChannelLogger = createServiceLogger("inbox-channel-delivery");
 
 /** 小队命名空间的分支（集成分支 / 队员分支）—— **永远不是** base：它们是小队运行期的产物。 */
 function isSquadNamespaceBranch(branch: string): boolean {
@@ -279,9 +284,10 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   const squadDeferredDispatchRepo = createSquadDeferredDispatchRepo(db);
   const workItemRepo = createWorkItemRepo(db);
   const wakeRuleRepo = createWakeRuleRepo(db);
-  // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
-  // 服务面经注入的懒取 repo 读写 —— 两处是**同一个** createInboxItemRepo，唯一写者不变。
-  const inboxItemRepo = createInboxItemRepo(db);
+  /* SUB.3b：本 runtime 的 workspace 键**只算一次** —— 订阅读写（收件人解析）与推送目标必须是同一条
+     式子（identity 去空白优先，否则 path）。两处各拼一次时，「推到另一个 workspace 的渠道」
+     不会报错，只会安静地推错人。 */
+  const boundWorkspaceKey = resolveWorkspaceKey({ workspacePath, workspaceIdentity });
   /* SUB.1：订阅关系（`work_item_subscribers`）的**唯一**存储面 + **绑定到本 workspace** 的事实出口。
      两个「负责人」写者（`applyWorkItemAssignee` / 归档转交）与门面的手动订阅都经它报事实；
      事实→reason 的映射与落库判据在 `subscriberFacts`（runtime 只负责把「哪张 workspace」钉死）。
@@ -289,9 +295,31 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   const subscriberRepo = createWorkItemSubscriberRepo(db);
   const subscriberFacts = createSubscriberFactRecorder(
     subscriberRepo,
-    { key: resolveWorkspaceKey({ workspacePath, workspaceIdentity }), path: workspacePath },
+    { key: boundWorkspaceKey, path: workspacePath },
     (message, error) => subscriberLogger.warn(message, { error }),
   );
+  /* SUB.3b：**渠道只读推送的编排器**（本 runtime 一份，绑定本 workspace）。
+     它只回答「推不推、推什么」（判据全在 `inboxNotificationPolicy` —— 本层零自判），出站口由组合根
+     注入（不注入 ⇒ 零出站）；收件人解析读的两口就在这一层：订阅行取本 runtime 的 workspace 键，
+     父链取工作项树（`get` 过滤归档行 ⇒ 上溯在归档处自然停下）。 */
+  const inboxChannelDelivery = createInboxChannelDelivery({
+    target: {
+      workspacePath,
+      ...(workspaceIdentity.trim() ? { workspaceIdentity } : {}),
+    },
+    readSubscribers: (workItemId) => subscriberRepo.listByWorkItem(boundWorkspaceKey, workItemId),
+    readParentId: (workItemId) => workItemRepo.get(workItemId)?.parentId ?? null,
+    ...(deps.inboxChannelPush !== undefined ? { push: deps.inboxChannelPush } : {}),
+    warn: (message, error) => inboxChannelLogger.warn(message, { error }),
+  });
+  // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
+  // 服务面经注入的懒取 repo 读写 —— 两处是**同一个** createInboxItemRepo，唯一写者不变。
+  //
+  // SUB.3b：**唯一挂接点**（`insertIfAbsent === true` 时通知编排器）装在这一个构造点上 ——
+  // 全仓的条目写入（批次编排器 / 服务面 / SUB.2 通知口）都经过它，故不会漏推、也不会推两次。
+  const inboxItemRepo = createInboxItemRepo(db, {
+    onInserted: (item) => inboxChannelDelivery.notifyInserted(item),
+  });
   /* Activity 投影器（C3b.1）：`work_item_activities` 的第三个写者（前两个：CommentService / DecisionService），
      与它们共用同一份 repo 契约（dedupKey 幂等 + 闭集双闸 + sequence 原子）—— repo 仍是唯一存储写者。
      **恒构造**（接线钉死测试钉住）：漏接的表现是「时间线永远只有评论」，而一路不报错。 */

@@ -9,6 +9,7 @@ import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper } from "../worktree/orphanReaper.js";
 import type { WorktreeManager } from "../worktree/worktreeManager.js";
 import type { InboxItemRepo } from "./inboxItemRepo.js";
+import type { InboxChannelPushPort } from "./inboxChannelDelivery.js";
 import type { PullRequestProvider } from "./pullRequestProvider.js";
 import type { PullRequestSync } from "./pullRequestSync.js";
 import type { WorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
@@ -101,6 +102,16 @@ export type SquadRuntimeDeps = {
    * 缺省（不注入）⇒ `local`：既有装配与既有用例零改动，且缺省形态零出站（pr-gate 才碰远端）。
    */
   readSquadMergeMode?: () => SquadMergeMode;
+  /**
+   * **渠道只读推送的出站口**（SUB.3b，可选加法）：组合根把它绑到 bots 域的
+   * `IBotsService.pushInboxChannelSummary`（本域只持**类型**，不 import provider 实现 ——
+   * 「推到哪个渠道」是 bots 域的配置事实）。
+   *
+   * 为什么要传函数而不是在 runtime 里现建：bots 服务在组合根**后段**才注册（前向引用），
+   * 而 runtime 是按目标现构、不缓存的；传函数让「服务集合装配完成之后的那次调用」才解析服务。
+   *
+   * 缺省（不注入）⇒ **零出站**：既有调用方与既有用例零改动（离线缺省形态）。 */
+  inboxChannelPush?: InboxChannelPushPort;
 };
 
 export type SquadRuntime = {

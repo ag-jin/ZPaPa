@@ -2917,6 +2917,15 @@ export function createLocalServices(options: {
       // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
       dispatchRequestHub: squadDispatchRequests,
       runSettlementHub: squadRunSettlements,
+      /* SUB.3b：**渠道只读推送的出站口**（唯一装配点）。这里只把「一条摘要推到某个 workspace
+         的通知渠道」转给 bots 服务 —— 「推到哪个 bot / 哪个会话」是 bots 域的配置事实，
+         workitem 域只持类型（`InboxChannelPushPort`），不 import provider 实现。
+         为什么惰性取：bot 服务在本组合根**后段**才注册（下面的 ServiceCollection 装配），
+         而 runtime 是按目标现构的 —— 调用发生在装配完成之后，故这里读得到；
+         读不到（服务集合不含 Bots，如纯服务端进程）⇒ `?.` 得 undefined ⇒ 零出站。
+         与 `squadRuntimeServiceForAgent` 同一手法：**前向引用**，不在装配中途强取。 */
+      inboxChannelPush: (params) =>
+        services.getOptional(IBotsService)?.pushInboxChannelSummary(params),
     });
     runtime.subscribeWorkItemEvents(forwardSquadChildCompleted(runtime));
     return runtime;

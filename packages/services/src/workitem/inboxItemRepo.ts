@@ -101,6 +101,23 @@ export type InboxItem = {
 };
 
 /**
+ * 构造参数（SUB.3b，**加法**）。
+ *
+ * `onInserted` = 渠道推送的**唯一挂接点**：只有「真的插入了新行」（`insertIfAbsent` 返回 `true`）
+ * 才通知 —— `false`（同 `(workspace_key, dedup_key)` 已有行，含已归档那格）是幂等重投的**结论**，
+ * 不是新事实，推了就是第二次打扰；归档行不复活，也不该被重新推送。
+ *
+ * 载荷是**落库那一行**（含 repo 单源派生的 `severity` 与真正的 `id` / `created_at`）：
+ * 推送链因此不必回读库，也拿不到「与库里不一致的副本」。
+ *
+ * 契约：**同步、绝不抛**。推送是派生动作（副本），不得影响登记返回值 ——
+ * 回调自己吞掉失败（生产侧的吞法在 `inboxChannelDelivery` 的 best-effort 包装里）。
+ */
+export type InboxItemRepoOptions = {
+  onInserted?: (item: InboxItem) => void;
+};
+
+/**
  * 登记入参。**`severity` 刻意不在入参里**：它由 repo 从 `INBOX_SEVERITY_BY_KIND` 补 —— 产生点只管
  * `kind`，映射只有一处（若让调用方传 severity，「冲突有多急」就会有第二份判据）。
  *
@@ -237,12 +254,19 @@ function rowToInboxItem(row: InboxItemRow): InboxItem {
 // 排序口径的单处定义：新的在前；同刻写入的行按 id 升序（不随存储顺序漂移）。
 const ORDER_BY_CREATED = "ORDER BY created_at DESC, id ASC";
 
-export function createInboxItemRepo(db: DatabaseSync): InboxItemRepo {
+export function createInboxItemRepo(
+  db: DatabaseSync,
+  options: InboxItemRepoOptions = {},
+): InboxItemRepo {
   return {
     insertIfAbsent(input) {
       const kind = assertKind(input.kind);
       // severity 从这里补（唯一映射），不走入参：产生点只管 kind。
       const severity = INBOX_SEVERITY_BY_KIND[kind];
+      /* id / created_at 先算成局部量再落库：同一个值既写进行里、又进 onInserted 的载荷，
+         推送链拿到的「这一行」与库里那一行逐格相同（`id` 当场生成、`created_at` 当场取一次）。 */
+      const id = randomUUID();
+      const createdAt = Date.now();
       const result = db
         .prepare(
           `INSERT OR IGNORE INTO inbox_items (
@@ -251,7 +275,7 @@ export function createInboxItemRepo(db: DatabaseSync): InboxItemRepo {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
         )
         .run(
-          randomUUID(),
+          id,
           input.workspaceKey,
           input.workspacePath,
           input.dedupKey,
@@ -261,10 +285,27 @@ export function createInboxItemRepo(db: DatabaseSync): InboxItemRepo {
           JSON.stringify(input.detail),
           input.workItemId ?? null,
           input.runId ?? null,
-          Date.now(),
+          createdAt,
         );
       // changes === 0 ⇔ 唯一索引拦下了这次插入（同一事实已登记，含已归档那格）：不写第二行、不改任何列。
-      return result.changes === 1;
+      if (result.changes !== 1) return false;
+      /* 唯一挂接点（SUB.3b）：**真的新插入**之后才通知。放在这里而不是各产生点，是因为这里是全仓
+         唯一写收口 —— 产生点各自推送会让「同一事实几条推送」随调用点漂移，而漂移不报错。 */
+      options.onInserted?.({
+        id,
+        workspaceKey: input.workspaceKey,
+        workspacePath: input.workspacePath,
+        kind,
+        severity,
+        title: input.title,
+        detail: input.detail,
+        workItemId: input.workItemId ?? null,
+        runId: input.runId ?? null,
+        createdAt,
+        readAt: null,
+        archivedAt: null,
+      });
+      return true;
     },
 
     get(id) {
