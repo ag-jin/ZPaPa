@@ -114,6 +114,22 @@ test("登记｜镜像列落库 + title 派生；同 (workspace,item,owner,name,n
   assert.equal(count.n, 2, "只有两条：pr-1 与 pr-2（重投不新增）");
 });
 
+test("登记｜#8 D3：带上**已知的 head 分支**（自动开 PR 的登记面知道它）⇒ 落库；省略 ⇒ NULL（不猜）", () => {
+  const { repo } = setup();
+  const withBranch = repo.link(linkInput({ branch: "squad/integration/wi-p" }));
+  assert.equal(
+    withBranch.branch,
+    "squad/integration/wi-p",
+    "开 PR 那一刻 head 是**已知事实**（不是从别处猜的）：落库，收尾幂等闸按它认本批那条 PR",
+  );
+  assert.equal(repo.link(linkInput({ id: "pr-2", prNumber: 8 })).branch, null, "省略 ⇒ NULL");
+  assert.equal(
+    repo.link(linkInput({ id: "pr-3", prNumber: 9, branch: "   " })).branch,
+    null,
+    "空白 = 没给（不落一个空白分支名 —— 它会让「按分支认 PR」的判据永远不命中）",
+  );
+});
+
 test("登记｜形态闸：非正整数号 / 空 owner/name/url 一律响亮拒（不落坏行）", () => {
   const { db, repo } = setup();
   assert.throws(() => repo.link(linkInput({ prNumber: 0 })), /pr_number/);

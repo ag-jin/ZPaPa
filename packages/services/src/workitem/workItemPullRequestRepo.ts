@@ -72,6 +72,13 @@ export type LinkPullRequestInput = {
   /** 省略/空白 ⇒ 派生 `owner/name#number`（呈现可读；远端标题归快照，登记时不猜）。 */
   title?: string;
   htmlUrl: string;
+  /**
+   * **登记时已知的 head 分支**（#8 D3 加法）：自动开 PR 的那条路径（pr-gate 收尾）在创建响应里
+   * 就拿到了 head ref —— 那是**已知事实**，不是猜的；落进这一列让「本批那条 PR」可按分支认出来
+   * （收尾幂等闸的判据）。人工贴 URL 不给（远端 head 归快照，登记时不知道）。
+   * 省略/空白 ⇒ NULL（不猜：NULL 只表示「尚无此事实」）。
+   */
+  branch?: string;
   linkedBy: AuthorRef;
   createdAt: number;
 };
@@ -246,6 +253,8 @@ export function createWorkItemPullRequestRepo(db: DatabaseSync): WorkItemPullReq
       const htmlUrl = assertNonBlank(input.htmlUrl, "html_url");
       const prNumber = assertPrNumber(input.prNumber);
       const title = input.title?.trim() ? input.title.trim() : defaultPullRequestTitle(input);
+      // 登记时已知的 head 分支（D3 加法）：空白视同没给（NULL 不猜）。
+      const branch = input.branch !== undefined && input.branch.trim() !== "" ? input.branch : null;
       const key = {
         workspaceKey: input.workspaceKey,
         workItemId: input.workItemId,
@@ -259,7 +268,7 @@ export function createWorkItemPullRequestRepo(db: DatabaseSync): WorkItemPullReq
            id, workspace_key, workspace_path, work_item_id, repo_owner, repo_name, pr_number,
            title, html_url, branch, state, merged_at, api_mergeable, api_merge_state_status,
            snapshot_head_sha, snapshot_fetched_at, linked_by_kind, linked_by_id, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, '', NULL, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, '', NULL, ?, ?, ?, ?)`,
       ).run(
         input.id,
         input.workspaceKey,
@@ -270,6 +279,7 @@ export function createWorkItemPullRequestRepo(db: DatabaseSync): WorkItemPullReq
         prNumber,
         title,
         htmlUrl,
+        branch,
         input.linkedBy.kind,
         input.linkedBy.id,
         input.createdAt,
