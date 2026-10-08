@@ -545,3 +545,49 @@ export const SQUAD_RUN_USAGE_SQL = `
   ALTER TABLE squad_runs ADD COLUMN usage_model_error_count INTEGER;
   ALTER TABLE squad_runs ADD COLUMN usage_recorded_at INTEGER;
 `;
+
+/* 0016（#7 工作项级交付物 D1a）：交付物表。只建新表 + 两索引，**不改既有列/表**；
+   0006/0015 的 SQL 一字不动（checksum 冻结），与 0010/0011/0012 同一条加法纪律。
+
+   为什么是独立表而不是 work_items 的两列（spec §3.4 曾设想 deliverables/pullRequests 字段）：
+   交付物是**一条条独立事实**（一条 run 一条 diff、人可登记任意条 link），
+   挂在 work_items 的行 JSON 里会让「按 run 读回」「幂等重投」「只增不改」三件事全部失去落点。
+
+   · **`kind` 闭集 v1 = 'diff' | 'link'**（设计报告 §3.2 / Q5 裁定）：`diff` 的正文**不进库**
+     （真实 diff 可达数百 KB~MB，tasks-index 库被多窗口 Host 共连接），落
+     `<ws>/.zcode/squad/deliverables/<id>.diff`，本表只存相对路径 + sha256 + 字节数；
+     `link` 的 `content_ref` 就是外部 URL。闭集本身由 repo 的**读写双闸**管（列上不建 CHECK：
+     与 `comment_dispatch_receipts.outcome` 同款——枚举漂移要在代码里响亮，不在 DDL 里静默）。
+   · **`dedup_key` + 唯一索引是存储层的幂等不变式**（`UNIQUE(workspace_key, dedup_key)`）：
+     同一事实重投不得产生第二条（INSERT OR IGNORE，不先查后插——跨连接并发下两次查都可能
+     看不到对方），与 inbox_items / work_item_activities 同一手法。自动捕获的键形如
+     `deliverable:<runId>:diff` / `deliverable:<parentWorkItemId>:batch-diff`（单源在捕获模块）。
+   · `run_id` 可空：NULL = 手动登记（挂工作项不挂 run）；**不建外键**——work_items/squad_runs
+     都只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA / SQUAD_RUN_SCHEMA 同一条理由）。
+   · `meta_json` 是结构化事实（branch/base/statSummary/commitCount/batchLevel…），形状随产生点而变，
+     拆列会把未枚举的字段当未知列拒掉（与 WAKE_RULE_SCHEMA 的 condition/filters 同一条理由）。 */
+export const WORK_ITEM_DELIVERABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_deliverables (
+    id                TEXT PRIMARY KEY,
+    workspace_key     TEXT NOT NULL,
+    workspace_path    TEXT NOT NULL,
+    work_item_id      TEXT NOT NULL,
+    run_id            TEXT,
+    kind              TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    meta_json         TEXT NOT NULL DEFAULT '{}',
+    content_ref       TEXT NOT NULL,
+    content_sha       TEXT,
+    content_size      INTEGER,
+    actor_kind        TEXT NOT NULL,
+    actor_id          TEXT NOT NULL,
+    dedup_key         TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_deliverables_item
+    ON work_item_deliverables(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_deliverables_run
+    ON work_item_deliverables(run_id) WHERE run_id IS NOT NULL;
+`;

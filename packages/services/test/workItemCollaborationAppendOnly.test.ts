@@ -20,6 +20,9 @@ test("负向守卫｜协作域 repo 只增不改（UPDATE 仅限墓碑时间戳�
     "workitem/workItemDecisionRepo.ts",
     "workitem/workItemCommentRepo.ts",
     "workitem/workItemCommentReactionRepo.ts",
+    /* #7 交付物（D1a）：同一条铁律——本 repo 结构上不存在 UPDATE/DELETE，
+       幂等只靠 INSERT OR IGNORE + 唯一索引（`UNIQUE(workspace_key, dedup_key)`）。 */
+    "workitem/workItemDeliverableRepo.ts",
   ]) {
     const source = readSource(file);
     assert.ok(!/DELETE FROM/.test(source), `${file} 不得出现 DELETE FROM`);

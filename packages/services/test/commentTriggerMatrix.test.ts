@@ -1001,6 +1001,12 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
       "ALTER TABLE squad_runs DROP COLUMN usage_input_tokens",
       "ALTER TABLE squad_runs DROP COLUMN usage_total_tokens",
     ],
+    // 0016（#7 交付物 D1a）：只建一张新表 + 两索引（反向 DDL 先索引后表，与 0010/0011/0012 同序）。
+    "0016_work_item_deliverables": [
+      "DROP INDEX idx_work_item_deliverables_run",
+      "DROP INDEX idx_work_item_deliverables_item",
+      "DROP TABLE work_item_deliverables",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
   /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整

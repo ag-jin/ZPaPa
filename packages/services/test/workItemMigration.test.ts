@@ -119,7 +119,58 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "ALTER TABLE squad_runs DROP COLUMN usage_input_tokens",
     "ALTER TABLE squad_runs DROP COLUMN usage_total_tokens",
   ],
+  // 0016（#7 交付物 D1a）：只建一张新表 + 两索引（反向 DDL 先索引后表，与 0010/0011/0012 同序）。
+  "0016_work_item_deliverables": [
+    "DROP INDEX idx_work_item_deliverables_run",
+    "DROP INDEX idx_work_item_deliverables_item",
+    "DROP TABLE work_item_deliverables",
+  ],
 };
+
+/* 0016（#7 交付物 D1a）的列集：设计报告 §3.2 的表形状逐字抄录（不在这里用代码重算）。
+   `kind` 闭集与 `UNIQUE(workspace_key, dedup_key)` 不占列：前者由 repo 的读写双闸管，
+   后者是幂等索引（repo 用例里以「人为重复插入 ⇒ /UNIQUE/」钉住）。 */
+const EXPECTED_DELIVERABLE_COLUMNS = [
+  "id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "run_id",
+  "kind",
+  "title",
+  "meta_json",
+  "content_ref",
+  "content_sha",
+  "content_size",
+  "actor_kind",
+  "actor_id",
+  "dedup_key",
+  "created_at",
+  "updated_at",
+];
+
+const EXPECTED_DELIVERABLE_INDEXES = [
+  "idx_work_item_deliverables_item",
+  "idx_work_item_deliverables_run",
+];
+
+function deliverableColumns(db: DatabaseSync): string[] {
+  return (
+    db.prepare("PRAGMA table_info(work_item_deliverables)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function deliverableIndexes(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_work_item_deliverables%'",
+      )
+      .all() as Array<{ name: string }>
+  )
+    .map((row) => row.name)
+    .sort();
+}
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
   "run_id",
@@ -349,6 +400,61 @@ test("0015：老库补跑只加 9 列用量（既有行全 NULL，零回填）�
   const fresh = openFreshDb();
   runTasksDatabaseMigrations(fresh);
   assert.deepEqual(squadRunColumns(fresh), squadRunColumns(db));
+});
+
+/* 0016（#7 交付物 D1a）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0015、库里还有行）补跑 ⇒ 只建 `work_item_deliverables` 一张新表与两索引，
+     **既有表/列一字未动**（本迁移是纯新建，没有 ALTER、没有回填）；
+   · 从零建库同一形状（0016 的建表 SQL 是这张表的唯一来源，不存在「老库升级后少一列」的分叉）。 */
+test("0016：老库补跑只建交付物表（既有表未动、零回填）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from016 = fullLedger.findIndex((row) => row.id === "0016_work_item_deliverables");
+  assert.ok(from016 > 0, "账本里没有 0016（迁移没挂上）");
+  // 逐条退回（逆序）到「0016 之前」：结构与 0015 之后一模一样。
+  for (const row of fullLedger.slice(from016).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  assert.equal(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_deliverables'")
+      .get(),
+    undefined,
+    "退回后这张表不该还在（老库形状）",
+  );
+  // 老库里躺着一条既有行（0015 之后的列集可写）：补跑 0016 不得碰它。
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at, dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+       usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+       usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+       usage_model_error_count, usage_recorded_at)
+     VALUES ('legacy-016', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL,
+       111, 111, NULL, NULL, 111, NULL, 7, 5, 2, 0, 0, 0, 1, 0, 111)`,
+  ).run();
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  assert.deepEqual(deliverableColumns(db), EXPECTED_DELIVERABLE_COLUMNS, "列集与顺序逐字固定");
+  assert.deepEqual(deliverableIndexes(db), EXPECTED_DELIVERABLE_INDEXES);
+  assert.deepEqual(
+    squadRunColumns(db),
+    [...EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014, ...EXPECTED_SQUAD_RUN_USAGE_COLUMNS],
+    "既有 squad_runs 表一字未动",
+  );
+  const legacy = db
+    .prepare("SELECT usage_total_tokens FROM squad_runs WHERE run_id = 'legacy-016'")
+    .get() as { usage_total_tokens: number | null };
+  assert.equal(legacy.usage_total_tokens, 7, "既有行数据未被 0016 触碰");
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(deliverableColumns(fresh), deliverableColumns(db));
+  assert.deepEqual(deliverableIndexes(fresh), deliverableIndexes(db));
 });
 
 // 迁移必须幂等：老库升级与重放都不能报错、不能改动结构。
