@@ -1,4 +1,7 @@
 import type { Locale } from "@zcode/shared";
+/* 仅类型：kind / severity 的闭集单源在 workitem 域（`inboxItemRepo`）；本文件只做文案映射，
+   值导入会把 node:crypto 带进 bot 消息表（`browserSafeRootEntry.test.ts` 守这条）。 */
+import type { InboxItemKind, InboxItemSeverity } from "../workitem/inboxItemRepo.js";
 
 export type BotMessageLocale = Extract<Locale, "zh-CN" | "en-US">;
 
@@ -121,6 +124,25 @@ const messages = {
     replySelectTitle: "当前第三方回复颗粒度 {mode}\n选择第三方回复颗粒度",
     replyMissing: "未找到回复颗粒度。",
     replyChanged: "第三方回复颗粒度已切换为 {mode}。",
+    /* SUB.3b：渠道只读推送的 Inbox 摘要（§2.4 文案行：kind 短词 + 工作项标题 + 项目 + 严重级
+       + 打开指引）。这里只放**短词**与句式模板，不放长句；kind 键集与 `INBOX_ITEM_KINDS` 一一对应
+       （映射表 `INBOX_KIND_MESSAGE_ID` 是 Record ⇒ 漏一格是编译错）。 */
+    inboxKindMergeConflict: "合并冲突",
+    inboxKindMemberFailed: "队员运行失败",
+    inboxKindRunOrphaned: "运行残留",
+    inboxKindRunStalled: "运行卡住",
+    inboxKindDispatchSkipped: "派发跳过",
+    inboxKindPrGateDegraded: "收尾降级",
+    inboxKindMentionActionRequired: "有人被点名",
+    inboxKindDecisionRequired: "有待裁决的决定",
+    inboxKindCommentAttention: "新评论",
+    inboxSeverityActionRequired: "需要处理",
+    inboxSeverityAttention: "需要查看",
+    inboxSeverityInfo: "仅告知",
+    inboxChannelHeadline: "【{kind}】{title}",
+    inboxChannelProject: "项目：{project}",
+    inboxChannelSeverity: "严重级：{severity}",
+    inboxChannelOpenHint: "打开 ZCode 收件箱查看并处理。",
   },
   "en-US": {
     botDisabled: "This bot is not enabled.",
@@ -245,6 +267,22 @@ const messages = {
     replySelectTitle: "Current third-party reply detail {mode}\nSelect third-party reply detail",
     replyMissing: "Reply detail option not found.",
     replyChanged: "Third-party reply detail changed to {mode}.",
+    inboxKindMergeConflict: "Merge conflict",
+    inboxKindMemberFailed: "Member run failed",
+    inboxKindRunOrphaned: "Orphaned run",
+    inboxKindRunStalled: "Run stalled",
+    inboxKindDispatchSkipped: "Dispatch skipped",
+    inboxKindPrGateDegraded: "PR gate degraded",
+    inboxKindMentionActionRequired: "You were mentioned",
+    inboxKindDecisionRequired: "Decision required",
+    inboxKindCommentAttention: "New comment",
+    inboxSeverityActionRequired: "action required",
+    inboxSeverityAttention: "needs review",
+    inboxSeverityInfo: "for information",
+    inboxChannelHeadline: "[{kind}] {title}",
+    inboxChannelProject: "Project: {project}",
+    inboxChannelSeverity: "Severity: {severity}",
+    inboxChannelOpenHint: "Open the ZCode inbox to review and handle it.",
   },
 } as const;
 
@@ -264,4 +302,61 @@ export function formatBotMessage(
     message = message.replaceAll(`{${key}}`, String(value ?? ""));
   }
   return message;
+}
+
+/* ---------- SUB.3b：渠道只读推送的摘要 ----------
+
+   两张 Record 是**穷尽性闸**：`InboxItemKind` / `InboxItemSeverity` 加一格而这里漏一格 ⇒ 编译错
+   （与 `INBOX_SEVERITY_BY_KIND` 同一手法）。用映射表而不是 `switch`：
+   「kind → 短词」只有这一处，文案键名拼错在这里就被类型拦住。
+
+   摘要**只推短词与事实**（不推 detail JSON、不推收件人名单）：渠道是只读副本，
+   推得越长越像一份要人在聊天里回应的东西；「打开收件箱」才是处置入口。 */
+
+const INBOX_KIND_MESSAGE_ID: Record<InboxItemKind, BotMessageId> = {
+  merge_conflict: "inboxKindMergeConflict",
+  member_failed: "inboxKindMemberFailed",
+  run_orphaned: "inboxKindRunOrphaned",
+  run_stalled: "inboxKindRunStalled",
+  dispatch_skipped: "inboxKindDispatchSkipped",
+  pr_gate_degraded: "inboxKindPrGateDegraded",
+  mention_action_required: "inboxKindMentionActionRequired",
+  decision_required: "inboxKindDecisionRequired",
+  comment_attention: "inboxKindCommentAttention",
+};
+
+const INBOX_SEVERITY_MESSAGE_ID: Record<InboxItemSeverity, BotMessageId> = {
+  action_required: "inboxSeverityActionRequired",
+  attention: "inboxSeverityAttention",
+  info: "inboxSeverityInfo",
+};
+
+/**
+ * 一条 Inbox 条目的渠道摘要（纯文本，两语）。
+ *
+ * 四行固定顺序：`【kind 短词】标题` / `项目：…` / `严重级：…` / 打开指引 ——
+ * 顺序稳定是为了「扫一眼就知道是什么事、哪个项目、多急、去哪处理」，
+ * 而不是把 detail 里的结构化数据摊平成一段散文。
+ */
+export function formatBotInboxChannelSummary(input: {
+  locale: Locale | undefined;
+  kind: InboxItemKind;
+  severity: InboxItemSeverity;
+  /** 工作项标题（调用方已按构建件口径回落 id）。 */
+  title: string;
+  /** 项目（workspacePath 的末段；调用方从目标 workspace 取）。 */
+  workspaceLabel: string;
+}): string {
+  const locale = input.locale;
+  return [
+    formatBotMessage(locale, "inboxChannelHeadline", {
+      kind: formatBotMessage(locale, INBOX_KIND_MESSAGE_ID[input.kind]),
+      title: input.title,
+    }),
+    formatBotMessage(locale, "inboxChannelProject", { project: input.workspaceLabel }),
+    formatBotMessage(locale, "inboxChannelSeverity", {
+      severity: formatBotMessage(locale, INBOX_SEVERITY_MESSAGE_ID[input.severity]),
+    }),
+    formatBotMessage(locale, "inboxChannelOpenHint"),
+  ].join("\n");
 }
