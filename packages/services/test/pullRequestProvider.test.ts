@@ -370,6 +370,177 @@ test("P3-1｜畸形响应里的远端可控字段：错误文案**定长截断**
   assert.match(failure.reason, /截断|truncat/i, "截断这件事本身要写明，不假装原文就是这么短");
 });
 
+/* ---------------- ⑥ 写路径与列举口（#8 D3：pr-gate 收尾要用） ---------------- */
+
+test("createPullRequest｜请求形状：POST 规范地址 + Bearer + JSON 体（title/head/base/body）；响应映射成远端事实", async () => {
+  const { calls, impl } = jsonFetch(
+    pullPayload({
+      number: 42,
+      html_url: "https://github.com/acme/widget/pull/42",
+      title: "批次 A",
+      head: { ref: "squad/integration/wi-p", sha: "sha-int" },
+    }),
+  );
+  const provider = createGitHubPullRequestProvider({
+    readToken: () => TOKEN,
+    fetchImpl: impl,
+    now: () => 777,
+  });
+  const result = await provider.createPullRequest({
+    repoOwner: "acme",
+    repoName: "widget",
+    title: "批次 A",
+    head: "squad/integration/wi-p",
+    base: "main",
+    body: "由 ZPaPa 小队整批收尾创建",
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.url, "https://api.github.com/repos/acme/widget/pulls");
+  assert.equal(calls[0]!.init?.method, "POST");
+  const headers = calls[0]!.init?.headers as Record<string, string>;
+  assert.equal(headers.Authorization, `Bearer ${TOKEN}`);
+  assert.equal(headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(String(calls[0]!.init?.body)), {
+    title: "批次 A",
+    head: "squad/integration/wi-p",
+    base: "main",
+    body: "由 ZPaPa 小队整批收尾创建",
+  });
+  assert.equal(result.pullRequest.number, 42);
+  assert.equal(result.pullRequest.htmlUrl, "https://github.com/acme/widget/pull/42");
+  assert.deepEqual(result.pullRequest.snapshot, {
+    state: "open",
+    mergedAt: null,
+    title: "批次 A",
+    branch: "squad/integration/wi-p",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    headSha: "sha-int",
+    fetchedAt: 777,
+  });
+});
+
+test("createPullRequest｜无 token ⇒ unavailable 零出站；422 ⇒ http_error 带远端 message（定长截断、零 token 回显）", async () => {
+  let calls = 0;
+  const offline = createGitHubPullRequestProvider({
+    readToken: () => "",
+    fetchImpl: (async () => {
+      calls++;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch,
+  });
+  const unavailable = await offline.createPullRequest({
+    repoOwner: "acme",
+    repoName: "widget",
+    title: "t",
+    head: "h",
+    base: "main",
+  });
+  assert.equal(unavailable.ok, false);
+  if (!unavailable.ok) assert.equal(unavailable.code, "unavailable");
+  assert.equal(calls, 0, "没 token ⇒ 写路径同样零出站");
+
+  /* 422（已存在同名 PR 的典型响应）：远端 message 是**远端可控文本**，带出但定长截断（P3-1 同款）。 */
+  const hostile = `A pull request already exists for acme:squad/integration/wi-p${"B".repeat(2048)}`;
+  const created = createGitHubPullRequestProvider({
+    readToken: () => TOKEN,
+    fetchImpl: (async () =>
+      new Response(JSON.stringify({ message: hostile }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+  });
+  const failure = await created.createPullRequest({
+    repoOwner: "acme",
+    repoName: "widget",
+    title: "t",
+    head: "squad/integration/wi-p",
+    base: "main",
+  });
+  assert.equal(failure.ok, false);
+  if (failure.ok) return;
+  assert.equal(failure.code, "http_error");
+  assert.equal(failure.status, 422);
+  assert.match(failure.reason, /already exists/, "远端 message 要带出（这是「已存在」的判别句）");
+  assert.equal(failure.reason.includes(hostile), false, "不得整段回显远端文本");
+  assert.ok(failure.reason.length < 512, `原因必须有界（实得 ${failure.reason.length} 字）`);
+  assert.equal(failure.reason.includes(TOKEN), false, "失败原因里零 token 回显");
+});
+
+test("listOpenByBranchPrefix｜GET 开着的 PR 列表，按 head 前缀过滤（stub 断言，不联网）", async () => {
+  const { calls, impl } = jsonFetch([
+    pullPayload({ number: 7, head: { ref: "squad/integration/wi-p", sha: "s1" } }),
+    pullPayload({ number: 8, head: { ref: "squad/integration/wi-q", sha: "s2" } }),
+    pullPayload({ number: 9, head: { ref: "main", sha: "s3" } }),
+  ]);
+  const provider = createGitHubPullRequestProvider({ readToken: () => TOKEN, fetchImpl: impl });
+  const result = await provider.listOpenByBranchPrefix({
+    repoOwner: "acme",
+    repoName: "widget",
+    prefix: "squad/integration/wi-p",
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.equal(calls[0]!.url, "https://api.github.com/repos/acme/widget/pulls?state=open&per_page=100");
+  assert.deepEqual(
+    result.pullRequests.map((pull) => pull.number),
+    [7],
+    "只留 head 命中前缀的（其余原样滤掉，不改写成别的形态）",
+  );
+  assert.equal(result.pullRequests[0]!.snapshot.branch, "squad/integration/wi-p");
+
+  // 无 token ⇒ 同一句 unavailable，零出站。
+  let offlineCalls = 0;
+  const offline = createGitHubPullRequestProvider({
+    readToken: () => undefined,
+    fetchImpl: (async () => {
+      offlineCalls++;
+      return new Response("[]", { status: 200 });
+    }) as typeof fetch,
+  });
+  const unavailable = await offline.listOpenByBranchPrefix({
+    repoOwner: "acme",
+    repoName: "widget",
+    prefix: "squad/integration/",
+  });
+  assert.equal(unavailable.ok, false);
+  if (!unavailable.ok) assert.equal(unavailable.code, "unavailable");
+  assert.equal(offlineCalls, 0);
+});
+
+test("缺省 provider｜写路径与列举口同样现判 token（未配 ⇒ unavailable，配上 ⇒ 转发实现）", async () => {
+  let token: string | undefined;
+  const { calls, impl } = jsonFetch(pullPayload({ number: 5 }));
+  const provider = createDefaultPullRequestProvider({
+    readToken: () => token,
+    fetchImpl: impl,
+    now: () => 1,
+  });
+  const offline = await provider.createPullRequest({
+    repoOwner: "acme",
+    repoName: "widget",
+    title: "t",
+    head: "h",
+    base: "main",
+  });
+  assert.equal(offline.ok, false);
+  assert.equal(calls.length, 0);
+
+  token = TOKEN;
+  const created = await provider.createPullRequest({
+    repoOwner: "acme",
+    repoName: "widget",
+    title: "t",
+    head: "h",
+    base: "main",
+  });
+  assert.equal(created.ok, true);
+  assert.equal(calls.length, 1);
+});
+
 /* ---------------- ④ 缺省 provider（runtime 的唯一构造口径） ---------------- */
 
 test("缺省 provider｜token 空白 ⇒ null 形态；配了 token ⇒ GitHub 形态（每次调用现判，不缓存结论）", async () => {

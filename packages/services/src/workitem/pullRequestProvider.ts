@@ -51,6 +51,77 @@ export type GitHubPullRequestAddress = {
   canonicalUrl: string;
 };
 
+/**
+ * 一次读/写带回的**远端 PR 事实**（`createPullRequest` 与 `listOpenByBranchPrefix` 共用）。
+ *
+ * `snapshot` 与 `GET /pulls/{n}` 的映射**同一形状**（同一个 `mapPullPayload`）：
+ * 写路径带回来的也是一份快照，落库直接走既有的 `replaceSnapshot` —— 不为写路径另造一套快照形状
+ * （两套形状迟早分叉，而分叉的表现是「开完 PR 的登记行缺字段」且不报错）。
+ */
+export type RemotePullRequestFact = {
+  /** GitHub 的 PR 号（正整数；非此形态一律 malformed，不猜）。 */
+  number: number;
+  /** 远端事实自带的规范页地址（不要自己从 owner/repo/number 拼 —— 那是第二份拼装口径）。 */
+  htmlUrl: string;
+  snapshot: PullRequestSnapshot;
+};
+
+/** `createPullRequest` 的入参（POST `/repos/{owner}/{repo}/pulls` 的全部内容）。 */
+export type CreatePullRequestInput = {
+  repoOwner: string;
+  repoName: string;
+  title: string;
+  /** head 分支（短名即可；同仓库 PR 不需要 `owner:` 前缀）。 */
+  head: string;
+  /** base 分支（小队的 target）。 */
+  base: string;
+  body?: string;
+};
+
+/** 写路径的失败面与读路径**同一族码值**（同一套词汇，不另造一份枚举）。 */
+export type PullRequestFailure = {
+  ok: false;
+  code: PullRequestFetchFailureCode;
+  reason: string;
+  status?: number;
+};
+
+export type PullRequestCreateResult =
+  | { ok: true; pullRequest: RemotePullRequestFact }
+  | PullRequestFailure;
+
+export type PullRequestListResult =
+  | { ok: true; pullRequests: RemotePullRequestFact[] }
+  | PullRequestFailure;
+
+export interface PullRequestProvider {
+  /** 同步、无 IO：只回答「现在有没有可用的读数面」（UI 据此决定显示快照态还是「未配置 token」）。 */
+  describe(): PullRequestProviderStatus;
+  /** 一次读数（无 token 时零出站）；**不抛**——一切失败都在返回值里带原因。 */
+  fetchPullRequest(url: string): Promise<PullRequestFetchResult>;
+  /**
+   * 开一个 PR（**写路径**，D3 的 pr-gate 收尾用）：`POST /repos/{owner}/{repo}/pulls`。
+   *
+   * 纪律与读路径一致：无 token ⇒ `unavailable` 且**零出站**；网络/HTTP/形态失败各自带原因返回
+   * （**不抛**）；HTTP 失败时把远端 `message` 带出（**定长截断**，P3-1）——「同 head 的 PR 已存在」
+   * 这类判别句必须看得见，否则用户只知道「远端拒绝了」。
+   */
+  createPullRequest(input: CreatePullRequestInput): Promise<PullRequestCreateResult>;
+  /**
+   * 列举某仓库**开着的** PR 并按 head 分支前缀过滤（`GET /pulls?state=open&per_page=100` +
+   * 本地前缀过滤 —— GitHub REST 的 `head` 过滤是**精确匹配**，给不了前缀语义）。
+   *
+   * 用途（v1）：pr-gate 收尾在「开 PR 的那一刻」进程崩溃、本地登记行没写成时，按集成分支前缀
+   * 把已存在的 PR **认回来**（设计 Q6 的自动关联留位按「列出待确认」口径使用，不做自动落表）。
+   * 无 token ⇒ `unavailable` 且零出站；一切失败带原因返回（不抛）。
+   */
+  listOpenByBranchPrefix(input: {
+    repoOwner: string;
+    repoName: string;
+    prefix: string;
+  }): Promise<PullRequestListResult>;
+}
+
 const GITHUB_HOSTS = new Set(["github.com", "www.github.com"]);
 /** GitHub 的 owner 位：字母数字与 `-`（`--` 连续是保留形态，这里只做形态闸）。 */
 const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
@@ -118,14 +189,19 @@ export function createNullPullRequestProvider(
   reason: string = PULL_REQUEST_TOKEN_MISSING_REASON,
 ): PullRequestProvider {
   const unavailable: PullRequestFetchResult = { ok: false, code: "unavailable", reason };
+  // 写路径与列举口**同一句原因、同一个对象形状**（无 token 是同一个事实，不该有两种说法）。
+  const unavailableWrite: PullRequestFailure = { ok: false, code: "unavailable", reason };
   return {
     describe: () => ({ available: false, reason }),
     // 不持 fetch ⇒ 结构上发不出请求；返回同一个失败对象（不可变值，调用方无法改坏共享实例）。
     fetchPullRequest: async () => unavailable,
+    createPullRequest: async () => unavailableWrite,
+    listOpenByBranchPrefix: async () => unavailableWrite,
   };
 }
 
 type GitHubPullPayload = {
+  number?: unknown;
   state?: unknown;
   draft?: unknown;
   merged?: unknown;
@@ -135,6 +211,8 @@ type GitHubPullPayload = {
   head?: { ref?: unknown; sha?: unknown } | null;
   mergeable?: unknown;
   mergeable_state?: unknown;
+  /** 失败响应（HTTP 非 2xx）的远端说明；只在失败面上读，**定长截断**后才进原因（P3-1）。 */
+  message?: unknown;
 };
 
 /** 把 REST 的 `mergeable_state` 归一成大写原值（GitHub 给的是小写：clean/dirty/blocked/…）。 */
@@ -219,6 +297,23 @@ function mapPullPayload(payload: GitHubPullPayload, fetchedAt: number): PullRequ
 }
 
 /**
+ * 响应 → **远端 PR 事实**（`createPullRequest` / `listOpenByBranchPrefix` 的映射）。
+ * `number` / `html_url` 是我们**认这条 PR**的两个句柄：缺一个或形态不对就抛（不猜、不拼）。
+ */
+function mapRemotePullRequest(
+  payload: GitHubPullPayload,
+  fetchedAt: number,
+): RemotePullRequestFact {
+  const htmlUrl = typeof payload.html_url === "string" ? payload.html_url.trim() : "";
+  if (htmlUrl === "") throwPullPayloadProblem("html_url");
+  const rawNumber = payload.number;
+  if (typeof rawNumber !== "number" || !Number.isInteger(rawNumber) || rawNumber <= 0) {
+    throwPullPayloadProblem(`number=${boundedRemoteJson(rawNumber)}（必须是正整数）`);
+  }
+  return { number: rawNumber, htmlUrl, snapshot: mapPullPayload(payload, fetchedAt) };
+}
+
+/**
  * GitHub PAT adapter。`readToken` 每次调用现判；token 空白 ⇒ 与 null adapter 同形的
  * `unavailable`（**零出站**，不抛）。一切失败都带原因返回（见文件头）。
  */
@@ -241,6 +336,89 @@ export function createGitHubPullRequestProvider(deps: {
     code: "unavailable",
     reason: PULL_REQUEST_TOKEN_MISSING_REASON,
   });
+  const unavailableFailure = (): PullRequestFailure => ({
+    ok: false,
+    code: "unavailable",
+    reason: PULL_REQUEST_TOKEN_MISSING_REASON,
+  });
+
+  /**
+   * 认证与协议头 —— **全模块唯一一处把凭据写进请求的地方**（读/写/列举三条路径共用一份；
+   * 三处各拼一遍迟早在某一处漏掉版本头、Accept 或凭据）。
+   *
+   * 返回 `null` = 未配置（**零出站**）：调用方据此走 unavailable，结构上不会带着空凭据发请求。
+   */
+  function buildAuthHeaders(json: boolean): Record<string, string> | null {
+    const token = deps.readToken()?.trim();
+    if (!isGithubPullRequestTokenConfigured(token)) return null;
+    return {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(json ? { "Content-Type": "application/json" } : {}),
+    };
+  }
+
+  /**
+   * 一次出站（**唯一的超时/网络失败收口点**）：有界超时 + 非 2xx + JSON 解析三段在这里归一。
+   * `action` 只进文案（「读取」/「创建」）；头由调用方经 `buildAuthHeaders` 拿（凭据不在这里流转）。
+   */
+  async function requestJson(input: {
+    authHeaders: Record<string, string>;
+    url: string;
+    action: "读取" | "创建";
+    method: "GET" | "POST";
+    body?: unknown;
+  }): Promise<{ ok: true; payload: unknown } | PullRequestFailure> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response;
+    try {
+      response = await fetchImpl(input.url, {
+        method: input.method,
+        headers: input.authHeaders,
+        ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      /* 网络层失败（DNS/TLS/超时中止）。原因原样带出：ENOTFOUND 与 abort 的处理方式不同，
+         把它们折成同一句「网络失败」会让复盘时看不出该改网络还是该改超时。 */
+      return {
+        ok: false,
+        code: "network_error",
+        reason:
+          `请求 GitHub API 失败（${input.url}，超时上限 ${timeoutMs}ms）：` +
+          (error instanceof Error ? error.message : String(error)),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      /* 失败响应体里的远端 `message` 常是唯一可行动的判别句（「同 head 的 PR 已存在」、
+         「No commits between base and head」）——带出但**定长截断**（P3-1：远端可控文本）。 */
+      const detail = await readRemoteFailureDetail(response);
+      return {
+        ok: false,
+        code: "http_error",
+        status: response.status,
+        reason:
+          describeHttpFailure(response.status, input.url, input.action) +
+          (detail === null ? "" : `（远端：${truncateRemoteField(detail)}）`),
+      };
+    }
+
+    try {
+      return { ok: true, payload: JSON.parse(await response.text()) };
+    } catch (error) {
+      logWarn(`[pull-request] GitHub 响应不是 JSON（${input.url}）`, error);
+      return {
+        ok: false,
+        code: "malformed_response",
+        reason: `GitHub 对 ${input.url} 的响应不是 JSON（响应体可能被代理/网关改写）。`,
+      };
+    }
+  }
 
   return {
     describe() {
@@ -250,8 +428,8 @@ export function createGitHubPullRequestProvider(deps: {
     },
 
     async fetchPullRequest(url) {
-      const token = deps.readToken()?.trim();
-      if (!isGithubPullRequestTokenConfigured(token)) return unavailable();
+      const authHeaders = buildAuthHeaders(false);
+      if (authHeaders === null) return unavailable();
 
       let address: GitHubPullRequestAddress;
       try {
@@ -264,59 +442,17 @@ export function createGitHubPullRequestProvider(deps: {
         };
       }
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let response: Response;
-      try {
-        response = await fetchImpl(
-          `https://api.github.com/repos/${address.repoOwner}/${address.repoName}/pulls/${address.prNumber}`,
-          {
-            method: "GET",
-            headers: {
-              Accept: "application/vnd.github+json",
-              Authorization: `Bearer ${token}`,
-              "X-GitHub-Api-Version": "2022-11-28",
-            },
-            signal: controller.signal,
-          },
-        );
-      } catch (error) {
-        /* 网络层失败（DNS/TLS/超时中止）。原因原样带出：ENOTFOUND 与 abort 的处理方式不同，
-           把它们折成同一句「网络失败」会让复盘时看不出该改网络还是该改超时。 */
-        return {
-          ok: false,
-          code: "network_error",
-          reason:
-            `请求 GitHub API 失败（${address.canonicalUrl}，超时上限 ${timeoutMs}ms）：` +
-            (error instanceof Error ? error.message : String(error)),
-        };
-      } finally {
-        clearTimeout(timer);
-      }
+      const apiUrl = `https://api.github.com/repos/${address.repoOwner}/${address.repoName}/pulls/${address.prNumber}`;
+      const response = await requestJson({
+        authHeaders,
+        url: apiUrl,
+        action: "读取",
+        method: "GET",
+      });
+      if (!response.ok) return response;
 
-      if (!response.ok) {
-        return {
-          ok: false,
-          code: "http_error",
-          status: response.status,
-          reason: describeHttpFailure(response.status, address),
-        };
-      }
-
-      let payload: GitHubPullPayload;
       try {
-        const text = await response.text();
-        payload = JSON.parse(text) as GitHubPullPayload;
-      } catch (error) {
-        logWarn(`[pull-request] GitHub 响应不是 JSON（${address.canonicalUrl}）`, error);
-        return {
-          ok: false,
-          code: "malformed_response",
-          reason: `GitHub 对 ${address.canonicalUrl} 的响应不是 JSON（响应体可能被代理/网关改写）。`,
-        };
-      }
-      try {
-        return { ok: true, snapshot: mapPullPayload(payload, now()) };
+        return { ok: true, snapshot: mapPullPayload(response.payload as GitHubPullPayload, now()) };
       } catch (error) {
         return {
           ok: false,
@@ -327,25 +463,113 @@ export function createGitHubPullRequestProvider(deps: {
         };
       }
     },
+
+    async createPullRequest(input) {
+      const authHeaders = buildAuthHeaders(true);
+      if (authHeaders === null) return unavailableFailure();
+
+      const apiUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/pulls`;
+      const response = await requestJson({
+        authHeaders,
+        url: apiUrl,
+        action: "创建",
+        method: "POST",
+        body: {
+          title: input.title,
+          head: input.head,
+          base: input.base,
+          ...(input.body !== undefined ? { body: input.body } : {}),
+        },
+      });
+      if (!response.ok) return response;
+
+      try {
+        return {
+          ok: true,
+          pullRequest: mapRemotePullRequest(response.payload as GitHubPullPayload, now()),
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: "malformed_response",
+          reason: `GitHub 对 ${apiUrl} 的创建响应形态不认识：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+    },
+
+    async listOpenByBranchPrefix(input) {
+      const authHeaders = buildAuthHeaders(false);
+      if (authHeaders === null) return unavailableFailure();
+
+      const apiUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/pulls?state=open&per_page=100`;
+      const response = await requestJson({
+        authHeaders,
+        url: apiUrl,
+        action: "读取",
+        method: "GET",
+      });
+      if (!response.ok) return response;
+
+      try {
+        const payload = response.payload;
+        if (!Array.isArray(payload)) throwPullPayloadProblem("期望一个 PR 数组");
+        const facts = (payload as GitHubPullPayload[]).map((entry) =>
+          mapRemotePullRequest(entry, now()),
+        );
+        return {
+          ok: true,
+          pullRequests: facts.filter((fact) => (fact.snapshot.branch ?? "").startsWith(input.prefix)),
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: "malformed_response",
+          reason: `GitHub 对 ${apiUrl} 的响应形态不认识：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+    },
   };
 }
 
+/** 失败响应体里的远端说明（取 `message` 字段；读不出/不是 JSON ⇒ null，不猜）。 */
+async function readRemoteFailureDetail(response: Response): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await response.text()) as GitHubPullPayload;
+    return typeof parsed.message === "string" && parsed.message.trim() !== ""
+      ? parsed.message.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** HTTP 状态 → 可行动的原因（401 = 凭据、403 = 权限/限流、404 = 不存在或不可见、5xx = 远端）。 */
-function describeHttpFailure(status: number, address: GitHubPullRequestAddress): string {
-  const target = `${address.repoOwner}/${address.repoName}#${address.prNumber}`;
+function describeHttpFailure(status: number, url: string, action: "读取" | "创建"): string {
   if (status === 401) {
-    return `GitHub 返回 401（${target}）：访问令牌无效或已过期，请在设置里重新配置。`;
+    return `GitHub 返回 401（${url}）：访问令牌无效或已过期，请在设置里重新配置。`;
   }
   if (status === 403) {
     return (
-      `GitHub 返回 403（${target}）：令牌权限不足或触发了 API 限流` +
+      `GitHub 返回 403（${url}）：令牌权限不足或触发了 API 限流` +
       "（403 + X-RateLimit-Remaining: 0 即限流，等窗口重置后重试）。"
     );
   }
   if (status === 404) {
-    return `GitHub 返回 404（${target}）：该 PR 不存在，或令牌看不见这个仓库。`;
+    return action === "创建"
+      ? `GitHub 返回 404（${url}）：仓库不存在，或令牌看不见这个仓库（创建 PR 需要 contents/pull request 写权限）。`
+      : `GitHub 返回 404（${url}）：该 PR 不存在，或令牌看不见这个仓库。`;
   }
-  return `GitHub 返回 ${status}（${target}）：远端拒绝了这次读取。`;
+  if (status === 422 && action === "创建") {
+    return (
+      `GitHub 返回 422（${url}）：这次创建被拒 —— 常见因：同 head 分支的 PR 已存在、` +
+      "head 与 base 之间没有差异、或 base 分支不存在。"
+    );
+  }
+  return `GitHub 返回 ${status}（${url}）：远端拒绝了这次${action}。`;
 }
 
 /**
@@ -366,5 +590,7 @@ export function createDefaultPullRequestProvider(deps: {
   return {
     describe: () => pick().describe(),
     fetchPullRequest: (url) => pick().fetchPullRequest(url),
+    createPullRequest: (input) => pick().createPullRequest(input),
+    listOpenByBranchPrefix: (input) => pick().listOpenByBranchPrefix(input),
   };
 }
