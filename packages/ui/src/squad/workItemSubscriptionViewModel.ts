@@ -93,8 +93,9 @@ export function workItemSubscriptionView(input: {
     (row) => row.subjectType === input.viewerActor.kind && row.subjectId === input.viewerActor.id,
   );
   if (mine === undefined) return { status: "none" };
-  /* 墓碑行的 `reason` 恒为 `manual`（退订行不承载「为什么订阅」），故两态各读各的列：
-     判据是 `tombstonedAt`（活动行两档都可能是 issue，读 `optOutScope` 会把「关注中」显示成「已退订」）。 */
+  /* 墓碑行的 `reason` **保留退订前的原值**（「这行原本为什么在」不因退订而丢掉；只有凭空退订的
+     插入支路才落 `manual`），且**不参与本判据**：两态各读各的列，判据是 `tombstonedAt`
+     （活动行两档都可能是 issue，读 `optOutScope` 会把「关注中」显示成「已退订」）。 */
   if (mine.tombstonedAt !== null) {
     return {
       status: "unsubscribed",

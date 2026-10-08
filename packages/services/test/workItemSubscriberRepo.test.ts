@@ -187,6 +187,29 @@ test("存储｜显式退订：无行 ⇒ 建 tombstone 行（reason=manual 承�
   assert.equal(rawRow(db, "s-t1").tombstoned_at, 1_000, "同事实重投不改时间戳");
 });
 
+test("存储｜退订两条路的 reason 口径：既有自动行**保留原 reason**（信息不丢）；凭空退订落 manual", () => {
+  const { db, repo } = fresh();
+  /* 期望值来源：SUB.1 冻结的设计意图 —— 墓碑是「这行原本为什么在」的保留面，**信息不因退订丢掉**；
+     只有凭空退订（无既有行）才归 `manual`。两条路各钉一格，防止「冲突支路顺手改写 reason」的漂移。 */
+  repo.upsertActive(active({ reason: "commenter", id: "s-1", createdAt: 1_000 }));
+  repo.upsertTombstone({ ...active({ id: "s-1", createdAt: 2_000 }), scope: "subtree" });
+  const existing = rawRow(db, "s-1");
+  assert.equal(existing.tombstoned_at, 2_000, "墓碑落在既有行上");
+  assert.equal(existing.opt_out_scope, "subtree", "范围跟着改");
+  assert.equal(
+    existing.reason,
+    "commenter",
+    "既有自动行上退订保留原 reason（退订不抹掉「这行原本为什么在」）",
+  );
+  assert.equal(existing.created_at, 1_000, "首次建立关系的时刻不动");
+
+  repo.upsertTombstone({
+    ...active({ id: "s-2", subjectId: "other-user", createdAt: 3_000 }),
+    scope: "issue",
+  });
+  assert.equal(rawRow(db, "s-2").reason, "manual", "凭空退订（无既有行）：只有用户自己能解释");
+});
+
 test("存储｜显式复活：清 tombstone 且 reason 归 manual、范围回到 issue；未命中响亮抛", () => {
   const { db, repo } = fresh();
   assert.throws(
