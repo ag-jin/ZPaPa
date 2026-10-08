@@ -92,6 +92,19 @@ export function computeWorktreeDiscardedDedupKey(runId: string): string {
 }
 
 /**
+ * 第 20 枚 `deliverable_registered` 的**回声键**（#7 交付物 D1a 落键函数，投影接线归 D1b）：
+ * `deliverable:<deliverableId>:registered`（设计 §3.4）。
+ *
+ * 由**交付物 id** 派生而不是由 runId：一条交付物只登记一次，重投同键由唯一索引咬住
+ * （与 `comment:<id>:created` / `decision:<id>:created` 同族）；键**永不解析**（只作等值与唯一索引）。
+ * 刻意不带 `<ms>`：与状态/改派两枚的区别是事实身份不同——「同一工作项两次合法的同向迁移」是两件事，
+ * 「同一条交付物被登记两次」不是。
+ */
+export function computeDeliverableRegisteredDedupKey(deliverableId: string): string {
+  return `deliverable:${deliverableId}:registered`;
+}
+
+/**
  * 终态迁移的**投影意图**（调用方声明，不从 `(status, reason)` 反推 —— 反推在残行自愈臂上必然说谎：
  * 那些行同样是 `discarded`+无 reason，却从未开跑、没有树，投影它们就是写谎话）。
  * 判据矩阵见设计 §5.2；缺省 = 不投影（残行三臂依赖它）。

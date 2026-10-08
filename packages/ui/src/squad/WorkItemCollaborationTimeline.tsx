@@ -16,6 +16,7 @@ import {
   CircleCheckBig,
   CircleDot,
   CircleX,
+  FileDiff,
   GitMerge,
   MessageSquarePlus,
   Play,
@@ -75,6 +76,9 @@ const ICONS: Record<WorkItemActivityKind, LucideIcon> = {
   worktree_merged: GitMerge,
   worktree_discarded: Trash2,
   wake_rule_fired: AlarmClock,
+  /* 第 20 枚（#7 交付物 D1a）：交付物的主体形态是 diff（分支合并后即删，diff 是唯一留痕），
+     故用 FileDiff 这个「带改动的文件」形状。 */
+  deliverable_registered: FileDiff,
 };
 
 export function WorkItemCollaborationTimeline({

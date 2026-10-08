@@ -4821,7 +4821,7 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.dispatch.failed": "Dispatch failed",
   "squad.workItemDetail.dispatch.suppressed": "Dispatch not requested",
   "squad.workItemDetail.dispatch.moreTargets": "{count} more targets",
-  /* Visible short sentence per Activity kind (closed set of 19), one-to-one with
+  /* Visible short sentence per Activity kind (closed set of 20), one-to-one with
      `WORK_ITEM_ACTIVITY_KINDS`; the mapping type is `Record<WorkItemActivityKind, string>`,
      so adding a kind fails compilation instead of silently missing a sentence. */
   "squad.workItemDetail.activity.kind.comment_created": "posted a comment",
@@ -4844,6 +4844,9 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.activity.kind.worktree_merged": "merged a worktree",
   "squad.workItemDetail.activity.kind.worktree_discarded": "discarded a worktree",
   "squad.workItemDetail.activity.kind.wake_rule_fired": "woke a batch",
+  /* Deliverable registration (#7 D1a; wording may be tuned): one sentence for both the
+     automatic capture and the manual link, the subject being the system/operator fact. */
+  "squad.workItemDetail.activity.kind.deliverable_registered": "registered a deliverable",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

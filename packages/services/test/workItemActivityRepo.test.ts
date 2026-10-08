@@ -115,19 +115,23 @@ test("dedupKey 幂等：同键重投返回既存行不产生第二行；关联�
   assert.equal(count.n, 1);
 });
 
-test("kind 闭集：19 值全通过（含第 19 枚 run_rejected）；非法值读写双闸响亮抛", () => {
+test("kind 闭集：20 值全通过（含第 20 枚 deliverable_registered）；非法值读写双闸响亮抛", () => {
   const { repo, db } = setup();
-  assert.equal(WORK_ITEM_ACTIVITY_KINDS.length, 19);
+  assert.equal(WORK_ITEM_ACTIVITY_KINDS.length, 20);
   assert.ok(
     (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("run_rejected"),
     "第 19 枚 = run_rejected（2026-10-08 用户裁定：审查打回必须时间线可见）",
+  );
+  assert.ok(
+    (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes("deliverable_registered"),
+    "第 20 枚 = deliverable_registered（#7 交付物 D1a：登记一条交付物须时间线可见）",
   );
   let i = 0;
   for (const kind of WORK_ITEM_ACTIVITY_KINDS) {
     repo.add(input({ id: `k-${i}`, dedupKey: `dk-${i}`, kind }));
     i += 1;
   }
-  assert.equal(repo.listByWorkItem("ws", "wi-1").length, 19);
+  assert.equal(repo.listByWorkItem("ws", "wi-1").length, 20);
   assert.throws(
     () => repo.add(input({ id: "k-bad", dedupKey: "dk-bad", kind: "bogus" as never })),
     /kind/,

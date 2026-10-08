@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { WORK_ITEM_ACTIVITY_KINDS } from "../src/workitem/workItemActivityRepo.js";
+import { computeDeliverableRegisteredDedupKey } from "../src/workitem/workItemActivityProjector.js";
 
 /* C3b.1：投影模块的**结构负向守卫**（设计 §4.4 / §7；形态照 C3.1 的 `workItemDecisionGuards`）。
 
@@ -68,7 +69,7 @@ test("G2｜依赖集封顶：注入面恰是 activities / now / logWarn（加 ru
   );
 });
 
-test("G3｜十枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定义，实现体内不拼第二份形状", () => {
+test("G3｜十一枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定义，实现体内不拼第二份形状", () => {
   const keyFunctions = [
     "computeStatusChangedDedupKey",
     "computeAssigneeChangedDedupKey",
@@ -80,6 +81,8 @@ test("G3｜十枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定�
     "computeWorktreeCreatedDedupKey",
     "computeWorktreeMergedDedupKey",
     "computeWorktreeDiscardedDedupKey",
+    /* 第 20 枚的**回声键**（D1a 只落键函数，投影接线归 D1b）：形状单源与十枚同一条纪律。 */
+    "computeDeliverableRegisteredDedupKey",
   ];
   const files = readdirSync(WORKITEM_DIR).filter((name) => name.endsWith(".ts"));
   for (const name of keyFunctions) {
@@ -89,14 +92,14 @@ test("G3｜十枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定�
     assert.deepEqual(defining, ["workItemActivityProjector.ts"], `${name} 必须只有一处定义`);
   }
 
-  // 去掉十个定义后，实现体不得再出现键字面量前缀（第二份形状）。
+  // 去掉这些定义后，实现体不得再出现键字面量前缀（第二份形状）。
   let body = PROJECTOR_CODE;
   for (const name of keyFunctions) {
     body = body.replace(new RegExp(`export function ${name}\\([\\s\\S]*?\\n\\}\\n`), "");
   }
   assert.ok(
-    !/`(?:status|assignee|run):/.test(body),
-    "dedupKey 形状只能来自十个纯函数：实现体内不得内联 `status:` / `assignee:` / `run:` 拼接",
+    !/`(?:status|assignee|run|deliverable):/.test(body),
+    "dedupKey 形状只能来自上述纯函数：实现体内不得内联 `status:` / `assignee:` / `run:` / `deliverable:` 拼接",
   );
 });
 
@@ -118,8 +121,9 @@ test("G4｜kind 面按裁定扩至十枚：投影只产十枚 kind（comment_*/d
       "worktree_discarded",
       "worktree_merged",
     ],
-    "投影的 kind 面 = 十枚（19 值闭集：第 19 枚 run_rejected 是 2026-10-08 用户裁定的加法，" +
-      "其余九枚不动；仍不越界写评论/决定族的事实）",
+    "投影的 kind 面 = 十枚（20 值闭集：第 19 枚 run_rejected 是 2026-10-08 用户裁定的加法，" +
+      "第 20 枚 deliverable_registered 的键函数已落地、**投影接线归 D1b**，故这里仍是十枚；" +
+      "仍不越界写评论/决定族的事实）",
   );
   // 反向：投影产出的每枚 kind 都必须在服务面闭集内（扩了这里而忘了闭集 ⇒ 写入时响亮抛）。
   for (const kind of new Set(kinds)) {
@@ -217,4 +221,22 @@ test("G7｜reason 映射单源：lifecycle 不内联 user_cancel / 看门狗族�
     readSource(`workitem/${file}`).includes("export function runSettleIntentForFailureReason("),
   );
   assert.deepEqual(defining, ["workItemActivityProjector.ts"], "映射函数只准有一处定义");
+});
+
+test("G8｜第 20 枚回声键：computeDeliverableRegisteredDedupKey 由交付物 id 派生（形状冻结）", () => {
+  // 键由**交付物 id** 派生（设计 §3.4）：一次登记一条回声，重投同键由唯一索引咬住。
+  assert.equal(
+    computeDeliverableRegisteredDedupKey("deliverable-run-1-diff"),
+    "deliverable:deliverable-run-1-diff:registered",
+  );
+  assert.equal(
+    computeDeliverableRegisteredDedupKey("deliverable-wi-1-batch-diff"),
+    "deliverable:deliverable-wi-1-batch-diff:registered",
+  );
+  // 纯函数：同输入两次调用逐字节相同（无时钟、无 IO）——回声键不得带 `<ms>`：
+  // 一条交付物只登记一次，「同一事实两枚回声」不是合法状态。
+  assert.equal(
+    computeDeliverableRegisteredDedupKey("d-1"),
+    computeDeliverableRegisteredDedupKey("d-1"),
+  );
 });

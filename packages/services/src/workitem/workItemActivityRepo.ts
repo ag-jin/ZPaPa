@@ -31,6 +31,12 @@ export const WORK_ITEM_ACTIVITY_KINDS = [
   "worktree_merged",
   "worktree_discarded",
   "wake_rule_fired",
+  /* 第 20 枚（#7 交付物 D1a）：一条交付物被登记（自动捕获或人工贴链）。
+     为什么它必须是时间线事实：合并后分支即删（spec §6.3），交付物是产出的**唯一留痕**，
+     而「谁在什么时候登记了什么」与评论/决定一样是审计链的一环——挂在独立表上只是它的
+     存储形态（同 Comment/Decision 先例），不改变它作为时间线回声的身份。
+     键形状 `deliverable:<deliverableId>:registered`（由交付物 id 派生，见投影模块）。 */
+  "deliverable_registered",
 ] as const;
 export type WorkItemActivityKind = (typeof WORK_ITEM_ACTIVITY_KINDS)[number];
 

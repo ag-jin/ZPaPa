@@ -71,6 +71,10 @@ export const WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS: Record<WorkItemActivityKind, s
   worktree_merged: "squad.workItemDetail.activity.kind.worktree_merged",
   worktree_discarded: "squad.workItemDetail.activity.kind.worktree_discarded",
   wake_rule_fired: "squad.workItemDetail.activity.kind.wake_rule_fired",
+  /* 第 20 枚（#7 交付物 D1a）：一条交付物被登记。服务面本轮只落**闭集 + 键函数**（投影接线归 D1b），
+     穷尽映射先落位——`Record<WorkItemActivityKind, string>` 的穷尽性要求闭集一长这里就有文案，
+     否则整个 UI 包直接编译失败。 */
+  deliverable_registered: "squad.workItemDetail.activity.kind.deliverable_registered",
 };
 
 /**

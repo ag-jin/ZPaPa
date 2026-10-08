@@ -4507,7 +4507,7 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.dispatch.failed": "派发失败",
   "squad.workItemDetail.dispatch.suppressed": "未请求派发",
   "squad.workItemDetail.dispatch.moreTargets": "另 {count} 个目标",
-  /* Activity kind 闭集（19 值）的可见短句：与 `WORK_ITEM_ACTIVITY_KINDS` 一一对应，
+  /* Activity kind 闭集（20 值）的可见短句：与 `WORK_ITEM_ACTIVITY_KINDS` 一一对应，
      映射类型是 `Record<WorkItemActivityKind, string>` ⇒ 将来加 kind 会**编译失败**。 */
   "squad.workItemDetail.activity.kind.comment_created": "发表了评论",
   "squad.workItemDetail.activity.kind.comment_mention_parsed": "解析了提及",
@@ -4529,6 +4529,8 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.activity.kind.worktree_merged": "合并了工作树",
   "squad.workItemDetail.activity.kind.worktree_discarded": "丢弃了工作树",
   "squad.workItemDetail.activity.kind.wake_rule_fired": "唤醒了批次",
+  /* 交付物登记（#7 D1a；口径可调）：自动捕获与人工贴链共用这一句，主体是「谁」这条系统/操作者事实。 */
+  "squad.workItemDetail.activity.kind.deliverable_registered": "登记了交付物",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",
