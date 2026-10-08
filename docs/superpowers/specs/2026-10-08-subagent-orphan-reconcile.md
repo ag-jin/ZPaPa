@@ -16,13 +16,13 @@ agent **长期显示 running**——面板出现一张无 Stop 入口的常驻�
 
 一个 child 被收敛为孤儿，当且仅当以下条件**全部**成立：
 
-| 判据 | 内容 | 数据来源 |
-| --- | --- | --- |
-| J1 后台启动 | `runInBackground === true`（持久化 spawn input） | 父 transcript 的 spawn 候选枚举 `collectCandidates` |
-| J2 已知 child | ∈ 权威清单 `readSessionSubagentInventory().childSessionIds` | store：child session 记录在场 ∧ `taskType === "subagent_child"` |
-| J3 无终态 | 当前落在清单 `running` 集合（无 outcome / 无 stop 关系 / 无 background 终态 / part 无 error） | 同上（`projectSessionSubagents`） |
-| J4 本进程不认领 | 本 runtime 对该 child 无 live 记录（`context.sessions` 无 child） | 进程内内存态 |
-| J5 过宽容期 | child 最后持久活动距今 > `SUBAGENT_ORPHAN_GRACE_MS`（10 分钟） | `max(childSession.time.updated, child transcript 最后消息时间)` |
+| 判据            | 内容                                                                                          | 数据来源                                                        |
+| --------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| J1 后台启动     | `runInBackground === true`（持久化 spawn input）                                              | 父 transcript 的 spawn 候选枚举 `collectCandidates`             |
+| J2 已知 child   | ∈ 权威清单 `readSessionSubagentInventory().childSessionIds`                                   | store：child session 记录在场 ∧ `taskType === "subagent_child"` |
+| J3 无终态       | 当前落在清单 `running` 集合（无 outcome / 无 stop 关系 / 无 background 终态 / part 无 error） | 同上（`projectSessionSubagents`）                               |
+| J4 本进程不认领 | 本 runtime 对该 child 无 live 记录（`context.sessions` 无 child）                             | 进程内内存态                                                    |
+| J5 过宽容期     | child 最后持久活动距今 > `SUBAGENT_ORPHAN_GRACE_MS`（10 分钟）                                | `max(childSession.time.updated, child transcript 最后消息时间)` |
 
 J5 的宽容期是**有界**的代价项：孤儿最长多显示 10 分钟 running，换取对「契约外双进程」里另一
 进程仍在跑的 agent 的防御（不误杀优先于收敛及时性）。
@@ -68,12 +68,12 @@ ended 判定：  childOutcome（真实 outcome）> entry > "lost"（既有兜底
 
 ## 2. 状态所有者
 
-| 状态 | 所有者 | 说明 |
-| --- | --- | --- |
-| child 终态 | child session 持久记录（store） | `48f7f18` 已确立的唯一持久权威 |
-| 孤儿收敛事实 | reconcile entry（child 的 `subagent_outcome`） | 只填洞不覆盖：真实 outcome 优先 |
-| 活性 / 认领 | 本进程 `context.sessions` / runtime registry | 进程私有；重启即空 |
-| 面板 / 侧栏 / 行 | 纯投影（无独立状态） | 复用既有词表：面板卡片消失、侧栏 lost、row failed |
+| 状态             | 所有者                                         | 说明                                              |
+| ---------------- | ---------------------------------------------- | ------------------------------------------------- |
+| child 终态       | child session 持久记录（store）                | `48f7f18` 已确立的唯一持久权威                    |
+| 孤儿收敛事实     | reconcile entry（child 的 `subagent_outcome`） | 只填洞不覆盖：真实 outcome 优先                   |
+| 活性 / 认领      | 本进程 `context.sessions` / runtime registry   | 进程私有；重启即空                                |
+| 面板 / 侧栏 / 行 | 纯投影（无独立状态）                           | 复用既有词表：面板卡片消失、侧栏 lost、row failed |
 
 事件顺序（冷恢复收敛）：
 
@@ -114,25 +114,25 @@ T3  之后任意 reload / 双端打开：entry 已持久 ⇒ 同一终态，无�
 每条不变量至少映射一个用例（测试文件 `bootstrap/test/subagent-orphan-reconcile.test.ts` 与
 `bootstrap/test/coldHydrationSubagentStatus.test.ts`）：
 
-| # | 绝不能收敛的场合 | 判据 | 用例 |
-| --- | --- | --- | --- |
-| N1 | 本 runtime 正在跑该 agent | 挂点在激活尾部；已激活会话早退 | J4 用例（live child 跳过）+ 现有 211/230 行 |
-| N2 | SendMessage resume 后在本 runtime 续跑 | 会话已激活不触发；重臂持续写 child transcript 被 J5 排除 | 同上 + 宽容期用例 |
-| N3 | 远端另一端经共享 host 观看同一会话 | ADR0003 单运行时：共享同一 host，未重启即已激活 | 同上（无独立 runtime） |
-| N4 | 双进程违例中另一进程仍在跑 | J5 宽容期 10 分钟 | 宽容期内不写用例 |
-| N5 | rewind 分支上的陈旧 spawn | J2 复用 `activeBranchMessages`/`collectCandidates` | 候选枚举用例（分支外 spawn 不入集合） |
-| N6 | child 有任何真实终态 | J3：只处理 running 集合成员 | 真实 outcome 不写用例 |
-| N7 | 前台（阻塞式）Agent | J1：`runInBackground === true` 才参与 | 前台用例 |
-| N8 | 调用方读不到 child 记录（回放桶） | J2：unknown child 不进集合，保持 part 推断 | 回放桶护栏用例（现有 297 行） |
-| N9 | child entry 读/写失败 | warn + 跳过，绝不拖垮激活 | 写失败用例 |
+| #   | 绝不能收敛的场合                       | 判据                                                     | 用例                                        |
+| --- | -------------------------------------- | -------------------------------------------------------- | ------------------------------------------- |
+| N1  | 本 runtime 正在跑该 agent              | 挂点在激活尾部；已激活会话早退                           | J4 用例（live child 跳过）+ 现有 211/230 行 |
+| N2  | SendMessage resume 后在本 runtime 续跑 | 会话已激活不触发；重臂持续写 child transcript 被 J5 排除 | 同上 + 宽容期用例                           |
+| N3  | 远端另一端经共享 host 观看同一会话     | ADR0003 单运行时：共享同一 host，未重启即已激活          | 同上（无独立 runtime）                      |
+| N4  | 双进程违例中另一进程仍在跑             | J5 宽容期 10 分钟                                        | 宽容期内不写用例                            |
+| N5  | rewind 分支上的陈旧 spawn              | J2 复用 `activeBranchMessages`/`collectCandidates`       | 候选枚举用例（分支外 spawn 不入集合）       |
+| N6  | child 有任何真实终态                   | J3：只处理 running 集合成员                              | 真实 outcome 不写用例                       |
+| N7  | 前台（阻塞式）Agent                    | J1：`runInBackground === true` 才参与                    | 前台用例                                    |
+| N8  | 调用方读不到 child 记录（回放桶）      | J2：unknown child 不进集合，保持 part 推断               | 回放桶护栏用例（现有 297 行）               |
+| N9  | child entry 读/写失败                  | warn + 跳过，绝不拖垮激活                                | 写失败用例                                  |
 
 矩阵新档位（`48f7f18` 既有 8 档行为一档不变，新维度只在「接管时刻」切片上改写 running）：
 
-| 档 | child 事实 | 终态证据 | 运行时切片 | row | 侧栏 |
-| --- | --- | --- | --- | --- | --- |
-| 2 | known | 无 | 接管 ∧ 宽容期内 | running（跳过） | 运行中 |
-| 3 | known | 无 | 接管 ∧ 过宽容期 | failed | 已丢失 |
-| 8 | known | entry ∧ 真实 outcome 后来到场 | 任意 | 真实 outcome 赢 | 真实终态 |
+| 档  | child 事实 | 终态证据                      | 运行时切片      | row             | 侧栏     |
+| --- | ---------- | ----------------------------- | --------------- | --------------- | -------- |
+| 2   | known      | 无                            | 接管 ∧ 宽容期内 | running（跳过） | 运行中   |
+| 3   | known      | 无                            | 接管 ∧ 过宽容期 | failed          | 已丢失   |
+| 8   | known      | entry ∧ 真实 outcome 后来到场 | 任意            | 真实 outcome 赢 | 真实终态 |
 
 真机 E2E（留给真机执行，见交接）：① 杀进程重启后打开会话：卡片消失、侧栏「已丢失」、row failed、
 无 Stop 残留；② 同会话反复 reload / 切走切回状态稳定；③ 双端看到同一终态；④ 不杀进程的切走切回

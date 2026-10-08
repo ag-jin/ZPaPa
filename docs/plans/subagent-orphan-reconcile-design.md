@@ -39,35 +39,35 @@
 
 ### 2.1 已确认事实
 
-| # | 事实 | 证据 |
-| --- | --- | --- |
-| C1 | 冷恢复终态判据：`HydratedSubagentChildFacts = { knownChildSessionIds, terminalStates }`；后台 part 在「child 已知 ∧ 无终态」时**只建 running 行**；`lost` 在 row 层映射为 `failed` | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts:109-141`、`:606-622`（`subagentLifecycleResolution`）、`:591-598`（`subagentStopStatusWord`） |
-| C2 | hydrate 用 `readSessionSubagentInventory` **同一次读**喂 hydration 判据与 `subagentsSeed`；读取在 raw-event buffer 补回之前 | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4/v4-bridge.ts:1851-1913` |
-| C3 | 权威清单的活/死判定：live child/parent projection 只查**本进程** `context.sessions`；侧栏 running 判定有后台兜底——`runInBackground ∧ background===undefined ∧ childProjection===undefined ∧ stoppedStatus===undefined ∧ childOutcome.status===undefined ⇒ running`（**孤儿显示 running 的根源**）；ended 兜底是 `childOutcome.status ?? "lost"` | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts:1693-1776`（`readSessionSubagentInventory`）、`subagent-session-query.ts:292-332`（`runningStatus`）、`:353-373`（`endedStatus`）、`:242-277`（`lastChildOutcome`） |
-| C4 | runtime task registry 纯内存：`deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry()`；**没有任何持久回灌路径**。runner 的 `metadata.json` 只写不读（唯一写方在 runner） | `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts:284`、`core/src/subagent/runner.ts:132`、`:1989`（`writeAgentMetadataFile`）、`:1952`（`writeStoppedAgentArtifacts`） |
-| C5 | SendMessage 是 registry 绑定的：`registry.get(to)` 失败即报 `No active local_agent task found`；「resume 重臂」（`resumeTerminalAgentInBackground`）只对 **registry 里仍在的 terminal 条目**生效，重臂后 agent 在**本进程**续跑并继续写同一 child session | `core/src/subagent/runner.ts:900-934`、`:955-1062` |
-| C6 | 仓内先例：dynamic workflow 的孤儿 run 收敛——**构造时**收敛（该时刻本服务名下零个在飞 run，故 journal 里本会话的非终态行只可能是死进程遗物，二次构造天然幂等）；**只收敛本会话**；**不合成 dwf_event**（状态权威在 run 行上）；终态 `stopped + stopReason=interrupted + 专属 failure code`（非 DriverError、非 cancelled）；失败 warn 不拖垮构造 | `apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-reconcile.ts:60-108` |
-| C7 | `branchGeneration`（runtime-command-generation）是 rewind 分支的**进程内**代际，用于命令入队/事件发布前丢弃陈旧分支，重启即丢——**不能直接作跨重启的孤儿判据**。持久可见的「新 runtime 边界」是 core resume 发出的 `SessionResumed` 事件（进 eventStore） | `core/src/runtime/methods/runtime-command-generation.ts:6-66`、`core/src/runtime/methods/resume.ts:239-253` |
-| C8 | 会话状态是**进程内内存态**（`context.sessions` 每进程 Map）；ADR0003 已把设备侧收敛为单一运行时（窗口 host 兼常驻主机），dual-host 分叉是被消除的形态；远端双端共享同一常驻 runtime | `docs/adr/0003-single-runtime-window-host-as-resident.md` |
-| C9 | **冷打开 = 接管**：v4 冷订阅走 `ensureColdReadyPublisher` → `coldResume.ensureResumed`（按会话单飞）→ `activateSessionForResume`（已激活则 `existing` 早退）→ `context.sessions.set` + `app.resume()`。即桌面/web 打开会话即在本 runtime 激活；重复订阅不会再 activation | `bootstrap/src/zcode-protocol-v4/v4-gateway.ts:2899-2922`、`cold-session-resume.ts:43-66`、`server-operations.ts:1413-1433` |
-| C10 | 面板：running 行 → 卡片（`conversationStatusPanelModel.ts:429-458`）；侧栏 `SubagentDirectorySidePane` 直接按 `subagentDirectory.status.${status}` 渲染，`lost` 键已存在（zh-CN「已丢失」/ en-US「Lost」），**零 UI 改动即可呈现 lost** | `packages/ui/src/app-shell/SubagentDirectorySidePane.tsx:89`、`packages/ui/src/i18n/locales/zh-CN.ts:903-909` |
-| C11 | session entry 机制已有「写入 → 冷恢复读回」的完整先例（goal verification 经 `store.sessionEntries` 读回 hydration） | `transcript-hydration.ts:1067-1128`、`core/src/runtime/methods/events.ts:263-289` |
-| C12 | 现有测试基线：`coldHydrationSubagentStatus.test.ts` 11 例，node:test + 直接构造 facts 走 `mergeColdConversationEvents → ProductProjection hydration 回放` 三段管线 | `apps/zcode-cli/packages/bootstrap/test/coldHydrationSubagentStatus.test.ts` |
+| #   | 事实                                                                                                                                                                                                                                                                                                                                            | 证据                                                                                                                                                                                                                                           |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | 冷恢复终态判据：`HydratedSubagentChildFacts = { knownChildSessionIds, terminalStates }`；后台 part 在「child 已知 ∧ 无终态」时**只建 running 行**；`lost` 在 row 层映射为 `failed`                                                                                                                                                              | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts:109-141`、`:606-622`（`subagentLifecycleResolution`）、`:591-598`（`subagentStopStatusWord`）                                                                 |
+| C2  | hydrate 用 `readSessionSubagentInventory` **同一次读**喂 hydration 判据与 `subagentsSeed`；读取在 raw-event buffer 补回之前                                                                                                                                                                                                                     | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4/v4-bridge.ts:1851-1913`                                                                                                                                                               |
+| C3  | 权威清单的活/死判定：live child/parent projection 只查**本进程** `context.sessions`；侧栏 running 判定有后台兜底——`runInBackground ∧ background===undefined ∧ childProjection===undefined ∧ stoppedStatus===undefined ∧ childOutcome.status===undefined ⇒ running`（**孤儿显示 running 的根源**）；ended 兜底是 `childOutcome.status ?? "lost"` | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts:1693-1776`（`readSessionSubagentInventory`）、`subagent-session-query.ts:292-332`（`runningStatus`）、`:353-373`（`endedStatus`）、`:242-277`（`lastChildOutcome`） |
+| C4  | runtime task registry 纯内存：`deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry()`；**没有任何持久回灌路径**。runner 的 `metadata.json` 只写不读（唯一写方在 runner）                                                                                                                                                                | `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts:284`、`core/src/subagent/runner.ts:132`、`:1989`（`writeAgentMetadataFile`）、`:1952`（`writeStoppedAgentArtifacts`）                                                               |
+| C5  | SendMessage 是 registry 绑定的：`registry.get(to)` 失败即报 `No active local_agent task found`；「resume 重臂」（`resumeTerminalAgentInBackground`）只对 **registry 里仍在的 terminal 条目**生效，重臂后 agent 在**本进程**续跑并继续写同一 child session                                                                                       | `core/src/subagent/runner.ts:900-934`、`:955-1062`                                                                                                                                                                                             |
+| C6  | 仓内先例：dynamic workflow 的孤儿 run 收敛——**构造时**收敛（该时刻本服务名下零个在飞 run，故 journal 里本会话的非终态行只可能是死进程遗物，二次构造天然幂等）；**只收敛本会话**；**不合成 dwf_event**（状态权威在 run 行上）；终态 `stopped + stopReason=interrupted + 专属 failure code`（非 DriverError、非 cancelled）；失败 warn 不拖垮构造 | `apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-reconcile.ts:60-108`                                                                                                                                                           |
+| C7  | `branchGeneration`（runtime-command-generation）是 rewind 分支的**进程内**代际，用于命令入队/事件发布前丢弃陈旧分支，重启即丢——**不能直接作跨重启的孤儿判据**。持久可见的「新 runtime 边界」是 core resume 发出的 `SessionResumed` 事件（进 eventStore）                                                                                        | `core/src/runtime/methods/runtime-command-generation.ts:6-66`、`core/src/runtime/methods/resume.ts:239-253`                                                                                                                                    |
+| C8  | 会话状态是**进程内内存态**（`context.sessions` 每进程 Map）；ADR0003 已把设备侧收敛为单一运行时（窗口 host 兼常驻主机），dual-host 分叉是被消除的形态；远端双端共享同一常驻 runtime                                                                                                                                                             | `docs/adr/0003-single-runtime-window-host-as-resident.md`                                                                                                                                                                                      |
+| C9  | **冷打开 = 接管**：v4 冷订阅走 `ensureColdReadyPublisher` → `coldResume.ensureResumed`（按会话单飞）→ `activateSessionForResume`（已激活则 `existing` 早退）→ `context.sessions.set` + `app.resume()`。即桌面/web 打开会话即在本 runtime 激活；重复订阅不会再 activation                                                                        | `bootstrap/src/zcode-protocol-v4/v4-gateway.ts:2899-2922`、`cold-session-resume.ts:43-66`、`server-operations.ts:1413-1433`                                                                                                                    |
+| C10 | 面板：running 行 → 卡片（`conversationStatusPanelModel.ts:429-458`）；侧栏 `SubagentDirectorySidePane` 直接按 `subagentDirectory.status.${status}` 渲染，`lost` 键已存在（zh-CN「已丢失」/ en-US「Lost」），**零 UI 改动即可呈现 lost**                                                                                                         | `packages/ui/src/app-shell/SubagentDirectorySidePane.tsx:89`、`packages/ui/src/i18n/locales/zh-CN.ts:903-909`                                                                                                                                  |
+| C11 | session entry 机制已有「写入 → 冷恢复读回」的完整先例（goal verification 经 `store.sessionEntries` 读回 hydration）                                                                                                                                                                                                                             | `transcript-hydration.ts:1067-1128`、`core/src/runtime/methods/events.ts:263-289`                                                                                                                                                              |
+| C12 | 现有测试基线：`coldHydrationSubagentStatus.test.ts` 11 例，node:test + 直接构造 facts 走 `mergeColdConversationEvents → ProductProjection hydration 回放` 三段管线                                                                                                                                                                              | `apps/zcode-cli/packages/bootstrap/test/coldHydrationSubagentStatus.test.ts`                                                                                                                                                                   |
 
 ### 2.2 推断
 
-| # | 推断 | 依据 |
-| --- | --- | --- |
-| I1 | 孤儿（宿主进程死亡、无终态落盘）**永远不会被任何活运行时认领**：唯一的「认领」机制是 spawn/resume 时 register 进本进程 registry（C4、C5），进程死后不存在；跨进程也没有可查的活清单（无会话租约；`resident-host.json` 是设备级 host 发现文件，非 per-session）。 | C4、C5、C8 |
-| I2 | 收敛事实写入 **child session 的持久记录**后，同一次 `readSessionSubagentInventory` 即可让侧栏（ended=lost）与 v4 hydration（terminalStates=lost → row failed）同时正确——48f7f18 的「同源单一结论」原则继续成立，不需要第二个权威。 | C2、C3、C10 |
-| I3 | 接管时收敛的覆盖面 = 所有经桌面/web/CLI 打开的会话（冷打开即激活，C9）；浏览器回放桶无 session store，本来就退 part 推断（有界），不需要收敛。 | C9、C1 |
+| #   | 推断                                                                                                                                                                                                                                                             | 依据        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| I1  | 孤儿（宿主进程死亡、无终态落盘）**永远不会被任何活运行时认领**：唯一的「认领」机制是 spawn/resume 时 register 进本进程 registry（C4、C5），进程死后不存在；跨进程也没有可查的活清单（无会话租约；`resident-host.json` 是设备级 host 发现文件，非 per-session）。 | C4、C5、C8  |
+| I2  | 收敛事实写入 **child session 的持久记录**后，同一次 `readSessionSubagentInventory` 即可让侧栏（ended=lost）与 v4 hydration（terminalStates=lost → row failed）同时正确——48f7f18 的「同源单一结论」原则继续成立，不需要第二个权威。                               | C2、C3、C10 |
+| I3  | 接管时收敛的覆盖面 = 所有经桌面/web/CLI 打开的会话（冷打开即激活，C9）；浏览器回放桶无 session store，本来就退 part 推断（有界），不需要收敛。                                                                                                                   | C9、C1      |
 
 ### 2.3 假设
 
-| # | 假设 | 风险与核对点 |
-| --- | --- | --- |
-| A1 | `saveSessionEntry` 支持同 id 覆盖（upsert），且可对 `subagent_child` 会话写入 | 实现时核对 `sessionStore.saveSessionEntry` 语义；若不成立，备选落点见 §5.3 |
-| A2 | 「会话单属主」契约对 subagent child 同样成立（与 dwf 先例同款前提）；双进程同会话属架构违例，用宽容期缓解而非根治 | 与 C6、C8 一致；残差风险见 §9 |
+| #   | 假设                                                                                                              | 风险与核对点                                                               |
+| --- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| A1  | `saveSessionEntry` 支持同 id 覆盖（upsert），且可对 `subagent_child` 会话写入                                     | 实现时核对 `sessionStore.saveSessionEntry` 语义；若不成立，备选落点见 §5.3 |
+| A2  | 「会话单属主」契约对 subagent child 同样成立（与 dwf 先例同款前提）；双进程同会话属架构违例，用宽容期缓解而非根治 | 与 C6、C8 一致；残差风险见 §9                                              |
 
 ---
 
@@ -177,7 +177,7 @@ J5 过宽容期     child 的最后持久活动（childSession.time.updated 与 
   1. 重臂发生在**已激活**会话上，activation 早退，reconcile 根本不跑；
   2. 重臂后 agent 持续写 child transcript，J5 宽容期将其排除；
   3. 若重臂后宿主进程再次崩溃，child 重新变成无终态孤儿——**下次接管收敛它是正确行为**。
-  「现状认领机制是什么，若没有要补什么」：现状即 registry 进程内认领，没有跨进程认领；本设计**不补**跨进程认领（非目标），因为跨进程 resume 在现状就不存在（C5：`registry.get` 直接失败）。
+     「现状认领机制是什么，若没有要补什么」：现状即 registry 进程内认领，没有跨进程认领；本设计**不补**跨进程认领（非目标），因为跨进程 resume 在现状就不存在（C5：`registry.get` 直接失败）。
 
 ### 4.3 收敛动作 —— 落盘 child session entry，终态 `lost`，不合成父事件
 
@@ -218,17 +218,17 @@ time: { created: reconciledAt, updated: reconciledAt }
 
 ### 4.4 不误杀不变量清单
 
-| # | 绝不能收敛的场合 | 判据如何排除 |
-| --- | --- | --- |
-| N1 | 本 runtime 正在跑该 agent | 挂点在 activation 尾部：此刻本 runtime 对该会话零在飞（§4.1）；已激活会话的后续 spawn/resume 不会再触发 reconcile（C9 早退） |
-| N2 | SendMessage resume 后 agent 在本 runtime 续跑 | 三道互斥（§4.2）：会话已激活不触发；重臂持续写 child transcript 被 J5 排除；重臂产生的新活动让 child 不满足 J3 |
-| N3 | 远端另一端经共享 host 观看/操控同一会话 | ADR0003 单运行时：所有端共享同一 host 进程，不存在「另一端的独立 runtime」（C8）；host 未重启则会话已激活、早退 |
-| N4 | 双进程违例（CLI + 桌面同会话，契约外）中另一进程在跑 | J5 宽容期（10 分钟）：活 agent 的 child transcript 有近期写入则跳过；残差见 §9-R1 |
-| N5 | rewind 分支上的陈旧 spawn 但分支仍被引用 | J2 复用 `activeBranchMessages`/`collectCandidates`：只看当前分支的 spawn 候选；且收敛写的是 child 持久事实（分支无关），rewind 掉的 child 不被引用也不显示，entry 无害 |
-| N6 | child 有任何真实终态（outcome/stop/error/background 终态） | J3：只处理落在 running 集合里的 child；ended 集合成员不碰 |
-| N7 | 前台（阻塞式）Agent | J1：`runInBackground === true` 才参与；前台 part 终态即证据（C12 用例已锁定该行为不回归） |
-| N8 | 调用方读不到 child 记录（浏览器回放桶） | J2：unknown child 不进收敛集合，保持 48f7f18 的 part 推断降级（C1「有界」注释） |
-| N9 | child session entry 读取/写入失败 | 收敛是自愈动作：warn + 跳过，绝不拖垮激活（对齐 dwf 边界 3，C6）；后果只是该孤儿暂不收敛（下次接管重试） |
+| #   | 绝不能收敛的场合                                           | 判据如何排除                                                                                                                                                           |
+| --- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| N1  | 本 runtime 正在跑该 agent                                  | 挂点在 activation 尾部：此刻本 runtime 对该会话零在飞（§4.1）；已激活会话的后续 spawn/resume 不会再触发 reconcile（C9 早退）                                           |
+| N2  | SendMessage resume 后 agent 在本 runtime 续跑              | 三道互斥（§4.2）：会话已激活不触发；重臂持续写 child transcript 被 J5 排除；重臂产生的新活动让 child 不满足 J3                                                         |
+| N3  | 远端另一端经共享 host 观看/操控同一会话                    | ADR0003 单运行时：所有端共享同一 host 进程，不存在「另一端的独立 runtime」（C8）；host 未重启则会话已激活、早退                                                        |
+| N4  | 双进程违例（CLI + 桌面同会话，契约外）中另一进程在跑       | J5 宽容期（10 分钟）：活 agent 的 child transcript 有近期写入则跳过；残差见 §9-R1                                                                                      |
+| N5  | rewind 分支上的陈旧 spawn 但分支仍被引用                   | J2 复用 `activeBranchMessages`/`collectCandidates`：只看当前分支的 spawn 候选；且收敛写的是 child 持久事实（分支无关），rewind 掉的 child 不被引用也不显示，entry 无害 |
+| N6  | child 有任何真实终态（outcome/stop/error/background 终态） | J3：只处理落在 running 集合里的 child；ended 集合成员不碰                                                                                                              |
+| N7  | 前台（阻塞式）Agent                                        | J1：`runInBackground === true` 才参与；前台 part 终态即证据（C12 用例已锁定该行为不回归）                                                                              |
+| N8  | 调用方读不到 child 记录（浏览器回放桶）                    | J2：unknown child 不进收敛集合，保持 48f7f18 的 part 推断降级（C1「有界」注释）                                                                                        |
+| N9  | child session entry 读取/写入失败                          | 收敛是自愈动作：warn + 跳过，绝不拖垮激活（对齐 dwf 边界 3，C6）；后果只是该孤儿暂不收敛（下次接管重试）                                                               |
 
 ### 4.5 与 48f7f18 降级矩阵的关系
 
@@ -257,13 +257,13 @@ known ∧ 无终态 ∧ {本进程 child live}                        → 保持
 
 收敛后各面的显示（全部复用既有词表，**除一个可选 summary 键外零新增 i18n**）：
 
-| 面 | 显示 | i18n 键 |
-| --- | --- | --- |
-| 会话行（row） | `failed`（lost 在 row 层按 48f7f18 定案映射） | 既有 failed 词表（row 原生） |
-| 侧栏（SubagentDirectorySidePane） | 「已丢失」/「Lost」 | `subagentDirectory.status.lost`（zh-CN:909 / en-US:992，**已存在**） |
-| 面板卡片 | running 卡片**消失**（running 集合为空）；不产生新卡片 | — |
-| 无 Stop 入口问题 | **随收敛自然消失**：Stop 入口只挂在 running 行/work 上（conversationStatusPanelModel.ts:415-427 只收 `status === "running"`），row 变 failed 后控制面自然不生成 | — |
-| （可选增强）ended 条目摘要 | 「运行时已退出，结果未知」 | 新键 `subagentDirectory.summary.reconciled`（zh/en 各一条，可延后） |
+| 面                                | 显示                                                                                                                                                            | i18n 键                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 会话行（row）                     | `failed`（lost 在 row 层按 48f7f18 定案映射）                                                                                                                   | 既有 failed 词表（row 原生）                                         |
+| 侧栏（SubagentDirectorySidePane） | 「已丢失」/「Lost」                                                                                                                                             | `subagentDirectory.status.lost`（zh-CN:909 / en-US:992，**已存在**） |
+| 面板卡片                          | running 卡片**消失**（running 集合为空）；不产生新卡片                                                                                                          | —                                                                    |
+| 无 Stop 入口问题                  | **随收敛自然消失**：Stop 入口只挂在 running 行/work 上（conversationStatusPanelModel.ts:415-427 只收 `status === "running"`），row 变 failed 后控制面自然不生成 | —                                                                    |
+| （可选增强）ended 条目摘要        | 「运行时已退出，结果未知」                                                                                                                                      | 新键 `subagentDirectory.summary.reconciled`（zh/en 各一条，可延后）  |
 
 呈现层的杠杆来自 §3.1 的读面收敛：面板/侧栏/行三个消费方不改代码就拿到 lost。
 
@@ -305,15 +305,15 @@ known ∧ 无终态 ∧ {本进程 child live}                        → 保持
 
 依赖序：T1 → T2 → T3 → T4 → T5；T6 与 T2-T4 并行；T7 收尾。
 
-| 任务 | 内容 | 依赖 | 风险标注 |
-| --- | --- | --- | --- |
-| T1 | spec 先行：把本设计 §4 各结论落为行为 spec（产品规则、状态所有者、验收场景），更新到本分支文档 | — | 低；仓库规范「先 spec 后实现」 |
-| T2 | 判据纯函数 + `subagent-orphan-reconcile.ts` 模块骨架：`reconcileSubagentOrphansOnActivation` + `SUBAGENT_ORPHAN_GRACE_MS` 常量 + 结构化日志事件（`zcode_protocol.subagent.orphan_reconciled` / `_skipped` / `_failed`，对齐既有日志命名） | T1 | 低；纯函数可先行全测 |
-| T3 | entry 写入与读取接线：新 `SESSION_ENTRY_SUBAGENT_OUTCOME` 类型常量；`readSessionSubagentInventory` 读 child entry；`runningStatus`/`endedStatus` 消费（优先级：真实 outcome > entry） | T2 | 中；核对 A1（saveSessionEntry upsert 语义），不成立则走 §5.3 备选 |
-| T4 | 挂点：`activateSessionForResume` 尾部调用（`app.resume()` 成功后、返回前）；确认 `ensureResumed` 单飞覆盖（C9）使重复订阅不重复收敛 | T3 | 中；注意激活路径时延（复用 inventory 单次读，只对孤儿写） |
-| T5 | 测试补齐：§4.7 单测 1-13 + coldHydrationSubagentStatus 矩阵扩展 | T3 | 低 |
-| T6 | i18n 可选键 `subagentDirectory.summary.reconciled`（zh/en）+ 真机 E2E 五点 | 与 T2-T4 并行 | 低；可选增强可独立裁剪 |
-| T7 | `pnpm typecheck` / `pnpm lint` / `pnpm --dir apps/zcode-cli typecheck` / lint + 架构检查 `pnpm architecture:check --changed`；如实记录结果 | T5、T6 | 流程项 |
+| 任务 | 内容                                                                                                                                                                                                                                      | 依赖          | 风险标注                                                          |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------- |
+| T1   | spec 先行：把本设计 §4 各结论落为行为 spec（产品规则、状态所有者、验收场景），更新到本分支文档                                                                                                                                            | —             | 低；仓库规范「先 spec 后实现」                                    |
+| T2   | 判据纯函数 + `subagent-orphan-reconcile.ts` 模块骨架：`reconcileSubagentOrphansOnActivation` + `SUBAGENT_ORPHAN_GRACE_MS` 常量 + 结构化日志事件（`zcode_protocol.subagent.orphan_reconciled` / `_skipped` / `_failed`，对齐既有日志命名） | T1            | 低；纯函数可先行全测                                              |
+| T3   | entry 写入与读取接线：新 `SESSION_ENTRY_SUBAGENT_OUTCOME` 类型常量；`readSessionSubagentInventory` 读 child entry；`runningStatus`/`endedStatus` 消费（优先级：真实 outcome > entry）                                                     | T2            | 中；核对 A1（saveSessionEntry upsert 语义），不成立则走 §5.3 备选 |
+| T4   | 挂点：`activateSessionForResume` 尾部调用（`app.resume()` 成功后、返回前）；确认 `ensureResumed` 单飞覆盖（C9）使重复订阅不重复收敛                                                                                                       | T3            | 中；注意激活路径时延（复用 inventory 单次读，只对孤儿写）         |
+| T5   | 测试补齐：§4.7 单测 1-13 + coldHydrationSubagentStatus 矩阵扩展                                                                                                                                                                           | T3            | 低                                                                |
+| T6   | i18n 可选键 `subagentDirectory.summary.reconciled`（zh/en）+ 真机 E2E 五点                                                                                                                                                                | 与 T2-T4 并行 | 低；可选增强可独立裁剪                                            |
+| T7   | `pnpm typecheck` / `pnpm lint` / `pnpm --dir apps/zcode-cli typecheck` / lint + 架构检查 `pnpm architecture:check --changed`；如实记录结果                                                                                                | T5、T6        | 流程项                                                            |
 
 ---
 
@@ -340,30 +340,30 @@ known ∧ 无终态 ∧ {本进程 child live}                        → 保持
 
 ## 6. 降级矩阵扩展后的完整档位（测试对照表）
 
-| 档 | child 事实 | 终态证据 | 运行时切片 | row | 侧栏 | 用例锚 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | known | 无 | 已激活/活 runtime | running | 运行中 | 现有 211/230/238 行（不回归） |
-| 2 | known | 无 | 接管 ∧ 宽容期内 | running（本次跳过） | 运行中 | 新增 §4.7-2 |
-| 3 | known | 无 | 接管 ∧ 过宽容期 | failed | 已丢失 | 新增 §4.7-1/11 |
-| 4 | known | success/failed/cancelled | 任意 | 对应收口 | 对应 | 现有 251/264/275 行 |
-| 5 | known | lost（entry 或既有来源） | 任意 | failed | 已丢失 | 现有 307 行 + 新增集成形态 |
-| 6 | unknown | — | 任意 | part 推断 | — | 现有 286 行 |
-| 7 | facts 缺席 | — | 任意 | part 推断 | — | 现有 297 行 |
-| 8 | known | entry ∧ 真实 outcome 后来到场 | 任意 | 真实 outcome 赢 | 真实终态 | 新增 §4.7-10 |
-| 9 | 前台 part | part 终态 | 任意 | part 终态 | — | 现有 318 行（不回归） |
+| 档  | child 事实 | 终态证据                      | 运行时切片        | row                 | 侧栏     | 用例锚                        |
+| --- | ---------- | ----------------------------- | ----------------- | ------------------- | -------- | ----------------------------- |
+| 1   | known      | 无                            | 已激活/活 runtime | running             | 运行中   | 现有 211/230/238 行（不回归） |
+| 2   | known      | 无                            | 接管 ∧ 宽容期内   | running（本次跳过） | 运行中   | 新增 §4.7-2                   |
+| 3   | known      | 无                            | 接管 ∧ 过宽容期   | failed              | 已丢失   | 新增 §4.7-1/11                |
+| 4   | known      | success/failed/cancelled      | 任意              | 对应收口            | 对应     | 现有 251/264/275 行           |
+| 5   | known      | lost（entry 或既有来源）      | 任意              | failed              | 已丢失   | 现有 307 行 + 新增集成形态    |
+| 6   | unknown    | —                             | 任意              | part 推断           | —        | 现有 286 行                   |
+| 7   | facts 缺席 | —                             | 任意              | part 推断           | —        | 现有 297 行                   |
+| 8   | known      | entry ∧ 真实 outcome 后来到场 | 任意              | 真实 outcome 赢     | 真实终态 | 新增 §4.7-10                  |
+| 9   | 前台 part  | part 终态                     | 任意              | part 终态           | —        | 现有 318 行（不回归）         |
 
 ---
 
 ## 7. 风险与回滚
 
-| # | 风险 | 概率/影响 | 缓解 | 回滚 |
-| --- | --- | --- | --- | --- |
-| R1 | 双进程违例（CLI+桌面同会话）下误收敛另一进程仍在跑的 agent | 低/中 | J5 宽容期 10 分钟（§4.2）；ADR0003 已消除常态双 host | entry 只增不改：删掉该 child 的 entry 即恢复 running 显示；或挂点短路（一行调用移除），机制整体退场不影响 48f7f18 行为 |
-| R2 | entry 与 child transcript 真实终态竞争（收敛后 child 又有了真实 outcome——仅 R1 情形下可能） | 低/低 | 读取端优先级固定「真实 outcome > entry」（§4.3）；真实终态到场自动覆盖展示 | 同 R1：entry 是补洞事实，删除无损 |
-| R3 | 激活路径变慢（reconcile 串在 activation 尾部） | 中/低 | 复用 inventory 单次读（与 hydrate 同源）；只对孤儿写；失败即刻降级 warn | 挂点移除即回到修前激活时延 |
-| R4 | A1 假设不成立（entry 无法按设想写入 child 会话） | 低/中 | §5.3 备选落点；实现期 T3 第一件事核对 | 设计不变，仅换存储 adapter |
-| R5 | 收敛把「用户还想 resume 的 agent」标死，用户预期落空 | 低/低 | SendMessage 跨重启本来就不可用（C5，报错而非续跑）；lost≠failed 的文案已区分「结果未知」 | 无需回滚：行为与现状一致，只是显示从谎称 running 变为诚实的已丢失 |
-| R6 | 48f7f18 的 11 例回归 | 低/高 | 新维度不改既有档位（§4.5）；T5 回归护栏用例 13 | 模块独立、挂点独立，revert 单提交即可 |
+| #   | 风险                                                                                        | 概率/影响 | 缓解                                                                                     | 回滚                                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| R1  | 双进程违例（CLI+桌面同会话）下误收敛另一进程仍在跑的 agent                                  | 低/中     | J5 宽容期 10 分钟（§4.2）；ADR0003 已消除常态双 host                                     | entry 只增不改：删掉该 child 的 entry 即恢复 running 显示；或挂点短路（一行调用移除），机制整体退场不影响 48f7f18 行为 |
+| R2  | entry 与 child transcript 真实终态竞争（收敛后 child 又有了真实 outcome——仅 R1 情形下可能） | 低/低     | 读取端优先级固定「真实 outcome > entry」（§4.3）；真实终态到场自动覆盖展示               | 同 R1：entry 是补洞事实，删除无损                                                                                      |
+| R3  | 激活路径变慢（reconcile 串在 activation 尾部）                                              | 中/低     | 复用 inventory 单次读（与 hydrate 同源）；只对孤儿写；失败即刻降级 warn                  | 挂点移除即回到修前激活时延                                                                                             |
+| R4  | A1 假设不成立（entry 无法按设想写入 child 会话）                                            | 低/中     | §5.3 备选落点；实现期 T3 第一件事核对                                                    | 设计不变，仅换存储 adapter                                                                                             |
+| R5  | 收敛把「用户还想 resume 的 agent」标死，用户预期落空                                        | 低/低     | SendMessage 跨重启本来就不可用（C5，报错而非续跑）；lost≠failed 的文案已区分「结果未知」 | 无需回滚：行为与现状一致，只是显示从谎称 running 变为诚实的已丢失                                                      |
+| R6  | 48f7f18 的 11 例回归                                                                        | 低/高     | 新维度不改既有档位（§4.5）；T5 回归护栏用例 13                                           | 模块独立、挂点独立，revert 单提交即可                                                                                  |
 
 **回滚边界**：整个机制 = 一个新文件 + `server-operations.ts` 一行挂点 + inventory 读面一处消费，可单提交 revert，不触碰 48f7f18 的任何判定代码。
 
