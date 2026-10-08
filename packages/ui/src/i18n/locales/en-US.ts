@@ -4688,6 +4688,24 @@ const enUS: Record<string, string> = {
   "squad.workItems.bulk.selectRow": "Select “{title}”",
   "squad.workItems.bulk.clear": "Clear selection",
   "squad.workItems.bulk.apply": "Apply to selected",
+  // 保存视图（阶段二 · T-P2-R6b，**破例键**：主会话第 251 轮裁定 —— 原冻结清单漏排 saved views，
+  // 这里是最小集，**不得再加**；12 枚与 workItemSurfaceKeys.test.ts 的破例段逐项对应）。
+  // 可见性控件做成单枚勾选（共享给工作区）：二值语义 + 两枚选项标签会超出破例键额（服务端缺省 = private）。
+  "squad.workItems.views.label": "Views",
+  "squad.workItems.views.new": "New view",
+  "squad.workItems.views.save": "Save",
+  "squad.workItems.views.saveAs": "Save as",
+  "squad.workItems.views.edit": "Edit",
+  "squad.workItems.views.delete": "Delete",
+  "squad.workItems.views.deleteConfirmTitle": "Delete the view “{name}”?",
+  "squad.workItems.views.deleteConfirmBody":
+    "Only this view is deleted; no work items are removed.",
+  "squad.workItems.views.manage": "Manage views",
+  "squad.workItems.views.namePlaceholder": "View name",
+  "squad.workItems.views.shared": "Share with workspace",
+  "squad.workItems.views.missingToast":
+    "That view is gone (deleted, or no longer shared with you). Back to All.",
+
   "squad.workItems.bulk.result": "{ok} succeeded, {failed} failed",
 
   "squad.runs.title": "Runs awaiting wrap-up",

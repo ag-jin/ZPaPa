@@ -147,3 +147,70 @@ test("键目录冻结｜「无匹配」与「还没有工作项」是两套不�
     );
   }
 });
+
+/* ---------- 破例段（T-P2-R6b，主会话第 251 轮裁定） ----------
+
+   背景：第 251 轮的拆解**漏排了 saved views**（R4 把保存视图划出 out-of-scope，阶段二无施工轮），
+   补排的 R6 卡对「零键增」纪律**显式破例**：视图条 / 保存对话框 / 删除确认 / 消失提示需要文案，
+   原 30 枚冻结清单里一枚都没有。破例额**定死 12 枚**（卡与简报同一份清单，不得再超）。
+
+   这一段的判据与上面基础段同款（两语齐备 / 占位符成对 / 枚枚有落点），只多一条「**不得超**」：
+   变异（顺手加第 13 枚 views 键）⇒ 本用例红。 */
+
+/** 破例段（**12 枚**：卡上列出的最小集；第 12 枚 `shared` 见下面注释）。 */
+const VIEW_BAR_EXCEPTION_MESSAGE_IDS: string[] = [
+  "squad.workItems.views.label",
+  "squad.workItems.views.new",
+  "squad.workItems.views.save",
+  "squad.workItems.views.saveAs",
+  "squad.workItems.views.edit",
+  "squad.workItems.views.delete",
+  "squad.workItems.views.deleteConfirmTitle",
+  "squad.workItems.views.deleteConfirmBody",
+  "squad.workItems.views.manage",
+  "squad.workItems.views.namePlaceholder",
+  /* ⚠️ 卡上写「12 枚」但逐条只列了 11 枚（`label/save/namePlaceholder/delete/deleteConfirmTitle/
+     deleteConfirmBody/edit/saveAs/manage/new/missingToast`）。第 12 枚取 `shared`：可见性控件
+     必须在对话框里表达（二值 ⇒ 单枚勾选文案，而不是两枚选项标签），否则"共享给工作区"这件事
+     在界面上说不出来（服务面支持 visibility=workspace 却没有入口）。**总数仍是 12，未超上限**；
+     这处对账差异已登记给 T-P2-V（第 251 轮裁定原文与实列枚数的差额）。 */
+  "squad.workItems.views.shared",
+  "squad.workItems.views.missingToast",
+];
+
+test("键目录冻结｜破例段（第 251 轮）：views 键恰 12 枚、不与基础段重号、两语齐备", () => {
+  assert.equal(
+    new Set(VIEW_BAR_EXCEPTION_MESSAGE_IDS).size,
+    VIEW_BAR_EXCEPTION_MESSAGE_IDS.length,
+    "破例段自身不得有重复键",
+  );
+  assert.equal(VIEW_BAR_EXCEPTION_MESSAGE_IDS.length, 12, "破例额**定死 12 枚**（超 ⇒ 这里必红）");
+  for (const id of VIEW_BAR_EXCEPTION_MESSAGE_IDS) {
+    assert.ok(
+      !FROZEN_NEW_MESSAGE_IDS.includes(id),
+      `${id} 不得与基础冻结段重号（两段各管一段历史，重号会让"30 枚"失去意义）`,
+    );
+  }
+  for (const key of VIEW_BAR_EXCEPTION_MESSAGE_IDS) {
+    const zh = zhCN[key];
+    const en = enUS[key];
+    assert.ok(zh, `zh-CN 缺破例句 ${key}`);
+    assert.ok(en, `en-US 缺破例句 ${key}`);
+    assert.equal(placeholders(zh), placeholders(en), `${key} 的占位符两语必须一致`);
+    assert.ok(zh.length > 0 && en.length > 0, `${key} 不得为空串`);
+  }
+});
+
+test("键目录冻结｜破例段用满且不越界：两语 locale 里的 views.* 键**恰好**是这 12 枚", () => {
+  for (const [localeName, locale] of [
+    ["zh-CN", zhCN],
+    ["en-US", enUS],
+  ] as const) {
+    const declared = Object.keys(locale).filter((key) => key.startsWith("squad.workItems.views."));
+    assert.deepEqual(
+      [...declared].sort(),
+      [...VIEW_BAR_EXCEPTION_MESSAGE_IDS].sort(),
+      `${localeName} 的 views.* 键集必须与破例段逐枚一致（多的 = 越界加键，少的 = 用了裸 key）`,
+    );
+  }
+});

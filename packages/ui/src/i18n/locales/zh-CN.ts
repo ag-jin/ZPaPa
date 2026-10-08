@@ -4386,6 +4386,23 @@ const zhCN: Record<string, string> = {
   "squad.workItems.bulk.selectRow": "选择「{title}」",
   "squad.workItems.bulk.clear": "清除选择",
   "squad.workItems.bulk.apply": "应用到已选",
+  // 保存视图（阶段二 · T-P2-R6b，**破例键**：主会话第 251 轮裁定 —— 原冻结清单漏排 saved views，
+  // 这里是最小集，**不得再加**；12 枚与 workItemSurfaceKeys.test.ts 的破例段逐项对应）。
+  // 可见性控件做成单枚勾选（共享给工作区）：二值语义 + 两枚选项标签会超出破例键额（服务端缺省 = private）。
+  "squad.workItems.views.label": "视图",
+  "squad.workItems.views.new": "新建视图",
+  "squad.workItems.views.save": "保存",
+  "squad.workItems.views.saveAs": "另存为",
+  "squad.workItems.views.edit": "编辑",
+  "squad.workItems.views.delete": "删除",
+  "squad.workItems.views.deleteConfirmTitle": "删除视图「{name}」？",
+  "squad.workItems.views.deleteConfirmBody": "只删这个视图本身，不会删除任何工作项。",
+  "squad.workItems.views.manage": "管理视图",
+  "squad.workItems.views.namePlaceholder": "视图名称",
+  "squad.workItems.views.shared": "共享给工作区",
+  "squad.workItems.views.missingToast":
+    "这个视图已经不在了（被删除，或不再与你共享），已回到「全部」。",
+
   "squad.workItems.bulk.result": "成功 {ok} 项，失败 {failed} 项",
 
   "squad.runs.title": "待收尾的运行",

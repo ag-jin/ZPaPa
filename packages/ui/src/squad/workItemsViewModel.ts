@@ -239,6 +239,14 @@ export function groupWorkItemBoard(input: {
   });
 }
 
+/** 三个分组维度的文案键（闭集：加维度时这里必须跟着改 —— 与 `WorkItemLaneDimension` 同源）。
+    住在纯词汇层（R6b：保存视图的 display 摘要也要按它渲染用户能读的词，第二处若各写一份迟早分叉）。 */
+export const WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS: Record<WorkItemLaneDimension, string> = {
+  none: "squad.workItems.lane.dimension.none",
+  statusCategory: "squad.workItems.lane.dimension.statusCategory",
+  assignee: "squad.workItems.lane.dimension.assignee",
+};
+
 /** 工作项状态的文案 id：用 `Record<WorkItemStatusKey, string>` **强制穷尽** ——
     将来给 `WORK_ITEM_STATUS_KEYS` 加一个状态时这里会编译失败，而不是界面上多出一个裸 key。 */
 export const WORK_ITEM_STATUS_MESSAGE_IDS: Record<WorkItemStatusKey, string> = {
