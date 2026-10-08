@@ -855,17 +855,23 @@ test("守卫｜聚焦意图全链 App → shell → 页面 → 看板（看过�
     "页面透传消费回调给看板（消费点在看板：只有那里拿着渲染后的行）",
   );
 
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  /* T-P2-R1 口径更新：聚焦消费随行渲染抽到共用行模块（三视图共用同一份 map + 同一份 effect）
+     —— 「目标在不在列表」这句话现在由**行模块**回答（宿主只创建一份注册表）。 */
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.ok(
     board.includes('scrollIntoView({ block: "nearest" })'),
-    "看板把目标行滚进视野（最小距离）",
+    "行模块把目标行滚进视野（最小距离）",
   );
   assert.ok(board.includes("ring-brand"), "高亮用语义色 token（brand 环，不引九色板）");
   const consumeAt = board.indexOf("onFocusConsumed?.()");
-  assert.ok(consumeAt >= 0, "看板必须消费聚焦意图（清掉后壳才不会再聚焦）");
+  assert.ok(consumeAt >= 0, "行模块必须消费聚焦意图（清掉后壳才不会再聚焦）");
   const focusEffectStart = board.indexOf("if (!focusWorkItemId) return;");
   const focusEffectEnd = board.indexOf("}, [focusWorkItemId", focusEffectStart);
   assert.ok(focusEffectStart >= 0 && focusEffectEnd > focusEffectStart, "聚焦消费必须在 effect 里");
+  assert.ok(
+    board.includes("export function useWorkItemRowFocus("),
+    "聚焦注册表由行模块导出（宿主创建一次、三视图共用：各建一份 = 换视图后聚焦静默失效）",
+  );
   const focusEffect = board.slice(focusEffectStart, focusEffectEnd);
   assert.ok(
     focusEffect.includes("scrollIntoView("),

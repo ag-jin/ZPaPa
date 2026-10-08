@@ -1,7 +1,7 @@
 import type { WorkItemCollaborationRead } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { WorkItemLabelChip, WorkItemPriorityBadge } from "./WorkItemsBoard.js";
+import { WorkItemLabelChip, WorkItemPriorityBadge } from "./WorkItemRows.js";
 import {
   workItemCreatorKindMessageId,
   workItemCreatorText,

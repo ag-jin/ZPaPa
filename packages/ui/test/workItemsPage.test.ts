@@ -335,12 +335,20 @@ test("守卫｜WorkItemsPage 走响亮取数通路，写动作齐全，放弃整
   // 测试锚点（后续 e2e 依赖；顺手钉住防被误删）。
   assert.ok(page.includes('data-testid="work-items-page"'), "页根 testid 不得改名");
   assert.ok(page.includes('data-testid="work-items-create"'), "新建按钮 testid 不得改名");
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  // T-P2-R1：行锚点与行动作随行渲染抽到共用行模块（三视图共用）。
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.ok(board.includes("data-work-item-id"), "行上要有 data-work-item-id");
   for (const testid of ["work-item-edit", "work-item-discard"]) {
     assert.ok(board.includes(testid), `行内动作 testid ${testid} 不得缺（锚点）`);
   }
-  assert.ok(board.includes("flattenWorkItemBoard("), "看板行序必须走纯函数 flattenWorkItemBoard");
+  assert.ok(
+    readSource("squad/WorkItemsBoard.tsx").includes("flattenWorkItemBoard("),
+    "看板行序必须走纯函数 flattenWorkItemBoard",
+  );
+  assert.ok(
+    readSource("squad/WorkItemsSurface.tsx").includes("workItemSurfaceVisibleItems("),
+    "宿主必须用纯函数投影（过滤/搜索/排序判据不得写进组件）",
+  );
   const review = readSource("squad/SquadRunsReview.tsx");
   assert.ok(review.includes("data-run-id"), "运行行上要有 data-run-id");
   for (const testid of ["run-approve", "run-reject", "run-open-session"]) {
@@ -398,19 +406,29 @@ test("运行可审查性：produced / rejected 可审，其余三态（open / me
    行序与 DOM 形状零回归 —— 「给出泳道」不等于「换掉看板」。
    变异（L1-3）：把默认维度改成 `statusCategory`（或不分组也套泳道壳）⇒ 第一 / 四 / 五条必红。 */
 test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
+  /* T-P2-R1 口径更新：行渲染抽到共用行模块后，「单 ul + 行序」的判据改为
+     ① 看板的不分组分支把 `flattenWorkItemBoard(workItems)` 交给共用行列表，并给既有锚点
+        `work-items-list`（DOM 逐字保留由 workItemsSurfaceRender 的逐字节对照承担）；
+     ② 宿主默认视图 = board，且默认状态下投影**原样返回输入**（默认路径零加工）。 */
   const board = readSource("squad/WorkItemsBoard.tsx");
+  const rows = readSource("squad/WorkItemRows.tsx");
+  assert.ok(board.includes('testId="work-items-list"'), "不分组仍是单 ul（锚点在共用列表上）");
   assert.ok(
-    board.includes('data-testid="work-items-list"'),
-    "不分组仍是单 ul（现状 DOM 逐字保留）",
+    board.includes("rows={flattenWorkItemBoard(workItems)}"),
+    "不分组把 flattenWorkItemBoard 的结果交给共用行列表（行序判据不变）",
   );
   assert.ok(
-    board.includes("flattenWorkItemBoard(workItems).map(renderRow)"),
-    "不分组走 flattenWorkItemBoard（行序判据不变）",
+    rows.includes("<ul className={LIST_CLASSNAME} data-testid={testId}>"),
+    "容器仍是那个单 ul（由共用列表实现，锚点由消费方给）",
   );
   const page = readSource("squad/WorkItemsPage.tsx");
   assert.ok(
     page.includes('useState<WorkItemLaneDimension>("none")'),
     "默认维度必须是 none（默认改泳道 = 改掉所有既有用户看到的界面）",
+  );
+  assert.ok(
+    page.includes("useState<WorkItemSurfaceState>(workItemSurfaceDefaultState)"),
+    "默认 Surface 状态走纯函数（默认视图 = board + 无查询：默认状态一改这里必红）",
   );
   const actions = readSource("squad/WorkItemsPageActions.tsx");
   assert.ok(

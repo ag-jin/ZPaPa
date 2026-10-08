@@ -7,7 +7,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { WorkItem } from "@zcode/shared";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
-import { WorkItemsBoard } from "../src/squad/WorkItemsBoard.js";
+import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
+import { workItemSurfaceDefaultState } from "../src/squad/workItemSurfaceViewModel.js";
 
 /* 工作项**行内编辑**（阶段一轮 D，T-P1-R4）的**呈现与接线**守卫：真渲染 + 结构断言。
 
@@ -41,7 +42,7 @@ function wi(overrides: Partial<WorkItem> = {}): WorkItem {
   };
 }
 
-/** 页面把写路径交给看板；这里只回答「写成功」（失败形态由页面的守卫钉住）。 */
+/** 页面把写路径交给宿主；这里只回答「写成功」（失败形态由页面的守卫钉住）。 */
 const inlineEditSucceeds = async () => null;
 
 function renderInlineBoard(workItems: WorkItem[]): string {
@@ -56,13 +57,15 @@ function renderInlineBoard(workItems: WorkItem[]): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(WorkItemsBoard, {
+      children: createElement(WorkItemsSurface, {
         workItems,
         snapshot,
         discardableIds: new Set<string>(),
         busyWorkItemId: null,
         timelineExpandedWorkItemId: null,
         laneDimension: "none" as const,
+        // T-P2-R1：渲染根从看板改为 **Surface 宿主**（行渲染/聚焦/编辑态都在宿主装配后交给行模块）。
+        surface: workItemSurfaceDefaultState(),
         onEdit: () => {},
         onInlineEdit: inlineEditSucceeds,
         onReassign: () => {},
@@ -100,12 +103,13 @@ test("真渲染｜标题行内入口：普通行给；归档行不给（附同�
    **交互状态与键盘语义**在 `useWorkItemInlineEdit` 一处 —— 两处都只有一份实现。
    变异（M1）：删掉 Escape 分支 ⇒ 第三条必红；变异（M2）：删掉 stopPropagation ⇒ 第四条必红。 */
 test("守卫｜标题行内编辑：blur / Enter 提交、Escape 恢复（不提交）、编辑态阻止冒泡", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  // T-P2-R1：行渲染（含编辑器 JSX）在共用行模块 —— 单点口径是「跨三视图共用同一模块」。
+  const board = readSource("squad/WorkItemRows.tsx");
   const hook = stripComments(readSource("squad/useWorkItemInlineEdit.ts"));
   assert.equal(
     (board.match(/data-testid="work-item-title-edit"/g) ?? []).length,
     1,
-    "标题编辑入口单点（编辑态进 renderRow 一份实现，不复制行 JSX）",
+    "标题编辑入口单点（编辑器进行模块一份实现，不复制行 JSX）",
   );
   assert.equal((board.match(/data-testid="work-item-title-input"/g) ?? []).length, 1);
   assert.ok(
@@ -163,7 +167,7 @@ test("守卫｜标题行内编辑：blur / Enter 提交、Escape 恢复（不提
 /* 守卫｜失败**不吞**：就地留下原因 + 草稿原样留着（不静默回退成旧值、不清行）。
    变异（M3）：失败分支也把编辑器关掉（或把草稿重置成 item.title）⇒ 第二条必红。 */
 test("守卫｜提交失败：就地提示且保留用户输入（不清行、不静默回退）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  const board = readSource("squad/WorkItemRows.tsx");
   const hook = stripComments(readSource("squad/useWorkItemInlineEdit.ts"));
   const parts = stripComments(readSource("squad/WorkItemInlineEditParts.tsx"));
   const submit = hook.slice(hook.indexOf("const submit = ("), hook.indexOf("commitTitleEdit,"));
@@ -186,7 +190,7 @@ test("守卫｜提交失败：就地提示且保留用户输入（不清行、�
   );
   assert.ok(
     board.includes("<WorkItemInlineEditFailureLine failure={inlineFailure} />"),
-    "就地原因由唯一那份零件渲染（看板只挂载一次）",
+    "就地原因由唯一那份零件渲染（行模块只挂载一次）",
   );
   assert.ok(
     parts.includes('data-testid="work-item-inline-edit-error"'),
@@ -202,9 +206,12 @@ test("守卫｜提交失败：就地提示且保留用户输入（不清行、�
 /* 守卫｜写路径**单点**：行内提交只把纯函数产出的 patch 交给页面回调；服务调用/请求拼装都留在页面。
    变异（M4）：在看板/hook 里直接调服务（或在回调里重拼字段名）⇒ 本条必红。 */
 test("守卫｜行内写只经页面回调：看板与 hook 零服务调用、零请求拼装", () => {
-  const board = stripComments(readSource("squad/WorkItemsBoard.tsx"));
+  const board = stripComments(readSource("squad/WorkItemRows.tsx"));
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  const list = stripComments(readSource("squad/WorkItemListView.tsx"));
+  const table = stripComments(readSource("squad/WorkItemTableView.tsx"));
   const hook = stripComments(readSource("squad/useWorkItemInlineEdit.ts"));
-  for (const source of [board, hook]) {
+  for (const source of [board, host, list, table, hook]) {
     for (const forbidden of [
       "updateWorkItem",
       "createWorkItem",
@@ -253,7 +260,7 @@ test("真渲染｜优先级行内 picker：有值/未设置都给入口，归档
    而分叉的表现是「界面给的档位，判据不认」）。档位文案走轮 C 的穷尽映射，不另造一份。
    变异（M5）：把四档列表抄到第二处（例如给徽标另写一个菜单）⇒ 第一 / 二条必红。 */
 test("守卫｜优先级 picker 单点：四档 + 清除各一处、文案走轮 C 映射、不用空串 item 值", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  const board = readSource("squad/WorkItemRows.tsx");
   const parts = stripComments(readSource("squad/WorkItemInlineEditParts.tsx"));
   assert.equal(
     (parts.match(/data-testid="work-item-priority-picker"/g) ?? []).length,

@@ -318,30 +318,47 @@ test("指派泳道名：user 为 null（由本地化文案补）、已知对象�
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
-/* 守卫 a（L1-5，**核心**）：行渲染**单点**。
-   泳道只是「外层分组 + 头部」；复制一份「泳道版行渲染」能通过 typecheck，却会让
-   `rowElementsRef` 在其中一条路径上静默不注册 ⇒ 收件箱「打开工作项」的聚焦/高亮失败且不报错。
-   变异：把 renderRow 复制一份给泳道分支用 ⇒ 第一、二条必红。 */
-test("守卫｜行渲染单点：data-work-item-id 与 rowElementsRef 注册各恰一处，两个分支共用同一个函数", () => {
+/* 守卫 a（L1-5，**核心**，T-P2-R1 口径更新）：行渲染**单点**。
+   旧口径是「`WorkItemsBoard` 内恰一处 renderRow」；阶段二起三个视图（board / list / table）与
+   看板的两个分支（不分组 / 泳道）都渲染**同一批行**，所以口径改为：
+   **行模块里各恰一处，且四个消费点全部走共用列表组件**。
+   复制一份行渲染能通过 typecheck，却会让 `rowElementsRef` 在其中一条路径上静默不注册 ⇒
+   收件箱「打开工作项」的聚焦/高亮失败且不报错。
+   变异：把行 JSX 复制一份给某个视图/分支用 ⇒ 第一、二、三条必红。 */
+test("守卫｜行渲染单点（口径更新）：锚点与聚焦注册各恰一处，且看板两分支与三视图共用同一模块", () => {
   const board = readSource("squad/WorkItemsBoard.tsx");
+  const rows = readSource("squad/WorkItemRows.tsx");
   assert.equal(
-    (board.match(/data-work-item-id=\{item\.id\}/g) ?? []).length,
+    (rows.match(/data-work-item-id=\{item\.id\}/g) ?? []).length,
     1,
-    "行 JSX 只能有一处（复制一份泳道版行渲染 = 聚焦/高亮在一条路径上静默失效）",
+    "行 JSX 只能有一处（复制一份行渲染 = 聚焦/高亮在某条路径上静默失效）",
   );
   assert.equal(
-    (board.match(/rowElementsRef\.current\.set\(/g) ?? []).length,
+    (rows.match(/rowElementsRef\.current\.set\(/g) ?? []).length,
     1,
-    "行 DOM 引用注册只此一处（两个分支共用它）",
+    "行 DOM 引用注册只此一处（所有视图共用它）",
   );
+  // 看板的两个分支都要走共用列表（不得自己 map 出行），三视图模块也各自消费它。
+  assert.equal(
+    (board.match(/<WorkItemRowList/g) ?? []).length,
+    2,
+    "不分组与泳道两个分支共用同一个列表组件（两次挂载、同一份实现）",
+  );
+  for (const file of [
+    "squad/WorkItemsSurface.tsx",
+    "squad/WorkItemListView.tsx",
+    "squad/WorkItemTableView.tsx",
+  ]) {
+    assert.ok(
+      readSource(file).includes("WorkItemRow"),
+      `${file} 必须消费共用行模块（三视图共用同一模块）`,
+    );
+  }
   const listTag = board.indexOf('data-testid="work-items-list"');
   const laneTag = board.indexOf('data-testid="work-items-lane"');
   assert.ok(listTag > 0 && laneTag > 0, "none 分支与泳道分支都要有各自的容器锚点");
-  const rowFn = board.indexOf("const renderRow");
-  assert.ok(
-    rowFn > 0 && rowFn < listTag && rowFn < laneTag,
-    "行渲染函数在两条分支之前定义（一处）",
-  );
+  const rowsTag = rows.indexOf("data-testid={testId}");
+  assert.ok(rowsTag > 0, "行列表的 testid 由消费方给（容器锚点仍是各视图的属性）");
 });
 
 test("守卫｜none 分支保留现状 DOM（单 ul），泳道分支带 data-lane-key；泳道不做折叠", () => {
@@ -354,11 +371,18 @@ test("守卫｜none 分支保留现状 DOM（单 ul），泳道分支带 data-la
   for (const forbidden of ["collapsed", "laneExpanded", "setLaneCollapsed"]) {
     assert.ok(!board.includes(forbidden), `泳道 v1 不做折叠（${forbidden} 说明有人顺手加了）`);
   }
-  // 批根判据的输入只算一次（两种视图共用同一份）；变异：搬进行渲染里 ⇒ 每条泳道各算一遍。
-  const board2 = readSource("squad/WorkItemsBoard.tsx");
-  const computeIndex = board2.indexOf("const runParentWorkItemIds");
-  const rowFn = board2.indexOf("const renderRow");
-  assert.ok(computeIndex > 0 && computeIndex < rowFn, "runParentWorkItemIds 在行渲染之外只算一次");
+  /* 批根判据的输入只算一次（T-P2-R1：随行列表实现搬进 `WorkItemRowList`，每张列表算一次，
+     仍**不在行内**重算）；变异：搬进行渲染里 ⇒ 每行各算一遍（行数 × run 数的无谓重复）。 */
+  const board2 = readSource("squad/WorkItemRows.tsx");
+  assert.equal(
+    (board2.match(/snapshot\.runs\.map\(/g) ?? []).length,
+    1,
+    "runParentWorkItemIds 只算一次（在 WorkItemRowList 里，不在行内逐行重算）",
+  );
+  assert.ok(
+    board2.includes("const runParentWorkItemIds = useMemo("),
+    "那份输入在行列表里一次算好（memo 挂在列表上）",
+  );
 });
 
 test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions 与 Board", () => {

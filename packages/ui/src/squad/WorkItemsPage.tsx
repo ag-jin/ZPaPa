@@ -9,7 +9,7 @@ import type { WorkItemDialogSubmitInput } from "./SquadCreateDialogs.js";
 import { WorkItemsPageDialogs } from "./WorkItemsPageDialogs.js";
 import { SquadRunsReview } from "./SquadRunsReview.js";
 import { WakeRulesSection } from "./WakeRulesSection.js";
-import { WorkItemsBoard } from "./WorkItemsBoard.js";
+import { WorkItemsSurface } from "./WorkItemsSurface.js";
 import {
   SQUAD_DISCARD_CONFIRM_IDLE,
   cancelSquadDiscard,
@@ -31,6 +31,12 @@ import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
+import {
+  applyWorkItemSurfaceIntent,
+  workItemSurfaceDefaultState,
+  type WorkItemSurfaceIntent,
+  type WorkItemSurfaceState,
+} from "./workItemSurfaceViewModel.js";
 import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
 
 /* 「工作项」一级入口的**完整功能面**（用户 2026-10-03 裁定：入口不藏设置；「UI 功能需要打磨
@@ -113,6 +119,14 @@ export function WorkItemsPage({
      默认 `none` = 现状视图。刻意**不持久化**：本域无偏好持久化先例，新增 store/设置项
      就是一个新真相源 + 广播回环风险（口径裁定的默认值就是「不持久化」）。 */
   const [laneDimension, setLaneDimension] = useState<WorkItemLaneDimension>("none");
+  /* Surface 状态（阶段二 · T-P2-R1）：视图模式 / 本地搜索 / 过滤 / 排序 / 列配置 —— 与 `laneDimension`
+     同款（**会话内**状态、刻意不持久化：本域无偏好持久化先例，新增 store 就是新真相源 + 广播回环）。
+     状态在这里（而不是宿主里）：控件带渲染在**动作行**（取数失败时也要常驻），宿主只消费。
+     迁移只有一处实现（`applyWorkItemSurfaceIntent` 纯函数）—— 控件只回传意图，不自己 setState。 */
+  const [surface, setSurface] = useState<WorkItemSurfaceState>(workItemSurfaceDefaultState);
+  const applySurfaceIntent = useCallback((intent: WorkItemSurfaceIntent) => {
+    setSurface((current) => applyWorkItemSurfaceIntent(current, intent));
+  }, []);
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
 
@@ -397,6 +411,8 @@ export function WorkItemsPage({
         createDisabled={createDisabled}
         laneDimension={laneDimension}
         onLaneDimensionChange={setLaneDimension}
+        surface={surface}
+        onSurfaceIntent={applySurfaceIntent}
         t={t}
         onReload={() => void reload()}
         onCreate={() => setDialog({ kind: "create" })}
@@ -406,13 +422,14 @@ export function WorkItemsPage({
 
       {state.mode === "ready" ? (
         <>
-          <WorkItemsBoard
+          <WorkItemsSurface
             workItems={state.snapshot.workItems}
             snapshot={state.snapshot}
             discardableIds={discardableIds}
             busyWorkItemId={discardingId ?? busyWorkItemId}
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
             laneDimension={laneDimension}
+            surface={surface}
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}

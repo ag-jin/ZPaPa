@@ -11,7 +11,8 @@ import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import { WorkItemDetailOverview } from "../src/squad/WorkItemDetailOverview.js";
-import { WorkItemsBoard } from "../src/squad/WorkItemsBoard.js";
+import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
+import { workItemSurfaceDefaultState } from "../src/squad/workItemSurfaceViewModel.js";
 import {
   WORK_ITEM_CREATOR_KIND_MESSAGE_IDS,
   WORK_ITEM_PRIORITY_MESSAGE_IDS,
@@ -256,13 +257,15 @@ function renderBoard(workItems: WorkItemCollaborationRead["workItem"][]): string
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(WorkItemsBoard, {
+      children: createElement(WorkItemsSurface, {
         workItems,
         snapshot,
         discardableIds: new Set<string>(),
         busyWorkItemId: null,
         timelineExpandedWorkItemId: null,
         laneDimension: "none",
+        // T-P2-R1：Surface 宿主消费状态（默认 = board + 无查询）；行渲染单点在 WorkItemRows。
+        surface: workItemSurfaceDefaultState(),
         onEdit: () => {},
         // 阶段一轮 D：看板新增**必填**的行内写回调（页面注入；这里只渲染，不需要它被调到）。
         onInlineEdit: async () => null,
@@ -293,7 +296,8 @@ test("看板行真渲染｜identifier 与优先级**有值才画**（未设置�
    而是**细分隔线 + hover surface** 的高密度列表行；行高不小于 44px（可点目标的下限）。
    变异：把 ROW_CLASSNAME 改回卡片形态（或去掉 min-h-11）⇒ 本守卫必红。 */
 test("守卫｜看板行视觉密度：细分隔线 + hover surface + 44px 行高（不是卡片包裹）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  // T-P2-R1：行样式常量随行渲染抽到共用行模块（三视图共用同一份行外观）。
+  const board = readSource("squad/WorkItemRows.tsx");
   const match = /const ROW_CLASSNAME\s*=\s*([\s\S]*?);/.exec(board);
   assert.ok(match, "行样式常量必须存在且可被文本断言");
   const classname = match[1]!;
@@ -312,12 +316,13 @@ test("守卫｜看板行视觉密度：细分隔线 + hover surface + 44px 行�
   );
 });
 
-test("守卫｜优先级徽标只有一处定义（看板行与详情概览共用同一个组件）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+test("守卫｜优先级徽标只有一处定义（行模块与详情概览共用同一个组件）", () => {
+  // T-P2-R1：徽标是「行词汇」，行词汇的拥有者随行渲染一起抽到 WorkItemRows。
+  const board = readSource("squad/WorkItemRows.tsx");
   const overview = readSource("squad/WorkItemDetailOverview.tsx");
   assert.ok(
     board.includes("export function WorkItemPriorityBadge("),
-    "徽标的唯一定义在看板（行词汇的拥有者）",
+    "徽标的唯一定义在共用行模块（行词汇的拥有者）",
   );
   assert.equal(
     (board.match(/const WORK_ITEM_PRIORITY_BADGE_CLASSNAME/g) ?? []).length,
@@ -335,7 +340,8 @@ test("守卫｜优先级徽标只有一处定义（看板行与详情概览共�
 });
 
 test("守卫｜行渲染仍单点（data-work-item-id 与 rowElementsRef 注册各恰一处）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  // T-P2-R1 口径更新：单点从「WorkItemsBoard 内」改「跨三视图共用同一模块」（WorkItemRows）。
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.equal(
     (board.match(/data-work-item-id=\{item\.id\}/g) ?? []).length,
     1,
@@ -356,6 +362,12 @@ test("守卫｜日期零转换：轮 C 的呈现与编辑面不得出现时刻�
   for (const file of [
     "squad/WorkItemDetailOverview.tsx",
     "squad/WorkItemsBoard.tsx",
+    // T-P2-R1 新增/搬动的面同样纳入零换算扫描（名单只扩不收）。
+    "squad/WorkItemRows.tsx",
+    "squad/WorkItemsSurface.tsx",
+    "squad/WorkItemListView.tsx",
+    "squad/WorkItemTableView.tsx",
+    "squad/workItemSurfaceViewModel.ts",
     "squad/workItemPropertiesViewModel.ts",
     "squad/WorkItemsPage.tsx",
     "squad/WorkItemsPageDialogs.tsx",
@@ -379,7 +391,8 @@ test("守卫｜identifier 前缀不入库：展示文本单源拼接，领域形
     "前缀常量只有「定义 + 拼接」两处（多一处 = 有人自己拼）",
   );
   assert.ok(vm.includes('export const WORK_ITEM_IDENTIFIER_PREFIX = "#";'), "前缀是 UI 常量短码");
-  for (const file of ["squad/WorkItemDetailOverview.tsx", "squad/WorkItemsBoard.tsx"]) {
+  // T-P2-R1：行上的 identifier 呈现随行渲染抽到 WorkItemRows（仍是同一个单源函数）。
+  for (const file of ["squad/WorkItemDetailOverview.tsx", "squad/WorkItemRows.tsx"]) {
     const source = stripComments(readSource(file));
     assert.ok(source.includes("workItemIdentifierText("), `${file} 必须走单源函数`);
     assert.ok(

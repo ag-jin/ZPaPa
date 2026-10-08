@@ -83,8 +83,9 @@ test("往返：parseAssigneeValue(assigneeOptionValue(x)) 原样还原 x", () =>
 /* 守卫 a：看板行有「改派」钮（`data-testid="work-item-reassign"`）。
    变异：删掉钮（或把它挪进某个条件分支）⇒ 本用例必红。
    所有行都有（**含子项**）：钮在**行内动作簇**里、与编辑同级 —— 中间不得隔一个条件门。 */
-test("守卫｜看板行有「改派」钮：在行内动作簇里、与编辑同级、所有行都给", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+test("守卫｜行有「改派」钮：在行内动作簇里、与编辑同级、所有行都给", () => {
+  // T-P2-R1：行动作簇随行渲染抽到共用行模块（三视图共用同一份行）。
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.equal(
     (board.match(/work-item-reassign/g) ?? []).length,
     1,
@@ -106,7 +107,10 @@ test("守卫｜看板行有「改派」钮：在行内动作簇里、与编辑�
     "有请求在飞时改派钮置灰",
   );
   assert.ok(board.includes("onReassign(item)"), "钮点击必须把意图交给页面（onReassign(item)）");
-  assert.ok(board.includes("onReassign: (item: WorkItem) => void"), "onReassign 是看板的入参契约");
+  assert.ok(
+    board.includes("onReassign: (item: WorkItem) => void"),
+    "onReassign 是行环境的入参契约（宿主装配、行消费）",
+  );
 });
 
 // ---------- ② 结构守卫：页面 ----------

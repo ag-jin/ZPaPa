@@ -639,8 +639,9 @@ test("守卫｜S7：App 意图态与 props 链完整（意图 → shell → 详�
   );
 });
 
-test("守卫｜S8：两个入口——看板行覆盖按钮 + agent 任务表行标题（各自 testid）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+test("守卫｜S8：两个入口——行覆盖按钮 + agent 任务表行标题（各自 testid）", () => {
+  // T-P2-R1：行覆盖按钮随行渲染抽到共用行模块（三视图共用）。
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.ok(
     board.includes('data-testid="work-item-row-open-detail"'),
     "看板行必须有透明覆盖按钮（行内已有独立按钮，整行 button 嵌套非法）",

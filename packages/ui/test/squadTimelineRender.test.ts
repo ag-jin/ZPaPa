@@ -494,8 +494,10 @@ test("守卫｜SquadTimelineSection：历史读经服务通路、失败带重试
 
 /* 守卫 c：展开钮只在**批根行**（判据 = 服务面唯一实现 isSquadBatchRoot）。
    变异：M2 去掉 isSquadBatchRoot 条件（无条件渲染展开钮）⇒ 前三条红。 */
-test("守卫｜WorkItemsBoard：展开钮在 isSquadBatchRoot 条件内、渲染在行下方、透传 onOpenSession", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+test("守卫｜行模块：展开钮在 isSquadBatchRoot 条件内、渲染在行下方、透传 onOpenSession", () => {
+  /* T-P2-R1：时间线挂载点随行渲染抽到共用行模块（三视图共用同一份行）—— 判据不变，只换被读文件。
+     批根判据的输入仍在**行列表**里一次算好（`WorkItemRowList` 的 useMemo），不在行内重算。 */
+  const board = readSource("squad/WorkItemRows.tsx");
 
   const gate = board.indexOf("isSquadBatchRoot({");
   const button = board.indexOf('data-testid="work-item-timeline-toggle"');
@@ -510,13 +512,23 @@ test("守卫｜WorkItemsBoard：展开钮在 isSquadBatchRoot 条件内、渲染
   const sectionGate = board.indexOf("timelineExpanded ? (");
   const section = board.indexOf("<SquadTimelineSection");
   assert.ok(sectionGate >= 0 && section > sectionGate, "展开时把分区渲染在该行下方（条件渲染）");
-  assert.ok(board.includes("onOpenSession={onOpenSession}"), "看板把 onOpenSession 透传给分区");
+  assert.ok(
+    board.includes("onOpenSession={onOpenSession}"),
+    "行模块把 onOpenSession 透传给时间线分区",
+  );
+  const list = readSource("squad/WorkItemRows.tsx");
+  assert.equal(
+    (list.match(/snapshot\.runs\.map\(/g) ?? []).length,
+    1,
+    "批根判据的输入只算一次（在行列表里；行内重算 = 行数 × run 数的无谓重复）",
+  );
   assert.ok(board.includes('t("squad.timeline.toggle")'), "展开钮文案走 squad.timeline.toggle");
 
   const page = readSource("squad/WorkItemsPage.tsx");
+  // T-P2-R1：页面渲染**宿主**（`WorkItemsSurface`）—— 时间线展开态与穿透原样交给它。
   const pageBoardTag = page.slice(
-    page.indexOf("<WorkItemsBoard"),
-    page.indexOf("/>", page.indexOf("<WorkItemsBoard")),
+    page.indexOf("<WorkItemsSurface"),
+    page.indexOf("/>", page.indexOf("<WorkItemsSurface")),
   );
   for (const needle of [
     "timelineExpandedWorkItemId={expandedTimelineWorkItemId}",
@@ -525,7 +537,7 @@ test("守卫｜WorkItemsBoard：展开钮在 isSquadBatchRoot 条件内、渲染
     "workspacePath={workspacePath}",
     "workspaceIdentity={workspaceIdentity}",
   ]) {
-    assert.ok(pageBoardTag.includes(needle), `页面到看板的接线缺 ${needle}`);
+    assert.ok(pageBoardTag.includes(needle), `页面到宿主的接线缺 ${needle}`);
   }
 });
 

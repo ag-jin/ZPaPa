@@ -57,8 +57,9 @@ test("标签 chip 投影：上限可注入（默认 3），且不改写入参", 
 
 /* 守卫 a：看板行渲染 chip（标题之后）+「+N」，且 chip 只有**一处**定义（两个面共用它）。
    变异：把 chip 的 class 常量复制一份到详情页（各自一套外观）⇒ 第二/三条必红。 */
-test("守卫｜看板行渲染标签 chip 与「+N」；chip 定义只有一处（详情页复用同一个组件）", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+test("守卫｜行渲染标签 chip 与「+N」；chip 定义只有一处（详情页复用同一个组件）", () => {
+  // T-P2-R1：行渲染（含标签 chip）抽到共用行模块 —— 断言不变，只换被读的文件（口径：跨三视图共用）。
+  const board = readSource("squad/WorkItemRows.tsx");
   assert.ok(board.includes("workItemLabelChips("), "看板行必须走纯函数投影（截断规则一处实现）");
   assert.ok(board.includes('data-testid="work-item-label"'), "chip 的 testid 锚点");
   assert.ok(board.includes('data-testid="work-item-label-more"'), "「+N」的 testid 锚点");
@@ -70,7 +71,7 @@ test("守卫｜看板行渲染标签 chip 与「+N」；chip 定义只有一处�
   const detail = readDetailSurface();
   assert.ok(
     detail.includes("WorkItemLabelChip") && !detail.includes("WORK_ITEM_LABEL_CHIP_CLASSNAME"),
-    "详情页必须复用看板的 chip 组件，不得自带第二份样式",
+    "详情页必须复用共用行模块的 chip 组件，不得自带第二份样式",
   );
 });
 
@@ -78,7 +79,7 @@ test("守卫｜看板行渲染标签 chip 与「+N」；chip 定义只有一处�
    状态只由语义色表达；标签是描述，不是状态 —— 用绿色 chip 会让「这个标签」读成「这件事成了」）。
    变异：把 chip 的样式常量改成含 `destructive` / `success` / `warning` / `brand` 的 token ⇒ 本守卫必红。 */
 test("守卫｜标签 chip 只用中性 token，不含任何语义状态色", () => {
-  const board = readSource("squad/WorkItemsBoard.tsx");
+  const board = readSource("squad/WorkItemRows.tsx");
   const match = /const WORK_ITEM_LABEL_CHIP_CLASSNAME\s*=\s*([\s\S]*?);/.exec(board);
   assert.ok(match, "chip 的样式常量必须存在且可被文本断言（一处定义）");
   const classname = match[1]!;
