@@ -3969,9 +3969,9 @@ const enUS: Record<string, string> = {
   "settings.subagents.form.tools.mode.custom": "Custom allowed tools",
   "settings.subagents.form.disallowedTools.label": "Disallowed tools",
   "settings.subagents.form.skills.label": "Skills",
-  "settings.subagents.form.background.label": "Run in background",
+  "settings.subagents.form.background.label": "Dispatch in background",
   "settings.subagents.form.background.description":
-    "Allow the subagent to run as a background task when requested by the model.",
+    "Always dispatch this subagent as a background task; you will be notified when it completes.",
   "settings.subagents.form.injectAgentsMd.label": "Inject AGENTS.md",
   "settings.subagents.form.systemPrompt.label": "System prompt",
   "settings.subagents.form.systemPrompt.placeholder": "Describe this subagent's role and rules...",

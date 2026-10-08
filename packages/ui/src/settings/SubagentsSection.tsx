@@ -117,6 +117,7 @@ interface SubagentFormInitialState {
   model: string;
   thoughtLevel?: string;
   injectAgentsMd: boolean;
+  background: boolean;
   inheritAllTools: boolean;
   selectedTools: string[];
   preservedTools: string[];
@@ -302,6 +303,7 @@ function createSubagentFormInitialState(
     | "tools"
     | "systemPrompt"
     | "injectAgentsMd"
+    | "background"
   >,
 ): SubagentFormInitialState {
   return {
@@ -311,6 +313,7 @@ function createSubagentFormInitialState(
     model: toSubagentModelValue(initial?.modelSelection),
     thoughtLevel: initial?.modelSelection?.options?.reasoningLevel,
     injectAgentsMd: initial?.injectAgentsMd ?? true,
+    background: initial?.background ?? false,
     inheritAllTools: initial?.tools === undefined || initial.tools.length === 0,
     selectedTools: getKnownTools(initial?.tools),
     preservedTools: getPreservedTools(initial?.tools),
@@ -826,6 +829,7 @@ function SubagentForm({
   const [model, setModel] = useState(initialFormState.model);
   const [thoughtLevel, setThoughtLevel] = useState(initialFormState.thoughtLevel);
   const [injectAgentsMd, setInjectAgentsMd] = useState(initialFormState.injectAgentsMd);
+  const [background, setBackground] = useState(initialFormState.background);
   const [inheritAllTools, setInheritAllTools] = useState(initialFormState.inheritAllTools);
   const [selectedTools, setSelectedTools] = useState<string[]>(initialFormState.selectedTools);
   const [systemPrompt, setSystemPrompt] = useState(initialFormState.systemPrompt);
@@ -914,6 +918,7 @@ function SubagentForm({
     setModel(nextInitialState.model);
     setThoughtLevel(nextInitialState.thoughtLevel);
     setInjectAgentsMd(nextInitialState.injectAgentsMd);
+    setBackground(nextInitialState.background);
     setInheritAllTools(nextInitialState.inheritAllTools);
     setSelectedTools(nextInitialState.selectedTools);
     setSystemPrompt(nextInitialState.systemPrompt);
@@ -1013,6 +1018,7 @@ function SubagentForm({
       systemPrompt: systemPrompt.trim(),
       color,
       injectAgentsMd,
+      background,
       ...(selection ? { modelSelection: selection } : {}),
       tools: inheritAllTools
         ? undefined
@@ -1021,7 +1027,6 @@ function SubagentForm({
       skills: initial?.skills,
       permissionMode: initial?.permissionMode,
       ...(initial?.maxTurns ? { maxTurns: initial.maxTurns } : {}),
-      ...(initial?.background !== undefined ? { background: initial.background } : {}),
       mcpServers: initial?.mcpServers,
     });
   };
@@ -1229,6 +1234,28 @@ function SubagentForm({
           onCheckedChange={setInjectAgentsMd}
           aria-label={intl.formatMessage({
             id: "settings.subagents.form.injectAgentsMd.label",
+          })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({
+              id: "settings.subagents.form.background.label",
+            })}
+          </p>
+          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
+            {intl.formatMessage({
+              id: "settings.subagents.form.background.description",
+            })}
+          </p>
+        </div>
+        <Switch
+          checked={background}
+          onCheckedChange={setBackground}
+          aria-label={intl.formatMessage({
+            id: "settings.subagents.form.background.label",
           })}
         />
       </div>
