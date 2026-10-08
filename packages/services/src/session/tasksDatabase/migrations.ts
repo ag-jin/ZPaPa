@@ -19,6 +19,7 @@ import {
   WORK_ITEM_DELIVERABLE_SQL,
   WORK_ITEM_PULL_REQUEST_SQL,
   WORK_ITEM_SCHEMA,
+  WORK_ITEM_SURFACE_FIELDS_SQL,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "#src/session/tasksDatabase/official-glm-selection-v3.js";
@@ -154,6 +155,16 @@ const definitions = [
     id: "0017_work_item_pull_requests",
     checksumInput: [WORK_ITEM_PULL_REQUEST_SQL],
   },
+  /* 0018（工作项 Surface 对齐 · 阶段一 R1）：`work_items` 加 7 列
+     （priority / start_date / due_date / creator_kind / creator_id / creator_display_name /
+     identifier_seq）+ `UNIQUE(workspace_key, identifier_seq)`。
+     回填**分两半**：identifier_seq 全量回填（每 workspace 按 created_at,id 从 1 编号，依据是既有事实），
+     其余六列**零回填**（NULL = 未设置 / 迁移前未知，不编造值；详见 SQL 常量的注释）。
+     只加列与索引，不改既有列/表——checksum 纪律同 0008/0009/0013/0014/0015。 */
+  {
+    id: "0018_work_item_surface_fields",
+    checksumInput: [WORK_ITEM_SURFACE_FIELDS_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -220,6 +231,8 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0015_squad_run_usage") db.exec(SQUAD_RUN_USAGE_SQL);
       else if (migration.id === "0016_work_item_deliverables") db.exec(WORK_ITEM_DELIVERABLE_SQL);
       else if (migration.id === "0017_work_item_pull_requests") db.exec(WORK_ITEM_PULL_REQUEST_SQL);
+      else if (migration.id === "0018_work_item_surface_fields")
+        db.exec(WORK_ITEM_SURFACE_FIELDS_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

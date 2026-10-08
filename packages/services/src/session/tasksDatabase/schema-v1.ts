@@ -642,3 +642,36 @@ export const WORK_ITEM_PULL_REQUEST_SQL = `
   CREATE INDEX IF NOT EXISTS idx_work_item_pull_requests_pr
     ON work_item_pull_requests(workspace_key, repo_owner, repo_name, pr_number);
 `;
+
+/* 0018（工作项 Surface 对齐 · 阶段一 R1）：`work_items` 加 7 列 + `UNIQUE(workspace_key, identifier_seq)`。
+   回填纪律**分两半**（拆解报告 §2.1/§2.2/§2.3，用户裁定 Q4/Q5/Q6）：
+
+   ① `priority` / `start_date` / `due_date` / `creator_kind` / `creator_id` / `creator_display_name`
+      —— **零回填**：存量行没有「谁定过优先级 / 哪天开始 / 谁按下的创建」这些事实。填默认值
+      （如 `priority='medium'`）是替用户编一个没人决定过的选择，`creator=assignee` 更是**伪造历史**
+      （指派是「派给谁」，创建人是「谁按下的创建」，两件事）。NULL = 未设置 / 迁移前未知，不猜。
+
+   ② `identifier_seq` —— **全量回填**：事实是「顺序」，依据是既有的 `created_at`（`id` 只做同刻并列的
+      确定性 tie-break），每 workspace 从 1 编号。归档行**也占号**（identifier 是永久标签，故唯一索引
+      **不带** `archived_at IS NULL` 谓词）。DDL 允许 NULL（SQLite 的 `ADD COLUMN` 不能带 NOT NULL 无缺省），
+      「行必须有号」由写入口保证（`workItemRepo.insert` 语句内 `COALESCE(MAX)+1` 原子生成）。
+
+   本迁移**只加列与索引、不改既有列/表**；SQL 冻结后不得再改（改了老库升级抛 `checksum_mismatch`）。 */
+export const WORK_ITEM_SURFACE_FIELDS_SQL = `
+  ALTER TABLE work_items ADD COLUMN priority TEXT;
+  ALTER TABLE work_items ADD COLUMN start_date TEXT;
+  ALTER TABLE work_items ADD COLUMN due_date TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_kind TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_id TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_display_name TEXT;
+  ALTER TABLE work_items ADD COLUMN identifier_seq INTEGER;
+  WITH ranked AS (
+    SELECT id AS ranked_id,
+           ROW_NUMBER() OVER (PARTITION BY workspace_key ORDER BY created_at ASC, id ASC) AS seq
+    FROM work_items
+  )
+  UPDATE work_items
+    SET identifier_seq = (SELECT seq FROM ranked WHERE ranked.ranked_id = work_items.id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_identifier
+    ON work_items(workspace_key, identifier_seq);
+`;

@@ -33,7 +33,10 @@ function ledger(db: DatabaseSync): Array<{ id: string; checksum: string }> {
   }>;
 }
 
+// 0004 建表时是 3 条；0018（工作项 Surface 对齐·阶段一 R1）给 work_items 追加了
+// `UNIQUE(workspace_key, identifier_seq)` 一条 —— 这是这张表**唯一**一次索引追加。
 const EXPECTED_WORK_ITEM_INDEXES = [
+  "idx_work_items_identifier",
   "idx_work_items_parent",
   "idx_work_items_status",
   "idx_work_items_workspace",
@@ -124,6 +127,18 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP INDEX idx_work_item_deliverables_run",
     "DROP INDEX idx_work_item_deliverables_item",
     "DROP TABLE work_item_deliverables",
+  ],
+  // 0018（工作项 Surface 对齐 · 阶段一 R1）：work_items 加 7 列 + 一条唯一索引。
+  // 列级追加（不改表）⇒ 反向 DDL 先撤索引（列在索引里，先 DROP COLUMN 会被拒绝）再逐列 DROP。
+  "0018_work_item_surface_fields": [
+    "DROP INDEX idx_work_items_identifier",
+    "ALTER TABLE work_items DROP COLUMN identifier_seq",
+    "ALTER TABLE work_items DROP COLUMN creator_display_name",
+    "ALTER TABLE work_items DROP COLUMN creator_id",
+    "ALTER TABLE work_items DROP COLUMN creator_kind",
+    "ALTER TABLE work_items DROP COLUMN due_date",
+    "ALTER TABLE work_items DROP COLUMN start_date",
+    "ALTER TABLE work_items DROP COLUMN priority",
   ],
 };
 

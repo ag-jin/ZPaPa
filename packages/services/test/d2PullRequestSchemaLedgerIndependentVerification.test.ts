@@ -209,6 +209,9 @@ const LEDGER_IDS = [
   "0015_squad_run_usage",
   "0016_work_item_deliverables",
   "0017_work_item_pull_requests",
+  // 0018（工作项 Surface 对齐 · 阶段一 R1）：D2 之后追加的最后一条 —— 本表是全量账本的逐条对号，
+  // 追加迁移时同步补一行（DR2 的「恰 17 条」由此改为全量对号，0017 之前的 id 一字未动仍被钉住）。
+  "0018_work_item_surface_fields",
 ];
 
 /**
@@ -219,7 +222,7 @@ const LEDGER_IDS = [
  */
 const FROZEN_0016_CHECKSUM = "61d1cbe6506fb9deb73e9f84df807feef2e756cba11c1a12fce925b89b756490";
 
-test("账本｜17 条逐条对号；0016 checksum 与基线冻结值一字不差（D2 没动交付物迁移）", () => {
+test("账本｜全量逐条对号；0016 checksum 与基线冻结值一字不差（D2 没动交付物迁移）", () => {
   const db = freshDb();
   const rows = db
     .prepare("SELECT id, checksum FROM tasks_schema_migration ORDER BY id")
@@ -227,7 +230,7 @@ test("账本｜17 条逐条对号；0016 checksum 与基线冻结值一字不差
   assert.deepEqual(
     rows.map((row) => row.id),
     LEDGER_IDS,
-    "账本恰 17 条（D2 只追加 0017，不改既有 id）",
+    "账本逐条对号（D2 只追加 0017；其后追加 0018 —— 既有 id 一个都不改）",
   );
   const byId = new Map(rows.map((row) => [row.id, row.checksum]));
   assert.equal(
@@ -265,7 +268,7 @@ test("升级路径｜把 0017 行与其对象摘掉再跑 ⇒ 恰执行 1 条（
   const count = db.prepare("SELECT COUNT(*) AS n FROM tasks_schema_migration").get() as {
     n: number;
   };
-  assert.equal(count.n, 17);
+  assert.equal(count.n, 18, "补跑后账本 = 全量 18 条（0018 行本来就在，不因 0017 重跑而增减）");
   db.close();
 });
 

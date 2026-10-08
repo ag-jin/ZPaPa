@@ -83,6 +83,18 @@ function downgradeTo0014(db: DatabaseSync): void {
   db.exec("DROP INDEX idx_work_item_pull_requests_pr");
   db.exec("DROP TABLE work_item_pull_requests");
   db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0017_work_item_pull_requests'").run();
+  /* 0018（工作项 Surface 对齐 · 阶段一 R1）落地后同样补上它的反向 DDL：本夹具要模拟的是
+     「升级前 = 止于 0014 的老库」，留下 0018 的列与账本行会让 `ledgerBefore.length` 变成 15 ——
+     那时这条用例测的就不是「0015 的老库升级」而是另一种形状了（同 0016/0017 的登记纪律）。 */
+  db.exec("DROP INDEX idx_work_items_identifier");
+  db.exec("ALTER TABLE work_items DROP COLUMN identifier_seq");
+  db.exec("ALTER TABLE work_items DROP COLUMN creator_display_name");
+  db.exec("ALTER TABLE work_items DROP COLUMN creator_id");
+  db.exec("ALTER TABLE work_items DROP COLUMN creator_kind");
+  db.exec("ALTER TABLE work_items DROP COLUMN due_date");
+  db.exec("ALTER TABLE work_items DROP COLUMN start_date");
+  db.exec("ALTER TABLE work_items DROP COLUMN priority");
+  db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0018_work_item_surface_fields'").run();
 }
 
 test("路径 A（从零建库）：9 个 usage_* 列按序追加（INTEGER / 可空 / 无缺省）；账本 0015 checksum 等于冻结口径", () => {
@@ -103,8 +115,8 @@ test("路径 A（从零建库）：9 个 usage_* 列按序追加（INTEGER / 可
   const entries = ledger(db);
   assert.equal(
     entries.length,
-    17,
-    "账本 0001–0015 共 15 条 + 0016（#7 交付物）+ 0017（#8 PR）各一条",
+    18,
+    "账本 0001–0015 共 15 条 + 0016（#7 交付物）+ 0017（#8 PR）+ 0018（工作项 Surface）各一条",
   );
   const entry = entries.find((row) => row.id === "0015_squad_run_usage");
   assert.ok(entry, "0015 必须已登记");
@@ -180,8 +192,8 @@ test("路径 B（老库升级）：列集 = 升级前 + 9 列（无第三类改�
   );
   assert.equal(
     ledgerAfter.length,
-    17,
-    "升级恰好追加 0015 + 0016 + 0017 三条（降级夹具把三者都退回，补跑时一起装回）",
+    18,
+    "升级恰好追加 0015 + 0016 + 0017 + 0018 四条（降级夹具把四者都退回，补跑时一起装回）",
   );
 });
 

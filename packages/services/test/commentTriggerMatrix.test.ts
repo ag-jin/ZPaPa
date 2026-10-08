@@ -1013,6 +1013,18 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
       "DROP INDEX idx_work_item_pull_requests_item",
       "DROP TABLE work_item_pull_requests",
     ],
+    // 0018（工作项 Surface 对齐 · 阶段一 R1）：work_items 加 7 列 + 一条唯一索引；
+    // 反向 DDL 先撤索引（列在索引里，先 DROP COLUMN 会被拒绝）再逐列 DROP（同 0013/0015 的列级形）。
+    "0018_work_item_surface_fields": [
+      "DROP INDEX idx_work_items_identifier",
+      "ALTER TABLE work_items DROP COLUMN identifier_seq",
+      "ALTER TABLE work_items DROP COLUMN creator_display_name",
+      "ALTER TABLE work_items DROP COLUMN creator_id",
+      "ALTER TABLE work_items DROP COLUMN creator_kind",
+      "ALTER TABLE work_items DROP COLUMN due_date",
+      "ALTER TABLE work_items DROP COLUMN start_date",
+      "ALTER TABLE work_items DROP COLUMN priority",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
   /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整
