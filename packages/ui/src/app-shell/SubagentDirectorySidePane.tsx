@@ -20,6 +20,7 @@ import type {
   SubagentDirectorySidePaneTab,
 } from "@/lib/workspaceSidePane.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
+import { subagentDirectoryRowSummary } from "@/lib/subagentDirectoryRow.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { V4PaneConversationProvider, useV4Conversation } from "@/v4/V4ConversationContext.js";
@@ -73,6 +74,9 @@ const DirectoryRow = memo(function DirectoryRow({
 }) {
   const { intl } = useZCodeIntl();
   const timestamp = "endedAt" in item ? item.endedAt : item.startedAt;
+  // 副文案整段来自纯函数（child 自己的 summary 优先；收敛落 lost 的条目补一句成因——
+  //「已丢失」只说了状态，没说为什么）。组件只渲染它给出的结果。
+  const summary = subagentDirectoryRowSummary(item, (id) => intl.formatMessage({ id }));
   return (
     <button
       type="button"
@@ -89,10 +93,8 @@ const DirectoryRow = memo(function DirectoryRow({
             {intl.formatMessage({ id: `subagentDirectory.status.${item.status}` })}
           </span>
         </span>
-        {item.summary ? (
-          <span className="mt-0.5 block truncate text-ui-sm text-foreground-subtle">
-            {item.summary}
-          </span>
+        {summary ? (
+          <span className="mt-0.5 block truncate text-ui-sm text-foreground-subtle">{summary}</span>
         ) : null}
       </span>
       {timestamp ? (
