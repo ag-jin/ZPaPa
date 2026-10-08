@@ -419,3 +419,86 @@ test("读模型｜协作聚合读恰十键（workItem/viewerActor + 八格数据
     db.close();
   }
 });
+
+/* ---------------- ④ D2/D3 边界（装配级）：快照刷新不得动工作项状态 ---------------- */
+
+test("边界｜配 token 真刷到 merged：mergedPullRequests 报出，但工作项状态一字不动（终态判定是 D3）", async () => {
+  const workspacePath = mkdtempSync(join(tmpdir(), "d2-boundary-"));
+  const db = new DatabaseSync(":memory:");
+  runTasksDatabaseMigrations(db);
+  try {
+    const runtime = await createSquadRuntime({
+      db,
+      workspacePath,
+      workspaceIdentity: WS,
+      readExperimentEnabled: () => true,
+      readGithubPullRequestToken: () => "ghp_verify_boundary",
+      githubFetch: (async () =>
+        new Response(
+          JSON.stringify({
+            number: 7,
+            state: "closed",
+            draft: false,
+            merged: true,
+            merged_at: "2025-01-02T03:04:05Z",
+            title: "Merged widget",
+            head: { ref: "feat/widget", sha: "sha-merged" },
+            mergeable: true,
+            mergeable_state: "clean",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as typeof fetch,
+    });
+    runtime.workItemRepo.insert({
+      id: "wi-boundary",
+      workspaceIdentity: WS,
+      workspacePath,
+      title: "边界工作项",
+      body: "",
+      status: "in_review",
+      assignee: { type: "user", id: "u-1" },
+      labels: [],
+      properties: {},
+      position: 0,
+    });
+    const service = createWorkItemCollaborationService({
+      createRuntime: async () => runtime,
+      getRepos: () => ({
+        comments: createWorkItemCommentRepo(db),
+        activities: createWorkItemActivityRepo(db),
+        decisions: createWorkItemDecisionRepo(db),
+        reactions: createWorkItemCommentReactionRepo(db),
+        receipts: createCommentDispatchReceiptRepo(db),
+      }),
+      localHumanActor: () => ({ kind: "human", id: "u-1" }),
+      now: () => 1,
+    });
+    const target = { path: workspacePath, identity: WS };
+    await service.linkWorkItemPullRequest(target, {
+      workItemId: "wi-boundary",
+      url: "https://github.com/acme/widget/pull/7",
+    });
+    const report = await service.refreshWorkItemPullRequests(target, {
+      workItemId: "wi-boundary",
+    });
+
+    assert.deepEqual(
+      report.items.map((item) => [item.prNumber, item.outcome, item.state]),
+      [[7, "updated", "merged"]],
+      "在线形态：快照刷新成功且状态是 merged",
+    );
+    assert.deepEqual(
+      report.mergedPullRequests.map((fact) => [fact.prNumber, fact.mergedAt]),
+      [[7, 1735787045000]],
+      "D3 的口：merged 事实读自库（含 merged_at 的 ms 值）",
+    );
+    assert.equal(
+      runtime.workItemRepo.get("wi-boundary")!.status,
+      "in_review",
+      "D2 不做终态判定：工作项状态必须一字不动（唯一写者仍是 WorkItemService.transition，D3 在调用点做）",
+    );
+  } finally {
+    rmSync(workspacePath, { recursive: true, force: true });
+    db.close();
+  }
+});
