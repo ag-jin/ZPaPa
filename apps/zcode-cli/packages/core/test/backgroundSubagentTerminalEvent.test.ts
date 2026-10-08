@@ -40,7 +40,9 @@ const launchOutput = {
  * 但真实返回的是 registry 里的 RuntimeTaskSnapshot（见 runner.ts 的 getTask → registry.get），
  * 而判断「已通知的本地 agent」正是读这个字段。缺了它用例会走不到那条分支（假绿）。
  */
-function completedTaskSnapshot(overrides: Partial<SubagentTaskSnapshot> = {}): SubagentTaskSnapshot {
+function completedTaskSnapshot(
+  overrides: Partial<SubagentTaskSnapshot> = {},
+): SubagentTaskSnapshot {
   return {
     type: "local_agent",
     taskId: AGENT_ID,
@@ -56,9 +58,10 @@ function completedTaskSnapshot(overrides: Partial<SubagentTaskSnapshot> = {}): S
   } as unknown as SubagentTaskSnapshot;
 }
 
-function createTracker(options: {
-  snapshot: SubagentTaskSnapshot | undefined;
-}): { tracker: BackgroundTaskTracker; events: SessionEvent[] } {
+function createTracker(options: { snapshot: SubagentTaskSnapshot | undefined }): {
+  tracker: BackgroundTaskTracker;
+  events: SessionEvent[];
+} {
   const events: SessionEvent[] = [];
   const tracker = new BackgroundTaskTracker({
     emitEvent: async (event: SessionEvent) => {
