@@ -595,9 +595,8 @@ test("混合：一个已结束、一个本进程在跑、一个孤儿 ⇒ 只收
     childActivityAt: NOW - SUBAGENT_ORPHAN_GRACE_MS - 1,
   });
   const parentMessages = state.messages.get(PARENT_SESSION_ID) ?? [];
-  const [user, assistant] = parentMessages;
   state.messages.set(PARENT_SESSION_ID, [
-    user,
+    parentMessages[0] ?? userMessage(),
     assistantMessage({
       background: true,
       startedAt: NOW - 3 * HOUR + MINUTE,
