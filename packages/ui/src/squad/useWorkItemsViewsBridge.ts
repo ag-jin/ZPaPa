@@ -101,9 +101,9 @@ export function useWorkItemsViewsBridge(input: {
 
   const views = useWorkItemViews({
     io: viewIo,
-    /* 观察者身份：**读面没有带回它**（R6a 的 list 只回记录）⇒ 归属不可判定（`null`），
-       界面按「服务面是权威」渲染；UI 不得自造身份（D1-A 的既定纪律）。登记给 T-P2-V。 */
-    owner: null,
+    /* 归属不用接线层给：**读面逐行带回** `ownedByViewer`（`listWorkItemViews` 按注入身份算），
+       状态机的标签/管理面板投影直接消费它。UI 没有身份链（D1-A：不许自造身份）—— R6b 期间的
+       `owner: null` 占位曾让「编辑禁用 / 删除不渲染」两个分支不可达（T-P2-V §9-2），已拆。 */
     surface,
     laneDimension,
     /* 首开 seed 的落地口：状态在页面（R1 冻结），本层只把 seed 灌进去。 */

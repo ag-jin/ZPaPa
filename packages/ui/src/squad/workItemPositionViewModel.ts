@@ -82,6 +82,40 @@ export function workItemPositionPlan(input: {
   return { kind: "resequence", updates };
 }
 
+/**
+ * **一次拖拽落点的唯一处理**（T-P2-V §8 缺口 1 的修补）：DOM 事件的两个 id → 找被拖行所在的泳道
+ * → 纯函数算计划 → 非 `none` 时**恰一次**交回写路径。
+ *
+ * 为什么必须提纯（而不是留在看板的 `onDragEnd` 里）：T-P2-V 的 M10 实证了「`handleDragEnd` 整段
+ * 短路后 ui 整包仍全绿」—— 取事件 id、找泳道、交回写路径这三步当时零自动化覆盖，而拖拽这一面的
+ * 坏法全是静默的（落到别的列却写了一个位置值、误触也写一次盘、计划算出来了却没交出去）。本函数把
+ * 这三步收成一处可逐格测试的实现，看板只剩「把 `over.active.id` / `over.id` 与泳道映射传进来」。
+ *
+ * 落点语义全在 `workItemPositionPlan`（本函数**只找泳道**，不重算位置值）：
+ * · 指针没落在任何行上（`over === null`）⇒ `none`；
+ * · 被拖行不在任何泳道（行在两次渲染之间消失 / DOM 给了陈旧 id）⇒ `none`；
+ * · 落点在**别的**泳道（跨列，v1 有意不做 —— 那是改状态的语义，不发明）⇒ 纯函数给 `none`。
+ * `none` ⇒ **不调** `onPlan`：写一个等值的 position 只是多一次写盘与一次刷新。
+ */
+export function workItemBoardDrop(input: {
+  /** 被拖行的 id（`String(event.active.id)` 的转换在事件绑定处，本层只认字符串）。 */
+  activeId: string;
+  /** 指针下的行 id（`null` = 没落在任何行上）。 */
+  overId: string | null;
+  /** 泳道映射：每列的行（repo 次序）。列内次序即落点语义的输入。 */
+  lanes: readonly (readonly WorkItemPositionRow[])[];
+  /** 写路径（页面注入的**唯一**写入口；本层不写库、不落位）。 */
+  onPlan: (plan: WorkItemPositionPlan) => void;
+}): WorkItemPositionPlan {
+  const { activeId, overId, lanes, onPlan } = input;
+  if (overId === null) return { kind: "none" };
+  const lane = lanes.find((rows) => rows.some((row) => row.id === activeId));
+  if (lane === undefined) return { kind: "none" };
+  const plan = workItemPositionPlan({ rows: lane, activeId, overId });
+  if (plan.kind !== "none") onPlan(plan);
+  return plan;
+}
+
 /** 计划里的全部写入（`none` ⇒ 空数组；调用方与用例共用这一份"计划 → 写入"的投影）。 */
 export function workItemPositionPlanUpdates(
   plan: WorkItemPositionPlan,

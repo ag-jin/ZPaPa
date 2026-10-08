@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   CreateWorkItemViewInput,
   PatchWorkItemViewInput,
-  WorkItemViewOwner,
   WorkItemViewRecord,
 } from "@zcode/services";
 import { WORK_ITEM_VIEW_REVISION_CONFLICT_CODE } from "@zcode/services";
@@ -22,9 +21,7 @@ import {
   workItemViewSeed,
   workItemViewTabs,
   type WorkItemViewBaseline,
-  type WorkItemViewDisplayDocument,
   type WorkItemViewManageRow,
-  type WorkItemViewQueryDocument,
   type WorkItemViewSummaryEntry,
   type WorkItemViewTab,
 } from "./workItemViewsViewModel.js";
@@ -64,8 +61,6 @@ export type WorkItemViewsController = ReturnType<typeof useWorkItemViews>;
 export function useWorkItemViews(input: {
   /** 有 workspace 目标且读写面已接线（`io === null` ⇒ 条上只剩内建锚，不可建）。 */
   io: WorkItemViewIo | null;
-  /** 观察者身份：**读面没有带回它**（R6a 的 list 只回记录）⇒ 传 `null`（归属不可判定）。 */
-  owner: WorkItemViewOwner | null;
   surface: WorkItemSurfaceState;
   laneDimension: WorkItemLaneDimension;
   /** 首开 seed 的落地口（页面注入：把 seed 灌进它持有的 surface + 分组状态）。 */
@@ -102,7 +97,7 @@ export function useWorkItemViews(input: {
   cancelDelete: () => void;
   runDelete: () => Promise<void>;
 } {
-  const { io, owner, surface, laneDimension, applySeed, onError, onMissing } = input;
+  const { io, surface, laneDimension, applySeed, onError, onMissing } = input;
 
   const [views, setViews] = useState<WorkItemViewRecord[]>([]);
   /* 打开态是**页面内存态**（不写进任何存储）：恢复了已删视图的 id 会把用户困在"打开着一个
@@ -274,8 +269,10 @@ export function useWorkItemViews(input: {
   }, []);
 
   return {
-    tabs: useMemo(() => workItemViewTabs({ views, owner }), [owner, views]),
-    manageRows: useMemo(() => workItemViewManageRows({ views, owner }), [owner, views]),
+    /* 归属（谁可管理）由**读面带回的** `ownedByViewer` 逐行给（`listVisible` 按注入身份算）——
+       本层不持有"观察者身份"这类状态：UI 没有身份链（D1-A），自造一份就是第二份判据。 */
+    tabs: useMemo(() => workItemViewTabs({ views }), [views]),
+    manageRows: useMemo(() => workItemViewManageRows({ views }), [views]),
     activeViewId,
     activeView,
     baseline: useMemo(

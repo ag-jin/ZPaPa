@@ -15,7 +15,6 @@ import {
   workItemViewBaseline,
   workItemViewHasIncrement,
   workItemViewListAfterLoad,
-  workItemViewOwnedBy,
   workItemViewSeed,
   workItemViewTabActions,
   workItemViewTabs,
@@ -292,13 +291,18 @@ test("不回写｜本地调整后再打开同一视图：状态回到**定义**�
 
 // ---------- ④ 视图条投影：内建锚 + 可见视图 + 权限（编辑禁用 / 删除不渲染） ----------
 
-test("视图条｜标签投影：内建锚恒第一枚（不可隐藏不可删）+ 保存视图同列，标注我是不是 owner", () => {
+test("视图条｜标签投影：内建锚恒第一枚（不可隐藏不可删）+ 保存视图同列，归属取读面的 ownedByViewer", () => {
   const tabs = workItemViewTabs({
     views: [
-      view({ id: "view-mine", name: "我的" }),
-      view({ id: "view-shared", name: "别人的共享", owner: { kind: "human", id: "other" } }),
+      view({ id: "view-mine", name: "我的", ownedByViewer: true }),
+      view({
+        id: "view-shared",
+        name: "别人的共享",
+        owner: { kind: "human", id: "other" },
+        visibility: "workspace",
+        ownedByViewer: false,
+      }),
     ],
-    owner: { kind: "human", id: "me" },
   });
   assert.deepEqual(
     tabs.map((tab) => [tab.id, tab.name, tab.builtin, tab.ownership]),
@@ -308,24 +312,21 @@ test("视图条｜标签投影：内建锚恒第一枚（不可隐藏不可删�
       ["view-shared", "别人的共享", false, "other"],
     ],
     "内建锚在第一枚（默认落地态），保存视图按列表次序（created_at ASC，repo 给的），" +
-      "ownership = 归属三态（管理权的唯一判据）",
+      "ownership = 归属三态（管理权的唯一判据）= 读面带回的 `ownedByViewer`",
   );
   assert.equal(tabs[0]!.nameId, "squad.workItems.filter.all", "内建锚的文案复用既有的「全部」键");
-  assert.deepEqual(workItemViewTabActions(tabs[1]!), { canManage: true }, "自己的视图：可管理");
+  assert.deepEqual(workItemViewTabActions(tabs[1]!), { canManage: true }, "自己的视图：可编辑可删");
   assert.deepEqual(
     workItemViewTabActions(tabs[2]!),
     { canManage: false },
-    "别人的共享视图：看得见但改不动（编辑置灰、删除不渲染）",
+    "别人的共享视图：看得见但改不动（编辑置灰、删除不渲染）—— T-P2-V §9-2「权限镜像未点亮」的那一格",
   );
-  // 身份**不可判定**（读面没带回观察者身份）⇒ 界面按「服务面是权威」渲染（不假装「不是我的」）。
-  const unknown = workItemViewTabs({
-    views: [view({ id: "view-x" })],
-    owner: null,
-  });
+  // 读面**没带回归属**（记录没有这一位）⇒ 不可判定：界面按「服务面是权威」渲染，不猜一个 owner 出来。
+  const unknown = workItemViewTabs({ views: [view({ id: "view-x" })] });
   assert.deepEqual(
     unknown.map((tab) => tab.ownership),
     ["unknown", "unknown"],
-    "身份缺席 ⇒ 归属不可判定（UI 不得自造身份：D1-A 的既定纪律）",
+    "归属缺席 ⇒ 不可判定（D1-A 的既定纪律：UI 不自造身份）",
   );
   assert.deepEqual(
     workItemViewTabActions(unknown[1]!),
@@ -339,16 +340,10 @@ test("视图条｜标签投影：内建锚恒第一枚（不可隐藏不可删�
   );
 });
 
-test("视图条｜权限判据逐格：owner 比对按 (kind, id) 两列，身份缺失一律不可管理", () => {
-  const mine = view({ owner: { kind: "human", id: "me" } });
-  assert.equal(workItemViewOwnedBy(mine, { kind: "human", id: "me" }), true, "同 kind 同 id");
-  assert.equal(
-    workItemViewOwnedBy(mine, { kind: "agent", id: "me" }),
-    false,
-    "id 相同但 kind 不同不是同一个人（owner 是 (kind, id) 两列）",
-  );
-  assert.equal(workItemViewOwnedBy(mine, null), false, "身份未知 ⇒ 不可管理（响亮失败优于猜）");
-});
+/* `(kind, id)` 两列的 owner 比对**不再在 UI 侧**（T-P2-V §9-2 的修补：UI 没有身份链，自造一份比对
+   就等于第二份判据）—— 判据上移到读面：repo 按注入身份现场算 `ownedByViewer`，服务面列表逐行带回。
+   相应的逐格用例在 services 侧（`workItemViewService.test.ts` B1b + `workItemViewRepo.test.ts` 的
+   listVisible 归属用例），本文件只钉「投影消费这一位」。 */
 
 // ---------- ⑤ 视图消失（删 / 无权）⇒ 退出到默认标签 + 提示 ----------
 
@@ -486,21 +481,30 @@ test("表单｜可见性：勾选 = workspace 共享；`my` 档的视图恒私�
 });
 
 test("管理面板｜行投影：每行带记录 + 标签 + 管理权（三处共用同一份判据）", () => {
-  const mine = view({ id: "view-mine", name: "我的" });
-  const other = view({ id: "view-other", name: "别人的", owner: { kind: "human", id: "other" } });
+  const mine = view({ id: "view-mine", name: "我的", ownedByViewer: true });
+  const other = view({
+    id: "view-other",
+    name: "别人的",
+    owner: { kind: "human", id: "other" },
+    visibility: "workspace",
+    ownedByViewer: false,
+  });
   assert.deepEqual(
-    workItemViewManageRows({ views: [mine, other], owner: { kind: "human", id: "me" } }).map(
-      (row) => [row.view.id, row.tab.name, row.canManage],
-    ),
+    workItemViewManageRows({ views: [mine, other] }).map((row) => [
+      row.view.id,
+      row.tab.name,
+      row.canManage,
+    ]),
     [
       ["view-mine", "我的", true],
       ["view-other", "别人的", false],
     ],
-    "管理面板只列**可见**视图（list 已滤），每行给出管理权（编辑禁用 / 删除不渲染的判据）",
+    "管理面板只列**可见**视图（list 已滤），每行给出管理权（编辑禁用 / 删除不渲染的判据）：" +
+      "他人的共享视图 = false —— R6b 已实现的那两个 UI 分支由此从不可达变为可达",
   );
   assert.deepEqual(
-    workItemViewManageRows({ views: [mine], owner: null }).map((row) => row.canManage),
+    workItemViewManageRows({ views: [view({ id: "view-x" })] }).map((row) => row.canManage),
     [null],
-    "身份不可判定 ⇒ canManage = null（面板同样按「服务面是权威」处理）",
+    "读面没带回归属 ⇒ canManage = null（面板同样按「服务面是权威」处理）",
   );
 });

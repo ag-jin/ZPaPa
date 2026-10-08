@@ -10,17 +10,14 @@ import type { SquadSnapshot, WorkItemViewRecord } from "@zcode/services";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
-import { WorkItemViewDialogs } from "../src/squad/WorkItemViewDialogs.js";
 import { WorkItemViewsBar } from "../src/squad/WorkItemViewsBar.js";
 import { WorkItemsPageActions } from "../src/squad/WorkItemsPageActions.js";
 import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
 import {
-  WORK_ITEM_VIEW_ANCHOR_ID,
   workItemViewBaseline,
   workItemSortKeysForLaneDimension,
   workItemViewDialogProjection,
   workItemViewTabs,
-  type WorkItemViewManageRow,
 } from "../src/squad/workItemViewsViewModel.js";
 import {
   applyWorkItemSurfaceIntent,
@@ -122,7 +119,7 @@ function renderBar(over: {
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
       children: createElement(WorkItemViewsBar, {
-        tabs: workItemViewTabs({ views, owner: { kind: "human", id: "me" } }),
+        tabs: workItemViewTabs({ views }),
         activeViewId,
         busy,
         disabled,
@@ -450,9 +447,63 @@ test("拖拽落库（验收 4）｜计划经 updateWorkItem 的 position 白名�
       surface.includes("reorder: reorderCapability"),
     "宿主按唯一判据投影拖拽能力（行只据此挂不挂把手）",
   );
+  /* 落点处理必须走提纯后的唯一实现（T-P2-V §8 缺口 1 / M10：`handleDragEnd` 整段短路后 ui 整包
+     仍全绿）—— 这几条把"组件只做事件绑定与调用"钉住：自己算位置值 ⇒ 红；传一份没有 position 的
+     泳道映射（拖了没有落点，且不报错）⇒ 红；**在调用之前短路 return / 不把计划交回写路径** ⇒ 红。
+     落点语义本身在 workItemPosition.test.ts 逐格钉住。 */
+  const board = stripComments(readSource("squad/WorkItemsBoard.tsx"));
+  assert.ok(
+    board.includes("workItemBoardDrop(") && !board.includes("workItemPositionPlan("),
+    "看板把落点处理交给 workItemBoardDrop（不自己找泳道、不自己算计划）",
+  );
+  assert.ok(
+    /lanes\.map\(\(boardLane\)[\s\S]{0,160}row\.item\.position/.test(board),
+    "落点用的泳道映射必须带上落库的 position（映射成空/少了位置 = 每次拖拽都静默 none）",
+  );
+  /* 组件级的 M10 形态（整段短路 / 只算不交）逐格钉：把 `handleDragEnd` 的函数体切出来看 ——
+     提前 `return`、或把 `onPlan` 换成空函数（计划算了却交不出去），都是**不报错**的坏法。 */
+  const dragEnd = /const handleDragEnd =[\s\S]*?\n {2}\};/.exec(board)?.[0] ?? "";
+  assert.ok(dragEnd.includes("workItemBoardDrop("), "handleDragEnd 的函数体必须真的调用落点处理");
+  assert.ok(
+    dragEnd.includes("onPlan: reorderCapability.onPlan"),
+    "计划必须交回行环境给的写入口（换掉它 = 拖了但库里没动，且不报错）",
+  );
+  assert.ok(
+    !dragEnd.includes("return"),
+    "handleDragEnd 不得有短路 return（落点处理整段在 workItemBoardDrop 里，本层不做判断）",
+  );
 });
 
-// ---------- ⑥ 写路径单点（验收 2「本地调整不回写定义」的结构判据） ----------
+// ---------- ⑥ 权限镜像接线（T-P2-V §9-2：owner: null 死路已拆，编辑禁用/删除不渲染变可达） ----------
+
+test("权限镜像｜归属由读面带回：接线层不再注入观察者身份，投影只消费 ownedByViewer", () => {
+  /* 点亮前后的对照（T-P2-V §9-2 实测）：R6b 期间 `owner: null` ⇒ 每一行 ownership 都是
+     "unknown" ⇒ `canManage = null` ⇒ **别人的共享视图也渲染可点的编辑/删除**（点下去才
+     forbidden）——R6b 已实现的「编辑禁用 / 删除不渲染」两个分支生产接线不可达。
+     现在：服务面列表逐行带回 `ownedByViewer`（repo 按注入身份算），UI 只消费它。 */
+  const bridge = stripComments(readSource("squad/useWorkItemsViewsBridge.ts"));
+  assert.ok(
+    !bridge.includes("owner:"),
+    "接线层不再注入「观察者身份」（UI 没有身份链：那一份只能是占位/自造）",
+  );
+  const hook = stripComments(readSource("squad/useWorkItemViews.ts"));
+  assert.ok(
+    hook.includes("workItemViewTabs({ views })") &&
+      hook.includes("workItemViewManageRows({ views })"),
+    "状态机的投影只吃记录本身（归属在记录上）",
+  );
+  const model = stripComments(readSource("squad/workItemViewsViewModel.ts"));
+  assert.ok(
+    model.includes("view.ownedByViewer"),
+    "归属判据读读面带回的 `ownedByViewer`（变异：改回「不读这一位」⇒ 本条 + 纯函数用例红）",
+  );
+  assert.ok(
+    !model.includes("owner: WorkItemViewOwner | null"),
+    "投影不再有「观察者身份」入参（(kind, id) 比对只在服务面算一次）",
+  );
+});
+
+// ---------- ⑦ 写路径单点（验收 2「本地调整不回写定义」的结构判据） ----------
 
 /** 全 src 树里出现某个字面量的文件（相对 `src/`）。 */
 function filesUsing(needle: string): string[] {
@@ -545,7 +596,7 @@ test("视图消失｜退出默认标签 + 一次提示（missingToast 只在状�
   );
 });
 
-// ---------- ⑦ 破例键：视图条这一面用到的键**全部**来自破例段（12 枚）+ 既有键 ----------
+// ---------- ⑧ 破例键：视图条这一面用到的键**全部**来自破例段（12 枚）+ 既有键 ----------
 
 test("守卫｜视图面用到的文案键：破例 12 枚 + 既有键，且两语齐备（裸 key 是静默坏法）", () => {
   const exception = [

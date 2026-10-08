@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   WORK_ITEM_POSITION_CLEARED,
   executeWorkItemPositionPlan,
+  workItemBoardDrop,
   workItemPositionOrder,
   workItemPositionPlan,
   workItemPositionPlanUpdates,
@@ -181,4 +182,88 @@ test("执行｜逐条串行调用写入口（次序稳定），失败**不吞**�
 
 test("清位值｜「无手动序」的取值是 0（列是 REAL NOT NULL DEFAULT 0；不造 null）", () => {
   assert.equal(WORK_ITEM_POSITION_CLEARED, 0, "清位 = 写 0（R6s 裁定的语义：与新建项的默认同值）");
+});
+
+// ---------- ④ 落点处理（DOM 事件的 active/over → 找泳道 → 计划 → 交回写路径） ----------
+
+/* 为什么这一段必须存在（T-P2-V §8 缺口 1，M10 实证）：`handleDragEnd` 的这四步 —— 取事件的
+   active/over id → 找被拖行所在的泳道 → 纯函数算计划 → 非 `none` 时交回写路径 —— 当时**零自动化
+   覆盖**：把整段短路后 ui 整包仍然全绿。拖拽这一面的坏法又全是**静默**的（落到别的列却写了一个
+   位置值、误触也写一次盘、计划算出来了却没有交回写路径）。
+
+   本段钉住提纯后的唯一实现：输入 = 事件的 active/over id + **泳道映射**（每列的行），输出 = 计划或
+   `none`；写库只能经注入的 `onPlan` **恰一次**（`none` ⇒ 一次都不调）。期望值的独立真源：拆解卡
+   §T-P2-R6b「position 拖拽合流」（列内落点 = 邻居中值 / 列首列尾；跨列 v1 有意不做 = `none`）+
+   上面 ①-③ 已钉住的 `workItemPositionPlan` 语义（本段只钉「找泳道」与「交回写路径」，位置值不重算）。 */
+
+/** 一条泳道：`[id, position]` 逐行手写（position 是落库值，不按行序号现算）。 */
+function lane(...rows: Array<[string, number]>): Array<{ id: string; position: number }> {
+  return rows.map(([id, position]) => ({ id, position }));
+}
+
+/** 跑一次落点处理，并记录**交回写路径**的那些计划（恰一次 = 长度 1；`none` = 长度 0）。 */
+function drop(input: {
+  activeId: string;
+  overId: string | null;
+  lanes: Array<Array<{ id: string; position: number }>>;
+}): { plan: WorkItemPositionPlan; handed: WorkItemPositionPlan[] } {
+  const handed: WorkItemPositionPlan[] = [];
+  const plan = workItemBoardDrop({ ...input, onPlan: (planned) => handed.push(planned) });
+  return { plan, handed };
+}
+
+test("落点处理｜列内落点：计划按落点语义给，且交回写路径**恰一次**（页面是唯一写入口）", () => {
+  const lanes = [lane(["a", 2], ["b", 4], ["c", 6]), lane(["x", 2], ["y", 4])];
+  const expected: WorkItemPositionPlan = { kind: "set", workItemId: "c", position: 1 };
+  assert.deepEqual(
+    drop({ activeId: "c", overId: "a", lanes }).plan,
+    expected,
+    "c 落到列首 a 之前 ⇒ 位置 = a 的 2 减 1（与 ① 同一份落点语义：本层只找泳道）",
+  );
+  assert.deepEqual(
+    drop({ activeId: "c", overId: "a", lanes }).handed,
+    [expected],
+    "非 none 的计划**恰一次**交回写路径（本层不写库）",
+  );
+  /* 并列 position（新建项的默认 0）⇒ 计划里是多条写入，但**只交付一次**
+     （逐条串行落库由写路径 `executeWorkItemPositionPlan` 负责，不在这里逐条调）。 */
+  const tied = drop({ activeId: "c", overId: "b", lanes: [lane(["a", 0], ["b", 0], ["c", 0])] });
+  assert.deepEqual(
+    tied.plan,
+    {
+      kind: "resequence",
+      updates: [
+        { workItemId: "c", position: 1 },
+        { workItemId: "b", position: 2 },
+      ],
+    },
+    "并列邻居 ⇒ 整列重排（不是算出一个「没有变化」的中值）",
+  );
+  assert.deepEqual(tied.handed, [tied.plan], "多条写入的计划同样只交付一次（不逐条调写路径）");
+});
+
+test("落点处理｜跨列落点：none 且**不写**（v1 不做跨列 = 不发明「拖过去就改状态」）", () => {
+  const lanes = [lane(["a", 2], ["b", 4]), lane(["x", 2], ["y", 4])];
+  const dropped = drop({ activeId: "a", overId: "x", lanes });
+  assert.deepEqual(dropped.plan, { kind: "none" }, "目标在**别的**泳道 ⇒ 计划 none");
+  assert.deepEqual(
+    dropped.handed,
+    [],
+    "一次都不调写路径（写一个等值的 position 只是多一次写盘与一次刷新）",
+  );
+});
+
+test("落点处理｜落点不可用：over 缺席 / 目标不在任何泳道 / 被拖行不在任何泳道 / 落点是自己 ⇒ none 不写", () => {
+  const lanes = [lane(["a", 2], ["b", 4]), lane(["x", 2], ["y", 4])];
+  const cases: Array<{ label: string; activeId: string; overId: string | null }> = [
+    { label: "指针没落在任何行上（over = null）", activeId: "a", overId: null },
+    { label: "目标不在任何泳道（DOM 给了未知 id）", activeId: "a", overId: "不认识" },
+    { label: "被拖行不在任何泳道（行在两次渲染之间消失）", activeId: "已消失", overId: "a" },
+    { label: "落点就是自己（误触 / 原地放下）", activeId: "a", overId: "a" },
+  ];
+  for (const { label, activeId, overId } of cases) {
+    const dropped = drop({ activeId, overId, lanes });
+    assert.deepEqual(dropped.plan, { kind: "none" }, `${label} ⇒ 计划 none`);
+    assert.deepEqual(dropped.handed, [], `${label} ⇒ 零次写入`);
+  }
 });

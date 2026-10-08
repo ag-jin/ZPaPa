@@ -1,5 +1,4 @@
 import type {
-  WorkItemViewOwner,
   WorkItemViewRecord,
   WorkItemViewScopeType,
   WorkItemViewVisibility,
@@ -278,26 +277,30 @@ export type WorkItemViewTab = {
   /** 内建锚的文案 id（保存视图为 `null` —— 用户数据不走 i18n）。 */
   nameId: string | null;
   builtin: boolean;
-  /** 归属（管理权的**唯一**判据）：\`unknown\` = 读面没带回观察者身份 ⇒ **不可判定**
-      （界面不假装"不是我的"—— multica 的客户端镜像要靠 /me 那份身份，ZPaPa 的视图读面还没有它）。 */
+  /** 归属（管理权的**唯一**判据）：取**读面带回的** `ownedByViewer`；读面没带 ⇒ `unknown`
+      （不可判定 —— 界面不假装"不是我的"：UI 没有身份链，D1-A 不许自造）。 */
   ownership: WorkItemViewOwnership;
 };
 
-/** 归属三态（闭集）：我的 / 别人的 / 不可判定（身份缺席）。 */
+/** 归属三态（闭集）：我的 / 别人的 / 不可判定（读面没带回 `ownedByViewer`）。 */
 export type WorkItemViewOwnership = "mine" | "other" | "unknown";
 
-/** owner 比对（`(kind, id)` 两列；身份未知 ⇒ 不可管理 —— 响亮失败优于猜一个 owner 出来）。 */
-export function workItemViewOwnedBy(
-  view: WorkItemViewRecord,
-  owner: WorkItemViewOwner | null,
-): boolean {
-  return owner !== null && view.owner.kind === owner.kind && view.owner.id === owner.id;
+/**
+ * 归属判定（**唯一**输入 = 读面带回的 `ownedByViewer`）。
+ *
+ * 判据为什么要从"UI 侧拿身份比 (kind, id)"改成"读面的投影"：UI **没有**身份链 ——
+ * R6b 期间只能给 `owner: null`（占位），结果是每一行都落进"不可判定"，别人的共享视图也渲染出
+ * 可点的编辑/删除（点下去才 forbidden，T-P2-V §9-2 实测）。服务面的列表读面按注入身份把
+ * `(kind, id)` 两列比好、逐行带回真值（`workItemViewRepo.listVisible`），本层只消费它。
+ */
+export function workItemViewOwnership(view: WorkItemViewRecord): WorkItemViewOwnership {
+  if (view.ownedByViewer === undefined) return "unknown";
+  return view.ownedByViewer ? "mine" : "other";
 }
 
 /** 标签列表：内建锚恒第一枚，保存视图按 repo 给的次序（created_at ASC, id ASC）。 */
 export function workItemViewTabs(input: {
   views: readonly WorkItemViewRecord[];
-  owner: WorkItemViewOwner | null;
 }): WorkItemViewTab[] {
   return [
     {
@@ -312,18 +315,9 @@ export function workItemViewTabs(input: {
       name: view.name,
       nameId: null,
       builtin: false,
-      ownership: workItemViewOwnership(view, input.owner),
+      ownership: workItemViewOwnership(view),
     })),
   ];
-}
-
-/** 归属判定（`(kind, id)` 两列比对；观察者身份缺席 ⇒ `unknown` —— 不猜一个 owner 出来）。 */
-export function workItemViewOwnership(
-  view: WorkItemViewRecord,
-  owner: WorkItemViewOwner | null,
-): WorkItemViewOwnership {
-  if (owner === null) return "unknown";
-  return workItemViewOwnedBy(view, owner) ? "mine" : "other";
 }
 
 /**
@@ -576,10 +570,9 @@ export type WorkItemViewManageRow = {
 
 export function workItemViewManageRows(input: {
   views: readonly WorkItemViewRecord[];
-  owner: WorkItemViewOwner | null;
 }): WorkItemViewManageRow[] {
   return input.views.map((view) => {
-    const tab = workItemViewTabs({ views: [view], owner: input.owner })[1]!;
+    const tab = workItemViewTabs({ views: [view] })[1]!;
     return { view, tab, canManage: workItemViewTabActions(tab).canManage };
   });
 }

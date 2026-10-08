@@ -15,7 +15,7 @@ import {
 import type { WorkItem, WorkItemStatusCategory } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { parseAssigneeValue } from "./squadEntryViewModel.js";
-import { workItemPositionPlan } from "./workItemPositionViewModel.js";
+import { workItemBoardDrop } from "./workItemPositionViewModel.js";
 import { WorkItemRowList, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import type { WorkItemRowReorder } from "./workItemRowParts.js";
 import {
@@ -43,9 +43,9 @@ import {
 
    **拖拽改序（T-P2-R6b）**：只在宿主给了 `environment.reorder` 时包一层 `DndContext`
    （宿主按 `workItemBoardReorderEnabled` 投影：看板 + statusCategory + 手动档 + 页面接了写入口）。
-   未启用时**零 DOM 变化**（不分组与泳道两条既有路径的逐字节基线因此不受影响）。落点的
-   **位置值**由纯函数 `workItemPositionPlan` 算（本层不算数），算好后连同计划交回页面写库 ——
-   "拖拽写什么"只有一处实现。 */
+   未启用时**零 DOM 变化**（不分组与泳道两条既有路径的逐字节基线因此不受影响）。一次落点的
+   处理（取事件 id → 找泳道 → 算位置值 → 交回页面写库）收在纯函数 `workItemBoardDrop` 里
+   （本层只做事件绑定与调用）——"拖到哪一列、写什么"只有一处实现。 */
 
 export function WorkItemsBoard({
   workItems,
@@ -103,21 +103,18 @@ export function WorkItemsBoard({
     roster: environment.snapshot,
   });
 
-  /** 一次拖拽的落点：找到被拖行所在的泳道 ⇒ 纯函数算计划 ⇒ 交回页面（本层不写库、不算数）。 */
+  /** 一次拖拽的落点：**只做事件绑定与调用** —— 取 id、找泳道、算计划、交回写路径全在
+      `workItemBoardDrop` 里（纯函数，逐格可测；T-P2-V §8 缺口 1：这四步当时零覆盖，
+      把整段短路后 ui 整包仍全绿）。 */
   const handleDragEnd = (event: DragEndEvent, reorderCapability: WorkItemRowReorder) => {
-    const activeId = String(event.active.id);
-    const overId = event.over === null ? null : String(event.over.id);
-    if (overId === null) return;
-    const lane = lanes.find((entry) => entry.rows.some((row) => row.item.id === activeId));
-    if (lane === undefined) return;
-    const plan = workItemPositionPlan({
-      rows: lane.rows.map((row) => row.item),
-      activeId,
-      overId,
+    workItemBoardDrop({
+      activeId: String(event.active.id),
+      overId: event.over === null ? null : String(event.over.id),
+      lanes: lanes.map((boardLane) =>
+        boardLane.rows.map((row) => ({ id: row.item.id, position: row.item.position })),
+      ),
+      onPlan: reorderCapability.onPlan,
     });
-    // `none`（落点是自己 / 目标不在这一列）⇒ 不写库：等值写会让每次误触都产生一次写盘。
-    if (plan.kind === "none") return;
-    reorderCapability.onPlan(plan);
   };
 
   /* 泳道视图：只加「外层容器 + 头部」，行仍由共用行模块渲染（单点）。
