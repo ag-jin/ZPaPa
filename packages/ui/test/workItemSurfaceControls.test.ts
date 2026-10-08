@@ -84,6 +84,20 @@ function renderActions(over: {
         onSurfaceIntent,
         t,
         onReload: () => {},
+        /* T-P2-R5：控件带新增**必填**批量工具栏入参（省略 = 类型报错 —— 「忘接线」不该只是静默失活）。
+           本文件的用例不驱动批量交互，故给一个未开启的空壳；批量面自己的用例在
+           `workItemBulkToolbar.test.ts`（真渲染 + 逐条结果 + 接线守卫）。 */
+        bulk: {
+          active: false,
+          selectedCount: 0,
+          draft: { field: "priority", value: "__unset__" },
+          applying: false,
+          result: null,
+          onToggleActive: () => {},
+          onClear: () => {},
+          onDraftIntent: () => {},
+          onApply: () => {},
+        },
         onCreate: () => {},
       }),
     }),
@@ -360,6 +374,17 @@ function renderBandAndSurface(surface: WorkItemSurfaceState, workItems: WorkItem
           onSurfaceIntent: () => {},
           t,
           onReload: () => {},
+          bulk: {
+            active: false,
+            selectedCount: 0,
+            draft: { field: "priority", value: "__unset__" },
+            applying: false,
+            result: null,
+            onToggleActive: () => {},
+            onClear: () => {},
+            onDraftIntent: () => {},
+            onApply: () => {},
+          },
           onCreate: () => {},
         }),
         createElement(WorkItemsSurface, {
@@ -441,6 +466,9 @@ const SURFACE_CONTROL_TEST_IDS = [
   "work-items-sort-key",
   "work-items-sort-direction",
   "work-items-filter-clear",
+  /* T-P2-R5：批量入口与上面几枚同属「取数不可用 ⇒ 置灰 + 给原因、但不消失」的常驻入口 ——
+     把新入口纳入这条不变式是**加强**（断言只多不少），不是口径放宽。 */
+  "work-items-bulk-toggle",
 ] as const;
 
 /** 取出带某个 testid 的那个**标签本身**（SSR markup 是扁平字符串；锚点到下一个 `>` 即元素末尾）。 */

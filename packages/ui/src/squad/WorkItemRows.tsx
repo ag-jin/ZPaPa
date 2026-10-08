@@ -13,6 +13,7 @@ import {
 } from "./WorkItemInlineEditParts.js";
 import {
   AssigneeMarker,
+  WorkItemRowSelect,
   WorkItemTableTimelineRow,
   type WorkItemRowEnvironment,
   type WorkItemRowFocus,
@@ -46,7 +47,16 @@ export type { WorkItemRowEnvironment, WorkItemRowFocus } from "./workItemRowPart
    长得不一样，且不会有人发现）。
 
    缩进沿用 `WikiCatalogTree` 的既有手法（`paddingLeft: depth * 12 + 8` px）：深度由纯函数算好，
-   本层只负责按它缩进 —— 组件里递归 = 不可测。 */
+   本层只负责按它缩进 —— 组件里递归 = 不可测。
+
+   **结构纪律（T-P2-R5 起显式写在文件头，后续轮必读）**：行容器的**孩子槽位**是行为的一部分 ——
+   React 把「这一层的孩子数」编进 `useId`（SSR 实测：同一棵子树，兄弟数从 1 变 2 会把 Radix 的
+   `aria-controls` 从 `_R_0_` 变成 `_R_2_`），所以**多一个槽位（哪怕渲染成 null）也会让默认路径的
+   锚点漂移**，`workItemsSurfaceBaseline` 的逐字节对照当场红。三条落地：
+   ① 列表行**直接返回那个 `<li>`**（不套 Fragment；表格布局才有第二个 `<tr>`）；
+   ② 新增行级件（本轮的勾选件）与已有的「打开详情」覆盖层**共用第一个槽位**（三元分支），
+      不是并排两个槽位；
+   ③ 未进入批量模式时整个槽位序列与今天**逐槽相同**（`selection` 缺席 ⇒ 不渲染勾选件）。 */
 
 /** 行列表容器：**不留行间沟**（差距报告 §5 的密度口径）——分隔线相邻成列；
     留沟会把行拆成一块块卡片，hover surface 也跟着断开。 */
@@ -239,6 +249,7 @@ function WorkItemRow({
     timelineExpandedWorkItemId,
     rowFocus,
     inlineEdit,
+    selection,
     onEdit,
     onReassign,
     onDiscard,
@@ -260,6 +271,16 @@ function WorkItemRow({
   const titleDraft = inlineEdit.titleDraftOf(item);
   const inlineFailure = inlineEdit.failureOf(item);
   const priorityValue = inlineEdit.priorityValueOf(item);
+  /* 行勾选件（**零件在 `workItemRowParts`：那里是行模块的无锚点零散件的家**，本模块是它唯一的
+     消费方 —— 单点性质不变，见 R5 的全树守卫）。未进入批量模式（`selection` 缺席）⇒ `null`：
+     行结构逐槽不变（见文件头「结构纪律」）。 */
+  const rowSelectControl =
+    selection === undefined ? null : <WorkItemRowSelect item={item} selection={selection} />;
+  /* 行级「打开详情」的透明覆盖按钮（**一处定义，多面共用**的组件在这里挂载一次；
+     表格布局由单元格模块挂载同一份组件）。抽成变量是为了让它与勾选件共用同一个槽位。 */
+  const openDetailOverlay = (
+    <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenWorkItemDetail(item.id)} />
+  );
   /* 行内动作簇（编辑 / 改派 / 放弃整批 / 时间线）：**一处定义，两种布局共用** ——
      表格的动作列不是第二份动作簇，只是同一个簇换了个宿主格子（`<td data-column="actions">`）。 */
   const actions = (
@@ -343,19 +364,26 @@ function WorkItemRow({
       )}
     >
       {table !== undefined ? (
-        /* 表格的行内容（单元格 + 动作格）：列投影属于视图，动作簇由本模块**传进去**
-           （`actions` 仍只有一份实现，见 `WorkItemTableRowInput`）。 */
-        table.cells(row, actions)
+        /* 表格的行内容（单元格 + 动作格）：列投影属于视图，动作簇与勾选件由本模块**传进去**
+           （两者都仍只有一份实现，见 `WorkItemTableRowInput`）。 */
+        table.cells(row, actions, rowSelectControl)
       ) : (
         <>
-          {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
-              覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
-              点击命中是硬要求，不是样式偏好。 */}
           <div className="relative flex items-center justify-between gap-3">
-            <WorkItemRowOpenDetailOverlay
-              title={item.title}
-              onOpen={() => onOpenWorkItemDetail(item.id)}
-            />
+            {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
+                覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
+                点击命中是硬要求，不是样式偏好。
+                ⚠️ 勾选件与覆盖层**共用第一个槽位**（三元而不是多一个兄弟槽位）：React 把「这一层的
+                孩子数」编进 `useId`，多一个槽位（哪怕渲染成 null）就会让 Radix 的 `aria-controls`
+                漂移、R1 的逐字节基线红（实测：删掉 `_R_b5_` → `_R_2_`）。 */}
+            {rowSelectControl === null ? (
+              openDetailOverlay
+            ) : (
+              <>
+                {rowSelectControl}
+                {openDetailOverlay}
+              </>
+            )}
             <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
               {/* identifier 在标题**之前**（它是这条记录的编号，等宽字形；DESIGN：标识符用 font-mono）。
               未设置（存量行）⇒ 不画，也不占位。 */}
@@ -458,16 +486,26 @@ function WorkItemRow({
   return (
     <>
       {rowElement}
-      <WorkItemTableTimelineRow timeline={timeline} columnCount={table.columnCount} />
+      <WorkItemTableTimelineRow
+        timeline={timeline}
+        /* 跨列宽 = 数据列 + （标题列、动作列）+ 批量模式下的勾选列 —— 展开行的 `<td>` 必须与
+           表头的列数逐项对齐，否则这行会横向错位（表格结构是硬要求）。 */
+        columnCount={table.columnCount + (rowSelectControl === null ? 0 : 1)}
+      />
     </>
   );
 }
 
 /**
  * 表格布局下每行的**内容**（列目录与可见列是视图的状态，故由视图投影）：`actions` 是行模块
- * 交给它的**动作簇**（同一个簇，只换个宿主格子 —— 不是第二份实现）。
+ * 交给它的**动作簇**、`select` 是行模块交给它的**勾选件**（两者都只有一个实现，只是换个宿主格子）。
+ * `select === null` = 未进入批量选择模式 ⇒ 那个格子（连同列）**整格不渲染**。
  */
-export type WorkItemTableCells = (row: WorkItemBoardRow, actions: ReactNode) => ReactNode;
+export type WorkItemTableCells = (
+  row: WorkItemBoardRow,
+  actions: ReactNode,
+  select: ReactNode,
+) => ReactNode;
 
 /** 表格布局的入参：有它 = 行元素是 `<tr>`、容器是 `<tbody>`（没有 = 列表/看板的原样）。 */
 export type WorkItemTableRowInput = { cells: WorkItemTableCells; columnCount: number };

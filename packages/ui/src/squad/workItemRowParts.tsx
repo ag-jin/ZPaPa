@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
+import { Checkbox } from "@/components/ui/checkbox.js";
 import { cn } from "@/components/lib/utils.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import type { WorkItemInlineEditApi } from "./useWorkItemInlineEdit.js";
+import { workItemBulkSelectable, type WorkItemRowSelection } from "./workItemBulkViewModel.js";
 
 /* 行模块的**零件与契约**（阶段二 · T-P2-R3 抽出）。
  *
@@ -13,7 +16,9 @@ import type { WorkItemInlineEditApi } from "./useWorkItemInlineEdit.js";
  * 「容器参数化 + 单元格 + 展开行」之后，把**没有守卫锚点**的零散件搬到这里换余量：
  * · 指派圆点（纯呈现，行与表格单元格共用）；
  * · 行的契约类型（环境 / 聚焦注册表 —— 只有类型，无行为）；
- * · 表格布局的展开行（时间线那一行：内容由行模块给，这里只负责 `<tr>` 与跨列的 `<td>`）。
+ * · 表格布局的展开行（时间线那一行：内容由行模块给，这里只负责 `<tr>` 与跨列的 `<td>`）；
+ * · 行的**勾选件**（批量选择，T-P2-R5：`WorkItemRows` 是它唯一的消费方 —— 迁到这里是**换余量**，
+ *   单点性质不变，全 src 树守卫仍断言「产出勾选件的模块恰一个」）。
  *
  * 行为**零变化**：看板/列表的 DOM 由 `workItemsSurfaceBaseline` 的逐字节基线兜底，表格的
  * 行/列结构由 `workItemTableView.test.ts` 的真渲染用例兜底。 */
@@ -33,6 +38,9 @@ export type WorkItemRowEnvironment = {
   rowFocus: WorkItemRowFocus;
   /** 行内编辑状态（宿主创建**一份**：整块 surface 共享同一份编辑态，见 useWorkItemInlineEdit）。 */
   inlineEdit: WorkItemInlineEditApi;
+  /** 批量选择（阶段二 · T-P2-R5）：`undefined` = 未进入批量选择模式 ⇒ 行**不渲染**勾选件
+      （默认界面的行结构因此逐槽不变，见 `WorkItemRows` 的结构纪律）。 */
+  selection?: WorkItemRowSelection;
   onEdit: (item: WorkItem) => void;
   /** 点「改派」⇒ 交给页面打开改派对话框（本层不持有状态、也不执行服务调用）。 */
   onReassign: (item: WorkItem) => void;
@@ -89,6 +97,42 @@ export function AssigneeMarker({
   }
   return (
     <span className="size-2 shrink-0 rounded-full border border-foreground-subtlest" aria-hidden />
+  );
+}
+
+/**
+ * 行**勾选件**（阶段二 · T-P2-R5）：多选行的行级控件，与 `AssigneeMarker` / 展开行同属「行模块的零件」。
+ *
+ * 为什么放在这里而不是行渲染模块里：那个文件是**行渲染的单点实现**，`max-lines = 400` 是全局硬线
+ * （R3 已把无锚点的零散件搬到这里换余量）。**单点性质不变**：全 `src` 树只有这一处产出勾选件，
+ * 行模块是它**唯一**的消费方（视图与单元格模块不得自带第二份 —— 用例外另有全树守卫）。
+ *
+ * 三条：① 可写判据复用 `workItemBulkSelectable`（= 行内编辑入口同一份结论：归档行不给勾选件）；
+ * ② 可及名称带**行标题**（一排同名复选框读屏时分不出哪一行）；③ 用既有 `Checkbox` 原语
+ * （Radix + DESIGN token），不另写一套勾选外观与键盘语义。
+ */
+export function WorkItemRowSelect({
+  item,
+  selection,
+}: {
+  item: WorkItem;
+  /** `undefined` = 未进入批量选择模式（连勾选件都不渲染 —— 行结构因此逐槽不变）。 */
+  selection?: WorkItemRowSelection;
+}) {
+  const { intl } = useZCodeIntl();
+  if (selection === undefined || !workItemBulkSelectable(item)) return null;
+  return (
+    <Checkbox
+      className="relative z-10 shrink-0"
+      data-testid="work-item-select"
+      aria-label={intl.formatMessage(
+        { id: "squad.workItems.bulk.selectRow" },
+        { title: item.title },
+      )}
+      checked={selection.selectedIds.has(item.id)}
+      disabled={selection.disabled}
+      onCheckedChange={() => selection.onToggle(item.id)}
+    />
   );
 }
 

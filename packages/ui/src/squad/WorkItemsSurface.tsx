@@ -3,6 +3,7 @@ import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
+import type { WorkItemRowSelection } from "./workItemBulkViewModel.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemListView } from "./WorkItemListView.js";
 import { useWorkItemRowFocus, type WorkItemRowEnvironment } from "./WorkItemRows.js";
@@ -42,6 +43,7 @@ export function WorkItemsSurface({
   laneDimension,
   surface,
   onSurfaceIntent,
+  selection,
   focusWorkItemId,
   onFocusConsumed,
   onEdit,
@@ -67,7 +69,9 @@ export function WorkItemsSurface({
   /** 视图回传的**意图**（T-P2-R3 起 table 的表头排序与列显隐消费它）：宿主只透传给视图，
       折叠仍只有一处实现（页面的 `applyWorkItemSurfaceIntent`）。 */
   onSurfaceIntent: (intent: WorkItemSurfaceIntent) => void;
-  /** 收件箱穿透的**一次性聚焦意图**（`null` = 没有意图）。 */
+  /** 批量选择（T-P2-R5）：`undefined` = 未进入批量选择模式 ⇒ 三视图的行都不渲染勾选件
+      （默认界面的行结构因此逐槽不变）。选择集与收敛判据都在页面（本层只透传）。 */
+  selection?: WorkItemRowSelection /** 收件箱穿透的**一次性聚焦意图**（`null` = 没有意图）。 */;
   focusWorkItemId?: string | null;
   /** 聚焦消费回调：找到就滚 + 高亮后调；**目标不在列表也调**（父项被归档等 —— 不留悬挂意图）。 */
   onFocusConsumed?: () => void;
@@ -110,6 +114,7 @@ export function WorkItemsSurface({
     timelineExpandedWorkItemId,
     rowFocus,
     inlineEdit,
+    selection,
     onEdit,
     onReassign,
     onDiscard,

@@ -139,6 +139,17 @@ export function WorkItemTableView({
         <table className="w-full border-collapse text-left">
           <thead>
             <tr>
+              {/* 勾选列（T-P2-R5）：**只在批量模式下**存在 —— 未进入批量模式时表格结构与 R3 落地时
+                  逐项相同（列身份 = 标题 + 目录列 + 动作列）。列名给可及名称（读屏听到的是一列
+                  「批量操作」的勾选格，而不是一列没有名字的复选框）。 */}
+              {environment.selection === undefined ? null : (
+                <th
+                  scope="col"
+                  data-column="select"
+                  aria-label={t("squad.workItems.bulk.label")}
+                  className={TABLE_HEAD_CELL_CLASSNAME}
+                />
+              )}
               {headerCell({
                 column: "title",
                 label: t("squad.common.title"),
@@ -161,13 +172,14 @@ export function WorkItemTableView({
             environment={environment}
             table={{
               columnCount: columns.length,
-              cells: (row, actions) => (
+              cells: (row, actions, select) => (
                 <WorkItemTableRowCells
                   row={row}
                   columns={columns}
                   snapshot={environment.snapshot}
                   onOpenWorkItemDetail={environment.onOpenWorkItemDetail}
                   actions={actions}
+                  select={select}
                 />
               ),
             }}

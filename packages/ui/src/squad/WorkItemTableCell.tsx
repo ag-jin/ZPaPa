@@ -48,13 +48,18 @@ const TABLE_TITLE_CELL_CLASSNAME =
 /* 动作格：与数据格同一套分隔线 / 内边距 / 高度 token（行级入口的宿主格）。
    「格子怎么排」属于表格视图；**动作簇本身**由行模块传进来（见 `actions`），不在这里重写。 */
 const TABLE_ACTIONS_CELL_CLASSNAME = "h-11 border-b border-border px-3 py-1.5 align-middle";
+/* 勾选格（阶段二 · T-P2-R5）：同样一套分隔线 / 高度 token（44px 行高不下调）；
+   列的宽度交给内容（一枚 16px 的勾选件 + 两侧内边距），不写死宽度。 */
+const TABLE_SELECT_CELL_CLASSNAME = "h-11 border-b border-border px-3 py-1.5 align-middle";
 
 /**
- * 一行在表格里的内容：标题格 + 按**可见列**顺序的数据格 + 动作格。
+ * 一行在表格里的内容：（批量模式下的）勾选格 + 标题格 + 按**可见列**顺序的数据格 + 动作格。
  *
  * `columns` 由视图给（= `visibleWorkItemColumns(surface.columns)` 的结论）：本模块不判显隐 ——
  * 判据在 R1 的纯函数里，这里只按给定顺序渲染。`actions` 是行模块交进来的**动作簇**
  * （编辑 / 改派 / 放弃整批 / 时间线）：本模块只给它一个格子，不重写按钮。
+ * `select`（阶段二 · T-P2-R5）同理：**行模块产出的勾选件**，本模块只给它首列那个格子
+ * （`null` = 未进入批量模式 ⇒ 整格不渲染，不留一个空列）。
  */
 export function WorkItemTableRowCells({
   row,
@@ -62,6 +67,7 @@ export function WorkItemTableRowCells({
   snapshot,
   onOpenWorkItemDetail,
   actions,
+  select,
 }: {
   row: WorkItemBoardRow;
   columns: readonly WorkItemSurfaceColumnKey[];
@@ -69,6 +75,8 @@ export function WorkItemTableRowCells({
   onOpenWorkItemDetail: (workItemId: string) => void;
   /** 行级动作簇（行模块的单点实现，原样放进动作格）。 */
   actions: ReactNode;
+  /** 行级勾选件（行模块的单点实现，原样放进首列格）；`null` = 批量模式未开启。 */
+  select: ReactNode;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
@@ -123,6 +131,13 @@ export function WorkItemTableRowCells({
 
   return (
     <>
+      {/* 勾选格：批量模式下是**首列**（与表头的 `data-column="select"` 对应）；未进入批量模式时
+          连这个 `<td>` 都不渲染（空 `<td>` 会占一整列并把列对齐改掉）。 */}
+      {select === null ? null : (
+        <td data-column="select" className={TABLE_SELECT_CELL_CLASSNAME}>
+          {select}
+        </td>
+      )}
       <td
         data-column="title"
         style={{ paddingLeft: `${depth * 12 + 8}px` }}

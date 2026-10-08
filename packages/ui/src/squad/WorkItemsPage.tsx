@@ -28,6 +28,8 @@ import {
   squadWorkspaceTarget,
 } from "./squadRuntimeAccess.js";
 import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
+import { type WorkItemBulkFailure, type WorkItemBulkTarget } from "./workItemBulkViewModel.js";
+import { useWorkItemBulk } from "./useWorkItemBulk.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
@@ -354,6 +356,36 @@ export function WorkItemsPage({
      有选择的表单（「点得开但通往死路」比置灰更糟）；按钮本身**始终渲染**。 */
   const createDisabled = !workItemCreateEnabled({ hasTarget: target !== null, snapshot });
 
+  /* ---------- 批量工具栏（阶段二 · T-P2-R5）----------
+
+     状态机（选择集 / 批量模式 / 取值草稿 / 上次结果 + 收敛与逐条执行）在 `useWorkItemBulk`；
+     页面只负责**写路径**：注入单条写入口（唯一写路径 `updateWorkItem`）与回读刷新。 */
+  const writeBulkRow = useCallback(
+    (row: WorkItemBulkTarget) => {
+      /* 目标缺席时**响亮抛**（批量入口在无工作区/未就绪时置灰，正常走不到这里）；失败由
+         executor 逐条归拢成可见结果，不吞。 */
+      if (target === null) throw new Error("[WorkItemsPage] 批量写缺少 workspace 目标");
+      return resolveSquadRuntimeService(services).updateWorkItem(target, {
+        id: row.id,
+        patch: row.patch,
+      });
+    },
+    [services, target],
+  );
+  const logBulkFailures = useCallback((failures: WorkItemBulkFailure[]) => {
+    logger.warn("[WorkItemsPage] 批量写有失败行", {
+      failed: failures.length,
+      workItemIds: failures.map((failure) => failure.workItemId),
+    });
+  }, []);
+  const bulk = useWorkItemBulk({
+    workItems: snapshot === null ? null : snapshot.workItems,
+    surface,
+    write: writeBulkRow,
+    reload,
+    onFailures: logBulkFailures,
+  });
+
   /**
    * 改派的提交路径（**有意不走 `runAction`**）：`runAction` 的语义是「新建 / 编辑成功 ⇒
    * `setDialog(null)` + 一条成功提示」，而改派多一种结论 —— 服务面在**同值**时短路并回
@@ -413,6 +445,7 @@ export function WorkItemsPage({
         onLaneDimensionChange={setLaneDimension}
         surface={surface}
         onSurfaceIntent={applySurfaceIntent}
+        bulk={bulk.toolbar}
         t={t}
         onReload={() => void reload()}
         onCreate={() => setDialog({ kind: "create" })}
@@ -431,6 +464,7 @@ export function WorkItemsPage({
             laneDimension={laneDimension}
             surface={surface}
             onSurfaceIntent={applySurfaceIntent}
+            selection={bulk.selection}
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}

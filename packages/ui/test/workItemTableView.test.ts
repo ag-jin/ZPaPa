@@ -604,9 +604,18 @@ test("守卫｜单元格零第二份实现：锚点仍只在共用行模块，�
       !/border-border px-1\.5 py-0\.5/.test(cells),
     "单元格不得自带第二份 chip/徽标样式常量",
   );
+  /* T-P2-R5 口径微调（**强度不降**）：表格的「行级件由行模块产出、经 `table:{cells}` 交给视图」
+     这一条通道多了一个乘客 —— **勾选件**（R3 报告 §8 留下的接缝原话：「勾选件像 `actions` 一样由
+     行模块产出、经行列表的 `table:{cells}` 参数交给视图」）。断言的实质不变：行模块把投影交给
+     视图的单元格函数，且行元素参数化（`HTMLElement`）仍在；变异（M-动作复制/单元格自带行级件）
+     仍必红（下方断言 + `workItemBulkToolbar.test.ts` 的全树单点守卫各拦一半）。 */
   assert.ok(
-    rows.includes("table.cells(row, actions)") && rows.includes("HTMLElement"),
-    "行模块的表格布局是**加法**：容器元素参数化（ref 类型放宽到 HTMLElement）+ 单元格由视图给、动作簇由行模块传进去",
+    rows.includes("table.cells(row, actions, rowSelectControl)") && rows.includes("HTMLElement"),
+    "行模块的表格布局是**加法**：容器元素参数化（ref 类型放宽到 HTMLElement）+ 单元格由视图给、动作簇与勾选件由行模块传进去",
+  );
+  assert.ok(
+    cells.includes("select") && !cells.includes('data-testid="work-item-select"'),
+    "单元格模块只接收勾选件（只给它一个格子），不得自带行选择控件",
   );
   /* 动作簇**只有一份**（在行模块里），表格的动作格只接收它：单元格模块自带一枚动作按钮
      = 第二份动作簇（同一语义两处实现，改一处漏一处）。变异（M-动作复制）必红。 */

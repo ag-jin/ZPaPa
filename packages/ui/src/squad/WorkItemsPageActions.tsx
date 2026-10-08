@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.js";
 import { Spinner } from "@/components/ui/spinner.js";
+import { WorkItemBulkToolbar, type WorkItemBulkToolbarInput } from "./WorkItemBulkToolbar.js";
 import {
   WORK_ITEM_SURFACE_SEARCH_DEBOUNCE_MS,
   resolveWorkItemSurfaceSearchKeyIntent,
@@ -56,6 +57,7 @@ export function WorkItemsPageActions({
   onLaneDimensionChange,
   surface,
   onSurfaceIntent,
+  bulk,
   t,
   onReload,
   onCreate,
@@ -71,6 +73,9 @@ export function WorkItemsPageActions({
       宿主与页面因此不是并行作业的写入点（阶段二 §6.3 串行点纪律）。 */
   surface: WorkItemSurfaceState;
   onSurfaceIntent: (intent: WorkItemSurfaceIntent) => void;
+  /** 批量工具栏（T-P2-R5）：状态与草稿都在页面（本组件只**挂载**它，并把手里那份置灰原因
+      传下去 —— 「取数不可用 = 置灰 + 原因」只有 `workItemSurfaceControlsDisabledReason` 一份判据）。 */
+  bulk: WorkItemBulkToolbarInput;
   t: (id: string) => string;
   onReload: () => void;
   onCreate: () => void;
@@ -383,6 +388,9 @@ export function WorkItemsPageActions({
           ))}
         </SelectContent>
       </Select>
+      {/* 批量工具栏（T-P2-R5）：挂在动作行里（与视图切换 / 过滤同排）—— 它是**当前视图的动作面**，
+          不是「设置」；取数不可用时同样只置灰 + 原因（复用上面那份判据的结论）。 */}
+      <WorkItemBulkToolbar disabledReason={controlsDisabledReason} {...bulk} />
       <Button
         variant="outline"
         size="sm"
