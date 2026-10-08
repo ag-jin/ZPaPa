@@ -486,6 +486,29 @@ export function resolveExperimentalAgentSquadsDefault(
   return flavorInjected && flavor === "preview";
 }
 
+/**
+ * GitHub PR 集成的访问令牌（PAT）—— **本仓第一个 secret 字段**（#8 D2，设计 §4.3 / Q2 裁定）。
+ *
+ * 取舍（要向用户言明的那一条）：**明文落盘**在 setting.json。边界是「本地单机、单用户、
+ * 文件权限即边界」；keychain 能力未知，若将来 IPlatformService 有了 secret 存储，存储面可
+ * 无痛 adapter 化（provider 只经 `readToken` 读，不认识存储）。
+ *
+ * 形态闸：trim 后 ≤255（GitHub PAT 既有的 `ghp_`/`github_pat_` 前缀形态不在 schema 里校验 ——
+ * 细粒度 token 与 future 形态都会变，校验形态会把合法凭据挡在门外）。空串是**合法的清除值**
+ * （与 `httpProxy` 的「空串 = 显式清空」同款），不是「半个配置」。
+ */
+export const GITHUB_PULL_REQUEST_TOKEN_MAX_LENGTH = 255;
+const githubPullRequestTokenSchema = z.string().trim().max(GITHUB_PULL_REQUEST_TOKEN_MAX_LENGTH);
+
+/**
+ * 「token 是否已配置」的**唯一判据**（服务侧 provider 可用性 + 呈现侧设置区状态行共用）：
+ * 空白（含未设）一律视同未配置。两处各写一份会在「只输了空格」这类输入上分叉 ——
+ * 设置区显示「已配置」而 PR 区说「未配置」，谁都没写错，但用户看到的是自相矛盾。
+ */
+export function isGithubPullRequestTokenConfigured(token: string | null | undefined): boolean {
+  return typeof token === "string" && token.trim() !== "";
+}
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   locale: localeSchema.default("zh-CN"),
@@ -534,6 +557,9 @@ const appSettingsObjectSchema = z.object({
   // 多智能体小队实验开关。缺省按安装包身份（A1）：preview 包默认开启、其余默认关闭；显式值优先
   //（default 只在键缺失时生效——显式关闭过的用户不会被渠道默认翻回 true）。
   experimentalAgentSquadsEnabled: z.boolean().default(resolveExperimentalAgentSquadsDefault()),
+  /* #8 D2：GitHub PR 快照的访问令牌（明文，见上面的取舍说明）。**无默认值**：未配置就是 undefined
+     —— 补一个空串默认值会让「有没有配」在设置文件里失去唯一的可判别形态。 */
+  githubPullRequestToken: githubPullRequestTokenSchema.optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -640,6 +666,8 @@ export const appSettingsPatchSchema = z.object({
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().optional(),
   experimentalAgentSquadsEnabled: z.boolean().optional(),
+  /* #8 D2：token 的 patch 位（两处 schema 同步是既有纪律）。`""` = 显式清除，省略 = 不改这一格。 */
+  githubPullRequestToken: githubPullRequestTokenSchema.optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),

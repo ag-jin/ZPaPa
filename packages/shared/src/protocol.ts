@@ -434,6 +434,12 @@ export interface AppSettings {
   /** 多智能体小队实验开关（preview 包缺省开启，其余缺省关闭；显式值优先）。 */
   experimentalAgentSquadsEnabled?: boolean;
   /**
+   * GitHub PR 集成的访问令牌（PAT，**明文**存本地设置；#8 D2）。
+   * 未配置（undefined）或空白 ⇒ PR 快照面不可用（离线缺省形态），PR 区只显示手动登记的链接。
+   * 凭据纪律：不得出现在日志、错误原因、示例与本字段之外的任何持久化面。
+   */
+  githubPullRequestToken?: string;
+  /**
    * 项目知识库（wiki）配置：生成选项与定时自动更新。
    * 产物落 `<workspace>/wiki/`。
    */
