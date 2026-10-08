@@ -34,7 +34,12 @@
  * （`dynamic-workflow-run-service` ↔ 其 launch/submit）。
  */
 
-import type { SessionEntryInfo, SessionId, SessionStorePort } from "@zcode/contracts";
+import type {
+  MessageWithParts,
+  SessionEntryInfo,
+  SessionId,
+  SessionStorePort,
+} from "@zcode/contracts";
 import {
   readSessionSubagentInventory,
   type SessionSubagentInventory,
@@ -170,6 +175,11 @@ export interface SubagentOrphanReconcileInput {
   /** 权威清单读取的依赖窄面（store / 本进程 live 记录 / logger）。 */
   context: SessionSubagentInventoryReadContext;
   sessionId: string;
+  /**
+   * 调用方（激活路径）已经读出的父 transcript。传进来可以省掉清单读取里的一次重复查询
+   * （激活路径的时延预算）；缺席时清单自己读。
+   */
+  persistedMessages?: MessageWithParts[];
   /** 测试注入时钟；缺省 `Date.now()`。 */
   now?: number;
   /** 测试注入宽容期；缺省 {@link SUBAGENT_ORPHAN_GRACE_MS}。 */
@@ -203,7 +213,7 @@ export async function reconcileSubagentOrphansOnActivation(
     inventory = await readSessionSubagentInventory(
       context,
       sessionId,
-      undefined,
+      input.persistedMessages,
       "subagent_orphan_reconcile",
     );
   } catch (error) {

@@ -24,10 +24,16 @@ import {
   SessionEventType,
   createSessionId,
   type MessageWithParts,
+  type SessionEntryInfo,
   type SessionEvent,
+  type SessionId,
+  type SessionInfo,
+  type SessionTaskType,
 } from "@zcode/contracts";
 import { mergeColdConversationEvents } from "../src/zcode-protocol-v4/cold-event-merge.js";
 import { ProductProjection } from "../src/zcode-protocol-v4/product-projection.js";
+import { readSessionSubagentInventory } from "../src/zcode-protocol/server-operations.js";
+import { reconcileSubagentOrphansOnActivation } from "../src/zcode-protocol/subagent-orphan-reconcile.js";
 import type {
   HydratedSubagentChildFacts,
   HydratedSubagentTerminalState,
@@ -321,4 +327,198 @@ test("前台 Agent（阻塞式）不受影响：part 终态即 child 终态，�
 
   assert.equal(row?.status, "success", "阻塞式 Agent 的 part 终态仍是 child 终态的证据");
   assert.equal(subagentLifecycleTypes(events).at(-1), SessionEventType.SubagentStopped);
+});
+
+// ── 孤儿收敛的集成形态：entry 经 inventory 注入 ⇒ 与既有 8 档同一收口路径 ─────────────
+//
+// 上面的用例手工构造 child 事实；这里改走真实读面（readSessionSubagentInventory）：
+// 接管时收敛落盘 subagent_outcome{lost} → 同一次读把 child 放进 ended ⇒ facts 注入
+// hydration ⇒ 与「child 有 lost 终态」完全同一档（row failed、running 空、endedTotal=1）。
+// 这条链路是 48f7f18「同源单一结论」的延续：收敛不合成父事件，只补 child 的持久事实。
+
+interface OrphanStoreState {
+  sessions: Map<string, SessionInfo>;
+  messages: Map<string, MessageWithParts[]>;
+  entries: Map<string, SessionEntryInfo[]>;
+  saves: SessionEntryInfo[];
+}
+
+/** child 的「还在跑」transcript：最后一条 assistant 带 tool part、没有 completed/finish。 */
+function runningChildTranscript(activityAt: number): MessageWithParts[] {
+  return [
+    {
+      info: {
+        id: "msg_cold_hydration_child_assistant",
+        role: "assistant",
+        parentID: "msg_cold_hydration_child_user",
+        time: { created: activityAt },
+        finish: "tool-calls",
+      },
+      parts: [
+        {
+          id: "part_cold_hydration_child_tool",
+          type: "tool",
+          callID: "call_cold_hydration_child_tool",
+          tool: "Bash",
+          state: { status: "running", input: { command: "sleep 600" }, time: { start: activityAt } },
+        },
+      ],
+    } as unknown as MessageWithParts,
+  ];
+}
+
+function orphanSessionInfo(input: {
+  id: string;
+  taskType: SessionTaskType;
+  parentID?: string;
+  updated: number;
+}): SessionInfo {
+  return {
+    id: input.id as SessionId,
+    projectID: "proj_cold_hydration" as SessionInfo["projectID"],
+    taskType: input.taskType,
+    slug: "cold-hydration",
+    directory: "/tmp/cold-hydration",
+    title: "cold hydration",
+    version: "0.0.0-test",
+    time: { created: input.updated - 3_600_000, updated: input.updated },
+    ...(input.parentID ? { parentID: input.parentID as SessionId } : {}),
+  };
+}
+
+/** 接管时刻的会话状态：父 transcript 有后台 spawn，child 记录在场、无终态。 */
+function createOrphanStoreState(childActivityAt: number): OrphanStoreState {
+  const state: OrphanStoreState = {
+    sessions: new Map(),
+    messages: new Map(),
+    entries: new Map(),
+    saves: [],
+  };
+  state.sessions.set(
+    SESSION_ID,
+    orphanSessionInfo({ id: SESSION_ID, taskType: "interactive", updated: BASE_MS }),
+  );
+  state.messages.set(SESSION_ID, [userMessage(), assistantMessage({ background: true })]);
+  state.sessions.set(
+    CHILD_SESSION_ID,
+    orphanSessionInfo({
+      id: CHILD_SESSION_ID,
+      taskType: "subagent_child",
+      parentID: SESSION_ID,
+      updated: childActivityAt,
+    }),
+  );
+  state.messages.set(CHILD_SESSION_ID, runningChildTranscript(childActivityAt));
+  return state;
+}
+
+/** 激活后的窄面 context（parent live record 只提供清单读取会问的事件/投影面）。 */
+function orphanContext(state: OrphanStoreState) {
+  return {
+    deps: {
+      sessionStore: {
+        async getSession(sessionId: string) {
+          return state.sessions.get(sessionId) ?? null;
+        },
+        async messages(input: { sessionID: string }) {
+          return state.messages.get(input.sessionID) ?? [];
+        },
+        async sessionEntries(input: { sessionID: string; type?: string }) {
+          return (state.entries.get(input.sessionID) ?? []).filter(
+            (entry) => input.type === undefined || entry.type === input.type,
+          );
+        },
+        async saveSessionEntry(entry: SessionEntryInfo) {
+          state.saves.push(entry);
+          const key = String(entry.sessionID);
+          state.entries.set(key, [
+            ...(state.entries.get(key) ?? []).filter((item) => item.id !== entry.id),
+            entry,
+          ]);
+        },
+      },
+    },
+    sessions: new Map([
+      [
+        SESSION_ID,
+        {
+          stateRevision: 0,
+          eventStore: { getEvents: async () => [] },
+          app: { runtime: { getProjection: async () => undefined } },
+        },
+      ],
+    ]),
+  } as unknown as Parameters<typeof readSessionSubagentInventory>[0];
+}
+
+/** 与 v4 bridge 同形的 facts 构造：known 取自 childSessionIds，终态取自 ended。 */
+function factsFromInventory(
+  inventory: Awaited<ReturnType<typeof readSessionSubagentInventory>>,
+): HydratedSubagentChildFacts {
+  return {
+    knownChildSessionIds: new Set(inventory.childSessionIds),
+    terminalStates: new Map(
+      inventory.ended.map((item) => [item.childSessionId, { status: item.status }]),
+    ),
+  };
+}
+
+test("集成：孤儿经接管收敛落盘 ⇒ row failed、running=[]、endedTotal=1，且重放幂等", async () => {
+  const state = createOrphanStoreState(BASE_MS + 60_000);
+  const context = orphanContext(state);
+  const now = BASE_MS + 3 * 3_600_000;
+
+  const reconciled = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: SESSION_ID,
+    now,
+  });
+  assert.equal(reconciled.reconciled, 1, "孤儿必须被收敛（判据 J1-J5 全部成立）");
+  assert.equal(state.saves.length, 1);
+  assert.equal(state.saves[0]?.sessionID, CHILD_SESSION_ID);
+
+  const inventory = await readSessionSubagentInventory(context, SESSION_ID);
+  assert.deepEqual(inventory.running, [], "收敛后 running 行必须为空（常驻卡片消失）");
+  assert.deepEqual(
+    inventory.ended.map((item) => ({ childSessionId: item.childSessionId, status: item.status })),
+    [{ childSessionId: CHILD_SESSION_ID, status: "lost" }],
+  );
+
+  const facts = factsFromInventory(inventory);
+  const first = hydrate({ background: true, subagentChildFacts: facts });
+  const [row] = subagentRows(first.snapshot);
+  assert.equal(row?.status, "failed", "lost 在 row 词表无对应项，按 failed 收口");
+  assert.equal(first.snapshot.subagents.running.length, 0);
+  assert.equal(first.snapshot.subagents.endedTotal, 1);
+
+  // 幂等：同一份 transcript + 同一份 entry 重放两次，subagents 与行逐字段一致；
+  // 再跑一次收敛也不会产生第二条 entry（同 key upsert）。
+  const second = hydrate({ background: true, subagentChildFacts: factsFromInventory(inventory) });
+  assert.deepEqual(second.snapshot.subagents, first.snapshot.subagents);
+  assert.deepEqual(subagentRows(second.snapshot), subagentRows(first.snapshot));
+  const reconciledAgain = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: SESSION_ID,
+    now: now + 3_600_000,
+  });
+  assert.equal(reconciledAgain.reconciled, 0, "已收敛的孤儿不再是候选");
+  assert.equal(state.saves.length, 1, "entry 只增不改：同 key 覆盖，不累积");
+});
+
+test("回放桶护栏：store 里有收敛 entry，但调用方读不到 child 事实 ⇒ 保持 part 推断", async () => {
+  // 浏览器回放桶没有 session store，读不到 child 记录也就没有 facts 注入。收敛机制只在
+  // 「读面注入的终态事实」这一条路上生效，不许从旁路改写这条有界降级（现有 297 行语义）。
+  const state = createOrphanStoreState(BASE_MS + 60_000);
+  await reconcileSubagentOrphansOnActivation({
+    context: orphanContext(state),
+    sessionId: SESSION_ID,
+    now: BASE_MS + 3 * 3_600_000,
+  });
+  assert.equal(state.saves.length, 1, "先确认 entry 真的落盘了");
+
+  const { snapshot } = hydrate({ background: true });
+  const [row] = subagentRows(snapshot);
+
+  assert.equal(row?.status, "success", "没有 child 终态事实时退回 part 推断（与修前同形）");
+  assert.equal(snapshot.subagents.running.length, 0);
 });

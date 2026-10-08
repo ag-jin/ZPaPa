@@ -5,6 +5,7 @@ import {
   selectActiveConversationBranch,
   type BackgroundTaskInfo,
   type MessageWithParts,
+  type SessionEntryInfo,
   type SessionEvent,
   type SessionInfo,
   type SessionProjection,
@@ -63,6 +64,11 @@ interface ProjectSessionSubagentsInput {
   childProjectionsById: ReadonlyMap<string, SessionProjection>;
   parentProjection?: SessionProjection;
   parentEvents?: readonly SessionEvent[];
+  /**
+   * 收敛 entry 的终态（childSessionId 键）。**最低优先级**证据：只在 child 没有真实
+   * outcome/stop/error 时生效，见 {@link subagentOutcomeEntryStatus}。
+   */
+  subagentOutcomeEntryStatusById?: ReadonlyMap<string, ZCodeSessionEndedSubagent["status"]>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -290,6 +296,21 @@ export function lastChildActivityAt(
   return Math.max(childSession.time.updated, lastMessageAt);
 }
 
+/**
+ * 收敛 entry 的终态（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）。
+ *
+ * 只认 `status: "lost"`——本机制唯一写出的终态；其它形状（旧版、手改、未来扩展）一律当作
+ * 不可用的补洞事实（返回 undefined），退回既有的 `"lost"` 兜底，读面不因未知 entry 变形。
+ */
+export function subagentOutcomeEntryStatus(
+  entries: readonly SessionEntryInfo[] | undefined,
+): ZCodeSessionEndedSubagent["status"] | undefined {
+  for (const entry of entries ?? []) {
+    if (nonEmptyString(asRecord(entry.data).status) === "lost") return "lost";
+  }
+  return undefined;
+}
+
 function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
   endedAt?: number;
   status?: "success" | "failed" | "cancelled";
@@ -346,6 +367,12 @@ function runningStatus(input: {
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
   parentProjection?: SessionProjection;
+  /**
+   * child 上的 subagent_outcome entry（孤儿收敛落下的终态补洞事实）。
+   * 它是最低优先级证据，但在「后台兜底」这一支是决定性的：entry 在场说明某个 runtime
+   * 已经收敛过它，此时**不许再凭空宣称存活**（否则孤儿永远回到 running）。
+   */
+  entryStatus?: ZCodeSessionEndedSubagent["status"];
 }): ZCodeSessionRunningSubagent["status"] | undefined {
   if (input.background?.status === "running") {
     return input.background.blocked ? "blocked" : "running";
@@ -357,12 +384,14 @@ function runningStatus(input: {
   // tool part 会把 child 误判为 ended，并在 cold seed 时清空 V4 running 行。
   // child 还没有终态输出、spawn relation 也没有 stop 时，background input 本身
   // 是可恢复的 running 事实；真实终态仍由 background/child projection/outcome 优先。
+  // 收敛 entry 同样优先于这条兜底：有 entry 就是有终态事实，不再宣称存活。
   if (
     input.candidate.runInBackground &&
     input.background === undefined &&
     input.childProjection === undefined &&
     input.candidate.stoppedStatus === undefined &&
-    input.childOutcome.status === undefined
+    input.childOutcome.status === undefined &&
+    input.entryStatus === undefined
   ) {
     return "running";
   }
@@ -401,11 +430,26 @@ function terminalBackgroundStatus(
   }
 }
 
+/**
+ * child 已落库的终态证据：真实 outcome 优先，收敛 entry 只填洞。
+ *
+ * entry 是「孤儿收敛」写下的补洞事实（`subagent_outcome`），只在 child 没有任何真实
+ * outcome/stop/error 证据时成立；真实终态后来到场时永远赢（终态以 child 的持久记录为准）。
+ */
+function recordedTerminalStatus(input: {
+  childOutcome: ReturnType<typeof lastChildOutcome>;
+  entryStatus?: ZCodeSessionEndedSubagent["status"];
+}): ZCodeSessionEndedSubagent["status"] | undefined {
+  return input.childOutcome.status ?? input.entryStatus;
+}
+
 function endedStatus(input: {
   background?: BackgroundTaskInfo;
   candidate: SubagentCandidate;
   childOutcome: ReturnType<typeof lastChildOutcome>;
   childProjection?: SessionProjection;
+  /** 收敛 entry 的终态（最低优先级证据，见 {@link recordedTerminalStatus}）。 */
+  entryStatus?: ZCodeSessionEndedSubagent["status"];
 }): ZCodeSessionEndedSubagent["status"] {
   const backgroundStatus = terminalBackgroundStatus(input.background);
   if (backgroundStatus) return backgroundStatus;
@@ -418,9 +462,18 @@ function endedStatus(input: {
   const outputStatus = stringField(input.candidate.output ?? {}, "status");
   if (outputStatus === "cancelled" || outputStatus === "stopped") return "cancelled";
   if (outputStatus === "failed" || outputStatus === "error") return "failed";
-  if (outputStatus === "async_launched") return input.childOutcome.status ?? "lost";
+  if (outputStatus === "async_launched") return recordedTerminalStatus(input) ?? "lost";
+  if (input.candidate.runInBackground) {
+    // 后台 Agent 的 spawn part 在启动那一刻就 completed（launch ACK），它证明「启动过」而不是
+    // 「结束了」：终态只能看 child 的持久记录（真实 outcome 或收敛 entry），与 48f7f18 的
+    // hydration 判据同源。两者都缺席时保持既有兜底（completed ⇒ success），行为不变。
+    if (input.candidate.part.state.status === "completed") {
+      return recordedTerminalStatus(input) ?? "success";
+    }
+    return recordedTerminalStatus(input) ?? "lost";
+  }
   if (input.candidate.part.state.status === "completed") return "success";
-  return input.childOutcome.status ?? "lost";
+  return recordedTerminalStatus(input) ?? "lost";
 }
 
 function startedAt(
@@ -447,12 +500,14 @@ export function projectSessionSubagents(
     const childProjection = input.childProjectionsById.get(candidate.childSessionId);
     const background = findBackgroundTask(input.parentProjection, candidate);
     const childOutcome = lastChildOutcome(input.childMessagesById.get(candidate.childSessionId));
+    const entryStatus = input.subagentOutcomeEntryStatusById?.get(candidate.childSessionId);
     const liveStatus = runningStatus({
       background,
       candidate,
       childOutcome,
       childProjection,
       parentProjection: input.parentProjection,
+      ...(entryStatus === undefined ? {} : { entryStatus }),
     });
     const common = {
       childSessionId: candidate.childSessionId,
@@ -474,7 +529,13 @@ export function projectSessionSubagents(
         : undefined;
     ended.push({
       ...common,
-      status: endedStatus({ background, candidate, childOutcome, childProjection }),
+      status: endedStatus({
+        background,
+        candidate,
+        childOutcome,
+        childProjection,
+        ...(entryStatus === undefined ? {} : { entryStatus }),
+      }),
       ...(candidate.summary || childOutcome.summary
         ? { summary: candidate.summary ?? childOutcome.summary }
         : {}),
