@@ -4590,6 +4590,10 @@ const enUS: Record<string, string> = {
   "squad.squads.maxRounds": "Max rounds (required)",
 
   "squad.workItems.create": "New work item",
+  // Quick create (T-P3-R1, bar at the top of the surface): the placeholder is the usage hint
+  // (title is the only required field; Enter creates). Other copy reuses squad.common.title /
+  // .parent / .parent.none / .submit and the four failure keys (no second vocabulary).
+  "squad.workItems.quickCreate.placeholder": "Type a title, press Enter to create",
   "squad.workItems.created": "Work item created",
   "squad.workItems.updated": "Saved",
   "squad.workItems.editTitle": "Edit work item",

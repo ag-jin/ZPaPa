@@ -5,6 +5,10 @@ import { squadEntryErrorFeedback, type SquadEntryFeedback } from "./squadEntryVi
 import { resolveSquadRuntimeService } from "./squadRuntimeAccess.js";
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import { executeWorkItemPositionPlan } from "./workItemPositionViewModel.js";
+import {
+  executeWorkItemQuickCreate,
+  type WorkItemQuickCreateRequest,
+} from "./workItemQuickCreateViewModel.js";
 import type { WorkItemSurfaceIntent, WorkItemSurfaceState } from "./workItemSurfaceViewModel.js";
 import {
   useWorkItemViews,
@@ -56,6 +60,8 @@ export function useWorkItemsViewsBridge(input: {
   applySurfaceIntent: (intent: WorkItemSurfaceIntent) => void;
   changeLaneDimension: (dimension: WorkItemLaneDimension) => void;
   movePosition: (plan: WorkItemPositionPlan) => void;
+  /** 快速创建的写路径（T-P3-R1）：`null` = 成功（新行由回读后的快照投影出来）。 */
+  createWorkItem: (request: WorkItemQuickCreateRequest) => Promise<SquadEntryFeedback | null>;
   openView: (viewId: string | null) => void;
   openCreateDialog: (sourceViewId?: string) => void;
   openManage: () => void;
@@ -166,12 +172,49 @@ export function useWorkItemsViewsBridge(input: {
     [markBusy, notify, reload, services, target],
   );
 
+  /**
+   * 快速创建的**唯一写路径**（T-P3-R1）：服务访问点、忙标记、失败归类、**服务回读**都在这里
+   * —— 与 `movePosition` 同款分工（页面的 `max-lines` 硬线是这一层存在的理由）。
+   *
+   * 三条纪律（与执行编排 `executeWorkItemQuickCreate` 一一对应）：
+   * ① 只经 `createWorkItem`（服务面唯一创建入口，**不直写 repo、不拼第二条请求**）；
+   * ② 成功之后才 `reload()`（**无乐观插入**：新行由快照投影，本层不造行、不回传"刚建的那条"）；
+   * ③ **失败不吞**：返回 `SquadEntryFeedback`（门禁 / 无工作区 / 未知失败带原始 `detail`），
+   *    由快速创建条就地显示并保留用户输入；没有 workspace 目标时返回「无激活工作区」这条
+   *    原因文案，**不去调服务**（"点得动但写不下去"的一条静默路径）。这一格是**防御**：
+   *    宿主的提交钮在无目标时已经置灰（`workItemCreateEnabled`），正常走不到。
+   */
+  const createWorkItem = useCallback(
+    async (request: WorkItemQuickCreateRequest): Promise<SquadEntryFeedback | null> => {
+      if (!target) return { tone: "error", messageId: "squad.common.noWorkspace" };
+      markBusy("*");
+      try {
+        const feedback = await executeWorkItemQuickCreate({
+          request,
+          create: (input) => resolveSquadRuntimeService(services).createWorkItem(target, input),
+          reload,
+        });
+        if (feedback !== null) {
+          logger.warn("[WorkItemsPage] 快速创建失败", {
+            messageId: feedback.messageId,
+            error: feedback.detail,
+          });
+        }
+        return feedback;
+      } finally {
+        markBusy(null);
+      }
+    },
+    [markBusy, reload, services, target],
+  );
+
   return {
     views,
     ioReady: viewIo !== null,
     applySurfaceIntent,
     changeLaneDimension,
     movePosition,
+    createWorkItem,
     openView: views.open,
     openCreateDialog: views.openCreateDialog,
     openManage: views.openManage,

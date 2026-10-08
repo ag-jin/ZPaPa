@@ -496,6 +496,7 @@ export function WorkItemsPage({
             workspaceIdentity={workspaceIdentity}
             onOpenSession={onOpenSession}
             onReorderPosition={viewsBridge.movePosition}
+            onQuickCreate={viewsBridge.createWorkItem}
           />
           <SquadRunsReview
             runs={state.snapshot.runs}

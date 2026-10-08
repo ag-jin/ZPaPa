@@ -3,9 +3,11 @@ import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
+import { squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import type { WorkItemRowSelection } from "./workItemBulkViewModel.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemListView } from "./WorkItemListView.js";
+import { WorkItemQuickCreate } from "./WorkItemQuickCreate.js";
 import { useWorkItemRowFocus, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import { WorkItemTableView } from "./WorkItemTableView.js";
 import { useWorkItemInlineEdit } from "./useWorkItemInlineEdit.js";
@@ -19,7 +21,8 @@ import {
   type WorkItemSurfaceIntent,
   type WorkItemSurfaceState,
 } from "./workItemSurfaceViewModel.js";
-import type { WorkItemLaneDimension } from "./workItemsViewModel.js";
+import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
+import type { WorkItemQuickCreateRequest } from "./workItemQuickCreateViewModel.js";
 
 /* **工作项 Surface 宿主**（阶段二 · T-P2-R1 的接口冻结点）：三视图分派 + 投影 + 空态 + 共用状态。
 
@@ -35,7 +38,12 @@ import type { WorkItemLaneDimension } from "./workItemsViewModel.js";
 
    空态也在这里（两种，**判据在纯函数**）：`none` = 一条都没有（既有文案与锚点逐字保留）；
    `filtered` = 有数据但被当前查询筛掉（另两句文案 —— 「无匹配」与「还没有工作项」必须分开说，
-   否则用户会以为自己的数据没了）。 */
+   否则用户会以为自己的数据没了）。
+
+   快速创建（T-P3-R1）也由这里挂载：写入口 `onQuickCreate` **可选**（缺省 ⇒ 整块不渲染，
+   三份逐字节基线不受影响），请求构造与可点性判据在下方的 `WorkItemQuickCreate` 与
+   `workItemQuickCreateViewModel`；本宿主只做两件事 —— 把快照的**原始**列表给候选、
+   把"能不能建"的结论（`workItemCreateEnabled`）与"有没有写在飞"（`busyWorkItemId`）投给它。 */
 
 export function WorkItemsSurface({
   workItems,
@@ -59,6 +67,7 @@ export function WorkItemsSurface({
   workspaceIdentity,
   onOpenSession,
   onReorderPosition,
+  onQuickCreate,
 }: {
   /** 页面的原始投影（`snapshot.workItems`）：过滤/搜索/排序由本宿主按 `surface` 应用。 */
   workItems: WorkItem[];
@@ -94,6 +103,11 @@ export function WorkItemsSurface({
   onOpenSession?: (sessionId: string) => void;
   /** 拖拽改序的写入口（页面注入；缺省 ⇒ 不给拖拽把手 —— 点得动但写不下去的入口比没有更糟）。 */
   onReorderPosition?: (plan: WorkItemPositionPlan) => void;
+  /** 快速创建的写入口（T-P3-R1，页面经接线层注入；**缺省 ⇒ 整块不渲染** —— 与 reorder 同款纪律：
+      没有写路径的入口只会被读成功能坏了）。请求由本宿主下方的 `WorkItemQuickCreate` 构造
+      （默认值判据在 `workItemQuickCreateViewModel`），接线层负责调 `createWorkItem` 单源 +
+      **服务回读**刷新（本层不做乐观插入、不碰行）。 */
+  onQuickCreate?: (request: WorkItemQuickCreateRequest) => Promise<SquadEntryFeedback | null>;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -149,43 +163,65 @@ export function WorkItemsSurface({
     total: workItems.length,
     visible: visibleItems.length,
   });
-  if (emptyKind === "none") {
-    return (
+
+  /* 快速创建条（T-P3-R1）：**写入口缺省 ⇒ 整块不渲染**（连容器都不进 DOM）—— 三份逐字节基线
+     因此仍逐字节不变，而"点得动但写不下去"在接线层面凑不出来（与拖拽把手同款纪律）。
+     可点性沿用**既有判据** `workItemCreateEnabled`（本域唯一一处"能不能建"）：无工作区目标 ⇒ 置灰；
+     "快照未就绪"这一半由**位置**保证 —— 宿主只在 ready 态被挂载（页面按状态机分支渲染），
+     且判据本身仍按原样问一遍（不因为"反正不在"就省掉这一问）。target 用与页面**同一枚纯函数**
+     （`squadWorkspaceTarget`）+ 同一对输入求值，结论恒等（宿主不持有第二个权威）。 */
+  const quickCreateEnabled = workItemCreateEnabled({
+    hasTarget: squadWorkspaceTarget(workspacePath, workspaceIdentity) !== null,
+    snapshot,
+  });
+  const quickCreate =
+    onQuickCreate === undefined ? null : (
+      <WorkItemQuickCreate
+        /* 父项候选 = 快照的**原始**投影（不是 `visibleItems`）：搜索/过滤只作用于行，
+           不该让"选一个父项"这件事凭空少掉候选（服务面才是合法性判据）。 */
+        workItems={workItems}
+        createEnabled={quickCreateEnabled}
+        busy={busyWorkItemId !== null}
+        onSubmit={onQuickCreate}
+      />
+    );
+
+  const surfaceBody =
+    emptyKind === "none" ? (
       <div className="flex flex-col gap-1" data-testid="work-items-empty">
         <p className="text-ui-base text-foreground">{t("squad.workItems.empty")}</p>
         <p className="text-ui-sm text-foreground-subtlest">{t("squad.workItems.emptyHint")}</p>
       </div>
-    );
-  }
-  if (emptyKind === "filtered") {
-    return (
+    ) : emptyKind === "filtered" ? (
       <div className="flex flex-col gap-1" data-testid="work-items-filtered-empty">
         <p className="text-ui-base text-foreground">{t("squad.workItems.filteredEmpty")}</p>
         <p className="text-ui-sm text-foreground-subtlest">
           {t("squad.workItems.filteredEmptyHint")}
         </p>
       </div>
-    );
-  }
-
-  if (surface.view === "list") {
-    return <WorkItemListView items={visibleItems} environment={environment} />;
-  }
-  if (surface.view === "table") {
-    return (
+    ) : surface.view === "list" ? (
+      <WorkItemListView items={visibleItems} environment={environment} />
+    ) : surface.view === "table" ? (
       <WorkItemTableView
         items={visibleItems}
         environment={environment}
         surface={surface}
         onSurfaceIntent={onSurfaceIntent}
       />
+    ) : (
+      <WorkItemsBoard
+        workItems={visibleItems}
+        laneDimension={laneDimension}
+        environment={environment}
+      />
     );
-  }
+
+  /* 没有写入口 ⇒ **原样返回**（不套壳）：默认路径的 DOM 逐槽与新增该能力之前相同。 */
+  if (quickCreate === null) return surfaceBody;
   return (
-    <WorkItemsBoard
-      workItems={visibleItems}
-      laneDimension={laneDimension}
-      environment={environment}
-    />
+    <div className="flex flex-col gap-2">
+      {quickCreate}
+      {surfaceBody}
+    </div>
   );
 }

@@ -4295,6 +4295,9 @@ const zhCN: Record<string, string> = {
   "squad.squads.maxRounds": "轮次上限（必填）",
 
   "squad.workItems.create": "新建工作项",
+  // 快速创建（T-P3-R1，视图顶部条）：占位即用法（必填仅标题；回车 = 建）。其余文案复用
+  // squad.common.title / .parent / .parent.none / .submit 与失败四键（不新增第二套词汇）。
+  "squad.workItems.quickCreate.placeholder": "输入标题，回车即建",
   "squad.workItems.created": "已创建工作项",
   "squad.workItems.updated": "已保存",
   "squad.workItems.editTitle": "编辑工作项",
