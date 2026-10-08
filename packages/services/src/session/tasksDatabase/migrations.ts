@@ -8,6 +8,7 @@ import {
   OFF_PEAK_SCHEMA,
   SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_QUEUE_SQL,
+  SQUAD_RUN_USAGE_SQL,
   SQUAD_RUN_WATCHDOG_SQL,
   WORK_ITEM_COLLABORATION_SQL,
   WORK_ITEM_COLLABORATION_SQL_2,
@@ -131,6 +132,13 @@ const definitions = [
     id: "0014_squad_run_watchdog",
     checksumInput: [SQUAD_RUN_WATCHDOG_SQL],
   },
+  /* 0015（#6 按 run 用量记账 CT.1）：squad_runs 加 9 个用量列（8 数值 + `usage_recorded_at`
+     存在性开关；NULL = 未记录 ≠ 0）。只加列、**零回填**（没有会话就没有用量，回填无事实可依），
+     不改既有列/表——checksum 纪律同 0008/0009/0013/0014。 */
+  {
+    id: "0015_squad_run_usage",
+    checksumInput: [SQUAD_RUN_USAGE_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -194,6 +202,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0013_collaboration_source_run_and_origin")
         db.exec(WORK_ITEM_COLLABORATION_SQL_3);
       else if (migration.id === "0014_squad_run_watchdog") db.exec(SQUAD_RUN_WATCHDOG_SQL);
+      else if (migration.id === "0015_squad_run_usage") db.exec(SQUAD_RUN_USAGE_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

@@ -412,10 +412,17 @@ test("守卫｜游标的不透明契约：服务面与 UI 都不解析游标内�
   assert.ok(!uiViewModel.includes(`${"v1"}:`), "UI 视图模型不得知道游标格式");
 });
 
-// 默认方案是**零迁移**（拆解 §4.6）：分页只改读路径。这里把「本轮没加 0015」钉住。
-test("守卫｜零迁移：迁移栈末位仍是 0014（分页只改读路径，不加列也不加索引）", () => {
+/* 默认方案是**零迁移**（拆解 §4.6）：分页只改读路径。
+   原断言「迁移栈末位仍是 0014」是**当时状态**的代理，0015 落地后即失效——0015 已由主会话
+   **排他分配**给 #6 用量记账（CT.1，见 `reports/2026-10-08-cost-tier-breakdown.md` §2.5），
+   故「栈里出现新迁移」不再等价于「分页轮加了迁移」。这里改钉**真实意图**：迁移栈里不得出现
+   分页轮自己的迁移对象（分页读路径不依赖新列 / 新索引），并保留「分页索引迁移必须另开号」的负向断言。 */
+test("守卫｜零迁移：迁移栈无分页轮自己的迁移（分页只改读路径，不加列也不加索引）", () => {
   const migrations = readRepoFile("packages/services/src/session/tasksDatabase/migrations.ts");
   const ids = [...migrations.matchAll(/id: "(00\d\d_[a-z_]+)"/g)].map((match) => match[1]!);
-  assert.equal(ids[ids.length - 1], "0014_squad_run_watchdog", "末位迁移不得变（本轮零迁移）");
-  assert.ok(!ids.includes("0015_squad_run_history_indexes"), "0015 已被登记为独立小项，不在本轮");
+  for (const id of ids) assert.ok(!id.includes("history"), `分页轮不得自带迁移：${id}`);
+  assert.ok(
+    !ids.includes("0015_squad_run_history_indexes"),
+    "分页索引迁移仍未开轮（0015 由 #6 用量记账占用）",
+  );
 });

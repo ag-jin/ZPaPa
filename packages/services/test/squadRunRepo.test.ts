@@ -400,9 +400,10 @@ test("listByWorkItem 只取该工作项的 run", () => {
 
 // 台账是**逐字段落盘**：表少一列不会报错，只在写入 / 读回时静默丢字段。故列名逐一比对，
 // 并配一条「写入 → 读回」的往返断言（含队长 run 的空 branch / dirName 与 0/1 布尔列）。
-// 0008 追加的两列（`dispatch_cause` / `caused_by_run_id`）与 0014 追加的两列
-//（`opened_at` / `settle_reason`）必须在清单里，且**在末尾**（与 ALTER TABLE 追加的位置一致）
-// —— 少登记一列就会出现「写了没读回」的静默丢字段。
+// 0008 追加的两列（`dispatch_cause` / `caused_by_run_id`）、0014 追加的两列
+//（`opened_at` / `settle_reason`）与 0015 追加的 9 列用量（`usage_*`）必须在清单里，
+// 且**在末尾**（与 ALTER TABLE 追加的位置一致）—— 少登记一列就会出现「写了没读回」的静默丢字段；
+// **列名逐字**（拼错列名时读回恒 null，而 INSERT/UPDATE 都不报错）。
 test("squad_runs 的列与 SquadRunRecord 逐字段对齐", () => {
   const { db } = setup();
   const columns = (
@@ -426,6 +427,16 @@ test("squad_runs 的列与 SquadRunRecord 逐字段对齐", () => {
     "caused_by_run_id",
     "opened_at",
     "settle_reason",
+    // 0015（#6 用量记账）：8 数值 + `usage_recorded_at` 存在性开关（NULL = 未记录 ≠ 0）。
+    "usage_total_tokens",
+    "usage_input_tokens",
+    "usage_output_tokens",
+    "usage_reasoning_tokens",
+    "usage_cache_creation_tokens",
+    "usage_cache_read_tokens",
+    "usage_model_request_count",
+    "usage_model_error_count",
+    "usage_recorded_at",
   ]);
 });
 

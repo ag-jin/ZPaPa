@@ -107,6 +107,18 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "ALTER TABLE squad_runs DROP COLUMN settle_reason",
     "ALTER TABLE squad_runs DROP COLUMN opened_at",
   ],
+  // 0015（#6 用量记账 CT.1）：squad_runs 加 9 个用量列（列级追加 ⇒ 反向 DDL 逐列 DROP；**零回填**）。
+  "0015_squad_run_usage": [
+    "ALTER TABLE squad_runs DROP COLUMN usage_recorded_at",
+    "ALTER TABLE squad_runs DROP COLUMN usage_model_error_count",
+    "ALTER TABLE squad_runs DROP COLUMN usage_model_request_count",
+    "ALTER TABLE squad_runs DROP COLUMN usage_cache_read_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_cache_creation_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_reasoning_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_output_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_input_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_total_tokens",
+  ],
 };
 
 const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
@@ -130,6 +142,29 @@ function squadRunColumns(db: DatabaseSync): string[] {
     (column) => column.name,
   );
 }
+
+/** 0014 之后（= 0015 之前）的完整列集：0006 建表 13 列 + 0008 两列 + 0014 两列。 */
+const EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014 = [
+  ...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
+  "dispatch_cause",
+  "caused_by_run_id",
+  "opened_at",
+  "settle_reason",
+];
+
+/** 0015 的 9 个用量列（追加在末尾；顺序 = `SQUAD_RUN_USAGE_SQL` 的 ALTER 顺序，逐字固定）。
+ *  `usage_recorded_at` 是**存在性开关**：NULL = 未记录（与合法值 0「跑过但没消耗」可区分）。 */
+const EXPECTED_SQUAD_RUN_USAGE_COLUMNS = [
+  "usage_total_tokens",
+  "usage_input_tokens",
+  "usage_output_tokens",
+  "usage_reasoning_tokens",
+  "usage_cache_creation_tokens",
+  "usage_cache_read_tokens",
+  "usage_model_request_count",
+  "usage_model_error_count",
+  "usage_recorded_at",
+];
 
 test("迁移建出 work_items 表与索引", () => {
   const db = openFreshDb();
@@ -242,16 +277,14 @@ test("0014：老库补跑只加两列并回填 opened_at = created_at（queued �
 
   runTasksDatabaseMigrations(db);
   assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  /* 本用例只对 0014 的契约负责：既有 15 列**逐字未动**（前缀相等），0014 的两列紧随其后。
+     刻意不再断言「总列数 = 17」：0014 之后的新迁移（0015 的 9 个用量列即一例）可以继续在末尾
+     追加列——把总数写死会让本用例在下一条加法迁移落地时假红，而它要守的是「老库升级不得改动
+     既有列」（各条迁移的新增列由各自的专条用例断言，与 0008 用例同一条纪律）。 */
   assert.deepEqual(
-    squadRunColumns(db),
-    [
-      ...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
-      "dispatch_cause",
-      "caused_by_run_id",
-      "opened_at",
-      "settle_reason",
-    ],
-    "只加两列（在末尾），既有 15 列一字未动",
+    squadRunColumns(db).slice(0, EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014.length),
+    EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014,
+    "只加两列（在末尾），既有 15 列一字未动（前缀逐字相等）",
   );
   // 回填语义：非 queued ⇒ created_at；queued ⇒ NULL（不猜起算点）；settle_reason 一律 NULL。
   const backfilled = (
@@ -263,6 +296,54 @@ test("0014：老库补跑只加两列并回填 opened_at = created_at（queued �
     { runId: "legacy-open", openedAt: 111, settleReason: null },
     { runId: "legacy-queued", openedAt: null, settleReason: null },
   ]);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), squadRunColumns(db));
+});
+
+/* 0015（#6 按 run 用量记账 CT.1）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0014、库里还有行）补跑 ⇒ 只加 9 个 `usage_*` 列、既有 17 列一字未动；
+   · **零回填**：既有行读回 9 列全 NULL —— 没有会话就没有用量，回填无事实可依；填 0 会把
+     「没记账」伪装成「没消耗」（列语义见 `SQUAD_RUN_USAGE_SQL` 的注释）；
+   · 从零建库同一形状（0015 的 ALTER 是 9 列的**唯一**来源，0006 的建表 SQL 已冻结）。 */
+test("0015：老库补跑只加 9 列用量（既有行全 NULL，零回填）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from015 = fullLedger.findIndex((row) => row.id === "0015_squad_run_usage");
+  assert.ok(from015 > 0, "账本里没有 0015（迁移没挂上）");
+  // 逐条退回（逆序）到「0015 之前」：结构与 0014 之后一模一样（17 列）。
+  for (const row of fullLedger.slice(from015).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  assert.deepEqual(squadRunColumns(db), EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014);
+  // 造一条遗留行（0014 的列清单可写）：它没有经过任何用量记账。
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at, dispatch_cause, caused_by_run_id, opened_at, settle_reason)
+     VALUES ('legacy-usage-1', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL,
+       111, 111, NULL, NULL, 111, NULL)`,
+  ).run();
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  assert.deepEqual(
+    squadRunColumns(db),
+    [...EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014, ...EXPECTED_SQUAD_RUN_USAGE_COLUMNS],
+    "0015 只加 9 列（在末尾），既有 17 列一字未动",
+  );
+  // 零回填 + NULL 语义：既有行 9 列全 NULL（**未记录 ≠ 0**）。
+  const legacy = db
+    .prepare(
+      `SELECT ${EXPECTED_SQUAD_RUN_USAGE_COLUMNS.join(", ")} FROM squad_runs WHERE run_id = 'legacy-usage-1'`,
+    )
+    .get() as Record<string, number | null>;
+  for (const column of EXPECTED_SQUAD_RUN_USAGE_COLUMNS)
+    assert.equal(legacy[column], null, `${column} 必须保持 NULL（零回填：没有会话就没有用量）`);
 
   // 从零建库：同一形状（新库不该比老库升级多/少列）。
   const fresh = openFreshDb();

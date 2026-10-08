@@ -518,3 +518,30 @@ export const SQUAD_RUN_WATCHDOG_SQL = `
   ALTER TABLE squad_runs ADD COLUMN settle_reason TEXT;
   UPDATE squad_runs SET opened_at = created_at WHERE status != 'queued' AND opened_at IS NULL;
 `;
+
+/* 0015（#6 按 run 用量记账 CT.1）：squad_runs 加 9 个用量列。只加列、不改既有列/表；
+   0006 的 `SQUAD_RUN_SCHEMA` 与 0008/0009/0011/0013/0014 的 SQL 一字不动（checksum 冻结）。
+
+   数据源是**会话累计值**（协议 `v4/conversation/usage` 那 8 个数值字段，读取口
+   `getTaskTokenUsage({sessionId})`；host 侧无副本，只读、超时重发安全）⇒ 事实源是 CLI 侧
+   SQLite 的 model_usage 聚合，本表只落一份快照，不含价格列（仓内无任何价格来源）。
+
+   · **`usage_recorded_at` 是存在性开关**：NULL = **未记录**，与合法值 `0`（跑过但没消耗）
+     必须可区分——把 NULL 折成 0 会把「没记账」伪装成「没花用量」。9 列同写同读，读回不得猜值。
+   · **零回填**：没有会话就没有用量，回填无事实可依（反例是 0014 的 `created_at` 近似起点）。
+   · **重开臂只记最后一次会话**：C1 的「结算 + 同 runId 重开」会把 `session_id` 置回 NULL 并另建
+     会话（一行的用量在结算时刻补拉，只覆盖最后一次会话）——诚实登记，不假装是跨尝试总和。
+   · 8 个数值列与协议字段**逐字对齐**（total / input / output / reasoning / cache_creation /
+     cache_read / model_request_count / model_error_count）；不存 `inputBaselineBySource`
+     （JSON、按来源分桶的第二形状，v1 无消费方——形状封闭就该拆列）。 */
+export const SQUAD_RUN_USAGE_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN usage_total_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_input_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_output_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_reasoning_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_cache_creation_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_cache_read_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_model_request_count INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_model_error_count INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_recorded_at INTEGER;
+`;

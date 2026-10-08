@@ -989,6 +989,18 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
       "ALTER TABLE squad_runs DROP COLUMN settle_reason",
       "ALTER TABLE squad_runs DROP COLUMN opened_at",
     ],
+    // 0015（#6 按 run 用量记账 CT.1）：squad_runs 加 9 个用量列（零回填），反向 DDL 逐列 DROP。
+    "0015_squad_run_usage": [
+      "ALTER TABLE squad_runs DROP COLUMN usage_recorded_at",
+      "ALTER TABLE squad_runs DROP COLUMN usage_model_error_count",
+      "ALTER TABLE squad_runs DROP COLUMN usage_model_request_count",
+      "ALTER TABLE squad_runs DROP COLUMN usage_cache_read_tokens",
+      "ALTER TABLE squad_runs DROP COLUMN usage_cache_creation_tokens",
+      "ALTER TABLE squad_runs DROP COLUMN usage_reasoning_tokens",
+      "ALTER TABLE squad_runs DROP COLUMN usage_output_tokens",
+      "ALTER TABLE squad_runs DROP COLUMN usage_input_tokens",
+      "ALTER TABLE squad_runs DROP COLUMN usage_total_tokens",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
   /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整
