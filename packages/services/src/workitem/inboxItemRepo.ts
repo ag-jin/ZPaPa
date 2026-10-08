@@ -42,6 +42,20 @@ export const INBOX_ITEM_KINDS = [
    * 这条记录同时携带**为什么**（`detail.code` 是闭集码值）+ 这次降级涉及的集成分支。
    */
   "pr_gate_degraded",
+  /**
+   * SUB.2：评论**显式点名**了某个非作者主体（`@agent` / `@squad`，`ParsedMention` 单源）——
+   * 「明确要求某人回应/执行」（spec §7.2）。与 `comment_attention` 的分界：本 kind 是**对着某个人说
+   * 的一句话**（收件人由点名给定），后者是「我关注的工作项有新动静」（收件人由订阅解析给定）。
+   */
+  "mention_action_required",
+  /** SUB.2：一条决定落库（`decision_created`）且存在非作者的收件人 —— 「需要人作裁决」（spec §7.2）。 */
+  "decision_required",
+  /**
+   * SUB.2：本项（或经祖先链冒泡可达的祖先项）有**非作者的订阅者**，而这条评论没有点名任何人
+   * —— 「仅需关注，不要求动作」（spec §7.2）。author 是唯一收件人时**不产生**（自通知问题，
+   * 见 `inboxNotificationPolicy`）：单人产品下人类作者恒是自己那条订阅行的主体。
+   */
+  "comment_attention",
 ] as const;
 
 /** 一条 InboxItem **多急**（枚举，不是自由文本）——spec §3.x 的三个严重级。 */
@@ -63,6 +77,12 @@ export const INBOX_SEVERITY_BY_KIND: Record<InboxItemKind, InboxItemSeverity> = 
   /* pr-gate 降级：没有东西坏掉（批次已按本地形态落地），但**用户选的模式没生效** ——
      要人看一眼（配 token / 换远端 / 或改回 local 模式），故 attention 而不是 info。 */
   pr_gate_degraded: "attention",
+  /* SUB.2 三格：点名要人回应、要人裁决 ⇒ action_required；仅需关注 ⇒ info（Q3 裁定）。
+     三格都只在这里出现一次 —— 推送档（`inboxNotificationPolicy.resolveInboxDeliveryTier`）
+     消费的是本映射的 severity，不另立第二张 kind→推/不推 的表。 */
+  mention_action_required: "action_required",
+  decision_required: "action_required",
+  comment_attention: "info",
 };
 
 export type InboxItem = {

@@ -60,7 +60,7 @@ test("独立复验｜WORK_ITEM_ACTIVITY_KINDS 恰 21 枚且唯一，第 21 枚 =
   assert.equal(computePullRequestMergedDedupKey("pr-x"), "pr:pr-x:merged");
 });
 
-test("独立复验｜Inbox 闭集（手写表）：6 枚唯一、严重级映射穷尽、pr_gate_degraded = attention", () => {
+test("独立复验｜Inbox 闭集（手写表）：9 枚唯一、严重级映射穷尽、pr_gate_degraded = attention", () => {
   const handWritten = [
     "merge_conflict",
     "member_failed",
@@ -68,6 +68,10 @@ test("独立复验｜Inbox 闭集（手写表）：6 枚唯一、严重级映射
     "dispatch_skipped",
     "run_stalled",
     "pr_gate_degraded",
+    // SUB.2 追加三格（评论/决定族；闭集只增不改：既有六格一字不动）。
+    "mention_action_required",
+    "decision_required",
+    "comment_attention",
   ];
   assert.deepEqual([...INBOX_ITEM_KINDS].sort(), [...handWritten].sort());
   assert.equal(new Set(INBOX_ITEM_KINDS).size, handWritten.length);

@@ -1,5 +1,6 @@
 import type { SquadPrGateDegradeCode } from "@zcode/shared";
 import type { InboxItemInput } from "./inboxItemRepo.js";
+import type { SubscriberSubject } from "./subscriberFacts.js";
 
 /* 五个产生点的**纯构建件**（spec §5.7.4 冲突 / §6.2 队员失败 / §6.6 启动和解 / §3.9 四条 skip / W1 看门狗 run_stalled）。
 
@@ -58,7 +59,13 @@ export type InboxDedupFact =
   | { kind: "dispatch_skipped"; workItemId: string; reason: string }
   /* #8 D3：pr-gate 降级按「父项 + **码值**」去重（同 dispatch_skipped 的「原因变了就是新事实」口径，
      但用**闭集码值**而不是原因原文：码值是稳定判别，原文会随文案改写而漂移）。 */
-  | { kind: "pr_gate_degraded"; parentWorkItemId: string; code: SquadPrGateDegradeCode };
+  | { kind: "pr_gate_degraded"; parentWorkItemId: string; code: SquadPrGateDegradeCode }
+  /* SUB.2 三新事实**按事实 id 去重**：一条评论 / 一条决定各是一个事实（§8.1 幂等：
+     重投同一事实不得产生第二条），而工作的推进（谁被点名、谁在关注）不改变「这条评论存在过」。
+     与 run 族同款：dedupKey 的稳定一半是事实行的 id。 */
+  | { kind: "mention_action_required"; commentId: string }
+  | { kind: "decision_required"; decisionId: string }
+  | { kind: "comment_attention"; commentId: string };
 
 export function computeInboxDedupKey(fact: InboxDedupFact): string {
   switch (fact.kind) {
@@ -77,6 +84,15 @@ export function computeInboxDedupKey(fact: InboxDedupFact): string {
       return `dispatch_skipped:${fact.workItemId}:${fact.reason}`;
     case "pr_gate_degraded":
       return `pr_gate_degraded:${fact.parentWorkItemId}:${fact.code}`;
+    /* SUB.2：三新事实按事实 id 去重（见 `InboxDedupFact` 的说明）。同一评论的
+       `mention_action_required` 与 `comment_attention` 是**两个不同的事实**（对着人说的一句话 /
+       让人关注的动静），键不同是刻意的：它们不互相吞并。 */
+    case "mention_action_required":
+      return `mention_action_required:${fact.commentId}`;
+    case "decision_required":
+      return `decision_required:${fact.decisionId}`;
+    case "comment_attention":
+      return `comment_attention:${fact.commentId}`;
   }
 }
 
@@ -312,5 +328,129 @@ export function buildPrGateDegradedInboxItem(input: {
       targetBranch: input.targetBranch,
     },
     workItemId: input.parentWorkItemId,
+  };
+}
+
+/* ---------- SUB.2：评论 / 决定三新构建件 ----------
+
+   三个构建件的**准入**不在这里（「要不要产生」是 `inboxNotificationPolicy.planInboxNotificationItem`
+   的唯一判据）：构建件只回答「事实长什么样」。调用方到达这里时，事实已经成立（有非作者的收件人）。
+
+   `author` 与 `recipients` / `mentioned` 都是**已归一**的订阅主体（Q4 单源），就地转成 `{kind,id}`
+   写进 detail：detail 是持久 JSON，存裸主体而不是别处的行 id —— 订阅行会被退订/撤销，行 id 会失效，
+   而「当时对着谁说的一句话」不会。 */
+
+/** detail 里的主体形状：只有 kind + id（与订阅行的 (subject_type, subject_id) 同形）。 */
+function subjectDetail(subject: SubscriberSubject): { kind: string; id: string } {
+  return { kind: subject.kind, id: subject.id };
+}
+
+/**
+ * 评论**显式点名**了非作者主体：`mention_action_required` / `action_required`（spec §7.2
+ * 「明确要求某人回应/执行」）。
+ *
+ * `workItemTitle` 拿不到时回落 `workItemId`（同前几个构建件的口径：一条「工作项 xx 有人被点名」
+ * 远好过什么都没记）。`mentioned` 至少一个 —— 空集是调用方漏了准入，不在这里静默降级成
+ * 「一条没有收件人的点名」。
+ */
+export function buildMentionActionRequiredInboxItem(input: {
+  workspaceKey: string;
+  workspacePath: string;
+  workItemId: string;
+  /** 工作项标题；`null` = 拿不到 ⇒ 回落 `workItemId`。 */
+  workItemTitle: string | null;
+  commentId: string;
+  /** 评论作者（已归一的可通知主体）。 */
+  author: SubscriberSubject;
+  /** 被点名的**非作者**主体（准入已判过至少一个）。 */
+  mentioned: readonly SubscriberSubject[];
+}): InboxItemInput {
+  return {
+    workspaceKey: input.workspaceKey,
+    workspacePath: input.workspacePath,
+    kind: "mention_action_required",
+    dedupKey: computeInboxDedupKey({
+      kind: "mention_action_required",
+      commentId: input.commentId,
+    }),
+    title: input.workItemTitle ?? input.workItemId,
+    detail: {
+      workItemId: input.workItemId,
+      commentId: input.commentId,
+      author: subjectDetail(input.author),
+      mentioned: input.mentioned.map(subjectDetail),
+    },
+    workItemId: input.workItemId,
+  };
+}
+
+/**
+ * 评论出现了**非作者的订阅者**（本项或经祖先冒泡可达）：`comment_attention` / `info`（spec §7.2
+ * 「仅需关注，不要求动作」）。
+ *
+ * 与 `mention_action_required` 的分界：那条是「对着某个人说」，本条是「我关注的工作项有新动静」。
+ * 一条评论的两个事实**不同时产生**（收件箱行按事实去重，一条评论至多一条：准入的先后见
+ * `planInboxNotificationItem`）—— `recipients` 因此是解析结果里除作者外的收件人。
+ */
+export function buildCommentAttentionInboxItem(input: {
+  workspaceKey: string;
+  workspacePath: string;
+  workItemId: string;
+  /** 工作项标题；`null` = 拿不到 ⇒ 回落 `workItemId`。 */
+  workItemTitle: string | null;
+  commentId: string;
+  /** 评论作者（已归一的可通知主体）。 */
+  author: SubscriberSubject;
+  /** 非作者的收件人（订阅解析结果；准入已判过至少一个）。 */
+  recipients: readonly SubscriberSubject[];
+}): InboxItemInput {
+  return {
+    workspaceKey: input.workspaceKey,
+    workspacePath: input.workspacePath,
+    kind: "comment_attention",
+    dedupKey: computeInboxDedupKey({ kind: "comment_attention", commentId: input.commentId }),
+    title: input.workItemTitle ?? input.workItemId,
+    detail: {
+      workItemId: input.workItemId,
+      commentId: input.commentId,
+      author: subjectDetail(input.author),
+      recipients: input.recipients.map(subjectDetail),
+    },
+    workItemId: input.workItemId,
+  };
+}
+
+/**
+ * 一条决定落库且存在非作者收件人：`decision_required` / `action_required`（spec §7.2
+ * 「需要人作裁决」）。
+ *
+ * 与评论两条的分界：决定是**单向宣告**（没有点名面），收件人恒由订阅解析给出；
+ * `decisionId` 是事实身份（去重键的一半）。
+ */
+export function buildDecisionRequiredInboxItem(input: {
+  workspaceKey: string;
+  workspacePath: string;
+  workItemId: string;
+  /** 工作项标题；`null` = 拿不到 ⇒ 回落 `workItemId`。 */
+  workItemTitle: string | null;
+  decisionId: string;
+  /** 作出裁决的主体（已归一的可通知主体）。 */
+  author: SubscriberSubject;
+  /** 非作者的收件人（订阅解析结果；准入已判过至少一个）。 */
+  recipients: readonly SubscriberSubject[];
+}): InboxItemInput {
+  return {
+    workspaceKey: input.workspaceKey,
+    workspacePath: input.workspacePath,
+    kind: "decision_required",
+    dedupKey: computeInboxDedupKey({ kind: "decision_required", decisionId: input.decisionId }),
+    title: input.workItemTitle ?? input.workItemId,
+    detail: {
+      workItemId: input.workItemId,
+      decisionId: input.decisionId,
+      author: subjectDetail(input.author),
+      recipients: input.recipients.map(subjectDetail),
+    },
+    workItemId: input.workItemId,
   };
 }

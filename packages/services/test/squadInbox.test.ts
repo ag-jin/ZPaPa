@@ -13,8 +13,11 @@ import {
   type InboxItemInput,
 } from "../src/workitem/inboxItemRepo.js";
 import {
+  buildCommentAttentionInboxItem,
+  buildDecisionRequiredInboxItem,
   buildDispatchSkippedInboxItem,
   buildMemberFailedInboxItem,
+  buildMentionActionRequiredInboxItem,
   buildMergeConflictInboxItem,
   buildOrphanedRunInboxItem,
   computeInboxDedupKey,
@@ -255,6 +258,144 @@ test("INBOX_SEVERITY_BY_KIND：键集 = 四 kind、值 ∈ 三 severity（穷尽
   assert.equal(INBOX_SEVERITY_BY_KIND.member_failed, "attention");
   assert.equal(INBOX_SEVERITY_BY_KIND.run_orphaned, "attention");
   assert.equal(INBOX_SEVERITY_BY_KIND.dispatch_skipped, "info");
+});
+
+/* SUB.2：三新 kind 的闭集与 severity 三格。期望值来源：拆解报告 §2.2 的三格冻结值 +
+   spec §7.2「严重级仍由 kind 的唯一映射决定，不由评论入口自行传入」；Q3 裁定 comment_attention 落 info
+   （「仅需关注、不要求动作」⇒ 一格映射同时把它挡在渠道之外）。 */
+test("SUB.2｜三新 kind：闭集 6→9 且键集穷尽；severity 三格由单源补齐（comment_attention ⇒ info）", () => {
+  assert.deepEqual(
+    [...INBOX_ITEM_KINDS].sort(),
+    [
+      "comment_attention",
+      "decision_required",
+      "dispatch_skipped",
+      "member_failed",
+      "mention_action_required",
+      "merge_conflict",
+      "pr_gate_degraded",
+      "run_orphaned",
+      "run_stalled",
+    ],
+    "闭集 9 值（既有六格一字不改，三新格为追加）",
+  );
+  assert.deepEqual(
+    Object.keys(INBOX_SEVERITY_BY_KIND).sort(),
+    [...INBOX_ITEM_KINDS].sort(),
+    "映射键集 = 闭集：漏一格 ⇒ Record<InboxItemKind,…> 编译错 + 本断言红",
+  );
+  assert.equal(
+    INBOX_SEVERITY_BY_KIND.mention_action_required,
+    "action_required",
+    "点名要人回应 ⇒ 最急",
+  );
+  assert.equal(INBOX_SEVERITY_BY_KIND.decision_required, "action_required", "要人裁决 ⇒ 最急");
+  assert.equal(
+    INBOX_SEVERITY_BY_KIND.comment_attention,
+    "info",
+    "Q3：仅需关注、不要求动作 ⇒ info（不推渠道）",
+  );
+});
+
+/* SUB.2：三新事实的 dedup 形状逐条钉（形状只有 `computeInboxDedupKey` 一处实现）。
+   期望值来源：拆解报告 §4.2 文件集里冻结的三条形状（按事实 id 去重：一条评论/一条决定 = 一个事实），
+   不在测试里按实现的分支重算。 */
+test("SUB.2｜computeInboxDedupKey：三新形状逐条钉（同事实两次同键；不同事实不同键）", () => {
+  assert.equal(
+    computeInboxDedupKey({ kind: "mention_action_required", commentId: "c-1" }),
+    "mention_action_required:c-1",
+  );
+  assert.equal(
+    computeInboxDedupKey({ kind: "decision_required", decisionId: "d-1" }),
+    "decision_required:d-1",
+  );
+  assert.equal(
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-1" }),
+    "comment_attention:c-1",
+  );
+
+  // 同事实两次 ⇒ 同键（幂等的立足点：重投不产生第二条）。
+  assert.equal(
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-1" }),
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-1" }),
+  );
+  // 不同事实 ⇒ 不同键（两条评论是两个事实，不能互相吞并）。
+  assert.notEqual(
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-1" }),
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-2" }),
+  );
+  // 同一个评论的两条可能 kind 是**两个事实**（点名要人回应 / 只让人关注）：键不同，不互相吞并。
+  assert.notEqual(
+    computeInboxDedupKey({ kind: "mention_action_required", commentId: "c-1" }),
+    computeInboxDedupKey({ kind: "comment_attention", commentId: "c-1" }),
+  );
+});
+
+/* SUB.2：三新构建件（评论点名 / 评论关注 / 决定）。期望值来源：拆解报告 §2.2 的三格准入 +
+   spec §7.2「Inbox item 必须引用 workItemId、可选 commentId/decisionId」—— detail 形状固定
+   （不适用的一律不出现，读者不必按 kind 猜哪些键在），title 拿不到工作项标题时回落 id
+   （与既有五个构建件同一口径）。 */
+test("SUB.2｜三新构建件：kind / dedupKey / title 回落 / workItemId / detail 固定形状", () => {
+  const base = { workspaceKey: WS, workspacePath: "/tmp/ws" };
+  const AUTHOR = { kind: "agent" as const, id: "ta-ann" };
+  const READER = { kind: "human" as const, id: "local-user" };
+
+  const mention = buildMentionActionRequiredInboxItem({
+    ...base,
+    workItemId: "wi-c",
+    workItemTitle: null,
+    commentId: "c-1",
+    author: AUTHOR,
+    mentioned: [READER],
+  });
+  assert.equal(mention.kind, "mention_action_required");
+  assert.equal(mention.dedupKey, "mention_action_required:c-1");
+  assert.equal(mention.title, "wi-c", "拿不到标题 ⇒ 回落 id");
+  assert.equal(mention.workItemId, "wi-c");
+  assert.equal(mention.runId, undefined, "不涉 run 的条目不带 runId");
+  assert.deepEqual(mention.detail, {
+    workItemId: "wi-c",
+    commentId: "c-1",
+    author: { kind: "agent", id: "ta-ann" },
+    mentioned: [{ kind: "human", id: "local-user" }],
+  });
+
+  const attention = buildCommentAttentionInboxItem({
+    ...base,
+    workItemId: "wi-c",
+    workItemTitle: "子任务",
+    commentId: "c-2",
+    author: AUTHOR,
+    recipients: [READER],
+  });
+  assert.equal(attention.kind, "comment_attention");
+  assert.equal(attention.dedupKey, "comment_attention:c-2");
+  assert.equal(attention.title, "子任务", "有标题就用标题（面向人的主体）");
+  assert.equal(attention.workItemId, "wi-c");
+  assert.deepEqual(attention.detail, {
+    workItemId: "wi-c",
+    commentId: "c-2",
+    author: { kind: "agent", id: "ta-ann" },
+    recipients: [{ kind: "human", id: "local-user" }],
+  });
+
+  const decision = buildDecisionRequiredInboxItem({
+    ...base,
+    workItemId: "wi-p",
+    workItemTitle: "计划",
+    decisionId: "d-1",
+    author: AUTHOR,
+    recipients: [READER],
+  });
+  assert.equal(decision.kind, "decision_required");
+  assert.equal(decision.dedupKey, "decision_required:d-1");
+  assert.equal(decision.title, "计划");
+  assert.deepEqual(decision.detail, {
+    workItemId: "wi-p",
+    decisionId: "d-1",
+    author: { kind: "agent", id: "ta-ann" },
+    recipients: [{ kind: "human", id: "local-user" }],
+  });
 });
 
 test("四个构建件：kind / dedupKey / title 回落 / detail 原始值", () => {
