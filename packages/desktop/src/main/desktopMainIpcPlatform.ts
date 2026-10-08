@@ -24,7 +24,6 @@ import {
 import { getInstalledEditors } from "./editors.js";
 import { getApplicationIcon } from "./applicationIcons.js";
 import { exportLogs } from "./exportLogs.js";
-import { resolveCommunityUrl } from "./desktopCommandHandlers.js";
 import { openInEditor } from "./openInEditor.js";
 import {
   openResourceManager,
@@ -57,7 +56,6 @@ import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 
 export function registerPlatformIpcHandlers(options: {
-  fetchHelpConfig?: () => Promise<unknown>;
   logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
@@ -322,21 +320,8 @@ export function registerPlatformIpcHandlers(options: {
     currentApplicationLocale: options.currentApplicationLocale,
   });
 
-  ipcMain.handle(PlatformChannels.CanOpenCommunity, async (_event, locale: unknown) => {
-    const result = localeSchema.safeParse(locale);
-    if (!result.success) {
-      options.logger.warn("[community] invalid locale:", formatZodError(result.error));
-      return false;
-    }
-
-    const communityUrl = await resolveCommunityUrl({
-      locale: result.data,
-      fetchRemoteConfig: options.fetchHelpConfig,
-      logger: options.logger,
-    });
-
-    return typeof communityUrl === "string" && communityUrl.length > 0;
-  });
+  // 用户社群入口改为硬指 ZPaPa 仓库 Discussions，不再依赖语言/远端配置，因此恒可打开。
+  ipcMain.handle(PlatformChannels.CanOpenCommunity, async () => true);
 
   ipcMain.handle(
     PlatformChannels.AcknowledgePostUpdateReleaseNotes,
