@@ -29,6 +29,7 @@ import type {
 import type { SquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
 import {
+  mentionedSubscriberSubjects,
   subscriberFactsForComment,
   subscriberSubjectOfActor,
   type SubscriberFactRecorder,
@@ -535,9 +536,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
           workItemTitle: workItem?.title ?? null,
           commentId: comment.id,
           author: subscriberSubjectOfActor(comment.author),
-          mentioned: subscriptionFacts.flatMap((fact) =>
-            fact.kind === "subscribe" && fact.reason === "mentioned" ? [fact.subject] : [],
-          ),
+          mentioned: mentionedSubscriberSubjects(subscriptionFacts),
         });
       }
       // 线程根：根评论 threadId = id（§3.2），故按 id 取恒可命中（含墓碑行）。

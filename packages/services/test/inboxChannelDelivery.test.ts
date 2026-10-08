@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,28 @@ const AGENT: SubscriberSubject = { kind: "agent", id: "ta-ann" };
 const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const stripComments = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+/** 递归列出 src 下全部 `.ts`（守卫的**全仓**口径：只扫某一个文件会漏掉第二构造面）。 */
+function listSourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(dir, entry.name);
+    if (entry.isDirectory()) return listSourceFiles(path);
+    return entry.name.endsWith(".ts") ? [path] : [];
+  });
+}
+
+/** 从 `index` 处的调用名取出**完整调用文本**（括号配对到闭合，含嵌套箭头函数参数）。 */
+function callTextAt(source: string, index: number): string {
+  let depth = 0;
+  for (let cursor = source.indexOf("(", index); cursor < source.length; cursor += 1) {
+    if (source[cursor] === "(") depth += 1;
+    else if (source[cursor] === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(index, cursor + 1);
+    }
+  }
+  throw new Error(`未闭合的调用（源码守卫取不到调用文本）：${source.slice(index, index + 80)}`);
+}
 
 /** 一条订阅行（判据只读三格；活动行恒 `issue`）。 */
 function row(
@@ -404,18 +426,42 @@ test("SUB.3b｜装配：未注入出站口（既有调用方）⇒ 登记照常�
   }
 });
 
-test("SUB.3b｜结构守卫：挂接点与出站口各恰一处（产生点不得各自推送）", () => {
-  const runtimeSource = stripComments(
-    readFileSync(resolve(SRC_ROOT, "workitem/squadRuntime.ts"), "utf8"),
+test("SUB.3b｜结构守卫：全仓 repo 构造三分（定义 / 带 sink 写构造 / 不带 sink 读构造）+ 组合根注入各恰一处", () => {
+  /* 全仓口径（SUB.V P3-2 扩面）：只数 `squadRuntime.ts` 会把「读面被装上 sink」这类第二构造面漏掉。
+     三个构造面 = 定义 1（inboxItemRepo）+ **写**构造 1（squadRuntime，带 sink）+ 读面懒取 1
+     （node.ts，服务 list/mark/archive，不带 sink）。第四处 = 某条写入通路可能绕过 sink 静默不推。 */
+  const constructionSites = listSourceFiles(SRC_ROOT).flatMap((file) => {
+    const source = stripComments(readFileSync(file, "utf8"));
+    return [...source.matchAll(/createInboxItemRepo\(/g)].map((match) => ({
+      file: relative(SRC_ROOT, file),
+      call: callTextAt(source, match.index!),
+    }));
+  });
+  assert.deepEqual(
+    constructionSites.map((site) => site.file).sort(),
+    ["node.ts", "workitem/inboxItemRepo.ts", "workitem/squadRuntime.ts"],
+    "全仓恰三处：定义 + 唯一写构造 + 读面懒取（第四处 = 第二条产生通路可能静默不推）",
   );
-  assert.equal(
-    [...runtimeSource.matchAll(/createInboxItemRepo\(/g)].length,
-    1,
-    "repo 构造点唯一：两个构造点会让其中一条通路静默不推",
+
+  const writeSites = constructionSites.filter((site) => site.call.includes("onInserted:"));
+  assert.deepEqual(
+    writeSites.map((site) => site.file),
+    ["workitem/squadRuntime.ts"],
+    "带 sink 的**写**构造恰一处；两个构造点会让其中一条通路静默不推",
   );
   assert.ok(
-    /createInboxItemRepo\(db, \{\s*onInserted:/.test(runtimeSource),
-    "唯一构造点必须把 sink 装进 onInserted（漏装 = 推送整块空转且不报错）",
+    /^createInboxItemRepo\(db, \{\s*onInserted:/.test(writeSites[0]!.call),
+    "唯一**写**构造点必须把 sink 装进 onInserted（漏装 = 推送整块空转且不报错）",
+  );
+
+  const readSite = constructionSites.find((site) => site.file === "node.ts")!;
+  assert.ok(
+    !readSite.call.includes("onInserted"),
+    "读面懒取（list / mark / archive）不得带 sink：读路径不产生新条目，装了会让出站口多一个驱动器",
+  );
+
+  const runtimeSource = stripComments(
+    readFileSync(resolve(SRC_ROOT, "workitem/squadRuntime.ts"), "utf8"),
   );
   assert.equal(
     [...runtimeSource.matchAll(/createInboxChannelDelivery\(/g)].length,

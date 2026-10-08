@@ -24,10 +24,12 @@ import {
   AUTOMATIC_SUBSCRIBER_REASONS,
   MANUAL_SUBSCRIBER_REASON,
   createSubscriberFactRecorder,
+  mentionedSubscriberSubjects,
   type SubscriberReason,
 } from "../src/workitem/subscriberFacts.js";
 import {
   reconcileSubscriberFacts,
+  type SubscriberFact,
   type SubscriberRowState,
 } from "../src/workitem/subscriberReconciler.js";
 
@@ -702,9 +704,16 @@ test("守卫｜唯一 reconciler：全仓恰一处调用（唯一 applier），�
     1,
     "applier 里也只调一次（不重复判）",
   );
-  const literalSpellers = files.filter((name) =>
-    /reason:\s*"(creator|assignee|commenter|mentioned|delegated|manual)"/.test(sourceOf(name)),
-  );
+  /* 两种拼法都算「自拼 reason」：对象字面量（`reason: "x"`）与比较（`reason === "x"`）。
+     只认第一种会从缝里漏掉消费面的比较式 —— SUB.V P3-4 之前 `commentService` 正是这么漏的
+     （消费面必须经 `mentionedSubscriberSubjects` 一类具名选择器读结论）。 */
+  const literalSpellers = files.filter((name) => {
+    const code = sourceOf(name);
+    const reasonLiteral = /"(creator|assignee|commenter|mentioned|delegated|manual)"/;
+    const objectSpelling = new RegExp(`reason:\\s*${reasonLiteral.source}`);
+    const comparisonSpelling = new RegExp(`reason\\s*[!=]==?\\s*${reasonLiteral.source}`);
+    return objectSpelling.test(code) || comparisonSpelling.test(code);
+  });
   assert.deepEqual(
     literalSpellers,
     ["subscriberFacts.ts"],
@@ -747,4 +756,26 @@ test("守卫｜存储层谓词在位：upsert 走唯一键冲突分支；墓碑�
       !sourceOf("subscriberReconciler.ts").includes("db."),
     "判据模块零 IO（不碰数据库句柄）",
   );
+});
+
+test("SUB.1｜点名子集选择器：只取 `mentioned` 的订阅事实主体（作者 / 撤销 / 手动事实都不入选）", () => {
+  /* 期望值来源：spec §7.1 事实表 —— 「被 `@agent` 明确点名的主体 ⇒ mentioned」。
+     该子集是收件箱通知口的 `mentioned` 入参（「点名压过关注」的判据在策略模块，不在这里）。 */
+  const facts: SubscriberFact[] = [
+    { kind: "subscribe", reason: "commenter", subject: { kind: "agent", id: "ta-author" } },
+    { kind: "subscribe", reason: "mentioned", subject: { kind: "agent", id: "ta-ann" } },
+    { kind: "subscribe", reason: "mentioned", subject: { kind: "squad", id: "sq-1" } },
+    { kind: "revoke", subject: { kind: "agent", id: "ta-old" } },
+    { kind: "manual_subscribe", subject: { kind: "human", id: "local-user" } },
+    { kind: "manual_unsubscribe", subject: { kind: "human", id: "local-user" }, scope: "issue" },
+  ];
+  assert.deepEqual(
+    mentionedSubscriberSubjects(facts),
+    [
+      { kind: "agent", id: "ta-ann" },
+      { kind: "squad", id: "sq-1" },
+    ],
+    "点名子集 = `subscribe` 且 reason 为 `mentioned` 的主体（按事实原序）；commenter 的作者不入选",
+  );
+  assert.deepEqual(mentionedSubscriberSubjects([]), [], "零事实 ⇒ 空点名集（不是 undefined）");
 });

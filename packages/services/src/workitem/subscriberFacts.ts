@@ -298,3 +298,17 @@ export function subscriberFactsForComment(input: {
   }
   return facts;
 }
+
+/**
+ * 从一批订阅事实里取**点名**子集（`@人名` 命中的订阅主体）：收件箱通知口的 `mentioned` 入参。
+ *
+ * 为什么给具名选择器而不是让消费面自拼 `fact.reason === "mentioned"`：六 reason 的拼写只在
+ * 本模块（词表单源），消费面按名字取结论 —— 闭集加档 / 改名时不必去消费面搜字符串。
+ * 只认 `subscribe` 且 reason 命中：作者那条 `commenter`、负责人撤销、手动两向都不入选
+ * （「点名压过关注」的判据在 `inboxNotificationPolicy` 一处，不在这里重判）。
+ */
+export function mentionedSubscriberSubjects(facts: readonly SubscriberFact[]): SubscriberSubject[] {
+  return facts.flatMap((fact) =>
+    fact.kind === "subscribe" && fact.reason === "mentioned" ? [fact.subject] : [],
+  );
+}
