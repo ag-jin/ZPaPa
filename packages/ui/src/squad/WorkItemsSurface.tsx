@@ -12,6 +12,7 @@ import { WorkItemsBoard } from "./WorkItemsBoard.js";
 import {
   workItemSurfaceEmptyKind,
   workItemSurfaceVisibleItems,
+  type WorkItemSurfaceIntent,
   type WorkItemSurfaceState,
 } from "./workItemSurfaceViewModel.js";
 import type { WorkItemLaneDimension } from "./workItemsViewModel.js";
@@ -40,6 +41,7 @@ export function WorkItemsSurface({
   timelineExpandedWorkItemId,
   laneDimension,
   surface,
+  onSurfaceIntent,
   focusWorkItemId,
   onFocusConsumed,
   onEdit,
@@ -62,6 +64,9 @@ export function WorkItemsSurface({
   laneDimension: WorkItemLaneDimension;
   /** Surface 状态（页面持有）：视图模式 / 本地搜索 / 过滤 / 排序 / 列配置。 */
   surface: WorkItemSurfaceState;
+  /** 视图回传的**意图**（T-P2-R3 起 table 的表头排序与列显隐消费它）：宿主只透传给视图，
+      折叠仍只有一处实现（页面的 `applyWorkItemSurfaceIntent`）。 */
+  onSurfaceIntent: (intent: WorkItemSurfaceIntent) => void;
   /** 收件箱穿透的**一次性聚焦意图**（`null` = 没有意图）。 */
   focusWorkItemId?: string | null;
   /** 聚焦消费回调：找到就滚 + 高亮后调；**目标不在列表也调**（父项被归档等 —— 不留悬挂意图）。 */
@@ -142,7 +147,14 @@ export function WorkItemsSurface({
     return <WorkItemListView items={visibleItems} environment={environment} />;
   }
   if (surface.view === "table") {
-    return <WorkItemTableView items={visibleItems} environment={environment} />;
+    return (
+      <WorkItemTableView
+        items={visibleItems}
+        environment={environment}
+        surface={surface}
+        onSurfaceIntent={onSurfaceIntent}
+      />
+    );
   }
   return (
     <WorkItemsBoard

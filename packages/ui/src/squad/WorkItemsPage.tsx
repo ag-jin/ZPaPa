@@ -430,6 +430,7 @@ export function WorkItemsPage({
             timelineExpandedWorkItemId={expandedTimelineWorkItemId}
             laneDimension={laneDimension}
             surface={surface}
+            onSurfaceIntent={applySurfaceIntent}
             focusWorkItemId={focusWorkItemId}
             onFocusConsumed={onFocusConsumed}
             onEdit={(item) => setDialog({ kind: "edit", item })}
