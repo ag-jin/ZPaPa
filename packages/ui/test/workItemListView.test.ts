@@ -155,6 +155,8 @@ function renderView(
         timelineExpandedWorkItemId: null,
         laneDimension: "none",
         surface,
+        // T-P2-R3：宿主新增意图透传（table 视图的表头排序/列显隐消费它）；本用例只渲染不交互。
+        onSurfaceIntent: () => {},
         onEdit: () => {},
         onInlineEdit: async () => null,
         onReassign: () => {},
@@ -368,6 +370,11 @@ test("守卫｜聚焦注册：宿主创建一次并交给行模块，视图链�
     stripComments(readSource("squad/WorkItemsSurface.tsx")).includes("items: visibleItems"),
     "待消费的聚焦意图在**投影后的可见集**上重试（换视图/换查询后仍能定位）",
   );
+  /* T-P2-R3 口径微调（**强度不降**）：禁的针从裸 `ring-brand` 收窄为**行高亮的那一组**
+     （`ring-2 ring-brand`）。理由：`focus-visible:ring-brand` 是全仓通用的**键盘焦点环**
+     （Navigation.tsx 等既有先例），视图层的原生按钮需要它才算键盘可达；裸针会把
+     「焦点可见」误判成「自持高亮」。行高亮的判据改为：那一组字面量在全 `src` 树**恰一处**
+     （行模块），视图层不得出现（见下方新增断言）。变异（M-高亮漂移）仍必红。 */
   for (const file of [
     "squad/WorkItemListView.tsx",
     "squad/WorkItemTableView.tsx",
@@ -375,7 +382,12 @@ test("守卫｜聚焦注册：宿主创建一次并交给行模块，视图链�
     "squad/WorkItemsSurface.tsx",
   ]) {
     const source = stripComments(readSource(file));
-    for (const forbidden of ["rowElementsRef", "scrollIntoView(", "registerRow", "ring-brand"]) {
+    for (const forbidden of [
+      "rowElementsRef",
+      "scrollIntoView(",
+      "registerRow",
+      "ring-2 ring-brand",
+    ]) {
       assert.ok(
         !source.includes(forbidden),
         `${file} 不得自持 ${forbidden}（聚焦只有行模块一份实现）`,
@@ -385,6 +397,11 @@ test("守卫｜聚焦注册：宿主创建一次并交给行模块，视图链�
   const rows = stripComments(readSource("squad/WorkItemRows.tsx"));
   assert.ok(rows.includes('scrollIntoView({ block: "nearest" })'), "行模块负责把目标行滚进视野");
   assert.ok(rows.includes("ring-brand"), "高亮用语义色 token（brand 环）");
+  assert.equal(
+    (rows.match(/ring-2 ring-brand/g) ?? []).length,
+    1,
+    "行高亮（`ring-2 ring-brand`）恰一处：三视图共用同一份高亮实现",
+  );
   assert.match(
     rows,
     /onFocusConsumed\?\.\(\);/,
@@ -392,10 +409,14 @@ test("守卫｜聚焦注册：宿主创建一次并交给行模块，视图链�
   );
   /* 注册的**接线**也要钉住：注册表存在 ≠ 行会进注册表。`registerRow` 只有在行元素上被
      `ref` 调过，map 才有那条（M-漏接线：删掉 `<li>` 的 ref 回调 —— 只数
-     `rowElementsRef.current.set(` 是数不出来的，它仍在 `registerRow` 里活着）。 */
-  assert.ok(
-    rows.includes("ref={(element) => {") &&
-      rows.includes("rowFocus.registerRow(item.id, element);"),
+     `rowElementsRef.current.set(` 是数不出来的，它仍在 `registerRow` 里活着）。
+     T-P2-R3 口径微调（**强度不降**，assert 不删）：表格视图落地后行的容器元素在 `<li>`/`<tr>`
+     之间参数化，联合标签让 TS 无法上下文推断 ref 参数 ⇒ 回调**显式标注** `HTMLElement | null`
+     （`registerRow` 的类型同步放宽到 `HTMLElement`）。断言的实质不变：ref 回调把**行元素**交给
+     `registerRow`，且注册接线恰一处。变异（M-漏接线）仍必红。 */
+  assert.match(
+    rows,
+    /ref=\{\(element: HTMLElement \| null\) => \{[\s\S]{0,80}rowFocus\.registerRow\(item\.id, element\);/,
     "行的 ref 回调用行元素调 registerRow（少了这一步，聚焦在**所有**视图里静默失败）",
   );
   assert.equal(

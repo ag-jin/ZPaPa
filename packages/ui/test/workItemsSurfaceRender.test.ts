@@ -120,6 +120,8 @@ function renderSurface(input: {
         timelineExpandedWorkItemId: null,
         laneDimension,
         surface,
+        // T-P2-R3：宿主新增意图透传（table 视图的表头排序/列显隐）；逐字节基线只渲染不交互。
+        onSurfaceIntent: () => {},
         onEdit: () => {},
         onInlineEdit: async () => null,
         onReassign: () => {},
@@ -269,6 +271,8 @@ test("判据在纯函数：视图层源码不得出现 .filter( / .sort( 业务�
     "squad/WorkItemRows.tsx",
     "squad/WorkItemListView.tsx",
     "squad/WorkItemTableView.tsx",
+    // T-P2-R3：表格单元格也是视图层（自己排/自己筛 = 第二份投影判据）。
+    "squad/WorkItemTableCell.tsx",
     "squad/WorkItemsBoard.tsx",
   ]) {
     const source = stripComments(readSource(file));

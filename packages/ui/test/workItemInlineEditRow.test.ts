@@ -66,6 +66,8 @@ function renderInlineBoard(workItems: WorkItem[]): string {
         laneDimension: "none" as const,
         // T-P2-R1：渲染根从看板改为 **Surface 宿主**（行渲染/聚焦/编辑态都在宿主装配后交给行模块）。
         surface: workItemSurfaceDefaultState(),
+        // T-P2-R3：宿主新增意图透传（table 的表头排序/列显隐消费它）；本用例只渲染。
+        onSurfaceIntent: () => {},
         onEdit: () => {},
         onInlineEdit: inlineEditSucceeds,
         onReassign: () => {},

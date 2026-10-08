@@ -107,8 +107,10 @@ test("守卫｜行有「改派」钮：在行内动作簇里、与编辑同级�
     "有请求在飞时改派钮置灰",
   );
   assert.ok(board.includes("onReassign(item)"), "钮点击必须把意图交给页面（onReassign(item)）");
+  /* T-P2-R3：行环境的**类型**搬到了 `workItemRowParts`（行模块要守 400 行上限，见该文件头），
+     契约本身不变（仍由宿主装配、行消费）—— 断言不删，只换被读的文件（照 R1/R2 先例）。 */
   assert.ok(
-    board.includes("onReassign: (item: WorkItem) => void"),
+    readSource("squad/workItemRowParts.tsx").includes("onReassign: (item: WorkItem) => void"),
     "onReassign 是行环境的入参契约（宿主装配、行消费）",
   );
 });

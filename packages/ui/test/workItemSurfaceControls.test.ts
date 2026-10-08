@@ -370,6 +370,8 @@ function renderBandAndSurface(surface: WorkItemSurfaceState, workItems: WorkItem
           timelineExpandedWorkItemId: null,
           laneDimension: "none",
           surface,
+          // T-P2-R3：宿主把视图的意图透传给页面（table 的表头排序/列显隐消费它）；本用例只渲染。
+          onSurfaceIntent: () => {},
           onEdit: () => {},
           onInlineEdit: async () => null,
           onReassign: () => {},

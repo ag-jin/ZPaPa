@@ -266,6 +266,8 @@ function renderBoard(workItems: WorkItemCollaborationRead["workItem"][]): string
         laneDimension: "none",
         // T-P2-R1：Surface 宿主消费状态（默认 = board + 无查询）；行渲染单点在 WorkItemRows。
         surface: workItemSurfaceDefaultState(),
+        // T-P2-R3：宿主新增意图透传（table 视图的表头排序/列显隐消费它）；本用例只渲染。
+        onSurfaceIntent: () => {},
         onEdit: () => {},
         // 阶段一轮 D：看板新增**必填**的行内写回调（页面注入；这里只渲染，不需要它被调到）。
         onInlineEdit: async () => null,
@@ -367,6 +369,9 @@ test("守卫｜日期零转换：轮 C 的呈现与编辑面不得出现时刻�
     "squad/WorkItemsSurface.tsx",
     "squad/WorkItemListView.tsx",
     "squad/WorkItemTableView.tsx",
+    // T-P2-R3 新增/搬动的面同样纳入零换算扫描（名单只扩不收）：表格的单元格与表格判据。
+    "squad/WorkItemTableCell.tsx",
+    "squad/workItemTableViewModel.ts",
     "squad/workItemSurfaceViewModel.ts",
     "squad/workItemPropertiesViewModel.ts",
     "squad/WorkItemsPage.tsx",
