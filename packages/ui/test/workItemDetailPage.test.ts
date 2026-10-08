@@ -113,6 +113,8 @@ function read(): WorkItemCollaborationRead {
     comments: [],
     activities: [],
     decisions: [],
+    /* #7 D1b：读模型多了交付物清单（详情页的交付物区读它）。 */
+    deliverables: [],
     reactions: [],
     receipts: [],
     viewerActor: { kind: "human", id: "local-user" },

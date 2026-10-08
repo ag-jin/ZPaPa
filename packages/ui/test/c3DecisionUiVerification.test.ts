@@ -17,6 +17,7 @@ import { createWorkItemActivityRepo } from "../../services/src/workitem/workItem
 import { createWorkItemCommentReactionRepo } from "../../services/src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemCommentRepo } from "../../services/src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../../services/src/workitem/workItemDecisionRepo.js";
+import { createWorkItemDeliverableRepo } from "../../services/src/workitem/workItemDeliverableRepo.js";
 import {
   createWorkItemDecisionService,
   type WorkItemDecisionServiceDeps,
@@ -471,7 +472,11 @@ function setupChain() {
   });
   const facade = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo: workItems, boundWorkspace: CHAIN_WS }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: workItems,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: CHAIN_WS,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments: createWorkItemCommentRepo(db),
       activities,

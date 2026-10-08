@@ -503,11 +503,11 @@ export const COMMENT_REACTION_EMOJIS = ["👍", "🎉", "👀", "🙏", "✅"] a
 /**
  * 写面不可用的原因（设计案 §4.1 + §3.4）：归档 > 刷新失败 > 可写（`null`）。
  *
- * **评论与决定共用这一条判据**（只换文案族）：两个面各写一份「先看归档再看刷新」的优先级，
- * 迟早在某一面上漏掉一格 —— 而漏掉的表现是「入口亮着，点了必失败」。
+ * **评论 / 决定 / 交付物三个面共用这一条判据**（只换文案族）：各面各写一份「先看归档再看刷新」
+ * 的优先级，迟早在某一面上漏掉一格 —— 而漏掉的表现是「入口亮着，点了必失败」。
  */
 export function writeDisabledReason(
-  surface: "comment" | "decision",
+  surface: "comment" | "decision" | "deliverable",
   workItem: { archivedAt?: number },
   refreshFailure: string | null,
 ): string | null {

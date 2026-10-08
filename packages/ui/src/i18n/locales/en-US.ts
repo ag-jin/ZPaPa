@@ -4812,6 +4812,33 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.decision.parentReopened": "Reopens: {kind} · {subject}",
   "squad.workItemDetail.decision.parentRelated": "About: {kind} · {subject}",
   "squad.workItemDetail.decision.parentUnresolved": "Parent decision unavailable: {id}",
+  /* #7 D1b: deliverables section (design §3.4). The kind mapping is
+     `Record<DeliverableKind, string>` (exhaustive over the closed set). */
+  "squad.workItemDetail.deliverables.title": "Deliverables",
+  "squad.workItemDetail.deliverables.empty":
+    "No deliverables yet: merged work is captured automatically, and you can register external links.",
+  "squad.workItemDetail.deliverables.kind.diff": "diff",
+  "squad.workItemDetail.deliverables.kind.link": "link",
+  "squad.workItemDetail.deliverables.commits": "{count} commits",
+  "squad.workItemDetail.deliverables.view": "View diff",
+  "squad.workItemDetail.deliverables.hide": "Hide",
+  "squad.workItemDetail.deliverables.contentLoading": "Loading content…",
+  "squad.workItemDetail.deliverables.contentMissing":
+    "Content missing (metadata is kept; nothing is rebuilt)",
+  "squad.workItemDetail.deliverables.contentFailed": "Failed to load the deliverable content",
+  "squad.workItemDetail.deliverables.form.open": "Register link",
+  "squad.workItemDetail.deliverables.form.titlePlaceholder": "Title (e.g. PR #12)",
+  "squad.workItemDetail.deliverables.form.urlPlaceholder": "https://…",
+  "squad.workItemDetail.deliverables.form.titleRequired": "Fill in a title",
+  "squad.workItemDetail.deliverables.form.urlRequired": "Fill in a URL",
+  "squad.workItemDetail.deliverables.form.urlInvalid":
+    "The URL must start with http:// or https://",
+  "squad.workItemDetail.deliverables.form.submit": "Register",
+  "squad.workItemDetail.deliverables.form.cancel": "Cancel",
+  "squad.workItemDetail.deliverable.disabled.archived":
+    "This work item is archived; deliverables cannot be registered",
+  "squad.workItemDetail.deliverable.disabled.readFailed":
+    "Activity failed to load; deliverables cannot be registered",
   "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
   "squad.workItemDetail.dispatch.opened": "Run opened",
   "squad.workItemDetail.dispatch.queued": "Queued",

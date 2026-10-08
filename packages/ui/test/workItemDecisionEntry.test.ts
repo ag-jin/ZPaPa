@@ -19,6 +19,7 @@ import { createWorkItemActivityRepo } from "../../services/src/workitem/workItem
 import { createWorkItemCommentReactionRepo } from "../../services/src/workitem/workItemCommentReactionRepo.js";
 import { createWorkItemCommentRepo } from "../../services/src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../../services/src/workitem/workItemDecisionRepo.js";
+import { createWorkItemDeliverableRepo } from "../../services/src/workitem/workItemDeliverableRepo.js";
 import { createWorkItemDecisionService } from "../../services/src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../../services/src/workitem/workItemRepo.js";
 import type { SquadRuntime } from "../../services/src/workitem/squadContracts.js";
@@ -666,7 +667,11 @@ function setupTimeline() {
   });
   const collaboration = createWorkItemCollaborationService({
     createRuntime: async () =>
-      ({ workItemRepo: workItems, boundWorkspace: TIMELINE_WORKSPACE }) as unknown as SquadRuntime,
+      ({
+        workItemRepo: workItems,
+        deliverableRepo: createWorkItemDeliverableRepo(db),
+        boundWorkspace: TIMELINE_WORKSPACE,
+      }) as unknown as SquadRuntime,
     getRepos: () => ({
       comments: createWorkItemCommentRepo(db),
       activities,

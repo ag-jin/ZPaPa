@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
-  CommentDispatchReceiptRecord,
   IWorkItemCollaborationServiceShape,
   SquadSnapshot,
   SquadWorkspaceTarget,
-  WorkItemCommentReactionRecord,
   WorkItemCommentRecord,
 } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
@@ -20,6 +18,8 @@ import { WorkItemCollaborationTimeline } from "./WorkItemCollaborationTimeline.j
 import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
 import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDecisionDialog.js";
+import { WorkItemDeliverablesSection } from "./WorkItemDeliverablesSection.js";
+import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
 import {
   COMMENT_DELETE_CONFIRM_IDLE,
@@ -177,10 +177,41 @@ export function WorkItemDetailPage({
     [runCollaborationAction, workItemIdForWrite],
   );
 
+  /**
+   * 手动登记一条 **link** 交付物（#7 D1b）：与评论/决定同一条执行器（写 → 只刷新协作读模型）。
+   * `workItemId` 由读面带回的工作项补上；`kind` 不由 UI 给（服务面只开 link）。
+   */
+  const submitDeliverableLink = useCallback(
+    async (input: { title: string; url: string }) => {
+      const id = workItemIdForWrite;
+      // 没有工作项就不能登记：抛出去让交付物区显示「未登记」，**不**假装写成功。
+      if (id === null) throw new Error("工作项尚未读出，无法登记交付物。");
+      await runCollaborationAction(null, (service, currentTarget) =>
+        service.registerWorkItemDeliverableLink(currentTarget, { workItemId: id, ...input }),
+      );
+    },
+    [runCollaborationAction, workItemIdForWrite],
+  );
+
+  /**
+   * 交付物正文按需读（#7 D1b）：**只读**不经 `runCollaborationAction`（那是写入的执行器），
+   * 但仍只在这里碰服务对象 —— 组件拿回调，不拿服务。失败**不吞**：交给交付物区就地呈现
+   * （读取失败与「正文缺失」是两件事，必须分得开）。
+   */
+  const loadDeliverableContent = useCallback(
+    async (deliverableId: string) => {
+      if (!target) return null;
+      return resolveWorkItemCollaborationService(services).getWorkItemDeliverable(
+        target,
+        deliverableId,
+      );
+    },
+    [services, target],
+  );
+
   const requestDelete = useCallback((comment: WorkItemCommentRecord) => {
     setDeleteConfirm({ pendingCommentId: comment.id });
   }, []);
-
   /** 确认分支的执行：可执行的那一条**只能**来自确认态（`confirmCommentDelete`）。 */
   const runDelete = useCallback(() => {
     const decision = confirmCommentDelete(deleteConfirm);
@@ -359,6 +390,17 @@ export function WorkItemDetailPage({
         )}
       </section>
 
+      <WorkItemDeliverablesSection
+        deliverables={read.deliverables}
+        registerDisabledReasonMessageId={writeDisabledReason(
+          "deliverable",
+          workItem,
+          state.refreshFailure,
+        )}
+        onRegisterLink={submitDeliverableLink}
+        onLoadContent={loadDeliverableContent}
+      />
+
       <section
         data-testid="work-item-collaboration"
         className={cn("flex flex-col gap-3 rounded-xl border border-card-border bg-card px-4 py-4")}
@@ -428,29 +470,4 @@ export function WorkItemDetailPage({
       )}
     </div>
   );
-}
-
-/** 回应按评论分组（一次遍历；分组语义在纯函数 `groupCommentReactions` 里）。 */
-function buildReactionsByComment(
-  reactions: WorkItemCommentReactionRecord[],
-): Map<string, WorkItemCommentReactionRecord[]> {
-  return groupBy(reactions, (reaction) => reaction.commentId);
-}
-
-/** receipt 按评论分组（同上；顺序原样保留 —— repo 已按 createdAt ASC → dispatchKey ASC 给）。 */
-function buildReceiptsByComment(
-  receipts: CommentDispatchReceiptRecord[],
-): Map<string, CommentDispatchReceiptRecord[]> {
-  return groupBy(receipts, (receipt) => receipt.commentId);
-}
-
-function groupBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
-  const grouped = new Map<string, T[]>();
-  for (const item of items) {
-    const key = keyOf(item);
-    const bucket = grouped.get(key);
-    if (bucket) bucket.push(item);
-    else grouped.set(key, [item]);
-  }
-  return grouped;
 }
