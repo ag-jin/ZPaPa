@@ -4645,6 +4645,12 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.decision.parentReopened": "重新审议：{kind} · {subject}",
   "squad.workItemDetail.decision.parentRelated": "关于：{kind} · {subject}",
   "squad.workItemDetail.decision.parentUnresolved": "父决定不可用：{id}",
+  /* 阶段三 · T-P3-R3：详情页「子项」区（快照按 parentId 过滤，不新增读面）。最小集 5 枚。 */
+  "squad.workItemDetail.children.title": "子项",
+  "squad.workItemDetail.children.empty": "还没有子项：在下面输入标题即可添加。",
+  "squad.workItemDetail.children.rosterUnavailable": "名册读取失败，暂时看不到子项",
+  "squad.workItemDetail.children.summary": "已收尾 {terminal}/{total}",
+  "squad.workItemDetail.children.disabled.archived": "工作项已归档，不能添加子项",
   /* #7 D1b：交付物区（设计 §3.4）。kind 映射是 `Record<DeliverableKind, string>`（闭集穷尽）。 */
   "squad.workItemDetail.deliverables.title": "交付物",
   "squad.workItemDetail.deliverables.empty":

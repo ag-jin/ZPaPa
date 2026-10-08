@@ -4972,6 +4972,14 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.decision.parentReopened": "Reopens: {kind} · {subject}",
   "squad.workItemDetail.decision.parentRelated": "About: {kind} · {subject}",
   "squad.workItemDetail.decision.parentUnresolved": "Parent decision unavailable: {id}",
+  /* Phase 3 · T-P3-R3: detail-page "sub-items" section (roster filtered by parentId; no new read). */
+  "squad.workItemDetail.children.title": "Sub-items",
+  "squad.workItemDetail.children.empty": "No sub-items yet: type a title below to add one.",
+  "squad.workItemDetail.children.rosterUnavailable":
+    "Could not read the roster: sub-items are unavailable",
+  "squad.workItemDetail.children.summary": "{terminal}/{total} closed out",
+  "squad.workItemDetail.children.disabled.archived":
+    "This work item is archived; cannot add sub-items",
   /* #7 D1b: deliverables section (design §3.4). The kind mapping is
      `Record<DeliverableKind, string>` (exhaustive over the closed set). */
   "squad.workItemDetail.deliverables.title": "Deliverables",

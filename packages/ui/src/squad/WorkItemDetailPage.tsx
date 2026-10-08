@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   IWorkItemCollaborationServiceShape,
   PullRequestSyncReport,
-  SquadSnapshot,
   SquadWorkspaceTarget,
   WorkItemCommentRecord,
 } from "@zcode/services";
@@ -29,6 +28,8 @@ import { WorkItemPullRequestsSection } from "./WorkItemPullRequestsSection.js";
 import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
 import { pullRequestGateNoticeMessageId } from "./workItemPullRequestsViewModel.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
+import { useWorkItemChildren } from "./useWorkItemChildren.js";
+import { WorkItemChildrenSection } from "./WorkItemChildrenSection.js";
 import {
   COMMENT_DELETE_CONFIRM_IDLE,
   confirmCommentDelete,
@@ -59,7 +60,11 @@ import {
       写入路径里**不出现** `getSnapshot(`（第二次取快照会让名册与协作数据各自漂移）；
    ② 写入调用只在下面的 `runCollaborationAction` 一处：模板与子组件都拿到「做什么」的回调，
       而不是拿到服务对象自己调（要能一眼看出「谁在写」）。C3.2 起它同时承载**决定**的写入
-      （评论与决定的失败域相同：动作错误条 / 就地失败提示），唯一执行器仍是这一处。 */
+      （评论与决定的失败域相同：动作错误条 / 就地失败提示），唯一执行器仍是这一处。
+
+   T-P3-R3 的**第二条**（运行面）写路径：子项创建只经 `createWorkItem` 单源，收在
+   `useWorkItemChildren` —— 同一条「一次动作只刷新一个事实源」的纪律：写成功只回读**名册**
+   （子项区唯一的数据源），不碰协作读模型；协作写入照旧不碰名册。 */
 
 export function WorkItemDetailPage({
   workspacePath,
@@ -82,8 +87,18 @@ export function WorkItemDetailPage({
     [workspacePath, workspaceIdentity],
   );
   const { state, reload } = useWorkItemCollaboration({ target, workItemId });
-  /* 名册**只供** mention 解析与指派显示（§9-C4：概览不从快照取工作项）——工作项本体来自协作读。 */
-  const [roster, setRoster] = useState<SquadSnapshot | null>(null);
+  /* 名册**只供** mention 解析、指派显示与**子项区**的清单（§9-C4：概览不从快照取工作项）——
+     工作项本体来自协作读；快照读取的唯一调用点仍在页面（写路径不得再取一次），
+     状态机与子项的写路径收在 `useWorkItemChildren`（页面已到 400 行硬线）。 */
+  const readRoster = useCallback(
+    (currentTarget: SquadWorkspaceTarget) =>
+      resolveSquadRuntimeService(services).getSnapshot(currentTarget),
+    [services],
+  );
+  const { roster, rosterFailure, createChildWorkItem } = useWorkItemChildren({
+    target,
+    readRoster,
+  });
   const [replyTarget, setReplyTarget] = useState<WorkItemCommentRecord | null>(null);
   /* 概览正文**可折叠**（设计案 §2.1：避免长描述把协作入口推离首屏）——默认收起。 */
   const [bodyExpanded, setBodyExpanded] = useState(false);
@@ -95,26 +110,6 @@ export function WorkItemDetailPage({
   const [pendingCommentId, setPendingCommentId] = useState<string | null>(null);
   /** 动作失败的原因（区域错误条）：删除/解决/回应失败时显示；提交失败另有就地提示。 */
   const [actionError, setActionError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!target) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const snapshot = await resolveSquadRuntimeService(services).getSnapshot(target);
-        if (!cancelled) setRoster(snapshot);
-      } catch (error) {
-        // 辅助失败域：不把整页打红，交由 composer 的「名册不可用」说明行承接（响亮、可见）。
-        if (!cancelled) setRoster(null);
-        logger.warn("[WorkItemDetailPage] 读取名册失败", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [services, target]);
 
   const workItemIdForWrite = state.status === "ready" ? (state.read?.workItem.id ?? null) : null;
 
@@ -391,6 +386,16 @@ export function WorkItemDetailPage({
         assigneeLabel={assigneeLabel}
         bodyExpanded={bodyExpanded}
         onToggleBody={() => setBodyExpanded((previous) => !previous)}
+      />
+
+      {/* T-P3-R3：子项区（**不新增读面**：清单来自上面那一份名册按 `parentId` 过滤；
+          时间线仍只挂在看板的批根行上，本页不挂第二处）。 */}
+      <WorkItemChildrenSection
+        parentId={workItem.id}
+        snapshot={roster}
+        rosterFailure={rosterFailure}
+        archived={workItem.archivedAt !== undefined}
+        onSubmit={createChildWorkItem}
       />
 
       {/* SUB.3a：订阅控件（状态三态 + 两档退订确认）。它吃**读模型两格**（订阅行 + 观察者身份）
