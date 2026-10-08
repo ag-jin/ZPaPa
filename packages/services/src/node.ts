@@ -2987,6 +2987,10 @@ export function createLocalServices(options: {
          由组合根那份 hub 转给 host 注入的评论派发入口（X2.1）。缺这一半 ⇒ 评论永久停在 pending，
          没有任何东西会执行它，而界面会如实显示「等待派发」—— 一条看起来正常的死路。 */
       publishDispatchRequest: (request) => squadDispatchRequests.publish(request),
+      /* SUB.1 订阅事实（commenter / mentioned）：直接取**本 runtime 的**事实出口 —— 它已绑定这张
+         workspace（键与路径在闭包里），组合根不再拼一次；缺这一格的表现是「评论照常、订阅表永远
+         只有建项那一行」，而全链不报错（正是本域反复出现的静默缺口形态）。 */
+      subscribers: runtime.subscriberFacts,
     });
   };
 

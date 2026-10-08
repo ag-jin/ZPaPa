@@ -20,6 +20,7 @@ import {
   createWorkItemDecisionService,
 } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemSubscriberRepo } from "../src/workitem/workItemSubscriberRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
 import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
@@ -617,6 +618,8 @@ test("零副作用｜经门面写 5 种 kind：work_items / runs / receipts / �
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(f.db),
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -708,6 +711,8 @@ test("零副作用｜读面闭合：门面读回 decisions 与锚 Activity 指�
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(f.db),
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

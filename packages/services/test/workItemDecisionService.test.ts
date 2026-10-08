@@ -15,6 +15,7 @@ import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
+import { createWorkItemSubscriberRepo } from "../src/workitem/workItemSubscriberRepo.js";
 import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 
 /* C3.1：Decision 写入服务面（任务卡 §4.3 步骤 1/2/3/4/5/6）。
@@ -479,6 +480,8 @@ test("读面闭合｜经门面写入后读回：decisions 含新行、activities
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(f.db),
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

@@ -27,7 +27,13 @@ import { createWorkItemDeliverableRecorder } from "./workItemDeliverableRecorder
 import { createWorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
+import {
+  createSubscriberFactRecorder,
+  subscriberFactsForAssigneeChange,
+} from "./subscriberFacts.js";
 import { createWorkItemService, type WorkItemEvent } from "./workItemService.js";
+import { createWorkItemSubscriberRepo } from "./workItemSubscriberRepo.js";
 import { createWakeRuleRepo } from "./wakeRuleRepo.js";
 
 /* **组合根装配**：把 P0–P2a 交付的零件按目标 workspace 拼成一个 runtime。
@@ -41,6 +47,9 @@ import { createWakeRuleRepo } from "./wakeRuleRepo.js";
       外来的异己 workspaceKey 一律抛（见 `createRunLifecycle` 的 `assertOwnWorkspace`）。
    2. **不缓存**（由组合根决定使用方式）：本文件只提供「按目标现构」的工厂，每次调用都新建一套零件，
       所以不存在陈旧与失效逻辑；代价是一次 `git symbolic-ref` 子进程。 */
+
+/* SUB.1：订阅事实落库失败的留痕口（订阅行是派生投影，失败只 warn、不回滚主事实）。 */
+const subscriberLogger = createServiceLogger("work-item-subscribers");
 
 /** 小队命名空间的分支（集成分支 / 队员分支）—— **永远不是** base：它们是小队运行期的产物。 */
 function isSquadNamespaceBranch(branch: string): boolean {
@@ -273,6 +282,16 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
   // 收件箱台账（P2c）：同样落**同一条** db。编排器经 runtime.inboxItemRepo 直写（冲突发生在其内部），
   // 服务面经注入的懒取 repo 读写 —— 两处是**同一个** createInboxItemRepo，唯一写者不变。
   const inboxItemRepo = createInboxItemRepo(db);
+  /* SUB.1：订阅关系（`work_item_subscribers`）的**唯一**存储面 + **绑定到本 workspace** 的事实出口。
+     两个「负责人」写者（`applyWorkItemAssignee` / 归档转交）与门面的手动订阅都经它报事实；
+     事实→reason 的映射与落库判据在 `subscriberFacts`（runtime 只负责把「哪张 workspace」钉死）。
+     失败只留痕（订阅行是派生投影，不回滚主事实）——见 recorder 的失败面说明。 */
+  const subscriberRepo = createWorkItemSubscriberRepo(db);
+  const subscriberFacts = createSubscriberFactRecorder(
+    subscriberRepo,
+    { key: resolveWorkspaceKey({ workspacePath, workspaceIdentity }), path: workspacePath },
+    (message, error) => subscriberLogger.warn(message, { error }),
+  );
   /* Activity 投影器（C3b.1）：`work_item_activities` 的第三个写者（前两个：CommentService / DecisionService），
      与它们共用同一份 repo 契约（dedupKey 幂等 + 闭集双闸 + sequence 原子）—— repo 仍是唯一存储写者。
      **恒构造**（接线钉死测试钉住）：漏接的表现是「时间线永远只有评论」，而一路不报错。 */
@@ -331,6 +350,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     emit: fanout,
     // 状态变迁的投影跟随唯一写者（C3b.1）：三个生产调用点自动全覆盖，零新增判据。
     activityProjector,
+    // SUB.1：创建事实（creator + 创建时的 assignee）经唯一 reconciler 落订阅行。
+    subscribers: subscriberFacts,
   });
 
   // ⑥ 拼成 runtime。定义根都从目标 workspace 派生（实验命名空间 `<ws>/.zcode/squad/`）。
@@ -398,6 +419,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     activityProjector,
     deliverableRepo,
     deliverableRecorder,
+    subscriberRepo,
+    subscriberFacts,
     pullRequestRepo,
     pullRequestProvider,
     pullRequestSync,
@@ -510,6 +533,16 @@ export async function archiveSquadAndTransfer(
       from: item.assignee,
       to: { type: "agent", id: squad.leaderAgentId },
     });
+    /* 订阅事实（SUB.1）：转交也是一次负责人变化 —— 与 `applyWorkItemAssignee` 共用同一份
+       事实→reason 映射（`cause="squad_archived_transfer"` ⇒ assignee；小队行撤销、队长行入册）。
+       不在这里另判一格：两处各写一份的表现是「同一次转交在两张表里留下不同的关系」。 */
+    for (const fact of subscriberFactsForAssigneeChange({
+      from: item.assignee,
+      to: { type: "agent", id: squad.leaderAgentId },
+      cause: "squad_archived_transfer",
+    })) {
+      runtime.subscriberFacts({ workItemId: item.id, fact });
+    }
   }
 
   runtime.squadService.archive(squadId);

@@ -1,6 +1,7 @@
 import type { WorkItem } from "@zcode/shared";
 import type { UserDispatchCause } from "./squadDispatchRequests.js";
 import type { SquadRuntime } from "./squadContracts.js";
+import { subscriberFactsForAssigneeChange } from "./subscriberFacts.js";
 
 /* 「改负责人 + 发派发事件」的**唯一实现**（`reassignWorkItem`（UI 改派）与 `assignWorkItem`
    （队长派单工具薄包装）都只调它）：两处的写者纪律、同值处置、事件出口因此不可能分叉。
@@ -69,6 +70,16 @@ export function applyWorkItemAssignee(
     to: input.assignee,
     cause: options.cause,
   });
+  /* 订阅事实（SUB.1）：**负责人关系换人**这条事实的两个半边 —— 新负责人入册（`cause` 决定
+     `assignee` / `delegated`）+ 旧负责人行撤销；同主体重投不产撤销（见事实映射处）。
+     与投影同一次序（写成功之后、发事件之前）：事实点只报事实，reason 的映射单源在 `subscriberFacts`。 */
+  for (const fact of subscriberFactsForAssigneeChange({
+    from: item.assignee,
+    to: input.assignee,
+    cause: options.cause,
+  })) {
+    runtime.subscriberFacts({ workItemId: item.id, fact });
+  }
   /* **指派给人（= 等人自己动手）只写负责人，不发派发事件**：
      人不需要被派 run（`planDispatch` 的 user 支路同样只通知、不排队）。除 user 外的两类都发 ——
      `agent` 起队员 / 单独安排 run，`squad` 由派发路径解析出队长 run（载荷 `assignee` 带类型）。

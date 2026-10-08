@@ -372,10 +372,12 @@ test("读模型｜协作聚合读恰十一键（workItem/viewerActor + 九格数
         "pullRequests",
         "reactions",
         "receipts",
+        /* SUB.1：订阅行格（第十二格）——详情页的订阅控件与 SUB.2 的收件人解析都读它。 */
+        "subscribers",
         "viewerActor",
         "workItem",
       ].sort(),
-      "D1 交付物格、D2 PR 两格与 D3 模式格必须同时在读模型里（缺一格 ⇒ 详情页某区静默空转）",
+      "D1 交付物格、D2 PR 两格、D3 模式格与 SUB.1 订阅格必须同时在读模型里（缺一格 ⇒ 详情页某区静默空转）",
     );
     assert.deepEqual(read!.deliverables, [], "D1 交付物格仍按 workspace+item 口径可读");
     assert.deepEqual(read!.pullRequests, [], "D2 PR 清单格可读（离线缺省下为空）");

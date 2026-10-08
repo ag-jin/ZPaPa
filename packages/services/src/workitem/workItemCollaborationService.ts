@@ -50,6 +50,11 @@ import {
   requireOwnedWorkItem,
 } from "./workItemPullRequestEntry.js";
 import type { PullRequestRecord } from "./workItemPullRequestRepo.js";
+/* SUB.1：订阅主体规范化与手动订阅事实的**入口**（值导入，浏览器安全：`subscriberFacts` 零 IO、
+   零 `node:` 值导入）；订阅行类型与读取面只作类型引用。 */
+import { subscriberSubjectOfActor } from "./subscriberFacts.js";
+import type { OptOutScope } from "./subscriberFacts.js";
+import type { WorkItemSubscriberRecord } from "./workItemSubscriberRepo.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：工作项**协作门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.3）。
    —— 轮 1 落下**读**（`getWorkItemCollaboration`），轮 2 落下**四个写入口**（§5.2），
@@ -108,6 +113,15 @@ export type WorkItemCollaborationRead = {
   reactions: WorkItemCommentReactionRecord[];
   /** `CommentDispatchReceiptRepo.listByWorkItem` 口径（createdAt ASC, dispatchKey ASC）。 */
   receipts: CommentDispatchReceiptRecord[];
+  /**
+   * **本工作项的订阅行**（SUB.1）：`WorkItemSubscriberRepo.listByWorkItem` 口径
+   * （`created_at ASC, id ASC`），含 tombstone 行（「已退订」是可观察状态）。
+   *
+   * 为什么带**该工作项的全部主体**而不是只带当前人类那一行：本层对数组**不 filter、不 derive**
+   * （见上面纪律 ③）—— 过滤是呈现的活；且同一读面还要服务 SUB.2 的收件人解析与「谁在关注」的呈现。
+   * 当前人类的行按 `viewerActor` 的规范化主体在数组里查得（写入口用的就是同一份规范化）。
+   */
+  subscribers: WorkItemSubscriberRecord[];
   /**
    * **交付物清单**（#7 D1b）：`WorkItemDeliverableRepo.listByWorkItem` 口径（createdAt ASC, id ASC），
    * 含两型（自动捕获的 `diff` / 手动登记的 `link`）。
@@ -217,6 +231,17 @@ export type UnlinkWorkItemPullRequestRequest = {
   pullRequestId: string;
 };
 
+/**
+ * 手动订阅 / 退订（SUB.1；UI 控件在 SUB.3a 接线）。
+ *
+ * 判别联合而不是「两个可空字段」：订**不存在范围**、退订**必须有范围**（两档：`issue` 只此条 /
+ * `subtree` 此条及子项）。写成 `{subscribed, scope?}` 会让「退订但忘了范围」在类型上合法，
+ * 落库时只能猜一个默认档 —— 猜错的表现是「我退订了，子项还在通知我」。
+ */
+export type SetWorkItemSubscriptionRequest =
+  | { workItemId: string; subscribed: true }
+  | { workItemId: string; subscribed: false; scope: OptOutScope };
+
 /** 按需刷新（手动触发）一个工作项下全部已链接 PR 的快照。 */
 export type RefreshWorkItemPullRequestsRequest = {
   workItemId: string;
@@ -267,6 +292,22 @@ export interface IWorkItemCollaborationService {
     target: SquadWorkspaceTarget,
     input: CreateWorkItemDecisionRequest,
   ): Promise<WorkItemDecisionRecord>;
+
+  /* ---------- SUB.1：第六个写入口（订阅 / 退订；UI 控件在 SUB.3a） ---------- */
+
+  /**
+   * 手动订阅 / 退订（用户显式意思，**唯一**能改订阅意愿的入口）。
+   * · `subscribed: true` ⇒ 显式订阅：清墓碑、`reason` 归 `manual`（此后自动规则再也删不掉它）；
+   * · `subscribed: false` + `scope` ⇒ 显式退订：落墓碑并承载退订范围（两档）。
+   *
+   * 返回写后的**本人类订阅行**（界面据此直接呈现「关注中 / 已退订」，不必二次读）。
+   * 主体恒取组合根注入的本地人类身份（UI 零身份拼装，D1-A）；「工作项必须已存在且同 workspace」
+   * 复用既有那一处判据（`requireOwnedWorkItem`），归档项与其余写入口同款被拒。
+   */
+  setWorkItemSubscription(
+    target: SquadWorkspaceTarget,
+    input: SetWorkItemSubscriptionRequest,
+  ): Promise<WorkItemSubscriberRecord>;
 
   /* ---------- #7 D1b：交付物的读一条 + 手动登记（设计 §3.1「无新服务」的第二个面） ---------- */
 
@@ -507,6 +548,8 @@ export function createWorkItemCollaborationService(
         /* #8 D2：PR 关联清单 + 读数面可用性（同步判据，零 IO）。离线缺省下这里返回
            `available: false` 而列表照常 —— 「没配 token」是配置状态，不是读失败。 */
         pullRequests: runtime.pullRequestRepo.listByWorkItem(workspaceKey, workItemId),
+        /* SUB.1：本工作项的订阅行（含 tombstone）：原样来自 repo（本层不 sort / 不 filter）。 */
+        subscribers: runtime.subscriberRepo.listByWorkItem(workspaceKey, workItemId),
         pullRequestProvider: pullRequestProviderAvailability(runtime),
         /* #8 D3：整批收尾模式（`local` / `pr-gate`）随读面带出。为什么读面要带它：
            pr-gate 的前置不满足时收尾会**降级为本地合并**（收件箱留痕），而详情页的 PR 区
@@ -595,6 +638,37 @@ export function createWorkItemCollaborationService(
         // 幂等键必带：缺了它重试就是第二条决定（§8.1）。
         sourceRequestId: input.sourceRequestId,
       });
+    },
+
+    /* SUB.1：第六写入口（订阅 / 退订）。与其余入口同形——**现构 runtime → 取绑定 workspace →
+       交给订阅事实出口**：门面只定「谁（注入的本地人类，经唯一规范化单源）、对哪条工作项、
+       想订阅还是退订（退订必带范围）」，判据与落库全在 `subscriberFacts` 的唯一 reconciler 路径上。
+       返回写后的行：`manual_subscribe` / `manual_unsubscribe` 两条路径**恒存在一行**
+       （订阅=插入或改写；退订=插入或更新墓碑），故这里拿不到行即为不可达态，响亮抛。 */
+    async setWorkItemSubscription(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      requireOwnedWorkItem(runtime, workspaceKey, input.workItemId, "订阅工作项");
+      const subject = subscriberSubjectOfActor(requireLocalHumanActor());
+      runtime.subscriberFacts({
+        workItemId: input.workItemId,
+        fact: input.subscribed
+          ? { kind: "manual_subscribe", subject }
+          : { kind: "manual_unsubscribe", subject, scope: input.scope },
+      });
+      const row = runtime.subscriberRepo.get({
+        workspaceKey,
+        workItemId: input.workItemId,
+        subjectType: subject.kind,
+        subjectId: subject.id,
+      });
+      if (row === null) {
+        throw new Error(
+          `订阅写入后读不到 (workspace=${workspaceKey}, workItem=${input.workItemId}, ` +
+            `subject=${subject.kind}:${subject.id}) 的行：不可达态，须查订阅事实出口的接线。`,
+        );
+      }
+      return row;
     },
 
     /* ---------- #7 D1b：交付物读一条 + 手动登记 ---------- */

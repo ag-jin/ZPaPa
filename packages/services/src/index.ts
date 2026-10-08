@@ -439,7 +439,28 @@ export type {
   LinkWorkItemPullRequestRequest,
   UnlinkWorkItemPullRequestRequest,
   RefreshWorkItemPullRequestsRequest,
+  /* SUB.1：第六写入口（订阅 / 退订）的入参形状（判别联合：退订必带范围）。 */
+  SetWorkItemSubscriptionRequest,
 } from "./workitem/workItemCollaborationService.js";
+/* SUB.1（订阅表）：三个闭集是**服务端单源**，UI 只渲染映射（spec §7.1「UI 不得猜 reason」）——
+   故值从根入口出（`subscriberFacts` 零 IO、零 `node:` 值导入，renderer 可以直接解析）；
+   订阅行**类型**只出类型（`workItemSubscriberRepo` 值导入 `node:crypto`，出值会让 renderer 整包失败）。 */
+export {
+  ASSIGNMENT_SUBSCRIBER_REASONS,
+  AUTOMATIC_SUBSCRIBER_REASONS,
+  MANUAL_SUBSCRIBER_REASON,
+  OPT_OUT_SCOPES,
+  SUBSCRIBER_REASONS,
+  SUBSCRIBER_SUBJECT_TYPES,
+} from "./workitem/subscriberFacts.js";
+export type {
+  AutomaticSubscriberReason,
+  OptOutScope,
+  SubscriberReason,
+  SubscriberSubject,
+  SubscriberSubjectType,
+} from "./workitem/subscriberFacts.js";
+export type { WorkItemSubscriberRecord } from "./workitem/workItemSubscriberRepo.js";
 /* #7 D1b：交付物的**类型面**（读模型与 UI 穷尽映射要能命名这些形状）。
    只出类型：`workItemDeliverableRepo` 值导入 node:fs/node:crypto，出值会让 renderer 整包失败
    （browserSafeRootEntry.test.ts 守这条）。`DeliverableKind` 是 v1 闭集的类型名 —— UI 的

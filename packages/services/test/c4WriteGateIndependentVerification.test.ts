@@ -23,6 +23,7 @@ import { createWorkItemCollaborationService } from "../src/workitem/workItemColl
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
 import { createWorkItemDecisionService } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemSubscriberRepo } from "../src/workitem/workItemSubscriberRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
 import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
@@ -349,6 +350,8 @@ test("IV-READ｜读面 canView：注入拒绝 ⇒ 响亮抛且未取 repo（不�
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: WS,
       }) as unknown as SquadRuntime,
     getRepos: () => {

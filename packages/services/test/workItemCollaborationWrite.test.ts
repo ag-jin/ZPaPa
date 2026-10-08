@@ -32,6 +32,7 @@ import type {
   WorkItemDecisionRecord,
 } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemSubscriberRepo } from "../src/workitem/workItemSubscriberRepo.js";
 
 /* B5.2 轮 2：工作项协作门面的**四个写入口**（任务卡 §5.3-1）。
 
@@ -148,6 +149,8 @@ test("写入口｜读面 viewerActor = 组合根注入的本地人类身份（C5
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -189,6 +192,8 @@ test("写入口｜软删/解决/回应三入口走真实服务面：墓碑 + 根
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -322,6 +327,8 @@ test("写入口｜跨 workspace 的动作响亮拒绝（门面不把「写错的
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: OTHER_WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -643,6 +650,8 @@ function readFixture(
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: options.boundWorkspace ?? WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

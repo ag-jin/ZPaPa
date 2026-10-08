@@ -17,6 +17,7 @@ import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverab
 import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
 import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
+import { createWorkItemSubscriberRepo } from "../src/workitem/workItemSubscriberRepo.js";
 
 /* B5.1 轮 1：工作项协作读门面（`IWorkItemCollaborationService`）的服务面验收。
 
@@ -100,6 +101,8 @@ function setup() {
       pullRequestProvider: createNullPullRequestProvider(),
       /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
       readSquadMergeMode: () => "local",
+      /* SUB.1：订阅存储面（读模型的 `subscribers` 格取自它）——夹具按 runtime 契约补齐。 */
+      subscriberRepo: createWorkItemSubscriberRepo(db),
       boundWorkspace,
       async assertDispatchEnabled() {
         dispatchGateCalls += 1;
@@ -157,6 +160,8 @@ test("服务面：空工作项 ⇒ 九格数据面齐备（含 D3 模式），�
     "pullRequests",
     "reactions",
     "receipts",
+    /* SUB.1：订阅行（含 tombstone 行）—— 详情页订阅控件与 SUB.2 的收件人解析读它。 */
+    "subscribers",
     "viewerActor",
     "workItem",
   ]);
@@ -175,6 +180,7 @@ test("服务面：空工作项 ⇒ 九格数据面齐备（含 D3 模式），�
   assert.equal(read.decisions.length, 0);
   assert.equal(read.reactions.length, 0);
   assert.equal(read.receipts.length, 0);
+  assert.deepEqual(read.subscribers, [], "没有订阅行 ⇒ 空数组（不是 undefined）");
   assert.equal(f.dispatchGateCalls, 0, "读面不得调 assertDispatchEnabled（读不是新派发）");
 });
 

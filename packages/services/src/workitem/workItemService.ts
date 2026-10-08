@@ -14,6 +14,10 @@ import {
 } from "@zcode/shared";
 import { randomUUID } from "node:crypto";
 import type { UserDispatchCause } from "./squadDispatchRequests.js";
+import {
+  subscriberFactsForCreatedWorkItem,
+  type SubscriberFactRecorder,
+} from "./subscriberFacts.js";
 import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 
@@ -97,6 +101,15 @@ export function createWorkItemService(deps: {
    * （编排器父项流转 / 队员完成 / 子项收尾）自动全覆盖，零新增判据 —— 投影跟随事实的唯一写者。
    */
   activityProjector?: WorkItemActivityProjector;
+  /**
+   * 订阅事实出口（SUB.1，**可选加法**）：`create` 成功后按 `creator` 与创建时的 `assignee`
+   * 两条事实报一次（订阅行由唯一 reconciler 写）。装配方（`createSquadRuntime`）恒传入；
+   * 测试装配不传也不报错（缺省 = 不产订阅行，行为与加法前逐字一致）。
+   *
+   * 为什么接线在**这里**：`create` 是工作项事实的唯一创建点 —— 创建人与初始负责人都只在这里
+   * 第一次成立，零新增判据。事实→reason 的映射在 `subscriberFacts`（生产点不自拼 reason 字面量）。
+   */
+  subscribers?: SubscriberFactRecorder;
 }): WorkItemService {
   const { repo, emit, activityProjector } = deps;
 
@@ -171,6 +184,15 @@ export function createWorkItemService(deps: {
       /* 序号由存储面语句内生成并回传（调用方**结构上无法传号**：CreateWorkItemInput 里没有
          这个字段）。返回的实体带上真实号 —— 否则调用方拿到的实体缺一列而库里有一列，两处分叉。 */
       const identifierSeq = repo.insert(item);
+      /* 订阅事实（SUB.1）：**行落地之后**才报（订阅关系挂在一条真实存在的工作项上）。
+         同刻两条事实（负责人 → 创建人）的次序是语义，见 `subscriberFactsForCreatedWorkItem`：
+         同主体时 reason 落 `creator`，于是 spec §7.1 的「记录创建者，不因后续改派消失」成立。 */
+      for (const fact of subscriberFactsForCreatedWorkItem({
+        assignee: item.assignee,
+        creator: item.creator,
+      })) {
+        deps.subscribers?.({ workItemId: id, fact });
+      }
       return { ...item, identifierSeq };
     },
 

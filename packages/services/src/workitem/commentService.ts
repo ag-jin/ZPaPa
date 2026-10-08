@@ -27,6 +27,7 @@ import type {
 } from "./commentDispatchReceiptRepo.js";
 import type { SquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
+import { subscriberFactsForComment, type SubscriberFactRecorder } from "./subscriberFacts.js";
 import type { WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type {
   AuthorRef,
@@ -235,6 +236,15 @@ export type CommentServiceDeps = {
   readDispatchEnabled: () => boolean;
   /** 已知人类成员名（@人名抑制的判定输入）；本轮没有人类名册来源，缺省为空集。 */
   humanNames?: ReadonlySet<string>;
+  /**
+   * **订阅事实出口**（SUB.1，可选加法）：`createComment` 写成功后按 `作者`（commenter）与
+   * 显式点名（mentioned：agent / squad）报事实，订阅行由唯一 reconciler 写。
+   *
+   * 缺省（未注入）= 不产订阅行（既有调用方与测试不受影响；组合根在 node.ts 注入）。
+   * 事实→reason 的映射单源在 `subscriberFacts`：本文件不拼 reason 字面量，
+   * 也不知道「哪种点名不建订阅」（`@all` / human / unresolved 的处置在那一处）。
+   */
+  subscribers?: SubscriberFactRecorder;
   /**
    * **§9 三轴的判据面**（C4.1）：本服务的**四个写方法各恰一处**并列调用它，且都在第一次写之前
    * （结构守卫见 collaborationWriteGate.test.ts）。主体恒取 `initiatedBy`（A2A 红线）。
@@ -480,6 +490,16 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         sourceRun: input.sourceRun,
         initiatedBy: input.initiatedBy,
       });
+      /* 订阅事实（SUB.1）：评论**写成功之后**才报 —— spec §7.1「不能仅因浏览评论订阅」。
+         位置在派发链**之前**：派发结论（pending / blocked / deferred）不改变「这个人写过评论」
+         这条已成立的事实，订阅行也不得随派发成败增删。事实→reason 的映射在 `subscriberFacts`
+         （本文件不拼 reason 字面量）。 */
+      for (const fact of subscriberFactsForComment({
+        author: comment.author,
+        mentions: parsed.mentions,
+      })) {
+        deps.subscribers?.({ workItemId: comment.workItemId, fact });
+      }
       // 线程根：根评论 threadId = id（§3.2），故按 id 取恒可命中（含墓碑行）。
       const threadRoot = parent !== null ? deps.comments.get(parent.threadId) : null;
       const resolution = resolveCommentTrigger({

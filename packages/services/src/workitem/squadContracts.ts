@@ -15,6 +15,8 @@ import type { WorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
 import type { SquadRunLifecycle } from "./squadRunLifecycle.js";
 import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
+import type { SubscriberFactRecorder } from "./subscriberFacts.js";
+import type { WorkItemSubscriberRepo } from "./workItemSubscriberRepo.js";
 import type { WakeRuleRepo } from "./wakeRuleRepo.js";
 import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
 import type { WorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
@@ -160,6 +162,23 @@ export type SquadRuntime = {
    * 「取哪张 workspace 的行」与其它零件同一口径；D3 的终态驱动消费它报出的 `mergedPullRequests`。
    */
   pullRequestSync: PullRequestSync;
+  /**
+   * **订阅关系的存储面**（SUB.1，`work_item_subscribers` 表，迁移 0019）：订阅 / 退订与双向读
+   * （按工作项 / 按主体）都经它；写路径的唯一入口是 `subscriberFacts`（见下）。
+   *
+   * 为什么挂在 runtime 上：订阅是**按 workspace** 的事实（行里带 `workspace_key/path`），
+   * 与 `deliverableRepo` / `pullRequestRepo` 同一条理由 —— 另建跨目标单例会让读落到别的 workspace。
+   */
+  subscriberRepo: WorkItemSubscriberRepo;
+  /**
+   * **订阅事实出口**（SUB.1）：两个「负责人」写者（`applyWorkItemAssignee` 与归档转交）经它报事实，
+   * 门面的手动订阅 / 退订也走它。它**绑定到本 runtime 的 workspace**（键与路径在闭包里），
+   * 调用点因此拼不出「写到别的 workspace」的路径；事实→reason 的映射单源在 `subscriberFacts`。
+   *
+   * 为什么不是「每处现建一个 recorder」：现建要把「哪张 workspace」交给调用点去拼，而拼错不报错
+   * （写进另一张 workspace 的订阅表，谁也不会知道）。
+   */
+  subscriberFacts: SubscriberFactRecorder;
   /**
    * **整批收尾模式**（#8 D3）的现判读取口：`local`（缺省，本地合回）/ `pr-gate`（push + 开 PR，
    * 终态交 PR merge）。**每次调用现判**（转调注入的读函数；未注入恒 `local`）——
