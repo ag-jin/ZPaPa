@@ -37,6 +37,7 @@ import {
   IHooksService,
   IMemoryService,
   IWikiService,
+  IAgentBuilderService,
   ISettingsSyncService,
   IFeedbackService,
   IRemoteDeviceConfigService,
@@ -98,6 +99,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly memoryService: IMemoryService;
   /** 项目知识库（wiki）：生成、读取与进度订阅。 */
   readonly wikiService: IWikiService;
+  /** AI 访谈式智能体创建（AgentBuilder）：一轮访谈一次 RPC，历史与草稿由 UI 持有。 */
+  readonly agentBuilderService: IAgentBuilderService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   /** 远程设备配置（投射端本地能力，仅 desktop host 提供）。 */
@@ -257,6 +260,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.wikiService = ProxyChannel.toService<IWikiService>(
       channelClient.getChannel(IWikiService.channelName),
+    );
+    this.agentBuilderService = ProxyChannel.toService<IAgentBuilderService>(
+      channelClient.getChannel(IAgentBuilderService.channelName),
     );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),

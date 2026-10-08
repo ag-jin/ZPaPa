@@ -140,3 +140,26 @@ test("mcpServers 字段：可选（缺省不落盘）、合法 map 原样保留�
     assert.equal(rejected.success, false, `mcpServers=${JSON.stringify(bad)} 应被拒绝`);
   }
 });
+
+// ---------- provenance.source 增枚举 ai_builder（AgentBuilder 访谈产物留痕）----------
+
+/* 「这个智能体是怎么被设计出来的」要能被读出来（设计报告 §5.2 状态所有权表：prefill 留痕同款）。
+   枚举是**闭集**：只做加法，未知来源仍要被拒（自由字符串会让留痕失去判据）。 */
+test("provenance.source：允许 ai_builder，既有 manual/prefill 不受影响，未知来源仍被拒", () => {
+  const interviewed = teamAgentSchema.parse({
+    ...baseAgent,
+    provenance: { source: "ai_builder" },
+  });
+  assert.equal(interviewed.provenance?.source, "ai_builder");
+
+  for (const source of ["manual", "prefill"] as const) {
+    const parsed = teamAgentSchema.parse({ ...baseAgent, provenance: { source } });
+    assert.equal(parsed.provenance?.source, source, `${source} 是既有合法值，不得被本轮改动挤掉`);
+  }
+
+  assert.equal(
+    teamAgentSchema.safeParse({ ...baseAgent, provenance: { source: "wizard" } }).success,
+    false,
+    "未列出的来源必须被拒（枚举是闭集，不是自由字符串）",
+  );
+});
