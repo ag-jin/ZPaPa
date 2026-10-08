@@ -1,19 +1,151 @@
-/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行，避免跨文件依赖在页面上下文里失效。 */
+/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行：祖先链 helper 与主函数同文件裸引用，组装时按名字前置声明，避免跨文件依赖在页面上下文里失效。 */
 import type {
   WebElementContextPayload,
   WebElementRect,
   WebElementStyleSummary,
 } from "@/lib/webElementContext.js";
 
-export type WebElementPickerScriptResult =
-  | { status: "cancelled" }
-  | { status: "selected"; element: Omit<WebElementContextPayload, "workspacePath"> };
+export type WebElementPickerPickResult =
+  | { status: "clicked"; chain: WebElementAncestorStep[]; chainTruncated: boolean }
+  | { status: "cancelled" };
+
+export type WebElementPickerAdjustResult =
+  | { status: "selected"; element: Omit<WebElementContextPayload, "workspacePath"> }
+  | { status: "repick" }
+  | { status: "cancelled" };
+
+/** 句柄小脚本可驱动的方法（与页内 `window.__zcodeWebElementPicker` 的键一一对应）。 */
+export type WebElementPickerCommand =
+  | "pick"
+  | "beginAdjust"
+  | "showAncestor"
+  | "confirm"
+  | "requestRepick"
+  | "cancel";
+
+/** 祖先链档位：level 0 = 被点击元素，仅 renderer 消费（不进入 prompt）。 */
+export interface WebElementAncestorStep {
+  level: number;
+  tagName: string;
+  id?: string;
+  classNames?: string[];
+  label: string;
+}
+
+/** 上溯只读这几个字段，伪节点树（单测）与真实 Element 都能满足。 */
+export interface WebElementAncestorNodeLike {
+  tagName: string;
+  id?: string;
+  classList?: Iterable<string> | { length: number; item(index: number): string | null };
+  parentElement?: WebElementAncestorNodeLike | null;
+}
+
+/**
+ * 注入脚本组装用的前置声明名：主函数体按这些名字裸引用 helper，
+ * buildWebElementPickerScript 把这些名字定义成 helper 的源码文本。
+ */
+const ZCODE_WEP_COMPUTE_ANCESTOR_CHAIN = "__zcodeWepComputeAncestorChain";
+const ZCODE_WEP_BUILD_ANCESTOR_LABEL = "__zcodeWepBuildAncestorLabel";
+
+/**
+ * 从被点元素沿 `parentElement` 上溯，排除 body/html（到 body 之前封顶），深度上限 24。
+ *
+ * 与注入脚本同批编译：只能依赖入参结构，不得引用模块级值，`toString()` 后要能独立运行。
+ */
+export function computeAncestorChain(
+  node: WebElementAncestorNodeLike | null | undefined,
+  maxDepth?: number,
+): { chain: WebElementAncestorStep[]; truncated: boolean } {
+  const limit = typeof maxDepth === "number" && maxDepth > 0 ? Math.floor(maxDepth) : 24;
+  const readClassNames = (target: WebElementAncestorNodeLike): string[] => {
+    const classList = target.classList;
+    if (!classList) {
+      return [];
+    }
+    const names: string[] = [];
+    const iterable = classList as Partial<Iterable<string>>;
+    if (typeof iterable[Symbol.iterator] === "function") {
+      for (const name of classList as Iterable<string>) {
+        if (name) {
+          names.push(name);
+        }
+      }
+    } else {
+      const list = classList as { length?: number; item?: (index: number) => string | null };
+      const length = typeof list.length === "number" ? list.length : 0;
+      for (let index = 0; index < length; index += 1) {
+        const name = typeof list.item === "function" ? list.item(index) : null;
+        if (name) {
+          names.push(name);
+        }
+      }
+    }
+    return names.slice(0, 2);
+  };
+
+  const chain: WebElementAncestorStep[] = [];
+  let current: WebElementAncestorNodeLike | null | undefined = node;
+
+  while (current && chain.length < limit) {
+    const tagName = String(current.tagName ?? "").toLowerCase();
+    if (!tagName) {
+      break;
+    }
+    if (chain.length > 0 && (tagName === "body" || tagName === "html")) {
+      break;
+    }
+
+    const id = typeof current.id === "string" && current.id ? current.id : undefined;
+    const classNames = readClassNames(current);
+    chain.push({
+      level: chain.length,
+      tagName,
+      ...(id ? { id } : {}),
+      ...(classNames.length > 0 ? { classNames } : {}),
+      label: id ? `${tagName}#${id}` : classNames[0] ? `${tagName}.${classNames[0]}` : tagName,
+    });
+    current = current.parentElement ?? null;
+  }
+
+  const remainingTagName = current ? String(current.tagName ?? "").toLowerCase() : "";
+  return {
+    chain,
+    truncated:
+      chain.length >= limit &&
+      remainingTagName !== "" &&
+      remainingTagName !== "body" &&
+      remainingTagName !== "html",
+  };
+}
+
+/**
+ * 页内层级标签：至多两段（父 子，形如 `tr th`），根档位与链长 1 时单段。
+ *
+ * 同 computeAncestorChain 的注入约束：零外部依赖。
+ */
+export function buildAncestorLabel(
+  chain: readonly WebElementAncestorStep[],
+  level: number,
+): string {
+  const current = chain[level];
+  if (!current) {
+    return "";
+  }
+  const parent = chain[level + 1];
+  return parent ? `${parent.label} ${current.label}` : current.label;
+}
+
+// 源码内与注入体同名的模块级绑定：类型检查与注入体共享同一份实现。
+const __zcodeWepComputeAncestorChain = computeAncestorChain;
+const __zcodeWepBuildAncestorLabel = buildAncestorLabel;
 
 interface WebElementPickerScriptOptions {
   maxTextChars: number;
   maxHtmlChars: number;
   maxAttributeChars: number;
   labels: WebElementPickerScriptLabels;
+  /** 页内实例句柄的挂载键（命令小脚本与主脚本必须一致）。 */
+  stateKey: string;
 }
 
 export interface WebElementPickerScriptLabels {
@@ -35,10 +167,11 @@ const DEFAULT_OPTIONS: WebElementPickerScriptOptions = {
     color: "Color",
     font: "Font",
   },
+  stateKey: "__zcodeWebElementPicker",
 };
 
 function webElementPickerScript(options: WebElementPickerScriptOptions) {
-  const stateKey = "__zcodeWebElementPicker";
+  const stateKey = options.stateKey;
   const existing = (window as unknown as Record<string, { cancel?: () => void }>)[stateKey];
   existing?.cancel?.();
 
@@ -326,11 +459,19 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     height: rect.height,
   });
 
+  const hoverOverlayStyle = {
+    background: "rgba(37, 99, 235, 0.12)",
+    border: "2px solid #2563eb",
+  } satisfies Partial<CSSStyleDeclaration>;
+  const lockedOverlayStyle = {
+    background: "rgba(22, 163, 74, 0.14)",
+    border: "2px solid #16a34a",
+  } satisfies Partial<CSSStyleDeclaration>;
+
   const overlay = document.createElement("div");
   overlay.setAttribute("data-zcode-web-element-picker", "overlay");
   Object.assign(overlay.style, {
-    background: "rgba(37, 99, 235, 0.12)",
-    border: "2px solid #2563eb",
+    ...hoverOverlayStyle,
     borderRadius: "4px",
     boxShadow: "0 0 0 9999px rgba(15, 23, 42, 0.10)",
     boxSizing: "border-box",
@@ -366,18 +507,68 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
 
   document.documentElement.append(overlay, label);
 
-  let hoveredElement: Element | null = null;
-  let settled = false;
-  let finishPicker: ((result: WebElementPickerScriptResult) => void) | null = null;
+  type Phase = "idle" | "hovering" | "adjusting";
 
-  const cleanup = () => {
+  let phase: Phase = "idle";
+  let hoveredElement: Element | null = null;
+  let chain: WebElementAncestorStep[] = [];
+  let chainElements: Element[] = [];
+  let chainTruncated = false;
+  let level = 0;
+  let pickResolve: ((result: WebElementPickerPickResult) => void) | null = null;
+  let adjustResolve: ((result: WebElementPickerAdjustResult) => void) | null = null;
+
+  const settlePick = (result: WebElementPickerPickResult) => {
+    const resolve = pickResolve;
+    pickResolve = null;
+    resolve?.(result);
+  };
+
+  const settleAdjust = (result: WebElementPickerAdjustResult) => {
+    const resolve = adjustResolve;
+    adjustResolve = null;
+    resolve?.(result);
+  };
+
+  const watchHover = (enabled: boolean) => {
+    if (enabled) {
+      document.addEventListener("mousemove", handleMouseMove, true);
+      document.addEventListener("click", handleClick, true);
+      document.documentElement.style.cursor = "crosshair";
+      return;
+    }
     document.removeEventListener("mousemove", handleMouseMove, true);
     document.removeEventListener("click", handleClick, true);
+    document.documentElement.style.cursor = "";
+  };
+
+  // adjust 阶段冻结 hover 监听后，只剩滚动/缩放需要重定位绿框与标签。
+  const watchRelayout = (enabled: boolean) => {
+    if (enabled) {
+      window.addEventListener("scroll", handleRelayout, { capture: true, passive: true });
+      window.addEventListener("resize", handleRelayout);
+      return;
+    }
+    window.removeEventListener("scroll", handleRelayout, { capture: true });
+    window.removeEventListener("resize", handleRelayout);
+  };
+
+  const cleanup = () => {
+    phase = "idle";
+    watchHover(false);
+    watchRelayout(false);
     document.removeEventListener("keydown", handleKeyDown, true);
     overlay.remove();
     label.remove();
     delete (window as unknown as Record<string, unknown>)[stateKey];
-    document.documentElement.style.cursor = "";
+    chain = [];
+    chainElements = [];
+    chainTruncated = false;
+    level = 0;
+    hoveredElement = null;
+    // 任意阶段：全部 pending promise 一律以 cancelled 落定（沿用既有契约）。
+    settlePick({ status: "cancelled" });
+    settleAdjust({ status: "cancelled" });
   };
 
   const appendPopoverRow = (name: string, value: string | undefined) => {
@@ -422,7 +613,7 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     label.append(row);
   };
 
-  const renderPopover = (target: Element, rect: DOMRect) => {
+  const renderPopover = (target: Element, rect: DOMRect, levelLabel?: string) => {
     const style = readStyleSummary(target);
     label.replaceChildren();
 
@@ -436,7 +627,8 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     } satisfies Partial<CSSStyleDeclaration>);
 
     const tagNode = document.createElement("span");
-    tagNode.textContent = target.tagName.toLowerCase();
+    // adjust 阶段标题换成层级标签（`tr th` 形态），hover 阶段仍是原始 tag。
+    tagNode.textContent = levelLabel ?? target.tagName.toLowerCase();
     Object.assign(tagNode.style, {
       color: "#ffffff",
       fontSize: "16px",
@@ -534,7 +726,7 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     return availableSpaces[0] ?? { left: padding, top: padding };
   };
 
-  const updateOverlay = (target: Element | null) => {
+  const updateOverlay = (target: Element | null, levelLabel?: string) => {
     if (!target || target === overlay || target === label || label.contains(target)) {
       overlay.style.display = "none";
       label.style.display = "none";
@@ -555,13 +747,63 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     overlay.style.height = `${rect.height}px`;
 
     label.style.display = "block";
-    renderPopover(target, rect);
+    renderPopover(target, rect, levelLabel);
 
     const labelWidth = label.offsetWidth || 240;
     const labelHeight = label.offsetHeight || 90;
     const position = getPopoverPosition(rect, labelWidth, labelHeight);
     label.style.left = `${position.left}px`;
     label.style.top = `${position.top}px`;
+  };
+
+  const currentTarget = () => chainElements[level] ?? null;
+
+  /** 幂等：把绿框与层级标签移到档位 `nextLevel`（越界自动夹在链内）。 */
+  const showLevel = (nextLevel: number): { level: number; label: string } | null => {
+    if (chain.length === 0) {
+      updateOverlay(null);
+      return null;
+    }
+    const requested = Number.isFinite(nextLevel) ? Math.floor(nextLevel) : 0;
+    level = Math.max(0, Math.min(chain.length - 1, requested));
+    const target = currentTarget();
+    if (!target) {
+      updateOverlay(null);
+      return null;
+    }
+    const levelLabel = __zcodeWepBuildAncestorLabel(chain, level);
+    updateOverlay(target, levelLabel);
+    return { level, label: levelLabel };
+  };
+
+  const collectChainElements = (element: Element, count: number) => {
+    const elements: Element[] = [];
+    let node: Element | null = element;
+    while (node && elements.length < count) {
+      elements.push(node);
+      node = node.parentElement;
+    }
+    return elements;
+  };
+
+  const enterAdjusting = () => {
+    phase = "adjusting";
+    watchHover(false);
+    watchRelayout(true);
+    Object.assign(overlay.style, lockedOverlayStyle);
+    showLevel(0);
+  };
+
+  /** 退出层级调整：清空链与 pending，等 renderer 再次 pick() 或 cancel()。 */
+  const leaveAdjusting = () => {
+    phase = "idle";
+    watchRelayout(false);
+    Object.assign(overlay.style, hoverOverlayStyle);
+    updateOverlay(null);
+    chain = [];
+    chainElements = [];
+    chainTruncated = false;
+    level = 0;
   };
 
   function handleMouseMove(event: MouseEvent) {
@@ -571,6 +813,13 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     }
     hoveredElement = target;
     updateOverlay(target);
+  }
+
+  function handleRelayout() {
+    if (phase !== "adjusting") {
+      return;
+    }
+    showLevel(level);
   }
 
   function collectElement(element: Element): Omit<WebElementContextPayload, "workspacePath"> {
@@ -597,49 +846,123 @@ function webElementPickerScript(options: WebElementPickerScriptOptions) {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-    if (!hoveredElement) {
-      finishPicker?.({ status: "cancelled" });
+    if (phase !== "hovering" || !hoveredElement) {
+      settlePick({ status: "cancelled" });
       return;
     }
-    finishPicker?.({
-      status: "selected",
-      element: collectElement(hoveredElement),
-    });
+
+    const picked = __zcodeWepComputeAncestorChain(hoveredElement);
+    if (picked.chain.length === 0) {
+      settlePick({ status: "cancelled" });
+      return;
+    }
+
+    chain = picked.chain;
+    chainTruncated = picked.truncated;
+    chainElements = collectChainElements(hoveredElement, picked.chain.length);
+    enterAdjusting();
+    settlePick({ status: "clicked", chain, chainTruncated });
   }
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (event.key !== "Escape") {
+    if (event.key !== "Escape" && event.key !== "Enter") {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
-    finishPicker?.({ status: "cancelled" });
-  }
-
-  return new Promise<WebElementPickerScriptResult>((resolve) => {
-    const finish = (result: WebElementPickerScriptResult) => {
-      if (settled) {
+    if (phase === "hovering") {
+      if (event.key !== "Escape") {
         return;
       }
-      settled = true;
-      cleanup();
-      resolve(result);
-    };
-    finishPicker = finish;
-
-    function cancel() {
-      finish({ status: "cancelled" });
+      event.preventDefault();
+      event.stopPropagation();
+      settlePick({ status: "cancelled" });
+      return;
+    }
+    if (phase !== "adjusting") {
+      return;
     }
 
-    (window as unknown as Record<string, { cancel: () => void }>)[stateKey] = {
-      cancel,
-    };
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      requestRepick();
+      return;
+    }
+    confirm();
+  }
 
-    document.documentElement.style.cursor = "crosshair";
-    document.addEventListener("mousemove", handleMouseMove, true);
-    document.addEventListener("click", handleClick, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-  });
+  function pick() {
+    return new Promise<WebElementPickerPickResult>((resolve) => {
+      if (pickResolve || adjustResolve) {
+        // 每个时刻至多一条 pending：重复发起按取消收敛，不制造第二条悬挂 promise。
+        resolve({ status: "cancelled" });
+        return;
+      }
+      phase = "hovering";
+      hoveredElement = null;
+      chain = [];
+      chainElements = [];
+      chainTruncated = false;
+      level = 0;
+      updateOverlay(null);
+      watchHover(true);
+      pickResolve = resolve;
+    });
+  }
+
+  function beginAdjust() {
+    return new Promise<WebElementPickerAdjustResult>((resolve) => {
+      if (phase !== "adjusting" || chain.length === 0 || adjustResolve) {
+        // 顺序不变量：beginAdjust 必须在 adjusting 阶段且尚未悬挂时发起（confirm/requestRepick
+        // 靠这条 promise 落定）。阶段不符按「重选」收敛，renderer 会回到 hover 重新 pick。
+        resolve({ status: "repick" });
+        return;
+      }
+      adjustResolve = resolve;
+    });
+  }
+
+  function showAncestor(nextLevel: number) {
+    if (phase !== "adjusting") {
+      // 防御式：非 adjusting 阶段（或句柄已随页面销毁）一律返回 null，不 reject。
+      return null;
+    }
+    return showLevel(Number(nextLevel));
+  }
+
+  function confirm() {
+    if (phase !== "adjusting" || !adjustResolve) {
+      return;
+    }
+    const target = currentTarget();
+    if (!target) {
+      return;
+    }
+    // 确认时按当前层级重新采集（新鲜 capturedAt），不复用 click 时的快照。
+    const element = collectElement(target);
+    leaveAdjusting();
+    settleAdjust({ status: "selected", element });
+  }
+
+  function requestRepick() {
+    if (phase !== "adjusting" || !adjustResolve) {
+      return;
+    }
+    leaveAdjusting();
+    settleAdjust({ status: "repick" });
+  }
+
+  const handle = {
+    pick,
+    beginAdjust,
+    showAncestor,
+    confirm,
+    requestRepick,
+    cancel: cleanup,
+  };
+
+  (window as unknown as Record<string, typeof handle>)[stateKey] = handle;
+  document.addEventListener("keydown", handleKeyDown, true);
+  return pick();
 }
 
 export function buildWebElementPickerScript(options: WebElementPickerScriptBuildOptions = {}) {
@@ -651,14 +974,34 @@ export function buildWebElementPickerScript(options: WebElementPickerScriptBuild
       ...options.labels,
     },
   };
-  return `(${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)})`;
+  // helper 与主函数同批编译：前置声明其源码文本，主函数体内裸引用的名字才能解析。
+  return [
+    "(function () {",
+    `const ${ZCODE_WEP_COMPUTE_ANCESTOR_CHAIN} = ${computeAncestorChain.toString()};`,
+    `const ${ZCODE_WEP_BUILD_ANCESTOR_LABEL} = ${buildAncestorLabel.toString()};`,
+    `return (${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)});`,
+    "})()",
+  ].join("\n");
+}
+
+export function buildWebElementPickerCommandScript(
+  method: WebElementPickerCommand,
+  ...args: unknown[]
+) {
+  const serializedArgs = args
+    .filter((arg) => arg !== undefined)
+    .map((arg) => JSON.stringify(arg))
+    .join(", ");
+  // 防御式：句柄不存在（页面已导航/实例已销毁）或阶段不符时返回 null，不 reject。
+  return [
+    "(() => {",
+    `const picker = window.${DEFAULT_OPTIONS.stateKey};`,
+    `if (!picker || typeof picker.${method} !== 'function') return null;`,
+    `return picker.${method}(${serializedArgs});`,
+    "})()",
+  ].join("\n");
 }
 
 export function buildCancelWebElementPickerScript() {
-  return [
-    "(() => {",
-    "const picker = window.__zcodeWebElementPicker;",
-    "if (picker && typeof picker.cancel === 'function') picker.cancel();",
-    "})()",
-  ].join("\n");
+  return buildWebElementPickerCommandScript("cancel");
 }
