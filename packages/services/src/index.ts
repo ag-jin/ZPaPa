@@ -391,7 +391,12 @@ export type {
 export type { DispatchCause } from "./workitem/squadDispatchRequests.js";
 export type { ReapOutcome } from "./worktree/orphanReaper.js";
 export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
-export type { SquadRunRecord, SquadRunRepo, SquadRunStatus } from "./workitem/squadRunRepo.js";
+export type {
+  SquadRunRecord,
+  SquadRunRepo,
+  SquadRunStatus,
+  SquadRunUsageSnapshot,
+} from "./workitem/squadRunRepo.js";
 /* `settle_reason` 的**码值单源**（W1 的 0014 列）也要从这里出**值**：agent 详情页要把
    「为什么结束」本地化呈现（欠账 #13），而 UI 侧**不得内联** `watchdog_ttl` 这类字面量 ——
    抄错一个字，一次看门狗结算会被显示成别的原因，且不报错。`squadRunRepo` 只 type-import

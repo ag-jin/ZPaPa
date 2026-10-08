@@ -31,7 +31,7 @@ import type {
   OpenMemberRunResult,
   ReviewOutcome,
 } from "./squadRunLifecycle.js";
-import type { SquadRunRecord } from "./squadRunRepo.js";
+import type { SquadRunRecord, SquadRunUsageSnapshot } from "./squadRunRepo.js";
 // 用户取消的 `settle_reason` 码值 + 看门狗族（单源；W3 的「取消不计入熔断」判别位与重试触发面）。
 // 值导入安全：`squadRunRepo` 只 type-import node:sqlite，值导入链不触达 node:*（本文件必须浏览器安全）。
 import {
@@ -643,6 +643,25 @@ export interface ISquadRuntimeService {
   bindMemberRunSession(
     target: SquadWorkspaceTarget,
     input: { runId: string; sessionId: string },
+  ): Promise<void>;
+  /**
+   * **per-run 用量落账**（0015，#6 按 run 记账 CT.1）：把一次用量快照写进台账的 9 列
+   * （`usage_*` + `usage_recorded_at`）。**唯一消费者是 host 的捕获臂**（CT.2：终态 / 看门狗 /
+   * 启动和解三臂在收尾后补拉 `getTaskTokenUsage`）；界面读它走既有读取面
+   * （`listSquadRunHistory` 已带这 9 列），**不经本方法**。
+   *
+   * 三条纪律：
+   * · **不过门禁**（`assertDispatchEnabled`）：记账不是「新派发」（与 `failMemberRun` /
+   *   `bindMemberRunSession` 同款理由——关掉实验开关后，在途 run 的收尾仍应如实记账）；
+   * · **薄转发**：只做「现构 runtime → runId 非空闸 → 交 repo 的 `recordUsage`」——
+   *   write-once / 幂等（`{written:false}`）/ 未命中抛的判据**只有一处实现**（repo），
+   *   本层不得重写第二份；8 个数值的**非负整数闸同在 repo 的写路径**（单点，SQL 之前）；
+   * · **write-once 语义由 repo 兜底**：同 run 二次调用不改写（来源是会话累计值，重拉只会变大），
+   *   本层对「已记录」不抛（合法重投），对「没有该行」由 repo 响亮抛。
+   */
+  recordSquadRunUsage(
+    target: SquadWorkspaceTarget,
+    input: { runId: string; usage: SquadRunUsageSnapshot },
   ): Promise<void>;
   /**
    * **per-run 取消的台账半边（L1）**（设计 §3.4 / W1 卡）：把一条 run 立刻移出活跃集 ——
@@ -1305,6 +1324,20 @@ export function createSquadRuntimeService(deps: {
         runId: input.runId,
         sessionId: input.sessionId,
       });
+    },
+
+    /* 0015（#6 按 run 记账 CT.1）：host 三臂捕获的落账入口。薄转发 —— write-once / 幂等 /
+       未命中抛的判据单源在 repo 的 `recordUsage`，本层只补 runId 非空（空串进 repo 只会命中
+       「没有该行」，那里区分不出「调用方传空」与「行不在」，故在入口先拒）。 */
+    async recordSquadRunUsage(target, input) {
+      if (input.runId.trim().length === 0) {
+        throw new Error(
+          "记录 run 用量失败：runId 不能为空——空串进台账只会命中「没有该行」，" +
+            "文案区分不出「调用方传空」与「行不在」，故在入口先响亮拒绝。",
+        );
+      }
+      const runtime = await deps.createRuntime(target);
+      runtime.squadRunRepo.recordUsage(input.runId, input.usage);
     },
 
     /* W1：per-run 取消的 L1 半边（分格表见接口注释）。按**当时状态**分流；状态写路径只有两条

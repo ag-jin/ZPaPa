@@ -71,6 +71,27 @@ export type InsertLeaderRunOrQueueResult =
   | { kind: "queued"; runId: string }
   | { kind: "coalesced"; targetRunId: string };
 
+/**
+ * 用量快照：字段与来源逐字对齐协议 `v4/conversation/usage` 的 8 个数值字段
+ * （`totalTokens / inputTokens / outputTokens / reasoningTokens / cacheCreationTokens /
+ * cacheReadTokens / modelRequestCount / modelErrorCount`），**减去 `sessionId` 与
+ * `inputBaselineBySource`**。
+ *
+ * 为什么不留 `inputBaselineBySource`：它是第二形状（JSON、按来源分桶），v1 无消费方；
+ * 照「`detail_json` 只用于形状随产生点而变」的既有判据，这里形状是**封闭协议 schema**，拆列才对。
+ * 为什么不带 `sessionId`：会话是台账自己的列（`session_id`），快照里再带一份就是第二个真相。
+ */
+export type SquadRunUsageSnapshot = {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  modelRequestCount: number;
+  modelErrorCount: number;
+};
+
 export type SquadRunRecord = {
   runId: string;
   workspaceKey: string;
@@ -113,6 +134,32 @@ export type SquadRunRecord = {
    * 可选的理由与 `openedAt` 同：读回恒有值，写入缺省不动该列。
    */
   settleReason?: string | null;
+  /**
+   * 用量快照的 8 个数值列（0015，#6 按 run 记账）：字段与来源见 `SquadRunUsageSnapshot`。
+   * **读回恒有值**（NULL = 未记录）；8 列与 `usageRecordedAt` **同写同读**——它们一起构成一次快照，
+   * 单独的某一列为 null 只出现在「未记录」的行上。**写入口唯一** = `recordUsage`（write-once），
+   * 不走 `setStatus` 的 patch（用量不是「状态推进」，与 bindSession 同纪律）。
+   * 可选（`?`）的理由与 `openedAt` 同：存量调用方的行字面量不因加列而全体改。
+   */
+  usageTotalTokens?: number | null;
+  usageInputTokens?: number | null;
+  usageOutputTokens?: number | null;
+  usageReasoningTokens?: number | null;
+  usageCacheCreationTokens?: number | null;
+  usageCacheReadTokens?: number | null;
+  usageModelRequestCount?: number | null;
+  usageModelErrorCount?: number | null;
+  /**
+   * 记账时刻（0015 的**存在性开关**）：NULL = **未记录**（没有会话 / 补拉没成功 / 遗留行），
+   * 与合法值 `0`（跑过但没消耗）必须可区分——读回**不得把 NULL 猜成 0**（照 `dispatchCause`
+   * 的「读回不得猜」纪律）：渲染 0 会把「没记账」伪装成「没花用量」。
+   *
+   * 一旦非空，这一行的 9 列**不可再改写**（write-once，见 `recordUsage`）：来源是**会话累计值**
+   * （重拉只会变大），取「先到者赢」让快照语义明确（结算时刻的值），也消除「两次值不同时谁赢」
+   * 的第二份判据。**重开臂**（C1 结算后同 runId 重开、另建会话）只记**最后一次会话**的累计值
+   * ——诚实登记，不假装是跨尝试总和。
+   */
+  usageRecordedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -286,6 +333,20 @@ export interface SquadRunRepo {
    * 未命中该 runId 时**抛**（与 `setStatus` 同一口径：调用方以为绑上了，而行不在）。
    */
   bindSession(runId: string, sessionId: string): void;
+  /**
+   * **唯一用量的写入口**（0015，#6 按 run 记账）。**write-once**：`usage_recorded_at IS NULL` 才写，
+   * 二次调用不改变行内容（含 `updated_at`——「没写」的可观察证据）。
+   *
+   * · 为什么 write-once 而不是「覆盖 / 取大」：来源是**会话累计值**（`getTaskTokenUsage` 读 CLI 侧
+   *   SQLite 聚合；同一 run 重拉只会变大），一次落账 = 快照语义明确（「结算时刻的值」），
+   *   且消除「两次值不同时谁赢」的第二份判据。
+   * · 为什么「已记录」返回 `{written:false}` 而不是抛：重复补拉是**合法重投**（查询面超时重发安全），
+   *   抛会把幂等重投误当调用方 bug；但 **runId 不存在仍响亮抛**（与 `bindSession` 同款：未命中即抛
+   *   ——「没有该行」与「已记录」是两件不同的事，静默混同会让传错 runId 变成没人知道的事）。
+   * · **只写 `usage_*` 9 列 + `updated_at`**：不碰 status / 身份列（与 `bindSession`「只写
+   *   `session_id` 一列」同纪律）。8 个数值先过写路径闸（非负整数），非法值绝不落盘。
+   */
+  recordUsage(runId: string, usage: SquadRunUsageSnapshot): { written: boolean };
 }
 
 interface SquadRunRow {
@@ -304,6 +365,15 @@ interface SquadRunRow {
   caused_by_run_id: string | null;
   opened_at: number | null;
   settle_reason: string | null;
+  usage_total_tokens: number | null;
+  usage_input_tokens: number | null;
+  usage_output_tokens: number | null;
+  usage_reasoning_tokens: number | null;
+  usage_cache_creation_tokens: number | null;
+  usage_cache_read_tokens: number | null;
+  usage_model_request_count: number | null;
+  usage_model_error_count: number | null;
+  usage_recorded_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -374,6 +444,48 @@ function assertDispatchCause(cause: DispatchCause | null): DispatchCause | null 
   return cause;
 }
 
+/** `recordUsage` 的数值列名 → 快照键（写路径闸的报错要点名是哪一列）。 */
+const USAGE_VALUE_KEYS = [
+  ["totalTokens", "usage_total_tokens"],
+  ["inputTokens", "usage_input_tokens"],
+  ["outputTokens", "usage_output_tokens"],
+  ["reasoningTokens", "usage_reasoning_tokens"],
+  ["cacheCreationTokens", "usage_cache_creation_tokens"],
+  ["cacheReadTokens", "usage_cache_read_tokens"],
+  ["modelRequestCount", "usage_model_request_count"],
+  ["modelErrorCount", "usage_model_error_count"],
+] as const satisfies ReadonlyArray<readonly [keyof SquadRunUsageSnapshot, string]>;
+
+/* `recordUsage` 的**写路径闸**（与 readStatus / assertStatus / assertDispatchCause 同款裁定）：
+   8 个数值必须是**非负整数**（累计 token 计数与请求数）——负数/小数/NaN 只可能是调用方算错，
+   而落盘后读回是一个「看起来像真的」的用量，且不报错（记账面正是最经不起编数字的地方）。
+   校验在 SQL 之前：非法值根本没机会写进列。 */
+function assertUsageValues(usage: SquadRunUsageSnapshot): void {
+  for (const [key, column] of USAGE_VALUE_KEYS) {
+    const value = usage[key];
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(
+        `squad_runs.${column} 拒绝写入非法值「${String(value)}」：用量计数必须是非负整数` +
+          "（负数/小数只可能是调用方算错，落盘后会变成没人知道是假的用量）。",
+      );
+    }
+  }
+}
+
+/** 9 个用量列的写入值（`record.usageX ?? null`）：读回恒有值、写入缺省不动该列（= NULL）。
+ *  与 `settleReason ?? null` 同款：存量调用方的行字面量不因加列而全体改。 */
+const usageInsertValues = (record: SquadRunRecord): Array<number | null> => [
+  record.usageTotalTokens ?? null,
+  record.usageInputTokens ?? null,
+  record.usageOutputTokens ?? null,
+  record.usageReasoningTokens ?? null,
+  record.usageCacheCreationTokens ?? null,
+  record.usageCacheReadTokens ?? null,
+  record.usageModelRequestCount ?? null,
+  record.usageModelErrorCount ?? null,
+  record.usageRecordedAt ?? null,
+];
+
 function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
   return {
     runId: row.run_id,
@@ -391,6 +503,16 @@ function rowToSquadRun(row: SquadRunRow): SquadRunRecord {
     causedByRunId: row.caused_by_run_id,
     openedAt: row.opened_at,
     settleReason: row.settle_reason,
+    // 0015：9 列原样透出（**不得 `?? 0`**：NULL = 未记录，折成 0 会把「没记账」伪装成「没消耗」）。
+    usageTotalTokens: row.usage_total_tokens,
+    usageInputTokens: row.usage_input_tokens,
+    usageOutputTokens: row.usage_output_tokens,
+    usageReasoningTokens: row.usage_reasoning_tokens,
+    usageCacheCreationTokens: row.usage_cache_creation_tokens,
+    usageCacheReadTokens: row.usage_cache_read_tokens,
+    usageModelRequestCount: row.usage_model_request_count,
+    usageModelErrorCount: row.usage_model_error_count,
+    usageRecordedAt: row.usage_recorded_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -515,8 +637,11 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         `INSERT INTO squad_runs (
           run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
           is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-          dispatch_cause, caused_by_run_id, opened_at, settle_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+          usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+          usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+          usage_model_error_count, usage_recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.runId,
         record.workspaceKey,
@@ -537,6 +662,8 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
         // 由 open 的写点各自负责填——不变式用例在 squadWatchdog.test.ts 逐条钉住五类写点）。
         record.openedAt ?? null,
         record.settleReason ?? null,
+        // 0015 九列：缺省 NULL（未记录）——用量只由 `recordUsage` 写；行字面量带值也照落（写路径全量）。
+        ...usageInsertValues(record),
       );
     },
 
@@ -550,9 +677,12 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id, opened_at, settle_reason
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+            usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+            usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+            usage_model_error_count, usage_recorded_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
@@ -577,6 +707,7 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.causedByRunId,
           record.openedAt ?? null,
           record.settleReason ?? null,
+          ...usageInsertValues(record),
           record.workspaceKey,
           record.workItemId,
           ...SQUAD_RUN_ACTIVE_STATUSES,
@@ -606,9 +737,12 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id, opened_at, settle_reason
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+            usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+            usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+            usage_model_error_count, usage_recorded_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE (SELECT COUNT(*) FROM squad_runs
                    WHERE workspace_key = ? AND agent_id = ? AND status = 'open') < ?
              AND NOT EXISTS (
@@ -634,6 +768,7 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.causedByRunId,
           record.openedAt ?? null,
           record.settleReason ?? null,
+          ...usageInsertValues(record),
           record.workspaceKey,
           record.agentId,
           maxConcurrentRuns,
@@ -651,9 +786,13 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id, opened_at, settle_reason
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+            usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+            usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+            usage_model_error_count, usage_recorded_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL,
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
@@ -794,9 +933,12 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id, opened_at, settle_reason
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+            usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+            usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+            usage_model_error_count, usage_recorded_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND is_leader_task = 1
@@ -823,6 +965,7 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           record.causedByRunId,
           record.openedAt ?? null,
           record.settleReason ?? null,
+          ...usageInsertValues(record),
           record.workspaceKey,
           record.workItemId,
           ...SQUAD_RUN_ACTIVE_STATUSES,
@@ -850,9 +993,13 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
           `INSERT INTO squad_runs (
             run_id, workspace_key, workspace_path, work_item_id, parent_work_item_id, agent_id,
             is_leader_task, branch, dir_name, status, session_id, created_at, updated_at,
-            dispatch_cause, caused_by_run_id, opened_at, settle_reason
+            dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+            usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+            usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+            usage_model_error_count, usage_recorded_at
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL
+          SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, ?, ?, ?, ?, NULL, NULL,
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
            WHERE NOT EXISTS (
              SELECT 1 FROM squad_runs
               WHERE workspace_key = ? AND work_item_id = ? AND agent_id = ? AND status = 'queued'
@@ -1054,6 +1201,51 @@ export function createSquadRunRepo(db: DatabaseSync): SquadRunRepo {
             "静默 no-op 会让「这个 run 用哪个会话」变成没人知道的事，故一律抛。",
         );
       }
+    },
+
+    recordUsage(runId, usage) {
+      // 数值先过写路径闸：非法值绝不落盘（与 insert / setStatus 的闸同一条纪律）。
+      assertUsageValues(usage);
+      /* **单条 UPDATE 同持「行存在 + 未记录」两前置**（`usage_recorded_at IS NULL` 是 write-once 的
+         全部实现）：先查后写（read → if null → write）在两次补拉并发时都会读到 NULL ⇒ 两次都写，
+         后写者覆盖先写者，「先到者赢」当场失效——而这条路的两次调用来自两条异步臂，
+         并发是常态。写进语句本身即原子（与 insertMemberRunOrQueue 的「判定写进语句」同法）。
+         只写 `usage_*` 9 列 + `updated_at`：不碰 status / 身份列（与 bindSession 同纪律）。 */
+      const now = Date.now();
+      const changes = db
+        .prepare(
+          `UPDATE squad_runs SET
+             usage_total_tokens = ?, usage_input_tokens = ?, usage_output_tokens = ?,
+             usage_reasoning_tokens = ?, usage_cache_creation_tokens = ?, usage_cache_read_tokens = ?,
+             usage_model_request_count = ?, usage_model_error_count = ?,
+             usage_recorded_at = ?, updated_at = ?
+           WHERE run_id = ? AND usage_recorded_at IS NULL`,
+        )
+        .run(
+          usage.totalTokens,
+          usage.inputTokens,
+          usage.outputTokens,
+          usage.reasoningTokens,
+          usage.cacheCreationTokens,
+          usage.cacheReadTokens,
+          usage.modelRequestCount,
+          usage.modelErrorCount,
+          now,
+          now,
+          runId,
+        ).changes;
+      if (changes === 1) return { written: true };
+      /* changes === 0 底下是两件完全不同的事，必须分开（见接口注释）：
+         · 行在、只是已记录 ⇒ 合法重投 ⇒ 幂等返回 {written:false}（不抛）；
+         · 行不在 ⇒ 调用方传错 runId / 台账被删 ⇒ 响亮抛（混同「已记录」会让接线 bug 变成没人知道的事）。 */
+      const existing = db.prepare("SELECT 1 FROM squad_runs WHERE run_id = ?").get(runId);
+      if (existing === undefined) {
+        throw new Error(
+          `squad_runs 没有 runId=「${runId}」的行，无法记录用量：调用方传错 runId，或台账行已被删除。` +
+            "静默返回 {written:false} 会把「没有这一行」混同「已记录」——前者是接线 bug，故一律抛。",
+        );
+      }
+      return { written: false };
     },
   };
 }

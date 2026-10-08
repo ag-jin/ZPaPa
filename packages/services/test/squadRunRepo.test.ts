@@ -35,6 +35,17 @@ const row = (over: Partial<SquadRunRecord> = {}): SquadRunRecord => ({
   // 0014 两列：缺省 = 与 createdAt 同刻（直开行的常态形态；queued 行由语句强制 NULL，见队列用例）。
   openedAt: 1,
   settleReason: null,
+  // 0015 九列：缺省 = 未记录（全 NULL）。**读回恒有值**（`rowToSquadRun` 原样映射列），
+  // 故行字面量必须显式带上这 9 个键，否则「写入 → 读回」的 deepEqual 会因键集不同而假红。
+  usageTotalTokens: null,
+  usageInputTokens: null,
+  usageOutputTokens: null,
+  usageReasoningTokens: null,
+  usageCacheCreationTokens: null,
+  usageCacheReadTokens: null,
+  usageModelRequestCount: null,
+  usageModelErrorCount: null,
+  usageRecordedAt: null,
   createdAt: 1,
   updatedAt: 1,
   ...over,
@@ -289,6 +300,72 @@ test("listActive 含 branch / dirName 为 null 的队长 run", () => {
 test("get 未命中返回 null", () => {
   const { repo } = setup();
   assert.equal(repo.get("nope"), null);
+});
+
+/* ---------- 0015：用量记账 `recordUsage`（write-once 单点写） ---------- */
+
+/** 一组独立字面量的用量快照（期望值不按实现的方式重算）。 */
+const USAGE = {
+  totalTokens: 12345,
+  inputTokens: 10000,
+  outputTokens: 2345,
+  reasoningTokens: 678,
+  cacheCreationTokens: 111,
+  cacheReadTokens: 222,
+  modelRequestCount: 7,
+  modelErrorCount: 1,
+} as const;
+
+test("recordUsage 写入生效：8 数值列与入参逐一相等，usageRecordedAt 非空", () => {
+  const { repo } = setup();
+  repo.insert(row({ runId: "r-usage" }));
+  assert.deepEqual(repo.recordUsage("r-usage", USAGE), { written: true });
+  const after = repo.get("r-usage")!;
+  assert.equal(after.usageTotalTokens, 12345);
+  assert.equal(after.usageInputTokens, 10000);
+  assert.equal(after.usageOutputTokens, 2345);
+  assert.equal(after.usageReasoningTokens, 678);
+  assert.equal(after.usageCacheCreationTokens, 111);
+  assert.equal(after.usageCacheReadTokens, 222);
+  assert.equal(after.usageModelRequestCount, 7);
+  assert.equal(after.usageModelErrorCount, 1);
+  assert.equal(typeof after.usageRecordedAt, "number", "存在性开关必须落定（NULL = 未记录）");
+});
+
+// write-once 的**直接**证据：来源是会话累计值，同一 run 重拉只会变大；取「先到者赢」让快照语义
+// 明确（结算时刻的值）。`updated_at` 也不得动——它是「确实没写」的可观察证据（行内容逐列不变）。
+test("recordUsage 二次调用 no-op：{written:false} 且行内容（含 updated_at）逐列不变", () => {
+  const { db, repo } = setup();
+  repo.insert(row({ runId: "r-usage" }));
+  assert.deepEqual(repo.recordUsage("r-usage", USAGE), { written: true });
+  const first = repo.get("r-usage")!;
+  // SQLite 行是 null 原型对象，与字面量 deepEqual 会因原型不同而假红 ⇒ 先取原始列快照。
+  const rawOf = () =>
+    Object.fromEntries(
+      Object.entries(
+        db.prepare("SELECT * FROM squad_runs WHERE run_id = 'r-usage'").get() as Record<
+          string,
+          unknown
+        >,
+      ).sort(([a], [b]) => a.localeCompare(b)),
+    );
+  const rawFirst = rawOf();
+
+  assert.deepEqual(
+    repo.recordUsage("r-usage", { ...USAGE, totalTokens: 999999, inputTokens: 888888 }),
+    { written: false },
+    "已记录 ⇒ 合法重投的幂等返回（不是抛：查询面超时重发安全）",
+  );
+
+  assert.deepEqual(rawOf(), rawFirst, "二次调用不得改动任何列（含 updated_at：没写就是没写）");
+  assert.deepEqual(repo.get("r-usage"), first, "读回与首次落账逐字段一致（没有被覆盖）");
+});
+
+// 未命中 runId 必须响亮失败（照 bindSession / setStatus 的同款裁定）：静默返回 {written:false}
+// 会把「没有这一行」（接线 bug / 台账被删）混同「已记录」，而两者处置完全不同。
+test("recordUsage 未命中 runId 抛错", () => {
+  const { repo } = setup();
+  assert.throws(() => repo.recordUsage("nope", USAGE), /runId/);
 });
 
 /* ---------- 0008：派发成因两列（`dispatch_cause` / `caused_by_run_id`） ---------- */
