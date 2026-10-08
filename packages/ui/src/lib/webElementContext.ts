@@ -5,6 +5,12 @@ export const WEB_ELEMENT_CONTEXT_REMOVE_FROM_CHAT_EVENT =
 const WEB_ELEMENT_CONTEXT_BLOCK_TITLE = "# Web page elements:";
 const MAX_MARKDOWN_FIELD_LENGTH = 8_000;
 
+export const WEB_ELEMENT_COMMENT_MAX_CHARS = 2_000;
+
+// build-only：解析时它位于首个 `## Element` 之前，会被既有的 split+filter(null) 丢弃。
+const WEB_ELEMENT_COMMENT_DIRECTIVE =
+  'Each element below may carry a "Comment" line. Treat every non-empty comment as the user\'s instruction for that element, process all of them, and never apply one element\'s comment to another.';
+
 export interface WebElementRect {
   x: number;
   y: number;
@@ -38,6 +44,8 @@ export interface WebElementContextPayload {
   attributes?: Record<string, string>;
   rect?: WebElementRect;
   style?: WebElementStyleSummary;
+  /** 已规范化（trim / 单行 / ≤ WEB_ELEMENT_COMMENT_MAX_CHARS）的用户评语。 */
+  comment?: string;
   capturedAt: number;
 }
 
@@ -70,6 +78,19 @@ export function getWebElementContextWorkspaceKey(
   workspaceIdentity?: string,
 ) {
   return workspaceIdentity?.trim() || workspacePath;
+}
+
+/**
+ * 评语规范化：折叠成单行（含换行）并截断到上限。
+ *
+ * 单行是安全边界：多行评语会伪造出 `## Element N` 行首或 ``` 围栏，
+ * 把用户正文劫持成上下文块的一部分。
+ */
+export function normalizeWebElementComment(comment: string | undefined): string {
+  const normalized = (comment ?? "").replace(/\s+/gu, " ").trim();
+  return normalized.length > WEB_ELEMENT_COMMENT_MAX_CHARS
+    ? normalized.slice(0, WEB_ELEMENT_COMMENT_MAX_CHARS)
+    : normalized;
 }
 
 export function isWebElementContextAddToChatEvent(
@@ -108,8 +129,57 @@ export function isWebElementContextPayload(payload: unknown): payload is WebElem
     typeof candidate.pageTitle === "string" &&
     typeof candidate.tagName === "string" &&
     candidate.tagName.length > 0 &&
+    (candidate.comment === undefined || typeof candidate.comment === "string") &&
     typeof candidate.capturedAt === "number"
   );
+}
+
+/**
+ * 元素身份键：同页 + 元素定位（selector → xpath → tagName 退化）。
+ *
+ * 用身份而非每次拾取新生成的 uuid 匹配，重拾取/事后补评语才落在同一条上；
+ * 两个 pane 同 workspace 双监听得到的同身份 payload 也会合并为一条。
+ */
+export function getWebElementContextDedupeKey(payload: {
+  pageUrl: string;
+  selector?: string;
+  xpath?: string;
+  tagName: string;
+}): string {
+  return [payload.pageUrl, payload.selector ?? payload.xpath ?? `#${payload.tagName}`].join("\0");
+}
+
+/**
+ * 按身份合并附件：未命中追加，命中则替换元素数据、保留旧 id、评语非空才覆盖。
+ *
+ * 保留旧 id 是硬要求：removeContext 按 id 删除，id 漂移会让已上屏的 chip 删不掉。
+ */
+export function mergeWebElementContextAttachment(
+  items: readonly WebElementContextComposerAttachment[],
+  attachment: WebElementContextComposerAttachment,
+): readonly WebElementContextComposerAttachment[] {
+  const key = getWebElementContextDedupeKey(attachment);
+  const existingIndex = items.findIndex((item) => getWebElementContextDedupeKey(item) === key);
+  if (existingIndex < 0) {
+    return [...items, attachment];
+  }
+
+  return items.map((item, index) => {
+    if (index !== existingIndex) {
+      return item;
+    }
+    const comment =
+      normalizeWebElementComment(attachment.comment) ||
+      normalizeWebElementComment(item.comment);
+    const merged: WebElementContextComposerAttachment = { ...attachment, id: item.id };
+    if (comment) {
+      merged.comment = comment;
+    } else {
+      // 两侧都空时不能把 incoming 的空白评语原样留下（序列化会再被裁掉，但内存态会撒谎）。
+      delete merged.comment;
+    }
+    return merged;
+  });
 }
 
 function truncateMarkdownValue(value: string | undefined) {
@@ -155,6 +225,7 @@ function buildWebElementContextMarkdown(payload: WebElementContextPayload) {
     `Tag: ${payload.tagName.toLowerCase()}`,
   ];
 
+  appendOptionalLine(lines, "Comment", normalizeWebElementComment(payload.comment));
   appendOptionalLine(lines, "Role", payload.role);
   appendOptionalLine(lines, "Accessible name", payload.accessibleName);
   appendOptionalLine(lines, "Selector", payload.selector);
@@ -199,7 +270,13 @@ export function buildPromptWithWebElementContexts(
     return content.trim();
   }
 
-  const contextBlock = `${WEB_ELEMENT_CONTEXT_BLOCK_TITLE}\n\n${contexts
+  const hasComment = contexts.some((context) =>
+    Boolean(normalizeWebElementComment(context.comment)),
+  );
+  const blockHeader = hasComment
+    ? `${WEB_ELEMENT_CONTEXT_BLOCK_TITLE}\n\n${WEB_ELEMENT_COMMENT_DIRECTIVE}`
+    : WEB_ELEMENT_CONTEXT_BLOCK_TITLE;
+  const contextBlock = `${blockHeader}\n\n${contexts
     .map((context, index) =>
       buildWebElementContextMarkdown(context).replace("## Element", `## Element ${index + 1}`),
     )
@@ -269,6 +346,8 @@ function parseElementItem(
   const pageUrl = readField(rawItem, "URL");
   const pageTitle = readField(rawItem, "Title");
   const tagName = readField(rawItem, "Tag");
+  // 评语只在首个 fenced 块之前读取：页面正文里行首恰好是 `Comment:` 的文本不得被误当评语。
+  const headerPart = rawItem.split("\n```")[0] ?? "";
 
   if (!pageUrl || !tagName) {
     return null;
@@ -281,6 +360,7 @@ function parseElementItem(
     pageUrl,
     pageTitle: pageTitle === "(untitled)" ? "" : pageTitle,
     tagName,
+    comment: readField(headerPart, "Comment") || undefined,
     role: readField(rawItem, "Role") || undefined,
     accessibleName: readField(rawItem, "Accessible name") || undefined,
     selector: readField(rawItem, "Selector") || undefined,
@@ -320,11 +400,20 @@ export function parsePromptWebElementContexts(
     .split(/\n(?=## Element(?:\s+\d+)?\n)/)
     .map((item) => item.trim())
     .filter(Boolean);
-  const webElementContexts = rawItems
-    .map((item, index) =>
-      parseElementItem(item, index, options.workspacePath, options.workspaceIdentity),
-    )
-    .filter((item): item is WebElementContextComposerAttachment => item !== null);
+  // 块头 directive 会被 split 成首个 rawItem（内容不构成元素而被丢弃），
+  // 序号按**已识别元素**累进，新旧格式的同序元素才能拿到同一个 id。
+  const webElementContexts: WebElementContextComposerAttachment[] = [];
+  for (const item of rawItems) {
+    const parsed = parseElementItem(
+      item,
+      webElementContexts.length,
+      options.workspacePath,
+      options.workspaceIdentity,
+    );
+    if (parsed) {
+      webElementContexts.push(parsed);
+    }
+  }
 
   if (webElementContexts.length === 0) {
     return {
