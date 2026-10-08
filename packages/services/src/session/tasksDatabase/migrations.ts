@@ -17,6 +17,7 @@ import {
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
   WORK_ITEM_DELIVERABLE_SQL,
+  WORK_ITEM_PULL_REQUEST_SQL,
   WORK_ITEM_SCHEMA,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
@@ -146,6 +147,13 @@ const definitions = [
     id: "0016_work_item_deliverables",
     checksumInput: [WORK_ITEM_DELIVERABLE_SQL],
   },
+  /* 0017（#8 GitHub PR 集成 D2）：建 `work_item_pull_requests` 一张新表 + 两索引
+     （工作项↔PR 关联 + 快照列，head-SHA 防陈旧写）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0011/0012/0016。 */
+  {
+    id: "0017_work_item_pull_requests",
+    checksumInput: [WORK_ITEM_PULL_REQUEST_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -211,6 +219,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0014_squad_run_watchdog") db.exec(SQUAD_RUN_WATCHDOG_SQL);
       else if (migration.id === "0015_squad_run_usage") db.exec(SQUAD_RUN_USAGE_SQL);
       else if (migration.id === "0016_work_item_deliverables") db.exec(WORK_ITEM_DELIVERABLE_SQL);
+      else if (migration.id === "0017_work_item_pull_requests") db.exec(WORK_ITEM_PULL_REQUEST_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

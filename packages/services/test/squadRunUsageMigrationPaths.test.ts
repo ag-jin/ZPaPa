@@ -65,9 +65,10 @@ const migrateFresh = (): DatabaseSync => {
 /**
  * 降到 0014 形态：逆序移除 9 列 + 删 0015 账本行（不触碰 0001–0014 的任何字节）。
  *
- * 0016（#7 交付物）落地后同步补上它的反向 DDL：本夹具要模拟的是「升级前 = 止于 0014 的老库」，
- * 只删 0015 会让 0016 的表与账本行留在里面、`ledgerBefore.length` 变成 15 —— 那时这条用例
- * 测的就不是「老库升级」而是另一种形状了（与本仓各条迁移的 artifact 登记同一条纪律）。
+ * 0016（#7 交付物）/ 0017（#8 PR 关联+快照）落地后同步补上它们的反向 DDL：本夹具要模拟的是
+ * 「升级前 = 止于 0014 的老库」，只删 0015 会让后两条的表与账本行留在里面、
+ * `ledgerBefore.length` 变成 15/16 —— 那时这条用例测的就不是「老库升级」而是另一种形状了
+ * （与本仓各条迁移的 artifact 登记同一条纪律）。
  */
 function downgradeTo0014(db: DatabaseSync): void {
   for (const column of [...USAGE_COLUMNS].reverse()) {
@@ -78,6 +79,10 @@ function downgradeTo0014(db: DatabaseSync): void {
   db.exec("DROP INDEX idx_work_item_deliverables_item");
   db.exec("DROP TABLE work_item_deliverables");
   db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0016_work_item_deliverables'").run();
+  db.exec("DROP INDEX idx_work_item_pull_requests_item");
+  db.exec("DROP INDEX idx_work_item_pull_requests_pr");
+  db.exec("DROP TABLE work_item_pull_requests");
+  db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0017_work_item_pull_requests'").run();
 }
 
 test("路径 A（从零建库）：9 个 usage_* 列按序追加（INTEGER / 可空 / 无缺省）；账本 0015 checksum 等于冻结口径", () => {
@@ -96,7 +101,11 @@ test("路径 A（从零建库）：9 个 usage_* 列按序追加（INTEGER / 可
     );
   }
   const entries = ledger(db);
-  assert.equal(entries.length, 16, "账本 0001–0015 共 15 条 + 0016（#7 交付物）一条");
+  assert.equal(
+    entries.length,
+    17,
+    "账本 0001–0015 共 15 条 + 0016（#7 交付物）+ 0017（#8 PR）各一条",
+  );
   const entry = entries.find((row) => row.id === "0015_squad_run_usage");
   assert.ok(entry, "0015 必须已登记");
   assert.equal(
@@ -171,8 +180,8 @@ test("路径 B（老库升级）：列集 = 升级前 + 9 列（无第三类改�
   );
   assert.equal(
     ledgerAfter.length,
-    16,
-    "升级恰好追加 0015 + 0016 两条（降级夹具把两者都退回，补跑时一起装回）",
+    17,
+    "升级恰好追加 0015 + 0016 + 0017 三条（降级夹具把三者都退回，补跑时一起装回）",
   );
 });
 

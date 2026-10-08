@@ -591,3 +591,54 @@ export const WORK_ITEM_DELIVERABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_work_item_deliverables_run
     ON work_item_deliverables(run_id) WHERE run_id IS NOT NULL;
 `;
+
+/* 0017（#8 GitHub PR 集成 D2）：工作项 ↔ PR 的**关联 + 快照**单表（设计报告 §4.2）。
+
+   表结构 = multica 两张表（`github_pull_request` 镜像列 M1 + 222 号迁移的快照列 M2）的**单表精简**：
+   单用户本地无 installation / workspace 多租户面，也没有 webhook 入站（桌面单机无公网入口），
+   故不需要 `github_installation` 与 `issue_pull_request` 关联表 —— 「工作项 ↔ PR」直接是这张表的行，
+   `linked_by_*` 是归因。
+
+   两条与交付物表**相反**的纪律（别把两表的手感混起来）：
+   · 本表是**可变镜像**（快照刷新会 UPDATE、unlink 会 DELETE），不是 append-only 事实账本；
+   · 没有 `dedup_key`：幂等身份是**业务键** `(workspace_key, work_item_id, repo_owner, repo_name, pr_number)`
+     的唯一索引（同一个 PR 挂到同一工作项至多一行；挂到不同工作项是两行，各自成立）。
+
+   快照列（M2 的移植）：
+   · `snapshot_head_sha` 是**防陈旧写的比较对象**（pin，空串 = 从未拉取）：快照只写在
+     「库里 pin 仍等于本次快照所基于的 head」时，慢响应不得覆盖更新 head 的快照；
+   · `state` 四值闭集 `open|closed|merged|draft`（multica 口径）——**可空**：NULL = 从未拉取。
+     离线缺省形态（没配 token）下永远是 NULL，界面按「未拉取」呈现，不伪造 `open`。
+     闭集由 repo 的读写双闸管（不在 DDL 里 CHECK：枚举漂移要在代码里响亮，不在 DDL 里静默）；
+   · `api_mergeable` / `api_merge_state_status` 存 GitHub 的原值（MERGEABLE/CONFLICTING/UNKNOWN、
+     CLEAN/DIRTY/BLOCKED/BEHIND/…）。**不做 checks 汇总列**（`checks_rollup_state` 后置，设计 §4.2：
+     它要 GraphQL statusCheckRollup，v1 用 REST GET pull，拿不到 rollup —— 宁缺不伪造）。 */
+export const WORK_ITEM_PULL_REQUEST_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_pull_requests (
+    id                      TEXT PRIMARY KEY,
+    workspace_key           TEXT NOT NULL,
+    workspace_path          TEXT NOT NULL,
+    work_item_id            TEXT NOT NULL,
+    repo_owner              TEXT NOT NULL,
+    repo_name               TEXT NOT NULL,
+    pr_number               INTEGER NOT NULL,
+    title                   TEXT NOT NULL,
+    html_url                TEXT NOT NULL,
+    branch                  TEXT,
+    state                   TEXT,
+    merged_at               INTEGER,
+    api_mergeable           TEXT,
+    api_merge_state_status  TEXT,
+    snapshot_head_sha       TEXT NOT NULL DEFAULT '',
+    snapshot_fetched_at     INTEGER,
+    linked_by_kind          TEXT NOT NULL,
+    linked_by_id            TEXT NOT NULL,
+    created_at              INTEGER NOT NULL,
+    updated_at              INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, repo_owner, repo_name, pr_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_pull_requests_item
+    ON work_item_pull_requests(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_pull_requests_pr
+    ON work_item_pull_requests(workspace_key, repo_owner, repo_name, pr_number);
+`;
