@@ -26,7 +26,11 @@ export type PullRequestFetchFailureCode =
   | "unavailable"
   | "http_error"
   | "network_error"
-  | "malformed_response";
+  | "malformed_response"
+  /* P3-2（D2 复验）：**请求侧**的地址形态问题（库里那一行的 URL 不是 GitHub PR 地址）。
+     此前与网络失败共用一个 code —— 而两者的处置完全不同（一个是修这一行，一个是查网络）；
+     误报成 network_error 会把人引去重启网络，真正要做的事（改地址）反而没人做。 */
+  | "invalid_url";
 
 export type PullRequestFetchResult =
   | { ok: true; snapshot: PullRequestSnapshot }
@@ -151,6 +155,27 @@ function throwPullPayloadProblem(what: string): never {
   throw new Error(`GitHub 响应缺少可用字段：${what}`);
 }
 
+/* P3-1（D2 复验）：远端可控字段进**错误文案**前一律定长截断。
+ *
+ * 为什么必须有界：`state` / `merged_at` 这类字段是远端（及其背后的代理/网关）可控的任意长字符串，
+ * 整段 JSON.stringify 进失败原因后，会一路进 SyncReport → 界面 → 日志。除了「文案可以无限长」，
+ * 更实际的风险是**回显**：若中间有代理把请求原文（含 Authorization 头）折进响应体，这段文本就会被
+ * 搬进报告面。截断不是消毒（不假装能识别凭据），而是把**任何**单字段的影响面钉在一个常数量级上；
+ * 同时保留字段名与开头若干字符 —— 截断不得吃掉「哪个字段畸形」这条可行动性。 */
+export const REMOTE_FIELD_MAX_LENGTH = 120;
+
+/** 远端可控值 → 有界的可读形态（超长则截断并**写明被截断**，不假装原文就这么短）。 */
+export function truncateRemoteField(value: string, max: number = REMOTE_FIELD_MAX_LENGTH): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…（截断，原文 ${value.length} 字）`;
+}
+
+/** 远端可控值 → 有界的 JSON 形态（字符串原样截断，其余走 JSON.stringify）。 */
+function boundedRemoteJson(value: unknown): string {
+  const text = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  return JSON.stringify(truncateRemoteField(text));
+}
+
 /** 响应 → 快照；形态不对 ⇒ 抛（由调用方折成 malformed_response，不猜值）。 */
 function mapPullPayload(payload: GitHubPullPayload, fetchedAt: number): PullRequestSnapshot {
   const title = typeof payload.title === "string" ? payload.title.trim() : "";
@@ -169,14 +194,15 @@ function mapPullPayload(payload: GitHubPullPayload, fetchedAt: number): PullRequ
           : payload.state === "closed"
             ? "closed"
             : throwPullPayloadProblem(
-                `state=${JSON.stringify(payload.state)}（闭集 open/closed + merged/draft 标志）`,
+                // 远端可控 ⇒ 定长截断（P3-1）；字段名照旧点名。
+                `state=${boundedRemoteJson(payload.state)}（闭集 open/closed + merged/draft 标志）`,
               );
 
   let mergedAt: number | null = null;
   if (typeof payload.merged_at === "string" && payload.merged_at.trim() !== "") {
     const parsed = Date.parse(payload.merged_at);
     if (!Number.isFinite(parsed))
-      throwPullPayloadProblem(`merged_at=${JSON.stringify(payload.merged_at)}`);
+      throwPullPayloadProblem(`merged_at=${boundedRemoteJson(payload.merged_at)}`);
     mergedAt = parsed;
   }
 
@@ -233,7 +259,7 @@ export function createGitHubPullRequestProvider(deps: {
       } catch (error) {
         return {
           ok: false,
-          code: "network_error",
+          code: "invalid_url",
           reason: error instanceof Error ? error.message : String(error),
         };
       }

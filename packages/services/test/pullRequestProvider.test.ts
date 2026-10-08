@@ -323,6 +323,53 @@ test("GitHub adapter｜无 token：describe=unavailable，fetch 响亮拒且**�
   assert.equal(calls, 0, "没 token 不发请求");
 });
 
+/* ---------------- ⑤ P3 加固（D2 复验报告的两条低危项，D3 同域顺手修） ---------------- */
+
+test("P3-2｜库里的地址不是 GitHub PR：code=invalid_url 且**零出站**（不得误判成网络失败）", async () => {
+  /* 来路：手工改库 / 历史行 / 换过归一化口径的旧行 —— 这种地址**不是网络问题**，
+     报成 network_error 会让人去查网络（「重启试试」），而真正要做的是修这一行的地址。
+     同时必须**零出站**：地址都不合法，一次请求都不该发。 */
+  const { calls, impl } = jsonFetch(pullPayload());
+  const provider = createGitHubPullRequestProvider({ readToken: () => TOKEN, fetchImpl: impl });
+  for (const url of [
+    "https://gitlab.com/acme/widget/pull/7",
+    "not a url",
+    "https://github.com/acme/widget/issues/7",
+  ]) {
+    const failure = expectFail(await provider.fetchPullRequest(url));
+    assert.equal(failure.code, "invalid_url", `${url}：地址形态问题是**请求侧**的结论`);
+    assert.match(failure.reason, /GitHub|地址|URL/i, `${url}：原因必须点明地址形态`);
+  }
+  assert.equal(calls.length, 0, "地址不合法 ⇒ 一次请求都不能发");
+});
+
+test("P3-1｜畸形响应里的远端可控字段：错误文案**定长截断**（远端文本不得整段进报告/日志）", async () => {
+  /* 来路（D2 复验）：`state` / `merged_at` 是**远端可控**的任意长字符串，此前被整段
+     JSON.stringify 进失败原因（再进 SyncReport / UI / 日志）。这不只是「文案很长」：
+     若代理/网关把请求头回显进响应体，理论上有把凭据带进报告面的路径。
+     修法：插值**定长截断**，但仍点名是哪个字段畸形（可行动性不因截断丢失）。 */
+  const hostile = "A".repeat(4096);
+  const provider = createGitHubPullRequestProvider({
+    readToken: () => TOKEN,
+    fetchImpl: (async () =>
+      new Response(JSON.stringify(pullPayload({ state: hostile, merged_at: hostile })), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+  });
+  const failure = expectFail(
+    await provider.fetchPullRequest("https://github.com/acme/widget/pull/7"),
+  );
+  assert.equal(failure.code, "malformed_response");
+  assert.equal(failure.reason.includes(hostile), false, "不得整段回显远端文本");
+  assert.ok(
+    failure.reason.length < 512,
+    `失败原因必须有界（实得 ${failure.reason.length} 字）——它要进报告/界面/日志`,
+  );
+  assert.match(failure.reason, /state/, "仍要点名是哪个字段畸形（截断不得吃掉可行动性）");
+  assert.match(failure.reason, /截断|truncat/i, "截断这件事本身要写明，不假装原文就是这么短");
+});
+
 /* ---------------- ④ 缺省 provider（runtime 的唯一构造口径） ---------------- */
 
 test("缺省 provider｜token 空白 ⇒ null 形态；配了 token ⇒ GitHub 形态（每次调用现判，不缓存结论）", async () => {
