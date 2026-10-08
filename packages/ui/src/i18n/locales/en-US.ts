@@ -4816,7 +4816,7 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.dispatch.failed": "Dispatch failed",
   "squad.workItemDetail.dispatch.suppressed": "Dispatch not requested",
   "squad.workItemDetail.dispatch.moreTargets": "{count} more targets",
-  /* Visible short sentence per Activity kind (closed set of 18), one-to-one with
+  /* Visible short sentence per Activity kind (closed set of 19), one-to-one with
      `WORK_ITEM_ACTIVITY_KINDS`; the mapping type is `Record<WorkItemActivityKind, string>`,
      so adding a kind fails compilation instead of silently missing a sentence. */
   "squad.workItemDetail.activity.kind.comment_created": "posted a comment",
@@ -4833,6 +4833,8 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.activity.kind.run_completed": "completed a run",
   "squad.workItemDetail.activity.kind.run_failed": "run failed",
   "squad.workItemDetail.activity.kind.run_cancelled": "cancelled a run",
+  /* Review rejection (wording may be tuned): same sentence shape as the run family. */
+  "squad.workItemDetail.activity.kind.run_rejected": "Review rejected",
   "squad.workItemDetail.activity.kind.worktree_created": "created a worktree",
   "squad.workItemDetail.activity.kind.worktree_merged": "merged a worktree",
   "squad.workItemDetail.activity.kind.worktree_discarded": "discarded a worktree",

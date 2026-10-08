@@ -9,6 +9,7 @@ import {
   computeRunCancelledDedupKey,
   computeRunCompletedDedupKey,
   computeRunFailedDedupKey,
+  computeRunRejectedDedupKey,
   computeRunStartedDedupKey,
   computeStatusChangedDedupKey,
   computeWorktreeCreatedDedupKey,
@@ -136,7 +137,7 @@ function runRecord(overrides: Partial<SquadRunRecord> = {}): SquadRunRecord {
   };
 }
 
-test("九枚 dedupKey 形状一次冻结（字面量独立真源 = 设计 §5 表）", () => {
+test("十枚 dedupKey 形状一次冻结（字面量独立真源 = 设计 §5 表 + 第 19 枚裁定）", () => {
   // 工作项两枚（身份 = 工作项 + 事件，尾段毫秒区分两次合法同向迁移）
   assert.equal(
     computeStatusChangedDedupKey({
@@ -156,14 +157,22 @@ test("九枚 dedupKey 形状一次冻结（字面量独立真源 = 设计 §5 �
     }),
     "assignee:wi-7:squad:sq-1:user:u-1:1700000000000",
   );
-  // run / worktree 七枚（身份 = runId + 事件；对一条 run 每类事实至多一枚，故无毫秒段）
+  // run / worktree 八枚（身份 = runId + 事件；对一条 run 每类事实至多一枚，故无毫秒段）
   assert.equal(computeRunStartedDedupKey("run-7"), "run:run-7:started");
   assert.equal(computeRunCompletedDedupKey("run-7"), "run:run-7:completed");
   assert.equal(computeRunFailedDedupKey("run-7"), "run:run-7:failed");
   assert.equal(computeRunCancelledDedupKey("run-7"), "run:run-7:cancelled");
+  assert.equal(computeRunRejectedDedupKey("run-7"), "run:run-7:rejected");
   assert.equal(computeWorktreeCreatedDedupKey("run-7"), "run:run-7:worktree_created");
   assert.equal(computeWorktreeMergedDedupKey("run-7"), "run:run-7:worktree_merged");
   assert.equal(computeWorktreeDiscardedDedupKey("run-7"), "run:run-7:worktree_discarded");
+  // 第 19 枚与既有 run 族同形：身份段原样拼接、**永不解析**（runId 自带冒号亦照拼），
+  // 且不带毫秒段（一条 run 的「被打回」事实至多一枚，重复审查不产生第二行）。
+  assert.equal(
+    computeRunRejectedDedupKey("comment:c9:dispatch_requested"),
+    "run:comment:c9:dispatch_requested:rejected",
+  );
+  assert.notEqual(computeRunRejectedDedupKey("run-a"), computeRunRejectedDedupKey("run-b"));
 });
 
 test("runStarted：member 出口 ⇒ run_started + worktree_created 各一枚（sourceRun.role=member，无 squadId）", () => {
@@ -209,7 +218,7 @@ test("runStarted：leader（无树）⇒ 只 run_started，role=leader，NULL �
   assert.deepEqual(rows[0]!.sourceRun, { runId: "run-1", agentId: "ta-leader", role: "leader" });
 });
 
-test("runSettled：五个意图各映射一枚，payload 按冻结表（status 由 isLeaderTask 定）", () => {
+test("runSettled：六个意图各映射一枚，payload 按冻结表（status 由 isLeaderTask 定）", () => {
   const f = setup();
   f.projector.runSettled(runRecord({ runId: "run-member", status: "produced" }), {
     kind: "run_completed",
@@ -231,6 +240,9 @@ test("runSettled：五个意图各映射一枚，payload 按冻结表（status �
   f.projector.runSettled(runRecord({ runId: "run-cancel", status: "discarded" }), {
     kind: "run_cancelled",
     reason: "user_cancel",
+  });
+  f.projector.runSettled(runRecord({ runId: "run-reject", status: "rejected" }), {
+    kind: "run_rejected",
   });
   f.projector.runSettled(runRecord({ runId: "run-merge", status: "merged" }), {
     kind: "worktree_merged",
@@ -265,6 +277,15 @@ test("runSettled：五个意图各映射一枚，payload 按冻结表（status �
   assert.equal(cancelled.kind, "run_cancelled");
   assert.equal(cancelled.dedupKey, "run:run-cancel:cancelled");
   assert.deepEqual(cancelled.payload, { reason: "user_cancel" });
+
+  /* 第 19 枚（2026-10-08 用户裁定）：打回 ⇒ 恰一枚 `run_rejected`，payload 与 worktree_* 族同形
+     （branch 由行取、agentId 同族携带）；**无 reason 键** —— reviewMemberRun 的入参里没有原因，
+     不发明一个（「有 reason 原文则加」，这里没有就不写）。 */
+  const rejected = byRow("run-reject");
+  assert.equal(rejected.kind, "run_rejected");
+  assert.equal(rejected.dedupKey, "run:run-reject:rejected");
+  assert.deepEqual(rejected.payload, { branch: "squad/member/ta-1", agentId: "ta-1" });
+  assert.deepEqual(rejected.sourceRun, { runId: "run-reject", agentId: "ta-1", role: "member" });
 
   const merged = byRow("run-merge");
   assert.equal(merged.kind, "worktree_merged");

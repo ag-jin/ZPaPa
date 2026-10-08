@@ -23,6 +23,10 @@ export const WORK_ITEM_ACTIVITY_KINDS = [
   "run_completed",
   "run_failed",
   "run_cancelled",
+  /* 第 19 枚（2026-10-08 用户裁定）：审查打回曾是时间线唯一不可见的终态 —— settleStatus 的
+     rejected 臂此前无意图、零投影，打回只在 run 台账/快照里看得见。设计 §10-2 登记为开放问题，
+     本枚即那格的关闭：与 run 族同形（键 `run:<id>:rejected`，payload 带 branch/agentId）。 */
+  "run_rejected",
   "worktree_created",
   "worktree_merged",
   "worktree_discarded",

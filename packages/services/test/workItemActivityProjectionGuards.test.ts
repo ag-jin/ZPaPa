@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { WORK_ITEM_ACTIVITY_KINDS } from "../src/workitem/workItemActivityRepo.js";
 
 /* C3b.1：投影模块的**结构负向守卫**（设计 §4.4 / §7；形态照 C3.1 的 `workItemDecisionGuards`）。
 
@@ -67,7 +68,7 @@ test("G2｜依赖集封顶：注入面恰是 activities / now / logWarn（加 ru
   );
 });
 
-test("G3｜九枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定义，实现体内不拼第二份形状", () => {
+test("G3｜十枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定义，实现体内不拼第二份形状", () => {
   const keyFunctions = [
     "computeStatusChangedDedupKey",
     "computeAssigneeChangedDedupKey",
@@ -75,6 +76,7 @@ test("G3｜九枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定�
     "computeRunCompletedDedupKey",
     "computeRunFailedDedupKey",
     "computeRunCancelledDedupKey",
+    "computeRunRejectedDedupKey",
     "computeWorktreeCreatedDedupKey",
     "computeWorktreeMergedDedupKey",
     "computeWorktreeDiscardedDedupKey",
@@ -87,18 +89,18 @@ test("G3｜九枚 dedupKey 单源：每个纯函数在 workitem/** 恰一处定�
     assert.deepEqual(defining, ["workItemActivityProjector.ts"], `${name} 必须只有一处定义`);
   }
 
-  // 去掉九个定义后，实现体不得再出现键字面量前缀（第二份形状）。
+  // 去掉十个定义后，实现体不得再出现键字面量前缀（第二份形状）。
   let body = PROJECTOR_CODE;
   for (const name of keyFunctions) {
     body = body.replace(new RegExp(`export function ${name}\\([\\s\\S]*?\\n\\}\\n`), "");
   }
   assert.ok(
     !/`(?:status|assignee|run):/.test(body),
-    "dedupKey 形状只能来自九个纯函数：实现体内不得内联 `status:` / `assignee:` / `run:` 拼接",
+    "dedupKey 形状只能来自十个纯函数：实现体内不得内联 `status:` / `assignee:` / `run:` 拼接",
   );
 });
 
-test("G4｜kind 面不扩：投影只产九枚 kind（comment_*/decision_created/wake_rule_fired 一律不得出现）", () => {
+test("G4｜kind 面按裁定扩至十枚：投影只产十枚 kind（comment_*/decision_created/wake_rule_fired 一律不得出现）", () => {
   // 只认**成行的** `kind: "<字面量>",`（append 的实参位）：系统主体的 `{ kind: "system" }` 在同行的
   // 单行字面量里，不该被算进「投影产出的 kind 面」。
   const kinds = [...PROJECTOR_CODE.matchAll(/^\s+kind: "([a-z_]+)"/gm)].map((match) => match[1]!);
@@ -109,14 +111,23 @@ test("G4｜kind 面不扩：投影只产九枚 kind（comment_*/decision_created
       "run_cancelled",
       "run_completed",
       "run_failed",
+      "run_rejected",
       "run_started",
       "status_changed",
       "worktree_created",
       "worktree_discarded",
       "worktree_merged",
     ],
-    "投影的 kind 面 = 九枚（18 值闭集不动：不新造第 19 枚，也不越界写评论/决定族的事实）",
+    "投影的 kind 面 = 十枚（19 值闭集：第 19 枚 run_rejected 是 2026-10-08 用户裁定的加法，" +
+      "其余九枚不动；仍不越界写评论/决定族的事实）",
   );
+  // 反向：投影产出的每枚 kind 都必须在服务面闭集内（扩了这里而忘了闭集 ⇒ 写入时响亮抛）。
+  for (const kind of new Set(kinds)) {
+    assert.ok(
+      (WORK_ITEM_ACTIVITY_KINDS as readonly string[]).includes(kind),
+      `投影产出的 ${kind} 必须在 WORK_ITEM_ACTIVITY_KINDS 闭集内`,
+    );
+  }
 });
 
 test("G5｜接线钉死（结构面）：组合根恒构造投影器并交给工作项服务与 run lifecycle（防「忘了接线、只留 warn」）", () => {

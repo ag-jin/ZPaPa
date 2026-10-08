@@ -64,6 +64,9 @@ export const WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS: Record<WorkItemActivityKind, s
   run_completed: "squad.workItemDetail.activity.kind.run_completed",
   run_failed: "squad.workItemDetail.activity.kind.run_failed",
   run_cancelled: "squad.workItemDetail.activity.kind.run_cancelled",
+  /* 第 19 枚（2026-10-08 用户裁定）：审查打落时间线。`Record<WorkItemActivityKind, string>` 的
+     穷尽性保证「服务面加一枚而这里漏一枚」直接编译失败（响亮），不会界面上少一句话。 */
+  run_rejected: "squad.workItemDetail.activity.kind.run_rejected",
   worktree_created: "squad.workItemDetail.activity.kind.worktree_created",
   worktree_merged: "squad.workItemDetail.activity.kind.worktree_merged",
   worktree_discarded: "squad.workItemDetail.activity.kind.worktree_discarded",

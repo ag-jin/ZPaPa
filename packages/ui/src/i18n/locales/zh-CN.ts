@@ -4503,7 +4503,7 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.dispatch.failed": "派发失败",
   "squad.workItemDetail.dispatch.suppressed": "未请求派发",
   "squad.workItemDetail.dispatch.moreTargets": "另 {count} 个目标",
-  /* Activity kind 闭集（18 值）的可见短句：与 `WORK_ITEM_ACTIVITY_KINDS` 一一对应，
+  /* Activity kind 闭集（19 值）的可见短句：与 `WORK_ITEM_ACTIVITY_KINDS` 一一对应，
      映射类型是 `Record<WorkItemActivityKind, string>` ⇒ 将来加 kind 会**编译失败**。 */
   "squad.workItemDetail.activity.kind.comment_created": "发表了评论",
   "squad.workItemDetail.activity.kind.comment_mention_parsed": "解析了提及",
@@ -4519,6 +4519,8 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.activity.kind.run_completed": "完成了运行",
   "squad.workItemDetail.activity.kind.run_failed": "运行失败",
   "squad.workItemDetail.activity.kind.run_cancelled": "取消了运行",
+  /* 审查打回（口径可调）：与 run 族句式一致，主语是「谁」这条系统事实。 */
+  "squad.workItemDetail.activity.kind.run_rejected": "审查打回",
   "squad.workItemDetail.activity.kind.worktree_created": "创建了工作树",
   "squad.workItemDetail.activity.kind.worktree_merged": "合并了工作树",
   "squad.workItemDetail.activity.kind.worktree_discarded": "丢弃了工作树",

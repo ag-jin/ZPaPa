@@ -6,10 +6,10 @@ import type { AuthorRef, SourceRunRef } from "./workItemCommentRepo.js";
 
 /* C3b.1：执行面向工作项时间线（append-only 事实账本）的**投影深模块**（设计报告 §7）。
 
-   为什么是独立深模块而不是九个写点各自拼一行：
+   为什么是独立深模块而不是十个写点各自拼一行：
    · 调用方只交「已经拿在手里的行 + 一个意图」，键形状 / payload 组装 / actor / sourceRun / 时间戳
-     全在模块内 —— 删掉它，九处调用点各自长出这些判据，复杂度在 N 个调用点重现（模块在赚自己的饭钱）。
-   · 幂等键形状**只有这一处**（九个导出纯函数）：C3b.2 只消费，不得再造第二份形状。
+     全在模块内 —— 删掉它，十处调用点各自长出这些判据，复杂度在 N 个调用点重现（模块在赚自己的饭钱）。
+   · 幂等键形状**只有这一处**（十个导出纯函数）：C3b.2 只消费，不得再造第二份形状。
 
    **依赖集封顶**（结构红线，`workItemActivityProjectionGuards.test.ts` 的 G1/G2 钉住）：
    只有 `activities` + 注入的 `now` / `logWarn`。没有派发面（openMemberRun / planDispatch / …）、
@@ -61,10 +61,11 @@ export function computeAssigneeChangedDedupKey(input: {
   return `assignee:${input.workItemId}:${input.from.type}:${input.from.id}:${input.to.type}:${input.to.id}:${input.at}`;
 }
 
-/* run / worktree 七枚的键形状（设计 §5 表）本轮**一次冻结**：C3b.2 只消费、不得再造第二份形状。
-   七枚都以 runId 为身份（一条 run 的每类事实至多一枚），故没有 `<ms>` 段 —— 与工作项两枚的区别
-   正是「事实身份」不同：状态/改派可以合法地发生两次（同向迁移，靠毫秒区分），
-   开跑/终态/建树/合树/弃树对一个 runId 是唯一的。 */
+/* run / worktree 八枚的键形状（设计 §5 表；第 19 枚 `run_rejected` 为 2026-10-08 用户裁定的加法，
+   与同族逐字同形）：一次冻结后只消费、不得再造第二份形状。八枚都以 runId 为身份（一条 run 的每类
+   事实至多一枚），故没有 `<ms>` 段 —— 与工作项两枚的区别正是「事实身份」不同：状态/改派可以合法地
+   发生两次（同向迁移，靠毫秒区分），开跑/终态/建树/合树/弃树/打回对一个 runId 是唯一的
+   （重复审查打回同一条 run 也只留一枚：同键重投返回既存行）。 */
 export function computeRunStartedDedupKey(runId: string): string {
   return `run:${runId}:started`;
 }
@@ -76,6 +77,9 @@ export function computeRunFailedDedupKey(runId: string): string {
 }
 export function computeRunCancelledDedupKey(runId: string): string {
   return `run:${runId}:cancelled`;
+}
+export function computeRunRejectedDedupKey(runId: string): string {
+  return `run:${runId}:rejected`;
 }
 export function computeWorktreeCreatedDedupKey(runId: string): string {
   return `run:${runId}:worktree_created`;
@@ -91,11 +95,17 @@ export function computeWorktreeDiscardedDedupKey(runId: string): string {
  * 终态迁移的**投影意图**（调用方声明，不从 `(status, reason)` 反推 —— 反推在残行自愈臂上必然说谎：
  * 那些行同样是 `discarded`+无 reason，却从未开跑、没有树，投影它们就是写谎话）。
  * 判据矩阵见设计 §5.2；缺省 = 不投影（残行三臂依赖它）。
+ *
+ * `run_rejected` 是 2026-10-08 用户裁定的第六个意图（第 19 枚 kind）：`rejected` 曾是时间线唯一
+ * 不可见的终态（settleStatus 的 rejected 臂此前不传意图）。它同样**由调用方声明**而不可反推：
+ * 打回待修与「产出入账」在 `(status, reason)` 上分得开（produced vs rejected），但把判据散到
+ * 调用点就会与 status 一起分叉；意图位才是那条判据的唯一落点。
  */
 export type RunSettleIntent =
   | { kind: "run_completed" }
   | { kind: "run_failed"; reason: string }
   | { kind: "run_cancelled"; reason: string }
+  | { kind: "run_rejected" }
   | { kind: "worktree_merged"; integration: string }
   | { kind: "worktree_discarded" };
 
@@ -152,7 +162,7 @@ export interface WorkItemActivityProjector {
 /**
  * 注入面 = 依赖集封顶（改这个类型即编译错）：`activities` 是唯一存储写口，`now` 是时间源，
  * `logWarn` 是失败留痕口（缺省回落 `console.warn`，与 `squadRuntimeService` 的既有手法一致）。
- * `newId` **不在**注入面：九枚投影的 id 都由 dedupKey 确定性派生（`activity-<键>`）——
+ * `newId` **不在**注入面：十枚投影的 id 都由 dedupKey 确定性派生（`activity-<键>`）——
  * 重投连 id 都不新建行，也就不需要（更不该有）一个随机 id 源。
  */
 export function createWorkItemActivityProjector(deps: {
@@ -303,6 +313,20 @@ export function createWorkItemActivityProjector(deps: {
             kind: "run_cancelled",
             payload: { reason: intent.reason },
             dedupKey: computeRunCancelledDedupKey(record.runId),
+          });
+          return;
+        case "run_rejected":
+          /* 打回待修（spec §6.2：工作树必须存活到合并）：payload 与 worktree_* 族同形 ——
+             branch 由行取（NULL 不写，同族手法）、agentId 同族携带；**不带 reason**：
+             `reviewMemberRun` 的入参里没有原因，宁缺毋造（有原文才加）。 */
+          append({
+            ...base,
+            kind: "run_rejected",
+            payload: {
+              ...(record.branch !== null ? { branch: record.branch } : {}),
+              agentId: record.agentId,
+            },
+            dedupKey: computeRunRejectedDedupKey(record.runId),
           });
           return;
         case "worktree_merged":

@@ -466,6 +466,24 @@ test("Activity kind 映射：key 集合 == 服务面运行时闭集（deepEqual�
   }
 });
 
+test("时间线：第 19 枚 run_rejected 落 system 条目（与 run_* 族同形，不落 link-error）", () => {
+  const rejected = {
+    ...activity("a-rej", "run_rejected"),
+    payload: { branch: "squad/member/ag-1" },
+  };
+  const entries = buildWorkItemTimelineEntries({
+    comments: [],
+    decisions: [],
+    activities: [rejected],
+  });
+  assert.deepEqual(entries.map(summary), ["system:run_rejected:a-rej"]);
+  // 文案键 = 闭集穷尽表里那枚（界面经 intl 翻成「审查打回」/「Review rejected」）。
+  assert.equal(
+    WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS.run_rejected,
+    "squad.workItemDetail.activity.kind.run_rejected",
+  );
+});
+
 /* ---------- @ 补全菜单（workItemMentionViewModel） ---------- */
 
 function expectAllOption() {

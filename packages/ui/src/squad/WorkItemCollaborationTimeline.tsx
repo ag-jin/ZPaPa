@@ -24,6 +24,7 @@ import {
   SmilePlus,
   SquareStack,
   Trash2,
+  Undo2,
   UserRoundCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -67,6 +68,9 @@ const ICONS: Record<WorkItemActivityKind, LucideIcon> = {
   run_completed: CircleCheck,
   run_failed: CircleX,
   run_cancelled: Ban,
+  /* 第 19 枚（2026-10-08 用户裁定）：打回待修 = 「退回」的语义，故用 Undo2（与 run_cancelled 的
+     Ban 分形；同一闭集里 Ban/Trash2 已有重复使用，此处仍取可区分的形状）。 */
+  run_rejected: Undo2,
   worktree_created: SquareStack,
   worktree_merged: GitMerge,
   worktree_discarded: Trash2,
