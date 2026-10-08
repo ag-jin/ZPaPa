@@ -1239,18 +1239,11 @@ function SubagentForm({
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-3 py-2.5">
-        <div className="min-w-0">
-          <p className="text-ui-base font-medium text-foreground">
-            {intl.formatMessage({
-              id: "settings.subagents.form.background.label",
-            })}
-          </p>
-          <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
-            {intl.formatMessage({
-              id: "settings.subagents.form.background.description",
-            })}
-          </p>
-        </div>
+        <p className="min-w-0 text-ui-base font-medium text-foreground">
+          {intl.formatMessage({
+            id: "settings.subagents.form.background.label",
+          })}
+        </p>
         <Switch
           checked={background}
           onCheckedChange={setBackground}

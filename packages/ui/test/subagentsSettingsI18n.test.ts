@@ -8,8 +8,8 @@ import zhCN from "../src/i18n/locales/zh-CN.js";
 
 /* 「后台派发」开关（设置页 · 子智能体表单）：字段全链路已存在，缺的只是表单这一格。
    语义以运行时为准 —— `runner.ts` 的 `rawRequest.runInBackground === true || profile.background === true`
-   都会走 `start`，即 `background: true` 是**强制后台**（调用方不传也后台），文案写成
-   「模型请求时允许」是错的，本组用例把正确措辞与表单接线一起钉死。
+   都会走 `start`，即 `background: true` 是**强制后台**（调用方不传也后台）。
+   开关不需要解释文案，描述键与其渲染一并删除，行形态与「注入 AGENTS.md」行一致。
    表单没有渲染测试设施（本项目既定做法，见 wakeRulesEditPage.test.ts 的说明），
    因此用结构守卫：初始值 / state / 重置 / 保存四格必须齐全，**保存要始终写表单值**
    （显式关掉必须落 false，否则旧值残留）；最易踩的坑是重置机制 —— 编辑另一个 agent
@@ -32,25 +32,18 @@ function slice(source: string, start: string, end: string): string {
 
 const subagentsSource = readSource("settings/SubagentsSection.tsx");
 
-test("i18n：后台开关的文案键两语成对且非空", () => {
-  for (const key of [
-    "settings.subagents.form.background.label",
-    "settings.subagents.form.background.description",
-  ]) {
-    assert.ok(zhCN[key], `zh-CN 缺少 ${key}`);
-    assert.ok(enUS[key], `en-US 缺少 ${key}`);
-    assert.ok(zhCN[key]?.trim(), `zh-CN 的 ${key} 为空`);
-    assert.ok(enUS[key]?.trim(), `en-US 的 ${key} 为空`);
-  }
-  // 两语都不得再出现「模型请求时允许」的旧口径（强制后台 ≠ 按请求后台）。
+test("i18n：后台开关只保留标签键，描述键两语成对删除", () => {
   for (const [locale, name] of [
     [zhCN, "zh-CN"],
     [enUS, "en-US"],
   ] as const) {
-    const description = locale["settings.subagents.form.background.description"] ?? "";
+    const label = locale["settings.subagents.form.background.label"];
+    assert.ok(label, `${name} 缺少 settings.subagents.form.background.label`);
+    assert.ok(label?.trim(), `${name} 的 settings.subagents.form.background.label 为空`);
+    // 开关不再有解释文案：描述键必须整条删除，不能留下无人渲染的死键（键集不含该键）。
     assert.ok(
-      !description.includes("模型请求") && !description.toLowerCase().includes("when requested"),
-      `${name} 的描述仍是「按模型请求」的旧口径：${description}`,
+      !Object.hasOwn(locale, "settings.subagents.form.background.description"),
+      `${name} 不得再保留 settings.subagents.form.background.description`,
     );
   }
 });
@@ -124,24 +117,22 @@ test("开关行：紧随注入 AGENTS.md 行，同款带边框行 + 左标签 + 
   assert.notEqual(backgroundRowStart, -1, "注入 AGENTS.md 行之后必须有同款带边框的开关行");
   const switchIndex = compactSource.indexOf("checked={background}", backgroundRowStart);
   assert.notEqual(switchIndex, -1, "注入 AGENTS.md 行之后必须有绑定 background 的 Switch");
-  // 行片段取到 Switch 之后的收尾 `</div>`：标签、描述与开关必须同处这一行内。
+  // 行片段取到 Switch 之后的收尾 `</div>`：标签与开关必须同处这一行内，且行内不再有解释文案。
   const backgroundRow = compactSource.slice(
     backgroundRowStart,
     compactSource.indexOf("</div>", switchIndex),
   );
   for (const fragment of [
     "settings.subagents.form.background.label",
-    "settings.subagents.form.background.description",
     "checked={background}",
     "onCheckedChange={setBackground}",
   ]) {
     assert.ok(backgroundRow.includes(fragment), `开关行缺少 ${fragment}：${backgroundRow}`);
   }
-  // 描述文案必须真的渲染出来：键写好了却不显示，用户看不到「始终后台」这条关键语义。
-  assert.match(
-    backgroundRow,
-    /intl\.formatMessage\(\{ id: "settings\.subagents\.form\.background\.description",? \}\)/u,
-    `开关行必须渲染描述文案：${backgroundRow}`,
+  // 用户反馈开关不需要解释文案：行内不得再渲染描述键（键已删除）。
+  assert.ok(
+    !backgroundRow.includes("settings.subagents.form.background.description"),
+    `开关行不得再渲染描述文案：${backgroundRow}`,
   );
   // Switch 的可访问名与左侧标签同源（只有一侧改名时 screen reader 会读旧文案）。
   assert.match(
