@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createContext, runInContext, runInNewContext } from "node:vm";
+import { transformSync } from "esbuild";
 import {
   buildAncestorLabel,
   buildWebElementPickerCommandScript,
@@ -11,7 +14,8 @@ import {
 
 /* 注入脚本层（设计 §4.2 / §5.2 / §11.2）在 UI 面的用例：
    1. 祖先链与层级标签是纯函数，单独直测（伪节点树，不需要 DOM）；
-   2. 组装产物必须是自包含 JS（helper 前置声明 + 主函数调用），句柄小脚本防御式。
+   2. 组装产物必须是自包含 JS（helper 走位置实参注入），句柄小脚本防御式；
+   3. 生产打包形态（模块经压缩改名）下产物仍能在页内执行，见下方 vm 用例。
    页内阶段状态机（hovering/adjusting 与句柄动作）靠组装的执行契约 + T6 E2E 覆盖。 */
 
 interface FakeNode extends WebElementAncestorNodeLike {
@@ -149,23 +153,211 @@ test("层级标签：至多两段（父 子），根档位单段", () => {
   );
 });
 
-test("组装：helper 前置声明 + 主函数裸引用，产物是自包含 JS", () => {
+/* 生产打包形态（模块经压缩改名）。注入脚本是 renderer 侧拼出来的字符串，破坏发生在打包之后：
+   打包器会重命名模块作用域绑定，`toString()` 拿到的是改名后的函数体；组装若靠「名字」声明 helper，
+   主函数体内引用的就是被改名的标识符，页面执行即 ReferenceError——只在压缩过的产物里坏，源码测试全绿。
+   这里用仓库自带 esbuild 复现该形态：压缩模块源码 → vm 里取出 builder → 压缩产物 → node:vm 执行。 */
+
+const PICKER_STATE_KEY = "__zcodeWebElementPicker";
+
+/** 页内元素桩：祖先链 helper 只读 tagName/id/classList/parentElement，浮窗只读几何与样式。 */
+class PickerElementStub {
+  tagName: string;
+  style: Record<string, string> = {};
+  textContent = "";
+  id = "";
+  classList: string[] = [];
+  parentElement: PickerElementStub | null = null;
+  offsetWidth = 0;
+  offsetHeight = 0;
+
+  constructor(tagName: string) {
+    this.tagName = tagName;
+  }
+
+  getBoundingClientRect() {
+    return { bottom: 40, height: 32, left: 4, right: 124, top: 8, width: 120, x: 4, y: 8 };
+  }
+
+  append() {}
+
+  replaceChildren() {}
+
+  contains() {
+    return false;
+  }
+
+  setAttribute() {}
+
+  removeAttribute() {}
+
+  remove() {}
+
+  closest() {
+    return null;
+  }
+}
+
+/** 最小 window/document 桩，并暴露按类型触发已注册监听的手段（页内状态靠事件驱动）。 */
+function createPickerPage() {
+  const listeners = new Map<string, Array<(event: unknown) => void>>();
+  const record = (type: string, listener: unknown) => {
+    if (typeof listener !== "function") {
+      return;
+    }
+    const handlers = listeners.get(type) ?? [];
+    handlers.push(listener as (event: unknown) => void);
+    listeners.set(type, handlers);
+  };
+  const documentStub = {
+    documentElement: new PickerElementStub("html"),
+    title: "Example",
+    addEventListener: record,
+    removeEventListener: () => {},
+    createElement: (tagName: string) => new PickerElementStub(tagName),
+    getElementById: () => null,
+  };
+  const windowStub: Record<string, unknown> = {
+    innerWidth: 1024,
+    innerHeight: 768,
+    addEventListener: record,
+    removeEventListener: () => {},
+    getComputedStyle: () => ({
+      backgroundColor: "rgb(255, 255, 255)",
+      color: "rgb(17, 24, 39)",
+      display: "block",
+      fontFamily: "Inter",
+      fontSize: "14px",
+      fontWeight: "400",
+    }),
+  };
+
+  return {
+    sandbox: {
+      Element: PickerElementStub,
+      document: documentStub,
+      window: windowStub,
+    } as Record<string, unknown>,
+    element(
+      tagName: string,
+      options: { classNames?: string[]; id?: string; parent?: PickerElementStub } = {},
+    ) {
+      const element = new PickerElementStub(tagName);
+      if (options.id) {
+        element.id = options.id;
+      }
+      if (options.classNames) {
+        element.classList = options.classNames;
+      }
+      if (options.parent) {
+        element.parentElement = options.parent;
+      }
+      return element;
+    },
+    fire(type: string, event: unknown) {
+      const handlers = listeners.get(type) ?? [];
+      assert.ok(handlers.length > 0, `页内脚本必须已注册 ${type} 监听`);
+      for (const handler of handlers) {
+        handler(event);
+      }
+    },
+    handle() {
+      return windowStub[PICKER_STATE_KEY] as
+        | { cancel: () => void; showAncestor: (level: number) => unknown }
+        | undefined;
+    },
+  };
+}
+
+/** 取「生产压缩形态」的模块导出：真实 renderer 打包会重命名模块作用域绑定，这里同样压缩后再取 builder。 */
+function loadMinifiedPickerModule() {
+  const source = readFileSync(
+    new URL("../src/lib/webElementPickerScript.ts", import.meta.url),
+    "utf8",
+  );
+  const { code } = transformSync(source, { format: "cjs", loader: "ts", minify: true });
+  const moduleStub = { exports: {} as Record<string, unknown> };
+  runInContext(code, createContext({ exports: moduleStub.exports, module: moduleStub }));
+  return moduleStub.exports as {
+    buildWebElementPickerScript: (options?: Record<string, unknown>) => string;
+  };
+}
+
+test("组装：模块压缩改名后产物仍自包含可执行，页内拾取与层级标签可用", async () => {
+  const { buildWebElementPickerScript: buildMinifiedScript } = loadMinifiedPickerModule();
+  const page = createPickerPage();
+  const html = page.element("html");
+  const body = page.element("body", { parent: html });
+  const table = page.element("table", { id: "grid", parent: body });
+  const row = page.element("tr", { parent: table });
+  const cell = page.element("th", { classNames: ["cell"], parent: row });
+
+  const script = transformSync(buildMinifiedScript(), { minify: true }).code;
+  const pickPromise = runInNewContext(script, page.sandbox) as Promise<unknown>;
+  assert.equal(
+    typeof (pickPromise as { then?: unknown } | undefined)?.then,
+    "function",
+    "注入脚本求值结果必须是 pick() 的 promise（renderer 依赖它等待落定）",
+  );
+
+  const handle = page.handle();
+  assert.ok(handle, "句柄必须挂在页内 stateKey 上");
+  assert.deepEqual(
+    Object.keys(handle).sort(),
+    ["beginAdjust", "cancel", "confirm", "pick", "requestRepick", "showAncestor"],
+    "句柄方法集是 renderer 与页内之间的契约",
+  );
+
+  page.fire("mousemove", { target: cell });
+  page.fire("click", {
+    preventDefault: () => {},
+    stopImmediatePropagation: () => {},
+    stopPropagation: () => {},
+  });
+
+  // 跨 realm 对象原型不同，deepStrictEqual 会误报，断言前先规整成宿主侧普通对象。
+  const picked = JSON.parse(JSON.stringify(await pickPromise));
+  assert.deepEqual(picked, {
+    status: "clicked",
+    chain: [
+      { level: 0, tagName: "th", classNames: ["cell"], label: "th.cell" },
+      { level: 1, tagName: "tr", label: "tr" },
+      { level: 2, tagName: "table", id: "grid", label: "table#grid" },
+    ],
+    chainTruncated: false,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(handle.showAncestor(0))), {
+    level: 0,
+    label: "tr th.cell",
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(handle.showAncestor(2))), {
+    level: 2,
+    label: "table#grid",
+  });
+
+  handle.cancel();
+});
+
+test("组装：helper 以位置实参注入，产物是自包含 JS", () => {
   const script = buildWebElementPickerScript();
   const occurrencesOf = (needle: string) => script.split(needle).length - 1;
 
-  assert.ok(script.startsWith("(function () {"), "外层 IIFE 承载 helper 前置声明");
+  assert.ok(script.startsWith("(function () {"), "外层 IIFE 承载注入体");
   assert.ok(
-    script.includes("const __zcodeWepComputeAncestorChain = function computeAncestorChain("),
-    "祖先链 helper 必须以源码文本前置声明（跨文件 helper 在页面上下文里解析不到）",
+    script.includes(", function computeAncestorChain(") &&
+      script.includes(", function buildAncestorLabel("),
+    "helper 源码必须落在实参位置：按名字前置声明会被压缩器改名（发布产物里 ReferenceError）",
   );
-  assert.ok(
-    script.includes("const __zcodeWepBuildAncestorLabel = function buildAncestorLabel("),
-    "层级标签 helper 必须以源码文本前置声明",
+  assert.equal(
+    occurrencesOf("const __zcodeWepComputeAncestorChain") +
+      occurrencesOf("const __zcodeWepBuildAncestorLabel"),
+    0,
+    "不再按名字声明 helper，压缩器无从与主函数体内引用失配",
   );
   assert.ok(
     occurrencesOf("__zcodeWepComputeAncestorChain") >= 2 &&
       occurrencesOf("__zcodeWepBuildAncestorLabel") >= 2,
-    "两个 helper 除前置声明外都必须有裸引用调用点（否则前缀声明是死代码，祖先链恒空）",
+    "两个 helper 形参必须在主函数签名与函数体内都出现（否则祖先链为空、标签缺失）",
   );
   assert.ok(script.endsWith(")()"), "主函数调用必须收尾在 IIFE 内");
   assert.doesNotThrow(() => {
@@ -202,5 +394,16 @@ test("命令脚本：句柄缺失时安全返回 null，句柄存在时按方法
     evaluate({ __zcodeWebElementPicker: { pick: "not-a-function" } }),
     null,
     "方法存在但不是函数时也走防御分支",
+  );
+
+  // 命令脚本是纯字符串构造（不注入 helper 源码），压缩形态下同样自包含可执行。
+  const minified = transformSync(buildWebElementPickerCommandScript("showAncestor", 3), {
+    minify: true,
+  }).code;
+  assert.equal(
+    runInNewContext(minified, {
+      window: { __zcodeWebElementPicker: { showAncestor: (level: number) => `level:${level}` } },
+    }),
+    "level:3",
   );
 });
