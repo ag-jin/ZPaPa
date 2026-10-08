@@ -8,6 +8,7 @@ import {
   PULL_REQUEST_STATE_MESSAGE_IDS,
   PULL_REQUEST_STATE_UNKNOWN_MESSAGE_ID,
   pullRequestLinkDraftProblemId,
+  pullRequestGateNoticeMessageId,
   pullRequestRefreshSummary,
   pullRequestRowFacts,
 } from "../src/squad/workItemPullRequestsViewModel.js";
@@ -171,4 +172,78 @@ test("呈现｜刷新结果摘要：四类结局各自计数，失败原因原�
     "GitHub 返回 401（acme/widget#3）：访问令牌无效或已过期。",
   ]);
   assert.equal(summary.discardReasons.length, 1, "陈旧拒写单列一档（不是失败，但必须可见）");
+});
+
+/* ---------- #8 D3：pr-gate 状态提示（等待 PR merge 的横幅 / 降级说明） ---------- */
+
+test("D3 提示｜pr-gate + 等验收 + 有未合并的 PR ⇒ 等 merge 横幅；已合并/已关闭/非 in_review 都不提示", () => {
+  const base = { workItemStatus: "in_review", mergeMode: "pr-gate" as const, providerAvailable: true };
+  assert.equal(
+    pullRequestGateNoticeMessageId({ ...base, pullRequests: [record({ state: "open" })] }),
+    "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+  );
+  assert.equal(
+    pullRequestGateNoticeMessageId({ ...base, pullRequests: [record({ state: "draft" })] }),
+    "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+    "草稿 PR 也是「还没合并」（draft 档与 open 同为未合并）",
+  );
+  for (const state of ["merged", "closed", null] as const) {
+    assert.equal(
+      pullRequestGateNoticeMessageId({ ...base, pullRequests: [record({ state })] }),
+      null,
+      `${String(state)} 不是「等合并」`,
+    );
+  }
+  assert.equal(pullRequestGateNoticeMessageId({ ...base, pullRequests: [] }), null, "没有 PR 就没有等待");
+  assert.equal(
+    pullRequestGateNoticeMessageId({
+      ...base,
+      workItemStatus: "in_progress",
+      pullRequests: [record({ state: "open" })],
+    }),
+    null,
+    "只有等验收（in_review）的工作项才由 PR merge 驱动终态",
+  );
+  // 终态驱动与模式无关（local 模式下手工挂的 PR 同样会驱动终态）——提示照给。
+  assert.equal(
+    pullRequestGateNoticeMessageId({
+      workItemStatus: "in_review",
+      mergeMode: "local",
+      providerAvailable: true,
+      pullRequests: [record({ state: "open" })],
+    }),
+    "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+  );
+});
+
+test("D3 提示｜pr-gate 但没配 token ⇒ 降级说明优先于等待横幅；local 模式没 token 不提示（离线缺省是正常形态）", () => {
+  assert.equal(
+    pullRequestGateNoticeMessageId({
+      workItemStatus: "in_review",
+      mergeMode: "pr-gate",
+      providerAvailable: false,
+      pullRequests: [record({ state: "open" })],
+    }),
+    "squad.workItemDetail.pullRequests.gate.tokenMissing",
+    "pr-gate 的前置不满足 ⇒ 必须说清「收尾会降级为本地合并」（否则用户以为 PR 会开出来）",
+  );
+  assert.equal(
+    pullRequestGateNoticeMessageId({
+      workItemStatus: "in_review",
+      mergeMode: "local",
+      providerAvailable: false,
+      pullRequests: [record({ state: "open" })],
+    }),
+    "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+    "local 模式没 token：不提示降级（本就该走本地），但「等待合并」这条事实照给",
+  );
+  assert.equal(
+    pullRequestGateNoticeMessageId({
+      workItemStatus: "todo",
+      mergeMode: "local",
+      providerAvailable: false,
+      pullRequests: [],
+    }),
+    null,
+  );
 });

@@ -324,9 +324,15 @@ test("回归｜writeDisabledReason 四面（comment/decision/deliverable/pullReq
   }
 });
 
-/* ---------------- ④ 文案与命名空间（D2 的 12 键 / 20 键） ---------------- */
+/* ---------------- ④ 文案与命名空间（D2 的 12 键 / 20 键） ----------------
+ *
+ * D3 重算（2026-10-08，与 experimentsSquadEntry.test.ts 同一纪律）：
+ * · `settings.experiments.*` 12 → **17**（新增整批收尾模式 5 键：label/description/两档/degrade）；
+ * · PR 区命名空间 20 → **22**（新增 gate.awaitingMerge 与 gate.tokenMissing）。
+ * 两处都是**有意的增长**（pr-gate 的开关与「在等什么」的说明要能在界面上看见），
+ * 故按同一纪律把确数重算并写死新集合 —— 不是放宽断言。 */
 
-test("文案｜settings.experiments.* 恰 12 条（D2 的 GitHub 8 键 + 既有 4 键）且两语键集逐字相等", () => {
+test("文案｜settings.experiments.* 恰 17 条（D2 的 GitHub 8 键 + D3 模式 5 键 + 既有 4 键）且两语键集逐字相等", () => {
   const keysOf = (locale: Record<string, string>, prefix: string) =>
     Object.keys(locale)
       .filter((key) => key.startsWith(prefix))
@@ -337,6 +343,11 @@ test("文案｜settings.experiments.* 恰 12 条（D2 的 GitHub 8 键 + 既有 
   assert.deepEqual(zh, [
     "settings.experiments.githubIntegration.description",
     "settings.experiments.githubIntegration.label",
+    "settings.experiments.githubIntegration.mergeMode.degrade",
+    "settings.experiments.githubIntegration.mergeMode.description",
+    "settings.experiments.githubIntegration.mergeMode.label",
+    "settings.experiments.githubIntegration.mergeMode.local",
+    "settings.experiments.githubIntegration.mergeMode.prGate",
     "settings.experiments.githubIntegration.saveFailed",
     "settings.experiments.githubIntegration.tokenClear",
     "settings.experiments.githubIntegration.tokenConfigured",
@@ -350,7 +361,7 @@ test("文案｜settings.experiments.* 恰 12 条（D2 的 GitHub 8 键 + 既有 
   ]);
 });
 
-test("文案｜PR 区命名空间 20 键两语齐平（含状态五档与禁用两因），且没有落到别的命名空间", () => {
+test("文案｜PR 区命名空间 22 键两语齐平（含状态五档、禁用两因与 D3 两档提示），且没有落到别的命名空间", () => {
   const keysOf = (locale: Record<string, string>, prefix: string) =>
     Object.keys(locale)
       .filter((key) => key.startsWith(prefix))
@@ -358,7 +369,7 @@ test("文案｜PR 区命名空间 20 键两语齐平（含状态五档与禁用�
   const zh = keysOf(zhCN, "squad.workItemDetail.pullRequests.");
   const en = keysOf(enUS, "squad.workItemDetail.pullRequests.");
   assert.deepEqual(en, zh, "两语键集必须逐字相等");
-  assert.equal(zh.length, 20, `PR 区键数：${zh.join(", ")}`);
+  assert.equal(zh.length, 22, `PR 区键数：${zh.join(", ")}`);
   for (const state of ["open", "closed", "merged", "draft", "notFetched"]) {
     assert.ok(zh.includes(`squad.workItemDetail.pullRequests.state.${state}`), `状态档缺 ${state}`);
   }

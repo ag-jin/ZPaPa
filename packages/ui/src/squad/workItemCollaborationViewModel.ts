@@ -75,6 +75,10 @@ export const WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS: Record<WorkItemActivityKind, s
      穷尽映射先落位——`Record<WorkItemActivityKind, string>` 的穷尽性要求闭集一长这里就有文案，
      否则整个 UI 包直接编译失败。 */
   deliverable_registered: "squad.workItemDetail.activity.kind.deliverable_registered",
+  /* 第 21 枚（#8 D3）：外链 PR 的合并**驱动**了本工作项的终态（pr-gate / 手工关联的形态）。
+     与 worktree_merged 的区别：那个是本地把队员成果合进集成分支，本枚是远端 PR 合并后
+     经快照发现驱动的终态 —— 审计流里必须分得开（谁推的、在哪一步推的）。 */
+  pr_merged: "squad.workItemDetail.activity.kind.pr_merged",
 };
 
 /**

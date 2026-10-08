@@ -4088,6 +4088,13 @@ const zhCN: Record<string, string> = {
   "settings.experiments.githubIntegration.label": "GitHub 集成（PR 快照）",
   "settings.experiments.githubIntegration.description":
     "配置个人访问令牌（PAT）后，工作项详情页的 PR 区可拉取快照状态（开放/已合并等）。令牌以**明文**保存在本机设置文件中（本地单机、单用户），请使用只读或最小权限的令牌。",
+  "settings.experiments.githubIntegration.mergeMode.label": "整批收尾模式",
+  "settings.experiments.githubIntegration.mergeMode.description":
+    "本地合并：整批合回本仓库的 base 分支（默认，离线可用）；pr-gate：把集成分支推到远端并开 PR，工作项留在待验收态，待 PR 合并后自动转「已完成」。",
+  "settings.experiments.githubIntegration.mergeMode.local": "本地合并",
+  "settings.experiments.githubIntegration.mergeMode.prGate": "pr-gate（开 PR）",
+  "settings.experiments.githubIntegration.mergeMode.degrade":
+    "未配置访问令牌：pr-gate 的前置不满足，收尾会**降级为本地合并**（不会开 PR），并在收件箱留一条说明。",
   "settings.experiments.githubIntegration.tokenPlaceholder":
     "粘贴 GitHub 访问令牌（不留空则不修改）",
   "settings.experiments.githubIntegration.tokenConfigured": "已配置",
@@ -4364,6 +4371,7 @@ const zhCN: Record<string, string> = {
   "squad.inbox.kind.member_failed": "运行失败",
   "squad.inbox.kind.run_orphaned": "残留的运行",
   "squad.inbox.kind.dispatch_skipped": "派发被跳过",
+  "squad.inbox.kind.pr_gate_degraded": "pr-gate 收尾已降级为本地合并",
   "squad.inbox.kind.run_stalled": "运行卡住",
   "squad.inbox.severity.action_required": "需处理",
   "squad.inbox.severity.attention": "需关注",
@@ -4540,6 +4548,10 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.pullRequests.state.merged": "已合并",
   "squad.workItemDetail.pullRequests.state.draft": "草稿",
   "squad.workItemDetail.pullRequests.state.notFetched": "未拉取",
+  "squad.workItemDetail.pullRequests.gate.awaitingMerge":
+    "等待 PR 合并：本工作项已在待验收态，关联的 PR 合并后会自动转为「已完成」。",
+  "squad.workItemDetail.pullRequests.gate.tokenMissing":
+    "pr-gate 模式需要 GitHub 访问令牌：未配置时这次收尾会降级为本地合并（不会开 PR），并会在收件箱留一条说明。",
   "squad.workItemDetail.pullRequests.tokenMissing":
     "未配置 GitHub 访问令牌：只显示手动登记的链接（在设置 ▸ 实验功能里配置后即可拉取 PR 快照）。",
   "squad.workItemDetail.pullRequests.refresh": "刷新快照",
@@ -4592,6 +4604,7 @@ const zhCN: Record<string, string> = {
   "squad.workItemDetail.activity.kind.wake_rule_fired": "唤醒了批次",
   /* 交付物登记（#7 D1a；口径可调）：自动捕获与人工贴链共用这一句，主体是「谁」这条系统/操作者事实。 */
   "squad.workItemDetail.activity.kind.deliverable_registered": "登记了交付物",
+  "squad.workItemDetail.activity.kind.pr_merged": "PR 已合并（驱动工作项终态）",
   "settings.workspaceFileSearch.title": "工作区搜索范围",
   "settings.workspaceFileSearch.description":
     "编辑 .zcodeignore 忽略规则（语法与 .gitignore 一致），控制工作区文件搜索的范围。保存后下次搜索生效。",

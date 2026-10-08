@@ -195,9 +195,9 @@ test("UI-⑤ kind 映射穷尽：闭集两型两语齐备（编译期 Record 之
   }
 });
 
-test("UI-⑥ 第 20 枚在 UI 面穷尽：活动 kind 映射 20 枚、双语齐备、时间线图标已接", () => {
+test("UI-⑥ 第 20/21 枚在 UI 面穷尽：活动 kind 映射 21 枚、双语齐备、时间线图标已接", () => {
   const kinds = Object.keys(WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS);
-  assert.equal(kinds.length, 20, "活动闭集 20 枚必须全部有文案");
+  assert.equal(kinds.length, 21, "活动闭集 21 枚必须全部有文案（D3 起第 21 枚 = pr_merged）");
   assert.ok(kinds.includes("deliverable_registered"));
   for (const kind of kinds) {
     const messageId =
@@ -208,6 +208,8 @@ test("UI-⑥ 第 20 枚在 UI 面穷尽：活动 kind 映射 20 枚、双语齐�
   assert.equal(zhCN["squad.workItemDetail.activity.kind.deliverable_registered"], "登记了交付物");
   const timeline = readFileSync(resolve(SRC, "squad/WorkItemCollaborationTimeline.tsx"), "utf8");
   assert.match(timeline, /deliverable_registered:\s*FileDiff/, "时间线必须给第 20 枚一个图标");
+  assert.ok(kinds.includes("pr_merged"), "#8 D3 起第 21 枚 pr_merged 必须在 UI 映射里");
+  assert.match(timeline, /pr_merged:\s*\w+/, "时间线必须给第 21 枚一个图标");
 });
 
 test("UI-⑦ 正文三态不谎报（源码切片，去注释）：file 渲染正文、missing 无空框、external 走外链", () => {

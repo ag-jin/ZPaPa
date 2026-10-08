@@ -675,6 +675,8 @@ function setupTimeline() {
         deliverableRepo: createWorkItemDeliverableRepo(db),
         pullRequestRepo: createWorkItemPullRequestRepo(db),
         pullRequestProvider: createNullPullRequestProvider(),
+        // #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示需要它）。
+        readSquadMergeMode: () => "local",
         boundWorkspace: TIMELINE_WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

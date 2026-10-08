@@ -42,6 +42,8 @@ const EXPECTED_KINDS: readonly InboxItemKind[] = [
   "run_orphaned",
   "dispatch_skipped",
   "run_stalled",
+  // #8 D3：pr-gate 收尾降级为本地收尾（模式没按用户选的走，必须能在收件箱里看见为什么）。
+  "pr_gate_degraded",
 ];
 const EXPECTED_SEVERITIES: readonly InboxItemSeverity[] = ["action_required", "attention", "info"];
 
@@ -129,7 +131,7 @@ test("文案表：kind 键集 = 5、severity 键集 = 3，且两语齐全", () =
   assert.deepEqual(
     Object.keys(INBOX_KIND_MESSAGE_IDS).sort(),
     [...EXPECTED_KINDS].sort(),
-    "kind 文案表必须穷尽四个 kind（加一个 kind 时这里必须跟着动）",
+    "kind 文案表必须穷尽全部 kind（加一个 kind 时这里必须跟着动）",
   );
   assert.deepEqual(
     Object.keys(INBOX_SEVERITY_MESSAGE_IDS).sort(),

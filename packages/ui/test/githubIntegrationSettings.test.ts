@@ -143,3 +143,79 @@ test("呈现｜设置区文案键双语齐备（标签/说明/占位/状态/保�
       .includes("plaintext"),
   );
 });
+
+/* ---------- #8 D3：整批收尾**模式**（pr-gate 开关）在设置区的呈现 ---------- */
+
+function renderWithMode(props: {
+  mergeMode: "local" | "pr-gate";
+  tokenConfigured: boolean;
+}): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(GitHubIntegrationSettingsRow, {
+        tokenConfigured: props.tokenConfigured,
+        saving: false,
+        mergeMode: props.mergeMode,
+        onSave: async () => {},
+        onClear: async () => {},
+        onSelectMergeMode: async () => {},
+      }),
+    }),
+  );
+}
+
+test("D3 模式行｜两档可选、当前档可见；选 pr-gate 但没配 token ⇒ 就地说明「会降级为本地合并」", () => {
+  const local = renderWithMode({ mergeMode: "local", tokenConfigured: false });
+  assert.ok(local.includes('data-testid="github-integration-merge-mode"'), "模式行必现");
+  assert.ok(local.includes("本地合并"), `两档文案都在：\n${local}`);
+  assert.ok(local.includes("pr-gate"), "pr-gate 档文案");
+  assert.equal(
+    local.includes('data-testid="github-integration-merge-mode-degrade"'),
+    false,
+    "local 模式不提示降级（本来就该本地合）",
+  );
+  // 当前档：按钮带 aria-pressed（可读的选中态，不靠颜色）。
+  const pressed = local.match(/<button[^>]*aria-pressed="true"[^>]*>/g) ?? [];
+  assert.equal(pressed.length, 1, "恰一个按钮处于选中态");
+  assert.ok(pressed[0]!.includes('data-testid="github-integration-merge-mode-local"'));
+
+  const gated = renderWithMode({ mergeMode: "pr-gate", tokenConfigured: false });
+  assert.ok(
+    gated.includes('data-testid="github-integration-merge-mode-degrade"'),
+    "pr-gate 没配 token：必须就地说明「收尾会降级为本地合并」（不静默）",
+  );
+  assert.ok(gated.includes("降级"), `降级说明文案：\n${gated}`);
+  const pressedGated = gated.match(/<button[^>]*aria-pressed="true"[^>]*>/g) ?? [];
+  assert.ok(pressedGated[0]!.includes('data-testid="github-integration-merge-mode-pr-gate"'));
+
+  const configured = renderWithMode({ mergeMode: "pr-gate", tokenConfigured: true });
+  assert.equal(
+    configured.includes('data-testid="github-integration-merge-mode-degrade"'),
+    false,
+    "配了 token 就不再提示降级",
+  );
+});
+
+test("D3 模式行｜SEC 纪律不因新模式行松动：props 里仍没有 token 字段、渲染里无凭据串", () => {
+  const html = renderWithMode({ mergeMode: "pr-gate", tokenConfigured: true });
+  assert.equal(html.includes(TOKEN_LIKE), false);
+  assert.equal(/ghp_[A-Za-z0-9]/.test(html), false, "任何 `ghp_` 前缀串都不得出现");
+  const component = readFileSync(
+    resolve(SRC, "settings/GitHubIntegrationSettingsRow.tsx"),
+    "utf8",
+  );
+  // 模式行不得挟带 token 值：props 解构里仍只许 tokenConfigured 这个布尔事实
+  //（判据与 SEC-③ 同一处写法；回调签名里的入参草稿不在 props 解构位，故不冲突）。
+  const destructure = component.match(
+    /export function GitHubIntegrationSettingsRow\(\{([\s\S]*?)\}: \{/,
+  )?.[1];
+  assert.ok(destructure, "找不到 props 解构");
+  assert.equal(
+    /(^|\s)token\s*[,:]/.test(destructure!),
+    false,
+    "呈现组件的 props 里不得有 token 值（只许 tokenConfigured 布尔事实）",
+  );
+  assert.ok(destructure!.includes("tokenConfigured"));
+  assert.ok(destructure!.includes("mergeMode"), "模式行的 props 必须含 mergeMode");
+});

@@ -118,6 +118,8 @@ function read(): WorkItemCollaborationRead {
     /* #8 D2：读模型多了「PR 关联清单 + 读数面可用性」（详情页的 PR 区读它们）。 */
     pullRequests: [],
     pullRequestProvider: { available: false, reason: "未配置 token" },
+    /* #8 D3：整批收尾模式随读面带出（PR 区的 pr-gate 提示读它）。 */
+    mergeMode: "local",
     reactions: [],
     receipts: [],
     viewerActor: { kind: "human", id: "local-user" },

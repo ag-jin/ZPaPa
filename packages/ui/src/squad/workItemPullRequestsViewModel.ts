@@ -94,9 +94,43 @@ export function pullRequestLinkDraftProblemId(draft: PullRequestLinkDraft): stri
   return null;
 }
 
+/* ---------- #8 D3：pr-gate 状态提示（等待 PR merge / 降级说明） ---------- */
+
+/** pr-gate 未配 token 的降级说明键。 */
+export const PULL_REQUEST_GATE_TOKEN_MISSING_MESSAGE_ID = `${PREFIX}.gate.tokenMissing`;
+/** 「等验收且挂着未合并的 PR」的等待说明键。 */
+export const PULL_REQUEST_AWAITING_MERGE_MESSAGE_ID = `${PREFIX}.gate.awaitingMerge`;
+
+/**
+ * PR 区的**一句状态说明**（设计 §4.4 的 pr-gate 呈现面 / §4.1 失败面「不静默」在家门口的一次应用）。
+ *
+ * 两档，按优先级：
+ * ① pr-gate 模式**没配 token** ⇒ 降级说明（「收尾会按本地合并、不会开 PR」）：
+ *    这是 pr-gate 的前置不满足（收尾那一刻降级 + 收件箱留痕），用户必须能**事先**看出来；
+ * ② 工作项**等验收**（`in_review`）且挂着**未合并**的 PR（open/draft）⇒「合并后自动转 done」。
+ *    这一档与模式**无关**：PR merge 驱动终态是工作项级规则（local 模式下手工挂的 PR 同样驱动）。
+ *
+ * 为什么要这两档：PR 区此前只说「有没有快照」，用户看不出「这个工作项在等什么」
+ * （等 PR 合并？还是没人管？）—— 静默的等待与「一切正常」在界面上分不开。
+ */
+export function pullRequestGateNoticeMessageId(input: {
+  workItemStatus: string;
+  mergeMode: "local" | "pr-gate";
+  providerAvailable: boolean;
+  pullRequests: Array<{ state: PullRequestState | null }>;
+}): string | null {
+  if (input.mergeMode === "pr-gate" && !input.providerAvailable) {
+    return PULL_REQUEST_GATE_TOKEN_MISSING_MESSAGE_ID;
+  }
+  const awaiting = input.pullRequests.some((row) => row.state === "open" || row.state === "draft");
+  if (awaiting && input.workItemStatus === "in_review") {
+    return PULL_REQUEST_AWAITING_MERGE_MESSAGE_ID;
+  }
+  return null;
+}
+
 /** 一次刷新的摘要（组件按它渲染结果行；四类结局**各自可见**，不合并成「完成」）。 */
-export type PullRequestRefreshSummary = {
-  updated: number;
+export type PullRequestRefreshSummary = {  updated: number;
   discarded: number;
   unavailable: number;
   failed: number;

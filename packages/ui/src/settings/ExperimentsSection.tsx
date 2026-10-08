@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { isGithubPullRequestTokenConfigured } from "@zcode/shared";
+import {
+  isGithubPullRequestTokenConfigured,
+  resolveSquadMergeMode,
+  type SquadMergeMode,
+} from "@zcode/shared";
 import { Switch } from "@/components/ui/switch.js";
 import { toast } from "@/components/ui/toast.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -78,6 +82,24 @@ export function ExperimentsSection() {
     }
   };
 
+  /* #8 D3：整批收尾模式的读写（同一行区）。失败与 token 同款：留痕 + toast + 抛回行内。
+     切到 pr-gate 不校验 token —— 前置不满足时**收尾那一刻降级**（收件箱留痕），
+     而不是在设置里拦住（用户可以先选模式、再配 token）。 */
+  const saveSquadMergeMode = async (mode: SquadMergeMode) => {
+    setSaving(true);
+    try {
+      await update({ squadMergeMode: mode });
+    } catch (error) {
+      logger.warn("[ExperimentsSection] 保存整批收尾模式失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      toast(intl.formatMessage({ id: "settings.experiments.githubIntegration.saveFailed" }));
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <SettingsGroupCard>
       <SettingsRow
@@ -103,12 +125,16 @@ export function ExperimentsSection() {
           control={null}
         />
       ) : null}
-      {/* #8 D2：GitHub 集成（PAT）——传下去的**只有布尔事实**（token 值不进渲染层）。 */}
+      {/* #8 D2：GitHub 集成（PAT）——传下去的**只有布尔事实**（token 值不进渲染层）。
+          #8 D3：同一行区内含整批收尾模式（local / pr-gate）。模式是**闭集值**（不是凭据），
+          可以直接进渲染层；判据的归一只有一处（shared 的 `resolveSquadMergeMode`）。 */}
       <GitHubIntegrationSettingsRow
         tokenConfigured={isGithubPullRequestTokenConfigured(settings?.githubPullRequestToken)}
         saving={saving}
+        mergeMode={resolveSquadMergeMode(settings?.squadMergeMode)}
         onSave={saveGithubToken}
         onClear={clearGithubToken}
+        onSelectMergeMode={saveSquadMergeMode}
       />
     </SettingsGroupCard>
   );

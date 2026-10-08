@@ -57,6 +57,7 @@ function render(props: {
   pullRequests: PullRequestRecord[];
   provider?: { available: boolean; reason: string | null };
   registerDisabledReasonMessageId?: string | null;
+  noticeMessageId?: string | null;
 }): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
@@ -65,6 +66,7 @@ function render(props: {
         pullRequests: props.pullRequests,
         provider: props.provider ?? NO_PROVIDER,
         registerDisabledReasonMessageId: props.registerDisabledReasonMessageId ?? null,
+        noticeMessageId: props.noticeMessageId ?? null,
         onLink: async () => {},
         onUnlink: async () => {},
         onRefresh: async () => ({
@@ -216,4 +218,43 @@ test("守卫｜详情页把 PR 区**紧接**交付物区挂在同一屏，且三
     false,
     "PR 区组件不得自己取服务（服务调用只在详情页）",
   );
+});
+
+/* ---------- #8 D3：pr-gate 状态提示的一行（等待合并 / 降级说明） ---------- */
+
+test("PR-⑤ 真渲染｜pr-gate 提示：等待合并横幅 / 未配 token 的降级说明；无提示时不渲染容器", () => {
+  const awaiting = render({
+    pullRequests: [record({ state: "open" })],
+    provider: { available: true, reason: null },
+    noticeMessageId: "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+  });
+  assert.ok(
+    awaiting.includes('data-testid="work-item-pull-requests-gate-notice"'),
+    `提示行必现：\n${awaiting}`,
+  );
+  assert.ok(awaiting.includes("等待 PR 合并"), "等待合并用真文案");
+  assert.ok(awaiting.includes("自动转为"), "说明后果（合并后自动转 done）");
+
+  const degraded = render({
+    pullRequests: [],
+    noticeMessageId: "squad.workItemDetail.pullRequests.gate.tokenMissing",
+  });
+  assert.ok(degraded.includes("降级为本地合并"), `降级说明用真文案：\n${degraded}`);
+
+  const none = render({ pullRequests: [record()] });
+  assert.equal(
+    none.includes('data-testid="work-item-pull-requests-gate-notice"'),
+    false,
+    "无提示 ⇒ 连容器都不渲染（与空插槽同款纪律）",
+  );
+});
+
+test("呈现｜D3 提示键双语齐备（等待合并 / 降级说明）", () => {
+  for (const id of [
+    "squad.workItemDetail.pullRequests.gate.awaitingMerge",
+    "squad.workItemDetail.pullRequests.gate.tokenMissing",
+  ]) {
+    assert.ok(id in zhCN, `zh-CN 缺键 ${id}`);
+    assert.ok(id in enUS, `en-US 缺键 ${id}`);
+  }
 });

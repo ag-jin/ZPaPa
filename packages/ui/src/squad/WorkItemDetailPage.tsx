@@ -27,6 +27,7 @@ import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDe
 import { WorkItemDeliverablesSection } from "./WorkItemDeliverablesSection.js";
 import { WorkItemPullRequestsSection } from "./WorkItemPullRequestsSection.js";
 import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
+import { pullRequestGateNoticeMessageId } from "./workItemPullRequestsViewModel.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
 import {
   COMMENT_DELETE_CONFIRM_IDLE,
@@ -449,7 +450,9 @@ export function WorkItemDetailPage({
         onLoadContent={loadDeliverableContent}
       />
 
-      {/* #8 D2：关联 PR 区**紧接**交付物区（同屏相邻）——「产出留痕」与「远端镜像」是一件事的两面。 */}
+      {/* #8 D2：关联 PR 区**紧接**交付物区（同屏相邻）——「产出留痕」与「远端镜像」是一件事的两面。
+          #8 D3：pr-gate 状态提示由**纯函数**算好（`pullRequestGateNoticeMessageId`，可独立测）：
+          等待 PR 合并 / 未配 token 的降级说明 —— 判据不在组件里，也不在页面里。 */}
       <WorkItemPullRequestsSection
         pullRequests={read.pullRequests}
         provider={read.pullRequestProvider}
@@ -458,6 +461,12 @@ export function WorkItemDetailPage({
           workItem,
           state.refreshFailure,
         )}
+        noticeMessageId={pullRequestGateNoticeMessageId({
+          workItemStatus: workItem.status,
+          mergeMode: read.mergeMode,
+          providerAvailable: read.pullRequestProvider.available,
+          pullRequests: read.pullRequests,
+        })}
         onLink={submitPullRequestLink}
         onUnlink={unlinkPullRequest}
         onRefresh={refreshPullRequests}

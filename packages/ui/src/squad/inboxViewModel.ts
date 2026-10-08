@@ -72,6 +72,8 @@ export const INBOX_KIND_MESSAGE_IDS: Record<InboxItemKind, string> = {
   run_orphaned: "squad.inbox.kind.run_orphaned",
   dispatch_skipped: "squad.inbox.kind.dispatch_skipped",
   run_stalled: "squad.inbox.kind.run_stalled",
+  /* #8 D3：pr-gate 收尾降级为本地收尾（模式没按用户选的走）—— 文案表也必须穷尽。 */
+  pr_gate_degraded: "squad.inbox.kind.pr_gate_degraded",
 };
 
 /**
@@ -169,6 +171,14 @@ export function inboxItemDetailLine(item: InboxItem): string | null {
     }
     case "dispatch_skipped": {
       // 四条 skip 的 reason 原文点名的就是处置方向（指派给人 / 小队不存在 / 已归档 / 已停用）。
+      push(readDetailString(item.detail, "reason"));
+      break;
+    }
+    case "pr_gate_degraded": {
+      /* 降级的两个要素：**这次收尾落在哪条分支上**（集成分支）+ **为什么降级**（reason 原文）。
+         码值（no_token/no_remote/remote_not_github）不进次要行：那是给人看的另一样东西的键，
+         两语文案由 kind 与 reason 承载。 */
+      push(readDetailString(item.detail, "integrationBranch"));
       push(readDetailString(item.detail, "reason"));
       break;
     }

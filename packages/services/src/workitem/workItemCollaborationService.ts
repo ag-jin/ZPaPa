@@ -1,4 +1,4 @@
-import { resolveWorkspaceKey, type WorkItem } from "@zcode/shared";
+import { resolveWorkspaceKey, type SquadMergeMode, type WorkItem } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type {
   CommentDispatchReceiptRepo,
@@ -130,6 +130,12 @@ export type WorkItemCollaborationRead = {
    * UI 据此把快照态呈现为「未配置 token（只显示手动登记的链接）」而不是错误。
    */
   pullRequestProvider: { available: boolean; reason: string | null };
+  /**
+   * **整批收尾模式**（#8 D3）：`local`（本地合回）/ `pr-gate`（push + 开 PR，终态交 PR merge）。
+   * 读面带它的唯一用途是呈现：pr-gate 而没配 token 时，收尾会降级为本地合并（收件箱留痕），
+   * PR 区据此给出「为什么这里没有 PR」的一句说明（判据单源在 runtime 的现判读取口）。
+   */
+  mergeMode: SquadMergeMode;
 };
 
 /**
@@ -502,6 +508,11 @@ export function createWorkItemCollaborationService(
            `available: false` 而列表照常 —— 「没配 token」是配置状态，不是读失败。 */
         pullRequests: runtime.pullRequestRepo.listByWorkItem(workspaceKey, workItemId),
         pullRequestProvider: pullRequestProviderAvailability(runtime),
+        /* #8 D3：整批收尾模式（`local` / `pr-gate`）随读面带出。为什么读面要带它：
+           pr-gate 的前置不满足时收尾会**降级为本地合并**（收件箱留痕），而详情页的 PR 区
+           要能给出一句「这个工作项在等什么 / 为什么没开 PR」的说明 —— 那需要模式这一个事实。
+           判据只有一个来源（runtime 的现判读取口），UI 不自己读设置、不再判一份。 */
+        mergeMode: runtime.readSquadMergeMode(),
       };
     },
 

@@ -596,3 +596,20 @@ test("/note 模式：手工输入 /note 与开关同步（前缀为准，不依�
     "已是开启态再点开启 ⇒ 只补一个空格，不重复插入前缀",
   );
 });
+
+test("时间线：第 21 枚 pr_merged 落 system 条目（与 run_* 族同形，不落 link-error）", () => {
+  const merged = {
+    ...activity("a-pr", "pr_merged"),
+    payload: { prNumber: 7, url: "https://github.com/acme/widget/pull/7" },
+  };
+  const entries = buildWorkItemTimelineEntries({
+    comments: [],
+    decisions: [],
+    activities: [merged],
+  });
+  assert.deepEqual(entries.map(summary), ["system:pr_merged:a-pr"]);
+  assert.equal(
+    WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS.pr_merged,
+    "squad.workItemDetail.activity.kind.pr_merged",
+  );
+});

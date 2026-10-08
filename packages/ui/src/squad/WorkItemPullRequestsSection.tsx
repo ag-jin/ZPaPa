@@ -33,6 +33,7 @@ export function WorkItemPullRequestsSection({
   pullRequests,
   provider,
   registerDisabledReasonMessageId,
+  noticeMessageId,
   onLink,
   onUnlink,
   onRefresh,
@@ -43,6 +44,11 @@ export function WorkItemPullRequestsSection({
   provider: { available: boolean; reason: string | null };
   /** 写入口的禁用原因（归档 / 读取失败）；`null` = 可写。 */
   registerDisabledReasonMessageId: string | null;
+  /**
+   * **pr-gate 状态提示**（#8 D3）：由页面用纯函数算好的文案键（等待 PR 合并 / 未配 token 的降级说明）；
+   * `null` ⇒ 连容器都不渲染。组件不自己判（判据在 `pullRequestGateNoticeMessageId`，可独立测）。
+   */
+  noticeMessageId: string | null;
   onLink: (input: { url: string; title?: string }) => Promise<void>;
   onUnlink: (pullRequestId: string) => Promise<void>;
   onRefresh: () => Promise<PullRequestSyncReport>;
@@ -133,6 +139,16 @@ export function WorkItemPullRequestsSection({
           className="text-ui-xs text-foreground-subtlest"
         >
           {t("squad.workItemDetail.pullRequests.tokenMissing")}
+        </p>
+      )}
+
+      {/* #8 D3：pr-gate 状态提示（等待 PR 合并 / 未配 token 的降级说明）。无提示 ⇒ 不渲染容器。 */}
+      {noticeMessageId === null ? null : (
+        <p
+          data-testid="work-item-pull-requests-gate-notice"
+          className="text-ui-xs text-foreground-subtle"
+        >
+          {t(noticeMessageId)}
         </p>
       )}
 

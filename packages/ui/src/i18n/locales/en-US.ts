@@ -4369,6 +4369,13 @@ const enUS: Record<string, string> = {
   "settings.experiments.githubIntegration.label": "GitHub integration (PR snapshots)",
   "settings.experiments.githubIntegration.description":
     "With a personal access token (PAT), the pull requests area on a work item page can fetch snapshot state (open / merged / …). The token is stored in **plaintext** in the local settings file (single machine, single user); prefer a read-only token with the least privilege.",
+  "settings.experiments.githubIntegration.mergeMode.label": "Batch finalize mode",
+  "settings.experiments.githubIntegration.mergeMode.description":
+    "Local merge: finalize merges the batch back into this repository's base branch (default, works offline). pr-gate: push the integration branch, open a pull request, and keep the work item in review until that PR is merged.",
+  "settings.experiments.githubIntegration.mergeMode.local": "Local merge",
+  "settings.experiments.githubIntegration.mergeMode.prGate": "pr-gate (open a PR)",
+  "settings.experiments.githubIntegration.mergeMode.degrade":
+    "No access token configured: pr-gate cannot run, so finalize degrades to a local merge (no PR is opened) and leaves a note in the inbox.",
   "settings.experiments.githubIntegration.tokenPlaceholder":
     "Paste a GitHub access token (leave empty to keep the current one)",
   "settings.experiments.githubIntegration.tokenConfigured": "Configured",
@@ -4667,6 +4674,7 @@ const enUS: Record<string, string> = {
   "squad.inbox.kind.member_failed": "Run failed",
   "squad.inbox.kind.run_orphaned": "Orphaned run",
   "squad.inbox.kind.dispatch_skipped": "Dispatch skipped",
+  "squad.inbox.kind.pr_gate_degraded": "pr-gate finalize degraded to a local merge",
   "squad.inbox.kind.run_stalled": "Stalled run",
   "squad.inbox.severity.action_required": "Action required",
   "squad.inbox.severity.attention": "Attention",
@@ -4861,6 +4869,10 @@ const enUS: Record<string, string> = {
   "squad.workItemDetail.pullRequests.state.merged": "Merged",
   "squad.workItemDetail.pullRequests.state.draft": "Draft",
   "squad.workItemDetail.pullRequests.state.notFetched": "Not fetched",
+  "squad.workItemDetail.pullRequests.gate.awaitingMerge":
+    "Waiting for the pull request to merge: this item is in review and will move to Done automatically once the linked PR is merged.",
+  "squad.workItemDetail.pullRequests.gate.tokenMissing":
+    "pr-gate mode needs a GitHub access token: without one, finalize degrades to a local merge (no PR is opened) and leaves a note in the inbox.",
   "squad.workItemDetail.pullRequests.tokenMissing":
     "No GitHub access token configured: only manually registered links are shown (configure one under Settings ▸ Experiments to fetch PR snapshots).",
   "squad.workItemDetail.pullRequests.refresh": "Refresh snapshots",
@@ -4918,6 +4930,7 @@ const enUS: Record<string, string> = {
   /* Deliverable registration (#7 D1a; wording may be tuned): one sentence for both the
      automatic capture and the manual link, the subject being the system/operator fact. */
   "squad.workItemDetail.activity.kind.deliverable_registered": "registered a deliverable",
+  "squad.workItemDetail.activity.kind.pr_merged": "pull request merged (drove this item to done)",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

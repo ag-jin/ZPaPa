@@ -28,6 +28,7 @@ import {
   Undo2,
   UserRoundCheck,
   type LucideIcon,
+  GitPullRequestArrow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -79,6 +80,9 @@ const ICONS: Record<WorkItemActivityKind, LucideIcon> = {
   /* 第 20 枚（#7 交付物 D1a）：交付物的主体形态是 diff（分支合并后即删，diff 是唯一留痕），
      故用 FileDiff 这个「带改动的文件」形状。 */
   deliverable_registered: FileDiff,
+  /* 第 21 枚（#8 D3）：远端 PR 合并驱动终态 —— 用 GitPullRequestArrow（「PR 被合并进来」的形状，
+     与 worktree_merged 的 GitMerge 分形：一个是本地分支合并，一个是远端 PR 合并）。 */
+  pr_merged: GitPullRequestArrow,
 };
 
 export function WorkItemCollaborationTimeline({
