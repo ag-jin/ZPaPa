@@ -697,6 +697,7 @@ test("独立复验｜422 认回（崩溃窗口）：按 head **精确**认回本
     await gitOk(["checkout", "-q", "main"], f.repoRoot);
 
     const listedPrefixes: string[] = [];
+    let listFails = false;
     const facts = (branch: string, number: number) => ({
       number,
       htmlUrl: `https://github.com/iv-org/iv-repo/pull/${number}`,
@@ -733,6 +734,9 @@ test("独立复验｜422 认回（崩溃窗口）：按 head **精确**认回本
           }),
           listOpenByBranchPrefix: async (input) => {
             listedPrefixes.push(input.prefix);
+            if (listFails) {
+              return { ok: false, code: "network_error", reason: "列举失败（stub）" };
+            }
             return {
               ok: true,
               pullRequests: list.map((entry) => facts(entry.branch, entry.number)),
@@ -778,6 +782,20 @@ test("独立复验｜422 认回（崩溃窗口）：按 head **精确**认回本
       { number: 73, branch: "squad/integration/iv-batch-extra" },
     ]).publishForReview(input);
     assert.equal(none.status, "failed", JSON.stringify(none));
+
+    // ③ 列举本身失败（网络/HTTP）：不认回、不谎报成功，失败面响亮（带留痕）。
+    listFails = true;
+    const warnedBefore = warnings.length;
+    const listDown = await publisher([]).publishForReview(input);
+    assert.equal(listDown.status, "failed", JSON.stringify(listDown));
+    assert.ok(
+      warnings.length > warnedBefore,
+      `列举失败必须留痕（否则「为什么没认回」在日志里查不出）：${JSON.stringify(warnings)}`,
+    );
+    assert.ok(
+      warnings.some((message) => /认回失败/.test(message)),
+      `留痕要说明是认回这一步失败的：${JSON.stringify(warnings)}`,
+    );
   } finally {
     f.cleanup();
   }
