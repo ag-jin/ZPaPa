@@ -117,6 +117,8 @@ export const TID_BROWSER_RESPONSIVE_RESIZE_CORNER_BOTTOM_LEFT =
 export const TID_BROWSER_RESPONSIVE_RESIZE_CORNER = "browser-responsive-resize-corner";
 /** 浏览器网页元素选择按钮 */
 export const TID_BROWSER_ELEMENT_PICKER_BUTTON = "browser-element-picker-button";
+/** 浏览器网页元素拾取浮条 */
+export const TID_BROWSER_ELEMENT_PICKER_BAR = "browser-element-picker-bar";
 /** 浏览器地址栏更多操作按钮 */
 export const TID_BROWSER_MORE_BUTTON = "browser-more-button";
 /** 浏览器在默认浏览器中打开菜单项 */
