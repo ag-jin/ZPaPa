@@ -131,6 +131,11 @@ import {
   type SquadWatchdogSweepPorts,
   type SquadWatchdogTickHandle,
 } from "./squadWatchdogTick.js";
+/* CT.2（#6 按 run 记账）：三臂收尾之后的**用量补拉**工具。行为与失败纪律都在那个模块里
+   （无会话静默跳过 / 拉取或落账失败只 warn 且台账保持 NULL），本文件只负责五个调用点：
+   ①队员成功 ②队长成功 ③失败出口 ④看门狗结算端口（在线 tick + 启动和解队员臂共用）
+   ⑤启动和解队长臂。次序契约：**终态写入 → 用量补拉 → 留痕**（用量是终态行的属性）。 */
+import { captureSquadRunUsage } from "./squadRunUsageCapture.js";
 import {
   assertBoundSessionDispatchable,
   resolveOffPeakDispatchKind,
@@ -903,13 +908,28 @@ function resolveSquadWatchdogSweepPorts(
   if (!services) return null;
   const squadRuntime = services.getOptional(ISquadRuntimeService);
   if (!squadRuntime) return null;
+  const zcodeTaskService = services.getOptional(IZCodeTaskService) ?? null;
+  /* CT.2 臂②（**看门狗结算**：在线 tick 与启动和解的队员臂共用这一处端口）：结算**成功之后**
+     补拉一次用量。数据源不可得（task service 未注册）⇒ 端口缺席 = 静默跳过留 NULL ——
+     「没有查询面」不是失败，写 0 才是说谎（NULL ≠ 0）。捕获自身只 warn，绝不反噬结算。 */
+  const captureUsage = zcodeTaskService
+    ? (
+        target: { path: string; identity: string },
+        input: { runId: string; sessionId: string | null },
+      ) =>
+        captureSquadRunUsage(
+          { zcodeTaskService, squadRuntime, logger },
+          { target, runId: input.runId, sessionId: input.sessionId },
+        )
+    : undefined;
   return createSquadWatchdogSweepPorts({
     squadRuntime,
     agentService: services.getOptional(IZCodeAgentService) ?? null,
     stopSession: createSquadRunSessionStopper({
-      taskService: services.getOptional(IZCodeTaskService) ?? null,
+      taskService: zcodeTaskService,
       logWarn: (message, error) => logger.warn(message, error),
     }),
+    captureUsage,
     logger,
   });
 }
@@ -1056,25 +1076,39 @@ async function settleStaleLeaderRunsBestEffort(
         workspacePath: target.path,
         workspaceIdentity: target.identity,
       });
+      /* CT.2 臂③（启动和解）的**数据源**：用法查询面缺席 ⇒ 下面的捕获一律静默跳过留 NULL
+         （「没有查询面」不是失败；结算是这一臂的必达半边，捕获是属性）。 */
+      const zcodeTaskService = services?.getOptional(IZCodeTaskService) ?? null;
       for (const runId of stale) {
         /** 和解原因原文：`failMemberRun` 的台账理由与 Inbox 登记的 detail 用**同一份**。 */
         const reconcileReason =
           "startup 和解：该队长 run 的会话已不在执行（进程重启后没有东西会再把它推向终态）";
         /* 失败只 warn（best-effort）但**逐条**记：一条收不掉的行会把那个工作项的后续指派永久吃掉，
          所以「哪条没收掉」必须能从日志里读出来。 */
+        let settled = false;
         try {
           await squadRuntime.failMemberRun(target, {
             runId,
             reason: reconcileReason,
           });
+          settled = true;
         } catch (error) {
           logger.warn(`[squad] startup leader-run reconciliation failed for run=${runId}`, error);
+        }
+        const record = leaderRuns.find((run) => run.runId === runId);
+        /* CT.2 臂③（启动和解的队长臂）：**终态写入之后**补拉一次用量。只在结算真生效且查询面在时；
+           未绑会话（`sessionId === null`）由捕获内部静默跳过 —— 重启后这些行的用量是一次真实补记机会
+           （没有别的收尾出口会再经过它们）。捕获自身只 warn，不阻断下面的 Inbox 登记。 */
+        if (settled && zcodeTaskService) {
+          await captureSquadRunUsage(
+            { zcodeTaskService, squadRuntime, logger },
+            { target, runId, sessionId: record?.sessionId ?? null },
+          );
         }
         /* P2c（产生点 ③，spec §6.6 / §16 S-C4）：这条残留 run 也登记一条 InboxItem
            （`run_orphaned` / attention）—— 启动和解此前只在日志里（「收了几条」），
            人看不到「哪个工作项的哪条 run 被卡过」。与上面 `failMemberRun` 同款 best-effort：
            失败只 warn（带原文），不阻断后面的行、也不阻断**已经完成**的和解本身。 */
-        const record = leaderRuns.find((run) => run.runId === runId);
         if (!record) {
           /* `stale` 由 `selectStaleLeaderRuns` 从同一份 `leaderRuns` 投影出 ⇒ 记录必在。
              真取不到时**不编造**（跳过一次登记 + 响亮留痕），而不是拿半个事实去写。 */
@@ -3572,16 +3606,27 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
             const runLabelReason =
               `${runLabel}会话终态=${outcome.outcome}` +
               (outcome.error ? `：${outcome.error}` : "");
-            void squadRuntime
+            /* CT.2 臂①（失败出口）：三段是**一条链**，次序是契约 ——
+               **终态写入 → 用量补拉 → Inbox 登记**（用量是终态行的属性）。
+               · 终态没写进去（`failMemberRun` 抛）⇒ **不补拉**：先写用量会留下「有用量但未结算」
+                 的行，与「台账即真相」冲突；Inbox 留痕照旧（它不依赖台账状态）。
+               · 捕获自身 best-effort（只 warn、不抛）⇒ 它绝不会吞掉下面的 Inbox 登记。 */
+            const failureExit = squadRuntime
               .failMemberRun(target, {
                 runId: eventKey,
                 reason: runLabelReason,
               })
-              .catch((error: unknown) =>
-                logger.error(
-                  `[squad] ${runLabel} run 失败出口未生效：${eventKey} 仍停在活跃集`,
-                  error,
-                ),
+              .then(
+                () =>
+                  captureSquadRunUsage(
+                    { zcodeTaskService, squadRuntime, logger },
+                    { target, runId: eventKey, sessionId: task.taskId },
+                  ),
+                (error: unknown) =>
+                  logger.error(
+                    `[squad] ${runLabel} run 失败出口未生效：${eventKey} 仍停在活跃集`,
+                    error,
+                  ),
               );
             /* P2c（产生点 ②，spec §6.2）：失败 run 也登记一条 InboxItem（`member_failed` / attention）
                ——「这条 run 失败了、产出没了」是**需人介入**的事，此前只有一行日志。
@@ -3591,25 +3636,29 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
                · sessionId：本次派发的**真实会话 id**（`task.taskId`，闭包内即在作用域里）——
                  UI 的「打开会话」穿透靠它（与 run_orphaned 的 `detail.sessionId` 同一个键）；
                · best-effort：登记失败只 warn（带原文）—— 上面 `failMemberRun` 的出口才是台账的收口，
-                 Inbox 是留痕，不得阻断、也不得静默。 */
-            void squadRuntime
-              .recordInboxItem(
-                target,
-                buildMemberFailedInboxItem({
-                  workspaceKey: targetWorkspaceKey,
-                  workspacePath: target.path,
-                  workItemId: workItem.id,
-                  workItemTitle: workItem.title,
-                  runId: eventKey,
-                  agentId: enqueued.agentId,
-                  branch: worktree?.branch ?? null,
-                  sessionId: task.taskId,
-                  reason: runLabelReason,
-                }),
-              )
-              .catch((error: unknown) =>
-                logger.warn(`[squad] ${runLabel} run 失败未能登记 Inbox：${eventKey}`, error),
-              );
+                 Inbox 是留痕，不得阻断、也不得静默。
+               CT.2：登记排在「终态写入 + 用量补拉」之后（次序契约），但**不依赖**它们的成败
+               （`failureExit` 已把两条分支都收成 resolved）。 */
+            void failureExit.then(() =>
+              squadRuntime
+                .recordInboxItem(
+                  target,
+                  buildMemberFailedInboxItem({
+                    workspaceKey: targetWorkspaceKey,
+                    workspacePath: target.path,
+                    workItemId: workItem.id,
+                    workItemTitle: workItem.title,
+                    runId: eventKey,
+                    agentId: enqueued.agentId,
+                    branch: worktree?.branch ?? null,
+                    sessionId: task.taskId,
+                    reason: runLabelReason,
+                  }),
+                )
+                .catch((error: unknown) =>
+                  logger.warn(`[squad] ${runLabel} run 失败未能登记 Inbox：${eventKey}`, error),
+                ),
+            );
           }
           listener(outcome);
         });
@@ -3622,18 +3671,34 @@ async function runSquadDispatch(msg: SquadDispatchRequestMsg): Promise<SquadDisp
           runId: eventKey,
           traceId,
           subscribe: subscribeTerminal,
-          completeMemberRun: (runId) => squadRuntime.completeMemberRun(target, { runId }),
+          /* CT.2 臂①（队员成功出口）：先入账（终态是主事实），再补拉用量 —— 捕获自身 best-effort
+             （无会话 / 拉取失败都只留 NULL + 一行 warn），绝不把一次成功的收口翻成失败
+             （`watchRunSettlement` 会把 `settleOnSuccess` 的失败记为「入账失败」，故捕获不会抛）。 */
+          completeMemberRun: async (runId) => {
+            await squadRuntime.completeMemberRun(target, { runId });
+            await captureSquadRunUsage(
+              { zcodeTaskService, squadRuntime, logger },
+              { target, runId, sessionId: task.taskId },
+            );
+          },
           logInfo: (message) => logger.info(message),
           logError: (message, error) => logger.error(message, error),
         });
       } else if (kind === "leader") {
         /* 队长 run 的成功入账：`completeLeaderRun` **只把台账行移到终态**（不碰工作项 — §5.7(2)）。
-           它与队员共用上面的订阅闭包 ⇒ 队长 run 的终态（成功 / 失败 / 中止）真的被写回。 */
+           它与队员共用上面的订阅闭包 ⇒ 队长 run 的终态（成功 / 失败 / 中止）真的被写回。
+           CT.2 臂①（队长成功出口）：与队员同款 —— 入账之后补拉一次用量。 */
         watchLeaderRunSettlement({
           runId: eventKey,
           traceId,
           subscribe: subscribeTerminal,
-          completeLeaderRun: (runId) => squadRuntime.completeLeaderRun(target, { runId }),
+          completeLeaderRun: async (runId) => {
+            await squadRuntime.completeLeaderRun(target, { runId });
+            await captureSquadRunUsage(
+              { zcodeTaskService, squadRuntime, logger },
+              { target, runId, sessionId: task.taskId },
+            );
+          },
           logInfo: (message) => logger.info(message),
           logError: (message, error) => logger.error(message, error),
         });

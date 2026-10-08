@@ -132,6 +132,17 @@ export type SquadWatchdogSweepPorts = {
     input: { settledRunId: string },
   ): Promise<WatchdogRetryOutcome>;
   recordInbox(target: SquadWatchdogTickTarget, item: InboxItemInput): Promise<void>;
+  /**
+   * **结算成功之后的用量补拉**（CT.2 臂②：在线 tick 与启动和解的队员臂共用这一处）。
+   *
+   * 时序契约：**只在 `settleRun` 成功之后**调用一次（终态是主事实，用量是属性 —— 先写用量会留下
+   * 「有用量但未结算」的行）。缺席（数据源不可得：task service 未注册）⇒ 静默跳过留 NULL；
+   * 抛错由本文件接住（只 warn）—— **绝不允许**把一条已结算的行翻成 `failed`。
+   */
+  captureUsage?(
+    target: SquadWatchdogTickTarget,
+    input: { runId: string; sessionId: string | null },
+  ): Promise<void>;
   /** 缺席 ⇒ 空闲档只发决策不动作？（不，见 `stopSession` 的注释：缺席时该档一律不动作并留痕。） */
   stopSession: SquadSessionStopFn | null;
   /** 每个 run 的**静默毫秒数**（缺席 = 无信号 ⇒ 空闲档不动作，不猜）。 */
@@ -148,6 +159,8 @@ export function createSquadWatchdogSweepPorts(params: {
   squadRuntime: ISquadRuntimeService;
   agentService: Pick<IZCodeAgentService, "readSession"> | null;
   stopSession: SquadSessionStopFn | null;
+  /** CT.2 臂②：结算后的用量补拉（缺席 = 数据源不可得 ⇒ 静默跳过留 NULL）。 */
+  captureUsage?: SquadWatchdogSweepPorts["captureUsage"];
   logger: SquadWatchdogLogger;
 }): SquadWatchdogSweepPorts {
   const { squadRuntime, agentService, logger } = params;
@@ -250,6 +263,7 @@ export function createSquadWatchdogSweepPorts(params: {
       squadRuntime.registerWatchdogRetry({ path: target.path, identity: target.identity }, input),
     recordInbox: (target, item) =>
       squadRuntime.recordInboxItem({ path: target.path, identity: target.identity }, item),
+    ...(params.captureUsage ? { captureUsage: params.captureUsage } : {}),
     stopSession: params.stopSession,
   };
 }
@@ -362,6 +376,33 @@ async function registerRetryBestEffort(
   }
 }
 
+/**
+ * 结算**成功之后**的用量补拉（CT.2 臂②；best-effort，两条纪律各一处判据）：
+ * · **端口缺席 ⇒ 静默跳过**（数据源不可得：task service 未注册 / 会话为空——`sessionId === null`
+ *   时实现方会自己跳过，本层照样调，因为「留 NULL」是台账那一侧的事实）；
+ * · **抛错只 warn**：捕获是属性，绝不能让一条已经结算的行被算成 `failed`（那会让熔断窗口平白
+ *   多记一次结算失败，且人去找一个已经收口的 run）。
+ */
+async function captureSettledRunUsage(
+  params: {
+    target: SquadWatchdogTickTarget;
+    ports: SquadWatchdogSweepPorts;
+    logger: SquadWatchdogLogger;
+  },
+  input: { runId: string; sessionId: string | null },
+): Promise<void> {
+  const capture = params.ports.captureUsage;
+  if (!capture) return;
+  try {
+    await capture(params.target, input);
+  } catch (error) {
+    params.logger.warn(
+      `[squad] watchdog 结算后的用量补拉失败（台账保持 NULL）：run=${input.runId}`,
+      error,
+    );
+  }
+}
+
 /** 逐条执行一个决策；返回这一条是否被计数（`settled` / `stopped` / `skipped` / `failed`）。 */
 async function executeDecision(params: {
   decision: ReturnType<typeof decideSquadWatchdog>[number];
@@ -394,6 +435,9 @@ async function executeDecision(params: {
     case "settle_dead_session":
     case "settle_ttl": {
       await ports.settleRun(target, { runId: decision.runId, reason: decision.reason });
+      /* CT.2 臂②：终态**已写入**（上面那一步成功返回）⇒ 补拉一次用量。排在 Inbox/重试之前：
+         「终态 → 用量 → 留痕」是同一条次序契约（用量是终态行的属性，留痕是结算的痕迹）。 */
+      await captureSettledRunUsage(params, { runId: decision.runId, sessionId: row.sessionId });
       /* 留痕与结算是**两件事**：结算失败已由调用方接住（下面逐条 try/catch），登记失败只 warn ——
          台账已经收口，Inbox 是留痕，不得让它把一条已结算的行报成失败。 */
       try {
@@ -416,6 +460,8 @@ async function executeDecision(params: {
           runId: decision.runId,
           reason: SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
         });
+        // CT.2 臂②（空闲档兜底这条结算出口同样要补拉）：终态已写入 ⇒ 补拉一次，之后才是留痕。
+        await captureSettledRunUsage(params, { runId: decision.runId, sessionId: row.sessionId });
         pendingStops.delete(decision.runId);
         try {
           await ports.recordInbox(target, inboxFor(SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE));

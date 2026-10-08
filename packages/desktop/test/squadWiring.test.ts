@@ -551,9 +551,11 @@ test("派发桥为队长 run 接上终态收口（同一条出口 + completeLead
     "队长 run 未接终态收口 —— 成功的队长行会长驻 open（§5.7(1) 判据恒真、重复指派被永久合并）",
   );
   // ② 成功的入账是**队长专用**动作：completeLeaderRun（不碰工作项）；不得错用 completeMemberRun。
+  //    CT.2（#6 按 run 记账）起这个回调多接了一步「入账后补拉用量」，故断言的是「回调体里**先是**
+  //    completeLeaderRun」——入账动作与「不得错用 completeMemberRun」两条性质逐字不变。
   assert.match(
     branch,
-    /completeLeaderRun: \(runId\) => squadRuntime\.completeLeaderRun\(target, \{ runId \}\)/,
+    /completeLeaderRun: async \(runId\) => \{[\s\S]{0,120}?await squadRuntime\.completeLeaderRun\(target, \{ runId \}\)/,
     "队长的成功入账必须是 completeLeaderRun（completeMemberRun 会把父项推 in_review，违反 §5.7(2)）",
   );
   // ③ **同一条出口**：终态订阅只该有一处 `onDynamicTaskTerminalOutcome(` —— 两种 run 共用它。
