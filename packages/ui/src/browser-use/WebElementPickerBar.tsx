@@ -1,19 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ChevronRightIcon, MousePointerClickIcon } from "lucide-react";
+import { MousePointerClickIcon } from "lucide-react";
 import {
   TID_BROWSER_ELEMENT_PICKER_BAR,
+  TID_BROWSER_ELEMENT_PICKER_CANCEL_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_COMMENT_ADD_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_COMMENT_INPUT,
-  TID_BROWSER_ELEMENT_PICKER_COMMENT_SKIP_BUTTON,
-  TID_BROWSER_ELEMENT_PICKER_CONFIRM_BUTTON,
-  TID_BROWSER_ELEMENT_PICKER_DONE_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_LEVEL_BREADCRUMB,
   TID_BROWSER_ELEMENT_PICKER_LEVEL_SLIDER,
   TID_BROWSER_ELEMENT_PICKER_REPICK_BUTTON,
 } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Textarea } from "@/components/ui/textarea.js";
-import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import type { WebElementPickerSession } from "@/lib/webElementPickerSession.js";
@@ -21,15 +18,18 @@ import type { WebElementPickerSession } from "@/lib/webElementPickerSession.js";
 interface WebElementPickerBarProps {
   session: WebElementPickerSession;
   onSetLevel: (level: number) => void;
-  onConfirm: () => void;
+  /** 唯一确认：当前层级元素 + 草稿评语（可空）一次提交。 */
+  onAddComment: (comment: string) => void;
   onRepick: () => void;
-  onDone: () => void;
-  onSaveComment: (comment: string) => void;
-  onSkipComment: () => void;
+  onCancel: () => void;
 }
 
 /**
- * 网页元素拾取浮条：hover 提示 / 层级滑轨 / 评语录入三态，绝对定位悬浮在 webview 视口底部。
+ * 网页元素拾取浮条：hover 提示 / 调整阶段（一行层级指示 + 滑轨 + 就地评语框 + 动作行），
+ * 绝对定位悬浮在 webview 视口底部。
+ *
+ * 层级与评语合成一个阶段（用户实测反馈：祖先链不必逐个列出，确认一次提交）：
+ * 滑轨正下方就是评语框，「加入对话」把当前层级元素与评语一起加入对话 —— 没有第二次确认。
  *
  * 纯受控组件（草稿除外）：状态全部来自 `useWebElementPicker` 的 session，
  * 动作原样转发给 hook —— 页内状态机与 renderer 之间只有 executeJs 一条通道。
@@ -37,29 +37,30 @@ interface WebElementPickerBarProps {
 export function WebElementPickerBar({
   session,
   onSetLevel,
-  onConfirm,
+  onAddComment,
   onRepick,
-  onDone,
-  onSaveComment,
-  onSkipComment,
+  onCancel,
 }: WebElementPickerBarProps) {
   const { intl } = useZCodeIntl();
   const [comment, setComment] = useState("");
   const compositionActiveRef = useRef(false);
+  // 草稿只属于「当前这一轮」：额度变化（同一 chain 对象）不清，换元素或退出调整阶段就清，
+  // 免得上一条评语串到下一个元素上。
+  const roundChain = session.phase === "adjust" ? session.chain : null;
 
   useEffect(() => {
-    if (session.phase !== "comment") {
-      setComment("");
-      compositionActiveRef.current = false;
-    }
-  }, [session.phase]);
+    setComment("");
+    compositionActiveRef.current = false;
+  }, [roundChain]);
 
   const hintLabel = intl.formatMessage({ id: "browser.elementPicker.bar.hint" });
   const adjustHintLabel = intl.formatMessage({ id: "browser.elementPicker.bar.adjustHint" });
   const sliderLabel = intl.formatMessage({ id: "browser.elementPicker.bar.sliderLabel" });
   const repickLabel = intl.formatMessage({ id: "browser.elementPicker.bar.repick" });
-  const confirmLabel = intl.formatMessage({ id: "browser.elementPicker.bar.confirm" });
-  const doneLabel = intl.formatMessage({ id: "browser.elementPicker.bar.done" });
+  const cancelLabel = intl.formatMessage({ id: "browser.elementPicker.bar.cancel" });
+  const levelIndicatorLabel = intl.formatMessage({
+    id: "browser.elementPicker.bar.levelIndicator",
+  });
   const chainTruncatedLabel = intl.formatMessage({
     id: "browser.elementPicker.bar.chainTruncated",
   });
@@ -67,28 +68,29 @@ export function WebElementPickerBar({
     id: "browser.elementPicker.comment.placeholder",
   });
   const addCommentLabel = intl.formatMessage({ id: "browser.elementPicker.comment.add" });
-  const skipCommentLabel = intl.formatMessage({ id: "browser.elementPicker.comment.skip" });
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Escape") {
       return;
     }
 
-    if (session.phase === "comment") {
+    const eventFromCommentInput =
+      event.target instanceof Element &&
+      event.target.closest(`[data-testid="${TID_BROWSER_ELEMENT_PICKER_COMMENT_INPUT}"]`) !== null;
+    if (eventFromCommentInput) {
       if (
         isImeComposingKeyEvent({
           compositionActive: compositionActiveRef.current,
           isComposing: event.nativeEvent.isComposing,
         })
       ) {
-        // 中文/日文输入法下 Esc 是取消候选词，不是弃评语。
+        // 中文/日文输入法下 Esc 是取消候选词，不是弃草稿。
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      // Esc 与「跳过」同义：只丢弃本次评语草稿，不退出会话。
+      // 评语框内 Esc = 只丢弃草稿，不退出会话、也不重选。
       setComment("");
-      onSkipComment();
       return;
     }
 
@@ -98,17 +100,16 @@ export function WebElementPickerBar({
       onRepick();
       return;
     }
-    onDone();
+    onCancel();
   };
 
   const chainLength = session.chain.length;
   const maxLevel = Math.max(0, chainLength - 1);
-  const breadcrumb = [...session.chain]
-    .sort((left, right) => right.level - left.level)
-    .map((step) => ({
-      ...step,
-      current: step.level === session.level,
-    }));
+  const level = Math.min(session.level, maxLevel);
+  const levelIndicator = intl.formatMessage(
+    { id: "browser.elementPicker.bar.levelIndicator" },
+    { n: level + 1, total: chainLength },
+  );
 
   return (
     <div
@@ -134,94 +135,45 @@ export function WebElementPickerBar({
             type="button"
             size="xs"
             variant="ghost"
-            data-testid={TID_BROWSER_ELEMENT_PICKER_DONE_BUTTON}
-            onClick={onDone}
+            data-testid={TID_BROWSER_ELEMENT_PICKER_CANCEL_BUTTON}
+            onClick={onCancel}
           >
-            {doneLabel}
+            {cancelLabel}
           </Button>
         </div>
       ) : null}
 
       {session.phase === "adjust" ? (
-        <>
-          <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+        <div className="flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <div
               data-testid={TID_BROWSER_ELEMENT_PICKER_LEVEL_BREADCRUMB}
-              className="flex min-w-0 items-center gap-1 overflow-hidden font-mono text-foreground-subtle"
+              className="flex min-w-0 items-center gap-1 font-mono"
             >
-              {breadcrumb.map((step, index) => (
-                <span key={step.level} className="flex min-w-0 items-center gap-1">
-                  {index > 0 ? <ChevronRightIcon className="size-3 shrink-0" /> : null}
-                  <span
-                    className={cn(
-                      "truncate",
-                      step.current && "rounded-sm bg-surface px-1 font-medium text-foreground",
-                    )}
-                  >
-                    {step.label}
-                  </span>
-                </span>
-              ))}
+              <span className="truncate font-medium">{session.chain[level]?.label}</span>
               {session.chainTruncated ? (
-                <span className="flex min-w-0 items-center gap-1">
-                  <ChevronRightIcon className="size-3 shrink-0" />
-                  <span className="truncate" title={chainTruncatedLabel}>
-                    …
-                  </span>
+                <span className="shrink-0 text-foreground-subtle" title={chainTruncatedLabel}>
+                  …
                 </span>
               ) : null}
             </div>
-            <span className="whitespace-nowrap pl-1 text-foreground-subtle">{adjustHintLabel}</span>
+            <span className="shrink-0 text-foreground-subtle" title={levelIndicatorLabel}>
+              {levelIndicator}
+            </span>
+            <span className="truncate text-foreground-subtle">{adjustHintLabel}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={0}
-              max={maxLevel}
-              value={Math.min(session.level, maxLevel)}
-              disabled={chainLength <= 1}
-              aria-label={sliderLabel}
-              data-testid={TID_BROWSER_ELEMENT_PICKER_LEVEL_SLIDER}
-              onChange={(event) => onSetLevel(Number(event.target.value))}
-              className="h-7 w-40 accent-primary"
-            />
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              data-testid={TID_BROWSER_ELEMENT_PICKER_REPICK_BUTTON}
-              onClick={onRepick}
-            >
-              {repickLabel}
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              data-testid={TID_BROWSER_ELEMENT_PICKER_CONFIRM_BUTTON}
-              onClick={onConfirm}
-            >
-              {confirmLabel}
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              data-testid={TID_BROWSER_ELEMENT_PICKER_DONE_BUTTON}
-              onClick={onDone}
-            >
-              {doneLabel}
-            </Button>
-          </div>
-        </>
-      ) : null}
-
-      {session.phase === "comment" ? (
-        <div className="flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
-          <div className="truncate font-mono text-foreground-subtle">
-            {session.lastSelected?.selector ?? session.lastSelected?.tagName ?? ""}
-          </div>
+          <input
+            type="range"
+            min={0}
+            max={maxLevel}
+            value={level}
+            disabled={chainLength <= 1}
+            aria-label={sliderLabel}
+            data-testid={TID_BROWSER_ELEMENT_PICKER_LEVEL_SLIDER}
+            onChange={(event) => onSetLevel(Number(event.target.value))}
+            className="h-7 w-full accent-primary"
+          />
           <Textarea
-            autoFocus
             rows={3}
             value={comment}
             data-testid={TID_BROWSER_ELEMENT_PICKER_COMMENT_INPUT}
@@ -241,18 +193,27 @@ export function WebElementPickerBar({
               type="button"
               size="xs"
               variant="ghost"
-              data-testid={TID_BROWSER_ELEMENT_PICKER_COMMENT_SKIP_BUTTON}
-              onClick={onSkipComment}
+              data-testid={TID_BROWSER_ELEMENT_PICKER_REPICK_BUTTON}
+              onClick={onRepick}
             >
-              {skipCommentLabel}
+              {repickLabel}
             </Button>
             <Button
               type="button"
               size="xs"
               data-testid={TID_BROWSER_ELEMENT_PICKER_COMMENT_ADD_BUTTON}
-              onClick={() => onSaveComment(comment)}
+              onClick={() => onAddComment(comment)}
             >
               {addCommentLabel}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              data-testid={TID_BROWSER_ELEMENT_PICKER_CANCEL_BUTTON}
+              onClick={onCancel}
+            >
+              {cancelLabel}
             </Button>
           </div>
         </div>

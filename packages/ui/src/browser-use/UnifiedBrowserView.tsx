@@ -411,8 +411,6 @@ export function UnifiedBrowserView({
     setLevel: setWebElementPickerLevel,
     confirmSelection: confirmWebElementSelection,
     requestRepick: requestWebElementRepick,
-    saveComment: saveWebElementComment,
-    skipComment: skipWebElementComment,
   } = useWebElementPicker({
     // 传输无关出口：webview 就绪时走 <webview>.executeJavaScript(script, true)；
     // 尚为 null 时返回 cancelled（合法选择结果），保持 no-op。
@@ -428,7 +426,7 @@ export function UnifiedBrowserView({
     },
   });
 
-  const handleWebElementPickerDone = useCallback(() => {
+  const handleWebElementPickerCancel = useCallback(() => {
     void cancelWebElementPicking();
   }, [cancelWebElementPicking]);
 
@@ -1123,11 +1121,9 @@ export function UnifiedBrowserView({
         <WebElementPickerBar
           session={webElementPickerSession}
           onSetLevel={setWebElementPickerLevel}
-          onConfirm={confirmWebElementSelection}
+          onAddComment={confirmWebElementSelection}
           onRepick={requestWebElementRepick}
-          onDone={handleWebElementPickerDone}
-          onSaveComment={saveWebElementComment}
-          onSkipComment={skipWebElementComment}
+          onCancel={handleWebElementPickerCancel}
         />
       ) : null}
     </div>

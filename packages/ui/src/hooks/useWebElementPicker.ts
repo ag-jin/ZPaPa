@@ -93,23 +93,15 @@ export function useWebElementPicker({
     [driver],
   );
 
-  const confirmSelection = useCallback(() => {
-    driver.confirmSelection();
-  }, [driver]);
-
-  const requestRepick = useCallback(() => {
-    driver.requestRepick();
-  }, [driver]);
-
-  const saveComment = useCallback(
+  const confirmSelection = useCallback(
     (comment: string) => {
-      driver.saveComment(comment);
+      driver.confirmSelection(comment);
     },
     [driver],
   );
 
-  const skipComment = useCallback(() => {
-    driver.skipComment();
+  const requestRepick = useCallback(() => {
+    driver.requestRepick();
   }, [driver]);
 
   useEffect(() => {
@@ -122,7 +114,7 @@ export function useWebElementPicker({
         return;
       }
 
-      // 浮条内部自己处理 Esc（评语框内只弃草稿，层级态回 hover），这里跳过以免双触发。
+      // 浮条内部自己处理 Esc（评语框内只弃草稿，调整阶段回 hover），这里跳过以免双触发。
       const target = event.target;
       if (
         target instanceof Element &&
@@ -133,12 +125,8 @@ export function useWebElementPicker({
 
       event.preventDefault();
       // 焦点在 guest 页面内时由注入脚本处理 Esc；焦点还在外层工具栏时这里兜底，
-      // 按当前阶段收敛：评语态弃草稿回 hover、层级态重选、hover 态退出会话。
+      // 按当前阶段收敛：调整阶段重选、hover 态退出会话。
       const phase = phaseRef.current;
-      if (phase === "comment") {
-        driver.skipComment();
-        return;
-      }
       if (phase === "adjust") {
         driver.requestRepick();
         return;
@@ -167,7 +155,5 @@ export function useWebElementPicker({
     setLevel,
     confirmSelection,
     requestRepick,
-    saveComment,
-    skipComment,
   };
 }
