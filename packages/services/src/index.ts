@@ -556,6 +556,9 @@ export type {
   WorkItemCommentRecord,
 } from "./workitem/workItemCommentRepo.js";
 export type { WorkItemCommentReactionRecord } from "./workitem/workItemCommentReactionRepo.js";
+/* 工作项级 reactions 的行形状（P3-R5s；UI 侧按 emoji 聚合要用它命名返回元素）：
+   类型声明在 repo 模块（只 `import type node:sqlite`），这里只做类型再导出（编译擦除）。 */
+export type { WorkItemReactionRecord } from "./workitem/workItemReactionRepo.js";
 export { WORK_ITEM_DECISION_KINDS } from "./workitem/workItemDecisionRepo.js";
 export type {
   WorkItemDecisionKind,

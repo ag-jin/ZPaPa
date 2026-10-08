@@ -23,6 +23,7 @@ import type { WorkItemActivityProjector } from "./workItemActivityProjector.js";
 import type { WorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
 import type { WorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import type { WorkItemEvent, WorkItemService } from "./workItemService.js";
+import type { WorkItemReactionRepo } from "./workItemReactionRepo.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 import type { WorkItemViewPrefsRepo } from "./workItemViewPrefsRepo.js";
 import type { WorkItemViewRepo } from "./workItemViewRepo.js";
@@ -208,6 +209,16 @@ export type SquadRuntime = {
    * 挂在 runtime 上的理由与 `workItemViewRepo` 同款。
    */
   workItemViewPrefsRepo: WorkItemViewPrefsRepo;
+  /**
+   * **工作项级表情回应的存储面**（P3-R5s，`work_item_reactions` 表，迁移 0021）：轻实体
+   * （五元组唯一键 + `INSERT OR IGNORE` + `changes()` 判真插入），读写都经它。emoji 护栏与工作项
+   * 归属判据在服务面（`workItemReactionService.ts`），存储面只给「同人同 emoji 恰一条」与插入序读。
+   *
+   * 为什么挂在 runtime 上：反应是**按 workspace** 的事实（行里带 `workspace_key`），与
+   * `workItemViewRepo` / `subscriberRepo` / `deliverableRepo` / `pullRequestRepo` 同一条理由 ——
+   * 另建跨目标单例会让读落到别的 workspace 上（而 `workspace_key` 的写路径守卫在服务面）。
+   */
+  workItemReactionRepo: WorkItemReactionRepo;
   /**
    * **整批收尾模式**（#8 D3）的现判读取口：`local`（缺省，本地合回）/ `pr-gate`（push + 开 PR，
    * 终态交 PR merge）。**每次调用现判**（转调注入的读函数；未注入恒 `local`）——

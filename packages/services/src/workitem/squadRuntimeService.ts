@@ -65,6 +65,11 @@ import {
 } from "./workItemViewService.js";
 // 只取类型：`WorkItemViewRecord`（repo 模块只 `import type node:sqlite`，本文件仍保持浏览器安全）。
 import type { WorkItemViewRecord } from "./workItemViewRepo.js";
+// 工作项级 reactions 两件（P3-R5s）：置上/撤掉 + 本工作项的反应行。同款拆文件（本文件必须浏览器安全
+// + 贴着 lint 门槛）；主体身份、emoji 两条闸、工作项归属全在该文件内单源。
+import { createWorkItemReactionOps } from "./workItemReactionService.js";
+// 只取类型：`WorkItemReactionRecord`（同上，类型擦除，不破坏浏览器安全）。
+import type { WorkItemReactionRecord } from "./workItemReactionRepo.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -904,6 +909,43 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { prefs: WorkItemViewPrefsDocument },
   ): Promise<WorkItemViewPrefsDocument>;
+  /**
+   * **工作项级表情回应 · 置上 / 撤掉**（P3-R5s 服务面半边；唯一实现在 `workItemReactionService.ts`）。
+   *
+   * `on=true` ⇒ 幂等添加；`on=false` ⇒ 幂等撤销（不存在 = 无变化、**不报错**）。两者都返回
+   * **操作后该工作项的全部反应行**（插入序）—— 幂等语义下重复调用**返回同值**
+   * （同人同 emoji 由迁移 0021 的五元组唯一键 + `INSERT OR IGNORE` 兜底，不产生第二行）。
+   *
+   * 为什么返回行而不是聚合分组（`{emoji,count,actors,reactedByMe}`）：聚合归 UI（multica 的
+   * `groupReactions` 就在 UI 层），且 `reactedByMe` 要拿「我」与本机名册逐个比 —— 那是 UI 已有的
+   * 身份视图；服务面只交事实（原始行），不预先分组、不重排（顺序 = repo 的插入序）。
+   *
+   * 为什么不给 author 入参：反应行的作者 = 组合根注入的 `localHumanActor`（与 0018 创建人 /
+   * 0020 视图 owner **同一处定义点**）—— 「谁按下的表情」不能由调用方自证（设计案 §12-2）；
+   * 未注入 ⇒ 响亮抛。
+   *
+   * 工作项归属（§8.5）：不存在 / 已归档 / 跨 workspace 一律响亮抛且**零写入**（归档行视同不存在）。
+   * **emoji 只剩两条闸**：非空 + 宽松长度上限（32 字节）—— **不白名单**（快捷表情集是 UI 的呈现层；
+   * 白名单写进服务面会让「放开完整 picker」变成服务端改动 + 数据迁移）。
+   * **不过门禁**：reactions 不产生新派发（与 `updateWorkItem` 同款理由，本层不写第二份开关判据）。
+   */
+  setWorkItemReaction(
+    target: SquadWorkspaceTarget,
+    input: { workItemId: string; emoji: string; on: boolean },
+  ): Promise<WorkItemReactionRecord[]>;
+  /**
+   * **本工作项的反应行**（原始行、插入序；P3-R5s）：**聚合归 UI**（chip = emoji + count、
+   * 「谁反应了」由 UI 用名册解析、`reactedByMe` 必须带 kind 判断）。
+   *
+   * **只读、不过门禁**（读不是新派发，与 `listWakeRules` / `listWorkItemViews` 同款 ——
+   * 关掉实验开关后仍应能看到谁对这条工作项表过态）。归属校验与写路径**同一份实现**：
+   * 不存在 / 已归档 / 跨 workspace 一律响亮抛（不静默返回空数组 —— 那会把「id 算错」
+   * 或「取错目标」伪装成「这个项还没人反应」）。
+   */
+  listWorkItemReactions(
+    target: SquadWorkspaceTarget,
+    input: { workItemId: string },
+  ): Promise<WorkItemReactionRecord[]>;
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
@@ -1049,6 +1091,15 @@ export function createSquadRuntimeService(deps: {
    * **绝不**拿 `assignee` 冒充（指派是「派给谁」，创建人是「谁按下的创建」，两件事）。
    */
   localHumanActor?: () => WorkItemCreator;
+  /**
+   * 服务面边界用的时钟与 id 生成（**仅测试可钉死**，生产不注入）。
+   *
+   * 为什么留这两个口：反应行的 `created_at` 与 `id` 由服务面取（repo 显式收时间戳以便回放），
+   * 而「重复 add **返回同值**」这条幂等契约只有把时钟与 id 钉死才谈得上逐字段对齐 ——
+   * 与 `workItemViewService` 的 `now` 同一手法。
+   */
+  now?: () => number;
+  newId?: () => string;
 }): ISquadRuntimeService {
   /** 本 runtime 的 `workspace_key`（C14 口径）：台账与快照都按它过滤。 */
   const keyOf = (runtime: SquadRuntime): string =>
@@ -1143,9 +1194,24 @@ export function createSquadRuntimeService(deps: {
     ...(deps.localHumanActor === undefined ? {} : { localHumanActor: deps.localHumanActor }),
   });
 
+  /* 工作项级 reactions 两件（P3-R5s）：实现全在 `workItemReactionService.ts`（身份 / emoji 两条闸 /
+     工作项归属 / 幂等读写），这里只把依赖接进去 —— ① `deps.createRuntime`（按目标现构，不缓存）；
+     ② `deps.localHumanActor`（反应行的作者 = 与 0018 创建人 / 0020 视图 owner **同一处定义点**的
+     身份；未注入 ⇒ 两个方法响亮抛，见 ops 内的 `requireActor`）；③ 时钟与 id（测试可钉死）。
+     **不调 `assertEnabled`**：reactions 与派发无关，关掉实验开关后照常可用（与 `updateWorkItem`
+     同款理由，本层不写第二份判据）。 */
+  const workItemReactionOps = createWorkItemReactionOps({
+    createRuntime: deps.createRuntime,
+    ...(deps.localHumanActor === undefined ? {} : { localHumanActor: deps.localHumanActor }),
+    ...(deps.now === undefined ? {} : { now: deps.now }),
+    ...(deps.newId === undefined ? {} : { newId: deps.newId }),
+  });
+
   return {
     // 保存视图六件（R6a）：实现在 `workItemViewService.ts`（本层只接线，见上面 ops 的构造点）。
     ...workItemViewOps,
+    // 工作项级 reactions 两件（P3-R5s）：实现在 `workItemReactionService.ts`（同上）。
+    ...workItemReactionOps,
 
     async assertDispatchEnabled(_target) {
       // 只答门禁问题：**不构造 runtime**（也就不依赖 git 解析），只读设置、只抛错。
