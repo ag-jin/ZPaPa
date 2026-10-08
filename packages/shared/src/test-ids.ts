@@ -119,6 +119,25 @@ export const TID_BROWSER_RESPONSIVE_RESIZE_CORNER = "browser-responsive-resize-c
 export const TID_BROWSER_ELEMENT_PICKER_BUTTON = "browser-element-picker-button";
 /** 浏览器网页元素拾取浮条 */
 export const TID_BROWSER_ELEMENT_PICKER_BAR = "browser-element-picker-bar";
+/** 拾取浮条里的祖先层级滑轨 */
+export const TID_BROWSER_ELEMENT_PICKER_LEVEL_SLIDER = "browser-element-picker-level-slider";
+/** 拾取浮条里的祖先链面包屑 */
+export const TID_BROWSER_ELEMENT_PICKER_LEVEL_BREADCRUMB =
+  "browser-element-picker-level-breadcrumb";
+/** 拾取浮条确认当前层级按钮 */
+export const TID_BROWSER_ELEMENT_PICKER_CONFIRM_BUTTON = "browser-element-picker-confirm-button";
+/** 拾取浮条重选按钮 */
+export const TID_BROWSER_ELEMENT_PICKER_REPICK_BUTTON = "browser-element-picker-repick-button";
+/** 拾取浮条完成按钮 */
+export const TID_BROWSER_ELEMENT_PICKER_DONE_BUTTON = "browser-element-picker-done-button";
+/** 拾取浮条评语输入框 */
+export const TID_BROWSER_ELEMENT_PICKER_COMMENT_INPUT = "browser-element-picker-comment-input";
+/** 拾取浮条评语加入对话按钮 */
+export const TID_BROWSER_ELEMENT_PICKER_COMMENT_ADD_BUTTON =
+  "browser-element-picker-comment-add-button";
+/** 拾取浮条跳过评语按钮 */
+export const TID_BROWSER_ELEMENT_PICKER_COMMENT_SKIP_BUTTON =
+  "browser-element-picker-comment-skip-button";
 /** 浏览器地址栏更多操作按钮 */
 export const TID_BROWSER_MORE_BUTTON = "browser-more-button";
 /** 浏览器在默认浏览器中打开菜单项 */

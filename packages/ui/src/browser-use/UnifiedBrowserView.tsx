@@ -12,6 +12,7 @@ import { logger } from "@/logger.js";
 import { BrowserToolbar } from "@/EmbeddedBrowserPaneParts.js";
 import { BrowserViewportSurface } from "@/browser-use/BrowserViewportSurface.js";
 import { BrowserViewportToolbar } from "@/browser-use/BrowserViewportToolbar.js";
+import { WebElementPickerBar } from "@/browser-use/WebElementPickerBar.js";
 import { useBrowserResizeOperationWarning } from "@/browser-use/useBrowserResizeOperationWarning.js";
 import { useBrowserScreenshotSurfaceReady } from "@/browser-use/useBrowserScreenshotSurfaceReady.js";
 import { useEmbeddedBrowserWheelChain } from "@/browser-use/useEmbeddedBrowserWheelChain.js";
@@ -406,6 +407,12 @@ export function UnifiedBrowserView({
     cancelPicking: cancelWebElementPicking,
     isPicking: isWebElementPicking,
     togglePicking: toggleWebElementPicking,
+    session: webElementPickerSession,
+    setLevel: setWebElementPickerLevel,
+    confirmSelection: confirmWebElementSelection,
+    requestRepick: requestWebElementRepick,
+    saveComment: saveWebElementComment,
+    skipComment: skipWebElementComment,
   } = useWebElementPicker({
     // 传输无关出口：webview 就绪时走 <webview>.executeJavaScript(script, true)；
     // 尚为 null 时返回 cancelled（合法选择结果），保持 no-op。
@@ -413,7 +420,17 @@ export function UnifiedBrowserView({
       webview ? webview.executeJavaScript(script, true) : Promise.resolve({ status: "cancelled" }),
     workspacePath: workspacePath ?? "",
     workspaceIdentity: workspaceKey ?? workspaceIdentity,
+    // 页内信息卡是 guest 自绘的，文案只能注入；漏传就会退化成英文默认值。
+    labels: {
+      background: intl.formatMessage({ id: "browser.elementPicker.popover.background" }),
+      color: intl.formatMessage({ id: "browser.elementPicker.popover.color" }),
+      font: intl.formatMessage({ id: "browser.elementPicker.popover.font" }),
+    },
   });
+
+  const handleWebElementPickerDone = useCallback(() => {
+    void cancelWebElementPicking();
+  }, [cancelWebElementPicking]);
 
   // ---- 从 webview 同步 chrome 状态（url/前进后退/标题）----
   const syncBrowserState = useCallback((target: ElectronWebviewTag) => {
@@ -1051,7 +1068,7 @@ export function UnifiedBrowserView({
       }
       className={cn(
         isVisible || shouldComposeSurface ? "flex" : "hidden",
-        "h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background",
+        "relative h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background",
       )}
     >
       <BrowserToolbar
@@ -1102,6 +1119,17 @@ export function UnifiedBrowserView({
         viewportSize={effectiveViewportSize}
         viewportZoom={effectiveViewportZoom}
       />
+      {isWebElementPicking && webElementPickerSession ? (
+        <WebElementPickerBar
+          session={webElementPickerSession}
+          onSetLevel={setWebElementPickerLevel}
+          onConfirm={confirmWebElementSelection}
+          onRepick={requestWebElementRepick}
+          onDone={handleWebElementPickerDone}
+          onSaveComment={saveWebElementComment}
+          onSkipComment={skipWebElementComment}
+        />
+      ) : null}
     </div>
   );
 }

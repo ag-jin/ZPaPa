@@ -21,10 +21,14 @@ function assertPrefixParity(prefix: string, minimumCount: number) {
     assert.ok(key in zhCN, `zh-CN 缺 ${key}`);
   }
   assert.deepEqual(zhKeys.sort(), enKeys.sort(), `${prefix} 子树两语键集必须相等`);
-  assert.ok(
-    zhKeys.length >= minimumCount,
-    `${prefix} 只比到 ${zhKeys.length} 条，前缀可能写错了`,
-  );
+  assert.ok(zhKeys.length >= minimumCount, `${prefix} 只比到 ${zhKeys.length} 条，前缀可能写错了`);
+}
+
+function placeholdersOf(value: string) {
+  return [...value.matchAll(/\{(\w+)\}/gu)]
+    .map((match) => match[1])
+    .sort()
+    .join(",");
 }
 
 test("i18n：chat.webElements.* 两语键集相等，评语编辑四条文案按设计落地", () => {
@@ -45,4 +49,36 @@ test("i18n：chat.webElements.* 两语键集相等，评语编辑四条文案按
       `${key} 不是占位符文案，不应带花括号`,
     );
   }
+});
+
+test("i18n：browser.elementPicker.* 两语键集相等，浮条动作与评语区文案按设计落地", () => {
+  assertPrefixParity("browser.elementPicker.", 16);
+
+  const expected = {
+    "browser.elementPicker.bar.hint": ["点击页面中的元素", "Click an element in the page"],
+    "browser.elementPicker.bar.adjustHint": ["拖动滑轨调整层级", "Drag the slider to adjust level"],
+    "browser.elementPicker.bar.sliderLabel": ["祖先层级", "Ancestor level"],
+    "browser.elementPicker.bar.repick": ["重选", "Repick"],
+    "browser.elementPicker.bar.confirm": ["确认", "Confirm"],
+    "browser.elementPicker.bar.done": ["完成", "Done"],
+    "browser.elementPicker.bar.chainTruncated": ["祖先链已截断", "Ancestor chain truncated"],
+    "browser.elementPicker.comment.placeholder": [
+      "输入对该元素的评语或问题（可选）",
+      "Add a comment or question for this element (optional)",
+    ],
+    "browser.elementPicker.comment.add": ["加入对话", "Add to chat"],
+    "browser.elementPicker.comment.skip": ["跳过", "Skip"],
+  } as const;
+
+  for (const [key, [zh, en]] of Object.entries(expected)) {
+    assert.equal(zhCN[key], zh, `zh-CN 的 ${key} 文案与设计不一致`);
+    assert.equal(enUS[key], en, `en-US 的 ${key} 文案与设计不一致`);
+  }
+
+  // 带占位符的键：只译一侧会让用户看到原始花括号。
+  const selectedCountKey = "browser.elementPicker.bar.selectedCount";
+  assert.equal(zhCN[selectedCountKey], "已选 {count} 个元素");
+  assert.equal(enUS[selectedCountKey], "{count} elements selected");
+  assert.equal(placeholdersOf(zhCN[selectedCountKey] ?? ""), "count");
+  assert.equal(placeholdersOf(enUS[selectedCountKey] ?? ""), "count");
 });

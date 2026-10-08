@@ -9,7 +9,7 @@ export const WEB_ELEMENT_COMMENT_MAX_CHARS = 2_000;
 
 // build-only：解析时它位于首个 `## Element` 之前，会被既有的 split+filter(null) 丢弃。
 const WEB_ELEMENT_COMMENT_DIRECTIVE =
-  'Each element below may carry a "Comment" line. Treat every non-empty comment as the user\'s instruction for that element, process all of them, and never apply one element\'s comment to another.';
+  "Each element below may carry a \"Comment\" line. Treat every non-empty comment as the user's instruction for that element, process all of them, and never apply one element's comment to another.";
 
 export interface WebElementRect {
   x: number;
@@ -169,8 +169,7 @@ export function mergeWebElementContextAttachment(
       return item;
     }
     const comment =
-      normalizeWebElementComment(attachment.comment) ||
-      normalizeWebElementComment(item.comment);
+      normalizeWebElementComment(attachment.comment) || normalizeWebElementComment(item.comment);
     const merged: WebElementContextComposerAttachment = { ...attachment, id: item.id };
     if (comment) {
       merged.comment = comment;

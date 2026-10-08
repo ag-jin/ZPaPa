@@ -89,7 +89,9 @@ export function WebElementContextAttachmentChip({
             <Globe2Icon className="mt-1 size-4 shrink-0 text-foreground-subtle" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1">
-                <div className="min-w-0 flex-1 truncate font-medium">{getElementTitle(context)}</div>
+                <div className="min-w-0 flex-1 truncate font-medium">
+                  {getElementTitle(context)}
+                </div>
                 {onEditComment && !editing ? (
                   <Button
                     type="button"
