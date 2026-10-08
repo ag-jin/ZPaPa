@@ -124,6 +124,40 @@ test("repo｜listVisible：owner 全见、shared 全见、他人 private 不见�
   db.close();
 });
 
+test("repo｜listVisible 带观察者归属：自己的行 ownedByViewer=true、别人的共享=false（读时算，不进存储）", () => {
+  const { db, repo } = makeRepo();
+  const me = owner("local-user");
+  const other = owner("someone-else");
+  const mine = insert(repo, { name: "我的私有", createdAt: 1 });
+  const theirs = insert(repo, {
+    name: "别人的共享",
+    owner: other,
+    visibility: "workspace",
+    createdAt: 2,
+  });
+  assert.deepEqual(
+    repo.listVisible(WS, me).map((view) => [view.id, view.ownedByViewer]),
+    [
+      [mine, true],
+      [theirs, false],
+    ],
+    "归属 = 观察者（注入身份）与行 owner 的比对结果，**随观察者变**（看得见 ≠ 是我的）",
+  );
+  /* 归属是**读面的投影**，不是一列/不是存储事实：单行读（get）与存储面都不带它 ——
+     只有列表读面投影（T-P2-V 缺口 4 的修补：UI 的权限镜像要有真值可用）。 */
+  assert.equal(
+    "ownedByViewer" in (repo.get(WS, mine) ?? {}),
+    false,
+    "单行读不带归属（归属是「这一行对当前观察者」的关系，不是行自身的字段）",
+  );
+  const columns = db.prepare("PRAGMA table_info(work_item_views)").all() as Array<{ name: string }>;
+  assert.ok(
+    !columns.some((column) => column.name === "owned_by_viewer"),
+    "存储面没有这一列（不改 schema：归属由读权谓词那两列现场比出来）",
+  );
+  db.close();
+});
+
 test("repo｜listVisible 排序确定（created_at ASC, id ASC）且上限 200（multica LIMIT 200）", () => {
   const { db, repo } = makeRepo();
   const me = owner("local-user");

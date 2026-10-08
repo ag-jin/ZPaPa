@@ -259,6 +259,9 @@ export function createWorkItemViewOps(
     /**
      * 本 workspace 的**可见**视图（读权谓词在 repo 的 SQL 里：owner 或 shared）。
      * 排序（created_at ASC, id ASC）与上限（200）由 repo 单源给出，本层不重排、不截断。
+     * 每行带**观察者归属** `ownedByViewer`（repo 按注入身份 `(kind, id)` 两列现场算）——
+     * UI 的权限镜像（他人的共享视图 ⇒ 编辑禁用 / 删除不渲染）据此分「我的 / 别人的」，
+     * 不再有「身份不可判定」的中间态需求（D1-A：UI 不自造身份，读面带回真值）。
      * 不过门禁：读不是新派发（与 `listWakeRules` 同款）。
      */
     async listWorkItemViews(target) {

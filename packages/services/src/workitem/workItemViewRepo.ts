@@ -57,6 +57,19 @@ export type WorkItemViewRecord = {
   revision: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * **观察者归属**（T-P2-V §9-2 的修补）：这一行是不是**读它的那个人**建的。
+   *
+   * 只由**列表读面**（`listVisible`）按注入身份（`owner` 入参 = 组合根的 `localHumanActor`）
+   * 现场算出 —— 不是一列、不进存储、`get` 的单行读不带它（那几处调用只落在「本人可管理」的
+   * 路径上）。`undefined` = 这个读面没带回归属 ⇒ 消费方按「不可判定」处理（UI 的权限镜像据此
+   * 分三态，不猜一个 owner 出来）。
+   *
+   * 为什么需要一个投影位：管理权（改/删）= owner，但**读权**允许别人共享的视图出现在列表里
+   * —— 「看得见」与「改得动」的差别只有归属能表达；少了它，界面只能把所有行都渲染成可管理
+   * （T-P2-V 实测：非 owner 的共享视图也渲染可点的编辑/删除，点击才 forbidden）。
+   */
+  ownedByViewer?: boolean;
 };
 
 /** 新建一行（`revision` 不入参：新行恒从 1 起，由 DDL 的 DEFAULT 给）。 */
@@ -140,7 +153,8 @@ export interface WorkItemViewRepo {
   get(workspaceKey: string, id: string): WorkItemViewRecord | null;
   /**
    * 本 workspace 内**调用者有权读**的行：owner 本人（含私有）或 `visibility='workspace'` 的共享行。
-   * 排序与上限见文件头第 ② 条。
+   * 排序与上限见文件头第 ② 条。每行带**观察者归属** `ownedByViewer`（= 这一行是不是 `owner`
+   * 参数本人建的；读权允许别人的共享行出现在这里，「看得见 ≠ 是我的」靠它表达）。
    */
   listVisible(workspaceKey: string, owner: WorkItemViewOwner): WorkItemViewRecord[];
   /** 每 owner 配额计数（multica `CountIssueViewsByOwner`；按 workspace + owner 两列）。 */
@@ -203,7 +217,12 @@ export function createWorkItemViewRepo(db: DatabaseSync): WorkItemViewRepo {
            LIMIT ${WORK_ITEM_VIEW_LIST_LIMIT}`,
         )
         .all(workspaceKey, owner.kind, owner.id) as unknown as WorkItemViewRow[];
-      return rows.map(rowToView);
+      /* 归属按 **owner 两列**（kind + id）比：`agent:local-user` 与 `human:local-user` 不是同一个人
+         （与读权谓词同一份口径 —— 两处若各写一份，某天会在某一处把 agent 读成「我的」）。 */
+      return rows.map((row) => ({
+        ...rowToView(row),
+        ownedByViewer: row.owner_kind === owner.kind && row.owner_id === owner.id,
+      }));
     },
 
     countByOwner(workspaceKey, owner) {

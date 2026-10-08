@@ -307,6 +307,51 @@ test("B1｜list：owner 见自己的 private + 所有 shared；非 owner 只共�
   );
 });
 
+test("B1b｜list 带观察者归属：按 (kind, id) 两列与注入身份比；同一行对不同观察者相反", async () => {
+  const { db, service, serviceFor } = await makeWorld();
+  const other = serviceFor(OTHER);
+  /* 同 id 不同 kind：owner 是**两列** —— `agent:local-user` 与 `human:local-user` 不是同一个人
+     （与 UI 侧曾用 (kind, id) 比对的那条判据同一份语义，现在只在服务面算一次）。 */
+  const twin = serviceFor({ kind: "agent", id: "local-user" });
+  const mine = await service.createWorkItemView(WS, {
+    name: "我的共享",
+    scopeType: "workspace",
+    visibility: "workspace",
+    query: {},
+  });
+  const theirs = await other.createWorkItemView(WS, {
+    name: "他的共享",
+    scopeType: "workspace",
+    visibility: "workspace",
+    query: {},
+  });
+  const twinView = await twin.createWorkItemView(WS, {
+    name: "同名 agent 的共享",
+    scopeType: "workspace",
+    visibility: "workspace",
+    query: {},
+  });
+
+  const flagsFor = async (actor: ISquadRuntimeService): Promise<Map<string, unknown>> =>
+    new Map((await actor.listWorkItemViews(WS)).map((view) => [view.id, view.ownedByViewer]));
+  const asMe = await flagsFor(service);
+  assert.equal(asMe.get(mine.id), true, "自己建的 ⇒ true");
+  assert.equal(
+    asMe.get(theirs.id),
+    false,
+    "别人共享的 ⇒ false（看得见 ≠ 是我的：改/删的入口据此收敛）",
+  );
+  assert.equal(
+    asMe.get(twinView.id),
+    false,
+    "id 相同但 kind 不同（agent ≠ human）⇒ 不是同一个人（owner 是两列一起比）",
+  );
+  const asOther = await flagsFor(other);
+  assert.equal(asOther.get(mine.id), false, "同一行在别人的列表里不是我的（归属随观察者变）");
+  assert.equal(asOther.get(theirs.id), true, "镜像方向同样成立");
+  db.close();
+});
+
 test("B2｜patch 权限：owner 可改；非 owner 改共享 ⇒ forbidden；改他人私有 ⇒ not_found（同码）", async () => {
   const { db, serviceFor } = await makeWorld();
   const owner = serviceFor(ACTOR);

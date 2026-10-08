@@ -864,6 +864,9 @@ export interface ISquadRuntimeService {
    * · 管理（patch / delete）：**owner**。multica 的「workspace owner/admin 且 shared」在 ZPaPa v1
    *   没有对应概念（单机单身份，人类名册归 C4）⇒ 非 owner 改/删共享视图 ⇒ `work_item_view_forbidden`
    *   （与「读不到」区分：他看得见这个视图，只是不能改；multica 的 403 同格）。
+   * · **列表的观察者归属**：`listWorkItemViews` 每行带 `ownedByViewer`（读时按注入身份
+   *   `(kind, id)` 两列算；不是一列、不进存储）—— UI 的权限镜像（他人的共享视图 ⇒ 编辑禁用 /
+   *   删除不渲染）以它为唯一判据，UI 侧不再需要「观察者身份」入参（D1-A：UI 不自造身份）。
    *
    * **owner 身份**＝组合根注入的 `localHumanActor`（与 0018 创建人**同一处定义点**）：
    * 调用方**不能**自证身份（设计案 §12-2），故六个方法都没有 owner 入参。未注入 ⇒ 六个方法响亮抛。
