@@ -1,10 +1,10 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import type { WorkItem, WorkItemPriorityKey } from "@zcode/shared";
-import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
 import {
   resolveWorkItemInlinePriorityEdit,
   resolveWorkItemInlineTitleEdit,
+  resolveWorkItemInlineTitleKeyIntent,
   workItemInlineEditUnchanged,
   type WorkItemInlineEditPatch,
 } from "./workItemInlineEditViewModel.js";
@@ -153,23 +153,21 @@ export function useWorkItemInlineEdit({
       /* 编辑态的键盘事件**不冒泡**：Enter / Escape 不该喂给行导航与全局快捷键
          （编辑时阻止行导航是原文语义；这里连键位都不外传）。 */
       event.stopPropagation();
-      if (
-        isImeComposingKeyEvent({
-          compositionActive: composingRef.current,
-          nativeEvent: event.nativeEvent,
-        })
-      ) {
-        return;
-      }
-      if (event.key === "Enter") {
-        event.preventDefault();
+      /* 键位 → 意图的判据在纯函数里（可逐格测）：组合期（输入法候选确认）一律 ignore、
+         非组合期 Enter = 提交、Escape = 取消、其余键不吃。本层只执行结论 —— 判据不再
+         散在事件回调里（那样没有测试设施能钉住它，见 workItemInlineEditViewModel 的函注）。 */
+      const intent = resolveWorkItemInlineTitleKeyIntent({
+        key: event.key,
+        compositionActive: composingRef.current,
+        isComposing: event.nativeEvent.isComposing,
+      });
+      if (intent === "ignore") return;
+      event.preventDefault();
+      if (intent === "commit") {
         commitTitleEdit(item);
         return;
       }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cancelTitleEdit();
-      }
+      cancelTitleEdit();
     },
     titleCompositionHandlers: {
       onCompositionStart: () => {

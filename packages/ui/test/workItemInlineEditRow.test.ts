@@ -117,20 +117,39 @@ test("守卫｜标题行内编辑：blur / Enter 提交、Escape 恢复（不提
     "编辑态的键盘语义走同一个处理器",
   );
 
+  /* 键位 → 意图的**判据**在纯函数（`resolveWorkItemInlineTitleKeyIntent`，逐格用例在
+     workItemInlineEditViewModel.test.ts）；本层只执行结论 —— 因此这里钉两件事：
+     ① 回调把三格输入（键、组合态、原生 isComposing）**原样**交给那个判据；
+     ② 三种意图各有归宿（commit ⇒ 提交、cancel ⇒ 取消、ignore ⇒ 直接返回）。
+     变异（M5 复验口径）：摘掉判据里的组合期早退 ⇒ 那边逐格用例红；把本层对判据的调用删掉
+     （自己重写一份 if-else）⇒ 第一条必红。 */
   const keydown = hook.slice(
     hook.indexOf("handleTitleKeyDown: (item, event) => {"),
     hook.indexOf("commitPriorityEdit: (item, selectValue) => {"),
   );
-  assert.ok(keydown.includes('event.key === "Enter"'), "Enter 提交");
   assert.ok(
-    keydown.includes("commitTitleEdit(item)"),
-    "Enter 走同一个提交函数（两条路不各写一遍）",
+    keydown.includes("resolveWorkItemInlineTitleKeyIntent({") &&
+      keydown.includes("key: event.key") &&
+      keydown.includes("compositionActive: composingRef.current") &&
+      keydown.includes("isComposing: event.nativeEvent.isComposing"),
+    "键盘意图必须交给纯函数判据（键 + 组合态 + 原生 isComposing 三格输入都带上）",
   );
-  assert.ok(keydown.includes('event.key === "Escape"'), "Escape 恢复");
-  assert.ok(keydown.includes("cancelTitleEdit()"), "Escape 走取消路径（不是提交）");
+  assert.ok(keydown.includes('if (intent === "ignore") return;'), "ignore ⇒ 不吃这个键");
+  assert.ok(
+    keydown.includes('if (intent === "commit")') && keydown.includes("commitTitleEdit(item)"),
+    "commit ⇒ 走同一个提交函数（两条路不各写一遍）",
+  );
+  assert.ok(
+    keydown.includes("cancelTitleEdit()"),
+    "cancel ⇒ 走取消路径（Escape 恢复原值，不是提交）",
+  );
   assert.ok(
     keydown.includes("event.stopPropagation()"),
     "编辑态的键盘事件不冒泡（Escape / Enter 不喂给行导航与全局快捷键）",
+  );
+  assert.ok(
+    !keydown.includes('event.key === "Enter"') && !keydown.includes('event.key === "Escape"'),
+    "本层不得再自写一份键位判据（两份判据迟早分叉，且分叉不报错）",
   );
 
   const cancel = hook.slice(hook.indexOf("cancelTitleEdit = () => {"), hook.indexOf("return {"));

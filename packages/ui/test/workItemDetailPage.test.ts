@@ -485,9 +485,20 @@ test("反向断言｜R9：写入只在页面的唯一执行点出现，且全 UI
       assert.ok(!source.includes(forbidden), `${file} 不得本地模拟落盘`);
     }
   }
-  const afterLoad = page.slice(page.indexOf("const runCommentAction"));
+  /* 「写入路径不得再取一次快照」的窗口按**真实存在的**符号切（T-P1-V 缺口 2）：
+     这里原来用 `const runCommentAction` 取窗口，而该符号早已改名 `runCollaborationAction`
+     （WorkItemDetailPage.tsx），`indexOf` 恒 -1 ⇒ `slice(-1)` 只剩最后一个字符 ⇒ 断言**恒真空跑**
+     （窗口 0 字符时任何 includes 都不命中，守卫静默失效）。两处新断言把这种「空窗口」变成响亮红：
+     ① 窗口必须真的从执行器声明处开始；② 窗口内必须出现执行器本体（`setPendingCommentId(`）。 */
+  const executorAt = page.indexOf("const runCollaborationAction");
+  assert.ok(executorAt >= 0, "窗口锚点必须是源码里真实存在的执行器符号（改名即红，不再静默空跑）");
+  const afterLoad = page.slice(executorAt, executorAt + 1600);
   assert.ok(
-    !afterLoad.slice(0, 1600).includes("getSnapshot("),
+    afterLoad.includes("setPendingCommentId("),
+    "窗口必须覆盖执行器本体（窗口为空的守卫是恒真空跑，不是通过）",
+  );
+  assert.ok(
+    !afterLoad.includes("getSnapshot("),
     "写入路径不得再取一次快照（一次动作只刷新一个事实源）",
   );
 });

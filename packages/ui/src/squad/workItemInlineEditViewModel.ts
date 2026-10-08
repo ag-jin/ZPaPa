@@ -1,4 +1,5 @@
 import type { WorkItemPriorityKey } from "@zcode/shared";
+import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import { writeDisabledReason } from "./workItemCollaborationViewModel.js";
 import {
   WORK_ITEM_SURFACE_FIELD_ERROR_MESSAGE_IDS,
@@ -99,6 +100,43 @@ export function resolveWorkItemInlinePriorityEdit(value: string): WorkItemInline
     };
   }
   return { kind: "ok", patch: { priority: parsed.patch.priority } };
+}
+
+/**
+ * 标题输入框在**编辑态**里的键盘意图（**闭集**：加一种意图 ⇒ 类型报错拖出全部消费点）。
+ * · `commit` = Enter（提交这次编辑）；`cancel` = Escape（恢复原值，不写库）；`ignore` = 不吃这个键。
+ */
+export type WorkItemInlineTitleKeyIntent = "commit" | "cancel" | "ignore";
+
+/**
+ * 编辑态按键 → 意图的**唯一判据**（T-P1-V 缺口 1 的补丁）。
+ *
+ * 为什么从 hook 里抽到本模块：IME 组合闸原先写在 `useWorkItemInlineEdit` 的
+ * `handleTitleKeyDown` 里，而本包没有渲染测试设施 ⇒ 这条判据**零测试覆盖**（复验实测：
+ * `isImeComposingKeyEvent` 在全部 test 目录引用数 0，M5「摘掉组合期早退块」整包不咬）。
+ * 抽成纯函数后可以逐格钉：组合期（任一来源）一律 `ignore`、非组合期 Enter ⇒ commit、
+ * Escape ⇒ cancel、其余键 ⇒ ignore —— 中文输入法的 Enter 是**候选确认**，不是提交，
+ * 这条语义此前只有源码阅读担保。
+ *
+ * 组合判据仍走 `isImeComposingKeyEvent` 单源（不在这里再写一份 `isComposing` 或链）：
+ * 两处各写一份的坏法是静默的 —— 一处认组合态、另一处不认，行为随调用路径漂移。
+ */
+export function resolveWorkItemInlineTitleKeyIntent(input: {
+  key: string;
+  compositionActive: boolean;
+  isComposing?: boolean;
+}): WorkItemInlineTitleKeyIntent {
+  if (
+    isImeComposingKeyEvent({
+      compositionActive: input.compositionActive,
+      isComposing: input.isComposing,
+    })
+  ) {
+    return "ignore";
+  }
+  if (input.key === "Enter") return "commit";
+  if (input.key === "Escape") return "cancel";
+  return "ignore";
 }
 
 /**

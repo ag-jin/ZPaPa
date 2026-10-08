@@ -12,10 +12,12 @@ import {
   WORK_ITEM_PRIORITY_CLEAR_VALUE,
   resolveWorkItemInlinePriorityEdit,
   resolveWorkItemInlineTitleEdit,
+  resolveWorkItemInlineTitleKeyIntent,
   workItemInlineEditUnavailableReason,
   workItemInlineEditUnchanged,
   workItemInlinePrioritySelectValue,
 } from "../src/squad/workItemInlineEditViewModel.js";
+import { isImeComposingKeyEvent } from "../src/lib/imeComposition.js";
 import { WORK_ITEM_SURFACE_FIELD_ERROR_MESSAGE_IDS } from "../src/squad/workItemPropertiesViewModel.js";
 
 /* 工作项**行内编辑**（阶段一轮 D，T-P1-R4）的**判据**逐格用例：字段 → patch 归一化、
@@ -154,6 +156,61 @@ test("守卫｜行内编辑的文案键两语成对（含归档不可用的原�
     WORK_ITEM_SURFACE_FIELD_ERROR_MESSAGE_IDS.priority,
     "优先级的失败文案指向轮 C 的同一个键（不抄一个同值字符串：抄出来的两份会各自漂移）",
   );
+});
+
+/* 守卫｜IME 判据逐格（T-P1-V 缺口 1：`isImeComposingKeyEvent` 在全部 test 目录里引用数 0，
+   变异 M5「摘掉组合期早退」整包不咬 —— 中文输入体验只有源码阅读担保）。
+   三个来源任一为真都算「组合中」：组件自己的组合态、React 合成事件、原生事件标记。
+   变异：把任一来源从判据里去掉 ⇒ 对应用例必红。 */
+test("IME 判据逐格：compositionActive / isComposing / nativeEvent 任一为真即「组合中」", () => {
+  assert.equal(isImeComposingKeyEvent({}), false, "没有任何组合标记 ⇒ 非组合期");
+  assert.equal(isImeComposingKeyEvent({ compositionActive: true }), true);
+  assert.equal(isImeComposingKeyEvent({ isComposing: true }), true);
+  assert.equal(isImeComposingKeyEvent({ nativeEvent: { isComposing: true } }), true);
+  assert.equal(isImeComposingKeyEvent({ nativeEvent: {} }), false);
+  assert.equal(
+    isImeComposingKeyEvent({ compositionActive: false, isComposing: false }),
+    false,
+    "显式 false 不得被读成「组合中」（漏一个 ! 就会让 Enter 永远不提交）",
+  );
+});
+
+/* 守卫｜行内标题的**键盘意图**逐格（判据抽成纯函数后，组合期/非组合期/未知键三格都可钉）。
+   组合期的 Enter 是**输入法候选确认**，不是提交；Escape 同理不是取消；未知键一律不吃。
+   变异（M5 复验口径）：摘掉判据里的 IME 早退块 ⇒ 第一组 8 条必红。 */
+test("行内标题键盘意图｜组合期：Enter / Escape / 未知键一律 ignore（候选确认不是提交）", () => {
+  for (const key of ["Enter", "Escape", "a", "Tab"]) {
+    assert.equal(
+      resolveWorkItemInlineTitleKeyIntent({ key, compositionActive: true }),
+      "ignore",
+      `组合期按 ${key} 不得触发提交或取消（那是输入法在确认候选）`,
+    );
+    assert.equal(
+      resolveWorkItemInlineTitleKeyIntent({ key, compositionActive: false, isComposing: true }),
+      "ignore",
+      `原生事件标记 isComposing=true 同样算组合期：${key}`,
+    );
+  }
+});
+
+test("行内标题键盘意图｜非组合期逐键：Enter ⇒ commit、Escape ⇒ cancel、其余 ⇒ ignore", () => {
+  assert.equal(
+    resolveWorkItemInlineTitleKeyIntent({ key: "Enter", compositionActive: false }),
+    "commit",
+    "非组合期 Enter = 提交",
+  );
+  assert.equal(
+    resolveWorkItemInlineTitleKeyIntent({ key: "Escape", compositionActive: false }),
+    "cancel",
+    "非组合期 Escape = 取消（恢复原值，不写库）",
+  );
+  for (const key of ["", " ", "Enter ", "Esc", "Tab", "Process", "a"]) {
+    assert.equal(
+      resolveWorkItemInlineTitleKeyIntent({ key, compositionActive: false }),
+      "ignore",
+      `编辑态不吃未知键：${JSON.stringify(key)}`,
+    );
+  }
 });
 
 /* 守卫｜归档判据：行内编辑不可用的原因**复用详情写面同一份判据**（`writeDisabledReason`）。
