@@ -675,3 +675,36 @@ export const WORK_ITEM_SURFACE_FIELDS_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_identifier
     ON work_items(workspace_key, identifier_seq);
 `;
+
+/* 0019（Subscriber 完整语义线 SUB.1）：建 `work_item_subscribers` 一张新表 + 两索引
+   （拆解报告 §2.1 的表形状）。只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017。
+
+   一行 = 一个「（工作项, 主体）的**当前**关系」，故：
+   · 唯一键是 `(workspace_key, work_item_id, subject_type, subject_id)`，**不含 `reason`**：
+     `reason` 是这行上「为什么我在这里」的当前解释（同一人既是创建者又是评论者时不该长两行，
+     否则退订要取消哪一行没有答案）；
+   · `tombstoned_at` 非空 = **显式退订**（用户意愿，可审计）。它与活动行共用同一行是为了让
+     「自动规则不得复活已退订者」成为**同一行上的判据**（不同行会让复活检查变成两次查、且能漏）；
+   · `opt_out_scope` 只在 tombstone 行上有语义（`issue` = 只此条 / `subtree` = 此条及后代），
+     活动行恒 `issue`——由 repo 的写路径维持，不在 DDL 里 CHECK（枚举漂移要在代码里响亮）；
+   · `reason` / `subject_type` / `opt_out_scope` 三个闭集同样由 repo 的**读写双闸**管
+     （与 `inbox_items.kind` / `work_item_pull_requests.state` 同一条纪律）。
+   刻意不建指向 work_items 的外键：工作项只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA 同理由）。 */
+export const WORK_ITEM_SUBSCRIBER_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_subscribers (
+    id             TEXT PRIMARY KEY,
+    workspace_key  TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    work_item_id   TEXT NOT NULL,
+    subject_type   TEXT NOT NULL,
+    subject_id     TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    opt_out_scope  TEXT NOT NULL,
+    tombstoned_at  INTEGER,
+    created_at     INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_work_item_subscribers_unique
+    ON work_item_subscribers(workspace_key, work_item_id, subject_type, subject_id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_subscribers_subject
+    ON work_item_subscribers(workspace_key, subject_type, subject_id);
+`;

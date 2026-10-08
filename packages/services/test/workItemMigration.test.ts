@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
-import { WORK_ITEM_SCHEMA } from "../src/session/tasksDatabase/schema-v1.js";
+import {
+  WORK_ITEM_SCHEMA,
+  WORK_ITEM_SUBSCRIBER_SQL,
+} from "../src/session/tasksDatabase/schema-v1.js";
 
 function openFreshDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -140,6 +143,12 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "ALTER TABLE work_items DROP COLUMN start_date",
     "ALTER TABLE work_items DROP COLUMN priority",
   ],
+  // 0019（Subscriber 完整语义线 SUB.1）：只建一张新表 + 两索引（反向 DDL 先索引后表，同 0010/0011/0012/0016）。
+  "0019_work_item_subscribers": [
+    "DROP INDEX idx_work_item_subscribers_subject",
+    "DROP INDEX idx_work_item_subscribers_unique",
+    "DROP TABLE work_item_subscribers",
+  ],
 };
 
 /* 0016（#7 交付物 D1a）的列集：设计报告 §3.2 的表形状逐字抄录（不在这里用代码重算）。
@@ -168,6 +177,65 @@ const EXPECTED_DELIVERABLE_INDEXES = [
   "idx_work_item_deliverables_item",
   "idx_work_item_deliverables_run",
 ];
+
+/* 0019（SUB.1）的列集：拆解报告 §2.1 的表形状逐字抄录（不在这里用代码重算）。
+   三个闭集列（reason / subject_type / opt_out_scope）不占 CHECK：枚举漂移要在 repo 的读写双闸里
+   响亮，不在 DDL 里静默（与 inbox_items.kind / work_item_pull_requests.state 同一条纪律）。 */
+const EXPECTED_SUBSCRIBER_COLUMNS = [
+  "id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "subject_type",
+  "subject_id",
+  "reason",
+  "opt_out_scope",
+  "tombstoned_at",
+  "created_at",
+];
+
+const EXPECTED_SUBSCRIBER_INDEXES = [
+  "idx_work_item_subscribers_subject",
+  "idx_work_item_subscribers_unique",
+];
+
+function subscriberColumns(db: DatabaseSync): string[] {
+  return (
+    db.prepare("PRAGMA table_info(work_item_subscribers)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function subscriberIndexes(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_work_item_subscribers%'",
+      )
+      .all() as Array<{ name: string }>
+  )
+    .map((row) => row.name)
+    .sort();
+}
+
+/** 唯一索引的列序与唯一性（PRAGMA index_list/index_info 的裸读，不经 repo）。 */
+function subscriberUniqueIndexFacts(db: DatabaseSync): {
+  unique: number;
+  columns: string[];
+  partial: number;
+} {
+  const listed = db.prepare("PRAGMA index_list(work_item_subscribers)").all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  const entry = listed.find((row) => row.name === "idx_work_item_subscribers_unique");
+  const columns = (
+    db.prepare("PRAGMA index_info(idx_work_item_subscribers_unique)").all() as Array<{
+      name: string;
+    }>
+  ).map((row) => row.name);
+  return { unique: entry?.unique ?? 0, columns, partial: entry?.partial ?? 0 };
+}
 
 function deliverableColumns(db: DatabaseSync): string[] {
   return (
@@ -561,4 +629,68 @@ test("老库升级只补跑最新一条迁移", () => {
   });
   assert.equal(executedAgain, 0);
   assert.deepEqual(ledger(db), fullLedger);
+});
+
+// ---------------------------------------------------------------------------
+// 0019（SUB.1）：work_item_subscribers —— 订阅关系的存储落点
+// ---------------------------------------------------------------------------
+
+test("0019 订阅表：列集与两索引齐备；唯一键不含 reason；重复插入被唯一索引拒绝；账本收尾 19 条", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+
+  assert.deepEqual(subscriberColumns(db), EXPECTED_SUBSCRIBER_COLUMNS, "0019 的列集逐字对号");
+  assert.deepEqual(
+    subscriberIndexes(db),
+    EXPECTED_SUBSCRIBER_INDEXES,
+    "恰两条索引：唯一键 + 主体反查",
+  );
+
+  const facts = subscriberUniqueIndexFacts(db);
+  assert.equal(facts.unique, 1, "idx_work_item_subscribers_unique 必须是 UNIQUE 索引");
+  assert.deepEqual(
+    facts.columns,
+    ["workspace_key", "work_item_id", "subject_type", "subject_id"],
+    "唯一键 = (workspace, 工作项, 主体类型, 主体 id)：一行 = 一个（工作项, 主体）的当前关系，" +
+      "reason 是这行上的字段而不是键的一部分（含 reason 会让同一个人长两行，退订时无从选择）",
+  );
+  assert.equal(facts.partial, 0, "唯一索引不得带谓词（带谓词会让同一主体在谓词外再长一行）");
+
+  // 存储层不变式：人为重复插入必须被唯一索引**拒绝**（幂等不是靠调用方的「先查后插」）。
+  const insert = (id: string, reason: string) =>
+    db
+      .prepare(
+        `INSERT INTO work_item_subscribers (
+           id, workspace_key, workspace_path, work_item_id, subject_type, subject_id,
+           reason, opt_out_scope, tombstoned_at, created_at
+         ) VALUES (?, 'ws-1', '/tmp/ws-1', 'wi-1', 'human', 'local-user', ?, 'issue', NULL, 1)`,
+      )
+      .run(id, reason);
+  insert("s-1", "creator");
+  assert.throws(
+    () => insert("s-2", "commenter"),
+    /UNIQUE/,
+    "同 (workspace, 工作项, 主体) 的第二行必须被拒绝——换了 reason 也不能长第二行",
+  );
+  // 键的另一半：换工作项就是另一个关系，合法。
+  db.prepare(
+    `INSERT INTO work_item_subscribers (
+       id, workspace_key, workspace_path, work_item_id, subject_type, subject_id,
+       reason, opt_out_scope, tombstoned_at, created_at
+     ) VALUES ('s-3', 'ws-1', '/tmp/ws-1', 'wi-2', 'human', 'local-user', 'creator', 'issue', NULL, 1)`,
+  ).run();
+  const count = db.prepare("SELECT COUNT(*) AS n FROM work_item_subscribers").get() as {
+    n: number;
+  };
+  assert.equal(count.n, 2, "不同工作项各自一行");
+
+  const ids = ledger(db).map((row) => row.id);
+  assert.equal(ids.length, 19, "账本 0001..0019 恰 19 条");
+  assert.equal(ids.at(-1), "0019_work_item_subscribers", "最后一条是 0019（本轮追加）");
+
+  // DDL 幂等：绕开账本把常量再执行一遍（IF NOT EXISTS 生效，形状一字不改）。
+  const before = subscriberColumns(db);
+  assert.doesNotThrow(() => db.exec(WORK_ITEM_SUBSCRIBER_SQL));
+  assert.deepEqual(subscriberColumns(db), before);
+  assert.deepEqual(subscriberIndexes(db), EXPECTED_SUBSCRIBER_INDEXES);
 });

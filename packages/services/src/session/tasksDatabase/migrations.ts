@@ -19,6 +19,7 @@ import {
   WORK_ITEM_DELIVERABLE_SQL,
   WORK_ITEM_PULL_REQUEST_SQL,
   WORK_ITEM_SCHEMA,
+  WORK_ITEM_SUBSCRIBER_SQL,
   WORK_ITEM_SURFACE_FIELDS_SQL,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
@@ -165,6 +166,13 @@ const definitions = [
     id: "0018_work_item_surface_fields",
     checksumInput: [WORK_ITEM_SURFACE_FIELDS_SQL],
   },
+  /* 0019（Subscriber 完整语义线 SUB.1）：建 `work_item_subscribers` 一张新表 + 两索引
+     （唯一键 (workspace_key, work_item_id, subject_type, subject_id) + 主体反查索引）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017。 */
+  {
+    id: "0019_work_item_subscribers",
+    checksumInput: [WORK_ITEM_SUBSCRIBER_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -233,6 +241,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0017_work_item_pull_requests") db.exec(WORK_ITEM_PULL_REQUEST_SQL);
       else if (migration.id === "0018_work_item_surface_fields")
         db.exec(WORK_ITEM_SURFACE_FIELDS_SQL);
+      else if (migration.id === "0019_work_item_subscribers") db.exec(WORK_ITEM_SUBSCRIBER_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

@@ -212,6 +212,8 @@ const LEDGER_IDS = [
   // 0018（工作项 Surface 对齐 · 阶段一 R1）：D2 之后追加的最后一条 —— 本表是全量账本的逐条对号，
   // 追加迁移时同步补一行（DR2 的「恰 17 条」由此改为全量对号，0017 之前的 id 一字未动仍被钉住）。
   "0018_work_item_surface_fields",
+  // 0019（SUB.1 订阅表）：同一条追加纪律 —— 补一行，既有 id 一字不动。
+  "0019_work_item_subscribers",
 ];
 
 /**
@@ -268,7 +270,11 @@ test("升级路径｜把 0017 行与其对象摘掉再跑 ⇒ 恰执行 1 条（
   const count = db.prepare("SELECT COUNT(*) AS n FROM tasks_schema_migration").get() as {
     n: number;
   };
-  assert.equal(count.n, 18, "补跑后账本 = 全量 18 条（0018 行本来就在，不因 0017 重跑而增减）");
+  assert.equal(
+    count.n,
+    19,
+    "补跑后账本 = 全量 19 条（0018/0019 行本来就在，不因 0017 重跑而增减）",
+  );
   db.close();
 });
 

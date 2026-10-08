@@ -77,13 +77,19 @@ function identifierIndexFacts(db: DatabaseSync): { unique: number; columns: stri
   return { unique, columns };
 }
 
-/** 退到 0017 形态（老库）：撤掉 0018 的索引与 7 列，并删掉它的账本行。 */
+/** 退到 0017 形态（老库）：撤掉 0018 的索引与 7 列，并删掉它的账本行。
+    0019（SUB.1 订阅表）追加后同步登记其反向 DDL（本仓「追加迁移时同步补登记」的既有纪律）：
+    本夹具要模拟的是「0018 之前的老库」，留下 0019 的对象与账本行会让补跑断言测到另一种形状。 */
 function downgradeTo0017(db: DatabaseSync): void {
   db.exec(`DROP INDEX IF EXISTS ${IDENTIFIER_INDEX}`);
   for (const column of [...SURFACE_COLUMNS].reverse()) {
     db.exec(`ALTER TABLE work_items DROP COLUMN ${column}`);
   }
   db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0018_work_item_surface_fields'").run();
+  db.exec("DROP INDEX idx_work_item_subscribers_subject");
+  db.exec("DROP INDEX idx_work_item_subscribers_unique");
+  db.exec("DROP TABLE work_item_subscribers");
+  db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0019_work_item_subscribers'").run();
 }
 
 function legacyRow(
@@ -108,12 +114,12 @@ function rowsByWorkspace(
   }>;
 }
 
-test("0018｜新库：账本 18 条（0018 收尾），7 列按 ALTER 序追加，唯一索引就位", () => {
+test("0018｜新库：账本 19 条（0019 收尾），7 列按 ALTER 序追加，唯一索引就位", () => {
   const db = openDb();
   runTasksDatabaseMigrations(db);
   const ids = ledgerIds(db);
-  assert.equal(ids.length, 18, "账本应到 0018（0001–0017 + 0018）");
-  assert.equal(ids.at(-1), "0018_work_item_surface_fields");
+  assert.equal(ids.length, 19, "账本应到 0019（0001–0017 + 0018 + 0019）");
+  assert.equal(ids.at(-1), "0019_work_item_subscribers");
   assert.deepEqual(
     columnNames(db, "work_items").slice(-SURFACE_COLUMNS.length),
     [...SURFACE_COLUMNS],
@@ -213,7 +219,7 @@ test("0018｜零回填：老库升级后 priority / 日期 / creator 三族全�
   db.close();
 });
 
-test("0018｜升级恰执行 1 条：账本逐行一致、老库与从零建库同形状、再跑 no-op", () => {
+test("0018｜升级路径：账本逐行一致、老库与从零建库同形状、再跑 no-op", () => {
   const full = openDb();
   runTasksDatabaseMigrations(full);
   const fullLedger = ledgerIds(full);
@@ -229,7 +235,14 @@ test("0018｜升级恰执行 1 条：账本逐行一致、老库与从零建库�
       if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
     },
   });
-  assert.deepEqual(migrated, ["0017_work_item_pull_requests"], "老库升级只补跑 0018 一条");
+  /* 0019（SUB.1 订阅表）追加后，从「0018 之前」的老库补跑会一并装回 0018 与 0019 两条。
+     两条上报的 `lastAppliedMigrationId` 都是本次执行前的账本头 `0017` —— 头部只在本次运行的
+     循环之前采集一次（runner 的既有实现），不是「第二遍又从头跑」。 */
+  assert.deepEqual(
+    migrated,
+    ["0017_work_item_pull_requests", "0017_work_item_pull_requests"],
+    "老库升级补跑 0018 与其后追加的 0019 两条",
+  );
   assert.deepEqual(ledgerIds(db), fullLedger);
   assert.deepEqual(columnNames(db, "work_items"), columnNames(full, "work_items"));
   assert.deepEqual(identifierIndexFacts(db), identifierIndexFacts(full));
