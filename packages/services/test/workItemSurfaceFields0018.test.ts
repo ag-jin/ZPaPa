@@ -97,6 +97,10 @@ function downgradeTo0017(db: DatabaseSync): void {
   db.exec("DROP TABLE work_item_view_prefs");
   db.exec("DROP TABLE work_item_views");
   db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0020_work_item_views'").run();
+  // 0021（工作项级 reactions，P3-R5s）：一表一索引（同 0016/0017/0019 的序：先索引后表）。
+  db.exec("DROP INDEX idx_work_item_reactions_item");
+  db.exec("DROP TABLE work_item_reactions");
+  db.prepare("DELETE FROM tasks_schema_migration WHERE id = '0021_work_item_reactions'").run();
 }
 
 function legacyRow(
@@ -121,12 +125,12 @@ function rowsByWorkspace(
   }>;
 }
 
-test("0018｜新库：账本 20 条（0020 收尾），7 列按 ALTER 序追加，唯一索引就位", () => {
+test("0018｜新库：账本 21 条（0021 收尾），7 列按 ALTER 序追加，唯一索引就位", () => {
   const db = openDb();
   runTasksDatabaseMigrations(db);
   const ids = ledgerIds(db);
-  assert.equal(ids.length, 20, "账本应到 0020（0001–0019 + 0020）");
-  assert.equal(ids.at(-1), "0020_work_item_views");
+  assert.equal(ids.length, 21, "账本应到 0021（0001–0020 + 0021）");
+  assert.equal(ids.at(-1), "0021_work_item_reactions");
   assert.deepEqual(
     columnNames(db, "work_items").slice(-SURFACE_COLUMNS.length),
     [...SURFACE_COLUMNS],
@@ -242,17 +246,19 @@ test("0018｜升级路径：账本逐行一致、老库与从零建库同形状�
       if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
     },
   });
-  /* 0019（SUB.1 订阅表）与 0020（saved views）追加后，从「0018 之前」的老库补跑会一并装回
-     0018 / 0019 / 0020 三条。三条上报的 `lastAppliedMigrationId` 都是本次执行前的账本头 `0017`
-     —— 头部只在本次运行的循环之前采集一次（runner 的既有实现），不是「第二遍又从头跑」。 */
+  /* 0019（SUB.1 订阅表）/ 0020（saved views）/ 0021（工作项级 reactions）追加后，从「0018 之前」的
+     老库补跑会一并装回 0018 / 0019 / 0020 / 0021 四条。四条上报的 `lastAppliedMigrationId` 都是
+     本次执行前的账本头 `0017` —— 头部只在本次运行的循环之前采集一次（runner 的既有实现），
+     不是「第二遍又从头跑」。 */
   assert.deepEqual(
     migrated,
     [
       "0017_work_item_pull_requests",
       "0017_work_item_pull_requests",
       "0017_work_item_pull_requests",
+      "0017_work_item_pull_requests",
     ],
-    "老库升级补跑 0018 与其后追加的 0019 / 0020 三条",
+    "老库升级补跑 0018 与其后追加的 0019 / 0020 / 0021 四条",
   );
   assert.deepEqual(ledgerIds(db), fullLedger);
   assert.deepEqual(columnNames(db, "work_items"), columnNames(full, "work_items"));

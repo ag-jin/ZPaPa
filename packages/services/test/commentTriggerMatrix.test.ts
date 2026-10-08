@@ -1039,6 +1039,12 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
       "DROP TABLE work_item_view_prefs",
       "DROP TABLE work_item_views",
     ],
+    // 0021（工作项级 reactions，P3-R5s）：只建一张新表 + 一条索引（反向 DDL 先索引后表，
+    // 同 0016/0017/0019/0020 的序）。
+    "0021_work_item_reactions": [
+      "DROP INDEX idx_work_item_reactions_item",
+      "DROP TABLE work_item_reactions",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
   /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整

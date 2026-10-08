@@ -18,6 +18,7 @@ import {
   WAKE_RULE_SCHEMA,
   WORK_ITEM_DELIVERABLE_SQL,
   WORK_ITEM_PULL_REQUEST_SQL,
+  WORK_ITEM_REACTIONS_SQL,
   WORK_ITEM_SCHEMA,
   WORK_ITEM_SUBSCRIBER_SQL,
   WORK_ITEM_SURFACE_FIELDS_SQL,
@@ -181,6 +182,13 @@ const definitions = [
     id: "0020_work_item_views",
     checksumInput: [WORK_ITEM_VIEWS_SQL],
   },
+  /* 0021（工作项级 reactions，阶段三 P3-R5s 服务面半边）：建 `work_item_reactions` 一张新表 + 一条
+     查询索引（五元组唯一键 + (workspace_key, work_item_id, created_at) 查询形状）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020。 */
+  {
+    id: "0021_work_item_reactions",
+    checksumInput: [WORK_ITEM_REACTIONS_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -251,6 +259,7 @@ export function runTasksDatabaseMigrations(
         db.exec(WORK_ITEM_SURFACE_FIELDS_SQL);
       else if (migration.id === "0019_work_item_subscribers") db.exec(WORK_ITEM_SUBSCRIBER_SQL);
       else if (migration.id === "0020_work_item_views") db.exec(WORK_ITEM_VIEWS_SQL);
+      else if (migration.id === "0021_work_item_reactions") db.exec(WORK_ITEM_REACTIONS_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

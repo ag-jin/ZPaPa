@@ -782,3 +782,36 @@ export const WORK_ITEM_VIEWS_SQL = `
     PRIMARY KEY (workspace_key, owner_kind, owner_id)
   );
 `;
+
+/* 0021（工作项级 reactions，阶段三 P3-R5s —— 服务面半边）：建**单表** `work_item_reactions`
+   （轻实体）+ 一条查询索引。用户裁定「并入 Surface 阶段三」，取证见
+   reports/2026-10-09-reactions-multica-evidence.md §1/§2（multica `027_issue_reactions`）。
+
+   · 列形状**复用 0010 的 `work_item_comment_reactions` 现成模板**（`:390-399`）：回应是轻实体，
+     不存展示名快照、不存正文、不挂 revision —— 行本身只是「谁、在哪个工作项上、留了哪个 emoji」。
+   · **五元组唯一键** `(workspace_key, work_item_id, author_kind, author_id, emoji)`（multica
+     `UNIQUE (issue_id, actor_type, actor_id, emoji)` 的 ZPaPa 同构 + workspace 前缀）：
+     「同人同 emoji 恰一条」由存储层兜底，写路径是 `INSERT OR IGNORE`（命中冲突 = 无变化，
+     见 repo 的 `changes()` 判定）—— 幂等不靠先查后插。一人多 emoji 天然合法（唯一键含 emoji）。
+   · **`CHECK (length(emoji) > 0)` 是唯一的存储层约束**：multica 服务端零白名单/零长度校验
+     （只有非空串能落库），UI 侧的快捷表情集是**呈现**、不是存储判据 —— 写进 DDL 会让
+     「放开完整 emoji picker」变成一次数据迁移。长度护栏在服务面（宽松上限，防滥用）。
+   · 索引 `(workspace_key, work_item_id, created_at)`：读路径的唯一形状是「按工作项取全行、
+     按插入序（created_at）排」—— 即列表/聚合的取数口径。**列序照此固定**（迁移用例钉住）。
+   · **不给 work_items 建外键**（0010 同款理由：工作项只归档不硬删，外键会在归档路径上误伤）。
+   · **不进 activity 流**（multica 同款：reactions 不进时间线）；也**不写 revision 通道**
+     （单机 SQLite 单写者直读，无多端对齐问题 —— 台账第 223 轮的裁定）。 */
+export const WORK_ITEM_REACTIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_reactions (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    work_item_id  TEXT NOT NULL,
+    author_kind   TEXT NOT NULL,
+    author_id     TEXT NOT NULL,
+    emoji         TEXT NOT NULL CHECK (length(emoji) > 0),
+    created_at    INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, author_kind, author_id, emoji)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_reactions_item
+    ON work_item_reactions(workspace_key, work_item_id, created_at);
+`;
