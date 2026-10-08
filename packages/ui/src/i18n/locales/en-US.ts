@@ -4490,6 +4490,11 @@ const enUS: Record<string, string> = {
   "squad.agentDetail.runsMoreFailed": "Failed to load more",
   "squad.agentDetail.runsLoaded": "{count} loaded (more available)",
   "squad.agentDetail.runsAllLoaded": "All loaded",
+  // Usage cell (#6 per-run accounting, CT.3): "not recorded" renders **no cell at all**, so there is
+  // no wording for it here; a recorded 0 is a fact and is rendered ("ran but consumed nothing"
+  // must stay distinguishable from "nothing was recorded").
+  "squad.agentDetail.runUsage.total": "{total} tokens",
+  "squad.agentDetail.runUsage.totalWithReasoning": "{total} tokens (reasoning {reasoning})",
   // Settle reasons: known codes are localized here; non-closed-set text is shown verbatim by the UI.
   "squad.agentDetail.settleReason.watchdogDeadSession": "Watchdog: session disappeared",
   "squad.agentDetail.settleReason.watchdogTtl": "Watchdog: timed out before wrap-up",

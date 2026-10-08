@@ -8,7 +8,11 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 import { buildAgentPresence } from "./squadPresenceViewModel.js";
-import { mergeRunHistoryPages, runSettleReasonMessageId } from "./squadRunHistoryViewModel.js";
+import {
+  mergeRunHistoryPages,
+  runSettleReasonMessageId,
+  runUsageLabel,
+} from "./squadRunHistoryViewModel.js";
 import { resolveSquadRuntimeService } from "./squadRuntimeAccess.js";
 import { listMcpServerEntries, mcpTransportMessageId } from "./teamAgentMcpViewModel.js";
 import { logger } from "@/logger.js";
@@ -355,7 +359,7 @@ function RunsZone({
   history: RunHistoryView | null;
   onLoadMore: () => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const t = (id: string, values?: Record<string, string | number>) =>
     intl.formatMessage({ id }, values);
   const runs = history?.runs ?? [];
@@ -380,12 +384,26 @@ function RunsZone({
                  不是闭集，失败原因原文也落这一列 —— 当枚举隐藏就是把最该看的一行抹掉）；
                  空 ⇒ 整块不渲染。 */
               const reasonMessageId = runSettleReasonMessageId(run.settleReason ?? null);
+              /* 用量一格（#6 按 run 记账）：判档与格式化都在纯函数里（组件只消费）。
+                 `null` = **未记录**（`usage_recorded_at` 为 NULL）⇒ 整块不渲染 —— 不显示 0，
+                 也不显示占位符：把「没记账」说成一句话就是在说一个我们不知道的事实。 */
+              const usage = runUsageLabel(run, locale);
               return (
                 <li key={run.runId} className="flex items-center gap-2 text-ui-sm">
                   <span className={BADGE_CLASSNAME}>{t(`squad.runs.status.${run.status}`)}</span>
                   <span className="min-w-0 flex-1 truncate text-foreground-subtlest">
                     {run.branch ?? run.runId}
                   </span>
+                  {usage === null ? null : (
+                    <span className={BADGE_CLASSNAME} data-testid="squad-agent-detail-run-usage">
+                      {usage.reasoning === null
+                        ? t("squad.agentDetail.runUsage.total", { total: usage.total })
+                        : t("squad.agentDetail.runUsage.totalWithReasoning", {
+                            total: usage.total,
+                            reasoning: usage.reasoning,
+                          })}
+                    </span>
+                  )}
                   {run.settleReason ? (
                     <span
                       className={BADGE_CLASSNAME}

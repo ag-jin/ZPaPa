@@ -4202,6 +4202,10 @@ const zhCN: Record<string, string> = {
   "squad.agentDetail.runsMoreFailed": "加载更多失败",
   "squad.agentDetail.runsLoaded": "已加载 {count} 条（还有更多）",
   "squad.agentDetail.runsAllLoaded": "已全部加载",
+  // 用量一格（#6 按 run 记账，CT.3）：**未记录不渲染该格**，故这里没有「未记录」文案；
+  // 记录值 0 是事实，照常渲染（「跑过但没消耗」与「没记账」必须看得出区别）。
+  "squad.agentDetail.runUsage.total": "{total} tokens",
+  "squad.agentDetail.runUsage.totalWithReasoning": "{total} tokens（含推理 {reasoning}）",
   // 结算原因：已知码值本地化；非闭集原文由界面原样显示（不经这里）。
   "squad.agentDetail.settleReason.watchdogDeadSession": "看门狗：会话已消失",
   "squad.agentDetail.settleReason.watchdogTtl": "看门狗：超时未收尾",

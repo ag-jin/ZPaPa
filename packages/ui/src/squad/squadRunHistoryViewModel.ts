@@ -5,6 +5,7 @@ import {
   SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
   type SquadRunRecord,
 } from "@zcode/services";
+import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 
 /* agent 详情页「运行历史」分页（欠账 #13，2026-10-07 裁定）的**纯逻辑**。
 
@@ -65,4 +66,39 @@ export const RUN_SETTLE_REASON_MESSAGE_IDS: Record<string, string> = {
 export function runSettleReasonMessageId(reason: string | null | undefined): string | null {
   if (!reason) return null;
   return RUN_SETTLE_REASON_MESSAGE_IDS[reason] ?? null;
+}
+
+/** 运行行的用量呈现（#6 按 run 记账，CT.3）：`total` 与 `reasoning` 都是**已格式化的紧凑数字**
+ *  （`formatCompactTokenNumber` 单源）；`reasoning === null` = 无分解（推理为 0 或缺席）。 */
+export type RunUsageLabel = {
+  total: string;
+  reasoning: string | null;
+};
+
+/**
+ * 用量文案的分档判据：**只认 `usageRecordedAt`（0015 的存在性开关）**，不认数字本身。
+ *
+ * · `usageRecordedAt === null`（未记录：没有会话 / 补拉没成功 / 遗留行）⇒ `null` = 界面**整块不渲染**。
+ *   **不得折成 0**：0 是「跑过但没消耗」这个事实，渲染 0 会把「没记账」伪装成「没花用量」；
+ * · 已记录 ⇒ `total` 走 `formatCompactTokenNumber`（本域单源，中文万/亿、英文 K/M）。
+ */
+export function runUsageLabel(
+  run: Pick<SquadRunRecord, "usageRecordedAt" | "usageTotalTokens" | "usageReasoningTokens">,
+  locale: string,
+): RunUsageLabel | null {
+  if (run.usageRecordedAt === null || run.usageRecordedAt === undefined) return null;
+  const total = run.usageTotalTokens;
+  /* 开关说「已记录」但总数不是数字：只可能出自绕过 `recordUsage` 的行字面量（9 列同写同读）。
+     这一格**不猜 0**（NULL ≠ 0），也不渲染半个数字 —— 没有可诚实显示的总数就不渲染该格。 */
+  if (typeof total !== "number" || !Number.isFinite(total)) return null;
+  /* 分解只给**推理**这一枚（v1 冻结：缓存读写/请求计数是诊断字段，无产品面消费方；列已存，
+     将来加是加法）。0 不渲染 `含推理 0`（那是噪音，且「0 推理」与「无分解」对用户是同一件事）。 */
+  const reasoning = run.usageReasoningTokens;
+  return {
+    total: formatCompactTokenNumber(locale, total),
+    reasoning:
+      typeof reasoning === "number" && Number.isFinite(reasoning) && reasoning > 0
+        ? formatCompactTokenNumber(locale, reasoning)
+        : null,
+  };
 }
