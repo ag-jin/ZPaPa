@@ -52,22 +52,45 @@ test("i18n：chat.webElements.* 两语键集相等，评语编辑四条文案按
 });
 
 test("i18n：browser.elementPicker.* 两语键集相等，浮条动作与评语区文案按设计落地", () => {
-  assertPrefixParity("browser.elementPicker.", 16);
+  // 键集逐条钉死：合并层级与评语一步提交后，「确认/跳过/完成」三个键必须消失
+  // （少删一个就是浮条上还留着说不出话的死按钮），只允许新增「取消」与「层级指示」。
+  const expectedKeys = [
+    "browser.elementPicker.bar.adjustHint",
+    "browser.elementPicker.bar.cancel",
+    "browser.elementPicker.bar.chainTruncated",
+    "browser.elementPicker.bar.hint",
+    "browser.elementPicker.bar.levelIndicator",
+    "browser.elementPicker.bar.repick",
+    "browser.elementPicker.bar.selectedCount",
+    "browser.elementPicker.bar.sliderLabel",
+    "browser.elementPicker.cancel",
+    "browser.elementPicker.comment.add",
+    "browser.elementPicker.comment.placeholder",
+    "browser.elementPicker.popover.background",
+    "browser.elementPicker.popover.color",
+    "browser.elementPicker.popover.font",
+    "browser.elementPicker.start",
+  ].sort();
+  assertPrefixParity("browser.elementPicker.", expectedKeys.length);
+  assert.deepEqual(
+    keysWithPrefix(zhCN, "browser.elementPicker.").sort(),
+    expectedKeys,
+    "browser.elementPicker.* 键集必须与设计 §10.1 一致",
+  );
 
   const expected = {
     "browser.elementPicker.bar.hint": ["点击页面中的元素", "Click an element in the page"],
     "browser.elementPicker.bar.adjustHint": ["拖动滑轨调整层级", "Drag the slider to adjust level"],
     "browser.elementPicker.bar.sliderLabel": ["祖先层级", "Ancestor level"],
     "browser.elementPicker.bar.repick": ["重选", "Repick"],
-    "browser.elementPicker.bar.confirm": ["确认", "Confirm"],
-    "browser.elementPicker.bar.done": ["完成", "Done"],
+    "browser.elementPicker.bar.cancel": ["取消", "Cancel"],
+    "browser.elementPicker.bar.levelIndicator": ["第 {n} / {total} 层", "Level {n} of {total}"],
     "browser.elementPicker.bar.chainTruncated": ["祖先链已截断", "Ancestor chain truncated"],
     "browser.elementPicker.comment.placeholder": [
       "输入对该元素的评语或问题（可选）",
       "Add a comment or question for this element (optional)",
     ],
     "browser.elementPicker.comment.add": ["加入对话", "Add to chat"],
-    "browser.elementPicker.comment.skip": ["跳过", "Skip"],
   } as const;
 
   for (const [key, [zh, en]] of Object.entries(expected)) {
@@ -81,4 +104,8 @@ test("i18n：browser.elementPicker.* 两语键集相等，浮条动作与评语�
   assert.equal(enUS[selectedCountKey], "{count} elements selected");
   assert.equal(placeholdersOf(zhCN[selectedCountKey] ?? ""), "count");
   assert.equal(placeholdersOf(enUS[selectedCountKey] ?? ""), "count");
+
+  const levelIndicatorKey = "browser.elementPicker.bar.levelIndicator";
+  assert.equal(placeholdersOf(zhCN[levelIndicatorKey] ?? ""), "n,total");
+  assert.equal(placeholdersOf(enUS[levelIndicatorKey] ?? ""), "n,total");
 });

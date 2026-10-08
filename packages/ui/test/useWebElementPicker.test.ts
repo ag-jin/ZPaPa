@@ -7,6 +7,9 @@ import type { WebElementAncestorStep } from "../src/lib/webElementPickerScript.j
 /* 拾取会话循环（设计 §5.1 / §6 / §11.3）在 UI 面的用例：以 fake `executeJs` 驱动状态机，
    断言调用序列、阶段切换、payload 派发与错误收敛。
 
+   提交语义（用户实测反馈后收敛）：一次确认 = `confirmSelection(comment)` 一次性派发
+   「元素 + 评语」，没有 comment 轮、也没有补派发；空评语就是不带 comment 的同一份派发。
+
    断言口径说明：payload 走**默认出口**（`window` CustomEvent，与真实链路一致），
    在模块作用域替换一个只记录事件的 window 替身；页面侧的 executeJavaScript 结果由
    responder 按「命令方法名」编程化 resolve，因此不依赖真实 webview。 */
@@ -93,7 +96,14 @@ function latestSession(sessions: Array<unknown>) {
   return sessions.length === 0 ? undefined : sessions[sessions.length - 1];
 }
 
-test("会话循环：hover → adjust(滑轨) → comment → 再 pick 直到取消", async () => {
+/** 会话期间出现过的阶段序列（去掉终结的 null）。 */
+function phasesOf(sessions: Array<unknown>) {
+  return sessions
+    .map((session) => (session as { phase?: string } | null)?.phase)
+    .filter((phase): phase is string => typeof phase === "string");
+}
+
+test("会话循环：hover → adjust(滑轨) → 加入对话（带评语，单次派发）→ 再 pick 直到取消", async () => {
   const fake = createFakeExecuteJs();
   const sessions: Array<unknown> = [];
   let resolveAdjust: ((value: unknown) => void) | null = null;
@@ -140,7 +150,7 @@ test("会话循环：hover → adjust(滑轨) → comment → 再 pick 直到取
   assert.deepEqual(
     fake.methods(),
     ["beginAdjust"],
-    "先发 beginAdjust 再让浮条渲染确认按钮（顺序不变量）",
+    "先发 beginAdjust 再让浮条渲染加入对话按钮（顺序不变量）",
   );
 
   driver.setLevel(2);
@@ -158,38 +168,47 @@ test("会话循环：hover → adjust(滑轨) → comment → 再 pick 直到取
     `最新档位必须随脚本下发，实际为：${showAncestorScript ?? "(缺)"}`,
   );
 
-  driver.confirmSelection();
+  resetDispatched();
+  driver.confirmSelection("  表头文案要改\n成「季度」  ");
   await flush();
-  assert.equal((latestSession(sessions) as { phase?: string }).phase, "comment");
-  assert.equal(dispatched.length, 1, "确认后先派发一次无评语元素，chip 立即可见");
+  assert.equal(dispatched.length, 1, "「加入对话」= 元素 + 评语一次提交，只派发一次");
   assert.equal(dispatched[0]?.type, ADD_EVENT);
   assert.equal(dispatched[0]?.detail.tagName, "th");
   assert.equal(dispatched[0]?.detail.workspacePath, "/workspace/project");
-  assert.equal(dispatched[0]?.detail.comment, undefined);
-
-  driver.skipComment();
-  await flush();
   assert.equal(
-    fake.methods()[fake.methods().length - 1],
-    "pick",
-    "跳过评语后自动进入下一个元素的 hover 阶段",
+    dispatched[0]?.detail.comment,
+    "表头文案要改 成「季度」",
+    "评语在写入点规范化后随同一次派发",
   );
+  assert.deepEqual(
+    fake.methods(),
+    ["beginAdjust", "showAncestor", "confirm", "pick"],
+    "确认后直接回到 hover 再 pick 下一个（没有中间评语轮）",
+  );
+  assert.equal(phasesOf(sessions).includes("comment"), false, "会话状态机里不再有 comment 阶段");
 
   await started;
   assert.equal(latestSession(sessions), null, "页内取消（Esc）后会话归 idle");
-  const afterSkip = sessions[sessions.length - 2] as { phase?: string; pickedCount?: number };
-  assert.equal(afterSkip?.phase, "hover", "跳过评语后回到 hover 提示态继续选下一个");
-  assert.equal(afterSkip?.pickedCount, 1, "已选元素计数用于浮条提示");
+  const afterConfirm = sessions[sessions.length - 2] as {
+    phase?: string;
+    pickedCount?: number;
+  };
+  assert.equal(afterConfirm?.phase, "hover", "加入对话后回到 hover 提示态继续选下一个");
+  assert.equal(afterConfirm?.pickedCount, 1, "已选元素计数用于浮条提示");
 });
 
-test("会话循环：保存评语以同一身份补派发，不重新回页面取数", async () => {
+test("会话循环：评语为空/全空白/未传 → 同一次派发不带 comment", async () => {
   const fake = createFakeExecuteJs();
   const sessions: Array<unknown> = [];
+  const comments: Array<string | undefined> = [undefined, "   ", "\n\t "];
+  let round = 0;
   let resolveAdjust: ((value: unknown) => void) | null = null;
   fake.setResponder((script) => {
     const method = commandMethodOf(script);
-    if (method === null) {
-      return { status: "clicked", chain: CHAIN, chainTruncated: false };
+    if (method === null || method === "pick") {
+      return round < comments.length
+        ? { status: "clicked", chain: CHAIN, chainTruncated: false }
+        : { status: "cancelled" };
     }
     if (method === "beginAdjust") {
       return new Promise((resolve) => {
@@ -200,32 +219,29 @@ test("会话循环：保存评语以同一身份补派发，不重新回页面�
       resolveAdjust?.({ status: "selected", element: ELEMENT_PAYLOAD });
       return null;
     }
-    if (method === "pick") {
-      return { status: "cancelled" };
-    }
     return null;
   });
 
   const driver = createDriver(fake, sessions);
   const started = driver.start();
   await flush();
-  driver.confirmSelection();
-  await flush();
+  for (const comment of comments) {
+    round += 1;
+    resetDispatched();
+    if (comment === undefined) {
+      driver.confirmSelection();
+    } else {
+      driver.confirmSelection(comment);
+    }
+    await flush();
+    assert.equal(dispatched.length, 1, `第 ${round} 轮仍是单次派发`);
+    assert.equal(
+      "comment" in (dispatched[0]?.detail ?? {}),
+      false,
+      `空白评语（${JSON.stringify(comment)}）不得写入 comment 字段`,
+    );
+  }
 
-  resetDispatched();
-  driver.saveComment("  表头文案要改\n成「季度」  ");
-  await flush();
-
-  assert.equal(dispatched.length, 1, "保存评语补派发一次同身份元素");
-  assert.equal(dispatched[0]?.detail.comment, "表头文案要改 成「季度」", "评语在写入点规范化");
-  assert.equal(dispatched[0]?.detail.selector, ELEMENT_PAYLOAD.selector, "身份字段原样保留");
-  assert.equal(
-    fake.methods().includes("showAncestor"),
-    false,
-    "补评语不回页面取数，只重走 add 事件",
-  );
-
-  driver.skipComment();
   await started;
   assert.equal(latestSession(sessions), null);
 });
@@ -258,6 +274,7 @@ test("会话循环：重选（repick）回到 hover 并重新 pick", async () =>
   const started = driver.start();
   await flush();
   assert.equal((latestSession(sessions) as { chainTruncated?: boolean }).chainTruncated, true);
+  resetDispatched();
 
   driver.requestRepick();
   await flush();
@@ -270,6 +287,7 @@ test("会话循环：重选（repick）回到 hover 并重新 pick", async () =>
     1,
     "repick 后重新 pick 下一个元素",
   );
+  assert.deepEqual(dispatched, [], "重选不派发任何元素");
 
   await started;
   assert.equal(latestSession(sessions), null);
@@ -370,12 +388,14 @@ test("会话循环：阶段失败按取消静默收敛，首段注入失败才�
   const driverAgain = createDriver(midLoop, sessionsAgain);
   const started = driverAgain.start();
   await flush();
-  driverAgain.confirmSelection();
+  resetDispatched();
+  driverAgain.confirmSelection("评语");
   await flush();
-  driverAgain.skipComment();
 
   await assert.doesNotReject(started, "循环内失败不得冒泡成错误横幅");
   assert.equal(latestSession(sessionsAgain), null, "循环内失败静默收敛回 idle");
+  assert.equal(dispatched.length, 1, "本轮「加入对话」已派发（失败的是它之后的 pick）");
+  assert.equal(dispatched[0]?.detail.comment, "评语", "已提交的元素保留评语，不回滚");
 });
 
 test("会话循环：同一帧内的滑轨拖动合并成一次 showAncestor", async () => {
@@ -474,21 +494,19 @@ test("会话循环：已选计数按元素身份去重（同一元素重选不�
   for (let index = 0; index < selections.length; index += 1) {
     driver.confirmSelection();
     await flush();
-    driver.skipComment();
-    await flush();
   }
 
   await started;
   assert.equal(confirmed, 3, "三次确认都走完（末次 pick 才收敛为取消）");
-  const commentCounts = sessions
+  const hoverCounts = sessions
     .filter(
       (session): session is { phase: string; pickedCount: number } =>
-        (session as { phase?: string } | null)?.phase === "comment",
+        (session as { phase?: string } | null)?.phase === "hover",
     )
     .map((session) => session.pickedCount);
   assert.deepEqual(
-    commentCounts,
-    [1, 1, 2],
+    hoverCounts,
+    [0, 1, 1, 2],
     "同一元素（同 selector 身份）重选后浮条计数不涨，异元素才 +1",
   );
 });
@@ -499,10 +517,8 @@ test("会话循环：多余动作不改状态（幂等守卫）", async () => {
   const driver = createDriver(fake, sessions);
 
   driver.setLevel(3);
-  driver.confirmSelection();
+  driver.confirmSelection("x");
   driver.requestRepick();
-  driver.saveComment("x");
-  driver.skipComment();
   await flush();
 
   assert.deepEqual(fake.methods(), [], "未开始会话时任何动作都不应下发脚本");
