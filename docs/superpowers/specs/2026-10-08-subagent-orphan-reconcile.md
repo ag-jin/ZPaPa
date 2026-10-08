@@ -187,3 +187,45 @@ false，旧 J4 用例绿是因为 fake 手工把 child 放进了 `context.sessio
 session」索引，J4 并查它）；② 会话关闭时收走本会话的后台 agent（与同链已有的后台 bash、dwf run
 关闭对齐，让 child 落一个真实终态而非事后被推断为 lost）。两者都引入新的状态所有者或改变产品语义，
 按「发现设计缺陷先对齐」的约定留待决策，本分支不自行扩判据。
+
+## 7. 三面同源与收敛行的呈现（分支复核加固，2026-10-08）
+
+§1.5 只写了 `readSessionSubagentInventory` 一个读面，实现里却有多条取数路径共用
+`projectSessionSubagents`：V4 侧栏 / hydration 的权威清单，以及 TUI 观察面
+（`bootstrap/src/app/subagent-observation.ts` 的 `readSubagents`，终端子智能体目录的取数口）。
+**同一份持久记录必须由同一解释器读**——任一面自己判一次活、判一次终态，同一个孤儿就会在终端
+显示 running、在 V4 显示 lost（终端还会留一张永不消失的卡片）。
+
+### 7.1 TUI 观察面消费同一份 entry 事实
+
+- `createSubagentObservation` 与权威清单一样，按 child 读 `subagent_outcome` entry，作为
+  `subagentOutcomeEntryById` 传给同一次 `projectSessionSubagents`：running 集合与 ended 终态在
+  V4 清单 / hydration / TUI 目录三面逐字段同结论。
+- 用例：`bootstrap/test/coldHydrationSubagentStatus.test.ts`
+  「集成：同一孤儿收敛后 V4 侧栏清单 / hydration / TUI 观察三面同一终态」。
+
+### 7.2 收敛行的时间与 `reconciled` 标记：只在 entry 决定终态时成立
+
+`entry.data.reconciledAt` 是读面事实（与 `time.created` 同值）。**当且仅当该行的终态取自 entry**
+（child 无真实 outcome ∧ `endedStatus` 的结论 === entry 的终态）时，`endedAt` 取收敛时刻，并带
+`reconciled: true`；否则两者都退回既有时间链、不带标记。
+
+- 时间：spawn part 的 `end` 是 launch ACK（启动那一刻），拿它排序会让「跑了很久才被收敛」的孤儿
+  带着很早的时间沉到分页底部（用户翻不到）⇒ 收敛行的排序时间必须是收敛时刻。
+- 标记：更硬的终局事实（background 终态 / child projection / part error / stop 事件 / 真实 outcome）
+  赢过 entry 时，终态不是收敛来的——标记与成因文案必须跟着**真正决定终态的那条证据**走，
+  否则会给出「已取消」+「运行时已退出，结果未知」这种自相矛盾的呈现，并按收敛时刻错误排序。
+- 用例（`bootstrap/test/subagent-orphan-reconcile.test.ts`）：「收敛行的 endedAt 取
+  entry.data.reconciledAt」「因收敛落 lost 的行带 reconciled 标记」「更晚的 stop 事实赢过收敛
+  entry」「长期孤儿按收敛时刻排序」。
+
+### 7.3 呈现决定：`subagentDirectory.summary.reconciled` 接线（不删键）
+
+该文案键原先只写不用（死键）：收敛落 lost 的行只显示「已丢失」，说了状态没说成因。决定**接线**：
+
+- 读面给收敛行带 `reconciled: true`（`packages/shared` 的 `zcodeSessionEndedSubagentSchema` 增
+  可选字段），UI 纯函数 `ui/src/lib/subagentDirectoryRow.ts` 据此给副文案：child 自己的 `summary`
+  优先（它是证据），无 summary 且 `reconciled` 才补成因；组件只渲染纯函数的结果。
+- 代价（已接受）：`.strict()` 闭集加字段属于偏斜加值——旧桌面收到未知字段会整帧解析失败，依赖
+  CLI 与桌面同批发布（同类代价先例：`backgroundWorkSummarySchema.kind` 的闭集枚举加值）。
+- 用例：`ui/test/subagentDirectoryReconciledSummary.test.ts`（判据、优先级、接线守卫、两语文案在场）。
