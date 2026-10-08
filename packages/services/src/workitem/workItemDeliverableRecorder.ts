@@ -104,7 +104,10 @@ export function createWorkItemDeliverableRecorder(deps: {
   const capture = createDeliverableCapture({ git: deps.git, repoRoot: deps.workspace.path });
   const now = deps.now ?? (() => Date.now());
   const newId = deps.newId ?? (() => randomUUID());
-  const logWarn = deps.logWarn ?? ((message: string) => console.warn(message));
+  /* 缺省落 `console.warn`（服务日志面不是本模块的依赖）：**第二参数必须透传**（P3-2，D1 复验发现）
+     —— 丢掉原始错误后，warn 只剩「失败了」，复盘时看不到「为什么」（ENOTDIR / EACCES / 库约束…）。 */
+  const logWarn =
+    deps.logWarn ?? ((message: string, error?: unknown) => console.warn(message, error));
 
   /** 自动路径的**唯一**落库+回声：成功返回，失败只 warn（见文件头纪律①）。 */
   function record(

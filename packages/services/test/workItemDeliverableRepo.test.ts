@@ -229,6 +229,34 @@ test("路径逃逸防护：id 含 ../ 或分隔符 ⇒ 零副作用拒写；被�
   }
 });
 
+test("P3-1 单段闸对两型同口径：link 行的逃逸 id 同样零副作用拒写（D1 复验发现）", () => {
+  const { root, db, repo } = setup();
+  try {
+    /* 复验发现（P3-1）：单段闸原先只在 diff 分支（`deliverableContentPath` 里）——link 行不落盘，
+       于是 `../../escape` 这样的 id 能落库。id 是这张表的**主键与寻址面**（get(id) / 未来按 id 取数），
+       放行它等于让「id 是单一路径段」这条不变量只在一条写入口上成立 —— 两条入口分叉，且不报错。 */
+    for (const id of ["../evil", "..", ".", "a/b", "a\\b", ""]) {
+      assert.throws(
+        () => repo.register(linkInput(root, { id, dedupKey: `lk-${id}` })),
+        /id/,
+        `link 行的非法 id ${JSON.stringify(id)} 必须与 diff 同口径响亮拒`,
+      );
+    }
+    // 零副作用：一条都没落库（拒绝发生在写库之前，而不是「写进去了然后读不回来」）。
+    const count = db.prepare("SELECT COUNT(*) AS n FROM work_item_deliverables").get() as {
+      n: number;
+    };
+    assert.equal(count.n, 0);
+    // 合法 id 不受影响（闸只挡形态，不挡内容）。
+    assert.equal(
+      repo.register(linkInput(root, { id: "deliverable-link-ok" })).id,
+      "deliverable-link-ok",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("读回｜listByWorkItem（workspace 隔离 + created_at,id 序）与 listByRun（run 维度）", () => {
   const { root, repo } = setup();
   try {

@@ -286,6 +286,50 @@ test("D1b-③ 捕获失败（git 侧）不抛：留一条 warn、零行、零回
   assert.match(warns[0]!, /boom/, "warn 必须带 git 原文，否则复盘时不知道这次为什么没有交付物");
 });
 
+test("P3-2 缺省 logWarn 透传原始错误：登记面抛错时第二个参数原样到 console.warn（D1 复验发现）", async () => {
+  const repoRoot = await makeRepo();
+  const db = new DatabaseSync(":memory:");
+  runTasksDatabaseMigrations(db);
+  /* 捕获面成功（git 恒 0），失败发生在**登记面**：把 workspace 指到一个普通文件上
+     ⇒ 正文根 `mkdirSync` 抛 ENOTDIR ⇒ recordRunDiff 的 catch 走到 `logWarn(message, error)`。
+     用「路径是文件」而不是 chmod：它与运行用户无关，形态稳定（复验那轮用的是 EACCES）。 */
+  const notADirectory = join(repoRoot, "not-a-dir.txt");
+  writeFileSync(notADirectory, "x\n");
+  const okGit: GitRunner = async (args) => ({
+    code: 0,
+    stdout: args[0] === "rev-list" ? "1" : "diff --git a/a b/a\n",
+    stderr: "",
+  });
+  const captured: unknown[][] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    captured.push(args);
+  };
+  try {
+    const recorder = createWorkItemDeliverableRecorder({
+      git: okGit,
+      repo: createWorkItemDeliverableRepo(db),
+      workspace: { key: WS, path: notADirectory },
+    });
+    await recorder.recordRunDiff({
+      record: runRecord({ runId: "r-p3-2", branch: "squad/member/wi-c/d1b-agent" }),
+      base: "main",
+    });
+  } finally {
+    console.warn = original;
+  }
+
+  assert.equal(captured.length, 1, `恰一条 warn，实得：${JSON.stringify(captured)}`);
+  assert.equal(
+    captured[0]!.length,
+    2,
+    "第二个参数（原始错误）必须在缺省 logWarn 上透传 —— 丢掉它，复盘时看不到「为什么没留痕」",
+  );
+  assert.match(String(captured[0]![0]), /run 级交付物登记失败/);
+  assert.match(String((captured[0]![1] as Error)?.message), /ENOTDIR|not a directory/i);
+  assert.deepEqual(createWorkItemDeliverableRepo(db).listByRun("r-p3-2"), []);
+});
+
 test("D1b-④ record 级闸：队长 run（branch=null）不捕获 —— 零 git 调用、零行、零 warn", async () => {
   const repoRoot = await makeRepo();
   const db = new DatabaseSync(":memory:");

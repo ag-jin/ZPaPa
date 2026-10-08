@@ -324,6 +324,10 @@ export function createWorkItemDeliverableRepo(db: DatabaseSync): WorkItemDeliver
 
   return {
     register(input) {
+      /* id 闸**先于一切分支**（P3-1，D1 复验发现）：单段闸原先只藏在 `deliverableContentPath`
+         （diff 落盘半）里，于是 link 行的 `../../escape` 能落库。id 是主键与寻址面，两型同口径；
+         放在读 dedupKey **之前**，是为了让非法输入零副作用（否则重投会返回一行用坏 id 建的既存行）。 */
+      assertSinglePathSegment(input.id);
       assertDeliverableKind(input.kind);
       if (input.kind === "link") assertNonBlankUrl(input.url);
       // 幂等：同键重投返回既存行、**不重写正文**（写一次不更新——重放的第二次捕获可能算出
