@@ -2,15 +2,27 @@ import type { WorkItem } from "@zcode/shared";
 import { WorkItemRowList, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import { flattenWorkItemBoard } from "./workItemsViewModel.js";
 
-/* **list 视图**（阶段二 · T-P2-R1 先给最小实现；密度与批次子树呈现归 T-P2-R2）。
+/* **list 视图**（阶段二 · T-P2-R2）：**高密度树形行**的单列列表 —— 批次子树按深度缩进，
+   批根行保留时间线 / 放弃整批入口。
 
-   本文件存在的理由（接口冻结的硬约束）：宿主 `WorkItemsSurface` 的三视图分支由 T-P2-R1 **预置**，
-   非 board 的实现落在**各自的文件**里 —— 这样 R2（list）/ R3（table）换实现时**不改宿主**
-   （宿主是串行点文件，两个并行作业都碰它就会互相踩），也**不复制行 JSX**（行渲染的唯一实现在
-   `WorkItemRows`）。
+   三个「不做」是本视图的正式契约（拆解 §3 的裁定，不是待办）：
+   · **不做批次分组**：整份列表只有**一个**行容器，批次子树只靠 `depth` 缩进表达。把每棵树
+     包成容器/分组 = 把「根」从行序投影升格为容器结构（拆解 §3.1 三条否决理由：第三份根投影、
+     批根入口改宿主、聚焦链路破坏）。
+   · **不做折叠**：所有行都挂载（拆解 §3.2 v1）—— 折叠会让收件箱聚焦的目标行可能不在
+     `rowElementsRef` 里，滚动 + 高亮静默失效；要折叠必须先同轮交付「聚焦目标在折叠子树内
+     ⇒ 自动展开祖先链」的判据 + 守卫 + 演示（登记为后续）。
+   · **不做虚拟化**：同上，按需挂载与聚焦注册天然冲突（登记为后续，与 table 的分页一并裁）。
 
-   最小实现的边界：行集与深度仍来自**同一份** `flattenWorkItemBoard`（本轮不新增第二次 DFS）；
-   R2 在此基础上做密度/批根入口的呈现，不改这里的取数口径。 */
+   行本身不在这里：行 JSX / 行 DOM 引用 / 聚焦注册 / 批根入口 / 缩进全部在 `WorkItemRows`
+   （跨三视图的**唯一**实现，见 T-P2-R1 的接口冻结）。本文件只决定「行从哪来、外面套什么壳」——
+   行序与深度仍来自**同一份** `flattenWorkItemBoard`（整个 surface 唯一的一次 DFS 消费点之一，
+   这里不复制、不重排、不重算父子）。
+
+   锚点归属（T-P2-R2 的显式化）：`work-items-list-view` 由**本视图自己的容器**持有，不再借
+   `WorkItemRowList` 的 `<ul>` —— 面锚点不该耦合到共用模块的内部结构（那个 `<ul>` 是三个视图
+   共用的，未来若加壳/换实现，锚点会跟着漂移且不报错）。看板的不分组分支仍保持
+   `<ul data-testid="work-items-list">` 的既有 DOM（逐字节基线在 `workItemsSurfaceBaseline.ts`）。 */
 
 export function WorkItemListView({
   items,
@@ -21,10 +33,10 @@ export function WorkItemListView({
   environment: WorkItemRowEnvironment;
 }) {
   return (
-    <WorkItemRowList
-      rows={flattenWorkItemBoard(items)}
-      environment={environment}
-      testId="work-items-list-view"
-    />
+    /* `data-view` 是**面的**标记（不是行的）：list 与看板默认路径的容器 class 相同，
+       样式与 e2e 需要能区分「当前是哪张视图」，而 class 列表不是稳定标识。 */
+    <div className="flex flex-col" data-testid="work-items-list-view" data-view="list">
+      <WorkItemRowList rows={flattenWorkItemBoard(items)} environment={environment} />
+    </div>
   );
 }
