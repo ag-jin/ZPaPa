@@ -12,14 +12,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createSessionId,
+  SessionEventType,
   type MessageWithParts,
   type SessionEntryInfo,
+  type SessionEvent,
   type SessionId,
   type SessionInfo,
   type SessionTaskType,
 } from "@zcode/contracts";
 import { SESSION_ENTRY_SUBAGENT_OUTCOME } from "../src/zcode-protocol/subagent-session-query.js";
-import { readSessionSubagentInventory } from "../src/zcode-protocol/server-operations.js";
+import { listSessionSubagents, readSessionSubagentInventory } from "../src/zcode-protocol/server-operations.js";
 import {
   SUBAGENT_ORPHAN_GRACE_MS,
   SUBAGENT_ORPHAN_RECONCILE_REASON,
@@ -229,14 +231,22 @@ function fakeSessionStore(state: FakeOrphanStore) {
 
 type ReconcileInput = Parameters<typeof reconcileSubagentOrphansOnActivation>[0];
 
-function reconcileContext(state: FakeOrphanStore, liveChildSessionIds: readonly string[] = []) {
+/**
+ * 本进程 live record 的窄面。`liveSessionIds` 是「本进程有 record」的会话（读面只从 live 父记录
+ * 取事件与投影，见 readSessionSubagentInventory）；`parentEvents` 是这些记录能读到的事件。
+ */
+function reconcileContext(
+  state: FakeOrphanStore,
+  liveSessionIds: readonly string[] = [],
+  parentEvents: readonly SessionEvent[] = [],
+) {
   const sessions = new Map<string, unknown>();
-  for (const sessionId of liveChildSessionIds) {
+  for (const sessionId of liveSessionIds) {
     sessions.set(sessionId, {
       // 与真实 record 同形的最小面：清单读取会问事件与投影。恢复出的空投影正是「接管时刻
       // 本进程零在飞」的形态（registry/事件都是进程内内存态）。
       stateRevision: 0,
-      eventStore: { getEvents: async () => [] },
+      eventStore: { getEvents: async () => [...parentEvents] },
       app: { runtime: { getProjection: async () => undefined } },
     });
   }
@@ -244,6 +254,26 @@ function reconcileContext(state: FakeOrphanStore, liveChildSessionIds: readonly 
     deps: { sessionStore: fakeSessionStore(state) },
     sessions,
   } as unknown as ReconcileInput["context"];
+}
+
+/** 父会话的 SubagentStopped 事件（与 core runner 落盘同形，`status` 决定 stoppedStatus）。 */
+function subagentStoppedEvent(input: {
+  stoppedAt: number;
+  status: "success" | "failed" | "cancelled";
+}): SessionEvent {
+  return {
+    type: SessionEventType.SubagentStopped,
+    sessionID: PARENT_SESSION_ID as SessionId,
+    timestamp: new Date(input.stoppedAt),
+    payload: {
+      agentId: AGENT_ID,
+      agentType: "implementer",
+      background: true,
+      childSessionId: CHILD_SESSION_ID,
+      parentToolCallId: TOOL_CALL_ID,
+      status: input.status,
+    },
+  } as unknown as SessionEvent;
 }
 
 /** 标准孤儿场景：父 transcript 有后台 spawn，child 记录在场、无终态、活动时间可控。 */
@@ -254,6 +284,8 @@ function orphanScenario(options: {
   liveInProcess?: boolean;
   childTaskType?: SessionTaskType;
   childOutcomeStatus?: "failed" | "cancelled";
+  /** 父会话的 live 事件（给「更硬的终局事实后来到场」类用例注入 stop 事实）。 */
+  parentEvents?: readonly SessionEvent[];
 }): { state: FakeOrphanStore; context: ReconcileInput["context"] } {
   const state = createFakeStore();
   state.sessions.set(
@@ -298,7 +330,10 @@ function orphanScenario(options: {
     state,
     context: reconcileContext(
       state,
-      options.liveInProcess ? [PARENT_SESSION_ID, CHILD_SESSION_ID] : [],
+      options.liveInProcess || options.parentEvents
+        ? [PARENT_SESSION_ID, ...(options.liveInProcess ? [CHILD_SESSION_ID] : [])]
+        : [],
+      options.parentEvents ?? [],
     ),
   };
 }
@@ -717,6 +752,176 @@ test("读面：subagent_outcome entry 让 child 离开 running 并进入 ended{l
   assert.deepEqual(
     inventory.ended.map((item) => ({ childSessionId: item.childSessionId, status: item.status })),
     [{ childSessionId: CHILD_SESSION_ID, status: "lost" }],
+  );
+});
+
+/** 收敛 entry 的落盘形状（与 `buildSubagentOutcomeEntry` 同形：data.reconciledAt 是 ISO 串）。 */
+function outcomeEntry(input: { childSessionId: string; reconciledAt: number }): SessionEntryInfo {
+  return {
+    id: subagentOutcomeEntryId(input.childSessionId),
+    sessionID: input.childSessionId as SessionId,
+    type: SESSION_ENTRY_SUBAGENT_OUTCOME,
+    time: { created: input.reconciledAt, updated: input.reconciledAt },
+    data: {
+      status: "lost",
+      reason: SUBAGENT_ORPHAN_RECONCILE_REASON,
+      reconciledAt: new Date(input.reconciledAt).toISOString(),
+    },
+  } as SessionEntryInfo;
+}
+
+test("读面：收敛行的 endedAt 取 entry.data.reconciledAt，不用 spawn part 的时刻", async () => {
+  // 收敛行的时间若取 spawn part 的 end（launch ACK 时刻），一个跑了很久才被收敛的孤儿会带着
+  // 很早的时间进 ended 排序 —— 长期存在的老会话里它会沉到分页底部，用户翻不到（本用例锁时间来源）。
+  const { state, context } = orphanScenario({ childActivityAt: NOW - 2 * HOUR });
+  const reconciledAt = NOW - 5 * MINUTE;
+  state.entries.set(CHILD_SESSION_ID, [
+    outcomeEntry({ childSessionId: CHILD_SESSION_ID, reconciledAt }),
+  ]);
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  const [ended] = inventory.ended;
+
+  assert.equal(ended?.status, "lost");
+  assert.equal(
+    ended?.endedAt,
+    reconciledAt,
+    "收敛行的时间必须是 entry 记下的收敛时刻（spawn part 的 end 早得多）",
+  );
+  // 反面对照：spawn part 的 end = NOW - 3h + 1min + 100ms（orphanScenario 的固定值）。
+  assert.notEqual(ended?.endedAt, NOW - 3 * HOUR + MINUTE + 100);
+});
+
+test("读面：因收敛落 lost 的行带 reconciled 标记（UI 副文案的唯一判据）", async () => {
+  // 「已丢失」只说了状态，没说为什么。UI 只有在能分辨「这条终态是收敛来的」时才该写
+  // 「运行时已退出，结果未知」；真实终态到场后标记必须消失，否则副文案会给真结果配错解释。
+  const { state, context } = orphanScenario({ childActivityAt: NOW - 2 * HOUR });
+  state.entries.set(CHILD_SESSION_ID, [
+    outcomeEntry({ childSessionId: CHILD_SESSION_ID, reconciledAt: NOW }),
+  ]);
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  assert.equal(inventory.ended[0]?.status, "lost");
+  assert.equal(inventory.ended[0]?.reconciled, true, "收敛来的终态行必须可被 UI 识别");
+
+  // 真实 outcome 后来到场（例如另一进程真把它跑完了）：标记必须让位。
+  state.messages.set(CHILD_SESSION_ID, [
+    {
+      info: {
+        id: "msg_child_late_success",
+        role: "assistant",
+        parentID: "msg_orphan_reconcile_child_user",
+        time: { created: NOW - 2 * MINUTE, completed: NOW - MINUTE },
+        finish: "stop",
+      },
+      parts: [{ id: "part_child_late_success", type: "text", text: "完成" }],
+    } as unknown as MessageWithParts,
+  ]);
+  const afterOutcome = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  assert.equal(afterOutcome.ended[0]?.status, "success");
+  assert.equal(afterOutcome.ended[0]?.reconciled, undefined, "真实终态不是收敛来的，不许带标记");
+});
+
+test("读面：更晚的 stop 事实赢过收敛 entry ⇒ 终态、时间、标记都跟着真实终局", async () => {
+  // 反面对照（上一条只证明了「entry 决定终态时带标记」）：entry 落盘后又来了更硬的终局事实
+  // （父会话的 SubagentStopped）——这条行的终态由后者决定，标记与时间就必须跟着后者走。
+  // 若判据写成「有 entry ∧ child 无 outcome」而不看**终态到底取自谁**：取消行会被配上
+  // 「运行时已退出，结果未知」的成因文案，并按收敛时刻排进分页（比真实取消时刻早得多）。
+  const stoppedAt = NOW - MINUTE;
+  const { state, context } = orphanScenario({
+    childActivityAt: NOW - 2 * HOUR,
+    parentEvents: [subagentStoppedEvent({ stoppedAt, status: "cancelled" })],
+  });
+  state.entries.set(CHILD_SESSION_ID, [
+    outcomeEntry({ childSessionId: CHILD_SESSION_ID, reconciledAt: NOW - 5 * MINUTE }),
+  ]);
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  const [ended] = inventory.ended;
+
+  assert.equal(ended?.status, "cancelled", "更晚的 stop 事实赢过收敛 entry");
+  assert.equal(ended?.reconciled, undefined, "终态不是收敛来的，不许带成因标记");
+  assert.equal(ended?.endedAt, stoppedAt, "时间也必须取真实终局时刻，不取收敛时刻");
+});
+
+test("读面：长期孤儿按收敛时刻排序 ⇒ 收敛行留在首页（不掉出 limit 分页）", async () => {
+  const secondAgentId = "agent_bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+  const secondChildSessionId = String(createSessionId(`subagent_${secondAgentId}`));
+  const secondCallId = "call_orphan_reconcile_agent_second";
+  const state = createFakeStore();
+  state.sessions.set(
+    PARENT_SESSION_ID,
+    sessionInfo({ id: PARENT_SESSION_ID, taskType: "interactive", updated: NOW - 3 * HOUR }),
+  );
+  // 父 transcript 两个后台 spawn：第一个早得多（老孤儿），第二个是刚结束的一条。
+  state.messages.set(PARENT_SESSION_ID, [
+    userMessage(),
+    assistantMessage({
+      background: true,
+      startedAt: NOW - 3 * HOUR + MINUTE,
+      parts: [
+        agentToolPart({
+          agentId: AGENT_ID,
+          callId: TOOL_CALL_ID,
+          background: true,
+          startedAt: NOW - 4 * HOUR,
+        }),
+        agentToolPart({
+          agentId: secondAgentId,
+          callId: secondCallId,
+          background: true,
+          startedAt: NOW - 30 * MINUTE,
+        }),
+      ],
+    }),
+  ]);
+  // child 1：老孤儿，早先被收敛（entry 在场，reconciledAt = NOW）。
+  state.sessions.set(
+    CHILD_SESSION_ID,
+    sessionInfo({
+      id: CHILD_SESSION_ID,
+      taskType: "subagent_child",
+      parentID: PARENT_SESSION_ID,
+      updated: NOW - 4 * HOUR,
+    }),
+  );
+  state.messages.set(CHILD_SESSION_ID, childTranscript(NOW - 4 * HOUR));
+  state.entries.set(CHILD_SESSION_ID, [
+    outcomeEntry({ childSessionId: CHILD_SESSION_ID, reconciledAt: NOW }),
+  ]);
+  // child 2：真实结束（近期终态），时间明显晚于老孤儿的 spawn 时刻。
+  state.sessions.set(
+    secondChildSessionId,
+    sessionInfo({
+      id: secondChildSessionId,
+      taskType: "subagent_child",
+      parentID: PARENT_SESSION_ID,
+      updated: NOW - 25 * MINUTE,
+    }),
+  );
+  state.messages.set(secondChildSessionId, [
+    {
+      info: {
+        id: "msg_child_second_final",
+        role: "assistant",
+        parentID: "msg_orphan_reconcile_child_user",
+        time: { created: NOW - 26 * MINUTE, completed: NOW - 25 * MINUTE },
+        finish: "stop",
+      },
+      parts: [{ id: "part_child_second_final", type: "text", text: "完成" }],
+    } as unknown as MessageWithParts,
+  ]);
+
+  const result = await listSessionSubagents(
+    reconcileContext(state) as unknown as Parameters<typeof listSessionSubagents>[0],
+    { endedLimit: 1, sessionId: PARENT_SESSION_ID },
+  );
+
+  assert.equal(result.ended.total, 2);
+  assert.deepEqual(
+    result.ended.items.map((item) => item.childSessionId),
+    [CHILD_SESSION_ID],
+    "收敛后的老孤儿必须排在首页（按 spawn 时刻排会沉到第二页，用户永远翻不到）",
   );
 });
 

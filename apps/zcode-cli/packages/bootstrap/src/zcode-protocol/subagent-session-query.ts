@@ -55,6 +55,17 @@ interface SessionSubagentProjection {
   ended: ZCodeSessionEndedSubagent[];
 }
 
+/**
+ * 收敛 entry 的读面事实（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）：
+ * 终态词 + 收敛时刻。两者一起读——终态决定「这条 ended 行是不是收敛来的」，收敛时刻决定它的
+ * 排序时间（见 {@link projectSessionSubagents} 的 endedAt）。
+ */
+export interface SubagentOutcomeEntryFact {
+  status: ZCodeSessionEndedSubagent["status"];
+  /** `entry.data.reconciledAt` 的毫秒；读不到时省略（endedAt 退回既有时间链）。 */
+  reconciledAtMs?: number;
+}
+
 interface ProjectSessionSubagentsInput {
   revision: number;
   parentSession: SessionInfo;
@@ -65,10 +76,10 @@ interface ProjectSessionSubagentsInput {
   parentProjection?: SessionProjection;
   parentEvents?: readonly SessionEvent[];
   /**
-   * 收敛 entry 的终态（childSessionId 键）。**最低优先级**证据：只在 child 没有真实
-   * outcome/stop/error 时生效，见 {@link subagentOutcomeEntryStatus}。
+   * 收敛 entry 的事实（childSessionId 键）。**最低优先级**证据：只在 child 没有真实
+   * outcome/stop/error 时生效，见 {@link subagentOutcomeEntryFact} 与 `recordedTerminalStatus`。
    */
-  subagentOutcomeEntryStatusById?: ReadonlyMap<string, ZCodeSessionEndedSubagent["status"]>;
+  subagentOutcomeEntryById?: ReadonlyMap<string, SubagentOutcomeEntryFact>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -297,16 +308,25 @@ export function lastChildActivityAt(
 }
 
 /**
- * 收敛 entry 的终态（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）。
+ * 收敛 entry 的事实（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）。
  *
  * 只认 `status: "lost"`——本机制唯一写出的终态；其它形状（旧版、手改、未来扩展）一律当作
  * 不可用的补洞事实（返回 undefined），退回既有的 `"lost"` 兜底，读面不因未知 entry 变形。
+ * 收敛时刻取 `data.reconciledAt`（写盘时与 `time.created` 同值，这里是**事实字段**；
+ * 解析不出来就不给值，endedAt 退回既有时间链而不是记 0）。
  */
-export function subagentOutcomeEntryStatus(
+export function subagentOutcomeEntryFact(
   entries: readonly SessionEntryInfo[] | undefined,
-): ZCodeSessionEndedSubagent["status"] | undefined {
+): SubagentOutcomeEntryFact | undefined {
   for (const entry of entries ?? []) {
-    if (nonEmptyString(asRecord(entry.data).status) === "lost") return "lost";
+    const data = asRecord(entry.data);
+    if (nonEmptyString(data.status) !== "lost") continue;
+    const reconciledAt = nonEmptyString(data.reconciledAt);
+    const reconciledAtMs = reconciledAt ? Date.parse(reconciledAt) : Number.NaN;
+    return {
+      status: "lost",
+      ...(Number.isFinite(reconciledAtMs) ? { reconciledAtMs } : {}),
+    };
   }
   return undefined;
 }
@@ -500,7 +520,8 @@ export function projectSessionSubagents(
     const childProjection = input.childProjectionsById.get(candidate.childSessionId);
     const background = findBackgroundTask(input.parentProjection, candidate);
     const childOutcome = lastChildOutcome(input.childMessagesById.get(candidate.childSessionId));
-    const entryStatus = input.subagentOutcomeEntryStatusById?.get(candidate.childSessionId);
+    const entry = input.subagentOutcomeEntryById?.get(candidate.childSessionId);
+    const entryStatus = entry?.status;
     const liveStatus = runningStatus({
       background,
       candidate,
@@ -527,19 +548,31 @@ export function projectSessionSubagents(
       "time" in candidate.part.state && "end" in candidate.part.state.time
         ? candidate.part.state.time.end
         : undefined;
+    const status = endedStatus({
+      background,
+      candidate,
+      childOutcome,
+      childProjection,
+      ...(entryStatus === undefined ? {} : { entryStatus }),
+    });
+    // 收敛 entry 只在它**真的决定了这条行的终态**时才提供标记与时间（`status === entryStatus`）：
+    // 更硬的终局事实（background 终态 / child projection / part error / stop 事件 / 真实 outcome）
+    // 赢过 entry 时，时间与成因文案都必须来自那个事实。判据漏掉这一层，就会给「已取消」的行配
+    // 「运行时已退出，结果未知」的成因文案，并按收敛时刻把它排进分页。
+    // 时间之所以不能用 spawn part 的 end（launch ACK 时刻）：跑了很久才被收敛的孤儿会带着很早的
+    // 时间沉到分页底部，用户翻不到——收敛行的排序时间必须是收敛时刻。
+    const reconciledTerminal =
+      entryStatus !== undefined && childOutcome.status === undefined && status === entryStatus;
     ended.push({
       ...common,
-      status: endedStatus({
-        background,
-        candidate,
-        childOutcome,
-        childProjection,
-        ...(entryStatus === undefined ? {} : { entryStatus }),
-      }),
+      status,
       ...(candidate.summary || childOutcome.summary
         ? { summary: candidate.summary ?? childOutcome.summary }
         : {}),
+      // 展示层判据：这条终态是不是收敛来的（只有它能给 lost 行配成因副文案）。
+      ...(reconciledTerminal ? { reconciled: true } : {}),
       endedAt:
+        (reconciledTerminal ? entry?.reconciledAtMs : undefined) ??
         background?.completedAt?.getTime() ??
         candidate.stoppedAt ??
         stateEndedAt ??
