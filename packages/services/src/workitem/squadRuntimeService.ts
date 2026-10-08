@@ -55,6 +55,16 @@ import {
   type CreateWakeRuleRequest,
   type UpdateWakeRuleInput,
 } from "./squadWakeRules.js";
+// 保存视图六件（R6a：list / create / patch / delete + prefs get / put）的唯一实现（名称上限 /
+// 闭集 / JSON object 校验 / 权限矩阵 / 配额 / revision CAS 全在其中）。同款拆文件理由见该文件头注释。
+import {
+  createWorkItemViewOps,
+  type CreateWorkItemViewInput,
+  type PatchWorkItemViewInput,
+  type WorkItemViewPrefsDocument,
+} from "./workItemViewService.js";
+// 只取类型：`WorkItemViewRecord`（repo 模块只 `import type node:sqlite`，本文件仍保持浏览器安全）。
+import type { WorkItemViewRecord } from "./workItemViewRepo.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -838,6 +848,62 @@ export interface ISquadRuntimeService {
    * 归档后同一事实的重投**不复活**它（存储层不变式，见 `recordInboxItem` 第 1 条）。未命中 ⇒ 响亮抛。
    */
   archiveInboxItem(id: string): Promise<void>;
+  /**
+   * **保存视图六件**（R6a，2026-10-09：Q2「v1 会话内」被 multica 取证推翻 —— multica 是**服务端
+   * 持久化**视图，按上位裁定「优先 multica 不计成本」重开）。唯一实现在 `workItemViewService.ts`
+   * （本文件只把「按目标现构 runtime」与「本机操作者身份」接进去）。存储面 = 迁移 0020 的两张表。
+   *
+   * **权限形态**（照 multica `issue_view.go`，逐格）：
+   * · 读（list / 出现在列表里）：**owner 或 `visibility='workspace'`**；越权读与「不存在」**同码**
+   *   （`work_item_view_not_found` —— 私有视图的存在性不泄露，multica 一律 404）；
+   * · 管理（patch / delete）：**owner**。multica 的「workspace owner/admin 且 shared」在 ZPaPa v1
+   *   没有对应概念（单机单身份，人类名册归 C4）⇒ 非 owner 改/删共享视图 ⇒ `work_item_view_forbidden`
+   *   （与「读不到」区分：他看得见这个视图，只是不能改；multica 的 403 同格）。
+   *
+   * **owner 身份**＝组合根注入的 `localHumanActor`（与 0018 创建人**同一处定义点**）：
+   * 调用方**不能**自证身份（设计案 §12-2），故六个方法都没有 owner 入参。未注入 ⇒ 六个方法响亮抛。
+   *
+   * **my 档强制 private 三处**：create 强制（`visibility` 被改写，multica 同款）、patch 响亮拒绝
+   * 非 private（multica 400 "my views are always private"）、DB CHECK（迁移 0020）。
+   *
+   * **query / display 对服务端不透明**：只校验「合法 JSON object」（`z.record` 同款）+ 128KiB 载荷
+   * 上限；facet 集（status / priority 两维 + display 子集）由 UI 层定义（R1 已落），服务面**不枚举** ——
+   * 将来加 facet 不需要动服务端。`definitionVersion` 是客户端契约版本（客户端恒写 1）。
+   *
+   * **revision**（乐观并发）：`patch` 必填 `expectedRevision`（正整数），CAS 未命中 ⇒
+   * `work_item_view_revision_conflict`（409 等价物）；`delete` **不带** revision（multica 同款）。
+   *
+   * **配额**：每 owner 每 workspace 100（`WORK_ITEM_VIEWS_PER_OWNER_MAX`，写之前判 ⇒ 超限不落盘）；
+   * 列表硬上限 200（schema 侧单源 `WORK_ITEM_VIEW_LIST_LIMIT`，滥用兜底不是分页）。
+   *
+   * 六件都**不过门禁**（`assertDispatchEnabled`）：视图与工作项派发无关，关掉实验开关后
+   * 保存/切换视图仍必须可用。**本层不写任何第二份开关判据。**
+   */
+  listWorkItemViews(target: SquadWorkspaceTarget): Promise<WorkItemViewRecord[]>;
+  createWorkItemView(
+    target: SquadWorkspaceTarget,
+    input: CreateWorkItemViewInput,
+  ): Promise<WorkItemViewRecord>;
+  patchWorkItemView(
+    target: SquadWorkspaceTarget,
+    input: PatchWorkItemViewInput,
+  ): Promise<WorkItemViewRecord>;
+  deleteWorkItemView(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /**
+   * **视图条偏好**：无行 ⇒ **空文档 `{}`**（不是错误、不是 404 —— multica `issue_view_preference.go`
+   * 的 no-rows 分支同款；文档键集 `{hidden, order}` 由 UI 层定义）。偏好按
+   * `(workspace, owner)` 隔离，只有调用者本人那一份。
+   */
+  getWorkItemViewPrefs(target: SquadWorkspaceTarget): Promise<WorkItemViewPrefsDocument>;
+  /**
+   * **整文档覆盖写**（last-write-wins、**无 revision** —— 偏好不是共享事实，用不着 fencing；
+   * multica PUT 同款）。不是 merge：`{hidden:[]}` 覆盖后旧的 `order` 键必须消失
+   * （merge 会把用户明确删掉的条目复活）。校验与 query/display 同一份：JSON object + 载荷上限。
+   */
+  putWorkItemViewPrefs(
+    target: SquadWorkspaceTarget,
+    input: { prefs: WorkItemViewPrefsDocument },
+  ): Promise<WorkItemViewPrefsDocument>;
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
@@ -1067,7 +1133,20 @@ export function createSquadRuntimeService(deps: {
     assertEnabled,
   });
 
+  /* 保存视图六件（R6a）：实现全在 `workItemViewService.ts`（名称 / JSON object / 权限 / 配额 /
+     revision CAS），这里只把两个依赖接进去 —— ① `deps.createRuntime`（按目标现构，不缓存）；
+     ② `deps.localHumanActor`（视图 owner = 与 0018 创建人**同一处定义点**的身份；未注入 ⇒
+     六个方法响亮抛，见 ops 内的 `requireActor`）。**都不调 `assertEnabled`**：视图与派发无关，
+     关掉实验开关后保存/切换视图仍必须可用（与 `updateWorkItem` 同款理由，本层不写第二份判据）。 */
+  const workItemViewOps = createWorkItemViewOps({
+    createRuntime: deps.createRuntime,
+    ...(deps.localHumanActor === undefined ? {} : { localHumanActor: deps.localHumanActor }),
+  });
+
   return {
+    // 保存视图六件（R6a）：实现在 `workItemViewService.ts`（本层只接线，见上面 ops 的构造点）。
+    ...workItemViewOps,
+
     async assertDispatchEnabled(_target) {
       // 只答门禁问题：**不构造 runtime**（也就不依赖 git 解析），只读设置、只抛错。
       await assertEnabled();

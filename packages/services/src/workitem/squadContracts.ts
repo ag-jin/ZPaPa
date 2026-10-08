@@ -24,6 +24,8 @@ import type { WorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.
 import type { WorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import type { WorkItemEvent, WorkItemService } from "./workItemService.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
+import type { WorkItemViewPrefsRepo } from "./workItemViewPrefsRepo.js";
+import type { WorkItemViewRepo } from "./workItemViewRepo.js";
 
 /* 小队运行时的**类型面**（Wave 0 的冻结接口之一）。
    本文件**只含类型**：`SquadRuntime` 的**值**由 `squadRuntime.ts` 的 `createSquadRuntime` 给出。
@@ -190,6 +192,22 @@ export type SquadRuntime = {
    * （写进另一张 workspace 的订阅表，谁也不会知道）。
    */
   subscriberFacts: SubscriberFactRecorder;
+  /**
+   * **保存视图的存储面**（R6a，`work_item_views` 表，迁移 0020）：命名视图（结构化列 + 两个不透明
+   * JSON 文档 + revision）的读写都经它。权限判据（owner / shared）在服务面（`workItemViewService.ts`），
+   * 存储面只给「一条查询能读到哪些行」的谓词。
+   *
+   * 为什么挂在 runtime 上：视图是**按 workspace** 的事实（行里带 `workspace_key`），与
+   * `subscriberRepo` / `deliverableRepo` / `pullRequestRepo` 同一条理由 —— 另建跨目标单例会让读落到
+   * 别的 workspace 上（而 `workspace_key` 的写路径守卫就在服务面：`keyOf(runtime)`）。
+   */
+  workItemViewRepo: WorkItemViewRepo;
+  /**
+   * **视图条偏好的存储面**（R6a，`work_item_view_prefs` 表，迁移 0020）：每 owner 每 workspace 一行
+   * 整文档（`hidden` / `order`），整文档覆盖写、last-write-wins、无 revision（multica 268 同款）。
+   * 挂在 runtime 上的理由与 `workItemViewRepo` 同款。
+   */
+  workItemViewPrefsRepo: WorkItemViewPrefsRepo;
   /**
    * **整批收尾模式**（#8 D3）的现判读取口：`local`（缺省，本地合回）/ `pr-gate`（push + 开 PR，
    * 终态交 PR merge）。**每次调用现判**（转调注入的读函数；未注入恒 `local`）——

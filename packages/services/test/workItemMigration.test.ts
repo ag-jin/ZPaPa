@@ -149,6 +149,14 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP INDEX idx_work_item_subscribers_unique",
     "DROP TABLE work_item_subscribers",
   ],
+  // 0020（saved views R6a）：建两张新表 + 两索引（反向 DDL 先索引后表；prefs 表无显式索引，
+  // 主键即索引，随表 drop）。登记纪律同 0016/0017/0019。
+  "0020_work_item_views": [
+    "DROP INDEX idx_work_item_views_shared",
+    "DROP INDEX idx_work_item_views_owner",
+    "DROP TABLE work_item_view_prefs",
+    "DROP TABLE work_item_views",
+  ],
 };
 
 /* 0016（#7 交付物 D1a）的列集：设计报告 §3.2 的表形状逐字抄录（不在这里用代码重算）。
@@ -685,8 +693,10 @@ test("0019 订阅表：列集与两索引齐备；唯一键不含 reason；重�
   assert.equal(count.n, 2, "不同工作项各自一行");
 
   const ids = ledger(db).map((row) => row.id);
-  assert.equal(ids.length, 19, "账本 0001..0019 恰 19 条");
-  assert.equal(ids.at(-1), "0019_work_item_subscribers", "最后一条是 0019（本轮追加）");
+  /* 0020（saved views R6a）落地后账本到 20：本断言随追加同步（与 0016/0017/0018 的登记纪律同款）。
+     「最后一条是谁」刻意不钉：那是各迁移专条用例的事，0019 只需证明自己在账本里。 */
+  assert.equal(ids.length, 20, "账本 0001..0020 恰 20 条");
+  assert.ok(ids.includes("0019_work_item_subscribers"), "0019 在账本里");
 
   // DDL 幂等：绕开账本把常量再执行一遍（IF NOT EXISTS 生效，形状一字不改）。
   const before = subscriberColumns(db);

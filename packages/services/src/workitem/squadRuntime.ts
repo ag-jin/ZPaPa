@@ -28,6 +28,8 @@ import { createWorkItemDeliverableRecorder } from "./workItemDeliverableRecorder
 import { createWorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
+import { createWorkItemViewPrefsRepo } from "./workItemViewPrefsRepo.js";
+import { createWorkItemViewRepo } from "./workItemViewRepo.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import {
   createSubscriberFactRecorder,
@@ -365,6 +367,14 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     },
   });
 
+  /* R6a（saved views）：两个存储面在**这里**装配一次（同一条 db、同一目标 workspace）。
+     · `work_item_views`：命名视图（结构化列 + query/display 两个不透明文档 + revision）；
+     · `work_item_view_prefs`：视图条偏好（每 owner 每 workspace 一行整文档，last-write-wins）。
+     两者都**恒构造**：漏接的表现是「保存视图的入口全报错」，而那是服务面的响亮抛（可发现），
+     不是静默空转 —— 与 `subscriberRepo` / `deliverableRepo` 同一处口径（按目标现构、不缓存）。 */
+  const workItemViewRepo = createWorkItemViewRepo(db);
+  const workItemViewPrefsRepo = createWorkItemViewPrefsRepo(db);
+
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
   const subscribers = new Set<(event: WorkItemEvent) => void>();
@@ -452,6 +462,9 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     pullRequestRepo,
     pullRequestProvider,
     pullRequestSync,
+    /* R6a：保存视图 + 视图条偏好的存储面（同一条 db；权限与配额判据在服务面）。 */
+    workItemViewRepo,
+    workItemViewPrefsRepo,
     /* #8 D3：整批收尾模式的现判读取口（缺省 local = 行为与改前一致）；编排器在收尾那一刻取一次。 */
     readSquadMergeMode: () => deps.readSquadMergeMode?.() ?? "local",
     teamAgentService,

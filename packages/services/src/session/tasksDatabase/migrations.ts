@@ -21,6 +21,7 @@ import {
   WORK_ITEM_SCHEMA,
   WORK_ITEM_SUBSCRIBER_SQL,
   WORK_ITEM_SURFACE_FIELDS_SQL,
+  WORK_ITEM_VIEWS_SQL,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "#src/session/tasksDatabase/official-glm-selection-v3.js";
@@ -173,6 +174,13 @@ const definitions = [
     id: "0019_work_item_subscribers",
     checksumInput: [WORK_ITEM_SUBSCRIBER_SQL],
   },
+  /* 0020（saved views 服务面轮 R6a）：建 `work_item_views` + `work_item_view_prefs` 两张新表 + 两索引
+     （命名视图 + 视图条偏好；multica 265/266/267/268 的 ZPaPa 收窄切分，见 SQL 常量注释）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019。 */
+  {
+    id: "0020_work_item_views",
+    checksumInput: [WORK_ITEM_VIEWS_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -242,6 +250,7 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0018_work_item_surface_fields")
         db.exec(WORK_ITEM_SURFACE_FIELDS_SQL);
       else if (migration.id === "0019_work_item_subscribers") db.exec(WORK_ITEM_SUBSCRIBER_SQL);
+      else if (migration.id === "0020_work_item_views") db.exec(WORK_ITEM_VIEWS_SQL);
       else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(

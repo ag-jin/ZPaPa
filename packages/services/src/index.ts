@@ -377,6 +377,35 @@ export type {
   SquadSnapshot,
   SquadWorkspaceTarget,
 } from "./workitem/squadRuntimeService.js";
+/* 保存视图（R6a）的**稳定错误码 + 错误类 + 常量**：UI 侧按码分流（照 `SQUAD_DISPATCH_DISABLED_CODE`
+   的做法：不存在 / 无权读同码、越权管理、revision 冲突、配额、非法输入五类）。实现文件
+   （`workItemViewService.ts`）是浏览器安全的（zod + shared + 只类型引用），故可作**值**导出。 */
+export {
+  WorkItemViewError,
+  WORK_ITEM_VIEW_FORBIDDEN_CODE,
+  WORK_ITEM_VIEW_INVALID_CODE,
+  WORK_ITEM_VIEW_NAME_MAX_LENGTH,
+  WORK_ITEM_VIEW_NOT_FOUND_CODE,
+  WORK_ITEM_VIEW_PAYLOAD_MAX_BYTES,
+  WORK_ITEM_VIEW_QUOTA_EXCEEDED_CODE,
+  WORK_ITEM_VIEW_REVISION_CONFLICT_CODE,
+  WORK_ITEM_VIEWS_PER_OWNER_MAX,
+} from "./workitem/workItemViewService.js";
+/* 保存视图六件的入参出参形状（UI 的视图条 / 保存对话框要能命名它们）：类型声明在实现文件
+   （`workItemViewService.ts` / `workItemViewRepo.ts`），只做类型再导出（编译擦除）。 */
+export type {
+  CreateWorkItemViewInput,
+  PatchWorkItemViewInput,
+  WorkItemViewDefinitionPatchInput,
+  WorkItemViewErrorCode,
+  WorkItemViewPrefsDocument,
+} from "./workitem/workItemViewService.js";
+export type {
+  WorkItemViewOwner,
+  WorkItemViewRecord,
+  WorkItemViewScopeType,
+  WorkItemViewVisibility,
+} from "./workitem/workItemViewRepo.js";
 /* 唤醒规则的建/编辑入参（P2b 第二半 + 收口）：UI 的规则表单要能命名它们。类型声明在实现文件
    （`squadWakeRules.ts`，400 行门槛的拆分点），与 `MemberRunRequest` 声明在 `squadRunLifecycle.ts`
    同一条先例 —— 只做类型再导出（编译擦除，不进 renderer 的运行时依赖图）。

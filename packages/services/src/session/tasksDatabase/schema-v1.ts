@@ -708,3 +708,77 @@ export const WORK_ITEM_SUBSCRIBER_SQL = `
   CREATE INDEX IF NOT EXISTS idx_work_item_subscribers_subject
     ON work_item_subscribers(workspace_key, subject_type, subject_id);
 `;
+
+/* 0020（saved views 服务面轮 R6a）：`work_item_views` + `work_item_view_prefs` 两张新表 + 两索引。
+   一次建两表（拆解卡 §T-P2-R6a 明写「两表同迁移」）。只加新对象，**不改既有列/表** ——
+   checksum 纪律同 0008/0009/0010/0016/0017/0019（SQL 冻结后不得再改）。
+
+   形态照 multica `265_issue_view.up.sql:7-35` / `266/267` 索引 / `268_issue_view_preference.up.sql`
+   切分（证据 `reports/2026-10-09-saved-views-multica-evidence.md` §1/§2/§9）：
+
+   · **结构化列 + 两个不透明 JSON 文档**：`query`（视图的共享身份，过滤 facet）与 `display`
+     （布局/分组/排序等，只在「首次打开」做种子，之后本用户调整**不回写**定义）。服务端对两者
+     **零解释**（只校验「是 JSON object」，`jsonb_typeof='object'` 的 SQLite 对应写法是
+     `json_valid(...) AND json_type(...)='object'`）；解释权在客户端 `definition_version` 契约。
+   · **`name` 1..80 按字符计**（multica `CHAR_LENGTH(name) BETWEEN 1 AND 80`）：SQLite 的
+     `length()` 同样按字符（不按 UTF-16），服务面必须用同一把尺子（`[...name].length`）。
+   · **无 name 唯一键**（multica 没加）：重名由用户自己区分，存储层不替他们判断。
+   · **权限形态三档**：读 = owner 或 `visibility='workspace'`；管理（改/删）= owner
+     （ZPaPa v1 没有 workspace 管理员名册 —— multica 的「owner/admin 且 shared」在单机单身份下
+     退化为 owner，登记在交付报告）；`visibility` 闭集 `private | workspace`。
+   · **`scope_id` / `scope_variant` 列保留但恒空**：v1 只有 `workspace | my` 两档、无 variant 轴与
+     project 档。列留着是为了将来补轴时**不再 ALTER**（multica 的 269 正是「加轴」的一次 ALTER）；
+     两条 `CHECK (... IS NULL)` 把「恒空」钉在存储层 —— 界面永远读不到一列没人写的轴。
+   · **`my ⇒ visibility='private'` 是跨列 CHECK**（multica 同款）：my 档是每人视角，共享没有意义。
+     三道闸里的最后一道（DDL）；前两道在写路径（create 强制、patch 响亮拒绝）与 repo。
+   · **`revision` 第一天就要有**（multica `issue_view.go:354-357` 的 409 是形态一部分）：
+     写路径 `UPDATE … SET revision = revision + 1 WHERE … AND revision = expected`，
+     不匹配即冲突（乐观并发）。
+   · **`work_item_view_prefs` 的 PK = (workspace_key, owner_kind, owner_id)**：每 owner 每 workspace
+     一行偏好文档（multica 的 scope 四元组在 v1 无轴 ⇒ 收窄为三元组）。文档是**客户端自有**、
+     服务端只认「JSON object」（multica `issue_view_preference.go` 同款；无行 ⇒ 空文档 `{}`，不是 404）。
+     整文档 upsert、**last-write-wins、无 revision**（multica 同款：偏好不是共享事实，用不着 fencing）。
+   · 两条索引照 multica 266/267：owner 查询（列表的 owner 分支 + 每 owner 配额计数）与 shared
+     **部分索引**（`WHERE visibility='workspace'`，列表的共享分支）。multica 索引前缀里的
+     `scope_type/scope_id` 在本版**不复制**：`scope_id` 恒空（把常量 NULL 列塞进索引只会白占空间），
+     `scope_type` 只两档且两档都要出现在同一个列表里 —— owner/shared 两条路径才是查询形状。
+   · 不给 work_items 建外键（只归档不硬删，同 WORK_ITEM_SCHEMA 理由）：视图不挂工作项。
+   · 删除视图**不级联清 prefs**（prefs 的 `order`/`hidden` 里可能残留已删视图 id）：清理判据在
+     UI 的 sanitizer（multica 同款：写入前剪掉已不存在的 id），存储层不替它扫。 */
+export const WORK_ITEM_VIEWS_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_views (
+    id                 TEXT PRIMARY KEY,
+    workspace_key      TEXT NOT NULL,
+    owner_kind         TEXT NOT NULL,
+    owner_id           TEXT NOT NULL,
+    name               TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    scope_type         TEXT NOT NULL CHECK (scope_type IN ('workspace', 'my')),
+    scope_id           TEXT,
+    scope_variant      TEXT,
+    visibility         TEXT NOT NULL DEFAULT 'private'
+                       CHECK (visibility IN ('private', 'workspace')),
+    definition_version INTEGER NOT NULL DEFAULT 1,
+    query              TEXT NOT NULL CHECK (json_valid(query) AND json_type(query) = 'object'),
+    display            TEXT NOT NULL DEFAULT '{}'
+                       CHECK (json_valid(display) AND json_type(display) = 'object'),
+    revision           INTEGER NOT NULL DEFAULT 1,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    CHECK (scope_id IS NULL),
+    CHECK (scope_variant IS NULL),
+    CHECK (scope_type <> 'my' OR visibility = 'private')
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_views_owner
+    ON work_item_views(workspace_key, owner_kind, owner_id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_views_shared
+    ON work_item_views(workspace_key) WHERE visibility = 'workspace';
+  CREATE TABLE IF NOT EXISTS work_item_view_prefs (
+    workspace_key TEXT NOT NULL,
+    owner_kind    TEXT NOT NULL,
+    owner_id      TEXT NOT NULL,
+    prefs         TEXT NOT NULL DEFAULT '{}'
+                  CHECK (json_valid(prefs) AND json_type(prefs) = 'object'),
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, owner_kind, owner_id)
+  );
+`;
