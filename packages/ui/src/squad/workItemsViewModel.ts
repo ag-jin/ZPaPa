@@ -50,6 +50,33 @@ export function flattenWorkItemBoard(items: WorkItem[]): WorkItemBoardRow[] {
   return walkWorkItemBoardForest(items).map(({ item, depth }) => ({ item, depth }));
 }
 
+/** 一棵**树单元**：根行 + 它的全部后代行（DFS 前序，深度自根起算）。 */
+export type WorkItemBoardTree = { root: WorkItem; rows: WorkItemBoardRow[] };
+
+/**
+ * 树单元投影：按**输入顺序**给出「根 + 该根的子树行」。
+ *
+ * 为什么留给本文件（而不是让调用方自己分组）：`root` 是 `walkWorkItemBoardForest` 的一个产出
+ * （与 `flattenWorkItemBoard` / `groupWorkItemBoard` 共用**同一份** DFS），把它暴露给需要
+ * 「哪些行属于同一棵树」的消费方（阶段二 Surface 的整树过滤/排序），才能让「谁是根」只有一份
+ * 判据 —— 调用方若自己按 `parentId` 爬链，就是第二份根判据（分叉不报错，表现是某棵树凭空
+ * 换了位置或消失）。空输入 ⇒ `[]`。
+ */
+export function workItemBoardTrees(items: WorkItem[]): WorkItemBoardTree[] {
+  const trees: WorkItemBoardTree[] = [];
+  const indexByRootId = new Map<string, number>();
+  for (const row of walkWorkItemBoardForest(items)) {
+    let index = indexByRootId.get(row.root.id);
+    if (index === undefined) {
+      index = trees.length;
+      indexByRootId.set(row.root.id, index);
+      trees.push({ root: row.root, rows: [] });
+    }
+    trees[index]!.rows.push({ item: row.item, depth: row.depth });
+  }
+  return trees;
+}
+
 /**
  * 森林的**唯一**遍历实现（`flattenWorkItemBoard` 与 `groupWorkItemBoard` 共用它）。
  *
