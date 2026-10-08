@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import type { SquadMergeMode } from "@zcode/shared";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
 import { createSquadOrchestrator } from "../src/workitem/squadOrchestrator.js";
+import { createWorkItemActivityRepo } from "../src/workitem/workItemActivityRepo.js";
+import { createWorkItemPullRequestEntry } from "../src/workitem/workItemPullRequestEntry.js";
 import { createSquadRuntime } from "../src/workitem/squadRuntime.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 import { slugForId } from "../src/workitem/slug.js";
@@ -128,6 +130,7 @@ async function setup(options: {
   });
   return {
     repoRoot,
+    db,
     runtime,
     orchestrator: createSquadOrchestrator({ runtime }),
     remoteBranchSha: async (branch: string) => {
@@ -147,6 +150,11 @@ async function setup(options: {
 }
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
+
+/** 工作项活动（时间线回声）的读回口：与 runtime 同一库、真 repo（不经过任何门面）。 */
+function activitiesOf(f: Fixture, workItemId: string) {
+  return createWorkItemActivityRepo(f.db).listByWorkItem(WS, workItemId);
+}
 
 /** 一条「父项 + 一个子项」的批（与 squadOrchestrator.batch.test.ts 同形，本文件自持一份）。 */
 async function batchWithOneChild(f: Fixture) {
@@ -443,6 +451,85 @@ test("local 模式（开关关闭态）｜有 GitHub remote 且配了 token：**
     assert.equal(await branchExists(f, integrationBranch()), false, "集成分支照旧删掉");
     assert.equal(f.runtime.pullRequestRepo.listByWorkItem(WS, parentId).length, 0);
     assert.equal(f.runtime.inboxItemRepo.listByWorkspace(WS).length, 0, "local 模式没有降级留痕");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("pr-gate **全链**｜push+开 PR+登记 ⇒ 父项留 in_review；PR 被合并后一次刷新 ⇒ done + 回声（同一条链跨两个缝合面）", async () => {
+  /* 本用例把两半接起来跑（stub 网络 + 真 git/真库/真状态机）：
+     ① pr-gate 收尾（写路径：POST /pulls）；
+     ② 远端把 PR 合并之后的一次按需刷新（读路径：GET /pulls/42）⇒ 终态驱动。
+     「等 merge」这一段用 stub 的**状态翻转**表达（真实等待由人操作 GitHub 完成）。 */
+  let merged = false;
+  const calls: string[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    const body =
+      typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+    const payload = {
+      number: 42,
+      state: merged ? "closed" : "open",
+      draft: false,
+      merged,
+      merged_at: merged ? "2025-01-02T03:04:05Z" : null,
+      title: (body?.title as string | undefined) ?? "批次 A",
+      html_url: "https://github.com/acme/widget/pull/42",
+      head: { ref: body?.head ?? "squad/integration/wi-c", sha: "sha-pr-head" },
+      mergeable: true,
+      mergeable_state: "clean",
+    };
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const f = await setup({ mode: "pr-gate", token: TOKEN, remote: "github", fetchImpl });
+  try {
+    const { parentId } = await batchWithOneChild(f);
+    await produce(f);
+    finishChild(f);
+    await f.orchestrator.advanceAfterChildrenDone({
+      workspaceKey: WS,
+      parentWorkItemId: parentId,
+    });
+
+    // ① 发布完成：PR 行在、父项等验收、集成分支保留（PR head）。
+    assert.equal(status(f, parentId), "in_review", "发布完成 ⇒ 留 in_review 等 PR merge");
+    const row = f.runtime.pullRequestRepo.listByWorkItem(WS, parentId)[0]!;
+    assert.equal(row.state, "open");
+    assert.equal(await branchExists(f, integrationBranch()), true);
+    assert.equal(f.runtime.pullRequestRepo.listByWorkItem(WS, parentId).length, 1);
+
+    // ② 远端合并后的一次按需刷新（走协作入口——终态驱动的调用点）。
+    merged = true;
+    const entry = createWorkItemPullRequestEntry({
+      runtime: f.runtime,
+      workspaceKey: WS,
+      actor: () => ({ kind: "human", id: "u-1" }),
+      now: () => 12_345,
+    });
+    const report = await entry.refresh({ workItemId: parentId });
+
+    assert.deepEqual(
+      report.mergedPullRequests.map((fact) => fact.prNumber),
+      [42],
+      "刷新报出 merged 事实（D2 的读出）",
+    );
+    assert.equal(status(f, parentId), "done", "PR merge 驱动：父项 in_review → done");
+    const echoes = activitiesOf(f, parentId).filter((row) => row.kind === "pr_merged");
+    assert.equal(echoes.length, 1, "时间线回声恰一条（第 21 枚）");
+    assert.equal(echoes[0]!.payload["prNumber"], 42);
+    assert.ok(
+      calls.some((call) => call.startsWith("POST ")),
+      "写路径确实出过站（开 PR）",
+    );
+    assert.ok(
+      calls.some((call) => call.startsWith("GET ")),
+      "读路径确实出过站（刷新快照）",
+    );
   } finally {
     f.cleanup();
   }
