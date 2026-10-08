@@ -435,6 +435,64 @@ test("会话循环：同一帧内的滑轨拖动合并成一次 showAncestor", a
   }
 });
 
+test("会话循环：已选计数按元素身份去重（同一元素重选不累加）", async () => {
+  const fake = createFakeExecuteJs();
+  const sessions: Array<unknown> = [];
+  const otherElement: Omit<WebElementContextPayload, "workspacePath"> = {
+    ...ELEMENT_PAYLOAD,
+    selector: "tr > th:nth-of-type(3)",
+    accessibleName: "同比",
+  };
+  const selections = [ELEMENT_PAYLOAD, ELEMENT_PAYLOAD, otherElement];
+  let confirmed = 0;
+  let resolveAdjust: ((value: unknown) => void) | null = null;
+  fake.setResponder((script) => {
+    const method = commandMethodOf(script);
+    if (method === null) {
+      return { status: "clicked", chain: CHAIN, chainTruncated: false };
+    }
+    if (method === "beginAdjust") {
+      return new Promise((resolve) => {
+        resolveAdjust = resolve;
+      });
+    }
+    if (method === "confirm") {
+      resolveAdjust?.({ status: "selected", element: selections[confirmed++] ?? ELEMENT_PAYLOAD });
+      return null;
+    }
+    if (method === "pick") {
+      return confirmed < selections.length
+        ? { status: "clicked", chain: CHAIN, chainTruncated: false }
+        : { status: "cancelled" };
+    }
+    return null;
+  });
+
+  const driver = createDriver(fake, sessions);
+  const started = driver.start();
+  await flush();
+  for (let index = 0; index < selections.length; index += 1) {
+    driver.confirmSelection();
+    await flush();
+    driver.skipComment();
+    await flush();
+  }
+
+  await started;
+  assert.equal(confirmed, 3, "三次确认都走完（末次 pick 才收敛为取消）");
+  const commentCounts = sessions
+    .filter(
+      (session): session is { phase: string; pickedCount: number } =>
+        (session as { phase?: string } | null)?.phase === "comment",
+    )
+    .map((session) => session.pickedCount);
+  assert.deepEqual(
+    commentCounts,
+    [1, 1, 2],
+    "同一元素（同 selector 身份）重选后浮条计数不涨，异元素才 +1",
+  );
+});
+
 test("会话循环：多余动作不改状态（幂等守卫）", async () => {
   const fake = createFakeExecuteJs(() => null);
   const sessions: Array<unknown> = [];
