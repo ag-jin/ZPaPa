@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行：祖先链 helper 由组装模板以位置实参注入，函数体只引用形参、不引用模块作用域。 */
+/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行：祖先链 helper 与挂载键由组装模板以位置实参注入，函数体只引用形参、不引用模块作用域，内层函数一律无名（压缩器会改写具名内层函数）。 */
 import type {
   WebElementContextPayload,
   WebElementRect,
@@ -43,14 +43,16 @@ export interface WebElementAncestorNodeLike {
 /**
  * 从被点元素沿 `parentElement` 上溯，排除 body/html（到 body 之前封顶），深度上限 24。
  *
- * 作为注入脚本的位置实参传入：只能依赖入参与语言内建，不得引用模块级值，`toString()` 后要能独立运行。
+ * 作为注入脚本的位置实参传入：只能依赖入参与语言内建，不得引用模块级值，`toString()` 后要能独立运行；
+ * 内层 helper 同样不许有名字（理由见 webElementPickerScript 的自包含约束）。
  */
 export function computeAncestorChain(
   node: WebElementAncestorNodeLike | null | undefined,
   maxDepth?: number,
 ): { chain: WebElementAncestorStep[]; truncated: boolean } {
   const limit = typeof maxDepth === "number" && maxDepth > 0 ? Math.floor(maxDepth) : 24;
-  const readClassNames = (target: WebElementAncestorNodeLike): string[] => {
+  const helpers = {} as { readClassNames: (target: WebElementAncestorNodeLike) => string[] };
+  helpers.readClassNames = (target: WebElementAncestorNodeLike): string[] => {
     const classList = target.classList;
     if (!classList) {
       return [];
@@ -89,7 +91,7 @@ export function computeAncestorChain(
     }
 
     const id = typeof current.id === "string" && current.id ? current.id : undefined;
-    const classNames = readClassNames(current);
+    const classNames = helpers.readClassNames(current);
     chain.push({
       level: chain.length,
       tagName,
@@ -133,8 +135,6 @@ interface WebElementPickerScriptOptions {
   maxHtmlChars: number;
   maxAttributeChars: number;
   labels: WebElementPickerScriptLabels;
-  /** 页内实例句柄的挂载键（命令小脚本与主脚本必须一致）。 */
-  stateKey: string;
 }
 
 export interface WebElementPickerScriptLabels {
@@ -147,6 +147,12 @@ type WebElementPickerScriptBuildOptions = Partial<Omit<WebElementPickerScriptOpt
   labels?: Partial<WebElementPickerScriptLabels>;
 };
 
+/**
+ * 页内实例句柄的挂载键：主脚本与句柄小脚本共用同一常量，且作为位置实参注入主函数
+ * （注入体不得引用模块作用域绑定，键漂移会让所有句柄命令静默 no-op）。
+ */
+const WEB_ELEMENT_PICKER_STATE_KEY = "__zcodeWebElementPicker";
+
 const DEFAULT_OPTIONS: WebElementPickerScriptOptions = {
   maxTextChars: 4_000,
   maxHtmlChars: 6_000,
@@ -156,39 +162,102 @@ const DEFAULT_OPTIONS: WebElementPickerScriptOptions = {
     color: "Color",
     font: "Font",
   },
-  stateKey: "__zcodeWebElementPicker",
 };
 
 /**
- * 页内主脚本。两个 helper 是**位置形参**，由 buildWebElementPickerScript 在模板里以源码文本实参传入
- * （形参名只在本函数内解析，构建器压缩改名后主函数体依然自洽）。
+ * 注入主函数体内层 helper 的形态契约。类型只在编译期存在（打包器会擦除注解），因此不违反
+ * `toString()` 产物的自包含约束：helper 一律以**成员赋值**挂到页内 runtime 对象上。
+ */
+interface WebElementPickerRuntime {
+  truncate: (value: string | null | undefined, maxLength: number) => string;
+  clampColorChannel: (value: number) => number;
+  toHexColor: (red: number, green: number, blue: number) => string;
+  parseAlpha: (value: string | undefined) => number;
+  formatComputedColor: (value: string) => string;
+  readStyleSummary: (element: Element) => WebElementStyleSummary;
+  formatFont: (style: WebElementStyleSummary) => string;
+  formatElementSize: (rect: DOMRect) => string;
+  hasVisibleBackground: (style: WebElementStyleSummary) => boolean;
+  cssEscape: (value: string) => string;
+  readElementText: (element: Element) => string;
+  getImplicitRole: (element: Element) => string;
+  getAccessibleName: (element: Element) => string;
+  getAttributes: (element: Element) => Record<string, string>;
+  getSelector: (element: Element) => string;
+  getXPath: (element: Element) => string;
+  getNearbyText: (element: Element) => string;
+  getHtmlExcerpt: (element: Element) => string;
+  rectToPlainObject: (rect: DOMRect) => WebElementRect;
+  settlePick: (result: WebElementPickerPickResult) => void;
+  settleAdjust: (result: WebElementPickerAdjustResult) => void;
+  watchHover: (enabled: boolean) => void;
+  watchRelayout: (enabled: boolean) => void;
+  cleanup: () => void;
+  appendPopoverRow: (name: string, value: string | undefined) => void;
+  renderPopover: (target: Element, rect: DOMRect, levelLabel?: string) => void;
+  clampPosition: (value: number, min: number, max: number) => number;
+  getPopoverPosition: (
+    rect: DOMRect,
+    labelWidth: number,
+    labelHeight: number,
+  ) => { left: number; top: number };
+  updateOverlay: (target: Element | null, levelLabel?: string) => void;
+  currentTarget: () => Element | null;
+  showLevel: (nextLevel: number) => { level: number; label: string } | null;
+  collectChainElements: (element: Element, count: number) => Element[];
+  enterAdjusting: () => void;
+  leaveAdjusting: () => void;
+  handleMouseMove: (event: MouseEvent) => void;
+  handleRelayout: () => void;
+  collectElement: (element: Element) => Omit<WebElementContextPayload, "workspacePath">;
+  handleClick: (event: MouseEvent) => void;
+  handleKeyDown: (event: KeyboardEvent) => void;
+  pick: () => Promise<WebElementPickerPickResult>;
+  beginAdjust: () => Promise<WebElementPickerAdjustResult>;
+  showAncestor: (nextLevel: number) => { level: number; label: string } | null;
+  confirm: () => void;
+  requestRepick: () => void;
+}
+
+/**
+ * 页内主脚本。opts、两个 helper 与挂载键都是**位置形参**，由 buildWebElementPickerScript 在模板里以
+ * 源码文本实参传入（形参名只在本函数内解析，构建器压缩改名后主函数体依然自洽）。
  *
  * 函数体不得引用任何模块作用域绑定：打包器重命名模块绑定后，toString() 出来的引用会指向压缩改名的
  * 标识符，而注入体里并不存在它们——发布产物会直接 ReferenceError。
+ *
+ * 第二条约束同理但更隐蔽：**内层函数一律不许有名字**——函数声明、`const f = …`、对象字面量属性都会让
+ * 压缩器推导出名字，minify + keepNames 组合下它们会被改写成 `__name(fn, "f")`，而 `__name` 是注入在
+ * 模块作用域的 helper（先例见 apps/zcode-cli/packages/dynamic-workflow-runtime/src/child-source.ts）。
+ * 它一旦出现在 toString() 文本里，页内执行就 ReferenceError，且**只在压缩产物里坏**。所以 helper 统一
+ * 走「成员赋值 + 末尾解构取回局部名」：成员赋值不被推导名字，解构也不创建函数。
  */
 function webElementPickerScript(
   options: WebElementPickerScriptOptions,
   __zcodeWepComputeAncestorChain: typeof computeAncestorChain,
   __zcodeWepBuildAncestorLabel: typeof buildAncestorLabel,
+  __zcodeWepStateKey: string,
 ) {
-  const stateKey = options.stateKey;
-  const existing = (window as unknown as Record<string, { cancel?: () => void }>)[stateKey];
+  const runtime = {} as WebElementPickerRuntime;
+  const existing = (window as unknown as Record<string, { cancel?: () => void }>)[
+    __zcodeWepStateKey
+  ];
   existing?.cancel?.();
 
-  const truncate = (value: string | null | undefined, maxLength: number) => {
+  runtime.truncate = (value: string | null | undefined, maxLength: number) => {
     const normalized = (value ?? "").replace(/\s+/g, " ").trim();
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
   };
 
-  const clampColorChannel = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  runtime.clampColorChannel = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
 
-  const toHexColor = (red: number, green: number, blue: number) =>
+  runtime.toHexColor = (red: number, green: number, blue: number) =>
     `#${[red, green, blue]
       .map((channel) => clampColorChannel(channel).toString(16).padStart(2, "0"))
       .join("")
       .toUpperCase()}`;
 
-  const parseAlpha = (value: string | undefined) => {
+  runtime.parseAlpha = (value: string | undefined) => {
     if (!value) {
       return 1;
     }
@@ -198,7 +267,7 @@ function webElementPickerScript(
     return Number(value);
   };
 
-  const formatComputedColor = (value: string) => {
+  runtime.formatComputedColor = (value: string) => {
     const normalized = value.trim();
     const match =
       /^rgba?\(\s*([0-9.]+)(?:,|\s)+([0-9.]+)(?:,|\s)+([0-9.]+)(?:\s*[,/]\s*([0-9.]+%?))?\s*\)$/iu.exec(
@@ -229,7 +298,7 @@ function webElementPickerScript(
     return toHexColor(red, green, blue);
   };
 
-  const readStyleSummary = (element: Element): WebElementStyleSummary => {
+  runtime.readStyleSummary = (element: Element): WebElementStyleSummary => {
     const style = window.getComputedStyle(element);
     const backgroundColor = formatComputedColor(style.backgroundColor);
     return {
@@ -242,20 +311,20 @@ function webElementPickerScript(
     };
   };
 
-  const formatFont = (style: WebElementStyleSummary) =>
+  runtime.formatFont = (style: WebElementStyleSummary) =>
     truncate([style.fontSize, style.fontFamily].filter(Boolean).join(" "), 96);
 
-  const formatElementSize = (rect: DOMRect) =>
+  runtime.formatElementSize = (rect: DOMRect) =>
     `${Math.round(rect.width)}x${Math.round(rect.height)}`;
 
-  const hasVisibleBackground = (style: WebElementStyleSummary) =>
+  runtime.hasVisibleBackground = (style: WebElementStyleSummary) =>
     Boolean(
       style.backgroundColor &&
       style.backgroundColor !== "transparent" &&
       style.backgroundColor !== "rgba(0, 0, 0, 0)",
     );
 
-  const cssEscape = (value: string) => {
+  runtime.cssEscape = (value: string) => {
     const escape = (window.CSS as { escape?: (input: string) => string } | undefined)?.escape;
     if (escape) {
       return escape(value);
@@ -263,7 +332,7 @@ function webElementPickerScript(
     return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
   };
 
-  const readElementText = (element: Element) => {
+  runtime.readElementText = (element: Element) => {
     if (element instanceof HTMLInputElement) {
       if (element.type.toLowerCase() === "password") {
         return "[masked password input]";
@@ -293,7 +362,7 @@ function webElementPickerScript(
     );
   };
 
-  const getImplicitRole = (element: Element) => {
+  runtime.getImplicitRole = (element: Element) => {
     const tagName = element.tagName.toLowerCase();
     if (tagName === "button") return "button";
     if (tagName === "a" && element.hasAttribute("href")) return "link";
@@ -315,7 +384,7 @@ function webElementPickerScript(
     return "";
   };
 
-  const getAccessibleName = (element: Element) => {
+  runtime.getAccessibleName = (element: Element) => {
     const labelledBy = element.getAttribute("aria-labelledby");
     if (labelledBy) {
       const label = labelledBy
@@ -336,7 +405,7 @@ function webElementPickerScript(
     );
   };
 
-  const getAttributes = (element: Element) => {
+  runtime.getAttributes = (element: Element) => {
     const attributes: Record<string, string> = {};
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
@@ -359,7 +428,7 @@ function webElementPickerScript(
     return attributes;
   };
 
-  const getSelector = (element: Element) => {
+  runtime.getSelector = (element: Element) => {
     if (element.id) {
       return `#${cssEscape(element.id)}`;
     }
@@ -397,7 +466,7 @@ function webElementPickerScript(
     return parts.join(" > ");
   };
 
-  const getXPath = (element: Element) => {
+  runtime.getXPath = (element: Element) => {
     const parts: string[] = [];
     let current: Element | null = element;
     while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 12) {
@@ -419,7 +488,7 @@ function webElementPickerScript(
     return `/${parts.join("/")}`.replace(/^\/\//u, "/");
   };
 
-  const getNearbyText = (element: Element) => {
+  runtime.getNearbyText = (element: Element) => {
     const container =
       element.closest("article, section, main, form, li, tr, dialog") ||
       element.parentElement ||
@@ -430,7 +499,7 @@ function webElementPickerScript(
     );
   };
 
-  const getHtmlExcerpt = (element: Element) => {
+  runtime.getHtmlExcerpt = (element: Element) => {
     const clone = element.cloneNode(true);
     if (!(clone instanceof Element)) {
       return "";
@@ -452,7 +521,7 @@ function webElementPickerScript(
     return truncate(clone.outerHTML, options.maxHtmlChars);
   };
 
-  const rectToPlainObject = (rect: DOMRect): WebElementRect => ({
+  runtime.rectToPlainObject = (rect: DOMRect): WebElementRect => ({
     x: rect.x,
     y: rect.y,
     width: rect.width,
@@ -518,19 +587,19 @@ function webElementPickerScript(
   let pickResolve: ((result: WebElementPickerPickResult) => void) | null = null;
   let adjustResolve: ((result: WebElementPickerAdjustResult) => void) | null = null;
 
-  const settlePick = (result: WebElementPickerPickResult) => {
+  runtime.settlePick = (result: WebElementPickerPickResult) => {
     const resolve = pickResolve;
     pickResolve = null;
     resolve?.(result);
   };
 
-  const settleAdjust = (result: WebElementPickerAdjustResult) => {
+  runtime.settleAdjust = (result: WebElementPickerAdjustResult) => {
     const resolve = adjustResolve;
     adjustResolve = null;
     resolve?.(result);
   };
 
-  const watchHover = (enabled: boolean) => {
+  runtime.watchHover = (enabled: boolean) => {
     if (enabled) {
       document.addEventListener("mousemove", handleMouseMove, true);
       document.addEventListener("click", handleClick, true);
@@ -543,7 +612,7 @@ function webElementPickerScript(
   };
 
   // adjust 阶段冻结 hover 监听后，只剩滚动/缩放需要重定位绿框与标签。
-  const watchRelayout = (enabled: boolean) => {
+  runtime.watchRelayout = (enabled: boolean) => {
     if (enabled) {
       window.addEventListener("scroll", handleRelayout, { capture: true, passive: true });
       window.addEventListener("resize", handleRelayout);
@@ -553,14 +622,14 @@ function webElementPickerScript(
     window.removeEventListener("resize", handleRelayout);
   };
 
-  const cleanup = () => {
+  runtime.cleanup = () => {
     phase = "idle";
     watchHover(false);
     watchRelayout(false);
     document.removeEventListener("keydown", handleKeyDown, true);
     overlay.remove();
     label.remove();
-    delete (window as unknown as Record<string, unknown>)[stateKey];
+    delete (window as unknown as Record<string, unknown>)[__zcodeWepStateKey];
     chain = [];
     chainElements = [];
     chainTruncated = false;
@@ -571,7 +640,7 @@ function webElementPickerScript(
     settleAdjust({ status: "cancelled" });
   };
 
-  const appendPopoverRow = (name: string, value: string | undefined) => {
+  runtime.appendPopoverRow = (name: string, value: string | undefined) => {
     if (!value) {
       return;
     }
@@ -613,7 +682,7 @@ function webElementPickerScript(
     label.append(row);
   };
 
-  const renderPopover = (target: Element, rect: DOMRect, levelLabel?: string) => {
+  runtime.renderPopover = (target: Element, rect: DOMRect, levelLabel?: string) => {
     const style = readStyleSummary(target);
     label.replaceChildren();
 
@@ -658,10 +727,10 @@ function webElementPickerScript(
     appendPopoverRow(options.labels.font, formatFont(style));
   };
 
-  const clampPosition = (value: number, min: number, max: number) =>
+  runtime.clampPosition = (value: number, min: number, max: number) =>
     Math.max(min, Math.min(max, value));
 
-  const getPopoverPosition = (rect: DOMRect, labelWidth: number, labelHeight: number) => {
+  runtime.getPopoverPosition = (rect: DOMRect, labelWidth: number, labelHeight: number) => {
     const padding = 8;
     const gap = 12;
     const maxLeft = Math.max(padding, window.innerWidth - labelWidth - padding);
@@ -726,7 +795,7 @@ function webElementPickerScript(
     return availableSpaces[0] ?? { left: padding, top: padding };
   };
 
-  const updateOverlay = (target: Element | null, levelLabel?: string) => {
+  runtime.updateOverlay = (target: Element | null, levelLabel?: string) => {
     if (!target || target === overlay || target === label || label.contains(target)) {
       overlay.style.display = "none";
       label.style.display = "none";
@@ -756,10 +825,10 @@ function webElementPickerScript(
     label.style.top = `${position.top}px`;
   };
 
-  const currentTarget = () => chainElements[level] ?? null;
+  runtime.currentTarget = () => chainElements[level] ?? null;
 
   /** 幂等：把绿框与层级标签移到档位 `nextLevel`（越界自动夹在链内）。 */
-  const showLevel = (nextLevel: number): { level: number; label: string } | null => {
+  runtime.showLevel = (nextLevel: number): { level: number; label: string } | null => {
     if (chain.length === 0) {
       updateOverlay(null);
       return null;
@@ -776,7 +845,7 @@ function webElementPickerScript(
     return { level, label: levelLabel };
   };
 
-  const collectChainElements = (element: Element, count: number) => {
+  runtime.collectChainElements = (element: Element, count: number) => {
     const elements: Element[] = [];
     let node: Element | null = element;
     while (node && elements.length < count) {
@@ -786,7 +855,7 @@ function webElementPickerScript(
     return elements;
   };
 
-  const enterAdjusting = () => {
+  runtime.enterAdjusting = () => {
     phase = "adjusting";
     watchHover(false);
     watchRelayout(true);
@@ -795,7 +864,7 @@ function webElementPickerScript(
   };
 
   /** 退出层级调整：清空链与 pending，等 renderer 再次 pick() 或 cancel()。 */
-  const leaveAdjusting = () => {
+  runtime.leaveAdjusting = () => {
     phase = "idle";
     watchRelayout(false);
     Object.assign(overlay.style, hoverOverlayStyle);
@@ -806,23 +875,23 @@ function webElementPickerScript(
     level = 0;
   };
 
-  function handleMouseMove(event: MouseEvent) {
+  runtime.handleMouseMove = (event: MouseEvent) => {
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
     }
     hoveredElement = target;
     updateOverlay(target);
-  }
+  };
 
-  function handleRelayout() {
+  runtime.handleRelayout = () => {
     if (phase !== "adjusting") {
       return;
     }
     showLevel(level);
-  }
+  };
 
-  function collectElement(element: Element): Omit<WebElementContextPayload, "workspacePath"> {
+  runtime.collectElement = (element: Element): Omit<WebElementContextPayload, "workspacePath"> => {
     const rect = element.getBoundingClientRect();
     return {
       pageUrl: location.href,
@@ -840,9 +909,9 @@ function webElementPickerScript(
       style: readStyleSummary(element),
       capturedAt: Date.now(),
     };
-  }
+  };
 
-  function handleClick(event: MouseEvent) {
+  runtime.handleClick = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -862,9 +931,9 @@ function webElementPickerScript(
     chainElements = collectChainElements(hoveredElement, picked.chain.length);
     enterAdjusting();
     settlePick({ status: "clicked", chain, chainTruncated });
-  }
+  };
 
-  function handleKeyDown(event: KeyboardEvent) {
+  runtime.handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape" && event.key !== "Enter") {
       return;
     }
@@ -888,9 +957,9 @@ function webElementPickerScript(
       return;
     }
     confirm();
-  }
+  };
 
-  function pick() {
+  runtime.pick = () => {
     return new Promise<WebElementPickerPickResult>((resolve) => {
       if (pickResolve || adjustResolve) {
         // 每个时刻至多一条 pending：重复发起按取消收敛，不制造第二条悬挂 promise。
@@ -907,9 +976,9 @@ function webElementPickerScript(
       watchHover(true);
       pickResolve = resolve;
     });
-  }
+  };
 
-  function beginAdjust() {
+  runtime.beginAdjust = () => {
     return new Promise<WebElementPickerAdjustResult>((resolve) => {
       if (phase !== "adjusting" || chain.length === 0 || adjustResolve) {
         // 顺序不变量：beginAdjust 必须在 adjusting 阶段且尚未悬挂时发起（confirm/requestRepick
@@ -919,17 +988,17 @@ function webElementPickerScript(
       }
       adjustResolve = resolve;
     });
-  }
+  };
 
-  function showAncestor(nextLevel: number) {
+  runtime.showAncestor = (nextLevel: number) => {
     if (phase !== "adjusting") {
       // 防御式：非 adjusting 阶段（或句柄已随页面销毁）一律返回 null，不 reject。
       return null;
     }
     return showLevel(Number(nextLevel));
-  }
+  };
 
-  function confirm() {
+  runtime.confirm = () => {
     if (phase !== "adjusting" || !adjustResolve) {
       return;
     }
@@ -941,15 +1010,63 @@ function webElementPickerScript(
     const element = collectElement(target);
     leaveAdjusting();
     settleAdjust({ status: "selected", element });
-  }
+  };
 
-  function requestRepick() {
+  runtime.requestRepick = () => {
     if (phase !== "adjusting" || !adjustResolve) {
       return;
     }
     leaveAdjusting();
     settleAdjust({ status: "repick" });
-  }
+  };
+
+  // 成员赋值不被压缩器推导函数名；解构同样不创建函数，取回局部名后函数体照旧互相引用。
+  const {
+    truncate,
+    clampColorChannel,
+    toHexColor,
+    parseAlpha,
+    formatComputedColor,
+    readStyleSummary,
+    formatFont,
+    formatElementSize,
+    hasVisibleBackground,
+    cssEscape,
+    readElementText,
+    getImplicitRole,
+    getAccessibleName,
+    getAttributes,
+    getSelector,
+    getXPath,
+    getNearbyText,
+    getHtmlExcerpt,
+    rectToPlainObject,
+    settlePick,
+    settleAdjust,
+    watchHover,
+    watchRelayout,
+    cleanup,
+    appendPopoverRow,
+    renderPopover,
+    clampPosition,
+    getPopoverPosition,
+    updateOverlay,
+    currentTarget,
+    showLevel,
+    collectChainElements,
+    enterAdjusting,
+    leaveAdjusting,
+    handleMouseMove,
+    handleRelayout,
+    collectElement,
+    handleClick,
+    handleKeyDown,
+    pick,
+    beginAdjust,
+    showAncestor,
+    confirm,
+    requestRepick,
+  } = runtime;
 
   const handle = {
     pick,
@@ -960,7 +1077,7 @@ function webElementPickerScript(
     cancel: cleanup,
   };
 
-  (window as unknown as Record<string, typeof handle>)[stateKey] = handle;
+  (window as unknown as Record<string, typeof handle>)[__zcodeWepStateKey] = handle;
   document.addEventListener("keydown", handleKeyDown, true);
   return pick();
 }
@@ -974,10 +1091,10 @@ export function buildWebElementPickerScript(options: WebElementPickerScriptBuild
       ...options.labels,
     },
   };
-  // 注入脚本自包含：opts 与两个 helper 全部走位置实参，主函数体内不存在跨作用域的自由标识符。
+  // 注入脚本自包含：opts、两个 helper 与挂载键全部走位置实参，主函数体内不存在跨作用域的自由标识符。
   return [
     "(function () {",
-    `return (${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)}, ${computeAncestorChain.toString()}, ${buildAncestorLabel.toString()});`,
+    `return (${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)}, ${computeAncestorChain.toString()}, ${buildAncestorLabel.toString()}, ${JSON.stringify(WEB_ELEMENT_PICKER_STATE_KEY)});`,
     "})()",
   ].join("\n");
 }
@@ -993,7 +1110,7 @@ export function buildWebElementPickerCommandScript(
   // 防御式：句柄不存在（页面已导航/实例已销毁）或阶段不符时返回 null，不 reject。
   return [
     "(() => {",
-    `const picker = window.${DEFAULT_OPTIONS.stateKey};`,
+    `const picker = window.${WEB_ELEMENT_PICKER_STATE_KEY};`,
     `if (!picker || typeof picker.${method} !== 'function') return null;`,
     `return picker.${method}(${serializedArgs});`,
     "})()",

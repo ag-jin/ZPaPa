@@ -270,12 +270,18 @@ function createPickerPage() {
 }
 
 /** 取「生产压缩形态」的模块导出：真实 renderer 打包会重命名模块作用域绑定，这里同样压缩后再取 builder。 */
-function loadMinifiedPickerModule() {
+function loadMinifiedPickerModule(options: { keepNames?: boolean } = {}) {
   const source = readFileSync(
     new URL("../src/lib/webElementPickerScript.ts", import.meta.url),
     "utf8",
   );
-  const { code } = transformSync(source, { format: "cjs", loader: "ts", minify: true });
+  const { code } = transformSync(source, {
+    format: "cjs",
+    loader: "ts",
+    minify: true,
+    // 注入函数体经 `toString()` 变成源码文本，压缩器贴的模块作用域 helper（__name）会一起被带进页面。
+    keepNames: options.keepNames === true,
+  });
   const moduleStub = { exports: {} as Record<string, unknown> };
   runInContext(code, createContext({ exports: moduleStub.exports, module: moduleStub }));
   return moduleStub.exports as {
@@ -283,8 +289,12 @@ function loadMinifiedPickerModule() {
   };
 }
 
-test("组装：模块压缩改名后产物仍自包含可执行，页内拾取与层级标签可用", async () => {
-  const { buildWebElementPickerScript: buildMinifiedScript } = loadMinifiedPickerModule();
+/** 压缩形态产物在最小 window/document/Element 桩上驱动一次拾取：注入 → mousemove + click。 */
+async function injectAndPick(options: {
+  keepNames?: boolean;
+  scriptOptions?: Record<string, unknown>;
+}) {
+  const { buildWebElementPickerScript: buildMinifiedScript } = loadMinifiedPickerModule(options);
   const page = createPickerPage();
   const html = page.element("html");
   const body = page.element("body", { parent: html });
@@ -292,8 +302,10 @@ test("组装：模块压缩改名后产物仍自包含可执行，页内拾取�
   const row = page.element("tr", { parent: table });
   const cell = page.element("th", { classNames: ["cell"], parent: row });
 
-  const script = transformSync(buildMinifiedScript(), { minify: true }).code;
-  const pickPromise = runInNewContext(script, page.sandbox) as Promise<unknown>;
+  const script = transformSync(buildMinifiedScript(options.scriptOptions ?? {}), {
+    minify: true,
+  }).code;
+  const pickPromise = runInNewContext(script, page.sandbox);
   assert.equal(
     typeof (pickPromise as { then?: unknown } | undefined)?.then,
     "function",
@@ -301,7 +313,7 @@ test("组装：模块压缩改名后产物仍自包含可执行，页内拾取�
   );
 
   const handle = page.handle();
-  assert.ok(handle, "句柄必须挂在页内 stateKey 上");
+  assert.ok(handle, "句柄必须挂在页内状态键上");
   assert.deepEqual(
     Object.keys(handle).sort(),
     ["beginAdjust", "cancel", "confirm", "pick", "requestRepick", "showAncestor"],
@@ -316,7 +328,17 @@ test("组装：模块压缩改名后产物仍自包含可执行，页内拾取�
   });
 
   // 跨 realm 对象原型不同，deepStrictEqual 会误报，断言前先规整成宿主侧普通对象。
-  const picked = JSON.parse(JSON.stringify(await pickPromise));
+  return {
+    page,
+    handle,
+    picked: JSON.parse(JSON.stringify(await pickPromise)) as Record<string, unknown>,
+    showAncestor: (level: number) => JSON.parse(JSON.stringify(handle.showAncestor(level))),
+  };
+}
+
+test("组装：模块压缩改名后产物仍自包含可执行，页内拾取与层级标签可用", async () => {
+  const { handle, picked, showAncestor } = await injectAndPick({});
+
   assert.deepEqual(picked, {
     status: "clicked",
     chain: [
@@ -326,16 +348,43 @@ test("组装：模块压缩改名后产物仍自包含可执行，页内拾取�
     ],
     chainTruncated: false,
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(handle.showAncestor(0))), {
-    level: 0,
-    label: "tr th.cell",
-  });
-  assert.deepEqual(JSON.parse(JSON.stringify(handle.showAncestor(2))), {
-    level: 2,
-    label: "table#grid",
-  });
+  assert.deepEqual(showAncestor(0), { level: 0, label: "tr th.cell" });
+  assert.deepEqual(showAncestor(2), { level: 2, label: "table#grid" });
 
   handle.cancel();
+});
+
+test("组装：模块压缩开启 keepNames 后产物仍自包含可执行（内层函数不得被压缩器改名）", async () => {
+  const { handle, picked, showAncestor } = await injectAndPick({ keepNames: true });
+
+  assert.deepEqual(picked, {
+    status: "clicked",
+    chain: [
+      { level: 0, tagName: "th", classNames: ["cell"], label: "th.cell" },
+      { level: 1, tagName: "tr", label: "tr" },
+      { level: 2, tagName: "table", id: "grid", label: "table#grid" },
+    ],
+    chainTruncated: false,
+  });
+  assert.deepEqual(showAncestor(2), { level: 2, label: "table#grid" });
+
+  handle.cancel();
+});
+
+test("组装：挂载键是唯一常量，废弃的 stateKey 选项不会让句柄命令失联", async () => {
+  const legacyOptions = { stateKey: "__legacyWebElementPicker" };
+  const { page, picked } = await injectAndPick({ scriptOptions: legacyOptions });
+  assert.equal(picked.status, "clicked", "拾取仍应落到唯一挂载键上的实例");
+
+  const result = runInNewContext(
+    buildWebElementPickerCommandScript("showAncestor", 0),
+    page.sandbox,
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result)),
+    { level: 0, label: "tr th.cell" },
+    "命令小脚本必须命中主脚本挂上的实例（键漂移会让所有句柄命令静默 no-op）",
+  );
 });
 
 test("组装：helper 以位置实参注入，产物是自包含 JS", () => {
