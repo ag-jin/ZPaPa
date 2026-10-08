@@ -144,3 +144,46 @@ T3  之后任意 reload / 双端打开：entry 已持久 ⇒ 同一终态，无�
 整个机制 = 一个新文件 + `server-operations.ts` 一行挂点 + 读面一处消费（entry 读取与
 `runningStatus`/`endedStatus` 消费）。挂点与读面消费**同一提交**，单提交可 revert；
 revert 后回到 `48f7f18` 行为，entry 只增不改、删除无损。
+
+## 6. P1-1 边界核实：J4 信号的真实覆盖面与例外（debugger 取证，2026-10-08）
+
+**问题**：§1.2 的 J4 用 `context.sessions` 当「本进程认领」信号，但生产拓扑里 subagent child 是父
+runtime 内联创建的 `new AgentRuntime(...)`（`core/src/runtime/methods/subagent.ts`），**没有 host
+record**——`context.sessions.set` 只发生在 create/resume/fork 的 host 会话上。⇒ J4 对子 agent 恒
+false，旧 J4 用例绿是因为 fake 手工把 child 放进了 `context.sessions`。
+
+**核实结论**：父会话被去激活时，仍在跑的后台子 agent **不会被连带终止**；但主路径上
+「父被去激活 ∧ child 还活着」也不可达，两道防线都不是 J4：
+
+| 触发               | 父是否真被去激活                                                | child 是否被终止 | 误杀窗口 |
+| ------------------ | --------------------------------------------------------------- | ---------------- | -------- |
+| 切走会话           | 否（退订≠去激活；且后台 child 会让 `isEligible` 拒绝该会话）    | 否               | 不可达   |
+| 容量/idle 回收     | 否（`hasResidencyBlockingWork` 为真 ⇒ idle TTL 与高水位都跳过） | 否               | 不可达   |
+| host 卸载/进程退出 | 是（进程消失）                                                  | 是（随进程）     | 不可达   |
+| 显式会话关闭       | 是（绕过常驻池闸门摘 record，但不碰 child）                     | **否**           | **存在** |
+
+- 防线 1（常驻钉住）：后台 child 在父 runtime 的 task registry 里是 `isBackgrounded ∧ running`
+  ⇒ `hasRunningBackgroundTasks()` / `hasResidencyBlockingWork()` 为真 ⇒ 常驻池两条回收路径都跳过
+  （`session-resident-pool.ts` 的 `isEligible` + 执行前 fresh facts 二次校验）。
+- 防线 2（无连带终止入口）：后台 launch 不订阅父 turn 的 signal（`runner.ts` 的 `start()` 只在启动
+  瞬间读一次 `aborted`），`SubagentPort` 没有 stopAll/close，唯一停止入口 `stopTask` 只被用户
+  Stop / TaskStop / rewind 调用；会话关闭链（`beginShutdown` / `drainMemoryExtractions` /
+  `closeBrowserSession` / executionPort / MCP / session store）够不到它。
+- **例外（已确认可达）**：`deleteSession`（v4 命令）与 `session/close` 摘掉父 record 前不检查常驻
+  事实，也不停本会话的后台 child ⇒ child 继续在本进程跑，而 J4 与网关的 detached-child 跟踪都不在场
+  （后者随父 record 的 `cleanupSessionRuntime` 一并释放）。此时若父会话在同一进程内被重新激活
+  （被关闭的会话仍在 store 里——`deleteSession` 只退订 + 关 runtime，不清 message 库；sessions-index
+  的冷启动种子直接来自 store，故重载/新端接入会把它带回列表）且 child 静默已过宽容期，child 会被
+  暂时标成 `lost`；真实终局到场后自愈（读面「真实 outcome > entry」），期间面板卡片与 Stop 入口
+  消失。可达性前提：须有客户端对「正在跑后台 agent 的会话」下发这两个命令之一——本仓 UI 现有
+  `deleteSession` 派发点只有 draft/预热的空会话清理（`useDraftSessionPrewarm`、saved workflow
+  launcher），未发现桌面端对主会话的一等处；命令本身属 v4 协议面，任一客户端可下发。
+
+**回归锁**：`core/test/backgroundSubagentParentLifetime.test.ts`（真实 runtime + 真实 port：常驻钉住、
+父侧 teardown 不终止 child、唯一终止入口是 `stopTask`）与
+`bootstrap/test/session-resident-pool-background-pin.test.ts`（闸门语义 + 反面对照）。
+
+**未决修法（不在本次范围，需架构决策）**：① 新建进程级认领信号（runner 维护「本进程在跑的 child
+session」索引，J4 并查它）；② 会话关闭时收走本会话的后台 agent（与同链已有的后台 bash、dwf run
+关闭对齐，让 child 落一个真实终态而非事后被推断为 lost）。两者都引入新的状态所有者或改变产品语义，
+按「发现设计缺陷先对齐」的约定留待决策，本分支不自行扩判据。

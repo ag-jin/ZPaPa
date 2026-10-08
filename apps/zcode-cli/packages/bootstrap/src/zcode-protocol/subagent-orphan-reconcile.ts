@@ -18,6 +18,26 @@
  *   J4 本进程不认领（N1/N2）：`context.sessions` 里没有该 child 的 live runtime；
  *   J5 过宽容期（N4）：child 最后持久活动距今 > {@link SUBAGENT_ORPHAN_GRACE_MS}。
  *
+ * J4 信号的真实覆盖面（P1-1 边界核实）：`context.sessions` 是 **host record** 信号——bootstrap
+ * 只在 create/resume/fork 的 host 会话上 `sessions.set`，而 subagent child 由父 runtime 内联
+ * `new AgentRuntime(...)` 创建（core/runtime/methods/subagent.ts），生产拓扑里**没有 record**
+ * ⇒ J4 对子 agent 恒 false（旧用例靠 fake 手工把 child 塞进 `context.sessions` 才绿）。生产里
+ * 「父被去激活 ∧ child 还活着」在**主路径**上不可达，靠的是另外两道，不是这一条：
+ *   1) 常驻钉住：后台 child 在父 runtime 的 task registry 里是 `isBackgrounded ∧ running`
+ *      ⇒ `hasResidencyBlockingWork()` 为真 ⇒ 常驻池的 idle TTL 与高水位两条回收路径都跳过父会话
+ *      （`session-resident-pool.ts` 的 `isEligible`）；切走会话只是退订，本来就不是去激活；
+ *   2) 无连带终止入口：后台 launch 不订阅父 turn 的 signal（只在启动瞬间读一次 aborted），
+ *      `SubagentPort` 也没有 stopAll/close 这类整体停止面——唯一停止入口是 `stopTask`
+ *      （用户 Stop / TaskStop / rewind），会话关闭链够不到它。
+ * 这两条不变量锁在 `core/test/backgroundSubagentParentLifetime.test.ts` 与
+ * `bootstrap/test/session-resident-pool-background-pin.test.ts`（改 J4 也要保留它们）。
+ *
+ * J4 已知例外（未决，见 spec「P1-1 边界核实」）：**显式会话关闭**（deleteSession / session/close）
+ * 绕过常驻池闸门，摘掉父 record 却不停它的后台 child ⇒ 该 child 若随后静默超过宽容期，且父会话
+ * 在同一进程内被重新激活（删掉的会话仍在 store 里，冷读列表会把它带回来），就会被暂时标成 lost
+ * （真实终局到场即自愈，期间卡片与 Stop 入口消失）。修法要新建进程级认领信号或改会话关闭语义，
+ * 都属于新状态所有者，留待架构决策，本模块不自行扩判据。
+ *
  * J2/J3 由权威清单（`readSessionSubagentInventory`，与侧栏/hydration 同一次读）给出，本模块
  * 不自己判活/判终态——各判一次就会造出第二份结论。J1/J5 所需的事实（后台 spawn 候选、child
  * 最后活动）也由同一次读带出，避免在激活路径上再读一遍父/子 transcript。
@@ -233,6 +253,8 @@ export async function reconcileSubagentOrphansOnActivation(
   const candidates = inventory.running.map((running) => ({
     childSessionId: running.childSessionId,
     backgroundLaunch: backgroundChildSessionIds.has(running.childSessionId),
+    // 只认 host record（见文件头「J4 信号的真实覆盖面」）：subagent child 在生产里没有 record，
+    // 所以这一项恒 false；判据的防御力来自挂点位置 + 常驻钉住 + 宽容期，不来自这个信号本身。
     liveInProcess: context.sessions.has(running.childSessionId),
     lastActivityAt: inventory.childLastActivityAtMs.get(running.childSessionId),
   }));
