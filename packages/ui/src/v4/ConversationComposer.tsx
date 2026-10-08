@@ -711,6 +711,7 @@ function ConversationComposerImpl({
     contexts: webElementContexts,
     hasContexts: hasWebElementContexts,
     removeContext: removeWebElementContext,
+    updateContext: updateWebElementContext,
     clearContexts: clearWebElementContexts,
   } = useWebElementContexts({
     workspacePath,
@@ -1974,6 +1975,7 @@ function ConversationComposerImpl({
               contexts={webElementContexts}
               onRemove={removeWebElementContext}
               onRemoveAll={clearWebElementContexts}
+              onEditComment={(id, comment) => updateWebElementContext(id, { comment })}
             />
             <PptxElementReferenceChip
               references={pptxElementReferences}
@@ -2006,6 +2008,7 @@ function ConversationComposerImpl({
     removeCodeCommentContext,
     removeConversationSelectionReference,
     removeWebElementContext,
+    updateWebElementContext,
     removePptxElementReference,
     conversationSelectionReferences,
     pendingShareContext,
