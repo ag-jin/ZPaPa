@@ -1,8 +1,3 @@
-/* eslint-disable max-lines -- 详情页是**接线中心**：三个区（概览/协作/交付物+PR）的挂载与
-   「一次动作一个执行器」（runCollaborationAction）必须同处一屏才能被读出来 —— 各区自己取服务、
-   自己写，就会重新长出第二份「谁在写」的判据（B5.1/B5.2 的立身之本）。本体逻辑全在新模块里
-   （WorkItemDeliverablesSection / WorkItemPullRequestsSection / 各 viewmodel），本文件只做挂载
-   与回调转发。#8 D2 接 PR 区时本文件已 398/400 行（豁免先例：Root.tsx / squadRunLifecycle.ts）。 */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   IWorkItemCollaborationServiceShape,
@@ -19,11 +14,11 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { resolveSquadRuntimeService, squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import { resolveWorkItemCollaborationService } from "./workItemCollaborationAccess.js";
-import { WorkItemLabelChip } from "./WorkItemsBoard.js";
 import { WorkItemCollaborationTimeline } from "./WorkItemCollaborationTimeline.js";
 import { WorkItemCommentComposer } from "./WorkItemCommentComposer.js";
 import { WorkItemCommentDeleteDialog } from "./WorkItemCommentDeleteDialog.js";
 import { WorkItemDecisionRecorder, type DecisionSubmitInput } from "./WorkItemDecisionDialog.js";
+import { WorkItemDetailOverview } from "./WorkItemDetailOverview.js";
 import { WorkItemDeliverablesSection } from "./WorkItemDeliverablesSection.js";
 import { WorkItemPullRequestsSection } from "./WorkItemPullRequestsSection.js";
 import { buildReceiptsByComment, buildReactionsByComment } from "./workItemCollaborationGroups.js";
@@ -37,9 +32,13 @@ import {
   writeDisabledReason,
   type CommentDeleteConfirmState,
 } from "./workItemCollaborationViewModel.js";
-import { workItemPropertyValueText, workItemStatusMessageId } from "./workItemsViewModel.js";
 
-/* B5.1 轮 1 / B5.2 轮 2：工作项**详情页**（设计案 §2.1 的挂载点结论：独立页，不是抽屉/对话框）。
+/* B5.1 轮 1 / B5.2 轮 2：工作项**详情页** = **接线中心**（设计案 §2.1 的挂载点结论：独立页，
+   不是抽屉/对话框）。三个区（概览/协作/交付物+PR）的挂载与「一次动作一个执行器」必须同处一屏才能
+   被读出来 —— 各区自己取服务、自己写，就会重新长出第二份「谁在写」的判据（B5.1/B5.2 的立身之本）。
+   本体逻辑全在独立模块里（`WorkItemDetailOverview` / `WorkItemDeliverablesSection` /
+   `WorkItemPullRequestsSection` / 各 viewmodel），本文件只做挂载与回调转发；
+   T-P1-R2 把概览区也搬成独立模块后，本文件回到 400 行以内，**不再需要 max-lines 豁免**。
 
    导航语义（§1.3）：详情页**不猜历史**，返回只调 `onBack` —— 回哪个视图由 App 的
    `returnView` 决定（从看板进 ⇒ 回看板；从 agent 任务表进 ⇒ 回 agent 详情）。
@@ -368,76 +367,12 @@ export function WorkItemDetailPage({
         ) : null}
       </div>
 
-      <section
-        data-testid="work-item-detail-overview"
-        className="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4"
-      >
-        <span className="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">
-          <span>{t(workItemStatusMessageId(workItem.status))}</span>
-          <span>{assigneeLabel}</span>
-          {workItem.archivedAt === undefined ? null : <span>{t("squad.common.archived")}</span>}
-        </span>
-        <h1 className="text-ui-lg font-medium text-foreground">{workItem.title}</h1>
-        {/* 标签（#11 v1）：**全量**呈现、不截断（看板行的 3 个上限是行的约束，不是这条记录的约束），
-            取自 `state.read.workItem`（协作读模型含归档行 —— 用快照的话归档项的标签会凭空消失）。
-            空标签给一句「无标签」而不是整块消失：字段是这一轮新加的，什么都没有会被读成「页面坏了」。 */}
-        <span className="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">
-          <span className="text-ui-xs text-foreground-subtle">
-            {t("squad.workItemDetail.overview.labels")}
-          </span>
-          {workItem.labels.length === 0 ? (
-            <span className="text-ui-xs text-foreground-subtlest">
-              {t("squad.workItemDetail.overview.labelsEmpty")}
-            </span>
-          ) : (
-            workItem.labels.map((label) => <WorkItemLabelChip key={label} label={label} />)
-          )}
-        </span>
-        {/* 自定义属性（#11 v1）：**只读**呈现（零写者字段不做编辑器 —— 值域没有类型契约，
-            先造编辑器就是替设计补一个没裁过的决定）。非字符串值原样显示 JSON 文本；
-            没有属性则整块不渲染（空行是噪音，与 MCP 徽标同一裁定）。 */}
-        {Object.entries(workItem.properties).length === 0 ? null : (
-          <span
-            className="flex flex-wrap items-center gap-2 text-ui-xs"
-            data-testid="work-item-detail-properties"
-          >
-            <span className="text-foreground-subtle">
-              {t("squad.workItemDetail.overview.properties")}
-            </span>
-            {Object.entries(workItem.properties).map(([key, value]) => (
-              <span
-                key={key}
-                className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5"
-                data-testid="work-item-detail-property"
-              >
-                <span className="text-foreground-subtle">{key}</span>
-                <span className="text-foreground-subtlest">{workItemPropertyValueText(value)}</span>
-              </span>
-            ))}
-          </span>
-        )}
-        {workItem.body.trim().length === 0 ? null : (
-          <>
-            <Button
-              size="xs"
-              variant="ghost"
-              className="self-start"
-              aria-expanded={bodyExpanded}
-              data-testid="work-item-detail-body-toggle"
-              onClick={() => setBodyExpanded((previous) => !previous)}
-            >
-              {bodyExpanded
-                ? t("squad.workItemDetail.overview.bodyHide")
-                : t("squad.workItemDetail.overview.bodyShow")}
-            </Button>
-            {bodyExpanded ? (
-              <p className="text-ui-base text-foreground-subtle whitespace-pre-wrap break-words">
-                {workItem.body}
-              </p>
-            ) : null}
-          </>
-        )}
-      </section>
+      <WorkItemDetailOverview
+        workItem={workItem}
+        assigneeLabel={assigneeLabel}
+        bodyExpanded={bodyExpanded}
+        onToggleBody={() => setBodyExpanded((previous) => !previous)}
+      />
 
       <WorkItemDeliverablesSection
         deliverables={read.deliverables}

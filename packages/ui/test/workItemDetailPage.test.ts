@@ -3,14 +3,18 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   COMMENT_DISPATCH_OUTCOMES,
   WORK_ITEM_ACTIVITY_KINDS,
   type IServiceAccessor,
   type WorkItemCollaborationRead,
 } from "@zcode/services";
+import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
+import { WorkItemDetailOverview } from "../src/squad/WorkItemDetailOverview.js";
 import {
   WORK_ITEM_COLLABORATION_SERVICE_UNAVAILABLE_CODE,
   resolveWorkItemCollaborationService,
@@ -197,9 +201,11 @@ const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
 /** B-5 线两个轮次的 UI 源码文件（反向断言的扫描面；轮 2 追加两个新组件；
-    C3.2 再追加决定面的两个文件 —— R1/R2 的禁用词对它同样生效）。 */
+    C3.2 再追加决定面的两个文件 —— R1/R2 的禁用词对它同样生效；
+    T-P1-R2 追加**概览模块**（搬到哪，反向断言就扫到哪 —— 新文件不得脱离 R1/R2 的网）。 */
 const ROUND_ONE_SOURCES = [
   "squad/WorkItemDetailPage.tsx",
+  "squad/WorkItemDetailOverview.tsx",
   "squad/WorkItemCollaborationTimeline.tsx",
   "squad/WorkItemCommentEntry.tsx",
   "squad/WorkItemCommentComposer.tsx",
@@ -216,6 +222,9 @@ const ROUND_ONE_SOURCES = [
 
 test("守卫｜详情页四态与协作区 testid 齐备（页根 / 返回 / 概览 / 加载 / 失败 / 不存在 / 协作区）", () => {
   const page = readSource("squad/WorkItemDetailPage.tsx");
+  /* T-P1-R2 起概览 section 在独立模块里 ⇒ 扫描面 = 页面 + 概览模块（**只扩面**：
+     概览的四个 testid 仍必须存在，只是不再要求它们出现在页面文件本身）。 */
+  const detailSurface = page + readSource("squad/WorkItemDetailOverview.tsx");
   for (const testId of [
     "work-item-detail-page",
     "work-item-detail-back",
@@ -227,7 +236,7 @@ test("守卫｜详情页四态与协作区 testid 齐备（页根 / 返回 / 概
     "work-item-collaboration",
     "work-item-collaboration-failure",
   ]) {
-    assert.ok(page.includes(`data-testid="${testId}"`), `详情页缺 testid ${testId}`);
+    assert.ok(detailSurface.includes(`data-testid="${testId}"`), `详情页缺 testid ${testId}`);
   }
   assert.ok(
     page.includes("workItemId === null ? (") ||
@@ -672,4 +681,236 @@ test("守卫｜R10：i18n 全键两语齐 + 占位符成对 + 两族键数 == �
       `receipt outcome ${outcome} 缺两语文案`,
     );
   }
+});
+
+/* ---------- 概览抽件（T-P1-R2）：单点守卫 + 搬件基线（渲染输出逐字节一致） ---------- */
+
+/* 概览 section 自 T-P1-R2 起独立成模块（`WorkItemDetailOverview.tsx`），页面只留挂载与回调。
+   两条判据：① **单点** —— 概览 section 的 testid 全域恰一处、页面恰挂载一次（页面里再留一份 =
+   两个概览，R3 改一个漏一个）；② **搬件基线** —— 四态渲染输出与**搬件前**页面内联 JSX 逐字节一致。
+
+   夹具与期望值的关系：期望值是搬件前源码的真实渲染输出（脚本机械捕捉，不是手抄），
+   所以「四态全等」等价于「这次搬件一行渲染都没变」。 */
+
+const OVERVIEW_FULL_ITEM: WorkItemCollaborationRead["workItem"] = {
+  id: "wi-1",
+  workspaceIdentity: "ws",
+  workspacePath: "/w",
+  title: "把工作项详情页的概览抽成独立模块",
+  body: "第一行正文\n第二行正文",
+  status: "in_progress",
+  assignee: { type: "user", id: "u" },
+  labels: ["alpha", "beta"],
+  properties: { env: "prod", retries: 3, nested: { a: 1 } },
+  position: 0,
+};
+
+const OVERVIEW_SPARSE_ITEM: WorkItemCollaborationRead["workItem"] = {
+  id: "wi-1",
+  workspaceIdentity: "ws",
+  workspacePath: "/w",
+  title: "空标签空属性空正文",
+  body: "   ",
+  status: "cancelled",
+  assignee: { type: "user", id: "u" },
+  labels: [],
+  properties: {},
+  position: 0,
+  archivedAt: 1759968000000,
+};
+
+/* 搬件基线期望值：**搬件前**页面内联概览 JSX 的真实渲染输出（由脚本机械捕捉，不是手抄）。
+
+   值来自 `renderToStaticMarkup`（真 ZCodeIntlProvider，zh-CN）—— 搬件前后逐字节一致即本条通过。
+
+   R3 起若**有意**改概览（新字段/密度），必须同步更新这四段字面量：改动本身就是审查点。 */
+
+const OVERVIEW_FULL_COLLAPSED =
+  '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  "<span>进行中" +
+  "</span>" +
+  "<span>智能体·甲" +
+  "</span>" +
+  "</span>" +
+  '<h1 class="text-ui-lg font-medium text-foreground">把工作项详情页的概览抽成独立模块' +
+  "</h1>" +
+  '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
+  '<span class="text-ui-xs text-foreground-subtle">标签' +
+  "</span>" +
+  '<span class="shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest" data-testid="work-item-label">alpha' +
+  "</span>" +
+  '<span class="shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest" data-testid="work-item-label">beta' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs" data-testid="work-item-detail-properties">' +
+  '<span class="text-foreground-subtle">属性' +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">env' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">prod' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">retries' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">3' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">nested' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">{&quot;a&quot;:1}' +
+  "</span>" +
+  "</span>" +
+  "</span>" +
+  '<button data-slot="button" data-variant="ghost" data-size="xs" class="group/button inline-flex shrink-0 items-center justify-center border border-transparent bg-clip-padding whitespace-nowrap transition-colors outline-none select-none disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&amp;_svg]:pointer-events-none [&amp;_svg]:shrink-0 text-foreground hover:bg-hover hover:text-foreground aria-expanded:bg-hover aria-expanded:text-foreground h-5 gap-1 rounded-sm px-2 text-ui-base has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&amp;_svg:not([class*=&#x27;size-&#x27;])]:size-2.5 self-start" aria-expanded="false" data-testid="work-item-detail-body-toggle">展开描述' +
+  "</button>" +
+  "</section>";
+
+const OVERVIEW_FULL_EXPANDED =
+  '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  "<span>进行中" +
+  "</span>" +
+  "<span>智能体·甲" +
+  "</span>" +
+  "</span>" +
+  '<h1 class="text-ui-lg font-medium text-foreground">把工作项详情页的概览抽成独立模块' +
+  "</h1>" +
+  '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
+  '<span class="text-ui-xs text-foreground-subtle">标签' +
+  "</span>" +
+  '<span class="shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest" data-testid="work-item-label">alpha' +
+  "</span>" +
+  '<span class="shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest" data-testid="work-item-label">beta' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs" data-testid="work-item-detail-properties">' +
+  '<span class="text-foreground-subtle">属性' +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">env' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">prod' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">retries' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">3' +
+  "</span>" +
+  "</span>" +
+  '<span class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5" data-testid="work-item-detail-property">' +
+  '<span class="text-foreground-subtle">nested' +
+  "</span>" +
+  '<span class="text-foreground-subtlest">{&quot;a&quot;:1}' +
+  "</span>" +
+  "</span>" +
+  "</span>" +
+  '<button data-slot="button" data-variant="ghost" data-size="xs" class="group/button inline-flex shrink-0 items-center justify-center border border-transparent bg-clip-padding whitespace-nowrap transition-colors outline-none select-none disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&amp;_svg]:pointer-events-none [&amp;_svg]:shrink-0 text-foreground hover:bg-hover hover:text-foreground aria-expanded:bg-hover aria-expanded:text-foreground h-5 gap-1 rounded-sm px-2 text-ui-base has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&amp;_svg:not([class*=&#x27;size-&#x27;])]:size-2.5 self-start" aria-expanded="true" data-testid="work-item-detail-body-toggle">收起描述' +
+  "</button>" +
+  '<p class="text-ui-base text-foreground-subtle whitespace-pre-wrap break-words">第一行正文\n第二行正文' +
+  "</p>" +
+  "</section>";
+
+const OVERVIEW_SPARSE_COLLAPSED =
+  '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  "<span>已取消" +
+  "</span>" +
+  "<span>用户·本地" +
+  "</span>" +
+  "<span>已归档" +
+  "</span>" +
+  "</span>" +
+  '<h1 class="text-ui-lg font-medium text-foreground">空标签空属性空正文' +
+  "</h1>" +
+  '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
+  '<span class="text-ui-xs text-foreground-subtle">标签' +
+  "</span>" +
+  '<span class="text-ui-xs text-foreground-subtlest">无标签' +
+  "</span>" +
+  "</span>" +
+  "</section>";
+
+const OVERVIEW_SPARSE_EXPANDED =
+  '<section data-testid="work-item-detail-overview" class="flex flex-col gap-2 rounded-xl border border-card-border bg-card px-4 py-4">' +
+  '<span class="flex flex-wrap items-center gap-2 text-ui-xs text-foreground-subtle">' +
+  "<span>已取消" +
+  "</span>" +
+  "<span>用户·本地" +
+  "</span>" +
+  "<span>已归档" +
+  "</span>" +
+  "</span>" +
+  '<h1 class="text-ui-lg font-medium text-foreground">空标签空属性空正文' +
+  "</h1>" +
+  '<span class="flex flex-wrap items-center gap-1" data-testid="work-item-detail-labels">' +
+  '<span class="text-ui-xs text-foreground-subtle">标签' +
+  "</span>" +
+  '<span class="text-ui-xs text-foreground-subtlest">无标签' +
+  "</span>" +
+  "</span>" +
+  "</section>";
+
+function renderOverview(
+  workItem: WorkItemCollaborationRead["workItem"],
+  assigneeLabel: string,
+  bodyExpanded: boolean,
+): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(WorkItemDetailOverview, {
+        workItem,
+        assigneeLabel,
+        bodyExpanded,
+        onToggleBody: () => {},
+      }),
+    }),
+  );
+}
+
+test("搬件基线｜概览真渲染：折叠/展开 × 满字段/空字段 四态与搬件前逐字节一致", () => {
+  assert.equal(renderOverview(OVERVIEW_FULL_ITEM, "智能体·甲", false), OVERVIEW_FULL_COLLAPSED);
+  assert.equal(renderOverview(OVERVIEW_FULL_ITEM, "智能体·甲", true), OVERVIEW_FULL_EXPANDED);
+  assert.equal(renderOverview(OVERVIEW_SPARSE_ITEM, "用户·本地", false), OVERVIEW_SPARSE_COLLAPSED);
+  assert.equal(renderOverview(OVERVIEW_SPARSE_ITEM, "用户·本地", true), OVERVIEW_SPARSE_EXPANDED);
+});
+
+test("守卫｜概览单点：section 只在概览模块里，页面恰挂载一次（双份 = 红）", () => {
+  const page = readSource("squad/WorkItemDetailPage.tsx");
+  const overview = readSource("squad/WorkItemDetailOverview.tsx");
+  assert.equal(
+    (page + overview).split('data-testid="work-item-detail-overview"').length - 1,
+    1,
+    "概览 section 的 testid 全域恰一处（页面里再留一份 = 两个概览，R3 改一个漏一个）",
+  );
+  assert.equal(
+    page.split("<WorkItemDetailOverview").length - 1,
+    1,
+    "页面必须恰好挂载一次 <WorkItemDetailOverview（漏挂 = 概览整块消失且不报错）",
+  );
+  // props 契约（R3 的落点）：读模型 / 指派显示 / 展开态与回调 —— 展开态仍由页面持有（状态所有者不变）。
+  for (const prop of [
+    "workItem={workItem}",
+    "assigneeLabel={assigneeLabel}",
+    "bodyExpanded={bodyExpanded}",
+    "onToggleBody={",
+  ]) {
+    assert.ok(page.includes(prop), `页面必须以 ${prop} 接线概览模块`);
+  }
+  assert.ok(
+    /const \[bodyExpanded, setBodyExpanded\] = useState\(/.test(page),
+    "展开态属于页面（搬件不改状态所有者：模块只拿受控值 + 回调）",
+  );
+});
+
+test("守卫｜概览模块进入反向断言扫描名单（漏加 = 新文件可以偷偷 import repo/身份）", () => {
+  assert.ok(
+    ROUND_ONE_SOURCES.includes("squad/WorkItemDetailOverview.tsx"),
+    "R1/R2/R6/R8/R9 的扫描名单必须含概览模块（搬到哪，反向断言就扫到哪）",
+  );
 });

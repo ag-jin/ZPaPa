@@ -579,6 +579,8 @@ test("i18n｜映射表产出的每个文案键两语齐备、占位符一致（c
     "WorkItemsPageActions.tsx",
     "WorkItemsBoard.tsx",
     "WorkItemDetailPage.tsx",
+    // T-P1-R2 起概览区在独立模块里（键字面量随之一并搬走 ⇒ 扫描名单只扩，判据不动）。
+    "WorkItemDetailOverview.tsx",
     "SquadCreateDialogs.tsx",
   ]) {
     const source = readFileSync(resolve(squadDir, file), "utf8");

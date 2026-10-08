@@ -241,9 +241,11 @@ const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
 /** B-5 线的全部 UI 源码（反向断言的扫描面，与轮 1 文件保持同一份名单）。
-    C3.2 追加决定面的两个文件：新文件**自动**进入 D1-A 身份扫描与 lucide 图标扫描。 */
+    C3.2 追加决定面的两个文件：新文件**自动**进入 D1-A 身份扫描与 lucide 图标扫描。
+    T-P1-R2 追加概览模块（从页面搬出的呈现区照样要过同一张网）。 */
 const COLLABORATION_SOURCES = [
   "squad/WorkItemDetailPage.tsx",
+  "squad/WorkItemDetailOverview.tsx",
   "squad/WorkItemCollaborationTimeline.tsx",
   "squad/WorkItemCommentEntry.tsx",
   "squad/WorkItemCommentComposer.tsx",

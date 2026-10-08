@@ -131,9 +131,12 @@ const PAGE = readFileSync(resolve(SRC_DIR, "squad/WorkItemDetailPage.tsx"), "utf
 const SECTION = readFileSync(resolve(SRC_DIR, "squad/WorkItemDeliverablesSection.tsx"), "utf8");
 
 test("接线｜交付物区挂在详情页：概览与协作区之间，且拿得到读模型与两个回调", () => {
-  const overviewIndex = PAGE.indexOf('data-testid="work-item-detail-overview"');
+  /* T-P1-R2 起概览 section 在独立模块里 ⇒ 页面上的「概览位置」锚点是它的**挂载点**。
+     仍钉同一条判据（交付物区在概览之后、协作之前）；继续用 testid 会让 indexOf 得 -1 而**静默**通过。 */
+  const overviewIndex = PAGE.indexOf("<WorkItemDetailOverview");
   const deliverablesIndex = PAGE.indexOf("<WorkItemDeliverablesSection");
   const collaborationIndex = PAGE.indexOf('data-testid="work-item-collaboration"');
+  assert.ok(overviewIndex > 0, "详情页必须挂载概览模块（漏挂 ⇒ 下面的顺序判据会静默失效）");
   assert.ok(deliverablesIndex > 0, "详情页必须挂上交付物区");
   assert.ok(
     overviewIndex < deliverablesIndex && deliverablesIndex < collaborationIndex,

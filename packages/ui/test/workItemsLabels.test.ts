@@ -16,6 +16,11 @@ import { workItemLabelChips, workItemPropertyValueText } from "../src/squad/work
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
+/* 概览区自 T-P1-R2 起独立成模块（`WorkItemDetailOverview.tsx`）⇒ 概览的三个守卫（chip 复用 /
+   标签区 / 属性区）的扫描面 = 页面 + 概览模块。**只扩面**：判据与切片方式一字不动，
+   否则守卫会变成在「搬走后的页面」上找已经不是它的那几行（块切片取到空串 = 静默失效）。 */
+const readDetailSurface = () =>
+  readSource("squad/WorkItemDetailPage.tsx") + readSource("squad/WorkItemDetailOverview.tsx");
 const SERVICES_SRC_DIR = resolve(SRC_DIR, "../../services/src");
 const readServicesSource = (relativePath: string) =>
   readFileSync(resolve(SERVICES_SRC_DIR, relativePath), "utf8");
@@ -62,7 +67,7 @@ test("守卫｜看板行渲染标签 chip 与「+N」；chip 定义只有一处�
     1,
     "chip 的样式常量只有**一处定义**（各写一份外观 = 两个面迟早长得不一样）",
   );
-  const detail = readSource("squad/WorkItemDetailPage.tsx");
+  const detail = readDetailSurface();
   assert.ok(
     detail.includes("WorkItemLabelChip") && !detail.includes("WORK_ITEM_LABEL_CHIP_CLASSNAME"),
     "详情页必须复用看板的 chip 组件，不得自带第二份样式",
@@ -100,7 +105,7 @@ test("守卫｜标签 chip 只用中性 token，不含任何语义状态色", ()
    变异（M1-5）：改成从 `getSnapshot().workItems` 取 —— 归档行不在快照的 listByWorkspace 口径里，
    于是「已归档但仍有标签」的工作项在详情页会看不到标签，且**不报错**。 */
 test("守卫｜详情页标签只来自协作读模型（归档行才看得到），且不截断", () => {
-  const detail = readSource("squad/WorkItemDetailPage.tsx");
+  const detail = readDetailSurface();
   assert.ok(
     detail.includes("workItem.labels.map("),
     "标签必须来自本地解构出的 workItem（= state.read.workItem，协作读模型含归档行）",
@@ -207,7 +212,7 @@ test("守卫｜编辑对话框的初值来自条目本身（title / body / label
    故非字符串值原样显示 JSON 文本（不猜类型、不做控件）。
    变异：把 properties 块改成只渲染字符串值（丢掉对象/数字）⇒ 第一条必红。 */
 test("守卫｜详情页只读呈现 properties：键值对全量、非字符串值原样 JSON 文本、空则不渲染", () => {
-  const detail = readSource("squad/WorkItemDetailPage.tsx");
+  const detail = readDetailSurface();
   assert.ok(
     detail.includes('data-testid="work-item-detail-properties"'),
     "属性区必须存在（v1 = 只读可看；零写者不等于零呈现）",
