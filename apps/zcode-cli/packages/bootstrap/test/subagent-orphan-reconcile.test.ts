@@ -19,6 +19,7 @@ import {
   type SessionTaskType,
 } from "@zcode/contracts";
 import { SESSION_ENTRY_SUBAGENT_OUTCOME } from "../src/zcode-protocol/subagent-session-query.js";
+import { readSessionSubagentInventory } from "../src/zcode-protocol/server-operations.js";
 import {
   SUBAGENT_ORPHAN_GRACE_MS,
   SUBAGENT_ORPHAN_RECONCILE_REASON,
@@ -676,4 +677,98 @@ test("混合：一个已结束、一个本进程在跑、一个孤儿 ⇒ 只收
   assert.deepEqual(result.skipped, [
     { childSessionId: LIVE_CHILD_SESSION_ID, reason: "live_child" },
   ]);
+});
+
+// ── 读面：收敛 entry 的消费（同一次读 / 终态优先级 / 幂等）────────────────────
+
+test("读面：同一次读带出收敛判据所需的全部事实（running/ended + 后台候选 + 最后活动）", async () => {
+  const { context } = orphanScenario({ childActivityAt: NOW - HOUR });
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  const [running] = inventory.running;
+
+  assert.deepEqual(inventory.childSessionIds, [CHILD_SESSION_ID]);
+  assert.deepEqual(inventory.backgroundChildSessionIds, [CHILD_SESSION_ID], "J1 事实随同一次读带出");
+  assert.equal(
+    inventory.childLastActivityAtMs.get(CHILD_SESSION_ID),
+    NOW - HOUR,
+    "J5 事实随同一次读带出",
+  );
+  assert.equal(running?.childSessionId, CHILD_SESSION_ID);
+  assert.deepEqual(inventory.ended, []);
+});
+
+test("读面：subagent_outcome entry 让 child 离开 running 并进入 ended{lost}", async () => {
+  const { state, context } = orphanScenario({ childActivityAt: NOW - SUBAGENT_ORPHAN_GRACE_MS - 1 });
+  // 手工放一条收敛 entry（模拟上一个 runtime 收敛后落盘的事实）：entry 本身就是终态证据，
+  // 读面不许再凭空宣称 running——否则侧栏说「运行中」、行说 failed，正是 48f7f18 消灭的裂缝。
+  state.entries.set(CHILD_SESSION_ID, [
+    {
+      id: subagentOutcomeEntryId(CHILD_SESSION_ID),
+      sessionID: CHILD_SESSION_ID as SessionId,
+      type: SESSION_ENTRY_SUBAGENT_OUTCOME,
+      time: { created: NOW - HOUR, updated: NOW - HOUR },
+      data: { status: "lost", reason: SUBAGENT_ORPHAN_RECONCILE_REASON },
+    },
+  ]);
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+
+  assert.deepEqual(inventory.running, []);
+  assert.deepEqual(
+    inventory.ended.map((item) => ({ childSessionId: item.childSessionId, status: item.status })),
+    [{ childSessionId: CHILD_SESSION_ID, status: "lost" }],
+  );
+});
+
+test("幂等：收敛后的后续接管不再重复写（entry 已让 child 离开 running 集合）", async () => {
+  const { state, context } = orphanScenario({ childActivityAt: NOW - SUBAGENT_ORPHAN_GRACE_MS - 1 });
+
+  const first = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: PARENT_SESSION_ID,
+    now: NOW,
+  });
+  const second = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: PARENT_SESSION_ID,
+    now: NOW + HOUR,
+  });
+
+  assert.equal(first.reconciled, 1);
+  assert.equal(second.reconciled, 0, "已收敛的 child 不再是候选");
+  assert.deepEqual(second.skipped, []);
+  assert.equal(state.saves.length, 1, "同 key upsert，不累积第二条 entry");
+  assert.equal(state.entries.get(CHILD_SESSION_ID)?.length, 1);
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+  assert.deepEqual(inventory.running, []);
+  assert.deepEqual(inventory.ended.map((item) => item.status), ["lost"]);
+});
+
+test("优先级：真实 outcome 后来到场 ⇒ 赢过收敛 entry（终态永远以真实记录为准）", async () => {
+  const { state, context } = orphanScenario({ childActivityAt: NOW - SUBAGENT_ORPHAN_GRACE_MS - 1 });
+  await reconcileSubagentOrphansOnActivation({ context, sessionId: PARENT_SESSION_ID, now: NOW });
+
+  // child 后来真的结束/失败了（例如另一进程 resume 过它）：真实终态必须赢过补洞 entry。
+  state.messages.set(CHILD_SESSION_ID, [
+    {
+      info: {
+        id: "msg_child_late_outcome",
+        role: "assistant",
+        parentID: "msg_orphan_reconcile_child_user",
+        time: { created: NOW - MINUTE, completed: NOW - MINUTE },
+        finish: "stop",
+        error: { name: "SubagentCrashed" },
+      },
+      parts: [{ id: "part_child_late_outcome", type: "text", text: "子 agent 失败" }],
+    } as unknown as MessageWithParts,
+  ]);
+
+  const inventory = await readSessionSubagentInventory(context, PARENT_SESSION_ID);
+
+  assert.deepEqual(inventory.running, []);
+  assert.deepEqual(
+    inventory.ended.map((item) => ({ childSessionId: item.childSessionId, status: item.status })),
+    [{ childSessionId: CHILD_SESSION_ID, status: "failed" }],
+  );
 });

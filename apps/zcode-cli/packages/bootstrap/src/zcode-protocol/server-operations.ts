@@ -118,11 +118,14 @@ import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js"
 import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
 import { projectIdFromDirectory } from "../app/paths.js";
 import {
+  SESSION_ENTRY_SUBAGENT_OUTCOME,
   collectSubagentSpawnCandidates,
   lastChildActivityAt,
   paginateEndedSubagents,
   projectSessionSubagents,
+  subagentOutcomeEntryStatus,
 } from "./subagent-session-query.js";
+import { reconcileSubagentOrphansOnActivation } from "./subagent-orphan-reconcile.js";
 import { runSessionModelConfigMutation } from "../zcode-protocol-v4/model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
 
@@ -1515,6 +1518,11 @@ export async function activateSessionForResume(
     sessionId: params.sessionId,
     traceId: record.traceContext.traceId,
   });
+  // 接管时刻收敛孤儿（本机制唯一挂点）：app.resume() 已返回 ⇒ 本 runtime 对该会话名下零个在飞
+  // agent（registry 是进程私有内存态、冷恢复新建即为空），此刻仍在 running 的后台 child 只可能
+  // 是死进程的遗物。放在 hydration 之前，保证首次打开就读到统一终态（不出现「第一次 running、
+  // 第二次才收敛」的闪烁）；失败只降级 warn，绝不拖垮激活（见模块三条边界）。
+  await reconcileSubagentOrphansOnActivation({ context, sessionId: params.sessionId, persistedMessages });
   return {
     knownSession: session,
     record,
@@ -1774,7 +1782,14 @@ export async function readSessionSubagentInventory(
       // 孤儿收敛的宽容期判据（J5）在这批子查询里带出：收敛方在激活尾部复用同一次读，
       // 不再单独读一遍 child transcript（激活路径的时延预算）。
       childLastActivityAtMs.set(childSessionId, lastChildActivityAt(childSession, childMessages));
-      return { childMessages, childProjection, childSession, childSessionId };
+      // 收敛 entry（孤儿补洞的终态事实）同样属于这批子查询：读面只认 child 的持久记录。
+      const outcomeEntryStatus = subagentOutcomeEntryStatus(
+        await store.sessionEntries?.({
+          sessionID: childSession.id,
+          type: SESSION_ENTRY_SUBAGENT_OUTCOME,
+        }),
+      );
+      return { childMessages, childProjection, childSession, childSessionId, outcomeEntryStatus };
     }),
   );
   const persistedChildren = childEntries.filter(
@@ -1796,6 +1811,13 @@ export async function readSessionSubagentInventory(
     childProjectionsById: new Map(
       persistedChildren.flatMap((entry) =>
         entry.childProjection ? [[entry.childSessionId, entry.childProjection]] : [],
+      ),
+    ),
+    subagentOutcomeEntryStatusById: new Map(
+      persistedChildren.flatMap((entry) =>
+        entry.outcomeEntryStatus
+          ? [[entry.childSessionId, entry.outcomeEntryStatus] as const]
+          : [],
       ),
     ),
     ...(parentProjection ? { parentProjection } : {}),
