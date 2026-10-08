@@ -261,22 +261,22 @@ export class BackgroundTaskTracker {
           return;
         }
 
-        if (this.isNotifiedLocalAgentSnapshot(toolCall, snapshot)) {
-          this.deps.logger?.debug?.(
-            "Background task terminal notification already handled by subagent",
-            {
-              ...traceContextToLogContext(traceContext),
-              event: "background_task.tracking.notification_already_handled",
-              module: "core.tool.executor",
-              taskId,
-              toolName: toolCall.name,
-            },
-          );
-          stopped = true;
-          stopTracking();
-          return;
-        }
-
+        // 后台 Agent 的终态**不再**委派给 subagent runner。
+        //
+        // 旧实现在这里看到 `local_agent && notified` 就静默收摊，把终态发布义务全部押给
+        // runner 的 finalizeBackgroundCompletion/Failure。但那两条路径各有闸门
+        // （`if (current && isTerminalRuntimeTask(current)) return`、`if (task)`），一旦缺席，
+        // v4 投影 snapshot.backgroundWorks 就没有第二个写者——它是 append-only、无过期、
+        // 与 subagents 投影无对账的：work 永久停在 running，后台面板据此渲染一张「执行中」
+        // 卡片，卡片上的停止入口指向的任务却早已结束（点下去只拿到 background_task_not_running）。
+        // 真机日志印证了委派范围：近 7 天 121 个后台 Agent 全部只有 tracking.started、零条
+        // `background_task.tracking.terminal` —— 也就是说这个轮询的发布口从未开过。
+        //
+        // 而本分支的轮询是**唯一**周期性重读 runtime task registry 的地方，终态事实就在手里，
+        // 所以它必须发布。重复通知在这里根本不会发生：formatBackgroundTaskNotification 对
+        // subagent 分派返回 undefined，maybeEnqueueBackgroundTaskNotification 在 claim 之前
+        // 就返回了；投影侧对同状态事件幂等（onBackgroundTaskLifecycle 的内容比对）。
+        const terminalStatus = this.backgroundTerminalEventStatus(toolCall, snapshot.status);
         this.deps.logger?.info?.("Background task terminal snapshot observed", {
           ...traceContextToLogContext(traceContext),
           event: "background_task.tracking.terminal",
@@ -295,7 +295,7 @@ export class BackgroundTaskTracker {
         );
         await this.emitBackgroundTaskEvent(
           SessionEventType.BackgroundTaskCompleted,
-          this.backgroundTaskPayload(toolCall, taskId, snapshot.status, snapshot, output),
+          this.backgroundTaskPayload(toolCall, taskId, terminalStatus, snapshot, output),
           traceContext,
           turnId,
         );
@@ -451,16 +451,18 @@ export class BackgroundTaskTracker {
     return this.lifecycleProvider(toolCall).cancellable === true;
   }
 
-  private isNotifiedLocalAgentSnapshot(
-    toolCall: ExecutableToolCall,
-    snapshot: BackgroundTaskSnapshot,
-  ): boolean {
-    const record = snapshot as unknown as Record<string, unknown>;
-    return (
-      isSubagentDispatchToolName(toolCall.name) &&
-      record.type === "local_agent" &&
-      record.notified === true
-    );
+  /**
+   * registry 词表 → 后台任务事件词表的终态归一（只对后台 Agent 分派）。
+   *
+   * 停止路径把 local_agent 条目写成 `killed`（runner 的 BACKGROUND_AGENT_STOPPED_STATE），
+   * 而面板的事件词表把「被停止」记作 `cancelled`——runner 自己的停止终态事件就是 `cancelled`，
+   * `background.ts` 取消 Bash 时也做同款归一（`snapshot.status === "running" ? "cancelled"`）。
+   * 不归一就会发生：tracker 的轮询比 runner 的收尾晚到一步，用 killed 把已经收口成 cancelled 的
+   * work 改写成投影词表里的 failed。除停止态之外一律原样透传，不在此处新增语义。
+   */
+  private backgroundTerminalEventStatus(toolCall: ExecutableToolCall, status: string): string {
+    if (!isSubagentDispatchToolName(toolCall.name)) return status;
+    return status === "killed" || status === "stopped" ? "cancelled" : status;
   }
 
   private maybeEnqueueBackgroundTaskNotification(
