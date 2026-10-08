@@ -162,6 +162,12 @@ J5 过宽容期     child 的最后持久活动（childSession.time.updated 与 
                 最后消息时间的较大者）距今 > SUBAGENT_ORPHAN_GRACE_MS
 ```
 
+> **P1-1 核实（2026-10-08，debugger）**：J4 里「child 也无本进程 live projection」这一句不成立于生产
+> 拓扑——subagent child 由父 runtime 内联创建、没有 host record，`context.sessions` 里查不到它，J4
+> 对子 agent 恒 false。主路径的安全来自「挂点位置（激活尾部零在飞）+ 后台 child 钉住常驻池（不满足
+> `isEligible` ⇒ 父不会被容量去激活）+ 无连带终止入口 + J5」，唯一例外是显式会话关闭。取证与回归锁
+> 见 spec `docs/superpowers/specs/2026-10-08-subagent-orphan-reconcile.md` §6。
+
 **推荐宽容期常量**：`SUBAGENT_ORPHAN_GRACE_MS = 10 分钟`（命名常量，一处定义）。权衡：
 
 - 子 agent 有模型流空闲看门狗（`createSubagentActivityWatchdog`，`runner.ts:208-219`），但长工具执行期间可能不写 transcript，10 分钟远大于常见工具时长，能覆盖「另一进程还在跑但暂时安静」的绝大多数情形；
