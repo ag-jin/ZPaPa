@@ -771,3 +771,24 @@ test("优先级：真实 outcome 后来到场 ⇒ 赢过收敛 entry（终态永
     [{ childSessionId: CHILD_SESSION_ID, status: "failed" }],
   );
 });
+
+test("不收敛：spawn 在 rewind 掉的分支上 ⇒ 候选枚举只看当前分支，一行都不写（N5）", async () => {
+  // rewind 之后旧的 spawn 还在 append-only store 里，但它不在当前分支上：候选枚举复用
+  // activeBranchMessages/collectCandidates，分支外的 spawn 自然不进集合（收敛写的是 child
+  // 持久事实、与分支无关，所以即便收敛了也无害；这里锁定「不该收敛就不收敛」）。
+  const { state, context } = orphanScenario({
+    childActivityAt: NOW - SUBAGENT_ORPHAN_GRACE_MS - 1,
+  });
+  const parentSession = state.sessions.get(PARENT_SESSION_ID);
+  assert.ok(parentSession);
+  parentSession.revert = { targetMessageID: USER_MESSAGE_ID } as SessionInfo["revert"];
+
+  const result = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: PARENT_SESSION_ID,
+    now: NOW,
+  });
+
+  assert.equal(result.reconciled, 0);
+  assert.deepEqual(state.saves, []);
+});
