@@ -25,6 +25,9 @@ import { createWorkItemPullRequestRepo } from "../../services/src/workitem/workI
 import { createNullPullRequestProvider } from "../../services/src/workitem/pullRequestProvider.js";
 import { createWorkItemDecisionService } from "../../services/src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../../services/src/workitem/workItemRepo.js";
+/* SUB.1：读模型新增「本工作项的订阅行」一格 —— 夹具按 runtime 契约补 `subscriberRepo`
+   （缺它的表现就是时间线激活链在 `subscriberRepo.listByWorkItem` 处抛 undefined）。 */
+import { createWorkItemSubscriberRepo } from "../../services/src/workitem/workItemSubscriberRepo.js";
 import type { SquadRuntime } from "../../services/src/workitem/squadContracts.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
@@ -677,6 +680,8 @@ function setupTimeline() {
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：本工作项的订阅行随聚合读返回（空表即可 —— 本文件的用例不驱动订阅面）。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: TIMELINE_WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

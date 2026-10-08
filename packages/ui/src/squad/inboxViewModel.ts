@@ -74,6 +74,12 @@ export const INBOX_KIND_MESSAGE_IDS: Record<InboxItemKind, string> = {
   run_stalled: "squad.inbox.kind.run_stalled",
   /* #8 D3：pr-gate 收尾降级为本地收尾（模式没按用户选的走）—— 文案表也必须穷尽。 */
   pr_gate_degraded: "squad.inbox.kind.pr_gate_degraded",
+  /* SUB.2 三格（订阅线）：点名要人回应 / 仅需关注 / 要人裁决。三格**只补这里**——
+     severity 不在这里判（单源在 repo 的 `INBOX_SEVERITY_BY_KIND`），收件人也不在这里算
+     （那是服务面 SUB.2 的活）。 */
+  mention_action_required: "squad.inbox.kind.mention_action_required",
+  comment_attention: "squad.inbox.kind.comment_attention",
+  decision_required: "squad.inbox.kind.decision_required",
 };
 
 /**
@@ -117,6 +123,47 @@ export function inboxSeverityMessageId(severity: InboxItemSeverity): string {
 function readDetailString(detail: Record<string, unknown>, key: string): string | null {
   const value = detail[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * 一个**主体**值 → `kind:id`（两个都是非空字符串才算数）。坏形状（缺 kind / 缺 id / 非对象）
+ * 一律 `null` —— 与 `readDetailString` 同一条纪律：读不出就不显示，绝不渲染 `[object Object]`。
+ *
+ * 为什么显示成 `kind:id` 而不是只显示 id：订阅主体三值（human / agent / squad）**可能同 id 不同类**
+ * （`agent:user` 与 `human:user` 是两个人）—— 只显示 id 会让「谁被点名」说不清是谁。
+ */
+function subjectLabel(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { kind, id } = value as { kind?: unknown; id?: unknown };
+  if (typeof kind !== "string" || kind.length === 0) return null;
+  if (typeof id !== "string" || id.length === 0) return null;
+  return `${kind}:${id}`;
+}
+
+/** 从 detail 里读一个主体（键缺失 / 坏形状 ⇒ `null`）。 */
+function readDetailSubject(detail: Record<string, unknown>, key: string): string | null {
+  return subjectLabel(detail[key]);
+}
+
+/** 从 detail 里读一组主体（非数组 ⇒ 空集；逐项过滤坏形状 —— 一个坏项不该吞掉整行）。 */
+function readDetailSubjects(detail: Record<string, unknown>, key: string): string[] {
+  const value = detail[key];
+  if (!Array.isArray(value)) return [];
+  const labels: string[] = [];
+  for (const entry of value) {
+    const label = subjectLabel(entry);
+    if (label !== null) labels.push(label);
+  }
+  return labels;
+}
+
+/**
+ * 「作者 → 收件人」那一段：两端任一缺失就只显示另一端，都缺 ⇒ `null`
+ * （绝不渲染半个箭头：`"→ ag-1"` 会让人以为箭头左边有个说不出的作者）。
+ */
+function subjectArrow(author: string | null, targets: readonly string[]): string | null {
+  if (author === null) return targets.length > 0 ? targets.join(", ") : null;
+  return targets.length > 0 ? `${author} → ${targets.join(", ")}` : author;
 }
 
 /**
@@ -187,6 +234,23 @@ export function inboxItemDetailLine(item: InboxItem): string | null {
       push(readDetailString(item.detail, "agentId"));
       push(readDetailString(item.detail, "sessionId"));
       push(readDetailString(item.detail, "reason"));
+      break;
+    }
+    /* SUB.2 三格：同一形状的两端 ——「谁做的 → 这件事落到谁头上」。
+       差一个键名：点名用 `mentioned`（对着谁说的），关注与决定用 `recipients`（订阅解析结果）；
+       字段名以产生点 `inboxItemProducers.ts` 的三个构建件为准，本函数不猜键名（读不到就跳过该片段）。 */
+    case "mention_action_required":
+    case "comment_attention":
+    case "decision_required": {
+      push(
+        subjectArrow(
+          readDetailSubject(item.detail, "author"),
+          readDetailSubjects(
+            item.detail,
+            item.kind === "mention_action_required" ? "mentioned" : "recipients",
+          ),
+        ),
+      );
       break;
     }
   }

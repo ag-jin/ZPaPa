@@ -26,6 +26,9 @@ import {
   type WorkItemDecisionServiceDeps,
 } from "../../services/src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../../services/src/workitem/workItemRepo.js";
+/* SUB.1：读模型新增「本工作项的订阅行」一格 —— 夹具按 runtime 契约补 `subscriberRepo`
+   （缺它的表现就是本文件的激活链用例在 `subscriberRepo.listByWorkItem` 处抛 undefined）。 */
+import { createWorkItemSubscriberRepo } from "../../services/src/workitem/workItemSubscriberRepo.js";
 import type { SquadRuntime } from "../../services/src/workitem/squadContracts.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
@@ -54,10 +57,12 @@ type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 /** 依赖集封顶的类型层断言：加 runs/receipts 到 deps ⇒ `pnpm typecheck` 在本文件报错（编译期红线）。
     C4.1 把键集扩为「三 repo + `accessPolicy`（§9 判据口，纯函数面）+ 两注入口」——
-    这是任务卡 §4.4-G7 明文的封顶更新，故本断言随之更新（红线本身不移交）。 */
+    这是任务卡 §4.4-G7 明文的封顶更新，故本断言随之更新（红线本身不移交）。
+    SUB.2 再加一格 `inboxNotifications`（**只写 Inbox 的口**：类型上只有通知数据，不含任何
+    repo / run / receipt / 义务 / 状态面 —— 「决定不派发、不改状态」仍是结构上的不可能）。 */
 type DepsCapHolds = Equal<
   keyof WorkItemDecisionServiceDeps,
-  "accessPolicy" | "activities" | "decisions" | "newId" | "now" | "workItems"
+  "accessPolicy" | "activities" | "decisions" | "inboxNotifications" | "newId" | "now" | "workItems"
 >;
 const DEPS_CAP_HOLDS: DepsCapHolds = true;
 /** 判据自检（保证上面的 Equal 会真的区分）：若 Equal 退化成恒 true，下面这行赋值即编译错。 */
@@ -482,6 +487,8 @@ function setupChain() {
         pullRequestProvider: createNullPullRequestProvider(),
         /* #8 D3：读面带出整批收尾模式（详情页 PR 区的 pr-gate 提示读它）。 */
         readSquadMergeMode: () => "local",
+        /* SUB.1：本工作项的订阅行随聚合读返回（空表即可 —— 本文件的用例不驱动订阅面）。 */
+        subscriberRepo: createWorkItemSubscriberRepo(db),
         boundWorkspace: CHAIN_WS,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

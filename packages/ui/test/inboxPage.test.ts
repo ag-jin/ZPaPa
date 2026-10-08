@@ -44,6 +44,11 @@ const EXPECTED_KINDS: readonly InboxItemKind[] = [
   "run_stalled",
   // #8 D3：pr-gate 收尾降级为本地收尾（模式没按用户选的走，必须能在收件箱里看见为什么）。
   "pr_gate_degraded",
+  // SUB.2 三格（订阅线）：点名要人回应 / 仅需关注 / 要人裁决。闭集 6 → 9，文案表必须同步穷尽
+  // —— 少一格的表现是界面上出现一个裸键（或上一格的文案），而不会有任何报错。
+  "mention_action_required",
+  "comment_attention",
+  "decision_required",
 ];
 const EXPECTED_SEVERITIES: readonly InboxItemSeverity[] = ["action_required", "attention", "info"];
 
@@ -127,7 +132,7 @@ test("状态机：ready + 刷新失败 ⇒ 数据**不清空** + loadFailure 横
 
 // ---------- ② 文案表 + 中性断言 ----------
 
-test("文案表：kind 键集 = 5、severity 键集 = 3，且两语齐全", () => {
+test("文案表：kind 键集 = 9、severity 键集 = 3，且两语齐全", () => {
   assert.deepEqual(
     Object.keys(INBOX_KIND_MESSAGE_IDS).sort(),
     [...EXPECTED_KINDS].sort(),
@@ -280,9 +285,93 @@ test("次要行：字段缺一个就跳过一个；全缺 ⇒ null（**绝不渲
   }
 });
 
-// ---------- ④ 行动作四格 ----------
+/* SUB.2 三新 kind 的次要行（字段名以产生点为独立真源：`inboxItemProducers.ts` 的三个构建件
+   写的就是 `author` / `mentioned` / `recipients` 三个键，值形状是 `{kind,id}`）。
+   期望值手抄自产生点的 detail 形状，不是照实现回算 —— 键名或方向写错时这条必红。
+   变异：把 `author` 读成字符串（旧读法）⇒ 前三条全部退化成 null ⇒ 必红。 */
+test("次要行｜SUB.2 三新 kind：作者 →（被点名者 / 收件人），坏形状逐格降级", () => {
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "mention_action_required",
+        detail: {
+          workItemId: "w1",
+          commentId: "c1",
+          author: { kind: "human", id: "local-user" },
+          mentioned: [
+            { kind: "agent", id: "ag-1" },
+            { kind: "squad", id: "sq-1" },
+          ],
+        },
+      }),
+    ),
+    "human:local-user → agent:ag-1, squad:sq-1",
+    "点名：作者 → 被点名的全部主体（顺序原样，不排序）",
+  );
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "comment_attention",
+        detail: {
+          workItemId: "w1",
+          commentId: "c2",
+          author: { kind: "agent", id: "ag-1" },
+          recipients: [{ kind: "human", id: "local-user" }],
+        },
+      }),
+    ),
+    "agent:ag-1 → human:local-user",
+    "关注：作者 → 收件人（这条只是「有新动静」，没有点名面）",
+  );
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "decision_required",
+        detail: {
+          workItemId: "w1",
+          decisionId: "d1",
+          author: { kind: "human", id: "local-user" },
+          recipients: [{ kind: "agent", id: "ag-9" }],
+        },
+      }),
+    ),
+    "human:local-user → agent:ag-9",
+    "决定：作者 → 收件人（决定是单向宣告，收件人恒由订阅解析给出）",
+  );
+  // 坏形状逐格降级（detail 是 Record<string, unknown>）：只有一端就只显示那一端，全坏 ⇒ null。
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "decision_required",
+        detail: { author: { kind: "human", id: "local-user" } },
+      }),
+    ),
+    "human:local-user",
+    "只有作者 ⇒ 只显示作者（不补一个假的收件人）",
+  );
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "comment_attention",
+        detail: { recipients: [{ kind: "agent", id: "ag-1" }] },
+      }),
+    ),
+    "agent:ag-1",
+    "只有收件人 ⇒ 只显示收件人",
+  );
+  assert.equal(
+    inboxItemDetailLine(
+      inboxItem({
+        kind: "mention_action_required",
+        detail: { author: { kind: "human" }, mentioned: [null, "x", { id: "y" }] },
+      }),
+    ),
+    null,
+    "两端都是坏形状 ⇒ null（既不渲染 undefined，也不猜 id）",
+  );
+});
 
-// 变异（M4）：让已归档行仍给动作（去掉 archivedAt 判断）⇒ 第三、四格必红。
+// ---------- ④ 行动作四格 ----------// 变异（M4）：让已归档行仍给动作（去掉 archivedAt 判断）⇒ 第三、四格必红。
 test("行动作四格：未读未归档 / 已读未归档 / 未读已归档 / 已读已归档", () => {
   assert.deepEqual(
     inboxRowActions({ readAt: null, archivedAt: null }),
