@@ -7,6 +7,8 @@ import {
 } from "./collaborationAccessPolicy.js";
 import type { WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type { AuthorRef } from "./workItemCommentRepo.js";
+import type { DecisionNotificationFact } from "./inboxNotificationPolicy.js";
+import { subscriberSubjectOfActor } from "./subscriberFacts.js";
 import type {
   WorkItemDecisionKind,
   WorkItemDecisionRecord,
@@ -112,6 +114,21 @@ export type WorkItemDecisionServiceDeps = {
    * CommentServiceDeps.accessPolicy）。
    */
   accessPolicy?: CollaborationAccessPolicy;
+  /**
+   * **收件箱通知口**（SUB.2，可选加法）：`createDecision` 写成功后把「谁裁决了哪条决定」报一次；
+   * 要不要产生 `decision_required`、收件人是谁，全在注入的实现面里判
+   * （`inboxNotificationPolicy.planInboxNotificationItem` + 唯一写收口 `inboxItemRepo.insertIfAbsent`）。
+   *
+   * 它**不破坏依赖集封顶红线**：这是一个**只写 Inbox 的口**——类型上只有通知数据
+   * （workItemId / 标题 / decisionId / 作者），不含任何 repo / run / receipt / 义务 / 状态面，
+   * 于是「决定不派发、不改状态」仍是结构上的不可能（守卫见 `workItemDecisionGuards.test.ts` 的
+   * 键集断言与「通知口类型不含 run/receipt/状态面」断言）。
+   *
+   * 缺省（未注入）= 不产生条目（既有调用方与测试行为逐字不变；组合根在 node.ts 注入）。
+   * **失败面**：实现面必须自己吞掉失败 —— 条目是已落地决定的派生投影，抛出会把一次成功的
+   * 决定翻转成响亮失败（照 `SubscriberFactRecorder` 的口径）。
+   */
+  inboxNotifications?: (fact: DecisionNotificationFact) => void;
   /** 时钟（测试可注入）；缺省 Date.now。 */
   now?: () => number;
   /** id 生成（测试可注入）；缺省 randomUUID。 */
@@ -253,6 +270,20 @@ export function createWorkItemDecisionService(
         dedupKey: computeDecisionActivityDedupKey(decision.id),
         createdAt: timestamp,
       });
+      /* 收件箱通知（SUB.2）：决定**写成功之后**报一次事实面（谁裁决了什么）—— 准入（作者排除 /
+         有无非本人收件人）与收件人解析（订阅 + 祖先冒泡 + 退订静音）在 `inboxNotificationPolicy`
+         一处，本服务不判「要不要产生」。`system` 作者不是可通知主体 ⇒ 不报（`subscriberSubjectOfActor`
+         对 system 响亮抛，走到那里会把一次成功的决定翻转成失败）。 */
+      if (deps.inboxNotifications !== undefined && decision.author.kind !== "system") {
+        deps.inboxNotifications({
+          workspaceKey: decision.workspaceKey,
+          workspacePath: decision.workspacePath,
+          workItemId: decision.workItemId,
+          workItemTitle: workItem.title,
+          decisionId: decision.id,
+          author: subscriberSubjectOfActor(decision.author),
+        });
+      }
       return decision;
     },
   };

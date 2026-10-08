@@ -79,7 +79,7 @@ test("结构红线｜决定服务源码（去注释）零命中 run/receipt/义�
   assert.ok(DECISION_CODE.includes("deps.activities.add("), "活动行走 repo 口");
 });
 
-test("结构红线｜deps 类型层封顶：WorkItemDecisionServiceDeps 恰 6 个属性（三 repo + 判据口 + 两注入口；加 runs/receipts 即编译错+本守卫红）", () => {
+test("结构红线｜deps 类型层封顶：WorkItemDecisionServiceDeps 恰 7 个属性（三 repo + 判据口 + 两注入口 + SUB.2 只写 Inbox 的通知口；加 runs/receipts 即编译错+本守卫红）", () => {
   const marker = "export type WorkItemDecisionServiceDeps = {";
   const start = DECISION_SOURCE.indexOf(marker);
   assert.ok(start > 0, "找不到依赖集类型声明");
@@ -90,8 +90,11 @@ test("结构红线｜deps 类型层封顶：WorkItemDecisionServiceDeps 恰 6 �
   assert.deepEqual(
     [...new Set(keys)].sort(),
     // C4.1：本集新增 `accessPolicy`（§9 三轴的判据口 = 纯函数面，不是新 repo；决定写与四评论入口
-    // 并列过同一判据面，即 C3 的交接义务）。除它以外**仍然恰三 repo + 两注入口**。
-    ["accessPolicy", "activities", "decisions", "newId", "now", "workItems"],
+    // 并列过同一判据面，即 C3 的交接义务）。
+    // SUB.2：再新增 `inboxNotifications`（只写 Inbox 的通知口 = 纯函数类型，字段只有通知数据；
+    // 见 workItemDecisionGuards.test.ts 的 H5 与 inboxNotificationPolicy.test.ts 的组合根装配守卫）。
+    // 除这两个口以外**仍然恰三 repo + 两注入口** —— 加 repo / run / receipt 面即本守卫红。
+    ["accessPolicy", "activities", "decisions", "inboxNotifications", "newId", "now", "workItems"],
     "依赖集封顶是结构红线（任务卡 §4.4-G7）：这里逐字列出唯一允许的属性集",
   );
   // 组合根的实际装配：只允许传三个 repo（now/newId 走默认）。

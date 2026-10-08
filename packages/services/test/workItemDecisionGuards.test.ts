@@ -139,7 +139,7 @@ test("G6｜dedupKey 单源：两个纯函数在 workitem/** 各只有一处定�
   );
 });
 
-test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisions/activities/workItems/accessPolicy/now/newId", () => {
+test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisions/activities/workItems/accessPolicy/now/newId/inboxNotifications", () => {
   const block = DECISION_SERVICE_SRC.slice(
     DECISION_SERVICE_SRC.indexOf("export type WorkItemDecisionServiceDeps = {"),
   );
@@ -148,9 +148,61 @@ test("G7｜依赖集封顶：WorkItemDecisionServiceDeps 的属性只有 decisio
   const names = [...block.slice(0, end).matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => match[1]);
   assert.deepEqual(
     [...new Set(names)].sort(),
-    ["accessPolicy", "activities", "decisions", "newId", "now", "workItems"],
+    ["accessPolicy", "activities", "decisions", "inboxNotifications", "newId", "now", "workItems"],
     "依赖集封顶是结构红线：加 runs/receipts/deferred/workItemService 即编译错 + 本守卫红。" +
-      "accessPolicy 是 C4.1 的判据口（纯函数面，不是新 repo）——决定写与四评论入口并列过同一判据",
+      "accessPolicy 是 C4.1 的判据口（纯函数面，不是新 repo）——决定写与四评论入口并列过同一判据；" +
+      "inboxNotifications 是 SUB.2 的**只写 Inbox 的通知口**（纯函数类型，见 H5）——不是新 repo，" +
+      "键集断言逐字列出而不是「包含」，新加面必须显式更新本行",
+  );
+});
+
+/* H5（SUB.2）：通知口是**只写 Inbox** 的口 —— 类型面只带通知数据。
+   为什么单列一条：G7 只数键名个数，数不出「这个口拿到了什么」。若有人把 inboxNotifications
+   改成 `(fact, repos)` 或让 fact 带上 run/receipt/状态字段，G1/G2 的字符串名单可能照旧全绿，
+   而「决定链结构上碰不到生命周期面」这条红线已经破了。 */
+test("H5｜SUB.2 通知口只写 Inbox：类型字段只有通知数据；服务面恰调一次且缺省不产生", () => {
+  const POLICY_SRC = stripComments(readSource("workitem/inboxNotificationPolicy.ts"));
+  for (const typeName of ["DecisionNotificationFact", "CommentNotificationFact"]) {
+    const marker = `export type ${typeName} = {`;
+    const block = POLICY_SRC.slice(POLICY_SRC.indexOf(marker));
+    const end = block.indexOf("\n};");
+    assert.ok(POLICY_SRC.includes(marker) && end > 0, `找不到 ${typeName} 的类型块`);
+    const fields = [...block.slice(0, end).matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => match[1]);
+    for (const field of fields) {
+      assert.ok(
+        [
+          "author",
+          "commentId",
+          "decisionId",
+          "mentioned",
+          "workItemId",
+          "workItemTitle",
+          "workspaceKey",
+          "workspacePath",
+        ].includes(field),
+        `${typeName}.${field} 不在通知数据白名单内：通知口只带「谁对哪件事做了什么」，` +
+          "不得带上 repo / run / receipt / 义务 / 状态面（决定链的依赖集封顶红线）",
+      );
+    }
+    for (const forbidden of ["runs", "receipt", "Receipt", "deferred", "status", "transition"]) {
+      assert.ok(
+        !block.slice(0, end).includes(forbidden),
+        `${typeName} 不得出现 ${forbidden}（只写 Inbox 的口拿不到生命周期面）`,
+      );
+    }
+  }
+  // 调用面恰一处、且是**可选**注入（缺省不产生条目）。
+  assert.equal(
+    [...DECISION_SERVICE_CODE.matchAll(/deps\.inboxNotifications\(/g)].length,
+    1,
+    "决定写成功后恰报一次事实（不多报、不漏报）",
+  );
+  const depsBlock = DECISION_SERVICE_SRC.slice(
+    DECISION_SERVICE_SRC.indexOf("export type WorkItemDecisionServiceDeps = {"),
+  );
+  assert.ok(
+    depsBlock.slice(0, depsBlock.indexOf("\n};")).includes("inboxNotifications?: "),
+    "通知口必须是可选注入（缺省 = 不产生，既有调用方与测试行为逐字不变）",
   );
 });
 

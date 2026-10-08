@@ -514,6 +514,12 @@ import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 // 收件箱台账（P2c）：跨 workspace 的读取面要一条 repo，由组合根**懒取**注入给服务面
 // （见 createSquadRuntimeService 的 deps.getInboxItemRepo 注释：库就绪前服务面已构造）。
 import { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
+/* SUB.2：Inbox 通知的**判据面**（收件人解析 + 三新 kind 准入；纯函数）。组合根只做绑定：
+   订阅行 / 父链两口读 + 唯一写收口 `inboxItemRepo.insertIfAbsent`（见 `createInboxNotificationPortFor`）。 */
+import {
+  planInboxNotificationItem,
+  type InboxNotificationFact,
+} from "./workitem/inboxNotificationPolicy.js";
 // X2.1：评论派发 receipt 的懒取口（与 inboxItemRepo 同款：库就绪后在调用时取）。
 import { createCommentDispatchReceiptRepo } from "./workitem/commentDispatchReceiptRepo.js";
 /* B5.1：工作项协作**读门面**的注册（任务卡 §2.4-2）。四个协作 repo 与 receipt repo 同款懒取
@@ -2991,7 +2997,45 @@ export function createLocalServices(options: {
          workspace（键与路径在闭包里），组合根不再拼一次；缺这一格的表现是「评论照常、订阅表永远
          只有建项那一行」，而全链不报错（正是本域反复出现的静默缺口形态）。 */
       subscribers: runtime.subscriberFacts,
+      /* SUB.2 收件箱通知：评论写成功后报事实面，条目由通知口落库（准入/解析在策略模块）。
+         缺这一格的表现是「订阅表有人，而收件箱永远不出现新条目」——同样是静默缺口。 */
+      inboxNotifications: (fact) =>
+        createInboxNotificationPortFor(runtime)({ kind: "comment", ...fact }),
     });
+  };
+
+  /* SUB.2：**收件箱通知口的唯一装配点**（评论 / 决定两个写服务共用这一条装配）。
+     三件事在这里各就各位，且都只有一处：
+     · **绑定**：订阅行取本 runtime 绑定的 workspace 键（`resolveWorkspaceKey(boundWorkspace)` ——
+       与 SUB.1 事实出口写行时的键是**同一条式子**），父链取工作项树（`get` 过滤归档行 ⇒ 上溯在
+       归档处自然停下）；
+     · **判据**：准入（作者排除 / 有无非本人收件人）与收件人解析（冒泡 + 退订静音）在
+       `inboxNotificationPolicy` 一处 —— 本层不判「要不要产生」；
+     · **唯一写收口**：`insertIfAbsent`（存储层唯一索引兜幂等；`false` 是结论不是错误）。
+     失败**只留痕**：条目是已落地评论/决定的派生投影，抛出会把一次成功写入翻转成响亮失败
+     （照 `subscriberFacts` 记录器与 `activityProjector` 的既有失败面）。 */
+  const createInboxNotificationPortFor = (
+    runtime: SquadRuntime,
+  ): ((fact: InboxNotificationFact) => void) => {
+    const workspaceKey = resolveWorkspaceKey({
+      workspacePath: runtime.boundWorkspace.path,
+      workspaceIdentity: runtime.boundWorkspace.identity,
+    });
+    return (fact) => {
+      try {
+        const item = planInboxNotificationItem({
+          fact,
+          readSubscribers: (id) => runtime.subscriberRepo.listByWorkItem(workspaceKey, id),
+          readParentId: (id) => runtime.workItemRepo.get(id)?.parentId ?? null,
+        });
+        if (item !== null) runtime.inboxItemRepo.insertIfAbsent(item);
+      } catch (error) {
+        squadRuntimeLog.warn(
+          "收件箱通知登记失败：条目是已落地事实的派生投影，失败只留痕、不回滚主事实",
+          { workItemId: fact.workItemId, error },
+        );
+      }
+    };
   };
 
   /* C3.1：决定服务的**唯一构造点**（门面第五写入口 `createWorkItemDecision` 经它拿到实现体）。
@@ -3005,6 +3049,10 @@ export function createLocalServices(options: {
       decisions: createWorkItemDecisionRepo(db),
       activities: createWorkItemActivityRepo(db),
       workItems: runtime.workItemRepo,
+      /* SUB.2 收件箱通知：决定写成功后报事实面（收件人解析 + 准入在策略模块）——
+         只写 Inbox 的口，依赖集封顶红线不受影响（拿不到 run / receipt / 状态面）。 */
+      inboxNotifications: (fact) =>
+        createInboxNotificationPortFor(runtime)({ kind: "decision", ...fact }),
     });
   };
 

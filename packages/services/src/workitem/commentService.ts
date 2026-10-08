@@ -18,6 +18,7 @@ import {
   type RosterIndex,
 } from "./commentParser.js";
 import { computeCommentDispatchKey } from "./commentDispatchKey.js";
+import type { CommentNotificationFact } from "./inboxNotificationPolicy.js";
 import type { SquadDispatchRequest } from "./squadDispatchRequests.js";
 import type {
   CommentDispatchOutcome,
@@ -27,7 +28,11 @@ import type {
 } from "./commentDispatchReceiptRepo.js";
 import type { SquadDeferredDispatchRepo } from "./squadDeferredDispatchRepo.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
-import { subscriberFactsForComment, type SubscriberFactRecorder } from "./subscriberFacts.js";
+import {
+  subscriberFactsForComment,
+  subscriberSubjectOfActor,
+  type SubscriberFactRecorder,
+} from "./subscriberFacts.js";
 import type { WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type {
   AuthorRef,
@@ -245,6 +250,20 @@ export type CommentServiceDeps = {
    * 也不知道「哪种点名不建订阅」（`@all` / human / unresolved 的处置在那一处）。
    */
   subscribers?: SubscriberFactRecorder;
+  /**
+   * **收件箱通知口**（SUB.2，可选加法）：`createComment` 写成功后把「谁写了哪条评论、点名了谁」
+   * 报一次；要不要产生条目、产生哪一 kind、收件人是谁，全在注入的实现面里判
+   * （`inboxNotificationPolicy.planInboxNotificationItem` + 唯一写收口 `inboxItemRepo.insertIfAbsent`）。
+   *
+   * 为什么是**只写 Inbox 的口**而不是在本服务里判：准入（作者排除 / 有无非本人收件人）与收件人解析
+   * （订阅 + 祖先冒泡 + 退订静音）只有一处实现，本服务只报事实 —— 类型上它只带通知数据，
+   * 拿不到 run / receipt / 义务 / 订阅写入面（第二判据与第二写路径都无处生根）。
+   *
+   * 缺省（未注入）= 不产生条目（既有调用方与测试行为逐字不变；组合根在 node.ts 注入）。
+   * **失败面**：实现面必须自己吞掉失败 —— 条目是已落地评论的派生投影，抛出会把一次成功的评论
+   * 翻转成响亮失败（照 `SubscriberFactRecorder` 的口径）。
+   */
+  inboxNotifications?: (fact: CommentNotificationFact) => void;
   /**
    * **§9 三轴的判据面**（C4.1）：本服务的**四个写方法各恰一处**并列调用它，且都在第一次写之前
    * （结构守卫见 collaborationWriteGate.test.ts）。主体恒取 `initiatedBy`（A2A 红线）。
@@ -494,11 +513,32 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
          位置在派发链**之前**：派发结论（pending / blocked / deferred）不改变「这个人写过评论」
          这条已成立的事实，订阅行也不得随派发成败增删。事实→reason 的映射在 `subscriberFacts`
          （本文件不拼 reason 字面量）。 */
-      for (const fact of subscriberFactsForComment({
+      const subscriptionFacts = subscriberFactsForComment({
         author: comment.author,
         mentions: parsed.mentions,
-      })) {
+      });
+      for (const fact of subscriptionFacts) {
         deps.subscribers?.({ workItemId: comment.workItemId, fact });
+      }
+      /* 收件箱通知（SUB.2）：同一条已落地的评论再报一次**事实面**（谁写的、哪条、点名了谁）——
+         准入与收件人解析在 `inboxNotificationPolicy` 一处（本层不判「要不要产生」）。
+         · **写成功之后**才报：不能因为「浏览了评论」产生通知（与订阅事实同一时点）；
+         · `system` 作者不是可通知主体（也不会是任何收件人）⇒ 不报：走到口里再抛会把它变成
+           一条会把评论翻转成失败的路径（`subscriberSubjectOfActor` 对 system 响亮抛）；
+         · 点名集合取订阅事实里的 `mentioned` 单源：`@all` 只广播不 fan-out、`@人名` 名册未接通、
+           `unresolved` 不猜身份 —— 那三格的处置只在 `subscriberFacts` 一处，这里不重判一遍。 */
+      if (deps.inboxNotifications !== undefined && comment.author.kind !== "system") {
+        deps.inboxNotifications({
+          workspaceKey: comment.workspaceKey,
+          workspacePath: comment.workspacePath,
+          workItemId: comment.workItemId,
+          workItemTitle: workItem?.title ?? null,
+          commentId: comment.id,
+          author: subscriberSubjectOfActor(comment.author),
+          mentioned: subscriptionFacts.flatMap((fact) =>
+            fact.kind === "subscribe" && fact.reason === "mentioned" ? [fact.subject] : [],
+          ),
+        });
       }
       // 线程根：根评论 threadId = id（§3.2），故按 id 取恒可命中（含墓碑行）。
       const threadRoot = parent !== null ? deps.comments.get(parent.threadId) : null;
