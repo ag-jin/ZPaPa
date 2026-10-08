@@ -17,9 +17,10 @@ import { makeRepo } from "./helpers/gitFixture.js";
    （test-verifier，2026-10-07）。
 
    白名单承重（拆解 §3.2 / M1 结构守卫）：`updateContent` 是工作项**内容**的唯一写入口，
-   `status` / `archived_at` / `assignee_*` / `position` / `properties` 都**另有唯一写者**。
-   逐字段 SET 拼接（patch 里出现哪个字段才 SET 哪个）是「运行期多带的键写不进别的列」的实现；
-   本文件从**两道防线**分别验证这条守卫**不是空跑**：
+   `status` / `archived_at` / `assignee_*` / `properties` / `creator_*` / `identifier_seq` 都**另有
+   唯一写者**（R6 起 `position` 是**内容型**字段：看板拖拽改序经同一条白名单写入，见
+   `workItemPositionUpdate.test.ts`）。逐字段 SET 拼接（patch 里出现哪个字段才 SET 哪个）是
+   「运行期多带的键写不进别的列」的实现；本文件从**两道防线**分别验证这条守卫**不是空跑**：
    · 防线 A（服务面）：调用方把越界键塞进 `patch` ⇒ 服务面**重建** patch（只取白名单三字段）；
    · 防线 B（repo）：越界键直接送到 `updateContent` ⇒ 逐字段拼接把它们忽略掉，且**一行都不写**
      （没有任何白名单字段时返回 false，绝不发空 UPDATE）。
@@ -93,7 +94,7 @@ async function makeService() {
 
 // ---------- 防线 A：服务面（越界键在服务面就被丢掉） ----------
 
-test("白名单（防线 A）｜服务面重建 patch：越界键（status/archived_at/position/properties/assignee）一律写不进", async () => {
+test("白名单（防线 A）｜服务面重建 patch：白名单字段照写，越界键（status/archived_at/properties/assignee）一律写不进", async () => {
   const { db, squadRuntimeService } = await makeService();
   const item = await squadRuntimeService.createWorkItem(WS, {
     title: "原标题",
@@ -103,13 +104,14 @@ test("白名单（防线 A）｜服务面重建 patch：越界键（status/archi
   const before = readRow(db, item.id);
 
   // 模拟「调用方绕过类型把越界键塞进 patch」（RPC 传参 / 未类型化调用方都可能长这样）。
+  // `position` 在 R6 起是**白名单内**字段（越界键的名单里不再有它）。
   await squadRuntimeService.updateWorkItem(WS, {
     id: item.id,
     patch: {
       title: "改过的标题",
       status: "done",
       archived_at: 123,
-      position: 7,
+      position: 7.5,
       properties: { 偷偷: "写进去" },
       assignee_type: "agent",
       assignee_id: "ta-9",
@@ -124,13 +126,13 @@ test("白名单（防线 A）｜服务面重建 patch：越界键（status/archi
     ["改过的标签", "又一个"],
     "白名单内新增的 labels 也按归一化写入",
   );
+  assert.equal(after.position, 7.5, "白名单内新增的 position（REAL）原样写入，不得整数化");
   for (const column of [
     "body",
     "status",
     "assignee_type",
     "assignee_id",
     "archived_at",
-    "position",
     "properties",
   ] as const) {
     assert.deepEqual(
@@ -143,30 +145,30 @@ test("白名单（防线 A）｜服务面重建 patch：越界键（status/archi
 
 // ---------- 防线 B：repo（越界键被逐字段 SET 拼接忽略） ----------
 
-test("白名单（防线 B）｜repo 层：patch 带越界键 ⇒ 只写白名单列，越界列逐列不变", () => {
+test("白名单（防线 B）｜repo 层：patch 带越界键 ⇒ 只写白名单列（含 position），越界列逐列不变", () => {
   const { db, repo } = makeDb();
   insertRow(repo, "wi-1");
   const before = readRow(db, "wi-1");
 
   const smuggled = {
     title: "白名单内的新标题",
+    position: 9.5,
     status: "done",
     archived_at: 456,
     assignee_type: "agent",
     assignee_id: "ta-9",
-    position: 9,
     properties: { 越界: true },
   } as unknown as Parameters<WorkItemRepo["updateContent"]>[1];
 
   assert.equal(repo.updateContent("wi-1", smuggled), true, "命中一行且给了字段 ⇒ 返回 true");
   const after = readRow(db, "wi-1");
   assert.equal(after.title, "白名单内的新标题");
+  assert.equal(after.position, 9.5, "白名单内的 position（REAL）原样写入");
   for (const column of [
     "status",
     "assignee_type",
     "assignee_id",
     "archived_at",
-    "position",
     "properties",
   ] as const) {
     assert.deepEqual(after[column], before[column], `越界列 ${column} 不得被 patch 里的同名键改写`);

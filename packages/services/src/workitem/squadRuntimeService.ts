@@ -429,8 +429,9 @@ export interface ISquadRuntimeService {
    */
   deleteWakeRule(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
   /**
-   * 编辑工作项的**内容字段**（标题 / 正文 / 标签），返回写盘后的实体（**加法**，2026-10-03：
-   * 工作项看板要求编辑可用；2026-10-07 `#11` v1 把标签并进同一条白名单）。
+   * 编辑工作项的**内容字段**（标题 / 正文 / 标签；0018 起并入优先级与起止日期，R6 再并入手工排序位
+   * `position`），返回写盘后的实体（**加法**，2026-10-03：工作项看板要求编辑可用；2026-10-07
+   * `#11` v1 把标签并进同一条白名单）。
    *
    * 三条纪律（与 `updateTeamAgent` / `updateSquad` 同款）：
    * 1. **唯一写者**：`status` 仍只经 `workItemService.transition`（本条不碰它）；内容经 repo 的
@@ -468,6 +469,11 @@ export interface ISquadRuntimeService {
         priority?: WorkItemPriorityKey | null;
         startDate?: string | null;
         dueDate?: string | null;
+        /* R6（看板拖拽改序）：`position` 是**数值**内容字段（REAL，原样落库，不做整数化 / 不做二次
+           归一化 —— 它没有闭集或日历形状那样的判据，唯一的规则是「给了就 SET」）。未给（`undefined`）
+           = 不动现值，与其余字段同一份 patch 子集语义；建表列是 `REAL NOT NULL DEFAULT 0`，
+           故没有「写 NULL 清位」这一态。 */
+        position?: number;
       };
     },
   ): Promise<WorkItem>;
@@ -1265,9 +1271,12 @@ export function createSquadRuntimeService(deps: {
         priority?: WorkItemPriorityKey | null;
         startDate?: string | null;
         dueDate?: string | null;
+        position?: number;
       } = {
         title: input.patch.title,
         body: input.patch.body,
+        // R6：position 原样透传（没有要过闸的判据，不在这里做第二份判断）；undefined = 不动现值。
+        position: input.patch.position,
       };
       if (input.patch.labels !== undefined) {
         const parsed = parseWorkItemLabels(input.patch.labels);

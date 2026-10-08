@@ -309,8 +309,8 @@ test("守卫｜updateContent 的 SET 白名单只认 title / body / labels", () 
   );
   assert.deepEqual(
     pushed,
-    ["title", "body", "labels", "priority", "start_date", "due_date"],
-    "白名单集合是闭集，且顺序稳定（0018 扩三内容字段；creator/identifier_seq 仍在白名单外）",
+    ["title", "body", "labels", "priority", "start_date", "due_date", "position"],
+    "白名单集合是闭集，且顺序稳定（0018 扩三内容字段；R6 再扩 position —— REAL 原样、未给不动现值；creator/identifier_seq 仍在白名单外）",
   );
   for (const column of [
     "status",

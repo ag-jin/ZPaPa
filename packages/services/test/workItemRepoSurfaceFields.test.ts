@@ -18,9 +18,10 @@ import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
       本文件用**两个连接**交替插入证明序号每次取自库（内存 counter 会在这里撞唯一索引）。
    ② 新列 NULL 语义保真：没给的字段读回 `undefined`（不是 `null`、不是编造的默认值）。
 
-   越权列（`status` / `archived_at` / `assignee_*` / `position` / `properties` / `creator_*` /
+   越权列（`status` / `archived_at` / `assignee_*` / `properties` / `creator_*` /
    `identifier_seq`）**没有更新面**：`updateContent` 的逐字段 SET 拼接让它们结构上写不进去
-   （多带的键不参与拼接，且没有任何白名单字段时返回 false，绝不发空 UPDATE）。 */
+   （多带的键不参与拼接，且没有任何白名单字段时返回 false，绝不发空 UPDATE）。
+   （`position` 在 R6 起是**白名单内**字段 —— 看板拖拽改序，见 `workItemPositionUpdate.test.ts`。） */
 
 function openDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -194,7 +195,8 @@ test("创建人只写 kind/id 时读回不带 displayName（不落空串）", ()
   db.close();
 });
 
-/* 内容编辑白名单（`updateContent`）在 0018 扩到 6 个字段。三条纪律：
+/* 内容编辑白名单（`updateContent`）在 0018 扩到 6 个字段，R6 再加 `position` 第 7 个
+   （position 的用例在 `workItemPositionUpdate.test.ts`）。三条纪律：
    ① 新内容字段可写（含**清回未设置**：显式 `null` 是「清空」这个合法动作，不是空 patch ——
       与 `labels: []` 同款）；
    ② 越权键（status / archived_at / assignee / creator_* / identifier_seq）**不参与 SET**；
@@ -240,7 +242,6 @@ test("updateContent 越权键：不 SET 任何列且恰命中一行才算成功�
       creator_kind: "system",
       identifier_seq: 99,
       assignee_id: "u2",
-      position: 5,
     } as never),
     false,
     "只给白名单外的键 = 空 patch（不 SET 任何列）⇒ false",

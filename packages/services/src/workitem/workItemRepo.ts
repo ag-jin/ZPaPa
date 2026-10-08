@@ -95,6 +95,12 @@ export interface WorkItemRepo {
    * 0018 扩到 6 个字段：`priority` / `startDate` / `dueDate` 是**内容型**（与 title/body/labels 同列
    * 白名单）；`null` 是合法值 = **清回未设置**（与 `labels: []` 同款：给了字段就 SET）。`creator_*`
    * 与 `identifier_seq` **不在**白名单里：它们没有更新面（创建人与创建序号是既成事实，不可改）。
+   *
+   * R6 再加**第 7 个**字段 `position`（看板拖拽改序的服务面半边）：它是 `REAL` 列，数值**原样**
+   * 落库 —— 不做整数化（整数化会把「A 与 B 之间」的插入点压成并列，拖拽后的次序不再是用户看到的
+   * 次序），也不在这里编排序判据（`manual` 的次序判据是 `ORDER BY position ASC`，三条 list 语句自有）。
+   * 注意该列建表时是 `REAL NOT NULL DEFAULT 0`（schema-v1.ts）—— **没有**「写 NULL 清位」这一态；
+   * 未给字段（`undefined`）仍是不动现值（patch 子集语义）。
    */
   updateContent(
     id: string,
@@ -105,6 +111,7 @@ export interface WorkItemRepo {
       priority?: WorkItemPriorityKey | null;
       startDate?: string | null;
       dueDate?: string | null;
+      position?: number;
     },
   ): boolean;
   /** 子项是否全部终态。判据是 category（isTerminalWorkItemStatus），不是状态键名。 */
@@ -299,6 +306,12 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
       if (patch.dueDate !== undefined) {
         assignments.push("due_date=?");
         values.push(patch.dueDate);
+      }
+      /* R6：position（REAL）原样进 SET —— 只做「给了就 SET」，不做整数化 / 不编默认序。
+         列是 `REAL NOT NULL DEFAULT 0`：数值直接落库（含小数与负数），没有「写 NULL 清位」这条路径。 */
+      if (patch.position !== undefined) {
+        assignments.push("position=?");
+        values.push(patch.position);
       }
       // 空 patch：没有任何要写的列 ⇒ 不执行空 UPDATE，直接未命中（响亮错误留给调用方）。
       if (assignments.length === 0) return false;
