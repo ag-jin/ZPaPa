@@ -80,6 +80,39 @@ interface ParsedSubagentOutput {
   summaryText?: string;
 }
 
+/** 后台 Agent 的持久化 launch ACK 首行（core 的 `formatAgentOutputForModel` 写死同一句）。 */
+const BACKGROUND_AGENT_LAUNCH_ACK_PREFIX = "Async agent launched successfully.";
+
+/**
+ * child session 的真实终态，与侧栏 `projectSessionSubagents` 的 `ended.status` 同词表。
+ *
+ * success/failed/cancelled 是三种真实终态；lost 是「已不在运行、但 child 没留下任何
+ * outcome」的降级态——subagent row 的状态词表（running/success/failed/cancelled）没有
+ * lost，按 failed 收口（与投影 `mapSubagentStatus` 的 default 分支同判）。
+ */
+export interface HydratedSubagentTerminalState {
+  status: "success" | "failed" | "cancelled" | "lost";
+}
+
+/**
+ * child session 的持久事实。transcript 里没有这些字段，只能由能读持久层的调用方注入。
+ *
+ * 为什么必须由 child 记录裁决：目标后台 Agent 的持久化工具 part 是 launch ACK，它在
+ * **启动成功那一刻**就写成 completed——它证明「启动过」，不证明「结束了」。把它当终态
+ * 会把仍在跑的后台 Agent 收口成 success（row.status=success ⇒ snapshot.subagents.running
+ * 反推为空 ⇒ 面板与头像簇里活着的 agent 消失）。终态的唯一事实是 child session 的持久记录。
+ *
+ * 反向误判同样有界：「有持久 child 记录」是判活的共同前提，只有已知 child 且它没有终态
+ * 记录才判 running；记录被裁剪/从未落库（两个集合都没有它）时不许凭空宣称存活，
+ * 退回 part 自身证据，否则每一条历史后台 Agent 都会永久停在 running。
+ */
+export interface HydratedSubagentChildFacts {
+  /** 持久层可读、且 `taskType === "subagent_child"` 的 child session（判活/判终态的共同前提）。 */
+  knownChildSessionIds: ReadonlySet<string>;
+  /** 已有终态记录的 child（childSessionId 键，键存在即终态证据）。 */
+  terminalStates: ReadonlyMap<string, HydratedSubagentTerminalState>;
+}
+
 interface SynthesizeOptions {
   sessionId: string;
   /**
@@ -100,6 +133,12 @@ interface SynthesizeOptions {
    * transcript 没有该字段，必须显式注入合成 ModelComplete 才能保持 live/cold 等价。
    */
   fileChangeSummariesByMessageId?: ReadonlyMap<string, TurnFileChangeSummary>;
+  /**
+   * 后台 Agent 的终态事实来源（child session 的持久记录）。**缺席**表示调用方读不到
+   * child 记录（浏览器回放桶等），此时保持 part 自身推断：launch ACK 的 completed
+   * 没有第二个证据可对账，凭它判活会造出无界的永久 running 行。
+   */
+  subagentChildFacts?: HydratedSubagentChildFacts;
 }
 
 function isRealUserTurnStarter(message: MessageWithParts): boolean {
@@ -525,6 +564,64 @@ function subagentStatusFromToolPart(
 }
 
 /**
+ * 该 Agent part 是不是后台（async）启动。判据与 `projectSessionSubagents` 的
+ * `candidate.runInBackground` 同源（input.run_in_background），旧数据再兜底认
+ * JSON 输出的 async_launched 与人类可读 launch ACK 文本。
+ */
+function isBackgroundSubagentLaunch(part: Extract<MessagePart, { type: "tool" }>): boolean {
+  const input =
+    part.state.input && typeof part.state.input === "object"
+      ? (part.state.input as Record<string, unknown>)
+      : {};
+  if (input.run_in_background === true) return true;
+  if (part.state.status !== "completed") return false;
+  if (parseJsonObject(part.state.output)?.status === "async_launched") return true;
+  return (
+    typeof part.state.output === "string" &&
+    part.state.output.startsWith(BACKGROUND_AGENT_LAUNCH_ACK_PREFIX)
+  );
+}
+
+interface SubagentLifecycleResolution {
+  background: boolean;
+  /** null = **只建 running 行**（child 仍在跑，或没有终态证据可用）。 */
+  status: "completed" | "failed" | "cancelled" | null;
+}
+
+function subagentStopStatusWord(
+  status: HydratedSubagentTerminalState["status"],
+): NonNullable<SubagentLifecycleResolution["status"]> {
+  if (status === "success") return "completed";
+  if (status === "cancelled") return "cancelled";
+  // failed 与 lost 都收口成 failed（row 词表没有 lost，与投影 mapSubagentStatus 同判）。
+  return "failed";
+}
+
+/**
+ * 子 agent 的终态来源判定。status 为 null 表示「只建 running 行」。
+ *
+ * 阻塞式 Agent：part 要等 child 真的结束才 completed/error，part 终态就是 child 终态。
+ * 后台 Agent：part 是 launch ACK，终态只能看 child 的持久记录（见 HydratedSubagentChildFacts）。
+ */
+function subagentLifecycleResolution(
+  part: Extract<MessagePart, { type: "tool" }>,
+  info: ParsedSubagentOutput,
+  childFacts: HydratedSubagentChildFacts | undefined,
+): SubagentLifecycleResolution {
+  const partStatus = subagentStatusFromToolPart(part);
+  if (!isBackgroundSubagentLaunch(part)) return { background: false, status: partStatus };
+  const childSessionId = info.childSessionId;
+  const terminal = childSessionId ? childFacts?.terminalStates.get(childSessionId) : undefined;
+  if (terminal) return { background: true, status: subagentStopStatusWord(terminal.status) };
+  if (childSessionId && childFacts?.knownChildSessionIds.has(childSessionId)) {
+    // 持久 child 记录在场、且没有终态记录 ⇒ 仍在运行（内存 registry 缺席不是终态证据）。
+    return { background: true, status: null };
+  }
+  // child 记录被裁剪/从未落库，或调用方读不到 child：退回 part 证据，保持有界。
+  return { background: true, status: partStatus };
+}
+
+/**
  * 附件渲染：FilePart → TurnStarted 附件展示元信息（TurnAttachmentMeta）。
  * 冷订阅/fork-child 的历史附件由 transcript 反向合成——与 live 事件同一投影入口
  * （buildUserInputRow），保证冷/热路径行内容一致。
@@ -688,11 +785,15 @@ function synthesizeReasoningPart(
 
 function synthesizeSubagentLifecycle(
   info: ParsedSubagentOutput,
-  status: "completed" | "failed" | "cancelled",
+  resolution: SubagentLifecycleResolution,
   push: PushEvent,
   turnId: string,
 ): void {
   const agentId = info.agentId ?? `subagent-${turnId}`;
+  // 后台 spawn 必须与 live 同形带 background：渲染层（conversationTurnRenderUnits）
+  // 靠它把后台 subagent 行排除出「本轮仍在跑」判定，缺了它冷恢复会把早已结束的
+  // 历史轮重新翻成 running。**running 行同样要带**（正是「仍在跑」这一支最容易漏）。
+  const backgroundField = resolution.background ? { background: true } : {};
   push(
     SessionEventType.SubagentSpawned,
     {
@@ -703,9 +804,11 @@ function synthesizeSubagentLifecycle(
       parentToolCallId: info.parentToolCallId,
       prompt: info.prompt,
       status: "running",
+      ...backgroundField,
     },
     turnId,
   );
+  if (!resolution.status) return;
   push(
     SessionEventType.SubagentStopped,
     {
@@ -716,7 +819,8 @@ function synthesizeSubagentLifecycle(
       parentToolCallId: info.parentToolCallId,
       prompt: info.prompt,
       summaryText: info.summaryText,
-      status,
+      status: resolution.status,
+      ...backgroundField,
     },
     turnId,
   );
@@ -725,6 +829,7 @@ function synthesizeSubagentLifecycle(
 function synthesizeToolPart(
   part: Extract<MessagePart, { type: "tool" }>,
   assistantMessageId: string,
+  subagentChildFacts: HydratedSubagentChildFacts | undefined,
   push: PushEvent,
   turnId: string,
 ): AssistantSynthesisState {
@@ -773,7 +878,12 @@ function synthesizeToolPart(
 
   const subagentInfo = subagentInfoFromToolPart(part);
   if (subagentInfo && started) {
-    synthesizeSubagentLifecycle(subagentInfo, subagentStatusFromToolPart(part), push, turnId);
+    synthesizeSubagentLifecycle(
+      subagentInfo,
+      subagentLifecycleResolution(part, subagentInfo, subagentChildFacts),
+      push,
+      turnId,
+    );
   }
 
   if (part.state.status === "completed") {
@@ -1153,7 +1263,7 @@ function synthesizeSubtaskPart(
       prompt: part.prompt,
       summaryText: part.description,
     },
-    "completed",
+    { background: false, status: "completed" },
     push,
     turnId,
   );
@@ -1164,6 +1274,7 @@ function synthesizeAssistantParts(
   emittedCompactOperations: Set<string>,
   durableCompactPartsByOperation: ReadonlyMap<string, Extract<MessagePart, { type: "compaction" }>>,
   emittedGoalVerifications: Set<string>,
+  subagentChildFacts: HydratedSubagentChildFacts | undefined,
   push: PushEvent,
   turnId: string,
 ): AssistantSynthesisState {
@@ -1197,7 +1308,13 @@ function synthesizeAssistantParts(
         synthesizeReasoningPart(part, String(message.info.id), push, turnId);
         break;
       case "tool": {
-        const state = synthesizeToolPart(part, String(message.info.id), push, turnId);
+        const state = synthesizeToolPart(
+          part,
+          String(message.info.id),
+          subagentChildFacts,
+          push,
+          turnId,
+        );
         toolCallCount += state.toolCallCount;
         resultType = normalizeTurnResult(resultType, state.resultType);
         break;
@@ -1361,6 +1478,7 @@ function collectTurnOutput(options: {
   durableCompactPartsByOperation: ReadonlyMap<string, Extract<MessagePart, { type: "compaction" }>>;
   emittedGoalVerifications: Set<string>;
   goalVerificationsByAnchor: ReadonlyMap<string, GoalVerificationFact[]>;
+  subagentChildFacts?: HydratedSubagentChildFacts;
   onModelChange: (selection: HydratedTimelineModel) => void;
   push: PushEvent;
 }): TurnOutputCollection {
@@ -1473,6 +1591,7 @@ function collectTurnOutput(options: {
       options.emittedCompactOperations,
       options.durableCompactPartsByOperation,
       options.emittedGoalVerifications,
+      options.subagentChildFacts,
       push,
       turnId,
     );
@@ -1765,6 +1884,7 @@ export function synthesizeEventsFromMessages(
         durableCompactPartsByOperation,
         emittedGoalVerifications,
         goalVerificationsByAnchor,
+        subagentChildFacts: options.subagentChildFacts,
         onModelChange: recordTimelineModel,
         push,
       });
@@ -1822,6 +1942,7 @@ export function synthesizeEventsFromMessages(
           durableCompactPartsByOperation,
           emittedGoalVerifications,
           goalVerificationsByAnchor,
+          subagentChildFacts: options.subagentChildFacts,
           onModelChange: recordTimelineModel,
           push,
         });
@@ -1867,6 +1988,7 @@ export function synthesizeEventsFromMessages(
         durableCompactPartsByOperation,
         emittedGoalVerifications,
         goalVerificationsByAnchor,
+        subagentChildFacts: options.subagentChildFacts,
         onModelChange: recordTimelineModel,
         push,
       });
@@ -1927,6 +2049,7 @@ export function synthesizeEventsFromMessages(
       durableCompactPartsByOperation,
       emittedGoalVerifications,
       goalVerificationsByAnchor,
+      subagentChildFacts: options.subagentChildFacts,
       onModelChange: recordTimelineModel,
       push,
     });

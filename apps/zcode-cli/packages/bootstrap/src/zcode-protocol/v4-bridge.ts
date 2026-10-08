@@ -93,9 +93,9 @@ import {
   activateSessionForResume,
   createSessionRecordForV4,
   ensureSessionModelAvailableForNextTurn,
-  listSessionSubagents,
-  registerForkedSession,
   readSessionContextUsage,
+  readSessionSubagentInventory,
+  registerForkedSession,
 } from "./server-operations.js";
 import type {
   ZCodeProtocolAgentServerContext,
@@ -1848,6 +1848,25 @@ export function createConversationV4Gateway(
         await readSessionContextUsage(context, sessionId, source.messages),
         contextWindow,
       );
+      // 后台 Agent 的终态唯一事实是 child session 的持久记录：持久化工具 part 只是
+      // launch ACK（启动成功即 completed），把它当终态会让「切走再切回」时仍在跑的
+      // agent 被收口（row.status=success ⇒ snapshot.subagents.running 反推为空）。
+      // transcript 可恢复 Agent row，却不能证明 child session 已经落库，所以同一份
+      // 权威清单既喂 hydration 的终态判据，也喂下面的 subagentsSeed——各读一次会造出
+      // 「种子说 running、合成事件说 ended」的裂缝，而投影永远按 row 重算 subagents。
+      // 读取放在 raw-event buffer 补回之前：异步查询不能覆盖 seed 之后新到达的 live spawn/stop。
+      const subagentInventory = await readSessionSubagentInventory(
+        context,
+        sessionId,
+        persistedMessages,
+        "v4_hydrate",
+      );
+      const subagentChildFacts = {
+        knownChildSessionIds: new Set(subagentInventory.childSessionIds),
+        terminalStates: new Map(
+          subagentInventory.ended.map((item) => [item.childSessionId, { status: item.status }]),
+        ),
+      };
       const merged = mergeColdConversationEvents({
         contextWindow,
         fileChangeSummariesByMessageId,
@@ -1855,6 +1874,7 @@ export function createConversationV4Gateway(
         messages: source.messages,
         sessionId,
         goalVerificationEntries: source.goalVerificationEntries,
+        subagentChildFacts,
         ...(Object.prototype.hasOwnProperty.call(source, "target")
           ? { target: source.target }
           : {}),
@@ -1877,13 +1897,8 @@ export function createConversationV4Gateway(
         }
       }
       // transcript 可恢复 Agent row，却不能证明 child session 已经落库。
-      // 这里在 gateway 的 raw-event buffer 补回前生成校验种子，既排除旧幽灵引用，
+      // 这次清单读取已在 raw-event buffer 补回前完成，既排除旧幽灵引用，
       // 又避免异步查询覆盖 seed 之后新到达的 live spawn/stop。
-      const subagents = await listSessionSubagents(
-        context,
-        { sessionId, endedLimit: 1 },
-        persistedMessages,
-      );
       return {
         events: merged.events,
         // 与合成事件共用本次查询结果；不在后续回填阶段重新读取另一份容量。
@@ -1892,9 +1907,9 @@ export function createConversationV4Gateway(
         // transcript 重物化，需替换 ingest 抢先建的 cold publisher。
         synthesized: merged.usedDurableTranscript,
         subagentsSeed: {
-          revision: subagents.revision,
-          childSessionIds: subagents.childSessionIds,
-          running: subagents.running,
+          revision: subagentInventory.revision,
+          childSessionIds: subagentInventory.childSessionIds,
+          running: subagentInventory.running,
         },
         ...(source.sharedContextImport ? { sharedContextImport: source.sharedContextImport } : {}),
         sourceEventSeq,

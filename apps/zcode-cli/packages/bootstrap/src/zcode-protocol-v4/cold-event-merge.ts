@@ -13,6 +13,7 @@ import {
   goalVerificationEntriesFromSessionEntries,
   synthesizeEventsFromMessages,
   type HydratedGoalVerificationEntry,
+  type HydratedSubagentChildFacts,
 } from "./transcript-hydration.js";
 
 interface ConversationMaterializationSource {
@@ -145,6 +146,8 @@ interface MergeInput {
   memoryEvents: readonly SessionEvent[];
   messages: readonly MessageWithParts[];
   sessionId: string;
+  /** child session 的持久事实（后台 Agent 终态判据）；缺席表示调用方读不到 child 记录。 */
+  subagentChildFacts?: HydratedSubagentChildFacts;
   target?: SessionGoal | null;
 }
 
@@ -741,6 +744,7 @@ export function mergeColdConversationEvents(input: MergeInput): ColdEventMergeRe
     contextWindow: input.contextWindow,
     fileChangeSummariesByMessageId: input.fileChangeSummariesByMessageId,
     goalVerificationEntries: durableGoalEntries,
+    subagentChildFacts: input.subagentChildFacts,
   });
   const durableEvents = input.target
     ? [
