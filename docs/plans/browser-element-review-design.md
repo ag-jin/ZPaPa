@@ -333,7 +333,7 @@ export function getWebElementContextDedupeKey(payload: {
 
 | # | 文件（packages/ui 除注明外） | 改动 |
 | --- | --- | --- |
-| 1 | `src/lib/webElementPickerScript.ts` | 核心改造：阶段状态机（hovering/adjusting）；句柄 API（pick/beginAdjust/showAncestor/confirm/requestRepick/cancel）；click 时预计算祖先链（`computeAncestorChain`，排除 body/html、上限 24）；adjust 绿框样式 + scroll/resize 重定位；页内标签渲染 `buildAncestorLabel`；`buildWebElementPickerScript` 组装改为「helper 源码前置声明 + 主函数」拼接（§11.2）；新增 `buildWebElementPickerCommandScript(method, …args)` 句柄小脚本工厂（防御式，取消脚本沿用）；导出 `WebElementAncestorStep` 类型 |
+| 1 | `src/lib/webElementPickerScript.ts` | 核心改造：阶段状态机（hovering/adjusting）；句柄 API（pick/beginAdjust/showAncestor/confirm/requestRepick/cancel）；click 时预计算祖先链（`computeAncestorChain`，排除 body/html、上限 24）；adjust 绿框样式 + scroll/resize 重定位；页内标签渲染 `buildAncestorLabel`；`buildWebElementPickerScript` 组装改为「helper 源码位置实参注入」（§11.2；P0 修复：按名字前置声明在压缩产物里会 ReferenceError）；新增 `buildWebElementPickerCommandScript(method, …args)` 句柄小脚本工厂（防御式，取消脚本沿用）；导出 `WebElementAncestorStep` 类型 |
 | 2 | `src/hooks/useWebElementPicker.ts` | 会话循环状态机（idle/hover/adjust/comment）；`session` 状态与动作（setLevel[rAF 节流]/confirmSelection/requestRepick/saveComment/skipComment）；循环内错误按 cancelled 收敛（仅首次注入失败上横幅）；window Esc 兜底排除浮条内事件；修正 L16-19 注释（顺手修②） |
 | 3 | `src/browser-use/WebElementPickerBar.tsx` **（新）** | 浮条：hover 提示/面包屑+滑轨+重选/确认+完成；comment 展开 Textarea（IME 组合态保护、Esc 弃草稿、跳过/加入）；全部 data-testid；受控组件，无自有业务状态（草稿除外） |
 | 4 | `src/browser-use/UnifiedBrowserView.tsx` | 根容器加 `relative`；挂载 `WebElementPickerBar`（isPicking 时）；透传 labels（顺手修①）；`handleTogglePicker` 不变 |
@@ -416,21 +416,20 @@ export function getWebElementContextDedupeKey(payload: {
 ### 11.2 注入脚本层（webElementPickerScript.test.ts）
 
 - **纯函数直测**（祖先链从脚本文件抽为模块级导出、运行时零依赖的纯函数，见下）：`computeAncestorChain`（伪节点树：排除 body/html、深度 24 截断、单节点链、被点元素即 body）；`buildAncestorLabel`（`tr th`、`tag#id`、根档位单段、链长 1）。
-- **自包含组装**：`buildWebElementPickerScript()` 产物断言——包含 `__zcode` 前缀 helper 声明与主函数调用（结构冒烟）；`buildWebElementPickerCommandScript("showAncestor", 3)` 产物断言（防御式：无句柄时安全返回 null）。
-- 抽取方式：helper（`computeAncestorChain`/`buildAncestorLabel`/`normalizeWebElementComment` 等）定义为**同文件模块级、命名带 `__zcodeWep` 注入前缀风格**的纯函数（仅依赖入参结构，不 import 运行时值）；组装从 `(${fn.toString()})(${opts})` 改为：
+- **自包含组装**：`buildWebElementPickerScript()` 产物断言——helper 源码落在实参位置（结构冒烟）；`buildWebElementPickerCommandScript("showAncestor", 3)` 产物断言（防御式：无句柄时安全返回 null）。
+- 抽取方式：helper（`computeAncestorChain`/`buildAncestorLabel` 等）定义为**同文件模块级纯函数**（仅依赖入参结构，不 import 运行时值）；组装从 `(${fn.toString()})(${opts})` 改为 **helper 走位置实参注入**：
 
 ```ts
 return [
   "(function(){",
-  `const ${ZCODE_WEP_COMPUTE_CHAIN} = ${computeAncestorChainImpl.toString()};`,
-  `const ${ZCODE_WEP_BUILD_LABEL} = ${buildAncestorLabelImpl.toString()};`,
-  `return (${webElementPickerScriptImpl.toString()})(${JSON.stringify(resolvedOptions)});`,
+  `return (${webElementPickerScriptImpl.toString()})(${JSON.stringify(resolvedOptions)}, ${computeAncestorChainImpl.toString()}, ${buildAncestorLabelImpl.toString()});`,
   "})()",
 ].join("\n");
 ```
 
-  主函数体内以标识符引用 helper（同文件裸引用，与现状 `webElementPickerScript.toString()` 依赖同一构建不变量：**toString 后引用可解析**，风险不新增、范围扩大到同文件 helper）。注入函数仍是单函数自包含，`max-lines` 例外注释保留并更新说明。
-- 不做的事：不为测试把脚本拆成多文件模块（破坏注入自包含）；不引 headless DOM 依赖。
+  主函数以**形参**引用 helper，函数体不引用任何模块作用域绑定。修正记录（P0）：原「helper 源码按名字前置声明 + 主函数体内裸引用」在压缩构建下断裂——打包器重命名模块绑定后 `toString()` 拿到的是改名后的函数体（如 `Pe(W)`），而注入体里只有字面量名字，页面执行 `ReferenceError`，发布产物拾取整体失效；位置实参在模板里求值，压缩器无从改名。注入函数仍是单函数自包含，`max-lines` 例外注释保留并更新说明。
+- **生产打包形态回归**：用 esbuild 压缩模块源码 → `node:vm` 取出 builder → 压缩产物 → 以最小 `window`/`document`/`Element` 桩执行，驱动 mousemove+click 与 `showAncestor`，断言无 `ReferenceError` 且链、层级标签正确（源码形态全绿、压缩形态曾红）。harness 压缩模块源码，而不是直接跑 tsx 产出的函数文本：tsx 打开 esbuild `keepNames`，会给函数体注入模块作用域的 `__name` helper（渲染进程的 Vite/rolldown 链路不开该开关），那属于测试运行器形态、不是发布形态。
+- 不做的事：不为测试把脚本拆成多文件模块（破坏注入自包含）；不引 headless DOM 依赖；不放宽对自由标识符的检查（`node:vm` 里只有页内真实存在的全局）。
 
 ### 11.3 hook 状态机（useWebElementPicker.test.ts）
 
@@ -453,7 +452,7 @@ return [
 
 | 风险 | 等级 | 缓解 |
 | --- | --- | --- |
-| `toString()` 组装受构建器压缩/改名影响（现单函数已依赖此不变量，helper 扩大了依赖面） | 中 | helper 与主函数同文件同批编译；§11.2 结构冒烟断言；E2E 场景 1 兜底 |
+| `toString()` 组装受构建器压缩/改名影响（P0 已实测复现：压缩后主函数体引用被改名，发布产物 ReferenceError） | 中 | helper 走位置实参注入（模板内求值，压缩器无从改名）；§11.2 压缩形态 vm 回归测试（esbuild 压缩模块 + 产物整段压缩后执行）；E2E 场景 1 兜底 |
 | 会话中页面导航/刷新导致 pending promise reject 或实例丢失 | 中 | §6 要点 3：统一按 cancelled 收敛 + debug 日志；runId 防串沿用 |
 | 深DOM/浮层站点（自定义元素嵌套）链超 24 或滑轨档位过多 | 低 | 上限 24 + 截断指示；档位=链长的天然映射，不额外压缩 |
 | selector 身份键碰撞（同页结构完全相同的兄弟且无 nth-of-type 消歧） | 低 | `getSelector` 已带 nth-of-type；碰撞后果=合并为一条，可重选找回；文档化 |

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行：祖先链 helper 与主函数同文件裸引用，组装时按名字前置声明，避免跨文件依赖在页面上下文里失效。 */
+/* eslint-disable max-lines -- Electron webview 注入脚本需要在单个函数内自包含运行：祖先链 helper 由组装模板以位置实参注入，函数体只引用形参、不引用模块作用域。 */
 import type {
   WebElementContextPayload,
   WebElementRect,
@@ -41,16 +41,9 @@ export interface WebElementAncestorNodeLike {
 }
 
 /**
- * 注入脚本组装用的前置声明名：主函数体按这些名字裸引用 helper，
- * buildWebElementPickerScript 把这些名字定义成 helper 的源码文本。
- */
-const ZCODE_WEP_COMPUTE_ANCESTOR_CHAIN = "__zcodeWepComputeAncestorChain";
-const ZCODE_WEP_BUILD_ANCESTOR_LABEL = "__zcodeWepBuildAncestorLabel";
-
-/**
  * 从被点元素沿 `parentElement` 上溯，排除 body/html（到 body 之前封顶），深度上限 24。
  *
- * 与注入脚本同批编译：只能依赖入参结构，不得引用模块级值，`toString()` 后要能独立运行。
+ * 作为注入脚本的位置实参传入：只能依赖入参与语言内建，不得引用模块级值，`toString()` 后要能独立运行。
  */
 export function computeAncestorChain(
   node: WebElementAncestorNodeLike | null | undefined,
@@ -121,7 +114,7 @@ export function computeAncestorChain(
 /**
  * 页内层级标签：至多两段（父 子，形如 `tr th`），根档位与链长 1 时单段。
  *
- * 同 computeAncestorChain 的注入约束：零外部依赖。
+ * 同 computeAncestorChain 的注入约束：零模块作用域依赖。
  */
 export function buildAncestorLabel(
   chain: readonly WebElementAncestorStep[],
@@ -134,10 +127,6 @@ export function buildAncestorLabel(
   const parent = chain[level + 1];
   return parent ? `${parent.label} ${current.label}` : current.label;
 }
-
-// 源码内与注入体同名的模块级绑定：类型检查与注入体共享同一份实现。
-const __zcodeWepComputeAncestorChain = computeAncestorChain;
-const __zcodeWepBuildAncestorLabel = buildAncestorLabel;
 
 interface WebElementPickerScriptOptions {
   maxTextChars: number;
@@ -170,7 +159,18 @@ const DEFAULT_OPTIONS: WebElementPickerScriptOptions = {
   stateKey: "__zcodeWebElementPicker",
 };
 
-function webElementPickerScript(options: WebElementPickerScriptOptions) {
+/**
+ * 页内主脚本。两个 helper 是**位置形参**，由 buildWebElementPickerScript 在模板里以源码文本实参传入
+ * （形参名只在本函数内解析，构建器压缩改名后主函数体依然自洽）。
+ *
+ * 函数体不得引用任何模块作用域绑定：打包器重命名模块绑定后，toString() 出来的引用会指向压缩改名的
+ * 标识符，而注入体里并不存在它们——发布产物会直接 ReferenceError。
+ */
+function webElementPickerScript(
+  options: WebElementPickerScriptOptions,
+  __zcodeWepComputeAncestorChain: typeof computeAncestorChain,
+  __zcodeWepBuildAncestorLabel: typeof buildAncestorLabel,
+) {
   const stateKey = options.stateKey;
   const existing = (window as unknown as Record<string, { cancel?: () => void }>)[stateKey];
   existing?.cancel?.();
@@ -974,12 +974,10 @@ export function buildWebElementPickerScript(options: WebElementPickerScriptBuild
       ...options.labels,
     },
   };
-  // helper 与主函数同批编译：前置声明其源码文本，主函数体内裸引用的名字才能解析。
+  // 注入脚本自包含：opts 与两个 helper 全部走位置实参，主函数体内不存在跨作用域的自由标识符。
   return [
     "(function () {",
-    `const ${ZCODE_WEP_COMPUTE_ANCESTOR_CHAIN} = ${computeAncestorChain.toString()};`,
-    `const ${ZCODE_WEP_BUILD_ANCESTOR_LABEL} = ${buildAncestorLabel.toString()};`,
-    `return (${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)});`,
+    `return (${webElementPickerScript.toString()})(${JSON.stringify(resolvedOptions)}, ${computeAncestorChain.toString()}, ${buildAncestorLabel.toString()});`,
     "})()",
   ].join("\n");
 }
