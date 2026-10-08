@@ -31,6 +31,151 @@ export function isTerminalWorkItemStatus(key: WorkItemStatusKey): boolean {
 export const WORK_ITEM_MAX_DEPTH = 5;
 export const WORK_ITEM_MAX_CHILDREN = 50;
 
+/* ---------------- Surface 对齐（0018）：优先级 / 日期 / 创建人 ---------------- */
+
+/**
+ * 工作项优先级**闭集**（用户裁定 Q4，2026-10-08）：`urgent / high / medium / low`。
+ *
+ * 为什么是闭集而不是自由文本：阶段二必须在 list/table 上**排序与过滤**，可比序要求取值可枚举。
+ * 为什么 `NULL`（领域模型里 `undefined`）= **未设置**且**不设**一个显式 `none` 键：
+ * 「没人定过优先级」与「有人明确选了某一档」是两件事，揉成一态会让过滤/排序替用户编事实。
+ */
+export const WORK_ITEM_PRIORITY_KEYS = ["urgent", "high", "medium", "low"] as const;
+export type WorkItemPriorityKey = (typeof WORK_ITEM_PRIORITY_KEYS)[number];
+
+/**
+ * 优先级**排序位次**（越紧急越小）。`Record<…>` 是**穷尽**的：闭集加一枚键 ⇒ 编译期在这里报缺失
+ * （与 `WORK_ITEM_STATUS_CATEGORY` 同款纪律；数组式顺序表加键不会报错，只会静默漏排）。
+ */
+export const WORK_ITEM_PRIORITY_RANK: Record<WorkItemPriorityKey, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+/**
+ * 未设置**没有**位次（`null`）：「未设置排在最前还是最后」是消费方的呈现决定，本层不编造默认位次
+ * ——编了就会有一个谁也说不清的默认值被排序悄悄用上。
+ */
+export function resolveWorkItemPriorityRank(
+  priority: WorkItemPriorityKey | null | undefined,
+): number | null {
+  return priority === null || priority === undefined ? null : WORK_ITEM_PRIORITY_RANK[priority];
+}
+
+/** 优先级输入的**解析结论**（判别联合，与 `WorkItemLabelsParseResult` 同款：让调用方必须命名一种结论）。 */
+export type WorkItemPriorityResolveResult =
+  | { kind: "ok"; priority: WorkItemPriorityKey | null }
+  | { kind: "invalid"; value: string };
+
+/**
+ * 把**任意外来值**（RPC / 表单 / 库读回）归一化成入库形状：闭集内原样收下，未设置（`undefined`/`null`）
+ * 给 `null`，其余一律 `invalid`（**响亮**）——「看不懂就当未设置」会让用户明确选过的值无声消失。
+ *
+ * 纯函数、无 i18n、无 Node 依赖：两个写入口（建项 / 编辑）共用它，不各写一份校验。
+ * **不抛**（抛在写入口，错误契约属于写者），与 `parseWorkItemLabels` 同一条纪律。
+ */
+export function resolveWorkItemPriority(raw: unknown): WorkItemPriorityResolveResult {
+  if (raw === null || raw === undefined) return { kind: "ok", priority: null };
+  if (typeof raw === "string" && (WORK_ITEM_PRIORITY_KEYS as readonly string[]).includes(raw)) {
+    return { kind: "ok", priority: raw as WorkItemPriorityKey };
+  }
+  return { kind: "invalid", value: typeof raw === "string" ? raw : String(raw) };
+}
+
+/** 非 ok 的优先级解析结论 ⇒ **一条**响亮错误文本（两个写入口共用同一句话，照 `workItemLabelsErrorMessage`）。 */
+export function workItemPriorityErrorMessage(
+  failure: Exclude<WorkItemPriorityResolveResult, { kind: "ok" }>,
+): string {
+  return (
+    `工作项优先级「${failure.value}」不在闭集内（${WORK_ITEM_PRIORITY_KEYS.join(" / ")}，` +
+    "留空 = 未设置）：拒绝静默折算 —— 把看不懂的值当未设置会让用户的选择凭空消失。"
+  );
+}
+
+export const workItemPrioritySchema = z.enum(WORK_ITEM_PRIORITY_KEYS);
+
+/**
+ * 日历日期（起始 / 截止）的**唯一形状**（用户裁定 Q5）：`YYYY-MM-DD`，**不是时刻**。
+ *
+ * 为什么不用 `INTEGER` 毫秒（与 `created_at/updated_at` 同族的备选）：起始/截止的语义是
+ * 「用户选了哪一天」。存成时刻就必须回答「哪一天的零点、哪个时区」——跨时区/跨设备读回会差一天，
+ * 且这个差是**静默**的。TEXT 形态天然无时区、字典序 = 时间序，排序与过滤直接可比。
+ */
+const WORK_ITEM_DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 格里高利历闰年判据（独立于任何时刻库：`Date` 的月份/时区语义在这里只会添乱）。 */
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+/**
+ * 日期字符串是否**既合形状又真实存在**：正则只管形状，天数按月/闰年核对
+ * （`2026-02-29`、`2026-04-31` 正则都放行，但它们不是日期）。纯字符串判定，**不做**任何时刻换算。
+ */
+export function isWorkItemDateOnly(value: string): boolean {
+  if (!WORK_ITEM_DATE_ONLY_PATTERN.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1) return false;
+  // 月天数表按下标取；越界下标不可达（month 已限 1..12），真出现时按非法日期拒（不编天数）。
+  const daysInMonth = DAYS_IN_MONTH[month - 1];
+  if (daysInMonth === undefined) return false;
+  const maxDay = month === 2 && isLeapYear(year) ? 29 : daysInMonth;
+  return day <= maxDay;
+}
+
+/** 日期的**解析结论**（判别联合，同 `WorkItemPriorityResolveResult` 的纪律）。 */
+export type WorkItemDateResolveResult =
+  | { kind: "ok"; date: string | null }
+  | { kind: "invalid"; value: string };
+
+/**
+ * 归一化外来日期值：合法 ⇒ 原样收下（**逐字**透传，不做时区/格式规整），`undefined`/`null` ⇒ 未设置，
+ * 其余 ⇒ `invalid`（响亮）。两个写入口共用；**不抛**（抛在写入口）。
+ */
+export function resolveWorkItemDateOnly(raw: unknown): WorkItemDateResolveResult {
+  if (raw === null || raw === undefined) return { kind: "ok", date: null };
+  if (typeof raw === "string" && isWorkItemDateOnly(raw)) return { kind: "ok", date: raw };
+  return { kind: "invalid", value: typeof raw === "string" ? raw : String(raw) };
+}
+
+/** 非 ok 的日期解析结论 ⇒ **一条**响亮错误文本（两个写入口共用同一句话）。 */
+export function workItemDateErrorMessage(
+  failure: Exclude<WorkItemDateResolveResult, { kind: "ok" }>,
+): string {
+  return (
+    `工作项日期「${failure.value}」不是合法日历日期（形状 YYYY-MM-DD，且必须是真实存在的一天）：` +
+    "拒绝静默落成未设置 —— 不存在的日期进了库，只会在排序/展示时才现形。"
+  );
+}
+
+export const workItemDateOnlySchema = z.string().refine(isWorkItemDateOnly, {
+  message: "工作项日期必须是 YYYY-MM-DD 的真实日历日期",
+});
+
+/**
+ * 创建人（`creator_kind` / `creator_id` / `creator_display_name` 三列的领域形状）。
+ *
+ * 为什么复用作协域 actor 词汇 `human | agent | system`：创建人与评论/活动的「谁」是同一件事
+ * （审计事实「谁做的」）。为什么**不**复用 `assignee` 的 `user | agent | squad`：创建人是
+ * 「谁按下了创建」，指派是「派给谁」——**两件事**，拿 assignee 冒充创建人会伪造历史
+ * （存量行没有这个事实时留 NULL，不编）。
+ */
+export const WORK_ITEM_CREATOR_KINDS = ["human", "agent", "system"] as const;
+export type WorkItemCreatorKind = (typeof WORK_ITEM_CREATOR_KINDS)[number];
+
+export const workItemCreatorSchema = z.object({
+  kind: z.enum(WORK_ITEM_CREATOR_KINDS),
+  id: z.string().min(1),
+  displayName: z.string().optional(),
+});
+export type WorkItemCreator = z.infer<typeof workItemCreatorSchema>;
+
 /** 工作项标签的条数上限（#11 v1）。上限**不是**静默截断：超限由 `parseWorkItemLabels` 响亮报出。 */
 export const WORK_ITEM_LABEL_MAX_COUNT = 10;
 /** 工作项标签单条长度上限（同样响亮报出）。长度按 **trim 之后**的值算 —— trim 是解析的一部分。 */
@@ -131,5 +276,15 @@ export const workItemSchema = z.object({
   properties: z.record(z.string(), z.unknown()).default({}),
   position: z.number().default(0),
   archivedAt: z.number().int().nonnegative().optional(),
+  /* ---- Surface 对齐（0018，全部可选 = 缺省即未设置，NULL 语义保真）---- */
+  /** 闭集键；缺省 = **未设置**（与显式值不是同一态）。 */
+  priority: workItemPrioritySchema.optional(),
+  /** 起始 / 截止：日历日期 `YYYY-MM-DD`（Q5），`undefined` = 未设置。 */
+  startDate: workItemDateOnlySchema.optional(),
+  dueDate: workItemDateOnlySchema.optional(),
+  /** 创建人（谁按下创建）；缺省 = 未知（存量行**不**拿 assignee 冒充）。 */
+  creator: workItemCreatorSchema.optional(),
+  /** 每 workspace 单调序号（写入口用 SQL 原子生成；前缀不入库，展示文本由 UI 单源生成）。 */
+  identifierSeq: z.number().int().positive().optional(),
 });
 export type WorkItem = z.infer<typeof workItemSchema>;
