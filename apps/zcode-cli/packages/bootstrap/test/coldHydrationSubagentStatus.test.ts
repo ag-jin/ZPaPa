@@ -28,8 +28,10 @@ import {
   type SessionEvent,
   type SessionId,
   type SessionInfo,
+  type SessionStorePort,
   type SessionTaskType,
 } from "@zcode/contracts";
+import { createSubagentObservation } from "../src/app/subagent-observation.js";
 import { mergeColdConversationEvents } from "../src/zcode-protocol-v4/cold-event-merge.js";
 import { ProductProjection } from "../src/zcode-protocol-v4/product-projection.js";
 import { readSessionSubagentInventory } from "../src/zcode-protocol/server-operations.js";
@@ -415,29 +417,7 @@ function createOrphanStoreState(childActivityAt: number): OrphanStoreState {
 /** 激活后的窄面 context（parent live record 只提供清单读取会问的事件/投影面）。 */
 function orphanContext(state: OrphanStoreState) {
   return {
-    deps: {
-      sessionStore: {
-        async getSession(sessionId: string) {
-          return state.sessions.get(sessionId) ?? null;
-        },
-        async messages(input: { sessionID: string }) {
-          return state.messages.get(input.sessionID) ?? [];
-        },
-        async sessionEntries(input: { sessionID: string; type?: string }) {
-          return (state.entries.get(input.sessionID) ?? []).filter(
-            (entry) => input.type === undefined || entry.type === input.type,
-          );
-        },
-        async saveSessionEntry(entry: SessionEntryInfo) {
-          state.saves.push(entry);
-          const key = String(entry.sessionID);
-          state.entries.set(key, [
-            ...(state.entries.get(key) ?? []).filter((item) => item.id !== entry.id),
-            entry,
-          ]);
-        },
-      },
-    },
+    deps: { sessionStore: orphanStore(state) },
     sessions: new Map([
       [
         SESSION_ID,
@@ -451,6 +431,45 @@ function orphanContext(state: OrphanStoreState) {
   } as unknown as Parameters<typeof readSessionSubagentInventory>[0];
 }
 
+/** 三面共用的 store 数据面（清单读面与 TUI 观察面读的是同一份持久记录）。 */
+function orphanStore(state: OrphanStoreState): SessionStorePort {
+  return {
+    async getSession(sessionId: string) {
+      return state.sessions.get(sessionId) ?? null;
+    },
+    async messages(input: { sessionID: string }) {
+      return state.messages.get(input.sessionID) ?? [];
+    },
+    async sessionEntries(input: { sessionID: string; type?: string }) {
+      return (state.entries.get(input.sessionID) ?? []).filter(
+        (entry) => input.type === undefined || entry.type === input.type,
+      );
+    },
+    async saveSessionEntry(entry: SessionEntryInfo) {
+      state.saves.push(entry);
+      const key = String(entry.sessionID);
+      state.entries.set(key, [
+        ...(state.entries.get(key) ?? []).filter((item) => item.id !== entry.id),
+        entry,
+      ]);
+    },
+  } as unknown as SessionStorePort;
+}
+
+/**
+ * TUI 观察面的 runtime 窄面：只有事件读（live child 投影）与父投影两问，
+ * 都按「冷恢复进程内没有事件/投影」给空值（与生产冷恢复同形）。
+ */
+function observationRuntime() {
+  return {
+    getSessionEventStore: () => ({
+      getEvents: async () => [],
+      getLatestSequenceNumber: async () => 0,
+    }),
+    getProjection: async () => undefined,
+  } as unknown as Parameters<typeof createSubagentObservation>[0]["runtime"];
+}
+
 /** 与 v4 bridge 同形的 facts 构造：known 取自 childSessionIds，终态取自 ended。 */
 function factsFromInventory(
   inventory: Awaited<ReturnType<typeof readSessionSubagentInventory>>,
@@ -461,6 +480,11 @@ function factsFromInventory(
       inventory.ended.map((item) => [item.childSessionId, { status: item.status }]),
     ),
   };
+}
+
+/** 各读面的终态投影（只取跨面比较要用的两个字段）。 */
+function endedSummary(items: readonly { childSessionId: string; status: string }[]) {
+  return items.map((item) => ({ childSessionId: item.childSessionId, status: item.status }));
 }
 
 test("集成：孤儿经接管收敛落盘 ⇒ row failed、running=[]、endedTotal=1，且重放幂等", async () => {
@@ -521,4 +545,53 @@ test("回放桶护栏：store 里有收敛 entry，但调用方读不到 child �
 
   assert.equal(row?.status, "success", "没有 child 终态事实时退回 part 推断（与修前同形）");
   assert.equal(snapshot.subagents.running.length, 0);
+});
+
+// ── 三面一致：V4 侧栏清单 / hydration row / TUI 观察 ────────────────────────────────
+//
+// 收敛结论必须三面同源。读面（readSessionSubagentInventory）与 hydration 已经消费 entry，
+// 但 TUI 观察面（app 的 readSubagents —— 终端子智能体目录的取数口）自己 projectSessionSubagents
+// 而不读 entry ⇒ 同一个孤儿在 UI 显示「已丢失」、在终端仍显示 running（还有一张永远不消失的卡片）。
+// 这条用例把同一个孤儿推到三面，断言三面给同一结论：running 为空、终态 lost。
+
+test("集成：同一孤儿收敛后 V4 侧栏清单 / hydration / TUI 观察三面同一终态", async () => {
+  const state = createOrphanStoreState(BASE_MS + 60_000);
+  const context = orphanContext(state);
+  const now = BASE_MS + 3 * 3_600_000;
+  const reconciled = await reconcileSubagentOrphansOnActivation({
+    context,
+    sessionId: SESSION_ID,
+    now,
+  });
+  assert.equal(reconciled.reconciled, 1, "先确认孤儿真的被收敛（entry 已落盘）");
+
+  // 面 1：V4 侧栏 / 读面清单。
+  const inventory = await readSessionSubagentInventory(context, SESSION_ID);
+  assert.deepEqual(inventory.running, [], "读面：收敛后 running 行必须为空");
+  assert.deepEqual(endedSummary(inventory.ended), [
+    { childSessionId: CHILD_SESSION_ID, status: "lost" },
+  ]);
+
+  // 面 2：hydration（V4 投影行的终态来自读面注入的终态表）。
+  const { snapshot } = hydrate({
+    background: true,
+    subagentChildFacts: factsFromInventory(inventory),
+  });
+  const [row] = subagentRows(snapshot);
+  assert.equal(row?.status, "failed", "hydration：lost 在 row 词表无对应项，按 failed 收口");
+  assert.equal(snapshot.subagents.running.length, 0);
+
+  // 面 3：TUI 观察面（终端目录）——与读面同一份持久记录，必须同一结论。
+  const observation = createSubagentObservation({
+    runtime: observationRuntime(),
+    sessionId: SESSION_ID as SessionId,
+    sessionStore: orphanStore(state),
+  });
+  const directory = await observation.readSubagents();
+  assert.deepEqual(directory.running, [], "TUI 面不许把已收敛的孤儿继续报成 running");
+  assert.deepEqual(
+    endedSummary(directory.ended.items),
+    endedSummary(inventory.ended),
+    "TUI 观察面与 V4 读面必须给出同一终态（两条读路径不得各判一次）",
+  );
 });

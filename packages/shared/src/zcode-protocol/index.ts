@@ -1538,6 +1538,12 @@ export type ZCodeSessionRunningSubagent = z.infer<typeof zcodeSessionRunningSuba
 
 export const zcodeSessionEndedSubagentSchema = zcodeSessionSubagentBaseSchema.extend({
   status: z.enum(["success", "failed", "cancelled", "lost"]),
+  // 终态来自「孤儿收敛」（重启后接管会话，给一个没有终态记录的后台 child 落盘
+  // subagent_outcome{lost}），而不是 child 自己的持久记录。展示层据此给这种 lost 行配一句
+  // 成因副文案；真实终态到场后标记消失（终态永远以真实记录为准）。
+  // 夹在 .strict() 里的可选字段是闭集加值——旧桌面收到未知字段会整帧解析失败，与
+  // backgroundWorkSummary.kind 同款偏斜代价，依赖 CLI 与桌面同批发布。
+  reconciled: z.boolean().optional(),
 });
 export type ZCodeSessionEndedSubagent = z.infer<typeof zcodeSessionEndedSubagentSchema>;
 

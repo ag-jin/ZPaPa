@@ -123,7 +123,7 @@ import {
   lastChildActivityAt,
   paginateEndedSubagents,
   projectSessionSubagents,
-  subagentOutcomeEntryStatus,
+  subagentOutcomeEntryFact,
 } from "./subagent-session-query.js";
 import { reconcileSubagentOrphansOnActivation } from "./subagent-orphan-reconcile.js";
 import { runSessionModelConfigMutation } from "../zcode-protocol-v4/model-config-mutation.js";
@@ -1783,13 +1783,13 @@ export async function readSessionSubagentInventory(
       // 不再单独读一遍 child transcript（激活路径的时延预算）。
       childLastActivityAtMs.set(childSessionId, lastChildActivityAt(childSession, childMessages));
       // 收敛 entry（孤儿补洞的终态事实）同样属于这批子查询：读面只认 child 的持久记录。
-      const outcomeEntryStatus = subagentOutcomeEntryStatus(
+      const outcomeEntry = subagentOutcomeEntryFact(
         await store.sessionEntries?.({
           sessionID: childSession.id,
           type: SESSION_ENTRY_SUBAGENT_OUTCOME,
         }),
       );
-      return { childMessages, childProjection, childSession, childSessionId, outcomeEntryStatus };
+      return { childMessages, childProjection, childSession, childSessionId, outcomeEntry };
     }),
   );
   const persistedChildren = childEntries.filter(
@@ -1813,10 +1813,10 @@ export async function readSessionSubagentInventory(
         entry.childProjection ? [[entry.childSessionId, entry.childProjection]] : [],
       ),
     ),
-    subagentOutcomeEntryStatusById: new Map(
+    subagentOutcomeEntryById: new Map(
       persistedChildren.flatMap((entry) =>
-        entry.outcomeEntryStatus
-          ? [[entry.childSessionId, entry.outcomeEntryStatus] as const]
+        entry.outcomeEntry
+          ? [[entry.childSessionId, entry.outcomeEntry] as const]
           : [],
       ),
     ),

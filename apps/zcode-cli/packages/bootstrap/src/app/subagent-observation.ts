@@ -12,6 +12,8 @@ import {
   collectSubagentChildSessionIds,
   paginateEndedSubagents,
   projectSessionSubagents,
+  SESSION_ENTRY_SUBAGENT_OUTCOME,
+  subagentOutcomeEntryFact,
 } from "../zcode-protocol/subagent-session-query.js";
 
 export interface SubagentTranscriptSnapshot {
@@ -55,9 +57,19 @@ export function createSubagentObservation(deps: ObservationDeps) {
             deps.sessionStore.messages({ sessionID: sessionId }),
             eventStore.getEvents(sessionId),
           ]);
+          // 收敛 entry（孤儿补洞的终态事实）与 V4 读面用同一个解释器读同一份持久记录：
+          // 这条路径自己 projectSessionSubagents 而不消费 entry，会让同一个孤儿在终端显示
+          // running、在 V4 显示 lost（两条读路径各判一次，结论不一致）。
+          const outcomeEntry = subagentOutcomeEntryFact(
+            await deps.sessionStore.sessionEntries?.({
+              sessionID: sessionId,
+              type: SESSION_ENTRY_SUBAGENT_OUTCOME,
+            }),
+          );
           return {
             session,
             messages,
+            outcomeEntry,
             projection: events.length ? new EventReducer().reduce(events) : undefined,
           };
         }),
@@ -74,6 +86,11 @@ export function createSubagentObservation(deps: ObservationDeps) {
         childProjectionsById: new Map(
           valid.flatMap((child) =>
             child.projection ? [[child.session.id, child.projection] as const] : [],
+          ),
+        ),
+        subagentOutcomeEntryById: new Map(
+          valid.flatMap((child) =>
+            child.outcomeEntry ? [[child.session.id, child.outcomeEntry] as const] : [],
           ),
         ),
       });
