@@ -478,6 +478,8 @@ import { IHooksService } from "./hooks/hooks.js";
 import { IMemoryService } from "./memory/memory.js";
 import { IWikiService } from "./wiki/wiki.js";
 import { createWikiService } from "./wiki/wikiService.js";
+import { IAgentBuilderService } from "./agentbuilder/agentBuilder.js";
+import { createAgentBuilderService } from "./agentbuilder/agentBuilderService.js";
 import { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import { IFeedbackService } from "./feedback/feedback.js";
 import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -2688,6 +2690,28 @@ export function createLocalServices(options: {
     },
     logger: createServiceLogger("wiki"),
   });
+  // AgentBuilder（AI 访谈式智能体创建）与 wiki 同源：都走 generateWorkspaceText 与同一个
+  // preferredSelection。差别只在协议形态 —— 访谈用 messages 多轮（服务面无状态，每轮整段传历史）。
+  const agentBuilderService = createAgentBuilderService({
+    currentModelProvider: {
+      async readCurrentModel() {
+        return (await providerRuntime.modelSelection.getView()).preferredSelection ?? null;
+      },
+    },
+    textGenerator: {
+      async generateText(params) {
+        return await zcodeAgentService.generateWorkspaceText({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          selection: params.selection,
+          messages: params.messages,
+          querySource: params.querySource,
+          ...(params.signal ? { signal: params.signal } : {}),
+        });
+      },
+    },
+    logger: createServiceLogger("agent-builder"),
+  });
   const mediaPreviewService = createMediaPreviewService({
     fileService,
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
@@ -3230,6 +3254,7 @@ export function createLocalServices(options: {
     )
     .register(IMemoryService, createMemoryService())
     .register(IWikiService, wikiService)
+    .register(IAgentBuilderService, agentBuilderService)
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,

@@ -492,6 +492,8 @@ test("组件层：执行只经 executeSquadDiscard（页面里不出现 discardB
    具体类，任何一条既有映射被删掉/改名，对应的页面就会静默失去那个服务 —— 所以这里用**子集**守卫：
    下面这份清单是改动**之前**就有的条目，它们必须全部还在（新增服务不会让本用例误红）。 */
 const PINNED_RENDERER_ACCESSOR_DESCRIPTORS = [
+  // AgentBuilder（2026-10-08）：访谈面板要走 RPC，这条映射必须留着（删掉 = 面板静默缺服务）。
+  "IAgentBuilderService",
   "IBotsService",
   "IBroadcastService",
   "IClientConfigService",

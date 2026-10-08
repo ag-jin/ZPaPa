@@ -25,8 +25,9 @@ export const TEAM_AGENT_COLORS = [
   "cyan",
 ] as const satisfies readonly AgentColor[];
 
-/** `auto` / `plan` 与现有 AgentPermissionMode 同一取值域。 */
-const TEAM_AGENT_PERMISSION_MODES = [
+/** `auto` / `plan` 与现有 AgentPermissionMode 同一取值域。
+    AgentBuilder 草稿的 permissionMode 用同一常量（取值域单源：草稿与落盘定义不会分叉）。 */
+export const TEAM_AGENT_PERMISSION_MODES = [
   "auto",
   "plan",
 ] as const satisfies readonly AgentPermissionMode[];
@@ -79,8 +80,11 @@ export function resolveTeamAgentToolTimeoutMinutes(
 /** 预填来源留痕：只记「从哪来」，不建立引用（spec §3.2「此后无持续引用」）。 */
 export const teamAgentProvenanceSchema = z
   .object({
-    /** manual：手工新建；prefill：一次性从现有 agent 预填而来。 */
-    source: z.enum(["manual", "prefill"]),
+    /**
+     * manual：手工新建；prefill：一次性从现有 agent 预填而来；
+     * ai_builder：AgentBuilder 访谈产物（设计报告 §5.2：提交时由 UI 传，落盘留痕）。
+     */
+    source: z.enum(["manual", "prefill", "ai_builder"]),
     /** 预填来源 agent 的 id；仅作留痕，重命名/删除来源都不影响本定义。 */
     sourceAgentId: z.string().min(1).optional(),
   })

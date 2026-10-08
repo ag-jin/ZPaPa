@@ -1,3 +1,6 @@
+/* eslint-disable max-lines -- 根入口是**服务清单**：每个服务 1-3 行 re-export 正是它的本质。
+   拆成多个 barrel 只会给"某服务该从哪个入口拿"多一层查找（node.ts 同款理由）；
+   行数已到 400 上限，任何新服务都会越线，而这不是该被行数约束的东西。 */
 // Descriptors & collection (browser-safe)
 export { type ServiceDescriptor, createServiceDescriptor } from "./descriptors.js";
 export { ServiceCollection } from "./collection.js";
@@ -255,6 +258,9 @@ export type {
 // 即使只写 `export type`，打包器仍会把模块拉进 renderer 图。实测后果是页面
 // 停在启动壳、无报错浮层、无 pending 请求，极难定位。
 // 需要这些能力的调用方从 @zcode/services/node 或直接相对路径引入。
+
+export { AGENT_BUILDER_ERROR_CODES } from "./agentbuilder/agentBuilderErrors.js";
+export { AGENT_BUILDER_QUERY_SOURCE, IAgentBuilderService } from "./agentbuilder/agentBuilder.js";
 
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 

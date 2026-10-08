@@ -152,6 +152,8 @@ export const ServiceChannels = {
   OnboardingRecord: "onboarding-record",
   /** 项目知识库（wiki）生成与读取服务 */
   Wiki: "wiki",
+  /** AI 访谈式智能体创建（AgentBuilder）服务 */
+  AgentBuilder: "agent-builder",
 } as const;
 
 export type ServiceChannelName = (typeof ServiceChannels)[keyof typeof ServiceChannels];

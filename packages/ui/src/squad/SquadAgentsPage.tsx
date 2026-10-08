@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TeamAgent } from "@zcode/shared";
 import type { SquadSnapshot, ISquadRuntimeServiceShape } from "@zcode/services";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert.js";
+import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
@@ -10,7 +11,9 @@ import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
-import { TeamAgentDialog } from "./SquadCreateDialogs.js";
+import { AgentBuilderDialog } from "./AgentBuilderDialog.js";
+import { agentBuilderDraftToTeamAgentInitial } from "./agentBuilderViewModel.js";
+import { TeamAgentDialog, type TeamAgentDialogInitial } from "./SquadCreateDialogs.js";
 import { SquadAgentsList } from "./SquadAgentsList.js";
 import { squadSurfaceViewState } from "./squadSurfaceViewModel.js";
 import {
@@ -69,8 +72,13 @@ export function SquadAgentsPage({
   const [failure, setFailure] = useState<SquadEntryFeedback | null>(null);
   /** 有请求在飞的行 id（照 SquadMinimalView 的 busyRunId 形态）；新建走 `*`（不会撞上真实 id）。 */
   const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
+  /* 三态对话框：手动新建 / 编辑 / AI 访谈。`create.initial` = 访谈产物（或半途草稿）的预填初值；
+     `aiGenerated` 决定提交时带 `provenance.source = "ai_builder"`（留痕「这个智能体怎么来的」）。 */
   const [dialog, setDialog] = useState<
-    { kind: "create" } | { kind: "edit"; agent: TeamAgent } | null
+    | { kind: "create"; initial?: TeamAgentDialogInitial; aiGenerated?: boolean }
+    | { kind: "edit"; agent: TeamAgent }
+    | { kind: "interview" }
+    | null
   >(null);
 
   const t = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
@@ -197,7 +205,9 @@ export function SquadAgentsPage({
   });
 
   /* 新建 / 编辑共用一个对话框：提交期间（busyAgentId 非空）忽略重复提交 ——
-     表单是同一份实现，重复点提交不该建出两个智能体。 */
+     表单是同一份实现，重复点提交不该建出两个智能体。
+     `provenance` 不在表单里（它不是字段）：由**页面**按流程带 —— 访谈产物带 ai_builder 留痕，
+     手动创建沿用服务面默认 manual。 */
   const submitDialog = useCallback(
     (input: {
       name: string;
@@ -218,7 +228,11 @@ export function SquadAgentsPage({
       if (dialog?.kind === "create") {
         void runAction(
           "*",
-          (service) => service.createTeamAgent(target, input),
+          (service) =>
+            service.createTeamAgent(target, {
+              ...input,
+              ...(dialog.aiGenerated ? { provenance: { source: "ai_builder" as const } } : {}),
+            }),
           "squad.agents.created",
         );
         return;
@@ -252,13 +266,29 @@ export function SquadAgentsPage({
           {loading ? <Spinner className="size-3.5" /> : null}
           {t("squad.common.refresh")}
         </Button>
+        {/* 双入口（§4-D3）：手动表单与 AI 访谈**并存**，AI 带推荐徽标（对齐 multica 选择页的
+            recommended）。不做同 dialog 双 tab —— TeamAgentDialog 是「唯一一份表单」纪律的产物，
+            把聊天塞进去会让它膨胀并引入字段校验分叉。 */}
         <Button
+          variant="outline"
           size="sm"
           disabled={!target}
           data-testid="squad-agents-create"
           onClick={() => setDialog({ kind: "create" })}
         >
-          {t("squad.agents.create")}
+          {t("squad.agentBuilder.manualEntry")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!target}
+          data-testid="squad-agents-create-ai"
+          onClick={() => setDialog({ kind: "interview" })}
+        >
+          {t("squad.agentBuilder.aiEntry")}
+          <Badge variant="secondary" data-testid="squad-agents-create-ai-recommended">
+            {t("squad.agentBuilder.recommended")}
+          </Badge>
         </Button>
       </div>
 
@@ -343,8 +373,28 @@ export function SquadAgentsPage({
           onClose={() => setDialog(null)}
           onSubmit={submitDialog}
           modelView={modelView}
-          titleId="squad.agents.create"
+          {...(dialog.initial ? { initial: dialog.initial } : {})}
+          {...(dialog.aiGenerated ? { aiGenerated: true } : {})}
+          titleId={dialog.aiGenerated ? "squad.agentBuilder.prefillTitle" : "squad.agents.create"}
           submitLabelId="squad.common.submit"
+        />
+      ) : null}
+
+      {/* AI 访谈：面板自己持有消息与草稿；两个出口都把当前草稿带进**同一张**表单
+          （半途改手动也带草稿 —— 访谈做到一半的上下文不丢，§4-D3）。 */}
+      {dialog?.kind === "interview" ? (
+        <AgentBuilderDialog
+          workspacePath={workspacePath}
+          {...(workspaceIdentity ? { workspaceIdentity } : {})}
+          service={services.agentBuilderService ?? null}
+          onClose={() => setDialog(null)}
+          onOpenManualForm={(draft) =>
+            setDialog({
+              kind: "create",
+              ...(draft ? { initial: agentBuilderDraftToTeamAgentInitial(draft) } : {}),
+              ...(draft ? { aiGenerated: true } : {}),
+            })
+          }
         />
       ) : null}
 
