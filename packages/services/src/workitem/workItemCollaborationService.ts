@@ -40,6 +40,16 @@ import type {
   WorkItemDeliverableDetail,
   WorkItemDeliverableRecord,
 } from "./workItemDeliverableRepo.js";
+/* #8 D2：PR 关联的**类型**引用（同款理由：存储面用 `node:sqlite` 的类型）+ 三口的**实现面**
+   （`workItemPullRequestEntry`）：该模块与 provider / repo 一样保持浏览器安全（对 node 侧只用
+   `import type`），值导入不会把 node 侧带进 renderer 包（browserSafeRootEntry.test.ts 守这条）。 */
+import type { PullRequestSyncReport } from "./pullRequestSync.js";
+import {
+  createWorkItemPullRequestEntry,
+  pullRequestProviderAvailability,
+  requireOwnedWorkItem,
+} from "./workItemPullRequestEntry.js";
+import type { PullRequestRecord } from "./workItemPullRequestRepo.js";
 
 /* B5.1 轮 1 / B5.2 轮 2：工作项**协作门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.3）。
    —— 轮 1 落下**读**（`getWorkItemCollaboration`），轮 2 落下**四个写入口**（§5.2），
@@ -110,6 +120,16 @@ export type WorkItemCollaborationRead = {
    * diff 正文可达 MB 级，进读模型会让每次打开详情页都读一遍全部正文（设计 §3.2 的存储取舍）。
    */
   deliverables: WorkItemDeliverableRecord[];
+  /**
+   * **关联 PR 清单**（#8 D2）：`WorkItemPullRequestRepo.listByWorkItem` 口径（createdAt ASC, id ASC）。
+   * 含「登记了但从未拉取快照」的行（`state === null`）——离线缺省形态下这就是全部内容。
+   */
+  pullRequests: PullRequestRecord[];
+  /**
+   * 读数面此刻的可用性（同步、零 IO）：`available: false` ⇒ 未配置 token。
+   * UI 据此把快照态呈现为「未配置 token（只显示手动登记的链接）」而不是错误。
+   */
+  pullRequestProvider: { available: boolean; reason: string | null };
 };
 
 /**
@@ -168,6 +188,32 @@ export type RegisterWorkItemDeliverableLinkRequest = {
   title: string;
   url: string;
   note?: string;
+};
+
+/* ---------- #8 D2：三个 PR 入口的入参形状 ---------- */
+
+/**
+ * 手动登记一条 PR 关联（设计 §4.2「服务面出口」）。
+ *
+ * **不含 `actor`**（同 D1-A 口径）：登记人 = 组合根注入的本地人类身份。
+ * **不含 owner/repo/number**：它们从 `url` 归一化出来（唯一判据在服务面，UI 只贴地址）。
+ * `title` 可省：省略时派生 `owner/name#number`；远端标题归快照（登记时不猜）。
+ */
+export type LinkWorkItemPullRequestRequest = {
+  workItemId: string;
+  /** GitHub PR 地址（`https://github.com/<owner>/<repo>/pull[s]/<n>` 或其页面变体）。 */
+  url: string;
+  title?: string;
+};
+
+/** 解除一条关联（按 id 寻址；不存在的 id 返回 false，不是错误）。 */
+export type UnlinkWorkItemPullRequestRequest = {
+  pullRequestId: string;
+};
+
+/** 按需刷新（手动触发）一个工作项下全部已链接 PR 的快照。 */
+export type RefreshWorkItemPullRequestsRequest = {
+  workItemId: string;
 };
 
 export interface IWorkItemCollaborationService {
@@ -243,6 +289,38 @@ export interface IWorkItemCollaborationService {
     target: SquadWorkspaceTarget,
     input: RegisterWorkItemDeliverableLinkRequest,
   ): Promise<WorkItemDeliverableRecord>;
+
+  /* ---------- #8 D2：PR 关联与快照的三个入口（设计 §4.2 的服务面出口） ---------- */
+
+  /**
+   * 登记一条 PR 关联：URL 归一化（非 GitHub PR 地址**响亮抛**）+ 幂等落行 + 归因（操作者）。
+   * **不发网络请求**（按需拉取：快照只由 `refreshWorkItemPullRequests` 触发）。
+   */
+  linkWorkItemPullRequest(
+    target: SquadWorkspaceTarget,
+    input: LinkWorkItemPullRequestRequest,
+  ): Promise<PullRequestRecord>;
+
+  /**
+   * 解除一条关联（真删）。返回是否删到一行：`false` = 本来就没有（**不是错误** ——
+   * 界面上的陈旧条目不该让用户看到一次报错）。跨 workspace 的 id ⇒ 响亮抛（§8.5）。
+   */
+  unlinkWorkItemPullRequest(
+    target: SquadWorkspaceTarget,
+    input: UnlinkWorkItemPullRequestRequest,
+  ): Promise<boolean>;
+
+  /**
+   * 按需刷新该工作项下全部已链接 PR 的快照（**唯一的快照写入口**）。
+   *
+   * 未配 token ⇒ 报告每条 `unavailable` 且 `providerAvailable: false`（**不抛**：离线缺省形态
+   * 不是错误）；HTTP/网络失败与防陈旧拒写各自带原因进报告（不静默）。
+   * **不动工作项状态**：报告里的 `mergedPullRequests` 是 D3（终态驱动）要消费的口。
+   */
+  refreshWorkItemPullRequests(
+    target: SquadWorkspaceTarget,
+    input: RefreshWorkItemPullRequestsRequest,
+  ): Promise<PullRequestSyncReport>;
 }
 
 export const IWorkItemCollaborationService =
@@ -301,6 +379,11 @@ export type WorkItemCollaborationServiceDeps = {
    * 不静默 no-op（静默会让用户以为决定已经记下来了）。
    */
   createDecisionService?: (runtime: SquadRuntime) => WorkItemDecisionService;
+  /**
+   * 时钟注入面（#8 D2）：`link` 的 `created_at`/`updated_at` 取自它，缺省 `Date.now`。
+   * 存在的唯一理由是让「登记时刻」这一格在测试里可钉死（与各 repo 的 `now?` 同一条惯例）。
+   */
+  now?: () => number;
 };
 
 export function createWorkItemCollaborationService(
@@ -361,6 +444,11 @@ export function createWorkItemCollaborationService(
     workspacePath: runtime.boundWorkspace.path,
   });
 
+  /* 「工作项必须存在且同 workspace」的判据（D1b 的交付物登记与 D2 的 PR 三口共用）与
+     「读数面可用性」的归一都在 `workItemPullRequestEntry` 里 —— 本门面只引用，不再各自实现一份。 */
+
+  const now = deps.now ?? (() => Date.now());
+
   return {
     async getWorkItemCollaboration(target, workItemId) {
       const runtime = await deps.createRuntime(target);
@@ -410,6 +498,10 @@ export function createWorkItemCollaborationService(
         /* #7 D1b：交付物清单随同一次聚合读返回（**只带行**，正文按 ref 按需取）——
            口径与其它五面同一条：`workspaceKey` 取自本次 runtime 的绑定值，不取调用方传的 target。 */
         deliverables: runtime.deliverableRepo.listByWorkItem(workspaceKey, workItemId),
+        /* #8 D2：PR 关联清单 + 读数面可用性（同步判据，零 IO）。离线缺省下这里返回
+           `available: false` 而列表照常 —— 「没配 token」是配置状态，不是读失败。 */
+        pullRequests: runtime.pullRequestRepo.listByWorkItem(workspaceKey, workItemId),
+        pullRequestProvider: pullRequestProviderAvailability(runtime),
       };
     },
 
@@ -515,25 +607,9 @@ export function createWorkItemCollaborationService(
     async registerWorkItemDeliverableLink(target, input) {
       const runtime = await deps.createRuntime(target);
       const { workspaceKey } = boundWorkspaceOf(runtime);
-      /* **工作项必须已存在**（按 CommentService 的「挂到哪」同一条口径）：静默建行会把一条链接
-         挂到一个不存在的对象上，而界面上它会显得「记下了」（归档项同样拒绝：写闸与评论一致）。 */
-      const item = runtime.workItemRepo.get(input.workItemId);
-      if (!item) {
-        throw new Error(
-          `登记交付物失败：工作项「${input.workItemId}」不存在或已归档 —— ` +
-            "链接必须挂在一条可寻址的工作项上，静默建行会让它看起来记下了却查不回。",
-        );
-      }
-      const itemKey = resolveWorkspaceKey({
-        workspacePath: item.workspacePath,
-        workspaceIdentity: item.workspaceIdentity,
-      });
-      if (itemKey !== workspaceKey) {
-        throw new Error(
-          `工作项「${input.workItemId}」属于 workspace「${itemKey}」，与本次目标的「${workspaceKey}」不一致：` +
-            "跨 workspace 引用一律响亮拒绝（§8.5）。",
-        );
-      }
+      /* **工作项必须已存在且同 workspace**（判据提取成 requireOwnedWorkItem：D2 的 PR 三口共用同一道，
+         两处各写一份会在「归档项能不能挂」这类边界上分叉，而分叉不报错）。 */
+      requireOwnedWorkItem(runtime, workspaceKey, input.workItemId, "登记交付物");
       /* 交付物登记面的唯一实现在 runtime 上（自动捕获与手动登记共用一份）：本层只定
          「谁写的」（注入的本地人类）与「挂到哪」，id/键派生、落库、回声全在登记面里。 */
       return runtime.deliverableRecorder.registerLink({
@@ -543,6 +619,44 @@ export function createWorkItemCollaborationService(
         ...(input.note !== undefined ? { note: input.note } : {}),
         actor: requireLocalHumanActor(),
       });
+    },
+
+    /* ---------- #8 D2：PR 关联的三个入口 ----------
+       三条写法与四个评论入口同形：**现构 runtime → 取绑定 workspace → 交给实现面**。
+       实现（URL 归一化 / 可寻址判据 / 归因 / 幂等落行）在 `workItemPullRequestEntry` 里 ——
+       门面不写第二份（两处判据分叉的表现是「界面上拦住了而库里写进去了」，且不报错）。 */
+
+    async linkWorkItemPullRequest(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      return createWorkItemPullRequestEntry({
+        runtime,
+        workspaceKey,
+        actor: requireLocalHumanActor,
+        now,
+      }).link(input);
+    },
+
+    async unlinkWorkItemPullRequest(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      return createWorkItemPullRequestEntry({
+        runtime,
+        workspaceKey,
+        actor: requireLocalHumanActor,
+        now,
+      }).unlink(input);
+    },
+
+    async refreshWorkItemPullRequests(target, input) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      return createWorkItemPullRequestEntry({
+        runtime,
+        workspaceKey,
+        actor: requireLocalHumanActor,
+        now,
+      }).refresh(input);
     },
   };
 }

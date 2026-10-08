@@ -8,6 +8,9 @@ import type { createIntegrationMerger } from "../worktree/integrationMerge.js";
 import type { createOrphanReaper } from "../worktree/orphanReaper.js";
 import type { WorktreeManager } from "../worktree/worktreeManager.js";
 import type { InboxItemRepo } from "./inboxItemRepo.js";
+import type { PullRequestProvider } from "./pullRequestProvider.js";
+import type { PullRequestSync } from "./pullRequestSync.js";
+import type { WorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
 import type { SquadRunLifecycle } from "./squadRunLifecycle.js";
 import type { SquadDispatchRequestHub } from "./squadDispatchRequests.js";
 import type { SquadRunRepo } from "./squadRunRepo.js";
@@ -69,6 +72,22 @@ export type SquadRuntimeDeps = {
    * **可选**（既有调用方不受影响）：未注入时行为与加法前**完全一致**（只走实例级订阅表）。
    */
   dispatchRequestHub?: SquadDispatchRequestHub;
+  /**
+   * **GitHub PR 快照的 token 读取口**（#8 D2，可选加法）：组合根维护的**单点同步快照**
+   * （与 `readExperimentEnabled` 同一手法：`ISettingService` 只有异步 `get()`，而 provider 的
+   * `describe()` 是同步判据）。
+   *
+   * 为什么传**读取函数**而不是 token 值：runtime 按目标现构、不缓存，而 token 是**运行期可改**的设置
+   * ——读函数让「设置里刚配好/刚清空」在下一次刷新即生效，不必重建 runtime。
+   * 缺省（不注入）⇒ 恒未配置 ⇒ null adapter（离线缺省形态：PR 区只显示手动登记的链接）。
+   */
+  readGithubPullRequestToken?: () => string | undefined;
+  /**
+   * GitHub REST 的 **fetch 注入面**（#8 D2，**测试专用**）：缺省 = 全局 fetch（生产形态）。
+   * 注入 stub 后可在不联网的前提下断言请求形状（API 地址 / Bearer 头）与全部错误面 ——
+   * 真实网络调用不做单测（无真实 token；真网络登记是人工演示项）。
+   */
+  githubFetch?: typeof fetch;
 };
 
 export type SquadRuntime = {
@@ -113,6 +132,23 @@ export type SquadRuntime = {
    * 构造点唯一在组合根（接线钉死测试钉住）—— 调用方只经本字段用，不自建第二份。
    */
   deliverableRecorder: WorkItemDeliverableRecorder;
+  /**
+   * **PR 关联 + 快照的存储面**（#8 D2，`work_item_pull_requests` 表，迁移 0017）：关联是**按 workspace**
+   * 的事实（行里带 `workspace_key/path`），故与 `deliverableRepo` 同一条理由挂在 runtime 上
+   * （另建跨目标单例会让读落到别的 workspace）。
+   */
+  pullRequestRepo: WorkItemPullRequestRepo;
+  /**
+   * **PR 读数面**（#8 D2 的 seam）：缺省 = 「没配 token」的 null adapter；配了 token ⇒ GitHub PAT
+   * adapter。放在 runtime 上是因为它按**这张 workspace 的设置快照**判定可用性（token 读取口由组合根
+   * 注入），且 `describe()` 要能同步回答（UI 的「未配置 token」呈现不额外付一次往返）。
+   */
+  pullRequestProvider: PullRequestProvider;
+  /**
+   * **PR 快照同步深模块**（#8 D2）：按需刷新一个工作项下的已链接 PR。挂在 runtime 上使
+   * 「取哪张 workspace 的行」与其它零件同一口径；D3 的终态驱动消费它报出的 `mergedPullRequests`。
+   */
+  pullRequestSync: PullRequestSync;
   teamAgentService: TeamAgentService;
   squadService: SquadService;
   git: GitRunner;

@@ -435,6 +435,10 @@ export type {
   CreateWorkItemDecisionRequest,
   /* #7 D1b：交付物**手动登记**的入参形状（人工贴链；`kind` 不在其中 —— 手动只开 link）。 */
   RegisterWorkItemDeliverableLinkRequest,
+  /* #8 D2：PR 三入口的入参形状（UI 只给「挂到哪 / 贴哪个地址」；身份与 owner/repo/number 全由服务面派生）。 */
+  LinkWorkItemPullRequestRequest,
+  UnlinkWorkItemPullRequestRequest,
+  RefreshWorkItemPullRequestsRequest,
 } from "./workitem/workItemCollaborationService.js";
 /* #7 D1b：交付物的**类型面**（读模型与 UI 穷尽映射要能命名这些形状）。
    只出类型：`workItemDeliverableRepo` 值导入 node:fs/node:crypto，出值会让 renderer 整包失败
@@ -446,6 +450,26 @@ export type {
   WorkItemDeliverableDetail,
   WorkItemDeliverableRecord,
 } from "./workitem/workItemDeliverableRepo.js";
+/* #8 D2：PR 关联/快照的**类型面 + 两张闭集 + URL 归一化纯函数**。
+   · 类型（存储行 / 同步报告 / provider 结果）：UI 命名它们做穷尽映射；
+   · `PULL_REQUEST_STATES` 出**值**（与 WORK_ITEM_ACTIVITY_KINDS 同一条理由）：界面徽标映射
+     必须与服务面同一份闭集，硬编码四个字符串会在闭集增删时静默漂移；
+   · `normalizeGitHubPullRequestUrl` 出**值**：登记表单的「可提交判据」与服务面的入库判据必须是
+     **同一个**函数（两处各写一份正则会在「哪些地址算合法」上分叉，且分叉不报错）。
+     三个模块都保持浏览器安全（对 node 侧只用 `import type`），出值不会把 node 侧带进 renderer。 */
+export { PULL_REQUEST_STATES } from "./workitem/workItemPullRequestRepo.js";
+export type { PullRequestRecord, PullRequestState } from "./workitem/workItemPullRequestRepo.js";
+/* `normalizeGitHubPullRequestUrl` 的**返回值形状**（UI 表单判据的返回类型）与 URL 归一化本身
+   同源；provider 的接口类型（`PullRequestProvider` / 结果联合）留在 services 内部：
+   门面不暴露它们，UI 拿到的只有「可用性 + 行 + 报告」三样。 */
+export { normalizeGitHubPullRequestUrl } from "./workitem/pullRequestProvider.js";
+export type { GitHubPullRequestAddress } from "./workitem/pullRequestProvider.js";
+export type {
+  PullRequestMergedFact,
+  PullRequestSyncItem,
+  PullRequestSyncOutcome,
+  PullRequestSyncReport,
+} from "./workitem/pullRequestSync.js";
 /* 写入口的返回形状 = CommentService 的返回形状（门面不二次包装，故 UI 命名的是**同一份**类型）。
    `export type` 擦除：commentService.ts 值导入 node:crypto，只有**值**导出才会把 node 侧带进 renderer。 */
 export type { CreateCommentResult, CommentDispatchReport } from "./workitem/commentService.js";

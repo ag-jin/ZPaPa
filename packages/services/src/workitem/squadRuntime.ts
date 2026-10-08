@@ -14,6 +14,8 @@ import { createOrphanReaper } from "../worktree/orphanReaper.js";
 import { createWorktreeManager } from "../worktree/worktreeManager.js";
 import type { SquadBriefing } from "./leaderDispatch.js";
 import { createInboxItemRepo } from "./inboxItemRepo.js";
+import { createDefaultPullRequestProvider } from "./pullRequestProvider.js";
+import { createPullRequestSync } from "./pullRequestSync.js";
 import type { SquadRunLifecycle, SquadRuntime, SquadRuntimeDeps } from "./squadContracts.js";
 import { createRunLifecycle } from "./squadRunLifecycle.js";
 import { createSquadRunRepo } from "./squadRunRepo.js";
@@ -23,6 +25,7 @@ import { createWorkItemActivityRepo } from "./workItemActivityRepo.js";
 import { createWorkItemActivityProjector } from "./workItemActivityProjector.js";
 import { createWorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
 import { createWorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
+import { createWorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
 import { createWorkItemService, type WorkItemEvent } from "./workItemService.js";
 import { createWakeRuleRepo } from "./wakeRuleRepo.js";
@@ -295,6 +298,26 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     projector: activityProjector,
   });
 
+  /* #8 D2：PR 关联 + 快照的三件（存储面 / 读数面 / 同步深模块）在**这里**装配一次。
+     · provider 的 token 读取口缺省 = 恒未配置 ⇒ null adapter（离线缺省形态，不必特判）；
+     · 快照的 head-SHA 防陈旧写在 repo 的 CAS 里，同步模块只负责把它报出来（不静默）；
+     · 本层**不做**任何工作项状态迁移（D2 边界）：D3 消费 pullRequestSync 报出的 mergedPullRequests。 */
+  const pullRequestRepo = createWorkItemPullRequestRepo(db);
+  const pullRequestProvider = createDefaultPullRequestProvider({
+    readToken: deps.readGithubPullRequestToken ?? (() => undefined),
+    ...(deps.githubFetch !== undefined ? { fetchImpl: deps.githubFetch } : {}),
+  });
+  const pullRequestSync = createPullRequestSync({
+    provider: pullRequestProvider,
+    repo: pullRequestRepo,
+    workspace: {
+      key: resolveWorkspaceKey({
+        workspacePath,
+        workspaceIdentity,
+      }),
+    },
+  });
+
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
   const subscribers = new Set<(event: WorkItemEvent) => void>();
@@ -375,6 +398,9 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     activityProjector,
     deliverableRepo,
     deliverableRecorder,
+    pullRequestRepo,
+    pullRequestProvider,
+    pullRequestSync,
     teamAgentService,
     squadService,
     git,

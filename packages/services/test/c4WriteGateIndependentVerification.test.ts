@@ -24,6 +24,8 @@ import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo
 import { createWorkItemDecisionService } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
+import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
+import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 
 /* 协作域 C4 独立复验（test-verifier）：五写入口并列 + 读面 canView 的行为面复核。
  *
@@ -342,6 +344,9 @@ test("IV-READ｜读面 canView：注入拒绝 ⇒ 响亮抛且未取 repo（不�
       ({
         workItemRepo: createWorkItemRepo(db),
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: WS,
       }) as unknown as SquadRuntime,
     getRepos: () => {

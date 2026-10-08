@@ -2727,6 +2727,29 @@ export function createLocalServices(options: {
     refreshSquadsEnabled();
   });
 
+  /* #8 D2：GitHub PAT 的**单点同步快照**（与上面的实验开关同一手法与同一条理由）。
+     · 初值 `undefined` = 未配置 ⇒ runtime 的 provider 走 null adapter（离线缺省形态）；
+     · 之后只由 settingService 的变更事件刷新（配置/清除后，下一次 PR 快照刷新即生效，
+       不必重建 runtime —— provider 的 `readToken` 是每次调用现判的）；
+     · **凭据纪律**：这里只把值放进内存快照，绝不进日志（刷新失败只记原因，不回显 token）。 */
+  let githubPullRequestToken: string | undefined;
+  const refreshGithubPullRequestToken = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        githubPullRequestToken = settings.githubPullRequestToken;
+      },
+      (error: unknown) => {
+        // 读设置失败保留上一次结论（与实验开关同款）：一次抖动静默按「上一次」处理，
+        // 不把已配好的 token 误判成未配置（那会让 PR 区突然说「未配置 token」）。
+        squadRuntimeLog.warn("读取 GitHub 访问令牌失败：保留上一次结论", { error });
+      },
+    );
+  };
+  refreshGithubPullRequestToken();
+  settingService.onDidUpdate(() => {
+    refreshGithubPullRequestToken();
+  });
+
   /* 小队 runtime **不做长期单例、不缓存**（确认 3）：每个使用点带着自己的**目标 workspace** 进来，
      这里为它现构一个 runtime，方法返回后不再保留它。
 
@@ -2855,6 +2878,8 @@ export function createLocalServices(options: {
       workspaceIdentity: target.identity,
       // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
       readExperimentEnabled: () => squadsEnabled,
+      // #8 D2：PR 快照的 token 读取口（上面那份单点同步快照；未配置 ⇒ null adapter）。
+      readGithubPullRequestToken: () => githubPullRequestToken,
       // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
       // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
       dispatchRequestHub: squadDispatchRequests,

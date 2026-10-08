@@ -14,6 +14,8 @@ import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemComme
 import { createWorkItemCommentRepo } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
+import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
+import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 
 /* B5.1 轮 1：工作项协作读门面（`IWorkItemCollaborationService`）的服务面验收。
@@ -92,6 +94,10 @@ function setup() {
     ({
       workItemRepo,
       deliverableRepo: createWorkItemDeliverableRepo(db),
+      /* #8 D2：读模型新增「PR 关联清单 + 读数面可用性」两格 —— 夹具按 runtime 契约补齐
+         （缺了就等于读面被静默降级，本域明确拒绝那种形态）。 */
+      pullRequestRepo: createWorkItemPullRequestRepo(db),
+      pullRequestProvider: createNullPullRequestProvider(),
       boundWorkspace,
       async assertDispatchEnabled() {
         dispatchGateCalls += 1;
@@ -129,7 +135,7 @@ function countRows(db: DatabaseSync, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 }
 
-test("服务面：空工作项 ⇒ 六个字段齐备，除 workItem 外全为空数组，且门禁未被触碰", async () => {
+test("服务面：空工作项 ⇒ 八个字段齐备，除 workItem 外全为空数组，且门禁未被触碰", async () => {
   const f = setup();
   f.workItemRepo.insert(workItemRow("wi-1"));
 
@@ -142,11 +148,20 @@ test("服务面：空工作项 ⇒ 六个字段齐备，除 workItem 外全为�
     "decisions",
     /* #7 D1b：交付物清单并入这一聚合读（只带行，正文按 id 按需取）。 */
     "deliverables",
+    /* #8 D2：PR 关联清单 + 读数面可用性（后者是同步判据：没配 token ⇒ available:false）。 */
+    "pullRequestProvider",
+    "pullRequests",
     "reactions",
     "receipts",
     "viewerActor",
     "workItem",
   ]);
+  assert.deepEqual(read.pullRequests, [], "没有登记过 PR ⇒ 空数组（不是 undefined）");
+  assert.equal(
+    read.pullRequestProvider.available,
+    false,
+    "夹具注入的是 null adapter（离线缺省）⇒ 读模型如实报「未配置 token」",
+  );
   assert.deepEqual(read.viewerActor, LOCAL_HUMAN, "观察者身份 = 组合根注入值（D1-A）");
   assert.equal(read.workItem.id, "wi-1");
   assert.equal(read.workItem.title, "标题 wi-1");

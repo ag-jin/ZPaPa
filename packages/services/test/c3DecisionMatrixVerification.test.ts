@@ -21,6 +21,8 @@ import {
 } from "../src/workitem/workItemDecisionService.js";
 import { createWorkItemRepo } from "../src/workitem/workItemRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
+import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
+import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 import type { SquadRuntime } from "../src/workitem/squadContracts.js";
 
 /* C3 线独立复验（test-verifier）：C3.1 决定写入服务面的**穷举矩阵 + 幂等 + 隔离 + 归档 + 零副作用**。
@@ -610,6 +612,9 @@ test("零副作用｜经门面写 5 种 kind：work_items / runs / receipts / �
       ({
         workItemRepo: f.workItems,
         deliverableRepo: createWorkItemDeliverableRepo(f.db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(f.db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -696,6 +701,9 @@ test("零副作用｜读面闭合：门面读回 decisions 与锚 Activity 指�
       ({
         workItemRepo: f.workItems,
         deliverableRepo: createWorkItemDeliverableRepo(f.db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(f.db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: WS_A,
       }) as unknown as SquadRuntime,
     getRepos: () => ({

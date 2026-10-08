@@ -25,6 +25,8 @@ import { createWorkItemCommentReactionRepo } from "../src/workitem/workItemComme
 import { createWorkItemCommentRepo } from "../src/workitem/workItemCommentRepo.js";
 import { createWorkItemDecisionRepo } from "../src/workitem/workItemDecisionRepo.js";
 import { createWorkItemDeliverableRepo } from "../src/workitem/workItemDeliverableRepo.js";
+import { createWorkItemPullRequestRepo } from "../src/workitem/workItemPullRequestRepo.js";
+import { createNullPullRequestProvider } from "../src/workitem/pullRequestProvider.js";
 import type {
   CreateDecisionInput,
   WorkItemDecisionRecord,
@@ -137,6 +139,9 @@ test("写入口｜读面 viewerActor = 组合根注入的本地人类身份（C5
       ({
         workItemRepo,
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -173,6 +178,9 @@ test("写入口｜软删/解决/回应三入口走真实服务面：墓碑 + 根
       ({
         workItemRepo,
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -301,6 +309,9 @@ test("写入口｜跨 workspace 的动作响亮拒绝（门面不把「写错的
       ({
         workItemRepo,
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: OTHER_WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
@@ -612,6 +623,9 @@ function readFixture(
       ({
         workItemRepo,
         deliverableRepo: createWorkItemDeliverableRepo(db),
+        /* #8 D2：读模型新增 PR 关联清单 + 读数面可用性 —— 夹具按 runtime 契约补齐。 */
+        pullRequestRepo: createWorkItemPullRequestRepo(db),
+        pullRequestProvider: createNullPullRequestProvider(),
         boundWorkspace: options.boundWorkspace ?? WORKSPACE,
       }) as unknown as SquadRuntime,
     getRepos: () => ({
