@@ -54,6 +54,10 @@ export function nominalInstant(rule: WakeRule): number {
  * 边界语义钉死在这里、只用一份实现：**触发时刻必须严格早于 `expiresAt`** ⇒ `next >= expiresAt`
  * 即终态。写成 `>` 会让「到点时刻恰等于到期点」的那一格仍然触发，与「过期时刻之后不再唤醒」
  * 直接矛盾；写成每次调用点各判一次，三个消费方（create 首格 / resume 首格 / fire 推进）迟早漂移。
+ * 故本函数**导出**（R2 口径单点）：那三处一律改调它，边界只此一份 ——
+ *   · `squadWakeRules.initialNextFireAt` 的 `at` 分支（`at` 不过 `nextFireAtAfter`，得自己收口）；
+ *   · `wakeTick` 的 fire 前置守卫（名义时刻越界即终态，经 `@zcode/services/node` 取值）。
+ * 调用方只需给出「下一格 / 名义时刻」，判定（含 `next === null` 的透传）全在本函数内。
  *
  * 为什么是**终态**而不是「跳过这一格继续往后排」：后者会让规则永远留在表里、每格判一次、
  * 永远不派发 —— 正是域模型要消灭的静默死配置形态。置空排期后 `listReady`
@@ -62,7 +66,7 @@ export function nominalInstant(rule: WakeRule): number {
  * 注意这**不是闸**：到期不写 `pausedReason`（那是防失控闸的专列）、不动 `enabled`（用户启停）——
  * 「到点了」与「被停下来了」是两件可分辨的事。
  */
-function cutAtExpiry(rule: WakeRule, next: number | null): number | null {
+export function cutAtExpiry(rule: WakeRule, next: number | null): number | null {
   if (next === null) return null;
   if (rule.expiresAt !== undefined && next >= rule.expiresAt) return null;
   return next;

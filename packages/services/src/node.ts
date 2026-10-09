@@ -334,10 +334,11 @@ export type { SquadDeferredDispatchRecord } from "./workitem/squadDeferredDispat
 export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
 export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
 export { decideWake } from "./workitem/wakeGuard.js";
-/* 排期计算的**唯一实现**（`nominalInstant` / `nextFireAtAfter`）：调度器（desktop wakeTick）与
-   服务面（`createWakeRule` / `resumeWakeRule`）共用同一份网格语义，故从 node 入口可达
-   （desktop 只能经本入口取 services 的值）。搬运说明见 `workitem/wakeSchedule.ts` 头注释。 */
-export { nominalInstant, nextFireAtAfter } from "./workitem/wakeSchedule.js";
+/* 排期计算的**唯一实现**（`nominalInstant` / `nextFireAtAfter` / `cutAtExpiry`）：调度器
+   （desktop wakeTick）与服务面（`createWakeRule` / `resumeWakeRule`）共用同一份网格语义与同一份
+   到期点收口（R2），故从 node 入口可达（desktop 只能经本入口取 services 的值）。
+   搬运说明见 `workitem/wakeSchedule.ts` 头注释。 */
+export { cutAtExpiry, nominalInstant, nextFireAtAfter } from "./workitem/wakeSchedule.js";
 export {
   LEADER_PROTOCOL_TEXT,
   planDispatch,

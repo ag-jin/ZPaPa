@@ -120,10 +120,22 @@ test("项目预填：父项有项目 ⇒ 预填它的；父项无项目/未选/�
     undefined,
     "父项不在候选里（已归档）⇒ 无项目（不猜）",
   );
-  // 判据是**纯**的：同一输入两次调用同结论，且不读任何跨次状态（「上次选的项目」不存在）。
+  /* 判据是**纯**的：不读任何跨次状态（「上次选的项目」不存在）。实证办法 = 中间夹一次**另一个
+     父项**的调用，再回到原输入 —— 结论必须与首次逐字相同；若实现偷偷记住上一次的父项/项目，
+     这里会返回 p-beta。**不能**写成「同参两次调用断言相等」：那是恒真的（左右两边同一个表达式，
+     任何实现都通过），证不了纯度这件事。 */
+  assert.equal(
+    workItemProjectPrefillForParent({
+      parentId: "parent-b",
+      candidates: [...candidates, { id: "parent-b", projectId: "p-beta" }],
+    }),
+    "p-beta",
+    "先问另一个父项（换一次输入，给「跨次状态」留下可被记住的机会）",
+  );
   assert.equal(
     workItemProjectPrefillForParent({ parentId: "parent-a", candidates }),
-    workItemProjectPrefillForParent({ parentId: "parent-a", candidates }),
+    "p-alpha",
+    "再问回原父项 ⇒ 与首次结论相同（没有跨次状态）",
   );
 });
 

@@ -1,5 +1,5 @@
 import { computeEventKey, type WakePauseReason, type WakeRule } from "@zcode/shared";
-import { decideWake, nominalInstant, nextFireAtAfter } from "@zcode/services/node";
+import { cutAtExpiry, decideWake, nominalInstant, nextFireAtAfter } from "@zcode/services/node";
 
 /* 唤醒规则的**到点判定 + 派发请求构造**（spec §5.5 三道闸 / §5.7.1 eventKey / §3.9 幂等键）。
 
@@ -330,10 +330,11 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
            `next_fire_at <= now`，而 `next_fire_at` 可能**绕过网格**落到到期点之后 ——
            本轮之前建出的行（服务面早已透传落盘 `expires_at`），以及到期点被改到当前排期点
            之前的情形，都从这条缝里进来。不判它，「过期时刻」就是一句空话。
-           边界与 `nextFireAtAfter` 的收口同源：触发时刻必须**严格早于**到期点。
+           边界**就是** `nextFireAtAfter` 的收口（R2 起两处调同一个 `cutAtExpiry`，不再各写一份）：
+           触发时刻必须**严格早于**到期点。
            **到期不是闸**：只清排期（终态）、不写 `pausedReason`、不动开关 —— 若先判闸，
            一条已经死掉的规则会被标成 `max_fires` 暂停，界面把用户引到「resume」这个错的动作上。 */
-        if (rule.expiresAt !== undefined && nominalInstant(rule) >= rule.expiresAt) {
+        if (cutAtExpiry(rule, nominalInstant(rule)) === null) {
           deps.advance(advanced(rule, { nextFireAt: null }));
           continue;
         }

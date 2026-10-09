@@ -262,6 +262,37 @@ test("到期点｜at 与到期点的三种相对位置：早于 ⇒ 建出；恰
   );
 });
 
+/* 成因文案必须与事实一致（R1）：`at <= now < expiresAt` 时两件事**同时**在场 —— 到点时刻已过去
+   （真因，`initialNextFireAt` 的 `at <= now ⇒ null`）与到期点仍在未来（没卡掉任何东西）。
+   旧文案只看「有没有 expiresAt」就断言「到点时刻不早于到期时刻」，指着**没出问题**的那一边：
+   用户照它去改到期点，改到天边也建不出来。回落文案（同分支末行）才是这一格的成因。 */
+test("到期点｜at 已过去但到期点在未来 ⇒ 成因说「到点时刻已经过去」，不得说成被到期点卡的", async () => {
+  const { squadRuntimeService } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+
+  await assert.rejects(
+    () =>
+      squadRuntimeService.createWakeRule(WS, {
+        workItemId: item.id,
+        kind: "at",
+        mode: "once",
+        at: Date.now() - 1_000,
+        // 到期点在**未来**：首格不是被它卡掉的（卡的判据 `at >= expiresAt` 不成立）。
+        expiresAt: Date.now() + 600_000,
+      }),
+    (error: unknown) => {
+      const message = (error as Error).message;
+      assert.match(message, /到点时刻已经过去/, "真因是到点时刻已过 —— 文案必须说这一条");
+      assert.doesNotMatch(
+        message,
+        /不早于到期时刻/,
+        "到期点在将来、没卡掉首格：说成「不早于到期时刻」会把用户引到改到期点上（改不好）",
+      );
+      return true;
+    },
+  );
+});
+
 test("到期点｜expiresAt 已过 ⇒ 创建响亮拒且点名「过期」（不是笼统的「没有未来排期点」）", async () => {
   const { squadRuntimeService, createRuntime } = await makeService();
   const item = await makeWorkItem(squadRuntimeService);
