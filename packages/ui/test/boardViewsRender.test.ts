@@ -60,12 +60,15 @@ function textInside(markup: string, attr: string): string {
   return (match[1] ?? "").trim();
 }
 
-/** 列头文本（列骨架里第一个 `font-semibold` 节点；卡片标题不带该字重）。 */
+/** 列头文本：按 `data-board-column-title` 锚点取（评审 #33-S2：不绑 CSS 类）。 */
 function columnHeaderText(markup: string, stage: string): string {
   const start = markup.indexOf(`data-board-column="${stage}"`);
   assert.ok(start >= 0, `列 ${stage} 应存在`);
-  const match = /font-semibold[^>]*>([^<]*)</.exec(markup.slice(start, start + 600));
-  assert.ok(match, `列 ${stage} 应有列头文本`);
+  const slice = markup.slice(start, start + 600);
+  const match =
+    /data-board-column-title=""[^>]*>([^<]*)</.exec(slice) ??
+    /<summary[^>]*>\s*<[^>]*>([^<]*)</.exec(slice);
+  assert.ok(match, `列 ${stage} 应有列头文本锚点`);
   return (match[1] ?? "").trim();
 }
 
@@ -155,6 +158,90 @@ test("看板：已取消列灰显并展示 statusRule 取消原因（§13.2）",
     cancelled.includes("cancelled: 上游方案作废（取消留痕、号不复用）"),
     "取消原因（statusRule）应逐字展示",
   );
+  // 灰显守卫（评审 #33-S1）：测试名承诺的「灰显」必须有断言锚点，不能只有文案。
+  assert.ok(
+    /data-board-column="已取消"[^>]*data-board-column-muted="true"/.test(cancelled),
+    "已取消列应带灰显锚点",
+  );
+  assert.ok(
+    !columnSlice(markup, "待办", "执行中").includes("data-board-column-muted"),
+    "其余列不得被误标灰显",
+  );
+});
+
+test("看板：卡片角标簇与其余视图同装配（§13.2 各格要求的角标一处组装）", () => {
+  const raw = structuredClone(STAGE_MATRIX_BOARD);
+  const card8 = raw.features[0]?.tasks[1] as {
+    draft?: boolean;
+    blockers?: unknown[];
+  };
+  assert.ok(card8, "夹具应有 #8");
+  card8.draft = true;
+  card8.blockers = [{ kind: "external", summary: "待验证", evidence: [] }];
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const state: BoardPaneLoadState = { kind: "ready", board: outcome.board };
+
+  /**
+   * 元素自身的 markup 切片：从锚点到下一个同类锚点；`null` = 固定窗口（弹窗的 class 串很长，
+   * 角标区在窗口内可见即可）。
+   */
+  const clusterOf = (markup: string, anchor: string, nextAnchor: string | null): string => {
+    const start = markup.indexOf(anchor);
+    assert.ok(start >= 0, `${anchor} 应在 markup 里`);
+    const next = nextAnchor === null ? -1 : markup.indexOf(nextAnchor, start + 1);
+    return markup.slice(start, next > start ? next : start + 12000);
+  };
+
+  const order = [
+    "data-board-draft",
+    "data-board-attention",
+    "data-board-blockers",
+    "data-board-active-run",
+    "data-board-status",
+  ];
+
+  // 三处「卡片角标」视图共用同一装配点（表格的段位/缺口/受阻是单元格文本，不走角标簇）；
+  // 弹窗状态区同装配。
+  const card = 'data-board-card="task:8"';
+  const anyCard = 'data-board-card="';
+  const surfaces: Array<{
+    name: string;
+    markup: string;
+    anchor: string;
+    next: string | null;
+  }> = [
+    { name: "tree", markup: render(state, { viewMode: "tree" }), anchor: card, next: anyCard },
+    { name: "kanban", markup: render(state, { viewMode: "kanban" }), anchor: card, next: anyCard },
+    { name: "list", markup: render(state, { viewMode: "list" }), anchor: card, next: anyCard },
+    {
+      name: "dialog",
+      markup: render(state, { viewMode: "table", openCardId: "task:8" }),
+      anchor: 'data-board-dialog="task:8"',
+      next: null,
+    },
+  ];
+  for (const surface of surfaces) {
+    const cluster = clusterOf(surface.markup, surface.anchor, surface.next);
+    assert.ok(cluster.includes("data-board-badges"), `${surface.name} 的卡片应走同一处角标装配`);
+    for (const anchor of [
+      'data-board-draft=""',
+      'data-board-attention="interrupted-resume"',
+      'data-board-attention="unmerged-worktree"',
+      'data-board-blockers="1"',
+      'data-board-active-run="implementer"',
+      'data-board-status="active"',
+    ]) {
+      assert.ok(cluster.includes(anchor), `${surface.name} 的角标簇应含 ${anchor}：${cluster}`);
+    }
+    const positions = order.map((anchor) => cluster.indexOf(anchor));
+    assert.deepEqual(
+      [...positions].sort((left, right) => left - right),
+      positions,
+      `${surface.name} 的角标簇顺序应与装配点一致（草案 → 缺口 → 受阻 → 执行角色 → 状态点）`,
+    );
+  }
 });
 
 test("看板：待设计列的访谈汇总子区默认折叠，计数取 attentionSummary（§13.3）", () => {
@@ -211,7 +298,7 @@ const list = (controls?: Partial<BoardListControls>, state: BoardPaneLoadState =
     ...(controls ? { listControls: { ...EMPTY_BOARD_LIST_CONTROLS, ...controls } } : {}),
   });
 
-test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + 排序 2），各带「全部」项", () => {
+test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + 类型 2 + 排序 2），各带「全部」项", () => {
   const markup = list();
   assert.ok(markup.includes('data-board-view="list"'), "列表视图应有自己的根锚点");
   const optionsOf = (filter: string): string[] => {
@@ -244,7 +331,17 @@ test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + �
     "interrupted-resume",
     "unmerged-worktree",
   ]);
+  assert.deepEqual(optionsOf("kind"), ["", "feature", "task"], "类型筛（§13.2 表格待设计格）");
   assert.deepEqual(optionsOf("sort"), ["recent", "oldest"]);
+});
+
+test("列表：类型筛（kind）按闭集取值收窄行集合（特性/卡片各自筛）", () => {
+  const featuresOnly = list({ kind: "feature" });
+  assert.ok(featuresOnly.includes('data-board-card="spec:preview-channel"'), "特性节点留下");
+  assert.ok(!featuresOnly.includes('data-board-card="task:8"'), "卡片被筛掉");
+  const tasksOnly = list({ kind: "task" });
+  assert.ok(tasksOnly.includes('data-board-card="task:8"'), "卡片留下");
+  assert.ok(!tasksOnly.includes('data-board-card="spec:preview-channel"'), "特性节点被筛掉");
 });
 
 test("列表：按段位过滤只留该段位行（其余行不出现）", () => {

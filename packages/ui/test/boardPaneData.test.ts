@@ -209,6 +209,39 @@ test("卡片映射 updatedAt 与 statusRule（列内排序与取消原因的字�
   assert.equal(card8.statusRule, null, "缺 statusRule 的卡不得编造溯源");
 });
 
+test("计数映射：只认正整数（小数/负数/非数一律 0，不 trunc 编造计数）——评审 S1 的名实统一", async () => {
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as unknown as {
+    features: Record<string, unknown>[];
+    attentionSummary: Record<string, unknown>;
+  };
+  raw.attentionSummary = {
+    interviewedNotArranged: 2.5,
+    arrangedNotExpanded: -1,
+    interruptedResume: "3",
+    unmergedWorktree: 4,
+  };
+  const spec = raw.features[0];
+  assert.ok(spec);
+  spec.progress = { totalTasks: 3.5, completedTasks: 2 };
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(raw) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+  assert.deepEqual(
+    state.board.attentionSummary,
+    {
+      interviewedNotArranged: 0,
+      arrangedNotExpanded: 0,
+      interruptedResume: 0,
+      unmergedWorktree: 4,
+    },
+    "小数计数不得被 trunc 成「看起来像真的」的计数",
+  );
+  assert.deepEqual(state.board.features[0]?.progress, { totalTasks: 0, completedTasks: 2 });
+});
+
 test("stage 缺省（无 stage 字段的旧版板）不阻断渲染，也不猜测段位", async () => {
   const boardWithoutStage = structuredClone(GOLDEN_SHAPED_BOARD);
   for (const feature of boardWithoutStage.features) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent } from "react";
 import {
@@ -76,11 +77,33 @@ test("打开/激活回调：点击与 Enter/Space 都回传卡片 id；其余键
   assert.equal(prevented, true, "Space 激活要阻止页面滚动默认行为");
 });
 
-test("高亮 props：命中跳转落点才挂 data 锚点（其余卡片不带该属性）", () => {
+test("高亮 props：命中跳转落点才挂 data 锚点 + 类片段（其余卡片不带该属性）", () => {
   assert.deepEqual(boardCardHighlightProps("task:9", "task:9"), {
     "data-board-card-highlight": "true",
+    className: "bg-warning/15",
   });
+  assert.deepEqual(
+    boardCardHighlightProps("task:9", "task:9", { withBorder: true }),
+    { "data-board-card-highlight": "true", className: "border-warning bg-warning/15" },
+    "带边框的面（看板卡）多一道描边：样式与锚点同源，不再四处各写一份",
+  );
   assert.deepEqual(boardCardHighlightProps("task:8", "task:9"), {});
   assert.deepEqual(boardCardHighlightProps("task:9", null), {}, "没有跳转就没有高亮");
   assert.deepEqual(boardCardHighlightProps("task:9", undefined), {});
+});
+
+test("高亮样式单点（源码守卫）：四视图不得各自写高亮类（评审 #34-S2）", () => {
+  for (const file of ["BoardTreeView", "BoardListView", "BoardKanbanView", "BoardTableView"]) {
+    const source = readFileSync(new URL(`../src/board/${file}.tsx`, import.meta.url), "utf8");
+    assert.doesNotMatch(
+      source,
+      /bg-warning\/15/,
+      `${file} 的高亮底色应走 boardCardInteraction 一处生成`,
+    );
+    assert.doesNotMatch(
+      source,
+      /border-warning["\s)]/,
+      `${file} 的高亮描边应走 boardCardInteraction 一处生成（角标/提示条的 border-warning/40 除外）`,
+    );
+  }
 });

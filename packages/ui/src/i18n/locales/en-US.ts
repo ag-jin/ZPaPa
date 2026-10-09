@@ -1054,6 +1054,11 @@ const enUS: Record<string, string> = {
   "board.empty.features": "No specs or plans yet.",
   "board.empty.damaged":
     "The board format cannot be read (too new or corrupted). Rebuild it by running the compiler in a session.",
+  // Temporarily unreadable (connection not ready): kept apart from "damaged" (review #32-P3).
+  "board.unavailable":
+    "The board is temporarily unreadable (connection not ready). It will be re-read once the connection recovers, or use Refresh at the top right to retry.",
+  // Stale hint (contract §5 app-side lightweight reading: pure time heuristic, no fs mtime compare).
+  "board.stale.hint": "The board may be out of date (updated {time}): recompile it in the session.",
   "board.attention.interviewedNotArranged": "Interviewed, not yet carded",
   "board.attention.arrangedNotExpanded": "Arranged, not yet broken down",
   "board.attention.interruptedResume": "Interrupted, resumable (stopped at #{no})",
@@ -1087,8 +1092,12 @@ const enUS: Record<string, string> = {
   "board.filter.stage": "Stage",
   "board.filter.status": "Status",
   "board.filter.attention": "Gap",
+  "board.filter.kind": "Type",
   "board.filter.sort": "Sort",
   "board.filter.all": "All",
+  // Node type vocabulary (filter control; view node kind = feature node / task card).
+  "board.kind.feature": "Feature",
+  "board.kind.task": "Card",
   "board.sort.recent": "Recently updated",
   "board.sort.oldest": "Oldest untouched",
   // Status vocabulary (filter control; machine words match progress.json).

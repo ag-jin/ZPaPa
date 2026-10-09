@@ -18,20 +18,16 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   buildBoardCardDialog,
+  BOARD_ORIGIN_MESSAGE_IDS,
   type BoardDialogBlocker,
   type BoardDialogJumpTarget,
 } from "./boardDialogViewModel.js";
 import {
-  BoardAttentionBadges,
-  BoardBlockerBadge,
-  BoardDraftBadge,
+  BoardNodeBadges,
   BoardNodeNumber,
   BoardStageBadge,
-  BoardStatusDot,
 } from "./boardNodeParts.js";
 import {
-  BOARD_ORIGIN_MESSAGE_IDS,
-  formatBoardActiveRunText,
   formatBoardLastRunText,
   formatBoardRunTime,
   formatBoardStatusText,
@@ -193,19 +189,14 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard }: BoardCar
               {statusText}
             </span>
           ) : null}
-          <BoardStatusDot status={dialog.status} />
-          <BoardAttentionBadges attention={dialog.attention} lastRun={dialog.lastRun} />
-          <BoardBlockerBadge count={dialog.blockers.length} />
-          {dialog.activeRun ? (
-            <Badge
-              variant="secondary"
-              data-board-active-run={dialog.activeRun.role}
-              className="shrink-0"
-            >
-              {formatBoardActiveRunText(dialog.activeRun.role, intl.formatMessage)}
-            </Badge>
-          ) : null}
-          {dialog.draft ? <BoardDraftBadge /> : null}
+          <BoardNodeBadges
+            attention={dialog.attention}
+            blockers={dialog.blockers.length}
+            lastRun={dialog.lastRun}
+            draft={dialog.draft}
+            activeRunRole={dialog.activeRun?.role ?? null}
+            status={dialog.status}
+          />
         </div>
         {dialog.details ? (
           <DialogSection name="details" title={t("board.dialog.detailsTitle")}>

@@ -51,7 +51,9 @@ function BoardTableColumnConfig({
           {visibleCount}/{BOARD_TABLE_COLUMNS.length}
         </span>
       </summary>
-      <div className="absolute left-0 z-30 mt-1 flex min-w-[10rem] flex-col gap-1 rounded-lg border border-popover-border bg-popover p-2 shadow-md">
+      {/* 列配置浮层 = 菜单 surface（DESIGN.md「Menus, Popovers, Dialogs」：bg-menu / p-1 /
+          gap-0.5 / rounded-lg / border-popover-border / shadow-md）—— 评审 #34-S5 的 token 定性。 */}
+      <div className="absolute left-0 z-30 mt-1 flex min-w-[10rem] flex-col gap-0.5 rounded-lg border border-popover-border bg-menu p-1 shadow-md">
         {BOARD_TABLE_COLUMNS.map((key) => (
           <label key={key} className="flex cursor-pointer items-center gap-1.5 text-ui-xs">
             <input
@@ -59,6 +61,8 @@ function BoardTableColumnConfig({
               data-board-column-toggle={key}
               checked={columns[key]}
               onChange={() => onChange(toggleBoardTableColumn(columns, key))}
+              // 原生 checkbox 补尺寸/强调色（评审 #34-S4：密集面板里默认 13px 太小、各平台渲染不一）。
+              className="size-3.5 shrink-0 accent-primary"
             />
             <span className="text-foreground">
               {intl.formatMessage({ id: BOARD_TABLE_COLUMN_MESSAGE_IDS[key] })}
@@ -84,16 +88,16 @@ function BoardTableRow({
   highlightCardId: string | null;
 }) {
   const { intl } = useZCodeIntl();
-  const highlighted = boardCardHighlightProps(node.id, highlightCardId);
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    node.id,
+    highlightCardId,
+  );
   return (
     <tr
       data-board-card={node.id}
-      {...highlighted}
+      {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
-      className={cn(
-        "border-b border-border/40 hover:bg-surface-hover",
-        highlighted["data-board-card-highlight"] ? "bg-warning/15" : null,
-      )}
+      className={cn("border-b border-border/40 hover:bg-surface-hover", highlightClassName)}
     >
       {columns.map((key) => {
         const text = boardTableCellText(node, key, intl.formatMessage, now);

@@ -54,14 +54,24 @@ export function boardCardOpenProps(params: {
 }
 
 /**
- * 跳转高亮 props：只有落在 `highlightId` 上的卡片带 `data-board-card-highlight`
- * （视图层只负责把它散到卡片元素上；高亮的时限与清除在宿主）。
+ * 跳转落点高亮 props：锚点与**视觉样式**同源一处生成（只有落在 `highlightId` 上的卡片带
+ * `data-board-card-highlight` 与高亮类片段）；高亮的时限与清除在宿主。
+ * 调用方解构出 `className` 与其余 props 分别落位即可（不要在视图层重写配色）。
  */
+export interface BoardCardHighlightProps {
+  "data-board-card-highlight"?: "true";
+  className?: string;
+}
+
 export function boardCardHighlightProps(
   id: string,
   highlightId: string | null | undefined,
-): { "data-board-card-highlight"?: string } {
-  return highlightId !== null && highlightId !== undefined && highlightId === id
-    ? { "data-board-card-highlight": "true" }
-    : {};
+  options: { withBorder?: boolean } = {},
+): BoardCardHighlightProps {
+  if (highlightId === null || highlightId === undefined || highlightId !== id) return {};
+  return {
+    "data-board-card-highlight": "true",
+    // 带边框的面（看板卡）多一道描边；行式卡片（树形/列表/表格）只有底色——既有口径不变。
+    className: options.withBorder ? "border-warning bg-warning/15" : "bg-warning/15",
+  };
 }

@@ -36,6 +36,19 @@ export const BOARD_DIALOG_ORIGIN_KEYS = [
 
 export type BoardDialogOriginKey = (typeof BOARD_DIALOG_ORIGIN_KEYS)[number];
 
+/**
+ * 来源行标签词条（`Record<…>` 穷尽：origin 键加值在编译期报缺，不落裸 key）。
+ * 与键枚举**同模块**（评审 S6）：加一个 origin 键时枚举与词条在同一处改，呈现层叶子
+ * （`boardPresentation`）不再反依赖本 VM。
+ */
+export const BOARD_ORIGIN_MESSAGE_IDS: Record<BoardDialogOriginKey, string> = {
+  type: "board.dialog.origin.type",
+  interviewId: "board.dialog.origin.interviewId",
+  sessionId: "board.dialog.origin.sessionId",
+  specRoot: "board.dialog.origin.specRoot",
+  planRef: "board.dialog.origin.planRef",
+};
+
 export interface BoardDialogOriginRow {
   key: BoardDialogOriginKey;
   value: string;

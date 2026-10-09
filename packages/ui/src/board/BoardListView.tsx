@@ -6,20 +6,15 @@
  * §3.5（排序：attention 置顶 + updatedAt 倒序；「最老未动」第二视角）+ §3.1/§3.3（点击 → 弹窗）。
  * 判据全在纯函数层（`boardViewsViewModel`），本组件只投影 + 回传意图。
  */
-import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
 import {
-  BoardAttentionBadges,
-  BoardBlockerBadge,
-  BoardDraftBadge,
+  BoardNodeBadges,
   BoardNodeNumber,
   BoardStageBadge,
-  BoardStatusDot,
 } from "./boardNodeParts.js";
-import { formatBoardActiveRunText } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 import {
   boardListControlsToQuery,
@@ -38,16 +33,18 @@ function BoardListRow({
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
-  const { intl } = useZCodeIntl();
-  const highlighted = boardCardHighlightProps(node.id, highlightCardId);
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    node.id,
+    highlightCardId,
+  );
   return (
     <div
       data-board-card={node.id}
-      {...highlighted}
+      {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
       className={cn(
         "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
-        highlighted["data-board-card-highlight"] ? "bg-warning/15" : null,
+        highlightClassName,
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -55,19 +52,14 @@ function BoardListRow({
         <BoardStageBadge stage={node.stage} />
         <BoardNodeNumber no={node.no} label={node.label} />
         <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{node.title}</span>
-        {node.draft ? <BoardDraftBadge /> : null}
-        <BoardAttentionBadges attention={node.attention} lastRun={node.lastRun} />
-        <BoardBlockerBadge count={node.blockers.length} />
-        {node.activeRun ? (
-          <Badge
-            variant="secondary"
-            data-board-active-run={node.activeRun.role}
-            className="shrink-0"
-          >
-            {formatBoardActiveRunText(node.activeRun.role, intl.formatMessage)}
-          </Badge>
-        ) : null}
-        <BoardStatusDot status={node.status} />
+        <BoardNodeBadges
+          attention={node.attention}
+          blockers={node.blockers.length}
+          lastRun={node.lastRun}
+          draft={node.draft}
+          activeRunRole={node.activeRun?.role ?? null}
+          status={node.status}
+        />
       </div>
       {node.stage === "已取消" && node.statusRule ? (
         // 取消原因（§13.2 列表列「已取消」行）：只在终态行展示，其余行不铺溯源噪声。

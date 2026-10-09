@@ -5,21 +5,12 @@
  * §6（「点击节点/卡片 → 弹窗」）。判据（缩进层级、lastRun 文案、缺口徽章）全在纯函数层与
  * 共用零件（`boardNodeParts`），本组件只做投影 + 回传意图。
  */
-import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import {
-  BoardAttentionBadges,
-  BoardBlockerBadge,
-  BoardDraftBadge,
-  BoardNodeNumber,
-  BoardStageBadge,
-  BoardStatusDot,
-} from "./boardNodeParts.js";
+import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
 import {
   boardTaskLabelIndentLevel,
-  formatBoardActiveRunText,
   formatBoardLastRunText,
   formatBoardRunTime,
 } from "./boardPresentation.js";
@@ -47,41 +38,46 @@ function BoardTaskRow({
 }) {
   const { intl } = useZCodeIntl();
   const lastRunText = formatBoardLastRunText(task.lastRun, intl.formatMessage);
-  const highlighted = boardCardHighlightProps(task.id, highlightCardId);
+  const cancelReasonText = task.stage === "已取消" ? task.statusRule : null;
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    task.id,
+    highlightCardId,
+  );
   return (
     <>
       <div
         data-board-task={task.id}
         data-board-card={task.id}
         data-board-indent={depth}
-        {...highlighted}
+        {...highlightProps}
         {...boardCardOpenProps({ id: task.id, ...(onOpenCard ? { onOpenCard } : {}) })}
         className={cn(
           "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
           taskIndentClass(depth),
-          highlighted["data-board-card-highlight"] ? "bg-warning/15" : null,
+          highlightClassName,
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
           <BoardNodeNumber no={task.no} label={task.label} />
           <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{task.title}</span>
           <BoardStageBadge stage={task.stage} />
-          {task.draft ? <BoardDraftBadge /> : null}
-          <BoardAttentionBadges attention={task.attention} lastRun={task.lastRun} />
-          <BoardBlockerBadge count={task.blockers.length} />
-          {task.activeRun ? (
-            <Badge
-              variant="secondary"
-              data-board-active-run={task.activeRun.role}
-              className="shrink-0"
-            >
-              {formatBoardActiveRunText(task.activeRun.role, intl.formatMessage)}
-            </Badge>
-          ) : null}
-          <BoardStatusDot status={task.status} />
+          <BoardNodeBadges
+            attention={task.attention}
+            blockers={task.blockers.length}
+            lastRun={task.lastRun}
+            draft={task.draft}
+            activeRunRole={task.activeRun?.role ?? null}
+            status={task.status}
+          />
         </div>
         {lastRunText ? (
           <div className="truncate font-mono text-ui-xs text-foreground-subtle">{lastRunText}</div>
+        ) : null}
+        {cancelReasonText ? (
+          // §13.2 树形「已取消」格：节点行尾徽章 + 取消原因（与列表/看板同一字段 statusRule）。
+          <div data-board-status-rule="" className="truncate text-ui-xs text-foreground-subtle">
+            {cancelReasonText}
+          </div>
         ) : null}
       </div>
       {task.children.map((child) => (
@@ -107,6 +103,10 @@ function BoardFeatureSection({
   highlightCardId: string | null;
 }) {
   const { intl } = useZCodeIntl();
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    feature.id,
+    highlightCardId,
+  );
   const progressText =
     feature.progress && feature.progress.totalTasks > 0
       ? intl.formatMessage(
@@ -124,17 +124,26 @@ function BoardFeatureSection({
     <section data-board-feature={feature.id} className="flex flex-col gap-0.5 pb-3">
       <div
         data-board-card={feature.id}
-        {...boardCardHighlightProps(feature.id, highlightCardId)}
+        {...highlightProps}
         {...boardCardOpenProps({ id: feature.id, ...(onOpenCard ? { onOpenCard } : {}) })}
-        className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-2 py-1.5"
+        className={cn(
+          "flex min-w-0 items-center gap-2 rounded-lg bg-surface px-2 py-1.5",
+          highlightClassName,
+        )}
       >
         <BoardNodeNumber no={feature.no} label={feature.label} />
         <span className="min-w-0 flex-1 truncate text-ui-base font-medium text-foreground">
           {feature.title}
         </span>
         <BoardStageBadge stage={feature.stage} />
-        <BoardAttentionBadges attention={feature.attention} lastRun={null} />
-        <BoardStatusDot status={feature.status} />
+        <BoardNodeBadges
+          attention={feature.attention}
+          blockers={feature.blockers.length}
+          lastRun={null}
+          draft={false}
+          activeRunRole={null}
+          status={feature.status}
+        />
       </div>
       {updatedAtText || progressText ? (
         <div className="px-2 text-ui-xs text-foreground-subtle">

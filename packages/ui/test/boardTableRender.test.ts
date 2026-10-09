@@ -188,6 +188,19 @@ test("表格：列配置控件的锚点（每列一个开关，勾选态 = 当�
   assert.ok(markup.includes('data-board-column-config-count="9"'), "摘要显示可见列数");
 });
 
+test("表格：列配置浮层走菜单 surface（DESIGN.md 菜单 token，评审 #34-S5）", () => {
+  const markup = render();
+  const popover = /<div class="([^"]*absolute left-0[^"]*)">/.exec(markup);
+  assert.ok(popover, "列配置浮层应渲染");
+  for (const token of ["bg-menu", "p-1", "gap-0.5", "rounded-lg", "border-popover-border"]) {
+    assert.ok(popover[1]?.includes(token), `列配置浮层缺菜单 token ${token}：${popover[1]}`);
+  }
+  assert.ok(!popover[1]?.includes("bg-popover"), "菜单面不再借弹窗/面板面（popover 是对话框的壳）");
+  // 原生 checkbox 的尺寸/强调色（#34-S4）：密集面板里默认尺寸过小。
+  const toggle = /<input[^>]*data-board-column-toggle="no"[^>]*>/.exec(markup);
+  assert.ok(toggle?.[0].includes("size-3.5"), `列开关应带显式尺寸：${toggle?.[0]}`);
+});
+
 test("表格：英文界面列头与配置控件走英文词条（不漏中文）", () => {
   const markup = render({}, "en-US");
   const headers = [...markup.matchAll(/data-board-column-header="[^"]*"[^>]*>([^<]*)</g)].map(

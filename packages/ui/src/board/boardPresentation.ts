@@ -4,7 +4,6 @@
  * 契约逐字文案的落点：`.zcode/board/board-consumption-contract.md` §3.1/§3.3/§4。
  * 词条 id 在 zh-CN / en-US 词条表；本模块只做「字段 → 文案/样式」的映射，不做状态推导。
  */
-import type { BoardDialogOriginKey } from "./boardDialogViewModel.js";
 import type {
   BoardAttentionCode,
   BoardAttentionSummary,
@@ -192,15 +191,6 @@ export function formatBoardCardAge(
   const days = boardCardAgeDays(updatedAt, now);
   return days === null ? null : formatMessage({ id: "board.age.days" }, { days });
 }
-
-/** 弹窗来源区块的行标签词条（`Record<…>` 穷尽：origin 键加值在编译期报缺，不落裸 key）。 */
-export const BOARD_ORIGIN_MESSAGE_IDS: Record<BoardDialogOriginKey, string> = {
-  type: "board.dialog.origin.type",
-  interviewId: "board.dialog.origin.interviewId",
-  sessionId: "board.dialog.origin.sessionId",
-  specRoot: "board.dialog.origin.specRoot",
-  planRef: "board.dialog.origin.planRef",
-};
 
 /**
  * status 文案（表格「状态」列 + 过滤控件）：与 `formatBoardStageText` 同款姿态

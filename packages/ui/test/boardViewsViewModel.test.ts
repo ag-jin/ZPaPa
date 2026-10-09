@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  boardAttentionFilterValue,
   boardListControlsToQuery,
+  boardSortFilterValue,
+  boardStageFilterValue,
+  boardStatusFilterValue,
+  boardViewNodeKindFilterValue,
   buildBoardKanban,
   buildBoardListRows,
   collectBoardViewNodes,
@@ -229,6 +234,42 @@ test("列表过滤 · 缺口码：只留挂该码的节点（段位/状态不参
   assert.deepEqual(sortedNodeIds(interviews), ["interview:itw-a", "interview:itw-b"]);
 });
 
+test("列表过滤 · 节点类型（kind）：特性/卡片各自筛（§13.2 表格「待设计」格「可按 attention 与 kind 过滤」）", () => {
+  const featuresOnly = buildBoardListRows(stageMatrixBoard(), { filter: { kind: "feature" } });
+  assert.deepEqual(sortedNodeIds(featuresOnly), [
+    "interview:itw-a",
+    "interview:itw-b",
+    "plan:sess_1f3c5d7e",
+    "plan:sess_f1a2d0bb",
+    "spec:payment-split",
+    "spec:preview-channel",
+  ]);
+  const tasksOnly = buildBoardListRows(stageMatrixBoard(), { filter: { kind: "task" } });
+  assert.deepEqual(sortedNodeIds(tasksOnly), [
+    "task:10",
+    "task:12",
+    "task:13",
+    "task:14",
+    "task:7",
+    "task:8",
+    "task:9",
+  ]);
+  assert.deepEqual(
+    sortedNodeIds(
+      buildBoardListRows(stageMatrixBoard(), { filter: { kind: "task", stage: "待办" } }),
+    ),
+    ["task:10", "task:14", "task:7"],
+    "kind 与段位是交集",
+  );
+  assert.equal(
+    buildBoardListRows(stageMatrixBoard(), { filter: { kind: "task" } }).every(
+      (node) => node.kind === "task",
+    ),
+    true,
+    "kind 筛后不得夹带特性节点",
+  );
+});
+
 test("列表过滤：三条件是交集；条件为空即全量（清过滤回到全卡平铺）", () => {
   const both = buildBoardListRows(stageMatrixBoard(), {
     filter: { stage: "执行中", attention: "unmerged-worktree" },
@@ -241,7 +282,7 @@ test("列表过滤：三条件是交集；条件为空即全量（清过滤回�
   assert.equal(buildBoardListRows(stageMatrixBoard(), { filter: {} }).length, 13, "空条件 = 全量");
 });
 
-test("过滤控件状态 → 查询：null = 不筛；四项各自映射（UI 取值是闭集）", () => {
+test("过滤控件状态 → 查询：null = 不筛；各项各自映射（UI 取值是闭集）", () => {
   assert.deepEqual(boardListControlsToQuery(EMPTY_BOARD_LIST_CONTROLS), {
     filter: {},
     sort: "recent",
@@ -250,10 +291,11 @@ test("过滤控件状态 → 查询：null = 不筛；四项各自映射（UI �
     stage: "审核中",
     status: "pending",
     attention: "interrupted-resume",
+    kind: "task",
     sort: "oldest",
   });
   assert.deepEqual(query, {
-    filter: { stage: "审核中", status: "pending", attention: "interrupted-resume" },
+    filter: { stage: "审核中", status: "pending", attention: "interrupted-resume", kind: "task" },
     sort: "oldest",
   });
   assert.deepEqual(
@@ -261,6 +303,24 @@ test("过滤控件状态 → 查询：null = 不筛；四项各自映射（UI �
     ["task:13"],
     "控件状态直接喂给列表行（端到端一条链）",
   );
+});
+
+test("过滤控件取值归一：空串/不认识的值一律 null，排序坏值回落默认（评审 S4：UI 不裸 as 断言）", () => {
+  assert.equal(boardStageFilterValue(""), null);
+  assert.equal(boardStageFilterValue("第八段位"), null);
+  assert.equal(boardStageFilterValue("审核中"), "审核中");
+  assert.equal(boardStatusFilterValue(""), null);
+  assert.equal(boardStatusFilterValue("future-status"), null);
+  assert.equal(boardStatusFilterValue("cancelled"), "cancelled");
+  assert.equal(boardAttentionFilterValue(""), null);
+  assert.equal(boardAttentionFilterValue("future-code"), null);
+  assert.equal(boardAttentionFilterValue("unmerged-worktree"), "unmerged-worktree");
+  assert.equal(boardViewNodeKindFilterValue(""), null);
+  assert.equal(boardViewNodeKindFilterValue("interview-only"), null, "视图节点类型只有 feature/task");
+  assert.equal(boardViewNodeKindFilterValue("task"), "task");
+  assert.equal(boardSortFilterValue(""), "recent", "排序是闭集二选一，坏值回落默认视角");
+  assert.equal(boardSortFilterValue("future-sort"), "recent");
+  assert.equal(boardSortFilterValue("oldest"), "oldest");
 });
 
 test("列表默认排序：已完成段位沉底（§13.2 列表列），但 attention 置顶优先", () => {

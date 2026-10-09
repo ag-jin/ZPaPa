@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
@@ -6,7 +7,6 @@ import {
   boardStatusDotClassName,
   boardTaskLabelIndentLevel,
   BOARD_ATTENTION_LABEL_MESSAGE_IDS,
-  BOARD_ORIGIN_MESSAGE_IDS,
   BOARD_STAGE_MESSAGE_IDS,
   BOARD_STATUS_MESSAGE_IDS,
   formatAttentionBadgeText,
@@ -20,7 +20,10 @@ import {
   hasAttentionSignal,
   type BoardLastRun,
 } from "../src/board/boardViewModel.js";
-import { BOARD_DIALOG_ORIGIN_KEYS } from "../src/board/boardDialogViewModel.js";
+import {
+  BOARD_DIALOG_ORIGIN_KEYS,
+  BOARD_ORIGIN_MESSAGE_IDS,
+} from "../src/board/boardDialogViewModel.js";
 import {
   BOARD_TABLE_COLUMNS,
   BOARD_TABLE_COLUMN_MESSAGE_IDS,
@@ -192,6 +195,20 @@ test("七段位英文词条齐备且不含中文（评审 S5）", () => {
 test("段位缺省/不认识：null 不渲染徽章，未知段位原样透出（不吞字段、不自造词）", () => {
   assert.equal(formatBoardStageText(null, t), null);
   assert.equal(formatBoardStageText("未来段位", t), "未来段位");
+});
+
+test("来源行的键枚举与词条表同模块：呈现叶子不反依赖弹窗 VM（评审 S6）", () => {
+  const source = readFileSync(new URL("../src/board/boardPresentation.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(
+    source,
+    /boardDialogViewModel/,
+    "呈现层叶子不得 import 弹窗 VM（否则加一个 origin 键要跨两模块改两处）",
+  );
+  assert.deepEqual(
+    Object.keys(BOARD_ORIGIN_MESSAGE_IDS),
+    [...BOARD_DIALOG_ORIGIN_KEYS],
+    "词条表与键枚举同址：键集必须逐项对齐（`Record<…>` 穷尽，加键在编译期报缺）",
+  );
 });
 
 test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存在）", () => {

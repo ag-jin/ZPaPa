@@ -11,6 +11,8 @@
  */
 import {
   BOARD_STAGES,
+  isBoardAttentionCode,
+  isBoardStatusValue,
   type BoardAttentionCode,
   type BoardOrigin,
   type BoardPr,
@@ -150,6 +152,23 @@ export type BoardViewMode = "tree" | "kanban" | "list" | "table";
 
 export const BOARD_VIEW_MODES: readonly BoardViewMode[] = ["tree", "kanban", "list", "table"];
 
+/* ---------------- 视图节点类型（闭集） ---------------- */
+
+/** 视图节点类型（§13.2 表格「待设计」格的 kind 筛选用）：特性节点与任务卡。 */
+export type BoardViewNodeKind = BoardViewNode["kind"];
+
+export const BOARD_VIEW_NODE_KINDS: readonly BoardViewNodeKind[] = ["feature", "task"];
+
+/** 类型词条（`Record<…>` 穷尽：类型闭集加值在编译期报缺，不落裸 key）。 */
+export const BOARD_VIEW_NODE_KIND_MESSAGE_IDS: Record<BoardViewNodeKind, string> = {
+  feature: "board.kind.feature",
+  task: "board.kind.task",
+};
+
+export function isBoardViewNodeKind(value: unknown): value is BoardViewNodeKind {
+  return typeof value === "string" && (BOARD_VIEW_NODE_KINDS as readonly string[]).includes(value);
+}
+
 /** 视图名文案（`Record<…>` 穷尽：加视图 ⇒ 编译期在这里报缺失，而不是界面上多一个裸 key）。 */
 export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
   tree: "board.view.tree",
@@ -217,14 +236,16 @@ export interface BoardKanban {
 }
 
 /**
- * 列表过滤条件（§13.2 列表列：按段位/状态/缺口码筛；「过滤 UI 最小化」）。
- * 三条件都可缺省（`undefined`/`null` = 不筛），取值只从视图层的闭集词表来；这里只做**精确匹配**
- * —— 不归一、不猜（不认识的取值只会筛出空集，不会静默变成别的筛子）。
+ * 列表过滤条件（§13.2 列表列：按段位/状态/缺口码筛；表格「待设计」格另可按 kind 筛；
+ * 「过滤 UI 最小化」）。各条件都可缺省（`undefined`/`null` = 不筛），取值只从视图层的闭集词表来；
+ * 这里只做**精确匹配**—— 不归一、不猜（不认识的取值只会筛出空集，不会静默变成别的筛子）。
  */
 export interface BoardListFilter {
   stage?: BoardStage | null;
   status?: string | null;
   attention?: BoardAttentionCode | null;
+  /** 视图节点类型（§13.2 表格「待设计」格「可按 attention 与 kind 过滤」）。 */
+  kind?: BoardViewNodeKind | null;
 }
 
 export interface BoardListQuery {
@@ -243,6 +264,9 @@ function matchesFilter(node: BoardViewNode, filter: BoardListFilter): boolean {
     filter.attention !== null &&
     !node.attention.includes(filter.attention)
   ) {
+    return false;
+  }
+  if (filter.kind !== undefined && filter.kind !== null && node.kind !== filter.kind) {
     return false;
   }
   return true;
@@ -275,12 +299,14 @@ export function buildBoardListRows(
 
 /**
  * 过滤控件状态（UI 直持的扁平形态；`null` = 不筛）。
- * 取值都是闭集成员，`<select>` 的空串在这里归一到 `null`（UI ↔ 纯函数的唯一转换点）。
+ * 取值都是闭集成员，`<select>` 的空串与坏值在这里归一到 `null`（UI ↔ 纯函数的唯一转换点，
+ * 见 `boardStageFilterValue` 等四个归一函数 —— 视图层不写裸 `as` 断言）。
  */
 export interface BoardListControls {
   stage: BoardStage | null;
   status: BoardStatusValue | null;
   attention: BoardAttentionCode | null;
+  kind: BoardViewNodeKind | null;
   sort: BoardViewSort;
 }
 
@@ -288,23 +314,52 @@ export const EMPTY_BOARD_LIST_CONTROLS: BoardListControls = Object.freeze({
   stage: null,
   status: null,
   attention: null,
+  kind: null,
   sort: "recent",
 });
+
+/* ---------------- UI 取值归一（UI ↔ 纯函数的唯一转换点） ---------------- */
+
+/**
+ * 四个过滤 `<select>` 的取值 → 控件状态：`""`（「全部」）与不认识的值一律 `null`；
+ * 排序是闭集二选一，坏值回落默认视角 `recent`。
+ * 视图层因此不需要 `as BoardStage` 之类的断言：不认识的字面量到不了判据，也不会被猜成别的词。
+ */
+export function boardStageFilterValue(value: string): BoardStage | null {
+  return isBoardStage(value) ? value : null;
+}
+
+export function boardStatusFilterValue(value: string): BoardStatusValue | null {
+  return isBoardStatusValue(value) ? value : null;
+}
+
+export function boardAttentionFilterValue(value: string): BoardAttentionCode | null {
+  return isBoardAttentionCode(value) ? value : null;
+}
+
+export function boardViewNodeKindFilterValue(value: string): BoardViewNodeKind | null {
+  return isBoardViewNodeKind(value) ? value : null;
+}
+
+export function boardSortFilterValue(value: string): BoardViewSort {
+  return value === "oldest" ? "oldest" : "recent";
+}
 
 export function boardListControlsToQuery(controls: BoardListControls): BoardListQuery {
   const filter: BoardListFilter = {};
   if (controls.stage !== null) filter.stage = controls.stage;
   if (controls.status !== null) filter.status = controls.status;
   if (controls.attention !== null) filter.attention = controls.attention;
+  if (controls.kind !== null) filter.kind = controls.kind;
   return { filter, sort: controls.sort };
 }
 
 /**
- * 清过滤（只清三个筛子，保留排序视角）：弹窗内的依赖跳转用——过滤是临时视角，
+ * 清过滤（只清筛子，保留排序视角）：弹窗内的依赖跳转用——过滤是临时视角，
  * 目标卡若被筛掉就「跳了个寂寞」，跳转前先清筛子；「最老未动」这类第二视角不属于筛子，保留。
  */
 export function clearBoardListFilter(controls: BoardListControls): BoardListControls {
-  return { ...controls, stage: null, status: null, attention: null };
+  return { ...controls, stage: null, status: null, attention: null, kind: null };
 }
 
 /** 段位是否在七段位词表内（不自算段位，只做「认识/不认识」判定）。 */

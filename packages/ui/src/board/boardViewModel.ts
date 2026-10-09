@@ -49,6 +49,16 @@ export const BOARD_STATUS_VALUES = [
 
 export type BoardStatusValue = (typeof BOARD_STATUS_VALUES)[number];
 
+/** 状态取值守卫（契约 §3.2 四态 + v2.1 `cancelled`）：UI 取值只在闭集内，不认识即不筛。 */
+export function isBoardStatusValue(value: unknown): value is BoardStatusValue {
+  return typeof value === "string" && (BOARD_STATUS_VALUES as readonly string[]).includes(value);
+}
+
+/** 缺口码取值守卫（契约 §4 四个固定词汇）：不认识即不筛，不猜语义。 */
+export function isBoardAttentionCode(value: unknown): value is BoardAttentionCode {
+  return typeof value === "string" && (BOARD_ATTENTION_CODES as readonly string[]).includes(value);
+}
+
 /** 应用侧认识的 board.json 主版本（schema v2，T1 冻结）。 */
 export const BOARD_KNOWN_VERSION = 2;
 
@@ -204,8 +214,13 @@ function readPositiveInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
-function readNonNegativeInteger(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+/**
+ * 计数读取（`attentionSummary` 四项与 `progress` 两项共用）：只认**正整数**，其余一律 0。
+ * 名字与行为对齐（评审 S1）：不是「非负」——`0` 与缺省同为 0；小数/非数不 trunc
+ * （2.5 若被截成 2，界面上会多出一个「看起来像真的」的计数）。
+ */
+function readPositiveCount(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
 }
 
 /** 未知缺口码不进徽章（契约只给四个固定词汇的文案；未知码不猜）。 */
@@ -238,8 +253,8 @@ function readActiveRun(value: unknown): BoardActiveRun | null {
 
 function readProgress(value: unknown): BoardProgress | null {
   if (!isRecord(value)) return null;
-  const totalTasks = readNonNegativeInteger(value.totalTasks);
-  const completedTasks = readNonNegativeInteger(value.completedTasks);
+  const totalTasks = readPositiveCount(value.totalTasks);
+  const completedTasks = readPositiveCount(value.completedTasks);
   if (totalTasks <= 0 && completedTasks <= 0) return null;
   return { totalTasks, completedTasks };
 }
@@ -292,11 +307,6 @@ function readPr(value: unknown): BoardPr | null {
   return pr.number === null && pr.url === null ? null : pr;
 }
 
-/** 契约 §6「细节」：空串 → null（区块隐藏）；≤200 字符的存储上限由编译器保证，这里不动文本。 */
-function readDetails(value: unknown): string | null {
-  return readText(value);
-}
-
 function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
   const node = isRecord(raw) ? raw : {};
   const no = readPositiveInteger(node.no);
@@ -307,7 +317,7 @@ function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
     no,
     label,
     title: readText(node.title) ?? "",
-    details: readDetails(node.details),
+    details: readText(node.details),
     status: readText(node.status),
     statusRule: readText(node.statusRule),
     stage: readText(node.stage),
@@ -341,7 +351,7 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     label,
     kind: readText(node.kind),
     title: readText(node.title) ?? "",
-    details: readDetails(node.details),
+    details: readText(node.details),
     status: readText(node.status),
     statusRule: readText(node.statusRule),
     stage: readText(node.stage),
@@ -362,10 +372,10 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
 function readAttentionSummary(value: unknown): BoardAttentionSummary {
   if (!isRecord(value)) return { ...EMPTY_ATTENTION_SUMMARY };
   return {
-    interviewedNotArranged: readNonNegativeInteger(value.interviewedNotArranged),
-    arrangedNotExpanded: readNonNegativeInteger(value.arrangedNotExpanded),
-    interruptedResume: readNonNegativeInteger(value.interruptedResume),
-    unmergedWorktree: readNonNegativeInteger(value.unmergedWorktree),
+    interviewedNotArranged: readPositiveCount(value.interviewedNotArranged),
+    arrangedNotExpanded: readPositiveCount(value.arrangedNotExpanded),
+    interruptedResume: readPositiveCount(value.interruptedResume),
+    unmergedWorktree: readPositiveCount(value.unmergedWorktree),
   };
 }
 

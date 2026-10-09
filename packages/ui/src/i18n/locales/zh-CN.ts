@@ -971,6 +971,10 @@ const zhCN: Record<string, string> = {
   "board.empty.none": "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
   "board.empty.features": "尚无规格或计划。",
   "board.empty.damaged": "板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。",
+  // 暂时不可读（连接未就绪）：与「损坏」分开——不在断连时指引重编译（评审 #32-P3）。
+  "board.unavailable": "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  // 陈旧提示（契约 §5 的应用侧轻量版：纯时间启发式，不做 fs mtime 比对——见契约 §5 勘误）。
+  "board.stale.hint": "板可能已过期（更新于 {time}）：建议在会话内重新编译板。",
   "board.attention.interviewedNotArranged": "已访谈，尚未落卡",
   "board.attention.arrangedNotExpanded": "已安排，尚未拆解任务",
   "board.attention.interruptedResume": "执行中断，可续（停在 #{no}）",
@@ -1004,8 +1008,12 @@ const zhCN: Record<string, string> = {
   "board.filter.stage": "段位",
   "board.filter.status": "状态",
   "board.filter.attention": "缺口",
+  "board.filter.kind": "类型",
   "board.filter.sort": "排序",
   "board.filter.all": "全部",
+  // 节点类型词条（过滤控件用：视图节点类型 = 特性节点 / 任务卡）。
+  "board.kind.feature": "特性",
+  "board.kind.task": "卡片",
   "board.sort.recent": "最近更新",
   "board.sort.oldest": "最老未动",
   // status 枚举词条（过滤控件用；机器词汇与 progress.json 一致）。

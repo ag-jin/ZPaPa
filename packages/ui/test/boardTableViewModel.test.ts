@@ -337,14 +337,21 @@ test("表格行 = 列表视图同一管线：同一集合、同一过滤、同�
   assert.equal(buildBoardTableRows(matrixBoard()).length, 13, "全卡平铺：6 特性 + 7 卡一个不丢");
 });
 
-test("跳转前清过滤：只清三个筛子，保留排序视角（第二视角不被跳转重置）", () => {
+test("跳转前清过滤：只清四个筛子，保留排序视角（第二视角不被跳转重置）", () => {
   const cleared = clearBoardListFilter({
     stage: "执行中",
     status: "active",
     attention: "unmerged-worktree",
+    kind: "task",
     sort: "oldest",
   });
-  assert.deepEqual(cleared, { stage: null, status: null, attention: null, sort: "oldest" });
+  assert.deepEqual(cleared, {
+    stage: null,
+    status: null,
+    attention: null,
+    kind: null,
+    sort: "oldest",
+  });
   assert.deepEqual(
     clearBoardListFilter(EMPTY_BOARD_LIST_CONTROLS),
     EMPTY_BOARD_LIST_CONTROLS,

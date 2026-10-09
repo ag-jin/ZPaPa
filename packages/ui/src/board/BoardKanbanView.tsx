@@ -9,18 +9,11 @@
  * 空列策略（按 §13 成文）：**七列恒在，空列显示 0**——与仓库既有看板
  * （`squad/WorkItemsBoard.tsx` 的 statusCategory 空泳道保留）同款：骨架不随数据跳动。
  */
-import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import {
-  BoardAttentionBadges,
-  BoardBlockerBadge,
-  BoardNodeNumber,
-  BoardStageBadge,
-  BoardStatusDot,
-} from "./boardNodeParts.js";
-import { formatBoardActiveRunText, formatBoardStageText } from "./boardPresentation.js";
+import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
+import { formatBoardStageText } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 import {
   buildBoardKanban,
@@ -41,16 +34,19 @@ function BoardKanbanCard({
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
-  const { intl } = useZCodeIntl();
-  const highlighted = boardCardHighlightProps(node.id, highlightCardId);
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    node.id,
+    highlightCardId,
+    { withBorder: true },
+  );
   return (
     <div
       data-board-card={node.id}
-      {...highlighted}
+      {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
       className={cn(
         "flex flex-col gap-1 rounded-lg border border-border/50 bg-surface px-2 py-1.5",
-        highlighted["data-board-card-highlight"] ? "border-warning bg-warning/15" : null,
+        highlightClassName,
       )}
     >
       <div className="flex min-w-0 items-center gap-1.5">
@@ -59,23 +55,14 @@ function BoardKanbanCard({
       </div>
       <div className="flex flex-wrap items-center gap-1">
         <BoardStageBadge stage={node.stage} />
-        {node.draft ? (
-          <Badge variant="secondary" className="shrink-0">
-            {intl.formatMessage({ id: "board.draft" })}
-          </Badge>
-        ) : null}
-        <BoardAttentionBadges attention={node.attention} lastRun={node.lastRun} />
-        <BoardBlockerBadge count={node.blockers.length} />
-        {node.activeRun ? (
-          <Badge
-            variant="secondary"
-            data-board-active-run={node.activeRun.role}
-            className="shrink-0"
-          >
-            {formatBoardActiveRunText(node.activeRun.role, intl.formatMessage)}
-          </Badge>
-        ) : null}
-        <BoardStatusDot status={node.status} />
+        <BoardNodeBadges
+          attention={node.attention}
+          blockers={node.blockers.length}
+          lastRun={node.lastRun}
+          draft={node.draft}
+          activeRunRole={node.activeRun?.role ?? null}
+          status={node.status}
+        />
       </div>
       {showStatusRule && node.statusRule ? (
         <div data-board-status-rule="" className="text-ui-xs text-foreground-subtle">
@@ -143,13 +130,19 @@ function BoardKanbanColumnBody({
   );
 }
 
-/** 列头内容（列名 = 段位词条 + 计数）：普通列与可折叠列（已完成）共用同一份。 */
+/**
+ * 列头内容（列名 = 段位词条 + 计数）：普通列与可折叠列（已完成）共用同一份。
+ * 列名带 `data-board-column-title` 锚点（评审 #33-S2：测试与定位不绑 CSS 类）。
+ */
 function BoardKanbanHeaderContent({ column }: { column: BoardKanbanColumn }) {
   const { intl } = useZCodeIntl();
   const count = column.nodes.length + (column.interview?.nodes.length ?? 0);
   return (
     <>
-      <span className="min-w-0 flex-1 truncate text-ui-sm font-semibold text-foreground">
+      <span
+        data-board-column-title=""
+        className="min-w-0 flex-1 truncate text-ui-sm font-semibold text-foreground"
+      >
         {formatBoardStageText(column.stage, intl.formatMessage)}
       </span>
       <span
@@ -199,29 +192,34 @@ export function BoardKanbanView({
         {columns.map((column) =>
           column.stage === "已完成" ? (
             // 「已完成」列是可折叠分区（§13.2）：默认展开（归档前要看得见），用户可折叠。
+            // `<details>` 本身不挂 flex（评审 #33-S5 的跨浏览器风险）：flex 布局收进内包 div。
+            // 折叠列里的跳转落点由宿主在滚动前展开（`revealBoardCardElement`）。
             <details
               key={column.stage}
               open
               data-board-column={column.stage}
               data-board-column-details={column.stage}
-              className="flex w-56 shrink-0 flex-col rounded-xl border border-border/50 bg-background"
+              className="w-56 shrink-0 rounded-xl border border-border/50 bg-background"
             >
               <summary className="flex cursor-pointer items-center gap-1.5 px-1.5 py-1">
                 <BoardKanbanHeaderContent column={column} />
               </summary>
-              <BoardKanbanColumnBody
-                column={column}
-                {...(onOpenCard ? { onOpenCard } : {})}
-                highlightCardId={highlightCardId}
-              />
+              <div className="flex min-h-0 flex-col">
+                <BoardKanbanColumnBody
+                  column={column}
+                  {...(onOpenCard ? { onOpenCard } : {})}
+                  highlightCardId={highlightCardId}
+                />
+              </div>
             </details>
           ) : (
             <section
               key={column.stage}
               data-board-column={column.stage}
+              // 「已取消」列灰显（§13.2）：取消不清理现场，灰显表达终态；锚点让守卫断言可辨。
+              {...(column.stage === "已取消" ? { "data-board-column-muted": "true" } : {})}
               className={cn(
                 "flex w-56 shrink-0 flex-col rounded-xl border border-border/50 bg-background",
-                // 「已取消」列灰显（§13.2）：取消不清理现场，灰显表达终态。
                 column.stage === "已取消" && "opacity-70",
               )}
             >
