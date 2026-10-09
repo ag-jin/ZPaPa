@@ -37,7 +37,7 @@ export interface BoardFileServicePort {
 }
 
 /**
- * 面板四态：missing=空态 A；empty=空态 B；damaged=空态 C；ready=可渲染。
+ * 面板五态：missing=空态 A；empty=空态 B；damaged=空态 C；ready=可渲染。
  * `unavailable` = **暂时不可读**（RPC 未就绪 / 断连），与 damaged 分开（评审 #32-P3）：
  * 断连不是板的错，指引「重编译」在断连时是假动作。
  */

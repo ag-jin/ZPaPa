@@ -313,6 +313,16 @@ test("陈旧提示：updatedAt 距今超阈值才出现，纯提示不改变内�
   assert.ok(!withoutUpdatedAt.includes("data-board-stale-hint"), "没有时间戳就不猜陈旧");
 });
 
+test("陈旧提示与提示条次序：提示条在上、陈旧提示行在下（契约 §4 第一优先级；评审 #35-P1）", () => {
+  // 契约 §4（提示条为第一优先级视觉元素）与 §3.1（提示条置顶）：两者同时出现时提示条在前。
+  const markup = render(readyState(), { now: Date.parse("2026-10-11T17:00:00+08:00") });
+  const banner = markup.indexOf("data-board-attention-banner");
+  const stale = markup.indexOf("data-board-stale-hint");
+  assert.ok(banner >= 0, "夹具前提：有缺口 → 提示条出现");
+  assert.ok(stale >= 0, "夹具前提：updatedAt 超阈值 → 陈旧提示出现");
+  assert.ok(banner < stale, "提示条应在陈旧提示行之上（第一优先级视觉元素）");
+});
+
 /* ---------------- 提示条段落跳转（#32 遗留） ---------------- */
 
 /** 提示条可见文本（剥标签后归一空白）：文案仍须逐字等于契约 §3.1 模板。 */

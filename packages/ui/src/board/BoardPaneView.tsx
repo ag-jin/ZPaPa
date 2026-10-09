@@ -229,8 +229,17 @@ function BoardReadyView({
           {onRefresh ? <BoardPaneRefreshButton onRefresh={onRefresh} /> : null}
         </div>
       </div>
+      {showBanner ? (
+        // 提示条是第一优先级视觉元素：attentionSummary 非零即置顶常驻（契约 §3.1/§8.4），
+        // 排在陈旧提示行**之上**（评审 #35-P1：陈旧行不得顶在提示条之前）。
+        // 四视图共用同一条：缺口不因切视图而消失；每段可跳到对应卡（#32 遗留）。
+        <div className="shrink-0 px-3 pt-3">
+          <BoardAttentionBanner board={board} {...(onJumpToCard ? { onJumpToCard } : {})} />
+        </div>
+      ) : null}
       {staleHint ? (
-        // 陈旧提示（契约 §5 应用侧轻量版）：纯提示行，不改变既有内容渲染，也不是空态。
+        // 陈旧提示（契约 §5 应用侧轻量版）：纯提示行，不改变既有内容渲染，也不是空态；
+        // 排在提示条**之下**（提示条为第一优先级视觉元素，见上）。
         <div className="shrink-0 px-3 pt-3">
           <div
             data-board-stale-hint=""
@@ -239,13 +248,6 @@ function BoardReadyView({
           >
             {staleHint}
           </div>
-        </div>
-      ) : null}
-      {showBanner ? (
-        // 提示条是第一优先级视觉元素：attentionSummary 非零即置顶常驻（契约 §3.1/§8.4）。
-        // 四视图共用同一条：缺口不因切视图而消失；每段可跳到对应卡（#32 遗留）。
-        <div className="shrink-0 px-3 pt-3">
-          <BoardAttentionBanner board={board} {...(onJumpToCard ? { onJumpToCard } : {})} />
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
