@@ -10,6 +10,7 @@ import { BoardPaneView } from "../src/board/BoardPaneView.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import { LARGE_BOARD_TAIL_TITLE, buildLargeBoard } from "./boardTestFixture.js";
 
 /**
  * 真实素材 + 真实文件系统的可复现验证记录（卡 #32 验收：「对 golden 样例与本工作区真实板均可渲染；
@@ -31,20 +32,43 @@ const REAL_BOARD_PATH = join(REAL_BOARD_WORKSPACE, ".zcode/board/board.json");
 /** 七段位词表：真源是编译器的 STAGE 枚举（`assets/lib/derive.mjs`）。 */
 const STAGE_VALUES = ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"];
 
-/** 文件服务端口的最小 node:fs 实现：验证用夹具，不是应用代码（应用侧只经 IFileService）。 */
+/** 文件服务文本读的默认/硬上限（真源：`packages/services/src/file/fileService.ts:32-33`）。 */
+const SERVICE_DEFAULT_TEXT_READ_BYTES = 128 * 1024;
+const SERVICE_MAX_TEXT_READ_BYTES = 256 * 1024;
+
+/**
+ * 文件服务端口的 node:fs 实现：验证用夹具，不是应用代码（应用侧只经 IFileService）。
+ * 按 fileService.ts 的语义收敛 `length`（缺省 128 KiB、硬上限 256 KiB）并如实回报 truncated
+ * —— 不模拟上限的「整读」假件会让「调用方漏传 length」在测试里永远绿。
+ */
 function createNodeFileService() {
   return {
     checkFilesExist: async ({ paths }: { paths: string[] }) =>
       paths.map((path) => ({ path, exists: existsSync(path) })),
-    readTextFile: async ({ path }: { path: string; offset?: number; length?: number }) => {
-      const content = await readFile(path, "utf8");
+    readTextFile: async ({
+      path,
+      offset = 0,
+      length,
+    }: {
+      path: string;
+      offset?: number;
+      length?: number;
+    }) => {
+      const bytes = await readFile(path);
+      const start = Math.max(0, Math.trunc(offset));
+      const requested = Number.isFinite(length)
+        ? Math.trunc(length as number)
+        : SERVICE_DEFAULT_TEXT_READ_BYTES;
+      const target = Math.min(Math.max(requested, 1), SERVICE_MAX_TEXT_READ_BYTES);
+      const readLength = Math.min(target, Math.max(0, bytes.length - start));
+      const chunk = bytes.subarray(start, start + readLength);
       return {
         path,
-        content,
-        offset: 0,
-        bytesRead: Buffer.byteLength(content),
-        totalBytes: Buffer.byteLength(content),
-        truncated: false,
+        content: chunk.toString("utf8"),
+        offset: start,
+        bytesRead: chunk.length,
+        totalBytes: bytes.length,
+        truncated: start + chunk.length < bytes.length,
         isBinary: false,
       };
     },
@@ -345,6 +369,32 @@ test("空态 C（真实文件系统：损坏 JSON）逐字且不白屏", async (
     assert.equal(state.kind, "damaged");
     assert.ok(
       render(state).includes("板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。"),
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("P1 回归（真实文件系统）：>128 KiB 的合法板正常渲染，不是空态 C", async () => {
+  const board = buildLargeBoard({ minBytes: SERVICE_DEFAULT_TEXT_READ_BYTES });
+  assert.ok(
+    board.bytes > SERVICE_DEFAULT_TEXT_READ_BYTES,
+    `夹具前提：板应超过服务默认上限（实测 ${board.bytes} B）`,
+  );
+  const { workspace, cleanup } = await stageWorkspace(board.content);
+  try {
+    const state = await loadFromRealFile(workspace);
+    assert.equal(state.kind, "ready", `>128 KiB 的合法板应可加载（实测 ${board.bytes} B）`);
+    if (state.kind !== "ready") return;
+
+    const markup = render(state);
+    assert.ok(
+      markup.includes(LARGE_BOARD_TAIL_TITLE),
+      "尾哨兵在 128 KiB 之后：渲染出现即证明走的是读全的板",
+    );
+    assert.ok(
+      !markup.includes("板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。"),
+      "合法板不得落空态 C，更不得指引无效的「重编译」",
     );
   } finally {
     await cleanup();

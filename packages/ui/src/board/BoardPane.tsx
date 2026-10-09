@@ -43,8 +43,10 @@ export function BoardPane({
     void refresh();
   }, [refresh]);
 
-  // 时机 1/2：从非聚焦变为聚焦（切回该标签）时重读一次；挂载态由上面的 effect 负责，不重复。
-  const wasFocusedRef = useRef(false);
+  // 时机 1/2：从非聚焦变为聚焦（切回该标签）时重读一次。
+  // 初值取当前 focused：挂载时若面板本就是聚焦态，上面的挂载 effect 已经读过，
+  // 这里不能再把「挂载」误判成「刚从非聚焦变为聚焦」而重复读一次。
+  const wasFocusedRef = useRef(focused);
   useEffect(() => {
     const becameFocused = focused && !wasFocusedRef.current;
     wasFocusedRef.current = focused;

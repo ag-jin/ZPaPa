@@ -9,6 +9,77 @@
 export const WORKSPACE = "/workspace/ZCode";
 export const BOARD_PATH = `${WORKSPACE}/.zcode/board/board.json`;
 
+/** 大板尾哨兵：唯一「只在读满全文之后才可能出现」的标题，用于识破默认/截断读取。 */
+export const LARGE_BOARD_TAIL_TITLE = "尾哨兵：读全才可见";
+
+export interface LargeBoardFixture {
+  content: string;
+  bytes: number;
+  /** 尾哨兵标题在文本中的字节偏移（读全的判据：它必须大于读取上限）。 */
+  tailByteOffset: number;
+  featureCount: number;
+}
+
+/**
+ * 大板夹具（读取上限回归用）：合法 v2 板，字节数撑过给定下限；
+ * 首尾都是可判别的字段——读全才可能拿到末位尾哨兵。
+ */
+export function buildLargeBoard(params: { minBytes: number }): LargeBoardFixture {
+  const features: Record<string, unknown>[] = [];
+  const assemble = () =>
+    JSON.stringify({
+      version: 2,
+      project: { root: WORKSPACE, name: "大板（读取上限回归）" },
+      updatedAt: "2026-10-09T16:05:00+08:00",
+      generatedBy: "zcode-board/0.2",
+      features,
+      attentionSummary: {
+        interviewedNotArranged: 0,
+        arrangedNotExpanded: 0,
+        interruptedResume: 0,
+        unmergedWorktree: 0,
+      },
+      diagnostics: [],
+    });
+
+  let index = 0;
+  let content = assemble();
+  while (Buffer.byteLength(content) < params.minBytes) {
+    features.push({
+      id: `plan:padding-${index}`,
+      no: index + 10,
+      label: String(index + 10),
+      kind: "plan",
+      title: `填充特性 ${index}`,
+      details: "填充".repeat(60),
+      status: "pending",
+      attention: [],
+      tasks: [],
+    });
+    index += 1;
+    content = assemble();
+  }
+
+  features.push({
+    id: "plan:tail-sentinel",
+    no: 9999,
+    label: "9999",
+    kind: "plan",
+    title: LARGE_BOARD_TAIL_TITLE,
+    status: "pending",
+    attention: [],
+    tasks: [],
+  });
+  content = assemble();
+
+  return {
+    content,
+    bytes: Buffer.byteLength(content),
+    tailByteOffset: Buffer.byteLength(content.slice(0, content.indexOf(LARGE_BOARD_TAIL_TITLE))),
+    featureCount: features.length,
+  };
+}
+
 /**
  * 字段形态夹具：逐项覆盖 `board.golden.json` 的真实形态（四种缺口码、lastRun 三形态、
  * progress 有/无、未领号缺省、draft 卡、blockers 计数、pr、diagnostics）。

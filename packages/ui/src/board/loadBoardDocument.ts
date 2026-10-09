@@ -13,6 +13,19 @@ import { parseBoardJson, type BoardViewModel } from "./boardViewModel.js";
 /** 固定读取点（契约 §0/§7.3）：不做全局注册表、不看 `~/.zcode`。 */
 export const BOARD_JSON_RELATIVE_PATH = ".zcode/board/board.json";
 
+/**
+ * 读取上限＝文件服务文本读的硬上限。
+ * 来源（单一真源）：`packages/services/src/file/fileService.ts:32-33` 的
+ * `DEFAULT_TEXT_READ_BYTES = 128 * 1024` / `MAX_TEXT_READ_BYTES = 256 * 1024`；
+ * 同值先例 `packages/ui/src/lib/codeViewer.ts:25` 的 `FILE_VIEWER_MAX_TEXT_BYTES`
+ * （PreviewPane 读取时显式传该值）。这里不 import 该先例：board 读取只依赖一个最小端口，
+ * 不为一个数字把 codeViewer 的重依赖（shiki 等）拉进本模块。
+ *
+ * 必须显式传：服务默认上限只有 128 KiB，不传会把 ≥128 KiB 的合法板截断，
+ * 而板是活动物（本工作区真实板已 60 KB 量级），越线只是时间问题。
+ */
+export const BOARD_JSON_MAX_READ_BYTES = 256 * 1024;
+
 export function resolveBoardJsonPath(workspacePath: string): string {
   return joinFilePath(workspacePath, BOARD_JSON_RELATIVE_PATH);
 }
@@ -62,7 +75,18 @@ export async function loadBoardDocument(params: {
 
   let content: string;
   try {
-    const file = await params.fileService.readTextFile({ path: boardPath });
+    const file = await params.fileService.readTextFile({
+      path: boardPath,
+      offset: 0,
+      length: BOARD_JSON_MAX_READ_BYTES,
+    });
+    if (file.truncated) {
+      // 「读不全」与「解析失败」分开：读取成功但内容被 256 KiB 硬上限截断时，不解析这个
+      // 前缀（它可能恰好能解析，会把不完整的板静默当完整的板渲染），按空态 C 呈现。
+      // 残余限制（如实留痕，不发明词条）：>256 KiB 的板超出本期契约 §2 的三空态词条范围，
+      // 暂借空态 C 兜底；后续若为「板过大」立项，替换此分支的呈现即可。
+      return { kind: "damaged" };
+    }
     content = file.content;
   } catch (error) {
     // 检查通过后文件消失（竞态）仍属「无板」；其余读取失败归空态 C。

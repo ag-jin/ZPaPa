@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadBoardDocument } from "../src/board/loadBoardDocument.js";
-import { BOARD_PATH, GOLDEN_SHAPED_BOARD, WORKSPACE } from "./boardTestFixture.js";
+import {
+  BOARD_PATH,
+  GOLDEN_SHAPED_BOARD,
+  LARGE_BOARD_TAIL_TITLE,
+  WORKSPACE,
+  buildLargeBoard,
+} from "./boardTestFixture.js";
 
 /**
  * 项目看板面板的数据读取缝（卡 #32「UI tracer：只读树形视图面板」）。
@@ -211,4 +217,140 @@ test("未知缺口码不进徽章渲染（只有四个固定词汇有逐字文�
   assert.equal(state.kind, "ready");
   if (state.kind !== "ready") return;
   assert.deepEqual(state.board.features[0]?.tasks[1]?.attention, ["interrupted-resume"]);
+});
+
+/* ---------------- P1 回归（第三绿 changes_required）：读取上限 ---------------- */
+
+/**
+ * 忠实假件：逐条复刻 `packages/services/src/file/fileService.ts:32-33,55-60,477-521` 的
+ * readTextFile 语义 —— `length` 缺省 128 KiB、服务端收敛到 256 KiB 硬上限、超出部分以
+ * `truncated` 如实回报。上面的 createFakeFileService 不看 length、整读返回，因此看不见
+ * 「调用方未传 length」这类缺陷；本组回归必须用会截断的假件。
+ */
+const SERVICE_DEFAULT_TEXT_READ_BYTES = 128 * 1024;
+const SERVICE_MAX_TEXT_READ_BYTES = 256 * 1024;
+
+function createClampingFakeFileService(files: Record<string, FakeFile>) {
+  return {
+    checkFilesExist: async ({ paths }: { paths: string[] }) =>
+      paths.map((path) => ({
+        path,
+        exists: Object.prototype.hasOwnProperty.call(files, path),
+      })),
+    readTextFile: async ({
+      path,
+      offset = 0,
+      length,
+    }: {
+      path: string;
+      offset?: number;
+      length?: number;
+    }) => {
+      const file = files[path];
+      if (!file) {
+        const error = new Error(`ENOENT: no such file or directory, stat '${path}'`) as Error & {
+          code: string;
+        };
+        error.code = "ENOENT";
+        throw error;
+      }
+      const bytes = Buffer.from(file.content, "utf8");
+      const start = Math.max(0, Math.trunc(offset));
+      const requested = Number.isFinite(length)
+        ? Math.trunc(length as number)
+        : SERVICE_DEFAULT_TEXT_READ_BYTES;
+      const target = Math.min(Math.max(requested, 1), SERVICE_MAX_TEXT_READ_BYTES);
+      const readLength = Math.min(target, Math.max(0, bytes.length - start));
+      const chunk = bytes.subarray(start, start + readLength);
+      return {
+        path,
+        content: chunk.toString("utf8"),
+        offset: start,
+        bytesRead: chunk.length,
+        totalBytes: bytes.length,
+        truncated: start + chunk.length < bytes.length,
+        isBinary: false,
+      };
+    },
+  };
+}
+
+test("P1 回归：≥128 KiB 的合法板必须读全，不因服务默认读取上限误判空态 C", async () => {
+  const board = buildLargeBoard({ minBytes: SERVICE_DEFAULT_TEXT_READ_BYTES });
+  assert.ok(
+    board.bytes > SERVICE_DEFAULT_TEXT_READ_BYTES,
+    `夹具前提：板应超过服务默认上限（实测 ${board.bytes} B）`,
+  );
+  assert.ok(
+    board.bytes <= SERVICE_MAX_TEXT_READ_BYTES,
+    `夹具前提：板应落在服务硬上限内（实测 ${board.bytes} B）`,
+  );
+  assert.ok(
+    board.tailByteOffset > SERVICE_DEFAULT_TEXT_READ_BYTES,
+    `夹具前提：尾哨兵应在默认上限之后（实测偏移 ${board.tailByteOffset} B）`,
+  );
+
+  const fileService = createClampingFakeFileService({ [BOARD_PATH]: { content: board.content } });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+
+  assert.equal(
+    state.kind,
+    "ready",
+    "合法且可读全的板必须是 ready（空态 C 只留给读不到/读不全/版本不认识）",
+  );
+  if (state.kind !== "ready") return;
+  assert.equal(state.board.features.length, board.featureCount);
+  assert.equal(
+    state.board.features.at(-1)?.title,
+    LARGE_BOARD_TAIL_TITLE,
+    "尾哨兵在 128 KiB 之后：它出现即证明读全，而不是拿截断前缀当完整的板",
+  );
+});
+
+test("P1 残余限制：读取被 256 KiB 硬上限截断 → 空态 C，不部分渲染", async () => {
+  // 情形 1：板本身超过硬上限（截断点落在 JSON 正文中间）——前缀不可解析。
+  const oversized = buildLargeBoard({ minBytes: SERVICE_MAX_TEXT_READ_BYTES + 16 * 1024 });
+  assert.ok(
+    oversized.bytes > SERVICE_MAX_TEXT_READ_BYTES,
+    `夹具前提：板应超过服务硬上限（实测 ${oversized.bytes} B）`,
+  );
+  assert.throws(
+    () =>
+      JSON.parse(
+        Buffer.from(oversized.content, "utf8")
+          .subarray(0, SERVICE_MAX_TEXT_READ_BYTES)
+          .toString("utf8"),
+      ),
+    "夹具前提：硬上限处的前缀应不是合法 JSON（截断落在正文中间）",
+  );
+  const oversizedState = await loadBoardDocument({
+    fileService: createClampingFakeFileService({ [BOARD_PATH]: { content: oversized.content } }),
+    workspacePath: WORKSPACE,
+  });
+  assert.equal(oversizedState.kind, "damaged", "超硬上限的板读不全，按空态 C 呈现");
+
+  // 情形 2：硬上限处的前缀恰好是一份完整合法 JSON（余下是空白填充）——不显式看 truncated
+  // 就会把这个前缀当成 ready 渲染，等于把「没读全的板」静默当完整板展示（漏节点不报警）。
+  const paddedContent = `${JSON.stringify(GOLDEN_SHAPED_BOARD)}${" ".repeat(SERVICE_MAX_TEXT_READ_BYTES)}`;
+  const paddedBytes = Buffer.from(paddedContent, "utf8");
+  assert.ok(
+    paddedBytes.length > SERVICE_MAX_TEXT_READ_BYTES,
+    `夹具前提：文本应超过服务硬上限（实测 ${paddedBytes.length} B）`,
+  );
+  assert.doesNotThrow(
+    () => JSON.parse(paddedBytes.subarray(0, SERVICE_MAX_TEXT_READ_BYTES).toString("utf8")),
+    "夹具前提：硬上限处的前缀应是合法 JSON（本条红的判据）",
+  );
+  const paddedState = await loadBoardDocument({
+    fileService: createClampingFakeFileService({ [BOARD_PATH]: { content: paddedContent } }),
+    workspacePath: WORKSPACE,
+  });
+
+  // 残余限制（如实留痕，不发明词条）：>256 KiB 的板不在本期契约 §2 的三空态词条内，
+  // 这里借空态 C 兜底；测试把结果钉住，供后续「板过大」词条立项时替换。
+  assert.equal(
+    paddedState.kind,
+    "damaged",
+    "读取被截断就不允许按部分内容渲染（哪怕前缀恰好能解析）",
+  );
 });
