@@ -301,7 +301,7 @@ export function WorkItemPeekContent({
           {properties.map(([key, value]) => (
             <span
               key={key}
-              className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5"
+              className="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5"
             >
               <span className="text-foreground-subtle">{key}</span>
               <span className="text-foreground-subtlest">{workItemPropertyValueText(value)}</span>

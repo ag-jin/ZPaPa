@@ -58,8 +58,9 @@ import {
    重试走标题行刷新钮（照 SquadRunsDirectorySection 的既有口径）。 */
 
 const LIST_CLASSNAME = "flex flex-col gap-2";
-/** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级，照 SquadRunsReview）。 */
-const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/** 行容器：本页**第一个**圆角容器（页面列是布局区，不计层级）⇒ rounded-xl
+    （DESIGN.md「Radius ▸ Container hierarchy」，照 SquadRunsReview）。 */
+const ROW_CLASSNAME = "rounded-xl border border-border px-3 py-2";
 
 export function WakeRulesSection({
   workspacePath,
@@ -311,7 +312,7 @@ export function WakeRulesSection({
       {/* 无数据 + 失败了 ⇒ 错误态（**必须带原因**）+ 重试。 */}
       {target && rules === null && !loading && failure ? (
         <div className="flex flex-col gap-2" data-testid="squad-rules-error">
-          <p role="alert" className="text-ui-sm text-[var(--color-danger)]">
+          <p role="alert" className="text-ui-sm text-destructive">
             {t("squad.rules.loadFailed")}：{t(failure.messageId)}
             {failure.detail ? `：${failure.detail}` : ""}
           </p>
@@ -335,7 +336,7 @@ export function WakeRulesSection({
           {failure ? (
             <p
               role="alert"
-              className="text-ui-xs text-[var(--color-danger)]"
+              className="text-ui-xs text-destructive"
               data-testid="squad-rules-load-failure"
             >
               {t(failure.messageId)}
@@ -375,7 +376,7 @@ export function WakeRulesSection({
                         </span>
                         <span
                           className={cn(
-                            "shrink-0 rounded-full px-2 py-0.5 text-ui-xs",
+                            "shrink-0 rounded-md px-2 py-0.5 text-ui-xs",
                             WAKE_RULE_STATUS_BADGE_CLASSES[rowState.status],
                           )}
                         >

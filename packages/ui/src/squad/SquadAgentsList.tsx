@@ -24,8 +24,9 @@ import { buildAgentPresence } from "./squadPresenceViewModel.js";
    · 状态：停用 / 已归档徽标（复用既有键）。 */
 
 const LIST_CLASSNAME = "flex flex-col gap-2";
-/** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
-const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/** 行容器：本页**第一个**圆角容器（页面列是布局区，不计层级）⇒ rounded-xl
+    （DESIGN.md「Radius ▸ Container hierarchy」）。 */
+const ROW_CLASSNAME = "rounded-xl border border-border px-3 py-2";
 /** 状态/配置徽标的统一样式：小字、弱前景（信息存在但不与名字抢层级）。 */
 const BADGE_CLASSNAME = "text-ui-xs text-foreground-subtlest";
 

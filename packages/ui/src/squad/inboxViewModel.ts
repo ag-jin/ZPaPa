@@ -100,14 +100,16 @@ export const INBOX_SEVERITY_MESSAGE_IDS: Record<InboxItemSeverity, string> = {
 
 /**
  * severity → 徽标配色（**语义色 token**，spec §11.3：状态只由语义色表达）。
- * `action_required` ⇒ destructive；`attention` ⇒ warning；`info` ⇒ 中性 muted
- * （仓库没有 info 语义色 token，通知不该借一个"有颜色"的语义 —— 中性就是它的语义）。
+ * `action_required` ⇒ destructive；`attention` ⇒ warning；`info` ⇒ 中性弱底色
+ * （仓库没有 info 语义色 token，通知不该借一个"有颜色"的语义 —— 中性就是它的语义；
+ * 中性底色用本主题的 `bg-surface`，不是上游 shadcn 的 `bg-muted` —— 后者在本仓没有对应变量，
+ * 编译不出规则会让徽标静默丢掉底色）。
  * 这里**不出现九色板**（red-500 之类）：那会把"多急"编码成一个随手挑的颜色。
  */
 export const INBOX_SEVERITY_BADGE_CLASSES: Record<InboxItemSeverity, string> = {
   action_required: "bg-destructive/10 text-destructive",
   attention: "bg-warning/10 text-warning",
-  info: "bg-muted text-foreground-subtle",
+  info: "bg-surface text-foreground-subtle",
 };
 
 export function inboxKindMessageId(kind: InboxItemKind): string {

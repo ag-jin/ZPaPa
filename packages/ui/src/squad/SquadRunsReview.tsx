@@ -12,8 +12,9 @@ import { runReviewable, squadRunStatusMessageId } from "./squadEntryViewModel.js
    （分开写会漂移：标题在页面、空态在列表，改一处漏一处不报错）。 */
 
 const LIST_CLASSNAME = "flex flex-col gap-2";
-/** 行容器：比所在卡片（rounded-xl）低一级（spec §11.3 的圆角层级）。 */
-const ROW_CLASSNAME = "rounded-lg border border-border px-3 py-2";
+/** 行容器：本页**第一个**圆角容器（页面列是布局区，不计层级）⇒ rounded-xl
+    （DESIGN.md「Radius ▸ Container hierarchy」）。 */
+const ROW_CLASSNAME = "rounded-xl border border-border px-3 py-2";
 
 export function SquadRunsReview({
   runs,

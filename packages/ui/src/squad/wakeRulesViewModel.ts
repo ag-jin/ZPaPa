@@ -166,11 +166,13 @@ export const WAKE_RULE_STATUS_MESSAGE_IDS: Record<WakeRuleRowStatus, string> = {
   unscheduled: "squad.rules.status.unscheduled",
 };
 
+/* 状态 → 徽标配色（语义色 token 单源）。中性态（用户暂停 / 已完成）用本主题的弱底色
+   `bg-surface` —— 不用上游 shadcn 的 `bg-muted`：本仓主题没有那枚变量，编译不出规则。 */
 export const WAKE_RULE_STATUS_BADGE_CLASSES: Record<WakeRuleRowStatus, string> = {
   active: "bg-success/10 text-success",
-  user_paused: "bg-muted text-foreground-subtle",
+  user_paused: "bg-surface text-foreground-subtle",
   gate_paused: "bg-warning/10 text-warning",
-  completed: "bg-muted text-foreground-subtle",
+  completed: "bg-surface text-foreground-subtle",
   unscheduled: "bg-warning/10 text-warning",
 };
 

@@ -304,7 +304,7 @@ export function WorkItemsPageActions({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="absolute right-0 top-1/2 -translate-y-1/2 rounded-full text-foreground-subtle"
+            className="absolute right-0 top-1/2 -translate-y-1/2 text-foreground-subtle"
             disabled={controlsDisabled}
             title={disabledTitle}
             aria-label={t("squad.workItems.search.clear")}

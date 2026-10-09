@@ -158,7 +158,7 @@ export function SquadTimelineSection({
             className="flex flex-col items-start gap-2 px-1 py-1"
             data-testid="squad-timeline-error"
           >
-            <p role="alert" className="text-ui-sm text-[var(--color-danger)]">
+            <p role="alert" className="text-ui-sm text-destructive">
               {t("squad.timeline.loadFailed")}：{t(failure.messageId)}
               {failure.detail ? `：${failure.detail}` : ""}
             </p>

@@ -19,7 +19,12 @@ import {
    为什么与 Dialog 壳分开：Radix 的 Portal 在服务端渲染下不产出任何标记（`mounted` 仍是 false），
    所以「面板长什么样」如果只挂在壳里，就只能靠人眼验收。拆出来之后四种形态
    （首帧 / 等待中 / 失败 / 降级轮）都能用 renderToStaticMarkup 钉住 ——
-   这是仓内既定的 UI 验证手法（见 workItemProperties / d2PullRequestUi 的复验）。 */
+   这是仓内既定的 UI 验证手法（见 workItemProperties / d2PullRequestUi 的复验）。
+
+   圆角：本面板渲染在对话框壳内，而**壳不计入内容层级**（DESIGN.md「Radius ▸ Dialogs」）
+   ⇒ 转写气泡、空态提示、草稿卡这三个同层容器都是该对话框的**第一层内容容器** = rounded-xl
+   （聊天气泡同一条口径，见「Chat, Tooling, and Developer UI」）。把它们降到 rounded-lg 会让
+   面板看起来"陷进"对话框里 —— 守卫见 squadEntryStyleConformance.test.ts。 */
 
 export function AgentBuilderPanel({
   session,
@@ -169,7 +174,7 @@ export function AgentBuilderTranscript({ messages }: { messages: readonly AgentB
   if (messages.length === 0) {
     return (
       <p
-        className="rounded-lg border border-border bg-input/20 px-3 py-2 text-ui-sm text-foreground-subtle"
+        className="rounded-xl border border-border bg-input/20 px-3 py-2 text-ui-sm text-foreground-subtle"
         data-testid="agent-builder-transcript-empty"
       >
         {t("squad.agentBuilder.emptyHint")}
@@ -183,7 +188,7 @@ export function AgentBuilderTranscript({ messages }: { messages: readonly AgentB
           key={`${index}-${message.role}`}
           data-testid={`agent-builder-message-${message.role}`}
           className={cn(
-            "rounded-lg border px-3 py-2 text-ui-sm whitespace-pre-wrap",
+            "rounded-xl border px-3 py-2 text-ui-sm whitespace-pre-wrap",
             message.role === "user"
               ? "border-border bg-input/20 text-foreground"
               : "border-transparent bg-surface-hover text-foreground",
@@ -273,7 +278,7 @@ export function AgentBuilderDraftPreview({
   if (draft === null) {
     return (
       <div
-        className="rounded-lg border border-dashed border-border px-3 py-2 text-ui-sm text-foreground-subtle"
+        className="rounded-xl border border-dashed border-border px-3 py-2 text-ui-sm text-foreground-subtle"
         data-testid="agent-builder-draft-empty"
       >
         {t("squad.agentBuilder.draftEmpty")}
@@ -283,7 +288,7 @@ export function AgentBuilderDraftPreview({
   const summary = agentBuilderDraftSummary(draft);
   return (
     <div
-      className="flex flex-col gap-2 rounded-lg border border-border bg-input/20 px-3 py-2"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-input/20 px-3 py-2"
       data-testid="agent-builder-draft"
     >
       <div className="flex items-center justify-between gap-2">
