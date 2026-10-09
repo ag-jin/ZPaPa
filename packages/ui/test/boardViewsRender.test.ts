@@ -60,6 +60,15 @@ function textInside(markup: string, attr: string): string {
   return (match[1] ?? "").trim();
 }
 
+/** 列头文本（列骨架里第一个 `font-semibold` 节点；卡片标题不带该字重）。 */
+function columnHeaderText(markup: string, stage: string): string {
+  const start = markup.indexOf(`data-board-column="${stage}"`);
+  assert.ok(start >= 0, `列 ${stage} 应存在`);
+  const match = /font-semibold[^>]*>([^<]*)</.exec(markup.slice(start, start + 600));
+  assert.ok(match, `列 ${stage} 应有列头文本`);
+  return (match[1] ?? "").trim();
+}
+
 const kanban = (state: BoardPaneLoadState = matrixBoard()) => render(state, { viewMode: "kanban" });
 
 test("看板：七列按流水序渲染，列头走段位词条", () => {
@@ -67,8 +76,9 @@ test("看板：七列按流水序渲染，列头走段位词条", () => {
   assert.ok(markup.includes('data-board-view="kanban"'), "看板视图应有自己的根锚点");
   const order = [...markup.matchAll(/data-board-column="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(order, ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"]);
-  const design = columnSlice(markup, "待设计", "待办");
-  assert.ok(design.includes("待设计"), "列头应渲染段位词条文本");
+  for (const stage of order) {
+    assert.equal(columnHeaderText(markup, stage), stage, `列头应走段位词条：${stage}`);
+  }
 });
 
 test("看板：卡片卡入对应列（特性与任务卡同一集合）", () => {
@@ -332,5 +342,33 @@ test("视图切换：控件文案走词条（zh 逐字 树形/看板/列表）",
   assert.ok(switcher);
   for (const label of ["树形", "看板", "列表"]) {
     assert.ok(switcher[0].includes(`>${label}<`), `切换控件应含「${label}」`);
+  }
+});
+
+test("英文界面：看板/列表的段位与控件文案走英文词条（评审 S5 的两个新面）", () => {
+  const renderEnglish = (viewMode: BoardViewMode) =>
+    renderToStaticMarkup(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "en-US" as const,
+        children: createElement(BoardPaneView, { state: matrixBoard(), viewMode }),
+      }),
+    );
+  const kanbanEn = renderEnglish("kanban");
+  const expected: Record<string, string> = {
+    待设计: "Design",
+    待办: "To do",
+    执行中: "In progress",
+    审核中: "In review",
+    阻塞: "Blocked",
+    已完成: "Done",
+    已取消: "Cancelled",
+  };
+  for (const [stage, label] of Object.entries(expected)) {
+    assert.equal(columnHeaderText(kanbanEn, stage), label, `en-US 列头 ${stage} 应走英文词条`);
+  }
+  assert.ok(kanbanEn.includes("Interview summary"), "访谈汇总子区走英文词条");
+  const listEn = renderEnglish("list");
+  for (const label of ["Stage", "Status", "Gap", "Sort"]) {
+    assert.ok(listEn.includes(`>${label}<`), `en-US 列表应含过滤标签「${label}」`);
   }
 });
