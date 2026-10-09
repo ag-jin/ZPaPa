@@ -26,7 +26,10 @@ import type { HydratedReconciledBackgroundTask } from "../zcode-protocol-v4/tran
  *     ⇒ workId ≡ taskId ≡ 面板的 workId；ACK 的落库时间就是启动时刻与宽容期基准；
  *   - **终态证据**：①同一 workId 的后台结果唤醒轮（`originMeta.backgroundSource === "bash"`，
  *     模型收到通知 ⇒ 任务已终结，消息持久化在 transcript）②`background_task_outcome`
- *     session entry（孤儿收敛写下的补洞事实）。
+ *     session entry（孤儿收敛写下的补洞事实）。批量 drain 会把一轮内的多条通知合成**一条**
+ *     唤醒轮消息，originMeta 只保留代表任务的 workId；同轮其余 work 的终态从通知文本里的
+ *     `<task-id>` 取回（见 {@link BACKGROUND_TASK_NOTIFICATION_TASK_ID_PATTERN}），否则它们
+ *     尽管真实完成仍会被孤儿收敛误判成 lost。
  *
  * 与子 agent 同一条纪律：终态永远以持久记录为准，entry 只填洞；读不到（无 store）就退场，
  * 不猜、不制造第二份结论。
@@ -40,8 +43,24 @@ import type { HydratedReconciledBackgroundTask } from "../zcode-protocol-v4/tran
  */
 export const SESSION_ENTRY_BACKGROUND_TASK_OUTCOME = "background_task_outcome" as const;
 
-/** launch ACK 里的 workId（core 三个模板共用 `with ID: <id>.` 的写法，id 不含点/空白）。 */
-const BACKGROUND_LAUNCH_ACK_ID_PATTERN = /with ID:\s*([^\s.]+)/;
+/**
+ * launch ACK 里的 workId（core `formatBackgroundInfoForModel` 的三个模板共用「with ID: <id>.」
+ * 的写法，id 不含点/空白）。
+ *
+ * 必须锚定输出开头（前缀逐字对齐 `bash-model-content.ts` 的三个模板）：Bash 的持久 part 是
+ * 完整的模型可见输出，后台 ACK 是其中唯一以这些前缀开头的形态。不锚定则前台 stdout 里恰好
+ * 出现「with ID: …」短语（如 `connected to service with ID: abc123`）会被误认成后台 workId，
+ * 凭空长出一个永不存在的 work 候选。
+ */
+const BACKGROUND_LAUNCH_ACK_ID_PATTERN =
+  /^(?:Command running in background|Command was manually backgrounded by user|Command exceeded the assistant-mode blocking budget \(\d+(?:\.\d+)?s\) and was moved to the background) with ID:\s*([^\s.]+)/;
+
+/**
+ * 结果唤醒轮里内联的 task-id（core `formatTaskNotification` 的 `<task-id>…</task-id>` 段，
+ * 三个 taskType 共用；id 不含空白与尖括号）。批量 drain 的一轮消息里每个通知各有一段，
+ * 但 originMeta 只保留代表任务——同轮其余 work 的终态事实只能从这里取回。
+ */
+const BACKGROUND_TASK_NOTIFICATION_TASK_ID_PATTERN = /<task-id>\s*([^<\s]+)\s*<\/task-id>/gu;
 
 /**
  * work 的终态事实（持久来源 + 落盘时刻）。`notification` 是真实终局（模型收到结果），
@@ -94,8 +113,9 @@ function finiteTimeMs(value: unknown): number | undefined {
  * Bash tool part 的输出 → workId。
  *
  * 两种持久形态都认：模型可见的 ACK 文本（`formatBackgroundInfoForModel` 的三个模板共用
- * 「with ID: <id>.」）与结构化 JSON（`backgroundTaskId`）。**只认带 id 的 part**：
- * 拿不到 workId 就没有可寻址的工作身份，后续判据（终态对账、幂等键）全部无处落点。
+ * 「with ID: <id>.」，且必须自输出开头命中模板前缀——见
+ * {@link BACKGROUND_LAUNCH_ACK_ID_PATTERN}）与结构化 JSON（`backgroundTaskId`）。**只认带
+ * id 的 part**：拿不到 workId 就没有可寻址的工作身份，后续判据（终态对账、幂等键）全部无处落点。
  */
 export function backgroundWorkIdFromToolPart(part: ToolPart): string | undefined {
   if (part.tool !== "Bash") return undefined;
@@ -114,16 +134,29 @@ function toolPartIntervalMs(part: ToolPart, which: "start" | "end"): number | un
 }
 
 /**
- * 一条消息是否携带「后台 Bash work 结果」的持久元数据（model-only 唤醒轮的 originMeta）。
+ * 一条消息携带的「后台 Bash work 结果」持久证据（model-only 唤醒轮的 originMeta + 通知文本）。
  *
- * 解释器复用 hydration 的 {@link backgroundResultOriginMetaOfMessage}（唯一解释者）；
- * 这里只需 bash 的 workId 对账，所以只取 identity 两项。
+ * originMeta 由 hydration 的 {@link backgroundResultOriginMetaOfMessage} 解释（唯一解释者）：
+ * 它是「这是后台结果唤醒轮」的持久签名，只有在它成立时才继续扫文本——普通消息里恰好出现
+ * `<task-id>` 不构成终态证据（保守）。整批唤醒轮里 originMeta 只指代表任务，同轮其余 work
+ * 的终态从通知文本的各段 `<task-id>` 取回；文本解析不出来时退回仅 originMeta。
  */
-function backgroundResultWorkIdOfMessage(message: MessageWithParts): string | undefined {
+function backgroundResultWorkIdsOfMessage(message: MessageWithParts): string[] {
   const originMeta = backgroundResultOriginMetaOfMessage(message);
-  if (originMeta?.backgroundSource !== "bash") return undefined;
-  const workId = originMeta.workId.trim();
-  return workId.length > 0 ? workId : undefined;
+  if (!originMeta) return [];
+  const workIds: string[] = [];
+  if (originMeta.backgroundSource === "bash") {
+    const workId = originMeta.workId.trim();
+    if (workId.length > 0) workIds.push(workId);
+  }
+  for (const part of message.parts) {
+    if (part.type !== "text") continue;
+    for (const match of part.text.matchAll(BACKGROUND_TASK_NOTIFICATION_TASK_ID_PATTERN)) {
+      const workId = match[1]?.trim();
+      if (workId) workIds.push(workId);
+    }
+  }
+  return workIds;
 }
 
 /**
@@ -163,9 +196,9 @@ export function collectBackgroundTaskWorkFacts(
   const facts = new Map<string, BackgroundTaskWorkFact>();
   const terminalByWorkId = new Map<string, BackgroundTaskTerminalFact>();
   for (const message of active) {
-    const resultWorkId = backgroundResultWorkIdOfMessage(message);
-    if (resultWorkId) {
-      terminalByWorkId.set(resultWorkId, {
+    const resultWorkIds = backgroundResultWorkIdsOfMessage(message);
+    for (const workId of resultWorkIds) {
+      terminalByWorkId.set(workId, {
         source: "notification",
         endedAtMs: finiteTimeMs(message.info.time.created),
       });

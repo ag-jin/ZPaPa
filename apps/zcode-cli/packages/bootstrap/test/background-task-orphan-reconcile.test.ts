@@ -13,7 +13,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  createSessionId,
   type MessageWithParts,
   type SessionEntryInfo,
   type SessionId,
@@ -269,6 +268,44 @@ test("读面：三种后台 ACK 模板与 JSON 形状都能解出 workId，无 i
   assert.equal(backgroundWorkIdFromToolPart(noId), undefined, "无 workId 就没有可寻址身份");
 });
 
+test("读面：前台输出里恰好含 ACK 短语不得当 workId（锚定模板前缀）", () => {
+  const foregroundOutputs = [
+    "connected to service with ID: abc123 (retrying)",
+    "step 2: waiting for worker with ID: worker-7\ndone\n",
+    '{"service":{"with ID: abc"}}',
+  ];
+  for (const output of foregroundOutputs) {
+    const part = {
+      tool: "Bash",
+      callID: TOOL_CALL_ID,
+      state: {
+        status: "completed",
+        input: { command: "grep x log" },
+        output,
+        time: { start: 1, end: 2 },
+      },
+    } as unknown as Parameters<typeof backgroundWorkIdFromToolPart>[0];
+    assert.equal(
+      backgroundWorkIdFromToolPart(part),
+      undefined,
+      `前台文本误报成后台 workId：${output.slice(0, 40)}`,
+    );
+  }
+
+  // 正例对照：锚定只排除「短语恰好出现在别处」，模板原文仍在输出开头时照常解出。
+  const stillParses = {
+    tool: "Bash",
+    callID: TOOL_CALL_ID,
+    state: {
+      status: "completed",
+      input: { command: "x" },
+      output: `${backgroundLaunchAck(WORK_ID)}\nconnected to service with ID: abc123`,
+      time: { start: 1, end: 2 },
+    },
+  } as unknown as Parameters<typeof backgroundWorkIdFromToolPart>[0];
+  assert.equal(backgroundWorkIdFromToolPart(stillParses), WORK_ID);
+});
+
 test("读面：结果唤醒轮是终态证据；无它则 work 停在「无终态」", async () => {
   const running = await readSessionBackgroundTaskInventory(
     orphanContext(createState({})),
@@ -285,6 +322,152 @@ test("读面：结果唤醒轮是终态证据；无它则 work 停在「无终�
   );
   assert.equal(ended.works[0]?.terminal?.source, "notification");
   assert.equal(ended.works[0]?.terminal?.endedAtMs, BASE_MS + 2 * HOUR);
+});
+
+// ── 读面：批量唤醒轮（同轮多条通知）的终态覆盖 ──────────────────────────────────────
+
+const BATCH_WORK_ID_A = "exec_aaaaaaaa-1111-4222-8333-444444444444";
+const BATCH_WORK_ID_B = "exec_bbbbbbbb-1111-4222-8333-444444444444";
+const BATCH_WORK_ID_C = "exec_cccccccc-1111-4222-8333-444444444444";
+
+/**
+ * core `formatTaskNotification` 的 local_bash 分支（notification.ts）逐字对齐：通知文本的
+ * 形态是解析依据，夹具按**生产者**的模板写，不按解析器的写法反推。
+ */
+function bashTaskNotificationText(taskId: string): string {
+  return [
+    "<task-notification>",
+    `<task-id>${taskId}</task-id>`,
+    `<tool-use-id>call_${taskId}</tool-use-id>`,
+    `<output-file>/tmp/${taskId}.log</output-file>`,
+    "<status>completed</status>",
+    "<summary>完成</summary>",
+    "</task-notification>",
+  ].join("\n");
+}
+
+/**
+ * 批量场景的父 transcript：每 work 一条 launch ACK 的 assistant 消息，随后一轮**批量**结果
+ * 唤醒轮——core `persistBackgroundTaskNotificationBatch` 把各通知文本以 "\n\n" 连接成一条
+ * model-only user 消息，而 originMeta 只保留代表任务（首个）的 workId。
+ */
+function batchState(workIds: readonly string[]): HarnessState {
+  const state: HarnessState = {
+    sessions: new Map(),
+    messages: new Map(),
+    entries: new Map(),
+    saves: [],
+  };
+  state.sessions.set(SESSION_ID, sessionInfo({ id: SESSION_ID, updated: BASE_MS + 2 * HOUR }));
+  const messages: MessageWithParts[] = [
+    {
+      info: {
+        id: USER_MESSAGE_ID,
+        role: "user",
+        time: { created: BASE_MS },
+        semantics: {
+          origin: "real_user",
+          kind: "user_prompt",
+          uiVisibility: "visible",
+          providerVisibility: "visible",
+          transcriptVisibility: "visible",
+        },
+        anchor: { turnId: "turn_bg_batch", origin: "realUser" },
+      },
+      parts: [{ id: "part_bg_batch_user_text", type: "text", text: "并行跑三个任务" }],
+    } as unknown as MessageWithParts,
+    ...workIds.map(
+      (workId, index) =>
+        ({
+          info: {
+            id: `msg_bg_batch_launch_${index}`,
+            role: "assistant",
+            parentID: USER_MESSAGE_ID,
+            time: { created: BASE_MS + 100 + index, completed: BASE_MS + 200 + index },
+            finish: "tool-calls",
+          },
+          parts: [
+            {
+              id: `part_bg_batch_bash_${index}`,
+              type: "tool",
+              callID: `call_bg_batch_${index}`,
+              tool: "Bash",
+              state: {
+                status: "completed",
+                input: { command: `sleep ${index}`, description: workId, run_in_background: true },
+                output: backgroundLaunchAck(workId),
+                time: { start: BASE_MS + 150 + index, end: BASE_MS + 200 + index },
+              },
+            },
+          ],
+        }) as unknown as MessageWithParts,
+    ),
+    {
+      info: {
+        id: "msg_bg_batch_notice",
+        role: "user",
+        time: { created: BASE_MS + 2 * HOUR },
+        source: "background_task",
+        metadata: {
+          originMeta: {
+            backgroundSource: "bash",
+            title: workIds.join(" · "),
+            workId: workIds[0],
+          },
+        },
+        semantics: {
+          origin: "real_user",
+          kind: "user_prompt",
+          uiVisibility: "visible",
+          providerVisibility: "visible",
+          transcriptVisibility: "visible",
+        },
+      },
+      parts: [
+        {
+          id: "part_bg_batch_notice_text",
+          type: "text",
+          text: workIds.map(bashTaskNotificationText).join("\n\n"),
+        },
+      ],
+    } as unknown as MessageWithParts,
+  ];
+  state.messages.set(SESSION_ID, messages);
+  return state;
+}
+
+test("读面：批量唤醒轮里同轮全部 task-id 都是终态证据（originMeta 只指代表任务）", async () => {
+  const workIds = [BATCH_WORK_ID_A, BATCH_WORK_ID_B, BATCH_WORK_ID_C];
+  const state = batchState(workIds);
+  const context = orphanContext(state);
+  const inventory = await readSessionBackgroundTaskInventory(context, SESSION_ID);
+
+  assert.deepEqual(
+    inventory.works.map((work) => [work.workId, work.terminal?.source]),
+    [
+      [BATCH_WORK_ID_A, "notification"],
+      [BATCH_WORK_ID_B, "notification"],
+      [BATCH_WORK_ID_C, "notification"],
+    ],
+    "同轮通知文本里的每个 task-id 都有终态证据，不止 originMeta 的代表任务",
+  );
+  for (const work of inventory.works) {
+    assert.equal(work.terminal?.endedAtMs, BASE_MS + 2 * HOUR, "终局时刻取唤醒轮落库时间");
+  }
+
+  const persistedMessages = state.messages.get(SESSION_ID);
+  const result = await reconcileBackgroundTaskOrphansOnActivation({
+    context,
+    sessionId: SESSION_ID,
+    persistedMessages,
+    now: BASE_MS + 3 * HOUR,
+  });
+  assert.equal(result.reconciled, 0, "同批真实完成的任务不得被收敛成 lost");
+  assert.deepEqual(state.saves, []);
+  assert.deepEqual(
+    result.skipped.map((entry) => entry.reason),
+    ["terminal_evidence", "terminal_evidence", "terminal_evidence"],
+  );
 });
 
 // ── 判据纯函数 ────────────────────────────────────────────────────────────────────
