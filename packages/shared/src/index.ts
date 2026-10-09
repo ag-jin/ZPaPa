@@ -315,6 +315,7 @@ export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
 export * from "./work-item.js";
+export * from "./project.js";
 export * from "./team-agent.js";
 export * from "./team-agent-mcp.js";
 export * from "./agent-builder.js";

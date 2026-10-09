@@ -27,6 +27,7 @@ import { createWorkItemActivityProjector } from "./workItemActivityProjector.js"
 import { createWorkItemDeliverableRecorder } from "./workItemDeliverableRecorder.js";
 import { createWorkItemDeliverableRepo } from "./workItemDeliverableRepo.js";
 import { createWorkItemPullRequestRepo } from "./workItemPullRequestRepo.js";
+import { createWorkItemProjectRepo } from "./workItemProjectRepo.js";
 import { createWorkItemRepo } from "./workItemRepo.js";
 import { createWorkItemReactionRepo } from "./workItemReactionRepo.js";
 import { createWorkItemViewPrefsRepo } from "./workItemViewPrefsRepo.js";
@@ -381,6 +382,12 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
      —— 与 `workItemViewRepo` / `subscriberRepo` 同一处口径（按目标现构、不缓存）。 */
   const workItemReactionRepo = createWorkItemReactionRepo(db);
 
+  /* R-P1（工作项项目绑定 · 服务面轮）：项目存储面在这里装配一次（同一条 db、同一目标 workspace）。
+     恒构造：漏接的表现是「项目入口全报错」（服务面的响亮抛，可发现），不是静默空转 —— 与
+     `workItemViewRepo` / `workItemReactionRepo` 同一处口径（按目标现构、不缓存）。
+     短码唯一、workspace 租户守卫与「删项目置空挂接」的事务都在 repo 内（服务面只管形状/闭集）。 */
+  const workItemProjectRepo = createWorkItemProjectRepo(db);
+
   // ④ 工作项服务的事件出口**唯一**：内部订阅表。emit 只在这里转发，调用方拿
   //    `subscribeWorkItemEvents` 挂订阅（不得去读 repo 轮询——轮询会漏掉「刚刚那一次」的时序信息）。
   const subscribers = new Set<(event: WorkItemEvent) => void>();
@@ -473,6 +480,8 @@ export async function createSquadRuntime(deps: SquadRuntimeDeps): Promise<SquadR
     workItemViewPrefsRepo,
     /* P3-R5s：工作项级 reactions 的存储面（同一条 db；emoji 护栏与归属判据在服务面）。 */
     workItemReactionRepo,
+    /* R-P1：项目的存储面（同一条 db；短码形状/闭集判据在服务面，唯一性与租户守卫在 SQL）。 */
+    workItemProjectRepo,
     /* #8 D3：整批收尾模式的现判读取口（缺省 local = 行为与改前一致）；编排器在收尾那一刻取一次。 */
     readSquadMergeMode: () => deps.readSquadMergeMode?.() ?? "local",
     teamAgentService,

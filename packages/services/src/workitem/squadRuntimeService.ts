@@ -70,6 +70,17 @@ import type { WorkItemViewRecord } from "./workItemViewRepo.js";
 import { createWorkItemReactionOps } from "./workItemReactionService.js";
 // 只取类型：`WorkItemReactionRecord`（同上，类型擦除，不破坏浏览器安全）。
 import type { WorkItemReactionRecord } from "./workItemReactionRepo.js";
+// 项目五件（R-P1：list / create / update / delete + setWorkItemProject）的唯一实现（短码闭集与唯一、
+// status 闭集、挂接矩阵、删项目置空挂接全在其中）。同款拆文件：本文件必须浏览器安全 + 贴着 lint 门槛。
+import {
+  createWorkItemProjectOps,
+  resolveWorkItemProjectBinding,
+  type CreateProjectInput,
+  type SetWorkItemProjectInput,
+  type UpdateProjectInput,
+} from "./workItemProjectService.js";
+// 只取类型：`WorkItemProjectRecord`（repo 模块只 `import type node:sqlite`，本文件仍保持浏览器安全）。
+import type { WorkItemProjectRecord } from "./workItemProjectRepo.js";
 
 /* 小队运行时的**服务面**：UI / host / 工具三处都只经这个描述符取数或触发派发。
 
@@ -153,6 +164,14 @@ export type CreateWorkItemRequest = {
   /** 起始 / 截止：日历日期 `YYYY-MM-DD`（Q5），坏日期在唯一创建入口响亮抛。 */
   startDate?: string | null;
   dueDate?: string | null;
+  /**
+   * 所属项目（R-P1 加法，可空）：`undefined` = 无项目（新建没有「上次记忆」，与 multica 的
+   * 「deliberately NOT remembered」同款）；`null` 与 `undefined` 在建项路径同义（都落无项目），
+   * 但**类型上分开**是为了让「显式回无项目」在调用点可读（编辑器复用同一形状）。
+   * 非空 ⇒ 服务面校验项目属本 workspace（未知/跨域 ⇒ `work_item_project_not_found`），
+   * 并把项目短码作为 `identifier_prefix` **快照**同写（编号显示 = `{短码}-{序号}`）。
+   */
+  projectId?: string | null;
   /* 创建人**刻意不在这里**：身份由组合根注入（`deps.localHumanActor`，见该字段注释）——
      让调用方传身份就等于把「谁按下的创建」交给 UI 自证，而设计案 §12-2 明确
      「不应在 UI 自行决定身份」。 */
@@ -489,6 +508,13 @@ export interface ISquadRuntimeService {
            = 不动现值，与其余字段同一份 patch 子集语义；建表列是 `REAL NOT NULL DEFAULT 0`，
            故没有「写 NULL 清位」这一态。 */
         position?: number;
+        /**
+         * 项目挂接（R-P1 加法）：`undefined` = **不动现值**（与其余 patch 字段同款）；`null` =
+         * 回无项目（`project_id` 与 `identifier_prefix` 同置 NULL，编号显示回落 `#N`）；非空 ⇒
+         * 改挂到该项目（换短码前缀快照；未知/跨域 ⇒ `work_item_project_not_found`，写之前拒）。
+         * 它是 patch 的**合法唯一字段**（只给 `projectId` 不算空 patch）。
+         */
+        projectId?: string | null;
       };
     },
   ): Promise<WorkItem>;
@@ -949,6 +975,56 @@ export interface ISquadRuntimeService {
     target: SquadWorkspaceTarget,
     input: { workItemId: string },
   ): Promise<WorkItemReactionRecord[]>;
+  /**
+   * **本工作区的全部项目**（R-P1；唯一实现在 `workItemProjectService.ts`）。
+   *
+   * 排序（`created_at ASC, id ASC`）由 repo 单源给出，本层不重排、不截断。
+   * **不过门禁**：读不是新派发（与 `listWakeRules` / `listWorkItemViews` 同款 —— 关掉实验开关后
+   * 仍应能看到项目列表）。
+   */
+  listProjects(target: SquadWorkspaceTarget): Promise<WorkItemProjectRecord[]>;
+  /**
+   * 建一条项目（R-P1）。名称必填（multica `project.go:265`「title is required」的等价物）、
+   * `shortCode` 是 2-8 位大写字母数字且 **workspace 内唯一**（编号前缀来源；ZPaPa 加法 ——
+   * multica 的编号前缀是 workspace 级 `issue_prefix`，用户裁定改为项目短码）、`status` 闭集五档
+   * 缺省 `planned`、`priority` 与工作项同闭集（可空 = 未设置）、两个日历日期 `YYYY-MM-DD`。
+   * 坏值一律**响亮拒且零落盘**；短码撞唯一索引 ⇒ 稳定码 `work_item_project_short_code_conflict`。
+   *
+   * **不过门禁**：项目与派发无关，关掉实验开关后项目管理仍必须可用（与保存视图 / reactions 同款）。
+   */
+  createProject(
+    target: SquadWorkspaceTarget,
+    input: CreateProjectInput,
+  ): Promise<WorkItemProjectRecord>;
+  /**
+   * 子集 patch（未给的字段不动现值；`null` = 清回未设置）。**`shortCode` 不在 patch 面**
+   * （编号前缀来源，v1 不可改 —— 改它要么重写历史编号要么留陈旧前缀，登记在交付报告）。
+   * 空 patch ⇒ 响亮拒（不做空写）；不存在 / 异 workspace / 并发被删 ⇒
+   * `work_item_project_not_found`。**不过门禁**（同上）。
+   */
+  updateProject(
+    target: SquadWorkspaceTarget,
+    input: UpdateProjectInput,
+  ): Promise<WorkItemProjectRecord>;
+  /**
+   * 删项目 = **置空挂接 + 删行**（repo 在同一事务内做）：本 workspace 内挂到该项目的行
+   * `project_id` 置 NULL（`identifier_prefix` 快照**保留** —— 已签发的编号不重写，multica
+   * `ON DELETE SET NULL` 的等价物）；不存在 / 异 workspace ⇒ `work_item_project_not_found`。
+   * **不过门禁**（删掉的是分组容器，不是派发；与 `deleteWakeRule` 同款理由）。
+   */
+  deleteProject(target: SquadWorkspaceTarget, input: { id: string }): Promise<void>;
+  /**
+   * **单条工作项的项目挂接**（bind / unbind 的唯一服务面入口）：`projectId: null` ⇒ 回无项目
+   * （`project_id` 与 `identifier_prefix` 同置 NULL，编号显示回落 `#N`）；非空 ⇒ 写 `project_id`
+   * + 短码前缀快照。未知 / 跨 workspace 的项目、以及不存在 / 已归档 / 跨 workspace 的工作项都
+   * **响亮拒**（分别同码，防跨域存在性泄露）。返回**读回后的工作项**（`projectId` /
+   * `identifierPrefix` 两字段随读模型带出）。创建/编辑工作项两条路径的同名语义见
+   * `CreateWorkItemRequest.projectId` 与 `updateWorkItem` 的 patch。**不过门禁**（挂接不产生新派发）。
+   */
+  setWorkItemProject(
+    target: SquadWorkspaceTarget,
+    input: SetWorkItemProjectInput,
+  ): Promise<WorkItem>;
 }
 
 export const ISquadRuntimeService = createServiceDescriptor<ISquadRuntimeService>("squad-runtime");
@@ -1210,11 +1286,23 @@ export function createSquadRuntimeService(deps: {
     ...(deps.newId === undefined ? {} : { newId: deps.newId }),
   });
 
+  /* 项目五件（R-P1）：实现全在 `workItemProjectService.ts`（名称/短码/闭集/日期 -> 挂接矩阵 ->
+     删项目置空挂接），这里只把依赖接进去 —— ① `deps.createRuntime`（按目标现构，不缓存）；
+     ② 时钟与 id（测试可钉死，生产不注入）。**都不调 `assertEnabled`**：项目与派发无关，
+     关掉实验开关后项目管理仍必须可用（与 `updateWorkItem` / 保存视图 / reactions 同款理由）。 */
+  const workItemProjectOps = createWorkItemProjectOps({
+    createRuntime: deps.createRuntime,
+    ...(deps.now === undefined ? {} : { now: deps.now }),
+    ...(deps.newId === undefined ? {} : { newId: deps.newId }),
+  });
+
   return {
     // 保存视图六件（R6a）：实现在 `workItemViewService.ts`（本层只接线，见上面 ops 的构造点）。
     ...workItemViewOps,
     // 工作项级 reactions 两件（P3-R5s）：实现在 `workItemReactionService.ts`（同上）。
     ...workItemReactionOps,
+    // 项目五件（R-P1）：实现在 `workItemProjectService.ts`（同上）。
+    ...workItemProjectOps,
 
     async assertDispatchEnabled(_target) {
       // 只答门禁问题：**不构造 runtime**（也就不依赖 git 解析），只读设置、只抛错。
@@ -1321,6 +1409,14 @@ export function createSquadRuntimeService(deps: {
       // 「拦在入口而不是半路」：半路拦会留下一条已入队的工作项，看上去像是派发成功了一半。
       await assertEnabled();
       const runtime = await deps.createRuntime(target);
+      /* R-P1：项目归属**先校验、后建行**（坏值零落盘）。解析与校验的唯一实现在
+         `workItemProjectService.resolveWorkItemProjectBinding`（三条挂接写路径共用同一份）；
+         `undefined` / `null` 都折成「无项目」（两列 NULL）—— 新建不记忆上次项目。 */
+      const binding = resolveWorkItemProjectBinding({
+        repo: runtime.workItemProjectRepo,
+        workspaceKey: keyOf(runtime),
+        projectId: input.projectId ?? null,
+      });
       // workspace 列取自 runtime 的绑定值而不是入参 target：runtime 才是「为哪个 workspace 而构造」的权威。
       return runtime.workItemService.create({
         workspaceIdentity: runtime.boundWorkspace.identity,
@@ -1335,6 +1431,9 @@ export function createSquadRuntimeService(deps: {
         priority: input.priority,
         startDate: input.startDate,
         dueDate: input.dueDate,
+        // R-P1：挂接两列（已解析结论）同写；前缀 = 项目短码快照。
+        projectId: binding.projectId,
+        identifierPrefix: binding.identifierPrefix,
         /* 创建人 = **组合根注入的本机操作者**（不是入参、不是 assignee）：未注入 ⇒ 不传这个键，
            落 NULL（未知）。这里不做第二份身份判据，也不在缺身份时编一个。 */
         creator: deps.localHumanActor?.() ?? null,
@@ -1449,11 +1548,48 @@ export function createSquadRuntimeService(deps: {
         if (parsed.kind !== "ok") throw new Error(workItemDateErrorMessage(parsed));
         patch = { ...patch, dueDate: parsed.date };
       }
-      if (!runtime.workItemRepo.updateContent(input.id, patch)) {
+      /* R-P1：项目挂接**先解析、后写**（未知/跨域项目 ⇒ 写之前抛，库里保持原挂接）。
+         `undefined` = 不动现值；`null` = 回无项目；非空 = 改挂。
+         挂接两列不走 `updateContent`（那是内容白名单，见其注释「creator/identifier 没有更新面」的
+         同一条边界）：项目两列有专门的写入口 `workItemProjectRepo.bindWorkItem`（唯一实现，
+         两列同生共死）—— 在这里把「反正是 UPDATE work_items」的想法写成第二份 SQL 会让前缀与
+         project_id 在某个分支上分叉，而分叉不报错。 */
+      const binding =
+        input.patch.projectId === undefined
+          ? null
+          : resolveWorkItemProjectBinding({
+              repo: runtime.workItemProjectRepo,
+              workspaceKey: keyOf(runtime),
+              projectId: input.patch.projectId,
+            });
+      const hasContentPatch = Object.values(patch).some((value) => value !== undefined);
+      if (!hasContentPatch && binding === null) {
         throw new Error(
-          `编辑工作项失败：工作项「${input.id}」不存在、已归档、或没有给任何要改的字段（空 patch）——` +
+          `编辑工作项失败：工作项「${input.id}」没有给任何要改的字段（空 patch）——` +
             "静默 no-op 会让界面以为改成功了，而库里仍是旧内容。",
         );
+      }
+      if (hasContentPatch && !runtime.workItemRepo.updateContent(input.id, patch)) {
+        throw new Error(
+          `编辑工作项失败：工作项「${input.id}」不存在或已归档——` +
+            "静默 no-op 会让界面以为改成功了，而库里仍是旧内容。",
+        );
+      }
+      if (binding !== null) {
+        const bound = runtime.workItemProjectRepo.bindWorkItem({
+          workspaceKey: keyOf(runtime),
+          workItemId: input.id,
+          ...binding,
+        });
+        if (!bound) {
+          /* 未命中 = 行不存在 / 已归档 / 异 workspace：响亮抛。注意次序 —— 若内容 patch 已写而
+             挂接未落，两者会有一次「半程修改」（并发归档这一窄窗）；宁可响亮失败让调用方重放，
+             也不静默 no-op（那会让界面以为挂接成功了，而库里没动）。 */
+          throw new Error(
+            `编辑工作项失败：工作项「${input.id}」在挂接项目时已不可写（不存在 / 已归档 / 不属于本工作区）` +
+              "——挂接没有落盘（内容字段若已写则已生效，请刷新后重试整次编辑）。",
+          );
+        }
       }
       // 读回写盘后的实体返回；理论上刚刚命中过同一条件，读回为 null 不可达 —— 真不可达时也响亮抛，
       // 不返回 undefined 让调用方在下一层才炸。

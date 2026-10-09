@@ -559,6 +559,28 @@ export type { WorkItemCommentReactionRecord } from "./workitem/workItemCommentRe
 /* 工作项级 reactions 的行形状（P3-R5s；UI 侧按 emoji 聚合要用它命名返回元素）：
    类型声明在 repo 模块（只 `import type node:sqlite`），这里只做类型再导出（编译擦除）。 */
 export type { WorkItemReactionRecord } from "./workitem/workItemReactionRepo.js";
+/* 项目五件（R-P1）的**稳定错误码 + 错误类**：UI 侧按码分流（照 `SQUAD_DISPATCH_DISABLED_CODE`
+   的做法：项目不存在 / 工作项不存在 / 短码冲突 / 输入非法四类）。实现文件
+   （`workItemProjectService.ts`）是浏览器安全的（shared 纯函数 + 只类型引用），故可作**值**导出。 */
+export {
+  WorkItemProjectError,
+  WORK_ITEM_NOT_FOUND_CODE,
+  WORK_ITEM_PROJECT_INVALID_CODE,
+  WORK_ITEM_PROJECT_NOT_FOUND_CODE,
+  WORK_ITEM_PROJECT_SHORT_CODE_CONFLICT_CODE,
+} from "./workitem/workItemProjectService.js";
+/* 项目五件的入参出参形状（UI 的项目页 / 项目选择器 / 看板列要能命名它们）：类型声明在实现文件
+   （`workItemProjectService.ts` / `workItemProjectRepo.ts`），只做类型再导出（编译擦除）。 */
+export type {
+  CreateProjectInput,
+  SetWorkItemProjectInput,
+  UpdateProjectInput,
+  WorkItemProjectErrorCode,
+} from "./workitem/workItemProjectService.js";
+export type {
+  WorkItemProjectPatch,
+  WorkItemProjectRecord,
+} from "./workitem/workItemProjectRepo.js";
 export { WORK_ITEM_DECISION_KINDS } from "./workitem/workItemDecisionRepo.js";
 export type {
   WorkItemDecisionKind,

@@ -86,6 +86,18 @@ export interface CreateWorkItemInput {
    * 本层只负责落列，不做第二份身份判据。
    */
   creator?: WorkItemCreator | null;
+  /* ---- 项目绑定（0022；R-P1）：两列由**服务面**解析后传入（它是唯一能取项目行的一层）---- */
+  /**
+   * 所属项目（可空；省略 = 无项目）。**归属校验不在这里**：本函数拿不到项目表，判据在
+   * `workItemProjectService.resolveWorkItemProjectBinding`（服务面调用它后才把结论传进来）。
+   * 本层只照写两列（NULL = 无项目）。
+   */
+  projectId?: string | null;
+  /**
+   * 编号前缀**快照**（短码，由服务面与 `projectId` 同源解析、同生共死）。本层不做第二份推导
+   * —— 在前缀与项目不一致的写入路径上，编号会与挂接分叉，而分叉不报错。
+   */
+  identifierPrefix?: string | null;
   /** 可选：测试与幂等场景可自带 id；缺省时生成。 */
   id?: string;
 }
@@ -197,6 +209,16 @@ export function createWorkItemService(deps: {
         ...(dueDate.date !== null ? { dueDate: dueDate.date } : {}),
         ...(input.creator !== undefined && input.creator !== null
           ? { creator: input.creator }
+          : {}),
+        /* 0022：项目两列同生共死（省略 = 无项目；服务面已解析并校验过归属）。
+           前缀为空串与 null 同义（都落 NULL）—— 空串前缀不是合法短码，写进去只会让显示分叉。 */
+        ...(input.projectId != null && input.projectId !== ""
+          ? {
+              projectId: input.projectId,
+              ...(input.identifierPrefix != null && input.identifierPrefix !== ""
+                ? { identifierPrefix: input.identifierPrefix }
+                : {}),
+            }
           : {}),
       };
       /* 序号由存储面语句内生成并回传（调用方**结构上无法传号**：CreateWorkItemInput 里没有

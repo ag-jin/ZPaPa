@@ -27,6 +27,7 @@ import type { WorkItemReactionRepo } from "./workItemReactionRepo.js";
 import type { WorkItemRepo } from "./workItemRepo.js";
 import type { WorkItemViewPrefsRepo } from "./workItemViewPrefsRepo.js";
 import type { WorkItemViewRepo } from "./workItemViewRepo.js";
+import type { WorkItemProjectRepo } from "./workItemProjectRepo.js";
 
 /* 小队运行时的**类型面**（Wave 0 的冻结接口之一）。
    本文件**只含类型**：`SquadRuntime` 的**值**由 `squadRuntime.ts` 的 `createSquadRuntime` 给出。
@@ -219,6 +220,16 @@ export type SquadRuntime = {
    * 另建跨目标单例会让读落到别的 workspace 上（而 `workspace_key` 的写路径守卫在服务面）。
    */
   workItemReactionRepo: WorkItemReactionRepo;
+  /**
+   * **项目（workspace 级实体）的存储面**（R-P1，`projects` 表 + `work_items` 的项目两列，迁移 0022）：
+   * 项目 CRUD 与「工作项 ↔ 项目」挂接（含删项目时的置空挂接）都经它。短码唯一与租户守卫在 SQL 里，
+   * 形状/闭集判据在服务面（`workItemProjectService.ts`）。
+   *
+   * 为什么挂在 runtime 上：项目是**按 workspace** 的事实（行里带 `workspace_key`），与
+   * `workItemViewRepo` / `workItemReactionRepo` / `subscriberRepo` 同一条理由 —— 另建跨目标单例
+   * 会让读落到别的 workspace 上（而 `workspace_key` 的写路径守卫在服务面）。
+   */
+  workItemProjectRepo: WorkItemProjectRepo;
   /**
    * **整批收尾模式**（#8 D3）的现判读取口：`local`（缺省，本地合回）/ `pr-gate`（push + 开 PR，
    * 终态交 PR merge）。**每次调用现判**（转调注入的读函数；未注入恒 `local`）——

@@ -284,7 +284,48 @@ export const workItemSchema = z.object({
   dueDate: workItemDateOnlySchema.optional(),
   /** 创建人（谁按下创建）；缺省 = 未知（存量行**不**拿 assignee 冒充）。 */
   creator: workItemCreatorSchema.optional(),
-  /** 每 workspace 单调序号（写入口用 SQL 原子生成；前缀不入库，展示文本由 UI 单源生成）。 */
+  /** 每 workspace 单调序号（写入口用 SQL 原子生成；编号文本由 `formatWorkItemIdentifier` 单源拼接）。 */
   identifierSeq: z.number().int().positive().optional(),
+  /* ---- 项目绑定（0022；R-P1 服务面轮）---- */
+  /**
+   * 所属项目（`work_items.project_id`，可空）：**缺省 = 无项目**（显式合法状态，不是脏数据
+   * —— multica 同款：过滤/看板/选择器三层都显式表达「无项目」）。写入口校验项目属于本 workspace。
+   */
+  projectId: z.string().min(1).optional(),
+  /**
+   * 编号前缀**快照**（`work_items.identifier_prefix`）：绑定/改绑时落项目的 `short_code`，
+   * 清绑时置 NULL。它是**既成事实**（已签发的编号不因项目后续变动而重写），
+   * 读模型原样带出，不经项目表二次解析。
+   */
+  identifierPrefix: z.string().min(1).optional(),
 });
 export type WorkItem = z.infer<typeof workItemSchema>;
+
+/* ------------------------------------------------------------------------ */
+/* 编号显示（R-P1 项目绑定轮）                                                */
+/* ------------------------------------------------------------------------ */
+
+/** 无项目时的编号前缀：保持本仓既有 `#N` 形态（不因项目维度上线而改既有编号）。 */
+const NO_PROJECT_IDENTIFIER_PREFIX = "#";
+
+/**
+ * 工作项**编号文本**的唯一纯函数：`{短码}-{序号}`（有项目）或 `#{序号}`（无项目）。
+ *
+ * 为什么在 shared 而不是 UI：两个消费面（UI 的列/卡片/详情，服务侧的读模型与回声）必须同源 ——
+ * 两处各拼一遍时，某天会在「前缀是不是去空白」「分隔符是不是连字符」上分叉，而分叉只体现在
+ * 用户看到的编号上（不报错）。函数是纯函数、无 i18n、不抛：两个运行环境（浏览器 / node）都可用。
+ *
+ * 两个入参都来自**库里的行**（`identifier_prefix` 快照与 `identifier_seq`），不是实时项目：
+ * · `prefix` 非空 ⇒ `{prefix}-{seq}`；空串 / `null` / `undefined` ⇒ 按「无前缀」渲染 `#{seq}`。
+ *   空串是手改库/跨版本残留的坏值 —— 拼成 `-12` 这种残形比回落到既有形态更坏；渲染不抛。
+ * · `seq` 为 `null` / `undefined` ⇒ 返回 `null`（存量行没有号）：调用方据此**整块不渲染**，
+ *   空串会让「未设置」看起来像「编号是空的」。
+ */
+export function formatWorkItemIdentifier(input: {
+  prefix?: string | null;
+  seq?: number | null;
+}): string | null {
+  if (input.seq === null || input.seq === undefined) return null;
+  const prefix = input.prefix ?? "";
+  return prefix === "" ? `${NO_PROJECT_IDENTIFIER_PREFIX}${input.seq}` : `${prefix}-${input.seq}`;
+}

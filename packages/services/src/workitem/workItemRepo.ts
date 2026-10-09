@@ -35,6 +35,10 @@ interface WorkItemRow {
   creator_id: string | null;
   creator_display_name: string | null;
   identifier_seq: number | null;
+  /* 0022（项目绑定）追加的两列：project_id 可空（「无项目」是显式合法状态）；
+     identifier_prefix 是短码**快照**（编号 = 前缀-序号；NULL = 无前缀，显示回落 `#N`）。 */
+  project_id: string | null;
+  identifier_prefix: string | null;
 }
 
 export interface WorkItemRepo {
@@ -142,6 +146,10 @@ function rowToWorkItem(row: WorkItemRow): WorkItem {
        真出现时按「未知」读回，不返回半截对象）。 */
     creator: readCreator(row),
     identifierSeq: row.identifier_seq ?? undefined,
+    /* 0022：项目绑定的两列同一条读回纪律（NULL ⇒ undefined，不猜、不落默认值）——
+       「无项目」与「项目是空字符串」不是同一态，前缀快照 NULL 时编号显示回落 `#N`。 */
+    ...(row.project_id !== null ? { projectId: row.project_id } : {}),
+    ...(row.identifier_prefix !== null ? { identifierPrefix: row.identifier_prefix } : {}),
   };
 }
 
@@ -160,21 +168,23 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
   return {
     insert(item) {
       const now = Date.now();
-      /* 列集与 16 列版逐字一致（既有列的写入口径不变），只是追加 0018 的 7 列；
+      /* 列集与 16 列版逐字一致（既有列的写入口径不变），只是追加 0018 的 7 列与 0022 的 2 列；
          `identifier_seq` 由 SELECT 里的 `COALESCE(MAX…)+1` **语句内**生成，`RETURNING`
          把刚生成的号在**同一语句**里交回（没有「写入与读回之间」的窗口）——
-         参数列表里没有它，调用方结构上无法传号（见接口注释）。 */
+         参数列表里没有它，调用方结构上无法传号（见接口注释）。
+         项目两列（0022）由调用方给（服务面已校验项目属本 workspace）：
+         `identifier_prefix` 是绑定时刻的短码快照，不是读时从项目表现算的派生值。 */
       const row = db
         .prepare(
           `INSERT INTO work_items (
           id, workspace_key, workspace_path, parent_id, stage, title, body, status,
           assignee_type, assignee_id, labels, properties, position, archived_at,
           priority, start_date, due_date, creator_kind, creator_id, creator_display_name,
-          identifier_seq, created_at, updated_at
+          identifier_seq, project_id, identifier_prefix, created_at, updated_at
         )
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           COALESCE((SELECT MAX(identifier_seq) FROM work_items WHERE workspace_key = ?), 0) + 1,
-          ?, ?
+          ?, ?, ?, ?
         RETURNING identifier_seq`,
         )
         .get(
@@ -200,6 +210,8 @@ export function createWorkItemRepo(db: DatabaseSync): WorkItemRepo {
           item.creator?.displayName ?? null,
           // MAX+1 的作用域参数：workspace_key（序号是每 workspace 的）。
           item.workspaceIdentity,
+          item.projectId ?? null,
+          item.identifierPrefix ?? null,
           now,
           now,
         ) as { identifier_seq: number } | undefined;
