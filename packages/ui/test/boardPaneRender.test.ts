@@ -25,6 +25,22 @@ function render(state: BoardPaneLoadState): string {
   );
 }
 
+function renderEnglish(state: BoardPaneLoadState): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US" as const,
+      children: createElement(BoardPaneView, { state, onRefresh: () => {} }),
+    }),
+  );
+}
+
+/** 段位徽章的可见文本（`data-board-stage` 属性仍是字段原值，这里取文字节点）。 */
+function stageBadgeTexts(markup: string): string[] {
+  return [...markup.matchAll(/data-board-stage="[^"]*"[^>]*>([^<]*)</g)].map((match) =>
+    (match[1] ?? "").trim(),
+  );
+}
+
 function textInside(markup: string, attr: string): string {
   const match = new RegExp(`${attr}[^>]*>([^<]*)<`).exec(markup);
   assert.ok(match, `markup 里找不到 ${attr}：\n${markup}`);
@@ -166,4 +182,17 @@ test("卡片层级深度按 label 段数缩进（契约 §3.3）", () => {
   assert.ok(card11, "卡片应带缩进层级标记");
   assert.equal(card11[1], "1", "label=1.1 的卡片缩进层级为 1");
   assert.ok(draftCard && draftCard.length >= 1, "未领号卡也应有缩进层级");
+});
+
+test("英文界面：段位徽章走英文词条，不出现中文段位（评审 S5）", () => {
+  const markup = renderEnglish(readyState());
+  const texts = stageBadgeTexts(markup);
+  assert.ok(texts.length > 0, `英文界面应有段位徽章：\n${markup}`);
+  for (const text of texts) {
+    assert.ok(!/[\u4e00-\u9fff]/.test(text), `en-US 段位徽章漏了中文：${text}`);
+  }
+  // 字段原值仍是锚点（data 属性不本地化），可见文本才本地化。
+  assert.ok(markup.includes('data-board-stage="执行中"'), "段位锚点应保留字段原值");
+  assert.ok(texts.includes("In progress"), `执行中 的英文词条应为 In progress：${texts.join("|")}`);
+  assert.ok(texts.includes("To do"), `待办 的英文词条应为 To do：${texts.join("|")}`);
 });

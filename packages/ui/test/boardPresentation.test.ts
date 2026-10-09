@@ -1,14 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import {
   boardStatusDotClassName,
   boardTaskLabelIndentLevel,
+  BOARD_ATTENTION_LABEL_MESSAGE_IDS,
+  BOARD_STAGE_MESSAGE_IDS,
+  BOARD_STATUS_MESSAGE_IDS,
   formatAttentionBadgeText,
   formatAttentionSummaryText,
   formatBoardLastRunText,
+  formatBoardStageText,
 } from "../src/board/boardPresentation.js";
-import { hasAttentionSignal, type BoardLastRun } from "../src/board/boardViewModel.js";
+import {
+  BOARD_ATTENTION_CODES,
+  BOARD_STATUS_VALUES,
+  hasAttentionSignal,
+  type BoardLastRun,
+} from "../src/board/boardViewModel.js";
 
 /**
  * 看板呈现层的纯函数缝（卡 #32）。
@@ -18,13 +28,18 @@ import { hasAttentionSignal, type BoardLastRun } from "../src/board/boardViewMod
  * 字面量写在测试里 —— 词条漂移必须让测试红。
  */
 
-const t = (descriptor: { id: string }, values?: Record<string, string | number>) => {
-  let message = zhCN[descriptor.id] ?? descriptor.id;
-  for (const [key, value] of Object.entries(values ?? {})) {
-    message = message.replaceAll(`{${key}}`, String(value));
-  }
-  return message;
-};
+function formatterWith(messages: Record<string, string>) {
+  return (descriptor: { id: string }, values?: Record<string, string | number>) => {
+    let message = messages[descriptor.id] ?? descriptor.id;
+    for (const [key, value] of Object.entries(values ?? {})) {
+      message = message.replaceAll(`{${key}}`, String(value));
+    }
+    return message;
+  };
+}
+
+const t = formatterWith(zhCN);
+const tEn = formatterWith(enUS);
 
 test("四缺口码徽章文案逐字（契约 §4）", () => {
   const interrupted: BoardLastRun = {
@@ -141,4 +156,65 @@ test("卡片缩进随 label 段数；未领号卡按第二层处理（契约 §3
   assert.equal(boardTaskLabelIndentLevel("1.2"), 1);
   assert.equal(boardTaskLabelIndentLevel("1.2.3"), 2);
   assert.equal(boardTaskLabelIndentLevel(null), 1);
+});
+
+/**
+ * 段位词条映射（评审 S5：en-US 界面出现中文段位）。
+ * 期望值的独立真源：契约 §13.1 七段位词表（与 schema v2.1 / `lib/derive.mjs` 同源）。
+ * 中文侧必须逐字等于契约词表（界面术语即契约术语）；英文侧不得漏中文（S5 的病）。
+ */
+const STAGE_VALUES = ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"] as const;
+
+test("七段位中文词条逐字（契约 §13.1）", () => {
+  for (const stage of STAGE_VALUES) {
+    assert.equal(formatBoardStageText(stage, t), stage, `${stage} 的中文词条应逐字等于段位词`);
+  }
+});
+
+test("七段位英文词条齐备且不含中文（评审 S5）", () => {
+  const labels = STAGE_VALUES.map((stage) => formatBoardStageText(stage, tEn));
+  for (const [index, label] of labels.entries()) {
+    assert.ok(label && label.trim().length > 0, `${STAGE_VALUES[index]} 缺英文词条`);
+    assert.ok(
+      label !== null && !/[\u4e00-\u9fff]/.test(label),
+      `${STAGE_VALUES[index]} 的英文词条漏了中文：${label}`,
+    );
+  }
+  assert.equal(new Set(labels).size, STAGE_VALUES.length, "七个英文段位名必须互异");
+});
+
+test("段位缺省/不认识：null 不渲染徽章，未知段位原样透出（不吞字段、不自造词）", () => {
+  assert.equal(formatBoardStageText(null, t), null);
+  assert.equal(formatBoardStageText("未来段位", t), "未来段位");
+});
+
+test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存在）", () => {
+  const ids = [
+    ...STAGE_VALUES.map((stage) => BOARD_STAGE_MESSAGE_IDS[stage]),
+    ...BOARD_STATUS_VALUES.map((status) => BOARD_STATUS_MESSAGE_IDS[status]),
+    ...BOARD_ATTENTION_CODES.map((code) => BOARD_ATTENTION_LABEL_MESSAGE_IDS[code]),
+    "board.view.tree",
+    "board.view.kanban",
+    "board.view.list",
+    "board.kanban.interviewSummary",
+    "board.kanban.unplaced",
+    "board.list.filters",
+    "board.list.empty",
+    "board.filter.stage",
+    "board.filter.status",
+    "board.filter.attention",
+    "board.filter.sort",
+    "board.filter.all",
+    "board.sort.recent",
+    "board.sort.oldest",
+  ];
+  for (const id of ids) {
+    assert.ok(zhCN[id], `缺 zh-CN 词条：${id}`);
+    assert.ok(enUS[id], `缺 en-US 词条：${id}`);
+  }
+  // 英文过滤标签也不得漏中文（S5 同款判据）。
+  for (const code of BOARD_ATTENTION_CODES) {
+    const label = enUS[BOARD_ATTENTION_LABEL_MESSAGE_IDS[code]] ?? "";
+    assert.ok(!/[\u4e00-\u9fff]/.test(label), `en-US 缺口短标签漏中文：${label}`);
+  }
 });

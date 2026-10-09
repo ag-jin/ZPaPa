@@ -186,6 +186,29 @@ test("golden 形态 board.json → ready，映射特性树与卡片字段", asyn
   assert.ok(board.diagnostics[0]?.message.includes("未领号"));
 });
 
+test("卡片映射 updatedAt 与 statusRule（列内排序与取消原因的字段基础，卡 #33）", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+
+  const spec = state.board.features[0];
+  assert.ok(spec);
+  // 特性级 statusRule：段位溯源（契约 §13.1「每节点必带」）。
+  assert.equal(spec.statusRule, "progress.stages.design=active");
+
+  const [card7, card8] = spec.tasks;
+  assert.ok(card7 && card8);
+  // 卡龄排序的数据基础：卡片 updatedAt 必须映射（契约 §3.5）。
+  assert.equal(card7.updatedAt, "2026-10-09T14:05:00+08:00");
+  assert.equal(card8.updatedAt, "2026-10-09T14:20:00+08:00");
+  // 已取消列的取消原因来自任务级 statusRule；缺省不编造。
+  assert.equal(card7.statusRule, "tasks.md checkbox unchecked");
+  assert.equal(card8.statusRule, null, "缺 statusRule 的卡不得编造溯源");
+});
+
 test("stage 缺省（无 stage 字段的旧版板）不阻断渲染，也不猜测段位", async () => {
   const boardWithoutStage = structuredClone(GOLDEN_SHAPED_BOARD);
   for (const feature of boardWithoutStage.features) {

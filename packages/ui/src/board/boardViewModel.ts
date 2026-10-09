@@ -19,6 +19,36 @@ export const BOARD_ATTENTION_CODES = [
 
 export type BoardAttentionCode = (typeof BOARD_ATTENTION_CODES)[number];
 
+/**
+ * 七段位词表（按列序/流水序：待设计 → 待办 → 执行中 → 审核中 → 阻塞 → 已完成 → 已取消）。
+ *
+ * 单一真源：消费契约 §13.1「段位定义与优先级」表（与 `board.schema.json` v2.1 的
+ * `stage` 枚举、编译器 `lib/derive.mjs` 的 `deriveStage` 同源）。应用侧**只读渲染，不得自算段位**；
+ * 本词表只用于「认识/定位」段位值，不用于派生。
+ */
+export const BOARD_STAGES = [
+  "待设计",
+  "待办",
+  "执行中",
+  "审核中",
+  "阻塞",
+  "已完成",
+  "已取消",
+] as const;
+
+export type BoardStage = (typeof BOARD_STAGES)[number];
+
+/** schema v2.1 的 `status` 枚举（过滤控件取值用；判定口径仍只读板上字段）。 */
+export const BOARD_STATUS_VALUES = [
+  "pending",
+  "active",
+  "blocked",
+  "completed",
+  "cancelled",
+] as const;
+
+export type BoardStatusValue = (typeof BOARD_STATUS_VALUES)[number];
+
 /** 应用侧认识的 board.json 主版本（schema v2，T1 冻结）。 */
 export const BOARD_KNOWN_VERSION = 2;
 
@@ -61,6 +91,8 @@ export interface BoardTaskNode {
   label: string | null;
   title: string;
   status: string | null;
+  /** 段位溯源（契约 §13.1；应用侧只读，不自算段位）。 */
+  statusRule: string | null;
   stage: string | null;
   draft: boolean;
   attention: BoardAttentionCode[];
@@ -68,6 +100,8 @@ export interface BoardTaskNode {
   lastRun: BoardLastRun | null;
   activeRun: BoardActiveRun | null;
   worktree: string | null;
+  /** 卡龄排序基准（契约 §3.5；= max(源推导时间, 最新 run.at)，编译器已算好）。 */
+  updatedAt: string | null;
   children: BoardTaskNode[];
 }
 
@@ -78,6 +112,8 @@ export interface BoardFeatureNode {
   kind: string | null;
   title: string;
   status: string | null;
+  /** 段位溯源（契约 §13.1；已取消列展示取消原因的来源）。 */
+  statusRule: string | null;
   stage: string | null;
   attention: BoardAttentionCode[];
   progress: BoardProgress | null;
@@ -174,6 +210,7 @@ function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
     label,
     title: readText(node.title) ?? "",
     status: readText(node.status),
+    statusRule: readText(node.statusRule),
     stage: readText(node.stage),
     draft: node.draft === true,
     attention: readAttentionCodes(node.attention),
@@ -181,6 +218,7 @@ function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
     lastRun: readLastRun(node.lastRun),
     activeRun: readActiveRun(node.activeRun),
     worktree: readText(node.worktree),
+    updatedAt: readText(node.updatedAt),
     children: Array.isArray(node.tasks)
       ? node.tasks.map((child, childIndex) => mapTask(child, id, childIndex))
       : [],
@@ -200,6 +238,7 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     kind: readText(node.kind),
     title: readText(node.title) ?? "",
     status: readText(node.status),
+    statusRule: readText(node.statusRule),
     stage: readText(node.stage),
     attention: readAttentionCodes(node.attention),
     progress: readProgress(node.progress),
