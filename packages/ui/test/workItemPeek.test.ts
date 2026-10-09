@@ -733,18 +733,56 @@ function renderSurface(input: { workItems: WorkItem[]; withWriter?: boolean }): 
   );
 }
 
-/* 承重（默认路径零回归的**面板版**）：没打开任何条目 ⇒ peek 一个节点都不进 DOM —— 三份逐字节
-   基线因此仍绿（`workItemsSurfaceRender.test.ts` 实测，本轮变异 M3 逐条复核），而"点得动但写
-   不下去 / 打不开"在接线层面也凑不出来。变异：无条件套上分栏壳或无条件渲染面板 ⇒ 必红。 */
-test("宿主：未打开 ⇒ 零 peek（面板与分栏壳都不进 DOM；有写入口时也只是既有那层壳）", () => {
+/* 承重（默认路径零回归的**面板版** + F1/F2 口径变更，2026-10-09）：未打开任何条目 ⇒
+   **面板**一个节点都不进 DOM（`work-item-peek` 与身份文案都不出现），但桌面**恒定壳**恒在。
+   口径冲突裁定（2026-10-09，G4 实测 F1/F2）：原口径「未打开 ⇒ 零壳」要求开关面板时换树根
+   （未打开 `return body`、打开 `return <div 分栏壳>`）——**body 子树因此被卸载重挂**：
+   快速创建的草稿/失败/提交中当场丢失，且指针按下中的节点被换掉、click 根本派发不出去。
+   两条纪律冲突时保「peek 开关不换树根」（正确性缺陷优先）；四份字面量基线已按新口径机械
+   重捕捉（见 `workItemsSurfaceBaseline.ts` 的 2026-10-09 注记）。
+   变异：恢复树根交换（未打开 ⇒ return body）⇒ 第二条必红；未打开就渲染面板内容 ⇒ 第一/二条必红。 */
+test("宿主：未打开 ⇒ 面板零节点，但恒定壳恒在（口径变更；变异：树根交换 ⇒ 红）", () => {
   for (const markup of [
     renderSurface({ workItems: [wi()] }),
     renderSurface({ workItems: [wi()], withWriter: true }),
   ]) {
     assert.ok(!markup.includes("work-item-peek"), "面板不得出现（未打开）");
-    assert.ok(!markup.includes("work-items-surface-split"), "分栏壳不得出现（未打开）");
     assert.ok(!markup.includes(zhText("squad.workItems.peek.title")), "面板身份文案也不得出现");
+    assert.ok(
+      markup.includes('data-testid="work-items-surface-split"'),
+      "恒定壳必须恒在（未打开只是右列零节点：恢复树根交换 ⇒ 这里红，body 子树会被卸载重挂）",
+    );
   }
+});
+
+/* 承重（F1/F2 的结构前提，2026-10-09）：body（含快速创建条）恒定渲染在恒定壳的**左列**里 ——
+   peek 开关只增删右列的面板，不换 body 的父链。
+   为什么这就是 F1/F2 的判据：React 按「父元素类型 + 位置」复用子树，body 的位置恒定 ⇒
+   ① 开关面板不卸载重挂 body（草稿/失败/提交中留在原地 = F1 的验收 ①）；
+   ② 指针按下中的输入框节点不会被替换（click 能派发到它、焦点能落到它 = F2 的验收 ②）。
+   变异：把 body 挪出恒定壳 / 开关时换 body 的父链（含恢复 `return body`）⇒ 本条必红。 */
+test("宿主｜结构恒定（F1/F2 前提）：body 恒在恒定壳左列，面板只做它的兄弟（不换 body 父链）", () => {
+  const markup = renderSurface({ workItems: [wi()], withWriter: true });
+  const shell = markup.indexOf('data-testid="work-items-surface-split"');
+  const quickCreate = markup.indexOf('data-testid="work-items-quick-create"');
+  const rows = markup.indexOf('data-testid="work-items-list"');
+  assert.ok(shell >= 0, "恒定壳恒在（开关面板不换树根）");
+  assert.ok(quickCreate > shell && rows > shell, "body 子树（快速创建 + 行）嵌在恒定壳里");
+  assert.ok(
+    markup.slice(shell, quickCreate).includes("min-w-0 flex-1"),
+    "body 的父链 = 恒定壳的左列（开关面板不动它）",
+  );
+  /* 源码侧：面板是左列的**兄弟**（不在 body 的父链上），且桌面不存在第二条返回路径
+     （「未打开 ⇒ return body」就是树根交换本身）。 */
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  assert.ok(!/return\s+body\s*;/.test(host), "不得有裸 return body（那就是树根交换）");
+  const desktop = host.slice(host.indexOf('data-testid="work-items-surface-split"'));
+  const bodyIndex = desktop.indexOf("{body}");
+  const panelIndex = desktop.indexOf("{peekPanel}");
+  assert.ok(
+    bodyIndex >= 0 && panelIndex > bodyIndex,
+    "面板在 body 之后（兄弟，不是祖先）：开关只改它自己",
+  );
 });
 
 /* 变异（本轮承重 M4）：把行/单元格的回落拆掉（行永远走详情页导航，或永远走 peek）⇒ 下面
@@ -791,8 +829,12 @@ test("守卫｜宿主：打开态自持 + 分栏壳 + Esc 判据 + 焦点归还�
     "打开态 = 桌面分栏（左侧既有面可被压窄、右侧只读面板）",
   );
   assert.ok(
-    host.includes("if (peekWorkItemId === null) return body;"),
-    "未打开 ⇒ 原样返回（零 peek）",
+    !host.includes("if (peekWorkItemId === null) return body;"),
+    "不得回到树根交换（F1：未打开 ⇒ return body 会卸载重挂 body 子树）",
+  );
+  assert.ok(
+    host.includes("{peekPanel}"),
+    "面板仍只构造一份、作为恒定壳右列（开关只增删它自己，不换 body 的父链）",
   );
   assert.ok(
     host.includes("onOpenDetail={openPeekDetail}") && host.includes("onOpenWorkItemDetail(id)"),

@@ -343,9 +343,12 @@ function renderSurface(input: {
   );
 }
 
-/* 承重（验收 1 的桌面侧 + 默认路径零回归）：桌面（缺省 = SSR 默认，以及显式注入 desktop）
-   仍是既有行内条；触发钮/抽屉一个节点都不进 DOM。变异：桌面也渲染触发钮 ⇒ 第一条必红。 */
-test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SSR 默认）", () => {
+/* 承重（验收 1 的桌面侧 + 默认路径零回归 + F1 口径变更 2026-10-09）：桌面（缺省 = SSR 默认，
+   以及显式注入 desktop）仍是既有行内条；触发钮/抽屉一个节点都不进 DOM。
+   恒定壳（`work-items-surface-split`）口径变更：未打开 peek 也恒在（只保证右列零节点）——
+   否则开关面板要换树根，body 子树被卸载重挂（见 `workItemPeek.test.ts` 的结构恒定用例）。
+   变异：桌面也渲染触发钮 ⇒ 第一条必红；未打开就不渲染恒定壳 ⇒ 第四条必红。 */
+test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SSR 默认；恒定壳恒在）", () => {
   for (const markup of [
     renderSurface({ withWriter: true }),
     renderSurface({ withWriter: true, viewport: "desktop" }),
@@ -357,7 +360,11 @@ test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SS
     );
     assert.ok(!markup.includes("work-items-quick-create-open"), "桌面不给窄屏触发钮");
     assert.ok(!markup.includes("work-item-mobile-sheet"), "桌面不渲染抽屉");
-    assert.ok(!markup.includes("work-items-surface-split"), "没打开面板 ⇒ 分栏壳也不在");
+    assert.ok(
+      markup.includes('data-testid="work-items-surface-split"'),
+      "恒定壳恒在（口径变更：未打开只是 peek 面板零节点）",
+    );
+    assert.ok(!markup.includes("work-item-peek"), "没打开面板 ⇒ peek 面板零节点");
   }
 });
 

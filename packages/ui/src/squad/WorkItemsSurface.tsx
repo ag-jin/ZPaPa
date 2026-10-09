@@ -158,9 +158,9 @@ export function WorkItemsSurface({
   });
   const inlineEdit = useWorkItemInlineEdit({ onInlineEdit });
 
-  /* 侧边 peek 的**打开态**（本宿主自持）：`null` = 没打开（默认路径的 DOM 因此逐槽不变）。
-     打开时记下当前焦点元素（= 行的透明覆盖按钮，行本身不可聚焦），关闭时原样还回去 ——
-     这就是验收 ③的「焦点回到触发行」。 */
+  /* 侧边 peek 的**打开态**（本宿主自持）：`null` = 没打开（未打开 ⇒ 右列零节点；恒定壳仍恒在，
+     见下方桌面分支的 2026-10-09 结构恒定裁定）。打开时记下当前焦点元素（= 行的透明覆盖按钮，
+     行本身不可聚焦），关闭时原样还回去 —— 这就是验收 ③的「焦点回到触发行」。 */
   const [peekWorkItemId, setPeekWorkItemId] = useState<string | null>(null);
   const peekReturnFocusRef = useRef<HTMLElement | null>(null);
   const openPeek = useCallback((workItemId: string) => {
@@ -346,17 +346,21 @@ export function WorkItemsSurface({
     );
   }
 
-  /* 桌面（含 SSR 默认）：没打开面板 ⇒ 原样返回 body（默认路径逐字节不变）。 */
-  if (peekWorkItemId === null) return body;
-  /* 打开态 ⇒ **桌面分栏**：左侧是既有面（`min-w-0` 允许它被压窄、不给面板让位时溢出），
-     右侧是只读 peek。Esc 的键盘层挂在这个壳上（而不是 document）：全局 Esc 属于 App 的
-     键盘返回层（详情页返回就是它），peek 不该抢那一枚键；焦点在面内（打开时就在触发行上）时
-     Esc 到这里，行内编辑/下拉自己吃掉的键（`defaultPrevented`）不抢。 */
+  /* 桌面（含 SSR 默认）：**恒定壳**（2026-10-09 G4 实测 F1/F2 裁定）。body 恒定渲染在左列 ——
+     peek 的开关只增删右列的面板，**不换 body 的父链**。此前「未打开 `return body`、打开返回
+     分栏壳」是树根交换：开关各一次就把整个 body 子树卸载重挂（快速创建的草稿/失败/提交中当场
+     丢失），且指针按下中的节点被换掉、click 根本派发不出去（点快速创建输入框无反应）。
+     两条纪律冲突时保「不换树根」（口径变更登记在 `workItemsSurfaceBaseline.ts`）：未打开 ⇒
+     右列零节点（面板一个节点都不渲染），但壳恒在。
+     Esc 的键盘层挂在这个壳上（而不是 document）：全局 Esc 属于 App 的键盘返回层（详情页返回
+     就是它），peek 不该抢那一枚键；未打开时这一层不吃任何键。焦点在面内（打开时就在触发行上）
+     时 Esc 到这里，行内编辑/下拉自己吃掉的键（`defaultPrevented`）不抢。 */
   return (
     <div
       className="flex items-start gap-3"
       data-testid="work-items-surface-split"
       onKeyDown={(event) => {
+        if (peekWorkItemId === null) return;
         if (event.defaultPrevented) return;
         if (workItemPeekKeyIntent(event.key) !== "close") return;
         closePeek();

@@ -26,9 +26,12 @@ import {
 
    三件本轮必须成立的事：
    ① **默认路径零回归（承重验收 2）**：`view=board` 且无过滤/搜索/排序时，宿主渲染出的 markup 与
-      重构前（抽出共用行模块之前）**逐字节相同** —— 字面量基线在 `workItemsSurfaceBaseline.ts`；
+      字面量基线**逐字节相同** —— 基线在 `workItemsSurfaceBaseline.ts`；
       口径更新（用户 2026-10-09 裁定「默认按阶段进行分组」）：那份「无分组」基线改由**显式
       `none`** 态使用，默认态另立一条泳道基线（`..._DEFAULT_LANES`）；
+      口径更新之二（2026-10-09 G4 实测 F1/F2 的**结构恒定**裁定）：桌面宿主改为恒定壳
+      （`work-items-surface-split` 恒在，peek 未打开只是右列零节点）⇒ 四份基线按新实现的
+      真实渲染**机械重捕捉**，自此证明「2026-10-09 之后逐字节不变」（细节见基线文件头注记）；
    ② **行渲染单点（承重验收 5，口径已更新）**：`data-work-item-id` 与聚焦注册各**恰一处**，且三视图
       消费**同一个**模块（从「WorkItemsBoard 内单点」改为「跨三视图共用同一模块」）；
    ③ 三视图分支都真实可达（宿主预置分支，R2/R3 只换视图内部实现，不改宿主）。
@@ -148,8 +151,10 @@ function renderSurface(input: {
 /* 变异（承重）：不分组分支里顺手排序 / 过滤，或行模块抽件时改了任何一处 class 或属性顺序
    ⇒ 逐字节对照必红（这是本轮的承重判据）。
    口径（用户 2026-10-09 裁定）：`none` 不再是默认值，但「不分组」路径**逐字不变** —— 同一份
-   基线改由显式 `laneDimension: "none"` 使用（不逐个把断言改成泳道断言）。 */
-test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 与重构前逐字节相同", () => {
+   基线改由显式 `laneDimension: "none"` 使用（不逐个把断言改成泳道断言）。
+   口径之二（2026-10-09 结构恒定）：字面量含恒定壳；写进壳里的 body 与开关 peek 前的内部
+   markup 一致（Radix 标识除外）。 */
+test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 与基线逐字节相同（恒定壳口径）", () => {
   assert.equal(
     renderSurface({ workItems: defaultItems, runs: [run("wi-root")], laneDimension: "none" }),
     WORK_ITEMS_SURFACE_BASELINE_NONE,
