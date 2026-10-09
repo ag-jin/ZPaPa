@@ -325,6 +325,18 @@ export function createWakeTick(deps: WakeTickDeps): WakeTick {
       repostDue(now);
       // 规则之间的处理顺序由 repo 的 ORDER BY 保证（next_fire_at, id），本层不再排序。
       for (const rule of deps.listReady(now, WAKE_TICK_LIMIT)) {
+        /* 到期点守卫（G3）：名义时刻**不早于** `expiresAt` ⇒ 终态收口，本格不派发、也不判闸。
+           为什么这一层还要判一次（服务面建规则时已判过）：`listReady` 的判据是
+           `next_fire_at <= now`，而 `next_fire_at` 可能**绕过网格**落到到期点之后 ——
+           本轮之前建出的行（服务面早已透传落盘 `expires_at`），以及到期点被改到当前排期点
+           之前的情形，都从这条缝里进来。不判它，「过期时刻」就是一句空话。
+           边界与 `nextFireAtAfter` 的收口同源：触发时刻必须**严格早于**到期点。
+           **到期不是闸**：只清排期（终态）、不写 `pausedReason`、不动开关 —— 若先判闸，
+           一条已经死掉的规则会被标成 `max_fires` 暂停，界面把用户引到「resume」这个错的动作上。 */
+        if (rule.expiresAt !== undefined && nominalInstant(rule) >= rule.expiresAt) {
+          deps.advance(advanced(rule, { nextFireAt: null }));
+          continue;
+        }
         const eventKey = buildWakeEventKey(rule);
         const factKey = `${rule.id}\u0000${rule.revision}\u0000${eventKey}`;
         const decision = decide({

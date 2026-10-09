@@ -410,7 +410,9 @@ export type {
    （`squadWakeRules.ts`，400 行门槛的拆分点），与 `MemberRunRequest` 声明在 `squadRunLifecycle.ts`
    同一条先例 —— 只做类型再导出（编译擦除，不进 renderer 的运行时依赖图）。
    两个形状都是「与创建同集」的：`UpdateWakeRuleRequest` = 创建集减去 `workItemId`（挂载对象不可改）
-   与 `timezone` / `expiresAt`（界面不暴露，调度侧未消费）。 */
+   与 `timezone`（界面不暴露）。`expiresAt` **留在编辑集里**（G3：调度侧已消费 —— `wakeTick` 判、
+   `nextFireAtAfter` 收口，故编辑面必须能改它；patch 显式给 ⇒ 改，不给 ⇒ 保留现行值）。
+   「类型可命名」与「界面渲染出输入框」是两件事：本文件只保证前者。 */
 export type { CreateWakeRuleRequest, UpdateWakeRuleRequest } from "./workitem/squadWakeRules.js";
 // 方法的入参/出参类型也要可命名：Wave 1 的 host 与 UI 要用它们构造调用，
 // 只能从接口签名里「结构性」拿到是没法写代码的。

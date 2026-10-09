@@ -43,18 +43,26 @@ test("listReady 只取到期且 enabled 的规则", () => {
   );
 });
 
-// revision fencing：过期 revision 的推进必须失败，防止编辑后旧派发覆盖新状态。
-test("casAdvance 的 revision 不匹配则拒绝", () => {
+/* revision fencing：过期 revision 的推进必须失败，防止编辑后旧派发覆盖新状态。
+   **判因**（G2）：拒绝要分成「被 fencing」（行还在、revision 变了）与「行已删」两格 ——
+   两者对调用方的含义完全不同（前者是并发编辑、本格作废；后者是规则没了、本格自然作废），
+   合成一个 false 时接线方只能把两件事记成同一条日志。 */
+test("casAdvance 的 revision 不匹配 ⇒ fenced，且带回行当前的 revision", () => {
   const { repo } = setup();
   repo.insert(rule({ id: "w1" }));
-  assert.equal(repo.casAdvance("w1", 7, 200, 1), false);
-  assert.equal(repo.get("w1")?.revision, 0);
+  // 把行推到 revision 2（两次命中推进），再用**过期**的 revision 7 去撞：判因必须回读**行里的**当前版本，
+  // 而不是把调用方传进来的期望版本回声出去（回声等于没有判因）。
+  assert.deepEqual(repo.casAdvance("w1", 0, 200, 1), { outcome: "advanced" });
+  assert.deepEqual(repo.casAdvance("w1", 1, 300, 2), { outcome: "advanced" });
+  assert.deepEqual(repo.casAdvance("w1", 7, 400, 3), { outcome: "fenced", currentRevision: 2 });
+  assert.equal(repo.get("w1")?.revision, 2, "被拒的推进不得写盘");
+  assert.equal(repo.get("w1")?.nextFireAt, 300, "被拒的推进不得改排期");
 });
 
 test("casAdvance 命中则推进并 +1 revision", () => {
   const { repo } = setup();
   repo.insert(rule({ id: "w1" }));
-  assert.equal(repo.casAdvance("w1", 0, 200, 1), true);
+  assert.deepEqual(repo.casAdvance("w1", 0, 200, 1), { outcome: "advanced" });
   const after = repo.get("w1")!;
   assert.equal(after.revision, 1);
   assert.equal(after.fireCount, 1);
@@ -70,11 +78,21 @@ test("casAdvance 可写入暂停原因", () => {
 
 /* ===== 以下为「穷举」矩阵补齐：给定 5 条覆盖了主路径，这里补上被留下的格子 ===== */
 
-// casAdvance 矩阵没覆盖的一格：id 不存在。若实现对不存在的行也返回 true，
+// casAdvance 矩阵没覆盖的一格：id 不存在。若实现对不存在的行也报「已推进」，
 // 调用方会把「CAS 命中」当成「规则已推进」，静默丢掉一次派发。
-test("casAdvance 对不存在的 id 返回 false", () => {
+// **判因**（G2）：不存在的 id 必须报 `missing` 而不是 `fenced` —— 回读到「行不在」才算这条规则没了；
+// 报成 fenced 会让调度器每格打一条「并发编辑」的 warn，而真相是规则已被删除（不是异常）。
+test("casAdvance 对不存在的 id ⇒ missing", () => {
   const { repo } = setup();
-  assert.equal(repo.casAdvance("ghost", 0, 200, 1), false);
+  assert.deepEqual(repo.casAdvance("ghost", 0, 200, 1), { outcome: "missing" });
+});
+
+// 「读到之后被删」是 fenced / missing 唯一的分界场景：行曾在、读到了、写之前没了。
+test("casAdvance 在行被并发删除后 ⇒ missing（与 fenced 分格）", () => {
+  const { repo } = setup();
+  repo.insert(rule({ id: "w1", revision: 4 }));
+  assert.equal(repo.remove("w1"), true);
+  assert.deepEqual(repo.casAdvance("w1", 4, 200, 1), { outcome: "missing" });
 });
 
 // listReady 过滤矩阵的最后一格：disabled×未到点，外加 next_fire_at 为 NULL（尚无排期）。

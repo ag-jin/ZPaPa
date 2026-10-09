@@ -85,6 +85,126 @@ test("同一 eventKey 重投第二次被 merged 掉", async () => {
   assert.equal(posts.length, 1);
 });
 
+/* ── 到期点（`expiresAt`，G3）：到点扫描的**最后一道**守卫 ── */
+
+/* 为什么这一层还要判一次（服务面建规则时已判过）：`listReady` 是「`next_fire_at <= now`」，
+   而 `next_fire_at` 可能**绕过网格**落到到期点之后 —— 库中既有行（本轮之前建的规则就带着
+   `expires_at` 落盘）、以及到期点被改到当前排期点之前的情形。到点扫描不判它，那条规则就会在
+   到期之后照常派发一次，「过期时刻」变成一句空话。 */
+test("到期点｜名义时刻已不早于 expiresAt ⇒ 终态收口（清排期、不派发、不写闸原因）", async () => {
+  const posts: unknown[] = [];
+  const advanced: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({
+    listReady: () => [
+      rule({
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        nextFireAt: 5_000,
+        expiresAt: 5_000,
+      }),
+    ],
+    advance: (r) => {
+      advanced.push(r);
+    },
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(6_000);
+
+  assert.equal(posts.length, 0, "已到期 ⇒ 不得派发（到期点必须真的拦住这一格）");
+  assert.equal(advanced.length, 1, "必须落一次终态推进，否则规则永远卡在表里每格重判");
+  assert.equal(advanced[0]?.nextFireAt, null, "排期清空 = 终态（listReady 不再命中）");
+  assert.equal(
+    advanced[0]?.pausedReason,
+    undefined,
+    "到期**不是闸**：不得写 pausedReason（那是防失控闸的专列，写上去会让「到点了」与「被停下来了」混为一谈）",
+  );
+  assert.equal(advanced[0]?.fireCount, 0, "到期不是一次触发：fireCount 不动");
+});
+
+test("到期点｜名义时刻仍早于 expiresAt ⇒ 照常派发（对照组）", async () => {
+  const posts: unknown[] = [];
+  const advanced: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({
+    listReady: () => [
+      rule({
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        nextFireAt: 5_000,
+        expiresAt: 100_000,
+      }),
+    ],
+    advance: (r) => {
+      advanced.push(r);
+    },
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(6_000);
+
+  assert.equal(posts.length, 1, "到期点晚于名义时刻 ⇒ 这一格照常派发");
+  assert.equal(advanced[0]?.fireCount, 1);
+  assert.equal(advanced[0]?.nextFireAt, 65_000, "并推进到网格下一格（65s 仍早于到期点）");
+});
+
+/* 到期点落在**网格上**：这一格照常派发（名义时刻 5s 早于到期点），而 fire 推进走的
+   `nextFireAtAfter` 会把下一格（65s，不早于到期点）收成 null ⇒ 规则干净地停在这一格上。
+   这是「到期」与「推进」两处的接缝：fire 分支与到期判定共用同一份网格口径。 */
+test("到期点｜到期点落在下一格上 ⇒ 这一格照常派发、推进结果是终态", async () => {
+  const posts: unknown[] = [];
+  const advanced: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({
+    listReady: () => [
+      rule({
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        nextFireAt: 5_000,
+        expiresAt: 65_000,
+      }),
+    ],
+    advance: (r) => {
+      advanced.push(r);
+    },
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(6_000);
+
+  assert.equal(posts.length, 1, "这一格的名义时刻早于到期点 ⇒ 照常派发");
+  assert.equal(advanced[0]?.fireCount, 1, "是一次真实触发");
+  assert.equal(advanced[0]?.nextFireAt, null, "下一格不早于到期点 ⇒ 终态（不再排期）");
+});
+
+/* 到期与闸同时成立时的**次序**：到期优先 ⇒ 终态（无原因），不落成「闸暂停」。
+   反过来的实现（先判闸）会把一条已经死掉的规则标成 pausedReason=max_fires，界面上显示
+   「防失控已停」而真相是「它到期了」—— 且 pausedReason 只能由 resume 复位，用户会被引到错的动作上。 */
+test("到期点｜到期与闸同时成立 ⇒ 到期优先（终态、无闸原因）", async () => {
+  const posts: unknown[] = [];
+  const advanced: Array<Record<string, unknown>> = [];
+  const tick = createWakeTick({
+    listReady: () => [
+      rule({
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        fireCount: 9_999,
+        maxFires: 3,
+        nextFireAt: 5_000,
+        expiresAt: 5_000,
+      }),
+    ],
+    advance: (r) => {
+      advanced.push(r);
+    },
+    postRequest: (r) => posts.push(r),
+  });
+  await tick.run(6_000);
+
+  assert.equal(posts.length, 0);
+  assert.equal(advanced[0]?.pausedReason, undefined, "到期优先：不得落成闸暂停");
+  assert.equal(advanced[0]?.nextFireAt, null);
+});
+
 /* ── 以下为本任务补齐的矩阵格（brief Step 5 的穷举面） ── */
 
 test("listReady 返回空 ⇒ 不发请求、不推进（不是失败，也不该写任何状态）", async () => {

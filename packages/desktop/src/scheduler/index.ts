@@ -139,15 +139,28 @@ const wakeTick = createWakeTick({
   advance: (rule) => {
     // revision fencing（spec §5.7）：只有 revision 仍等于本轮读到的那一版才推进。
     // 未命中说明规则在判定期间被人编辑过 —— 本次派发**作废**，不入库也不覆盖新状态。
-    const advanced = requireWakeRuleRepo().casAdvance(
+    const outcome = requireWakeRuleRepo().casAdvance(
       rule.id,
       rule.revision,
       rule.nextFireAt,
       rule.fireCount,
       rule.pausedReason,
     );
-    if (!advanced) {
-      log("warn", `wake rule advance skipped by fencing rule=${rule.id} revision=${rule.revision}`);
+    /* 未命中按**判因**分格留痕（G2）：两种成因的处置不同，合成一条会让人排查时分不出来。
+       · fenced：行还在、revision 变了 ⇒ 并发编辑（本格作废）。warn 且带**两侧** revision，
+         否则只知道「没推进」，定位不到是谁改的；
+       · missing：行已不在 ⇒ 规则被删除 / 归档清理。正常生命周期，不是异常 ⇒ 只留 info。
+       advanced 静默（热路径，每格都发生）。 */
+    if (outcome.outcome === "fenced") {
+      log(
+        "warn",
+        `wake rule advance rejected by fencing rule=${rule.id} expectedRevision=${rule.revision} currentRevision=${outcome.currentRevision}`,
+      );
+    } else if (outcome.outcome === "missing") {
+      log(
+        "info",
+        `wake rule missing at advance rule=${rule.id} revision=${rule.revision}（规则已被删除，本格排期自然作废）`,
+      );
     }
   },
   postRequest: (request) => {

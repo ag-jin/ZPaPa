@@ -445,8 +445,9 @@ export interface ISquadRuntimeService {
    *
    * 实现要点（唯一实现在 `squadWakeRules.ts`，复用**同一份**组装与首格排期）：
    * 1. 读现行（不存在 ⇒ 响亮抛）；2. 以 patch 调 `assembleWakeRule` 造新配置实体（旧 kind 的
-   * 排期字段不带入 ⇒ 切换即清；**不含** `workItemId` / `timezone` / `expiresAt`，形状见
-   * `UpdateWakeRuleRequest`）；3. 抄回 `fireCount` / `enabled` / `pausedReason`；
+   * 排期字段不带入 ⇒ 切换即清；**不含** `workItemId` / `timezone`，形状见
+   * `UpdateWakeRuleRequest`）；3. 抄回 `fireCount` / `enabled` / `pausedReason` / **未在 patch 里
+   * 出现的 `expiresAt`**（到期点可编辑：显式给 ⇒ 改；不给 ⇒ 保留现行值，不是抹掉）；
    * 4. `validateWakeRule` 不过 ⇒ 中文 problems 原样带出；5. 在跑的规则重算 `nextFireAt`
    * （无未来排期点 ⇒ 响亮抛且不写盘）；暂停中（用户暂停 / 闸暂停）编辑 ⇒ 排期保持空；
    * 6. `casUpdateConfig` 写盘，CAS 未命中 ⇒ 响亮抛；读回返回。
