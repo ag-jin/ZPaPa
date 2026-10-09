@@ -8,7 +8,7 @@ import {
 import type { SquadRuntime } from "./squadContracts.js";
 import type { ISquadRuntimeService, SquadWorkspaceTarget } from "./squadRuntimeService.js";
 import type { WakeAdvanceOutcome } from "./wakeRuleRepo.js";
-import { nextFireAtAfter } from "./wakeSchedule.js";
+import { cutAtExpiry, nextFireAtAfter } from "./wakeSchedule.js";
 
 /* 唤醒规则的**服务面六个方法**（`listWakeRules` / `createWakeRule` / `pauseWakeRule` /
    `resumeWakeRule` / `updateWakeRule` / `deleteWakeRule`）的唯一实现（P2b 第二半 + 收口：
@@ -151,10 +151,11 @@ export type UpdateWakeRuleInput = { id: string; patch: UpdateWakeRuleRequest };
 function initialNextFireAt(rule: WakeRule, now: number): number | null {
   if (rule.kind === "at") {
     if (rule.at === undefined || rule.at <= now) return null;
-    // 到期点判定（G3）：`at` 的名义时刻**不经过** `nextFireAtAfter`（一次性规则在那里按
-    // `mode === "once"` 提前返回 null），所以这一支必须自己判 —— 边界与那边同一口径：
-    // 触发时刻必须**严格早于** `expiresAt`。
-    return rule.expiresAt !== undefined && rule.at >= rule.expiresAt ? null : rule.at;
+    /* 到期点判定（G3）：`at` 的名义时刻**不经过** `nextFireAtAfter`（一次性规则在那里按
+       `mode === "once"` 提前返回 null），所以收口要在这里单独调一次 —— 但**判据不另写**：
+       直接用排期核心导出的 `cutAtExpiry`（R2 口径单点，与 every/cron 分支、wakeTick 守卫同一份实现：
+       触发时刻必须**严格早于** `expiresAt`）。 */
+    return cutAtExpiry(rule, rule.at);
   }
   if (rule.kind === "every") {
     // 名义时刻锚点 = now（`nextFireAtAfter` 的 every 分支要求规则自带 next_fire_at）。
@@ -172,7 +173,10 @@ function noFutureScheduleReason(rule: WakeRule, now: number): string {
   }
   if (rule.kind === "at") {
     if (rule.at === undefined) return "kind「at」没有 at（validateWakeRule 本应拦住）";
-    if (rule.expiresAt !== undefined) {
+    /* 到期点只在**真卡住了**的时候才报（`at >= expiresAt`，与 `initialNextFireAt` 的判据同一口径）：
+       光看「有没有 expiresAt」会在 `at <= now < expiresAt` 上报出与事实相反的成因 —— 到期点还在
+       将来、什么也没卡住，真因是「到点时刻已经过去」（回落文案）。说错比不说更坏（用户会去改到期点）。 */
+    if (rule.expiresAt !== undefined && rule.at >= rule.expiresAt) {
       return (
         `「at」的到点时刻 ${rule.at}（${new Date(rule.at).toISOString()}）不早于到期时刻 ` +
         `${rule.expiresAt}（${new Date(rule.expiresAt).toISOString()}）——触发时刻必须严格早于到期点`
