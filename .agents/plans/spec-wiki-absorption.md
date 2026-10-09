@@ -7,21 +7,21 @@
 
 已交付，20 个新文件 / 30 个改动文件：
 
-| 层 | 文件 |
-|---|---|
-| 契约与存储 | `wikiTypes.ts`（两版 schema 兼容）、`wikiStore.ts`（`<workspace>/.wiki/` 读写） |
+| 层         | 文件                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------- |
+| 契约与存储 | `wikiTypes.ts`（两版 schema 兼容）、`wikiStore.ts`（`<workspace>/.wiki/` 读写）                                 |
 | 扫描与规划 | `wikiScan.ts`（清单 / manifestHash / languageStats / readme）、`wikiPlan.ts`（两跳提示词 + JSON 解析 + 归一化） |
-| 生成 | `wikiGenerator.ts`（逐页落盘 + 断点续跑 + 取消）、`wikiGeneratePage.ts`、`wikiPersist.ts` |
-| 定时更新 | `wikiAutoUpdate.ts`（cron 调度，复用 automation 的 croner 解析） |
-| 服务接线 | `wiki.ts`（接口 + 频道）、`wikiService.ts`（工厂）、`wikiRead.ts` |
-| UI | `WikiPane.tsx`（侧边面板）、`WikiCatalogTree.tsx`（目录树）、`settings/WikiSettingsSection.tsx` |
-| 测试 | 4 个测试文件，35 项全部通过 |
+| 生成       | `wikiGenerator.ts`（逐页落盘 + 断点续跑 + 取消）、`wikiGeneratePage.ts`、`wikiPersist.ts`                       |
+| 定时更新   | `wikiAutoUpdate.ts`（cron 调度，复用 automation 的 croner 解析）                                                |
+| 服务接线   | `wiki.ts`（接口 + 频道）、`wikiService.ts`（工厂）、`wikiRead.ts`                                               |
+| UI         | `WikiPane.tsx`（侧边面板）、`WikiCatalogTree.tsx`（目录树）、`settings/WikiSettingsSection.tsx`                 |
+| 测试       | 4 个测试文件，35 项全部通过                                                                                     |
 
 **与规划的三处偏差**（都是实施中发现更好做法）：
 
 1. **存储位置为 `<workspace>/.wiki/`**（用户决定），不再是应用数据目录，也不是 `docs/wiki`。
    用点开头的目录：不算项目源码、默认被 `includeHidden:false` 过滤、不干扰目录浏览。
-  因此 `getWorkspaceHash` 那套哈希规则只在**读取历史产物**时还需要，新产物不用。
+   因此 `getWorkspaceHash` 那套哈希规则只在**读取历史产物**时还需要，新产物不用。
 2. **`thoughtLevel` 未保留**，只存 `modelSelection.options.reasoningLevel`
    （两者是同一东西的两个名字，见 §3.3.1）。
 3. **自动更新的目标清单取「最近项目」**（`settings.recentProjects`），
@@ -42,6 +42,7 @@
 **这个功能在 ZPaPa 源码里已经被删除干净，不是被注释或降级。**
 
 证据：
+
 - 全仓库源码 grep `wiki`（排除 dist/node_modules）只命中两处误报：
   - `packages/rpc/src/serialization.ts:65` —— 维基百科链接（VQL 编码说明）
   - `apps/zcode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts` —— 命令注册表
@@ -78,6 +79,7 @@
 所以「WIKI」是用户自己起的名字，不能当作上游的目录名。
 
 已知的候选父目录（`packages/services/src/paths.ts`，全部已导出）：
+
 - `getAppConfigDir()`（`:53`）= `{dataBaseDir}/.zcode/v2` —— 最可能的落点，会话/tasks-index 都在这层
 - `getLegacyTaskSessionSnapshotPath()`（`:209`）= `~/.zcode/v2/sessions/{workspaceHash}/{taskId}.json`
   —— 这是「按 workspaceHash 分目录」的既有命名范式，wiki 极可能沿用同一层
@@ -91,16 +93,16 @@
 
 ### 顶层字段
 
-| 字段 | 说明 |
-|---|---|
-| `wikiId` | UUID，wiki 身份 |
-| `repoId` / `workspaceKey` / `workspacePath` | 本版三者同值（本地 workspace） |
-| `language` | 生成语言，样本为 `zh-CN` |
-| `manifestHash` | 项目清单指纹，用于判断项目是否变化（决定能否复用旧 wiki） |
-| `context` | 项目上下文快照（见下） |
-| `catalogTree` | 目录树（节点：`id` / `title` / `order` / `children` / `pageId`） |
-| `pages` | 页面数组 |
-| `createdAt` / `updatedAt` | 时间戳（毫秒） |
+| 字段                                        | 说明                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `wikiId`                                    | UUID，wiki 身份                                                  |
+| `repoId` / `workspaceKey` / `workspacePath` | 本版三者同值（本地 workspace）                                   |
+| `language`                                  | 生成语言，样本为 `zh-CN`                                         |
+| `manifestHash`                              | 项目清单指纹，用于判断项目是否变化（决定能否复用旧 wiki）        |
+| `context`                                   | 项目上下文快照（见下）                                           |
+| `catalogTree`                               | 目录树（节点：`id` / `title` / `order` / `children` / `pageId`） |
+| `pages`                                     | 页面数组                                                         |
+| `createdAt` / `updatedAt`                   | 时间戳（毫秒）                                                   |
 
 `context` 字段：`repoId`、`workspaceKey`、`name`、`rootPath`、`defaultBranch`、`commitHash`、
 `commitTime`、`fileCount`、`languageStats`（语言 → 字节数）、`readme`（README 全文，供模型理解项目）。
@@ -111,6 +113,7 @@
 单页生成是一次不小的请求。
 
 **好消息：mermaid 渲染能力仓库已有，不用新建**。UI 侧现成组件：
+
 - `packages/ui/src/components/ai-elements/mermaid-block.tsx`
 - `packages/ui/src/components/ai-elements/diagram-preview-dialog.tsx`
 - `packages/ui/src/lib/mermaidLanguage.ts`
@@ -125,17 +128,18 @@
 
 ### 两版 schema 差异（重要：向后兼容要同时吃下）
 
-| | 旧版（`385551730d64`） | 新版（`7b050da874c6`） |
-|---|---|---|
-| 模型字段 | `generationModel: {providerId, providerName, modelName}` | 同时有 `generationModel` + `modelSelection: {providerId, modelId, options:{reasoningLevel}}` |
-| 选项字段 | `generationOptions: {generateDiagrams, thoughtLevel, maxOutputTokens}` | 同上，`maxOutputTokens` 16384 → 65536 |
-| `sources` | 有 | 有 |
+|           | 旧版（`385551730d64`）                                                 | 新版（`7b050da874c6`）                                                                       |
+| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 模型字段  | `generationModel: {providerId, providerName, modelName}`               | 同时有 `generationModel` + `modelSelection: {providerId, modelId, options:{reasoningLevel}}` |
+| 选项字段  | `generationOptions: {generateDiagrams, thoughtLevel, maxOutputTokens}` | 同上，`maxOutputTokens` 16384 → 65536                                                        |
+| `sources` | 有                                                                     | 有                                                                                           |
 
 `draft.json` 比 `wiki.json` 多两个字段：`taskId` 与 `generatedPageIds[]`（已完成页面 id 列表）。
 
 ### failedPages 语义（已确证）
 
 `task.json` 的 `totalPages` / `completedPages` / `failedPages` 对应：
+
 - `totalPages` = catalogTree 中带 `pageId` 的节点数
 - `completedPages` = 真正生成出 `markdown` 的页面数
 - `failedPages` = `totalPages - completedPages`
@@ -191,16 +195,16 @@ wiki 的 `generationOptions.maxOutputTokens` 正好对应这个入参。
 
 新增一个服务需要改的位置（照 `IGitService` 的链路，已逐处核实）：
 
-| # | 位置 | 作用 |
-|---|---|---|
-| 1 | `packages/shared/src/channels.ts:150` 后 | 加频道名 `Wiki: "wiki"`（对象 `as const`，`:155` 派生 `ServiceChannelName`） |
-| 2 | `packages/services/src/wiki/wiki.ts`（新建） | 定义 `IWikiService` 接口 + `createServiceDescriptor<...>(ServiceChannels.Wiki)` |
-| 3 | `packages/services/src/wiki/wikiService.ts`（新建） | 服务端实现（读写文件、调度生成） |
-| 4 | `packages/services/src/index.ts` | 显式导出（根入口必须 browser-safe，不能引 node:*） |
-| 5 | `packages/services/src/accessor.ts` | `IServiceAccessor` 接口加 `readonly wikiService?: IWikiService` |
-| 6 | `packages/services/src/node.ts:2400-2573` | `.register(IWikiService, createWikiService(...))`（现有 44 条注册的链上追加） |
-| 7 | `packages/client/src/remoteServiceAccess.ts` | 类字段声明 + 构造函数 `ProxyChannel.toService` 赋值（**两处都要加**） |
-| 8 | `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:315-406` | 桌面远端 workspace 侧注册 |
+| #   | 位置                                                                    | 作用                                                                            |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | `packages/shared/src/channels.ts:150` 后                                | 加频道名 `Wiki: "wiki"`（对象 `as const`，`:155` 派生 `ServiceChannelName`）    |
+| 2   | `packages/services/src/wiki/wiki.ts`（新建）                            | 定义 `IWikiService` 接口 + `createServiceDescriptor<...>(ServiceChannels.Wiki)` |
+| 3   | `packages/services/src/wiki/wikiService.ts`（新建）                     | 服务端实现（读写文件、调度生成）                                                |
+| 4   | `packages/services/src/index.ts`                                        | 显式导出（根入口必须 browser-safe，不能引 node:\*）                             |
+| 5   | `packages/services/src/accessor.ts`                                     | `IServiceAccessor` 接口加 `readonly wikiService?: IWikiService`                 |
+| 6   | `packages/services/src/node.ts:2400-2573`                               | `.register(IWikiService, createWikiService(...))`（现有 44 条注册的链上追加）   |
+| 7   | `packages/client/src/remoteServiceAccess.ts`                            | 类字段声明 + 构造函数 `ProxyChannel.toService` 赋值（**两处都要加**）           |
+| 8   | `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:315-406` | 桌面远端 workspace 侧注册                                                       |
 
 唯一暴露点：`ServiceCollection.exposeOnChannelServer()`（`packages/services/src/collection.ts:30`）会遍历
 所有已注册服务逐个 `server.registerChannel`。它有 5 个调用点
@@ -215,7 +219,7 @@ wiki 的 `generationOptions.maxOutputTokens` 正好对应这个入参。
 
 `packages/services/src/index.ts` 里有一句明确的约束注释：
 「Conversation share 的具体实现依赖 Node 文件系统，只能从 `@zcode/services/node` 引入；
-根入口必须保持 browser-safe，避免 renderer 解析到 node:* 模块。」
+根入口必须保持 browser-safe，避免 renderer 解析到 node:\* 模块。」
 → 因此**接口与 descriptor 放根入口导出，Node 实现放 `src/wiki/` 并在 `node.ts` 注册**。
 
 ### 3.2.1 落盘：`IFileService` 是只读的
@@ -225,6 +229,7 @@ wiki 的 `generationOptions.maxOutputTokens` 正好对应这个入参。
 `searchWorkspaceFiles` / `listWorkspaceFiles*`）。wiki 产物落盘**不能走 `IFileService`**。
 
 正确做法是用现成的原子写工具：
+
 - `packages/services/src/fs/atomicFileUtils.ts:106 atomicWriteText()` / `:160 atomicWriteJson()`
 - 落盘服务先例（照抄）：`packages/services/src/onboarding/onboardingRecordService.ts`
   —— `:64-69` 串行写队列（`enqueueWrite`）+ `:14` import `atomicWriteText`；
@@ -242,12 +247,12 @@ wiki 的 `generationOptions.maxOutputTokens` 正好对应这个入参。
 
 可直接照抄的完整样本（**Feedback 最完整：进度 + 取消 + UI job 状态机三件套**）：
 
-| 服务 | 接口 | 实现 | 取消 |
-|---|---|---|---|
-| Feedback | `packages/services/src/feedback/feedback.ts:46` `onDynamicUploadProgress(id)`；进度类型 `:14-19` | `feedbackService.ts:215`（emitter 延迟创建 + 末订阅者移除即清理 `:108-119`；AbortController 表 `:104-105`） | `cancelUpload` `:212`、`cancelCreate` `:151` |
-| PromptAttachmentTransfer | `promptAttachmentTransfer.ts:42` | `promptAttachmentTransferService.ts:42` | `cancel(operationId)` `:40` |
-| PluginManagement | `pluginManagement.ts:60` | `pluginManagementService.ts:40-41` | 有 |
-| FileWatcher | `fileWatcher.ts:20` | `fileWatcherService.ts:135-138`（含订阅前事件 buffer） | — |
+| 服务                     | 接口                                                                                             | 实现                                                                                                        | 取消                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Feedback                 | `packages/services/src/feedback/feedback.ts:46` `onDynamicUploadProgress(id)`；进度类型 `:14-19` | `feedbackService.ts:215`（emitter 延迟创建 + 末订阅者移除即清理 `:108-119`；AbortController 表 `:104-105`） | `cancelUpload` `:212`、`cancelCreate` `:151` |
+| PromptAttachmentTransfer | `promptAttachmentTransfer.ts:42`                                                                 | `promptAttachmentTransferService.ts:42`                                                                     | `cancel(operationId)` `:40`                  |
+| PluginManagement         | `pluginManagement.ts:60`                                                                         | `pluginManagementService.ts:40-41`                                                                          | 有                                           |
+| FileWatcher              | `fileWatcher.ts:20`                                                                              | `fileWatcherService.ts:135-138`（含订阅前事件 buffer）                                                      | —                                            |
 
 UI 侧 job 状态机模板（wiki 生成进度面板可直接照抄）：
 `packages/ui/src/feedback/feedbackSubmissionJob.ts`（592 行）——
@@ -304,17 +309,18 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 
 设置页分区不是随手加 JSX，而是有类型化注册表，需改 **4 处**：
 
-| # | 位置 | 作用 |
-|---|---|---|
-| 1 | `packages/ui/src/lib/settingsNavigation.ts:4-23` | `SettingsSectionId` 联合类型加 `"wiki"`（现 19 个值） |
-| 2 | `packages/ui/src/settings/settingsPageConfig.ts:55` 起 | `BASE_SETTINGS_SECTIONS` 加一项（`{id, icon, titleId, groupId}`）；分组见 `:39-48` |
-| 3 | `packages/ui/src/i18n/locales/zh-CN.ts` + `en-US.ts` | 加分区标题与面板文案 |
-| 4 | `packages/ui/src/SettingsPage.tsx:2143-2280` | 三元链里加 `activeSection === "wiki" ? <WikiSection/> : ...` |
+| #   | 位置                                                   | 作用                                                                               |
+| --- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| 1   | `packages/ui/src/lib/settingsNavigation.ts:4-23`       | `SettingsSectionId` 联合类型加 `"wiki"`（现 19 个值）                              |
+| 2   | `packages/ui/src/settings/settingsPageConfig.ts:55` 起 | `BASE_SETTINGS_SECTIONS` 加一项（`{id, icon, titleId, groupId}`）；分组见 `:39-48` |
+| 3   | `packages/ui/src/i18n/locales/zh-CN.ts` + `en-US.ts`   | 加分区标题与面板文案                                                               |
+| 4   | `packages/ui/src/SettingsPage.tsx:2143-2280`           | 三元链里加 `activeSection === "wiki" ? <WikiSection/> : ...`                       |
 
 注意 `settingsNavigation.ts:37-47 HIDDEN_SETTINGS_SECTIONS` 是「保留 id 但隐藏入口」的机制
 （如 `workspaceFileSearch`、`computerUse`）。**wiki 不要加进这个集合**，否则分区不显示。
 
 若做成侧边面板而非设置页，则改 **4 处不同位置**：
+
 1. `packages/ui/src/lib/workspaceSidePane.ts:516-535`（`WorkspaceSidePaneTab` 联合，现 19 个成员）
 2. `packages/ui/src/app-shell/AnimatedSidePanePanel.tsx`（`:1204`/`:1226`/`:1233`/`:1290` 的三元链）
 3. `packages/ui/src/app-shell/sidePaneTabPresentation.ts:25-67`（搜索关键词）、`:101-120`（标题）
@@ -347,6 +353,7 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 ### 3.5 裁剪合规红线
 
 本项目已剔除全部云连接。wiki 功能**必须全部本地**：
+
 - 不引入任何 z.ai / bigmodel 端点调用（模型调用一律走用户自配 provider）
 - 不新增遥测（`apps/zcode-cli/packages/telemetry` 不得接入）
 - 产物落本地磁盘，不上传
@@ -357,7 +364,9 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 ## 四、分期实施建议
 
 ### 第 1 期：只读消费（最小可用，风险最低）
+
 先不做生成，只让已有产物能被看到。
+
 1. 定义产物类型与读取器（纯函数，可单测）：按 §二的候选路径探测
    `<getAppConfigDir()>/<候选父目录>/<workspaceHash>/{wiki,task,draft}.json` + `draft-pages/`
 2. 加 `IWikiService`（只读：`listWikis` / `getWiki` / `getPage`）
@@ -373,14 +382,14 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 
 **先做一个关键架构决策：生成逻辑放在哪一层。** 两个候选：
 
-| | 方案 A：服务层（推荐） | 方案 B：CLI runtime |
-|---|---|---|
-| 落点 | `packages/services/src/wiki/` | `apps/zcode-cli/packages/core/src/` |
-| 模型调用 | 循环调 `generateWorkspaceText`（单次文本生成，无工具循环） | agent 循环 + Read/Grep 工具（参照 `memory/`） |
-| 文件内容 | 自己读、自己控预算 | 模型自己读 |
-| 进度 | `onDynamic` 事件（RPC 原生） | 需新增协议方法（4 处） |
-| 落盘 | `atomicWriteJson`（host 进程） | `runtime.fileSystemPort`（CLI 侧，**不是** `IFileService`） |
-| 测试脚手架 | 有（`packages/services/test/`） | **无**（`apps/zcode-cli` 无 test 目录） |
+|            | 方案 A：服务层（推荐）                                     | 方案 B：CLI runtime                                         |
+| ---------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
+| 落点       | `packages/services/src/wiki/`                              | `apps/zcode-cli/packages/core/src/`                         |
+| 模型调用   | 循环调 `generateWorkspaceText`（单次文本生成，无工具循环） | agent 循环 + Read/Grep 工具（参照 `memory/`）               |
+| 文件内容   | 自己读、自己控预算                                         | 模型自己读                                                  |
+| 进度       | `onDynamic` 事件（RPC 原生）                               | 需新增协议方法（4 处）                                      |
+| 落盘       | `atomicWriteJson`（host 进程）                             | `runtime.fileSystemPort`（CLI 侧，**不是** `IFileService`） |
+| 测试脚手架 | 有（`packages/services/test/`）                            | **无**（`apps/zcode-cli` 无 test 目录）                     |
 
 **推荐方案 A**，理由是产物契约本身决定了它就是「两阶段 + 逐页落盘」的形状：
 `catalogTree` 先规划好每页的 `filePaths`，再逐页生成 markdown，`generatedPageIds` 记录进度。
@@ -391,6 +400,7 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 若将来发现方案 A 生成质量不足（模型需要主动探索仓库才能写好），可迁移过去。
 
 方案 A 的实施步骤：
+
 1. 项目扫描 → 算 `manifestHash` + 建 `context`（`fileCount` / `languageStats` / `commitHash` 等）
 2. 调用模型产出 **catalogTree**（第一跳：让模型给出目录结构与每页 filePaths）
 3. 逐页调用 `generateWorkspaceText` 产出 markdown，**每页完成即落盘 `draft-pages/`**，
@@ -404,6 +414,7 @@ UI 宿主参照 `FeedbackHost.tsx`、`FeedbackBackgroundUploadIndicator.tsx`、`
 唯一相近的是 `memory/extraction.ts:85` 的 `getCursor()`（消息游标，语义不同）。
 
 ### 第 3 期：打磨
+
 `generateDiagrams`（图表生成）、增量更新（按 `manifestHash` 判断项目是否变过）、
 导出、页面跳转到源码文件（`sources[].startLine` 已经带了行号锚点）。
 

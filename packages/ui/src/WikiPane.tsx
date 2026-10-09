@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpenIcon, Loader2Icon, RefreshCwIcon, SquareIcon, SparklesIcon } from "lucide-react";
 import type { WikiProjectSettings } from "@zcode/shared";
-import type {
-  WikiGenerationProgress,
-  WikiRenderNode,
-  WikiTaskState,
-} from "@zcode/services";
+import type { WikiGenerationProgress, WikiRenderNode, WikiTaskState } from "@zcode/services";
 import { isWikiTaskInProgress } from "@zcode/services";
 import { MessageResponse } from "@/components/ai-elements/message.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -134,7 +130,10 @@ export function WikiPane({ workspacePath, workspaceIdentity, remoteSessionId }: 
   );
 
   const handleCancel = useCallback(async () => {
-    await wikiService.cancel({ workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) });
+    await wikiService.cancel({
+      workspacePath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+    });
   }, [wikiService, workspacePath, workspaceIdentity]);
 
   /**
@@ -183,7 +182,10 @@ export function WikiPane({ workspacePath, workspaceIdentity, remoteSessionId }: 
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="wiki-pane">
+    <div
+      className="flex h-full min-h-0 flex-col bg-background text-foreground"
+      data-testid="wiki-pane"
+    >
       {/* 头部沿用 pane 约定：h2 标题 + 副标题 + 右侧徽标 */}
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-start justify-between gap-3">
@@ -201,12 +203,7 @@ export function WikiPane({ workspacePath, workspaceIdentity, remoteSessionId }: 
                 {intl.formatMessage(
                   { id: "wiki.summary.pages" },
                   {
-                    pages: String(
-                      state.nodes.reduce(
-                        (count, node) => count + countPages(node),
-                        0,
-                      ),
-                    ),
+                    pages: String(state.nodes.reduce((count, node) => count + countPages(node), 0)),
                     planned: String(state.task?.totalPages ?? 0),
                   },
                 )}
@@ -241,7 +238,10 @@ export function WikiPane({ workspacePath, workspaceIdentity, remoteSessionId }: 
           ) : null}
           {progress && progress.failedPages > 0 ? (
             <span className="shrink-0 text-destructive">
-              {intl.formatMessage({ id: "wiki.progress.failed" }, { count: String(progress.failedPages) })}
+              {intl.formatMessage(
+                { id: "wiki.progress.failed" },
+                { count: String(progress.failedPages) },
+              )}
             </span>
           ) : null}
           <Button

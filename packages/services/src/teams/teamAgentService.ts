@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSummary, TeamAgent, TeamAgentInput } from "@zcode/shared";
-import {
-  listTeamAgents,
-  readTeamAgent,
-  writeTeamAgent,
-} from "./teamAgentStorage.js";
+import { listTeamAgents, readTeamAgent, writeTeamAgent } from "./teamAgentStorage.js";
 
 /* 协作智能体的服务层：在 Task 7 的同步存储之上提供 CRUD + 一次性预填。
    保持同步（与存储一致）——get/list/archive/setEnabled 都直接返回结果而非 Promise。
@@ -24,12 +20,46 @@ export interface CreateTeamAgentInput {
   tools?: string[];
   disallowedTools?: string[];
   permissionMode?: TeamAgent["permissionMode"];
+  /**
+   * 该智能体自有的 MCP servers（名字 → 完整配置）。省略即不落盘 ⇒ 这个 agent 不覆盖任何 server
+   * （派发时按「user 级 + workspace 级」的基准挂载，见 `@zcode/shared` 的 team-agent-mcp）。
+   */
+  mcpServers?: TeamAgent["mcpServers"];
   /** 记忆作用域必须显式给出：它决定记忆写到哪个命名空间，猜错会把记忆写串。 */
   memoryScope: TeamAgent["memoryScope"];
+  /** 每 agent 最大并发 run 数（C1）：省略即不落盘，读数方经 resolve 拿缺省 6。 */
+  maxConcurrentRuns?: TeamAgent["maxConcurrentRuns"];
   /** 省略即 true：新建的队友默认启用，用户不必额外开一次开关。 */
   enabled?: boolean;
   provenance?: TeamAgent["provenance"];
 }
+
+/**
+ * 「编辑一个协作智能体」**可改字段的白名单**（`update` 的入参形状）。
+ *
+ * 为什么必须是**白名单**而不是 `Partial<TeamAgent>`：那是「编辑名字」与「改状态」的边界。
+ * 若 `update` 收整包 `TeamAgent` 的部分字段并展开合并（`{ ...agent, ...patch }`），
+ * 一个只想改名字的调用顺手带上 `enabled: false` / `archivedAt: 123` 就会**静默改掉状态**，
+ * 且不报任何错 —— 而这两件事各有自己的入口（`setEnabled` / `archive`，语义与通知都不同）。
+ * 白名单把「编辑定义」与「状态迁移」在类型层就分开：越界的字段**传不进来**。
+ */
+export type TeamAgentEditablePatch = Partial<
+  Pick<
+    TeamAgent,
+    | "name"
+    | "systemPrompt"
+    | "memoryScope"
+    | "maxConcurrentRuns"
+    | "description"
+    | "color"
+    | "modelSelection"
+    | "skills"
+    | "tools"
+    | "disallowedTools"
+    | "permissionMode"
+    | "mcpServers"
+  >
+>;
 
 export interface TeamAgentService {
   create(input: CreateTeamAgentInput): TeamAgent;
@@ -38,8 +68,21 @@ export interface TeamAgentService {
   list(): TeamAgent[];
   /** 一次性预填：只拷贝可复用的定义字段，不建立对来源的引用。 */
   prefillFrom(agent: AgentSummary): Partial<TeamAgent>;
+  /**
+   * 改**可编辑的三个定义字段**（见 `TeamAgentEditablePatch` 白名单），返回写盘后的新实体。
+   *
+   * 三条语义（与 `archive` / `setEnabled` 同款纪律）：
+   * 1. **id 不存在 ⇒ 响亮抛**（`协作智能体不存在：${id}`）—— 静默 no-op 会让界面以为改成功了；
+   * 2. **只写 patch 里出现的键**：值为 `undefined` 的键保持原值（不是"清空"），
+   *    且 `enabled` / `archivedAt` 等白名单外的字段**原样保留** —— 它们的入口是
+   *    `setEnabled` / `archive`，从"编辑名字"的调用里悄悄改状态必须写不出来；
+   * 3. **内容全同 ⇒ 不重写盘**（沿用私有 `update` 助手的引用相等短路），返回值即读到的实体。
+   */
+  update(id: string, patch: TeamAgentEditablePatch): TeamAgent;
   /** 归档而非硬删：只写 archivedAt，定义与记忆都保留。 */
   archive(id: string): void;
+  /** ⑤刀（矩阵裁定#2）：归档可恢复——清 archivedAt，其余字段一字不动；未归档 = 幂等 no-op。 */
+  restore(id: string): void;
   /** 只改 enabled，其余字段（含 archivedAt）原样保留。 */
   setEnabled(id: string, enabled: boolean): void;
 }
@@ -48,17 +91,16 @@ export interface TeamAgentService {
  * 读-改-写一个已存在定义；id 不存在则抛错（静默 no-op 会让界面以为改成功了）。
  * `mutate` 返回**同一个对象引用**即表示无需变更，此时跳过写盘——重复归档之类的操作
  * 不该产生一次内容相同的重写。
+ *
+ * 返回**写盘后的实体**（未变更时即读到的那个）：`update` 方法要把它交回给调用方，
+ * 而不是让调用方再读一次盘（第二次读可能撞上并发写入，拿到的就不是本次写的那份了）。
  */
-function update(
-  root: string,
-  id: string,
-  mutate: (agent: TeamAgent) => TeamAgent,
-): void {
+function update(root: string, id: string, mutate: (agent: TeamAgent) => TeamAgent): TeamAgent {
   const agent = readTeamAgent(root, id);
   if (!agent) throw new Error(`协作智能体不存在：${id}`);
   const next = mutate(agent);
-  if (next === agent) return;
-  writeTeamAgent(root, next);
+  if (next === agent) return agent;
+  return writeTeamAgent(root, next);
 }
 
 export function createTeamAgentService(deps: { root: string }): TeamAgentService {
@@ -79,7 +121,9 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
         tools: input.tools,
         disallowedTools: input.disallowedTools,
         permissionMode: input.permissionMode,
+        mcpServers: input.mcpServers,
         memoryScope: input.memoryScope,
+        maxConcurrentRuns: input.maxConcurrentRuns,
         enabled: input.enabled ?? true,
         provenance: input.provenance ?? { source: "manual" },
       };
@@ -114,6 +158,109 @@ export function createTeamAgentService(deps: { root: string }): TeamAgentService
       if (agent.skills !== undefined) draft.skills = [...agent.skills];
       if (agent.permissionMode !== undefined) draft.permissionMode = agent.permissionMode;
       return draft;
+    },
+
+    /* 只写 patch 里**出现**的键（`!== undefined` 逐个判断，不做整包展开）。
+       为什么不得用 `{ ...agent, ...patch }` 一把梭：patch 的静态类型虽是白名单，
+       运行期的对象可能多带键（调用方透传 / 反序列化的载荷）；展开会把 `enabled`、
+       `archivedAt` 一起覆盖 —— 一次「改名字」就能把已归档的定义悄悄复活，且不报错。
+       逐字段合并让白名单成为**运行期**的承重墙，而不只是类型层的君子协定。 */
+    update(id, patch) {
+      // 这里的 `update(...)` 是模块级的读-改-写助手（方法名不产生词法绑定），
+      // 与帮助文档里「沿用私有 update 助手的引用相等短路」指同一处。
+      return update(root, id, (agent) => {
+        const next: TeamAgent = { ...agent };
+        let changed = false;
+        if (patch.name !== undefined && patch.name !== agent.name) {
+          next.name = patch.name;
+          changed = true;
+        }
+        if (patch.systemPrompt !== undefined && patch.systemPrompt !== agent.systemPrompt) {
+          next.systemPrompt = patch.systemPrompt;
+          changed = true;
+        }
+        if (patch.memoryScope !== undefined && patch.memoryScope !== agent.memoryScope) {
+          next.memoryScope = patch.memoryScope;
+          changed = true;
+        }
+        if (
+          patch.maxConcurrentRuns !== undefined &&
+          patch.maxConcurrentRuns !== agent.maxConcurrentRuns
+        ) {
+          next.maxConcurrentRuns = patch.maxConcurrentRuns;
+          changed = true;
+        }
+        // ②刀（2026-10-06）：描述/身份色/模型选择进编辑白名单（update 逐字段，越界键仍被忽略）。
+        if (patch.description !== undefined && patch.description !== agent.description) {
+          next.description = patch.description;
+          changed = true;
+        }
+        if (patch.color !== undefined && patch.color !== agent.color) {
+          next.color = patch.color;
+          changed = true;
+        }
+
+        if (
+          patch.modelSelection !== undefined &&
+          JSON.stringify(patch.modelSelection) !== JSON.stringify(agent.modelSelection)
+        ) {
+          // 拷贝而非赋值：不让调用方的可变对象与台账定义共享引用（prefillFrom 同款纪律）。
+          next.modelSelection = { ...patch.modelSelection };
+          changed = true;
+        }
+        // ③刀（2026-10-06）：skills/tools/disallowedTools/permissionMode 进编辑白名单。
+        // 数组判等用 JSON（浅字面量数组）；「空数组」是合法值（skills=[] 不带技能 /
+        // tools=[] 按既有口径=允许全部），与 undefined（保持原值）严格区分。
+        if (
+          patch.skills !== undefined &&
+          JSON.stringify(patch.skills) !== JSON.stringify(agent.skills)
+        ) {
+          next.skills = [...patch.skills];
+          changed = true;
+        }
+        if (
+          patch.tools !== undefined &&
+          JSON.stringify(patch.tools) !== JSON.stringify(agent.tools)
+        ) {
+          next.tools = [...patch.tools];
+          changed = true;
+        }
+        if (
+          patch.disallowedTools !== undefined &&
+          JSON.stringify(patch.disallowedTools) !== JSON.stringify(agent.disallowedTools)
+        ) {
+          next.disallowedTools = [...patch.disallowedTools];
+          changed = true;
+        }
+        if (patch.permissionMode !== undefined && patch.permissionMode !== agent.permissionMode) {
+          next.permissionMode = patch.permissionMode;
+          changed = true;
+        }
+        // mcpServers（multica 欠账 #2）：与 modelSelection 同款 —— JSON 判等 + 拷贝。
+        // 语义是**整体替换**（不是按 server 名并入）：并入会让「删掉一个 server」永远做不到，
+        // 而删正是这个字段最常见的编辑动作。`{}` 是合法值（不再有自有 server ⇒ 回到「不覆盖」），
+        // 与 `undefined`（保持原值）严格区分。
+        if (
+          patch.mcpServers !== undefined &&
+          JSON.stringify(patch.mcpServers) !== JSON.stringify(agent.mcpServers)
+        ) {
+          // 拷贝而非赋值：不让调用方的可变对象与定义共享引用（prefillFrom 同款纪律）。
+          // 逐条浅拷贝（与 shared 的合并函数同深度）：条目里的 env/headers 不被本层改写，无需更深。
+          next.mcpServers = Object.fromEntries(
+            Object.entries(patch.mcpServers).map(([name, config]) => [name, { ...config }]),
+          );
+          changed = true;
+        }
+        // 内容全同 ⇒ 交回原引用：助手据此跳过写盘（重复点「保存」不该产生一次重写）。
+        return changed ? next : agent;
+      });
+    },
+
+    restore(id) {
+      // 幂等：未归档的行 restore 是 no-op（不重写盘）；id 不存在响亮抛（与 archive 同口径）。
+      update(root, id, (agent) =>
+        agent.archivedAt === undefined ? agent : { ...agent, archivedAt: undefined },
+      );
     },
 
     archive(id) {

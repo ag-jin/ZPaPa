@@ -342,6 +342,17 @@ export interface WikiSettings {
   lastAutoUpdateAt?: Record<string, number>;
 }
 
+/* #8 D3：小队整批收尾的**模式闭集**（设计 §4.4 的模式表 / §6 的「设置模式开关」）。
+ *
+ * `local`：finalize 合回本地 target，终态由本地收尾给出（缺省；离线唯一形态，零出站）；
+ * `pr-gate`：finalize 改为 push 集成分支 + 开 PR，终态交 PR merge（需要 PAT 与 GitHub remote，
+ * 两者缺一 ⇒ 降级回本地收尾并在收件箱留痕，不静默）。
+ *
+ * 常量与类型放在这里（AppSettings 的家）：schema（validationAppSettings）与组合根快照共用同一份
+ * 闭集，另立一处会让「能存的值」与「能读的值」两套定义悄悄分叉。 */
+export const SQUAD_MERGE_MODES = ["local", "pr-gate"] as const;
+export type SquadMergeMode = (typeof SQUAD_MERGE_MODES)[number];
+
 export interface AppSettings {
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */
   startPlanRecommendationDismissed?: boolean;
@@ -431,8 +442,22 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
-  /** 多智能体小队实验开关（默认 false）。 */
+  /** 多智能体小队实验开关（preview 包缺省开启，其余缺省关闭；显式值优先）。 */
   experimentalAgentSquadsEnabled?: boolean;
+  /**
+   * GitHub PR 集成的访问令牌（PAT，**明文**存本地设置；#8 D2）。
+   * 未配置（undefined）或空白 ⇒ PR 快照面不可用（离线缺省形态），PR 区只显示手动登记的链接。
+   * 凭据纪律：不得出现在日志、错误原因、示例与本字段之外的任何持久化面。
+   */
+  githubPullRequestToken?: string;
+  /**
+   * 小队整批收尾的**模式**（#8 D3，设计 §4.4 的模式表；两值闭集见 `SQUAD_MERGE_MODES`）。
+   *
+   * `local`（缺省）：finalize 合回本地 target，终态由本地收尾给出（离线唯一形态）；
+   * `pr-gate`：finalize 改为 push 集成分支 + 开 PR，终态交 PR merge（需要 token 与 GitHub remote，
+   * 两者缺一 ⇒ **降级回本地收尾并在收件箱留痕**，不静默）。
+   */
+  squadMergeMode?: SquadMergeMode;
   /**
    * 项目知识库（wiki）配置：生成选项与定时自动更新。
    * 产物落 `<workspace>/wiki/`。

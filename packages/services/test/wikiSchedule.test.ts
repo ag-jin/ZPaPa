@@ -40,12 +40,24 @@ test("每天：从锚点推出下一个同时刻", () => {
   const anchorAt = local(2026, 3, 10, 3, 0);
   // 锚点当天 03:00 之前 → 当天
   assert.equal(
-    computeNextWikiRunAt({ frequency: "daily", hour: 3, minute: 0, anchorAt, from: local(2026, 3, 10, 1, 0) }),
+    computeNextWikiRunAt({
+      frequency: "daily",
+      hour: 3,
+      minute: 0,
+      anchorAt,
+      from: local(2026, 3, 10, 1, 0),
+    }),
     local(2026, 3, 10, 3, 0),
   );
   // 锚点当天 03:00 之后 → 次日
   assert.equal(
-    computeNextWikiRunAt({ frequency: "daily", hour: 3, minute: 0, anchorAt, from: local(2026, 3, 10, 5, 0) }),
+    computeNextWikiRunAt({
+      frequency: "daily",
+      hour: 3,
+      minute: 0,
+      anchorAt,
+      from: local(2026, 3, 10, 5, 0),
+    }),
     local(2026, 3, 11, 3, 0),
   );
 });
@@ -54,7 +66,13 @@ test("每 2 天：按日历天推进，跨月末不出现「隔 1 天」", () =>
   // 这是不用 `*/2` cron 的原因：31 号之后 cron 会命中 1 号，实际只隔 1 天。
   const anchorAt = local(2026, 3, 31, 3, 0);
   const from = local(2026, 3, 31, 4, 0);
-  const next = computeNextWikiRunAt({ frequency: "every2days", hour: 3, minute: 0, anchorAt, from });
+  const next = computeNextWikiRunAt({
+    frequency: "every2days",
+    hour: 3,
+    minute: 0,
+    anchorAt,
+    from,
+  });
   // 3/31 + 2 天 = 4/2，而不是 4/1
   assert.equal(next, local(2026, 4, 2, 3, 0));
 });
@@ -96,7 +114,10 @@ test("computeNextWikiRunAt 结果总是严格晚于 from", () => {
       local(2026, 3, 11, 12, 0),
     ]) {
       const next = computeNextWikiRunAt({ frequency, hour: 3, minute: 0, anchorAt, from });
-      assert.ok(next > from, `${frequency} from=${new Date(from).toISOString()} → ${new Date(next).toISOString()}`);
+      assert.ok(
+        next > from,
+        `${frequency} from=${new Date(from).toISOString()} → ${new Date(next).toISOString()}`,
+      );
     }
   }
 });

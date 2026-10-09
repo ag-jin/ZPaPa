@@ -80,10 +80,7 @@ function compareItems(
  * 剥离只作用于"发给对端的参数"：对端返回的条目仍由 normalizeTaskMeta 按 scope
  * 重新贴上本端 identity，UI 侧的身份语义不受影响。
  */
-function mutationParams(
-  address: WindowHostTaskAddress,
-  scope: WindowHostControllerSourceScope,
-) {
+function mutationParams(address: WindowHostTaskAddress, scope: WindowHostControllerSourceScope) {
   const workspaceIdentity = scope.kind === "remote" ? undefined : address.workspaceIdentity;
   return {
     taskId: address.taskId,
@@ -759,32 +756,32 @@ export function createWindowHostControllerRuntime(options: {
     }): Promise<WindowHostTaskAddress> {
       const remoteAttachmentScope =
         params.attachmentScope?.kind === "remote" ? params.attachmentScope : undefined;
-      if (remoteAttachmentScope) {
-        if (
-          remoteAttachmentScope.workspacePath !== params.workspacePath ||
-          remoteAttachmentScope.workspaceIdentity !== params.workspaceIdentity
-        ) {
-          throw new Error("列表 mutation 与 remote attachment scope 不匹配");
-        }
-      }
       const resolved = options.resolveSource({
         workspacePath: params.workspacePath,
         ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
       });
+      // 远程 attachment 是**设备粒度**的：一台被投射设备上的多个项目共用同一个
+      // attachment，而 attachmentScope 记的是"绑定时刻的那个项目"。所以校验只认
+      // **同一台设备**，不再要求 path/identity 与 attachmentScope 相等 —— 否则对
+      // 非当前绑定项目的会话做归档/置顶/标记已读会整体被拒（实机缺陷：
+      // archiveTask 0 成功 / setTaskUnread 253 失败）。
+      //
+      // 跨设备与未绑定项目仍然 fail-closed：目标能否解析由 resolveSource 决定，
+      // 远程 project 只能命中"该设备绑定过的项目"（见 windowRemoteConnectionRegistry
+      // 的 sessionCoversWorkspace），未命中即 null → 这里直接拒绝，绝不回落本地库。
       if (
         remoteAttachmentScope &&
         (!resolved ||
           resolved.scope.kind !== "remote" ||
-          resolved.scope.remoteSessionId !== remoteAttachmentScope.remoteSessionId ||
-          resolved.scope.workspacePath !== remoteAttachmentScope.workspacePath ||
-          resolved.scope.workspaceIdentity !== remoteAttachmentScope.workspaceIdentity)
+          resolved.scope.remoteSessionId !== remoteAttachmentScope.remoteSessionId)
       ) {
         throw new Error("列表 mutation 与 remote attachment source 不匹配");
       }
       if (resolved) {
         // remote attachment 曾直接返回 address，跳过 source refresh；新绑定的
         // workspace 尚未读取 Controller 列表时没有投影行，导致 unread/archive 等首次写入失败。
-        // 这里只物化已按完整 remoteSessionId + identity 验证的 source，继续保持 fail-closed。
+        // 这里物化已解析出的 source（远程侧必须是该设备绑定过的项目，未绑定解析不出
+        // source），按需为这个项目登记投影行，继续保持 fail-closed。
         await refreshSource(resolved);
       }
       const matches = projection

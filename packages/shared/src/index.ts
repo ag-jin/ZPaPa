@@ -1,3 +1,4 @@
+export { TEAM_AGENT_COLORS } from "./team-agent.js";
 export type {
   FileBinaryPreview,
   FileEntry,
@@ -31,7 +32,8 @@ export type {
   WikiAutoUpdateFrequency,
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
-export { DEFAULT_LOCALE } from "./protocol.js";
+export { DEFAULT_LOCALE, SQUAD_MERGE_MODES } from "./protocol.js";
+export type { SquadMergeMode } from "./protocol.js";
 export { ZCODE_VERSION, ZCODE_COMMIT, ZCODE_BUILD_TIME } from "./version.js";
 export type { HelloMessage, HelloAckMessage } from "./handshake.js";
 export type { ArmsRumEnv, ZCodeEnv, ZCodeProductFlavor } from "./env.js";
@@ -224,6 +226,7 @@ export type {
   TaskNotificationPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
+  UpdateUpToDateNotice,
   WSLDistro,
   ZCodeStdioTapDevState,
 } from "./platform.js";
@@ -312,6 +315,9 @@ export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
 export * from "./work-item.js";
+export * from "./project.js";
 export * from "./team-agent.js";
+export * from "./team-agent-mcp.js";
+export * from "./agent-builder.js";
 export * from "./squad.js";
 export * from "./wake-rule.js";

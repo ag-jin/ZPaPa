@@ -64,7 +64,7 @@ import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js"
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useOffPeakTaskNotifications } from "@/hooks/useOffPeakTaskNotifications.js";
-import type { AppProps, WorkspaceMainView } from "@/app-shell/types.js";
+import type { AppProps, WorkItemDetailIntent, WorkspaceMainView } from "@/app-shell/types.js";
 import type {
   ChatSearchResultHighlightRequest,
   ChatViewSummaryPanelVariant,
@@ -827,13 +827,77 @@ export function App({
   useTestActions(testActions);
   const [workspaceMainView, setWorkspaceMainView] = useState<WorkspaceMainView>("chat");
   const [openAutomationId, setOpenAutomationId] = useState<string | null>(null);
+  /* ④刀（2026-10-06 裁定①：新独立视图）：agent 详情页的 id 寻址态——
+     与 openAutomationId 同款「App 级意图」形态（带参视图在当前机制下只能并列状态携带）。 */
+  const [agentDetailId, setAgentDetailId] = useState<string | null>(null);
+  /* B5.1：工作项详情页的意图态（**唯一**持有者）——`{ workItemId, returnView }`，形态对齐上面的
+     agentDetailId / openAutomationId。返回目标由 `returnView` 决定，详情页**不猜历史**（设计案 §1.3）；
+     `agentDetailId` 在跳走时**不清**（只在打开下一个 agent 时被覆盖）⇒ `returnView:"agent-detail"`
+     能原样复现上一屏。 */
+  const [workItemDetailIntent, setWorkItemDetailIntent] = useState<WorkItemDetailIntent | null>(
+    null,
+  );
+  /* B5.1：看板滚动位置（视图切换会把看板整棵子树卸载 ⇒ scrollTop 归零）。状态放在 App：
+     进详情前由 shell 记下、返回后 shell 在 layout 阶段还原（§3.1）。 */
+  const [workItemsScrollTop, setWorkItemsScrollTop] = useState(0);
   const [openAutomationTab, setOpenAutomationTab] = useState<NonNullable<
     AutomationsNavigationTarget["automationTab"]
   > | null>(null);
+  /* 「收件箱」穿透的一次性聚焦意图（照 openAutomationId 的先例）：shell 的「打开工作项」
+     导航成功后设它、工作项页的看板消费后清它 —— 意图跨页面存活要放在 App 这一层，
+     页面组件随主视图切走就卸载，放页面里会被卸载顺手清掉（清早 = 聚焦蒸发）。 */
+  const [inboxFocusWorkItemId, setInboxFocusWorkItemId] = useState<string | null>(null);
   const [pluginStoreReturnScopeKey, setPluginStoreReturnScopeKey] = useState("user");
   const [pluginStoreOpenVersion, setPluginStoreOpenVersion] = useState(0);
   const handleNavigateToTaskMain = useCallback(() => {
     setWorkspaceMainView("chat");
+  }, []);
+  // 侧栏一级入口「收件箱」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图。
+  // 与其他小队入口不同的一点：收件箱是**跨项目**面，页面不取 workspace 目标（服务面也没有目标参数）。
+  const handleOpenInboxMain = useCallback(() => {
+    setWorkspaceMainView("inbox");
+  }, []);
+  // 侧栏一级入口「智能体」（照 handleNavigateToTaskMain 的形态）：只是切主视图，
+  // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
+  const handleOpenSquadAgentsMain = useCallback(() => {
+    setWorkspaceMainView("agents");
+  }, []);
+  /* ④刀：列表行点击 → 详情页（切视图 + 记 id；每次打开都刷新 id——陈旧 id 不残留）。 */
+  const handleOpenAgentDetail = useCallback((agentId: string) => {
+    setAgentDetailId(agentId);
+    setWorkspaceMainView("agent-detail");
+  }, []);
+  /* B5.1：工作项详情页的**唯一**打开路径（两个入口各自固定 returnView，见下面两个包装）。 */
+  const openWorkItemDetail = useCallback(
+    (workItemId: string, returnView: WorkItemDetailIntent["returnView"]) => {
+      setWorkItemDetailIntent({ workItemId, returnView });
+      setWorkspaceMainView("work-item-detail");
+    },
+    [],
+  );
+  /** 入口①：工作项看板行（返回 ⇒ 回看板，滚动位置由 shell 记录/还原）。 */
+  const handleOpenWorkItemDetail = useCallback(
+    (workItemId: string) => openWorkItemDetail(workItemId, "work-items"),
+    [openWorkItemDetail],
+  );
+  /** 入口②：agent 详情任务表（返回 ⇒ 回该 agent 的详情页）。 */
+  const handleOpenWorkItemFromAgentDetail = useCallback(
+    (workItemId: string) => openWorkItemDetail(workItemId, "agent-detail"),
+    [openWorkItemDetail],
+  );
+  /** 离开工作项看板视图时记下滚动位置（shell 在滚动时写 ref，离开时才交回 App —— 不在每帧 setState）。 */
+  const handleWorkItemsScrollTopChange = useCallback((scrollTop: number) => {
+    setWorkItemsScrollTop(scrollTop);
+  }, []);
+  // 侧栏一级入口「小队」（照 handleOpenSquadAgentsMain 的形态）：只是切主视图，
+  // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
+  const handleOpenSquadsMain = useCallback(() => {
+    setWorkspaceMainView("squads");
+  }, []);
+  // 侧栏一级入口「工作项」（照 handleOpenSquadsMain 的形态）：只是切主视图，
+  // 页面自己负责取数（目标由 shell 的 workspaceAbsPath/workspaceIdentity 传入）。
+  const handleOpenWorkItemsMain = useCallback(() => {
+    setWorkspaceMainView("work-items");
   }, []);
   const { preserveNextSettingsExit } = useWorkspaceMainViewSettingsExit({
     isWorkspaceVisible,
@@ -856,6 +920,14 @@ export function App({
   const handleOpenAutomationConsumed = useCallback(() => {
     setOpenAutomationId(null);
     setOpenAutomationTab(null);
+  }, []);
+  /** 收件箱「打开工作项」：shell 导航成功后设置聚焦意图（`workItemId`）。 */
+  const handleInboxFocusRequest = useCallback((workItemId: string) => {
+    setInboxFocusWorkItemId(workItemId);
+  }, []);
+  /** 工作项页消费掉聚焦意图（聚焦或确认目标不在列表）后清掉 —— 不留悬挂意图。 */
+  const handleInboxFocusConsumed = useCallback(() => {
+    setInboxFocusWorkItemId(null);
   }, []);
   const {
     handleSelectTask,
@@ -946,9 +1018,28 @@ export function App({
     });
     openSettingsTab();
   }, [openSettingsTab, pluginStoreReturnScopeKey]);
+  /* ④刀：详情页返回 = 回智能体列表（与 shell 侧同一条判据，S6 同步点）。 */
+  const handleBackFromAgentDetailApp = useCallback(() => {
+    setWorkspaceMainView("agents");
+  }, []);
+  /* B5.1：工作项详情返回 = 回**来源视图**（意图里的 returnView；详情页不猜历史）。
+     意图不清：再进入时由打开动作覆盖；留着它才能让「返回」在多次往返间稳定。 */
+  const handleBackFromWorkItemDetailApp = useCallback(() => {
+    setWorkspaceMainView(workItemDetailIntent?.returnView ?? "work-items");
+  }, [workItemDetailIntent]);
   const handlePrimaryNavigationBack =
-    workspaceMainView === "plugin-store" ? handleManageInstalledPlugins : handleTaskNavBack;
-  const canPrimaryNavigationBack = workspaceMainView === "plugin-store" || canTaskNavBack;
+    workspaceMainView === "plugin-store"
+      ? handleManageInstalledPlugins
+      : workspaceMainView === "agent-detail"
+        ? handleBackFromAgentDetailApp
+        : workspaceMainView === "work-item-detail"
+          ? handleBackFromWorkItemDetailApp
+          : handleTaskNavBack;
+  const canPrimaryNavigationBack =
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail" ||
+    canTaskNavBack;
   const shellPanelIds = useMemo(() => ["sidebar", "content"], []);
 
   useAppKeyboard({
@@ -1133,8 +1224,23 @@ export function App({
         openAutomationTab={openAutomationTab}
         onWorkspaceMainViewChange={setWorkspaceMainView}
         onOpenAutomationConsumed={handleOpenAutomationConsumed}
+        inboxFocusWorkItemId={inboxFocusWorkItemId}
+        onInboxFocusRequest={handleInboxFocusRequest}
+        onInboxFocusConsumed={handleInboxFocusConsumed}
         handleOpenAutomations={handleOpenAutomations}
         handleOpenPluginStore={handleOpenPluginStoreForScope}
+        handleOpenSquadAgents={handleOpenSquadAgentsMain}
+        agentDetailId={agentDetailId}
+        onOpenAgentDetail={handleOpenAgentDetail}
+        workItemDetailIntent={workItemDetailIntent}
+        onOpenWorkItemDetail={handleOpenWorkItemDetail}
+        onOpenWorkItemFromAgentDetail={handleOpenWorkItemFromAgentDetail}
+        onBackFromWorkItemDetail={handleBackFromWorkItemDetailApp}
+        workItemsScrollTop={workItemsScrollTop}
+        onWorkItemsScrollTopChange={handleWorkItemsScrollTopChange}
+        handleOpenInbox={handleOpenInboxMain}
+        handleOpenSquads={handleOpenSquadsMain}
+        handleOpenWorkItems={handleOpenWorkItemsMain}
         handleManageInstalledPlugins={handleManageInstalledPlugins}
         onConnectRemote={onConnectRemote}
         onSelectRemoteProject={onSelectRemoteProject}

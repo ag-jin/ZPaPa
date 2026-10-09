@@ -18,13 +18,13 @@ sample: ['/Users/jin1/Workspace/新赛马', '/Users/jin1/Workspace/中转站', '
 
 运行时逐层验证（renderer 内 ESM import 读 store 实况）：
 
-| 检查项 | 结果 |
-|---|---|
-| `session.target` | `{kind:"ssh", host:"100.66.1.2"}` — 确实连到 B ✅ |
-| `session.remoteServices` 存在 | true ✅ |
-| `session.remoteServices.settingService.get().recentProjects` | **A 的 3 个路径** ❌ |
-| host 注册的 scoped channel 列表 | 有 `settings-sync`/`plugins`/`hooks`，**没有 `setting`** |
-| 验收脚本 `acceptance-device-connect.ts` | 读到 B 的 10 个项目 / 33 条会话 ✅ |
+| 检查项                                                       | 结果                                                     |
+| ------------------------------------------------------------ | -------------------------------------------------------- |
+| `session.target`                                             | `{kind:"ssh", host:"100.66.1.2"}` — 确实连到 B ✅        |
+| `session.remoteServices` 存在                                | true ✅                                                  |
+| `session.remoteServices.settingService.get().recentProjects` | **A 的 3 个路径** ❌                                     |
+| host 注册的 scoped channel 列表                              | 有 `settings-sync`/`plugins`/`hooks`，**没有 `setting`** |
+| 验收脚本 `acceptance-device-connect.ts`                      | 读到 B 的 10 个项目 / 33 条会话 ✅                       |
 
 ## 根因：这是刻意设计，与设备投射语义冲突
 
@@ -41,11 +41,11 @@ sample: ['/Users/jin1/Workspace/新赛马', '/Users/jin1/Workspace/中转站', '
 
 但「设备级投射」是**另一种语义**：
 
-| | 远端 workspace | 设备级投射 |
-|---|---|---|
-| 目的 | 打开 B 的某个项目 | 读 B **整台设备**有哪些项目 |
-| 项目清单来源 | 用户选定的目录 | 必须问 B 自己 |
-| settingService 应有语义 | 本机（现状，正确） | **设备侧** |
+|                         | 远端 workspace     | 设备级投射                  |
+| ----------------------- | ------------------ | --------------------------- |
+| 目的                    | 打开 B 的某个项目  | 读 B **整台设备**有哪些项目 |
+| 项目清单来源            | 用户选定的目录     | 必须问 B 自己               |
+| settingService 应有语义 | 本机（现状，正确） | **设备侧**                  |
 
 设备投射借用了 workspace 连接的 accessor，于是拿到了本机 settingService。
 

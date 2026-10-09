@@ -6,18 +6,54 @@ import { WIKI_DIR_RELATIVE_PATH } from "./wikiStore.js";
 
 /** 可遍历的源码文件扩展名 → 语言标签。用于 languageStats 与选材。 */
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  ".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx", ".mjs": "mjs", ".cjs": "cjs",
-  ".json": "json", ".md": "md", ".py": "py", ".go": "go", ".rs": "rs", ".java": "java",
-  ".rb": "rb", ".php": "php", ".vue": "vue", ".svelte": "svelte", ".css": "css",
-  ".scss": "scss", ".html": "html", ".yml": "yaml", ".yaml": "yaml", ".toml": "toml",
-  ".sh": "sh", ".sql": "sql", ".c": "c", ".h": "h", ".cc": "cc", ".cpp": "cpp",
+  ".ts": "ts",
+  ".tsx": "tsx",
+  ".js": "js",
+  ".jsx": "jsx",
+  ".mjs": "mjs",
+  ".cjs": "cjs",
+  ".json": "json",
+  ".md": "md",
+  ".py": "py",
+  ".go": "go",
+  ".rs": "rs",
+  ".java": "java",
+  ".rb": "rb",
+  ".php": "php",
+  ".vue": "vue",
+  ".svelte": "svelte",
+  ".css": "css",
+  ".scss": "scss",
+  ".html": "html",
+  ".yml": "yaml",
+  ".yaml": "yaml",
+  ".toml": "toml",
+  ".sh": "sh",
+  ".sql": "sql",
+  ".c": "c",
+  ".h": "h",
+  ".cc": "cc",
+  ".cpp": "cpp",
 };
 
 /** 这些目录一律跳过：既不是项目源码，也让清单变得不可读。 */
 const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set([
-  "node_modules", ".git", "dist", "build", "out", "target", "vendor",
-  ".next", ".nuxt", ".cache", "coverage", "__pycache__", ".venv", "venv",
-  ".idea", ".vscode",
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "vendor",
+  ".next",
+  ".nuxt",
+  ".cache",
+  "coverage",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".idea",
+  ".vscode",
   /* spec §13 C10 的工作区产物目录排除清单（**扫描半边**）：**不在这里手写**，改为从
      代码侧唯一来源 `packages/services/src/workspaceProductDirs.ts` 的
      `WORKSPACE_PRODUCT_DIRS` 派生（去重后的顶层目录名）。清单本体与「新增产物目录在此登记」
@@ -177,7 +213,9 @@ export function buildManifestDigest(scan: WikiScanResult, maxChars = 24_000): st
     // 单目录文件过多时只列前若干个，其余折叠 —— 提示模型这是概览而非全量。
     const preview = files.slice(0, 40);
     for (const file of preview) {
-      lines.push(`  ${file.path.slice(dir === "." ? 0 : dir.length + 1)} (${formatBytes(file.size)})`);
+      lines.push(
+        `  ${file.path.slice(dir === "." ? 0 : dir.length + 1)} (${formatBytes(file.size)})`,
+      );
     }
     if (files.length > preview.length) {
       lines.push(`  … 另有 ${files.length - preview.length} 个文件`);

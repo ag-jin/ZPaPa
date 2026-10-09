@@ -21,15 +21,15 @@ A 通过 SSH「远程项目」连 B 的某个项目目录后：
 
 ## 已确认事实（实测，带证据）
 
-| # | 事实 | 证据 |
-|---|---|---|
-| 1 | 远程 workspace 的 taskService 就是 **B 端服务**（经 RPC 代理），A 建会话索引天然写在 B | `remoteWorkspaceServiceCollection.ts:197,331` |
-| 2 | A 挂载 B 后 `listTasks({workspacePath})` → **8 条**；加 `workspaceIdentity: remote:ssh:...` → **0 条** | 实测 `probe-key-match.mjs` |
-| 3 | B 的 `tasks-index.sqlite` 中该项目 26 条会话：`workspace_key` = 纯路径、`workspace_identity` = NULL，8 条未归档 | B 库直查 |
-| 4 | 键解析：`resolveWorkspaceKey = identity?.trim() \|\| path`（**identity 优先**） | `packages/shared/src/task-realtime-core.ts:82` |
-| 5 | **混合键共存**：B 本地历史会话用纯路径键；A 远程建的会话带 identity 键 | 事实 3 + A 库 `remote:ssh:` 记录 |
-| 6 | A 侧 `useLocalWorkspaceScopes` 的 `isLocalWorkspaceTab` 要求 `!remoteSessionId && !remoteTarget && !workspaceIdentity` **三者全空**，远程 tab 被完全排除 | `packages/ui/src/hooks/useLocalWorkspaceScopes.ts:5` |
-| 7 | **架构约束**：远程必须传 workspaceIdentity（身份隔离） | `paneLayoutTree.ts:40`、`AGENTS.md` Workspace Identity 节 |
+| #   | 事实                                                                                                                                                     | 证据                                                      |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 1   | 远程 workspace 的 taskService 就是 **B 端服务**（经 RPC 代理），A 建会话索引天然写在 B                                                                   | `remoteWorkspaceServiceCollection.ts:197,331`             |
+| 2   | A 挂载 B 后 `listTasks({workspacePath})` → **8 条**；加 `workspaceIdentity: remote:ssh:...` → **0 条**                                                   | 实测 `probe-key-match.mjs`                                |
+| 3   | B 的 `tasks-index.sqlite` 中该项目 26 条会话：`workspace_key` = 纯路径、`workspace_identity` = NULL，8 条未归档                                          | B 库直查                                                  |
+| 4   | 键解析：`resolveWorkspaceKey = identity?.trim() \|\| path`（**identity 优先**）                                                                          | `packages/shared/src/task-realtime-core.ts:82`            |
+| 5   | **混合键共存**：B 本地历史会话用纯路径键；A 远程建的会话带 identity 键                                                                                   | 事实 3 + A 库 `remote:ssh:` 记录                          |
+| 6   | A 侧 `useLocalWorkspaceScopes` 的 `isLocalWorkspaceTab` 要求 `!remoteSessionId && !remoteTarget && !workspaceIdentity` **三者全空**，远程 tab 被完全排除 | `packages/ui/src/hooks/useLocalWorkspaceScopes.ts:5`      |
+| 7   | **架构约束**：远程必须传 workspaceIdentity（身份隔离）                                                                                                   | `paneLayoutTree.ts:40`、`AGENTS.md` Workspace Identity 节 |
 
 ## 结论：真正要解决的问题
 
@@ -43,17 +43,20 @@ A 通过 SSH「远程项目」连 B 的某个项目目录后：
 ## 方案
 
 ### 改动 ①：A 侧会话列表纳入远程 tab
+
 - `packages/ui/src/hooks/useLocalWorkspaceScopes.ts`：新增可选参数（如 `includeRemoteTabs`），允许远程 tab 通过。
 - 调用点：`useGroupedTaskView.ts:590`（会话列表）、`WorkspaceTimelineTasksSection.tsx:69`、`WorkspacePinnedTasksSection.tsx:75`。
 - 风险：`useAutomationProjectOptions.ts:69` 也在用，**automation 项目下拉不应纳入远程**（保持原语义）。
 
 ### 改动 ②：远程 tab 的查询 scope 用「项目路径」而不是 remote identity
+
 - `useGroupedTaskView.ts:98 buildWorkspaceScopes`：对远程 tab 传 `{workspacePath: <B项目路径>, workspaceIdentity: undefined}`。
 - 依据：事实 2（带 identity 查 0 条、纯路径查 8 条）。
 - **不违反架构约束**：identity 仍用于身份隔离与 RPC 路由；只在"查 B 库的会话列表"这一步匹配 B 的存储形态（B 库里就是纯路径键）。
 - ⚠️ **需验证**：host 侧 `resolveSource`（`packages/desktop/src/host/index.ts:1815`）对"无 identity 的 scope"会落到 **A 的本地 taskService**（查 A 自己的库，不是 B）。因此必须同时让 host 能识别"这是已连接的远程项目路径" → 走 `windowRemoteConnectionRegistry.findSessionForWorkspace`。这是本方案**最关键的实现点**。
 
 ### 改动 ③：归档不展示
+
 - 会话列表查询默认已过滤 `deleted`，需确认 `archived` 的默认行为并显式排除。
 
 ## 分步实施与验证

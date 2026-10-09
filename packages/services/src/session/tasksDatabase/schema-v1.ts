@@ -1,3 +1,7 @@
+/* oxlint-disable eslint(max-lines) -- 冻结 SQL 累积文件：每条迁移按「只加不改、SQL 冻结」纪律
+   在同文件追加 DDL（0012 起过 400 行门槛）。拆文件会改动已发布迁移的 import 路径（迁移账本
+   checksum 绑定的是 SQL 文本，与文件位置无关，但拆分的收益只是行数）——本条理由与
+   squadRunRepo 的 max-lines 例外同款：文件本身就是按顺序累积的单一对象集。 */
 // 0001 接管已有分散建表；发布后保持声明不变，后续变更新增 migration。
 export const TASK_INDEX_SCHEMA = `
       CREATE TABLE IF NOT EXISTS tasks (
@@ -247,4 +251,641 @@ export const WAKE_RULE_SCHEMA = `
     ON wake_rules(next_fire_at) WHERE enabled=1 AND next_fire_at IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_wake_rules_work_item
     ON wake_rules(work_item_id);
+`;
+
+// 0006 追加：小队运行台账。只新增，不改既有表/列。
+// 这张表是硬约束 2 的落点：启动回收的「活跃集合」必须**跨重启存活**——
+// 内存里的「当前有没有在跑的 run」既活不过重启，也会把「已产出但未合并」漏在外面。
+// branch / dir_name 可空：队长 run 不建工作树（spec §6.1「是否开工作树是本次运行的属性」）。
+// 刻意不建指向 work_items 的外键：工作项只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA 同一条理由）。
+export const SQUAD_RUN_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS squad_runs (
+    run_id               TEXT PRIMARY KEY,
+    workspace_key        TEXT NOT NULL,
+    workspace_path       TEXT NOT NULL,
+    work_item_id         TEXT NOT NULL,
+    parent_work_item_id  TEXT NOT NULL,
+    agent_id             TEXT NOT NULL,
+    is_leader_task       INTEGER NOT NULL,
+    branch               TEXT,
+    dir_name             TEXT,
+    status               TEXT NOT NULL,
+    session_id           TEXT,
+    created_at           INTEGER NOT NULL,
+    updated_at           INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_active
+    ON squad_runs(workspace_key, status);
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_work_item
+    ON squad_runs(work_item_id);
+`;
+
+// 0007 追加：收件箱（Inbox）实体。只新增，不改既有表/列。
+// 这张表是「需人介入的事 → 一条可查的记录」的**机械落点**（spec §3.x 实体表 / §5.7.4 冲突 / §6.2 队员失败 /
+// §6.6 启动和解）：此前这些事实只在日志与状态变迁里，没有可查的实体。
+// · `dedup_key` + 唯一索引是**存储层的幂等不变式**（见 idx_inbox_items_dedup）：同一事实重投不得产生
+//   第二条、已归档不得被重投复活 —— 两条都靠「冲突时不更新任何列」实现，不靠「先查后插」（并发下两次查
+//   都可能看不到对方）。
+// · `kind` 回答「这是什么」（枚举由 inboxItemRepo 单源定义），`severity` 只回答「多急」。
+// · `detail_json` 是结构化事实（分支名 / runId / reason 原文等），不拆列：形状随产生点而变，
+//   拆列会把未枚举的字段当未知列拒掉（与 WAKE_RULE_SCHEMA 的 condition/filters 同一条理由）。
+// · `read_at` / `archived_at` 可空且**只由专用写入口改**：已读与归档是两件正交的事。
+// · 刻意不建指向 work_items / squad_runs 的外键：两者都只归档不硬删，外键会让写入失败
+//   （与 WORK_ITEM_SCHEMA / SQUAD_RUN_SCHEMA 同一条理由）。
+export const INBOX_ITEM_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS inbox_items (
+    id               TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    workspace_path   TEXT NOT NULL,
+    dedup_key        TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    severity         TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    detail_json      TEXT NOT NULL,
+    work_item_id     TEXT,
+    run_id           TEXT,
+    created_at       INTEGER NOT NULL,
+    read_at          INTEGER,
+    archived_at      INTEGER
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_items_dedup
+    ON inbox_items(workspace_key, dedup_key);
+  CREATE INDEX IF NOT EXISTS idx_inbox_items_active
+    ON inbox_items(workspace_key, archived_at);
+`;
+
+// 0008 追加：给 squad_runs 落「派发成因」两列。只加列，不改既有列/表；NULL = 遗留行/未知成因（读回不得猜）。
+export const SQUAD_RUN_CAUSE_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN dispatch_cause TEXT;
+  ALTER TABLE squad_runs ADD COLUMN caused_by_run_id TEXT;
+`;
+
+/* 0009（C2 队列）：只加两索引与两张新表，**不加列**——0008 的列集断言在 0009 后逐字成立。
+   · 部分唯一索引 = 「(workspace, workItem,agent) 至多一个待开 Run」的一条 DDL 表达
+     （与 multica idx_one_pending_task_per_issue_agent_v2 同法；S6 §12.1-1 队列状态窗）；
+   · 容量索引服务闸的 count(open)×agent 计数（C0 十点之 10：produced/rejected 不占容量）；
+   · squad_run_deferred_dispatches = 运行中收到的派发请求的重放义务（S6 §12.1-2 deferred，
+     资格判据与排队不同故分表）；squad_run_coalesced_details = 并入留痕（INSERT OR IGNORE 幂等）。 */
+export const SQUAD_RUN_QUEUE_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_squad_runs_one_queued_per_item_agent
+    ON squad_runs(workspace_key, work_item_id, agent_id)
+    WHERE status = 'queued';
+  CREATE INDEX IF NOT EXISTS idx_squad_runs_agent_capacity
+    ON squad_runs(workspace_key, agent_id, status);
+  CREATE TABLE IF NOT EXISTS squad_run_deferred_dispatches (
+    run_id           TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    work_item_id     TEXT NOT NULL,
+    agent_id         TEXT NOT NULL,
+    dispatch_cause   TEXT,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, agent_id)
+  );
+  CREATE TABLE IF NOT EXISTS squad_run_coalesced_details (
+    request_run_id   TEXT PRIMARY KEY,
+    target_run_id    TEXT NOT NULL,
+    created_at       INTEGER NOT NULL
+  );
+`;
+
+/* 0010（协作域 X0.1）：四张表——work_item_comments（含软删/解决态墓碑、raw+normalized 双正文、
+   clientRequestId 幂等键）、work_item_comment_reactions（轻实体，INSERT OR IGNORE 幂等）。
+   Activity/Decision 两表在 X0.2 追加（同迁移号内不混轮次——0010 只加本卡的对象）。
+   不给 work_items/squad_runs 建外键（只归档不硬删，同 WORK_ITEM_SCHEMA 理由）。 */
+export const WORK_ITEM_COLLABORATION_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_comments (
+    id                    TEXT PRIMARY KEY,
+    workspace_key         TEXT NOT NULL,
+    workspace_path        TEXT NOT NULL,
+    work_item_id          TEXT NOT NULL,
+    thread_id             TEXT NOT NULL,
+    parent_comment_id     TEXT,
+    author_kind           TEXT NOT NULL,
+    author_id             TEXT NOT NULL,
+    author_display_name   TEXT,
+    source_run_id         TEXT,
+    source_run_agent_id   TEXT,
+    source_run_squad_id   TEXT,
+    source_run_role       TEXT,
+    initiated_by_kind     TEXT NOT NULL,
+    initiated_by_id       TEXT NOT NULL,
+    body                  TEXT NOT NULL,
+    normalized_body       TEXT NOT NULL,
+    mentions_json         TEXT NOT NULL DEFAULT '[]',
+    command               TEXT NOT NULL DEFAULT 'none',
+    inline_json           TEXT,
+    client_request_id     TEXT,
+    revision              INTEGER NOT NULL DEFAULT 1,
+    deleted_at            INTEGER,
+    resolved_at           INTEGER,
+    created_at            INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    UNIQUE (workspace_key, author_kind, author_id, client_request_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_comments_item
+    ON work_item_comments(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_comments_thread
+    ON work_item_comments(workspace_key, thread_id, created_at, id);
+  CREATE TABLE IF NOT EXISTS work_item_comment_reactions (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    comment_id    TEXT NOT NULL,
+    author_kind   TEXT NOT NULL,
+    author_id     TEXT NOT NULL,
+    emoji         TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    UNIQUE (workspace_key, comment_id, author_kind, author_id, emoji)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_comment_reactions_comment
+    ON work_item_comment_reactions(comment_id);
+`;
+
+/* 0011（协作域 X0.2）：Activity（每 WorkItem 单调 sequence——INSERT…SELECT COALESCE(MAX)+1 原子生成，
+   多窗口 Host 共用同一 tasks-index 库文件，禁止 JS 先查后插/内存 counter）与 Decision（只增不改）。
+   不给 work_items 建外键（只归档不硬删，同前）。 */
+export const WORK_ITEM_COLLABORATION_SQL_2 = `
+  CREATE TABLE IF NOT EXISTS work_item_activities (
+    id                TEXT PRIMARY KEY,
+    workspace_key     TEXT NOT NULL,
+    workspace_path    TEXT NOT NULL,
+    work_item_id      TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    sequence          INTEGER NOT NULL,
+    occurred_at       INTEGER NOT NULL,
+    actor_kind        TEXT NOT NULL,
+    actor_id          TEXT NOT NULL,
+    actor_display_name TEXT,
+    source_run_id     TEXT,
+    initiated_by_kind TEXT NOT NULL,
+    initiated_by_id   TEXT NOT NULL,
+    comment_id        TEXT,
+    decision_id       TEXT,
+    dispatch_event_id TEXT,
+    payload_json      TEXT NOT NULL DEFAULT '{}',
+    dedup_key         TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, sequence),
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_activities_item
+    ON work_item_activities(workspace_key, work_item_id, sequence);
+  CREATE TABLE IF NOT EXISTS work_item_decisions (
+    id                  TEXT PRIMARY KEY,
+    workspace_key       TEXT NOT NULL,
+    workspace_path      TEXT NOT NULL,
+    work_item_id        TEXT NOT NULL,
+    thread_id           TEXT,
+    parent_decision_id  TEXT,
+    author_kind         TEXT NOT NULL,
+    author_id           TEXT NOT NULL,
+    source_run_id       TEXT,
+    initiated_by_kind   TEXT NOT NULL,
+    initiated_by_id     TEXT NOT NULL,
+    kind                TEXT NOT NULL,
+    subject             TEXT NOT NULL,
+    selection_json      TEXT NOT NULL DEFAULT '{}',
+    rationale           TEXT,
+    evidence_json       TEXT NOT NULL DEFAULT '[]',
+    effective_at        INTEGER NOT NULL,
+    dedup_key           TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_decisions_item
+    ON work_item_decisions(workspace_key, work_item_id, effective_at, id);
+`;
+
+/* 0013（协作域 X1.3 修复轮）：
+   ① work_item_activities 补 sourceRun 全形状三列——0011 只存了 source_run_id，读回曾硬编码
+      role="member"（队长 run 的 Activity 读回变队员，agentId/squadId 一并丢失）：静默失真。
+      0011 的 SQL 已发布冻结（checksum 不可改），按 0008/0009 的加法纪律追加新迁移。
+   ② squad_run_deferred_dispatches 加 origin（义务来源闭集 'reassign'|'comment'）：评论 deferred
+      义务与 R2 义务同表且无来源判别列，claimDue 一视同仁认领后 host 会把评论 dispatchKey
+      当 eventKey 重放。NOT NULL DEFAULT 'reassign' ⇒ 历史行与未标注写入方保持 R2 语义（向后兼容）。
+   只加列、不改既有列/表；SQL 冻结后不得再改（改了老库升级会抛 checksum_mismatch）。 */
+export const WORK_ITEM_COLLABORATION_SQL_3 = `
+  ALTER TABLE work_item_activities ADD COLUMN source_run_agent_id TEXT;
+  ALTER TABLE work_item_activities ADD COLUMN source_run_squad_id TEXT;
+  ALTER TABLE work_item_activities ADD COLUMN source_run_role TEXT;
+  ALTER TABLE squad_run_deferred_dispatches ADD COLUMN origin TEXT NOT NULL DEFAULT 'reassign';
+`;
+
+/* 0012（协作域 X1.2）：评论派发 receipt 表。一行 = 一次「评论请求某目标 agent」的事实。
+   · dispatch_key 是**请求身份**（`computeCommentDispatchKey` 独立构造，§8.1：不复用 eventKey
+     拼接格式）；主键唯一 ⇒ 同键重投由存储层兜住，不需要先查后插。
+   · outcome 闭集读写双闸（见 commentDispatchReceiptRepo 的 readOutcome/assertOutcome）：
+     枚举外值读回/写入一律抛，静默按默认处理会让「这条请求到底派没派出去」变成没人知道的事。
+   · 两个索引都服务读路径：item 索引给时间线取某工作项的 receipt；outcome 索引给启动重投
+     （§8.4-1 扫描未完成 receipt）按 workspace + 状态取数。
+   · 不给 work_items 建外键（只归档不硬删，同前）。 */
+export const COMMENT_DISPATCH_RECEIPT_SQL = `
+  CREATE TABLE IF NOT EXISTS comment_dispatch_receipts (
+    dispatch_key     TEXT PRIMARY KEY,
+    workspace_key    TEXT NOT NULL,
+    work_item_id     TEXT NOT NULL,
+    target_agent_id  TEXT NOT NULL,
+    comment_id       TEXT NOT NULL,
+    thread_id        TEXT NOT NULL,
+    source           TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    detail_json      TEXT NOT NULL DEFAULT '{}',
+    attempt_count    INTEGER NOT NULL DEFAULT 1,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_comment_dispatch_receipts_item
+    ON comment_dispatch_receipts(workspace_key, work_item_id, created_at, dispatch_key);
+  CREATE INDEX IF NOT EXISTS idx_comment_dispatch_receipts_outcome
+    ON comment_dispatch_receipts(workspace_key, outcome);
+`;
+
+/* 0014（看门狗 W1）：squad_runs 加两列 + 一条回填。只加列、不改既有列/表；
+   0006 的 `SQUAD_RUN_SCHEMA` 与 0008/0009/0013 的 SQL 一字不动（checksum 冻结）。
+   · `opened_at`：**本次进入 open** 的时刻（0001 起算点的唯一来源）。直开 = insert 时刻、
+     认领升级 = 认领时刻；queued 行恒 NULL（它还没开跑）。刻意不用 created_at（排队久 ≠ 跑得久）
+     与 updated_at（bindSession 等每次 patch 都动它）。
+   · `settle_reason`：结算原因（自由文本列）。TTL 审计、熔断窗口计数、重试预算三处消费；
+     NULL = 常规结算 / 遗留行。看门狗与取消路径的**码值**是单源常量
+     （`squadRunRepo.ts` 的 `SQUAD_RUN_SETTLE_REASON_*`），列本身不建闭集约束
+     （`failMemberRun` 的失败原因原文也落这里）。
+   · 回填：非 queued 行都进过 open，`created_at` 是唯一可用的近似起点（遗留直开行 created=open）；
+     回填消解读侧猜测——回填后 NULL 只剩 queued 行，语义完备。 */
+export const SQUAD_RUN_WATCHDOG_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN opened_at INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN settle_reason TEXT;
+  UPDATE squad_runs SET opened_at = created_at WHERE status != 'queued' AND opened_at IS NULL;
+`;
+
+/* 0015（#6 按 run 用量记账 CT.1）：squad_runs 加 9 个用量列。只加列、不改既有列/表；
+   0006 的 `SQUAD_RUN_SCHEMA` 与 0008/0009/0011/0013/0014 的 SQL 一字不动（checksum 冻结）。
+
+   数据源是**会话累计值**（协议 `v4/conversation/usage` 那 8 个数值字段，读取口
+   `getTaskTokenUsage({sessionId})`；host 侧无副本，只读、超时重发安全）⇒ 事实源是 CLI 侧
+   SQLite 的 model_usage 聚合，本表只落一份快照，不含价格列（仓内无任何价格来源）。
+
+   · **`usage_recorded_at` 是存在性开关**：NULL = **未记录**，与合法值 `0`（跑过但没消耗）
+     必须可区分——把 NULL 折成 0 会把「没记账」伪装成「没花用量」。9 列同写同读，读回不得猜值。
+   · **零回填**：没有会话就没有用量，回填无事实可依（反例是 0014 的 `created_at` 近似起点）。
+   · **重开臂只记最后一次会话**：C1 的「结算 + 同 runId 重开」会把 `session_id` 置回 NULL 并另建
+     会话（一行的用量在结算时刻补拉，只覆盖最后一次会话）——诚实登记，不假装是跨尝试总和。
+   · 8 个数值列与协议字段**逐字对齐**（total / input / output / reasoning / cache_creation /
+     cache_read / model_request_count / model_error_count）；不存 `inputBaselineBySource`
+     （JSON、按来源分桶的第二形状，v1 无消费方——形状封闭就该拆列）。 */
+export const SQUAD_RUN_USAGE_SQL = `
+  ALTER TABLE squad_runs ADD COLUMN usage_total_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_input_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_output_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_reasoning_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_cache_creation_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_cache_read_tokens INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_model_request_count INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_model_error_count INTEGER;
+  ALTER TABLE squad_runs ADD COLUMN usage_recorded_at INTEGER;
+`;
+
+/* 0016（#7 工作项级交付物 D1a）：交付物表。只建新表 + 两索引，**不改既有列/表**；
+   0006/0015 的 SQL 一字不动（checksum 冻结），与 0010/0011/0012 同一条加法纪律。
+
+   为什么是独立表而不是 work_items 的两列（spec §3.4 曾设想 deliverables/pullRequests 字段）：
+   交付物是**一条条独立事实**（一条 run 一条 diff、人可登记任意条 link），
+   挂在 work_items 的行 JSON 里会让「按 run 读回」「幂等重投」「只增不改」三件事全部失去落点。
+
+   · **`kind` 闭集 v1 = 'diff' | 'link'**（设计报告 §3.2 / Q5 裁定）：`diff` 的正文**不进库**
+     （真实 diff 可达数百 KB~MB，tasks-index 库被多窗口 Host 共连接），落
+     `<ws>/.zcode/squad/deliverables/<id>.diff`，本表只存相对路径 + sha256 + 字节数；
+     `link` 的 `content_ref` 就是外部 URL。闭集本身由 repo 的**读写双闸**管（列上不建 CHECK：
+     与 `comment_dispatch_receipts.outcome` 同款——枚举漂移要在代码里响亮，不在 DDL 里静默）。
+   · **`dedup_key` + 唯一索引是存储层的幂等不变式**（`UNIQUE(workspace_key, dedup_key)`）：
+     同一事实重投不得产生第二条（INSERT OR IGNORE，不先查后插——跨连接并发下两次查都可能
+     看不到对方），与 inbox_items / work_item_activities 同一手法。自动捕获的键形如
+     `deliverable:<runId>:diff` / `deliverable:<parentWorkItemId>:batch-diff`（单源在捕获模块）。
+   · `run_id` 可空：NULL = 手动登记（挂工作项不挂 run）；**不建外键**——work_items/squad_runs
+     都只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA / SQUAD_RUN_SCHEMA 同一条理由）。
+   · `meta_json` 是结构化事实（branch/base/statSummary/commitCount/batchLevel…），形状随产生点而变，
+     拆列会把未枚举的字段当未知列拒掉（与 WAKE_RULE_SCHEMA 的 condition/filters 同一条理由）。 */
+export const WORK_ITEM_DELIVERABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_deliverables (
+    id                TEXT PRIMARY KEY,
+    workspace_key     TEXT NOT NULL,
+    workspace_path    TEXT NOT NULL,
+    work_item_id      TEXT NOT NULL,
+    run_id            TEXT,
+    kind              TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    meta_json         TEXT NOT NULL DEFAULT '{}',
+    content_ref       TEXT NOT NULL,
+    content_sha       TEXT,
+    content_size      INTEGER,
+    actor_kind        TEXT NOT NULL,
+    actor_id          TEXT NOT NULL,
+    dedup_key         TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    UNIQUE (workspace_key, dedup_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_deliverables_item
+    ON work_item_deliverables(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_deliverables_run
+    ON work_item_deliverables(run_id) WHERE run_id IS NOT NULL;
+`;
+
+/* 0017（#8 GitHub PR 集成 D2）：工作项 ↔ PR 的**关联 + 快照**单表（设计报告 §4.2）。
+
+   表结构 = multica 两张表（`github_pull_request` 镜像列 M1 + 222 号迁移的快照列 M2）的**单表精简**：
+   单用户本地无 installation / workspace 多租户面，也没有 webhook 入站（桌面单机无公网入口），
+   故不需要 `github_installation` 与 `issue_pull_request` 关联表 —— 「工作项 ↔ PR」直接是这张表的行，
+   `linked_by_*` 是归因。
+
+   两条与交付物表**相反**的纪律（别把两表的手感混起来）：
+   · 本表是**可变镜像**（快照刷新会 UPDATE、unlink 会 DELETE），不是 append-only 事实账本；
+   · 没有 `dedup_key`：幂等身份是**业务键** `(workspace_key, work_item_id, repo_owner, repo_name, pr_number)`
+     的唯一索引（同一个 PR 挂到同一工作项至多一行；挂到不同工作项是两行，各自成立）。
+
+   快照列（M2 的移植）：
+   · `snapshot_head_sha` 是**防陈旧写的比较对象**（pin，空串 = 从未拉取）：快照只写在
+     「库里 pin 仍等于本次快照所基于的 head」时，慢响应不得覆盖更新 head 的快照；
+   · `state` 四值闭集 `open|closed|merged|draft`（multica 口径）——**可空**：NULL = 从未拉取。
+     离线缺省形态（没配 token）下永远是 NULL，界面按「未拉取」呈现，不伪造 `open`。
+     闭集由 repo 的读写双闸管（不在 DDL 里 CHECK：枚举漂移要在代码里响亮，不在 DDL 里静默）；
+   · `api_mergeable` / `api_merge_state_status` 存 GitHub 的原值（MERGEABLE/CONFLICTING/UNKNOWN、
+     CLEAN/DIRTY/BLOCKED/BEHIND/…）。**不做 checks 汇总列**（`checks_rollup_state` 后置，设计 §4.2：
+     它要 GraphQL statusCheckRollup，v1 用 REST GET pull，拿不到 rollup —— 宁缺不伪造）。 */
+export const WORK_ITEM_PULL_REQUEST_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_pull_requests (
+    id                      TEXT PRIMARY KEY,
+    workspace_key           TEXT NOT NULL,
+    workspace_path          TEXT NOT NULL,
+    work_item_id            TEXT NOT NULL,
+    repo_owner              TEXT NOT NULL,
+    repo_name               TEXT NOT NULL,
+    pr_number               INTEGER NOT NULL,
+    title                   TEXT NOT NULL,
+    html_url                TEXT NOT NULL,
+    branch                  TEXT,
+    state                   TEXT,
+    merged_at               INTEGER,
+    api_mergeable           TEXT,
+    api_merge_state_status  TEXT,
+    snapshot_head_sha       TEXT NOT NULL DEFAULT '',
+    snapshot_fetched_at     INTEGER,
+    linked_by_kind          TEXT NOT NULL,
+    linked_by_id            TEXT NOT NULL,
+    created_at              INTEGER NOT NULL,
+    updated_at              INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, repo_owner, repo_name, pr_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_pull_requests_item
+    ON work_item_pull_requests(workspace_key, work_item_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_pull_requests_pr
+    ON work_item_pull_requests(workspace_key, repo_owner, repo_name, pr_number);
+`;
+
+/* 0018（工作项 Surface 对齐 · 阶段一 R1）：`work_items` 加 7 列 + `UNIQUE(workspace_key, identifier_seq)`。
+   回填纪律**分两半**（拆解报告 §2.1/§2.2/§2.3，用户裁定 Q4/Q5/Q6）：
+
+   ① `priority` / `start_date` / `due_date` / `creator_kind` / `creator_id` / `creator_display_name`
+      —— **零回填**：存量行没有「谁定过优先级 / 哪天开始 / 谁按下的创建」这些事实。填默认值
+      （如 `priority='medium'`）是替用户编一个没人决定过的选择，`creator=assignee` 更是**伪造历史**
+      （指派是「派给谁」，创建人是「谁按下的创建」，两件事）。NULL = 未设置 / 迁移前未知，不猜。
+
+   ② `identifier_seq` —— **全量回填**：事实是「顺序」，依据是既有的 `created_at`（`id` 只做同刻并列的
+      确定性 tie-break），每 workspace 从 1 编号。归档行**也占号**（identifier 是永久标签，故唯一索引
+      **不带** `archived_at IS NULL` 谓词）。DDL 允许 NULL（SQLite 的 `ADD COLUMN` 不能带 NOT NULL 无缺省），
+      「行必须有号」由写入口保证（`workItemRepo.insert` 语句内 `COALESCE(MAX)+1` 原子生成）。
+
+   本迁移**只加列与索引、不改既有列/表**；SQL 冻结后不得再改（改了老库升级抛 `checksum_mismatch`）。 */
+export const WORK_ITEM_SURFACE_FIELDS_SQL = `
+  ALTER TABLE work_items ADD COLUMN priority TEXT;
+  ALTER TABLE work_items ADD COLUMN start_date TEXT;
+  ALTER TABLE work_items ADD COLUMN due_date TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_kind TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_id TEXT;
+  ALTER TABLE work_items ADD COLUMN creator_display_name TEXT;
+  ALTER TABLE work_items ADD COLUMN identifier_seq INTEGER;
+  WITH ranked AS (
+    SELECT id AS ranked_id,
+           ROW_NUMBER() OVER (PARTITION BY workspace_key ORDER BY created_at ASC, id ASC) AS seq
+    FROM work_items
+  )
+  UPDATE work_items
+    SET identifier_seq = (SELECT seq FROM ranked WHERE ranked.ranked_id = work_items.id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_identifier
+    ON work_items(workspace_key, identifier_seq);
+`;
+
+/* 0019（Subscriber 完整语义线 SUB.1）：建 `work_item_subscribers` 一张新表 + 两索引
+   （拆解报告 §2.1 的表形状）。只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017。
+
+   一行 = 一个「（工作项, 主体）的**当前**关系」，故：
+   · 唯一键是 `(workspace_key, work_item_id, subject_type, subject_id)`，**不含 `reason`**：
+     `reason` 是这行上「为什么我在这里」的当前解释（同一人既是创建者又是评论者时不该长两行，
+     否则退订要取消哪一行没有答案）；
+   · `tombstoned_at` 非空 = **显式退订**（用户意愿，可审计）。它与活动行共用同一行是为了让
+     「自动规则不得复活已退订者」成为**同一行上的判据**（不同行会让复活检查变成两次查、且能漏）；
+   · `opt_out_scope` 只在 tombstone 行上有语义（`issue` = 只此条 / `subtree` = 此条及后代），
+     活动行恒 `issue`——由 repo 的写路径维持，不在 DDL 里 CHECK（枚举漂移要在代码里响亮）；
+   · `reason` / `subject_type` / `opt_out_scope` 三个闭集同样由 repo 的**读写双闸**管
+     （与 `inbox_items.kind` / `work_item_pull_requests.state` 同一条纪律）。
+   刻意不建指向 work_items 的外键：工作项只归档不硬删，外键会让写入失败（与 WORK_ITEM_SCHEMA 同理由）。 */
+export const WORK_ITEM_SUBSCRIBER_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_subscribers (
+    id             TEXT PRIMARY KEY,
+    workspace_key  TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    work_item_id   TEXT NOT NULL,
+    subject_type   TEXT NOT NULL,
+    subject_id     TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    opt_out_scope  TEXT NOT NULL,
+    tombstoned_at  INTEGER,
+    created_at     INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_work_item_subscribers_unique
+    ON work_item_subscribers(workspace_key, work_item_id, subject_type, subject_id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_subscribers_subject
+    ON work_item_subscribers(workspace_key, subject_type, subject_id);
+`;
+
+/* 0020（saved views 服务面轮 R6a）：`work_item_views` + `work_item_view_prefs` 两张新表 + 两索引。
+   一次建两表（拆解卡 §T-P2-R6a 明写「两表同迁移」）。只加新对象，**不改既有列/表** ——
+   checksum 纪律同 0008/0009/0010/0016/0017/0019（SQL 冻结后不得再改）。
+
+   形态照 multica `265_issue_view.up.sql:7-35` / `266/267` 索引 / `268_issue_view_preference.up.sql`
+   切分（证据 `reports/2026-10-09-saved-views-multica-evidence.md` §1/§2/§9）：
+
+   · **结构化列 + 两个不透明 JSON 文档**：`query`（视图的共享身份，过滤 facet）与 `display`
+     （布局/分组/排序等，只在「首次打开」做种子，之后本用户调整**不回写**定义）。服务端对两者
+     **零解释**（只校验「是 JSON object」，`jsonb_typeof='object'` 的 SQLite 对应写法是
+     `json_valid(...) AND json_type(...)='object'`）；解释权在客户端 `definition_version` 契约。
+   · **`name` 1..80 按字符计**（multica `CHAR_LENGTH(name) BETWEEN 1 AND 80`）：SQLite 的
+     `length()` 同样按字符（不按 UTF-16），服务面必须用同一把尺子（`[...name].length`）。
+   · **无 name 唯一键**（multica 没加）：重名由用户自己区分，存储层不替他们判断。
+   · **权限形态三档**：读 = owner 或 `visibility='workspace'`；管理（改/删）= owner
+     （ZPaPa v1 没有 workspace 管理员名册 —— multica 的「owner/admin 且 shared」在单机单身份下
+     退化为 owner，登记在交付报告）；`visibility` 闭集 `private | workspace`。
+   · **`scope_id` / `scope_variant` 列保留但恒空**：v1 只有 `workspace | my` 两档、无 variant 轴与
+     project 档。列留着是为了将来补轴时**不再 ALTER**（multica 的 269 正是「加轴」的一次 ALTER）；
+     两条 `CHECK (... IS NULL)` 把「恒空」钉在存储层 —— 界面永远读不到一列没人写的轴。
+   · **`my ⇒ visibility='private'` 是跨列 CHECK**（multica 同款）：my 档是每人视角，共享没有意义。
+     三道闸里的最后一道（DDL）；前两道在写路径（create 强制、patch 响亮拒绝）与 repo。
+   · **`revision` 第一天就要有**（multica `issue_view.go:354-357` 的 409 是形态一部分）：
+     写路径 `UPDATE … SET revision = revision + 1 WHERE … AND revision = expected`，
+     不匹配即冲突（乐观并发）。
+   · **`work_item_view_prefs` 的 PK = (workspace_key, owner_kind, owner_id)**：每 owner 每 workspace
+     一行偏好文档（multica 的 scope 四元组在 v1 无轴 ⇒ 收窄为三元组）。文档是**客户端自有**、
+     服务端只认「JSON object」（multica `issue_view_preference.go` 同款；无行 ⇒ 空文档 `{}`，不是 404）。
+     整文档 upsert、**last-write-wins、无 revision**（multica 同款：偏好不是共享事实，用不着 fencing）。
+   · 两条索引照 multica 266/267：owner 查询（列表的 owner 分支 + 每 owner 配额计数）与 shared
+     **部分索引**（`WHERE visibility='workspace'`，列表的共享分支）。multica 索引前缀里的
+     `scope_type/scope_id` 在本版**不复制**：`scope_id` 恒空（把常量 NULL 列塞进索引只会白占空间），
+     `scope_type` 只两档且两档都要出现在同一个列表里 —— owner/shared 两条路径才是查询形状。
+   · 不给 work_items 建外键（只归档不硬删，同 WORK_ITEM_SCHEMA 理由）：视图不挂工作项。
+   · 删除视图**不级联清 prefs**（prefs 的 `order`/`hidden` 里可能残留已删视图 id）：清理判据在
+     UI 的 sanitizer（multica 同款：写入前剪掉已不存在的 id），存储层不替它扫。 */
+export const WORK_ITEM_VIEWS_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_views (
+    id                 TEXT PRIMARY KEY,
+    workspace_key      TEXT NOT NULL,
+    owner_kind         TEXT NOT NULL,
+    owner_id           TEXT NOT NULL,
+    name               TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    scope_type         TEXT NOT NULL CHECK (scope_type IN ('workspace', 'my')),
+    scope_id           TEXT,
+    scope_variant      TEXT,
+    visibility         TEXT NOT NULL DEFAULT 'private'
+                       CHECK (visibility IN ('private', 'workspace')),
+    definition_version INTEGER NOT NULL DEFAULT 1,
+    query              TEXT NOT NULL CHECK (json_valid(query) AND json_type(query) = 'object'),
+    display            TEXT NOT NULL DEFAULT '{}'
+                       CHECK (json_valid(display) AND json_type(display) = 'object'),
+    revision           INTEGER NOT NULL DEFAULT 1,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    CHECK (scope_id IS NULL),
+    CHECK (scope_variant IS NULL),
+    CHECK (scope_type <> 'my' OR visibility = 'private')
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_views_owner
+    ON work_item_views(workspace_key, owner_kind, owner_id);
+  CREATE INDEX IF NOT EXISTS idx_work_item_views_shared
+    ON work_item_views(workspace_key) WHERE visibility = 'workspace';
+  CREATE TABLE IF NOT EXISTS work_item_view_prefs (
+    workspace_key TEXT NOT NULL,
+    owner_kind    TEXT NOT NULL,
+    owner_id      TEXT NOT NULL,
+    prefs         TEXT NOT NULL DEFAULT '{}'
+                  CHECK (json_valid(prefs) AND json_type(prefs) = 'object'),
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (workspace_key, owner_kind, owner_id)
+  );
+`;
+
+/* 0021（工作项级 reactions，阶段三 P3-R5s —— 服务面半边）：建**单表** `work_item_reactions`
+   （轻实体）+ 一条查询索引。用户裁定「并入 Surface 阶段三」，取证见
+   reports/2026-10-09-reactions-multica-evidence.md §1/§2（multica `027_issue_reactions`）。
+
+   · 列形状**复用 0010 的 `work_item_comment_reactions` 现成模板**（`:390-399`）：回应是轻实体，
+     不存展示名快照、不存正文、不挂 revision —— 行本身只是「谁、在哪个工作项上、留了哪个 emoji」。
+   · **五元组唯一键** `(workspace_key, work_item_id, author_kind, author_id, emoji)`（multica
+     `UNIQUE (issue_id, actor_type, actor_id, emoji)` 的 ZPaPa 同构 + workspace 前缀）：
+     「同人同 emoji 恰一条」由存储层兜底，写路径是 `INSERT OR IGNORE`（命中冲突 = 无变化，
+     见 repo 的 `changes()` 判定）—— 幂等不靠先查后插。一人多 emoji 天然合法（唯一键含 emoji）。
+   · **`CHECK (length(emoji) > 0)` 是唯一的存储层约束**：multica 服务端零白名单/零长度校验
+     （只有非空串能落库），UI 侧的快捷表情集是**呈现**、不是存储判据 —— 写进 DDL 会让
+     「放开完整 emoji picker」变成一次数据迁移。长度护栏在服务面（宽松上限，防滥用）。
+   · 索引 `(workspace_key, work_item_id, created_at)`：读路径的唯一形状是「按工作项取全行、
+     按插入序（created_at）排」—— 即列表/聚合的取数口径。**列序照此固定**（迁移用例钉住）。
+   · **不给 work_items 建外键**（0010 同款理由：工作项只归档不硬删，外键会在归档路径上误伤）。
+   · **不进 activity 流**（multica 同款：reactions 不进时间线）；也**不写 revision 通道**
+     （单机 SQLite 单写者直读，无多端对齐问题 —— 台账第 223 轮的裁定）。 */
+export const WORK_ITEM_REACTIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS work_item_reactions (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    work_item_id  TEXT NOT NULL,
+    author_kind   TEXT NOT NULL,
+    author_id     TEXT NOT NULL,
+    emoji         TEXT NOT NULL CHECK (length(emoji) > 0),
+    created_at    INTEGER NOT NULL,
+    UNIQUE (workspace_key, work_item_id, author_kind, author_id, emoji)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_item_reactions_item
+    ON work_item_reactions(workspace_key, work_item_id, created_at);
+`;
+
+/* 0022（工作项项目绑定 · 服务面轮 R-P1）：建 `projects`（workspace 级实体）+ `work_items` 加两列。
+   取材 `reports/2026-10-09-multica-issue-project-binding.md` A1（multica `034_projects.up.sql:2-14`
+   / `035_project_priority.up.sql:1` / `166_project_dates.up.sql:8-10`），逐条取舍：
+
+   · **`name` 对应 multica 的 `title`**（NOT NULL）：本仓工作项用 `title`，项目侧定名 `name`
+     （交付报告与 UI 轮按此名对接）；两者语义同一（可读标识），不复制两份。
+   · **`short_code` 是 ZPaPa 加法**（multica 没有项目短码 —— 它的编号前缀是 **workspace** 级
+     `issue_prefix`，`server/internal/handler/handler.go:1169` `issuePrefixForWorkspace`）。
+     用户裁定「编号换项目短码」⇒ 短码是本仓的编号前缀来源，2-8 位大写字母数字、workspace 内唯一
+     （唯一索引 = 存储层兜底；服务面是响亮的第一道）。形状与长度**写进 DDL CHECK**：短码是编号的
+     可见部分，形状漂移会直接改用户看到的编号（不是内部枚举），故最后一道闸放在存储层。
+   · **`status` 闭集与 DDL 默认值照 multica 逐字**：`planned|in_progress|paused|completed|cancelled`
+     + `DEFAULT 'planned'`。CHECK 与 multica 同款（`034:8-9`）。
+   · **`priority` 可空、无 CHECK**：multica 是 `NOT NULL DEFAULT 'none'`（`035:1`），ZPaPa 的
+     「未设置」统一是 NULL（不设显式 `none` 键 —— 与工作项优先级同一条纪律），闭集判据在 shared
+     纯函数（工作项优先级闭集即 multica 的 `urgent|high|medium|low` 四档），写入口响亮拒闭集外值。
+   · **`start_date` / `due_date` 可空 TEXT**：日历日（`YYYY-MM-DD`，无时刻无时区），与工作项
+     `start_date`/`due_date` 同一形状与同一条理由（见 0018 / shared `isWorkItemDateOnly`）。
+   · **`description` / `icon` 可空**：与 multica 同列。
+   · **不复制 `lead_type` / `lead_id`**（multica `034:10-11`）：ZPaPa v1 无人类名册与项目负责人语义，
+     列上没有任何写者/读者 —— 加了就是一列永远 NULL 的死列（要用时再迁移，登记在交付报告）。
+   · **不建 `workspace_id` 外键**（multica 指向 workspace 表）：本仓没有 workspace 表，
+     `workspace_key` 是身份键（C14 口径），同其余各表。
+   · multica 的读模型计数（`issue_count` / `done_count` / `resource_count`，前端 `Project` 类型）
+     是**派生值**，不入库（v1 不消费；需要时由查询算）。
+
+   只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020/0021。 */
+export const PROJECT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS projects (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    short_code    TEXT NOT NULL
+                  CHECK (length(short_code) BETWEEN 2 AND 8
+                         AND short_code NOT GLOB '*[^A-Z0-9]*'),
+    description   TEXT,
+    icon          TEXT,
+    status        TEXT NOT NULL DEFAULT 'planned'
+                  CHECK (status IN ('planned', 'in_progress', 'paused', 'completed', 'cancelled')),
+    priority      TEXT,
+    start_date    TEXT,
+    due_date      TEXT,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_short_code
+    ON projects(workspace_key, short_code);
+`;
+
+/* 0022 的第二半：`work_items` 加两列（只加列，不改既有列/表；SQL 冻结后不得再改）。
+
+   · **`project_id` 可空**：multica `034_projects.up.sql:19` 同样是可空列
+     （`ALTER TABLE issue ADD COLUMN project_id UUID REFERENCES project(id) ON DELETE SET NULL`）：
+     「无项目」是**显式合法状态**（过滤/看板/选择器三层都显式表达，证据 A1）。
+     **不建外键**：本仓既定的同一条纪律（工作项只归档不硬删，外键会让归档/删除路径误伤）——
+     「删项目 ⇒ 挂接置 NULL」由服务层做（`workItemProjectRepo.remove` 的 UPDATE），不是级联。
+   · **`identifier_prefix` = 短码快照**（TEXT 可空）：编号显示 = `{短码}-{序号}`，
+     无前缀（NULL）时保持既有 `#{序号}` 形态。
+     **序号语义不动**：`identifier_seq` 仍是**每 workspace** 一条序列（0018 的 `MAX+1` 生成式一字不改）。
+     —— 与 multica 逐字对齐：multica 的 `issue.number` 就是**每 workspace** 单调计数
+     （`server/pkg/db/queries/issue.sql:665` 注释 "number is a per-workspace monotonic counter"、
+     `GetIssueByNumber` 按 `(workspace_id, number)` 取行），编号字符串 = `{workspace issue_prefix}-{number}`
+     （`server/internal/handler/issue.go:478-479`）**在读取时拼**。本仓把「前缀」这一半**入库成快照**：
+     前缀来源是**项目短码**（可删可改绑），读时现拼会让历史编号随项目变动而变；快照让编号成为
+     既成事实（与 0018「identifier 是永久标签」同一条纪律）。
+     **改绑 / 清绑写快照，删项目不动快照**：`setWorkItemProject` 是显式绑定决定（改 ⇒ 换短码、
+     清 ⇒ NULL）；删项目只由服务层把 `project_id` 置 NULL（multica `ON DELETE SET NULL` 的等价物），
+     已签发的编号**不重写** —— multica 删项目也不会改既有 issue 的编号字符串。
+   · 回填：**零回填**（存量行没有项目事实，NULL = 未设置，不编造前缀）。 */
+export const WORK_ITEM_PROJECT_BINDING_SQL = `
+  ALTER TABLE work_items ADD COLUMN project_id TEXT;
+  ALTER TABLE work_items ADD COLUMN identifier_prefix TEXT;
 `;

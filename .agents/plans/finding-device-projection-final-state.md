@@ -10,11 +10,11 @@
 但设备投射要读的是**设备自己**的项目登记与设置。两者语义冲突，因此新增
 `IRemoteDeviceProjectsService`（channel `remote-device-projects`）：
 
-| 方法 | 作用 |
-|---|---|
-| `listRegisteredProjects()` | 读设备自身的 `recentProjects` |
-| `getSettings()` | 读设备完整设置（供白名单挑字段展示） |
-| `updateSetting(key, value)` | 写设备的一个设置字段 |
+| 方法                        | 作用                                 |
+| --------------------------- | ------------------------------------ |
+| `listRegisteredProjects()`  | 读设备自身的 `recentProjects`        |
+| `getSettings()`             | 读设备完整设置（供白名单挑字段展示） |
+| `updateSetting(key, value)` | 写设备的一个设置字段                 |
 
 由 A 侧 host 用**对端原始访问面**（`params.connectionServices`，指向 B 的
 resident host）代为读写。这样：不动 workspace 语义、不要求 B 升级
@@ -25,13 +25,13 @@ resident host）代为读写。这样：不动 workspace 语义、不要求 B �
 
 ## 跨机实测（2026-09-27，A=本机 Intel，B=100.66.1.2 官方包 3.14.3）
 
-| 验收标准 | 结果 | 证据 |
-|---|---|---|
-| 1. 侧边栏出现 B 的项目（图标/颜色区分）+ 会话可点开 | ✅ | 10 个项目全为 `/Volumes/数据盘/网站/*`；蓝色 `monitor-smartphone` vs 本地灰色 `folder-open`；展开显示 B 的会话标题与时间 |
-| 2. 可勾选显示哪些 B 项目 | ✅ | 设置页列出 10 项各带会话数；关掉 agent军团 → 10→9 且落盘 `visibleProjects`；勾回 → 9→10 |
-| 3. 断开后投射项消失、重连入口仍在 | ✅ | 断开后投射项 10→0；卡片仍显示 `linguojin@100.66.1.2 · 未连接 · [连接] [移除设备]` |
-| 4. 可读改 B 的白名单设置，改后 B 侧生效 | ✅ | 读：UI 三个开关与 B 文件一致。写：UI 改「显示待办」→ B 变 `False`、A 仍 `True`；随后回滚 B 至 `True` |
-| 5. A 端无 remote 会话索引残留 | ✅ | `tasks-index.sqlite` 中 `remote:%` 行数 = 0 |
+| 验收标准                                            | 结果 | 证据                                                                                                                     |
+| --------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1. 侧边栏出现 B 的项目（图标/颜色区分）+ 会话可点开 | ✅   | 10 个项目全为 `/Volumes/数据盘/网站/*`；蓝色 `monitor-smartphone` vs 本地灰色 `folder-open`；展开显示 B 的会话标题与时间 |
+| 2. 可勾选显示哪些 B 项目                            | ✅   | 设置页列出 10 项各带会话数；关掉 agent军团 → 10→9 且落盘 `visibleProjects`；勾回 → 9→10                                  |
+| 3. 断开后投射项消失、重连入口仍在                   | ✅   | 断开后投射项 10→0；卡片仍显示 `linguojin@100.66.1.2 · 未连接 · [连接] [移除设备]`                                        |
+| 4. 可读改 B 的白名单设置，改后 B 侧生效             | ✅   | 读：UI 三个开关与 B 文件一致。写：UI 改「显示待办」→ B 变 `False`、A 仍 `True`；随后回滚 B 至 `True`                     |
+| 5. A 端无 remote 会话索引残留                       | ✅   | `tasks-index.sqlite` 中 `remote:%` 行数 = 0                                                                              |
 
 检查：`pnpm typecheck` ✅ / `oxlint`（无新增告警）✅ / `architecture:check` 0 违规 ✅
 投影契约测试 11 项全通过（含新增的孤儿判定与设备 session 查找）。
@@ -73,5 +73,3 @@ resident host）代为读写。这样：不动 workspace 语义、不要求 B �
   `providerFamilyDomainMigrated` / `startPlanRecommendationDismissed` /
   `settingsSyncFirstRunPromptHandled`（内部标记）。机制正确，数字差异来自 B 的
   版本字段集与原型期不同。
-
-

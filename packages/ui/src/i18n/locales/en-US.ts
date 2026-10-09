@@ -990,6 +990,11 @@ const enUS: Record<string, string> = {
   "subagentDirectory.status.failed": "Failed",
   "subagentDirectory.status.cancelled": "Cancelled",
   "subagentDirectory.status.lost": "Lost",
+  // Squad runs (this project) section in the subagent directory side pane (spec §11.1 decision C11).
+  "subagentDirectory.squadRuns.title": "Squad runs (this project)",
+  "subagentDirectory.squadRuns.empty": "No squad runs in this project right now",
+  "subagentDirectory.squadRuns.loadFailed": "Failed to load squad runs",
+  "chat.statusPanel.openAgentDirectory": "Open agent directory",
   "chat.statusPanel.endedAgents": "Ended",
   "chat.statusPanel.endedWorkflows": "Ended workflows",
   "workflowDirectory.title": "Workflow runs",
@@ -1559,7 +1564,11 @@ const enUS: Record<string, string> = {
   "updateDialog.restartToUpdate": "Restart to update",
   "updateDialog.skipVersion": "Skip this version",
   "updateDialog.later": "Later",
+  "updateDialog.channel.stable": "Stable",
+  "updateDialog.channel.preview": "Preview",
   "update.toast.upToDate": "You're on the latest version (v{version})",
+  "update.toast.stableCatchUpPending":
+    "You are on preview v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once stable catches up.",
   "update.toast.available": "New version v{version} is available",
   "update.toast.downloading": "Downloading new version v{version}",
   "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
@@ -1607,6 +1616,10 @@ const enUS: Record<string, string> = {
   "workspace.startFromScratch": "Start from scratch",
   "workspace.openFolder": "Open folder",
   "workspace.openPluginsSettings": "Plugin Marketplace",
+  "workspace.openInbox": "Inbox",
+  "workspace.openSquadAgents": "Agents",
+  "workspace.openSquads": "Squads",
+  "workspace.openWorkItems": "Work items",
   "workspace.backToWorkspace": "Back to workspace",
   "workspace.noActiveForNewTask": "There is no available workspace yet. Open a workspace first.",
   "workspace.wslUncPrompt.title": "Open this through WSL remote connection?",
@@ -2209,6 +2222,10 @@ const enUS: Record<string, string> = {
   "settings.receivePreviewUpdates": "Receive preview updates early",
   "settings.receivePreviewUpdatesDescription":
     "When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.",
+  "settings.updateChannel.current.stable": "Current update channel: Stable",
+  "settings.updateChannel.current.preview": "Current update channel: Preview",
+  "settings.updateChannel.stableCatchUpPending":
+    "You are running preview build v{version}, but the latest stable version v{latestVersion} is lower. You cannot return to the stable channel yet; the app will upgrade automatically once a stable version catches up.",
   "settings.autoDownloadAndInstallUpdates": "Automatically download and install updates",
   "settings.autoDownloadAndInstallUpdatesDescription":
     "When enabled, updates start downloading as soon as they are found. Restart still requires confirmation when tasks are running.",
@@ -2758,18 +2775,22 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.addProviderAction": "Add provider",
   "settings.remoteDevice.title": "Remote device settings",
   "settings.remoteDevice.sectionTitle": "Remote devices",
-  "settings.remoteDevice.description": "Read and change settings on the remote device ({path}). Only safely projectable fields are shown.",
+  "settings.remoteDevice.description":
+    "Read and change settings on the remote device ({path}). Only safely projectable fields are shown.",
   "settings.remoteDevice.loading": "Loading remote settings...",
   "settings.remoteDevice.unavailable": "Remote device unavailable",
   "settings.remoteDevice.projects": "Projected projects",
-  "settings.remoteDevice.projectsHint": "{count} projects on the remote device; choose which to show.",
+  "settings.remoteDevice.projectsHint":
+    "{count} projects on the remote device; choose which to show.",
   "settings.remoteDevice.projectDescription": "{path} · {count} sessions",
-  "settings.remoteDevice.addHint": "Pick a device via Remote connection; then choose which projects to show here.",
+  "settings.remoteDevice.addHint":
+    "Pick a device via Remote connection; then choose which projects to show here.",
   "settings.remoteDevice.openConnectionDialog": "Open remote connection",
   "settings.remoteDevice.field.host": "Host",
   "settings.remoteDevice.field.username": "Username",
   "settings.remoteDevice.field.privateKeyPath": "Private key path",
-  "settings.remoteDevice.field.privateKeyPathHint": "References a key file on this machine; the key itself is never stored.",
+  "settings.remoteDevice.field.privateKeyPathHint":
+    "References a key file on this machine; the key itself is never stored.",
   "settings.remoteDevice.save": "Save device",
   "settings.remoteDevice.edit": "Edit",
   "settings.remoteDevice.remove": "Remove device",
@@ -4343,6 +4364,777 @@ const enUS: Record<string, string> = {
   "settings.experiments.squadToggle.description":
     "Enable collaborative agents, squads, and worktree isolation",
   "settings.experiments.saveFailed": "Could not save. Please try again.",
+  /* #8 D2: GitHub integration (PAT) — this repo's first secret field; the description states the
+     plaintext-on-disk trade-off to the user. */
+  "settings.experiments.githubIntegration.label": "GitHub integration (PR snapshots)",
+  "settings.experiments.githubIntegration.description":
+    "With a personal access token (PAT), the pull requests area on a work item page can fetch snapshot state (open / merged / …). The token is stored in **plaintext** in the local settings file (single machine, single user); prefer a read-only token with the least privilege.",
+  "settings.experiments.githubIntegration.mergeMode.label": "Batch finalize mode",
+  "settings.experiments.githubIntegration.mergeMode.description":
+    "Local merge: finalize merges the batch back into this repository's base branch (default, works offline). pr-gate: push the integration branch, open a pull request, and keep the work item in review until that PR is merged.",
+  "settings.experiments.githubIntegration.mergeMode.local": "Local merge",
+  "settings.experiments.githubIntegration.mergeMode.prGate": "pr-gate (open a PR)",
+  "settings.experiments.githubIntegration.mergeMode.degrade":
+    "No access token configured: pr-gate cannot run, so finalize degrades to a local merge (no PR is opened) and leaves a note in the inbox.",
+  "settings.experiments.githubIntegration.tokenPlaceholder":
+    "Paste a GitHub access token (leave empty to keep the current one)",
+  "settings.experiments.githubIntegration.tokenConfigured": "Configured",
+  "settings.experiments.githubIntegration.tokenNotConfigured": "Not configured",
+  "settings.experiments.githubIntegration.tokenSave": "Save",
+  "settings.experiments.githubIntegration.tokenClear": "Clear",
+  "settings.experiments.githubIntegration.saveFailed":
+    "Could not save the GitHub access token. Please try again.",
+
+  // Sidebar first-level entries "Agents" / "Squads" / "Work items" pages (2026-10-03 move: the surfaces
+  // left the settings card; only the master switch and one hint row remain in settings).
+  // Copy shared by all three lives under squad.common.*: one word, one place.
+  "squad.common.save": "Save",
+  "squad.common.edit": "Edit",
+  "squad.common.enable": "Enable",
+  "squad.common.disable": "Disable",
+  "squad.common.archive": "Archive",
+  "squad.common.experimentOff":
+    "The multi-agent squad experiment is off: the entry is hidden and new dispatches are rejected by the service layer; roster management here still works.",
+  "squad.common.settingsMovedHint":
+    "Agents, squads and the work-item board all live under the first-level sidebar entries",
+
+  // "Agents" surface (squad.agents.*).
+  "squad.agents.editTitle": "Edit team agent",
+  "squad.agents.archiveConfirmTitle": "Archive team agent “{name}”?",
+  "squad.agents.archiveConfirmDescription":
+    "Once archived it no longer appears as a dispatch candidate; its definition and memory are kept and no data is deleted. Archiving is reversible at any time.",
+  "squad.agents.archiveSucceeded": "Archived",
+  "squad.agents.updated": "Saved",
+  "squad.agents.enabledToast": "Enabled",
+  "squad.agents.disabledToast": "Disabled",
+  "squad.agents.loading": "Loading team agents…",
+  "squad.agents.loadFailed": "Failed to load team agents",
+  "squad.agents.emptyHint": "Create a team agent so squads can dispatch work to it.",
+  "squad.agents.modelDefault": "Follows default model",
+
+  // "Squads" surface (squad.squads.*).
+  "squad.squads.editTitle": "Edit squad",
+  "squad.squads.archiveConfirmTitle": "Archive squad “{name}”?",
+  "squad.squads.archiveConfirmDescription":
+    "Once archived it no longer appears as a dispatch candidate; work items assigned to the squad transfer to the leader; the roster and instructions are kept and no data is deleted. Archiving is reversible at any time.",
+  "squad.squads.archiveSucceeded": "Archived",
+  "squad.squads.updated": "Saved",
+  "squad.squads.enabledToast": "Enabled",
+  "squad.squads.disabledToast": "Disabled",
+  "squad.squads.loading": "Loading squads…",
+  "squad.squads.loadFailed": "Failed to load squads",
+  "squad.squads.empty": "No squads yet",
+  "squad.squads.emptyHint": "Create a squad to put a leader and members to work together.",
+  "squad.squads.leaderLabel": "Leader: ",
+  "squad.squads.membersLabel": "Members: ",
+  "squad.squads.noDispatchableAgentsHint":
+    "No dispatchable collaborative agents yet: create an enabled one under the “Agents” entry in the sidebar first.",
+  "squad.common.refresh": "Refresh",
+  "squad.common.cancel": "Cancel",
+  "squad.common.submit": "Create",
+  "squad.common.dialogHint":
+    "This stage asks for the minimum required fields only; the rest arrive in a later version.",
+  "squad.common.name": "Name",
+  "squad.common.systemPrompt": "System prompt",
+  "squad.common.memoryScope": "Memory scope",
+  "squad.common.memoryScope.user": "User",
+  "squad.common.memoryScope.project": "Project",
+  "squad.common.memoryScope.local": "Local",
+  "squad.common.noWorkspace": "No active workspace, so squad data cannot be read",
+  "squad.common.operationFailed": "The operation failed",
+  "squad.common.serviceUnavailable":
+    "Squad runtime service unavailable: this connection does not expose it (a container or remote host may not have it yet)",
+  "squad.common.dispatchDisabled":
+    "The experiment is off: new dispatches are stopped (running work is not interrupted)",
+  "squad.common.archived": "Archived",
+  "squad.common.description": "Description",
+  "squad.common.color": "Identity color",
+  "squad.common.model": "Model",
+  "squad.common.skills": "Skills",
+  "squad.common.skillsPlaceholder": "Comma-separated, e.g. code-review, wiki",
+  "squad.common.permissionMode": "Permission mode",
+  "squad.common.permissionMode.unset": "Follow default (unset)",
+  "squad.common.permissionMode.auto": "Auto",
+  "squad.common.permissionMode.plan": "Plan",
+  "squad.common.tools": "Allowed tools",
+  "squad.common.toolsMode.all": "Allow all",
+  "squad.common.toolsMode.custom": "Custom",
+  "squad.common.disallowedTools": "Disallowed tools",
+  "squad.common.restore": "Restore",
+  "squad.common.mcpServers": "MCP servers",
+  "squad.agentMcp.empty": "No MCP servers configured for this agent yet.",
+  "squad.agentMcp.add": "Add MCP server",
+  "squad.agentMcp.remove": "Remove",
+  "squad.agentMcp.removeAria": "Remove MCP server “{name}”",
+  "squad.agentMcp.inheritHint":
+    "Without an entry here, this agent's runs inherit the workspace- and user-level MCP servers; a server with the same name is overridden by the config here. Changes apply to the next dispatch.",
+  "squad.agentMcp.securityHint":
+    "Configs may contain API keys or tokens in plain text under <workspace>/.zcode/squad/agents/. If .zcode/squad is committed to a repository, those credentials spread with it — make sure it stays in .gitignore.",
+  "squad.agentMcp.oauthHint":
+    "An HTTP server using the authorization_code OAuth flow needs a browser: unattended agent runs cannot complete it and time out after about 15 seconds, so prefer interactive sessions for it.",
+  "squad.agentMcp.dialog.addTitle": "Add MCP server",
+  "squad.agentMcp.dialog.editTitle": "Edit MCP server",
+  "squad.agentMcp.dialog.hint":
+    "Names allow letters, digits, underscores and hyphens; the config is a JSON object that must provide at least a command (stdio) or a url (http/sse).",
+  "squad.agentMcp.dialog.config": "Config (JSON)",
+  "squad.agentMcp.nameError.required": "Enter a name",
+  "squad.agentMcp.nameError.format":
+    "Only letters, digits, underscores and hyphens are allowed ([A-Za-z0-9_-])",
+  "squad.agentMcp.nameError.duplicate": "An MCP server with this name already exists",
+  "squad.agentMcp.jsonError.invalidJson": "Not valid JSON",
+  "squad.agentMcp.jsonError.notObject": "The config must be a JSON object",
+  "squad.agentMcp.jsonError.missingTransport":
+    "Provide at least a command (stdio) or a url (http/sse)",
+  "squad.agentMcp.jsonError.invalidShape":
+    "A config field has a type the MCP server schema does not accept",
+  "squad.agentMcp.transport.stdio": "stdio",
+  "squad.agentMcp.transport.http": "http",
+  "squad.agentMcp.transport.sse": "sse",
+  "squad.agentMcp.transport.streamableHttp": "streamableHttp",
+  "squad.agents.restoredToast": "Restored",
+  "squad.squads.restoredToast": "Restored",
+  "squad.agentDetail.back": "Back to agents",
+  "squad.agentDetail.noSelection": "No agent selected",
+  "squad.agentDetail.loading": "Loading…",
+  "squad.agentDetail.capacity": "Running {running} / max {max}",
+  "squad.agentDetail.open": "Open details for {name}",
+  "squad.agentDetail.tasksTitle": "Assigned work items",
+  "squad.agentDetail.tasksEmpty": "No assigned work items",
+  "squad.agentDetail.tasksOpen": "Open",
+  "squad.agentDetail.runsTitle": "Run history",
+  "squad.agentDetail.runsEmpty": "No runs yet",
+  // Paging (#13): the old "({count} total, showing first 50)" line is gone — with paging it
+  // would be a lie.
+  "squad.agentDetail.runsMore": "Load more",
+  "squad.agentDetail.runsMoreLoading": "Loading…",
+  "squad.agentDetail.runsMoreFailed": "Failed to load more",
+  "squad.agentDetail.runsLoaded": "{count} loaded (more available)",
+  "squad.agentDetail.runsAllLoaded": "All loaded",
+  // Usage cell (#6 per-run accounting, CT.3): "not recorded" renders **no cell at all**, so there is
+  // no wording for it here; a recorded 0 is a fact and is rendered ("ran but consumed nothing"
+  // must stay distinguishable from "nothing was recorded").
+  "squad.agentDetail.runUsage.total": "{total} tokens",
+  "squad.agentDetail.runUsage.totalWithReasoning": "{total} tokens (reasoning {reasoning})",
+  // Settle reasons: known codes are localized here; non-closed-set text is shown verbatim by the UI.
+  "squad.agentDetail.settleReason.watchdogDeadSession": "Watchdog: session disappeared",
+  "squad.agentDetail.settleReason.watchdogTtl": "Watchdog: timed out before wrap-up",
+  "squad.agentDetail.settleReason.watchdogIdleGrace": "Watchdog: idle grace expired",
+  "squad.agentDetail.settleReason.userCancel": "Cancelled by user",
+  "squad.agentDetail.runsLeader": "Leader",
+  "squad.agentDetail.startConversation": "Start conversation",
+  "squad.common.maxConcurrentRuns": "Max concurrent runs",
+  "squad.common.disabled": "Disabled",
+  "squad.common.assignee": "Assign to",
+  "squad.common.assignee.user": "Me",
+  "squad.common.title": "Title",
+  "squad.common.body": "Body (optional)",
+  "squad.common.parent": "Parent work item (optional)",
+  "squad.common.parent.none": "None (top level)",
+
+  "squad.agents.create": "New collaborative agent",
+  "squad.agents.created": "Collaborative agent created",
+  "squad.agents.empty": "No collaborative agents yet",
+
+  // AgentBuilder (AI-interview agent creation): entries, interview panel, draft preview, close confirm.
+  "squad.agentBuilder.title": "Create an agent with AI",
+  "squad.agentBuilder.prefillTitle": "Review the AI draft and create",
+  "squad.agentBuilder.recommended": "Recommended",
+  "squad.agentBuilder.aiEntry": "Create with AI",
+  "squad.agentBuilder.manualEntry": "Create manually",
+  "squad.agentBuilder.intro":
+    "Tell me what this agent should do. I will draft as we talk and ask at most two questions per turn.",
+  "squad.agentBuilder.emptyHint":
+    "For example: an agent that writes a weekly engineering report every Friday.",
+  "squad.agentBuilder.inputPlaceholder": "Type your answer (Ctrl/Cmd + Enter to send)",
+  "squad.agentBuilder.send": "Send",
+  "squad.agentBuilder.thinking": "Drafting…",
+  "squad.agentBuilder.stop": "Stop",
+  "squad.agentBuilder.retryTurn": "Retry this turn",
+  "squad.agentBuilder.failureTitle": "Interview failed",
+  "squad.agentBuilder.failureModelUnavailable":
+    "No model is available — pick one in settings first; you can also create the agent manually",
+  "squad.agentBuilder.failureRequestFailed": "The model request failed; you can retry this turn",
+  "squad.agentBuilder.serviceUnavailable":
+    "The interview service is not connected (the host has no IAgentBuilderService, or the renderer did not map the channel): please create the agent manually",
+  "squad.agentBuilder.degradedNotice":
+    "The draft was not updated this turn (the model reply was malformed; one retry already happened)",
+  "squad.agentBuilder.draftTitle": "Draft preview",
+  "squad.agentBuilder.draftEmpty": "No draft yet: answer the questions above, or switch to manual.",
+  "squad.agentBuilder.draftUnnamed": "(unnamed)",
+  "squad.agentBuilder.draftPromptLength": "System prompt: {count} characters",
+  "squad.agentBuilder.confirmDraft": "Review & confirm",
+  "squad.agentBuilder.manualCreate": "Switch to manual",
+  "squad.agentBuilder.closeConfirmTitle": "Discard this interview?",
+  "squad.agentBuilder.closeConfirmDescription":
+    "The interview history lives only in this conversation and is not saved; you can still carry the current draft into the form.",
+  "squad.agentBuilder.closeConfirmDiscard": "Discard",
+  "squad.agentBuilder.systemPromptNotice": "Generated by AI — please review before creating.",
+  "squad.agentBuilder.you": "You",
+  "squad.agentBuilder.assistant": "Agent designer",
+  "squad.sidebar.aiTeam": "AI Team",
+  "squad.sidebar.idle": "Idle",
+  "squad.sidebar.agentCount": "{count} agents",
+  "squad.sidebar.moreMembers": "+{count} more",
+  "squad.sidebar.working": "Working · {count}",
+  "squad.sidebar.queued": "Queued · +{count}",
+  "squad.sidebar.queuedShort": "+{count} queued",
+  "squad.sidebar.statusUnavailable": "Status unavailable",
+
+  "squad.squads.create": "New squad",
+  "squad.squads.created": "Squad created",
+  "squad.squads.leaderAgent": "Leader agent",
+  "squad.squads.memberAgents": "Member agents (multi-select)",
+  "squad.squads.memberAgents.none":
+    "No other dispatchable agents; a leader alone is fine (the leader becomes a member automatically).",
+  "squad.squads.stopCondition": "Stop condition (required)",
+  "squad.squads.maxRounds": "Max rounds (required)",
+
+  "squad.workItems.create": "New work item",
+  // Quick create (T-P3-R1, bar at the top of the surface): the placeholder is the usage hint
+  // (title is the only required field; Enter creates). Other copy reuses squad.common.title /
+  // .parent / .parent.none / .submit and the four failure keys (no second vocabulary).
+  "squad.workItems.quickCreate.placeholder": "Type a title, press Enter to create",
+  // Responsive closure (T-P3-R4, compact drawer): **exactly two** keys — the compact quick-create
+  // trigger (also the drawer title) and the drawer header close button's accessible name.
+  // The desktop split (peek) and drawer contents reuse existing keys (the four peek keys as-is).
+  "squad.workItems.quickCreate.open": "Quick create",
+  "squad.workItems.sheet.close": "Close",
+  // Side peek (T-P3-R2, lightweight row-preview panel): **exactly four** keys — panel identity,
+  // the one entry to the full detail page, the close button's accessible name, activity summary
+  // heading. Everything else reuses existing keys (status, priority, labels, start/due, creator,
+  // loading/failed/retry/not-found, activity kinds and their empty state, "link unavailable").
+  "squad.workItems.peek.title": "Work item preview",
+  "squad.workItems.peek.openDetail": "Open full details",
+  "squad.workItems.peek.close": "Close",
+  "squad.workItems.peek.activity": "Recent activity",
+  "squad.workItems.created": "Work item created",
+  "squad.workItems.updated": "Saved",
+  "squad.workItems.editTitle": "Edit work item",
+  // Reassign (board row "Reassign" button -> ReassignWorkItemDialog): change an existing item's assignee.
+  "squad.workItems.reassign": "Reassign",
+  "squad.workItems.reassignTitle": "Reassign work item",
+  "squad.workItems.reassigned": "Reassigned",
+  "squad.workItems.reassignUnchanged": "Unchanged: same assignee",
+  "squad.workItems.loading": "Loading work items…",
+  "squad.workItems.loadFailed": "Failed to load work items",
+  "squad.workItems.empty": "No work items yet",
+  "squad.workItems.emptyHint":
+    "Create a work item and assign it to a team agent or squad; squads dispatch it through their leader.",
+  "squad.workItems.status.todo": "To do",
+  "squad.workItems.status.in_progress": "In progress",
+  "squad.workItems.status.in_review": "In review",
+  "squad.workItems.status.blocked": "Blocked",
+  "squad.workItems.status.done": "Done",
+  "squad.workItems.status.cancelled": "Cancelled",
+  // Labels (#11 v1): a purely descriptive field (no dispatch / status / filtering); input is
+  // comma- or newline-separated text.
+  "squad.workItems.labels": "Labels",
+  "squad.workItems.labelsPlaceholder": "Separate with commas or new lines, up to 10",
+  "squad.workItems.labelsTooMany": "At most {max} labels allowed (currently {count})",
+  "squad.workItems.labelsTooLong": "Each label can be at most {max} characters",
+  "squad.workItems.labelsMore": "+{count}",
+  // Surface alignment (0018, stage-1 round C): priority / start-due dates / creator — the field
+  // vocabulary shared by the form and the detail overview. NULL means "nobody decided"; apart from
+  // the "not set" select option we never invent another word for it.
+  "squad.workItems.priority": "Priority",
+  "squad.workItems.priority.urgent": "Urgent",
+  "squad.workItems.priority.high": "High",
+  "squad.workItems.priority.medium": "Medium",
+  "squad.workItems.priority.low": "Low",
+  "squad.workItems.priority.unset": "Not set",
+  "squad.workItems.startDate": "Start",
+  "squad.workItems.dueDate": "Due",
+  // Shape hint for the date inputs (identical in both languages: it is a format, not a sentence).
+  "squad.workItems.datePlaceholder": "YYYY-MM-DD",
+  "squad.workItems.creator": "Created by",
+  "squad.workItems.creator.human": "Human",
+  "squad.workItems.creator.agent": "Agent",
+  "squad.workItems.creator.system": "System",
+  // Form pre-check copy (the rule lives in shared; the bad value is quoted verbatim — "what is
+  // wrong" beats "invalid input").
+  "squad.workItems.priorityInvalid":
+    '"{value}" is not a selectable priority (urgent / high / medium / low)',
+  "squad.workItems.startDateInvalid":
+    'Start date "{value}" is not a real calendar date (YYYY-MM-DD)',
+  "squad.workItems.dueDateInvalid": 'Due date "{value}" is not a real calendar date (YYYY-MM-DD)',
+  // Inline editing (Surface round D): the title is the only inline-editable field with a value rule
+  // (blank = no title); the priority failure reuses the key above (same field, same sentence).
+  "squad.workItems.titleRequired": "Title cannot be empty",
+  // Project binding (R-P2 UI round): project / no project / new project / short code plus the
+  // short-code and name pre-checks. "No project" is an explicit legal state (multica's three layers:
+  // filter switch, grouping column, picker clear) — distinct from "a project this list cannot find"
+  // (that one falls back to the id instead of pretending to be "No project").
+  "squad.workItems.project": "Project",
+  "squad.workItems.project.none": "No project",
+  "squad.workItems.project.new": "New project…",
+  "squad.workItems.project.shortCode": "Short code",
+  "squad.workItems.project.shortCodePlaceholder": "e.g. PLT",
+  "squad.workItems.project.shortCodeInvalid":
+    '"{value}" is not a valid short code (2-8 uppercase letters or digits, e.g. PLT)',
+  "squad.workItems.project.nameRequired": "Project name is required",
+  // Board lanes (#15): closed set of dimensions = no grouping / status category (4-lane skeleton) /
+  // assignee (user first, then first appearance) / project (R-P2).
+  "squad.workItems.lane.dimension": "Group by",
+  "squad.workItems.lane.dimension.none": "No grouping",
+  "squad.workItems.lane.dimension.statusCategory": "By status",
+  "squad.workItems.lane.dimension.assignee": "By assignee",
+  "squad.workItems.lane.dimension.project": "By project",
+  "squad.workItems.lane.statusCategory.unstarted": "Not started",
+  "squad.workItems.lane.statusCategory.started": "In progress",
+  "squad.workItems.lane.statusCategory.done": "Done",
+  "squad.workItems.lane.statusCategory.closed": "Closed",
+  "squad.workItems.lane.assignee.user": "Me",
+  "squad.workItems.lane.assignee.unknownSuffix": " (no longer in the roster)",
+  "squad.workItems.lane.count": "{count} items",
+  // Surface (phase 2, T-P2-R1 key-catalog freeze): view / filter / search / sort / columns /
+  // filtered-empty / bulk. **Freeze discipline**: rounds R2-R5 must not add keys — the parallel groups
+  // (PG-4) depend on this catalog being settled once; report a blocker instead of adding keys ad hoc.
+  "squad.workItems.view.label": "View",
+  "squad.workItems.view.board": "Board",
+  "squad.workItems.view.list": "List",
+  "squad.workItems.view.table": "Table",
+  "squad.workItems.filter.label": "Filter",
+  "squad.workItems.filter.all": "All",
+  "squad.workItems.filter.clear": "Clear filters",
+  "squad.workItems.search.label": "Search",
+  "squad.workItems.search.placeholder": "Search title, labels, or ID",
+  "squad.workItems.search.clear": "Clear search",
+  "squad.workItems.sort.label": "Sort",
+  "squad.workItems.sort.manual": "Manual order",
+  "squad.workItems.sort.priority": "Priority",
+  "squad.workItems.sort.startDate": "Start date",
+  "squad.workItems.sort.dueDate": "Due date",
+  "squad.workItems.sort.title": "Title",
+  "squad.workItems.sort.asc": "Ascending",
+  "squad.workItems.sort.desc": "Descending",
+  "squad.workItems.columns.label": "Columns",
+  "squad.workItems.field.identifier": "ID",
+  "squad.workItems.field.status": "Status",
+  "squad.workItems.field.assignee": "Assignee",
+  "squad.workItems.filteredEmpty": "No matching work items",
+  "squad.workItems.filteredEmptyHint": "Try a different search term, or clear the filters.",
+  "squad.workItems.bulk.label": "Bulk actions",
+  "squad.workItems.bulk.selected": "{count} selected",
+  "squad.workItems.bulk.selectRow": "Select “{title}”",
+  "squad.workItems.bulk.clear": "Clear selection",
+  "squad.workItems.bulk.apply": "Apply to selected",
+  // 保存视图（阶段二 · T-P2-R6b，**破例键**：主会话第 251 轮裁定 —— 原冻结清单漏排 saved views，
+  // 这里是最小集，**不得再加**；12 枚与 workItemSurfaceKeys.test.ts 的破例段逐项对应）。
+  // 可见性控件做成单枚勾选（共享给工作区）：二值语义 + 两枚选项标签会超出破例键额（服务端缺省 = private）。
+  "squad.workItems.views.label": "Views",
+  "squad.workItems.views.new": "New view",
+  "squad.workItems.views.save": "Save",
+  "squad.workItems.views.saveAs": "Save as",
+  "squad.workItems.views.edit": "Edit",
+  "squad.workItems.views.delete": "Delete",
+  "squad.workItems.views.deleteConfirmTitle": "Delete the view “{name}”?",
+  "squad.workItems.views.deleteConfirmBody":
+    "Only this view is deleted; no work items are removed.",
+  "squad.workItems.views.manage": "Manage views",
+  "squad.workItems.views.namePlaceholder": "View name",
+  "squad.workItems.views.shared": "Share with workspace",
+  "squad.workItems.views.missingToast":
+    "That view is gone (deleted, or no longer shared with you). Back to All.",
+
+  "squad.workItems.bulk.result": "{ok} succeeded, {failed} failed",
+
+  "squad.runs.title": "Runs awaiting wrap-up",
+  "squad.runs.empty": "No runs awaiting wrap-up",
+  "squad.runs.approve": "Approve",
+  "squad.runs.reject": "Reject",
+  "squad.runs.merged": "Approved: merged into the integration branch",
+  "squad.runs.rejectedKept": "Rejected: the member's worktree is kept until it is fixed and merged",
+  "squad.runs.conflict":
+    "Merge conflict: not merged into the main branch; resolve the conflict first",
+  "squad.runs.branchMissing": "The member branch is missing, so it cannot be merged",
+  "squad.runs.leader": "Leader",
+  "squad.runs.member": "Member",
+  "squad.runs.openSession": "Open session",
+  "squad.runs.status.open": "Dispatched",
+  "squad.runs.status.produced": "Produced, awaiting review",
+  "squad.runs.status.rejected": "Rejected, awaiting fixes",
+  "squad.runs.status.merged": "Merged",
+  "squad.runs.status.discarded": "Discarded",
+  "squad.runs.status.queued": "Queued",
+
+  // Activity timeline (squad.timeline.*, spec §11.2): the swimlane chart expanded inline under a
+  // batch-root row. Arcs come in two shades: **solid = recorded dispatch** (the 0008 columns,
+  // written by the leader tool at dispatch time); **dashed = inferred** (legacy rows / missing
+  // edge). `legendInferred` / `inferredTooltip` must keep saying "inferred"; never present an
+  // inferred arc as established fact.
+  "squad.timeline.toggle": "Timeline",
+  "squad.timeline.loading": "Loading timeline…",
+  "squad.timeline.loadFailed": "Failed to load the timeline",
+  "squad.timeline.empty": "No runs in this batch yet",
+  "squad.timeline.legendTitle": "Legend",
+  "squad.timeline.legendIdentity": "Color = agent identity",
+  "squad.timeline.legendRecorded": "Solid = recorded dispatch (leader tool)",
+  "squad.timeline.legendInferred": "Dashed = inferred dispatch",
+  "squad.timeline.ariaLabel": "Activity timeline: {lanes} lanes / {runs} runs",
+  "squad.timeline.recordedTooltip":
+    "Recorded in the ledger: this dispatch was written by the leader tool at dispatch time",
+  "squad.timeline.inferredTooltip":
+    "No dispatch edge in the ledger: this relation is inferred from time and batch",
+  "squad.timeline.openSessionTooltip": "Click to open the session",
+  "squad.timeline.durationSeconds": "{seconds}s",
+
+  "squad.discard.action": "Discard batch",
+  "squad.discard.title": "Discard the whole batch “{title}”?",
+  "squad.discard.description":
+    "This deletes this batch's member branches and its integration branch, and cleans up their worktrees — unmerged changes in those worktrees are lost. The batch is marked as abandoned and nobody will wrap it up. This cannot be undone.",
+  "squad.discard.confirm": "Discard batch",
+  "squad.discard.succeeded":
+    "Batch discarded: member and integration branches deleted, worktrees cleaned, batch marked as abandoned",
+  "squad.discard.notConfirmed":
+    "Not confirmed, so nothing was discarded: no branch or worktree was deleted",
+
+  // Inbox surface (squad.inbox.*) — the cross-project notification face (2026-10-04).
+  // ⚠️ `member_failed` must stay neutral ("Run failed"): member runs and the leader run
+  // share one failure exit, so "member failed" would be false for leader runs; the reason
+  // line names who failed (it starts with "member"/"leader").
+  // `archiveSucceeded` does not reuse squad.common.archived (an adjective): it is an action
+  // result and must say "archived" (never "deleted") — the row is still retrievable
+  // with "Show archived".
+  "squad.inbox.loading": "Loading inbox…",
+  "squad.inbox.loadFailed": "Failed to load inbox",
+  "squad.inbox.empty": "Your inbox is empty",
+  "squad.inbox.emptyHint":
+    "Nothing needs your attention. Archived entries can be viewed with Show archived.",
+  "squad.inbox.showArchived": "Show archived",
+  "squad.inbox.markRead": "Mark read",
+  "squad.inbox.archive": "Archive",
+  "squad.inbox.markReadSucceeded": "Marked as read",
+  "squad.inbox.archiveSucceeded": "Archived — you can still see it with Show archived",
+  // Penetration (this round): entries are no longer read-only dead letters — "Open work item"
+  // activates the owning project (cross-workspace) and focuses that row; "Open session" only
+  // appears on entries that carry a session id (member_failed / run_orphaned).
+  // `openFailed` is the visible fate of a failed navigation (activate failing silently is a
+  // known pitfall: silence looks like "clicked, nothing happened").
+  "squad.inbox.openWorkItem": "Open work item",
+  "squad.inbox.openSession": "Open session",
+  "squad.inbox.openFailed": "Could not open: the project was not found or is no longer available",
+  // SUB.3a row-level unsubscribe ("stop notifying"): the two scope labels reuse
+  // `squad.workItemDetail.subscription.scope.*` (one vocabulary, two entry points); only the entry,
+  // title, description and success toast live here. The description must say that unsubscribing
+  // affects notifications only — users fear it deletes or mutates something.
+  "squad.inbox.unsubscribe": "Stop notifying",
+  "squad.inbox.unsubscribeTitle": "Stop notifying about “{title}”?",
+  "squad.inbox.unsubscribeDescription":
+    "Unsubscribing only affects notifications: the work item itself and existing inbox entries are untouched. Choosing “this item and its subtree” also mutes every descendant.",
+  "squad.inbox.unsubscribeSucceeded": "Unsubscribed — you will no longer be notified",
+  "squad.inbox.experimentOff":
+    "The multi-agent squad experiment is off: the sidebar entry is hidden and new dispatches are rejected by the service; existing inbox entries remain readable and archivable.",
+  "squad.inbox.kind.merge_conflict": "Merge conflict",
+  "squad.inbox.kind.member_failed": "Run failed",
+  "squad.inbox.kind.run_orphaned": "Orphaned run",
+  "squad.inbox.kind.dispatch_skipped": "Dispatch skipped",
+  "squad.inbox.kind.pr_gate_degraded": "pr-gate finalize degraded to a local merge",
+  "squad.inbox.kind.run_stalled": "Stalled run",
+  "squad.inbox.kind.mention_action_required": "You were mentioned — a reply is needed",
+  "squad.inbox.kind.comment_attention": "New comment on a work item you follow",
+  "squad.inbox.kind.decision_required": "A decision needs your attention",
+  "squad.inbox.severity.action_required": "Action required",
+  "squad.inbox.severity.attention": "Attention",
+  "squad.inbox.severity.info": "Notice",
+
+  // Wake rules section (squad.rules.*) — mounted on the Work Items page (§11.1
+  // "project window ▸ rules"). The round-39 hard constraints apply: `timezone` /
+  // `expiresAt` must not be exposed (the scheduler does not consume them) and
+  // condition / eventTypes / filters (event rules) have no vocabulary yet — no inputs
+  // for any of them. `mode` is derived from kind (at⇒once, every/cron⇒continuous),
+  // never a separate choice (kindHint.* tells the user).
+  // ⚠️ `kindHint.cron` must mention the rejection: an expression with no future match
+  // is loudly rejected by the service — that is the feature working, not an error.
+  "squad.rules.title": "Wake rules",
+  "squad.rules.empty": "This project has no wake rules yet",
+  "squad.rules.emptyHint":
+    "Rules attach to a work item: click “New rule”, pick one and a trigger, and its assignee is woken when the time comes.",
+  "squad.rules.noWorkItemsHint":
+    "Rules attach to a work item, and this project has none yet: create one on the board above first, then come back.",
+  "squad.rules.create": "New rule",
+  "squad.rules.createTitle": "New wake rule",
+  "squad.rules.createHint":
+    "The trigger determines how the rule runs (no separate choice): “At a time” fires once; “Every interval” and “Cron expression” fire repeatedly, bounded by the max-fires cap.",
+  "squad.rules.workItem": "Work item",
+  "squad.rules.kind.at": "At a time",
+  "squad.rules.kind.every": "Every interval",
+  "squad.rules.kind.cron": "Cron expression",
+  "squad.rules.kindHint.at": "Wakes once at the given local time; the rule is done after it fires.",
+  "squad.rules.kindHint.every":
+    "Wakes repeatedly at a fixed interval (anchored at creation/resume; missed windows are skipped).",
+  "squad.rules.kindHint.cron":
+    "Wakes repeatedly at the times the cron expression matches; the expression must have a future match or it is rejected.",
+  "squad.rules.atTime": "Fire time (local)",
+  "squad.rules.intervalSeconds": "Interval (seconds)",
+  "squad.rules.cronExpression": "Cron expression",
+  "squad.rules.maxFires": "Max fires (1–1000, blank for default)",
+  "squad.rules.fireProgress": "{count} / {max} fired",
+  "squad.rules.status.active": "Active",
+  "squad.rules.status.userPaused": "Paused",
+  "squad.rules.status.gatePaused": "Stopped by guard",
+  "squad.rules.status.completed": "Completed",
+  "squad.rules.status.unscheduled": "Unscheduled",
+  "squad.rules.pause": "Pause",
+  "squad.rules.resume": "Resume",
+  "squad.rules.paused": "Rule paused",
+  "squad.rules.resumed": "Rule resumed",
+  "squad.rules.created": "Wake rule created",
+  // Edit / delete (round 41): edit reuses the very same form (the host work item is
+  // read-only — it cannot be changed; hostLocked says why). Delete is destructive and
+  // irreversible in what it removes, so it is confirmed and the copy must spell out
+  // "the fire history goes with it" (deleteConfirmDescription).
+  "squad.rules.edit": "Edit",
+  "squad.rules.editTitle": "Edit wake rule",
+  "squad.rules.hostLocked":
+    "Editing does not move the rule to another work item: changing the host would swap the rule’s ownership — delete it and create a new one instead.",
+  "squad.rules.updated": "Wake rule saved",
+  "squad.rules.delete": "Delete",
+  "squad.rules.deleteConfirmTitle": "Delete the wake rule for “{name}”?",
+  "squad.rules.deleteConfirmDescription":
+    "This rule’s fire history ({count} fired) is deleted along with it. This cannot be undone.",
+  "squad.rules.deleted": "Wake rule deleted",
+  "squad.rules.loading": "Loading wake rules…",
+  "squad.rules.loadFailed": "Failed to load wake rules",
+  "squad.rules.schedule.at": "Fires at {time}",
+  "squad.rules.schedule.every": "Every {seconds}s",
+  "squad.rules.schedule.cron": "Cron: {expression}",
+  "squad.rules.invalid.workItem": "Pick the work item this rule attaches to",
+  "squad.rules.invalid.at": "The fire time must be a valid moment later than now (local time)",
+  "squad.rules.invalid.interval": "The interval must be a positive whole number of seconds",
+  "squad.rules.invalid.cron": "The cron expression cannot be empty",
+  "squad.rules.invalid.maxFires":
+    "Max fires must be a whole number between 1 and 1000 (blank for default)",
+  "squad.rules.configMissing": "Schedule configuration missing",
+  /* Work item detail page (B5.1). Deliberately its own namespace (not `squad.workItems.*`,
+     which is board CRUD vocabulary); both locales must stay isomorphic. */
+  "squad.workItemDetail.back": "Back to work items",
+  "squad.workItemDetail.notFound": "This work item was not found",
+  "squad.workItemDetail.loading": "Loading work item",
+  "squad.workItemDetail.loadFailed": "Unable to load work item",
+  "squad.workItemDetail.retry": "Retry",
+  "squad.workItemDetail.activity.title": "Activity",
+  "squad.workItemDetail.activity.empty": "No activity yet",
+  "squad.workItemDetail.activity.jumpToLatest": "Jump to latest",
+  "squad.workItemDetail.activity.linkUnavailable": "Linked activity is unavailable",
+  "squad.workItemDetail.activity.loadFailed": "Unable to load activity",
+  "squad.workItemDetail.activity.open": 'Open work item "{title}"',
+  "squad.workItemDetail.overview.bodyShow": "Show description",
+  "squad.workItemDetail.overview.bodyHide": "Hide description",
+  "squad.workItemDetail.overview.labels": "Labels",
+  "squad.workItemDetail.overview.labelsEmpty": "No labels",
+  "squad.workItemDetail.overview.properties": "Properties",
+  "squad.workItemDetail.comment.add": "Add comment",
+  "squad.workItemDetail.comment.placeholder": "Add a comment",
+  "squad.workItemDetail.comment.replyingTo": "Replying to {name}",
+  "squad.workItemDetail.comment.cancelReply": "Cancel reply",
+  "squad.workItemDetail.comment.sending": "Sending",
+  "squad.workItemDetail.comment.sendFailed": "Comment was not sent",
+  "squad.workItemDetail.comment.retrySend": "Retry send",
+  "squad.workItemDetail.comment.deleted": "This comment was deleted",
+  "squad.workItemDetail.comment.delete": "Delete comment",
+  "squad.workItemDetail.comment.deleteTitle": "Delete this comment?",
+  "squad.workItemDetail.comment.deleteDescription":
+    "The comment content will be hidden. Replies remain and this cannot be undone.",
+  "squad.workItemDetail.comment.note": "Note only",
+  "squad.workItemDetail.comment.noteHint": "This will not request an agent",
+  "squad.workItemDetail.comment.resolved": "Resolved",
+  "squad.workItemDetail.comment.resolve": "Resolve thread",
+  "squad.workItemDetail.comment.reopen": "Reopen thread",
+  "squad.workItemDetail.comment.reply": "Reply",
+  "squad.workItemDetail.comment.react": "Add reaction",
+  "squad.workItemDetail.comment.reacted": "Reacted",
+  "squad.workItemDetail.comment.author.human": "Human",
+  "squad.workItemDetail.comment.author.agent": "Agent",
+  "squad.workItemDetail.comment.sourceRole.leader": "Leader",
+  "squad.workItemDetail.comment.sourceRole.member": "Member",
+  "squad.workItemDetail.comment.sourceRole.standalone": "Standalone",
+  "squad.workItemDetail.comment.disabled.archived":
+    "This work item is archived; commenting is read-only",
+  "squad.workItemDetail.comment.disabled.readFailed":
+    "Activity failed to load; commenting is unavailable",
+  "squad.workItemDetail.comment.submitDisabled.empty": "Write something first",
+  "squad.workItemDetail.mention.all": "@all",
+  "squad.workItemDetail.mention.allHint": "Suppresses automatic routing only",
+  "squad.workItemDetail.mention.unresolved": "Unresolved mention",
+  "squad.workItemDetail.mention.ambiguous": "Name is ambiguous; use an identifier",
+  "squad.workItemDetail.mention.rosterUnavailable": "Roster unavailable: cannot suggest @ targets",
+  "squad.workItemDetail.inline.unavailable": "Location unavailable",
+  "squad.workItemDetail.decision.label": "Decision",
+  "squad.workItemDetail.decision.proposal": "Proposal",
+  "squad.workItemDetail.decision.accepted": "Accepted",
+  "squad.workItemDetail.decision.rejected": "Rejected",
+  "squad.workItemDetail.decision.superseded": "Superseded",
+  "squad.workItemDetail.decision.reopened": "Reopened",
+  /* C3.2: decision surface (write entry + parent-chain presentation). Besides the two parent
+     prefixes (supersede / reopen), the three kinds with an optional parent share one "About"
+     key: the v1 form does not offer a selector for them, but an existing parent chain must not
+     be displayed as if it were absent. */
+  "squad.workItemDetail.decision.record": "Record decision",
+  "squad.workItemDetail.decision.dialogTitle": "Record a decision",
+  "squad.workItemDetail.decision.field.kind": "Kind",
+  "squad.workItemDetail.decision.field.subject": "Subject",
+  "squad.workItemDetail.decision.field.rationale": "Rationale (optional)",
+  "squad.workItemDetail.decision.field.parent": "Parent decision",
+  "squad.workItemDetail.decision.parentEmpty": "No parent decision available",
+  "squad.workItemDetail.decision.parentRequired": "This kind requires a parent decision",
+  "squad.workItemDetail.decision.subjectRequired": "Describe the subject",
+  "squad.workItemDetail.decision.submit": "Record",
+  "squad.workItemDetail.decision.sending": "Recording",
+  "squad.workItemDetail.decision.failed": "Decision not recorded",
+  "squad.workItemDetail.decision.retry": "Retry",
+  "squad.workItemDetail.decision.disabled.archived":
+    "This work item is archived; decisions cannot be recorded",
+  "squad.workItemDetail.decision.disabled.readFailed":
+    "Activity failed to load; decisions cannot be recorded",
+  "squad.workItemDetail.decision.parentSuperseded": "Supersedes: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentReopened": "Reopens: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentRelated": "About: {kind} · {subject}",
+  "squad.workItemDetail.decision.parentUnresolved": "Parent decision unavailable: {id}",
+  /* Phase 3 · T-P3-R3: detail-page "sub-items" section (roster filtered by parentId; no new read). */
+  "squad.workItemDetail.children.title": "Sub-items",
+  "squad.workItemDetail.children.empty": "No sub-items yet: type a title below to add one.",
+  "squad.workItemDetail.children.rosterUnavailable":
+    "Could not read the roster: sub-items are unavailable",
+  "squad.workItemDetail.children.summary": "{terminal}/{total} closed out",
+  "squad.workItemDetail.children.disabled.archived":
+    "This work item is archived; cannot add sub-items",
+  /* Phase 3 · T-P3-R5u: work-item reactions (8 quick emojis + aggregated chips). Minimal set of 3:
+     the picker's accessible name, a chip's accessible name (emoji/count are placeholders),
+     and the peek's read-failure line. */
+  "squad.workItemDetail.reactions.add": "Add reaction",
+  "squad.workItemDetail.reactions.chip": "{emoji} {count} reactions",
+  "squad.workItemDetail.reactions.readFailed": "Could not read reactions",
+  /* #7 D1b: deliverables section (design §3.4). The kind mapping is
+     `Record<DeliverableKind, string>` (exhaustive over the closed set). */
+  "squad.workItemDetail.deliverables.title": "Deliverables",
+  "squad.workItemDetail.deliverables.empty":
+    "No deliverables yet: merged work is captured automatically, and you can register external links.",
+  "squad.workItemDetail.deliverables.kind.diff": "diff",
+  "squad.workItemDetail.deliverables.kind.link": "link",
+  "squad.workItemDetail.deliverables.commits": "{count} commits",
+  "squad.workItemDetail.deliverables.view": "View diff",
+  "squad.workItemDetail.deliverables.hide": "Hide",
+  "squad.workItemDetail.deliverables.contentLoading": "Loading content…",
+  "squad.workItemDetail.deliverables.contentMissing":
+    "Content missing (metadata is kept; nothing is rebuilt)",
+  "squad.workItemDetail.deliverables.contentFailed": "Failed to load the deliverable content",
+  "squad.workItemDetail.deliverables.form.open": "Register link",
+  "squad.workItemDetail.deliverables.form.titlePlaceholder": "Title (e.g. PR #12)",
+  "squad.workItemDetail.deliverables.form.urlPlaceholder": "https://…",
+  "squad.workItemDetail.deliverables.form.titleRequired": "Fill in a title",
+  "squad.workItemDetail.deliverables.form.urlRequired": "Fill in a URL",
+  "squad.workItemDetail.deliverables.form.urlInvalid":
+    "The URL must start with http:// or https://",
+  "squad.workItemDetail.deliverables.form.submit": "Register",
+  "squad.workItemDetail.deliverables.form.cancel": "Cancel",
+  "squad.workItemDetail.deliverable.disabled.archived":
+    "This work item is archived; deliverables cannot be registered",
+  "squad.workItemDetail.deliverable.disabled.readFailed":
+    "Activity failed to load; deliverables cannot be registered",
+  /* #8 D2: linked pull requests section (state closed set + a separate "not fetched" case). */
+  "squad.workItemDetail.pullRequests.title": "Linked pull requests",
+  "squad.workItemDetail.pullRequests.empty":
+    "No pull requests linked yet: paste a GitHub PR URL to register one (snapshot state appears once an access token is configured).",
+  "squad.workItemDetail.pullRequests.state.open": "Open",
+  "squad.workItemDetail.pullRequests.state.closed": "Closed",
+  "squad.workItemDetail.pullRequests.state.merged": "Merged",
+  "squad.workItemDetail.pullRequests.state.draft": "Draft",
+  "squad.workItemDetail.pullRequests.state.notFetched": "Not fetched",
+  "squad.workItemDetail.pullRequests.gate.awaitingMerge":
+    "Waiting for the pull request to merge: this item is in review and will move to Done automatically once the linked PR is merged.",
+  "squad.workItemDetail.pullRequests.gate.tokenMissing":
+    "pr-gate mode needs a GitHub access token: without one, finalize degrades to a local merge (no PR is opened) and leaves a note in the inbox.",
+  "squad.workItemDetail.pullRequests.tokenMissing":
+    "No GitHub access token configured: only manually registered links are shown (configure one under Settings ▸ Experiments to fetch PR snapshots).",
+  "squad.workItemDetail.pullRequests.refresh": "Refresh snapshots",
+  "squad.workItemDetail.pullRequests.refreshResult":
+    "Refresh finished: {updated} updated, {discarded} discarded as stale, {unavailable} not configured, {failed} failed",
+  "squad.workItemDetail.pullRequests.snapshot.at": "Snapshot at {time}",
+  "squad.workItemDetail.pullRequests.snapshot.never": "Never fetched",
+  "squad.workItemDetail.pullRequests.unlink": "Unlink",
+  "squad.workItemDetail.pullRequests.form.open": "Register pull request",
+  "squad.workItemDetail.pullRequests.form.urlPlaceholder":
+    "https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.titlePlaceholder":
+    "Title (optional; defaults to owner/repo#number)",
+  "squad.workItemDetail.pullRequests.form.urlRequired": "Enter a GitHub pull request URL",
+  "squad.workItemDetail.pullRequests.form.urlInvalid":
+    "Only GitHub pull request URLs are supported, e.g. https://github.com/<owner>/<repo>/pull/<number>",
+  "squad.workItemDetail.pullRequests.form.submit": "Register",
+  "squad.workItemDetail.pullRequests.form.cancel": "Cancel",
+  "squad.workItemDetail.pullRequest.disabled.archived":
+    "This work item is archived; pull requests cannot be registered",
+  "squad.workItemDetail.pullRequest.disabled.readFailed":
+    "Activity failed to load; pull requests cannot be registered",
+  // Board-row **inline editing** (Surface round D): shares the single "archived ⇒ not writable"
+  // rule with the four write surfaces above (writeDisabledReason, only the surface name differs).
+  "squad.workItemDetail.inlineEdit.disabled.archived":
+    "This work item is archived; inline editing is unavailable",
+  "squad.workItemDetail.inlineEdit.disabled.readFailed":
+    "Load failed; inline editing is temporarily unavailable",
+  // Notification / subscription surface (SUB.3a): the detail-page control and the inbox row's
+  // "stop notifying" share this vocabulary. Both status lines carry a placeholder — `{reason}` is
+  // "why I am here" (creator / assignee / commenter / mentioned / delegated / manual) and `{scope}`
+  // is "how far the opt-out reaches" (this item / this item and its subtree).
+  "squad.workItemDetail.subscription.title": "Notifications",
+  "squad.workItemDetail.subscription.status.none": "Not subscribed",
+  "squad.workItemDetail.subscription.status.subscribed": "Following ({reason})",
+  "squad.workItemDetail.subscription.status.unsubscribed": "Unsubscribed ({scope})",
+  "squad.workItemDetail.subscription.subscribe": "Subscribe",
+  "squad.workItemDetail.subscription.unsubscribe": "Unsubscribe",
+  "squad.workItemDetail.subscription.unsubscribeTitle": "Unsubscribe from this work item?",
+  "squad.workItemDetail.subscription.unsubscribeHint":
+    "Unsubscribing only affects notifications: the work item itself and existing inbox entries are untouched. Choosing “this item and its subtree” also mutes every descendant.",
+  "squad.workItemDetail.subscription.tombstoneHint":
+    "Unsubscribed: automatic rules will not add you back. Press Subscribe to receive notifications again.",
+  "squad.workItemDetail.subscription.reason.creator": "creator",
+  "squad.workItemDetail.subscription.reason.assignee": "assignee",
+  "squad.workItemDetail.subscription.reason.commenter": "commenter",
+  "squad.workItemDetail.subscription.reason.mentioned": "mentioned",
+  "squad.workItemDetail.subscription.reason.delegated": "delegated by the leader",
+  "squad.workItemDetail.subscription.reason.manual": "subscribed manually",
+  "squad.workItemDetail.subscription.scope.issue": "this item only",
+  "squad.workItemDetail.subscription.scope.subtree": "this item and its subtree",
+  "squad.workItemDetail.subscription.disabled.archived":
+    "This work item is archived; subscriptions cannot be changed",
+  "squad.workItemDetail.subscription.disabled.readFailed":
+    "Load failed; subscriptions cannot be changed right now",
+  "squad.workItemDetail.dispatch.pending": "Waiting to dispatch",
+  "squad.workItemDetail.dispatch.opened": "Run opened",
+  "squad.workItemDetail.dispatch.queued": "Queued",
+  "squad.workItemDetail.dispatch.coalesced": "Coalesced into pending run",
+  "squad.workItemDetail.dispatch.deferred": "Deferred until run completion",
+  "squad.workItemDetail.dispatch.blocked": "Dispatch blocked",
+  "squad.workItemDetail.dispatch.failed": "Dispatch failed",
+  "squad.workItemDetail.dispatch.suppressed": "Dispatch not requested",
+  "squad.workItemDetail.dispatch.moreTargets": "{count} more targets",
+  /* Visible short sentence per Activity kind (closed set of 20), one-to-one with
+     `WORK_ITEM_ACTIVITY_KINDS`; the mapping type is `Record<WorkItemActivityKind, string>`,
+     so adding a kind fails compilation instead of silently missing a sentence. */
+  "squad.workItemDetail.activity.kind.comment_created": "posted a comment",
+  "squad.workItemDetail.activity.kind.comment_mention_parsed": "resolved mentions",
+  "squad.workItemDetail.activity.kind.comment_dispatch_requested": "requested dispatch",
+  "squad.workItemDetail.activity.kind.comment_dispatch_suppressed": "did not request dispatch",
+  "squad.workItemDetail.activity.kind.comment_deleted": "deleted a comment",
+  "squad.workItemDetail.activity.kind.comment_resolved": "resolved a thread",
+  "squad.workItemDetail.activity.kind.comment_reaction_added": "added a reaction",
+  "squad.workItemDetail.activity.kind.decision_created": "recorded a decision",
+  "squad.workItemDetail.activity.kind.status_changed": "changed status",
+  "squad.workItemDetail.activity.kind.assignee_changed": "changed the assignee",
+  "squad.workItemDetail.activity.kind.run_started": "started a run",
+  "squad.workItemDetail.activity.kind.run_completed": "completed a run",
+  "squad.workItemDetail.activity.kind.run_failed": "run failed",
+  "squad.workItemDetail.activity.kind.run_cancelled": "cancelled a run",
+  /* Review rejection (wording may be tuned): same sentence shape as the run family. */
+  "squad.workItemDetail.activity.kind.run_rejected": "Review rejected",
+  "squad.workItemDetail.activity.kind.worktree_created": "created a worktree",
+  "squad.workItemDetail.activity.kind.worktree_merged": "merged a worktree",
+  "squad.workItemDetail.activity.kind.worktree_discarded": "discarded a worktree",
+  "squad.workItemDetail.activity.kind.wake_rule_fired": "woke a batch",
+  /* Deliverable registration (#7 D1a; wording may be tuned): one sentence for both the
+     automatic capture and the manual link, the subject being the system/operator fact. */
+  "squad.workItemDetail.activity.kind.deliverable_registered": "registered a deliverable",
+  "squad.workItemDetail.activity.kind.pr_merged": "pull request merged (drove this item to done)",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",
@@ -4750,27 +5542,32 @@ const enUS: Record<string, string> = {
   "wiki.settings.frequency.weekly": "Weekly",
   "wiki.settings.frequency.hint": "How often to regenerate the wiki",
   "wiki.settings.time.label": "Time",
-  "wiki.settings.status.staleHint": "New commits landed since the last run; regenerate to sync the latest code.",
+  "wiki.settings.status.staleHint":
+    "New commits landed since the last run; regenerate to sync the latest code.",
   "wiki.settings.frequency.label": "Frequency",
   "wiki.settings.model.label": "Model for generation",
   "wiki.settings.model.pending": "Loading…",
   "wiki.settings.model.hint": "Model used when generating the wiki manually",
   "wiki.settings.scheduledModel.label": "Model for scheduled runs",
-  "wiki.settings.scheduledModel.hint": "Scheduled runs are unattended; pin a model instead of following the session",
+  "wiki.settings.scheduledModel.hint":
+    "Scheduled runs are unattended; pin a model instead of following the session",
   "wiki.settings.status.never": "Not generated yet",
   "wiki.settings.projectList.title": "Projects",
   "wiki.settings.projectList.autoOn": "Scheduled auto-update is on for this project",
   "wiki.settings.projectList.autoBadge": "Auto",
   "wiki.settings.projectList.pending": "{count} to sync",
-  "wiki.settings.autoUpdate.projectHint": "Applies to this project only; each project keeps its own settings",
+  "wiki.settings.autoUpdate.projectHint":
+    "Applies to this project only; each project keeps its own settings",
   "wiki.settings.time.hint": "Runs at {time}",
-  "wiki.settings.description": "AI reads the project and writes developer docs into the project's wiki directory, versioned alongside the code.",
+  "wiki.settings.description":
+    "AI reads the project and writes developer docs into the project's wiki directory, versioned alongside the code.",
   "wiki.action.generateNow": "Generate now",
   "wiki.action.save": "Save",
   "wiki.settings.schedule.label": "Schedule",
   "wiki.settings.schedule.hint": "How often to update, and at what time",
   "wiki.settings.diagrams.label": "Generate diagrams",
-  "wiki.settings.diagrams.hint": "Let the model insert mermaid architecture and flow diagrams into pages",
+  "wiki.settings.diagrams.hint":
+    "Let the model insert mermaid architecture and flow diagrams into pages",
   "wiki.settings.language.label": "Document language",
   "wiki.settings.language.hint": "Language used for generated page content",
   "wiki.settings.autoUpdate.label": "Scheduled auto-update",
@@ -4778,7 +5575,8 @@ const enUS: Record<string, string> = {
   "wiki.settings.saving": "Saving…",
   "wiki.pane.title": "Project wiki",
   "wiki.state.loading": "Loading wiki…",
-  "wiki.state.empty": "This project has no wiki yet. Generate one to have AI read the project and write developer docs.",
+  "wiki.state.empty":
+    "This project has no wiki yet. Generate one to have AI read the project and write developer docs.",
   "wiki.state.selectPage": "Pick a page from the catalog on the left.",
   "wiki.catalog.empty": "Catalog is empty.",
   "wiki.page.notGenerated": "“{title}” has no content yet (generation failed or has not started).",
@@ -4789,7 +5587,8 @@ const enUS: Record<string, string> = {
   "wiki.option.model.default": "Default model",
   "wiki.option.model.hint": "Which model to use for this generation",
   "wiki.option.diagrams": "Diagrams",
-  "wiki.option.diagrams.hint": "When on, the model inserts mermaid architecture diagrams into pages",
+  "wiki.option.diagrams.hint":
+    "When on, the model inserts mermaid architecture diagrams into pages",
   "wiki.progress": "Generating {completed}/{total} pages",
   "wiki.progress.failed": "{count} failed",
   "wiki.summary.pages": "{pages} of {planned} planned pages generated",

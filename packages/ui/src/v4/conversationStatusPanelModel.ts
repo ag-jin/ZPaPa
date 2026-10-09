@@ -1,4 +1,5 @@
-import type { GitRepositorySummary } from "@zcode/shared";
+import type { AgentColor, GitRepositorySummary } from "@zcode/shared";
+import type { SquadSnapshot } from "@zcode/services";
 import type {
   BackgroundWorkSummary,
   GoalState,
@@ -9,6 +10,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { workflowRunStepCounts } from "@zcode/shared/zcode-protocol-v4";
 import { extractPlanToolCallContent, getPlanDirectoryTitle } from "@/lib/planToolCall.js";
+import { resolveSubagentColorFromName } from "@/lib/subagentColors.js";
 
 export interface ConversationStatusPanelGitModel {
   branchName: string | null;
@@ -44,6 +46,52 @@ export interface ConversationStatusPanelSessionPlansModel {
 export interface ConversationStatusPanelRunningSubagent extends RunningSubagentSummary {
   controlWorkId?: string;
   cancellable?: boolean;
+  squadRunSessionId?: string | null;
+}
+
+export interface ConversationStatusPanelSquadRun {
+  runId: string;
+  sessionId: string | null;
+  agentId: string;
+  title: string;
+  startedAt: number;
+}
+
+/**
+ * 将同 workspace 的活跃小队 run 并入当前会话 subagent 头像簇。
+ * sessionId/runId 是唯一事实：当前会话不计入，小队 run 与已有 projection 重叠时只保留一份。
+ */
+export function mergeRunningSubagentsWithSquadRuns(
+  subagents: readonly ConversationStatusPanelRunningSubagent[],
+  snapshot: SquadSnapshot | null | undefined,
+  currentSessionId?: string,
+): ConversationStatusPanelRunningSubagent[] {
+  const merged = [...subagents];
+  const identities = new Set(subagents.map((subagent) => subagent.childSessionId));
+  for (const run of snapshot?.runs ?? []) {
+    if (run.status !== "open" && run.status !== "produced" && run.status !== "rejected") continue;
+    if (
+      currentSessionId &&
+      (run.runId === currentSessionId || run.sessionId === currentSessionId)
+    ) {
+      continue;
+    }
+    const identity = run.sessionId ?? run.runId;
+    if (identities.has(identity) || identities.has(run.runId)) continue;
+    identities.add(identity);
+    identities.add(run.runId);
+    const agent = snapshot?.teamAgents.find((candidate) => candidate.id === run.agentId);
+    merged.push({
+      agentId: run.agentId,
+      childSessionId: run.sessionId ?? run.runId,
+      squadRunSessionId: run.sessionId,
+      subagentType: "subagent",
+      title: agent?.name ?? run.agentId,
+      status: "running",
+      startedAt: run.createdAt,
+    });
+  }
+  return merged;
 }
 
 /**
@@ -273,6 +321,53 @@ function buildRunningWorkflowRuns(
     });
   }
   return rows;
+}
+
+/** 头像簇最多画 **4** 个色点（定数）：再多的点在一行里既挤又难辨认；溢出用 `+K` 计数补齐。 */
+export const RUNNING_AGENT_AVATAR_MAX_DOTS = 4;
+
+/**
+ * 运行中的 subagent → 头像簇色点（**只表达身份，不编码状态** —— spec §11.3 的九色板纪律）。
+ *
+ * 身份口径：`agentId`（同一 agent 的多个运行同色）→ 无 agentId 的旧投影回落到 `title`
+ * → 最后 `childSessionId` 兜底；色值按身份**稳定哈希**取（`resolveSubagentColorFromName`），
+ * 与 `SquadAgentsList` / 面板胶囊同款式子 —— 同一份输入两次结果一致（组件重渲染不闪色）。
+ *
+ * 返回类名**键**（`AgentColor`）而不是 Tailwind 类：映射到 `SUBAGENT_COLOR_CLASS` 是渲染层的事，
+ * 模型层不 import UI 原语（本文件既定的分层）。
+ */
+export function runningAgentAvatarColors(
+  subagents: readonly Pick<RunningSubagentSummary, "agentId" | "title" | "childSessionId">[],
+  maxDots: number,
+): { colors: AgentColor[]; overflowCount: number } {
+  const visible = subagents.slice(0, Math.max(0, maxDots));
+  return {
+    colors: visible.map((subagent) =>
+      resolveSubagentColorFromName(subagent.agentId || subagent.title || subagent.childSessionId),
+    ),
+    overflowCount: subagents.length - visible.length,
+  };
+}
+
+/**
+ * agent 分区**渲不渲染**（三者之一即可）：
+ * ① 有在跑的 subagent；② 有已结束的 subagent 且目录可开；③ **`squadDirectoryDoor`**。
+ *
+ * 为什么要有 ③：分区里的「目录」页脚行是会话通往「智能体目录」的**唯一入口**，而目录里长着
+ * 「小队运行（本项目）」那段（规格 §11.1 C11 的合并入口）。若分区只在"有 subagent"时渲染，
+ * 那么**一个 subagent 都没用过的会话**里，小队运行就彻底看不见 —— 与会话侧那条既有的
+ * workflow 目录失效同型（"重启后活动数为零，若只按它开门，通往 run 目录的唯一入口会连带消失"）。
+ * ③ 由「小队实验开启 + 目录可开（有回调与 parentSessionId）」给出：**实验关闭时本函数与旧行为
+ * 逐字等价**（该项恒 false），不影响任何既有会话的渲染。
+ *
+ * 纯函数（不读 React / settings）：调用方把三项事实算好传进来，判据本身可被 node:test 逐格钉住。
+ */
+export function resolveAgentSectionRenderable(input: {
+  runningSubagentCount: number;
+  hasEndedAgents: boolean;
+  squadDirectoryDoor: boolean;
+}): boolean {
+  return input.runningSubagentCount > 0 || input.hasEndedAgents || input.squadDirectoryDoor;
 }
 
 /**

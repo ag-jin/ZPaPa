@@ -3,6 +3,39 @@ import { z } from "zod";
 /* Squad（小队）域模型（spec §3.3）：一支小队 = 一个队长 + 花名册 + 队长指令。
    与 TeamAgent 一样走 strict schema：未知字段直接拒绝，让「多写一个字段」无法静默落盘。 */
 
+/* ------------------------------------------------------------------------------------------------
+   看门狗六件套的**阈值单源**（用户 2026-10-07 裁定；全部在 shared，消费点不得写散值）。
+
+   为什么必须单源：这些值同时被判定面（`squadWatchdog`）、执行面（host 启动和解 / tick）与派生
+   SQL（熔断计数 / 重试预算）消费；任何一处就地写 30 / 10 / 5 / 24 都会立刻分叉，而分叉**不报错**
+   —— 表现是「台账按 30 分钟收、Inbox 文案说 10 分钟」这类无人能复现的不一致。
+   per-agent 覆盖字段在 `team-agent.ts`（`runTtlMinutes?` 等 + resolve helper），缺省值取这里的常量。
+   ------------------------------------------------------------------------------------------------ */
+
+/** `squad_runs.opened_at` 起算的单次墙钟上限（分钟）：超过即 `watchdog_ttl` 结算（根因②）。 */
+export const DEFAULT_SQUAD_RUN_TTL_MINUTES = 30;
+/** 会话活着但**静默**超此值（分钟）⇒ 先 stop 再等回调；宽限内无回调退回结算（根因①档 3）。 */
+export const DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES = 10;
+/** 工具看门狗的单次工具墙钟（分钟；W3 消费；R-1 已裁定按「降级 no-op + 留痕」交付时仅留痕）。 */
+export const DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES = 5;
+/**
+ * **探测不可得**时的兜底墙钟（小时）：探针缺席时看门狗不猜会话状态，只按这个超长墙钟结算
+ * （设计 §3.2 的退化路径）。取 24h 是为了「宁慢勿误杀」——探测不可得期间唯一可靠的事实是时间。
+ */
+export const DEFAULT_SQUAD_FALLBACK_WALL_CLOCK_HOURS = 24;
+/** 失败重试预算（次）：每 (workItem,agent) 至多自动重试 `budget` 次——同对**另有**的看门狗族结算数
+    达本值即不再登记重试（唯一消费点 `squadRuntimeService.registerWatchdogRetry` 把它注入派生计数判据）。
+    本值必须**真实被读**：此前的判据是 EXISTS（隐含恒为 1），改这里一行不会改变任何行为 —— 文档与实现
+    静默分叉，且分叉不报错（F1）。 */
+export const SQUAD_RETRY_BUDGET = 1;
+/** 熔断窗口（分钟）与阈值（次）：窗口内同 agent 的看门狗结算数达阈值 ⇒ 该 agent 熔断（W3）。 */
+export const SQUAD_BREAKER_WINDOW_MINUTES = 30;
+export const SQUAD_BREAKER_THRESHOLD = 3;
+
+/** 分钟 / 小时的毫秒换算单源：消费点不得写 `* 60_000` 这类散值（阈值常量只在上方一处）。 */
+export const MS_PER_MINUTE = 60_000;
+export const MS_PER_HOUR = 3_600_000;
+
 /** 队长指令的 8 个槽位：**固定全集**（spec §5.4 表）。
     写错槽位名等于指令静默丢失——队长会照旧派单，但派单规则其实是空的，所以键必须限定在这 8 个里。 */
 export const SQUAD_INSTRUCTION_SLOTS = [
@@ -106,3 +139,15 @@ export function validateSquad(squad: Squad): SquadValidationResult {
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }
+
+/* ------------------------------------------------------------------------------------------------
+   #8 D3：pr-gate 收尾**降级**的三档码值（闭集单源）。
+
+   降级 = 模式选了 pr-gate，但前置条件不满足（没 token / 没远端 / 远端不是 GitHub）⇒ 收尾改走
+   **本地形态**（批次照常落地），但必须留痕说明为什么 —— 静默降级会让用户以为 PR 已经开了。
+
+   为什么是**码值**而不是原因原文：码值是「同一件事」的稳定判据（Inbox 去重键含它、UI 将来按它出
+   两语文案），原文会随文案改写漂移；两者各司其职（code 判同一件事，reason 给人看）。
+   ------------------------------------------------------------------------------------------------ */
+export const SQUAD_PR_GATE_DEGRADE_CODES = ["no_token", "no_remote", "remote_not_github"] as const;
+export type SquadPrGateDegradeCode = (typeof SQUAD_PR_GATE_DEGRADE_CODES)[number];

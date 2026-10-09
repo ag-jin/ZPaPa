@@ -13,10 +13,7 @@ import {
 } from "@/components/ui/select.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
-import {
-  useBaseWorkspaceServices,
-  useWorkspaceServices,
-} from "@/hooks/useWorkspaceServices.js";
+import { useBaseWorkspaceServices, useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { ModelPickerRow } from "@/settings/WikiModelPickerRow.js";
 import { WikiFieldRow as FieldRow } from "@/settings/WikiFieldRow.js";
 import { WikiScheduleFields } from "@/settings/WikiScheduleFields.js";
@@ -28,7 +25,6 @@ import {
   type WikiProjectRowStatus,
   type WikiProjectSettingsValuePatch,
 } from "@/settings/WikiProjectColumns.js";
-
 
 /** workspace 身份键：与 services 层约定一致（identity 优先）。 */
 function resolveWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
@@ -164,7 +160,8 @@ export function WikiSettingsSection({
             hasWiki: status.hasWiki,
             lastGeneratedAt: status.lastGeneratedAt,
             pendingCommits: status.pendingCommits,
-            autoUpdateEnabled: settings.projects?.[project.workspaceKey]?.autoUpdateEnabled === true,
+            autoUpdateEnabled:
+              settings.projects?.[project.workspaceKey]?.autoUpdateEnabled === true,
           });
         } catch {
           // 单个项目读不到状态不影响其余项目
@@ -240,9 +237,7 @@ export function WikiSettingsSection({
         // 档位独立存储：与模型正交，用户可只调档位而沿用当前模型
         onReasoningLevelChange={(next) =>
           patchProject(
-            kind === "manual"
-              ? { reasoningLevel: next }
-              : { autoUpdateReasoningLevel: next },
+            kind === "manual" ? { reasoningLevel: next } : { autoUpdateReasoningLevel: next },
           )
         }
         modelView={modelView}

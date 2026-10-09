@@ -111,6 +111,20 @@ const SUITES = [
   },
   {
     layer: 1,
+    id: "multi-project-write-scope",
+    title: "同设备多项目写作用域矩阵（穷举 24 格，含 fail-closed）",
+    cwd: "packages/desktop",
+    file: "test/remoteMultiProjectWriteScope.test.ts",
+  },
+  {
+    layer: 1,
+    id: "device-workspace-bindings",
+    title: "设备 workspace 绑定按列表存（绑过不丢 / 未绑定必拒）",
+    cwd: "packages/desktop",
+    file: "test/remoteDeviceWorkspaceBindings.test.ts",
+  },
+  {
+    layer: 1,
     id: "device-config-store",
     title: "设备配置独立文件存储与坏数据容错",
     cwd: "packages/desktop",
@@ -327,9 +341,7 @@ console.log(`\n远程设备投射 · 回归（层 ${[...layers].sort().join("、
 console.log(`仓库: ${repoRoot}\n`);
 
 // 先确认每个测试文件都在，避免"跑了个不存在的脚本却算通过"。
-const missing = suites.filter(
-  (suite) => !existsSync(join(repoRoot, suite.cwd, suite.file)),
-);
+const missing = suites.filter((suite) => !existsSync(join(repoRoot, suite.cwd, suite.file)));
 if (missing.length > 0) {
   console.error(`❌ 测试文件不存在:`);
   for (const suite of missing) {
@@ -370,7 +382,9 @@ console.log(`层 1（纯函数/契约）: ${results.filter((r) => r.suite.layer 
 console.log(`层 2（跨机只读）:    ${results.filter((r) => r.suite.layer === 2).length} 项`);
 const layer3Ran = results.some((r) => r.suite.layer === 3);
 if (layer3Ran) {
-  console.log(`层 3（跨机写带回滚）: ${results.filter((r) => r.suite.layer === 3).length} 项（写了对端自建会话，已归档）`);
+  console.log(
+    `层 3（跨机写带回滚）: ${results.filter((r) => r.suite.layer === 3).length} 项（写了对端自建会话，已归档）`,
+  );
 } else {
   console.log(`层 3（跨机写带回滚）: 未跑（需显式 --layer=3 或 --layer=all）`);
 }

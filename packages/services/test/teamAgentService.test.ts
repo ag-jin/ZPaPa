@@ -13,8 +13,14 @@ function setup() {
 test("预填只拷贝字段，不建立引用", () => {
   const svc = setup();
   const source = {
-    id: "user:user:reviewer", name: "审查者", description: "d", systemPrompt: "sp",
-    path: "/tmp/x.md", scope: "user", source: "user", enabled: true,
+    id: "user:user:reviewer",
+    name: "审查者",
+    description: "d",
+    systemPrompt: "sp",
+    path: "/tmp/x.md",
+    scope: "user",
+    source: "user",
+    enabled: true,
     modelSelection: { providerId: "p", modelId: "m" },
   } as never;
   const draft = svc.prefillFrom(source);
@@ -24,6 +30,23 @@ test("预填只拷贝字段，不建立引用", () => {
   assert.equal("id" in draft, false);
   assert.equal("path" in draft, false);
   assert.equal("modelSelection" in draft, true);
+});
+
+// ⑤刀剩余半边（矩阵裁定#2：归档可恢复，智能体与小队同口径）。
+test("归档后可恢复（restore 清 archivedAt，定义与记忆保留）", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  svc.archive(a.id);
+  assert.ok(svc.get(a.id)!.archivedAt !== undefined);
+  svc.restore(a.id);
+  const restored = svc.get(a.id)!;
+  assert.equal(restored.archivedAt, undefined, "恢复 = 清归档时间戳（其余字段一字不动）");
+  assert.equal(restored.name, "a");
+  assert.equal(restored.enabled, true);
+  // 未归档的行再恢复 = no-op（不重写盘；幂等）；不存在的 id 响亮抛（与 archive 同口径）。
+  svc.restore(a.id);
+  assert.equal(svc.get(a.id)!.archivedAt, undefined);
+  assert.throws(() => svc.restore("nope"), /不存在/);
 });
 
 test("新建后可归档（归档而非硬删）", () => {
@@ -38,4 +61,121 @@ test("启停开关生效", () => {
   const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
   svc.setEnabled(a.id, false);
   assert.equal(svc.get(a.id)?.enabled, false);
+});
+
+// ---------- maxConcurrentRuns（C1）：字段透传 + 编辑白名单 ----------
+
+test("create 省略 maxConcurrentRuns ⇒ 盘上无该键（存量零改写）；显式 10 ⇒ 读回 10", () => {
+  const svc = setup();
+  const omitted = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  // 缺省不落盘：读数方经 resolve 拿 6，盘上缺键让「未设置」与「显式 6」可区分。
+  assert.equal("maxConcurrentRuns" in (svc.get(omitted.id) ?? {}), false);
+  const explicit = svc.create({
+    name: "b",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 10,
+  });
+  assert.equal(svc.get(explicit.id)?.maxConcurrentRuns, 10);
+});
+
+// ②刀（2026-10-06）：编辑白名单再扩 description/color/modelSelection（第②刀裁定）。
+// ③刀（2026-10-06）：编辑白名单再扩 skills/tools/disallowedTools/permissionMode。
+test("update 白名单含 skills/tools/disallowedTools/permissionMode（③刀）；数组与枚举逐字生效", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  const updated = svc.update(a.id, {
+    skills: ["code-review", "wiki"],
+    tools: ["Bash", "Edit"],
+    disallowedTools: ["WebSearch"],
+    permissionMode: "plan",
+  });
+  assert.deepEqual(updated.skills, ["code-review", "wiki"]);
+  assert.deepEqual(updated.tools, ["Bash", "Edit"]);
+  assert.deepEqual(updated.disallowedTools, ["WebSearch"]);
+  assert.equal(updated.permissionMode, "plan");
+  // 清空语义逐字：skills=[] 是合法值（不带技能）；undefined = 保持原值（不碰）。
+  assert.deepEqual(svc.update(a.id, { skills: [] }).skills, []);
+  assert.deepEqual(svc.update(a.id, {}).skills, []);
+  // permissionMode 切换往返；undefined 保持。
+  assert.equal(svc.update(a.id, { permissionMode: "auto" }).permissionMode, "auto");
+  assert.equal(svc.update(a.id, {}).permissionMode, "auto");
+});
+
+test("update 白名单含 description/color/modelSelection（②刀）；越界键原样保留", () => {
+  const svc = setup();
+  const a = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  const updated = svc.update(a.id, {
+    description: "第二描述",
+    color: "purple",
+    modelSelection: { providerId: "p", modelId: "m", options: { reasoningLevel: "high" } },
+  });
+  assert.equal(updated.description, "第二描述");
+  assert.equal(updated.color, "purple");
+  assert.equal(updated.modelSelection?.modelId, "m");
+  assert.equal(updated.modelSelection?.options?.reasoningLevel, "high");
+  // 改色往返：换色生效、清空（undefined）保持原值（不是清空——清空色需显式语义，白名单不做）。
+  assert.equal(svc.update(a.id, { color: "cyan" }).color, "cyan");
+  assert.equal(svc.update(a.id, {}).color, "cyan");
+});
+
+test("update 白名单含 maxConcurrentRuns；白名单外字段（enabled/archivedAt）原样保留", () => {
+  const svc = setup();
+  const a = svc.create({
+    name: "a",
+    systemPrompt: "s",
+    memoryScope: "project",
+    maxConcurrentRuns: 2,
+  });
+  const updated = svc.update(a.id, { maxConcurrentRuns: 5 });
+  assert.equal(updated.maxConcurrentRuns, 5);
+  // 运行期越界键不得生效：patch 对象多带 enabled/archivedAt（反序列化载荷场景），
+  // 逐字段合并必须忽略它们——「改并发上限」不得顺带复活/停用智能体。
+  const smuggled = svc.update(a.id, {
+    name: "a2",
+    enabled: false,
+    archivedAt: 123,
+  } as never);
+  assert.equal(smuggled.enabled, true, "update 不得改 enabled（入口是 setEnabled）");
+  assert.equal(smuggled.archivedAt, undefined, "update 不得写 archivedAt（入口是 archive）");
+  assert.equal(smuggled.name, "a2", "白名单内字段正常生效");
+});
+
+// ---------- mcpServers（multica 欠账 #2）：编辑白名单第 12 字段（原 11+1） ----------
+
+/* 与 modelSelection 同款的「整体替换 + JSON 判等 + 拷贝」三件套：
+   语义是**替换**不是并入 —— 并入会让人删不掉一个 server（旧条目永远留着），
+   而「删掉某个 MCP」正是这个字段最常见的编辑动作。 */
+test("create 透传 mcpServers（省略不落盘）；update 整体替换、{} 清空、undefined 保持原值", () => {
+  const svc = setup();
+  const omitted = svc.create({ name: "a", systemPrompt: "s", memoryScope: "project" });
+  assert.equal(
+    "mcpServers" in (svc.get(omitted.id) ?? {}),
+    false,
+    "省略不落盘：缺省 = 该 agent 不覆盖任何 server（存量定义零改写）",
+  );
+
+  const created = svc.create({
+    name: "b",
+    systemPrompt: "s",
+    memoryScope: "project",
+    mcpServers: { "code-search": { command: "npx", args: ["-y", "code-search-mcp"] } },
+  });
+  assert.deepEqual(svc.get(created.id)?.mcpServers, {
+    "code-search": { command: "npx", args: ["-y", "code-search-mcp"] },
+  });
+
+  const replaced = svc.update(created.id, {
+    mcpServers: { "docs-http": { url: "https://docs.test/sse", type: "sse" } },
+  });
+  assert.deepEqual(
+    replaced.mcpServers,
+    { "docs-http": { url: "https://docs.test/sse", type: "sse" } },
+    "整体替换：patch 就是这份定义的新值（并入会让人删不掉 server）",
+  );
+  assert.equal(replaced.name, "b", "白名单外的字段一字不动");
+
+  // {} 是**合法值**（该 agent 不再有自有 server，回到「不覆盖」）；undefined = 保持原值（不是清空）。
+  assert.deepEqual(svc.update(created.id, { mcpServers: {} }).mcpServers, {});
+  assert.deepEqual(svc.update(created.id, {}).mcpServers, {});
 });

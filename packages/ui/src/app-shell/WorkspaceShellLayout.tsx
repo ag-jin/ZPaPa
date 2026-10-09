@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- workspace shell 当前集中编排 sidebar、chat、terminal 和 browser pane 的布局联动，先保持单文件收口，避免为满足行数限制打散关键布局状态。*/
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -7,7 +7,7 @@ import type {
 } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
-import { TID_APP_HEADER } from "@zcode/shared";
+import { TID_APP_HEADER, isRemoteWorkspaceIdentity } from "@zcode/shared";
 // 保活：workspace tab 真正关闭时，按 workspaceKey 回收 side pane terminal 的常驻 PTY/xterm。
 // 对称下侧 Terminal.tsx 的 openWorkspaceKeys 回收。
 import { sidePaneTerminalSessionRegistry } from "@/terminal/sidePaneTerminalSessionRegistry.js";
@@ -46,6 +46,13 @@ import type {
 } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
 import { AutomationsMainBreadcrumbFrame } from "@/settings/AutomationsMainBreadcrumbFrame.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
+import { SquadsPage } from "@/squad/SquadsPage.js";
+import { SquadAgentDetailPage } from "@/squad/SquadAgentDetailPage.js";
+import { SquadAgentsPage } from "@/squad/SquadAgentsPage.js";
+import { WorkItemsPage } from "@/squad/WorkItemsPage.js";
+import { WorkItemDetailPage } from "@/squad/WorkItemDetailPage.js";
+import { InboxPage } from "@/squad/InboxPage.js";
+import type { InboxWorkItemTarget } from "@/squad/inboxViewModel.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { WorkspaceSidebar } from "@/WorkspaceSidebar.js";
@@ -196,8 +203,23 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   openAutomationTab,
   onWorkspaceMainViewChange,
   onOpenAutomationConsumed,
+  inboxFocusWorkItemId,
+  onInboxFocusRequest,
+  onInboxFocusConsumed,
   handleOpenAutomations,
   handleOpenPluginStore,
+  handleOpenSquadAgents,
+  agentDetailId,
+  onOpenAgentDetail,
+  workItemDetailIntent,
+  onOpenWorkItemDetail,
+  onOpenWorkItemFromAgentDetail,
+  onBackFromWorkItemDetail,
+  workItemsScrollTop,
+  onWorkItemsScrollTopChange,
+  handleOpenInbox,
+  handleOpenSquads,
+  handleOpenWorkItems,
   handleManageInstalledPlugins,
   onConnectRemote,
   onSelectRemoteProject,
@@ -802,9 +824,44 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   const showChatMainView = useCallback(() => {
     onWorkspaceMainViewChange("chat");
   }, [onWorkspaceMainViewChange]);
+  const handleBackFromAgentDetail = useCallback(() => {
+    onWorkspaceMainViewChange("agents");
+  }, [onWorkspaceMainViewChange]); // MUT-S5
+  /* B5.1：工作项详情返回 = 交回 App 的意图态决定（回看板 / 回 agent 详情）——
+     shell 与 App 两处判据同款（S5/S6），详情页只调 onBack。 */
+  const handleBackFromWorkItemDetail = useCallback(() => {
+    onBackFromWorkItemDetail();
+  }, [onBackFromWorkItemDetail]);
+  /* B5.1 看板滚动位置（§3.1）：视图切换会把看板整棵子树卸载 ⇒ scrollTop 归零。落点：
+     ① 滚动时只写 ref（**不** setState —— 每帧一次 App 重渲染会拖垮看板）；
+     ② 离开工作项视图时把值交回 App（意图态那一层，跨卸载存活）；
+     ③ 回到工作项视图时在 **layout 阶段**还原（渲染后立刻写 scrollTop，用户看不到跳动）。 */
+  const workItemsScrollRef = useRef<HTMLDivElement | null>(null);
+  const workItemsScrollTopRef = useRef(0);
+  useLayoutEffect(() => {
+    if (workspaceMainView !== "work-items") return;
+    const element = workItemsScrollRef.current;
+    if (element && element.scrollTop !== workItemsScrollTop) {
+      element.scrollTop = workItemsScrollTop;
+    }
+  }, [workspaceMainView, workItemsScrollTop]);
+  useEffect(() => {
+    if (workspaceMainView === "work-items") return;
+    onWorkItemsScrollTopChange(workItemsScrollTopRef.current);
+  }, [workspaceMainView, onWorkItemsScrollTopChange]);
   const primaryNavigationBack =
-    workspaceMainView === "plugin-store" ? handleManageInstalledPlugins : handleTaskNavBack;
-  const canPrimaryNavigationBack = workspaceMainView === "plugin-store" || canTaskNavBack;
+    workspaceMainView === "plugin-store"
+      ? handleManageInstalledPlugins
+      : workspaceMainView === "agent-detail"
+        ? handleBackFromAgentDetail
+        : workspaceMainView === "work-item-detail"
+          ? handleBackFromWorkItemDetail
+          : handleTaskNavBack;
+  const canPrimaryNavigationBack =
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail" ||
+    canTaskNavBack;
   const handleCreateTaskInChat = useCallback(
     (request?: Parameters<typeof onCreateTask>[0]) => {
       // workspaceReadOnlyReason 判定的是活动 workspace；当 request 显式带 targetWorkspace 时
@@ -906,6 +963,58 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       }
     },
     [handleSelectTask, intl, shellWorkbenchBinding, showChatMainView, tabStoreApi, workspaceTabs],
+  );
+  /* 「收件箱」穿透 ①：「打开工作项」—— 跨 workspace 激活/补开目标项目，切到它的「工作项」页
+     并把**聚焦意图**交给页面（页面消费，见 WorkItemsPage/WorkItemsBoard）。
+     次序有意如此（先确保 tab → 再激活 → 再设意图 → 最后切主视图）：
+     ① 主视图（App 状态）与 active tab（tab store）是两个状态源；**激活在前**才能保证主视图
+        翻到 work-items 那一刻 shell 的 workspaceAbsPath 已经是目标项目 —— 反了会先用旧项目
+        渲染一帧工作项页（页面按 workspace 目标取数，取错项目的快照且不报错）；
+     ② activate 失败 ⇒ **整条导航放弃**（响亮：logger + toast，不静默、不假装成功）——
+        先切视图就撤不回来了（会停在旧项目的 empty 工作项页，看起来像"跳转成功了但我的事没了"）。
+     identity 口径：`target.workspaceIdentity` 由条目的 `workspaceKey` 按 C14 反推（纯函数
+     `inboxItemWorkItemTarget` 一处给出）；不带时只按 path 处理（本地 tab 的既有语义）。 */
+  const handleOpenInboxWorkItem = useCallback(
+    (target: InboxWorkItemTarget) => {
+      const failLoudly = (detail: { reason: string }) => {
+        logger.error("[inbox] 打开工作项失败：workspace tab 未能激活", {
+          workspacePath: target.workspacePath,
+          workspaceIdentity: target.workspaceIdentity,
+          workItemId: target.workItemId,
+          ...detail,
+        });
+        toast(intl.formatMessage({ id: "squad.inbox.openFailed" }));
+      };
+      const workspaceTabOptions = target.workspaceIdentity
+        ? { workspaceIdentity: target.workspaceIdentity }
+        : undefined;
+      /* 次序：**先激活已存在的 tab**，只有"本地项目且确实没有 tab"才允许「不存在就建」。
+         为什么顺序要紧（审查发现项）：`ensureWorkspaceTab` 对**远程 identity** 也会建 tab ——
+         建成一个「带 identity、没有 attachment」的伪 tab（实验功能不参与投射，§12/C8），
+         表现为「看起来打开了，其实接不上」。故远程 identity 且窗口内无匹配 tab ⇒ **不建、响亮失败**
+         （宁可明说打开不了，也不造一个假象）。本地项目仍走「不存在就建」——收件箱是跨项目面，
+         目标项目可能根本没打开，只 activate 会静默失败（App.tsx handleStartDraftInWorkspace 记过这个坑）。 */
+      const activated = tabStoreApi
+        .getState()
+        .activateTabByPath(target.workspacePath, workspaceTabOptions);
+      if (!activated) {
+        if (
+          target.workspaceIdentity !== undefined &&
+          isRemoteWorkspaceIdentity(target.workspaceIdentity)
+        ) {
+          failLoudly({ reason: "remote_identity_without_open_tab" });
+          return;
+        }
+        tabStoreApi.getState().ensureWorkspaceTab(target.workspacePath, workspaceTabOptions);
+        if (!tabStoreApi.getState().activateTabByPath(target.workspacePath, workspaceTabOptions)) {
+          failLoudly({ reason: "activate_failed_after_ensure" });
+          return;
+        }
+      }
+      onInboxFocusRequest(target.workItemId);
+      onWorkspaceMainViewChange("work-items");
+    },
+    [intl, onInboxFocusRequest, onWorkspaceMainViewChange, tabStoreApi],
   );
   // 中枢直接启动 accepted 后切到新会话（run 卡已在顶部）：复用运行历史那条导航，
   // target 恒带工作流所属项目坐标（不变式 7），remoteSessionId 决定连接 endpoint。
@@ -1083,6 +1192,18 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       );
     },
     [handleStartDraftInWorkspace, showChatMainView],
+  );
+
+  /* 4b DM 直通（用户裁定③：新建+预填）：切会话视图新建草稿 + 预填「@名字 」——
+     复用 startDraft 与 requestComposerTextInsert 既有通路（协作域 §5「与头像簇穿透同一条路」）。 */
+  const handleStartAgentConversation = useCallback(
+    (agentName: string) => {
+      handleStartDraftInWorkspaceInChat(workspaceAbsPath, workspaceIdentity);
+      useZCodeSessionStore
+        .getState()
+        .requestComposerTextInsert(workspaceAbsPath, `@${agentName} `, workspaceIdentity);
+    },
+    [handleStartDraftInWorkspaceInChat, workspaceAbsPath, workspaceIdentity],
   );
   const handleCreateProjectDraft = useCallback(
     (path: string, identity?: string) =>
@@ -1452,6 +1573,9 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       onOpenFileLink={handleOpenMarkdownFileLink}
       onOpenBackgroundBash={handleOpenBackgroundBash}
       onOpenSubagentSession={handleOpenSubagentSession}
+      onOpenSquadRunSession={(sessionId) =>
+        handleSelectTaskInChat(workspaceAbsPath, sessionId, workspaceIdentity)
+      }
       onOpenWorkflowActorSession={handleOpenWorkflowActorSession}
       onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
       onOpenWorkflowArtifact={handleOpenWorkflowArtifact}
@@ -1472,8 +1596,21 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // Draft 之前维护一套独立轻量 header，导致 side pane、caption 安全区和拖拽入口
   // 与 Task Header 分叉。桌面端统一复用 WorkspaceHeader，只由 variant 裁剪 task 专属内容；
   // 手机远控无 active task 时仍不渲染桌面 chrome，继续遵守 replayable overlay 边界。
-  const shouldRenderMainViewHeader =
-    workspaceMainView !== "automations" && workspaceMainView !== "plugin-store";
+  //
+  // 「整页主视图」= 自带面包屑框架（AutomationsMainBreadcrumbFrame）的扁平页面：
+  // automations / plugin-store / inbox / agents / squads / work-items / agent-detail / work-item-detail。
+  // 这几处共用一个具名判据（header 渲染、终端面板显隐）；各写一份字面量判断迟早漂移 ——
+  // 漏一处就是某个入口多一层 header 或终端面板，且不报错。
+  const isFullPageMainView =
+    workspaceMainView === "automations" ||
+    workspaceMainView === "plugin-store" ||
+    workspaceMainView === "inbox" ||
+    workspaceMainView === "agents" ||
+    workspaceMainView === "squads" ||
+    workspaceMainView === "work-items" ||
+    workspaceMainView === "agent-detail" ||
+    workspaceMainView === "work-item-detail";
+  const shouldRenderMainViewHeader = !isFullPageMainView;
   const shouldRenderWorkspaceHeader =
     shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
   // ErrorBoundary resetKeys 的数组如果每次 render 都重新创建，
@@ -1578,6 +1715,18 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     automationsActive={workspaceMainView === "automations"}
                     onOpenPluginStore={handleOpenPluginStore}
                     pluginStoreActive={workspaceMainView === "plugin-store"}
+                    onOpenSquadAgents={handleOpenSquadAgents}
+                    squadAgentsActive={
+                      workspaceMainView === "agents" || workspaceMainView === "agent-detail"
+                    }
+                    onOpenInbox={handleOpenInbox}
+                    inboxActive={workspaceMainView === "inbox"}
+                    onOpenSquads={handleOpenSquads}
+                    squadsActive={workspaceMainView === "squads"}
+                    onOpenWorkItems={handleOpenWorkItems}
+                    workItemsActive={
+                      workspaceMainView === "work-items" || workspaceMainView === "work-item-detail"
+                    }
                   />
                 </WorkflowRunOpenProvider>
               </V4SplitPaneEntryProvider>
@@ -1798,6 +1947,248 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                             </div>
                           </AutomationsMainBreadcrumbFrame>
                         </main>
+                      ) : workspaceMainView === "inbox" ? (
+                        /* 「收件箱」一级入口（用户 2026-10-03 裁定：一级导航；本轮落地跨项目
+                           通知面）。骨架逐句对齐「智能体」分支：面包屑框架 + 稳定滚动槽 +
+                           居中内容列。`ScopedErrorBoundary` scope 独立（"inbox-page"）：本页的
+                           崩溃不该把别的页面一起带走，也不该被别人的崩溃连坐。
+                           与其他三面不同的一点：**不传 workspace props** —— 收件箱是跨项目面
+                           （服务面 `listInboxItems` 没有目标参数），页面自己不带"当前项目"语义；
+                           两条**穿透**是例外（本轮）：目标由每条条目自带，经 shell 的既有通路
+                           导航 —— 「打开工作项」走 `handleOpenInboxWorkItem`（跨 workspace 激活 +
+                           聚焦意图），「打开会话」走既有的 `handleSelectTaskInChat`。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openInbox",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="inbox-page"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <InboxPage
+                                    onOpenWorkItem={handleOpenInboxWorkItem}
+                                    onOpenSession={(target) =>
+                                      handleSelectTaskInChat(
+                                        target.workspacePath,
+                                        target.sessionId,
+                                        target.workspaceIdentity,
+                                      )
+                                    }
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "agents" ? (
+                        /* 「智能体」一级入口（用户 2026-10-03 裁定：一级导航，不藏设置）。
+                           骨架逐句对齐插件市场分支：面包屑框架 + 稳定滚动槽 + 居中内容列。
+                           `ScopedErrorBoundary` scope 独立（"squad-agents"）：本页的崩溃
+                           不该把别的页面一起带走，也不该被别人的崩溃连坐。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openSquadAgents",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="squad-agents"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <SquadAgentsPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    onOpenAgentDetail={onOpenAgentDetail}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "agent-detail" ? (
+                        /* ④刀（用户 2026-10-06 裁定①：新独立视图）：agent 详情页——概览+任务表+运行数据
+                           三区一体（multica agents/:id 形态）。骨架逐句对齐「智能体」分支；
+                           `ScopedErrorBoundary` scope 独立（"squad-agent-detail"）。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openSquadAgents",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="squad-agent-detail"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <SquadAgentDetailPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    agentId={agentDetailId}
+                                    onBack={handleBackFromAgentDetail}
+                                    onOpenWorkItem={onOpenWorkItemFromAgentDetail}
+                                    onStartConversation={handleStartAgentConversation}
+                                    canStartConversation={
+                                      workspaceReadOnlyReason === null ||
+                                      workspaceReadOnlyReason === undefined
+                                    }
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "work-item-detail" ? (
+                        /* B5.1：「工作项详情页」——独立视图（设计案 §1.2：不是抽屉/对话框），
+                           id 寻址（App 的意图态）、概览 + 混排活动时间线 + composer 外壳。
+                           骨架逐句对齐 agent-detail 分支（面包屑框架 + 稳定滚动槽 + 居中内容列，
+                           `ScopedErrorBoundary` scope 独立 "work-item-detail"）。
+                           返回只调 `onBackFromWorkItemDetail`：回哪个视图由 App 的意图态决定。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openWorkItems",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="work-item-detail"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <WorkItemDetailPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    workItemId={workItemDetailIntent?.workItemId ?? null}
+                                    onBack={onBackFromWorkItemDetail}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "squads" ? (
+                        /* 「小队」一级入口（用户 2026-10-03 裁定：一级导航，不藏设置）。
+                           骨架逐句对齐「智能体」分支：面包屑框架 + 稳定滚动槽 + 居中内容列。
+                           `ScopedErrorBoundary` scope 独立（"squads-page"）：本页的崩溃
+                           不该把别的页面一起带走，也不该被别人的崩溃连坐。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openSquads",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                              <ScopedErrorBoundary
+                                scope="squads-page"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <SquadsPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
+                      ) : workspaceMainView === "work-items" ? (
+                        /* 「工作项」一级入口（用户 2026-10-03 裁定：一级导航，不藏设置）。
+                           骨架逐句对齐「小队」分支：面包屑框架 + 稳定滚动槽 + 居中内容列。
+                           `ScopedErrorBoundary` scope 独立（"work-items-page"）：本页的崩溃
+                           不该把别的页面一起带走，也不该被别人的崩溃连坐。
+                           `onOpenSession` 照 AutomationsSection 的接线：run 的会话穿透走 shell
+                           既有的 `handleSelectTaskInChat`（目标就是本页的 workspace），
+                           页面自己不拼导航。
+                           `focusWorkItemId` / `onFocusConsumed` 是收件箱「打开工作项」带进来的
+                           一次性聚焦意图（照 openAutomationId 的先例：shell 透传 → 看板消费后
+                           经回调清掉，见 WorkItemsBoard 的消费点）。 */
+                        <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                          <AutomationsMainBreadcrumbFrame
+                            isDesktop={Boolean(isDesktop)}
+                            sectionLabel={intl.formatMessage({
+                              id: "workspace.openWorkItems",
+                            })}
+                            ariaLabel={intl.formatMessage({
+                              id: "settings.breadcrumbLabel",
+                            })}
+                          >
+                            <div
+                              ref={workItemsScrollRef}
+                              onScroll={(event) => {
+                                // 只在滚动时写 ref（不 setState —— 每帧一次 App 重渲染会拖垮看板）；
+                                // 离开视图时由下面的 effect 把值交回 App（§3.1）。
+                                workItemsScrollTopRef.current = event.currentTarget.scrollTop;
+                              }}
+                              className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+                            >
+                              <ScopedErrorBoundary
+                                scope="work-items-page"
+                                resetKeys={workspaceOnlyResetKeys}
+                                variant="panel"
+                                className="min-h-full"
+                              >
+                                {/* 工作项面**放宽居中窄栏**（2026-10-09 用户裁定，登记在实现报告）：
+                                    `max-w-4xl`(896px) 只装得下 2–3 列 —— 横排 280px 列是看板形态的
+                                    结构前提（spec §10-A2/§11 的「唯一硬结构冲突」）。只动这一个分支：
+                                    其余页面（插件市场/收件箱/智能体/小队/详情）的窄栏逐字保留。 */}
+                                <div className="flex min-h-full w-full flex-col px-4 py-4 md:px-6 md:py-6">
+                                  <WorkItemsPage
+                                    workspacePath={workspaceAbsPath}
+                                    workspaceIdentity={workspaceIdentity}
+                                    focusWorkItemId={inboxFocusWorkItemId}
+                                    onFocusConsumed={onInboxFocusConsumed}
+                                    onOpenWorkItemDetail={onOpenWorkItemDetail}
+                                    onOpenSession={(sessionId) =>
+                                      handleSelectTaskInChat(
+                                        workspaceAbsPath,
+                                        sessionId,
+                                        workspaceIdentity,
+                                      )
+                                    }
+                                  />
+                                </div>
+                              </ScopedErrorBoundary>
+                            </div>
+                          </AutomationsMainBreadcrumbFrame>
+                        </main>
                       ) : (
                         <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
                           {renderChatFindDialog()}
@@ -1876,7 +2267,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     </div>
                   </section>
                 </ResizablePanel>
-                {workspaceMainView !== "automations" && workspaceMainView !== "plugin-store" ? (
+                {isFullPageMainView ? null : (
                   <AnimatedTerminalPanel
                     frameClassName={cn(
                       isSidePaneVisible
@@ -1903,7 +2294,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                     onClose={() => setIsTerminalOpen(false)}
                     onOpenBrowserUrl={handleOpenBrowserUrl}
                   />
-                ) : null}
+                )}
               </ResizablePanelGroup>
             </ResizablePanel>
             {/* Browser Guest Host 必须与主视图路由解耦，避免 automations/plugin

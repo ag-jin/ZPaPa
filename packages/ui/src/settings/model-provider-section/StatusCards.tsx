@@ -122,7 +122,11 @@ export function ModelProviderLoadingCard({ loadingLabel }: { loadingLabel: strin
  * 无法判断是"还在加载"还是"根本没有可配置项"。这里明确区分两者：
  * 仍在加载 → loading；已加载但没有任何供应商 → 空态 + 添加入口提示。
  */
-export function ModelProviderEmptyStateCard({ messageId = "settings.modelProvider.noProvidersState" }: { messageId?: string }) {
+export function ModelProviderEmptyStateCard({
+  messageId = "settings.modelProvider.noProvidersState",
+}: {
+  messageId?: string;
+}) {
   const { intl } = useZCodeIntl();
 
   return (

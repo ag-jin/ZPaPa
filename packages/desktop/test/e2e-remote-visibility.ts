@@ -77,7 +77,9 @@ console.log(`\n=== A 侧列表查询结果（timeline，远程 scope 带 identit
 console.log(`条数: ${result.total}`);
 for (const item of result.items) {
   console.log(`  - ${String(item.title).slice(0, 44)} | status=${item.status}`);
-  console.log(`      identity=${item.workspaceIdentity === remoteIdentity ? "✅ 归一化为本端身份" : `❌ ${item.workspaceIdentity}`}`);
+  console.log(
+    `      identity=${item.workspaceIdentity === remoteIdentity ? "✅ 归一化为本端身份" : `❌ ${item.workspaceIdentity}`}`,
+  );
 }
 
 if (result.total === 0) {
@@ -92,6 +94,8 @@ const withoutIdentity = await runtime.service.listTaskList({
   workspaceScopes: [{ workspacePath: projectPath }],
   sortBy: "updated",
 });
-console.log(`\n对照(scope 不带 identity): ${withoutIdentity.total} 条 ${withoutIdentity.total === 0 ? "（符合预期：identity 必需）" : "（意外命中本地同路径项目）"}`);
+console.log(
+  `\n对照(scope 不带 identity): ${withoutIdentity.total} 条 ${withoutIdentity.total === 0 ? "（符合预期：identity 必需）" : "（意外命中本地同路径项目）"}`,
+);
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });

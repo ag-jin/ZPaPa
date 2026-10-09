@@ -7,7 +7,7 @@
 **Status:** 部分完成（显示位置按用户决定改为侧边栏嵌入，不另做主区）
 
 - [x] 列出被投射设备的项目并显示会话数 —— 位置改为**侧边栏嵌入**（用户 2026-09-27 决定："现在这个显示方式就不错"）；项目+会话数另在设置页设备卡片完整列出
-- [x] 项目清单为**并集** —— buildProjectedProjectList 合并 registeredProjects ∪ tasks 去重；实测列出 B 的 10 项（含 auto_技能/opencode 等 0 会话项）
+- [x] 项目清单为**并集** —— buildProjectedProjectList 合并 registeredProjects ∪ tasks 去重；实测列出 B 的 10 项（含 auto\_技能/opencode 等 0 会话项）
 - [x] 可进入项目的完整工作区 —— 点侧边栏投射项即展开该项目会话（实测展开出 B 的会话标题与时间）
 - [ ] 「添加项目」入口**未做** —— 需设备侧写能力（往 B 登记新项目），见工单 05
 - [x] 实时拉取 —— 每次连接/重连经设备通道读 B 的 recentProjects+会话；投射条目为内存态，不落库

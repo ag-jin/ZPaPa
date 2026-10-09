@@ -938,7 +938,9 @@ function RootInner({
       });
       // 登记为可重连的设备入口（只存连接记录，不存会话索引，见 ADR 0001）。
       const deviceConfigService = (
-        services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
+        services as {
+          remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+        }
       ).remoteDeviceConfigService;
       if (deviceConfigService) {
         // 合并写：整体覆盖会把既有 visibleProjects（项目显示偏好）抹掉，

@@ -34,9 +34,10 @@ export interface DeviceTaskQuery {
 /** 设备服务访问面的最小依赖（便于测试替身）。 */
 export interface DeviceServiceAccess {
   readonly zcodeTaskService: {
-    listTasks(params?: { workspacePath?: string; workspaceIdentity?: string }): Promise<
-      readonly unknown[]
-    >;
+    listTasks(params?: {
+      workspacePath?: string;
+      workspaceIdentity?: string;
+    }): Promise<readonly unknown[]>;
   };
   /**
    * 设备项目清单（读设备自身的 recentProjects）。

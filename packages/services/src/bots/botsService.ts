@@ -72,6 +72,8 @@ import type {
   BotBindCodeResult,
   BotAutomationRunWatchParams,
   BotCreateBindCodeParams,
+  BotInboxChannelPushParams,
+  BotInboxChannelPushResult,
   BotListWorkspaceRefsParams,
   BotSaveBotParams,
   BotTestResult,
@@ -108,7 +110,7 @@ import {
   pollWeixinRegistration as pollWeixinQrRegistration,
 } from "./providers/weixinRegistration.js";
 import { createFeishuBotProvider } from "./providers/feishuProvider.js";
-import { formatBotMessage, type BotMessageId } from "./messages.js";
+import { formatBotMessage, formatBotInboxChannelSummary, type BotMessageId } from "./messages.js";
 import {
   extractBotAssistantResponseMessages,
   formatBotAssistantReplyBlocks,
@@ -283,6 +285,15 @@ interface BotsServiceDeps {
   // 修复原因：desktop-attached 远端启动阶段不应抢跑 bot 轮询、runtime lock 和模型候选缓存；
   // 这些后台任务属于本地桌面 host，不属于 SSH/Docker 远端首屏连接路径。
   runStartupBackgroundTasks?: boolean;
+  /**
+   * **测试专用**的 provider 覆盖（照 `SquadRuntimeDeps.githubFetch` 先例）：只替换点名的那几个
+   * provider 的 adapter，其余仍用真实实现；生产装配**不传**。
+   *
+   * 为什么需要这个口：渠道只读推送的正确性锚点是「出站消息的形状」（纯文本、无 selection /
+   * elicitation），而真实 adapter 的出站都要过网络与凭据 —— 没有这一格，推送链的唯一可测形态
+   * 就只剩「跳过」，投递成功那条路径永远没有证据。
+   */
+  providers?: Partial<Record<BotProvider, BotProviderAdapter>>;
 }
 
 interface BotRemoteWorkspaceTarget {
@@ -476,7 +487,7 @@ function createOutbound(
 function resolveAutomationBotDeliveryTarget(
   actor: BotActor,
 ): ZCodeAutomationBotDeliveryTarget | undefined {
-  if (actor.provider !== "feishu" && actor.provider !== "lark" && actor.provider !== "weixin") {
+  if (!isProactiveDeliveryProvider(actor.provider)) {
     return undefined;
   }
   const providerUserId = actor.chatId?.trim() || actor.providerUserId.trim();
@@ -487,6 +498,30 @@ function resolveAutomationBotDeliveryTarget(
     providerUserId,
     chatType: actor.chatType,
   };
+}
+
+/**
+ * **该 workspace 的通知渠道目标**（SUB.3b，Q2：每 workspace 一个）。
+ *
+ * 解析口径（全部落在**既有**配置面上，不新增产品面）：
+ * · **声明**：bot 的 workspace access（`allowedWorkspaces`，Bots 设置里配的那一格）里有这个
+ *   workspace（`*` 视为全部）—— 这就是「该 workspace 已配置的通知渠道目标」的「已配置」；
+ * · **可投递**：必须已绑定一个会话（`providerUserId` 在绑定码兑换时写入）—— 没绑定就没有收件人；
+ * · **唯一**：多个候选时取**配置里的第一个**（用户在列表里看到的顺序），保证同一份配置下结论稳定
+ *   （Q2 裁定「per-workspace **一个**目标」，不扇出）。
+ *
+ * 停用与 provider 不符**不在这一层过滤**：它们是「解析到了目标但不能用」，各自有独立的跳过原因
+ * 与 warn —— 在这里默默换下一个 bot 会让「为什么这个项目不推消息」无从归因。
+ */
+function resolveInboxChannelBot(
+  config: BotsConfigFile,
+  workspaceKey: string,
+): BotConfig | undefined {
+  return config.bots.find(
+    (bot) =>
+      isWorkspaceAllowed(workspaceKey, bot.allowedWorkspaces) &&
+      (bot.providerUserId?.trim() ?? "") !== "",
+  );
 }
 
 function formatSelectionFallback(selection: SelectionPrompt, locale?: Locale): string {
@@ -676,6 +711,25 @@ const BOT_ELICITATION_SUBMIT_OPTION_ID = "__submit__";
 const BOT_ELICITATION_SKIP_OPTION_ID = "__skip__";
 const BOT_ELICITATION_FORM_VALUE_PREFIX = "__form__:";
 
+const BOT_PROACTIVE_DELIVERY_WARNING_TTL_MS = 5 * 60_000;
+
+/** 能**主动投递**（不需要先收到入站消息）的 provider —— 与 `ZCodeAutomationBotDeliveryTarget`
+ *  的枚举是同一条事实：定时任务回推与 Inbox 渠道推送都只能落在这三值上
+ *  （telegram 主动发言要 chatId、webhook 只有入站方向）。两处共用本闭集，
+ *  免得「哪几个 provider 能主动推」长出第二份判据。 */
+const BOT_PROACTIVE_DELIVERY_PROVIDERS = [
+  "feishu",
+  "lark",
+  "weixin",
+] as const satisfies readonly BotProvider[];
+type BotProactiveDeliveryProvider = (typeof BOT_PROACTIVE_DELIVERY_PROVIDERS)[number];
+
+function isProactiveDeliveryProvider(
+  provider: BotProvider,
+): provider is BotProactiveDeliveryProvider {
+  return (BOT_PROACTIVE_DELIVERY_PROVIDERS as readonly BotProvider[]).includes(provider);
+}
+
 export function createBotsService(
   deps: BotsServiceDeps,
 ): IBotsService & { disposeAll(): void; disposeAllAndWait(): Promise<void> } {
@@ -683,6 +737,8 @@ export function createBotsService(
   const repo = new BotsRepo();
   const bindCodes = new Map<string, BindCodeRecord>();
   const automationDeliveryWarningAtByKey = new Map<string, number>();
+  // SUB.3b：Inbox 渠道推送的 warn-once 时间戳（键 = `inbox:${workspaceKey}:${reason}`）。
+  const inboxChannelWarningAtByKey = new Map<string, number>();
   const streamSubscriptions = new Map<string, IDisposable>();
   const streamingCardRequestControllers = new Set<AbortController>();
   const transientInteractionCards = new Map<
@@ -726,25 +782,35 @@ export function createBotsService(
   >();
   let cachedLocale: Locale | undefined;
   const providers: Record<BotProvider, BotProviderAdapter | null> = {
-    telegram: createTelegramBotProvider({
-      loadCredential: (key) => deps.credentialService.load(key),
-    }),
-    webhook: createWebhookBotProvider({
-      loadCredential: (key) => deps.credentialService.load(key),
-    }),
-    feishu: createFeishuBotProvider({
-      onDeliveryResult,
-      loadCredential: (key) => deps.credentialService.load(key),
-    }),
-    lark: createFeishuBotProvider({
-      onDeliveryResult,
-      loadCredential: (key) => deps.credentialService.load(key),
-    }),
-    weixin: createWeixinBotProvider({
-      loadCredential: (key) => deps.credentialService.load(key),
-    }),
-    discord: null,
-    wecom: null,
+    telegram:
+      deps.providers?.telegram ??
+      createTelegramBotProvider({
+        loadCredential: (key) => deps.credentialService.load(key),
+      }),
+    webhook:
+      deps.providers?.webhook ??
+      createWebhookBotProvider({
+        loadCredential: (key) => deps.credentialService.load(key),
+      }),
+    feishu:
+      deps.providers?.feishu ??
+      createFeishuBotProvider({
+        onDeliveryResult,
+        loadCredential: (key) => deps.credentialService.load(key),
+      }),
+    lark:
+      deps.providers?.lark ??
+      createFeishuBotProvider({
+        onDeliveryResult,
+        loadCredential: (key) => deps.credentialService.load(key),
+      }),
+    weixin:
+      deps.providers?.weixin ??
+      createWeixinBotProvider({
+        loadCredential: (key) => deps.credentialService.load(key),
+      }),
+    discord: deps.providers?.discord ?? null,
+    wecom: deps.providers?.wecom ?? null,
   };
   let service: IBotsService & {
     disposeAll(): void;
@@ -5169,6 +5235,88 @@ export function createBotsService(
     });
   }
 
+  /** Inbox 渠道推送的 warn-once（与 `warnAutomationDeliveryOnce` 同款，键空间按 workspace 分）。 */
+  function warnInboxChannelDeliveryOnce(params: { workspaceKey: string; reason: string }): void {
+    const key = `inbox:${params.workspaceKey}:${params.reason}`;
+    const now = Date.now();
+    const previousAt = inboxChannelWarningAtByKey.get(key) ?? 0;
+    if (now - previousAt < BOT_PROACTIVE_DELIVERY_WARNING_TTL_MS) return;
+    inboxChannelWarningAtByKey.set(key, now);
+    botsLogger.warn(
+      undefined,
+      `inbox channel delivery skipped workspace=${params.workspaceKey} reason=${params.reason}`,
+    );
+  }
+
+  /**
+   * SUB.3b：渠道**只读**推送的一条文本摘要（Q2：每 workspace 一个通知渠道目标）。
+   *
+   * 为什么放在 bots 域：投递目标（哪个 bot、哪个会话）是 bots 域的配置事实，
+   * 而「要不要推、推什么」在 workitem 域（`inboxChannelDelivery`）——本方法只回答
+   * 「发给谁、发出去了没有」，不重判投递档。
+   *
+   * 三条跳过（`not_configured` / `bot_disabled` / `provider_mismatch`）+ 一条失败（`send_failed`）
+   * 全部是 best-effort：**绝不抛**，也绝不改主事实（Inbox 行已落库，这里只是它的副本）。
+   * 重试有意不做（§7-Q7）：失败只留痕，下一次新条目自然再试，不做台账。
+   */
+  async function pushInboxChannelSummary(
+    params: BotInboxChannelPushParams,
+  ): Promise<BotInboxChannelPushResult> {
+    const workspaceKey = getWorkspaceKey(
+      params.target.workspacePath,
+      params.target.workspaceIdentity,
+    );
+    const config = await repo.readConfig();
+    const bot = resolveInboxChannelBot(config, workspaceKey);
+    if (!bot) {
+      warnInboxChannelDeliveryOnce({ workspaceKey, reason: "not_configured" });
+      return { delivered: false, reason: "not_configured" };
+    }
+    if (!bot.enabled) {
+      warnInboxChannelDeliveryOnce({ workspaceKey, reason: "bot_disabled" });
+      return { delivered: false, reason: "bot_disabled" };
+    }
+    if (!isProactiveDeliveryProvider(bot.provider)) {
+      warnInboxChannelDeliveryOnce({ workspaceKey, reason: "provider_mismatch" });
+      return { delivered: false, reason: "provider_mismatch" };
+    }
+    const providerUserId = bot.providerUserId?.trim() ?? "";
+    const adapter = providers[bot.provider];
+    if (providerUserId === "" || !adapter) {
+      warnInboxChannelDeliveryOnce({ workspaceKey, reason: "provider_mismatch" });
+      return { delivered: false, reason: "provider_mismatch" };
+    }
+    const locale = await readMessageLocale();
+    /* 消息只有文本 + 会话地址：没有 selection、没有 elicitation、没有 callback 数据
+       ⇒ 渠道侧**结构上**没有可回的操作入口（「只读」不靠约定，靠这个形状）。 */
+    const message: BotOutboundMessage = {
+      botId: bot.id,
+      provider: bot.provider,
+      providerUserId,
+      text: formatBotInboxChannelSummary({
+        locale,
+        kind: params.summary.kind,
+        severity: params.summary.severity,
+        title: params.summary.title,
+        workspaceLabel: getWorkspaceLabel(params.target.workspacePath),
+      }),
+      ...(locale ? { locale } : {}),
+    };
+    try {
+      await adapter.send(bot, message);
+    } catch (error) {
+      warnInboxChannelDeliveryOnce({ workspaceKey, reason: "send_failed" });
+      botsLogger.debug(
+        undefined,
+        `inbox channel delivery failed workspace=${workspaceKey} bot=${bot.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return { delivered: false, reason: "send_failed" };
+    }
+    return { delivered: true, botId: bot.id, provider: bot.provider };
+  }
+
   service = {
     async syncAppRuntimePreferences(preferences) {
       await deps.remoteWorkspaceService?.syncAppRuntimePreferences?.(preferences);
@@ -5401,6 +5549,7 @@ export function createBotsService(
       await repo.writeState(state);
     },
     watchAutomationRun,
+    pushInboxChannelSummary,
     async handleInboundMessage(message: BotInboundMessage) {
       return enqueueInboundProcessing(message.actor, async () => {
         if (message.elicitationResponse) {
@@ -6336,6 +6485,7 @@ export function createBotsService(
       recentRemoteReconnectDeliveryAtByKey.clear();
       recentInboundDeliveryAtByKey.clear();
       automationDeliveryWarningAtByKey.clear();
+      inboxChannelWarningAtByKey.clear();
       inboundProcessingQueuesByContext.clear();
       // Bugfix：host 的异步资源回收会优先调用 disposeAllAndWait。保留统一 Promise，确保并发关闭
       // 只执行一次，并在返回前等三类 Provider runtime 的请求、WebSocket 和跨进程锁全部收口。

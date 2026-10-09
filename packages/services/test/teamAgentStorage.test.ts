@@ -4,14 +4,24 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  deleteTeamAgent, listTeamAgents, readTeamAgent, resolveSquadAgentRoot, writeTeamAgent,
+  deleteTeamAgent,
+  listTeamAgents,
+  readTeamAgent,
+  resolveSquadAgentRoot,
+  writeTeamAgent,
 } from "../src/teams/teamAgentStorage.js";
 
 test("定义落在实验命名空间，可写可读可删", () => {
   const ws = mkdtempSync(join(tmpdir(), "ws-"));
   const root = resolveSquadAgentRoot(ws);
   assert.ok(root.endsWith(join(".zcode", "squad", "agents")));
-  writeTeamAgent(root, { id: "ta_1", name: "审查者", systemPrompt: "s", memoryScope: "project", enabled: true });
+  writeTeamAgent(root, {
+    id: "ta_1",
+    name: "审查者",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
   assert.equal(readTeamAgent(root, "ta_1")?.name, "审查者");
   assert.equal(listTeamAgents(root).length, 1);
   deleteTeamAgent(root, "ta_1");
@@ -32,7 +42,13 @@ test("删掉整个实验命名空间后，现有 subagent 定义仍在", () => {
   mkdirSync(dirname(legacyAgentFile), { recursive: true });
   writeFileSync(legacyAgentFile, "# 现有 subagent\n");
   const root = resolveSquadAgentRoot(ws);
-  writeTeamAgent(root, { id: "ta_1", name: "a", systemPrompt: "s", memoryScope: "project", enabled: true });
+  writeTeamAgent(root, {
+    id: "ta_1",
+    name: "a",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
   rmSync(dirname(root), { recursive: true, force: true }); // 整块删除 .zcode/squad/
   assert.equal(existsSync(legacyAgentFile), true);
 });
@@ -41,7 +57,13 @@ test("删掉整个实验命名空间后，现有 subagent 定义仍在", () => {
 test("列表跳过无法解析的文件，其余定义照常返回", () => {
   const ws = mkdtempSync(join(tmpdir(), "ws-"));
   const root = resolveSquadAgentRoot(ws);
-  writeTeamAgent(root, { id: "ta_ok", name: "好的", systemPrompt: "s", memoryScope: "project", enabled: true });
+  writeTeamAgent(root, {
+    id: "ta_ok",
+    name: "好的",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
   writeFileSync(join(root, "ta_broken.json"), "{ 不是合法 JSON");
   const agents = listTeamAgents(root);
   assert.equal(agents.length, 1);
@@ -130,4 +152,50 @@ test("listTeamAgents 不受畸形文件名影响，好定义照常返回", () =>
     listTeamAgents(root).map((agent) => agent.id),
     ["ta_ok"],
   );
+});
+
+/* mcpServers 的校验在 schema 上（shared），写入收口 `writeTeamAgent` 先 parse ⇒ 畸形配置在
+ **落盘前**被拒、且不留半截文件；没有该字段的存量定义零改写、零迁移。 */
+test("writeTeamAgent 落盘前拒绝畸形 mcpServers；存量定义（无该字段）照旧合法", () => {
+  const ws = mkdtempSync(join(tmpdir(), "ws-"));
+  const root = resolveSquadAgentRoot(ws);
+  for (const broken of [
+    { broken: "npx" },
+    { broken: { args: ["-y"] } },
+    { "": { command: "npx" } },
+  ]) {
+    assert.throws(
+      () =>
+        writeTeamAgent(root, {
+          id: "ta_bad",
+          name: "a",
+          systemPrompt: "s",
+          memoryScope: "project",
+          enabled: true,
+          mcpServers: broken,
+        }),
+      `mcpServers=${JSON.stringify(broken)} 必须在写盘前被拒`,
+    );
+  }
+  assert.equal(existsSync(join(root, "ta_bad.json")), false, "被拒的定义不得留下任何文件");
+
+  // 空 map 是**合法值**（v1 不做「空 map = 严格空集/屏蔽继承」，设计 §3.1）：落盘、读回都是空表。
+  writeTeamAgent(root, {
+    id: "ta_empty",
+    name: "e",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+    mcpServers: {},
+  });
+  assert.deepEqual(readTeamAgent(root, "ta_empty")?.mcpServers, {});
+
+  writeTeamAgent(root, {
+    id: "ta_old",
+    name: "o",
+    systemPrompt: "s",
+    memoryScope: "project",
+    enabled: true,
+  });
+  assert.equal("mcpServers" in (readTeamAgent(root, "ta_old") ?? {}), false, "存量定义零改写");
 });

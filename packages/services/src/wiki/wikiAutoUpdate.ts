@@ -20,10 +20,7 @@ export interface WikiAutoUpdateSchedulerOptions {
   /** 列出所有已知 workspace（用来把配置键反解成可读写的路径）。 */
   listKnownTargets: () => Promise<WikiAutoUpdateTarget[]>;
   /** 触发一次增量生成。 */
-  runUpdate: (
-    target: WikiAutoUpdateTarget,
-    settings: ResolvedWikiProjectSettings,
-  ) => Promise<void>;
+  runUpdate: (target: WikiAutoUpdateTarget, settings: ResolvedWikiProjectSettings) => Promise<void>;
   /** 记录本次触发时间（写回该项目的 lastAutoUpdateAt）。 */
   recordRun?: (workspaceKey: string, at: number) => Promise<void>;
   logger?: ServiceLogger;

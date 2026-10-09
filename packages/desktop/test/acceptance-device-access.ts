@@ -54,7 +54,9 @@ for (const path of registered.slice(0, 5)) console.log(`  ${path}`);
 const t0 = Date.now();
 const tasks = await result.access.listAllTasks();
 console.log(`\n=== 设备级枚举: ${tasks.length} 条会话 (${Date.now() - t0}ms) ===`);
-console.log(`能力探测结论: ${result.supportsDeviceWideEnumeration ? "对端支持设备级枚举 ✅" : "对端不支持，已退化为按项目查询"}`);
+console.log(
+  `能力探测结论: ${result.supportsDeviceWideEnumeration ? "对端支持设备级枚举 ✅" : "对端不支持，已退化为按项目查询"}`,
+);
 
 // 3) 投影项目清单（并集）
 const projects = buildProjectedProjectList({ registeredProjects: registered, tasks });

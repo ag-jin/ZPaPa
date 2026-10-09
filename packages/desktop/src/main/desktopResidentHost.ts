@@ -82,7 +82,8 @@ export function spawnResidentHost(deps: ResidentHostDeps): ResidentHostHandle | 
       const message = raw as ResidentHostToMainMessage;
       if (!message || typeof message !== "object") return;
       if (message.type === "resident-host-log") {
-        const level = message.level === "warn" ? "warn" : message.level === "error" ? "error" : "info";
+        const level =
+          message.level === "warn" ? "warn" : message.level === "error" ? "error" : "info";
         deps.logger[level](`[resident-host] ${message.message}`);
         return;
       }

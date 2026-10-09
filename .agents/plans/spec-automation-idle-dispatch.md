@@ -52,11 +52,11 @@
 
 `failureKind` 增加第三个取值 `deferred`，语义与 `transient` 明确区分：
 
-| kind | 含义 | 对 `automations` 的影响 |
-| --- | --- | --- |
-| `transient` | 派发通道暂时失败（无 host、DB 未就绪等） | `dispatch_attempts+1`，`retry_at` 指数退避；达上限放弃本轮 |
-| `permanent` | 确定性配置错误 | 转 failed 终态并停用 |
-| `deferred` | 目标会话正在执行，等待空闲 | **不改 `dispatch_attempts`**，`retry_at = now + 30s`，`next_run_at` 不变 |
+| kind        | 含义                                     | 对 `automations` 的影响                                                  |
+| ----------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| `transient` | 派发通道暂时失败（无 host、DB 未就绪等） | `dispatch_attempts+1`，`retry_at` 指数退避；达上限放弃本轮               |
+| `permanent` | 确定性配置错误                           | 转 failed 终态并停用                                                     |
+| `deferred`  | 目标会话正在执行，等待空闲               | **不改 `dispatch_attempts`**，`retry_at = now + 30s`，`next_run_at` 不变 |
 
 `AutomationRepo.deferDispatch()`：`running=0`、`claimed_at=NULL`、`dispatch_status='idle'`、`retry_at=now+DEFERRED_RETRY_MS`；**保留** `next_run_at`（runId 因此稳定复用）、**保留** `dispatch_attempts`、**不写** `last_error`（避免设置页误显示失败徽标）。
 

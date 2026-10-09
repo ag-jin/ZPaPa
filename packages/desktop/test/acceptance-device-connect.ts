@@ -50,7 +50,9 @@ const access = await createDeviceAccess({
 const registered = await access.access.listRegisteredProjects();
 const tasks = await access.access.listAllTasks();
 const projects = buildProjectedProjectList({ registeredProjects: registered, tasks });
-console.log(`✅ 设备访问：已登记 ${registered.length} 个项目 / 枚举 ${tasks.length} 条会话 / 投影清单 ${projects.length} 个`);
+console.log(
+  `✅ 设备访问：已登记 ${registered.length} 个项目 / 枚举 ${tasks.length} 条会话 / 投影清单 ${projects.length} 个`,
+);
 
 // 3) 开关序列：断开 → 重连（验证可重复连接，不残留）
 await connection.disposeAndWait({ timeoutMs: 5_000 });

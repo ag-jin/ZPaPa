@@ -137,7 +137,10 @@ export async function exposeAsResidentHost(
           resolve(initial.port);
           return;
         }
-        const timer = setTimeout(() => reject(new Error("resident exposure listen timeout")), 10_000);
+        const timer = setTimeout(
+          () => reject(new Error("resident exposure listen timeout")),
+          10_000,
+        );
         listeningServer.once("listening", () => {
           clearTimeout(timer);
           const listening = listeningServer.address();

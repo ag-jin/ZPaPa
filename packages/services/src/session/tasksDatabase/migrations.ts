@@ -3,10 +3,28 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   AUTOMATION_SCHEMA,
+  COMMENT_DISPATCH_RECEIPT_SQL,
+  INBOX_ITEM_SCHEMA,
   OFF_PEAK_SCHEMA,
+  PROJECT_SCHEMA,
+  SQUAD_RUN_CAUSE_SQL,
+  SQUAD_RUN_QUEUE_SQL,
+  SQUAD_RUN_USAGE_SQL,
+  SQUAD_RUN_WATCHDOG_SQL,
+  WORK_ITEM_COLLABORATION_SQL,
+  WORK_ITEM_COLLABORATION_SQL_2,
+  WORK_ITEM_COLLABORATION_SQL_3,
+  SQUAD_RUN_SCHEMA,
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
+  WORK_ITEM_DELIVERABLE_SQL,
+  WORK_ITEM_PROJECT_BINDING_SQL,
+  WORK_ITEM_PULL_REQUEST_SQL,
+  WORK_ITEM_REACTIONS_SQL,
   WORK_ITEM_SCHEMA,
+  WORK_ITEM_SUBSCRIBER_SQL,
+  WORK_ITEM_SURFACE_FIELDS_SQL,
+  WORK_ITEM_VIEWS_SQL,
 } from "#src/session/tasksDatabase/schema-v1.js";
 import { importLegacyAutomationSelections } from "#src/session/tasksDatabase/provider-selection-v2.js";
 import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "#src/session/tasksDatabase/official-glm-selection-v3.js";
@@ -74,6 +92,113 @@ const definitions = [
     id: "0005_wake_rules",
     checksumInput: [WAKE_RULE_SCHEMA],
   },
+  {
+    id: "0006_squad_runs",
+    checksumInput: [SQUAD_RUN_SCHEMA],
+  },
+  {
+    id: "0007_inbox_items",
+    checksumInput: [INBOX_ITEM_SCHEMA],
+  },
+  /* 0008 只加两列（`ALTER TABLE ADD COLUMN`），**不改既有列/表**：既有库的 checksum 一字不动，
+     新库与老库升级后同一形状。SQL 冻结后不得再改（改了老库升级会抛 checksum_mismatch）。 */
+  {
+    id: "0008_squad_run_cause",
+    checksumInput: [SQUAD_RUN_CAUSE_SQL],
+  },
+  /* 0009 只加索引与新表（队列唯一性 / 容量计数 / deferred 义务 / 并入留痕），不加列不改既有表：
+     既有库 checksum 一字不动，SQL 冻结后不得再改（同 0008 纪律）。 */
+  {
+    id: "0009_squad_run_queue",
+    checksumInput: [SQUAD_RUN_QUEUE_SQL],
+  },
+  /* 0010（协作域 X0.1）：评论 + 表情回应两张表（Activity/Decision 在 X0.2 追加 0011）。
+     只加新对象，不改既有表——checksum 纪律同 0008/0009。 */
+  {
+    id: "0010_workitem_collaboration",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL],
+  },
+  /* 0011（协作域 X0.2）：Activity（sequence 原子生成）+ Decision。 */
+  {
+    id: "0011_workitem_activity_decision",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL_2],
+  },
+  /* 0012（协作域 X1.2）：评论派发 receipt（dispatch_key 主键 + outcome 闭集）。 */
+  {
+    id: "0012_comment_dispatch_receipts",
+    checksumInput: [COMMENT_DISPATCH_RECEIPT_SQL],
+  },
+  /* 0013（协作域 X1.3 修复）：Activity 补 sourceRun 全形状三列（读回不再硬编码 role="member"）
+     + deferred 义务表加 origin 来源判别列（评论义务与 R2 义务分流）。只加列，不改既有列/表。 */
+  {
+    id: "0013_collaboration_source_run_and_origin",
+    checksumInput: [WORK_ITEM_COLLABORATION_SQL_3],
+  },
+  /* 0014（看门狗 W1）：squad_runs 加 `opened_at`（TTL 起算点）/ `settle_reason`（结算原因）
+     两列 + 非 queued 行回填。只加列，不改既有列/表——checksum 纪律同 0008/0009/0013。 */
+  {
+    id: "0014_squad_run_watchdog",
+    checksumInput: [SQUAD_RUN_WATCHDOG_SQL],
+  },
+  /* 0015（#6 按 run 用量记账 CT.1）：squad_runs 加 9 个用量列（8 数值 + `usage_recorded_at`
+     存在性开关；NULL = 未记录 ≠ 0）。只加列、**零回填**（没有会话就没有用量，回填无事实可依），
+     不改既有列/表——checksum 纪律同 0008/0009/0013/0014。 */
+  {
+    id: "0015_squad_run_usage",
+    checksumInput: [SQUAD_RUN_USAGE_SQL],
+  },
+  /* 0016（#7 工作项级交付物 D1a）：建 `work_item_deliverables` 一张新表 + 两索引。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0011/0012。 */
+  {
+    id: "0016_work_item_deliverables",
+    checksumInput: [WORK_ITEM_DELIVERABLE_SQL],
+  },
+  /* 0017（#8 GitHub PR 集成 D2）：建 `work_item_pull_requests` 一张新表 + 两索引
+     （工作项↔PR 关联 + 快照列，head-SHA 防陈旧写）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0011/0012/0016。 */
+  {
+    id: "0017_work_item_pull_requests",
+    checksumInput: [WORK_ITEM_PULL_REQUEST_SQL],
+  },
+  /* 0018（工作项 Surface 对齐 · 阶段一 R1）：`work_items` 加 7 列
+     （priority / start_date / due_date / creator_kind / creator_id / creator_display_name /
+     identifier_seq）+ `UNIQUE(workspace_key, identifier_seq)`。
+     回填**分两半**：identifier_seq 全量回填（每 workspace 按 created_at,id 从 1 编号，依据是既有事实），
+     其余六列**零回填**（NULL = 未设置 / 迁移前未知，不编造值；详见 SQL 常量的注释）。
+     只加列与索引，不改既有列/表——checksum 纪律同 0008/0009/0013/0014/0015。 */
+  {
+    id: "0018_work_item_surface_fields",
+    checksumInput: [WORK_ITEM_SURFACE_FIELDS_SQL],
+  },
+  /* 0019（Subscriber 完整语义线 SUB.1）：建 `work_item_subscribers` 一张新表 + 两索引
+     （唯一键 (workspace_key, work_item_id, subject_type, subject_id) + 主体反查索引）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017。 */
+  {
+    id: "0019_work_item_subscribers",
+    checksumInput: [WORK_ITEM_SUBSCRIBER_SQL],
+  },
+  /* 0020（saved views 服务面轮 R6a）：建 `work_item_views` + `work_item_view_prefs` 两张新表 + 两索引
+     （命名视图 + 视图条偏好；multica 265/266/267/268 的 ZPaPa 收窄切分，见 SQL 常量注释）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019。 */
+  {
+    id: "0020_work_item_views",
+    checksumInput: [WORK_ITEM_VIEWS_SQL],
+  },
+  /* 0021（工作项级 reactions，阶段三 P3-R5s 服务面半边）：建 `work_item_reactions` 一张新表 + 一条
+     查询索引（五元组唯一键 + (workspace_key, work_item_id, created_at) 查询形状）。
+     只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020。 */
+  {
+    id: "0021_work_item_reactions",
+    checksumInput: [WORK_ITEM_REACTIONS_SQL],
+  },
+  /* 0022（工作项项目绑定 · 服务面轮 R-P1）：建 `projects` 一张新表 + 一条唯一索引
+     （短码 workspace 内唯一），并给 `work_items` 加两列（project_id 可空 + identifier_prefix 快照）。
+     只加新对象与列，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020/0021。
+     取舍（序号语义不动 / 前缀快照 / 无外键 / 零回填）逐条写在两个 SQL 常量的注释里。 */
+  {
+    id: "0022_projects",
+    checksumInput: [PROJECT_SCHEMA, WORK_ITEM_PROJECT_BINDING_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -125,7 +250,30 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0002_provider_selection") importLegacyAutomationSelections(db);
       else if (migration.id === "0004_work_items") db.exec(WORK_ITEM_SCHEMA);
       else if (migration.id === "0005_wake_rules") db.exec(WAKE_RULE_SCHEMA);
-      else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
+      else if (migration.id === "0006_squad_runs") db.exec(SQUAD_RUN_SCHEMA);
+      else if (migration.id === "0007_inbox_items") db.exec(INBOX_ITEM_SCHEMA);
+      else if (migration.id === "0008_squad_run_cause") db.exec(SQUAD_RUN_CAUSE_SQL);
+      else if (migration.id === "0009_squad_run_queue") db.exec(SQUAD_RUN_QUEUE_SQL);
+      else if (migration.id === "0010_workitem_collaboration") db.exec(WORK_ITEM_COLLABORATION_SQL);
+      else if (migration.id === "0011_workitem_activity_decision")
+        db.exec(WORK_ITEM_COLLABORATION_SQL_2);
+      else if (migration.id === "0012_comment_dispatch_receipts")
+        db.exec(COMMENT_DISPATCH_RECEIPT_SQL);
+      else if (migration.id === "0013_collaboration_source_run_and_origin")
+        db.exec(WORK_ITEM_COLLABORATION_SQL_3);
+      else if (migration.id === "0014_squad_run_watchdog") db.exec(SQUAD_RUN_WATCHDOG_SQL);
+      else if (migration.id === "0015_squad_run_usage") db.exec(SQUAD_RUN_USAGE_SQL);
+      else if (migration.id === "0016_work_item_deliverables") db.exec(WORK_ITEM_DELIVERABLE_SQL);
+      else if (migration.id === "0017_work_item_pull_requests") db.exec(WORK_ITEM_PULL_REQUEST_SQL);
+      else if (migration.id === "0018_work_item_surface_fields")
+        db.exec(WORK_ITEM_SURFACE_FIELDS_SQL);
+      else if (migration.id === "0019_work_item_subscribers") db.exec(WORK_ITEM_SUBSCRIBER_SQL);
+      else if (migration.id === "0020_work_item_views") db.exec(WORK_ITEM_VIEWS_SQL);
+      else if (migration.id === "0021_work_item_reactions") db.exec(WORK_ITEM_REACTIONS_SQL);
+      else if (migration.id === "0022_projects") {
+        db.exec(PROJECT_SCHEMA);
+        db.exec(WORK_ITEM_PROJECT_BINDING_SQL);
+      } else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
         migration.id,

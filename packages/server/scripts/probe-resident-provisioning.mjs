@@ -68,7 +68,9 @@ const view = await withTimeout(
   connection.services.providerSettingsService.getView(),
   "provider-settings.getView",
 );
-console.log(`[probe] ✅ provider-settings.getView ok (providers=${view?.providers?.length ?? "?"})`);
+console.log(
+  `[probe] ✅ provider-settings.getView ok (providers=${view?.providers?.length ?? "?"})`,
+);
 
 await connection.disposeAndWait({ timeoutMs: 5_000 });
 console.log(`[probe] remote close code=${remoteCloseCode}`);

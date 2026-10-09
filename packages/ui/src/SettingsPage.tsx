@@ -1149,9 +1149,9 @@ export function SettingsPage({
     "never" | "connecting" | "connected" | "failed" | "idle-unavailable"
   >("never");
   const [remoteDeviceConnectionError, setRemoteDeviceConnectionError] = useState<string>();
-  const [remoteDeviceProjects, setRemoteDeviceProjects] = useState<
-    ReturnType<typeof buildProjectedProjectList> | null
-  >(null);
+  const [remoteDeviceProjects, setRemoteDeviceProjects] = useState<ReturnType<
+    typeof buildProjectedProjectList
+  > | null>(null);
   // 连接不再由本组件持有：原先的 remoteDeviceConnectionRef 随设置页卸载即丢
   // （连接成功会切走一次设置页），现在统一由 deviceSessionStore 按设备持有。
 
@@ -1181,7 +1181,9 @@ export function SettingsPage({
   // 现统一走设备 store，避免「同一台设备在两处各有一个 sessionId」的不一致。
   const deviceKeyForEntry = deviceKey(remoteDeviceEntry?.target);
   const liveDeviceSessionId = useDeviceSessionStore((state) =>
-    deviceKeyForEntry ? (state.sessionsByDeviceKey[deviceKeyForEntry]?.sessionId ?? undefined) : undefined,
+    deviceKeyForEntry
+      ? (state.sessionsByDeviceKey[deviceKeyForEntry]?.sessionId ?? undefined)
+      : undefined,
   );
   // 断开时按 deviceSessionId 清投射条目需要 store api：断开可能发生在设置页
   // 重新挂载之后（连接成功会切走一次），此时 hook 形态不可用于事件回调外。
@@ -2235,9 +2237,7 @@ export function SettingsPage({
                               onRemoveDevice={handleRemoveRemoteDevice}
                               onConnect={handleConnectRemoteDevice}
                               onDisconnect={handleDisconnectRemoteDevice}
-                              onToggleProjectVisibility={
-                                handleRemoteDeviceProjectVisibilityChange
-                              }
+                              onToggleProjectVisibility={handleRemoteDeviceProjectVisibilityChange}
                               {...(onOpenRemoteConnection
                                 ? { onOpenRemoteConnection: () => onOpenRemoteConnection() }
                                 : {})}
@@ -2265,9 +2265,11 @@ export function SettingsPage({
                             workspacePath={remoteDeviceEntry.target.host}
                             remoteSessionId={liveDeviceSessionId}
                             workspaceIdentity=""
-                            services={liveDeviceServices as unknown as Parameters<
-                              typeof RemoteDeviceSettingsSection
-                            >[0]["services"]}
+                            services={
+                              liveDeviceServices as unknown as Parameters<
+                                typeof RemoteDeviceSettingsSection
+                              >[0]["services"]
+                            }
                           />
                         ) : null}
                         {activeSection === "appearance" ? (

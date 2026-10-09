@@ -5,9 +5,9 @@
 在 A 上对 B 的会话执行 `resumeTask({taskId, workspacePath, workspaceIdentity: "remote:ssh:..."})` 后，
 B 的 `~/.zcode/v2/tasks-index.sqlite` 中该会话出现**两条记录**：
 
-| workspace_key | 来源 |
-|---|---|
-| `/Volumes/数据盘/网站/新赛马` | 对端本地正常写入 |
+| workspace_key                                                    | 来源                             |
+| ---------------------------------------------------------------- | -------------------------------- |
+| `/Volumes/数据盘/网站/新赛马`                                    | 对端本地正常写入                 |
 | `remote:ssh:100.66.1.2:22:linguojin:/Volumes/数据盘/网站/新赛马` | **本端 identity 被透传写入对端** |
 
 已手工清理（`DELETE FROM tasks WHERE workspace_key LIKE 'remote:%'`）。

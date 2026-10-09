@@ -27,8 +27,7 @@ function collectValueSpecifiers(source: string): string[] {
 
   // 去掉内联 type 说明符：`import { type A, B } from "x"` 里的 A 是类型，
   // 但整条语句仍可能有值（B），所以这里只用于判断「是否只剩类型」。
-  const valueImportRe =
-    /(?:^|\n)\s*(?:import|export)\s*([\s\S]*?)\s*from\s*["']([^"']+)["']\s*;?/g;
+  const valueImportRe = /(?:^|\n)\s*(?:import|export)\s*([\s\S]*?)\s*from\s*["']([^"']+)["']\s*;?/g;
   valueImportRe.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = valueImportRe.exec(withoutTypeStatements)) !== null) {
@@ -126,8 +125,7 @@ test("@zcode/services 根入口的值依赖不得触达 node:* 内建", async ()
     [],
     `根入口的运行时依赖触达了 node:*（会让 renderer 在挂载前整包失败）：\n${offenders
       .map((o) => `  ${o.file} → ${o.specifier}`)
-      .join("\n")}\n` +
-      "修复：把实现移到 @zcode/services/node，或把引用改为 `import type`。",
+      .join("\n")}\n` + "修复：把实现移到 @zcode/services/node，或把引用改为 `import type`。",
   );
 });
 

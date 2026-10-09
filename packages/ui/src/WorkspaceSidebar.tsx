@@ -14,19 +14,23 @@ import {
 import {
   Archive,
   Blocks,
+  Bot,
   CalendarClock,
   Clock3,
   Cloud,
   Folder,
   FolderOpen,
   Hash,
+  Inbox,
   ListFilter,
+  ListTodo,
   Maximize2,
   MessageCircleCheck,
   MessageCirclePlus,
   Minimize2,
   Plus,
   Search,
+  UsersRound,
   X,
 } from "lucide-react";
 import {
@@ -90,6 +94,8 @@ import {
   reorderSidebarPurposeSections,
 } from "@/lib/sidebarPurposeSectionPreferences.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
@@ -241,8 +247,16 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter,
   onOpenAutomations,
   onOpenPluginStore,
+  onOpenInbox,
+  onOpenSquadAgents,
+  onOpenSquads,
+  onOpenWorkItems,
   automationsActive = false,
   pluginStoreActive = false,
+  inboxActive = false,
+  squadAgentsActive = false,
+  squadsActive = false,
+  workItemsActive = false,
 }: {
   workspacePath: string;
   workspaceRemoteSessionId?: string;
@@ -290,8 +304,16 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onOpenCommandCenter: () => void;
   onOpenAutomations?: () => void;
   onOpenPluginStore?: () => void;
+  onOpenInbox?: () => void;
+  onOpenSquadAgents?: () => void;
+  onOpenSquads?: () => void;
+  onOpenWorkItems?: () => void;
   automationsActive?: boolean;
   pluginStoreActive?: boolean;
+  inboxActive?: boolean;
+  squadAgentsActive?: boolean;
+  squadsActive?: boolean;
+  workItemsActive?: boolean;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const handleTaskRowSelect = useCallback(
@@ -722,6 +744,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const handleOpenAutomationsMain = useCallback(() => {
     onOpenAutomations?.();
   }, [onOpenAutomations]);
+  const handleOpenInboxMain = useCallback(() => {
+    onOpenInbox?.();
+  }, [onOpenInbox]);
+  const handleOpenSquadAgentsMain = useCallback(() => {
+    onOpenSquadAgents?.();
+  }, [onOpenSquadAgents]);
+  const handleOpenSquadsMain = useCallback(() => {
+    onOpenSquads?.();
+  }, [onOpenSquads]);
+  const handleOpenWorkItemsMain = useCallback(() => {
+    onOpenWorkItems?.();
+  }, [onOpenWorkItems]);
+  /* 「收件箱」「智能体」「小队」「工作项」四个一级入口的**显隐**：只在实验开关开启时渲染
+     （spec §12 / §16 S8）。判据是既有的纯函数 squadEntryVisible（settings 加载中给 null ⇒
+     不可见，避免加载期先闪一下入口再消失）。**这是呈现，不是门禁** —— 拦新派发是服务层单点
+     assertDispatchEnabled 的事，这里不判派发、也不读任何别的字段。
+     四个入口**共用这一个判据变量**（同一个开关管同一组实验入口）：给收件箱再造一个判据变量
+     就是同一语义两处实现，改一处漏一处不报错。 */
+  const { settings } = useSettings();
+  const showSquadEntries = squadEntryVisible(settings);
   const handleOpenCodingPlanUpgrade = useCallback(
     (
       providerId: string,
@@ -1307,6 +1349,91 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               <Blocks className="size-4" />
               {intl.formatMessage({ id: "workspace.openPluginsSettings" })}
             </Button>
+            {/* 「收件箱」一级入口：小队组的**最前**（在「智能体」之前 —— 与 multica 侧栏
+                「收件箱 → AI 团队」的顺序一致：先看"有什么要我处理"，再看名单）。
+                显隐与其他三个实验入口**共用同一个判据变量**（见上方注释）—— 不是门禁。 */}
+            {showSquadEntries ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenInboxMain}
+                data-icon="inline-start"
+                data-testid="inbox-sidebar-open"
+                size="lg"
+                aria-pressed={inboxActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  inboxActive && "bg-selected text-foreground",
+                )}
+              >
+                <Inbox className="size-4" />
+                {intl.formatMessage({ id: "workspace.openInbox" })}
+              </Button>
+            ) : null}
+            {/* AI Team 分组（侧栏小队重做 T2，multica 纯导航形态）：分组标题（静态不可折叠）+
+                「智能体」「小队」两个一击直达入口。整组共用 showSquadEntries 判据（同一实验开关）；
+                不取数、不按项目/工作区分组（旧内嵌面板形态已退役，见 squadSidebarSectionRetired.test.ts）。 */}
+            {showSquadEntries ? (
+              <section
+                data-testid="ai-team-sidebar-section"
+                aria-label={intl.formatMessage({ id: "squad.sidebar.aiTeam" })}
+                className="flex flex-col gap-1"
+              >
+                <div className="px-3 pb-1 pt-2 text-ui-xs font-medium tracking-wide text-foreground-subtlest">
+                  {intl.formatMessage({ id: "squad.sidebar.aiTeam" })}
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={handleOpenSquadAgentsMain}
+                  data-icon="inline-start"
+                  data-testid="ai-team-sidebar-agents"
+                  size="lg"
+                  aria-pressed={squadAgentsActive}
+                  aria-current={squadAgentsActive ? "page" : undefined}
+                  className={cn(
+                    "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                    squadAgentsActive && "bg-selected text-foreground",
+                  )}
+                >
+                  <Bot className="size-4" />
+                  {intl.formatMessage({ id: "workspace.openSquadAgents" })}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleOpenSquadsMain}
+                  data-icon="inline-start"
+                  data-testid="ai-team-sidebar-squads"
+                  size="lg"
+                  aria-pressed={squadsActive}
+                  aria-current={squadsActive ? "page" : undefined}
+                  className={cn(
+                    "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                    squadsActive && "bg-selected text-foreground",
+                  )}
+                >
+                  <UsersRound className="size-4" />
+                  {intl.formatMessage({ id: "workspace.openSquads" })}
+                </Button>
+              </section>
+            ) : null}
+            {/* 「工作项」一级入口：紧跟在「小队」之后（用户 2026-10-03 入口清单：AI 团队 ▸ 智能体 / 小队，
+                工作 ▸ 工作项看板）。显隐继续**共用同一个判据变量**（同一个实验开关管这组入口）。 */}
+            {showSquadEntries ? (
+              <Button
+                variant="ghost"
+                onClick={handleOpenWorkItemsMain}
+                data-icon="inline-start"
+                data-testid="work-items-sidebar-open"
+                size="lg"
+                aria-pressed={workItemsActive}
+                className={cn(
+                  "w-full justify-start gap-2 text-foreground hover:bg-surface-hover hover:text-foreground",
+                  workItemsActive && "bg-selected text-foreground",
+                )}
+              >
+                <ListTodo className="size-4" />
+                {intl.formatMessage({ id: "workspace.openWorkItems" })}
+              </Button>
+            ) : null}
           </div>
 
           <div className="relative flex min-h-0 flex-1 flex-col">

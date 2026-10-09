@@ -30,6 +30,7 @@ export type {
   BrowserPoint,
   ControlledView,
   ControlledViewCdp,
+  ControlledViewInputEvent,
   ControlledViewWebContents,
 } from "./browserCommandTypes.js";
 

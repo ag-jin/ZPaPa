@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { runTasksDatabaseMigrations } from "../src/session/tasksDatabase/migrations.js";
-import { WORK_ITEM_SCHEMA } from "../src/session/tasksDatabase/schema-v1.js";
+import {
+  WORK_ITEM_SCHEMA,
+  WORK_ITEM_SUBSCRIBER_SQL,
+} from "../src/session/tasksDatabase/schema-v1.js";
 
 function openFreshDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -27,12 +30,26 @@ function workItemIndexes(db: DatabaseSync): string[] {
 }
 
 function ledger(db: DatabaseSync): Array<{ id: string; checksum: string }> {
-  return db
-    .prepare("SELECT id, checksum FROM tasks_schema_migration ORDER BY id")
-    .all() as Array<{ id: string; checksum: string }>;
+  return db.prepare("SELECT id, checksum FROM tasks_schema_migration ORDER BY id").all() as Array<{
+    id: string;
+    checksum: string;
+  }>;
 }
 
+/** 「未登记即失败」规则本体：返回登记表里查不到的迁移号（空数组 = 登记齐备）。
+ *  抽成纯函数只为一件事——让规则自己也有守卫：把语义悄悄改回「未登记就跳过」（恒返回空）
+ *  时，下面的守卫自证用例会红。规则若只写成 inline 的 if，改回跳过就再也无人拦。 */
+function unregisteredMigrationIds(
+  rows: ReadonlyArray<{ id: string }>,
+  registry: Readonly<Record<string, string>>,
+): string[] {
+  return rows.filter((row) => registry[row.id] === undefined).map((row) => row.id);
+}
+
+// 0004 建表时是 3 条；0018（工作项 Surface 对齐·阶段一 R1）给 work_items 追加了
+// `UNIQUE(workspace_key, identifier_seq)` 一条 —— 这是这张表**唯一**一次索引追加。
 const EXPECTED_WORK_ITEM_INDEXES = [
+  "idx_work_items_identifier",
   "idx_work_items_parent",
   "idx_work_items_status",
   "idx_work_items_workspace",
@@ -41,20 +58,304 @@ const EXPECTED_WORK_ITEM_INDEXES = [
 // 与已发布数据库的契约：这些 checksum 一旦被改动，老库升级会抛 checksum_mismatch。
 // 值是**字面量**，不是「在测试里再用当前代码算一遍」——两侧重算等于什么都没测。
 // 这里只登记「已经发布过」的迁移；**最新那一条无需登记**，会被用例自动排除（见下），
-// 所以新增迁移不会让本用例假红。
+// 所以新增迁移不会让本用例假红。登记范围必须**恰好覆盖**账本里除最新一条之外的全部：
+// 少登记一条即失败（缺号会在报错里逐个列出），多登记一条也会失败（见下方的反向边界断言）。
 const PINNED_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
   "0001_adopt_task_schema": "3e8337b015d94b05dd31a6003f3acc649e821794cfa288bc0af3022698bd4d17",
   "0002_provider_selection": "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc",
   "0003_official_glm_selection": "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4",
   "0004_work_items": "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f",
+  "0005_wake_rules": "a2308d0724eae27813d92b5c8742a2de9aad68c5c6429601312483a0bd21b618",
+  // 0006–0021（2026-10-09 G1 补登记）：值取自本分支已提交的迁移常量跑出的
+  // tasks_schema_migration 账本，与上面五条同一口径（同一条 sha256(JSON.stringify(checksumInput))）。
+  // 这 16 条此前一直漏登记，而旧用例体对未登记行静默跳过 ⇒ 漏登记不红（见下方「未登记即失败」）。
+  "0006_squad_runs": "724298df32a87bfc1c5385f3671216a0c1c16b80f8d2a430aea259bd9f0899b9",
+  "0007_inbox_items": "4fa09c984986ebe7104e850fbc83517062ad241745a950e7b066a4fcadfe563c",
+  "0008_squad_run_cause": "41c0697298ee697c3c3c0ede8bd03e85d3e17086f76fc6d30f9e4be9c3099ff6",
+  "0009_squad_run_queue": "2439a595bab1aa7fd4b21293db83fcf637d9989361cefb5c2e5256d2e56af969",
+  "0010_workitem_collaboration": "25d5294ca8ae43e74b419ec4d9e96e70cfea96acb3f06ff4dc9f74697022aca0",
+  "0011_workitem_activity_decision":
+    "96343ad19f272594e088140f1edd8afb4ccad03d3a6cafc7a1b49881a7b806c6",
+  "0012_comment_dispatch_receipts":
+    "f3d67897ebf45a15a3c5a338fea41e0f054bbd969121262bac06205209918461",
+  "0013_collaboration_source_run_and_origin":
+    "1f8cb6bd1ad3881e534dab766d2c53dab41aa84d2b8065f0e5453186b816df64",
+  "0014_squad_run_watchdog": "e21414f1fdb965b06ab849c025b18be369a5c8eac286a9d0f989681a6f269bc0",
+  "0015_squad_run_usage": "c02640c377048a2e15278b19e9ffda63e09813725ce06bcb99bb3fc76c181f40",
+  "0016_work_item_deliverables": "61d1cbe6506fb9deb73e9f84df807feef2e756cba11c1a12fce925b89b756490",
+  "0017_work_item_pull_requests":
+    "37bbc0635188dc8a0cef729c4bda71cf3de730da124d9520059454be171815b6",
+  "0018_work_item_surface_fields":
+    "180325a73ba6ecb34bf3802da582081526ab7d495fbbf551f3191eed399f5f02",
+  "0019_work_item_subscribers": "3e2e0c42152e64c5d161bf47de2a6897b3660ffe402680d5656ded7a5e0253e7",
+  "0020_work_item_views": "e32697328e3d49e3477c7920b6e0b513d09e155e028215205c06e081170dd9b9",
+  "0021_work_item_reactions": "ce47388fd7a25670225d26537842da96b1ae8a9d37bf50747cc31e1d71e704ca",
 };
 
 // 「最新那条迁移建出了什么」无法从库里反推，故在此显式登记，用来把库退回上一版的样子。
 // **新增迁移时同步维护一行**（不维护也能通过：缺登记时只是不 drop 对象，模拟退化一档，
 // 因为 DDL 都带 IF NOT EXISTS，重跑不会炸——这是本用例能自适配的关键）。
+// 登记行按迁移累加，但用例只读当前最新 id 的那一行（旧行留着是为了让历史痕迹可读，不参与断言）。
 const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = {
   "0005_wake_rules": ["DROP TABLE wake_rules"],
+  "0006_squad_runs": ["DROP TABLE squad_runs"],
+  "0007_inbox_items": ["DROP TABLE inbox_items"],
+  // 0008 是**列级**追加（不改表）：反向 DDL 是逐列 DROP（SQLite 3.35+ 支持的形态）。
+  "0008_squad_run_cause": [
+    "ALTER TABLE squad_runs DROP COLUMN dispatch_cause",
+    "ALTER TABLE squad_runs DROP COLUMN caused_by_run_id",
+  ],
+  // 0009（C2 队列）：只加两索引（队列唯一性部分索引 + 容量计数索引）与两张新表（deferred 义务 / 合并明细），
+  // 不加列——列集断言（EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 路径）在 0009 后仍逐字成立。
+  "0009_squad_run_queue": [
+    "DROP INDEX idx_squad_runs_one_queued_per_item_agent",
+    "DROP INDEX idx_squad_runs_agent_capacity",
+    "DROP TABLE squad_run_coalesced_details",
+    "DROP TABLE squad_run_deferred_dispatches",
+  ],
+  // 0010（协作域 X0.1）：评论 + 表情回应两张表（Activity/Decision 在 X0.2/0011）。
+  "0010_workitem_collaboration": [
+    "DROP INDEX idx_work_item_comment_reactions_comment",
+    "DROP INDEX idx_work_item_comments_thread",
+    "DROP INDEX idx_work_item_comments_item",
+    "DROP TABLE work_item_comment_reactions",
+    "DROP TABLE work_item_comments",
+  ],
+  // 0011（协作域 X0.2）：Activity + Decision。
+  "0011_workitem_activity_decision": [
+    "DROP INDEX idx_work_item_decisions_item",
+    "DROP INDEX idx_work_item_activities_item",
+    "DROP TABLE work_item_decisions",
+    "DROP TABLE work_item_activities",
+  ],
+  // 0012（协作域 X1.2）：评论派发 receipt（两索引先于表 drop）。
+  "0012_comment_dispatch_receipts": [
+    "DROP INDEX idx_comment_dispatch_receipts_outcome",
+    "DROP INDEX idx_comment_dispatch_receipts_item",
+    "DROP TABLE comment_dispatch_receipts",
+  ],
+  // 0013（协作域 X1.3 修复）：Activity 补 sourceRun 全形状三列 + 义务表加 origin 来源列。
+  // 列级追加（不改表），反向 DDL 是逐列 DROP；列名与 0013 的 ALTER 一一对应。
+  "0013_collaboration_source_run_and_origin": [
+    "ALTER TABLE squad_run_deferred_dispatches DROP COLUMN origin",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_role",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_squad_id",
+    "ALTER TABLE work_item_activities DROP COLUMN source_run_agent_id",
+  ],
+  // 0014（看门狗 W1）：squad_runs 加 `opened_at` / `settle_reason` 两列（列级追加 ⇒ 反向 DDL 逐列 DROP）
+  // + 一条回填 UPDATE。反向 DDL 只还原**结构**：行数据由用例自己造（见 0014 的专条用例）。
+  "0014_squad_run_watchdog": [
+    "ALTER TABLE squad_runs DROP COLUMN settle_reason",
+    "ALTER TABLE squad_runs DROP COLUMN opened_at",
+  ],
+  // 0015（#6 用量记账 CT.1）：squad_runs 加 9 个用量列（列级追加 ⇒ 反向 DDL 逐列 DROP；**零回填**）。
+  "0015_squad_run_usage": [
+    "ALTER TABLE squad_runs DROP COLUMN usage_recorded_at",
+    "ALTER TABLE squad_runs DROP COLUMN usage_model_error_count",
+    "ALTER TABLE squad_runs DROP COLUMN usage_model_request_count",
+    "ALTER TABLE squad_runs DROP COLUMN usage_cache_read_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_cache_creation_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_reasoning_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_output_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_input_tokens",
+    "ALTER TABLE squad_runs DROP COLUMN usage_total_tokens",
+  ],
+  // 0016（#7 交付物 D1a）：只建一张新表 + 两索引（反向 DDL 先索引后表，与 0010/0011/0012 同序）。
+  "0016_work_item_deliverables": [
+    "DROP INDEX idx_work_item_deliverables_run",
+    "DROP INDEX idx_work_item_deliverables_item",
+    "DROP TABLE work_item_deliverables",
+  ],
+  // 0018（工作项 Surface 对齐 · 阶段一 R1）：work_items 加 7 列 + 一条唯一索引。
+  // 列级追加（不改表）⇒ 反向 DDL 先撤索引（列在索引里，先 DROP COLUMN 会被拒绝）再逐列 DROP。
+  "0018_work_item_surface_fields": [
+    "DROP INDEX idx_work_items_identifier",
+    "ALTER TABLE work_items DROP COLUMN identifier_seq",
+    "ALTER TABLE work_items DROP COLUMN creator_display_name",
+    "ALTER TABLE work_items DROP COLUMN creator_id",
+    "ALTER TABLE work_items DROP COLUMN creator_kind",
+    "ALTER TABLE work_items DROP COLUMN due_date",
+    "ALTER TABLE work_items DROP COLUMN start_date",
+    "ALTER TABLE work_items DROP COLUMN priority",
+  ],
+  // 0019（Subscriber 完整语义线 SUB.1）：只建一张新表 + 两索引（反向 DDL 先索引后表，同 0010/0011/0012/0016）。
+  "0019_work_item_subscribers": [
+    "DROP INDEX idx_work_item_subscribers_subject",
+    "DROP INDEX idx_work_item_subscribers_unique",
+    "DROP TABLE work_item_subscribers",
+  ],
+  // 0020（saved views R6a）：建两张新表 + 两索引（反向 DDL 先索引后表；prefs 表无显式索引，
+  // 主键即索引，随表 drop）。登记纪律同 0016/0017/0019。
+  "0020_work_item_views": [
+    "DROP INDEX idx_work_item_views_shared",
+    "DROP INDEX idx_work_item_views_owner",
+    "DROP TABLE work_item_view_prefs",
+    "DROP TABLE work_item_views",
+  ],
+  // 0021（工作项级 reactions，P3-R5s）：一表一索引（反向 DDL 先索引后表，同 0016/0017/0019/0020 的序）。
+  "0021_work_item_reactions": [
+    "DROP INDEX idx_work_item_reactions_item",
+    "DROP TABLE work_item_reactions",
+  ],
+  // 0022（项目绑定 · 服务面轮 R-P1）：一表一索引 + work_items 两列（列级追加 ⇒ 反向 DDL 先撤
+  // 索引/表、再按 ALTER 逆序逐列 DROP）。**这两列必须登记**：`ALTER TABLE ADD COLUMN` 不幂等，
+  // 漏登记时「退回上一版发布再补跑」会撞 duplicate column（本用例的自适配守卫会直接红）。
+  "0022_projects": [
+    "DROP INDEX idx_projects_short_code",
+    "DROP TABLE projects",
+    "ALTER TABLE work_items DROP COLUMN identifier_prefix",
+    "ALTER TABLE work_items DROP COLUMN project_id",
+  ],
 };
+
+/* 0016（#7 交付物 D1a）的列集：设计报告 §3.2 的表形状逐字抄录（不在这里用代码重算）。
+   `kind` 闭集与 `UNIQUE(workspace_key, dedup_key)` 不占列：前者由 repo 的读写双闸管，
+   后者是幂等索引（repo 用例里以「人为重复插入 ⇒ /UNIQUE/」钉住）。 */
+const EXPECTED_DELIVERABLE_COLUMNS = [
+  "id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "run_id",
+  "kind",
+  "title",
+  "meta_json",
+  "content_ref",
+  "content_sha",
+  "content_size",
+  "actor_kind",
+  "actor_id",
+  "dedup_key",
+  "created_at",
+  "updated_at",
+];
+
+const EXPECTED_DELIVERABLE_INDEXES = [
+  "idx_work_item_deliverables_item",
+  "idx_work_item_deliverables_run",
+];
+
+/* 0019（SUB.1）的列集：拆解报告 §2.1 的表形状逐字抄录（不在这里用代码重算）。
+   三个闭集列（reason / subject_type / opt_out_scope）不占 CHECK：枚举漂移要在 repo 的读写双闸里
+   响亮，不在 DDL 里静默（与 inbox_items.kind / work_item_pull_requests.state 同一条纪律）。 */
+const EXPECTED_SUBSCRIBER_COLUMNS = [
+  "id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "subject_type",
+  "subject_id",
+  "reason",
+  "opt_out_scope",
+  "tombstoned_at",
+  "created_at",
+];
+
+const EXPECTED_SUBSCRIBER_INDEXES = [
+  "idx_work_item_subscribers_subject",
+  "idx_work_item_subscribers_unique",
+];
+
+function subscriberColumns(db: DatabaseSync): string[] {
+  return (
+    db.prepare("PRAGMA table_info(work_item_subscribers)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function subscriberIndexes(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_work_item_subscribers%'",
+      )
+      .all() as Array<{ name: string }>
+  )
+    .map((row) => row.name)
+    .sort();
+}
+
+/** 唯一索引的列序与唯一性（PRAGMA index_list/index_info 的裸读，不经 repo）。 */
+function subscriberUniqueIndexFacts(db: DatabaseSync): {
+  unique: number;
+  columns: string[];
+  partial: number;
+} {
+  const listed = db.prepare("PRAGMA index_list(work_item_subscribers)").all() as Array<{
+    name: string;
+    unique: number;
+    partial: number;
+  }>;
+  const entry = listed.find((row) => row.name === "idx_work_item_subscribers_unique");
+  const columns = (
+    db.prepare("PRAGMA index_info(idx_work_item_subscribers_unique)").all() as Array<{
+      name: string;
+    }>
+  ).map((row) => row.name);
+  return { unique: entry?.unique ?? 0, columns, partial: entry?.partial ?? 0 };
+}
+
+function deliverableColumns(db: DatabaseSync): string[] {
+  return (
+    db.prepare("PRAGMA table_info(work_item_deliverables)").all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function deliverableIndexes(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_work_item_deliverables%'",
+      )
+      .all() as Array<{ name: string }>
+  )
+    .map((row) => row.name)
+    .sort();
+}
+
+const EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008 = [
+  "run_id",
+  "workspace_key",
+  "workspace_path",
+  "work_item_id",
+  "parent_work_item_id",
+  "agent_id",
+  "is_leader_task",
+  "branch",
+  "dir_name",
+  "status",
+  "session_id",
+  "created_at",
+  "updated_at",
+];
+
+function squadRunColumns(db: DatabaseSync): string[] {
+  return (db.prepare("PRAGMA table_info(squad_runs)").all() as Array<{ name: string }>).map(
+    (column) => column.name,
+  );
+}
+
+/** 0014 之后（= 0015 之前）的完整列集：0006 建表 13 列 + 0008 两列 + 0014 两列。 */
+const EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014 = [
+  ...EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
+  "dispatch_cause",
+  "caused_by_run_id",
+  "opened_at",
+  "settle_reason",
+];
+
+/** 0015 的 9 个用量列（追加在末尾；顺序 = `SQUAD_RUN_USAGE_SQL` 的 ALTER 顺序，逐字固定）。
+ *  `usage_recorded_at` 是**存在性开关**：NULL = 未记录（与合法值 0「跑过但没消耗」可区分）。 */
+const EXPECTED_SQUAD_RUN_USAGE_COLUMNS = [
+  "usage_total_tokens",
+  "usage_input_tokens",
+  "usage_output_tokens",
+  "usage_reasoning_tokens",
+  "usage_cache_creation_tokens",
+  "usage_cache_read_tokens",
+  "usage_model_request_count",
+  "usage_model_error_count",
+  "usage_recorded_at",
+];
 
 test("迁移建出 work_items 表与索引", () => {
   const db = openFreshDb();
@@ -64,6 +365,236 @@ test("迁移建出 work_items 表与索引", () => {
     .all();
   assert.equal(tables.length, 1);
   assert.deepEqual(workItemIndexes(db), EXPECTED_WORK_ITEM_INDEXES);
+});
+
+/* 0008 的**直接**用例（老库升级 + 从零建库两条路都要走）：
+   · 老库（已有 0001–0007、库里还有行）补跑 0008 ⇒ **只加两列**、既有 13 列一字未动、
+     既有行读回两列 = NULL（NULL = 遗留行/未知成因，加列**不猜值**）；
+   · 从零建库同样带这两列 ⇒ 新库与老库升级后**同一形状**（否则两边读回同一条 SQL 结果不同）。 */
+test("0008：老库补跑只加两列（既有行读回 NULL）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  // 自适配：0008 之后若再添迁移，本用例按同一条路逐条退回「0008 之前」。
+  const from008 = fullLedger.findIndex((row) => row.id === "0008_squad_run_cause");
+  assert.ok(from008 > 0, "账本里没有 0008（迁移没挂上）");
+  /* 逐条退回必须**逆序**（最后应用的最先撤）：0013 这类「往 0009/0011 建的表上加列」的迁移，
+     其反向 DDL 引用的表会被 0009/0011 自己的反向 DDL 整表 drop——正序执行会撞 no such table。 */
+  for (const row of fullLedger.slice(from008).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  // 退回「0008 之前」的形状：13 列，且我们真的能按旧列清单写入一条既有行。
+  assert.deepEqual(squadRunColumns(db), EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008);
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at)
+     VALUES ('legacy-1', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL, 1, 1)`,
+  ).run();
+
+  const migrated: Array<string | null> = [];
+  runTasksDatabaseMigrations(db, {
+    onProgress: (phase, facts) => {
+      if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
+    },
+  });
+  // 补跑了两条（0008 + 0009）：`lastAppliedMigrationId` 在循环前只取一次基线，
+  // 两条 migrating 回调带的是**同一个基线 id**（B1：0009 落地后本断言必须随之改为 2 条同基线）。
+  // 补跑条数 = 从 0008 起的所有迁移（含未来新增——结构性解耦，X0.1 推荐方案落地）。
+  const expected = fullLedger.slice(from008).map(() => fullLedger[from008 - 1]?.id ?? null);
+  assert.deepEqual(migrated, expected, "补跑 0008 起的全部迁移（基线 id 相同，各出现一次）");
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  const columns = squadRunColumns(db);
+  /* 本用例只对 0008 的契约负责：既有 13 列**逐字未动**（前缀相等），0008 的两列紧随其后。
+     刻意不再断言「总列数 = 15」：0008 之后的新迁移（0014 的 opened_at / settle_reason 即一例）
+     可以继续在末尾追加列——把总数写死会让本用例在下一条加法迁移落地时假红，
+     而它要守的是「老库升级不得改动既有列」（各条迁移的新增列由各自的专条用例断言）。 */
+  assert.deepEqual(
+    columns.slice(0, EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length),
+    EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008,
+    "既有 13 列一字未动（前缀逐字相等）",
+  );
+  assert.deepEqual(
+    columns.slice(
+      EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length,
+      EXPECTED_SQUAD_RUN_COLUMNS_BEFORE_0008.length + 2,
+    ),
+    ["dispatch_cause", "caused_by_run_id"],
+    "0008 的两列紧随其后",
+  );
+  // 既有行读回两列 = NULL：加列不猜值（遗留行语义），读回不得把 NULL 当成某一档成因。
+  const legacy = db
+    .prepare("SELECT dispatch_cause, caused_by_run_id FROM squad_runs WHERE run_id = 'legacy-1'")
+    .get() as { dispatch_cause: string | null; caused_by_run_id: string | null };
+  assert.equal(legacy.dispatch_cause, null);
+  assert.equal(legacy.caused_by_run_id, null);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), columns);
+});
+
+/* 0014（看门狗 W1）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0013、库里还有行）补跑 ⇒ 只加 `opened_at` / `settle_reason` 两列，
+     既有列一字未动，且**回填** `opened_at = created_at`（非 queued 行：它进过 open，created_at
+     是唯一可用的近似起点）；queued 行**恒 NULL**（它还没开跑，起算点不存在——不得拿 created_at
+     冒充，否则「排队久」会被 TTL 误判成「跑得久」）；
+   · 从零建库同一形状（0014 的 ALTER 是唯一列来源，0006 的建表 SQL 已冻结）。 */
+test("0014：老库补跑只加两列并回填 opened_at = created_at（queued 行 NULL）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from014 = fullLedger.findIndex((row) => row.id === "0014_squad_run_watchdog");
+  assert.ok(from014 > 0, "账本里没有 0014（迁移没挂上）");
+  // 逐条退回（逆序）到「0014 之前」：结构与 0013 之后一模一样。
+  for (const row of fullLedger.slice(from014).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  // 造两条遗留行（旧列集可写）：一条直开的 open 行、一条排队行。
+  const insertLegacy = (runId: string, status: string, createdAt: number) =>
+    db
+      .prepare(
+        `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+           parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+           created_at, updated_at, dispatch_cause, caused_by_run_id)
+         VALUES (?, 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, ?, NULL, ?, ?, NULL, NULL)`,
+      )
+      .run(runId, status, createdAt, createdAt);
+  insertLegacy("legacy-open", "open", 111);
+  insertLegacy("legacy-queued", "queued", 222);
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  /* 本用例只对 0014 的契约负责：既有 15 列**逐字未动**（前缀相等），0014 的两列紧随其后。
+     刻意不再断言「总列数 = 17」：0014 之后的新迁移（0015 的 9 个用量列即一例）可以继续在末尾
+     追加列——把总数写死会让本用例在下一条加法迁移落地时假红，而它要守的是「老库升级不得改动
+     既有列」（各条迁移的新增列由各自的专条用例断言，与 0008 用例同一条纪律）。 */
+  assert.deepEqual(
+    squadRunColumns(db).slice(0, EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014.length),
+    EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014,
+    "只加两列（在末尾），既有 15 列一字未动（前缀逐字相等）",
+  );
+  // 回填语义：非 queued ⇒ created_at；queued ⇒ NULL（不猜起算点）；settle_reason 一律 NULL。
+  const backfilled = (
+    db
+      .prepare("SELECT run_id, opened_at, settle_reason FROM squad_runs ORDER BY run_id")
+      .all() as Array<{ run_id: string; opened_at: number | null; settle_reason: string | null }>
+  ).map((row) => ({ runId: row.run_id, openedAt: row.opened_at, settleReason: row.settle_reason }));
+  assert.deepEqual(backfilled, [
+    { runId: "legacy-open", openedAt: 111, settleReason: null },
+    { runId: "legacy-queued", openedAt: null, settleReason: null },
+  ]);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), squadRunColumns(db));
+});
+
+/* 0015（#6 按 run 用量记账 CT.1）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0014、库里还有行）补跑 ⇒ 只加 9 个 `usage_*` 列、既有 17 列一字未动；
+   · **零回填**：既有行读回 9 列全 NULL —— 没有会话就没有用量，回填无事实可依；填 0 会把
+     「没记账」伪装成「没消耗」（列语义见 `SQUAD_RUN_USAGE_SQL` 的注释）；
+   · 从零建库同一形状（0015 的 ALTER 是 9 列的**唯一**来源，0006 的建表 SQL 已冻结）。 */
+test("0015：老库补跑只加 9 列用量（既有行全 NULL，零回填）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from015 = fullLedger.findIndex((row) => row.id === "0015_squad_run_usage");
+  assert.ok(from015 > 0, "账本里没有 0015（迁移没挂上）");
+  // 逐条退回（逆序）到「0015 之前」：结构与 0014 之后一模一样（17 列）。
+  for (const row of fullLedger.slice(from015).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  assert.deepEqual(squadRunColumns(db), EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014);
+  // 造一条遗留行（0014 的列清单可写）：它没有经过任何用量记账。
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at, dispatch_cause, caused_by_run_id, opened_at, settle_reason)
+     VALUES ('legacy-usage-1', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL,
+       111, 111, NULL, NULL, 111, NULL)`,
+  ).run();
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  assert.deepEqual(
+    squadRunColumns(db),
+    [...EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014, ...EXPECTED_SQUAD_RUN_USAGE_COLUMNS],
+    "0015 只加 9 列（在末尾），既有 17 列一字未动",
+  );
+  // 零回填 + NULL 语义：既有行 9 列全 NULL（**未记录 ≠ 0**）。
+  const legacy = db
+    .prepare(
+      `SELECT ${EXPECTED_SQUAD_RUN_USAGE_COLUMNS.join(", ")} FROM squad_runs WHERE run_id = 'legacy-usage-1'`,
+    )
+    .get() as Record<string, number | null>;
+  for (const column of EXPECTED_SQUAD_RUN_USAGE_COLUMNS)
+    assert.equal(legacy[column], null, `${column} 必须保持 NULL（零回填：没有会话就没有用量）`);
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(squadRunColumns(fresh), squadRunColumns(db));
+});
+
+/* 0016（#7 交付物 D1a）的**直接**用例：老库补跑 + 从零建库两条路都要走。
+   · 老库（已有 0001–0015、库里还有行）补跑 ⇒ 只建 `work_item_deliverables` 一张新表与两索引，
+     **既有表/列一字未动**（本迁移是纯新建，没有 ALTER、没有回填）；
+   · 从零建库同一形状（0016 的建表 SQL 是这张表的唯一来源，不存在「老库升级后少一列」的分叉）。 */
+test("0016：老库补跑只建交付物表（既有表未动、零回填）；从零建库同一形状", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+  const fullLedger = ledger(db);
+  const from016 = fullLedger.findIndex((row) => row.id === "0016_work_item_deliverables");
+  assert.ok(from016 > 0, "账本里没有 0016（迁移没挂上）");
+  // 逐条退回（逆序）到「0016 之前」：结构与 0015 之后一模一样。
+  for (const row of fullLedger.slice(from016).reverse()) {
+    for (const sql of LATEST_MIGRATION_ARTIFACTS[row.id] ?? []) db.exec(sql);
+    db.prepare("DELETE FROM tasks_schema_migration WHERE id = ?").run(row.id);
+  }
+  assert.equal(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_item_deliverables'")
+      .get(),
+    undefined,
+    "退回后这张表不该还在（老库形状）",
+  );
+  // 老库里躺着一条既有行（0015 之后的列集可写）：补跑 0016 不得碰它。
+  db.prepare(
+    `INSERT INTO squad_runs (run_id, workspace_key, workspace_path, work_item_id,
+       parent_work_item_id, agent_id, is_leader_task, branch, dir_name, status, session_id,
+       created_at, updated_at, dispatch_cause, caused_by_run_id, opened_at, settle_reason,
+       usage_total_tokens, usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
+       usage_cache_creation_tokens, usage_cache_read_tokens, usage_model_request_count,
+       usage_model_error_count, usage_recorded_at)
+     VALUES ('legacy-016', 'ws', '/tmp/ws', 'wi-1', 'wi-1', 'ta-a', 0, NULL, NULL, 'open', NULL,
+       111, 111, NULL, NULL, 111, NULL, 7, 5, 2, 0, 0, 0, 1, 0, 111)`,
+  ).run();
+
+  runTasksDatabaseMigrations(db);
+  assert.deepEqual(ledger(db), fullLedger, "补跑后账本与「一开始就完整跑满」逐行一致");
+  assert.deepEqual(deliverableColumns(db), EXPECTED_DELIVERABLE_COLUMNS, "列集与顺序逐字固定");
+  assert.deepEqual(deliverableIndexes(db), EXPECTED_DELIVERABLE_INDEXES);
+  assert.deepEqual(
+    squadRunColumns(db),
+    [...EXPECTED_SQUAD_RUN_COLUMNS_AFTER_0014, ...EXPECTED_SQUAD_RUN_USAGE_COLUMNS],
+    "既有 squad_runs 表一字未动",
+  );
+  const legacy = db
+    .prepare("SELECT usage_total_tokens FROM squad_runs WHERE run_id = 'legacy-016'")
+    .get() as { usage_total_tokens: number | null };
+  assert.equal(legacy.usage_total_tokens, 7, "既有行数据未被 0016 触碰");
+
+  // 从零建库：同一形状（新库不该比老库升级多/少列）。
+  const fresh = openFreshDb();
+  runTasksDatabaseMigrations(fresh);
+  assert.deepEqual(deliverableColumns(fresh), deliverableColumns(db));
+  assert.deepEqual(deliverableIndexes(fresh), deliverableIndexes(db));
 });
 
 // 迁移必须幂等：老库升级与重放都不能报错、不能改动结构。
@@ -103,16 +634,24 @@ test("老库升级只补跑最新一条迁移", () => {
   assert.ok(published.length > 0, "账本至少要两条迁移，否则模拟不出「老库」");
 
   // 冻结契约（字面量钉法）：已登记的每条必须逐一命中字面量，防「有人改冻结声明」。
-  // 未登记项（刚新增的迁移）不判红；反过来，登记表不得留下库里已不存在的 id，防边界漂移。
-  for (const row of published) {
-    const pinned = PINNED_MIGRATION_CHECKSUMS[row.id];
-    if (pinned !== undefined)
-      assert.equal(
-        row.checksum,
-        pinned,
-        `${row.id} 的冻结 checksum 被改动（老库升级会抛 checksum_mismatch）`,
-      );
-  }
+  /* 「未登记即失败」（2026-10-09 G1）：本用例原先对未登记行**静默跳过**，于是 0006–0021
+     一路漏登记而无人发现（依据：`.superpowers/sdd/…/reports/2026-10-09-plan-vs-code-reconciliation.md`
+     的 G1）。现在改成响亮失败，并一次列出全部缺号——「已发布」= 账本里除最新一条之外的全部，
+     所以刚新增的那条不必登记（不会假红）；但它一旦被下一条迁移顶成已发布，本用例就会红在这里，
+     逼着补登记（这就是堵住「新迁移再漏登记」的口子）。
+     下面这段必须与逐条比对分开写：否则有人把比对循环改回「未登记就跳过」时，缺号会重新静默。 */
+  const unregistered = unregisteredMigrationIds(published, PINNED_MIGRATION_CHECKSUMS);
+  assert.deepEqual(
+    unregistered,
+    [],
+    `以下已发布迁移未登记冻结 checksum（老库升级会抛 checksum_mismatch 而无人拦）：${unregistered.join("、")}`,
+  );
+  for (const row of published)
+    assert.equal(
+      row.checksum,
+      PINNED_MIGRATION_CHECKSUMS[row.id],
+      `${row.id} 的冻结 checksum 被改动（老库升级会抛 checksum_mismatch）`,
+    );
   for (const id of Object.keys(PINNED_MIGRATION_CHECKSUMS))
     assert.ok(
       published.some((row) => row.id === id),
@@ -155,4 +694,95 @@ test("老库升级只补跑最新一条迁移", () => {
   });
   assert.equal(executedAgain, 0);
   assert.deepEqual(ledger(db), fullLedger);
+});
+
+/* 守卫自证（围住守卫的守卫）：上面那条用例之所以能在漏登记时响亮失败，靠的是
+   `unregisteredMigrationIds` 的语义。若有人把规则改回「未登记就静默跳过」（规则恒返回空数组），
+   上面那条用例在登记齐备时照样绿 —— 刚堵上的口子会重新打开且无人察觉。故此处直接钉住规则本身：
+   给它一份**故意缺号**的账本，它必须逐个点名。值全是手写字面量，不由被测规则反推。 */
+test("守卫自证：未登记即失败规则必须点名缺号（语义退回「跳过」即在此红）", () => {
+  assert.deepEqual(
+    unregisteredMigrationIds(
+      [{ id: "0006_squad_runs" }, { id: "0022_projects" }, { id: "9999_probe" }],
+      { "0006_squad_runs": "a", "0022_projects": "b" },
+    ),
+    ["9999_probe"],
+    "缺号必须被点名（只报第一条、或整段不报，都会在这里红）",
+  );
+  assert.deepEqual(
+    unregisteredMigrationIds([], { "0001_adopt_task_schema": "a" }),
+    [],
+    "空账本不得报缺号——规则不是恒非空",
+  );
+  assert.deepEqual(
+    unregisteredMigrationIds([{ id: "0001_adopt_task_schema" }], {}),
+    ["0001_adopt_task_schema"],
+    "空登记表下每条账本行都算缺号，不是只看第一行",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 0019（SUB.1）：work_item_subscribers —— 订阅关系的存储落点
+// ---------------------------------------------------------------------------
+
+test("0019 订阅表：列集与两索引齐备；唯一键不含 reason；重复插入被唯一索引拒绝；账本收尾至最新一条", () => {
+  const db = openFreshDb();
+  runTasksDatabaseMigrations(db);
+
+  assert.deepEqual(subscriberColumns(db), EXPECTED_SUBSCRIBER_COLUMNS, "0019 的列集逐字对号");
+  assert.deepEqual(
+    subscriberIndexes(db),
+    EXPECTED_SUBSCRIBER_INDEXES,
+    "恰两条索引：唯一键 + 主体反查",
+  );
+
+  const facts = subscriberUniqueIndexFacts(db);
+  assert.equal(facts.unique, 1, "idx_work_item_subscribers_unique 必须是 UNIQUE 索引");
+  assert.deepEqual(
+    facts.columns,
+    ["workspace_key", "work_item_id", "subject_type", "subject_id"],
+    "唯一键 = (workspace, 工作项, 主体类型, 主体 id)：一行 = 一个（工作项, 主体）的当前关系，" +
+      "reason 是这行上的字段而不是键的一部分（含 reason 会让同一个人长两行，退订时无从选择）",
+  );
+  assert.equal(facts.partial, 0, "唯一索引不得带谓词（带谓词会让同一主体在谓词外再长一行）");
+
+  // 存储层不变式：人为重复插入必须被唯一索引**拒绝**（幂等不是靠调用方的「先查后插」）。
+  const insert = (id: string, reason: string) =>
+    db
+      .prepare(
+        `INSERT INTO work_item_subscribers (
+           id, workspace_key, workspace_path, work_item_id, subject_type, subject_id,
+           reason, opt_out_scope, tombstoned_at, created_at
+         ) VALUES (?, 'ws-1', '/tmp/ws-1', 'wi-1', 'human', 'local-user', ?, 'issue', NULL, 1)`,
+      )
+      .run(id, reason);
+  insert("s-1", "creator");
+  assert.throws(
+    () => insert("s-2", "commenter"),
+    /UNIQUE/,
+    "同 (workspace, 工作项, 主体) 的第二行必须被拒绝——换了 reason 也不能长第二行",
+  );
+  // 键的另一半：换工作项就是另一个关系，合法。
+  db.prepare(
+    `INSERT INTO work_item_subscribers (
+       id, workspace_key, workspace_path, work_item_id, subject_type, subject_id,
+       reason, opt_out_scope, tombstoned_at, created_at
+     ) VALUES ('s-3', 'ws-1', '/tmp/ws-1', 'wi-2', 'human', 'local-user', 'creator', 'issue', NULL, 1)`,
+  ).run();
+  const count = db.prepare("SELECT COUNT(*) AS n FROM work_item_subscribers").get() as {
+    n: number;
+  };
+  assert.equal(count.n, 2, "不同工作项各自一行");
+
+  const ids = ledger(db).map((row) => row.id);
+  /* 0022（项目绑定，R-P1）落地后账本到 22：本断言随追加同步（与 0016/0017/0018 的登记纪律同款）。
+     「最后一条是谁」刻意不钉：那是各迁移专条用例的事，0019 只需证明自己在账本里。 */
+  assert.equal(ids.length, 22, "账本 0001..0022 恰 22 条");
+  assert.ok(ids.includes("0019_work_item_subscribers"), "0019 在账本里");
+
+  // DDL 幂等：绕开账本把常量再执行一遍（IF NOT EXISTS 生效，形状一字不改）。
+  const before = subscriberColumns(db);
+  assert.doesNotThrow(() => db.exec(WORK_ITEM_SUBSCRIBER_SQL));
+  assert.deepEqual(subscriberColumns(db), before);
+  assert.deepEqual(subscriberIndexes(db), EXPECTED_SUBSCRIBER_INDEXES);
 });

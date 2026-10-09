@@ -1,3 +1,6 @@
+/* eslint-disable max-lines -- 根入口是**服务清单**：每个服务 1-3 行 re-export 正是它的本质。
+   拆成多个 barrel 只会给"某服务该从哪个入口拿"多一层查找（node.ts 同款理由）；
+   行数已到 400 上限，任何新服务都会越线，而这不是该被行数约束的东西。 */
 // Descriptors & collection (browser-safe)
 export { type ServiceDescriptor, createServiceDescriptor } from "./descriptors.js";
 export { ServiceCollection } from "./collection.js";
@@ -256,6 +259,9 @@ export type {
 // 停在启动壳、无报错浮层、无 pending 请求，极难定位。
 // 需要这些能力的调用方从 @zcode/services/node 或直接相对路径引入。
 
+export { AGENT_BUILDER_ERROR_CODES } from "./agentbuilder/agentBuilderErrors.js";
+export { AGENT_BUILDER_QUERY_SOURCE, IAgentBuilderService } from "./agentbuilder/agentBuilder.js";
+
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)
@@ -348,3 +354,239 @@ export type {
   FeedbackTicketType,
 } from "@zcode/shared";
 export { IClientConfigService } from "./client-config/clientConfig.js";
+
+/* ---------------- 小队运行时（workitem 域） ----------------
+   这里只能出**浏览器安全**的东西：描述符（renderer 要经它取数）、错误类、纯类型，
+   以及 `createSquadRunRepo`（它只 `import type` node:sqlite，不形成运行时依赖）。
+   实现（`createSquadRuntime` / `createSquadRuntimeService`）依赖 node 侧 git 与工作树，
+   只能从 `@zcode/services/node` 取；`slugForId` 依赖 node:crypto，同样只在 node 入口。 */
+export {
+  ISquadRuntimeService,
+  SQUAD_DISPATCH_DISABLED_CODE,
+  SquadDispatchDisabledError,
+  /* 「本工作项是不是一支小队批次的根」的**唯一判据**（纯函数、浏览器安全）：服务面的重驱枚举与
+     最小视图的「放弃整批」入口共用它 —— UI 必须能用**同一份定义**判断哪些工作项给破坏性入口，
+     否则「界面给得出、服务层不认」这类漂移不会报错。 */
+  isSquadBatchRoot,
+} from "./workitem/squadRuntimeService.js";
+/** 与描述符同名的接口类型换个名字导出：UI 侧要能单独引用**类型**（`ISquadRuntimeService` 这个名字
+    在本入口已经是值），与 IZCodeTaskService 等既有约定的处理方式一致。 */
+export type {
+  ISquadRuntimeService as ISquadRuntimeServiceShape,
+  CreateWorkItemRequest,
+  SquadSnapshot,
+  SquadWorkspaceTarget,
+} from "./workitem/squadRuntimeService.js";
+/* 保存视图（R6a）的**稳定错误码 + 错误类 + 常量**：UI 侧按码分流（照 `SQUAD_DISPATCH_DISABLED_CODE`
+   的做法：不存在 / 无权读同码、越权管理、revision 冲突、配额、非法输入五类）。实现文件
+   （`workItemViewService.ts`）是浏览器安全的（zod + shared + 只类型引用），故可作**值**导出。 */
+export {
+  WorkItemViewError,
+  WORK_ITEM_VIEW_FORBIDDEN_CODE,
+  WORK_ITEM_VIEW_INVALID_CODE,
+  WORK_ITEM_VIEW_NAME_MAX_LENGTH,
+  WORK_ITEM_VIEW_NOT_FOUND_CODE,
+  WORK_ITEM_VIEW_PAYLOAD_MAX_BYTES,
+  WORK_ITEM_VIEW_QUOTA_EXCEEDED_CODE,
+  WORK_ITEM_VIEW_REVISION_CONFLICT_CODE,
+  WORK_ITEM_VIEWS_PER_OWNER_MAX,
+} from "./workitem/workItemViewService.js";
+/* 保存视图六件的入参出参形状（UI 的视图条 / 保存对话框要能命名它们）：类型声明在实现文件
+   （`workItemViewService.ts` / `workItemViewRepo.ts`），只做类型再导出（编译擦除）。 */
+export type {
+  CreateWorkItemViewInput,
+  PatchWorkItemViewInput,
+  WorkItemViewDefinitionPatchInput,
+  WorkItemViewErrorCode,
+  WorkItemViewPrefsDocument,
+} from "./workitem/workItemViewService.js";
+export type {
+  WorkItemViewOwner,
+  WorkItemViewRecord,
+  WorkItemViewScopeType,
+  WorkItemViewVisibility,
+} from "./workitem/workItemViewRepo.js";
+/* 唤醒规则的建/编辑入参（P2b 第二半 + 收口）：UI 的规则表单要能命名它们。类型声明在实现文件
+   （`squadWakeRules.ts`，400 行门槛的拆分点），与 `MemberRunRequest` 声明在 `squadRunLifecycle.ts`
+   同一条先例 —— 只做类型再导出（编译擦除，不进 renderer 的运行时依赖图）。
+   两个形状都是「与创建同集」的：`UpdateWakeRuleRequest` = 创建集减去 `workItemId`（挂载对象不可改）
+   与 `timezone`（界面不暴露）。`expiresAt` **留在编辑集里**（G3：调度侧已消费 —— `wakeTick` 判、
+   `nextFireAtAfter` 收口，故编辑面必须能改它；patch 显式给 ⇒ 改，不给 ⇒ 保留现行值）。
+   「类型可命名」与「界面渲染出输入框」是两件事：本文件只保证前者。 */
+export type { CreateWakeRuleRequest, UpdateWakeRuleRequest } from "./workitem/squadWakeRules.js";
+// 方法的入参/出参类型也要可命名：Wave 1 的 host 与 UI 要用它们构造调用，
+// 只能从接口签名里「结构性」拿到是没法写代码的。
+export type {
+  MemberRunRequest,
+  OpenMemberRunResult,
+  ReviewOutcome,
+} from "./workitem/squadRunLifecycle.js";
+/* 派发**成因**（2026-10-04，`squad_runs.dispatch_cause`）的词汇：闭集三值联合（时间线把
+   「队长→队员」弧线从渲染时推断升级为事实时要能命名它）。声明在 `squadDispatchRequests.ts`
+   （浏览器安全的那个文件）；这里**只出类型**（编译擦除）—— 值（`DISPATCH_CAUSES` 常量数组）
+   只从 `@zcode/services/node` 出。 */
+export type { DispatchCause } from "./workitem/squadDispatchRequests.js";
+export type { ReapOutcome } from "./worktree/orphanReaper.js";
+export { createSquadRunRepo } from "./workitem/squadRunRepo.js";
+export type {
+  SquadRunRecord,
+  SquadRunRepo,
+  SquadRunStatus,
+  SquadRunUsageSnapshot,
+} from "./workitem/squadRunRepo.js";
+/* `settle_reason` 的**码值单源**（W1 的 0014 列）也要从这里出**值**：agent 详情页要把
+   「为什么结束」本地化呈现（欠账 #13），而 UI 侧**不得内联** `watchdog_ttl` 这类字面量 ——
+   抄错一个字，一次看门狗结算会被显示成别的原因，且不报错。`squadRunRepo` 只 type-import
+   `node:sqlite`，故这些常量（与已在此处的 `createSquadRunRepo` 同链）是浏览器安全的。 */
+export {
+  SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+} from "./workitem/squadRunRepo.js";
+/* 收件箱（P2c）**只出类型**：`inboxItemRepo` 值导入 `node:crypto`（id 生成），从本入口出值会让
+   renderer 整包失败（browserSafeRootEntry.test.ts 守这条）；值（repo 工厂 / 构建件）只从
+   `@zcode/services/node` 出。类型是擦除的，UI 侧要能命名这些形状。 */
+export type {
+  InboxItem,
+  InboxItemInput,
+  InboxItemKind,
+  InboxItemSeverity,
+} from "./workitem/inboxItemRepo.js";
+/* B5.1：工作项协作**读门面**（设计案开放问题 1 的答复，任务卡 §2.2/§2.4）——描述符从根入口出
+   （renderer 要经它取数），形状与语义见该文件头注释。新增描述符**不新增任何 IPC handler /
+   协议 schema**：host 侧 `ServiceCollection.register` 即把 channel 暴露在线路上。
+   三处接线（本入口导出 / node.ts register / client remoteServiceAccess 代理）由 UI 的 R4 守卫成对钉住。 */
+export {
+  IWorkItemCollaborationService,
+  createWorkItemCollaborationService,
+} from "./workitem/workItemCollaborationService.js";
+export type {
+  IWorkItemCollaborationService as IWorkItemCollaborationServiceShape,
+  WorkItemCollaborationRead,
+  WorkItemCollaborationRepos,
+  WorkItemCollaborationServiceDeps,
+  /* B5.2 轮 2：四个写入口的**入参形状**（编译擦除；UI 只命名它，不构造身份 —— D1-A）。 */
+  CreateWorkItemCommentRequest,
+  /* C3.1：第五写入口（决定）的入参形状。实现模块值导入 node 侧内建，只出类型（同款理由）。 */
+  CreateWorkItemDecisionRequest,
+  /* #7 D1b：交付物**手动登记**的入参形状（人工贴链；`kind` 不在其中 —— 手动只开 link）。 */
+  RegisterWorkItemDeliverableLinkRequest,
+  /* #8 D2：PR 三入口的入参形状（UI 只给「挂到哪 / 贴哪个地址」；身份与 owner/repo/number 全由服务面派生）。 */
+  LinkWorkItemPullRequestRequest,
+  UnlinkWorkItemPullRequestRequest,
+  RefreshWorkItemPullRequestsRequest,
+  /* SUB.1：第六写入口（订阅 / 退订）的入参形状（判别联合：退订必带范围）。 */
+  SetWorkItemSubscriptionRequest,
+} from "./workitem/workItemCollaborationService.js";
+/* SUB.1（订阅表）：三个闭集是**服务端单源**，UI 只渲染映射（spec §7.1「UI 不得猜 reason」）——
+   故值从根入口出（`subscriberFacts` 零 IO、零 `node:` 值导入，renderer 可以直接解析）；
+   订阅行**类型**只出类型（`workItemSubscriberRepo` 值导入 `node:crypto`，出值会让 renderer 整包失败）。 */
+export {
+  ASSIGNMENT_SUBSCRIBER_REASONS,
+  AUTOMATIC_SUBSCRIBER_REASONS,
+  MANUAL_SUBSCRIBER_REASON,
+  OPT_OUT_SCOPES,
+  SUBSCRIBER_REASONS,
+  SUBSCRIBER_SUBJECT_TYPES,
+} from "./workitem/subscriberFacts.js";
+export type {
+  AutomaticSubscriberReason,
+  OptOutScope,
+  SubscriberReason,
+  SubscriberSubject,
+  SubscriberSubjectType,
+} from "./workitem/subscriberFacts.js";
+export type { WorkItemSubscriberRecord } from "./workitem/workItemSubscriberRepo.js";
+/* #7 D1b：交付物的**类型面**（读模型与 UI 穷尽映射要能命名这些形状）。
+   只出类型：`workItemDeliverableRepo` 值导入 node:fs/node:crypto，出值会让 renderer 整包失败
+   （browserSafeRootEntry.test.ts 守这条）。`DeliverableKind` 是 v1 闭集的类型名 —— UI 的
+   `Record<DeliverableKind, …>` 穷尽映射靠它咬合（闭集一长，UI 侧直接编译失败）。 */
+export type {
+  DeliverableContent,
+  DeliverableKind,
+  WorkItemDeliverableDetail,
+  WorkItemDeliverableRecord,
+} from "./workitem/workItemDeliverableRepo.js";
+/* #8 D2：PR 关联/快照的**类型面 + 两张闭集 + URL 归一化纯函数**。
+   · 类型（存储行 / 同步报告 / provider 结果）：UI 命名它们做穷尽映射；
+   · `PULL_REQUEST_STATES` 出**值**（与 WORK_ITEM_ACTIVITY_KINDS 同一条理由）：界面徽标映射
+     必须与服务面同一份闭集，硬编码四个字符串会在闭集增删时静默漂移；
+   · `normalizeGitHubPullRequestUrl` 出**值**：登记表单的「可提交判据」与服务面的入库判据必须是
+     **同一个**函数（两处各写一份正则会在「哪些地址算合法」上分叉，且分叉不报错）。
+     三个模块都保持浏览器安全（对 node 侧只用 `import type`），出值不会把 node 侧带进 renderer。 */
+export { PULL_REQUEST_STATES } from "./workitem/workItemPullRequestRepo.js";
+export type { PullRequestRecord, PullRequestState } from "./workitem/workItemPullRequestRepo.js";
+/* `normalizeGitHubPullRequestUrl` 的**返回值形状**（UI 表单判据的返回类型）与 URL 归一化本身
+   同源；provider 的接口类型（`PullRequestProvider` / 结果联合）留在 services 内部：
+   门面不暴露它们，UI 拿到的只有「可用性 + 行 + 报告」三样。 */
+export { normalizeGitHubPullRequestUrl } from "./workitem/pullRequestProvider.js";
+export type { GitHubPullRequestAddress } from "./workitem/pullRequestProvider.js";
+export type {
+  PullRequestMergedFact,
+  PullRequestSyncItem,
+  PullRequestSyncOutcome,
+  PullRequestSyncReport,
+} from "./workitem/pullRequestSync.js";
+/* 写入口的返回形状 = CommentService 的返回形状（门面不二次包装，故 UI 命名的是**同一份**类型）。
+   `export type` 擦除：commentService.ts 值导入 node:crypto，只有**值**导出才会把 node 侧带进 renderer。 */
+export type { CreateCommentResult, CommentDispatchReport } from "./workitem/commentService.js";
+/* 协作域的三张**运行时闭集**从根入口出值（浏览器安全：三个模块对 node 侧只用 `import type`）。
+   UI 的穷尽映射守卫必须拿**同一份**闭集做 deepEqual —— 硬编码 18 / 7 / 5 会在闭集增删时静默漂移
+   （界面少一个 kind 的文案而仍显示，永不报错）。 */
+export { WORK_ITEM_ACTIVITY_KINDS } from "./workitem/workItemActivityRepo.js";
+export type {
+  WorkItemActivityKind,
+  WorkItemActivityRecord,
+} from "./workitem/workItemActivityRepo.js";
+export {
+  COMMENT_DISPATCH_OUTCOMES,
+  COMMENT_DISPATCH_SOURCES,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export type {
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  CommentDispatchSource,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export { SOURCE_RUN_ROLES } from "./workitem/workItemCommentRepo.js";
+export type {
+  AuthorRef,
+  CommentCommand,
+  InlineAnchor,
+  MentionRef,
+  SourceRunRef,
+  WorkItemCommentRecord,
+} from "./workitem/workItemCommentRepo.js";
+export type { WorkItemCommentReactionRecord } from "./workitem/workItemCommentReactionRepo.js";
+/* 工作项级 reactions 的行形状（P3-R5s；UI 侧按 emoji 聚合要用它命名返回元素）：
+   类型声明在 repo 模块（只 `import type node:sqlite`），这里只做类型再导出（编译擦除）。 */
+export type { WorkItemReactionRecord } from "./workitem/workItemReactionRepo.js";
+/* 项目五件（R-P1）的**稳定错误码 + 错误类**：UI 侧按码分流（照 `SQUAD_DISPATCH_DISABLED_CODE`
+   的做法：项目不存在 / 工作项不存在 / 短码冲突 / 输入非法四类）。实现文件
+   （`workItemProjectService.ts`）是浏览器安全的（shared 纯函数 + 只类型引用），故可作**值**导出。 */
+export {
+  WorkItemProjectError,
+  WORK_ITEM_NOT_FOUND_CODE,
+  WORK_ITEM_PROJECT_INVALID_CODE,
+  WORK_ITEM_PROJECT_NOT_FOUND_CODE,
+  WORK_ITEM_PROJECT_SHORT_CODE_CONFLICT_CODE,
+} from "./workitem/workItemProjectService.js";
+/* 项目五件的入参出参形状（UI 的项目页 / 项目选择器 / 看板列要能命名它们）：类型声明在实现文件
+   （`workItemProjectService.ts` / `workItemProjectRepo.ts`），只做类型再导出（编译擦除）。 */
+export type {
+  CreateProjectInput,
+  SetWorkItemProjectInput,
+  UpdateProjectInput,
+  WorkItemProjectErrorCode,
+} from "./workitem/workItemProjectService.js";
+export type {
+  WorkItemProjectPatch,
+  WorkItemProjectRecord,
+} from "./workitem/workItemProjectRepo.js";
+export { WORK_ITEM_DECISION_KINDS } from "./workitem/workItemDecisionRepo.js";
+export type {
+  WorkItemDecisionKind,
+  WorkItemDecisionRecord,
+} from "./workitem/workItemDecisionRepo.js";
+// `eventKey` 的唯一构造器（spec §5.7.1）：全仓只此一处，调度器与 Repo 都调它。
+export { computeEventKey } from "@zcode/shared";

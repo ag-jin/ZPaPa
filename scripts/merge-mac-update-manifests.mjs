@@ -30,7 +30,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const [arm64Path, x64Path, outPath] = process.argv.slice(2);
 if (!arm64Path || !x64Path || !outPath) {
-  console.error("用法: node scripts/merge-mac-update-manifests.mjs <arm64.yml> <x64.yml> <输出路径>");
+  console.error(
+    "用法: node scripts/merge-mac-update-manifests.mjs <arm64.yml> <x64.yml> <输出路径>",
+  );
   process.exit(1);
 }
 
@@ -183,7 +185,8 @@ for (const file of mergedFiles) {
 }
 // 向后兼容字段（electron-updater 1.x / <2.15）：指向 arm64 的包，与 files[0] 一致。
 for (const key of ["path", "sha512", "releaseDate"]) {
-  if (arm64.scalars[key] !== undefined) lines.push(`${key}: ${formatValue(key, arm64.scalars[key])}`);
+  if (arm64.scalars[key] !== undefined)
+    lines.push(`${key}: ${formatValue(key, arm64.scalars[key])}`);
 }
 
 writeFileSync(outPath, `${lines.join("\n")}\n`, "utf8");

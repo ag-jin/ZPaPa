@@ -38,6 +38,10 @@ export default defineConfig(({ mode }) => {
   // ZAI OAuth client_id 是公开标识，允许注入浏览器包；secret/token 不得走 VITE_。
   const zaiOAuthClientId = resolveZaiOAuthClientId(endpointEnv);
 
+  // server 的 PORT 覆盖（entry-http.ts 同款默认 3030）；vite 代理跟随同一变量，
+  // 使 `PORT=3031 pnpm run dev:web` 时 web 面连到本实例的 server 而非别人的 3030。
+  const serverPort = Number(env.PORT) || 3030;
+
   return {
     plugins: [pdfJsCMapsPlugin(), react(), tailwindcss(), thirdPartyNoticesVitePlugin()],
     resolve: {
@@ -55,6 +59,8 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      // 局域网预览：ZCODE_WEB_LAN=1 时监听所有接口（默认仍仅本机）。
+      host: process.env.ZCODE_WEB_LAN === "1" ? true : undefined,
       proxy: {
         // Web 登录本地调试时，OAuth token 交换必须先命中线上同源接口。
         // 该专用代理放在 `/api` 通配代理之前，避免被转发到本地 server 导致 404。
@@ -63,9 +69,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
-        // 将 /ws 和 /api 请求代理到 server（默认 3030 端口）
-        "/ws": { target: "ws://localhost:3030", ws: true },
-        "/api": { target: "http://localhost:3030" },
+        // 将 /ws 和 /api 请求代理到 server（默认 3030 端口）。
+        // server 与代理共用同一个 PORT 覆盖：`PORT=3031 pnpm run dev:web`
+        // 可在本机已有 3030 监听（另一工作树/另一实例）时并行起第二套。
+        "/ws": { target: `ws://localhost:${serverPort}`, ws: true },
+        "/api": { target: `http://localhost:${serverPort}` },
       },
     },
     optimizeDeps: {

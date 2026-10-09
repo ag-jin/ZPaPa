@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { modelSelectionSchema } from "./model-selection.js";
+import {
+  DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES,
+  DEFAULT_SQUAD_RUN_TTL_MINUTES,
+  DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES,
+} from "./squad.js";
 import type { AgentColor, AgentPermissionMode } from "./subagents-types.js";
+import { teamAgentMcpServersSchema } from "./team-agent-mcp.js";
 
 /* 协作智能体（TeamAgent）的域模型：一等独立实体，与现有 subagent 完全分开
    （决策 C3 三重隔离：存储命名空间 / 设置分区 / 术语）。
@@ -19,8 +25,9 @@ export const TEAM_AGENT_COLORS = [
   "cyan",
 ] as const satisfies readonly AgentColor[];
 
-/** `auto` / `plan` 与现有 AgentPermissionMode 同一取值域。 */
-const TEAM_AGENT_PERMISSION_MODES = [
+/** `auto` / `plan` 与现有 AgentPermissionMode 同一取值域。
+    AgentBuilder 草稿的 permissionMode 用同一常量（取值域单源：草稿与落盘定义不会分叉）。 */
+export const TEAM_AGENT_PERMISSION_MODES = [
   "auto",
   "plan",
 ] as const satisfies readonly AgentPermissionMode[];
@@ -28,11 +35,56 @@ const TEAM_AGENT_PERMISSION_MODES = [
 /** 记忆作用域：复用现成 agent-memory 能力（spec §3.2 / §7）。 */
 export const TEAM_AGENT_MEMORY_SCOPES = ["user", "project", "local"] as const;
 
+/** 每 agent 最大并发 run 数的缺省（C1，⑤刀 Concurrency 半边）：对齐 multica `MaxConcurrentTasks` 默认 6（migration 023）。 */
+export const DEFAULT_TEAM_AGENT_MAX_CONCURRENT_RUNS = 6;
+/** 并发上限的**校验界**（不是存储界）：单机 CLI 场景每个并发 run = 一条 CLI 会话 + 一棵工作树，16 已覆盖批量在途并留余量；将来放宽只改此常量、无需迁移。 */
+export const TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT = 16;
+
+/**
+ * 读「该 agent 允许的最大并发 run 数」的唯一入口：缺省（字段未设置）与显式值都经这里解析。
+ * 闸（C3）、UI 与详情页必须读同一处，不得各写一份 `?? 6`——否则缺省语义会分叉。
+ * 注意（C3 闸行为，评审 A5）：名册里**找不到 agent 定义**时不适用本函数、更不得凭空套缺省 6——
+ * 那是「闸不排队、照旧派发 + 日志」的独立分支，与本字段无关。
+ */
+export function resolveTeamAgentMaxConcurrentRuns(
+  agent: Pick<TeamAgent, "maxConcurrentRuns">,
+): number {
+  return agent.maxConcurrentRuns ?? DEFAULT_TEAM_AGENT_MAX_CONCURRENT_RUNS;
+}
+
+/**
+ * 看门狗三个**可按 agent 覆盖**的阈值（用户 2026-10-07 裁定）：单位都是**分钟**，缺省值在
+ * `squad.ts`（阈值单源）。形态与 `resolveTeamAgentMaxConcurrentRuns` 完全同款——可选字段
+ * （缺省不落盘、存量文件零改写）+ 唯一的解析入口（消费点不得各写一份 `?? 30`：缺省语义一旦分叉，
+ * 表现是「判定面按 30 分钟收、别处按 10 分钟留痕」，且不报错）。
+ *
+ * 为什么**不**给解析结果加下限/上限校验：这是恢复阈值，不是容量界——显式写一个很大的 TTL
+ * （例如「这台机器上的长跑 agent 别自动收」）是合法配置，闸门不在这里。
+ */
+export function resolveTeamAgentRunTtlMinutes(agent: Pick<TeamAgent, "runTtlMinutes">): number {
+  return agent.runTtlMinutes ?? DEFAULT_SQUAD_RUN_TTL_MINUTES;
+}
+
+export function resolveTeamAgentIdleTimeoutMinutes(
+  agent: Pick<TeamAgent, "idleTimeoutMinutes">,
+): number {
+  return agent.idleTimeoutMinutes ?? DEFAULT_SQUAD_IDLE_TIMEOUT_MINUTES;
+}
+
+export function resolveTeamAgentToolTimeoutMinutes(
+  agent: Pick<TeamAgent, "toolTimeoutMinutes">,
+): number {
+  return agent.toolTimeoutMinutes ?? DEFAULT_SQUAD_TOOL_TIMEOUT_MINUTES;
+}
+
 /** 预填来源留痕：只记「从哪来」，不建立引用（spec §3.2「此后无持续引用」）。 */
 export const teamAgentProvenanceSchema = z
   .object({
-    /** manual：手工新建；prefill：一次性从现有 agent 预填而来。 */
-    source: z.enum(["manual", "prefill"]),
+    /**
+     * manual：手工新建；prefill：一次性从现有 agent 预填而来；
+     * ai_builder：AgentBuilder 访谈产物（设计报告 §5.2：提交时由 UI 传，落盘留痕）。
+     */
+    source: z.enum(["manual", "prefill", "ai_builder"]),
     /** 预填来源 agent 的 id；仅作留痕，重命名/删除来源都不影响本定义。 */
     sourceAgentId: z.string().min(1).optional(),
   })
@@ -56,7 +108,27 @@ export const teamAgentSchema = z
     tools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     permissionMode: z.enum(TEAM_AGENT_PERMISSION_MODES).optional(),
+    /**
+     * 该智能体**自有的 MCP servers**（名字 → 完整配置，multica 欠账 #2）：可选——缺省不落盘
+     * （存量定义零改写、零迁移），"没有这个字段" = 该 agent 不额外覆盖任何 server（三态的第一态）。
+     *
+     * 与既有 subagent 的 `mcpServers`（`readonly string[]`：父会话**已连** server 的名单）**同名不同义**：
+     * 这里是自足配置（本 agent 的 run 要挂什么），不是继承名单。术语撞车但域隔离（决策 C3），
+     * 不做兼容层 —— 形状与校验见 `team-agent-mcp.ts`。
+     *
+     * 敏感面：配置里可能带 env / headers / token。校验只看形状（不回显内容），
+     * 日志只记 server 名；落盘位置与 workspace 级 MCP 配置同信任域（`<ws>/.zcode/`）。
+     */
+    mcpServers: teamAgentMcpServersSchema.optional(),
     memoryScope: z.enum(TEAM_AGENT_MEMORY_SCOPES),
+    /** 每 agent 最大并发 run 数（C1）：可选——缺省不落盘（存量文件零改写），读数经 resolveTeamAgentMaxConcurrentRuns。 */
+    maxConcurrentRuns: z.number().int().min(1).max(TEAM_AGENT_MAX_CONCURRENT_RUNS_LIMIT).optional(),
+    /** 看门狗 TTL（分钟，0014 判据 / W1）：可选——缺省不落盘，读数经 resolveTeamAgentRunTtlMinutes。 */
+    runTtlMinutes: z.number().int().min(1).optional(),
+    /** 看门狗空闲阈值（分钟）：可选——缺省不落盘，读数经 resolveTeamAgentIdleTimeoutMinutes。 */
+    idleTimeoutMinutes: z.number().int().min(1).optional(),
+    /** 工具看门狗阈值（分钟，W3 消费）：可选——缺省不落盘，读数经 resolveTeamAgentToolTimeoutMinutes。 */
+    toolTimeoutMinutes: z.number().int().min(1).optional(),
     enabled: z.boolean(),
     /** 归档时间戳（毫秒）：归档而非硬删，定义与记忆都不丢（Task 8 的 archive 写入）。 */
     archivedAt: z.number().int().nonnegative().optional(),

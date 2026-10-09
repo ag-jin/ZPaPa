@@ -76,6 +76,17 @@ test("仓库根 .gitignore 登记了全部产物目录，并驱动文件搜索�
   }
   // 反向对照：普通源码目录不能被误伤，否则「一律忽略」式实现也会通过。
   assert.equal(isWorkspaceFileSearchPathIgnored(rules, "src/index.ts", "file"), false);
+  /* #7 交付物（D1a）的正文目录是清单里 `.zcode/squad` 的**子目录**：本条把「零改动即覆盖」
+     变成断言（新增对象落在已有清单项之下，不需要也不得再往清单/`.gitignore` 里加一行）。 */
+  assert.equal(
+    isWorkspaceFileSearchPathIgnored(rules, ".zcode/squad/deliverables/d-1.diff", "file"),
+    true,
+    "交付物正文（.zcode/squad/deliverables/*.diff）应被已有清单项覆盖",
+  );
+  assert.equal(
+    isWorkspaceFileSearchPathIgnored(rules, ".zcode/squad/deliverables", "directory"),
+    true,
+  );
 });
 
 /**
@@ -142,6 +153,9 @@ test("wiki 扫描（服务端扫描半边）跳过产物目录，不把工作树
   // 实验命名空间下的定义文件同样是产物（.json 会被 languageOf 计入，故能证明被挡住）。
   mkdirSync(join(root, ".zcode", "squad", "agents"), { recursive: true });
   writeFileSync(join(root, ".zcode", "squad", "agents", "ta_1.json"), "{}\n");
+  // #7 交付物正文（D1a）：同命名空间下的第二类产物（.diff），同样不得被当源码收进清单。
+  mkdirSync(join(root, ".zcode", "squad", "deliverables"), { recursive: true });
+  writeFileSync(join(root, ".zcode", "squad", "deliverables", "d-1.diff"), "diff --git a b\n");
   // local scope 记忆（本次清单新增项）：同样是产物，不能当源码吃进清单。
   mkdirSync(join(root, ".zcode", "agent-memory-local", "ta_1"), { recursive: true });
   writeFileSync(join(root, ".zcode", "agent-memory-local", "ta_1", "MEMORY.md"), "# 记忆\n");

@@ -340,11 +340,7 @@ test("端到端：桌面挂载的首次同步屏障放行（用户可见症状�
     // 能兜住「单测里 target 被换成桩」的情形。
     //   failed / unsupported → 用户看到的「Provider Provisioning 首次同步失败」（连接建不起来）
     //   applied             → 模型配置同步又被打开了，那是整份覆盖对端配置的事故入口
-    assert.equal(
-      status,
-      "already-applied",
-      `期望「屏障放行且未写配置」，实际 status=${status}`,
-    );
+    assert.equal(status, "already-applied", `期望「屏障放行且未写配置」，实际 status=${status}`);
   } finally {
     await host.dispose();
   }

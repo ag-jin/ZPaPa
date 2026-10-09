@@ -90,13 +90,13 @@ B 侧（100.66.1.2）日志在每次失败时都打出同一行：
 
 新增 `packages/desktop/test/providerProvisioningChannel.test.ts`（已登记层 1）：
 
-| 用例 | 覆盖 |
-|---|---|
-| 窗口 host（desktop-local）提供该 channel | 本次回归的直接锁 |
-| 独立常驻主机（desktop-attached-remote）提供该 channel | 防修复反向破坏 legacy 形态 |
-| replayable 探测不到可用 target | 信任边界（弱断言） |
-| replayable 调真实 `apply` 被桩拒绝 | 信任边界（强断言：拿到可用 target 才是缺陷） |
-| 端到端首次同步屏障放行 | 用户可见症状本身（status applied/already-applied） |
+| 用例                                                  | 覆盖                                               |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| 窗口 host（desktop-local）提供该 channel              | 本次回归的直接锁                                   |
+| 独立常驻主机（desktop-attached-remote）提供该 channel | 防修复反向破坏 legacy 形态                         |
+| replayable 探测不到可用 target                        | 信任边界（弱断言）                                 |
+| replayable 调真实 `apply` 被桩拒绝                    | 信任边界（强断言：拿到可用 target 才是缺陷）       |
+| 端到端首次同步屏障放行                                | 用户可见症状本身（status applied/already-applied） |
 
 **红/绿双向验证**：暂存修复后重跑，失败恰为上述 3 条（channel / 信任边界 / 端到端），
 legacy 那条正确保持通过 —— 证明用例真的锁住了缺陷，而非恒真。

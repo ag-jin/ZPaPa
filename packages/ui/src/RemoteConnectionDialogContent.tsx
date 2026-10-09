@@ -8,7 +8,12 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@zcode/shared";
-import { TID_REMOTE_KIND_DOCKER, TID_REMOTE_KIND_SSH, TID_REMOTE_KIND_WSL, TID_REMOTE_CONNECT_AS_DEVICE } from "@zcode/shared";
+import {
+  TID_REMOTE_KIND_DOCKER,
+  TID_REMOTE_KIND_SSH,
+  TID_REMOTE_KIND_WSL,
+  TID_REMOTE_CONNECT_AS_DEVICE,
+} from "@zcode/shared";
 import type {
   IMcpSyncService,
   IPluginSyncService,

@@ -30,8 +30,11 @@ function assert(condition, message) {
 }
 
 const statusPath = join(homedir(), ".zcode/v2/resident-host.json");
-const status = JSON.parse(readFileSync(statusPath, "utf8"), );
-assert(status.port > 0, `resident host status file loaded (port=${status.port} protocol=${status.protocolVersion})`);
+const status = JSON.parse(readFileSync(statusPath, "utf8"));
+assert(
+  status.port > 0,
+  `resident host status file loaded (port=${status.port} protocol=${status.protocolVersion})`,
+);
 
 const { connectResidentRemote } = await tsImport(
   pathToFileURL(join(packageRoot, "src/remote/connect-resident.ts")).href,
@@ -92,7 +95,10 @@ const connection = await connectResidentRemote(backend, {
     remoteCloseCode = code;
   },
 });
-assert(connection !== null, "connectResidentRemote returned a connection (discovery + negotiation + ticket + ws attach)");
+assert(
+  connection !== null,
+  "connectResidentRemote returned a connection (discovery + negotiation + ticket + ws attach)",
+);
 
 const settings = await connection.services.settingService.get();
 assert(

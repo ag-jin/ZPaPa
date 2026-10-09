@@ -118,7 +118,28 @@ export interface GitChangeSummary {
   removed: number;
 }
 
-export type WorkspaceMainView = "chat" | "automations" | "plugin-store";
+export type WorkspaceMainView =
+  | "chat"
+  | "automations"
+  | "plugin-store"
+  | "inbox"
+  | "agents"
+  | "squads"
+  | "work-items"
+  | "agent-detail"
+  | "work-item-detail";
+
+/**
+ * 工作项详情页的**导航意图**（B5.1，照 `openAutomationId` / `agentDetailId` 的先例）：
+ * 唯一持有者是 App（跨页面存活）；详情页**不猜历史**，只调 `onBack`，
+ * 回哪个视图由这里的 `returnView` 决定（从看板进 ⇒ 回看板；从 agent 任务表进 ⇒ 回 agent 详情）。
+ *
+ * `commentId` 是设计案 §1.3 的深链接预留位：本轮**没有入口**、不填值，也不写死结构。
+ */
+export type WorkItemDetailIntent = {
+  workItemId: string;
+  returnView: "work-items" | "agent-detail";
+};
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
   workspaceReadOnlyReason?: string;
@@ -128,8 +149,39 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   openAutomationTab: AutomationsNavigationTab | null;
   onWorkspaceMainViewChange: (view: WorkspaceMainView) => void;
   onOpenAutomationConsumed: () => void;
+  /** 「收件箱」穿透的一次性聚焦意图（照 `openAutomationId` 的先例：意图 + 消费回调）。
+      工作项页把它（`focusWorkItemId`）交给看板，看板聚焦/确认缺席后经消耗回调清掉。 */
+  inboxFocusWorkItemId: string | null;
+  /** shell 在「打开工作项」导航**成功后**设置聚焦意图（状态在 App：跨页面存活；点击处理在 shell）。 */
+  onInboxFocusRequest: (workItemId: string) => void;
+  /** 工作项页消费掉聚焦意图后回调（清掉，避免每次回到该页都再聚焦一次）。 */
+  onInboxFocusConsumed: () => void;
   handleOpenAutomations: OpenAutomationsMain;
   handleOpenPluginStore: () => void;
+  /** 打开侧栏一级入口「智能体」（照 handleOpenPluginStore 的形态）。 */
+  handleOpenSquadAgents: () => void;
+  /** ④刀：当前详情页的 agent id（agent-detail 视图渲染时消费；null = 未打开）。 */
+  agentDetailId: string | null;
+  /** ④刀：打开某 agent 的详情页（切主视图 + 记 id）。 */
+  onOpenAgentDetail: (agentId: string) => void;
+  /** B5.1：工作项详情页的导航意图（`null` = 未选中；详情页消费 `workItemId`）。 */
+  workItemDetailIntent: WorkItemDetailIntent | null;
+  /** B5.1：从**工作项看板**打开详情（`returnView` 固定为 work-items）。 */
+  onOpenWorkItemDetail: (workItemId: string) => void;
+  /** B5.1：从 **agent 详情任务表**打开详情（`returnView` 固定为 agent-detail）。 */
+  onOpenWorkItemFromAgentDetail: (workItemId: string) => void;
+  /** B5.1：详情页返回（回哪个视图由 App 的意图态决定，详情页不猜历史）。 */
+  onBackFromWorkItemDetail: () => void;
+  /** B5.1：看板滚动位置（跨视图卸载后仍有值；进详情前记录、返回后由 shell 在 layout 阶段还原）。 */
+  workItemsScrollTop: number;
+  /** B5.1：离开工作项视图时把滚动位置交回 App。 */
+  onWorkItemsScrollTopChange: (scrollTop: number) => void;
+  /** 打开侧栏一级入口「收件箱」（照 handleOpenSquadAgents 的形态）。 */
+  handleOpenInbox: () => void;
+  /** 打开侧栏一级入口「小队」（照 handleOpenSquadAgents 的形态）。 */
+  handleOpenSquads: () => void;
+  /** 打开侧栏一级入口「工作项」（照 handleOpenSquads 的形态）。 */
+  handleOpenWorkItems: () => void;
   handleManageInstalledPlugins: () => void;
   workspaceShellZCodeState: WorkspaceShellZCodeState;
   theme: Theme;

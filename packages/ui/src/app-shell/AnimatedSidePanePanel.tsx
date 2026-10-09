@@ -327,6 +327,7 @@ export function AnimatedSidePanePanel({
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSquadRunSession,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -396,6 +397,8 @@ export function AnimatedSidePanePanel({
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  /** 会话「智能体目录」侧栏里点某次小队 run ⇒ 打开它的独立会话（透传给目录页）。 */
+  onOpenSquadRunSession: (sessionId: string) => void;
   /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
@@ -1175,6 +1178,7 @@ export function AnimatedSidePanePanel({
                           <SubagentDirectorySidePane
                             tab={tab}
                             onOpenSubagentSession={onOpenSubagentSession}
+                            onOpenSquadRunSession={onOpenSquadRunSession}
                           />
                         ) : tab.type === "selection-side-chat" ? (
                           <SelectionSideChatPane

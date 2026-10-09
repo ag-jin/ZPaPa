@@ -34,10 +34,10 @@ Web(Next.js) / 桌面(Electron) / 手机(Expo) → Go 后端(Chi + sqlc + WebSoc
 
 表结构极简，就两张：
 
-| 表 | 关键列 |
-|---|---|
-| `squad` | `leader_id → agent(id) ON DELETE RESTRICT`、`instructions`、`archived_at` |
-| `squad_member` | `member_type('agent'\|'member')`、`member_id`、`role` |
+| 表             | 关键列                                                                    |
+| -------------- | ------------------------------------------------------------------------- |
+| `squad`        | `leader_id → agent(id) ON DELETE RESTRICT`、`instructions`、`archived_at` |
+| `squad_member` | `member_type('agent'\|'member')`、`member_id`、`role`                     |
 
 队长**必须是一个 agent**，创建时自动作为成员写入 `role="leader"`。更重要的是 `issue.assignee_type ∈ ('member','agent','squad')`——**任务可以直接指派给整个小队**。指派给小队的语义是：解析出 `leader_id`，给队长排一次打了 `is_leader_task + squad_id` 标记的「队长角色 run」，并注入包含操作协议 + 花名册 + 指令的 briefing。**队长不是常驻进程，是一个会被唤醒的角色。**
 
@@ -92,12 +92,12 @@ Feature flag：定义在 `server/internal/featureflags/keys.go`，规则顺序 d
 
 multica 的 7 个状态**不是执行态，是「工作项(issue)的生命周期」态**，真正骨架是 **4 个 category**：
 
-| category | 内置键 | 机械含义 |
-|---|---|---|
-| unstarted | `backlog` `todo` | 未开始，可自由改派 |
-| started | `in_progress` `in_review` `blocked` | 进行中 |
-| done | `done` | 终态之一 |
-| closed | `cancelled` | 终态之一 |
+| category  | 内置键                              | 机械含义           |
+| --------- | ----------------------------------- | ------------------ |
+| unstarted | `backlog` `todo`                    | 未开始，可自由改派 |
+| started   | `in_progress` `in_review` `blocked` | 进行中             |
+| done      | `done`                              | 终态之一           |
+| closed    | `cancelled`                         | 终态之一           |
 
 **机器只读 category**（判终态、算 `children_done`、能不能挂规则），7 个键只是给人看的标签；自定义态靠加键、category 锁死（`is_system`）。
 
@@ -120,17 +120,17 @@ multica 的 7 个状态**不是执行态，是「工作项(issue)的生命周期
 
 ### 3.1 已经现成可复用
 
-| 用户要求 | 现有实现 | 位置 |
-|---|---|---|
-| 智能体独立、调用自有 CLI | 已是「一 agent 一目录」的定义；子 agent 跑成**子会话** | `packages/services/src/subagents/subagentStorage.ts`；`subagentMarkdown.ts` |
-| 每 agent 可配信息 / **不同模型** | `AgentSummary` 已有 `name/systemPrompt/modelSelection/tools/skills/permissionMode`；workflow agent 亦有 `model` 字段 | `packages/shared/src/subagents-types.ts:43`；`contracts/src/workflow/script.ts` |
-| **每 agent 独立持久记忆** | `AgentMemoryScope = user\|project\|local`，写在 agent 的 `.md` frontmatter；根 `agent-memory/<key>/MEMORY.md`；自动补 Write/Edit 工具 | `apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts`；`subagent/profile.ts:19,187` |
-| 多 agent 编排底座 | workflow：phases + agent activities，跑成子会话，带并发闸、activity 缓存、events/artifacts | `apps/zcode-cli/packages/{contracts,dynamic-workflow*}/`、`bootstrap/src/app/script-workflow-runtime.ts` |
-| 排班 | automations（cron）+ off-peak | `packages/services/src/session/automation*`、`offPeakTask*` |
-| 技能 | skills 已有 | `packages/services/src/skills/` |
-| 通知（inbox 原料） | background-task-notifications | `packages/shared/src/background-task-notifications.ts` |
-| 渠道 | bots 已有 feishu / telegram / weixin | `packages/services/src/bots/` |
-| 实验开关落点 | 设置页加分区有固定套路 | `settingsNavigation.ts` → `settingsPageConfig.ts` → `SettingsPage.tsx` → `validationAppSettings.ts` |
+| 用户要求                         | 现有实现                                                                                                                              | 位置                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 智能体独立、调用自有 CLI         | 已是「一 agent 一目录」的定义；子 agent 跑成**子会话**                                                                                | `packages/services/src/subagents/subagentStorage.ts`；`subagentMarkdown.ts`                              |
+| 每 agent 可配信息 / **不同模型** | `AgentSummary` 已有 `name/systemPrompt/modelSelection/tools/skills/permissionMode`；workflow agent 亦有 `model` 字段                  | `packages/shared/src/subagents-types.ts:43`；`contracts/src/workflow/script.ts`                          |
+| **每 agent 独立持久记忆**        | `AgentMemoryScope = user\|project\|local`，写在 agent 的 `.md` frontmatter；根 `agent-memory/<key>/MEMORY.md`；自动补 Write/Edit 工具 | `apps/zcode-cli/packages/core/src/subagent/persistent-memory.ts`；`subagent/profile.ts:19,187`           |
+| 多 agent 编排底座                | workflow：phases + agent activities，跑成子会话，带并发闸、activity 缓存、events/artifacts                                            | `apps/zcode-cli/packages/{contracts,dynamic-workflow*}/`、`bootstrap/src/app/script-workflow-runtime.ts` |
+| 排班                             | automations（cron）+ off-peak                                                                                                         | `packages/services/src/session/automation*`、`offPeakTask*`                                              |
+| 技能                             | skills 已有                                                                                                                           | `packages/services/src/skills/`                                                                          |
+| 通知（inbox 原料）               | background-task-notifications                                                                                                         | `packages/shared/src/background-task-notifications.ts`                                                   |
+| 渠道                             | bots 已有 feishu / telegram / weixin                                                                                                  | `packages/services/src/bots/`                                                                            |
+| 实验开关落点                     | 设置页加分区有固定套路                                                                                                                | `settingsNavigation.ts` → `settingsPageConfig.ts` → `SettingsPage.tsx` → `validationAppSettings.ts`      |
 
 ### 3.2 需要新建
 
@@ -191,13 +191,13 @@ TeamAgent {
 
 - **定义可复用现成格式**（`name/systemPrompt/modelSelection/tools/skills/permissionMode`），**但执行不能等于 subagent**：
 
-| 维度 | subagent | 队友智能体 |
-|---|---|---|
-| 身份 | 无稳定身份，一次性 | 稳定 id，可被指派/唤醒/@ |
-| 生命周期 | 绑父会话（`parentSessionId`），父亡子散 | 独立存活，跨会话延续 |
-| 上下文 | 嵌套进父的编排 | **必须隔离** |
-| 会话史 | 无独立历史 | 有 |
-| 可被指派工作项 / 被规则唤醒 / 有 inbox / 能当队长 | 不能 | 能 |
+| 维度                                              | subagent                                | 队友智能体               |
+| ------------------------------------------------- | --------------------------------------- | ------------------------ |
+| 身份                                              | 无稳定身份，一次性                      | 稳定 id，可被指派/唤醒/@ |
+| 生命周期                                          | 绑父会话（`parentSessionId`），父亡子散 | 独立存活，跨会话延续     |
+| 上下文                                            | 嵌套进父的编排                          | **必须隔离**             |
+| 会话史                                            | 无独立历史                              | 有                       |
+| 可被指派工作项 / 被规则唤醒 / 有 inbox / 能当队长 | 不能                                    | 能                       |
 
 - **底层机制其实很近、语义相反**：ZPaPa 已有 child-session 底座（`parentSessionId` 授权链 + workflow 子会话）。**subagent 的 parent = 当前对话；队友 run 的 parent 应 = 工作项**。同一底座挂不同父。
 
@@ -221,7 +221,7 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 **三条必须一起借的原则**：
 
-1. **状态只描述生命周期、不驱动执行**（multica 原话：*"This is not a workflow engine"*）——绝不让「进入 in_review」自动 call 审查 agent。
+1. **状态只描述生命周期、不驱动执行**（multica 原话：_"This is not a workflow engine"_）——绝不让「进入 in_review」自动 call 审查 agent。
 2. **`completed` ≠ `done` ≠ `closed`** 三层分开——否则「run 成功」被当成「工作通过」，互查白做。
 3. **聚合判定用 category 不用键名**（「等子任务全完成再唤醒队长」的判据是子项 category ∈ {done, closed}）。
 
@@ -257,12 +257,12 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 ## 5. 分期
 
-| 期 | 内容 | 可独立关闭 |
-|---|---|---|
-| **P0 机制底座** | 工作项实体 + 4 category 生命周期（一处拥有、流转幂等）+ 实验分区开关 + 协作智能体实体（含 memoryScope） | ✅ |
-| **P1 编排** | 唤醒规则（event/条件）+ 防失控三件套 + 队长角色 run | ✅ |
-| **P2 隔离与协作** | `isolation:"worktree"` 实现 + 建/合/抛+孤儿清理 + squad 配置 UI + 小队讨论路由 + Inbox | ✅ |
-| **P3 排班与治理** | autopilot 指派到 squad、权限双轴、skills 挂载、board 可视化 | ✅ |
+| 期                | 内容                                                                                                    | 可独立关闭 |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | ---------- |
+| **P0 机制底座**   | 工作项实体 + 4 category 生命周期（一处拥有、流转幂等）+ 实验分区开关 + 协作智能体实体（含 memoryScope） | ✅         |
+| **P1 编排**       | 唤醒规则（event/条件）+ 防失控三件套 + 队长角色 run                                                     | ✅         |
+| **P2 隔离与协作** | `isolation:"worktree"` 实现 + 建/合/抛+孤儿清理 + squad 配置 UI + 小队讨论路由 + Inbox                  | ✅         |
+| **P3 排班与治理** | autopilot 指派到 squad、权限双轴、skills 挂载、board 可视化                                             | ✅         |
 
 ---
 
@@ -287,11 +287,11 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 **用户已定：工作安排既可由队长指定，也可由用户安排**（与 multica 一致）。核对 multica 后，实际是**三路输入**：
 
-| 来源 | 形态 |
-|---|---|
-| **用户** | 指派负责人 / 把工作项派给整个小队 / `@` 某个智能体起一次运行 |
-| **队长** | leader-role run 里派单：显式 @队员、或建子工作项 |
-| **规则 · 排班** | 条件满足（`children_done` 等）或 cron 到点 |
+| 来源            | 形态                                                         |
+| --------------- | ------------------------------------------------------------ |
+| **用户**        | 指派负责人 / 把工作项派给整个小队 / `@` 某个智能体起一次运行 |
+| **队长**        | leader-role run 里派单：显式 @队员、或建子工作项             |
+| **规则 · 排班** | 条件满足（`children_done` 等）或 cron 到点                   |
 
 **核心不是「几路」，而是「多路输入、一处写入」**：三路都**不直接改状态**，而是发出同一形状的**派发事件**；由**工作项状态机（唯一所有者）**消费并流转。这正是 AGENTS.md「避免重复状态和多条写入路径」的要求。
 
@@ -309,20 +309,20 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 对 6 路调研逐条比对后的缺口，用户逐条确认（原则：**按完整形态吸收，不以工作量为由削减**）：
 
-| # | 项 | 决策 |
-|---|---|---|
-| 1 | 父子任务树（子工作项） | **完整父子树**：任意深度 + 分阶段（`stage:N` / `each_stage`） |
-| 2 | PR 关联 + review gate | **完整 GitHub 集成**：自动关联、PR 快照、merge 驱动状态 |
-| 3 | 订阅者模型 + Inbox | **完整**：订阅者表（reason 含 delegated）+ `opt_out_scope` + tombstone + 条目类型 + 严重级 + 只在需决策时推 + 父子冒泡 + 已读归档 + 渠道路由 |
-| 4 | 工作项评论 / 活动时间线 | **完整**：评论可 @ 触发运行 + 连续评论合并成一次运行 + `/note` 抑制 + `@all` 不触发 + 内联评论 |
-| 5 | 工作项元数据 | **完整**：labels + 带类型的自定义属性 + 手工排序 + 工作项搜索索引 + 表情 |
-| 6 | 工作项级交付物 | **完整**：分类（计划/文档/实现/diff/预览/测试结果），挂在运行上可供审查 |
-| 7 | 归档语义 | **完整**：归档 agent → 派发 skip；归档小队 → 指派与排班**转移给队长**；保留历史、不可被唤醒 |
-| 8 | 单次 run 的重试/超时/看门狗 | **完整**：空闲看门狗 + 工具看门狗 + 墙钟超时 + 取消/中断 + 失败重试 + 熔断 |
-| 9 | 成本/用量按 run 记账 | **完整**：每次 run 记 token/成本，按智能体/小队/工作项聚合展示 |
-| 10 | Agent 的「AI 构建」向导 | **做**：手工配 or 描述一句让 AI 生成配置 |
-| 11 | 渠道创建/触发工作项（`/issue`） | **不做**：渠道只到对话，不派活 |
-| 12 | Chat 独立入口 | **不做**：**ZPaPa 现有会话窗口已经是它**（不建工单即可直接问/派活），multica 的 Chat 在此冗余 |
+| #   | 项                              | 决策                                                                                                                                         |
+| --- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 父子任务树（子工作项）          | **完整父子树**：任意深度 + 分阶段（`stage:N` / `each_stage`）                                                                                |
+| 2   | PR 关联 + review gate           | **完整 GitHub 集成**：自动关联、PR 快照、merge 驱动状态                                                                                      |
+| 3   | 订阅者模型 + Inbox              | **完整**：订阅者表（reason 含 delegated）+ `opt_out_scope` + tombstone + 条目类型 + 严重级 + 只在需决策时推 + 父子冒泡 + 已读归档 + 渠道路由 |
+| 4   | 工作项评论 / 活动时间线         | **完整**：评论可 @ 触发运行 + 连续评论合并成一次运行 + `/note` 抑制 + `@all` 不触发 + 内联评论                                               |
+| 5   | 工作项元数据                    | **完整**：labels + 带类型的自定义属性 + 手工排序 + 工作项搜索索引 + 表情                                                                     |
+| 6   | 工作项级交付物                  | **完整**：分类（计划/文档/实现/diff/预览/测试结果），挂在运行上可供审查                                                                      |
+| 7   | 归档语义                        | **完整**：归档 agent → 派发 skip；归档小队 → 指派与排班**转移给队长**；保留历史、不可被唤醒                                                  |
+| 8   | 单次 run 的重试/超时/看门狗     | **完整**：空闲看门狗 + 工具看门狗 + 墙钟超时 + 取消/中断 + 失败重试 + 熔断                                                                   |
+| 9   | 成本/用量按 run 记账            | **完整**：每次 run 记 token/成本，按智能体/小队/工作项聚合展示                                                                               |
+| 10  | Agent 的「AI 构建」向导         | **做**：手工配 or 描述一句让 AI 生成配置                                                                                                     |
+| 11  | 渠道创建/触发工作项（`/issue`） | **不做**：渠道只到对话，不派活                                                                                                               |
+| 12  | Chat 独立入口                   | **不做**：**ZPaPa 现有会话窗口已经是它**（不建工单即可直接问/派活），multica 的 Chat 在此冗余                                                |
 
 **有意丢弃（已确认）**：异构 CLI 适配层、多租户治理（角色/席位/entitlement/计费/配额）、运维与遥测、multica 专属 flag（composio_mcp_apps / plugins_v1 / triage_v1 / local_search_index）、看板泳道（延后 P3）。
 
@@ -336,13 +336,13 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 原 §6 的 5 条待拍项，已逐条定案：
 
-| # | 项 | 决策 |
-|---|---|---|
-| A | 合并目标 | **集成分支**：队员先合 `squad/<工作项>`，整批过了再一次性合回主分支（主分支干净、整批可整体放弃） |
-| B | 合并后分支 | **删除**（队员分支与集成分支都删）；留痕靠工作项交付物 / diff 记录，不靠分支 |
-| C | 编排地基 | **完全另起一套**：不基于 workflow 子系统；编排层自建（工作项 / 小队 / 唤醒规则 / 队长 / 合并）。边界：底下的「一次会话运行」仍用自有 CLI 运行时 |
-| D | 智能体定义来源 | **独立实体、自成一份定义**；新建时可从现有 agent **一键预填一次**，此后各自独立、**无持续引用**（对齐 multica：agent 本就是独立记录，无复制/引用概念） |
-| E | 是否绑 host/设备 | **不做多设备联动**，不绑 host，单机运行（「全员同 host」约束因此自动满足） |
+| #   | 项               | 决策                                                                                                                                                   |
+| --- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A   | 合并目标         | **集成分支**：队员先合 `squad/<工作项>`，整批过了再一次性合回主分支（主分支干净、整批可整体放弃）                                                      |
+| B   | 合并后分支       | **删除**（队员分支与集成分支都删）；留痕靠工作项交付物 / diff 记录，不靠分支                                                                           |
+| C   | 编排地基         | **完全另起一套**：不基于 workflow 子系统；编排层自建（工作项 / 小队 / 唤醒规则 / 队长 / 合并）。边界：底下的「一次会话运行」仍用自有 CLI 运行时        |
+| D   | 智能体定义来源   | **独立实体、自成一份定义**；新建时可从现有 agent **一键预填一次**，此后各自独立、**无持续引用**（对齐 multica：agent 本就是独立记录，无复制/引用概念） |
+| E   | 是否绑 host/设备 | **不做多设备联动**，不绑 host，单机运行（「全员同 host」约束因此自动满足）                                                                             |
 
 > 原 §6「待定」已清空，设计层面无遗留待决项。
 
@@ -350,40 +350,40 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 ### A. 仓库已有的相关功能（按「怎么用」分类）
 
-| 现有能力 | 与新功能的关系 | 位置 |
-|---|---|---|
-| 会话/任务窗口（shell、任务列表、Side Pane） | **承载面**：小队就长在这层 | `app-shell/WorkspaceShellLayout.tsx`、`v4/V4ChatPane.tsx` |
-| 子 agent 系统（目录 + 独立会话 + 打开链路） | **直接复用 UI**；数据源要换 | `app-shell/SubagentDirectorySidePane.tsx`、`SubagentSessionSidePane.tsx`、`v4/ConversationAgentToolCallRow.tsx` |
-| 每 agent 独立持久记忆 + 配置目录 | **直接复用**（`memory: user\|project\|local`） | `core/src/subagent/persistent-memory.ts`、`subagents/subagentStorage.ts` |
-| 项目级共享记忆 | **相邻**：与私有记忆并存 | `services/src/memory/memoryService.ts` |
-| automations（cron）+ off-peak 闲时执行 | **排班基础**；与新唤醒规则并存 | `session/automation*`、`offPeakTask*` |
-| workflow 子系统（phases + agent activities + 时间线 + artifact） | ⚠️ **只借视觉语言**，编排不寄生（决策 C） | `components/workflow-timeline/*`、`dynamic-workflow*` |
-| skills | **直接复用** | `services/src/skills/` |
-| 通知 + 渠道 bots | **Inbox/渠道原料**；渠道不派活（12-11） | `background-task-notifications.ts`、`services/src/bots/` |
-| git 服务 + checkpoint + GitPane | **worktree/合并基础**；checkpoint 是另一种隔离 | `services/src/git/*` |
-| 设置页体系 | **实验分区落点** | `lib/settingsNavigation.ts` 等 4 处 |
-| CommandInbox 串行 admission | **steering 原生能力** | CLI runtime |
-| host/设备 + 远程投射 | **单机前提**（决策 E） | ADR 0003、`services/src/remote/` |
-| usage 面板（账号级） | **相邻**：per-run 记账是新增 | `settings/usage-stats/` |
+| 现有能力                                                         | 与新功能的关系                                 | 位置                                                                                                            |
+| ---------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 会话/任务窗口（shell、任务列表、Side Pane）                      | **承载面**：小队就长在这层                     | `app-shell/WorkspaceShellLayout.tsx`、`v4/V4ChatPane.tsx`                                                       |
+| 子 agent 系统（目录 + 独立会话 + 打开链路）                      | **直接复用 UI**；数据源要换                    | `app-shell/SubagentDirectorySidePane.tsx`、`SubagentSessionSidePane.tsx`、`v4/ConversationAgentToolCallRow.tsx` |
+| 每 agent 独立持久记忆 + 配置目录                                 | **直接复用**（`memory: user\|project\|local`） | `core/src/subagent/persistent-memory.ts`、`subagents/subagentStorage.ts`                                        |
+| 项目级共享记忆                                                   | **相邻**：与私有记忆并存                       | `services/src/memory/memoryService.ts`                                                                          |
+| automations（cron）+ off-peak 闲时执行                           | **排班基础**；与新唤醒规则并存                 | `session/automation*`、`offPeakTask*`                                                                           |
+| workflow 子系统（phases + agent activities + 时间线 + artifact） | ⚠️ **只借视觉语言**，编排不寄生（决策 C）      | `components/workflow-timeline/*`、`dynamic-workflow*`                                                           |
+| skills                                                           | **直接复用**                                   | `services/src/skills/`                                                                                          |
+| 通知 + 渠道 bots                                                 | **Inbox/渠道原料**；渠道不派活（12-11）        | `background-task-notifications.ts`、`services/src/bots/`                                                        |
+| git 服务 + checkpoint + GitPane                                  | **worktree/合并基础**；checkpoint 是另一种隔离 | `services/src/git/*`                                                                                            |
+| 设置页体系                                                       | **实验分区落点**                               | `lib/settingsNavigation.ts` 等 4 处                                                                             |
+| CommandInbox 串行 admission                                      | **steering 原生能力**                          | CLI runtime                                                                                                     |
+| host/设备 + 远程投射                                             | **单机前提**（决策 E）                         | ADR 0003、`services/src/remote/`                                                                                |
+| usage 面板（账号级）                                             | **相邻**：per-run 记账是新增                   | `settings/usage-stats/`                                                                                         |
 
 ### B. 冲突与重叠清单
 
-| # | 冲突 | 严重 | 处理 |
-|---|---|---|---|
-| C1 | **编排另起（决策 C）vs 时间线 UI 复用**：`WorkflowTimeline` 的模型来自 `WorkflowRunState`（zcode-protocol-v4），不是通用数据 | **高** | 二选一：①把小队状态**映射成 `WorkflowRunState`** 复用组件；②**只借视觉语言**（轨道/站点/药丸/九色）自建小队时间线。写 spec 时必须定 |
-| C2 | **status 四套并存**：执行态（`running\|completed\|error`）、派发态（`dispatch_status`）、automation 生命周期态、新的工作项生命周期 | **高** | 四者**正交**、工作项生命周期**一处拥有、流转幂等**；不得合并（参见 `task_status 残留` 教训） |
-| C3 | **subagent 与「协作智能体」两套 agent 概念并存** | **高** | 存储目录、设置清单、UI 入口都要**显式区分**；设置里两者不得同名混淆 |
-| C4 | **记忆三套**：项目共享 / 每 agent 私有 / 新实体记忆 | 中 | 明确三者关系与目录；`project` scope 写进工作区需排除 |
-| C5 | **automations(cron) 与新唤醒规则（event/条件）并存** | 中 | 明确分工：automation 管「无工作项的一次性/定时任务」，唤醒规则管「挂在工作项上的 event/条件」 |
-| C6 | **SendMessage 是父子树，小队需要多对多** | 中 | 新建按「小队/工作项」路由的消息层，不复用父子语义 |
-| C7 | **`taskAutoArchiveEnabled` 会扫走旧任务** | 中 | 若工作项落在 task 体系，须**排除**，否则工作项被自动归档 |
-| C8 | **远程投射会显示新 UI** | 中 | 明确声明「实验功能不参与投射」（决策 E 已定不做多设备联动） |
-| C9 | **两套开关体系**：编译期 `HIDDEN_SETTINGS_SECTIONS`（长期隐藏）vs 运行期 `appSettings` 布尔（用户可开） | 中 | 别混用；实验分区走**运行期**开关，且关掉后要让相关入口整体消失 |
-| C10 | **`.worktree/` 与 `.zcode/agent-memory/` 在工作区内** | 中 | **同时**加 `.gitignore` 与扫描排除（`wikiScan` 硬编码集 + `.zcodeignore`） |
-| C11 | **智能体目录入口与现有 `SubagentDirectorySidePane` 同 UI 不同源** | 低 | 决定合并成一个入口还是两个；数据源分别为「当前对话的 subagent」与「本项目/工作项成员」 |
-| C12 | **新工具命名**（建子工作项 / 派给队员）与现有 Agent / SendMessage / CronCreate 的语义边界 | 低 | 明确工具集新增清单与命名，避免语义重叠 |
-| C13 | **新增设置分区要改 4 处 + i18n** | 低 | 按既有套路（`SettingsSectionId` 联合、`isSettingsSectionId`、`settingsPageConfig`、`SettingsPage` 渲染、locale） |
-| C14 | **workspaceIdentity / workspacePath 双键规则** | 低 | 新实体（工作项/小队/智能体）的键必须遵从既有身份规则 |
+| #   | 冲突                                                                                                                               | 严重   | 处理                                                                                                                                |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| C1  | **编排另起（决策 C）vs 时间线 UI 复用**：`WorkflowTimeline` 的模型来自 `WorkflowRunState`（zcode-protocol-v4），不是通用数据       | **高** | 二选一：①把小队状态**映射成 `WorkflowRunState`** 复用组件；②**只借视觉语言**（轨道/站点/药丸/九色）自建小队时间线。写 spec 时必须定 |
+| C2  | **status 四套并存**：执行态（`running\|completed\|error`）、派发态（`dispatch_status`）、automation 生命周期态、新的工作项生命周期 | **高** | 四者**正交**、工作项生命周期**一处拥有、流转幂等**；不得合并（参见 `task_status 残留` 教训）                                        |
+| C3  | **subagent 与「协作智能体」两套 agent 概念并存**                                                                                   | **高** | 存储目录、设置清单、UI 入口都要**显式区分**；设置里两者不得同名混淆                                                                 |
+| C4  | **记忆三套**：项目共享 / 每 agent 私有 / 新实体记忆                                                                                | 中     | 明确三者关系与目录；`project` scope 写进工作区需排除                                                                                |
+| C5  | **automations(cron) 与新唤醒规则（event/条件）并存**                                                                               | 中     | 明确分工：automation 管「无工作项的一次性/定时任务」，唤醒规则管「挂在工作项上的 event/条件」                                       |
+| C6  | **SendMessage 是父子树，小队需要多对多**                                                                                           | 中     | 新建按「小队/工作项」路由的消息层，不复用父子语义                                                                                   |
+| C7  | **`taskAutoArchiveEnabled` 会扫走旧任务**                                                                                          | 中     | 若工作项落在 task 体系，须**排除**，否则工作项被自动归档                                                                            |
+| C8  | **远程投射会显示新 UI**                                                                                                            | 中     | 明确声明「实验功能不参与投射」（决策 E 已定不做多设备联动）                                                                         |
+| C9  | **两套开关体系**：编译期 `HIDDEN_SETTINGS_SECTIONS`（长期隐藏）vs 运行期 `appSettings` 布尔（用户可开）                            | 中     | 别混用；实验分区走**运行期**开关，且关掉后要让相关入口整体消失                                                                      |
+| C10 | **`.worktree/` 与 `.zcode/agent-memory/` 在工作区内**                                                                              | 中     | **同时**加 `.gitignore` 与扫描排除（`wikiScan` 硬编码集 + `.zcodeignore`）                                                          |
+| C11 | **智能体目录入口与现有 `SubagentDirectorySidePane` 同 UI 不同源**                                                                  | 低     | 决定合并成一个入口还是两个；数据源分别为「当前对话的 subagent」与「本项目/工作项成员」                                              |
+| C12 | **新工具命名**（建子工作项 / 派给队员）与现有 Agent / SendMessage / CronCreate 的语义边界                                          | 低     | 明确工具集新增清单与命名，避免语义重叠                                                                                              |
+| C13 | **新增设置分区要改 4 处 + i18n**                                                                                                   | 低     | 按既有套路（`SettingsSectionId` 联合、`isSettingsSectionId`、`settingsPageConfig`、`SettingsPage` 渲染、locale）                    |
+| C14 | **workspaceIdentity / workspacePath 双键规则**                                                                                     | 低     | 新实体（工作项/小队/智能体）的键必须遵从既有身份规则                                                                                |
 
 ### C. 结论
 
@@ -393,22 +393,22 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 ## 5.10 冲突抉择（建议方案）
 
-| # | 抉择 | 理由 |
-|---|---|---|
-| **C1** | **编排另起 + 显示层投影复用**：编排层完全自建（决策 C 不变），但在**显示边界**把小队状态**投影成一个视图模型**喂给现有 `WorkflowTimeline`。**不做领域复用**——不复用 workflow 的 script/phases/run 存储。 | 时间线组件承载了大量硬活（轨道/站点/弧线/行进光/药丸/roster/虚拟化视口/几何计算），自建是纯重复且必然与现有 UI 漂移。小队结构与它天然同构：**lane=队员、station=一次运行、arc=交接**。`WorkflowRunState` 当作**视图协议**而非领域模型，与「编排另起」不矛盾。**退出阀**：若投影扭曲（如 worktree/合并态塞不进去），退回「只借视觉语言、自建时间线」。小组件不受 workflow 灰度开关影响（开关只隐藏入口，不删代码）。 |
-| C2 | **工作项生命周期是新增的第四套，且是唯一对外的**：执行态归 CLI runtime、派发态归调度器内部、automation 生命周期态归 automation——**三者不外露**给用户与 agent；只有工作项生命周期是产品级状态，**一处拥有、流转幂等**。 | 避免多写入路径（`task_status 残留` 教训）。 |
-| C3 | **三处显式区分**：①存储（协作智能体放实验命名空间，如 `<ws>/.zcode/squad/`，整块可删）；②UI（现有在「设置 ▸ Subagent」，新的在「设置 ▸ 实验功能 ▸ 协作智能体」）；③术语（现有称「子智能体」，新的称「协作智能体 / 队友」）。会话窗口的「本项目智能体」目录**汇总列两类**（已定），但**配置处分开**。 | 概念分裂靠命名与位置隔离，不靠用户自己分辨。 |
-| C4 | 记忆三套**并存**：项目共享记忆保持原样；协作智能体记忆复用现有 `agent-memory/<key>`（**key 换成稳定 id**）；`project` scope 目录进排除清单。 | 复用现成能力，只修 key 缺陷。 |
-| C5 | **分工**：automation 管「无工作项的定时任务」；唤醒规则管「挂在工作项上的 event/条件」。automation 若要指向工作项，走唤醒规则而非另开一路。 | 两条触发机制并存但不重叠。 |
-| C6 | 新建**小队消息通道**（挂在 squad / work item 上）；`SendMessage` 的父子语义**不动**。 | 多对多不是父子树的超集。 |
-| C7 | 工作项**不进** task 自动归档的扫描范围（按类型/命名空间排除）。 | 否则工作项会被 `taskAutoArchiveEnabled` 按 7 天扫走。 |
-| C8 | 实验功能**不参与远程投射**：在投射的内容过滤里排除（与决策 E 一致）。 | 免得多设备端出现半残界面。 |
-| C9 | 实验分区用**运行期**开关（`appSettings` 布尔）；`HIDDEN_SETTINGS_SECTIONS` 只用于**长期隐藏**，不做实验开关。 | 两套语义不同，别混用。 |
-| C10 | 排除清单**集中一处维护**：`.worktree/`、`.zcode/agent-memory/`、`.zcode/squad/` 同时进 `.gitignore` 与扫描排除。 | 一处改，两处生效，避免漏。 |
-| C11 | **合并成一个「智能体」入口**（列本项目所有），配置分两处。 | 一处看状态，两处管定义。 |
-| C12 | 工具新增走**独立命名**（如 `CreateWorkItem` / `DelegateTask`），并在工具文档里写明与 `Agent` / `SendMessage` / `CronCreate` 的边界。 | 语义不重叠。 |
-| C13 | 按既有 4 处套路加分区（id 联合、`isSettingsSectionId`、`settingsPageConfig`、`SettingsPage` 渲染、locale）。 | — |
-| C14 | 新实体的键遵从 `workspaceIdentity?.trim() \|\| workspacePath`。 | AGENTS.md 既有规则。 |
+| #      | 抉择                                                                                                                                                                                                                                                                                                 | 理由                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **C1** | **编排另起 + 显示层投影复用**：编排层完全自建（决策 C 不变），但在**显示边界**把小队状态**投影成一个视图模型**喂给现有 `WorkflowTimeline`。**不做领域复用**——不复用 workflow 的 script/phases/run 存储。                                                                                             | 时间线组件承载了大量硬活（轨道/站点/弧线/行进光/药丸/roster/虚拟化视口/几何计算），自建是纯重复且必然与现有 UI 漂移。小队结构与它天然同构：**lane=队员、station=一次运行、arc=交接**。`WorkflowRunState` 当作**视图协议**而非领域模型，与「编排另起」不矛盾。**退出阀**：若投影扭曲（如 worktree/合并态塞不进去），退回「只借视觉语言、自建时间线」。小组件不受 workflow 灰度开关影响（开关只隐藏入口，不删代码）。 |
+| C2     | **工作项生命周期是新增的第四套，且是唯一对外的**：执行态归 CLI runtime、派发态归调度器内部、automation 生命周期态归 automation——**三者不外露**给用户与 agent；只有工作项生命周期是产品级状态，**一处拥有、流转幂等**。                                                                               | 避免多写入路径（`task_status 残留` 教训）。                                                                                                                                                                                                                                                                                                                                                                         |
+| C3     | **三处显式区分**：①存储（协作智能体放实验命名空间，如 `<ws>/.zcode/squad/`，整块可删）；②UI（现有在「设置 ▸ Subagent」，新的在「设置 ▸ 实验功能 ▸ 协作智能体」）；③术语（现有称「子智能体」，新的称「协作智能体 / 队友」）。会话窗口的「本项目智能体」目录**汇总列两类**（已定），但**配置处分开**。 | 概念分裂靠命名与位置隔离，不靠用户自己分辨。                                                                                                                                                                                                                                                                                                                                                                        |
+| C4     | 记忆三套**并存**：项目共享记忆保持原样；协作智能体记忆复用现有 `agent-memory/<key>`（**key 换成稳定 id**）；`project` scope 目录进排除清单。                                                                                                                                                         | 复用现成能力，只修 key 缺陷。                                                                                                                                                                                                                                                                                                                                                                                       |
+| C5     | **分工**：automation 管「无工作项的定时任务」；唤醒规则管「挂在工作项上的 event/条件」。automation 若要指向工作项，走唤醒规则而非另开一路。                                                                                                                                                          | 两条触发机制并存但不重叠。                                                                                                                                                                                                                                                                                                                                                                                          |
+| C6     | 新建**小队消息通道**（挂在 squad / work item 上）；`SendMessage` 的父子语义**不动**。                                                                                                                                                                                                                | 多对多不是父子树的超集。                                                                                                                                                                                                                                                                                                                                                                                            |
+| C7     | 工作项**不进** task 自动归档的扫描范围（按类型/命名空间排除）。                                                                                                                                                                                                                                      | 否则工作项会被 `taskAutoArchiveEnabled` 按 7 天扫走。                                                                                                                                                                                                                                                                                                                                                               |
+| C8     | 实验功能**不参与远程投射**：在投射的内容过滤里排除（与决策 E 一致）。                                                                                                                                                                                                                                | 免得多设备端出现半残界面。                                                                                                                                                                                                                                                                                                                                                                                          |
+| C9     | 实验分区用**运行期**开关（`appSettings` 布尔）；`HIDDEN_SETTINGS_SECTIONS` 只用于**长期隐藏**，不做实验开关。                                                                                                                                                                                        | 两套语义不同，别混用。                                                                                                                                                                                                                                                                                                                                                                                              |
+| C10    | 排除清单**集中一处维护**：`.worktree/`、`.zcode/agent-memory/`、`.zcode/squad/` 同时进 `.gitignore` 与扫描排除。                                                                                                                                                                                     | 一处改，两处生效，避免漏。                                                                                                                                                                                                                                                                                                                                                                                          |
+| C11    | **合并成一个「智能体」入口**（列本项目所有），配置分两处。                                                                                                                                                                                                                                           | 一处看状态，两处管定义。                                                                                                                                                                                                                                                                                                                                                                                            |
+| C12    | 工具新增走**独立命名**（如 `CreateWorkItem` / `DelegateTask`），并在工具文档里写明与 `Agent` / `SendMessage` / `CronCreate` 的边界。                                                                                                                                                                 | 语义不重叠。                                                                                                                                                                                                                                                                                                                                                                                                        |
+| C13    | 按既有 4 处套路加分区（id 联合、`isSettingsSectionId`、`settingsPageConfig`、`SettingsPage` 渲染、locale）。                                                                                                                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| C14    | 新实体的键遵从 `workspaceIdentity?.trim() \|\| workspacePath`。                                                                                                                                                                                                                                      | AGENTS.md 既有规则。                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
@@ -425,20 +425,18 @@ Squad { id, name, leaderAgentId, members: [{ agentId, role? }], enabled }
 
 队长指令是**终止条件的载体**（系统不替你判断何时收手）。它落在 **Squad 实体的 `instructions` 字段**上（对齐 multica 的 `squad.instructions`），可按工作项覆盖。模板只给**槽位**，填什么由用户定：
 
-| 槽位 | 作用 | 例 |
-|---|---|---|
-| **目标** | 这个计划成功长什么样 | 「限流上线并通过审查」 |
-| **拆解规则** | 怎么拆成子工作项：粒度与判据 | 「按模块拆，单项不超过 3 个文件改动」 |
-| **派单规则** | 派给谁：按队员 role / 能力；是否允许并行 | 「安全类给审查者；实现类给实现者，最多并行 3」 |
-| **独立性要求** | 队员执行时**不得互相看结论**（四红线之②） | 「各自独立跑，汇总前不共享草稿」 |
-| **验收标准** | 每个子项怎样算过 | 「测试通过 + 审查者无阻断意见」 |
-| **收手条件** | **何时停**：继续 / 收工 / 叫人 | 「全部子项 done 且审查通过即收工；有 blocked 就进 Inbox 等人」 |
-| **汇报格式** | 向人汇报什么、何时进 Inbox | 「只在需决策或全部完成时通知」 |
-| **轮次上限** | 最多派几轮（与 `max_fires` 呼应） | 「最多 5 轮」 |
+| 槽位           | 作用                                      | 例                                                             |
+| -------------- | ----------------------------------------- | -------------------------------------------------------------- |
+| **目标**       | 这个计划成功长什么样                      | 「限流上线并通过审查」                                         |
+| **拆解规则**   | 怎么拆成子工作项：粒度与判据              | 「按模块拆，单项不超过 3 个文件改动」                          |
+| **派单规则**   | 派给谁：按队员 role / 能力；是否允许并行  | 「安全类给审查者；实现类给实现者，最多并行 3」                 |
+| **独立性要求** | 队员执行时**不得互相看结论**（四红线之②） | 「各自独立跑，汇总前不共享草稿」                               |
+| **验收标准**   | 每个子项怎样算过                          | 「测试通过 + 审查者无阻断意见」                                |
+| **收手条件**   | **何时停**：继续 / 收工 / 叫人            | 「全部子项 done 且审查通过即收工；有 blocked 就进 Inbox 等人」 |
+| **汇报格式**   | 向人汇报什么、何时进 Inbox                | 「只在需决策或全部完成时通知」                                 |
+| **轮次上限**   | 最多派几轮（与 `max_fires` 呼应）         | 「最多 5 轮」                                                  |
 
 **为什么模板里必须有「收手条件」和「轮次上限」**：写含糊的结果只有两种——**早早停了等人催**，或**没完没了地派**直到撞上 `max_fires`。这两条是把「自动推进」变成「可靠自动推进」的关键。
-
-
 
 ---
 

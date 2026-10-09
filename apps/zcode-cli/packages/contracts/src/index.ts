@@ -27,6 +27,8 @@ export * from "./interfaces/dynamic-workflow-snippet.port.js";
 export * from "./interfaces/model-catalog.port.js";
 export * from "./interfaces/automation.port.js";
 export * from "./interfaces/off-peak.port.js";
+// 队长派单端口（建子工作项 / 派给队员 / 只读花名册）。**不得**暴露写工作项状态的方法。
+export * from "./interfaces/squad.port.js";
 export * from "./interfaces/mcp.port.js";
 
 export * from "./interfaces/runtime-input-presentation.js";

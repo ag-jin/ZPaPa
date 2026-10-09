@@ -31,10 +31,7 @@ import {
 } from "@/lib/remoteWorkspaceHistory.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
-import {
-  buildProjectedProjectList,
-  createDeviceAccess,
-} from "@/lib/remoteDeviceAccess.js";
+import { buildProjectedProjectList, createDeviceAccess } from "@/lib/remoteDeviceAccess.js";
 import {
   computeProjectionSync,
   findDeviceRecord,
@@ -1071,9 +1068,8 @@ export function useRemoteWorkspaceHistory({
 
   // reconnectRemoteDevice 的 ref：它在本 hook 里声明得更晚（设备级通路依赖较多），
   // 而侧边栏重连需要复用它（投射条目不进 lastWorkspaceSession，走不了按 key 重连）。
-  const reconnectRemoteDeviceRef = useRef<(
-    target: Parameters<IPlatformService["connectRemote"]>[0],
-  ) => Promise<unknown>>(null);
+  const reconnectRemoteDeviceRef =
+    useRef<(target: Parameters<IPlatformService["connectRemote"]>[0]) => Promise<unknown>>(null);
 
   const handleReconnectRemoteWorkspace = useCallback(
     async (workspaceKey: string, options?: ReconnectRemoteWorkspaceOptions) => {
@@ -1642,11 +1638,7 @@ export function useRemoteWorkspaceHistory({
 
       return deviceConnection;
     },
-    [
-      connectRemoteWorkspaceTarget,
-      platform,
-      waitForRemoteWorkspaceSessionReady,
-    ],
+    [connectRemoteWorkspaceTarget, platform, waitForRemoteWorkspaceSessionReady],
   );
 
   /**

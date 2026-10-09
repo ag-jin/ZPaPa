@@ -1,10 +1,12 @@
 /* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
 import { z } from "zod";
-import type { AppSettings } from "./protocol.js";
+import { SQUAD_MERGE_MODES, type AppSettings, type SquadMergeMode } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
 import { normalizeZCodeEndpointOrigin } from "./zcodeEndpoint.js";
+import { IS_ZCODE_PRODUCT_FLAVOR_INJECTED, ZCODE_PRODUCT_FLAVOR } from "./env.js";
+import type { ZCodeProductFlavor } from "./env.js";
 import {
   DEFAULT_EMBEDDED_BROWSER_VIEWPORT_PREFERENCE,
   embeddedBrowserViewportPreferenceSchema,
@@ -427,7 +429,10 @@ const wikiModelSelectionSchema = z
   .object({
     providerId: z.string().trim().min(1),
     modelId: z.string().trim().min(1),
-    options: z.object({ reasoningLevel: z.string().trim().min(1).optional() }).strict().optional(),
+    options: z
+      .object({ reasoningLevel: z.string().trim().min(1).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -467,6 +472,59 @@ const wikiSettingsSchema = z
     lastAutoUpdateAt: z.record(z.string(), z.number().int().nonnegative()).optional(),
   })
   .strict();
+
+/**
+ * 小队实验开关的渠道缺省（A1，2026-10-05 裁定）：只有真注入了 flavor define 的构建（桌面包）
+ * 才按身份取默认；未注入面（node:test/web/CLI/server）一律回退 false，防止 test ⇒ preview 的
+ * fallback 把测试与生产语义漂移成「默认开」。显式值不受缺省影响：zod `.default()` 只在键缺失时
+ * 生效，显式关闭过的用户重启/升级/换渠道后保持关闭（I3/I4，见 experimentalSquadFlag.test.ts）。
+ */
+export function resolveExperimentalAgentSquadsDefault(
+  flavor: ZCodeProductFlavor = ZCODE_PRODUCT_FLAVOR,
+  flavorInjected: boolean = IS_ZCODE_PRODUCT_FLAVOR_INJECTED,
+): boolean {
+  return flavorInjected && flavor === "preview";
+}
+
+/**
+ * GitHub PR 集成的访问令牌（PAT）—— **本仓第一个 secret 字段**（#8 D2，设计 §4.3 / Q2 裁定）。
+ *
+ * 取舍（要向用户言明的那一条）：**明文落盘**在 setting.json。边界是「本地单机、单用户、
+ * 文件权限即边界」；keychain 能力未知，若将来 IPlatformService 有了 secret 存储，存储面可
+ * 无痛 adapter 化（provider 只经 `readToken` 读，不认识存储）。
+ *
+ * 形态闸：trim 后 ≤255（GitHub PAT 既有的 `ghp_`/`github_pat_` 前缀形态不在 schema 里校验 ——
+ * 细粒度 token 与 future 形态都会变，校验形态会把合法凭据挡在门外）。空串是**合法的清除值**
+ * （与 `httpProxy` 的「空串 = 显式清空」同款），不是「半个配置」。
+ */
+export const GITHUB_PULL_REQUEST_TOKEN_MAX_LENGTH = 255;
+const githubPullRequestTokenSchema = z.string().trim().max(GITHUB_PULL_REQUEST_TOKEN_MAX_LENGTH);
+
+/**
+ * 「token 是否已配置」的**唯一判据**（服务侧 provider 可用性 + 呈现侧设置区状态行共用）：
+ * 空白（含未设）一律视同未配置。两处各写一份会在「只输了空格」这类输入上分叉 ——
+ * 设置区显示「已配置」而 PR 区说「未配置」，谁都没写错，但用户看到的是自相矛盾。
+ */
+export function isGithubPullRequestTokenConfigured(token: string | null | undefined): boolean {
+  return typeof token === "string" && token.trim() !== "";
+}
+
+/* #8 D3：小队整批收尾的**模式**（闭集常量与类型在 protocol.ts —— AppSettings 的家）。
+ * 两值：`local`（缺省，离线唯一形态）与 `pr-gate`（push 集成分支 + 开 PR，终态交 PR merge）。 */
+const squadMergeModeSchema = z.enum(SQUAD_MERGE_MODES);
+
+/**
+ * 模式的**读出口唯一判据**（服务组合根的单点快照 + 将来任何消费方共用）：
+ * 闭集外的一切（undefined / 脏值 / 手改 setting.json 绕过 schema 的残留形态）一律收敛到 `local`。
+ *
+ * 为什么收敛方向是 `local` 而不是抛或走向 `pr-gate`：`local` 是**不动远端**的那一侧
+ * （无 push、无 PR、无网络）—— 数据损坏时把收尾留在本地是安全方向；反方向的静默收敛会让一个
+ * 配错的值变成一次远端写入。schema 已在读设置时拒绝闭集外值，这里是类型面的兜底
+ * （两道闸职责不同：schema 关「能不能存」，本函数关「读出来怎么用」）。
+ */
+export function resolveSquadMergeMode(value: unknown): SquadMergeMode {
+  return value === "pr-gate" ? "pr-gate" : "local";
+}
 
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
@@ -513,8 +571,15 @@ const appSettingsObjectSchema = z.object({
   onboardingOccupation: appSettingsOccupationSchema.nullish(),
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().default(false),
-  // 多智能体小队实验开关。默认关闭：不显式打开就不启用。
-  experimentalAgentSquadsEnabled: z.boolean().default(false),
+  // 多智能体小队实验开关。缺省按安装包身份（A1）：preview 包默认开启、其余默认关闭；显式值优先
+  //（default 只在键缺失时生效——显式关闭过的用户不会被渠道默认翻回 true）。
+  experimentalAgentSquadsEnabled: z.boolean().default(resolveExperimentalAgentSquadsDefault()),
+  /* #8 D2：GitHub PR 快照的访问令牌（明文，见上面的取舍说明）。**无默认值**：未配置就是 undefined
+     —— 补一个空串默认值会让「有没有配」在设置文件里失去唯一的可判别形态。 */
+  githubPullRequestToken: githubPullRequestTokenSchema.optional(),
+  /* #8 D3：小队整批收尾的模式。**有默认值**（与 token 相反的取舍）：模式必须有确定值
+     （缺省 local = 不动远端），undefined 的含糊态会让收尾方式变成一个「没人决定过」的选择。 */
+  squadMergeMode: squadMergeModeSchema.default("local"),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -547,7 +612,6 @@ const appSettingsObjectSchema = z.object({
   wikiSettings: wikiSettingsSchema.optional(),
 });
 
-
 export const appSettingsSchema = z.preprocess(
   (value) =>
     sanitizeEmbeddedBrowserViewportPreference(
@@ -563,7 +627,6 @@ export const appSettingsSchema = z.preprocess(
     ),
   appSettingsObjectSchema,
 );
-
 
 export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
@@ -623,6 +686,10 @@ export const appSettingsPatchSchema = z.object({
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().optional(),
   experimentalAgentSquadsEnabled: z.boolean().optional(),
+  /* #8 D2：token 的 patch 位（两处 schema 同步是既有纪律）。`""` = 显式清除，省略 = 不改这一格。 */
+  githubPullRequestToken: githubPullRequestTokenSchema.optional(),
+  /* #8 D3：模式的 patch 位（两处同步同上）。省略 = 不改这一格（模式只有「选哪个」，没有「清除」）。 */
+  squadMergeMode: squadMergeModeSchema.optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -648,5 +715,3 @@ export const appSettingsPatchSchema = z.object({
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
   wikiSettings: wikiSettingsSchema.optional(),
 });
-
-

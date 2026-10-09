@@ -3,9 +3,19 @@ import test from "node:test";
 import { decideWake } from "../src/workitem/wakeGuard.js";
 
 const base = {
-  rule: { id: "w1", workItemId: "wi", kind: "event", mode: "continuous", maxFires: 20, fireCount: 0 } as never,
-  manual: false, recentFireCount: 0, chainRepeatCount: 1,
-  hasPendingSameEvent: false, allInputsFromSelf: false,
+  rule: {
+    id: "w1",
+    workItemId: "wi",
+    kind: "event",
+    mode: "continuous",
+    maxFires: 20,
+    fireCount: 0,
+  } as never,
+  manual: false,
+  recentFireCount: 0,
+  chainRepeatCount: 1,
+  hasPendingSameEvent: false,
+  allInputsFromSelf: false,
 };
 
 test("正常情况放行", () => {
@@ -13,48 +23,68 @@ test("正常情况放行", () => {
 });
 
 test("达到 maxFires 暂停", () => {
-  assert.deepEqual(
-    decideWake({ ...base, rule: { ...base.rule, fireCount: 20 } as never }),
-    { action: "pause", reason: "max_fires" },
-  );
+  assert.deepEqual(decideWake({ ...base, rule: { ...base.rule, fireCount: 20 } as never }), {
+    action: "pause",
+    reason: "max_fires",
+  });
 });
 
 test("一小时内达到 rate 上限暂停", () => {
-  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), { action: "pause", reason: "rate" });
+  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), {
+    action: "pause",
+    reason: "rate",
+  });
 });
 
 test("run 链中同规则出现 2 次即 loop 暂停", () => {
-  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), { action: "pause", reason: "loop" });
+  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), {
+    action: "pause",
+    reason: "loop",
+  });
 });
 
 test("同事件已有待处理则合并（skip）", () => {
-  assert.deepEqual(decideWake({ ...base, hasPendingSameEvent: true }), { action: "skip", reason: "merged" });
+  assert.deepEqual(decideWake({ ...base, hasPendingSameEvent: true }), {
+    action: "skip",
+    reason: "merged",
+  });
 });
 
 test("输入全来自自身则只承认不启动", () => {
-  assert.deepEqual(decideWake({ ...base, allInputsFromSelf: true }), { action: "skip", reason: "acknowledged" });
+  assert.deepEqual(decideWake({ ...base, allInputsFromSelf: true }), {
+    action: "skip",
+    reason: "acknowledged",
+  });
 });
 
 // 人手动「现在就跑」豁免三条防失控——否则人会被自己设的闸拦住。
 test("manual=true 豁免 maxFires/rate/loop", () => {
   const manual = { ...base, manual: true };
-  assert.deepEqual(decideWake({ ...manual, rule: { ...base.rule, fireCount: 9999 } as never }), { action: "fire" });
+  assert.deepEqual(decideWake({ ...manual, rule: { ...base.rule, fireCount: 9999 } as never }), {
+    action: "fire",
+  });
   assert.deepEqual(decideWake({ ...manual, recentFireCount: 999 }), { action: "fire" });
   assert.deepEqual(decideWake({ ...manual, chainRepeatCount: 9 }), { action: "fire" });
 });
 
 // 但豁免不改变「合并」与「自我承认」：那是语义去重，不是限流闸。
 test("manual=true 不豁免 merged / acknowledged", () => {
-  assert.deepEqual(decideWake({ ...base, manual: true, hasPendingSameEvent: true }), { action: "skip", reason: "merged" });
-  assert.deepEqual(decideWake({ ...base, manual: true, allInputsFromSelf: true }), { action: "skip", reason: "acknowledged" });
+  assert.deepEqual(decideWake({ ...base, manual: true, hasPendingSameEvent: true }), {
+    action: "skip",
+    reason: "merged",
+  });
+  assert.deepEqual(decideWake({ ...base, manual: true, allInputsFromSelf: true }), {
+    action: "skip",
+    reason: "acknowledged",
+  });
 });
 
 // 优先级：pause 判定先于 skip（闸先于去重），max_fires 先于 rate 先于 loop。
 test("pause 优先于 skip", () => {
-  assert.deepEqual(
-    decideWake({ ...base, recentFireCount: 12, hasPendingSameEvent: true }),
-    { action: "pause", reason: "rate" },
-  );
+  assert.deepEqual(decideWake({ ...base, recentFireCount: 12, hasPendingSameEvent: true }), {
+    action: "pause",
+    reason: "rate",
+  });
 });
 
 /* ------------------------------------------------------------------
@@ -103,8 +133,16 @@ test("矩阵：manual=true × 五条规则（豁免三条闸，不豁免两条�
     { action: "fire" },
     "max_fires 被豁免",
   );
-  assert.deepEqual(decideWake({ ...base, manual: m, recentFireCount: 9999 }), { action: "fire" }, "rate 被豁免");
-  assert.deepEqual(decideWake({ ...base, manual: m, chainRepeatCount: 9999 }), { action: "fire" }, "loop 被豁免");
+  assert.deepEqual(
+    decideWake({ ...base, manual: m, recentFireCount: 9999 }),
+    { action: "fire" },
+    "rate 被豁免",
+  );
+  assert.deepEqual(
+    decideWake({ ...base, manual: m, chainRepeatCount: 9999 }),
+    { action: "fire" },
+    "loop 被豁免",
+  );
   assert.deepEqual(
     decideWake({ ...base, manual: m, hasPendingSameEvent: true }),
     { action: "skip", reason: "merged" },
@@ -191,10 +229,10 @@ test("闸 × 去重 十字矩阵：manual=false 报闸，manual=true 落到去�
 // maxFires 边界：未设 → 默认 20（brief 要求用 WAKE_DEFAULT_MAX_FIRES 兜底，不得就地写 20）。
 test("maxFires 未设时用默认值 20 兜底", () => {
   assert.deepEqual(decideWake({ ...base, rule: ruleWith(19, undefined) }), { action: "fire" });
-  assert.deepEqual(
-    decideWake({ ...base, rule: ruleWith(20, undefined) }),
-    { action: "pause", reason: "max_fires" },
-  );
+  assert.deepEqual(decideWake({ ...base, rule: ruleWith(20, undefined) }), {
+    action: "pause",
+    reason: "max_fires",
+  });
 });
 
 test("maxFires 边界 0/19/20/21（fireCount=20）", () => {
@@ -203,10 +241,10 @@ test("maxFires 边界 0/19/20/21（fireCount=20）", () => {
     { action: "pause", reason: "max_fires" },
     "0 = 无预算：非法输入下宁可停（fail-closed），不放过",
   );
-  assert.deepEqual(
-    decideWake({ ...base, rule: ruleWith(20, 19) }),
-    { action: "pause", reason: "max_fires" },
-  );
+  assert.deepEqual(decideWake({ ...base, rule: ruleWith(20, 19) }), {
+    action: "pause",
+    reason: "max_fires",
+  });
   assert.deepEqual(
     decideWake({ ...base, rule: ruleWith(20, 20) }),
     { action: "pause", reason: "max_fires" },
@@ -222,41 +260,56 @@ test("fireCount 比 maxFires 少 1 时仍放行", () => {
 
 test("rate 阈值边界 11 / 12", () => {
   assert.deepEqual(decideWake({ ...base, recentFireCount: 11 }), { action: "fire" });
-  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), { action: "pause", reason: "rate" });
+  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), {
+    action: "pause",
+    reason: "rate",
+  });
 });
 
 test("loop 阈值边界 0 / 1 / 2", () => {
   assert.deepEqual(decideWake({ ...base, chainRepeatCount: 0 }), { action: "fire" });
   assert.deepEqual(decideWake({ ...base, chainRepeatCount: 1 }), { action: "fire" });
-  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), { action: "pause", reason: "loop" });
+  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), {
+    action: "pause",
+    reason: "loop",
+  });
 });
 
 // 闸内优先级：三闸同时命中必须报 max_fires（最持久、最需要人看见的那条）。
 test("优先级 max_fires > rate > loop", () => {
   const all = { ...base, rule: ruleWith(20, 20), recentFireCount: 12, chainRepeatCount: 2 };
   assert.deepEqual(decideWake(all), { action: "pause", reason: "max_fires" });
-  assert.deepEqual(decideWake({ ...all, rule: ruleWith(0, 999) }), { action: "pause", reason: "rate" });
-  assert.deepEqual(
-    decideWake({ ...all, rule: ruleWith(0, 999), recentFireCount: 0 }),
-    { action: "pause", reason: "loop" },
-  );
+  assert.deepEqual(decideWake({ ...all, rule: ruleWith(0, 999) }), {
+    action: "pause",
+    reason: "rate",
+  });
+  assert.deepEqual(decideWake({ ...all, rule: ruleWith(0, 999), recentFireCount: 0 }), {
+    action: "pause",
+    reason: "loop",
+  });
 });
 
 test("优先级 pause > skip（三闸各自都压得住两条去重）", () => {
   const dedup = { hasPendingSameEvent: true, allInputsFromSelf: true };
-  assert.deepEqual(
-    decideWake({ ...base, ...dedup, rule: ruleWith(20, 20) }),
-    { action: "pause", reason: "max_fires" },
-  );
-  assert.deepEqual(decideWake({ ...base, ...dedup, recentFireCount: 12 }), { action: "pause", reason: "rate" });
-  assert.deepEqual(decideWake({ ...base, ...dedup, chainRepeatCount: 2 }), { action: "pause", reason: "loop" });
+  assert.deepEqual(decideWake({ ...base, ...dedup, rule: ruleWith(20, 20) }), {
+    action: "pause",
+    reason: "max_fires",
+  });
+  assert.deepEqual(decideWake({ ...base, ...dedup, recentFireCount: 12 }), {
+    action: "pause",
+    reason: "rate",
+  });
+  assert.deepEqual(decideWake({ ...base, ...dedup, chainRepeatCount: 2 }), {
+    action: "pause",
+    reason: "loop",
+  });
 });
 
 // 两条去重同时命中时的次序被钉死：先 self（自我回声）后 merged（同事件待处理）。
 // 两者都是 skip，只有 reason 不同；钉死是为了让接线方拿到稳定字符串，不让它随实现漂移。
 test("两条去重同时命中时报 acknowledged（self 优先于 merged）", () => {
-  assert.deepEqual(
-    decideWake({ ...base, allInputsFromSelf: true, hasPendingSameEvent: true }),
-    { action: "skip", reason: "acknowledged" },
-  );
+  assert.deepEqual(decideWake({ ...base, allInputsFromSelf: true, hasPendingSameEvent: true }), {
+    action: "skip",
+    reason: "acknowledged",
+  });
 });

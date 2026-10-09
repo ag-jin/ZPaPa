@@ -37,12 +37,17 @@ import {
   IHooksService,
   IMemoryService,
   IWikiService,
+  IAgentBuilderService,
   ISettingsSyncService,
   IFeedbackService,
   IRemoteDeviceConfigService,
   IRemoteDeviceProjectsService,
   IPromptAttachmentTransferService,
   IWindowControllerService,
+  ISquadRuntimeService,
+  type ISquadRuntimeServiceShape,
+  IWorkItemCollaborationService,
+  type IWorkItemCollaborationServiceShape,
   type IServiceAccessor,
 } from "@zcode/services";
 
@@ -94,6 +99,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly memoryService: IMemoryService;
   /** 项目知识库（wiki）：生成、读取与进度订阅。 */
   readonly wikiService: IWikiService;
+  /** AI 访谈式智能体创建（AgentBuilder）：一轮访谈一次 RPC，历史与草稿由 UI 持有。 */
+  readonly agentBuilderService: IAgentBuilderService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   /** 远程设备配置（投射端本地能力，仅 desktop host 提供）。 */
@@ -101,6 +108,38 @@ export class RemoteServiceAccess implements IServiceAccessor {
   /** 设备项目清单（读设备自身登记的 recentProjects，供投射用）。 */
   readonly remoteDeviceProjectsService?: IRemoteDeviceProjectsService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
+
+  /**
+   * 小队运行时（实验功能；名册落点已按用户裁定改为侧栏一级入口，见 spec §17 对应行 / §16 S8）。
+   *
+   * **为什么是可选**：它不是所有 host 都注册的服务面，且既有测试 double / 非 desktop host
+   * 未必提供；声明为可选才不会把这条新服务变成所有实现的必填项（那正是本轮要避免的连锁改动）。
+   * 取不到时**由消费方响亮报错**（`packages/ui/src/squad/squadRuntimeAccess.ts`
+   * 的 `resolveSquadRuntimeService`；2026-10-03 名册搬家时该文件由 `settings/squadEntry/` 移到 `squad/`），
+   * 不在这里静默兜底成 undefined —— 静默兜底会让界面
+   * 一片空白而分不清「没有数据」与「服务没接上」。
+   *
+   * **为什么用 defineProperty 且 enumerable: false**：与 `remoteDeviceConfigService` /
+   * `remoteDeviceProjectsService` 同一套路。远端 workspace 的 accessor 是
+   * `{...baseServices, ...}` 展开组装的（`desktop/src/renderer/src/remoteWorkspaceSessionServices.ts`），
+   * enumerable 的话本机 host 的小队服务会被**悄悄带进远端 workspace**，
+   * 于是拿着远端路径去问本机 host —— 正是该文件反复警告的「把远端路径发给本机 host」形态。
+   * 不可枚举 ⇒ 直接属性读仍然有效，但不会随展开泄漏到另一个 host 的 scope。
+   */
+  readonly squadRuntimeService?: ISquadRuntimeServiceShape;
+
+  /**
+   * 工作项协作**读门面**（B5.1）：按 (workspace, workItemId) 的一次聚合读（评论 / 活动 /
+   * 决定 / 回应 / receipt）。与 `squadRuntimeService` 同款理由声明为**可选**：不是所有 host
+   * 都注册该描述符，既有测试 double / 非 desktop host 未必提供；取不到时由消费方响亮报错
+   * （`packages/ui/src/squad/workItemCollaborationAccess.ts` 的 `resolveWorkItemCollaborationService`）。
+   *
+   * **为什么也用 defineProperty 且 enumerable: false**：与 `squadRuntimeService` 同一条理由 ——
+   * 远端 workspace 的 accessor 是 `{...baseServices, ...}` 展开组装的，enumerable 会让本机 host
+   * 的服务被悄悄带进远端 workspace scope，于是拿着远端路径去问本机 host。
+   * 不可枚举 ⇒ 直接属性读仍然有效，但不会随展开泄漏。
+   */
+  readonly workItemCollaborationService?: IWorkItemCollaborationServiceShape;
 
   constructor(channelClient: IChannelClient) {
     this.fileService = ProxyChannel.toService<IFileService>(
@@ -222,6 +261,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.wikiService = ProxyChannel.toService<IWikiService>(
       channelClient.getChannel(IWikiService.channelName),
     );
+    this.agentBuilderService = ProxyChannel.toService<IAgentBuilderService>(
+      channelClient.getChannel(IAgentBuilderService.channelName),
+    );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),
     );
@@ -243,5 +285,24 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.promptAttachmentTransferService = ProxyChannel.toService<IPromptAttachmentTransferService>(
       channelClient.getChannel(IPromptAttachmentTransferService.channelName),
     );
+    // 小队运行时：host 侧 `ServiceCollection.register(ISquadRuntimeService, …)` 已把 channel
+    // `squad-runtime` 暴露在线路上，这里补上 renderer 侧的代理映射 —— 缺这一行时 UI 拿不到该服务
+    // （accessor 是逐字段建代理的具体类，没有按 channelName 动态解析的兜底）。
+    // 老 host 没有这个 channel 时，方法调用会走 RPC 失败（不是静默 undefined）。
+    Object.defineProperty(this, "squadRuntimeService", {
+      value: ProxyChannel.toService<ISquadRuntimeServiceShape>(
+        channelClient.getChannel(ISquadRuntimeService.channelName),
+      ),
+      enumerable: false,
+    });
+    // 工作项协作读门面（B5.1）：与上面同款 —— host 侧 `register(IWorkItemCollaborationService, …)`
+    // 已把 channel `work-item-collaboration` 暴露在线路上，缺这一行 UI 拿不到该服务。
+    // 老 host 没有这个 channel 时方法调用走 RPC 失败（不是静默 undefined）。
+    Object.defineProperty(this, "workItemCollaborationService", {
+      value: ProxyChannel.toService<IWorkItemCollaborationServiceShape>(
+        channelClient.getChannel(IWorkItemCollaborationService.channelName),
+      ),
+      enumerable: false,
+    });
   }
 }

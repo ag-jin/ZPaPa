@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseMacDesignatedRequirement,
+  resolveGitHubReleasesPageUrl,
   resolveMacAppBundlePath,
   shouldUseInAppAutoUpdate,
 } from "../src/main/autoUpdatePolicy.js";
@@ -22,7 +23,11 @@ import {
 test("parseMacDesignatedRequirement：未签名（codesign 非 0 退出）判为无 DR", () => {
   // 真实未签名输出：codesign -d -r- 退出码非 0，stderr 写 "code object is not signed at all"
   assert.equal(
-    parseMacDesignatedRequirement(1, "", "/Applications/ZCode.app: code object is not signed at all"),
+    parseMacDesignatedRequirement(
+      1,
+      "",
+      "/Applications/ZCode.app: code object is not signed at all",
+    ),
     false,
   );
   // 退出码是稳定契约：即使 stderr 为空/被本地化，也必须判否
@@ -134,4 +139,17 @@ test("shouldUseInAppAutoUpdate：macOS 打包态取决于是否取到 DR", () =>
     }),
     false,
   );
+});
+
+test("resolveGitHubReleasesPageUrl：稳定通道照旧指向 latest，预览通道不得被送到正式版页", () => {
+  assert.equal(
+    resolveGitHubReleasesPageUrl("ag-jin", "ZPaPa", "stable"),
+    "https://github.com/ag-jin/ZPaPa/releases/latest",
+  );
+
+  const previewUrl = resolveGitHubReleasesPageUrl("ag-jin", "ZPaPa", "preview");
+  // /releases/latest 会被 GitHub 重定向到最新**正式版**（prerelease 不计入 latest），
+  // 预览用户会看不到自己这条通道的产物；必须改指完整发布列表。
+  assert.doesNotMatch(previewUrl, /\/latest$/, "预览通道不得指向 latest 正式版页");
+  assert.equal(previewUrl, "https://github.com/ag-jin/ZPaPa/releases");
 });

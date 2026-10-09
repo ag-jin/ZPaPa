@@ -3,8 +3,9 @@ import { RESOLVE_SCRIPT } from "./browserCommandScripts.js";
 import type { BrowserPoint, ControlledView } from "./browserCommandTypes.js";
 
 /**
- * 键盘修饰键 → CDP modifiers 位掩码（Alt=1, Control=2, Meta=4, Shift=8）。
- * click/press/drag 均复用此映射，透传给 dispatchMouseEvent/dispatchKeyEvent。
+ * 键盘修饰键 → 位掩码（Alt=1, Control=2, Meta=4, Shift=8）。
+ * 鼠标/拖拽复用此掩码透传给 dispatchMouseEvent；键盘经 `modifierNamesFromBitmask` 折成
+ * `sendInputEvent` 的 modifiers 名（frame 定点路径仍透传给 CDP dispatchKeyEvent）。
  */
 const MODIFIER_BITS: Record<BrowserKeyModifier, number> = {
   Alt: 1,
@@ -16,7 +17,8 @@ const MODIFIER_BITS: Record<BrowserKeyModifier, number> = {
 
 /**
  * 常用键名 → CDP Input.dispatchKeyEvent 参数映射。
- * 未命中的 key 走裸传（仅带 key 字段），交给内核尽力解释。
+ * **只服务跨进程 frame 的定点投递**（dispatchKey 的 sessionId 分支，见那里的通道说明）；
+ * 主 frame 不再走 CDP。未命中的 key 走裸传（仅带 key 字段），交给内核尽力解释。
  */
 const KEY_MAP: Record<string, { key: string; code: string; windowsVirtualKeyCode: number }> = {
   Enter: { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
@@ -29,20 +31,6 @@ const KEY_MAP: Record<string, { key: string; code: string; windowsVirtualKeyCode
   ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 },
   ArrowRight: { key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 },
   Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32 },
-};
-
-const MODIFIER_KEY_MAP: Record<
-  BrowserKeyModifier,
-  { code: string; windowsVirtualKeyCode: number }
-> = {
-  Alt: { code: "AltLeft", windowsVirtualKeyCode: 18 },
-  Control: { code: "ControlLeft", windowsVirtualKeyCode: 17 },
-  ControlOrMeta:
-    process.platform === "darwin"
-      ? { code: "MetaLeft", windowsVirtualKeyCode: 91 }
-      : { code: "ControlLeft", windowsVirtualKeyCode: 17 },
-  Meta: { code: "MetaLeft", windowsVirtualKeyCode: 91 },
-  Shift: { code: "ShiftLeft", windowsVirtualKeyCode: 16 },
 };
 
 function normalizeCuaKey(raw: string): string {
@@ -75,34 +63,78 @@ function asModifier(key: string): BrowserKeyModifier | undefined {
     : undefined;
 }
 
-function keyDefinition(keyName: string): {
-  key: string;
-  code?: string;
-  windowsVirtualKeyCode?: number;
-} {
-  const known = KEY_MAP[keyName];
-  if (known) return known;
-  const modifier = asModifier(keyName);
-  if (modifier) return { key: modifier, ...MODIFIER_KEY_MAP[modifier] };
-  if (/^[a-z]$/iu.test(keyName)) {
-    const upper = keyName.toUpperCase();
-    return { key: keyName, code: `Key${upper}`, windowsVirtualKeyCode: upper.charCodeAt(0) };
-  }
-  if (/^[0-9]$/u.test(keyName)) {
-    return {
-      key: keyName,
-      code: `Digit${keyName}`,
-      windowsVirtualKeyCode: keyName.charCodeAt(0),
-    };
-  }
-  return { key: keyName };
-}
-
 export function modifiersBitmask(mods?: readonly BrowserKeyModifier[]): number {
   if (!mods || mods.length === 0) return 0;
   let bits = 0;
   for (const m of mods) bits |= MODIFIER_BITS[m];
   return bits;
+}
+
+/** 修饰键位掩码（与 MODIFIER_BITS 同口径）→ Electron `sendInputEvent` 的 modifiers 名。 */
+export function modifierNamesFromBitmask(bits: number): string[] {
+  const names: string[] = [];
+  if ((bits & MODIFIER_BITS.Alt) !== 0) names.push("alt");
+  if ((bits & MODIFIER_BITS.Control) !== 0) names.push("control");
+  if ((bits & MODIFIER_BITS.Meta) !== 0) names.push("meta");
+  if ((bits & MODIFIER_BITS.Shift) !== 0) names.push("shift");
+  return names;
+}
+
+/**
+ * CDP 键名 → Electron accelerator 键名：**只有方向键不一致**，其余同名直通。
+ *
+ * 为什么单列一张表：`sendInputEvent` 的 `keyCode` 按 accelerator 键名解析，实测 Electron 41
+ * 收到 "ArrowUp" 这类 CDP 名时解析不出任何键 —— 产出 keyCode=0、key="" 的空事件且**不报错**；
+ * 折成 "Up" 才是真方向键。字母/数字/单字符/Home/End/PageUp/PageDown/Insert/F1–F24 同名直通。
+ */
+const ELECTRON_KEY_NAME_MAP: Record<string, string> = {
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  // 组合键里的复合修饰键在 accelerator 里没有对应名，按平台折成主修饰键（与 MODIFIER_BITS 同口径）。
+  ControlOrMeta: process.platform === "darwin" ? "Meta" : "Control",
+};
+
+/** 已实测可用的非单字符键名（其余键名显式报错：宁可命令失败，也不产出空键事件）。 */
+const ELECTRON_NAMED_KEYS = new Set([
+  "Enter",
+  "Return",
+  "Tab",
+  "Escape",
+  "Esc",
+  "Backspace",
+  "Delete",
+  "Insert",
+  "Space",
+  // 方向键的 accelerator 名（ELECTRON_KEY_NAME_MAP 的落点，必须同时在这张白名单里）。
+  "Up",
+  "Down",
+  "Left",
+  "Right",
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "Plus",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+]);
+
+/** 键名 → Electron accelerator 键名（白名单；不认识的键名抛错，见 ELECTRON_NAMED_KEYS）。 */
+export function electronKeyCodeFor(keyName: string): string {
+  const mapped = ELECTRON_KEY_NAME_MAP[keyName] ?? keyName;
+  const singleCharacter = [...mapped].length === 1;
+  if (
+    singleCharacter ||
+    ELECTRON_NAMED_KEYS.has(mapped) ||
+    /^F([1-9]|1[0-9]|2[0-4])$/u.test(mapped)
+  ) {
+    return mapped;
+  }
+  throw new Error(`press: unsupported key name "${keyName}"`);
 }
 
 /** 解析 ref 元素中心坐标；未找到（含返回非法结构）→ null。 */
@@ -277,7 +309,10 @@ export async function dispatchScrollGesture(
   });
 }
 
-/** 组合键输入：逐键按下组合键，末键 down/up 后逆序释放其余按键。 */
+/**
+ * 组合键输入：逐键按下组合键，末键 down/up 后逆序释放其余按键。
+ * 通道一律 `sendInputEvent`（组合键没有 frame 定点需求，理由见 dispatchKey）。
+ */
 export async function dispatchKeyPress(
   view: ControlledView,
   keys: readonly string[],
@@ -291,42 +326,64 @@ export async function dispatchKeyPress(
   const held = normalized.slice(0, -1);
   const pressedModifiers = new Set<BrowserKeyModifier>();
 
-  const dispatch = async (type: "keyDown" | "keyUp", keyName: string): Promise<void> => {
+  const dispatch = (type: "keyDown" | "keyUp", keyName: string): void => {
     const modifier = asModifier(keyName);
     if (type === "keyDown" && modifier) pressedModifiers.add(modifier);
     if (type === "keyUp" && modifier) pressedModifiers.delete(modifier);
-    const definition = keyDefinition(keyName);
-    const modifiers = modifiersBitmask([...pressedModifiers]);
-    await view.cdp.send("Input.dispatchKeyEvent", {
+    const modifierNames = modifierNamesFromBitmask(modifiersBitmask([...pressedModifiers]));
+    view.webContents.sendInputEvent({
       type,
-      ...definition,
-      ...(modifiers > 0 ? { modifiers } : {}),
+      keyCode: electronKeyCodeFor(keyName),
+      ...(modifierNames.length > 0 ? { modifiers: modifierNames } : {}),
     });
   };
 
-  for (const key of held) await dispatch("keyDown", key);
-  await dispatch("keyDown", last);
-  await dispatch("keyUp", last);
-  for (const key of held.toReversed()) await dispatch("keyUp", key);
+  for (const key of held) dispatch("keyDown", key);
+  dispatch("keyDown", last);
+  dispatch("keyUp", last);
+  for (const key of held.toReversed()) dispatch("keyUp", key);
 }
 
-/** 发一次按键（keyDown + keyUp）；已知键带完整映射，未知键裸传 key。modifiers 位掩码可透传。 */
+/**
+ * 发一次按键（keyDown + keyUp）。
+ *
+ * **通道判据**（IAB 键盘注入只有这一处，别再各写一份）：
+ * · 主 frame（`sessionId` 缺省）⇒ `webContents.sendInputEvent`：以 webContents 为单位投递，
+ *   与「窗口当前聚焦的 widget」无关。
+ *   为什么不能用 CDP `Input.dispatchKeyEvent`：`<webview>` guest 的 CDP 键事件会被路由到
+ *   窗口**当前聚焦**的 widget；guest 未持嵌入层焦点时（切 tab、点过 app 壳、刚 reload 完
+ *   都是常态）按键会**静默落进 app 自己的渲染层**，命令仍返回 ok=true。
+ * · 跨进程 iframe/OOPIF（`sessionId` 有值）⇒ 保留 CDP：只有它能定点到那个 frame。
+ *   该路径仍受嵌入层焦点限制（未修，属 frame 级焦点策略的 finding）。
+ */
 export async function dispatchKey(
   view: ControlledView,
   keyName: string,
   modifiers = 0,
   sessionId?: string,
 ): Promise<void> {
+  const modifierNames = modifierNamesFromBitmask(modifiers);
+  const electronModifiers = modifierNames.length > 0 ? { modifiers: modifierNames } : {};
+  if (sessionId == null) {
+    const keyCode = electronKeyCodeFor(keyName);
+    view.webContents.sendInputEvent({ type: "keyDown", keyCode, ...electronModifiers });
+    view.webContents.sendInputEvent({ type: "keyUp", keyCode, ...electronModifiers });
+    return;
+  }
   const def = KEY_MAP[keyName];
   const base = def
     ? { key: def.key, code: def.code, windowsVirtualKeyCode: def.windowsVirtualKeyCode }
     : { key: keyName };
-  // modifiers=0 时不带该字段，保持与既有单测（不含 modifiers 的断言）一致。
-  const mod = modifiers > 0 ? { modifiers } : {};
-  const sendKey = (type: "keyDown" | "keyUp") =>
-    sessionId == null
-      ? view.cdp.send("Input.dispatchKeyEvent", { type, ...base, ...mod })
-      : view.cdp.send("Input.dispatchKeyEvent", { type, ...base, ...mod }, sessionId);
-  await sendKey("keyDown");
-  await sendKey("keyUp");
+  // modifiers=0 时不带该字段，保持这条定点投递路径的线上形状不变。
+  const cdpModifiers = modifiers > 0 ? { modifiers } : {};
+  await view.cdp.send(
+    "Input.dispatchKeyEvent",
+    { type: "keyDown", ...base, ...cdpModifiers },
+    sessionId,
+  );
+  await view.cdp.send(
+    "Input.dispatchKeyEvent",
+    { type: "keyUp", ...base, ...cdpModifiers },
+    sessionId,
+  );
 }

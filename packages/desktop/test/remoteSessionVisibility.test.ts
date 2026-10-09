@@ -55,7 +55,11 @@ test("远程 source 查询对端时只传 workspacePath，不透传本端 identi
   const sourceErrors: unknown[] = [];
   const runtime = createWindowHostControllerRuntime({
     onSourceError: (scope, operation, error) => {
-      sourceErrors.push({ scope, operation, error: error instanceof Error ? error.message : String(error) });
+      sourceErrors.push({
+        scope,
+        operation,
+        error: error instanceof Error ? error.message : String(error),
+      });
     },
     createId: (() => {
       let n = 0;

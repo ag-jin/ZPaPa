@@ -84,7 +84,7 @@ const AGENT_COLORS: AgentColor[] = [...SUBAGENT_COLORS];
 const COLOR_DOT_CLASS: Record<AgentColor, string> = SUBAGENT_COLOR_CLASS;
 const MODEL_ITEM_NEVER_LOCKED = () => false;
 const INHERIT_MODEL_VALUE = "inherit";
-const TOOL_OPTIONS = [
+export const TOOL_OPTIONS = [
   "Read",
   "Grep",
   "Glob",

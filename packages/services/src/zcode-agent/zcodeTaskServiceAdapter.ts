@@ -3075,7 +3075,16 @@ export function createZCodeTaskServiceAdapter(
           listener({
             taskId,
             ...(inputId ? { inputId } : {}),
-            outcome: terminal.kind === "turn.failed" ? "failed" : "succeeded",
+            /* 三值映射（W2 / R-3 修复②）：`turn.interrupted`（会话被 stop 打断）**不得**落
+               `"succeeded"` —— 那等于宣布「这次派发跑完了、有产出」，host 的成功臂随后会把 run
+               入账成 `produced` 并把工作项推回 `in_review`，把用户刚做的取消 / 看门狗的收口静默改写。
+               这段映射只此一处：`succeeded / failed / stopped` 是 host 终态出口的分叉依据。 */
+            outcome:
+              terminal.kind === "turn.failed"
+                ? "failed"
+                : terminal.kind === "turn.interrupted"
+                  ? "stopped"
+                  : "succeeded",
           });
         });
     },

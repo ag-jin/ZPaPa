@@ -182,11 +182,7 @@ test("移除设备：只删目标台，保留其它台", () => {
 
   assert.equal(next.length, 1, "只删一台");
   assert.equal(next[0]?.target.host, "100.66.1.9", "保留的是另一台");
-  assert.deepEqual(
-    next[0]?.visibleProjects,
-    undefined,
-    "别台的偏好不受影响（本例别台本就为空）",
-  );
+  assert.deepEqual(next[0]?.visibleProjects, undefined, "别台的偏好不受影响（本例别台本就为空）");
 });
 
 test("移除设备：目标不存在时列表不变", () => {
@@ -314,10 +310,7 @@ test("显示偏好：连拨两个开关都留存（读-改-写基于最新一份
 test("反证：拿渲染期快照整份回写会丢掉前一次拨动", () => {
   let stored: DeviceRecord[] = [{ target, lastConnectionStatus: "connected" }];
   /** 旧写法：用渲染期快照拼整份 map 再整份写入。 */
-  const writeFromSnapshot = (
-    snapshot: Record<string, boolean>,
-    patch: Record<string, boolean>,
-  ) => {
+  const writeFromSnapshot = (snapshot: Record<string, boolean>, patch: Record<string, boolean>) => {
     stored = mergeDeviceRecord(stored, {
       target,
       visibleProjects: { ...snapshot, ...patch },

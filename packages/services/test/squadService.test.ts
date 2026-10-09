@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createSquadService } from "../src/teams/squadService.js";
@@ -54,6 +63,26 @@ test("create 缺收手条件/轮次上限则抛错", () => {
     () => svc.create({ name: "x", leaderAgentId: "ta_lead", members: [] }),
     /stopCondition|maxRounds/,
   );
+});
+
+// ⑤刀剩余半边（矩阵裁定#2：归档可恢复，与智能体同口径）。
+test("归档后可恢复（restore 清 archivedAt；未知 id 响亮抛）", () => {
+  const svc = setup();
+  const s0 = svc.create({
+    name: "sq",
+    leaderAgentId: "ta-1",
+    members: ["ta-1"],
+    instructions: { stopCondition: "x", maxRounds: "3" },
+  });
+  svc.archive(s0.id);
+  assert.ok(svc.get(s0.id)?.archivedAt !== undefined);
+  svc.restore(s0.id);
+  const restored = svc.get(s0.id)!;
+  assert.equal(restored.archivedAt, undefined, "恢复 = 清归档时间戳（花名册与指令保留）");
+  assert.equal(restored.name, "sq");
+  svc.restore(s0.id); // 幂等 no-op
+  assert.equal(svc.get(s0.id)?.archivedAt, undefined);
+  assert.throws(() => svc.restore("nope"), /不存在/);
 });
 
 test("归档写 archivedAt 而非删除，且 list 仍含它", () => {
@@ -284,4 +313,177 @@ test("小队定义只落在 .zcode/squad/squads 下", () => {
     instructions: { stopCondition: "s", maxRounds: "1" },
   });
   assert.deepEqual(readdirSync(join(ws, ".zcode", "squad")), ["squads"]);
+});
+
+// ---- updateRoster（2026-10-03 加法：一级入口「小队」的名册编辑）----
+
+/** 同 setup()，但把定义根一并交出来：`updateRoster` 的几条用例要直接读盘 / 打存储层。 */
+function setupWithRoot() {
+  const ws = mkdtempSync(join(tmpdir(), "ws-"));
+  const root = join(ws, ".zcode", "squad", "squads");
+  const svc = createSquadService({
+    root,
+    teamAgentRoot: join(ws, ".zcode", "squad", "agents"),
+  });
+  return { svc, root };
+}
+
+// 改名**不得**重建名册：重建从零拼，非队长的 `role` 标签会静默丢掉。
+// 今天没有别的入口设非队长 role，但「今天没有」不是「永远没有」——直接打存储层注入一份带标签的
+// 名册，让「重建一旦发生就会咬」这条断言是承重的。
+test("updateRoster：只改名字 ⇒ members 逐字节未动（不重建，非队长的 role 标签保住）", () => {
+  const { svc, root } = setupWithRoot();
+  const created = svc.create({
+    name: "网关组",
+    leaderAgentId: "ta_lead",
+    members: ["ta_x"],
+    instructions: { stopCondition: "收工", maxRounds: "5" },
+  });
+  const before = writeSquad(root, {
+    ...created,
+    members: [
+      { agentId: "ta_lead", role: "leader" },
+      { agentId: "ta_x", role: "reviewer" },
+    ],
+  });
+
+  const updated = svc.updateRoster(created.id, { name: "改过的名字" });
+
+  assert.equal(updated.name, "改过的名字");
+  assert.deepEqual(
+    updated.members,
+    before.members,
+    "只改名字时 members 必须逐字节未动（重建是有损的）",
+  );
+  assert.deepEqual(updated.instructions, before.instructions);
+  assert.equal(updated.leaderAgentId, before.leaderAgentId);
+  assert.equal(updated.enabled, before.enabled);
+  assert.equal(updated.archivedAt, undefined);
+  // 读盘：盘上那份也一样（保住的不是返回值的内存副本）。
+  assert.deepEqual(svc.get(created.id), updated);
+});
+
+// 单独换队长：新队长置首标 leader，旧队长回落到普通队员（composeMembers 的过滤让它不重复）。
+test("updateRoster：单独换 leaderAgentId ⇒ 新队长在 members 首位且 role=leader，旧队长仍在名册无重复", () => {
+  const { svc } = setupWithRoot();
+  const s = svc.create({
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: ["ta_x"],
+    instructions: { stopCondition: "s", maxRounds: "1" },
+  });
+
+  const updated = svc.updateRoster(s.id, { leaderAgentId: "ta_x" });
+
+  assert.equal(updated.leaderAgentId, "ta_x");
+  assert.deepEqual(
+    updated.members.map((member) => [member.agentId, member.role]),
+    [
+      ["ta_x", "leader"],
+      ["ta_lead", undefined],
+    ],
+    "新队长置首并标 leader、旧队长回落到普通队员（与 create 同一条组装规则）",
+  );
+  const ids = updated.members.map((member) => member.agentId);
+  assert.equal(new Set(ids).size, ids.length, "换队长不得造成重复队员");
+});
+
+// 重复队员不得被静默去重（与 create 同一条闸：validateSquad 拦下）。
+test("updateRoster：members 含重复 agentId ⇒ 响亮抛（不得静默去重），盘上不动", () => {
+  const { svc } = setupWithRoot();
+  const s = svc.create({
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: ["ta_x"],
+    instructions: { stopCondition: "s", maxRounds: "1" },
+  });
+  const before = svc.get(s.id);
+
+  assert.throws(
+    () => svc.updateRoster(s.id, { members: ["ta_x", "ta_x"] }),
+    /重复/,
+    "重复队员会让派单与记账出现两份，必须响亮拒绝",
+  );
+  assert.deepEqual(svc.get(s.id), before, "被拒的补丁一个字节都不该落盘");
+});
+
+// instructions 逐槽合并：没给的槽位（本轮界面只收 2 个，其余 6 个常常是历史填的）必须原样保留。
+test("updateRoster：instructions 只给 goal ⇒ 其余槽位原样保留；清空必填槽位 ⇒ 响亮抛", () => {
+  const { svc } = setupWithRoot();
+  const s = svc.create({
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: [],
+    instructions: { stopCondition: "收工", maxRounds: "5", reporting: "日报" },
+  });
+
+  const updated = svc.updateRoster(s.id, { instructions: { goal: "只填目标" } });
+  assert.equal(updated.instructions.goal, "只填目标");
+  assert.equal(
+    updated.instructions.stopCondition,
+    "收工",
+    "未提供的槽位原样保留（整包替换会静默清掉）",
+  );
+  assert.equal(updated.instructions.maxRounds, "5");
+  assert.equal(updated.instructions.reporting, "日报");
+
+  assert.throws(
+    () => svc.updateRoster(s.id, { instructions: { stopCondition: "   " } }),
+    /stopCondition/,
+    "把必填槽位清成空白必须被 validateSquad 响亮拒绝",
+  );
+  assert.equal(svc.get(s.id)?.instructions.stopCondition, "收工", "被拒的补丁不得落盘");
+});
+
+// 白名单是**运行期**的承重墙：patch 多带 enabled / archivedAt 时不得被展开写进盘里。
+test("updateRoster：白名单承重 —— patch 多带的 enabled/archivedAt 被忽略（读盘断言）", () => {
+  const { svc } = setupWithRoot();
+  const s = svc.create({
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: [],
+    instructions: { stopCondition: "s", maxRounds: "1" },
+  });
+
+  // 绕过类型限制模拟「调用方透传了运行时多出来的键」（反序列化载荷 / 手写对象）。
+  const hostilePatch = { name: "改名", enabled: false, archivedAt: 123 } as never;
+  const updated = svc.updateRoster(s.id, hostilePatch);
+  assert.equal(updated.name, "改名", "白名单内的字段照常写入");
+  const onDisk = svc.get(s.id);
+  assert.ok(onDisk);
+  assert.equal(onDisk.enabled, true, "enabled 必须原样保留（它有自己入口）");
+  assert.equal(onDisk.archivedAt, undefined, "archivedAt 必须原样保留（它有自己入口）");
+
+  // 已归档的小队改名也不得「复活」：归档状态逐字保留。
+  const archived = svc.archive(s.id);
+  const renamed = svc.updateRoster(s.id, { name: "归档后改名" });
+  assert.equal(renamed.name, "归档后改名");
+  assert.equal(renamed.archivedAt, archived.archivedAt);
+});
+
+// 空 patch（全 undefined）⇒ 返回原实体、**不重写盘**（重复点「保存」不该产生一次内容相同的重写）。
+test("updateRoster：空 patch ⇒ 返回原实体、内容与 mtime 都不变", () => {
+  const { svc, root } = setupWithRoot();
+  const s = svc.create({
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: [],
+    instructions: { stopCondition: "s", maxRounds: "1" },
+  });
+  const filePath = join(root, `${s.id}.json`);
+  const contentBefore = readFileSync(filePath, "utf8");
+  const mtimeBefore = statSync(filePath).mtimeMs;
+
+  const returned = svc.updateRoster(s.id, { name: undefined, instructions: undefined });
+
+  assert.deepEqual(returned, svc.get(s.id), "返回读到的原实体");
+  assert.equal(readFileSync(filePath, "utf8"), contentBefore, "空 patch 不得产生任何写入");
+  assert.equal(statSync(filePath).mtimeMs, mtimeBefore, "mtime 也不得变（真的没有写盘）");
+});
+
+// id 不存在 ⇒ 响亮抛：静默 no-op 会让界面以为改成功了。
+test("updateRoster：id 不存在 ⇒ 响亮抛", () => {
+  const { svc } = setupWithRoot();
+  assert.throws(() => svc.updateRoster("nope", { name: "x" }), /小队不存在：nope/);
+  assert.throws(() => svc.updateRoster("nope", {}), /小队不存在：nope/);
 });

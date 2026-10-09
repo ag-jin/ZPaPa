@@ -93,6 +93,26 @@ function rowToWakeRule(row: WakeRuleRow): WakeRule {
   };
 }
 
+/**
+ * `casAdvance` 的**判因**结论（G2：判「没命中」的两种原因）。
+ *
+ * 为什么不能只回一个 `boolean`：`changes === 0` 有两种截然不同的成因，而调用方对它们的处置也不同 ——
+ * · `fenced`：行还在，但 revision 已被并发改动（例如用户刚编辑了规则）。这是**并发**，要留痕（带两侧
+ *   revision）并且本格派发作废；
+ * · `missing`：行已不在（规则被删除 / 归档清理）。这是**正常生命周期**，不是异常，只该留一条 info。
+ * 合成一个 false 时接线方只能把两件事记成同一条「advance skipped」，排查时无法区分「并发打架」与
+ * 「规则没了」—— spec §17 原计划要的就是「回读比对 revision 判因」。
+ *
+ * 判因成本：命中路径（热路径）零额外查询；只有 `changes === 0`（冷路径）才回读一次 revision。
+ * 单写者 + 同连接 ⇒ 这条回读与 UPDATE 之间没有可乘之机（同一 DatabaseSync 连接串行执行）。
+ */
+export type WakeAdvanceOutcome =
+  | { outcome: "advanced" }
+  /** 行仍在：带回**行里的**当前 revision（不是调用方传进来的期望值 —— 回声不构成判因）。 */
+  | { outcome: "fenced"; currentRevision: number }
+  /** 行已不存在（读到之后被删）：不是异常，是这条规则的终态。 */
+  | { outcome: "missing" };
+
 export interface WakeRuleRepo {
   /** 写入一行。调用方必须已用 validateWakeRule 校验互斥，本层不重复校验。 */
   insert(rule: WakeRule): void;
@@ -101,16 +121,72 @@ export interface WakeRuleRepo {
       依赖 idx_wake_rules_ready 部分索引；用 SQL 过滤而不是全表读回后内存筛，
       否则每次 tick 都要把禁用的死规则一并读出来。 */
   listReady(now: number, limit: number): WakeRule[];
+  /**
+   * **全表读取**（加法，P2b 第二半）：服务面 `listWakeRules` 的取数口 —— `wake_rules` 表没有
+   * workspace 列（派发目标由工作项给出），「本 workspace 的规则」只能**全量读出后**按调用方的
+   * 工作项 id 集合过滤，故这里不接过滤参数（SQL 不猜 workspace，按工作项过滤是调用方的事）。
+   *
+   * **排序**：`work_item_id ASC, created_at ASC, id ASC`，三层键全部确定。为什么不用
+   * `listReady` 的到点序：本方法服务的是「读完过滤后直接呈现/遍历」，而不是到点批次 ——
+   * 到点序在暂停/终态行（next_fire_at 为 NULL）上会先排空值再排活跃值，对「按工作项看规则」
+   * 没有意义。取 work_item_id 优先是因为规则按工作项成组（挂在工作项上）；同组内按创建先后
+   * （created_at），同刻创建（毫秒级并列）再按 id 兜底 —— 任何一层并列都不会让顺序随
+   * 存储顺序漂移。
+   */
+  listAll(): WakeRule[];
   /** revision fencing（spec §5.7）：只有 revision 仍等于 expectRevision 才推进，
       命中即 revision+1。**单条条件 UPDATE**——先读后写会与并发派发竞态，
-      让「编辑规则」后仍在飞的旧派发覆盖掉新状态。 */
+      让「编辑规则」后仍在飞的旧派发覆盖掉新状态。
+
+      未命中时**回读判因**（`fenced` / `missing`，见 `WakeAdvanceOutcome`）：调用方（调度器与
+      pause/resume）对两者的处置不同，只拿到 false 时无法分辨「并发打架」与「规则已删」。 */
   casAdvance(
     id: string,
     expectRevision: number,
     nextFireAt: number | null,
     fireCount: number,
     pausedReason?: string,
-  ): boolean;
+    /**
+     * **可选**主开关（用户启停，`listReady` 的 `enabled = 1` 条件）：
+     * 省略 = 原样保留（`COALESCE(?, enabled)`），给出才改。既有调用方（闸暂停 / 调度推进）不受影响 ——
+     * 闸暂停只关排期、不动用户开关。
+     */
+    enabled?: boolean,
+  ): WakeAdvanceOutcome;
+  /**
+   * **编辑配置**（加法，P2b 收口）：`WHERE id=? AND revision=?` 的单条条件更新，写**配置列**
+   * （`kind` / `mode` / `at` / `interval_seconds` / `cron_expression` / `next_fire_at` / `max_fires`）
+   * 并 **`revision = revision + 1`**（+ `updated_at`）。
+   *
+   * **`revision+1` 是 §5.7 的 fencing 契约**，不是记账：调度器读到某一版后派发时把当时的 revision
+   * 带进幂等四元组，并在推进那一格时用它作 `casAdvance` 的 expectRevision —— 编辑若在「读到」
+   * 与「推进」之间发生，旧 revision 的推进自然未命中（过期派发自动作废），不会把编辑后的新配置
+   * 又按旧语义推一格。故此方法**必须** bump revision（M1 变异：不 bump ⇒ 版本栅栏用例红）。
+   *
+   * **不写**的列（各有自己的口径或不可改）：
+   * · `fire_count` —— 触发计数归调度推进（`casAdvance`），编辑不该重置或改写它；
+   * · `paused_reason` —— 闸暂停的专列（封闭枚举），编辑不伪造也不清除闸原因；
+   * · `enabled` —— 用户启停（`listReady` 的 `enabled = 1` 条件），编辑不改开关；
+   * · `work_item_id` —— 挂载对象不可改（改了等于换一条规则的归属，应删旧建新）；
+   * · `expires_at` / `timezone` / `condition` / `event_types` / `filters` —— 服务面编辑入口不暴露
+   *   （见 `UpdateWakeRuleRequest`），列值**原样留存**（本方法不把它们写成 NULL）。
+   *
+   * 返回 `changes === 1`（恰命中一行才算成功）：未命中 = revision 已被并发改动（例如调度器刚推进
+   * 一格）⇒ 调用方**响亮抛**（见 `squadWakeRules.ts` 的 `casMissError`），不得静默盖写。
+   */
+  casUpdateConfig(id: string, expectRevision: number, rule: WakeRule): boolean;
+  /**
+   * **删除一行**（加法，P2b 收口）：`DELETE ... WHERE id=?`，返回 `changes === 1`。
+   *
+   * 为什么删除是规则的正常生命周期终点：规则是**配置**（一张挂在工作项上的排班表），不是实体
+   * 记录 —— 关掉实验、配错一条 cron 之后，用户需要能把它从配置面上抹掉（这也是「编辑」的兜底：
+   * 改不回来的旧规则应当删掉重配）。故这里做**硬删**，不留软删标记（schema 也没有该列）。
+   *
+   * **已触发的记录（`fire_count`）随行一起消失**：本表没有触发历史表，删除即抹掉这条规则的一切
+   * 痕迹 —— 是否可接受由调用方（服务面 / UI 文案）向用户交代（见 `deleteWakeRule` 与
+   * `squad.rules.deleteConfirmDescription`），本层不做第二份判断。
+   */
+  remove(id: string): boolean;
   listByWorkItem(workItemId: string): WakeRule[];
 }
 
@@ -171,14 +247,72 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
     },
 
     // CAS 必须是单条条件更新并校验 changes：先读后写会与并发派发竞态。
-    casAdvance(id, expectRevision, nextFireAt, fireCount, pausedReason) {
+    // 未命中时回读一次判因（冷路径；命中路径零额外开销）—— 见 `WakeAdvanceOutcome` 的理由。
+    casAdvance(id, expectRevision, nextFireAt, fireCount, pausedReason, enabled) {
       const result = db
         .prepare(
-          `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?, revision=revision+1, updated_at=?
+          `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?,
+             enabled=COALESCE(?, enabled), revision=revision+1, updated_at=?
            WHERE id=? AND revision=?`,
         )
-        .run(nextFireAt, fireCount, pausedReason ?? null, Date.now(), id, expectRevision);
+        .run(
+          nextFireAt,
+          fireCount,
+          pausedReason ?? null,
+          enabled === undefined ? null : enabled ? 1 : 0,
+          Date.now(),
+          id,
+          expectRevision,
+        );
+      if (result.changes === 1) return { outcome: "advanced" };
+      // 行在 ⇒ 被 fencing（带回行里的当前版本）；行不在 ⇒ 规则已删。
+      const row = db.prepare("SELECT revision FROM wake_rules WHERE id = ?").get(id) as
+        | { revision: number }
+        | undefined;
+      return row ? { outcome: "fenced", currentRevision: row.revision } : { outcome: "missing" };
+    },
+
+    /* 编辑配置：单条条件更新 + revision+1（§5.7 fencing，契约见接口 doc）。
+       **不写** fire_count / paused_reason / enabled / work_item_id / timezone 等列
+       （各有口径，见接口 doc）—— 只把「排班表的配置」这一组列换成新的。
+       `expires_at` 在**这一组里**（G3 起调度侧真的消费它：`wakeTick` 判、`nextFireAtAfter` 收口），
+       故本方法写它；**清空**（写回 NULL）没有入口 —— 服务面只会在 patch 显式给了新值时把它带下来。 */
+    casUpdateConfig(id, expectRevision, rule) {
+      const result = db
+        .prepare(
+          `UPDATE wake_rules SET kind=?, mode=?, at=?, interval_seconds=?, cron_expression=?,
+             next_fire_at=?, max_fires=?, expires_at=?, revision=revision+1, updated_at=?
+           WHERE id=? AND revision=?`,
+        )
+        .run(
+          rule.kind,
+          rule.mode,
+          rule.at ?? null,
+          rule.intervalSeconds ?? null,
+          rule.cronExpression ?? null,
+          rule.nextFireAt ?? null,
+          rule.maxFires ?? null,
+          rule.expiresAt ?? null,
+          Date.now(),
+          id,
+          expectRevision,
+        );
       return result.changes === 1;
+    },
+
+    // 删除一行：硬删（理由与「触发记录随行消失」的交代见接口 doc）。恰命中一行才算成功。
+    remove(id) {
+      const result = db.prepare("DELETE FROM wake_rules WHERE id = ?").run(id);
+      return result.changes === 1;
+    },
+
+    // 全表读取（读取面，非调度扫表）：排序按 work_item_id → created_at → id，三层键全确定 ——
+    // 同一批规则的呈现次序不随存储顺序漂移（与 listByWorkItem / listByWorkspace 同一条理由）。
+    listAll() {
+      const rows = db
+        .prepare("SELECT * FROM wake_rules ORDER BY work_item_id ASC, created_at ASC, id ASC")
+        .all() as unknown as WakeRuleRow[];
+      return rows.map(rowToWakeRule);
     },
 
     listByWorkItem(workItemId) {

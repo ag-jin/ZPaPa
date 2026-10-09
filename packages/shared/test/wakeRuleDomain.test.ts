@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   WAKE_CONDITION_TYPES,
@@ -7,6 +8,7 @@ import {
   WAKE_LOOP_REPEAT_LIMIT,
   WAKE_RULE_KINDS,
   WAKE_RULE_MODES,
+  isValidTimeZoneName,
   wakeRuleSchema,
   validateWakeRule,
 } from "../src/wake-rule.js";
@@ -52,16 +54,18 @@ test("互斥②：event 带 timezone 被拒且点名字段", () => {
 // 补集方向：`timezone` **只对 event 禁**——三种排班 kind 都要它来确定触发时刻的时区，必须仍合法。
 // （只测「event 被拒」会漏掉「顺手把 timezone 也塞进互斥⑦」这个过度拦截的错误。）
 test("互斥②补集：at/every/cron 带 timezone 仍合法", () => {
-  assert.deepEqual(
-    problems({ kind: "at", mode: "once", at: 1, timezone: "Asia/Shanghai" }),
-    [],
-  );
+  assert.deepEqual(problems({ kind: "at", mode: "once", at: 1, timezone: "Asia/Shanghai" }), []);
   assert.deepEqual(
     problems({ kind: "every", mode: "continuous", intervalSeconds: 60, timezone: "Asia/Shanghai" }),
     [],
   );
   assert.deepEqual(
-    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", timezone: "Asia/Shanghai" }),
+    problems({
+      kind: "cron",
+      mode: "continuous",
+      cronExpression: "0 9 * * *",
+      timezone: "Asia/Shanghai",
+    }),
     [],
   );
 });
@@ -87,8 +91,7 @@ test("continuous 的 maxFires 越界被拒", () => {
     problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 0 }).length > 0,
   );
   assert.ok(
-    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length >
-      0,
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length > 0,
   );
 });
 
@@ -178,13 +181,25 @@ test("condition 四种类型：event 上全部合法，非 event 上一律被拒
 test("互斥⑦：每种 kind 只准带自己的调度字段，混装被拒且点名字段", () => {
   // 三个真实混装组合（穷举抓到的那三条）
   const mixed = [
-    { over: { kind: "every", mode: "continuous", intervalSeconds: 60, cronExpression: "0 9 * * *" }, field: "cronExpression" },
+    {
+      over: { kind: "every", mode: "continuous", intervalSeconds: 60, cronExpression: "0 9 * * *" },
+      field: "cronExpression",
+    },
     { over: { kind: "at", mode: "once", at: 1, intervalSeconds: 60 }, field: "intervalSeconds" },
     { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1 }, field: "at" },
     // 第三种混装：every 带 at
     { over: { kind: "every", mode: "continuous", intervalSeconds: 60, at: 1 }, field: "at" },
     // 三个字段一起上：cron 只该有 cronExpression，另两个都要点名
-    { over: { kind: "cron", mode: "continuous", cronExpression: "0 9 * * *", at: 1, intervalSeconds: 60 }, field: "at" },
+    {
+      over: {
+        kind: "cron",
+        mode: "continuous",
+        cronExpression: "0 9 * * *",
+        at: 1,
+        intervalSeconds: 60,
+      },
+      field: "at",
+    },
   ] as const;
 
   for (const { over, field } of mixed) {
@@ -196,18 +211,9 @@ test("互斥⑦：每种 kind 只准带自己的调度字段，混装被拒且�
   }
 
   // 合法面：每种 kind 只带自己的那一个，必须零问题（互斥⑦不能误伤正常配置）
-  assert.deepEqual(
-    problems({ kind: "at", mode: "once", at: 1 }),
-    [],
-  );
-  assert.deepEqual(
-    problems({ kind: "every", mode: "continuous", intervalSeconds: 60 }),
-    [],
-  );
-  assert.deepEqual(
-    problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" }),
-    [],
-  );
+  assert.deepEqual(problems({ kind: "at", mode: "once", at: 1 }), []);
+  assert.deepEqual(problems({ kind: "every", mode: "continuous", intervalSeconds: 60 }), []);
+  assert.deepEqual(problems({ kind: "cron", mode: "continuous", cronExpression: "0 9 * * *" }), []);
 });
 
 // 互斥⑧：eventTypes/filters 与 condition 同构，只对 event 有调度意义。
@@ -233,10 +239,7 @@ test("互斥⑧：eventTypes/filters 在三种非 event 上都被拒，event 上
   }
 
   // event 上两者都合法（唯一消费它们的地方），否则订阅规则无从表达
-  assert.deepEqual(
-    problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }),
-    [],
-  );
+  assert.deepEqual(problems({ eventTypes: ["work_item.updated"], filters: { label: "bug" } }), []);
 });
 
 // maxFires × {未给, 0, 1, 1000, 1001, 负数}。边界是 1 与 1000：两端合法、越界必须被拒（spec §5.5「1–1000」）。
@@ -375,7 +378,12 @@ test("§3.5 字段齐：全字段 event 规则通过 schema 与校验", () => {
     revision: 2,
     enabled: false,
   });
-  assert.deepEqual(validateWakeRule(rule), { ok: true });
+  /* 本用例查的是「§3.5 整张字段表都被 schema 认识」（下面的键存在性循环），而语义合法性断言
+     要避开一处**G5 新增的互斥**：本兜底夹具同时带了 `pausedReason` 与 `nextFireAt`，
+     那正是 G5 第三条明确拒绝的组合（暂停必清排期，见下方「带 pausedReason 却仍有 nextFireAt」用例）。
+     故语义断言用「去暂停态」变体——`pausedReason` 仍是上面的 parse 产物、仍在键存在性清单里，
+     字段覆盖不受影响，被移除的只是那次并存。 */
+  assert.deepEqual(validateWakeRule({ ...rule, pausedReason: undefined }), { ok: true });
   for (const key of [
     "id",
     "workItemId",
@@ -415,8 +423,13 @@ test("timezone 被 schema 认识（承载在排班类规则上，非 event）", 
 // 三个调度字段都要被 schema 认识（缺一即整类规则无法落盘）：三种 kind 各解析一次。
 test("调度字段 at/intervalSeconds/cronExpression 都被 schema 认识", () => {
   assert.equal(
-    wakeRuleSchema.parse({ id: "w1", workItemId: "wi_1", kind: "at", mode: "once", at: 1_700_000_000_000 })
-      .at,
+    wakeRuleSchema.parse({
+      id: "w1",
+      workItemId: "wi_1",
+      kind: "at",
+      mode: "once",
+      at: 1_700_000_000_000,
+    }).at,
     1_700_000_000_000,
   );
   assert.equal(
@@ -521,5 +534,127 @@ test("maxFires 非整数被 schema 拒", () => {
       maxFires: 1.5,
     }).success,
     false,
+  );
+});
+
+/* ================================================================== *
+ * G5：域层一致性约束收口（架构轮「FACA-11 架构轮交付」G5 一节）
+ *
+ * TODO(P2) 块四条在此轮各归其位：TODO-2（timezone IANA）与 TODO-4 的三条可闭项
+ * 落进 `validateWakeRule`；TODO-1 与 TODO-4 的其余部分**裁定为不进域层**（理由写在
+ * 域模型文件的 TODO 块里，不是漏检）。时间判定（TODO-3）由调度侧消费（G3）。
+ * ================================================================== */
+
+// `isValidTimeZoneName`：与调度器将来接线 croner `timeZone` 选项时**同一判据**的纯函数。
+// 期望值取自 IANA 时区库这一外部事实（不是用同一函数算出来的），故不是同义反复：
+// `Asia/Shanghai` / `America/New_York` / `UTC` 是真实存在的时区名；
+// `Mars/Phobos` 与空串不是。确定性（同一输入恒同一结论）也要钉住——它是纯函数，
+// 不许受调用时刻的宿主环境漂移影响。
+test("isValidTimeZoneName：真实 IANA 名通过，不存在的名与空串不通过", () => {
+  assert.equal(isValidTimeZoneName("Asia/Shanghai"), true);
+  assert.equal(isValidTimeZoneName("America/New_York"), true);
+  assert.equal(isValidTimeZoneName("UTC"), true);
+  assert.equal(isValidTimeZoneName("Mars/Phobos"), false);
+  assert.equal(isValidTimeZoneName(""), false);
+  assert.equal(isValidTimeZoneName("Asia/Shanghai"), true, "同一输入须恒同一结论（纯函数）");
+});
+
+// IANA 校验接进 `validateWakeRule`：非法时区名**响亮拒**（spec §17 `/678` 行的降级标注配套——
+// 字段虽暂不被调度消费，落盘值至少必须合法，将来接线即生效）。
+// 断言点名 `timezone`：用户要能一眼看出「就是这个字段写错了」，而不是拿到一句泛泛的「配置非法」。
+// 合法名一侧由既有「互斥②补集」用例守（`Asia/Shanghai` 仍零问题）——那条用例同时是
+// 「别把合法时区名误伤」的回归防线。
+test("G5：非法 IANA 时区名进 validateWakeRule 被响亮拒且点名 timezone", () => {
+  const bad = problems({
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    timezone: "Mars/Phobos",
+  });
+  assert.ok(
+    bad.some((p) => p.includes("timezone")),
+    `非法时区名应被点名 timezone，实际 problems：${JSON.stringify(bad)}`,
+  );
+});
+
+// TODO-4 可闭项①：`fireCount > maxFires` —— 超过上限还活着的规则是「闸失效」的实锤。
+// 边界必须**严格大于**：`fireCount === maxFires` 是合法的「停在上限」态（推进时同时写
+// `fireCount = maxFires` 与下一格排期，闸要到下一次到点才落 `pausedReason`，中间态合法且必要），
+// 写成 `>=` 会误伤这个中间态 —— 故用例两个方向都要钉。
+test("G5：fireCount 超过 maxFires 被拒，恰等于上限仍合法", () => {
+  const over = problems({
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    maxFires: 3,
+    fireCount: 4,
+  });
+  assert.ok(
+    over.some((p) => p.includes("maxFires")),
+    `fireCount > maxFires 应被点名 maxFires，实际 problems：${JSON.stringify(over)}`,
+  );
+  assert.deepEqual(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 3, fireCount: 3 }),
+    [],
+    "fireCount 恰等于 maxFires 是合法的「停在上限」态，不得被误伤",
+  );
+});
+
+// TODO-4 可闭项②：`once` 规则触发超过 1 次 —— mode 写错或推进逻辑写错的实锤。
+// 边界同样是严格大于：`fireCount === 1` 是一次性规则**正常跑完**的样子（`nextFireAt` 置空即终态）。
+test("G5：once 规则 fireCount > 1 被拒，恰为 1 仍合法", () => {
+  const twice = problems({ kind: "at", mode: "once", at: 1_800_000_000_000, fireCount: 2 });
+  assert.ok(twice.length > 0, `once + fireCount 2 应被拒，实际 problems：${JSON.stringify(twice)}`);
+  assert.deepEqual(
+    problems({ kind: "at", mode: "once", at: 1_800_000_000_000, fireCount: 1 }),
+    [],
+    "once 规则跑完一次（fireCount 1）是正常终态，不得被误伤",
+  );
+});
+
+// TODO-4 可闭项③：带 `pausedReason` 却仍有排期 —— 两种暂停形态都会清排期
+// （用户暂停 `pauseWakeRule` 置空、闸暂停由 advance 置空、暂停中编辑置空），
+// 三者全部构造路径都满足，故「暂停中还在排期」只可能来自绕过构造路径的写入。
+test("G5：带 pausedReason 却仍有 nextFireAt 被拒，排期为空则合法", () => {
+  const inconsistent = problems({
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    pausedReason: "max_fires",
+    nextFireAt: 1_800_000_000_000,
+  });
+  assert.ok(
+    inconsistent.some((p) => p.includes("pausedReason")),
+    `暂停却带排期应被点名 pausedReason，实际 problems：${JSON.stringify(inconsistent)}`,
+  );
+  assert.deepEqual(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, pausedReason: "max_fires" }),
+    [],
+    "暂停且排期为空是法定形态，不得被误伤",
+  );
+});
+
+/* 留白登记的**源头守卫**（G5 收口）：域模型文件里的登记块是「哪些缺口是有意留白」的唯一台账，
+   而它是注释——没有任何类型或运行时会因为它被误删/写回旧结论而报错。下一轮对账若按旧结论排产
+   （把已闭项当欠账、或把已裁定的两条当漏检），返工成本远大于这一条断言。
+   路径：读**源文件**（不是 import 的产物）——登记只在源码文本里。 */
+test("G5 登记守卫：留白块只剩两条『裁定不闭』，已闭项在册，旧结论字样不再出现", () => {
+  const source = readFileSync(new URL("../src/wake-rule.ts", import.meta.url), "utf8");
+  const block = source.slice(
+    source.indexOf("域层留白登记"),
+    source.indexOf("export function validateWakeRule"),
+  );
+  assert.ok(block.length > 0, "留白登记块必须存在于 validateWakeRule 之前");
+  assert.equal(
+    (block.match(/【裁定不闭】/g) ?? []).length,
+    2,
+    "「裁定不闭」应恰有两条（event 的 nextFireAt kind 约束；fireCount>=maxFires 不是不变量）",
+  );
+  for (const closed of ["isValidTimeZoneName", "已闭于调度侧", "fireCount > maxFires"]) {
+    assert.ok(block.includes(closed), `已闭项「${closed}」应在册，避免下轮按旧结论排产`);
+  }
+  assert.ok(
+    !block.includes("非法时区名会留到调度器运行时才炸"),
+    "TODO-2 的旧结论（timezone 不校验）已被 G5 关闭，不得留在登记块里",
   );
 });

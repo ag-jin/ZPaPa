@@ -52,7 +52,6 @@ export function isProjectableSetting(key: string, value: unknown): boolean {
   return !EXCLUDED_KEY_PATTERNS.some((pattern) => pattern.test(key));
 }
 
-
 /**
  * 字段 → 产品设置页现有 i18n 标签键。
  *
@@ -162,7 +161,10 @@ export function pickProjectableSettings(settings: object): ProjectableSettingEnt
 /** 人读标签：去掉常见前缀并把驼峰拆成词，供 UI 在缺少 i18n 时兜底展示。 */
 export function formatProjectableSettingLabel(key: string): string {
   const spaced = key
-    .replace(/^(desktop|embedded|messageStream|toolGrouping|native|askUser)/, (match) => `${match} `)
+    .replace(
+      /^(desktop|embedded|messageStream|toolGrouping|native|askUser)/,
+      (match) => `${match} `,
+    )
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();

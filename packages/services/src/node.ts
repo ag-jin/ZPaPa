@@ -13,7 +13,10 @@ import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
+  resolveSquadMergeMode,
+  resolveWorkspaceKey,
   type ProviderProvisioningTrigger,
+  type SquadMergeMode,
 } from "@zcode/shared";
 
 export {
@@ -283,6 +286,153 @@ export {
   isValidCronExpr,
 } from "./session/automationCron.js";
 
+/* ---------------- 小队域（workitem / teams / worktree）从 node 入口可达 ----------------
+   为什么这些必须从这里出去：desktop 只能经 `@zcode/services/node` 与 `.` 两个入口取东西
+   （见 packages/services/package.json#exports），而 workitem/ 域此前**零桌面侧消费**（recon.md C6）。
+   Wave 1 A 的调度器进程要**自己**建 tasks-index 连接（与 AutomationRepo / OffPeakTaskRepo 同法）
+   并跑判定，故 repo 与判定函数也必须可达。
+
+   刻意**不**从 `packages/services/src/index.ts` 出这些：那个入口被 renderer 直接解析，
+   只要有一条运行时依赖触达 `node:*` 就会让整包在挂载前失败（browserSafeRootEntry.test.ts 守这条）。
+   故依赖 `node:crypto`（slug）或 node 侧 git/工作树实现的都只从本文件出；
+   浏览器安全的描述符、错误类、纯类型与 `createSquadRunRepo`（只 `import type` node:sqlite）走根入口。 */
+export {
+  archiveSquadAndTransfer,
+  createSquadRuntime,
+  renderLeaderBriefingPrompt,
+} from "./workitem/squadRuntime.js";
+export { createSquadRuntimeService } from "./workitem/squadRuntimeService.js";
+/** 派发请求 hub（轮 2 裁定落点 ii）：组合根建**一份**、注入给每个 runtime 并订**一次**。 */
+export { createSquadDispatchRequestHub } from "./workitem/squadDispatchRequests.js";
+export type {
+  SquadAssignmentDispatchRequest,
+  SquadCommentDispatchRequest,
+  SquadDispatchRequest,
+} from "./workitem/squadDispatchRequests.js";
+/* 派发**成因**（2026-10-04）：host 派发桥要把三路成因归并进台账（`squad_runs.dispatch_cause`），
+   故类型与常量都与请求同源出（调用方就地抄一份三值联合，改了那边忘了这边不会有编译错）。 */
+export { DISPATCH_CAUSES } from "./workitem/squadDispatchRequests.js";
+export type { DispatchCause, UserDispatchCause } from "./workitem/squadDispatchRequests.js";
+/* X2.1：评论派发通道的判据面（host 派发桥按 outcome 回写 receipt、按 origin 分流重放通道）。
+   三样都与服务面**同源**出，调用方不得就地抄一份联合/常量（抄一份改了那边忘了这边不会有编译错）：
+   · COMMENT_DISPATCH_UNSETTLED_OUTCOMES：receipt 的「未收敛」格（回写认领的判据）；
+   · CommentDispatchOutcome：receipt 七值闭集（回写落定的取值域）；
+   · DeferredDispatchOrigin：义务来源闭集（R2 / 评论两条重放账的分流位）。 */
+export { COMMENT_DISPATCH_UNSETTLED_OUTCOMES } from "./workitem/commentDispatchReceiptRepo.js";
+/* D6：receipt 里「哪支小队」（队长目标的简报来源）的**唯一读法**。host 据此做身份核对
+   （目标是该队队长 ⇒ 走 `planDispatch.leaderOverride`，与「指派给小队」同形）。读法收在服务面一处：
+   就地读 `detail["squadId"]` 会把写坏的列静默读成 undefined（队长 run 静默降级成 standalone）。 */
+export { commentReceiptSquadId } from "./workitem/commentDispatchReceiptRepo.js";
+export type {
+  CommentDispatchOutcome,
+  CommentDispatchReceiptRecord,
+  CommentDispatchSource,
+} from "./workitem/commentDispatchReceiptRepo.js";
+export type { DeferredDispatchOrigin } from "./workitem/squadDeferredDispatchRepo.js";
+export type { SquadDeferredDispatchRecord } from "./workitem/squadDeferredDispatchRepo.js";
+// 批次编排工厂：desktop 侧（Wave 2 的组合根装配）只能经本入口取它（packages/services/package.json#exports）。
+export { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+export { createWakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+export { decideWake } from "./workitem/wakeGuard.js";
+/* 排期计算的**唯一实现**（`nominalInstant` / `nextFireAtAfter` / `cutAtExpiry`）：调度器
+   （desktop wakeTick）与服务面（`createWakeRule` / `resumeWakeRule`）共用同一份网格语义与同一份
+   到期点收口（R2），故从 node 入口可达（desktop 只能经本入口取 services 的值）。
+   搬运说明见 `workitem/wakeSchedule.ts` 头注释。 */
+export { cutAtExpiry, nominalInstant, nextFireAtAfter } from "./workitem/wakeSchedule.js";
+export {
+  LEADER_PROTOCOL_TEXT,
+  planDispatch,
+  declaredRunClassFor,
+} from "./workitem/leaderDispatch.js";
+// 派发类别（队长 / 队员 / 单独安排）：host 派发桥按它分流，故类型要与 `planDispatch` 同源出（加法）。
+export type { RunClass } from "./workitem/leaderDispatch.js";
+// 类别**声明**的取值：调用方（host 派发桥）按 `declaredRunClassFor` 算出它再传给 `planDispatch`；
+// 声明值的类型与规划同源出，避免调用方就地抄一份联合（抄一份改了那边忘了这边不会有编译错）。
+export type { DeclaredRunClass } from "./workitem/leaderDispatch.js";
+/* §5.7(1)/S13 的**判据**（「该工作项有没有进行中的队长 run」）导出给派发桥用：派发侧拿它做
+   「重复指派合并为同一次」的决定。判据只有这一处实现（`listActive` 上按 workItemId + 队长标记投影），
+   让调用方各自拼一份就是「同一语义两处实现」，两边迟早分叉。**只从 node 入口出**：
+   `squadRunLifecycle` 经 Repo 触到 node:sqlite，从浏览器安全入口（`index.ts`）出值会整包炸。 */
+export { hasInProgressLeaderRun } from "./workitem/squadRunLifecycle.js";
+/* 「该工作项上活跃的队长 run 是**哪一条**」——台账 `caused_by_run_id` 的唯一来源（与上面那条读法
+   是同一份「进行中」投影的两面）。host 派发桥在**派发时刻**用它解析入边，故与判据同源出；
+   **只从 node 入口出**（同 `hasInProgressLeaderRun` 的理由：`squadRunLifecycle` 经 Repo 触到 node:sqlite）。 */
+export { findActiveLeaderRunId } from "./workitem/squadRunLifecycle.js";
+// 队长行登记的**结论**（`recorded: false` = 本次并入进行中的那次）：派发桥要按它决定「起不起会话」，
+// 故类型与判据同源出（调用方就地抄一份联合，改了那边忘了这边不会有编译错）。
+export type { LeaderRunRecordOutcome } from "./workitem/squadRunLifecycle.js";
+// 分支/目录 slug 依赖 node:crypto（见 slug.ts 注释），故只能从 node 入口出。
+export { slugForId } from "./workitem/slug.js";
+export type { WakeRuleRepo } from "./workitem/wakeRuleRepo.js";
+/* 收件箱（P2c/W1）：repo 工厂与各个产生点的**纯构建件**只从这里出值 ——
+   `inboxItemRepo` 值导入 `node:crypto`（id 生成），从浏览器安全入口出值会让 renderer 整包失败
+   （browserSafeRootEntry.test.ts 守这条）；构建件虽纯，但只有 desktop host 用得到，同门出即可。
+   `computeInboxDedupKey` 故意不再单独出：产生点不得自己拼键（构建件内部已消费它）。 */
+export { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
+export {
+  buildDispatchSkippedInboxItem,
+  buildMemberFailedInboxItem,
+  buildMergeConflictInboxItem,
+  buildOrphanedRunInboxItem,
+  buildRunStalledInboxItem,
+} from "./workitem/inboxItemProducers.js";
+/* W1（看门狗六件套）：判定面 + 决策类型 + `cancelSquadRun` 的入参类型（W2 的 host 接线唯一入口）。
+   **刻意不经 `index.ts` 导出**（与 B5.1/B5.2 的 `index.ts` 改动面解耦；理由同 `hasInProgressLeaderRun`：
+   `squadWatchdog` 引 `squadRunLifecycle`（经 Repo 触到 node:sqlite），从浏览器安全入口出**值**会整包炸）。
+   决策自带结算码值（`settle_reason` 单源在 squadRunRepo）：host 侧不得再写一张 kind→码值 的映射表。 */
+export { decideSquadWatchdog } from "./workitem/squadWatchdog.js";
+/* W3：熔断判据（策略单源）——host 的派发桥（四出口）与推进臂（排队行/义务）都读它，
+   两处各写一份 `count >= 3` 会在改阈值时漏改一处，而漏改的表现只是「某个入口照常派发」。 */
+export { squadAgentBreakerSkipReason } from "./workitem/squadWatchdog.js";
+/* W3：工具臂判定（口径 A：检测 + 提醒；不结算、不 stop）——执行臂（tick 与启动和解共用）读它。 */
+export { decideSquadToolWatchdog } from "./workitem/squadWatchdog.js";
+export type {
+  SquadToolWatchdogDecision,
+  SquadToolWatchdogObservation,
+  SquadWatchdogToolCall,
+} from "./workitem/squadWatchdog.js";
+export type {
+  SquadWatchdogC1Case,
+  SquadWatchdogDecision,
+  SquadWatchdogInput,
+  SquadWatchdogRun,
+} from "./workitem/squadWatchdog.js";
+/* W2：看门狗行级输入的**唯一读法** `hasOtherRunRowForPair`（`SquadWatchdogRun.liveTreeOfOtherRow`
+   的事实来源）。host 的执行臂（启动和解 / 在线 tick）把台账行映射成判定行时要算它 ——
+   在 host 侧自己写一遍 `some(row => row.runId !== ... && workItemId === ... && agentId === ...)`
+   就是第二份判据：抄错一格的表现是「把别人的活树当成本行的」（请求永远等待占位）或反之
+   （把本行崩溃前建的树当别人的 ⇒ 误判无树），两者都不报错。同门理由与上面的判定面相同。 */
+export { hasOtherRunRowForPair } from "./workitem/squadRunLifecycle.js";
+/* W3（看门狗六件套）：`settle_reason` 的**码值单源**（在 `squadRunRepo`）——host 的 tick 执行臂要落
+   「空闲宽限摊牌」的码值，而 W3 的熔断窗口计数 / 重试预算按**看门狗族**派生 SQL。
+   两者若各持一份答案（host 一个字符串、services 一个族列表），分叉**不报错**：一次宽限摊牌不计入
+   窗口 ⇒ 熔断晚一轮生效。故码值只从这一处出值；沿用 W1 的同门理由（这条链触 repo，不进浏览器安全入口）。 */
+export {
+  SQUAD_RUN_SETTLE_REASON_USER_CANCEL,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_DEAD_SESSION,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_IDLE_GRACE,
+  SQUAD_RUN_SETTLE_REASON_WATCHDOG_TTL,
+  SQUAD_RUN_WATCHDOG_SETTLE_REASONS,
+} from "./workitem/squadRunRepo.js";
+export type { CancelSquadRunInput, SquadWatchdogGitFacts } from "./workitem/squadRuntimeService.js";
+/* W3：自动重试登记的结论类型（host 的 tick 执行臂读它决定留痕：「登记 / 预算已用 / 并入既有义务」
+   三件不同的事，压成布尔就没人能回答「为什么没重试」）。 */
+export type { WatchdogRetryOutcome } from "./workitem/squadRuntimeService.js";
+export type {
+  InboxItem,
+  InboxItemInput,
+  InboxItemKind,
+  InboxItemSeverity,
+} from "./workitem/inboxItemRepo.js";
+export type { WorkItemEvent, WorkItemService } from "./workitem/workItemService.js";
+export type { WorkItemRepo } from "./workitem/workItemRepo.js";
+export type {
+  SquadBatchOrchestrator,
+  SquadRuntime,
+  SquadRuntimeDeps,
+} from "./workitem/squadContracts.js";
+export type { SquadRunLifecycle } from "./workitem/squadRunLifecycle.js";
+
 import { ServiceCollection } from "./collection.js";
 import { IFileService } from "./file/file.js";
 import { IMediaPreviewService } from "./media-preview/mediaPreview.js";
@@ -290,9 +440,7 @@ import { IGitService } from "./git/git.js";
 import { IGitCheckpointService } from "./git/gitCheckpoint.js";
 import { ISystemService } from "./system/system.js";
 import { ITerminalService } from "./terminal/terminal.js";
-import {
-  IRemoteDeviceConfigService,
-} from "./remote/remoteDeviceConfig.js";
+import { IRemoteDeviceConfigService } from "./remote/remoteDeviceConfig.js";
 import { createRemoteDeviceConfigService } from "./remote/remoteDeviceConfigNode.js";
 import { ISettingService } from "./setting/setting.js";
 import { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
@@ -331,6 +479,8 @@ import { IHooksService } from "./hooks/hooks.js";
 import { IMemoryService } from "./memory/memory.js";
 import { IWikiService } from "./wiki/wiki.js";
 import { createWikiService } from "./wiki/wikiService.js";
+import { IAgentBuilderService } from "./agentbuilder/agentBuilder.js";
+import { createAgentBuilderService } from "./agentbuilder/agentBuilderService.js";
 import { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import { IFeedbackService } from "./feedback/feedback.js";
 import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -356,6 +506,64 @@ import { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAda
 import { createZCodeSessionService } from "./zcode-session/zcodeSessionService.js";
 import { createZCodeTaskIndexSyncer } from "./zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "./session/taskIndexRepo.js";
+// 小队运行时（Wave 0b）：装配在本文件的 createLocalServices 里，门禁读数只有一处（同步快照）。
+import {
+  ISquadRuntimeService,
+  createSquadRuntimeService,
+  type SquadWorkspaceTarget,
+} from "./workitem/squadRuntimeService.js";
+import { archiveSquadAndTransfer, createSquadRuntime } from "./workitem/squadRuntime.js";
+import { createSquadOrchestrator } from "./workitem/squadOrchestrator.js";
+// 收件箱台账（P2c）：跨 workspace 的读取面要一条 repo，由组合根**懒取**注入给服务面
+// （见 createSquadRuntimeService 的 deps.getInboxItemRepo 注释：库就绪前服务面已构造）。
+import { createInboxItemRepo } from "./workitem/inboxItemRepo.js";
+/* SUB.2：Inbox 通知的**判据面**（收件人解析 + 三新 kind 准入；纯函数）。组合根只做绑定：
+   订阅行 / 父链两口读 + 唯一写收口 `inboxItemRepo.insertIfAbsent`（见 `createInboxNotificationPortFor`）。 */
+import {
+  planInboxNotificationItem,
+  type InboxNotificationFact,
+} from "./workitem/inboxNotificationPolicy.js";
+// X2.1：评论派发 receipt 的懒取口（与 inboxItemRepo 同款：库就绪后在调用时取）。
+import { createCommentDispatchReceiptRepo } from "./workitem/commentDispatchReceiptRepo.js";
+/* B5.1：工作项协作**读门面**的注册（任务卡 §2.4-2）。四个协作 repo 与 receipt repo 同款懒取
+   （库走过迁移后才拿到同一条连接）；描述符本身从根入口出（renderer 侧取值），这里只装配实现。 */
+import {
+  IWorkItemCollaborationService,
+  createWorkItemCollaborationService,
+} from "./workitem/workItemCollaborationService.js";
+import { createWorkItemCommentRepo, type AuthorRef } from "./workitem/workItemCommentRepo.js";
+import { createWorkItemActivityRepo } from "./workitem/workItemActivityRepo.js";
+import { createWorkItemDecisionRepo } from "./workitem/workItemDecisionRepo.js";
+import { createWorkItemCommentReactionRepo } from "./workitem/workItemCommentReactionRepo.js";
+/* B5.2 轮 2：评论服务（写事实 + 队列状态窗裁决 + receipt）——**组合根唯一构造点**（见下面
+   `createCommentServiceFor`）：门面的四个写入口只转发到它，评论链自己不碰生命周期写接口。
+   X2.1 已落 host 侧的评论派发入口，但组合根这一半（构造 + 请求出口）此前未落，本轮补齐。 */
+import {
+  backfillMissingCommentFacts,
+  createCommentService,
+  type CommentService,
+  type CommentServiceDeps,
+} from "./workitem/commentService.js";
+/* G8（§8.3）：评论写入段的事务口 —— 与 `workItemProjectRepo.remove` 同一套 BEGIN IMMEDIATE 口径
+   （`createSqliteTransact` 是那份先例的逐字实现），连接取下面那条 `openSharedDatabase()`。 */
+import { createSqliteTransact } from "./workitem/sqliteTransact.js";
+/* C3.1：决定写入服务（1 行决定 + 1 枚带 decisionId 锚的 decision_created 活动）——
+   **组合根唯一构造点**（见下面 `createDecisionServiceFor`）：门面第五写入口只转发到它。
+   依赖集有意封顶（decisions/activities/workItems）：结构上碰不到 run / receipt / 义务表 / 状态机。 */
+import {
+  createWorkItemDecisionService,
+  type WorkItemDecisionService,
+} from "./workitem/workItemDecisionService.js";
+import {
+  createSquadDispatchRequestHub,
+  type SquadDispatchRequest,
+} from "./workitem/squadDispatchRequests.js";
+import {
+  createSquadRunSettlementHub,
+  type SquadRunSettlement,
+} from "./workitem/squadRunSettlementHub.js";
+import type { SquadRuntime } from "./workitem/squadContracts.js";
+import type { WorkItemEvent } from "./workitem/workItemService.js";
 import { createBotsService } from "./bots/botsService.js";
 import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge.js";
 import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
@@ -1338,6 +1546,39 @@ export function createLocalServices(options: {
     automation: ZCodeAutomation;
     run: ZCodeAutomationRun;
   }) => Promise<void>;
+  /**
+   * 队长派单（`squad/assign-work-item`）与 UI 改派（`reassignWorkItem`）产生的**派发请求**的执行体
+   * （**加法**，2026-10-02 第 2 轮裁定；载荷 2026-10-03 泛化为 `assignee`）。
+   *
+   * 为什么要有它：指派**不走唤醒规则**（那与「`@` ≠ 指派」及「人发起豁免三道闸」冲突，spec §5.5），
+   * 应走**与「人手动触发」同一条派发路径**、由**常驻侧**执行。服务面把派发请求经 hub 发到组合根，
+   * 组合根转给本回调 —— host 的派发桥据此开 run（与规则到点那条消息共用**同一个**派发实现）。
+   * 请求载荷是 `assignee`（类型 + id）：小队也能是被派发对象（负责人是 squad ⇒ 队长 run），
+   * 详见 `SquadDispatchRequest` 的注释。
+   *
+   * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见 node.ts 的订阅处）。
+   */
+  onSquadDispatchRequested?: (
+    request: import("./workitem/squadDispatchRequests.js").SquadAssignmentDispatchRequest,
+  ) => Promise<void> | void;
+  /**
+   * X2.1：**评论派发请求**的常驻订阅口（形态与 `onSquadDispatchRequested` 同款，同一条 hub 按 kind 分流）。
+   *
+   * 与改派请求的关键差别：派发目标**不是 assignee**（`@agent` 是一次运行请求、不是改派，§5.2），
+   * 故请求自带 `dispatchKey`（请求身份 / run 身份）与 `targetAgentId`；host 执行体据此读 receipt
+   * 事实、走 `planDispatch` 的 `targetOverride` 覆盖与 receipt 回写。
+   *
+   * 未注入时（remote host / 单测装配）：请求仍被**响亮**记录，只是不会开出 run（见订阅处）。
+   */
+  onCommentDispatchRequested?: (
+    request: import("./workitem/squadDispatchRequests.js").SquadCommentDispatchRequest,
+  ) => Promise<void> | void;
+  /**
+   * C4b：run 结算事实的常驻订阅口（形态与 onSquadDispatchRequested 同款）：组合根建一份
+   * settlement hub、每个 runtime 收尾后 publish；host 注入本回调做队列推进/义务重放。
+   * 不注入 ⇒ 事实发得出但没人推进（warn 留痕，不静默）。
+   */
+  onSquadRunSettled?: (settlement: SquadRunSettlement) => Promise<void> | void;
   /** 闲时任务翻 schedulable 后请求宿主立即唤醒 scheduler（desktop host 注入 parentPort 转发）。 */
   onOffPeakSchedulerWakeRequested?: () => void;
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
@@ -2085,6 +2326,10 @@ export function createLocalServices(options: {
   // OffPeakTaskService 单例在下方 DI register IIFE 中创建（晚于 agent service）；
   // 用前向引用 holder 惰性绑定——offPeak/create 协议请求只会发生在服务集合装配完成后。
   let offPeakTaskServiceForAgent: OffPeakTaskService | undefined;
+  // 小队运行时服务面同样在下方创建（晚于 agent service）：队长的两个派单工具经
+  // CLI 的 SquadPort 发反向请求，落到 zcodeAgentService 的 `squad/*` 分支；
+  // 用前向引用 holder 惰性绑定——那些请求只会发生在服务集合装配完成之后。
+  let squadRuntimeServiceForAgent: ISquadRuntimeService | undefined;
   // desktop-attached-remote 装配不暴露 Off-Peak 工具面（远程不在支持范围）。
   const offPeakToolWiring =
     options?.serviceAuthorityMode === "desktop-attached-remote"
@@ -2101,6 +2346,8 @@ export function createLocalServices(options: {
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,
+    // 小队派单工具的落点（`squad/*` 三个协议方法汇总到 ISquadRuntimeService）。
+    resolveSquadRuntimeService: () => squadRuntimeServiceForAgent,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
     // 是它自己那些 workspace 的唯一裁决者，灰度开启时远程 workspace 同样提供工作流。
@@ -2452,6 +2699,28 @@ export function createLocalServices(options: {
     },
     logger: createServiceLogger("wiki"),
   });
+  // AgentBuilder（AI 访谈式智能体创建）与 wiki 同源：都走 generateWorkspaceText 与同一个
+  // preferredSelection。差别只在协议形态 —— 访谈用 messages 多轮（服务面无状态，每轮整段传历史）。
+  const agentBuilderService = createAgentBuilderService({
+    currentModelProvider: {
+      async readCurrentModel() {
+        return (await providerRuntime.modelSelection.getView()).preferredSelection ?? null;
+      },
+    },
+    textGenerator: {
+      async generateText(params) {
+        return await zcodeAgentService.generateWorkspaceText({
+          workspacePath: params.workspacePath,
+          ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+          selection: params.selection,
+          messages: params.messages,
+          querySource: params.querySource,
+          ...(params.signal ? { signal: params.signal } : {}),
+        });
+      },
+    },
+    logger: createServiceLogger("agent-builder"),
+  });
   const mediaPreviewService = createMediaPreviewService({
     fileService,
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
@@ -2466,6 +2735,386 @@ export function createLocalServices(options: {
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];
+
+  /* ---------------- 小队运行时（Wave 0b 的装配点） ----------------
+     门禁的**唯一读取口**（spec §5.7.6 / 确认 2）：`ISettingService` 只有异步 `get()`，而门禁判定在派发
+     路径上不该变成一条异步 IO 链（每处 `await get()` 会让「谁来判」重新散开成多份判据），
+     故在组合根维护一份**单点刷新**的同步快照：
+
+     - 初值 `false`（**关**）：读设置是异步的，第一次读回来之前一律按「关」处理。
+       **首次加载失败也停在「关」**（初值就是 false）⇒ 这一格是 fail-closed；
+     - 之后**只**由 `settingService` 的变更事件刷新，刷新点只有这一处；
+     - 此后**刷新失败保留上一次结论**（不是「一律收敛到 false」）：这是**刻意**的，不叫「保守值」——
+       设置读取的偶发抖动不该把在途实验整批误关（关掉会停新派发、且不改在途 run，用户看到的是「功能忽然没了」）。
+       代价如实写明：上一次为 `true` 时，刷新失败期间是 **fail-open**（继续按开处理），直到下一次刷新成功。
+       取舍是「抖动静默按开」对「抖动误关在途实验」——选前者，因为后者是用户可见的行为突变。
+
+     为什么不是「每个入口各自 `await settingService.get()`」：那正是三份判据的形状（改一处漏一处），
+     也正是「关掉实验照旧派发」的成因（recon.md B4 现状）。 */
+  let squadsEnabled = false;
+  const squadRuntimeLog = createServiceLogger("squad-runtime");
+  const refreshSquadsEnabled = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        squadsEnabled = settings.experimentalAgentSquadsEnabled === true;
+      },
+      (error: unknown) => {
+        squadRuntimeLog.warn("读取实验开关失败：保留上一次结论（不因抖动误关在途实验）", { error });
+      },
+    );
+  };
+  refreshSquadsEnabled();
+  settingService.onDidUpdate(() => {
+    refreshSquadsEnabled();
+  });
+
+  /* #8 D2：GitHub PAT 的**单点同步快照**（与上面的实验开关同一手法与同一条理由）。
+     · 初值 `undefined` = 未配置 ⇒ runtime 的 provider 走 null adapter（离线缺省形态）；
+     · 之后只由 settingService 的变更事件刷新（配置/清除后，下一次 PR 快照刷新即生效，
+       不必重建 runtime —— provider 的 `readToken` 是每次调用现判的）；
+     · **凭据纪律**：这里只把值放进内存快照，绝不进日志（刷新失败只记原因，不回显 token）。 */
+  let githubPullRequestToken: string | undefined;
+  const refreshGithubPullRequestToken = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        githubPullRequestToken = settings.githubPullRequestToken;
+      },
+      (error: unknown) => {
+        // 读设置失败保留上一次结论（与实验开关同款）：一次抖动静默按「上一次」处理，
+        // 不把已配好的 token 误判成未配置（那会让 PR 区突然说「未配置 token」）。
+        squadRuntimeLog.warn("读取 GitHub 访问令牌失败：保留上一次结论", { error });
+      },
+    );
+  };
+  refreshGithubPullRequestToken();
+  settingService.onDidUpdate(() => {
+    refreshGithubPullRequestToken();
+  });
+
+  /* #8 D3：整批收尾**模式**的单点同步快照（与上面两处同一手法与同一条理由）。
+     · 初值 `local`（**不走向远端**）：读设置是异步的，第一次读回来之前一律按本地收尾处理
+       —— 这一格是 fail-safe 方向（缺省形态零出站）；
+     · 之后只由 settingService 的变更事件刷新（切成 pr-gate 后下一次收尾即生效，不必重建 runtime）；
+     · 刷新失败**保留上一次结论**（与上面同款）：一次抖动不该把用户的模式静默切走
+       （pr-gate 被切回 local = 该开的 PR 没开；local 被切成 pr-gate = 一次非预期的远端写入）；
+     · 值的归一只有一处判据（`resolveSquadMergeMode`）：脏值收敛到 local，不在这里再判一次。 */
+  let squadMergeMode: SquadMergeMode = "local";
+  const refreshSquadMergeMode = (): void => {
+    void settingService.get().then(
+      (settings) => {
+        squadMergeMode = resolveSquadMergeMode(settings.squadMergeMode);
+      },
+      (error: unknown) => {
+        squadRuntimeLog.warn("读取整批收尾模式失败：保留上一次结论", { error });
+      },
+    );
+  };
+  refreshSquadMergeMode();
+  settingService.onDidUpdate(() => {
+    refreshSquadMergeMode();
+  });
+
+  /* 小队 runtime **不做长期单例、不缓存**（确认 3）：每个使用点带着自己的**目标 workspace** 进来，
+     这里为它现构一个 runtime，方法返回后不再保留它。
+
+     为什么选「不缓存」：缓存要回答「什么时候失效」——workspace 切换、会话迁移、设置变更都会让它变陈旧，
+     而陈旧的表现是**在错的 workspace 上读写**（用户看到「我明明没建过」）。不缓存 ⇒ 无陈旧、无失效逻辑。
+     代价：每次操作多一次构造（含一次 `git symbolic-ref` 子进程）。若这一步实测成为热路径，
+     再改成按 `workspaceKey` 缓存**并显式登记失效面**（并在任务报告里写明依据）——
+     但**任何时候都不得**退化成「取首个 workspace」。 */
+
+  /* 派发请求的**常驻订阅口**（2026-10-02 第 2 轮裁定，落点 ii）：runtime 按目标现构、其事件订阅表在
+     实例内部 ⇒ 常驻侧订不到 ⇒「队长派单只发一条 `workitem.dispatch_requested`」在旧形态下**驱动不出 run**。
+     故把这一格的出口做成**可注入的单例 hub**（本文件建一份 = 「单例」= 组合根这一份），runtime 在
+     `emitWorkItemEvent` 里 publish，这里**订一次**并转给 host 注入的派发执行体。
+     为什么**订在组合根**而不是 host 里再订一次：组合根就活在 host 进程内、且是进程生命周期内唯一的那一份
+     （`createLocalServices` 只被 host 调用，见 desktop/src/host/index.ts）—— 它就是「常驻侧」的装配面。
+     **不静默**：没有执行体（如 remote host / 单测装配）时，请求发出去却没人接也必须能被看见。 */
+  const squadDispatchRequests = createSquadDispatchRequestHub();
+  squadDispatchRequests.subscribe((request: SquadDispatchRequest) => {
+    /* X2.1：评论请求与改派请求**按 kind 分流到两个执行体**（同一个常驻订阅口，身份在请求里）。
+       为什么不做成同一个执行体：两者的派发目标来源不同 —— 改派请求派 assignee（服务面刚写下的
+       负责人），评论请求派点名者（`@agent` 不是改派，assignee 保持不变，§5.2）。混在一起就必须
+       在执行体内按 kind 反推目标，那正是「一条请求两种含义」的静默漂移形态。 */
+    if (request.kind === "comment") {
+      const dispatchComment = options?.onCommentDispatchRequested;
+      if (!dispatchComment) {
+        squadRuntimeLog.warn(
+          "评论派发请求已发出，但本组合根没有注入 onCommentDispatchRequested（不会开出 run）",
+          { workItemId: request.workItemId, dispatchKey: request.dispatchKey },
+        );
+        return;
+      }
+      void Promise.resolve(dispatchComment(request)).catch((error: unknown) =>
+        squadRuntimeLog.error("评论派发执行体抛错", {
+          workItemId: request.workItemId,
+          dispatchKey: request.dispatchKey,
+          error,
+        }),
+      );
+      return;
+    }
+    const dispatchAssigned = options?.onSquadDispatchRequested;
+    if (!dispatchAssigned) {
+      squadRuntimeLog.warn(
+        "小队派发请求已发出，但本组合根没有注入 onSquadDispatchRequested（不会开出 run）",
+        {
+          workItemId: request.workItemId,
+          assignee: `${request.assignee.type}:${request.assignee.id}`,
+        },
+      );
+      return;
+    }
+    /* 派发执行体是**异步**的（要起 git/会话），而 hub 是同步扇出：用 `void` + catch 收口，
+       异常一律留痕（吞掉的话「派单了但什么都没发生」会变成一条查不到原因的静默路径）。 */
+    void Promise.resolve(dispatchAssigned(request)).catch((error: unknown) =>
+      squadRuntimeLog.error("小队指派派发执行体抛错", { workItemId: request.workItemId, error }),
+    );
+  });
+
+  /* C4b：run 结算事实的常驻出口（与派发请求 hub 同款裁定）：组合根建一份，
+     每个 runtime 经 deps.runSettlementHub publish，这里订一次转给 host 注入的推进执行体。 */
+  const squadRunSettlements = createSquadRunSettlementHub();
+  squadRunSettlements.subscribe((settlement: SquadRunSettlement) => {
+    const runSettled = options?.onSquadRunSettled;
+    if (!runSettled) {
+      squadRuntimeLog.warn("run 已结算，但本组合根没有注入 onSquadRunSettled（排队行不会被推进）", {
+        runId: settlement.runId,
+        agentId: settlement.agentId,
+        status: settlement.status,
+      });
+      return;
+    }
+    void Promise.resolve(runSettled(settlement)).catch((error: unknown) =>
+      squadRuntimeLog.error("run 结算的推进执行体抛错", { runId: settlement.runId, error }),
+    );
+  });
+
+  /**
+   * 批次收尾的**驱动**（spec §5.7.3 / §5.7.4 / §6.3）：子项**全部**终态 ⇒ `advanceAfterChildrenDone`
+   *（它内部完成：串行把每个队员合进集成分支 → 整批 `finalize` 合回主分支 → 抛弃已 `merged` 的工作树
+   * → 删集成分支 → 父项 `done`）。挂点**只有** `runtime.subscribeWorkItemEvents` 这一个事件出口
+   * ——**没有第二处轮询**（轮询会与事件流并发出两套判据）。
+   *
+   * 为什么把**同一个**转发器挂到**每一个新构的 runtime** 上（而不是只挂「某一个」）：
+   * 工作项事件的订阅表在 runtime **实例**内部（`workItemService` 的 emit 派发给本实例的订阅表），
+   * 而本组合根是**按目标现构、不缓存**的 ⇒ 只挂某一个实例的话，其余实例（服务面每次调用都会新构一个）
+   * 发出的 `child_completed` **永远收不到**，批次收尾静默失效。逐实例挂不是「重复挂」：
+   * 重复挂指同一个实例挂两次（同一次事件被处理两遍 ⇒ 第二次 merge 撞「分支不存在」），
+   * 而每个实例各自只挂一次、各自只收到自己发出的事件。
+   *
+   * **不得把 `advanceAfterChildrenDone` 在这里 `await`**：`serializeOnRepo` 的队列键是**仓库根**
+   * 且是模块级的（`squadOrchestrator.ts` 的 `repoChains`），两个实例的队列是**同一条链**。
+   * 本回调是在 `workItemService.transition` 的 emit 里**同步**跑的，而那一次 transition 往往正发生在
+   * 另一条 `advanceAfterChildrenDone`（同仓库，链上）的 task 内部 ⇒ 若在这里 `await`，内层调用会排队
+   * 等外层，外层又等内层，**自等死锁**。故只 `void` + `.catch` 留痕。
+   */
+  const forwardSquadChildCompleted =
+    (runtime: SquadRuntime) =>
+    (event: WorkItemEvent): void => {
+      /* `workitem.dispatch_requested`（队长派单工具改完负责人后发的派发请求）**不在这里处理**：
+         它由注入的 `dispatchRequestHub` 发给常驻侧（见上面 hub 那段与 `SquadRuntimeDeps` 的说明）——
+         实例级订阅表在 runtime 内部、按目标现构，常驻侧订不到，所以这一格的收口不能在实例回调里做。
+         这里直接放行（不是「静默吞掉」：请求已由 hub 交给 host 注入的派发执行体，其结果在那边留痕）。 */
+      if (event.kind !== "workitem.child_completed") return;
+      // 判据（`areAllChildrenTerminal`，按 category）在编排层内部，这里只做转发，
+      // 不在这里再判一次（两处判据迟早分叉，分叉的表现是「批永远收不了尾」）。
+      void createSquadOrchestrator({ runtime })
+        .advanceAfterChildrenDone({
+          // 用 runtime 的**绑定**身份（身份非空白优先，否则路径）：与台账/快照同一处口径。
+          workspaceKey: resolveWorkspaceKey({
+            workspacePath: runtime.boundWorkspace.path,
+            workspaceIdentity: runtime.boundWorkspace.identity,
+          }),
+          parentWorkItemId: event.parentId,
+        })
+        .catch((error: unknown) =>
+          squadRuntimeLog.error("小队批次收尾失败", { parentWorkItemId: event.parentId, error }),
+        );
+    };
+
+  const createSquadRuntimeFor = async (target: SquadWorkspaceTarget): Promise<SquadRuntime> => {
+    // tasks-index 连接由本组合根统一持有；`ensureReady()` 之后再取，拿到的才是走过迁移与回填的那一条。
+    await taskIndexRepo.ensureReady();
+    const runtime = await createSquadRuntime({
+      db: taskIndexRepo.openSharedDatabase(), // 与 taskIndexRepo 是**同一条**连接（recon.md F3）
+      workspacePath: target.path,
+      workspaceIdentity: target.identity,
+      // 门禁的**唯一读取口**：desktop 侧没有第二处读这个字段（spec §5.7.6）。
+      readExperimentEnabled: () => squadsEnabled,
+      // #8 D3：整批收尾模式的读取口（上面那份单点同步快照；缺省 local ⇒ 零出站）。
+      readSquadMergeMode: () => squadMergeMode,
+      // #8 D2：PR 快照的 token 读取口（上面那份单点同步快照；未配置 ⇒ null adapter）。
+      readGithubPullRequestToken: () => githubPullRequestToken,
+      // 派发请求的常驻出口（轮 2 裁定落点 ii）：每个 runtime 都把「队长派单请求」publish 到
+      // 组合根那一份 hub —— 实例级订阅表在 runtime 内部，常驻侧订不到。
+      dispatchRequestHub: squadDispatchRequests,
+      runSettlementHub: squadRunSettlements,
+      /* SUB.3b：**渠道只读推送的出站口**（唯一装配点）。这里只把「一条摘要推到某个 workspace
+         的通知渠道」转给 bots 服务 —— 「推到哪个 bot / 哪个会话」是 bots 域的配置事实，
+         workitem 域只持类型（`InboxChannelPushPort`），不 import provider 实现。
+         为什么惰性取：bot 服务在本组合根**后段**才注册（下面的 ServiceCollection 装配），
+         而 runtime 是按目标现构的 —— 调用发生在装配完成之后，故这里读得到；
+         读不到（服务集合不含 Bots，如纯服务端进程）⇒ `?.` 得 undefined ⇒ 零出站。
+         与 `squadRuntimeServiceForAgent` 同一手法：**前向引用**，不在装配中途强取。 */
+      inboxChannelPush: (params) =>
+        services.getOptional(IBotsService)?.pushInboxChannelSummary(params),
+    });
+    runtime.subscribeWorkItemEvents(forwardSquadChildCompleted(runtime));
+    return runtime;
+  };
+  const squadRuntimeService = createSquadRuntimeService({
+    createRuntime: createSquadRuntimeFor,
+    // 呈现与门禁**共用同一份快照**（就是上面那个 `squadsEnabled` 变量）：不再各自 `await settingService.get()`，
+    // 两次独立读取会互相漂移（呈现说「开」而门禁说「关」），表现为「入口看得见、点了没反应」。
+    // 门禁本体在服务侧的唯一判据（读的也是这份值）。
+    readExperimentEnabled: async () => squadsEnabled,
+    // 归档转交的组合在 squadRuntime.ts（它要用 workItemRepo，而描述符那一侧必须浏览器安全）。
+    archiveSquadAndTransfer: async (target, id) => {
+      await archiveSquadAndTransfer(await createSquadRuntimeFor(target), id);
+    },
+    // 编排器工厂由这里注入：描述符模块必须浏览器安全，值导入 squadOrchestrator 会把 node 侧依赖带进去。
+    createOrchestrator: createSquadOrchestrator,
+    /* 收件箱的跨项目读取面（listInboxItems / mark / archive）用的懒取 repo：
+       与 createSquadRuntimeFor 里 openSharedDatabase() 同一条口径 —— `ensureReady()` 之后才拿得到
+       同一条（走过迁移与回填的）连接；未就绪时它自己响亮抛（不静默给空表）。 */
+    getInboxItemRepo: () => createInboxItemRepo(taskIndexRepo.openSharedDatabase()),
+    /* X2.1：评论派发 receipt 的懒取口（与收件箱同款口径与理由）：host 的评论派发入口按
+       dispatchKey 读事实、按条件更新回写 outcome；未注入时服务面两个 receipt 方法响亮抛。 */
+    getCommentDispatchReceiptRepo: () =>
+      createCommentDispatchReceiptRepo(taskIndexRepo.openSharedDatabase()),
+    // 响亮留痕（Minor-3 的子项缺失支路）：复用本域 logger，带原文。
+    logWarn: (message, error) => squadRuntimeLog.warn(message, { error }),
+    /* 0018（工作项 Surface 对齐 · 阶段一 R1）：新建工作项的**创建人**用料是下面那一处
+       `LOCAL_HUMAN_ACTOR`（协作文档已裁定的**唯一**身份定义点，D1-A）—— 这里只是把同一个人
+       再注入一条链路，**不新造第二份身份**（两处身份不一致时，同一个人写下的行会长成两个创建人，
+       而任何地方都不报错）。UI 建项走 `createWorkItem`，身份因此由组合根定义、而非界面自证。 */
+    localHumanActor: () => LOCAL_HUMAN_ACTOR,
+  });
+  // 回写前向引用：zcodeAgentService 的 `squad/*` 三个分支经它拿到服务面
+  //（队长工具的每次调用都会走到这里；注册缺失时那条分支回 -32601，见 squadProtocolMethods.ts）。
+  squadRuntimeServiceForAgent = squadRuntimeService;
+
+  /* B5.2 轮 2（D1-A）：**本地人类身份的定义点，全仓只此一处**。
+     `AuthorRef` 是审计事实（§3.1「谁写了这条评论」），所以它既不能由 UI 拼（设计案 §12-2：
+     「不应在 UI 自行决定权限/身份」），也不能每个入口各自造一个 —— 两处身份不一致时，
+     「同一个人写的评论」在库里长成两个作者，而任何地方都不会报错。
+
+     为什么是**常量**而不是取系统用户名/邮箱：审计事实要稳定可重放，且当前版本没有人类名册
+     （人类名册 + 权限归 C4）。换机、改名不该让历史评论换一个作者。
+     显示名留空：界面用「人类」徽标兜底（`comment.author.human`），不拿 id 当名字。 */
+  const LOCAL_HUMAN_ACTOR: AuthorRef = { kind: "human", id: "local-user" };
+
+  /* 评论服务的**唯一构造点**：门面的四个写入口经它拿到实现体（任务卡 §5.2「若 X2.1 已构造则只
+     消费，不第二次构造」——X2.1 只落了 host 侧的派发入口，组合根这一半在本轮补齐）。
+
+     为什么按 `runtime` 装、而不是在组合根里建一个跨目标单例：名册（agent / 小队）与
+     workItem / run / 义务三个 repo 都是**按 workspace** 的，而 runtime 是按目标现构、不缓存的
+     （见上面「小队 runtime 不做长期单例」）。跨目标单例会让名册与 repo 落到第一个用它的 workspace 上
+     ——表现在「在 A 项目评论却触发了 B 项目的 agent」，且不报错。
+     连接取 `openSharedDatabase()`：与其余协作 repo 同一条（走过迁移的那一条）；调用点在
+     `createRuntime` 之后，库已 `ensureReady()`。 */
+  /* G7（§8.4-3）：评论族事实面的 repo 构造 —— **唯一出处**。CommentService 的 deps 与半途事务
+     补写扫描共用它：两处各拼一份 repo，会让「扫描读的库」与「写侧写的库」在连接形态变化时分叉，
+     而且不报错（`openSharedDatabase()` 取的是共享单例，两处取到的是同一条连接）。 */
+  const commentFactReposFor = (): Pick<
+    CommentServiceDeps,
+    "comments" | "activities" | "receipts"
+  > => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return {
+      comments: createWorkItemCommentRepo(db),
+      activities: createWorkItemActivityRepo(db),
+      receipts: createCommentDispatchReceiptRepo(db),
+    };
+  };
+
+  const createCommentServiceFor = (runtime: SquadRuntime): CommentService => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return createCommentService({
+      ...commentFactReposFor(),
+      reactions: createWorkItemCommentReactionRepo(db),
+      /* G8（§8.3）：**必填**的事务口，生产组合根注入真实现（同一连接的 BEGIN IMMEDIATE）——
+         「评论落库 → Activity → 裁决读窗 → receipt 落库」整段原子，且状态窗的读+写同锁。
+         这里是全仓唯一注入点：漏了它 `createCommentService` 会响亮抛（不静默不包事务）。 */
+      transact: createSqliteTransact(db),
+      runs: runtime.squadRunRepo,
+      deferred: runtime.squadDeferredDispatchRepo,
+      workItems: runtime.workItemRepo,
+      roster: {
+        listAgents: () => runtime.teamAgentService.list(),
+        listSquads: () => runtime.squadService.list(),
+      },
+      /* 门禁读**同一份**同步快照（就是上面那个 `squadsEnabled`）：呈现与门禁两份判据会漂移，
+         表现为「入口看得见、点了没反应」或「门关着照旧派发」。 */
+      readDispatchEnabled: () => squadsEnabled,
+      /* 评论派发请求的出口：**只发 pending**（见 CommentServiceDeps.publishDispatchRequest 的理由），
+         由组合根那份 hub 转给 host 注入的评论派发入口（X2.1）。缺这一半 ⇒ 评论永久停在 pending，
+         没有任何东西会执行它，而界面会如实显示「等待派发」—— 一条看起来正常的死路。 */
+      publishDispatchRequest: (request) => squadDispatchRequests.publish(request),
+      /* SUB.1 订阅事实（commenter / mentioned）：直接取**本 runtime 的**事实出口 —— 它已绑定这张
+         workspace（键与路径在闭包里），组合根不再拼一次；缺这一格的表现是「评论照常、订阅表永远
+         只有建项那一行」，而全链不报错（正是本域反复出现的静默缺口形态）。 */
+      subscribers: runtime.subscriberFacts,
+      /* SUB.2 收件箱通知：评论写成功后报事实面，条目由通知口落库（准入/解析在策略模块）。
+         缺这一格的表现是「订阅表有人，而收件箱永远不出现新条目」——同样是静默缺口。 */
+      inboxNotifications: (fact) =>
+        createInboxNotificationPortFor(runtime)({ kind: "comment", ...fact }),
+    });
+  };
+
+  /* SUB.2：**收件箱通知口的唯一装配点**（评论 / 决定两个写服务共用这一条装配）。
+     三件事在这里各就各位，且都只有一处：
+     · **绑定**：订阅行取本 runtime 绑定的 workspace 键（`resolveWorkspaceKey(boundWorkspace)` ——
+       与 SUB.1 事实出口写行时的键是**同一条式子**），父链取工作项树（`get` 过滤归档行 ⇒ 上溯在
+       归档处自然停下）；
+     · **判据**：准入（作者排除 / 有无非本人收件人）与收件人解析（冒泡 + 退订静音）在
+       `inboxNotificationPolicy` 一处 —— 本层不判「要不要产生」；
+     · **唯一写收口**：`insertIfAbsent`（存储层唯一索引兜幂等；`false` 是结论不是错误）。
+     失败**只留痕**：条目是已落地评论/决定的派生投影，抛出会把一次成功写入翻转成响亮失败
+     （照 `subscriberFacts` 记录器与 `activityProjector` 的既有失败面）。 */
+  const createInboxNotificationPortFor = (
+    runtime: SquadRuntime,
+  ): ((fact: InboxNotificationFact) => void) => {
+    const workspaceKey = resolveWorkspaceKey({
+      workspacePath: runtime.boundWorkspace.path,
+      workspaceIdentity: runtime.boundWorkspace.identity,
+    });
+    return (fact) => {
+      try {
+        const item = planInboxNotificationItem({
+          fact,
+          readSubscribers: (id) => runtime.subscriberRepo.listByWorkItem(workspaceKey, id),
+          readParentId: (id) => runtime.workItemRepo.get(id)?.parentId ?? null,
+        });
+        if (item !== null) runtime.inboxItemRepo.insertIfAbsent(item);
+      } catch (error) {
+        squadRuntimeLog.warn(
+          "收件箱通知登记失败：条目是已落地事实的派生投影，失败只留痕、不回滚主事实",
+          { workItemId: fact.workItemId, error },
+        );
+      }
+    };
+  };
+
+  /* C3.1：决定服务的**唯一构造点**（门面第五写入口 `createWorkItemDecision` 经它拿到实现体）。
+     依赖集有意封顶为 decisions / activities / workItems（+ 服务内建的 now/newId）：
+     决定链**结构上**拿不到 run 台账、派发回执、完成重放义务与状态机 ——「决定不派发、不改状态」
+     因此不是纪律，而是依赖图上的不可能（守卫见 workItemDecisionGuards.test.ts）。
+     连接取 `openSharedDatabase()`：与其余协作 repo 同一条（走过迁移的那一条）。 */
+  const createDecisionServiceFor = (runtime: SquadRuntime): WorkItemDecisionService => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return createWorkItemDecisionService({
+      decisions: createWorkItemDecisionRepo(db),
+      activities: createWorkItemActivityRepo(db),
+      workItems: runtime.workItemRepo,
+      /* SUB.2 收件箱通知：决定写成功后报事实面（收件人解析 + 准入在策略模块）——
+         只写 Inbox 的口，依赖集封顶红线不受影响（拿不到 run / receipt / 状态面）。 */
+      inboxNotifications: (fact) =>
+        createInboxNotificationPortFor(runtime)({ kind: "decision", ...fact }),
+    });
+  };
+
   const services = new ServiceCollection()
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
@@ -2631,6 +3280,7 @@ export function createLocalServices(options: {
     )
     .register(IMemoryService, createMemoryService())
     .register(IWikiService, wikiService)
+    .register(IAgentBuilderService, agentBuilderService)
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,
@@ -2664,7 +3314,42 @@ export function createLocalServices(options: {
   providerProvisioningTriggerDisposers.set(services, providerProvisioningDisposers);
   services
     .register(IProviderSettingsService, providerRuntime.providerSettings)
-    .register(IModelSelectionService, providerRuntime.modelSelection);
+    .register(IModelSelectionService, providerRuntime.modelSelection)
+    // 小队运行时：UI / host / 工具三处都经它取数或触发派发，门禁判据只有 runtime 里那一处。
+    .register(ISquadRuntimeService, squadRuntimeService)
+
+    /* B5.1：工作项协作读门面（独立描述符，不扩 ISquadRuntimeService / 快照）。五个 repo 全部
+       懒取（`ensureReady()` 之后才拿到同一条走过迁移的连接）；`createRuntime` 复用同一个按目标
+       现构的工厂 —— workspace 身份与「工作项在不在」的唯一权威。
+
+       B5.2：同一门面再挂**四个写入口**（创建/软删/解决/回应）。两处注入是这一格的全部接线：
+       · `localHumanActor` —— 本地人类身份（上面那一处常量，D1-A）；
+       · `createCommentService` —— 按本次 runtime 装的评论服务（上面那一个构造点）。
+       门面自己不碰 run / receipt / 义务：它只决定「写到哪、谁写的」，别的照 CommentService 的判据。 */
+    .register(
+      IWorkItemCollaborationService,
+      createWorkItemCollaborationService({
+        createRuntime: createSquadRuntimeFor,
+        getRepos: () => {
+          const db = taskIndexRepo.openSharedDatabase();
+          return {
+            comments: createWorkItemCommentRepo(db),
+            activities: createWorkItemActivityRepo(db),
+            decisions: createWorkItemDecisionRepo(db),
+            reactions: createWorkItemCommentReactionRepo(db),
+            receipts: createCommentDispatchReceiptRepo(db),
+          };
+        },
+        localHumanActor: () => LOCAL_HUMAN_ACTOR,
+        createCommentService: createCommentServiceFor,
+        createDecisionService: createDecisionServiceFor,
+        /* G7（§8.4-3）：半途事务扫描的公开入口（host 启动第 5 步按 workspace 调一次）。
+           复用 `commentFactReposFor` —— 与 CommentService 同一份 repo 构造，host 侧不另拼 repo、
+           不另建连接（补写投影必须落在写侧那张表上，两处各建一份就是两条路）。 */
+        backfillCommentFacts: (workspaceKey) =>
+          backfillMissingCommentFacts(commentFactReposFor(), workspaceKey),
+      }),
+    );
   if (
     shouldRegisterProviderProvisioningTarget({
       serviceAuthorityMode: options.serviceAuthorityMode,

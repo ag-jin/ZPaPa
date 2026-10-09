@@ -38,9 +38,7 @@ const TAIL_DESC = "order by sequence is null, sequence desc, time_created desc, 
 function tailMessageIds(sessionId: string, limit: number): string[] {
   return (
     db
-      .prepare(
-        `select id from message where session_id = ? ${TAIL_DESC} limit ?`,
-      )
+      .prepare(`select id from message where session_id = ? ${TAIL_DESC} limit ?`)
       .all(sessionId, limit) as Array<{ id: string }>
   ).map((row) => row.id);
 }
@@ -77,9 +75,7 @@ for (const sessionId of sessions) {
   if (all.length === 0) continue;
 
   // 覆盖多种窗口大小，含 1（最小）、边界与大窗口；>总数 时退化为全量。
-  const limits = [1, 2, 60, 200, all.length - 1, all.length, all.length + 1].filter(
-    (n) => n > 0,
-  );
+  const limits = [1, 2, 60, 200, all.length - 1, all.length, all.length + 1].filter((n) => n > 0);
 
   for (const limit of limits) {
     const effective = Math.min(limit, all.length);
@@ -90,8 +86,14 @@ for (const sessionId of sessions) {
     if (JSON.stringify(tail) !== JSON.stringify(expected)) {
       failures.push(
         `${sessionId.slice(0, 24)} limit=${limit}: 尾部顺序不一致\n` +
-          `    期望尾 3: ${expected.slice(-3).map((s) => s.slice(-8)).join(", ")}\n` +
-          `    实际尾 3: ${tail.slice(-3).map((s) => s.slice(-8)).join(", ")}`,
+          `    期望尾 3: ${expected
+            .slice(-3)
+            .map((s) => s.slice(-8))
+            .join(", ")}\n` +
+          `    实际尾 3: ${tail
+            .slice(-3)
+            .map((s) => s.slice(-8))
+            .join(", ")}`,
       );
       continue;
     }

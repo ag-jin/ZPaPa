@@ -47,7 +47,7 @@ remote:ssh:100.66.1.2:22:linguojin:/Volumes/数据盘/网站/新赛马 | sess_e3
   （`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace.ts:22-27`：
   非法 remote identity 直接抛错，不再落回本地路径），且注释明确写着
   「workspaceId 双形态（Workspace Identity 约束）…… 远程 pane（跨 workspace 分屏）
-   = 远程 identity …… identity 原样保留进 workspace ref（workspaceKey = identity）」。
+  = 远程 identity …… identity 原样保留进 workspace ref（workspaceKey = identity）」。
   这说明**远程 identity 进入对端 workspace ref 是被设计允许的语义**
   （跨 workspace 分屏要用它做隔离），并不等同于"误写重复行"。
 

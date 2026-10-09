@@ -32,7 +32,9 @@ function atTime(reference: Date, hour: number, minute: number): Date {
 
 /** 把可能越界的小时/分钟收敛到合法范围。 */
 export function clampClock(hour: number, minute: number): { hour: number; minute: number } {
-  const safeHour = Number.isFinite(hour) ? Math.min(23, Math.max(0, Math.floor(hour))) : WIKI_DEFAULT_HOUR;
+  const safeHour = Number.isFinite(hour)
+    ? Math.min(23, Math.max(0, Math.floor(hour)))
+    : WIKI_DEFAULT_HOUR;
   const safeMinute = Number.isFinite(minute)
     ? Math.min(59, Math.max(0, Math.floor(minute)))
     : WIKI_DEFAULT_MINUTE;

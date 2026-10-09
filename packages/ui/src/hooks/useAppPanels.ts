@@ -832,9 +832,7 @@ export function useAppPanels(options: {
           ...(workspaceIdentityForTab ? { workspaceIdentity: workspaceIdentityForTab } : {}),
           ...(remoteSessionIdForTab ? { workspaceRemoteSessionId: remoteSessionIdForTab } : {}),
           ...(request?.revealPath ? { revealPath: request.revealPath } : {}),
-          ...(request?.temporaryExternalDirectory
-            ? { temporaryExternalDirectory: true }
-            : {}),
+          ...(request?.temporaryExternalDirectory ? { temporaryExternalDirectory: true } : {}),
         });
         logger.info(
           `[App] 打开右侧面板 mode=file-tree workspace=${targetWorkspacePath} reveal=${request?.revealPath ? "yes" : "no"} tabs=${next.tabs.length}`,

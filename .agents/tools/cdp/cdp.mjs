@@ -5,7 +5,10 @@ const require = createRequire(process.env.ZPAPA_ROOT + "/package.json");
 const { WebSocket } = require("ws");
 
 const [, , WS, EXPR] = process.argv;
-if (!WS || !EXPR) { console.error("用法: node cdp.mjs <wsUrl> <expr>"); process.exit(2); }
+if (!WS || !EXPR) {
+  console.error("用法: node cdp.mjs <wsUrl> <expr>");
+  process.exit(2);
+}
 
 const ws = new WebSocket(WS, { perMessageDeflate: false });
 let id = 0;
@@ -37,7 +40,13 @@ ws.on("open", async () => {
       userGesture: true,
     });
     if (r.exceptionDetails) {
-      console.log("JS 异常: " + JSON.stringify(r.exceptionDetails.exception?.description ?? r.exceptionDetails).slice(0, 500));
+      console.log(
+        "JS 异常: " +
+          JSON.stringify(r.exceptionDetails.exception?.description ?? r.exceptionDetails).slice(
+            0,
+            500,
+          ),
+      );
     } else {
       console.log(JSON.stringify(r.result?.value ?? null, null, 1));
     }
@@ -48,4 +57,7 @@ ws.on("open", async () => {
     setTimeout(() => process.exit(0), 50);
   }
 });
-ws.on("error", (e) => { console.log("WS ERR: " + e.message); process.exit(1); });
+ws.on("error", (e) => {
+  console.log("WS ERR: " + e.message);
+  process.exit(1);
+});

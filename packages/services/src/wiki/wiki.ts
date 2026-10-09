@@ -32,10 +32,7 @@ export type {
  */
 export interface IWikiService {
   /** 列出该 workspace 的 wiki（当前为单份，保留列表形态以免将来多份时改接口）。 */
-  list(params: {
-    workspacePath: string;
-    workspaceIdentity?: string;
-  }): Promise<WikiSummary[]>;
+  list(params: { workspacePath: string; workspaceIdentity?: string }): Promise<WikiSummary[]>;
 
   /** 读取一份 wiki 的渲染树（目录树 + 正文，以 catalogTree 为准）。 */
   getTree(params: {
@@ -67,7 +64,10 @@ export interface IWikiService {
   generate(request: WikiGenerateRequest): Promise<WikiGenerateResult>;
 
   /** 取消进行中的生成任务。 */
-  cancel(params: { workspacePath: string; workspaceIdentity?: string }): Promise<{ cancelled: boolean }>;
+  cancel(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<{ cancelled: boolean }>;
 
   /**
    * 生成进度事件。
@@ -77,7 +77,10 @@ export interface IWikiService {
   onDynamicGenerationProgress(progressId: string): Event<WikiGenerationProgress>;
 
   /** 删除该 workspace 的 wiki 产物（整目录）。 */
-  remove(params: { workspacePath: string; workspaceIdentity?: string }): Promise<{ removed: boolean }>;
+  remove(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<{ removed: boolean }>;
 }
 
 export const IWikiService = createServiceDescriptor<IWikiService>(ServiceChannels.Wiki);

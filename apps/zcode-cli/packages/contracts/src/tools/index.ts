@@ -19,6 +19,9 @@ export * from "./skill.js";
 export * from "./todo.js";
 export * from "./automation.js";
 export * from "./off-peak.js";
+// 队长派单工具集（建子工作项 / 派给队员）：只在协作小队实验域内注册，名字常量被 core 的
+// 注册门与运行时门控读走；漏掉这行会让两个工具静默消失（照 resume-workflow-run 的同款注释）。
+export * from "./squad.js";
 export * from "./target.js";
 export * from "./plan-mode.js";
 export * from "./ask-user-question.js";

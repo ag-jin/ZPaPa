@@ -11,8 +11,6 @@
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-
-
 ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
 
 ## 更新
@@ -173,6 +171,40 @@ git push origin main v3.14.4
 - 未注入证书时，macOS 产物使用 **ad-hoc 签名**（`identity: "-"` + 显式 identifier 型 designated requirement）。这不等于"已签名分发"：macOS 首次打开仍需按上文 `xattr` 去隔离；但它让**应用内自动更新**可用。如需正式签名分发，在 CI 注入 `ZCODE_ENABLE_MAC_SIGN=1` + `APPLE_SIGNING_IDENTITY`（mac）或 `CSC_LINK`（win）后重新打包。
 - Windows 首次运行仍有 SmartScreen 提示（未做时间戳签名）。
 - 试跑（只构建为 Actions 产物、不发布 Release）：在 Actions 页面手动触发 `workflow_dispatch`，产物保留 7 天。
+
+### 预览版（Preview 通道）
+
+面向愿意提前试新功能的用户。应用内「设置 ▸ 通用 ▸ 接受提前收到预览版更新」打开后只会收到**预览版**，关闭则只跟随正式版节奏；**切换即时生效，无需重启**。
+
+发布一个预览版：
+
+```bash
+# 1. 把根 package.json 的 version 写成 prerelease 形式（例如 3.16.4-preview.1）
+# 2. 提交后打同名 tag 并推送
+git tag v3.16.4-preview.1
+git push origin main v3.16.4-preview.1
+```
+
+- 流水线识别 tag 里的 `-preview`，把该 Release 标为 **Pre-release**（**不是 Latest**），因此**关着预览开关的用户不会被推送到它**。产物与正式版同形：同样 10 个资产，含更新清单 `latest-mac.yml`（两架构合并）与 `latest.yml`。
+- **两条纪律**（违反会静默出问题，不是报错）：
+  1. **prerelease 标识必须恰为 `preview`**。更新器按「tag 的 prerelease 标识」做筛选与清单定位；换成 `rc`/`beta` 会同时破坏筛选条件与清单回退，表现为「开关打开了却收不到预览版」。
+  2. **预览版号不得高于随后发布的正式版号**。`X.Y.Z-preview.N < X.Y.Z`，所以**关着开关**的客户端在正式版发布后会看到它并升回去；若反过来（先发 `3.17.0-preview.1`、之后却把 `3.16.4` 当正式版发），这类用户会**卡在预览版**回不来。
+     注意：**开着开关**的客户端**不会**因为正式版发布而回到正式版——它只在自己的通道（prerelease 标识恰为 `preview` 的 Release）里选，正式版对它不可见，因此会一直显示「已是最新」。要回到正式版的动作是**关掉开关**（`3.16.4` 起立即生效），不是等一次发布。
+- 验收：推 tag 后确认该 Release 有 **Pre-release 徽标**、**不是 Latest**、且带 `latest-mac.yml`；再打开 `https://github.com/ag-jin/ZPaPa/releases/latest` 确认它**仍指向正式版**。
+- 注意：**存量正式版（`3.16.3` 及更早）点开关不生效**——运行时切换通道的能力是 `3.16.4-preview.1` 起才有的。首次进入预览通道需要**手动装一次**预览构建。
+
+### 发版后核对：实验开关（A1）
+
+小队实验开关 `experimentalAgentSquadsEnabled` 的缺省值**按安装包身份**（编译期注入的 flavor）分渠道，与设置里的「接受提前收到预览版更新」开关无关：preview 包默认开启、正式包默认关闭，且**显式值永不被渠道缺省改写**（来源 commit `ee14604`）。四条核对必须在**真实打包产物**上执行——本机 dev 构建、早于该提交的旧产物都不构成证据：
+
+| #      | 场景                   | 步骤                                                                                                  | 通过判据                                                  |
+| ------ | ---------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| R-A1-1 | I1：preview 冷启       | 安装 preview 包 → 清空或移除设置中的 `experimentalAgentSquadsEnabled`（或全新 profile）→ 冷启         | 未做任何设置即见 AI Team 分组与两入口；设置页开关显示为开 |
+| R-A1-2 | I3：显式关持久         | 在 R-A1-1 的同一实例内显式关闭 → 退出 → 冷启                                                          | 入口仍不可见（渠道缺省不得翻回）                          |
+| R-A1-3 | I2：production 冷启    | 安装正式包 → 全新 profile → 冷启                                                                      | 入口不可见；显式开启后可见（显式优先）                    |
+| R-A1-4 | 构建期锚点（可自动化） | 对打包产物断言 flavor 字面量，或在 CI 用 define 化单测（T8 验证报告 §2 的注入式脚本可提升为 CI 脚本） | preview 产物缺省 `true`、production 产物缺省 `false`      |
+
+不变式口径（I1–I4）：I1 = 键缺失且 flavor 为 preview（define 已注入）⇒ 缺省 `true`；I2 = 键缺失且其它情形（production 注入或未注入回退）⇒ 缺省 `false`；I3 = 键为 `false`（任何来源、任何渠道、任何升级）⇒ 永不被缺省逻辑改写；I4 = 键为 `true` ⇒ 永不被改写。
 
 ### 应用内自动更新
 

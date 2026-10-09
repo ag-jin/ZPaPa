@@ -49,11 +49,13 @@ spec 隐含但各任务测试**容易漏掉**的输入/失败模式（每条都�
 ### Task 1: Squad 域模型（含队长指令 8 槽位）
 
 **Files:**
+
 - Create: `packages/shared/src/squad.ts`
 - Modify: `packages/shared/src/index.ts`（追加导出）
 - Test: `packages/shared/test/squadDomain.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `SQUAD_INSTRUCTION_SLOTS = ["goal","breakdown","dispatch","independence","acceptance","stopCondition","reporting","maxRounds"] as const`
   - `type SquadInstructionSlot = (typeof SQUAD_INSTRUCTION_SLOTS)[number]`
@@ -67,19 +69,31 @@ spec 隐含但各任务测试**容易漏掉**的输入/失败模式（每条都�
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  SQUAD_INSTRUCTION_SLOTS, SQUAD_REQUIRED_INSTRUCTION_SLOTS,
-  squadSchema, validateSquad,
+  SQUAD_INSTRUCTION_SLOTS,
+  SQUAD_REQUIRED_INSTRUCTION_SLOTS,
+  squadSchema,
+  validateSquad,
 } from "../src/squad.js";
 
 const base = {
-  id: "sq_1", name: "网关组", leaderAgentId: "ta_lead",
+  id: "sq_1",
+  name: "网关组",
+  leaderAgentId: "ta_lead",
   members: [{ agentId: "ta_lead", role: "leader" }, { agentId: "ta_a" }],
-  instructions: { goal: "上线限流" }, enabled: true,
+  instructions: { goal: "上线限流" },
+  enabled: true,
 };
 
 test("8 个槽位是固定全集", () => {
   assert.deepEqual(SQUAD_INSTRUCTION_SLOTS, [
-    "goal","breakdown","dispatch","independence","acceptance","stopCondition","reporting","maxRounds",
+    "goal",
+    "breakdown",
+    "dispatch",
+    "independence",
+    "acceptance",
+    "stopCondition",
+    "reporting",
+    "maxRounds",
   ]);
 });
 
@@ -139,6 +153,7 @@ Expected: FAIL（模块不存在）
 按 P0 的 `packages/shared/src/work-item.ts` 风格写：`squadSchema` 用 `.strict()`；`instructions` 用 **`z.partialRecord(z.enum(SQUAD_INSTRUCTION_SLOTS), z.string())`**（键限定在 8 槽位内、**允许缺键**——zod 4 的 `z.record(z.enum)` 是穷尽语义，会要求 8 键全给）；`members` 用 `z.array(z.object({ agentId: z.string().min(1), role: z.string().optional() })).min(1)`——**不设名册上限**（spec 只限「并行队员 ≤ 6」，那是并发约束、由派发侧管，不是名册规模，见 spec §3.10）。
 
 `validateSquad` 返回 `problems: string[]`（中文、可读），逐条：
+
 1. `leaderAgentId` 必须出现在 `members` 的 `agentId` 中；
 2. `members` 的 `agentId` 不得重复（报「重复」）；
 3. `SQUAD_REQUIRED_INSTRUCTION_SLOTS` 每一项必须在 `instructions` 里有**非空**值。
@@ -153,6 +168,7 @@ Expected: PASS（8 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（对着 spec §3.3、§5.4 反查）：
+
 - spec §3.3 的字段逐项对照：`id/name/description/leaderAgentId/members/instructions/enabled/archivedAt` 是否齐？
 - spec §5.4 的 **8 个槽位**是否就是 `SQUAD_INSTRUCTION_SLOTS` 的全集？**「收手条件」「轮次上限」是否确为必填**？
 - spec 说「leader 自动作为成员」——本任务是否保证了这一点（校验而非静默补）？
@@ -181,10 +197,12 @@ git commit -m "feat(squad): Squad 域模型（队长指令 8 槽位 + 成员校�
 ### Task 2: Squad 存储 + 服务
 
 **Files:**
+
 - Create: `packages/services/src/teams/squadStorage.ts`、`packages/services/src/teams/squadService.ts`
 - Test: `packages/services/test/squadService.test.ts`
 
 **Interfaces:**
+
 - Consumes: `squadSchema` / `validateSquad` / `Squad`（Task 1）；P0 的 `teamAgentStorage` 风格（原子写 + 容错 list）
 - Produces:
   - `resolveSquadDefinitionRoot(workspacePath: string): string` → `<ws>/.zcode/squad/squads`
@@ -219,7 +237,10 @@ test("create 把 leader 并入 members 并标 role=leader", () => {
   const s = svc.create({ name: "网关组", leaderAgentId: "ta_lead", members: ["ta_a"] });
   assert.deepEqual(
     s.members.map((m) => [m.agentId, m.role]),
-    [["ta_lead", "leader"], ["ta_a", undefined]],
+    [
+      ["ta_lead", "leader"],
+      ["ta_a", undefined],
+    ],
   );
 });
 
@@ -235,7 +256,9 @@ test("create 缺收手条件/轮次上限则抛错", () => {
 test("归档写 archivedAt 而非删除，且 list 仍含它", () => {
   const svc = setup();
   const s = svc.create({
-    name: "网关组", leaderAgentId: "ta_lead", members: [],
+    name: "网关组",
+    leaderAgentId: "ta_lead",
+    members: [],
     instructions: { stopCondition: "全部 done 即收工", maxRounds: "5" },
   });
   svc.archive(s.id);
@@ -246,7 +269,9 @@ test("归档写 archivedAt 而非删除，且 list 仍含它", () => {
 test("update 不改变 id", () => {
   const svc = setup();
   const s = svc.create({
-    name: "a", leaderAgentId: "ta_lead", members: [],
+    name: "a",
+    leaderAgentId: "ta_lead",
+    members: [],
     instructions: { stopCondition: "s", maxRounds: "1" },
   });
   const updated = svc.update(s.id, { name: "b" });
@@ -274,6 +299,7 @@ Expected: PASS（4 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §3.3、§3.10、§13 C3）：
+
 - 「leader 自动作为成员」是否真的落地（不是只靠校验）？
 - 归档语义：是否**只写时间戳不删文件**、`list()` 是否含归档？
 - 是否**只**写 `<ws>/.zcode/squad/`，没碰 `<ws>/.zcode/agents` 或 `agents-state.json`？
@@ -305,11 +331,13 @@ git commit -m "feat(squad): 小队存储与服务（leader 并入成员 + 归档
 ### Task 3: 唤醒规则域模型（含 kind × mode 互斥）
 
 **Files:**
+
 - Create: `packages/shared/src/wake-rule.ts`
 - Modify: `packages/shared/src/index.ts`
 - Test: `packages/shared/test/wakeRuleDomain.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `WAKE_RULE_KINDS = ["event","at","every","cron"] as const`、`WAKE_RULE_MODES = ["once","continuous"] as const`
   - `WAKE_CONDITION_TYPES = ["issue_field","children_done","pull_request","other_issue"] as const`
@@ -323,11 +351,15 @@ git commit -m "feat(squad): 小队存储与服务（leader 并入成员 + 归档
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  WAKE_DEFAULT_MAX_FIRES, WAKE_HOURLY_RUN_LIMIT, WAKE_LOOP_REPEAT_LIMIT,
-  wakeRuleSchema, validateWakeRule,
+  WAKE_DEFAULT_MAX_FIRES,
+  WAKE_HOURLY_RUN_LIMIT,
+  WAKE_LOOP_REPEAT_LIMIT,
+  wakeRuleSchema,
+  validateWakeRule,
 } from "../src/wake-rule.js";
 
-const ok = (over = {}) => wakeRuleSchema.parse({ id: "w1", workItemId: "wi_1", kind: "event", mode: "once", ...over });
+const ok = (over = {}) =>
+  wakeRuleSchema.parse({ id: "w1", workItemId: "wi_1", kind: "event", mode: "once", ...over });
 const problems = (over = {}) => {
   const r = validateWakeRule(ok(over));
   return r.ok ? [] : r.problems;
@@ -357,7 +389,14 @@ test("event 带 cronExpression 被拒", () => {
 
 // condition 只允许挂在 event 上。
 test("every 带 condition 被拒", () => {
-  assert.ok(problems({ kind: "every", mode: "continuous", intervalSeconds: 60, condition: { type: "children_done" } }).length > 0);
+  assert.ok(
+    problems({
+      kind: "every",
+      mode: "continuous",
+      intervalSeconds: 60,
+      condition: { type: "children_done" },
+    }).length > 0,
+  );
 });
 
 // maxFires 只在 continuous 上有效，且 1..1000。
@@ -365,8 +404,12 @@ test("once 带 maxFires 被拒", () => {
   assert.ok(problems({ maxFires: 5 }).length > 0);
 });
 test("continuous 的 maxFires 越界被拒", () => {
-  assert.ok(problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 0 }).length > 0);
-  assert.ok(problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length > 0);
+  assert.ok(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 0 }).length > 0,
+  );
+  assert.ok(
+    problems({ kind: "every", mode: "continuous", intervalSeconds: 60, maxFires: 1001 }).length > 0,
+  );
 });
 
 // onTimeout=wake 仅限 event。
@@ -390,6 +433,7 @@ Expected: FAIL（模块不存在）
 `wakeRuleSchema`（strict）字段：`id`、`workItemId`、`kind`、`mode`、可选 `at`(number)、`intervalSeconds`(>0)、`cronExpression`(non-empty)、`timezone`、`condition`（`{ type }` + 可选参数）、`eventTypes`、`filters`、`nextFireAt`、`maxFires`、`fireCount`(default 0)、`pausedReason`、`expiresAt`、`onTimeout`、`revision`(default 0)、`enabled`(default true)。
 
 `validateWakeRule` 逐条实现互斥（每条给可读中文问题）：
+
 1. `kind === "at"` 时 `mode` 必须 `once`；`kind ∈ {every, cron}` 时 `mode` 必须 `continuous`；
 2. `kind === "event"` 时**不得**出现 `at`/`intervalSeconds`/`cronExpression`；
 3. `kind !== "event"` 时**不得**出现 `condition`；
@@ -405,6 +449,7 @@ Expected: PASS（9 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §3.5、§5.1、§5.5）：
+
 - §3.5 的字段是否齐（含 `filters`、`expiresAt`、`onTimeout`、`revision`、`pausedReason`）？
 - §5.5 的三个阈值是否与常量一致？
 - 计划 Global Constraints 列的**四条 kind/mode/condition 约束**是否全部落地？
@@ -431,11 +476,13 @@ git commit -m "feat(squad): 唤醒规则域模型（kind×mode 互斥 + 防失�
 ### Task 4: 唤醒规则表 + Repo（含 revision fencing）
 
 **Files:**
+
 - Modify: `packages/services/src/session/tasksDatabase/schema-v1.ts`、`migrations.ts`
 - Create: `packages/services/src/workitem/wakeRuleRepo.ts`
 - Test: `packages/services/test/wakeRuleRepo.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 3 的 `WakeRule`
 - Produces（真实签名）:
   - `createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo`
@@ -459,15 +506,25 @@ function setup() {
   runTasksDatabaseMigrations(db);
   return { db, repo: createWakeRuleRepo(db) };
 }
-const rule = (over = {}) => ({
-  id: "w1", workItemId: "wi_1", kind: "every", mode: "continuous",
-  intervalSeconds: 60, fireCount: 0, revision: 0, enabled: true, ...over,
-} as never);
+const rule = (over = {}) =>
+  ({
+    id: "w1",
+    workItemId: "wi_1",
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    fireCount: 0,
+    revision: 0,
+    enabled: true,
+    ...over,
+  }) as never;
 
 test("迁移建出 wake_rules 表", () => {
   const { db } = setup();
   assert.equal(
-    db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'").get().c,
+    db
+      .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='wake_rules'")
+      .get().c,
     1,
   );
 });
@@ -477,7 +534,10 @@ test("listReady 只取到期且 enabled 的规则", () => {
   repo.insert(rule({ id: "w_due", nextFireAt: 100 }));
   repo.insert(rule({ id: "w_future", nextFireAt: 999 }));
   repo.insert(rule({ id: "w_off", nextFireAt: 50, enabled: false }));
-  assert.deepEqual(repo.listReady(200, 10).map((r) => r.id), ["w_due"]);
+  assert.deepEqual(
+    repo.listReady(200, 10).map((r) => r.id),
+    ["w_due"],
+  );
 });
 
 // revision fencing：过期 revision 的推进必须失败，防止编辑后旧派发覆盖新状态。
@@ -520,10 +580,12 @@ Expected: FAIL（表不存在 / 模块不存在）
 `wakeRuleRepo.ts`：`casAdvance` 用**单条**条件 UPDATE：
 
 ```ts
-const r = db.prepare(
-  `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?, revision=revision+1, updated_at=?
+const r = db
+  .prepare(
+    `UPDATE wake_rules SET next_fire_at=?, fire_count=?, paused_reason=?, revision=revision+1, updated_at=?
    WHERE id=? AND revision=?`,
-).run(nextFireAt, fireCount, pausedReason ?? null, Date.now(), id, expectRevision);
+  )
+  .run(nextFireAt, fireCount, pausedReason ?? null, Date.now(), id, expectRevision);
 return r.changes === 1;
 ```
 
@@ -537,6 +599,7 @@ Expected: PASS（5 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §3.5、§5.7、§3.8）：
+
 - §3.8 的「迁移只追加、历史声明冻结」是否守住（diff 必须 0 删除）？
 - §5.7「每次流转携带期望前置状态（CAS）」是否落到 `revision` 上？
 - 新迁移是否**显式加了 `else if`**（P0 的教训）？
@@ -564,10 +627,12 @@ git commit -m "feat(squad): 唤醒规则表与 Repo（部分索引 + revision fe
 ### Task 5: 防失控 + 派发决策（纯函数）
 
 **Files:**
+
 - Create: `packages/services/src/workitem/wakeGuard.ts`
 - Test: `packages/services/test/wakeGuard.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 3 的阈值常量与 `WakeRule`
 - Produces:
   - `type WakeDecision = { action: "fire" } | { action: "skip"; reason: "merged" | "acknowledged" } | { action: "pause"; reason: "max_fires" | "rate" | "loop" }`
@@ -581,9 +646,19 @@ import test from "node:test";
 import { decideWake } from "../src/workitem/wakeGuard.js";
 
 const base = {
-  rule: { id: "w1", workItemId: "wi", kind: "event", mode: "continuous", maxFires: 20, fireCount: 0 } as never,
-  manual: false, recentFireCount: 0, chainRepeatCount: 1,
-  hasPendingSameEvent: false, allInputsFromSelf: false,
+  rule: {
+    id: "w1",
+    workItemId: "wi",
+    kind: "event",
+    mode: "continuous",
+    maxFires: 20,
+    fireCount: 0,
+  } as never,
+  manual: false,
+  recentFireCount: 0,
+  chainRepeatCount: 1,
+  hasPendingSameEvent: false,
+  allInputsFromSelf: false,
 };
 
 test("正常情况放行", () => {
@@ -591,48 +666,68 @@ test("正常情况放行", () => {
 });
 
 test("达到 maxFires 暂停", () => {
-  assert.deepEqual(
-    decideWake({ ...base, rule: { ...base.rule, fireCount: 20 } as never }),
-    { action: "pause", reason: "max_fires" },
-  );
+  assert.deepEqual(decideWake({ ...base, rule: { ...base.rule, fireCount: 20 } as never }), {
+    action: "pause",
+    reason: "max_fires",
+  });
 });
 
 test("一小时内达到 rate 上限暂停", () => {
-  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), { action: "pause", reason: "rate" });
+  assert.deepEqual(decideWake({ ...base, recentFireCount: 12 }), {
+    action: "pause",
+    reason: "rate",
+  });
 });
 
 test("run 链中同规则出现 2 次即 loop 暂停", () => {
-  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), { action: "pause", reason: "loop" });
+  assert.deepEqual(decideWake({ ...base, chainRepeatCount: 2 }), {
+    action: "pause",
+    reason: "loop",
+  });
 });
 
 test("同事件已有待处理则合并（skip）", () => {
-  assert.deepEqual(decideWake({ ...base, hasPendingSameEvent: true }), { action: "skip", reason: "merged" });
+  assert.deepEqual(decideWake({ ...base, hasPendingSameEvent: true }), {
+    action: "skip",
+    reason: "merged",
+  });
 });
 
 test("输入全来自自身则只承认不启动", () => {
-  assert.deepEqual(decideWake({ ...base, allInputsFromSelf: true }), { action: "skip", reason: "acknowledged" });
+  assert.deepEqual(decideWake({ ...base, allInputsFromSelf: true }), {
+    action: "skip",
+    reason: "acknowledged",
+  });
 });
 
 // 人手动「现在就跑」豁免三条防失控——否则人会被自己设的闸拦住。
 test("manual=true 豁免 maxFires/rate/loop", () => {
   const manual = { ...base, manual: true };
-  assert.deepEqual(decideWake({ ...manual, rule: { ...base.rule, fireCount: 9999 } as never }), { action: "fire" });
+  assert.deepEqual(decideWake({ ...manual, rule: { ...base.rule, fireCount: 9999 } as never }), {
+    action: "fire",
+  });
   assert.deepEqual(decideWake({ ...manual, recentFireCount: 999 }), { action: "fire" });
   assert.deepEqual(decideWake({ ...manual, chainRepeatCount: 9 }), { action: "fire" });
 });
 
 // 但豁免不改变「合并」与「自我承认」：那是语义去重，不是限流闸。
 test("manual=true 不豁免 merged / acknowledged", () => {
-  assert.deepEqual(decideWake({ ...base, manual: true, hasPendingSameEvent: true }), { action: "skip", reason: "merged" });
-  assert.deepEqual(decideWake({ ...base, manual: true, allInputsFromSelf: true }), { action: "skip", reason: "acknowledged" });
+  assert.deepEqual(decideWake({ ...base, manual: true, hasPendingSameEvent: true }), {
+    action: "skip",
+    reason: "merged",
+  });
+  assert.deepEqual(decideWake({ ...base, manual: true, allInputsFromSelf: true }), {
+    action: "skip",
+    reason: "acknowledged",
+  });
 });
 
 // 优先级：pause 判定先于 skip（闸先于去重），max_fires 先于 rate 先于 loop。
 test("pause 优先于 skip", () => {
-  assert.deepEqual(
-    decideWake({ ...base, recentFireCount: 12, hasPendingSameEvent: true }),
-    { action: "pause", reason: "rate" },
-  );
+  assert.deepEqual(decideWake({ ...base, recentFireCount: 12, hasPendingSameEvent: true }), {
+    action: "pause",
+    reason: "rate",
+  });
 });
 ```
 
@@ -644,6 +739,7 @@ Expected: FAIL（模块不存在）
 - [ ] **Step 3: 最小实现**
 
 纯函数，判定顺序（**顺序本身是契约，注释写明为什么**）：
+
 1. `!manual` 时先判闸：`fireCount >= (maxFires ?? WAKE_DEFAULT_MAX_FIRES)` → `max_fires`；再 `recentFireCount >= WAKE_HOURLY_RUN_LIMIT` → `rate`；再 `chainRepeatCount >= WAKE_LOOP_REPEAT_LIMIT` → `loop`；
 2. 再判去重（**manual 也适用**）：`allInputsFromSelf` → `acknowledged`；`hasPendingSameEvent` → `merged`；
 3. 否则 `fire`。
@@ -656,6 +752,7 @@ Expected: PASS（9 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §5.5、§5.2）：
+
 - §5.5 的五条规则（max_fires/rate/loop/merge/自我承认）是否**逐条**有实现与测试？
 - §5.2「防失控只约束非人发起；用户手动豁免」是否落地？豁免范围是否**恰好**是那三条（不多不少）？
 - 阈值是否取自 Task 3 的常量（而非就地硬编码）？
@@ -680,10 +777,12 @@ git commit -m "feat(squad): 防失控与派发决策（人发起豁免 + 闸先�
 ### Task 6: 队长角色 run 的派发（指派三态 × 触发源三态）
 
 **Files:**
+
 - Create: `packages/services/src/workitem/leaderDispatch.ts`
 - Test: `packages/services/test/leaderDispatch.test.ts`
 
 **Interfaces:**
+
 - Consumes: P0 的 `WorkItem`（`assignee` 三态联合类型）；Task 1 的 `Squad`
   - **裁定（P1 终审）**：本任务**不消费** `isTerminalWorkItemStatus`——「终态闸」不在派发解析里，归派发入口 / 工作项服务（P2 决定）。计划早前把它列为 Consumes 与「全阶段复用」是**契约漂移**，已删。
 - Produces:
@@ -698,19 +797,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { planDispatch } from "../src/workitem/leaderDispatch.js";
 
-const wi = (assignee: { type: string; id: string }) => ({
-  id: "wi_1", workspaceIdentity: "ws", workspacePath: "/tmp/ws", title: "t", body: "",
-  status: "todo", assignee, labels: [], properties: {}, position: 0,
-} as never);
+const wi = (assignee: { type: string; id: string }) =>
+  ({
+    id: "wi_1",
+    workspaceIdentity: "ws",
+    workspacePath: "/tmp/ws",
+    title: "t",
+    body: "",
+    status: "todo",
+    assignee,
+    labels: [],
+    properties: {},
+    position: 0,
+  }) as never;
 const squad = {
-  id: "sq_1", name: "网关组", leaderAgentId: "ta_lead",
+  id: "sq_1",
+  name: "网关组",
+  leaderAgentId: "ta_lead",
   members: [{ agentId: "ta_lead", role: "leader" }, { agentId: "ta_a" }],
-  instructions: { stopCondition: "全部 done 即收工", maxRounds: "5" }, enabled: true,
+  instructions: { stopCondition: "全部 done 即收工", maxRounds: "5" },
+  enabled: true,
 } as never;
 
 // 指派给小队 → 解析出队长，产出带 isLeaderTask + squadId + 简报的一次运行。
 test("指派 squad：产出队长角色 run（带标记与花名册简报）", () => {
-  const events = planDispatch({ workItem: wi({ type: "squad", id: "sq_1" }), squad, trigger: "user" });
+  const events = planDispatch({
+    workItem: wi({ type: "squad", id: "sq_1" }),
+    squad,
+    trigger: "user",
+  });
   const run = events.find((e) => e.kind === "run.enqueued");
   assert.ok(run && run.kind === "run.enqueued");
   assert.equal(run.agentId, "ta_lead");
@@ -721,7 +836,11 @@ test("指派 squad：产出队长角色 run（带标记与花名册简报）", (
 });
 
 test("指派单个 agent：产出普通 run（isLeaderTask=false、无 squadId）", () => {
-  const events = planDispatch({ workItem: wi({ type: "agent", id: "ta_x" }), squad: null, trigger: "user" });
+  const events = planDispatch({
+    workItem: wi({ type: "agent", id: "ta_x" }),
+    squad: null,
+    trigger: "user",
+  });
   const run = events.find((e) => e.kind === "run.enqueued");
   assert.ok(run && run.kind === "run.enqueued");
   assert.equal(run.agentId, "ta_x");
@@ -731,8 +850,15 @@ test("指派单个 agent：产出普通 run（isLeaderTask=false、无 squadId�
 
 // 指派给人：不排队，只发 Inbox 通知。
 test("指派给人的工作项：只发 inbox 通知，不发 run", () => {
-  const events = planDispatch({ workItem: wi({ type: "user", id: "u1" }), squad: null, trigger: "user" });
-  assert.equal(events.some((e) => e.kind === "run.enqueued"), false);
+  const events = planDispatch({
+    workItem: wi({ type: "user", id: "u1" }),
+    squad: null,
+    trigger: "user",
+  });
+  assert.equal(
+    events.some((e) => e.kind === "run.enqueued"),
+    false,
+  );
   assert.ok(events.some((e) => e.kind === "inbox.notified"));
 });
 
@@ -743,28 +869,53 @@ test("squad 已归档：不发起 run", () => {
     squad: { ...squad, archivedAt: 1 } as never,
     trigger: "rule",
   });
-  assert.equal(events.some((e) => e.kind === "run.enqueued"), false);
+  assert.equal(
+    events.some((e) => e.kind === "run.enqueued"),
+    false,
+  );
 });
 
 // 规则触发也要走同一处解析：不得出现「规则路径绕过队长解析」的第二条路。
 test("rule 触发 squad：同样产出队长角色 run", () => {
-  const events = planDispatch({ workItem: wi({ type: "squad", id: "sq_1" }), squad, trigger: "rule" });
+  const events = planDispatch({
+    workItem: wi({ type: "squad", id: "sq_1" }),
+    squad,
+    trigger: "rule",
+  });
   const run = events.find((e) => e.kind === "run.enqueued");
   assert.ok(run && run.kind === "run.enqueued" && run.isLeaderTask === true);
 });
 
 // 触发源只在事件上留痕，不改变解析：规则触发要额外带 wake.rule_fired。
 test("rule 触发附加 wake.rule_fired，user 触发不附加", () => {
-  const withRule = planDispatch({ workItem: wi({ type: "agent", id: "ta_x" }), squad: null, trigger: "rule" });
+  const withRule = planDispatch({
+    workItem: wi({ type: "agent", id: "ta_x" }),
+    squad: null,
+    trigger: "rule",
+  });
   assert.ok(withRule.some((e) => e.kind === "wake.rule_fired"));
-  const withUser = planDispatch({ workItem: wi({ type: "agent", id: "ta_x" }), squad: null, trigger: "user" });
-  assert.equal(withUser.some((e) => e.kind === "wake.rule_fired"), false);
+  const withUser = planDispatch({
+    workItem: wi({ type: "agent", id: "ta_x" }),
+    squad: null,
+    trigger: "user",
+  });
+  assert.equal(
+    withUser.some((e) => e.kind === "wake.rule_fired"),
+    false,
+  );
 });
 
 // squad 缺失（已被删除或引用失效）时不得静默当作普通 agent 发起运行。
 test("assignee=squad 但 squad 为 null：不发 run，只通知", () => {
-  const events = planDispatch({ workItem: wi({ type: "squad", id: "sq_1" }), squad: null, trigger: "rule" });
-  assert.equal(events.some((e) => e.kind === "run.enqueued"), false);
+  const events = planDispatch({
+    workItem: wi({ type: "squad", id: "sq_1" }),
+    squad: null,
+    trigger: "rule",
+  });
+  assert.equal(
+    events.some((e) => e.kind === "run.enqueued"),
+    false,
+  );
   assert.ok(events.some((e) => e.kind === "inbox.notified"));
 });
 ```
@@ -777,6 +928,7 @@ Expected: FAIL（模块不存在）
 - [ ] **Step 3: 最小实现**
 
 `planDispatch` 单一入口，按 `workItem.assignee.type` 分三支：
+
 - `agent` → `run.enqueued`（`isLeaderTask: false`，无 `squadId`/`briefing`）
 - `squad` → 需要 `squad`：若 `squad == null` 或已归档 → 只发 `inbox.notified`（reason 说明原因），**不发 run**；否则解析 `squad.leaderAgentId` → `run.enqueued`（`isLeaderTask: true`、`squadId`、`briefing`）
 - `user` → 只发 `inbox.notified`
@@ -793,6 +945,7 @@ Expected: PASS（5 passed）
 - [ ] **Step 5: 审查（逆推 + 穷举）**
 
 **① 逆推**（spec §3.3、§5.1、§5.7.2、§16 S10）：
+
 - §3.3「指派给 squad 时解析出 leader，并注入队长简报（花名册 + 操作协议 + instructions）」是否逐项落地？
 - §5.7.2「队长只产出派发事件与子工作项，**不改父项状态**」——本任务是否**完全没有**状态写入？
 - §5.1 的三路触发是否都汇到**同一处**解析（没有第二条队长解析路径）？
@@ -819,6 +972,7 @@ git commit -m "feat(squad): 队长角色 run 的派发（三态×三源单一解
 ## 计划的自我审查（Self-Review）
 
 **1. Spec 覆盖**（spec §15 P1 = 唤醒规则 + 防失控 + 队长角色 run + 队长指令模板）：
+
 - 队长指令模板 → Task 1（8 槽位 + 2 必填）
 - Squad 实体（队长 run 的前置） → Task 1、2
 - 唤醒规则（event/条件/at/every/cron + 互斥） → Task 3、4

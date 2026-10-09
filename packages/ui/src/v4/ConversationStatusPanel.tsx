@@ -39,6 +39,7 @@ import {
   TID_CHAT_SUMMARY_PANEL,
   TID_V4_BACKGROUND_WORK_CANCEL,
   TID_V4_BACKGROUND_WORK_ITEM,
+  isRemoteWorkspaceIdentity,
   testId,
 } from "@zcode/shared";
 import type {
@@ -79,6 +80,12 @@ import { formatBackgroundTaskElapsedLabel } from "@/BackgroundTaskElapsedLabel.j
 import { GitActionMenu } from "@/GitActionMenu.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { useServices } from "@/hooks/useServices.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { resolveSquadRuntimeService, squadWorkspaceTarget } from "@/squad/squadRuntimeAccess.js";
+import { squadEntryVisible } from "@/squad/squadEntryVisibility.js";
+import { SUBAGENT_COLOR_CLASS } from "@/lib/subagentColors.js";
 import type {
   OpenPlanDetailSideTabRequest,
   OpenSubagentDirectorySideTabRequest,
@@ -89,6 +96,10 @@ import type { ChatViewSummaryPanelVariant } from "@/v4/legacyChatViewTypes.js";
 import { resolveConversationStatusPanelVariant } from "@/v4/conversationLayout.js";
 import {
   buildConversationStatusPanelModel,
+  resolveAgentSectionRenderable,
+  RUNNING_AGENT_AVATAR_MAX_DOTS,
+  mergeRunningSubagentsWithSquadRuns,
+  runningAgentAvatarColors,
   type ConversationStatusPanelRunningSubagent,
   type ConversationStatusPanelModel,
   type ConversationStatusPanelSessionPlanItem,
@@ -225,6 +236,40 @@ function formatRunningSubagentCount(
     { count: String(count) },
   );
 }
+
+/**
+ * 运行中 subagent 的**头像簇**：一排身份色圆点 + 溢出的 `+K`（spec §11.3：九色板只表达身份，
+ * **不编码状态**）。agent 分区标题的 trailing（展开 / 收起两种形态）与收起态摘要胶囊**共用这一份**
+ * （抄两份会让两处随时间长出不同的点距与溢出口径）。
+ *
+ * **装饰**：紧随其后的计数文本（`formatRunningSubagentCount`）已经给出语义，读屏再念一遍色点
+ * 没有任何信息增量，故整体 `aria-hidden`；点本身也不参与交互（无可点目标）。
+ */
+const RunningAgentAvatarCluster = memo(function RunningAgentAvatarCluster({
+  subagents,
+}: {
+  subagents: readonly ConversationStatusPanelRunningSubagent[];
+}) {
+  const { colors, overflowCount } = runningAgentAvatarColors(
+    subagents,
+    RUNNING_AGENT_AVATAR_MAX_DOTS,
+  );
+  if (colors.length === 0) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
+      {colors.map((color, index) => (
+        // 点是**序号**对齐身份（同 agent 的两次运行 = 两个点、不合并），列表本身短小稳定，
+        // 用下标做 key 不会造成错位重排。
+        <span key={index} className={cn("size-2 rounded-full", SUBAGENT_COLOR_CLASS[color])} />
+      ))}
+      {overflowCount > 0 ? (
+        <span className="text-ui-xs tabular-nums text-[var(--color-foreground-subtle)]">
+          +{overflowCount}
+        </span>
+      ) : null}
+    </span>
+  );
+});
 
 type StatusSectionKind =
   | "environment"
@@ -953,9 +998,9 @@ function buildRunningSubagentOpenRequest({
 }: {
   parentSessionId?: string;
   rootSessionId?: string;
-  subagent: ZCodeSessionRunningSubagent;
+  subagent: ConversationStatusPanelRunningSubagent;
 }): OpenSubagentSideTabRequest | null {
-  if (!parentSessionId) return null;
+  if (!parentSessionId || subagent.squadRunSessionId === null) return null;
   return {
     rootSessionId: rootSessionId ?? parentSessionId,
     parentSessionId,
@@ -1326,6 +1371,7 @@ function SubagentStatusSection({
   separated,
   title,
   subagents,
+  squadDirectoryDoor,
 }: {
   endedSubagentCount: number;
   onCancelBackgroundWork?: (workId: string) => void;
@@ -1338,6 +1384,13 @@ function SubagentStatusSection({
   separated: boolean;
   title: string;
   subagents: readonly ConversationStatusPanelRunningSubagent[];
+  /**
+   * 小队实验开启时**把目录的门留着**（见 `resolveAgentSectionRenderable` 的 ③）：
+   * 即使本会话一个 subagent 都没有，也渲染这个分区（只带一行通往「智能体目录」的门），
+   * 否则目录里的「小队运行（本项目）」在没用过 subagent 的会话里彻底看不见。
+   * 实验关闭时恒 false ⇒ 与旧行为逐字等价。
+   */
+  squadDirectoryDoor?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const [now, setNow] = useState(() => Date.now());
@@ -1350,7 +1403,10 @@ function SubagentStatusSection({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [subagents.length]);
-  if (subagents.length === 0 && endedSubagentCount <= 0) return null;
+  /** 空分区但门要留：只有这一种情形会在"没有任何 subagent"时仍渲染（且默认展开，
+      否则门缩在折叠里等于没留）。 */
+  const emptyWithDirectoryDoor = subagents.length === 0 && endedSubagentCount <= 0;
+  if (emptyWithDirectoryDoor && !squadDirectoryDoor) return null;
   const longestElapsedMs = subagents.reduce(
     (longest, item) => Math.max(longest, Math.max(0, now - (item.startedAt ?? now))),
     0,
@@ -1359,26 +1415,33 @@ function SubagentStatusSection({
   return (
     <StatusSection
       section="agent"
-      defaultOpen={false}
+      defaultOpen={emptyWithDirectoryDoor}
       open={open}
       onOpenChange={onOpenChange}
       separated={separated}
       title={title}
       trailing={(isOpen) =>
-        subagents.length === 0 ? null : isOpen ? (
-          <span>{formatRunningSubagentCount(intl.formatMessage, subagents.length)}</span>
-        ) : (
+        subagents.length === 0 ? null : (
           <>
-            <span className="min-w-0 truncate">
-              {formatDurationUnits(
-                Math.max(1, Math.floor(longestElapsedMs / 1000)),
-                intl.formatMessage,
-              )}
-            </span>
-            <span className="shrink-0">·</span>
-            <span className="shrink-0">
-              {formatRunningSubagentCount(intl.formatMessage, subagents.length)}
-            </span>
+            {/* 头像簇在计数文本**之前**（身份点 + 「N 在跑」）：展开与收起两种形态都带它，
+                故放在 isOpen 分支之外只写一处。 */}
+            <RunningAgentAvatarCluster subagents={subagents} />
+            {isOpen ? (
+              <span>{formatRunningSubagentCount(intl.formatMessage, subagents.length)}</span>
+            ) : (
+              <>
+                <span className="min-w-0 truncate">
+                  {formatDurationUnits(
+                    Math.max(1, Math.floor(longestElapsedMs / 1000)),
+                    intl.formatMessage,
+                  )}
+                </span>
+                <span className="shrink-0">·</span>
+                <span className="shrink-0">
+                  {formatRunningSubagentCount(intl.formatMessage, subagents.length)}
+                </span>
+              </>
+            )}
           </>
         )
       }
@@ -1446,6 +1509,26 @@ function SubagentStatusSection({
           );
         })}
       </ul>
+      {/* 空分区 + 门要留：一行通往「智能体目录」（目录里长着「小队运行（本项目）」那段）。
+          为什么不用 EndedSubagentDirectoryRow：它在 count <= 0 时自我吞掉（见其实现），
+          而这一格的语义恰恰是"没有任何 subagent、但小队实验开着" ⇒ 必须单独一行。 */}
+      {emptyWithDirectoryDoor && squadDirectoryDoor && parentSessionId ? (
+        <button
+          type="button"
+          data-testid="agent-directory-door-row"
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-base text-[var(--color-foreground)] hover:bg-[var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
+          onClick={() =>
+            onOpenSubagentDirectory?.({
+              rootSessionId: rootSessionId ?? parentSessionId,
+              parentSessionId,
+            })
+          }
+        >
+          <BotIcon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+          <span>{intl.formatMessage({ id: "chat.statusPanel.openAgentDirectory" })}</span>
+          <ChevronRightIcon className="ml-auto size-4 text-[var(--color-foreground-subtle)]" />
+        </button>
+      ) : null}
       <EndedSubagentDirectoryRow
         count={endedSubagentCount}
         parentSessionId={parentSessionId}
@@ -1662,6 +1745,11 @@ function StatusSummaryRow({
     >
       {/* 产品规则：实时活动只能在没有 Goal/Todo/Git 等主状态时兜底，
           避免胶囊把主状态和输入框已展示的实时计数重复拼接。 */}
+      {/* 头像簇在 subagent 计数文本**之前**（与 agent 分区 trailing 共用同一个组件）；
+          只在计数走 subagent 文案时给 —— 纯 bash / workflow 的计数没有 subagent 身份可表达。 */}
+      {hasRunningSubagent ? (
+        <RunningAgentAvatarCluster subagents={model.runningSubagentWorks} />
+      ) : null}
       <span className="shrink-0">
         {hasRunningSubagent
           ? formatRunningSubagentCount(intl.formatMessage, runningCount)
@@ -1746,8 +1834,48 @@ function ConversationStatusPanelImpl({
   className,
 }: ConversationStatusPanelProps) {
   const isOfficeMode = useIsOfficeMode();
+  /** 小队实验开关（只用于**呈现**：把通往「智能体目录」的门留着 —— 目录里长着「小队运行」）。
+      门禁仍是服务层单点，这里不判派发（与侧栏一级入口同一份语义、同一份纯函数）。 */
+  const { settings } = useSettings();
+  const services = useServices();
+  const taskListVersion = useZCodeSessionStore(
+    (state) => state.getWorkspaceState(workspacePath, workspaceIdentity).taskListVersion,
+  );
+  const [squadSnapshot, setSquadSnapshot] = useState<
+    import("@zcode/services").SquadSnapshot | null
+  >(null);
+  const squadTarget = useMemo(
+    () => squadWorkspaceTarget(workspacePath, workspaceIdentity),
+    [workspacePath, workspaceIdentity],
+  );
+  useEffect(() => {
+    if (
+      !squadTarget ||
+      (workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim())) ||
+      !squadEntryVisible(settings)
+    ) {
+      setSquadSnapshot(null);
+      return;
+    }
+    let cancelled = false;
+    void resolveSquadRuntimeService(services)
+      .getSnapshot(squadTarget)
+      .then((snapshot) => {
+        if (!cancelled) setSquadSnapshot(snapshot);
+      })
+      .catch(() => {
+        // 失败保留旧快照，避免把已有会话 subagent 簇误报为 0。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [services, squadTarget, settings, taskListVersion]);
   const miniMeasureRef = useRef<HTMLDivElement | null>(null);
   const [miniWidth, setMiniWidth] = useState(320);
+  const mergedRunningSubagents = useMemo(
+    () => mergeRunningSubagentsWithSquadRuns(runningSubagents, squadSnapshot, parentSessionId),
+    [parentSessionId, runningSubagents, squadSnapshot],
+  );
   const model = useMemo(
     () =>
       buildConversationStatusPanelModel({
@@ -1760,7 +1888,7 @@ function ConversationStatusPanelImpl({
         workspacePath,
         plan,
         backgroundWorks,
-        runningSubagents,
+        runningSubagents: mergedRunningSubagents,
         workflowRuns,
       }),
     [
@@ -1808,9 +1936,19 @@ function ConversationStatusPanelImpl({
   const canRenderEndedAgents = Boolean(
     endedSubagentCount > 0 && parentSessionId && onOpenSubagentDirectory,
   );
+  /* 「小队实验开着 ⇒ 把通往智能体目录的门留着」（见 resolveAgentSectionRenderable 的 ③）：
+     目录里长着「小队运行（本项目）」那段（§11.1 C11 的合并入口），而本分区是它**唯一**的入口 ——
+     若分区只在"有 subagent"时渲染，没用过 subagent 的会话里那段就彻底看不见。
+     实验关闭 / 无目录回调 / 无 parentSessionId ⇒ 恒 false ⇒ 与旧行为逐字等价。 */
+  const squadDirectoryDoor =
+    Boolean(parentSessionId && onOpenSubagentDirectory) && squadEntryVisible(settings);
   // 已结束目录入口过去渲染在 Agent StatusSection 之后，视觉和 DOM 都被提升成
   // 并列顶层 section。Agent 的运行态和已结束目录属于同一领域，统一由 Agent 折叠分组承载。
-  const canRenderAgents = model.runningSubagentWorks.length > 0 || canRenderEndedAgents;
+  const canRenderAgents = resolveAgentSectionRenderable({
+    runningSubagentCount: model.runningSubagentWorks.length,
+    hasEndedAgents: canRenderEndedAgents,
+    squadDirectoryDoor,
+  });
   const handlePanelModeChange = useCallback(
     (value: string) => {
       if (value === "auto") {
@@ -2038,6 +2176,7 @@ function ConversationStatusPanelImpl({
                 title={intl.formatMessage({ id: "chat.statusPanel.agents" })}
                 subagents={model.runningSubagentWorks}
                 endedSubagentCount={canRenderEndedAgents ? endedSubagentCount : 0}
+                squadDirectoryDoor={squadDirectoryDoor}
                 onCancelBackgroundWork={onCancelBackgroundWork}
                 open={agentSectionOpen}
                 onOpenChange={onAgentSectionOpenChange}

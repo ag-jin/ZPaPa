@@ -11,7 +11,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useSessionSubagents } from "@/hooks/useSessionSubagents.js";
+import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { SquadRunsDirectorySection } from "@/squad/SquadRunsDirectorySection.js";
+import { squadDirectorySectionVisible } from "@/squad/squadRunsDirectoryViewModel.js";
 import type {
   OpenScopedSubagentSideTabRequest,
   SubagentDirectorySidePaneTab,
@@ -104,9 +107,14 @@ const DirectoryRow = memo(function DirectoryRow({
 export const SubagentDirectorySidePane = memo(function SubagentDirectorySidePane({
   tab,
   onOpenSubagentSession,
+  onOpenSquadRunSession,
 }: {
   tab: SubagentDirectorySidePaneTab;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  /** 打开某个小队 run 的独立会话（本会话面板里「小队运行（本项目）」分区的穿透入口）。
+      必填而不是可选：可选会留下「按钮在、点了没反应」的静默路径（`onOpenSquadRunSession?.()`
+      无声吞掉）—— 侧栏宿主恒会传（shell 的 handleSelectTaskInChat 接线），把契约钉在类型上。 */
+  onOpenSquadRunSession: (sessionId: string) => void;
 }) {
   const scope = useMemo<PaneWorkspaceScope>(
     () => ({
@@ -118,7 +126,11 @@ export const SubagentDirectorySidePane = memo(function SubagentDirectorySidePane
   );
   return (
     <V4PaneConversationProvider scope={scope}>
-      <SubagentDirectoryContents tab={tab} onOpenSubagentSession={onOpenSubagentSession} />
+      <SubagentDirectoryContents
+        tab={tab}
+        onOpenSubagentSession={onOpenSubagentSession}
+        onOpenSquadRunSession={onOpenSquadRunSession}
+      />
     </V4PaneConversationProvider>
   );
 });
@@ -126,12 +138,15 @@ export const SubagentDirectorySidePane = memo(function SubagentDirectorySidePane
 const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
   tab,
   onOpenSubagentSession,
+  onOpenSquadRunSession,
 }: {
   tab: SubagentDirectorySidePaneTab;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSquadRunSession: (sessionId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const { layer } = useV4Conversation();
+  const { settings } = useSettings();
   const [lease, setLease] = useState<SessionLease | null>(null);
   const projection = useConversationProjection(lease);
   const subagents = projection.snapshot?.subagents;
@@ -153,6 +168,13 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
   const handleOpen = (item: DirectoryItem) => {
     onOpenSubagentSession(buildSubagentDirectoryOpenRequest(tab, item));
   };
+  /* 整段「小队运行（本项目）」的显隐：**远端会话恒不渲染**（投射边界，spec §16 S9 —— 投射端连
+     小队运行时服务都没有），实验开关关闭 / 设置未加载也不渲染（复用 squadEntryVisible 语义）。
+     判据是纯函数，本层只问它（与侧栏一级入口同一份语义、同一份实现）。 */
+  const showSquadRuns = squadDirectorySectionVisible({
+    remoteSessionId: tab.remoteSessionId,
+    settings,
+  });
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
@@ -176,6 +198,17 @@ const SubagentDirectoryContents = memo(function SubagentDirectoryContents({
             </p>
           )}
         </section>
+
+        {/* 「小队运行（本项目）」：位于**正在运行之后、已结束之前** —— 三段都是"本会话相关"的
+            目录（running / 小队运行 / ended），小队运行与 ended 之间没有更强的相邻理由，
+            放在这里同时保住"活动类目录在上、历史类目录在下"的既有阅读次序。 */}
+        {showSquadRuns ? (
+          <SquadRunsDirectorySection
+            workspacePath={tab.workspacePath}
+            workspaceIdentity={tab.workspaceIdentity}
+            onOpenSession={onOpenSquadRunSession}
+          />
+        ) : null}
 
         <section className="mt-5">
           <h3 className="px-3 pb-1.5 text-ui-sm font-medium text-foreground-subtlest">

@@ -8,10 +8,7 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 import { z } from "zod";
-import type {
-  IRemoteDeviceConfigService,
-  RemoteDeviceConfigRecord,
-} from "./remoteDeviceConfig.js";
+import type { IRemoteDeviceConfigService, RemoteDeviceConfigRecord } from "./remoteDeviceConfig.js";
 
 export const REMOTE_DEVICES_FILE_NAME = "remote-devices.json";
 
@@ -25,9 +22,20 @@ const sshTargetSchema = z.object({
   privateKeyPassphrase: z.string().optional(),
 });
 
-const wslTargetSchema = z.object({ kind: z.literal("wsl"), distro: z.string().optional(), user: z.string().optional() });
-const dockerTargetSchema = z.object({ kind: z.literal("docker"), container: z.string().trim().min(1) });
-const targetSchema = z.discriminatedUnion("kind", [sshTargetSchema, wslTargetSchema, dockerTargetSchema]);
+const wslTargetSchema = z.object({
+  kind: z.literal("wsl"),
+  distro: z.string().optional(),
+  user: z.string().optional(),
+});
+const dockerTargetSchema = z.object({
+  kind: z.literal("docker"),
+  container: z.string().trim().min(1),
+});
+const targetSchema = z.discriminatedUnion("kind", [
+  sshTargetSchema,
+  wslTargetSchema,
+  dockerTargetSchema,
+]);
 
 const deviceRecordSchema = z.object({
   target: targetSchema,

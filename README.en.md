@@ -162,6 +162,40 @@ git push origin main v3.14.4
 - Windows still shows a SmartScreen warning on first run (no timestamp signature).
 - Dry run (build artifacts only, no Release): trigger `workflow_dispatch` from the Actions page; artifacts are kept for 7 days.
 
+### Preview channel
+
+For users who want new features early. With **Settings ▸ General ▸ "Receive preview updates early"** enabled the app only receives **preview** builds; disabled, it follows the stable cadence only. **Toggling takes effect immediately — no restart required.**
+
+Publishing a preview:
+
+```bash
+# 1. Set the root package.json version to a prerelease form (e.g. 3.16.4-preview.1)
+# 2. Commit, then tag and push
+git tag v3.16.4-preview.1
+git push origin main v3.16.4-preview.1
+```
+
+- The workflow detects `-preview` in the tag and marks the Release as a **Pre-release** (**not Latest**), so **users with the preview toggle off are never offered it**. Artifacts are identical in shape to a stable release: the same 10 assets, including the update manifests `latest-mac.yml` (both architectures merged) and `latest.yml`.
+- **Two disciplines** (violating either fails silently rather than erroring):
+  1. **The prerelease identifier must be exactly `preview`.** The updater selects releases and locates manifests by the tag's prerelease identifier; using `rc`/`beta` breaks both the selection filter and the manifest fallback, presenting as "the toggle is on but no preview ever arrives".
+  2. **A preview version must not outrank the next stable version.** Because `X.Y.Z-preview.N < X.Y.Z`, clients with the **toggle off** see the stable release once it ships and move back to it; reversed (shipping `3.17.0-preview.1`, then releasing `3.16.4` as stable) strands those users on the preview build.
+     Note: clients with the **toggle on** are **not** moved back by a stable release — they only select within their own channel (releases whose prerelease identifier is exactly `preview`), so the stable release is invisible to them and they keep reporting "up to date". The action that returns you to stable is **turning the toggle off** (effective immediately as of `3.16.4`), not waiting for a release.
+- Acceptance: after pushing the tag, confirm the Release carries the **Pre-release badge**, is **not Latest**, and includes `latest-mac.yml`; then open `https://github.com/ag-jin/ZPaPa/releases/latest` and confirm it **still points at the stable release**.
+- Note: **already-installed stable builds (`3.16.3` and earlier) do not honour the toggle** — switching channel at runtime only exists from `3.16.4-preview.1` onward. Entering the preview channel the first time requires **installing a preview build manually once**.
+
+### Post-release checks: experiment switch (A1)
+
+The default of the squad experiment switch `experimentalAgentSquadsEnabled` **follows the package identity** (the flavor injected at build time) and is unrelated to the "Receive preview updates early" setting: preview builds default to on, stable builds to off, and an **explicit value is never rewritten by the channel default** (source commit `ee14604`). All four checks require **real packaged artifacts** — a local dev build or an artifact older than that commit is not evidence:
+
+| #      | Scenario                        | Steps                                                                                                                                                                  | Pass criteria                                                                                      |
+| ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| R-A1-1 | I1: preview cold start          | Install the preview build → clear or remove `experimentalAgentSquadsEnabled` from settings (or use a fresh profile) → cold start                                       | The AI Team group and both entries are visible with no configuration; the settings toggle reads on |
+| R-A1-2 | I3: explicit off persists       | Turn the switch off explicitly in the same instance as R-A1-1 → quit → cold start                                                                                      | The entries stay hidden (the channel default must not flip it back)                                |
+| R-A1-3 | I2: stable cold start           | Install the stable build → fresh profile → cold start                                                                                                                  | The entries are hidden; enabling the switch explicitly makes them visible (explicit value wins)    |
+| R-A1-4 | Build-time anchor (automatable) | Assert the flavor literal on the packaged artifacts, or run the define-based unit test in CI (the §2 injection script in the T8 report can be promoted to a CI script) | Preview artifacts default to `true`, stable artifacts to `false`                                   |
+
+Invariants (I1–I4): I1 = key missing and the flavor is preview (the define is injected) ⇒ default `true`; I2 = key missing in every other case (production injected or no injection fallback) ⇒ default `false`; I3 = key `false` (any source, any channel, any upgrade) ⇒ never rewritten by the default logic; I4 = key `true` ⇒ never rewritten.
+
 ### In-app auto-update
 
 All three platforms update in-app from GitHub Releases (`ag-jin/ZPaPa`): a check on startup, an hourly poll, and a "Restart to update" menu entry once the download finishes. macOS relies on the designated requirement provided by the ad-hoc signature (see above); if a build shape cannot obtain a DR, the app falls back to opening the releases page from "Check for Updates" instead of silently doing nothing.

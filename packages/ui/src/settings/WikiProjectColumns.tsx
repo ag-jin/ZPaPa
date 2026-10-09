@@ -41,7 +41,8 @@ export function WikiProjectList({
   loading: boolean;
 }) {
   const { intl, localePreference } = useZCodeIntl();
-  const locale = typeof localePreference === "string" && localePreference ? localePreference : "zh-CN";
+  const locale =
+    typeof localePreference === "string" && localePreference ? localePreference : "zh-CN";
 
   const formatDateTime = (value: number | null): string => {
     if (value === null) return intl.formatMessage({ id: "wiki.settings.status.never" });

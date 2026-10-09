@@ -19,6 +19,7 @@ A 的当前 workspace 是 B 的项目时，会话里跑起来的预览服务（d
 ## 已具备的基础设施
 
 `ssh-backend.ts` 已有 `openTcpTunnel({ remoteHost, remotePort })`：
+
 - 在 A 开本地临时端口（仅 `127.0.0.1`），每连接一次 `ssh2 forwardOut`
 - 目前只被 `connect-resident.ts` 用于挂载 B 的常驻主机
 - 浏览器面板已能拿到 `remoteSessionId`（`UnifiedBrowserView.tsx:65`），
