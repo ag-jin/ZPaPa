@@ -4,6 +4,7 @@ import {
   parseWorkItemLabels,
   resolveWorkItemDateOnly,
   resolveWorkItemPriority,
+  resolveWorkspaceKey,
   workItemDateErrorMessage,
   workItemLabelsErrorMessage,
   workItemPriorityErrorMessage,
@@ -52,6 +53,11 @@ export type WorkItemEvent =
     };
 
 export interface CreateWorkItemInput {
+  /**
+   * workspace 身份（远程身份隔离用）。**落库前归一为 `workspace_key`**：
+   * `resolveWorkspaceKey`（identity trim 后非空优先，否则回落 `workspacePath`）——
+   * 空串（web 环境缺省）与纯空白都落 path，见 `create` 里的理由。
+   */
   workspaceIdentity: string;
   workspacePath: string;
   title: string;
@@ -160,9 +166,21 @@ export function createWorkItemService(deps: {
       const dueDate = resolveWorkItemDateOnly(input.dueDate);
       if (dueDate.kind !== "ok") throw new Error(workItemDateErrorMessage(dueDate));
 
+      /* workspace_key（落库列）= **归一后的身份键**，不是入参原文 —— 这是 G4 实测回归的修复点：
+         读侧（`squadRuntimeService.keyOf` / 唤醒调度 / 收件箱反推）一律按
+         `resolveWorkspaceKey`（identity trim 后非空优先，否则回落 path）求键，写侧若原样落
+         `input.workspaceIdentity`，空串（web 环境 squadWorkspaceTarget 缺省）就会落成 `workspace_key=''`
+         —— 建出来的行**永远读不回**（`listByWorkspace(path)` 命中 0 行，看板不可见）。
+         判据只有 shared 一处实现：本层不另写 `trim() ||`，否则两处口径迟早分叉（同上文标签/优先级）。
+         归一后 `create` 的返回值与随后的 `get`/`listByWorkspace` 读回**同键**（返回值若留着原文，
+         调用方手上的实体与库里的行就是两个 key）。`workspacePath` 仍按原值落列，不受影响。 */
+      const workspaceKey = resolveWorkspaceKey({
+        workspacePath: input.workspacePath,
+        workspaceIdentity: input.workspaceIdentity,
+      });
       const item: WorkItem = {
         id,
-        workspaceIdentity: input.workspaceIdentity,
+        workspaceIdentity: workspaceKey,
         workspacePath: input.workspacePath,
         parentId: input.parentId,
         stage: input.stage,
