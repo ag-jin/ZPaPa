@@ -144,10 +144,15 @@ export function sanitizeWorkItemViewDisplay(raw: unknown): WorkItemViewDisplayDo
   const hiddenRaw = readDocumentKey(raw, "hiddenColumns");
   return {
     viewMode: closedValue(readDocumentKey(raw, "viewMode"), WORK_ITEM_VIEW_MODES, "board"),
+    /* 分组维度的回落值 = **页面默认**（2026-10-09 用户裁定「默认按阶段进行分组」）：定义缺项 /
+       闭集外值 ⇒ 灌出来的界面与默认界面同形（空定义不得变出一份「默认界面之外的界面」）。
+       旧视图**显式存的** `none` 仍原样还原 —— 那是用户存下的取值，不是缺项。
+       ⚠️ 这一枚与 `WorkItemsPage` 的 useState 默认必须同改：页面在 `max-lines = 400` 的硬线上
+       （再进一个常量 import 就超线），故这里以字面量与它同一口径，不共用一个常量。 */
     grouping: closedValue(
       readDocumentKey(raw, "grouping"),
       ["none", "statusCategory", "assignee"] as const,
-      "none",
+      "statusCategory",
     ),
     sortBy: closedValue(readDocumentKey(raw, "sortBy"), WORK_ITEM_SORT_KEYS, "manual"),
     sortDirection: closedValue(

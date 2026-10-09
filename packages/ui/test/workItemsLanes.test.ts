@@ -385,7 +385,7 @@ test("守卫｜none 分支保留现状 DOM（单 ul），泳道分支带 data-la
   );
 });
 
-test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions 与 Board", () => {
+test("守卫｜维度是闭集、默认按阶段分组、选择器接线到 Actions 与 Board", () => {
   const viewModel = readSource("squad/workItemsViewModel.ts");
   assert.ok(
     viewModel.includes('"none" | "statusCategory" | "assignee"'),
@@ -397,8 +397,8 @@ test("守卫｜维度是闭集、默认不分组、选择器接线到 Actions �
   );
   const page = readSource("squad/WorkItemsPage.tsx");
   assert.ok(
-    page.includes('useState<WorkItemLaneDimension>("none")'),
-    "默认维度是 none（给出泳道 ≠ 换掉看板：既有用户看到的界面零变化）",
+    page.includes('useState<WorkItemLaneDimension>("statusCategory")'),
+    "默认维度是 statusCategory（用户 2026-10-09 裁定「默认按阶段进行分组」；「不分组」仍可在 Group by 里选）",
   );
   assert.ok(page.includes("laneDimension={laneDimension}"), "页面把维度传给看板");
   /* T-P2-R6b 口径更新：选择器接线从 `setLaneDimension` 直连改成页面的 `changeLaneDimension`

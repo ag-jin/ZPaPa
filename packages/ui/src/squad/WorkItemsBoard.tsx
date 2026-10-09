@@ -71,7 +71,8 @@ export function WorkItemsBoard({
   );
 
   /* 不分组 = **现状 DOM 逐字保留**（单 `<ul data-testid="work-items-list">`，无泳道壳）：
-     默认维度下所有既有用户看到的界面零变化 —— 「给出泳道」不等于「换掉看板」。 */
+     这条路径的界面零变化（用户 2026-10-09 裁定把**默认值**改为「按阶段分组」—— 变的是默认值，
+     不是「不分组」这条路径；它仍是 Group by 的可选项）。 */
   if (laneDimension === "none") {
     return (
       <WorkItemRowList

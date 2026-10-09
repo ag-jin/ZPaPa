@@ -134,7 +134,8 @@ function walkWorkItemBoardForest(
 
 /**
  * 泳道分组维度（**闭集**：加一个维度必须改这个类型 ⇒ 编译期把所有消费点拖出来）。
- * · `none`：不分组（**默认**，看板 DOM 逐字保留现状）；
+ * · `none`：不分组（看板 DOM 逐字保留现状；**不再是默认值** —— 2026-10-09 用户裁定默认改为
+ *   `statusCategory`，默认值的单点在 `WorkItemsPage` 的 `useState`）；
  * · `statusCategory`：按**根**的状态 category（4 条固定泳道）；
  * · `assignee`：按**根**的指派对象（user 固定第一条，其余按首现顺序）。
  */

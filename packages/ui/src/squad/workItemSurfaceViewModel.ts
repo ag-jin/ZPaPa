@@ -188,7 +188,8 @@ export type WorkItemSurfaceState = {
 
 /**
  * 默认状态（**逐字段写死**，不是从实现反推）：board + 无过滤 + 无搜索 + 无排序 + 零隐藏列。
- * 默认视图是**看板** —— 「给出多视图」不等于「换掉既有用户看到的界面」（与泳道默认 `none` 同款纪律）。
+ * 默认视图是**看板** —— 「给出多视图」不等于「换掉既有用户看到的界面」（泳道默认值 2026-10-09
+ * 经用户裁定改为「按阶段分组」，这条看板默认不动）。
  * 每次返回**新对象**：状态是可变引用（React state），共享一份常量迟早被某处就地改到。
  */
 export function workItemSurfaceDefaultState(): WorkItemSurfaceState {

@@ -94,9 +94,13 @@ test("首开 seed：定义缺项/缺文档 ⇒ 缺的那一格回默认值（不
       sort: { key: "manual", direction: "asc" },
       columns: { hidden: [] },
     },
-    "空定义 ⇒ 内建锚（默认态）逐格一致：默认视图是看板（与 R1 的默认状态同一份判据）",
+    "空定义 ⇒ 内建锚（默认态）逐格一致：默认视图是看板、分组维度是「按阶段分组」",
   );
-  assert.equal(seed.laneDimension, "none", "空定义 ⇒ 不分组（默认态）");
+  assert.equal(
+    seed.laneDimension,
+    "statusCategory",
+    "空定义 ⇒ 分组回**页面默认**（2026-10-09 用户裁定「默认按阶段进行分组」）；空定义打开的界面必须与默认界面同形",
+  );
 });
 
 test("首开 seed：未知枚举成员丢弃（闭集外的值回落默认，不静默交给状态）", () => {
@@ -118,7 +122,11 @@ test("首开 seed：未知枚举成员丢弃（闭集外的值回落默认，不
     "闭集外的 facet 值丢掉（界面按一个自己不认识的值渲染 = 一份没人能解释的状态）",
   );
   assert.equal(seed.surface.view, "board", "闭集外的视图名回落默认");
-  assert.equal(seed.laneDimension, "none", "闭集外的分组维度回落默认");
+  assert.equal(
+    seed.laneDimension,
+    "statusCategory",
+    "闭集外的分组维度回落**默认**（2026-10-09 用户裁定后 = statusCategory，与页面默认同一份口径）",
+  );
   assert.deepEqual(seed.surface.sort, { key: "manual", direction: "asc" }, "闭集外的排序回落默认");
   assert.deepEqual(
     seed.surface.columns,

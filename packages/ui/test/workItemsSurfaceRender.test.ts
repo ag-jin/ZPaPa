@@ -16,9 +16,10 @@ import {
 } from "../src/squad/workItemSurfaceViewModel.js";
 import type { WorkItemLaneDimension } from "../src/squad/workItemsViewModel.js";
 import {
-  WORK_ITEMS_SURFACE_BASELINE_DEFAULT,
+  WORK_ITEMS_SURFACE_BASELINE_DEFAULT_LANES,
   WORK_ITEMS_SURFACE_BASELINE_EMPTY,
   WORK_ITEMS_SURFACE_BASELINE_LANES,
+  WORK_ITEMS_SURFACE_BASELINE_NONE,
 } from "./workItemsSurfaceBaseline.js";
 
 /* 「工作项 Surface 宿主 + 共用行模块 + 三视图」（阶段二 · T-P2-R1 接口冻结轮）的**呈现与接线**守卫。
@@ -26,6 +27,8 @@ import {
    三件本轮必须成立的事：
    ① **默认路径零回归（承重验收 2）**：`view=board` 且无过滤/搜索/排序时，宿主渲染出的 markup 与
       重构前（抽出共用行模块之前）**逐字节相同** —— 字面量基线在 `workItemsSurfaceBaseline.ts`；
+      口径更新（用户 2026-10-09 裁定「默认按阶段进行分组」）：那份「无分组」基线改由**显式
+      `none`** 态使用，默认态另立一条泳道基线（`..._DEFAULT_LANES`）；
    ② **行渲染单点（承重验收 5，口径已更新）**：`data-work-item-id` 与聚焦注册各**恰一处**，且三视图
       消费**同一个**模块（从「WorkItemsBoard 内单点」改为「跨三视图共用同一模块」）；
    ③ 三视图分支都真实可达（宿主预置分支，R2/R3 只换视图内部实现，不改宿主）。
@@ -97,6 +100,12 @@ const laneItems: WorkItem[] = [
   wi({ id: "wi-done", title: "已完成的一条", status: "done" }),
 ];
 
+/** 用户 2026-10-09 裁定「默认按阶段进行分组」：页面的 `laneDimension` 默认值。
+    真源在 `WorkItemsPage` 的 `useState`（字面量一致性由 `workItemsLanes` / `workItemsPage` 的
+    页面源码守卫咬住）—— 这里的「默认态」渲染必须用同一个值，否则本文件的默认路径判据会
+    悄悄测成一条非默认路径。 */
+const DEFAULT_LANE_DIMENSION: WorkItemLaneDimension = "statusCategory";
+
 function renderSurface(input: {
   workItems: WorkItem[];
   runs?: SquadRunRecord[];
@@ -106,7 +115,7 @@ function renderSurface(input: {
   const {
     workItems,
     runs = [],
-    laneDimension = "none",
+    laneDimension = DEFAULT_LANE_DIMENSION,
     surface = workItemSurfaceDefaultState(),
   } = input;
   return renderToStaticMarkup(
@@ -134,16 +143,61 @@ function renderSurface(input: {
   );
 }
 
-// ---------- ① 默认路径逐字节零回归（承重验收 2） ----------
+// ---------- ① 显式「不分组」逐字节零回归 + 默认态（按阶段分组）基线（承重验收 2） ----------
 
-/* 变异（承重）：默认状态里顺手排序 / 过滤，或行模块抽件时改了任何一处 class 或属性顺序
-   ⇒ 逐字节对照必红（这是本轮的承重判据）。 */
-test("零回归｜默认（board + 无过滤/搜索/排序）：渲染 markup 与重构前逐字节相同", () => {
+/* 变异（承重）：不分组分支里顺手排序 / 过滤，或行模块抽件时改了任何一处 class 或属性顺序
+   ⇒ 逐字节对照必红（这是本轮的承重判据）。
+   口径（用户 2026-10-09 裁定）：`none` 不再是默认值，但「不分组」路径**逐字不变** —— 同一份
+   基线改由显式 `laneDimension: "none"` 使用（不逐个把断言改成泳道断言）。 */
+test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 与重构前逐字节相同", () => {
   assert.equal(
-    renderSurface({ workItems: defaultItems, runs: [run("wi-root")] }),
-    WORK_ITEMS_SURFACE_BASELINE_DEFAULT,
-    "抽出共用行模块 + 引入宿主后，默认路径的 markup 必须与重构前逐字节一致",
+    renderSurface({ workItems: defaultItems, runs: [run("wi-root")], laneDimension: "none" }),
+    WORK_ITEMS_SURFACE_BASELINE_NONE,
+    "「不分组」这一条路径的 markup 必须与重构前逐字节一致",
   );
+});
+
+/* 用户 2026-10-09 裁定「默认按阶段进行分组」：**默认态**（页面 useState 的默认维度 = statusCategory）
+   的真实渲染 = 泳道形态（`work-items-lanes` 锚点 + 每 lane 计数），逐字节基线机械捕捉
+   （照 R1 的独立真源做法：基线取自真实渲染输出，不手工改写）。
+   变异：默认维度改回 `none`（或页面不再按阶段分组）⇒ 本用例 + 两个页面源码守卫必红；
+   基线改一字节 ⇒ 必红。 */
+test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度渲染 = 泳道（锚点 + 每 lane 计数），与基线逐字节相同", () => {
+  /* 先钉「本用例测的真是默认态」：页面 useState 的默认值必须就是本文件的默认维度常量
+     （两处不一致 = 下面这条基线描述的已经不是默认态，而是一份没人解释的状态）。 */
+  assert.ok(
+    stripComments(readSource("squad/WorkItemsPage.tsx")).includes(
+      `useState<WorkItemLaneDimension>("${DEFAULT_LANE_DIMENSION}")`,
+    ),
+    "页面默认维度与本案的默认态常量必须同一（默认改回 none ⇒ 本条必红）",
+  );
+  const markup = renderSurface({ workItems: defaultItems, runs: [run("wi-root")] });
+  assert.equal(
+    markup,
+    WORK_ITEMS_SURFACE_BASELINE_DEFAULT_LANES,
+    "默认态的真实泳道渲染逐字节对照（锚点 / 泳道 4 键 / 计数 / 行内容）",
+  );
+  /* 每 lane 的计数由夹具语义手算（独立真源）：批根 in_progress ⇒ started（子项随根 = 2 行）、
+     孤儿 todo ⇒ unstarted（1 行）、done / closed 空泳道保留为 0。 */
+  for (const [laneKey, count] of [
+    ["unstarted", 1],
+    ["started", 2],
+    ["done", 0],
+    ["closed", 0],
+  ] as const) {
+    const start = markup.indexOf(`data-lane-key="${laneKey}"`);
+    assert.ok(start >= 0, `默认态必须是按 stage 分组的泳道（缺 ${laneKey}）`);
+    const header = markup.slice(start, start + 400);
+    assert.ok(header.includes(`${count} 项`), `泳道 ${laneKey} 的计数必须是 ${count} 项`);
+  }
+  // 「不分组」保留为 Group by 可选项：显式选它 ⇒ 回平铺（既有单 ul 锚点），不出现泳道壳。
+  const flat = renderSurface({
+    workItems: defaultItems,
+    runs: [run("wi-root")],
+    laneDimension: "none",
+  });
+  assert.ok(flat.includes('data-testid="work-items-list"'), "显式「不分组」仍是单 ul（既有锚点）");
+  assert.ok(!flat.includes('data-testid="work-items-lanes"'), "显式「不分组」不得出现泳道壳");
 });
 
 test("零回归｜泳道视图（statusCategory）与空态块：同样逐字节相同", () => {
@@ -164,7 +218,8 @@ test("零回归｜泳道视图（statusCategory）与空态块：同样逐字节
 /* 三视图都真实可达：list/table 分支由宿主预置（R2/R3 只换视图内部实现，**不改宿主**）——
    否则「分支已预置」这条前置不成立，并行组就得回头改串行点文件。 */
 test("三视图：宿主按视图模式分派（board 锚点保留，list / table 各有独立容器锚点）", () => {
-  const board = renderSurface({ workItems: defaultItems });
+  // 显式「不分组」：本用例钉的是 board 的既有单 ul 锚点（默认态现在是泳道，见上一条）。
+  const board = renderSurface({ workItems: defaultItems, laneDimension: "none" });
   assert.ok(board.includes('data-testid="work-items-list"'), "board 仍是既有单 ul 锚点");
 
   const list = renderSurface({

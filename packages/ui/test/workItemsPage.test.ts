@@ -402,10 +402,11 @@ test("运行可审查性：produced / rejected 可审，其余三态（open / me
   assert.equal(runReviewable({ status: "discarded" }), false);
 });
 
-/* 守卫 g（L1 泳道回归，2026-10-07）：看板新增分组视图后，**默认（不分组）**路径的既有锚点、
-   行序与 DOM 形状零回归 —— 「给出泳道」不等于「换掉看板」。
-   变异（L1-3）：把默认维度改成 `statusCategory`（或不分组也套泳道壳）⇒ 第一 / 四 / 五条必红。 */
-test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
+/* 守卫 g（L1 泳道回归，2026-10-07；默认值口径 2026-10-09 用户裁定）：**显式「不分组」**路径的
+   既有锚点、行序与 DOM 形状零回归 —— 「默认改按阶段分组」不等于「把不分组这条路径改掉」。
+   变异：不分组也套泳道壳（或 `none` 分支不再与 flatten 等价）⇒ 第一 / 四 / 五条必红；
+   默认维度改回 `none`（或不再按阶段分组）⇒ 下面第二条断言必红。 */
+test("守卫｜显式「不分组」路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
   /* T-P2-R1 口径更新：行渲染抽到共用行模块后，「单 ul + 行序」的判据改为
      ① 看板的不分组分支把 `flattenWorkItemBoard(workItems)` 交给共用行列表，并给既有锚点
         `work-items-list`（DOM 逐字保留由 workItemsSurfaceRender 的逐字节对照承担）；
@@ -423,8 +424,8 @@ test("守卫｜不分组（默认）路径零回归：单 ul + 既有行锚点 +
   );
   const page = readSource("squad/WorkItemsPage.tsx");
   assert.ok(
-    page.includes('useState<WorkItemLaneDimension>("none")'),
-    "默认维度必须是 none（默认改泳道 = 改掉所有既有用户看到的界面）",
+    page.includes('useState<WorkItemLaneDimension>("statusCategory")'),
+    "默认维度必须是 statusCategory（用户 2026-10-09 裁定「默认按阶段进行分组」；「不分组」保留为可选项）",
   );
   assert.ok(
     page.includes("useState<WorkItemSurfaceState>(workItemSurfaceDefaultState)"),
