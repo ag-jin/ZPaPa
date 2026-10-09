@@ -178,7 +178,6 @@ export function WorkItemTableView({
                   columns={columns}
                   snapshot={environment.snapshot}
                   onOpenWorkItemDetail={environment.onOpenWorkItemDetail}
-                  onOpenPeek={environment.onOpenPeek}
                   actions={actions}
                   select={select}
                 />

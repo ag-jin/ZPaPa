@@ -66,17 +66,15 @@ export function WorkItemTableRowCells({
   columns,
   snapshot,
   onOpenWorkItemDetail,
-  onOpenPeek,
   actions,
   select,
 }: {
   row: WorkItemBoardRow;
   columns: readonly WorkItemSurfaceColumnKey[];
   snapshot: SquadSnapshot;
+  /** 行级「打开」= 详情页导航（2026-10-09 用户裁定「点击进详情页，预览先下线」：peek 通道
+      已整体摘除 —— 表格与行模块仍是**同一份**打开语义，只是换个宿主格子）。 */
   onOpenWorkItemDetail: (workItemId: string) => void;
-  /** 侧边 peek（T-P3-R2）：与行模块**同一份**口径 —— 存在 ⇒ 标题格的「打开」打开预览，
-      缺省 ⇒ 既有详情页导航（表格不是第二套打开语义，只是换个宿主格子）。 */
-  onOpenPeek?: (workItemId: string) => void;
   /** 行级动作簇（行模块的单点实现，原样放进动作格）。 */
   actions: ReactNode;
   /** 行级勾选件（行模块的单点实现，原样放进首列格）；`null` = 批量模式未开启。 */
@@ -148,11 +146,11 @@ export function WorkItemTableRowCells({
         className={TABLE_TITLE_CELL_CLASSNAME}
       >
         <span className="relative flex items-center gap-2">
-          {/* 行级「打开详情」：与看板/列表**同一个**组件（透明覆盖层一处定义）；peek 能力存在时
-              打开的也是 peek（与行模块同一份回落口径，三视图不分叉）。 */}
+          {/* 行级「打开详情」：与看板/列表**同一个**组件（透明覆盖层一处定义），点击 = 详情页
+              导航（peek 通道下线后没有第二个分支可拦 —— 与行模块同一份口径）。 */}
           <WorkItemRowOpenDetailOverlay
             title={item.title}
-            onOpen={() => (onOpenPeek ?? onOpenWorkItemDetail)(item.id)}
+            onOpen={() => onOpenWorkItemDetail(item.id)}
           />
           <span className="pointer-events-none relative z-10 min-w-0 break-words">
             {item.title}

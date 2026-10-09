@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import {
 import { WorkItemPeek, WorkItemPeekContent } from "../src/squad/WorkItemPeek.js";
 import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
 import { workItemSurfaceDefaultState } from "../src/squad/workItemSurfaceViewModel.js";
+import type { WorkItemSurfaceViewport } from "../src/squad/workItemResponsiveViewModel.js";
 import { WORK_ITEM_ACTIVITY_KIND_MESSAGE_IDS } from "../src/squad/workItemCollaborationViewModel.js";
 import {
   WORK_ITEM_PEEK_ACTIVITY_LIMIT,
@@ -46,7 +47,12 @@ import {
    实现重算**：每条结构守卫都写明变异方式，交付报告里逐条实测。
 
    peek 的**内容**来自协作读模型 `WorkItemCollaborationRead`（与详情页**同一份**取数实现
-   `useWorkItemCollaboration`，见 ⑦ 的单源守卫）——peek 只做投影与呈现，不做第二份取数、不做任何写。 */
+   `useWorkItemCollaboration`，见 ⑦ 的单源守卫）——peek 只做投影与呈现，不做第二份取数、不做任何写。
+
+   2026-10-09 口径变更（用户裁定「点击进详情页，预览先下线」）：面板组件**保留**（后续升级完整
+   可编辑面板的底子），但**挂载整体摘除**（宿主不再持有打开态 / 分栏壳 / Esc 键盘层 / 焦点归还，
+   行环境也不再接受 peek 预览意图）。因此本文件 ①-⑦ 的组件级判据照旧，⑧ 改成**下线口径**：
+   宿主两档都零 peek 节点、点击一律走详情页导航、全树无 peek 预览意图通道（变异 M1/M2 逐条实测）。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
@@ -654,10 +660,14 @@ test("守卫｜关闭路径三条：Esc 走纯判据、点击外部用 contains 
     "内外判据用 contains（不拼选择器、不比坐标）",
   );
   assert.ok(peek.includes('data-testid="work-item-peek-close"'), "头部有关闭钮");
+  /* 口径变更（2026-10-09 用户裁定「点击进详情页，预览先下线」）：宿主不再挂载 peek，也不再接
+     那条 Esc 键盘层 —— 关闭路径此后**只在组件级**成立（上面三条 + `workItemPeekKeyIntent` 这一枚
+     纯判据随组件保留，后续升级完整面板时复用）。变异：宿主恢复 peek 键盘层（面板没挂却留着
+     键盘层 = 死代码）⇒ 下面的否定断言必红。 */
   const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
   assert.ok(
-    host.includes("workItemPeekKeyIntent("),
-    "Esc 的键位判据在宿主的键盘层（纯函数一处判定）",
+    !host.includes("workItemPeekKeyIntent("),
+    "宿主不再持有 peek 的 Esc 键盘层（面板未挂载 ⇒ 没有可关的面板）",
   );
 });
 
@@ -704,10 +714,14 @@ test("容器：面板锚点 + 头部（打开完整详情页 / 关闭）+ 首帧
   );
 });
 
-// ---------- ⑧ 宿主接线（行环境加法 + 桌面分栏 + 焦点归还） ----------
+// ---------- ⑧ 宿主接线（2026-10-09 用户裁定「点击进详情页，预览先下线」） ----------
 
-function renderSurface(input: { workItems: WorkItem[]; withWriter?: boolean }): string {
-  const { workItems, withWriter = false } = input;
+function renderSurface(input: {
+  workItems: WorkItem[];
+  withWriter?: boolean;
+  viewport?: WorkItemSurfaceViewport;
+}): string {
+  const { workItems, withWriter = false, viewport } = input;
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
@@ -728,116 +742,125 @@ function renderSurface(input: { workItems: WorkItem[]; withWriter?: boolean }): 
         onOpenWorkItemDetail: () => {},
         workspacePath: "/w/a",
         ...(withWriter ? { onQuickCreate: async () => null } : {}),
+        ...(viewport === undefined ? {} : { viewport }),
       }),
     }),
   );
 }
 
-/* 承重（默认路径零回归的**面板版** + F1/F2 口径变更，2026-10-09）：未打开任何条目 ⇒
-   **面板**一个节点都不进 DOM（`work-item-peek` 与身份文案都不出现），但桌面**恒定壳**恒在。
-   口径冲突裁定（2026-10-09，G4 实测 F1/F2）：原口径「未打开 ⇒ 零壳」要求开关面板时换树根
-   （未打开 `return body`、打开 `return <div 分栏壳>`）——**body 子树因此被卸载重挂**：
-   快速创建的草稿/失败/提交中当场丢失，且指针按下中的节点被换掉、click 根本派发不出去。
-   两条纪律冲突时保「peek 开关不换树根」（正确性缺陷优先）；四份字面量基线已按新口径机械
-   重捕捉（见 `workItemsSurfaceBaseline.ts` 的 2026-10-09 注记）。
-   变异：恢复树根交换（未打开 ⇒ return body）⇒ 第二条必红；未打开就渲染面板内容 ⇒ 第一/二条必红。 */
-test("宿主：未打开 ⇒ 面板零节点，但恒定壳恒在（口径变更；变异：树根交换 ⇒ 红）", () => {
+/** 递归收集 `src` 下的全部源码（.ts/.tsx）——「全树无 onOpenPeek」的 grep 验收用。 */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(fullPath);
+    return /\.(ts|tsx)$/.test(entry.name) ? [fullPath] : [];
+  });
+}
+
+/* 承重（本轮变异 M2）：宿主**不再挂载** peek —— 桌面与窄屏两档、有写入口与无写入口都不出现
+   `work-item-peek` 节点与 peek 身份文案。面板组件（`WorkItemPeek.tsx`）本身保留（后续升级完整
+   面板的底子，组件级判据见 ①-⑦），只是**没有任何挂载点**。
+   变异：在宿主里恢复 `<WorkItemPeek ...>`（或任何 peek 挂载）⇒ 下面每一条都能咬住。 */
+test("宿主｜peek 下线：两档都零 peek 节点（组件保留，挂载摘除）", () => {
   for (const markup of [
     renderSurface({ workItems: [wi()] }),
     renderSurface({ workItems: [wi()], withWriter: true }),
+    renderSurface({ workItems: [wi()], withWriter: true, viewport: "compact" }),
   ]) {
-    assert.ok(!markup.includes("work-item-peek"), "面板不得出现（未打开）");
-    assert.ok(!markup.includes(zhText("squad.workItems.peek.title")), "面板身份文案也不得出现");
+    assert.ok(!markup.includes("work-item-peek"), "peek 面板一个节点都不进 DOM");
+    assert.ok(!markup.includes(zhText("squad.workItems.peek.title")), "peek 身份文案也不得出现");
+  }
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  assert.ok(!host.includes("WorkItemPeek"), "宿主不得 import / 渲染 peek 组件（只摘挂载）");
+  assert.ok(
+    !host.includes("peekWorkItemId") && !host.includes("peekPanel"),
+    "宿主不再持有 peek 打开态与面板节点",
+  );
+  assert.ok(
+    !host.includes("work-items-surface-split"),
+    "分栏壳随 peek 一起摘除（没有右列就没有壳）",
+  );
+});
+
+/* 口径变更（2026-10-09 下线）：F1/F2 的「恒定壳」判据退役 —— 当时要壳是为了「开关 peek 不换
+   树根」；peek 下线后**没有开关**，桌面分支直接返回 body（恒定性由「没有第二条返回路径」
+   保证：body 的父链在两次渲染之间恒等）。
+   变异：给桌面分支加回条件包裹（或把 body 挪进另一条返回路径）⇒ 下面的断言必红。 */
+test("宿主｜恒定 body（F1/F2 下线口径）：桌面分支无壳、无 peek 开关，直接返回 body", () => {
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  assert.equal(
+    (host.match(/return\s+body\s*;/g) ?? []).length,
+    1,
+    "桌面（含 SSR 默认）= 直接返回 body：唯一返回路径 ⇒ 没有可换的树根",
+  );
+  assert.ok(
+    !host.includes("work-items-surface-split") && !host.includes("peekPanel"),
+    "壳与右列随 peek 下线（恒定 body 不再需要分栏容器）",
+  );
+  for (const markup of [
+    renderSurface({ workItems: [wi()], withWriter: true }),
+    renderSurface({ workItems: [wi()], withWriter: true, viewport: "desktop" }),
+  ]) {
     assert.ok(
-      markup.includes('data-testid="work-items-surface-split"'),
-      "恒定壳必须恒在（未打开只是右列零节点：恢复树根交换 ⇒ 这里红，body 子树会被卸载重挂）",
+      markup.includes('data-testid="work-items-quick-create"') &&
+        markup.includes('data-testid="work-items-list"'),
+      "body 子树照常渲染（快速创建 + 行都在）",
     );
   }
 });
 
-/* 承重（F1/F2 的结构前提，2026-10-09）：body（含快速创建条）恒定渲染在恒定壳的**左列**里 ——
-   peek 开关只增删右列的面板，不换 body 的父链。
-   为什么这就是 F1/F2 的判据：React 按「父元素类型 + 位置」复用子树，body 的位置恒定 ⇒
-   ① 开关面板不卸载重挂 body（草稿/失败/提交中留在原地 = F1 的验收 ①）；
-   ② 指针按下中的输入框节点不会被替换（click 能派发到它、焦点能落到它 = F2 的验收 ②）。
-   变异：把 body 挪出恒定壳 / 开关时换 body 的父链（含恢复 `return body`）⇒ 本条必红。 */
-test("宿主｜结构恒定（F1/F2 前提）：body 恒在恒定壳左列，面板只做它的兄弟（不换 body 父链）", () => {
-  const markup = renderSurface({ workItems: [wi()], withWriter: true });
-  const shell = markup.indexOf('data-testid="work-items-surface-split"');
-  const quickCreate = markup.indexOf('data-testid="work-items-quick-create"');
-  const rows = markup.indexOf('data-testid="work-items-list"');
-  assert.ok(shell >= 0, "恒定壳恒在（开关面板不换树根）");
-  assert.ok(quickCreate > shell && rows > shell, "body 子树（快速创建 + 行）嵌在恒定壳里");
-  assert.ok(
-    markup.slice(shell, quickCreate).includes("min-w-0 flex-1"),
-    "body 的父链 = 恒定壳的左列（开关面板不动它）",
+/* 承重（本轮变异 M1）：点击行/卡片/表格标题格一律走**详情页导航**（同一路由）—— 全树不得再有
+   `onOpenPeek` 这个拦截分支（类型字段、`?? onOpenPeek` 回落、视图透传、宿主注入全部摘掉）。
+   变异：恢复 `onOpenPeek?` 字段或 `onOpenPeek: onOpenRow = …` 回落 ⇒ 本用例必红。 */
+test("守卫｜点击=详情页：全树无 onOpenPeek；三视图的行覆盖按钮直连 onOpenWorkItemDetail", () => {
+  const offenders = sourceFiles(SRC_DIR).filter((file) =>
+    stripComments(readFileSync(file, "utf8")).includes("onOpenPeek"),
   );
-  /* 源码侧：面板是左列的**兄弟**（不在 body 的父链上），且桌面不存在第二条返回路径
-     （「未打开 ⇒ return body」就是树根交换本身）。 */
-  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
-  assert.ok(!/return\s+body\s*;/.test(host), "不得有裸 return body（那就是树根交换）");
-  const desktop = host.slice(host.indexOf('data-testid="work-items-surface-split"'));
-  const bodyIndex = desktop.indexOf("{body}");
-  const panelIndex = desktop.indexOf("{peekPanel}");
-  assert.ok(
-    bodyIndex >= 0 && panelIndex > bodyIndex,
-    "面板在 body 之后（兄弟，不是祖先）：开关只改它自己",
+  assert.deepEqual(
+    offenders,
+    [],
+    "onOpenPeek 通道必须整体下线（类型 / 回落 / 透传 / 注入一个不剩）",
   );
-});
-
-/* 变异（本轮承重 M4）：把行/单元格的回落拆掉（行永远走详情页导航，或永远走 peek）⇒ 下面
-   第一、二条必红；把字段改成必填 ⇒ 第三条必红（缺省零 peek 这一格就没了）。 */
-test("守卫｜行环境加法：行级「打开」优先走 onOpenPeek、缺省回落详情页；三视图同一份口径", () => {
-  const parts = stripComments(readSource("squad/workItemRowParts.tsx"));
-  assert.ok(
-    parts.includes("onOpenPeek?: (workItemId: string) => void;"),
-    "字段是**可选**的（缺省 ⇒ 行级「打开」仍进详情页、面板零渲染）",
-  );
+  /* 三个视图的「打开」入口：board/list 用行模块那一枚覆盖按钮、table 用单元格里**同一个**
+     组件 —— 两处都直连详情页导航，没有第二个分支可拦。 */
   const rows = stripComments(readSource("squad/WorkItemRows.tsx"));
   assert.ok(
-    rows.includes("onOpenPeek: onOpenRow = environment.onOpenWorkItemDetail,"),
-    "行模块：一条意图、一个入口（先 peek、缺省回落既有详情页导航）；回落取在解构默认值上，行渲染零新增行",
+    rows.includes("onOpen={() => onOpenWorkItemDetail(item.id)}"),
+    "行（board/list）：点击 = 详情页导航",
   );
-  assert.ok(
-    rows.includes("onOpen={() => onOpenRow(item.id)}"),
-    "行级覆盖按钮用的就是那枚已解析的意图（不再各自判一遍）",
+  assert.equal(
+    (rows.match(/onOpen=\{\(\) => onOpenWorkItemDetail\(item\.id\)\}/g) ?? []).length,
+    1,
+    "行模块只有这一枚打开入口（不新开第二条路径）",
   );
   const cells = stripComments(readSource("squad/WorkItemTableCell.tsx"));
   assert.ok(
-    cells.includes("(onOpenPeek ?? onOpenWorkItemDetail)(item.id)"),
-    "表格单元格与行模块**同一份**回落口径（否则 table 点开是详情页、board 点开是 peek）",
+    cells.includes("onOpen={() => onOpenWorkItemDetail(item.id)}"),
+    "表格标题格（table）：同一枚覆盖按钮、同一份口径 = 详情页导航",
   );
+  assert.ok(!cells.includes("onOpenPeek"), "单元格不再有 peek 参数（同一份口径，不是第二套）");
   const view = stripComments(readSource("squad/WorkItemTableView.tsx"));
-  assert.ok(view.includes("onOpenPeek={environment.onOpenPeek}"), "视图把环境字段投给单元格");
+  assert.ok(!view.includes("onOpenPeek"), "表格视图不再把 peek 意图投给单元格");
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  assert.ok(!host.includes("onOpenPeek"), "宿主环境不再注入 peek 打开入口");
 });
 
-test("守卫｜宿主：打开态自持 + 分栏壳 + Esc 判据 + 焦点归还（验收 ③④）", () => {
+/* 下线口径的宿主侧结构：打开态 / Esc 键盘层 / 焦点归还三件套随面板挂载一起摘掉（面板组件的
+   关闭路径仍在组件级，见 ⑦）。变异：把其中一件留成死代码（无挂载点却仍在宿主里）⇒ 必红。 */
+test("守卫｜宿主不再持有 peek 三件套：打开态 / Esc 键盘层 / 焦点归还", () => {
   const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  for (const forbidden of [
+    "peekWorkItemId",
+    "openPeek",
+    "closePeek",
+    "peekReturnFocusRef",
+    "document.activeElement",
+    "workItemPeekKeyIntent(",
+  ]) {
+    assert.ok(!host.includes(forbidden), `宿主不得残留 ${forbidden}（peek 已下线）`);
+  }
   assert.ok(
-    host.includes("useState<string | null>(null)"),
-    "打开态由宿主自持（页面 400 满线，无注入方）",
-  );
-  assert.ok(host.includes("onOpenPeek: openPeek"), "行环境拿到的是本宿主的打开入口");
-  assert.ok(
-    host.includes("document.activeElement") && host.includes("peekReturnFocusRef.current?.focus()"),
-    "打开时捕获触发元素、关闭时还回去（行本身不可聚焦，行的覆盖按钮才是焦点落点）",
-  );
-  assert.ok(
-    host.includes('data-testid="work-items-surface-split"') &&
-      host.includes("min-w-0 flex-1") &&
-      host.includes("<WorkItemPeek"),
-    "打开态 = 桌面分栏（左侧既有面可被压窄、右侧只读面板）",
-  );
-  assert.ok(
-    !host.includes("if (peekWorkItemId === null) return body;"),
-    "不得回到树根交换（F1：未打开 ⇒ return body 会卸载重挂 body 子树）",
-  );
-  assert.ok(
-    host.includes("{peekPanel}"),
-    "面板仍只构造一份、作为恒定壳右列（开关只增删它自己，不换 body 的父链）",
-  );
-  assert.ok(
-    host.includes("onOpenDetail={openPeekDetail}") && host.includes("onOpenWorkItemDetail(id)"),
-    "「打开完整详情页」交回页面导航（本层不持有导航意图）",
+    host.includes("onOpenWorkItemDetail,"),
+    "行环境仍把详情页导航交给行（三视图共用的唯一打开语义）",
   );
 });

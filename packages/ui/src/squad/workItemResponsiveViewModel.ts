@@ -1,9 +1,14 @@
-/* 工作项 Surface 的**响应式判据**（阶段三 · T-P3-R4）：窄屏把 peek 与快速创建交给底部抽屉
-   （`WorkItemMobileSheet`），桌面保持分栏（peek）/ 行内（快速创建）。
+/* 工作项 Surface 的**响应式判据**（阶段三 · T-P3-R4）：窄屏把快速创建交给底部抽屉
+   （`WorkItemMobileSheet`），桌面保持行内。
 
    为什么独立成模块：与 `workItemPeekViewModel` 同款 —— 判据纯函数化才可测（ui 包没有交互测试
    设施，本仓既有做法：判据纯函数 + 组件只画）。本文件不 import React、不碰 window：
    **命中结果从参数来**，组件层负责去问浏览器（见 `useWorkItemSurfaceViewport`）。
+
+   2026-10-09 口径变更（用户裁定「点击进详情页，预览先下线」）：窄屏抽屉目标里**不再有 peek** ——
+   peek 的打开态从宿主整体摘除，抽屉只剩快速创建这一个来源（判据里留一个永远为 false 的
+   `peekOpen` 参数 = 一条到不了的分支，故随下线一起删）。键位判据仍复用 peek 那一枚纯函数
+   （`workItemPeekKeyIntent` 随组件保留，见 `WorkItemPeek.tsx`）。
 
    两条纪律：
    ① **同源断点**：窄屏分界与 Tailwind `md:` 是同一枚（768px）—— 本仓既有移动输入
@@ -25,14 +30,11 @@ export function workItemSurfaceViewport(narrowMatch: boolean | null): WorkItemSu
   return narrowMatch === true ? "compact" : "desktop";
 }
 
-/** 窄屏抽屉目标（**至多一个**）：peek 优先（它是行点击的直接结果），其次快速创建。 */
+/** 窄屏抽屉目标（**至多一个**）：peek 下线后只剩快速创建一个来源。 */
 export function workItemCompactSheetTarget(input: {
-  peekOpen: boolean;
   quickCreateOpen: boolean;
-}): "peek" | "quickCreate" | "none" {
-  if (input.peekOpen) return "peek";
-  if (input.quickCreateOpen) return "quickCreate";
-  return "none";
+}): "quickCreate" | "none" {
+  return input.quickCreateOpen ? "quickCreate" : "none";
 }
 
 /**
@@ -42,9 +44,8 @@ export function workItemCompactSheetTarget(input: {
  */
 export function workItemCompactSheetKeyIntent(input: {
   key: string;
-  peekOpen: boolean;
   quickCreateOpen: boolean;
-}): "peek" | "quickCreate" | "none" {
+}): "quickCreate" | "none" {
   if (workItemPeekKeyIntent(input.key) !== "close") return "none";
   return workItemCompactSheetTarget(input);
 }

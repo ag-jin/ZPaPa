@@ -232,10 +232,10 @@ function WorkItemRow({
     onReassign,
     onDiscard,
     onToggleTimeline,
-    /* T-P3-R2：行级「打开」的**唯一**意图出口 —— 环境带了右侧预览（`onOpenPeek`）就用它，
-       缺省（`undefined`）仍是详情页导航（缺省零 peek）。回落取在解构的就地默认值上，故行渲染处
-       只有一枚 `onOpenRow`、零新增代码行（行模块 400 硬线：见文件头的结构纪律）。 */
-    onOpenPeek: onOpenRow = environment.onOpenWorkItemDetail,
+    /* 2026-10-09 用户裁定「点击进详情页，预览先下线」：行级「打开」只有**详情页导航**一条语义 ——
+       早前的 peek 预览意图通道（行环境的可选加法）已整体摘除（类型、回落、视图透传、宿主注入
+       全摘），行里没有第二个分支可拦（守卫见 `workItemPeek.test.ts` 的 ⑧）。 */
+    onOpenWorkItemDetail,
     workspacePath,
     workspaceIdentity,
     onOpenSession,
@@ -258,9 +258,10 @@ function WorkItemRow({
   const rowSelectControl =
     selection === undefined ? null : <WorkItemRowSelect item={item} selection={selection} />;
   /* 行级「打开详情」的透明覆盖按钮（**一处定义，多面共用**的组件在这里挂载一次；
-     表格布局由单元格模块挂载同一份组件）。抽成变量是为了让它与勾选件共用同一个槽位。 */
+     表格布局由单元格模块挂载同一份组件）。点击 = 详情页导航（peek 通道下线后的唯一语义，
+     见环境解构处的注记）；抽成变量是为了让它与勾选件共用同一个槽位。 */
   const openDetailOverlay = (
-    <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenRow(item.id)} />
+    <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenWorkItemDetail(item.id)} />
   );
   /* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。判据与钮都留在
      行模块，钮作为节点交给动作簇（`WorkItemRowActions`，行零件的家）—— 命中判据的位置不变。 */

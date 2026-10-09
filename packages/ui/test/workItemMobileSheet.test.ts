@@ -29,7 +29,11 @@ import {
    期望值的独立真源：任务卡 T-P3-R4 的验收 1-4（窄屏 = Sheet / 桌面 = 分栏·行内、不得两套同时渲染、
    移动输入 `text-mobile-input-safe`、关闭路径可验证）+ 本仓既有响应式形态（Tailwind `md:` = 768px，
    squad 的移动输入 `text-mobile-input-safe md:text-ui-base` 用的就是这一枚）+ UI Events 规范的
-   键值（`Escape`）。断言里的字面量不按实现重算：每条结构守卫都写明变异方式，交付报告里逐条实测。 */
+   键值（`Escape`）。断言里的字面量不按实现重算：每条结构守卫都写明变异方式，交付报告里逐条实测。
+
+   2026-10-09 口径变更（用户裁定「点击进详情页，预览先下线」）：窄屏抽屉**只剩快速创建**一个目标
+   （peek 的打开态与抽屉优先权随下线删掉），桌面也不再套分栏壳（peek 下线后没有要保的右列）；
+   ⑤/⑥ 的抽屉壳与 peek 组件呈现仍是组件级判据，照旧。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
@@ -59,42 +63,27 @@ test("断点：与 Tailwind `md:` 同一枚（≥768 = 桌面）；判不出宽�
 
 // ---------- ② 抽屉目标：至多一个 ----------
 
-/* 变异：两个抽屉各自独立渲染（不做目标归一）⇒ 第三条必红；把快速创建排在 peek 之前 ⇒
-   第四条必红（行点击的直接结果是 peek，它不能被另一个抽屉盖住）。 */
-test("抽屉目标：至多一个（peek 优先；都没开 ⇒ none）", () => {
-  assert.equal(workItemCompactSheetTarget({ peekOpen: false, quickCreateOpen: false }), "none");
-  assert.equal(
-    workItemCompactSheetTarget({ peekOpen: false, quickCreateOpen: true }),
-    "quickCreate",
-  );
-  assert.equal(workItemCompactSheetTarget({ peekOpen: true, quickCreateOpen: false }), "peek");
-  assert.equal(
-    workItemCompactSheetTarget({ peekOpen: true, quickCreateOpen: true }),
-    "peek",
-    "同时成立 ⇒ peek（否则 peek 被快速创建抽屉盖住）",
-  );
+/* 口径变更（2026-10-09 用户裁定「点击进详情页，预览先下线」）：窄屏抽屉目标只剩快速创建 ——
+   peek 的打开态从宿主整体摘除，纯函数不再接受 `peekOpen`（永远是 false 的参数 = 到不了的分支）。
+   变异：把 `peekOpen` 加回来（或让没开快速创建也返回目标）⇒ 后一条必红。 */
+test("抽屉目标：至多一个（快速创建开 ⇒ quickCreate；没开 ⇒ none）", () => {
+  assert.equal(workItemCompactSheetTarget({ quickCreateOpen: false }), "none");
+  assert.equal(workItemCompactSheetTarget({ quickCreateOpen: true }), "quickCreate");
 });
 
 // ---------- ③ 关闭路径（验收 3：至少一条可验证） ----------
 
-/* 变异：把键位判据另写一份（`key === "Esc"`）⇒ 第一条必红；让 Esc 无条件关两个（不判当前抽屉）
-   ⇒ 第三条必红。 */
+/* 变异：把键位判据另写一份（`key === "Esc"`）⇒ 第一条必红；没开抽屉也吃 Esc（关一个不存在
+   的抽屉）⇒ 后一条必红。 */
 test("Esc：只关当前那一个抽屉；没得关 ⇒ none（键位复用 peek 那一枚判据）", () => {
   assert.equal(
-    workItemCompactSheetKeyIntent({ key: "Escape", peekOpen: true, quickCreateOpen: true }),
-    "peek",
-  );
-  assert.equal(
-    workItemCompactSheetKeyIntent({ key: "Escape", peekOpen: false, quickCreateOpen: true }),
+    workItemCompactSheetKeyIntent({ key: "Escape", quickCreateOpen: true }),
     "quickCreate",
   );
-  assert.equal(
-    workItemCompactSheetKeyIntent({ key: "Escape", peekOpen: false, quickCreateOpen: false }),
-    "none",
-  );
+  assert.equal(workItemCompactSheetKeyIntent({ key: "Escape", quickCreateOpen: false }), "none");
   for (const key of ["Esc", "Enter", " ", "j", "Tab"]) {
     assert.equal(
-      workItemCompactSheetKeyIntent({ key, peekOpen: true, quickCreateOpen: true }),
+      workItemCompactSheetKeyIntent({ key, quickCreateOpen: true }),
       "none",
       `「${key}」不得关抽屉`,
     );
@@ -343,12 +332,12 @@ function renderSurface(input: {
   );
 }
 
-/* 承重（验收 1 的桌面侧 + 默认路径零回归 + F1 口径变更 2026-10-09）：桌面（缺省 = SSR 默认，
+/* 承重（验收 1 的桌面侧 + 默认路径零回归 + 2026-10-09 下线口径）：桌面（缺省 = SSR 默认，
    以及显式注入 desktop）仍是既有行内条；触发钮/抽屉一个节点都不进 DOM。
-   恒定壳（`work-items-surface-split`）口径变更：未打开 peek 也恒在（只保证右列零节点）——
-   否则开关面板要换树根，body 子树被卸载重挂（见 `workItemPeek.test.ts` 的结构恒定用例）。
-   变异：桌面也渲染触发钮 ⇒ 第一条必红；未打开就不渲染恒定壳 ⇒ 第四条必红。 */
-test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SSR 默认；恒定壳恒在）", () => {
+   分栏壳随 peek 下线一起摘除（用户裁定「预览先下线」）：桌面不再有 `work-items-surface-split`
+   包裹层，body 直接就是那一支的根（没有 peek 开关就没有要保的树根，见 `workItemPeek.test.ts`）。
+   变异：桌面也渲染触发钮 ⇒ 第一条必红；把 peek 节点/分栏壳挂回来 ⇒ 后两条必红。 */
+test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SSR 默认；无分栏壳）", () => {
   for (const markup of [
     renderSurface({ withWriter: true }),
     renderSurface({ withWriter: true, viewport: "desktop" }),
@@ -361,17 +350,18 @@ test("宿主｜桌面：行内条在、触发钮与抽屉都不在（缺省 = SS
     assert.ok(!markup.includes("work-items-quick-create-open"), "桌面不给窄屏触发钮");
     assert.ok(!markup.includes("work-item-mobile-sheet"), "桌面不渲染抽屉");
     assert.ok(
-      markup.includes('data-testid="work-items-surface-split"'),
-      "恒定壳恒在（口径变更：未打开只是 peek 面板零节点）",
+      !markup.includes('data-testid="work-items-surface-split"'),
+      "分栏壳随 peek 下线摘除（没有右列就没有壳）",
     );
-    assert.ok(!markup.includes("work-item-peek"), "没打开面板 ⇒ peek 面板零节点");
+    assert.ok(!markup.includes("work-item-peek"), "peek 面板零节点（宿主不再挂载）");
   }
 });
 
 /* 承重（验收 1 的窄屏侧 + 卡面变异「Sheet 与分栏同时渲染 ⇒ 红」）：窄屏只有触发钮一套，
-   行内条与输入**不在** DOM 里；没开抽屉 ⇒ 抽屉也不在。变异：窄屏仍渲染行内条（两套同时在场）
-   ⇒ 第二、三条必红；窄屏无条件渲染抽屉 ⇒ 第四条必红。 */
-test("宿主｜窄屏：只有触发钮一套（行内条不在）；未开抽屉 ⇒ 抽屉不进 DOM；不套分栏壳", () => {
+   行内条与输入**不在** DOM 里；没开抽屉 ⇒ 抽屉也不在。分栏壳已随 peek 下线摘除 ⇒ 两档都
+   不该出现它。变异：窄屏仍渲染行内条（两套同时在场）⇒ 第二、三条必红；窄屏无条件渲染抽屉
+   ⇒ 第四条必红；把分栏壳挂回来（只给桌面/给两档都算）⇒ 第五条必红。 */
+test("宿主｜窄屏：只有触发钮一套（行内条不在）；未开抽屉 ⇒ 抽屉不进 DOM；无分栏壳", () => {
   const markup = renderSurface({ withWriter: true, viewport: "compact" });
   assert.ok(markup.includes('data-testid="work-items-quick-create-open"'), "窄屏给触发钮");
   assert.ok(
@@ -385,8 +375,9 @@ test("宿主｜窄屏：只有触发钮一套（行内条不在）；未开抽�
   assert.ok(!markup.includes("work-item-mobile-sheet"), "没开抽屉 ⇒ 抽屉一个节点都不进 DOM");
   assert.ok(
     !markup.includes('data-testid="work-items-surface-split"'),
-    "窄屏不套桌面分栏壳（两套同时渲染 ⇒ 红）",
+    "分栏壳已随 peek 下线摘除（两档都不该出现）",
   );
+  assert.ok(!markup.includes("work-item-peek"), "peek 面板零节点（宿主不再挂载）");
 });
 
 test("宿主｜窄屏：没有写入口 ⇒ 连触发钮都不渲染（与桌面同款「缺省整块不渲染」）", () => {
@@ -396,11 +387,11 @@ test("宿主｜窄屏：没有写入口 ⇒ 连触发钮都不渲染（与桌面
 });
 
 /* 结构守卫（验收 1 的源码侧）：宿主用**同一个**形态判据接两档，且
-   ① 注入点唯一；② 分栏壳恰一处且只在窄屏分支**之后**；③ 抽屉恰一处（至多一个抽屉）；
-   ④ 抽屉内容 = 目标三元（peek / 快速创建**二选一**）。
-   变异：把抽屉挪到分栏壳里（或删掉窄屏提前返回）⇒ 第二条必红；抽屉里同时塞两样 ⇒ 第四条必红；
-   再抄一份形态判据（第二处分支）⇒ 第一条必红。 */
-test("守卫｜宿主：形态判据单源、分栏壳与抽屉互斥、抽屉内容二选一", () => {
+   ① 注入点唯一；② 窄屏提前返回（桌面不再套任何壳 —— 壳随 peek 下线摘除）；
+   ③ 抽屉恰一处（至多一个抽屉）；④ 抽屉内容 = 快速创建（peek 已下线，没有第二个来源）。
+   变异：再抄一份形态判据（第二处分支）⇒ 第一条必红；把抽屉挪到窄屏分支之外 ⇒ 第二条必红；
+   抽屉多挂一个来源（peek 回挂）⇒ 第四条必红。 */
+test("守卫｜宿主：形态判据单源、窄屏提前返回、抽屉只装快速创建", () => {
   const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
   assert.equal(
     (host.match(/useWorkItemSurfaceViewport\(/g) ?? []).length,
@@ -423,29 +414,17 @@ test("守卫｜宿主：形态判据单源、分栏壳与抽屉互斥、抽屉�
     "抽屉只有一处渲染点（两处 = 两个抽屉可能同时在场）",
   );
   assert.equal(
-    (host.match(/data-testid="work-items-surface-split"/g) ?? []).length,
-    1,
-    "分栏壳只有一处",
+    (host.match(/work-items-surface-split/g) ?? []).length,
+    0,
+    "分栏壳随 peek 下线摘除（再出现 = 挂回了 peek 的形态）",
   );
-  /* 互斥：窄屏**提前返回**必须在分栏壳之前，且窄屏分支里不得出现分栏壳（否则两套同时渲染）。 */
+  /* 窄屏**提前返回**：桌面那一支在它之后（删掉提前返回 = 窄屏也落进桌面分支）。 */
   const compactBranch = host.indexOf('viewportMode === "compact"');
-  const splitAnchor = host.indexOf('data-testid="work-items-surface-split"');
   assert.ok(compactBranch >= 0, "窄屏分支必须存在（形态判据的消费点）");
+  assert.ok(host.indexOf("return body;") > compactBranch, "窄屏提前返回在桌面返回之前（两档互斥）");
   assert.ok(
-    splitAnchor > compactBranch,
-    "窄屏提前返回必须在分栏壳之前（删掉它 = 窄屏也开始渲染分栏壳）",
-  );
-  assert.ok(
-    !host.slice(compactBranch, splitAnchor).includes("work-items-surface-split"),
-    "窄屏分支内不得出现分栏壳",
-  );
-  assert.ok(
-    host.includes('{sheetTarget === "peek" ? peekPanel : quickCreate}'),
-    "抽屉内容 = 目标三元（peek / 快速创建二选一；同时塞两样 ⇒ 红）",
-  );
-  assert.ok(
-    host.includes("{peekPanel}") && host.includes("min-w-0 flex-1"),
-    "桌面分栏壳仍然只装既有面 + 面板本体（面板只构造一份，两档共用）",
+    host.includes("<WorkItemMobileSheet"),
+    "窄屏抽屉仍是唯一宿主（快速创建在窄屏只有这一处）",
   );
 });
 
@@ -489,19 +468,22 @@ test("守卫｜peek 面板内没有输入件（只读速览；若加输入就必
 
 // ---------- ⑨ 关闭路径（验收 3：至少一条可验证） ----------
 
-/* 变异：窄屏不挂键盘层（Esc 到不了）⇒ 第一条必红；关闭绕开 closePeek（焦点不还给触发行）
+/* 变异：窄屏不挂键盘层（Esc 到不了）⇒ 第一条必红；Esc 不走纯判据（另写键位链）⇒ 第二条必红；
+   关闭不落到快速创建自己的打开态（`closePeek` 那一路已随 peek 下线删掉，再出现 = 挂回了 peek）
    ⇒ 第三条必红；壳里少接一处 onClose（遮罩或关闭钮形同虚设）⇒ 第四条必红。 */
-test("守卫｜关闭路径：Esc 纯判据 + 遮罩/关闭钮两处 + 关闭走 closePeek（焦点归还）", () => {
+test("守卫｜关闭路径：Esc 纯判据 + 遮罩/关闭钮两处 + 关闭只收快速创建自己的打开态", () => {
   const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
   assert.ok(host.includes("onKeyDown={compactKeyDown}"), "窄屏面上的键盘层（Esc 到得了）");
   assert.ok(
-    host.includes("workItemCompactSheetKeyIntent({ key: event.key, peekOpen, quickCreateOpen })"),
+    host.includes("workItemCompactSheetKeyIntent({ key: event.key, quickCreateOpen })"),
     "关谁由纯判据回答（不另写键位链）",
   );
-  assert.ok(
-    host.includes('sheetTarget === "peek" ? closePeek : () => setQuickCreateOpen(false)'),
-    "peek 抽屉关闭走 closePeek（焦点归还那一路），快速创建只收自己的打开态",
+  assert.equal(
+    (host.match(/setQuickCreateOpen\(false\)/g) ?? []).length,
+    2,
+    "两处关闭（Esc 键盘层 + 抽屉 onClose）都落到快速创建自己的打开态",
   );
+  assert.ok(!host.includes("closePeek"), "peek 的焦点归还那一路已随下线删掉");
   const sheet = stripComments(readSource("squad/WorkItemMobileSheet.tsx"));
   assert.equal(
     (sheet.match(/onClick=\{onClose\}/g) ?? []).length,

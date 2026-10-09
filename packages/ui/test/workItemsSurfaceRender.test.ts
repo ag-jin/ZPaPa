@@ -32,6 +32,9 @@ import {
       口径更新之二（2026-10-09 G4 实测 F1/F2 的**结构恒定**裁定）：桌面宿主改为恒定壳
       （`work-items-surface-split` 恒在，peek 未打开只是右列零节点）⇒ 四份基线按新实现的
       真实渲染**机械重捕捉**，自此证明「2026-10-09 之后逐字节不变」（细节见基线文件头注记）；
+      口径更新之三（2026-10-09 用户裁定「点击进详情页，预览先下线」）：peek 面板与分栏壳一起
+      退役，桌面直接返回 body ⇒ 四份基线再次机械重捕捉（唯一的结构性差异 = 摘掉壳容器），
+      基线自此证明「下线之后逐字节不变」；
    ② **行渲染单点（承重验收 5，口径已更新）**：`data-work-item-id` 与聚焦注册各**恰一处**，且三视图
       消费**同一个**模块（从「WorkItemsBoard 内单点」改为「跨三视图共用同一模块」）；
    ③ 三视图分支都真实可达（宿主预置分支，R2/R3 只换视图内部实现，不改宿主）。
@@ -152,14 +155,20 @@ function renderSurface(input: {
    ⇒ 逐字节对照必红（这是本轮的承重判据）。
    口径（用户 2026-10-09 裁定）：`none` 不再是默认值，但「不分组」路径**逐字不变** —— 同一份
    基线改由显式 `laneDimension: "none"` 使用（不逐个把断言改成泳道断言）。
-   口径之二（2026-10-09 结构恒定）：字面量含恒定壳；写进壳里的 body 与开关 peek 前的内部
-   markup 一致（Radix 标识除外）。 */
-test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 与基线逐字节相同（恒定壳口径）", () => {
+   口径之三（2026-10-09 peek 下线）：字面量不含分栏壳（宿主直接返回 body）；行/内容与下线前
+   逐字节一致（差异只在壳容器与 Radix 标识位移，见基线文件头）。 */
+test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 与基线逐字节相同（peek 下线口径）", () => {
+  const markup = renderSurface({
+    workItems: defaultItems,
+    runs: [run("wi-root")],
+    laneDimension: "none",
+  });
   assert.equal(
-    renderSurface({ workItems: defaultItems, runs: [run("wi-root")], laneDimension: "none" }),
+    markup,
     WORK_ITEMS_SURFACE_BASELINE_NONE,
-    "「不分组」这一条路径的 markup 必须与重构前逐字节一致",
+    "「不分组」这一条路径的 markup 必须与基线逐字节一致",
   );
+  assert.ok(!markup.includes("work-items-surface-split"), "分栏壳随 peek 下线摘除（基线里也没有）");
 });
 
 /* 用户 2026-10-09 裁定「默认按阶段进行分组」：**默认态**（页面 useState 的默认维度 = statusCategory）
@@ -167,7 +176,9 @@ test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 
    （照 R1 的独立真源做法：基线取自真实渲染输出，不手工改写）。
    口径更新（2026-10-09 用户裁定「看板 multica 形态重排」）：分组容器从**纵堆泳道**改为
    **横排固定 280px 列 + 卡片**（spec §10-A），两份看板分组基线按新实现的真实渲染**机械重捕捉**；
-   行序/列次序/计数口径不变（本用例的后半段断言仍逐项成立）。「不分组」与「空态」基线未动。
+   行序/列次序/计数口径不变（本用例的后半段断言仍逐项成立）。
+   口径更新之二（2026-10-09 peek 下线）：四份基线随分栏壳退役再次机械重捕捉（唯一差异 = 摘壳，
+   见基线文件头）；本用例的后半段断言逐项不变。
    变异：默认维度改回 `none`（或页面不再按阶段分组）⇒ 本用例 + 两个页面源码守卫必红；
    基线改一字节 ⇒ 必红。 */
 test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度渲染 = 4 列（锚点 + 每列计数），与基线逐字节相同", () => {
@@ -213,12 +224,12 @@ test("零回归｜泳道视图（statusCategory）与空态块：同样逐字节
   assert.equal(
     renderSurface({ workItems: laneItems, laneDimension: "statusCategory" }),
     WORK_ITEMS_SURFACE_BASELINE_LANES,
-    "泳道分支的 markup 与重构前逐字节一致",
+    "泳道分支的 markup 与基线逐字节一致",
   );
   assert.equal(
     renderSurface({ workItems: [] }),
     WORK_ITEMS_SURFACE_BASELINE_EMPTY,
-    "空态块与重构前逐字节一致（空态在宿主里，锚点 work-items-empty 不变）",
+    "空态块与基线逐字节一致（空态在宿主里，锚点 work-items-empty 不变）",
   );
 });
 
