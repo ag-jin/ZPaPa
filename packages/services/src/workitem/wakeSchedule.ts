@@ -49,6 +49,26 @@ export function nominalInstant(rule: WakeRule): number {
 }
 
 /**
+ * **到期点收口**（G3）：算出的下一格若不早于 `expiresAt`，就没有下一格（返回 null = 终态）。
+ *
+ * 边界语义钉死在这里、只用一份实现：**触发时刻必须严格早于 `expiresAt`** ⇒ `next >= expiresAt`
+ * 即终态。写成 `>` 会让「到点时刻恰等于到期点」的那一格仍然触发，与「过期时刻之后不再唤醒」
+ * 直接矛盾；写成每次调用点各判一次，三个消费方（create 首格 / resume 首格 / fire 推进）迟早漂移。
+ *
+ * 为什么是**终态**而不是「跳过这一格继续往后排」：后者会让规则永远留在表里、每格判一次、
+ * 永远不派发 —— 正是域模型要消灭的静默死配置形态。置空排期后 `listReady`
+ * （`next_fire_at IS NOT NULL`）不再命中它，规则干净地停在到期点上。
+ *
+ * 注意这**不是闸**：到期不写 `pausedReason`（那是防失控闸的专列）、不动 `enabled`（用户启停）——
+ * 「到点了」与「被停下来了」是两件可分辨的事。
+ */
+function cutAtExpiry(rule: WakeRule, next: number | null): number | null {
+  if (next === null) return null;
+  if (rule.expiresAt !== undefined && next >= rule.expiresAt) return null;
+  return next;
+}
+
+/**
  * fire 之后的下一次到点时刻。
  *
  * `once` ⇒ null（不再到点：`listReady` 只取 `next_fire_at IS NOT NULL`，置空即终态）。
@@ -63,6 +83,9 @@ export function nominalInstant(rule: WakeRule): number {
  *   - `event`：返回 null。事件由事实驱动，排期点是**事实侧**写进 next_fire_at 的；
  *     本层 fire 之后必须置空——否则下一轮 tick 会把同一条事实按新的 fireCount 再派一遍
  *     （一路派到撞上 `max_fires` 闸才停），下一条事实到来时再由事实侧重新写入。
+ *
+ * **到期点**（`expiresAt`，G3）：`every` / `cron` 算出的下一格都要过 `cutAtExpiry` ——
+ * 不早于到期点即终态（null）。`once` / `event` 本就返回 null，判定不改变它们的语义。
  *
  * 调用注意（服务面 `createWakeRule` / `resumeWakeRule`）：本函数按 `mode === "once"` 提前返回 null，
  * 那是**触发之后**的终态语义 —— 对「尚未触发」的一次性规则同样返回 null，故首格排期不能直接取本函数
@@ -86,7 +109,8 @@ export function nextFireAtAfter(rule: WakeRule, now: number): number | null {
          刚刚 fire 过的名义时刻。`Math.max(1, …)` 只兜 now < nominal 这种不该出现的输入
          （生产路径上 listReady 只取 `next_fire_at <= now`），保证步数恒 ≥ 1。 */
       const steps = Math.max(1, Math.floor((now - nominal) / stepMs) + 1);
-      return nominal + steps * stepMs;
+      // 网格算完再过到期点收口（G3）：越过到期点的下一格不存在。
+      return cutAtExpiry(rule, nominal + steps * stepMs);
     }
     case "cron": {
       const expression = rule.cronExpression;
@@ -96,7 +120,8 @@ export function nextFireAtAfter(rule: WakeRule, now: number): number | null {
         );
       }
       // 无未来命中（如表达式只覆盖过去的日历）⇒ null，按终态处理，与 once 同义。
-      return computeNextRunAt(expression, now);
+      // 命中点同样过到期点收口（G3）—— cron 的网格是表达式命中的那些时刻，到期点截断它。
+      return cutAtExpiry(rule, computeNextRunAt(expression, now));
     }
     case "at":
       // `at` 只允许配 `once`（validateWakeRule 互斥第 1 条），连续语义在契约上不存在。

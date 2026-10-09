@@ -93,6 +93,26 @@ function rowToWakeRule(row: WakeRuleRow): WakeRule {
   };
 }
 
+/**
+ * `casAdvance` 的**判因**结论（G2：判「没命中」的两种原因）。
+ *
+ * 为什么不能只回一个 `boolean`：`changes === 0` 有两种截然不同的成因，而调用方对它们的处置也不同 ——
+ * · `fenced`：行还在，但 revision 已被并发改动（例如用户刚编辑了规则）。这是**并发**，要留痕（带两侧
+ *   revision）并且本格派发作废；
+ * · `missing`：行已不在（规则被删除 / 归档清理）。这是**正常生命周期**，不是异常，只该留一条 info。
+ * 合成一个 false 时接线方只能把两件事记成同一条「advance skipped」，排查时无法区分「并发打架」与
+ * 「规则没了」—— spec §17 原计划要的就是「回读比对 revision 判因」。
+ *
+ * 判因成本：命中路径（热路径）零额外查询；只有 `changes === 0`（冷路径）才回读一次 revision。
+ * 单写者 + 同连接 ⇒ 这条回读与 UPDATE 之间没有可乘之机（同一 DatabaseSync 连接串行执行）。
+ */
+export type WakeAdvanceOutcome =
+  | { outcome: "advanced" }
+  /** 行仍在：带回**行里的**当前 revision（不是调用方传进来的期望值 —— 回声不构成判因）。 */
+  | { outcome: "fenced"; currentRevision: number }
+  /** 行已不存在（读到之后被删）：不是异常，是这条规则的终态。 */
+  | { outcome: "missing" };
+
 export interface WakeRuleRepo {
   /** 写入一行。调用方必须已用 validateWakeRule 校验互斥，本层不重复校验。 */
   insert(rule: WakeRule): void;
@@ -116,7 +136,10 @@ export interface WakeRuleRepo {
   listAll(): WakeRule[];
   /** revision fencing（spec §5.7）：只有 revision 仍等于 expectRevision 才推进，
       命中即 revision+1。**单条条件 UPDATE**——先读后写会与并发派发竞态，
-      让「编辑规则」后仍在飞的旧派发覆盖掉新状态。 */
+      让「编辑规则」后仍在飞的旧派发覆盖掉新状态。
+
+      未命中时**回读判因**（`fenced` / `missing`，见 `WakeAdvanceOutcome`）：调用方（调度器与
+      pause/resume）对两者的处置不同，只拿到 false 时无法分辨「并发打架」与「规则已删」。 */
   casAdvance(
     id: string,
     expectRevision: number,
@@ -129,7 +152,7 @@ export interface WakeRuleRepo {
      * 闸暂停只关排期、不动用户开关。
      */
     enabled?: boolean,
-  ): boolean;
+  ): WakeAdvanceOutcome;
   /**
    * **编辑配置**（加法，P2b 收口）：`WHERE id=? AND revision=?` 的单条条件更新，写**配置列**
    * （`kind` / `mode` / `at` / `interval_seconds` / `cron_expression` / `next_fire_at` / `max_fires`）
@@ -224,6 +247,7 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
     },
 
     // CAS 必须是单条条件更新并校验 changes：先读后写会与并发派发竞态。
+    // 未命中时回读一次判因（冷路径；命中路径零额外开销）—— 见 `WakeAdvanceOutcome` 的理由。
     casAdvance(id, expectRevision, nextFireAt, fireCount, pausedReason, enabled) {
       const result = db
         .prepare(
@@ -240,17 +264,24 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
           id,
           expectRevision,
         );
-      return result.changes === 1;
+      if (result.changes === 1) return { outcome: "advanced" };
+      // 行在 ⇒ 被 fencing（带回行里的当前版本）；行不在 ⇒ 规则已删。
+      const row = db.prepare("SELECT revision FROM wake_rules WHERE id = ?").get(id) as
+        | { revision: number }
+        | undefined;
+      return row ? { outcome: "fenced", currentRevision: row.revision } : { outcome: "missing" };
     },
 
     /* 编辑配置：单条条件更新 + revision+1（§5.7 fencing，契约见接口 doc）。
-       **不写** fire_count / paused_reason / enabled / work_item_id / expires_at / timezone 等列
-       （各有口径，见接口 doc）—— 只把「排班表的配置」这一组列换成新的。 */
+       **不写** fire_count / paused_reason / enabled / work_item_id / timezone 等列
+       （各有口径，见接口 doc）—— 只把「排班表的配置」这一组列换成新的。
+       `expires_at` 在**这一组里**（G3 起调度侧真的消费它：`wakeTick` 判、`nextFireAtAfter` 收口），
+       故本方法写它；**清空**（写回 NULL）没有入口 —— 服务面只会在 patch 显式给了新值时把它带下来。 */
     casUpdateConfig(id, expectRevision, rule) {
       const result = db
         .prepare(
           `UPDATE wake_rules SET kind=?, mode=?, at=?, interval_seconds=?, cron_expression=?,
-             next_fire_at=?, max_fires=?, revision=revision+1, updated_at=?
+             next_fire_at=?, max_fires=?, expires_at=?, revision=revision+1, updated_at=?
            WHERE id=? AND revision=?`,
         )
         .run(
@@ -261,6 +292,7 @@ export function createWakeRuleRepo(db: DatabaseSync): WakeRuleRepo {
           rule.cronExpression ?? null,
           rule.nextFireAt ?? null,
           rule.maxFires ?? null,
+          rule.expiresAt ?? null,
           Date.now(),
           id,
           expectRevision,

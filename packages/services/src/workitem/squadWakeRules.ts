@@ -7,6 +7,7 @@ import {
 } from "@zcode/shared";
 import type { SquadRuntime } from "./squadContracts.js";
 import type { ISquadRuntimeService, SquadWorkspaceTarget } from "./squadRuntimeService.js";
+import type { WakeAdvanceOutcome } from "./wakeRuleRepo.js";
 import { nextFireAtAfter } from "./wakeSchedule.js";
 
 /* 唤醒规则的**服务面六个方法**（`listWakeRules` / `createWakeRule` / `pauseWakeRule` /
@@ -34,8 +35,10 @@ import { nextFireAtAfter } from "./wakeSchedule.js";
 
    **CAS 与「前置读当时状态」**（照既有纪律）：pause/resume 都先 `get(id)` 拿到**当时**的
    `revision`，再用它作 `casAdvance` 的 expectRevision —— 读到写之间若有人并发改动
-   （例如调度器刚 fire 并推进了一格），`changes=0` ⇒ **响亮抛**，绝不把一次「按旧状态计算」的
+   （例如调度器刚 fire 并推进了一格），**未命中 ⇒ 响亮抛**，绝不把一次「按旧状态计算」的
    状态迁移静默盖上去（那会让「已停」与「还在跑」在两边同时为真）。
+   未命中按 repo 的**判因**分文案（`fenced` = 版本被并发改动 / `missing` = 行已被并发删除，
+   见 `casMissError`）：两者对用户的复位动作不同，合成一句话会把后者说成前者。
 
    **幂等 / 响亮的分格**（本实现已定口径，逐条写清）：
    - id 不存在 ⇒ 两个方法都**响亮抛**（静默 no-op 会让界面以为动作生效了）。
@@ -84,11 +87,21 @@ export type CreateWakeRuleRequest = {
   cronExpression?: string;
   /** 连续规则的触发上限（1..1000，未给时调度侧按默认 20 执行）；只在 `continuous` 时有意义。 */
   maxFires?: number;
-  /** 时区（非空；未给由调度器取默认）。**注意**：现有排期计算（croner）用本地时区，
-   *  `timezone` 目前只做落盘留存 —— 已有缺口（shared TODO(P2) 第 2 条），本轮登记不补。 */
+  /**
+   * 时区（非空；未给由调度器取默认）。**降级为文档标注**（G4，2026-10-09；spec §17 该行同步改写）：
+   * 字段**保留在 API 里**（删掉是破坏性变更），但**调度侧不消费它** —— 现有排期计算（croner）用本地时区，
+   * 显示侧也刻意用本地时区（与调度口径一致）。已闭合的只有**合法性**：显式传入的值经
+   * `validateWakeRule` 第 9 条过 IANA 校验，非法名当场响亮拒（`isValidTimeZoneName`），
+   * 不会留到将来接线时才炸。**接线（让这个字段真正生效）的前置三件套**，缺一不可：
+   * ① IANA 校验 —— 已有（上句）；② croner 的 `timeZone` 选项 —— 已核实装的是 croner 10.0.1（支持该选项），
+   * `computeNextRunAt` 加参即可；③ UI 时区口径切换 —— 显示侧现在刻意用本地时区，输入与显示必须**同步**切，
+   * 否则用户看到的到点时刻与实际的不是一回事。故本字段的闭合形态是**文档标注**而非接线：
+   * 界面对它维持「不暴露输入框」（第 39 轮硬约束）。
+   */
   timezone?: string;
-  /** 过期时刻（epoch ms）。**注意**：调度侧尚未消费 `expires_at`（wakeTick 不判过期）——
-   *  既有缺口，本轮只透传落盘，登记不猜。 */
+  /** 过期时刻（epoch ms）。**已由调度侧消费**（G3：`wakeTick` fire 前置守卫、`nextFireAtAfter` 收口、
+   *  `initialNextFireAt` 的 `at` 分支；建/编辑时 `expiresAt <= now` 响亮拒）。触发时刻必须**严格早于**
+   *  到期点；到期即终态（清排期，不写 `pausedReason`、不动 `enabled`）。 */
   expiresAt?: number;
 };
 
@@ -106,13 +119,15 @@ const newRuleId = (): string => globalThis.crypto.randomUUID();
  *   `validateWakeRule` 互斥第 1 条是最终判据；
  * · **不含 `workItemId`**：挂载对象不可改（改了等于换一条规则的归属 —— 列表按工作项反查归属，
  *   换归属应删旧建新），故它在类型上就没有入口；
- * · **不含 `timezone` / `expiresAt`**：第 39 轮硬约束 —— 界面不暴露（调度侧未消费 timezone、
- *   wakeTick 不判 expiresAt）。落盘的旧值原样留存（`casUpdateConfig` 不写这两列）。
+ * · **不含 `timezone`**：第 39 轮硬约束 —— 界面不暴露（调度侧未消费它）。落盘的旧值原样留存
+ *   （`casUpdateConfig` 不写这一列）；
+ * · **含 `expiresAt`（G3 起）**：调度侧此后真的消费到期点（`wakeTick` 判、`nextFireAtAfter` 收口），
+ *   于是「建后不可改」不再成立 —— 改到期时刻是正常运维动作（延长一次实验、提前收掉一条规则）。
+ *   语义与 `fireCount` / `enabled` 同组：**patch 显式给 = 改；未给 = 抄回现行值**（不顺手清掉）。
+ *   清空到期点（改回「永不过期」）v1 不给入口 —— 与 `workItemId` 同族的交代：删掉重配。
+ *   界面仍不暴露输入框（第 39 轮硬约束只对**输入**维持不变；调度侧消费不改变 UI 面的决定）。
  */
-export type UpdateWakeRuleRequest = Omit<
-  CreateWakeRuleRequest,
-  "workItemId" | "timezone" | "expiresAt"
->;
+export type UpdateWakeRuleRequest = Omit<CreateWakeRuleRequest, "workItemId" | "timezone">;
 
 /** `updateWakeRule` 的入参（id + patch）。**具名声明**而不是在描述符里内联的原因之一：
     `squadRuntimeService.ts` 贴着 400 行 lint 门槛 —— 内联形状要把签名折成四行，具名后一行装得下；
@@ -135,7 +150,11 @@ export type UpdateWakeRuleInput = { id: string; patch: UpdateWakeRuleRequest };
  */
 function initialNextFireAt(rule: WakeRule, now: number): number | null {
   if (rule.kind === "at") {
-    return rule.at !== undefined && rule.at > now ? rule.at : null;
+    if (rule.at === undefined || rule.at <= now) return null;
+    // 到期点判定（G3）：`at` 的名义时刻**不经过** `nextFireAtAfter`（一次性规则在那里按
+    // `mode === "once"` 提前返回 null），所以这一支必须自己判 —— 边界与那边同一口径：
+    // 触发时刻必须**严格早于** `expiresAt`。
+    return rule.expiresAt !== undefined && rule.at >= rule.expiresAt ? null : rule.at;
   }
   if (rule.kind === "every") {
     // 名义时刻锚点 = now（`nextFireAtAfter` 的 every 分支要求规则自带 next_fire_at）。
@@ -146,15 +165,48 @@ function initialNextFireAt(rule: WakeRule, now: number): number | null {
 
 /** `initialNextFireAt` 返回 null 的**原因口径**（写进响亮错误文案，便于直接定位是哪一条不成立）。 */
 function noFutureScheduleReason(rule: WakeRule, now: number): string {
+  /* 到期点优先判（G3）：它一旦成立，下面各支的「时间已过去」说法就是**错的** ——
+     例如 `at` 明明在未来，是到期点卡住了它。文案说错比不说更坏（用户会去改 at）。 */
+  if (rule.expiresAt !== undefined && rule.expiresAt <= now) {
+    return `到期时刻 ${rule.expiresAt}（${new Date(rule.expiresAt).toISOString()}）不晚于当前时刻 ${now}——规则已经过期`;
+  }
   if (rule.kind === "at") {
-    return rule.at === undefined
-      ? "kind「at」没有 at（validateWakeRule 本应拦住）"
-      : `「at」的到点时刻 ${rule.at}（${new Date(rule.at).toISOString()}）不晚于当前时刻 ${now}——到点时刻已经过去`;
+    if (rule.at === undefined) return "kind「at」没有 at（validateWakeRule 本应拦住）";
+    if (rule.expiresAt !== undefined) {
+      return (
+        `「at」的到点时刻 ${rule.at}（${new Date(rule.at).toISOString()}）不早于到期时刻 ` +
+        `${rule.expiresAt}（${new Date(rule.expiresAt).toISOString()}）——触发时刻必须严格早于到期点`
+      );
+    }
+    return `「at」的到点时刻 ${rule.at}（${new Date(rule.at).toISOString()}）不晚于当前时刻 ${now}——到点时刻已经过去`;
   }
   if (rule.kind === "cron") {
     return `cron 表达式「${rule.cronExpression ?? "<缺失>"}」在当前时刻之后没有任何命中（无未来排期点）`;
   }
+  if (rule.expiresAt !== undefined) {
+    return `kind「${rule.kind}」推进后的下一格不早于到期时刻 ${rule.expiresAt}（触发时刻必须严格早于到期点）`;
+  }
   return `kind「${rule.kind}」推进后没有下一格`;
+}
+
+/**
+ * 到期点已在过去 ⇒ **响亮拒**（死配置同族文案，G3 第 4 条）。
+ *
+ * 为什么服务面还要单独判一次（排期计算其实也会返回 null）：两处覆盖的形态不同 ——
+ * · **暂停中编辑**（`enabled === false` 或闸暂停）**不重算排期**（那是 resume 的事），
+ *   于是「把到期点改到过去」这条路径**不经过**任何排期计算，只有这里能拦；
+ * · 文案：排期那一侧只会说「没有未来排期点」，而用户改的是到期时刻，得让文案直接指向它。
+ *
+ * 为什么不放进 `validateWakeRule`：校验必须是**确定的纯函数**（同一 rule 任何时候结果一致），
+ * 而这一条要跟「当前时间」比 —— 时间判定归调度侧与服务面（shared TODO(P2) 第 3 条，G5 维持原裁定）。
+ */
+function assertNotExpired(rule: WakeRule, now: number, action: string): void {
+  if (rule.expiresAt === undefined || rule.expiresAt > now) return;
+  throw new Error(
+    `无法${action}唤醒规则：这条规则已经过期（到期时刻 ${rule.expiresAt}，` +
+      `${new Date(rule.expiresAt).toISOString()} 不晚于当前时刻 ${now}）——过期的规则建成即永不触发，` +
+      "调度器的到点扫描（next_fire_at <= now）永远扫不到它，静默落盘只会让界面看起来正常。",
+  );
 }
 
 /**
@@ -240,12 +292,34 @@ export function createWakeRuleOps(
     }
   };
 
-  /** CAS 未命中的统一响亮文案（pause / resume 共用；静默丢弃会让界面以为动作生效了）。 */
-  const casMissError = (action: string, id: string, revision: number): Error =>
-    new Error(
-      `${action}唤醒规则失败：规则「${id}」的 CAS 未命中（revision ${revision} 已被并发改动，` +
+  /**
+   * CAS 未命中的统一响亮文案（pause / resume 共用；静默丢弃会让界面以为动作生效了）。
+   *
+   * 文案按**判因**分格（G2）：`fenced`（行还在、版本被并发改动）与 `missing`（行已被并发删除）
+   * 对用户是两件事 —— 前者「请重读后再试」能自愈，后者重读多少次都读不回来（得去列表里确认
+   * 它是不是被删了）。写成同一句话会把后者说成前者，用户一直重试一条不存在的规则。
+   */
+  const casMissError = (
+    action: string,
+    id: string,
+    revision: number,
+    cause?: WakeAdvanceOutcome,
+  ): Error => {
+    if (cause?.outcome === "missing") {
+      return new Error(
+        `${action}唤醒规则失败：规则「${id}」已被并发删除（读到时还在，写盘前已不存在）。` +
+          "静默丢弃会让界面以为动作生效了，而这条规则已经不在库里。请刷新列表确认。",
+      );
+    }
+    /* `cause` 省略 = 走 `casUpdateConfig` 那条路（它只回 boolean，见 repo doc 的「不动」口径）：
+       前置 `get` 已给足语境，文案保持原样、不加「库中当前 revision」。 */
+    const current =
+      cause?.outcome === "fenced" ? `，库中当前 revision ${cause.currentRevision}` : "";
+    return new Error(
+      `${action}唤醒规则失败：规则「${id}」的 CAS 未命中（revision ${revision} 已被并发改动${current}，` +
         "例如调度器刚推进了一格）。静默丢弃会让用户以为动作生效了，而库里的状态并不是那样。请重读后再试。",
     );
+  };
 
   return {
     /**
@@ -278,6 +352,7 @@ export function createWakeRuleOps(
       if (!verdict.ok) {
         throw new Error(`无法创建唤醒规则：${verdict.problems.join("；")}`);
       }
+      assertNotExpired(rule, now, "创建");
       assertRuleHost(runtime, rule.workItemId);
       const nextFireAt = initialNextFireAt(rule, now);
       if (nextFireAt === null) {
@@ -319,7 +394,7 @@ export function createWakeRuleOps(
          语义与「闸暂停」（`pausedReason` + 清排期、开关不动）分开 —— 于是界面上「我停的」与
          「被闸停的」是两件可分辨的事，各自带各自的复位路径（resume / 等窗口滑过或 resume）。
          `pausedReason` 原样保留（不伪造闸原因：那是封闭枚举，写码 = 假数据）。 */
-      const ok = runtime.wakeRuleRepo.casAdvance(
+      const outcome = runtime.wakeRuleRepo.casAdvance(
         rule.id,
         rule.revision,
         null,
@@ -327,7 +402,9 @@ export function createWakeRuleOps(
         rule.pausedReason,
         false,
       );
-      if (!ok) throw casMissError("暂停", rule.id, rule.revision);
+      if (outcome.outcome !== "advanced") {
+        throw casMissError("暂停", rule.id, rule.revision, outcome);
+      }
     },
 
     /**
@@ -357,7 +434,7 @@ export function createWakeRuleOps(
             "恢复一条永不触发的规则等于建一条死配置，用户会以为它又开始跑了。**不写盘**（该行保持原样）。",
         );
       }
-      const ok = runtime.wakeRuleRepo.casAdvance(
+      const outcome = runtime.wakeRuleRepo.casAdvance(
         rule.id,
         rule.revision,
         nextFireAt,
@@ -365,7 +442,9 @@ export function createWakeRuleOps(
         undefined, // 清 pausedReason（闸暂停的复位路径；`undefined ⇒ null`）
         true,
       );
-      if (!ok) throw casMissError("恢复", rule.id, rule.revision);
+      if (outcome.outcome !== "advanced") {
+        throw casMissError("恢复", rule.id, rule.revision, outcome);
+      }
     },
 
     /**
@@ -402,21 +481,28 @@ export function createWakeRuleOps(
             "静默 no-op 会让界面以为保存成功了，而库里仍是旧配置。",
         );
       }
+      const now = Date.now();
       /* ② 合并（见 doc）；③ 抄回不归编辑管的字段。`revision` 也抄现行 —— 写盘时由 SQL 做
          revision+1，实体自身保持「写盘前是哪一版」的诚实（CAS 用 rule.revision 作前置）。 */
       const merged = assembleWakeRule({ ...input.patch, workItemId: rule.workItemId }, rule.id);
       merged.fireCount = rule.fireCount;
       merged.enabled = rule.enabled;
       if (rule.pausedReason !== undefined) merged.pausedReason = rule.pausedReason;
-      if (rule.expiresAt !== undefined) merged.expiresAt = rule.expiresAt;
+      /* `expiresAt`（G3）：**patch 显式给 = 改；未给 = 抄回现行**（与 fireCount / enabled 同组）。
+         抄回必须**先看 merged 有没有**：无条件覆盖会把 patch 刚给的到期点又打回旧值 ——
+         实体看着改了、库里没动（下一次读回就变回去），是本项最阴的失败形态。 */
+      if (merged.expiresAt === undefined && rule.expiresAt !== undefined) {
+        merged.expiresAt = rule.expiresAt;
+      }
       merged.revision = rule.revision;
 
       const verdict = validateWakeRule(merged);
       if (!verdict.ok) {
         throw new Error(`无法编辑唤醒规则：${verdict.problems.join("；")}`);
       }
+      // 到期点判定（G3）：**暂停中编辑不重算排期**，这条路径只有这里能拦（见 assertNotExpired）。
+      assertNotExpired(merged, now, "编辑");
 
-      const now = Date.now();
       if (merged.enabled && merged.pausedReason === undefined) {
         const nextFireAt = initialNextFireAt(merged, now);
         if (nextFireAt === null) {

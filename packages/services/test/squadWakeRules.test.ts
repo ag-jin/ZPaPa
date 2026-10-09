@@ -31,8 +31,10 @@ const target = (identity: string): SquadWorkspaceTarget => ({
   identity,
 });
 
-/** 真实 runtime + 真实服务面（照 squadRosterManagement.test.ts 的装配法），另暴露读库口。 */
-async function makeService() {
+/** 真实 runtime + 真实服务面（照 squadRosterManagement.test.ts 的装配法），另暴露读库口。
+    `wrapRuntime` 供「读到写之间的并发」用例注入确定性时序（照 `squadWakeRulesEdit.test.ts` 的同一
+    先例：真实竞态不可按需触发，包装器只改时序不改语义）。 */
+async function makeService(options?: { wrapRuntime?: (runtime: SquadRuntime) => SquadRuntime }) {
   const repoRoot = await makeRepo();
   const db = new DatabaseSync(":memory:");
   runTasksDatabaseMigrations(db);
@@ -41,12 +43,13 @@ async function makeService() {
   const seenTargets: string[] = [];
   const createRuntime = async (t: SquadWorkspaceTarget): Promise<SquadRuntime> => {
     seenTargets.push(`${t.path}|${t.identity}`);
-    return createSquadRuntime({
+    const runtime = await createSquadRuntime({
       db,
       workspacePath: repoRoot,
       workspaceIdentity: t.identity,
       readExperimentEnabled: () => state.enabled,
     });
+    return options?.wrapRuntime ? options.wrapRuntime(runtime) : runtime;
   };
   const squadRuntimeService: ISquadRuntimeService = createSquadRuntimeService({
     createRuntime,
@@ -164,6 +167,142 @@ test("死配置：at 已过去 / cron 无未来命中 ⇒ create 响亮抛，且
     [],
     "响亮抛的规则一行都不许落盘（「不落盘」是断言的一部分，不是靠人相信）",
   );
+});
+
+/* timezone（G4）：字段**保留**在 API 里但调度侧不消费（降级为文档标注），唯一被闭合的是
+   **合法性** —— 显式传入非法 IANA 名必须当场响亮拒（`validateWakeRule` 第 9 条），
+   而不是安静落盘、留到将来接线时才炸。两个方向都要钉：非法被拒、**合法不被误伤**
+   （过度拦截会把能用的规则也拦在门外，与「拒非法」是两条独立断言）。 */
+test("时区：显式传入非法 IANA 名 ⇒ create 响亮拒且不落盘；合法名 ⇒ 正常建出", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+
+  await assert.rejects(
+    () =>
+      squadRuntimeService.createWakeRule(WS, {
+        workItemId: item.id,
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        timezone: "Mars/Phobos",
+      }),
+    /timezone/,
+    "非法时区名必须当场点名 timezone 拒掉（域层 IANA 校验），不得安静落盘",
+  );
+
+  const created = await squadRuntimeService.createWakeRule(WS, {
+    workItemId: item.id,
+    kind: "every",
+    mode: "continuous",
+    intervalSeconds: 60,
+    timezone: "Asia/Shanghai",
+  });
+  const runtime = await createRuntime(WS);
+  assert.equal(runtime.wakeRuleRepo.get(created.id)?.timezone, "Asia/Shanghai");
+  assert.deepEqual(
+    runtime.wakeRuleRepo.listByWorkItem(item.id).map((r) => r.timezone),
+    ["Asia/Shanghai"],
+    "非法名那一行未落盘、合法名那一行在：被拒的是值，不是整个字段",
+  );
+});
+
+/* 到期点（G3）：**首格排期**也受到期点约束。`at` 的名义时刻不经 `nextFireAtAfter`
+   （一次性规则在那里按 `mode === "once"` 提前返回 null），所以它的到期判定必须单独落在
+   `initialNextFireAt` 的 at 分支上 —— 漏掉它，「at 晚于到期点」的规则会带着一个永不生效的
+   到期点落盘（用户设的过期时刻形同虚设）。 */
+test("到期点｜at 与到期点的三种相对位置：早于 ⇒ 建出；恰等于 / 晚于 ⇒ 死配置响亮抛", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const at = Date.now() + 600_000;
+
+  const created = await squadRuntimeService.createWakeRule(WS, {
+    workItemId: item.id,
+    kind: "at",
+    mode: "once",
+    at,
+    // 到期点比 at 晚 1ms：触发时刻严格早于到期点 ⇒ 合法（边界另一侧，防止实现写成 `>`）。
+    expiresAt: at + 1,
+  });
+  assert.equal(created.nextFireAt, at, "到期点晚于 at ⇒ 首格就是 at 本身");
+
+  // 恰等于 / 晚于到期点：到期点在未来，卡掉它的是**排期**那一侧（首格即越界）⇒ 死配置文案。
+  for (const expiresAt of [at, at - 1]) {
+    await assert.rejects(
+      () =>
+        squadRuntimeService.createWakeRule(WS, {
+          workItemId: item.id,
+          kind: "at",
+          mode: "once",
+          at,
+          expiresAt,
+        }),
+      /死配置/,
+      `expiresAt=${expiresAt}：首格不早于到期点 ⇒ 建成即永不触发，必须响亮抛`,
+    );
+  }
+  // 到期点本身已在过去：由服务面的到期点前置守卫判出（比「排期算不出下一格」更贴题的文案）。
+  await assert.rejects(
+    () =>
+      squadRuntimeService.createWakeRule(WS, {
+        workItemId: item.id,
+        kind: "at",
+        mode: "once",
+        at,
+        expiresAt: Date.now() - 1_000,
+      }),
+    /过期/,
+    "到期点已在过去 ⇒ 响亮拒，且点名是「过期」而不是排期问题",
+  );
+
+  const runtime = await createRuntime(WS);
+  assert.deepEqual(
+    runtime.wakeRuleRepo.listByWorkItem(item.id).map((rule) => rule.id),
+    [created.id],
+    "被拒的三条一行都不许落盘（只有对照组那条在库里）",
+  );
+});
+
+test("到期点｜expiresAt 已过 ⇒ 创建响亮拒且点名「过期」（不是笼统的「没有未来排期点」）", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+
+  await assert.rejects(
+    () =>
+      squadRuntimeService.createWakeRule(WS, {
+        workItemId: item.id,
+        kind: "every",
+        mode: "continuous",
+        intervalSeconds: 60,
+        expiresAt: Date.now() - 1_000,
+      }),
+    /过期/,
+    "期限已过的规则建成即永不触发：文案必须点名到期时刻（笼统文案会让人以为是排期算错了）",
+  );
+
+  const runtime = await createRuntime(WS);
+  assert.deepEqual(runtime.wakeRuleRepo.listByWorkItem(item.id), [], "不落盘");
+});
+
+test("到期点｜resume 时规则已过期 ⇒ 响亮抛且不写盘（不复活一条过期规则）", async () => {
+  const { squadRuntimeService, createRuntime, db } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  const runtime = await createRuntime(WS);
+  // 造「真实经历过的过期」：合法建出后绕过 repo 把到期点改到过去并暂停（模拟时间流逝 + 暂停态）。
+  db.prepare(
+    "UPDATE wake_rules SET expires_at = ?, next_fire_at = NULL, enabled = 0 WHERE id = ?",
+  ).run(Date.now() - 1_000, created.id);
+  const before = runtime.wakeRuleRepo.get(created.id)!;
+
+  await assert.rejects(
+    () => squadRuntimeService.resumeWakeRule(WS, { id: created.id }),
+    /过期/,
+    "恢复一条已经过期的规则 = 死动作（用户会以为它又开始跑了），必须响亮抛",
+  );
+  const after = runtime.wakeRuleRepo.get(created.id)!;
+  assert.equal(after.nextFireAt, undefined, "响亮抛时不得写盘");
+  assert.equal(after.revision, before.revision);
+  assert.equal(after.enabled, false, "开关原样（恢复没有发生）");
 });
 
 test("validateWakeRule 不过 ⇒ 响亮抛（中文 problems 原样带出），库里没有行", async () => {
@@ -297,9 +436,9 @@ test("resume：清 pausedReason + 重算为未来排期 + 重新被 listReady �
 
   // 模拟「闸暂停」的落库形态（与调度器同一写入口：casAdvance 带 pausedReason、nextFireAt 置空）。
   const initial = runtime.wakeRuleRepo.get(created.id)!;
-  assert.equal(
+  assert.deepEqual(
     runtime.wakeRuleRepo.casAdvance(created.id, initial.revision, null, initial.fireCount, "rate"),
-    true,
+    { outcome: "advanced" },
   );
   assert.equal(runtime.wakeRuleRepo.get(created.id)!.pausedReason, "rate");
   assert.deepEqual(runtime.wakeRuleRepo.listReady(FAR_FUTURE, 100), []);
@@ -361,6 +500,80 @@ test("pause / resume / list：id 不存在 ⇒ 响亮抛（静默 no-op 会让�
   const { squadRuntimeService } = await makeService();
   await assert.rejects(() => squadRuntimeService.pauseWakeRule(WS, { id: "不存在" }), /不存在/);
   await assert.rejects(() => squadRuntimeService.resumeWakeRule(WS, { id: "不存在" }), /不存在/);
+});
+
+/* CAS 未命中的**判因分格**（G2）：服务面读到现行、写盘前被并发改动，有两种成因，
+   而用户能做的复位动作不同 —— 必须给不同的话，否则「规则已被删」被说成「revision 被并发改动」，
+   用户会一直重读重试一条已经不存在的规则。判因由 repo 回读给出（`WakeAdvanceOutcome`）。 */
+test("pause 的 CAS 未命中：行被并发删除 ⇒ 文案说「已被并发删除」，不冒充版本冲突", async () => {
+  let armAfterRead = false;
+  const { squadRuntimeService, createRuntime } = await makeService({
+    wrapRuntime: (runtime) => ({
+      ...runtime,
+      wakeRuleRepo: {
+        ...runtime.wakeRuleRepo,
+        get: (id: string) => {
+          const rule = runtime.wakeRuleRepo.get(id);
+          if (rule !== null && armAfterRead) {
+            armAfterRead = false; // 只抢一次（一次并发删除）
+            assert.equal(runtime.wakeRuleRepo.remove(rule.id), true);
+          }
+          return rule;
+        },
+      },
+    }),
+  });
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  const runtime = await createRuntime(WS);
+
+  armAfterRead = true;
+  await assert.rejects(
+    () => squadRuntimeService.pauseWakeRule(WS, { id: created.id }),
+    /已被并发删除/,
+    "行已不在 ⇒ 判因是 missing：文案必须指向「规则已被删除」，而不是把它记成一次版本冲突",
+  );
+  assert.equal(runtime.wakeRuleRepo.get(created.id), null, "行确实已不存在");
+});
+
+test("pause 的 CAS 未命中：行还在但 revision 变了 ⇒ 文案说「已被并发改动」并带两侧版本", async () => {
+  let armAfterRead = false;
+  const { squadRuntimeService, createRuntime } = await makeService({
+    wrapRuntime: (runtime) => ({
+      ...runtime,
+      wakeRuleRepo: {
+        ...runtime.wakeRuleRepo,
+        get: (id: string) => {
+          const rule = runtime.wakeRuleRepo.get(id);
+          if (rule !== null && armAfterRead) {
+            armAfterRead = false; // 只抢一次（一次并发推进，模拟调度器刚 fire）
+            const advanced = runtime.wakeRuleRepo.casAdvance(
+              rule.id,
+              rule.revision,
+              rule.nextFireAt ?? null,
+              rule.fireCount,
+            );
+            assert.equal(advanced.outcome, "advanced");
+          }
+          return rule;
+        },
+      },
+    }),
+  });
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  const runtime = await createRuntime(WS);
+  const before = runtime.wakeRuleRepo.get(created.id)!;
+
+  armAfterRead = true;
+  await assert.rejects(
+    () => squadRuntimeService.pauseWakeRule(WS, { id: created.id }),
+    /CAS 未命中/,
+    "行还在、版本已变 ⇒ 判因是 fenced：这是并发冲突，文案与「已被删除」分格",
+  );
+  const after = runtime.wakeRuleRepo.get(created.id)!;
+  assert.equal(after.revision, before.revision + 1, "并发推进生效；暂停没有盖上去");
+  assert.equal(after.enabled, true, "暂停未写盘（旧行原样）");
 });
 
 test("门禁：关掉开关 ⇒ create / resume 被拒（稳定码），pause / list 仍可用", async () => {

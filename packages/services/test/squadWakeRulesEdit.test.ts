@@ -194,14 +194,14 @@ test("版本栅栏：读到写之间调度器推进了一格（revision+1）⇒ 
           const rule = runtime.wakeRuleRepo.get(id);
           if (rule !== null && armAfterRead) {
             armAfterRead = false; // 只抢一次（一次并发推进）
-            assert.equal(
+            assert.deepEqual(
               runtime.wakeRuleRepo.casAdvance(
                 rule.id,
                 rule.revision,
                 rule.nextFireAt ?? null,
                 rule.fireCount,
               ),
-              true,
+              { outcome: "advanced" },
             );
           }
           return rule;
@@ -247,7 +247,9 @@ test("保留项：编辑不改 enabled / pausedReason / fireCount（暂停中编
 
   // 造「已触发 5 次」的形态（casAdvance 是调度推进的同一写入口），再走用户暂停。
   const initial = runtime.wakeRuleRepo.get(created.id)!;
-  assert.equal(runtime.wakeRuleRepo.casAdvance(created.id, initial.revision, null, 5), true);
+  assert.deepEqual(runtime.wakeRuleRepo.casAdvance(created.id, initial.revision, null, 5), {
+    outcome: "advanced",
+  });
   await squadRuntimeService.pauseWakeRule(WS, { id: created.id });
   const paused = runtime.wakeRuleRepo.get(created.id)!;
   assert.equal(paused.enabled, false);
@@ -289,9 +291,9 @@ test("闸态保留：闸暂停（pausedReason + 排期空）中编辑 ⇒ 闸原
 
   // 模拟「闸暂停」的落库形态（与调度器同一写入口：casAdvance 带 pausedReason、排期置空）。
   const initial = runtime.wakeRuleRepo.get(created.id)!;
-  assert.equal(
+  assert.deepEqual(
     runtime.wakeRuleRepo.casAdvance(created.id, initial.revision, null, initial.fireCount, "rate"),
-    true,
+    { outcome: "advanced" },
   );
   assert.equal(runtime.wakeRuleRepo.get(created.id)!.pausedReason, "rate");
 
@@ -465,6 +467,89 @@ test("目标纪律：update / delete 把调用方给的目标原样交给 runtim
     ["/tmp/given-ws|ws-a", "/tmp/given-ws|ws-a"],
     "两次调用都必须带着调用方显式给的目标（原样透传，不挑不猜）",
   );
+});
+
+/* 到期点（G3）在编辑面的三条：**建后可改**（本项缺口的核心 —— 建后不可改等于过期时刻只能靠
+   删掉重配）、**不顺手清掉**（patch 未给 = 抄回现行，与 fireCount / enabled 同组）、
+   以及**暂停中也能拦住改到过去**（暂停中编辑不重算排期，只有服务面的到期点前置守卫能拦）。 */
+test("编辑｜到期点：patch 显式给 ⇒ 改并落 expires_at 列；未给 ⇒ 抄回现行值", async () => {
+  const { squadRuntimeService, db } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const expiresAt = Date.now() + 3_600_000;
+  const created = await squadRuntimeService.createWakeRule(WS, {
+    ...everyMinute(item.id),
+    expiresAt,
+  });
+  const rawExpiresAt = () =>
+    (
+      db.prepare("SELECT expires_at FROM wake_rules WHERE id = ?").get(created.id) as {
+        expires_at: number | null;
+      }
+    ).expires_at;
+  assert.equal(rawExpiresAt(), expiresAt, "创建时的到期点落盘（既有透传行为）");
+
+  // ① 未给 ⇒ 抄回现行：编辑配置不该顺手把到期点清掉（清掉 = 静默把过期规则变回永不过期）。
+  const kept = await squadRuntimeService.updateWakeRule(WS, {
+    id: created.id,
+    patch: everyTenSeconds,
+  });
+  assert.equal(kept.expiresAt, expiresAt, "返回值带上抄回的到期点");
+  assert.equal(rawExpiresAt(), expiresAt, "库里原样留存");
+
+  // ② 显式给 ⇒ 改。断言读**列**而不是实体：`casUpdateConfig` 不写 expires_at 的老实现
+  // 会让实体看着改了、库里没动（下一次读回又变回去）—— 那正是本项要闭合的缺口。
+  const next = expiresAt + 60_000;
+  const changed = await squadRuntimeService.updateWakeRule(WS, {
+    id: created.id,
+    patch: { ...everyTenSeconds, expiresAt: next },
+  });
+  assert.equal(changed.expiresAt, next);
+  assert.equal(rawExpiresAt(), next, "改到期点必须真的落到 expires_at 列");
+});
+
+test("编辑｜暂停中把到期点改到过去 ⇒ 响亮拒且行原样（暂停中不重算排期，只有前置守卫能拦）", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  // 用户暂停：主开关关、排期清空 ⇒ 编辑走「暂停中」那一支（**不重算排期**）。
+  await squadRuntimeService.pauseWakeRule(WS, { id: created.id });
+  const runtime = await createRuntime(WS);
+  const before = runtime.wakeRuleRepo.get(created.id)!;
+
+  await assert.rejects(
+    () =>
+      squadRuntimeService.updateWakeRule(WS, {
+        id: created.id,
+        patch: { ...everyTenSeconds, expiresAt: Date.now() - 1_000 },
+      }),
+    /过期/,
+    "暂停中编辑把到期点改到过去 ⇒ 必须响亮拒（这条路径不经过排期计算，只有前置守卫能拦）",
+  );
+
+  const after = runtime.wakeRuleRepo.get(created.id)!;
+  assert.deepEqual(after, before, "被拒的编辑不得改任何一列（含 revision 不 bump）");
+});
+
+test("编辑｜到期点卡在当前排期点之前 ⇒ 死配置响亮抛且不写盘", async () => {
+  const { squadRuntimeService, createRuntime } = await makeService();
+  const item = await makeWorkItem(squadRuntimeService);
+  const created = await squadRuntimeService.createWakeRule(WS, everyMinute(item.id));
+  const runtime = await createRuntime(WS);
+  const before = runtime.wakeRuleRepo.get(created.id)!;
+
+  await assert.rejects(
+    () =>
+      squadRuntimeService.updateWakeRule(WS, {
+        id: created.id,
+        // every 的下一格 = now + 60s，而到期点在 1 秒后 ⇒ 下一格越界 ⇒ 改后永不触发。
+        patch: { ...everyTenSeconds, expiresAt: Date.now() + 1_000 },
+      }),
+    /死配置/,
+    "改后的下一格不早于到期点 ⇒ 响亮抛（静默落盘 = 界面看着正常而永不触发）",
+  );
+
+  const after = runtime.wakeRuleRepo.get(created.id)!;
+  assert.deepEqual(after, before, "不写盘（该行保持原样）");
 });
 
 /* 守卫（单一来源）：update 路径**复用**既有的组装 / 校验 / 首格排期 / CAS 文案，

@@ -78,6 +78,35 @@ test("wakeTick 不得再定义排期计算（唯一实现在 services 的 wakeSc
   );
 });
 
+/* 调度器 `advance` 调用点的**判因分格**（G2）：`casAdvance` 未命中回的是判别联合
+   （`fenced` 行还在但版本变了 / `missing` 行已删），入口必须按因分格留痕 —— 只打一条
+   「advance skipped」会让排查时分不出「并发打架」与「规则没了」，而这两件事的处置完全不同：
+   fenced 是并发编辑（本格派发作废，要带两侧 revision 才能定位是谁改的），
+   missing 是规则被删（正常生命周期，不是异常，只该留 info）。
+   静态断言的理由与同文件其它守卫一致：这个入口是 `electronUtilityProcess.fork` 出来的，
+   测试进程里跑不起来，而「把两种情况记成同一条日志」是**源码里一眼可见**的形态。 */
+test("调度器 advance 调用点按判因分格留痕（fenced ⇒ warn / missing ⇒ info）", () => {
+  const entry = readFileSync(join(desktopSrc, "scheduler/index.ts"), "utf8");
+  // 旧的单分支形态（把结论当 boolean，只留一条 warn）必须消失。
+  assert.doesNotMatch(
+    entry,
+    /if\s*\(\s*!\s*\w+\s*\)\s*\{\s*log\("warn",/,
+    "不得再用「未命中就一条 warn」的写法：fenced 与 missing 必须分成两条",
+  );
+  assert.match(entry, /\.outcome === "fenced"/, "必须显式分格 fenced 判因");
+  assert.match(
+    entry,
+    /log\(\s*"warn",[^)]*(?:currentRevision|current=|current \$\{)/,
+    "fenced ⇒ warn，且日志要带**两侧** revision（期望的那版与行里当前的那版），否则定位不到是谁改的",
+  );
+  assert.match(entry, /\.outcome === "missing"/, "必须显式分格 missing 判因");
+  assert.match(
+    entry,
+    /log\(\s*"info",[^)]*(?:missing|removed|deleted|已删)/i,
+    "missing ⇒ info：规则被删是正常生命周期，记成 warn/error 会把正常态变成噪声",
+  );
+});
+
 /* 唤醒规则必须**每轮无条件**跑 `wakeTick.run` —— 这是本次修复在生产中生效的关键：   `fire()` 是 advance-before-post，已 fire 的规则 `next_fire_at` 已前进到未来 ⇒ 安静期里
    `listReady` 恒为空。若像基线那样「入口先按 limit 预扫一遍，为空就跳过 run」，则安静期的
    **重投与 TTL 淘汰整段永不执行**（一条 once 规则的瞬时失败会静默丢失）。所以钉住两件事：
