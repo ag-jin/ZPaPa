@@ -43,8 +43,11 @@ export function CreateDialogShell({
   };
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
-      {/* 圆角由 DialogContent 原语给出（rounded-2xl，spec §11.3 的对话框层级）。 */}
-      <DialogContent>
+      {/* 圆角由 DialogContent 原语给出（rounded-2xl，spec §11.3 的对话框层级）。
+          宽度收窄：原语默认 max-w-[calc(100%-2rem)] 近全宽，12 字段表单拉满屏过大（用户裁定
+          2026-10-09「创建智能体的弹窗过大」）；sm 起收至 2xl（672px），窄屏仍回原语全宽减边距。
+          高度封顶：长表单可滚，不顶出视口。 */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{intl.formatMessage({ id: titleId })}</DialogTitle>
           <DialogDescription>
