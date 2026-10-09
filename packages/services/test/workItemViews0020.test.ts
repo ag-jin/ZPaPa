@@ -62,12 +62,12 @@ function ledgerIds(db: DatabaseSync): string[] {
   ).map((row) => row.id);
 }
 
-test("0020｜新库：账本 21 条（0021 收尾），两张表按声明序建出、两索引就位", () => {
+test("0020｜新库：账本 22 条（0022 收尾），两张表按声明序建出、两索引就位", () => {
   const db = openDb();
   runTasksDatabaseMigrations(db);
   const ids = ledgerIds(db);
-  assert.equal(ids.length, 21, "账本应到 0021（0001–0020 + 0021）");
-  assert.equal(ids.at(-1), "0021_work_item_reactions");
+  assert.equal(ids.length, 22, "账本应到 0022（0001–0021 + 0022）");
+  assert.equal(ids.at(-1), "0022_projects");
   assert.deepEqual(
     columnNames(db, "work_item_views"),
     [...VIEW_COLUMNS],
@@ -285,12 +285,12 @@ test("0020｜老库升级：摘掉 0020 的两表两索引与账本行 ⇒ 恰�
       if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
     },
   });
-  /* 0021（工作项级 reactions，P3-R5s）落地后账本头是 0021：上报值 = 本次执行前的账本头（头部只在
-     循环之前采集一次），**不是**「补跑的是 0021」—— 补跑条数由数组长度（恰一条）钉住。 */
+  /* 0021（工作项级 reactions）与 0022（项目绑定，R-P1）落地后账本头是 0022：上报值 = 本次执行前的
+     账本头（头部只在循环之前采集一次），**不是**「补跑的是那一条」—— 补跑条数由数组长度（恰一条）钉住。 */
   assert.deepEqual(
     migrated,
-    ["0021_work_item_reactions"],
-    "老库只补跑 0020 一条（值 = 补跑前的账本头 0021）",
+    ["0022_projects"],
+    "老库只补跑 0020 一条（值 = 补跑前的账本头 0022）",
   );
   assert.deepEqual(ledgerIds(db), fullLedger);
   assert.deepEqual(columnNames(db, "work_item_views"), columnNames(full, "work_item_views"));

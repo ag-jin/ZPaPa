@@ -815,3 +815,77 @@ export const WORK_ITEM_REACTIONS_SQL = `
   CREATE INDEX IF NOT EXISTS idx_work_item_reactions_item
     ON work_item_reactions(workspace_key, work_item_id, created_at);
 `;
+
+/* 0022（工作项项目绑定 · 服务面轮 R-P1）：建 `projects`（workspace 级实体）+ `work_items` 加两列。
+   取材 `reports/2026-10-09-multica-issue-project-binding.md` A1（multica `034_projects.up.sql:2-14`
+   / `035_project_priority.up.sql:1` / `166_project_dates.up.sql:8-10`），逐条取舍：
+
+   · **`name` 对应 multica 的 `title`**（NOT NULL）：本仓工作项用 `title`，项目侧定名 `name`
+     （交付报告与 UI 轮按此名对接）；两者语义同一（可读标识），不复制两份。
+   · **`short_code` 是 ZPaPa 加法**（multica 没有项目短码 —— 它的编号前缀是 **workspace** 级
+     `issue_prefix`，`server/internal/handler/handler.go:1169` `issuePrefixForWorkspace`）。
+     用户裁定「编号换项目短码」⇒ 短码是本仓的编号前缀来源，2-8 位大写字母数字、workspace 内唯一
+     （唯一索引 = 存储层兜底；服务面是响亮的第一道）。形状与长度**写进 DDL CHECK**：短码是编号的
+     可见部分，形状漂移会直接改用户看到的编号（不是内部枚举），故最后一道闸放在存储层。
+   · **`status` 闭集与 DDL 默认值照 multica 逐字**：`planned|in_progress|paused|completed|cancelled`
+     + `DEFAULT 'planned'`。CHECK 与 multica 同款（`034:8-9`）。
+   · **`priority` 可空、无 CHECK**：multica 是 `NOT NULL DEFAULT 'none'`（`035:1`），ZPaPa 的
+     「未设置」统一是 NULL（不设显式 `none` 键 —— 与工作项优先级同一条纪律），闭集判据在 shared
+     纯函数（工作项优先级闭集即 multica 的 `urgent|high|medium|low` 四档），写入口响亮拒闭集外值。
+   · **`start_date` / `due_date` 可空 TEXT**：日历日（`YYYY-MM-DD`，无时刻无时区），与工作项
+     `start_date`/`due_date` 同一形状与同一条理由（见 0018 / shared `isWorkItemDateOnly`）。
+   · **`description` / `icon` 可空**：与 multica 同列。
+   · **不复制 `lead_type` / `lead_id`**（multica `034:10-11`）：ZPaPa v1 无人类名册与项目负责人语义，
+     列上没有任何写者/读者 —— 加了就是一列永远 NULL 的死列（要用时再迁移，登记在交付报告）。
+   · **不建 `workspace_id` 外键**（multica 指向 workspace 表）：本仓没有 workspace 表，
+     `workspace_key` 是身份键（C14 口径），同其余各表。
+   · multica 的读模型计数（`issue_count` / `done_count` / `resource_count`，前端 `Project` 类型）
+     是**派生值**，不入库（v1 不消费；需要时由查询算）。
+
+   只加新对象，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020/0021。 */
+export const PROJECT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS projects (
+    id            TEXT PRIMARY KEY,
+    workspace_key TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    short_code    TEXT NOT NULL
+                  CHECK (length(short_code) BETWEEN 2 AND 8
+                         AND short_code NOT GLOB '*[^A-Z0-9]*'),
+    description   TEXT,
+    icon          TEXT,
+    status        TEXT NOT NULL DEFAULT 'planned'
+                  CHECK (status IN ('planned', 'in_progress', 'paused', 'completed', 'cancelled')),
+    priority      TEXT,
+    start_date    TEXT,
+    due_date      TEXT,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_short_code
+    ON projects(workspace_key, short_code);
+`;
+
+/* 0022 的第二半：`work_items` 加两列（只加列，不改既有列/表；SQL 冻结后不得再改）。
+
+   · **`project_id` 可空**：multica `034_projects.up.sql:19` 同样是可空列
+     （`ALTER TABLE issue ADD COLUMN project_id UUID REFERENCES project(id) ON DELETE SET NULL`）：
+     「无项目」是**显式合法状态**（过滤/看板/选择器三层都显式表达，证据 A1）。
+     **不建外键**：本仓既定的同一条纪律（工作项只归档不硬删，外键会让归档/删除路径误伤）——
+     「删项目 ⇒ 挂接置 NULL」由服务层做（`workItemProjectRepo.remove` 的 UPDATE），不是级联。
+   · **`identifier_prefix` = 短码快照**（TEXT 可空）：编号显示 = `{短码}-{序号}`，
+     无前缀（NULL）时保持既有 `#{序号}` 形态。
+     **序号语义不动**：`identifier_seq` 仍是**每 workspace** 一条序列（0018 的 `MAX+1` 生成式一字不改）。
+     —— 与 multica 逐字对齐：multica 的 `issue.number` 就是**每 workspace** 单调计数
+     （`server/pkg/db/queries/issue.sql:665` 注释 "number is a per-workspace monotonic counter"、
+     `GetIssueByNumber` 按 `(workspace_id, number)` 取行），编号字符串 = `{workspace issue_prefix}-{number}`
+     （`server/internal/handler/issue.go:478-479`）**在读取时拼**。本仓把「前缀」这一半**入库成快照**：
+     前缀来源是**项目短码**（可删可改绑），读时现拼会让历史编号随项目变动而变；快照让编号成为
+     既成事实（与 0018「identifier 是永久标签」同一条纪律）。
+     **改绑 / 清绑写快照，删项目不动快照**：`setWorkItemProject` 是显式绑定决定（改 ⇒ 换短码、
+     清 ⇒ NULL）；删项目只由服务层把 `project_id` 置 NULL（multica `ON DELETE SET NULL` 的等价物），
+     已签发的编号**不重写** —— multica 删项目也不会改既有 issue 的编号字符串。
+   · 回填：**零回填**（存量行没有项目事实，NULL = 未设置，不编造前缀）。 */
+export const WORK_ITEM_PROJECT_BINDING_SQL = `
+  ALTER TABLE work_items ADD COLUMN project_id TEXT;
+  ALTER TABLE work_items ADD COLUMN identifier_prefix TEXT;
+`;

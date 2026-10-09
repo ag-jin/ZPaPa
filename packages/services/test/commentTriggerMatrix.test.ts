@@ -1045,6 +1045,14 @@ test("迁移 0009 起的老库补跑（退到 0008 之前形态）：全部补�
       "DROP INDEX idx_work_item_reactions_item",
       "DROP TABLE work_item_reactions",
     ],
+    // 0022（项目绑定 · 服务面轮 R-P1）：projects 一表一索引 + work_items 两列（反向 DDL 先撤
+    // 索引/表、再按 ALTER 逆序逐列 DROP）。列级 DDL 不幂等：漏登记时本用例的自适配守卫直接红。
+    "0022_projects": [
+      "DROP INDEX idx_projects_short_code",
+      "DROP TABLE projects",
+      "ALTER TABLE work_items DROP COLUMN identifier_prefix",
+      "ALTER TABLE work_items DROP COLUMN project_id",
+    ],
   };
   const fromIndex = fullLedger.findIndex((row) => row.id === "0009_squad_run_queue");
   /* 自适配守卫：从 0009 起的**每一条**账本迁移都必须登记了反向 DDL，否则退库不完整

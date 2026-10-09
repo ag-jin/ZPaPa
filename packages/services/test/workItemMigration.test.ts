@@ -157,6 +157,20 @@ const LATEST_MIGRATION_ARTIFACTS: Readonly<Record<string, readonly string[]>> = 
     "DROP TABLE work_item_view_prefs",
     "DROP TABLE work_item_views",
   ],
+  // 0021（工作项级 reactions，P3-R5s）：一表一索引（反向 DDL 先索引后表，同 0016/0017/0019/0020 的序）。
+  "0021_work_item_reactions": [
+    "DROP INDEX idx_work_item_reactions_item",
+    "DROP TABLE work_item_reactions",
+  ],
+  // 0022（项目绑定 · 服务面轮 R-P1）：一表一索引 + work_items 两列（列级追加 ⇒ 反向 DDL 先撤
+  // 索引/表、再按 ALTER 逆序逐列 DROP）。**这两列必须登记**：`ALTER TABLE ADD COLUMN` 不幂等，
+  // 漏登记时「退回上一版发布再补跑」会撞 duplicate column（本用例的自适配守卫会直接红）。
+  "0022_projects": [
+    "DROP INDEX idx_projects_short_code",
+    "DROP TABLE projects",
+    "ALTER TABLE work_items DROP COLUMN identifier_prefix",
+    "ALTER TABLE work_items DROP COLUMN project_id",
+  ],
 };
 
 /* 0016（#7 交付物 D1a）的列集：设计报告 §3.2 的表形状逐字抄录（不在这里用代码重算）。
@@ -693,9 +707,9 @@ test("0019 订阅表：列集与两索引齐备；唯一键不含 reason；重�
   assert.equal(count.n, 2, "不同工作项各自一行");
 
   const ids = ledger(db).map((row) => row.id);
-  /* 0021（工作项级 reactions，P3-R5s）落地后账本到 21：本断言随追加同步（与 0016/0017/0018 的登记
-     纪律同款）。「最后一条是谁」刻意不钉：那是各迁移专条用例的事，0019 只需证明自己在账本里。 */
-  assert.equal(ids.length, 21, "账本 0001..0021 恰 21 条");
+  /* 0022（项目绑定，R-P1）落地后账本到 22：本断言随追加同步（与 0016/0017/0018 的登记纪律同款）。
+     「最后一条是谁」刻意不钉：那是各迁移专条用例的事，0019 只需证明自己在账本里。 */
+  assert.equal(ids.length, 22, "账本 0001..0022 恰 22 条");
   assert.ok(ids.includes("0019_work_item_subscribers"), "0019 在账本里");
 
   // DDL 幂等：绕开账本把常量再执行一遍（IF NOT EXISTS 生效，形状一字不改）。

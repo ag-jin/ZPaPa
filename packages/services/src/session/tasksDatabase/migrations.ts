@@ -6,6 +6,7 @@ import {
   COMMENT_DISPATCH_RECEIPT_SQL,
   INBOX_ITEM_SCHEMA,
   OFF_PEAK_SCHEMA,
+  PROJECT_SCHEMA,
   SQUAD_RUN_CAUSE_SQL,
   SQUAD_RUN_QUEUE_SQL,
   SQUAD_RUN_USAGE_SQL,
@@ -17,6 +18,7 @@ import {
   TASK_INDEX_SCHEMA,
   WAKE_RULE_SCHEMA,
   WORK_ITEM_DELIVERABLE_SQL,
+  WORK_ITEM_PROJECT_BINDING_SQL,
   WORK_ITEM_PULL_REQUEST_SQL,
   WORK_ITEM_REACTIONS_SQL,
   WORK_ITEM_SCHEMA,
@@ -189,6 +191,14 @@ const definitions = [
     id: "0021_work_item_reactions",
     checksumInput: [WORK_ITEM_REACTIONS_SQL],
   },
+  /* 0022（工作项项目绑定 · 服务面轮 R-P1）：建 `projects` 一张新表 + 一条唯一索引
+     （短码 workspace 内唯一），并给 `work_items` 加两列（project_id 可空 + identifier_prefix 快照）。
+     只加新对象与列，不改既有列/表——checksum 纪律同 0008/0009/0010/0016/0017/0019/0020/0021。
+     取舍（序号语义不动 / 前缀快照 / 无外键 / 零回填）逐条写在两个 SQL 常量的注释里。 */
+  {
+    id: "0022_projects",
+    checksumInput: [PROJECT_SCHEMA, WORK_ITEM_PROJECT_BINDING_SQL],
+  },
 ] as const;
 
 export function runTasksDatabaseMigrations(
@@ -260,7 +270,10 @@ export function runTasksDatabaseMigrations(
       else if (migration.id === "0019_work_item_subscribers") db.exec(WORK_ITEM_SUBSCRIBER_SQL);
       else if (migration.id === "0020_work_item_views") db.exec(WORK_ITEM_VIEWS_SQL);
       else if (migration.id === "0021_work_item_reactions") db.exec(WORK_ITEM_REACTIONS_SQL);
-      else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
+      else if (migration.id === "0022_projects") {
+        db.exec(PROJECT_SCHEMA);
+        db.exec(WORK_ITEM_PROJECT_BINDING_SQL);
+      } else db.exec(OFFICIAL_GLM_SELECTION_MIGRATION_SQL);
       migrationFacts.executedCount++;
       db.prepare("INSERT INTO tasks_schema_migration VALUES(?,?,?)").run(
         migration.id,

@@ -90,12 +90,12 @@ function insertReaction(db: DatabaseSync, over: Record<string, string | number> 
   );
 }
 
-test("0021｜新库：账本 21 条（0021 收尾），work_item_reactions 逐列建出、查询索引就位", () => {
+test("0021｜新库：账本 22 条（0022 收尾），work_item_reactions 逐列建出、查询索引就位", () => {
   const db = openDb();
   runTasksDatabaseMigrations(db);
   const ids = ledgerIds(db);
-  assert.equal(ids.length, 21, "账本应到 0021（0001–0020 + 0021）");
-  assert.equal(ids.at(-1), "0021_work_item_reactions");
+  assert.equal(ids.length, 22, "账本应到 0022（0001–0021 + 0022）");
+  assert.equal(ids.at(-1), "0022_projects");
   assert.deepEqual(
     columnNames(db, "work_item_reactions"),
     [...REACTION_COLUMNS],
@@ -207,7 +207,7 @@ test("0021｜老库升级：摘掉 0021 的表/索引与账本行 ⇒ 恰补跑 
       if (phase === "migrating") migrated.push(facts.lastAppliedMigrationId ?? null);
     },
   });
-  assert.deepEqual(migrated, ["0020_work_item_views"], "老库只补跑 0021 一条");
+  assert.deepEqual(migrated, ["0022_projects"], "老库只补跑 0021 一条（值 = 补跑前的账本头 0022）");
   assert.deepEqual(ledgerIds(db), fullLedger);
   assert.deepEqual(
     columnNames(db, "work_item_reactions"),
