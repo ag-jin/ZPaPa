@@ -19,20 +19,22 @@
  *   J2 已知 work：ACK 就是启动成功的持久证据（core 只对真起了后台的任务写它）。
  *   J3 无终态：读面里既没有结果唤醒轮（真实终局），也没有 outcome entry。
  *   J4 本进程不认领：本进程 runtime 投影里该 workId 不是 running（bash 的 in-process
- *      registry 事件归约；激活尾部恒为空，跨进程违例时由它保底不误杀）。
+ *      registry 事件归约）。这是**同源防御纵深**：生产挂点上投影来自刚 resume 的 runtime
+ *      且 hydration 尚未跑，恒为空 ⇒ 该分支在生产不生效；真正承担跨进程违例兜底的是 J5。
  *   J5 过宽容期：ACK 的持久落库时间距今 > {@link BACKGROUND_TASK_ORPHAN_GRACE_MS}。
  *
  * 三条边界（对齐 `subagent-orphan-reconcile.ts` 与 `dynamic-workflow-run-reconcile.ts`）：
  *   - **只收敛真孤儿**：本进程在跑、或宽容期内仍可能启动的 work 一律跳过——宁可不收敛
- *     也不误杀（契约外双进程违例的防御靠「本进程认领 + 宽容期」）；
+ *     也不误杀（契约外双进程违例的防御靠挂点位置 + J5 宽容期）；
  *   - **不合成父会话事件**（不写 `BackgroundTaskCompleted`）：事件日志的契约是「引擎发过
  *     什么」，收敛者只落**持久事实**（`background_task_outcome` entry）；投影的收口由读面
  *     在重建时按该事实合成（见 `transcript-hydration` 的收敛合成器）；
  *   - **失败只降级 warn**（N9），绝不拖垮激活。
  *
  * J5 对 bash 的诚实边界：transcript 在启动后不再增长（输出写文件），所以宽容期只能回答
- * 「启动多久了」，不能证明进程活着；防误杀的主力是 J4（本进程认领）与挂点位置，宽容期只
- * 是给双进程违例兜底（与子 agent 的 J5 同款取舍）。
+ * 「启动多久了」，不能证明进程活着；防误杀的主力是挂点位置（激活尾部 = 本 runtime 对该会话
+ * 零个在飞 work 的时刻），跨进程违例（另一进程仍在跑同一 work）由 J5 兜底——超期后仍会被收敛，
+ * 这是与子 agent J5 同款的取舍；J4 读的是同一份进程内 registry，生产挂点下不承担兜底。
  */
 
 import type {
