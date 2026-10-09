@@ -17,8 +17,10 @@ import {
       两条都会「查不到」而撞唯一键，第二条会**响亮失败**（幂等塌掉）。
    ② **删除不存在 = 无变化、不报错**（multica `changed=false` 且 `204`）：重投/连点撤销不是错误。
    ③ **读 = 插入序（`created_at ASC`）**，不按热度也不按 id 重排（多端/多次刷新看到的次序不得抖动）。
-   ④ **存储不白名单**：emoji 是非空字符串（自定义 token / 超长串原样存取），唯一的存储层闸是
-      迁移 0021 的 `CHECK (length(emoji) > 0)`；服务面的宽松长度护栏是另一件事（见服务面用例）。 */
+   ④ **存储不白名单**：emoji 是非空字符串（自定义 token / 超长串原样存取），DDL 里唯一的约束是
+      迁移 0021 的 `CHECK (length(emoji) > 0)`；正常路径的空串闸在服务面 `assertEmoji`（写之前拒、
+      零落盘），而 `INSERT OR IGNORE` **连 CHECK 违规也一起吞** ⇒ 直插 repo 的空串由「回读为空」
+      响亮抛兜底（钉在本文件最后一条用例里）。 */
 
 const WS = "ws-a";
 const human = (id: string) => ({ kind: "human" as const, id });
@@ -157,5 +159,23 @@ test("listByWorkItem｜存储不白名单：自定义 token / 超长串原样读
     /author_kind|robot/,
     "非法主体类型读回必须响亮抛（同 0010 评论 reactions 的读回口径）",
   );
+  db.close();
+});
+
+/* 空 emoji 直插 repo 的**真实机制**（T-P3-V 复验收口）：`INSERT OR IGNORE` **连 CHECK 违规也
+   一起吞**（`changes()=0` 静默跳过，不抛 `CHECK constraint failed`），响亮抛的是随后按五元组
+   回读为空 —— 回读兜底，而不是「插入即抛」。
+   正常写路径的空串闸在**服务面** `assertEmoji`（写之前拒、零落盘，见服务面用例 B1）；
+   本用例钉的是 repo 被单独调用（绕过服务面）时的兜底行为。
+   变异：把 `INSERT OR IGNORE` 换成 `INSERT`（或「先查后插」，想「空串被 CHECK 响亮拒绝」）
+   ⇒ 这里必红 —— 抛的是 CHECK 错误，不再是读回兜底的「读回为空」。 */
+test("add｜空 emoji 直插 repo：`INSERT OR IGNORE` 把 CHECK 违规一起吞（changes=0 静默），响亮抛的是随后的回读空", () => {
+  const { db, repo } = makeRepo();
+  assert.throws(
+    () => add(repo, { id: "r-empty", emoji: "" }),
+    /读回为空/,
+    "空串不在这里被 CHECK 抛：IGNORE 连 CHECK 违规一起忽略（changes=0），抛的是回读兜底",
+  );
+  assert.equal(rawCount(db), 0, "CHECK 违规的行没有落库（IGNORE 吞掉的是这一行的写入）");
   db.close();
 });

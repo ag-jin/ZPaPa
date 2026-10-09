@@ -20,9 +20,13 @@ import type { AuthorRef } from "./workItemCommentRepo.js";
       （multica `ListIssueReactions` 同款），不按热度重排、也不按 id 整表重排 —— 后者的表现是
       界面次序随存储引擎/并发写入次序抖动，看起来像「有人在动数据」。同刻行用 `id ASC` 做
       tie-break（插入序在同刻下不可判定，选一条**确定**的规则，不留给引擎）。
-   ④ **存储不白名单**：emoji 就是非空字符串（自定义 token / 超长串原样存取），唯一的存储层闸是
+   ④ **存储不白名单**：emoji 就是非空字符串（自定义 token / 超长串原样存取），DDL 里唯一的约束是
       迁移 0021 的 `CHECK (length(emoji) > 0)` —— 白名单在 UI 层（快捷表情集是**呈现**），
       写进 DDL 会让「放开完整 emoji picker」变成一次数据迁移。长度护栏在服务面（宽松上限）。
+      **这条 CHECK 不是写路径的闸**：正常路径的空串/超长由服务面 `assertEmoji` 在写之前拒
+      （零落盘）；而 `INSERT OR IGNORE` **连 CHECK 违规也一起吞**（`changes=0` 静默跳过，不抛
+      `CHECK constraint failed`），绕过服务面直插 repo 的空串，由随后按五元组回读为空**响亮抛**兜底
+      （真实机制钉在 repo 用例里）。
 
    主体（`author`）复用协作文档的 `AuthorRef`（`human | agent | system`）：读回非法值**响亮抛**
    ——聚合的第一格判据就是 `author_kind`（`reactedByMe` 必须带 kind 判断），一个无法解释的 kind
@@ -121,7 +125,10 @@ export function createWorkItemReactionRepo(db: DatabaseSync): WorkItemReactionRe
         input.emoji,
       ) as unknown as WorkItemReactionRow | undefined;
     if (!row) {
-      // 不可达：`INSERT OR IGNORE` 之后该五元组必然有一行（刚插入的，或冲突命中的既存行）。
+      /* 兜底闸：`INSERT OR IGNORE` 之后该五元组本该有一行（刚插入的，或冲突命中的既存行）。
+         已知的可达路径只有一条——**空 emoji**（见 `add`：IGNORE 连 CHECK 违规一起吞，changes=0），
+         本抛即直插 repo 时的响亮兜底；常规写路径不可达（服务面 `assertEmoji` 在写之前就拒，
+         消息里的「不可达态」按此口径）。 */
       throw new Error(
         `work_item_reactions 读回为空（workspace=${input.workspaceKey}, workItem=${input.workItemId}, ` +
           `author=${input.author.kind}:${input.author.id}, emoji=「${input.emoji}」）：不可达态，须查库。`,
@@ -149,7 +156,9 @@ export function createWorkItemReactionRepo(db: DatabaseSync): WorkItemReactionRe
         );
       /* `changes===1` 才是真插入；命中唯一键冲突时 `INSERT OR IGNORE` 静默跳过（changes=0）——
          两种情形都回读同一行，差别只在 `inserted`（显式契约，见文件头第 ① 条）。
-         空 emoji 不在这里拦：那是 DDL 的 CHECK，插入即抛（响亮，不静默跳过）。 */
+         空 emoji 不在这里拦：`INSERT OR IGNORE` **连 CHECK 违规也一起忽略**（changes=0，静默跳过、
+         不抛 CHECK），随后回读找不到行 ⇒ 由 `readOne` 的「读回为空」响亮抛兜底（用例钉住）。
+         正常写路径的空串闸在服务面 `assertEmoji`（写之前拒，零落盘，见文件头第 ④ 条）。 */
       return { inserted: result.changes === 1, record: readOne(input) };
     },
 

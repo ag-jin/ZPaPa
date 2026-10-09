@@ -540,6 +540,28 @@ test("键：本轮新增恰 2 枚且两语成对（其余复用既有键）", ()
       `${key} 的占位符两语必须一致`,
     );
   }
+  /* 命名空间集合锁（对齐 R3/R5u 的 deepEqual 形态）：两枚新键落在两个命名空间 ——
+     quickCreate.open 与 R1 的 placeholder 同属 quickCreate.*（该空间此刻恰这两枚）；
+     sheet.close 独占 sheet.*。第三枚（越界加键）或遗留裸 key ⇒ 这里红。 */
+  for (const [name, locale] of [
+    ["zh-CN", zhCN],
+    ["en-US", enUS],
+  ] as const) {
+    assert.deepEqual(
+      Object.keys(locale)
+        .filter((key) => key.startsWith("squad.workItems.quickCreate."))
+        .sort(),
+      ["squad.workItems.quickCreate.open", "squad.workItems.quickCreate.placeholder"],
+      `${name} 的 quickCreate.* 键集必须恰等于两处声明（R1 的 placeholder + 本轮的 open）`,
+    );
+    assert.deepEqual(
+      Object.keys(locale)
+        .filter((key) => key.startsWith("squad.workItems.sheet."))
+        .sort(),
+      ["squad.workItems.sheet.close"],
+      `${name} 的 sheet.* 键集必须恰等于本轮声明（多 = 越界加键，少 = 用了裸 key）`,
+    );
+  }
   for (const key of [
     "squad.workItems.peek.title",
     "squad.workItems.peek.openDetail",

@@ -522,6 +522,20 @@ test("键：本轮新增恰 4 枚且两语成对；复用的既有键两语齐�
       `${key} 的占位符两语必须一致`,
     );
   }
+  /* 命名空间集合锁（对齐 R3/R5u 的 deepEqual 形态）：`squad.workItems.peek.*` 下的键集必须逐枚
+     等于本轮清单 —— 多 = 越界加键（有测试没跟上的新文案），少 = 用了裸 key。 */
+  for (const [name, locale] of [
+    ["zh-CN", zhCN],
+    ["en-US", enUS],
+  ] as const) {
+    assert.deepEqual(
+      Object.keys(locale)
+        .filter((key) => key.startsWith("squad.workItems.peek."))
+        .sort(),
+      [...added].sort(),
+      `${name} 的 peek.* 键集必须与清单逐枚一致（多 = 越界加键，少 = 用了裸 key）`,
+    );
+  }
   for (const key of [
     "squad.workItemDetail.loading",
     "squad.workItemDetail.loadFailed",

@@ -227,6 +227,21 @@ test("键：本轮新增恰 1 枚且两语成对；复用的既有键两语齐�
       `${key} 的占位符两语必须一致`,
     );
   }
+  /* 命名空间集合锁（对齐 R3/R5u 的 deepEqual 形态）：`squad.workItems.quickCreate.*` 下此刻
+     恰有两处声明 —— 本轮这枚 placeholder + R4 窄屏触发钮的 open。任何第三枚（越界加键：
+     加了文案却没跟任何清单）⇒ 这里红；少一枚（界面上出现裸 key）同样红。 */
+  for (const [name, locale] of [
+    ["zh-CN", zhCN],
+    ["en-US", enUS],
+  ] as const) {
+    assert.deepEqual(
+      Object.keys(locale)
+        .filter((key) => key.startsWith("squad.workItems.quickCreate."))
+        .sort(),
+      [...added, "squad.workItems.quickCreate.open"].sort(),
+      `${name} 的 quickCreate.* 键集必须恰等于两处声明（placeholder 属本轮、open 属 R4；越界即红）`,
+    );
+  }
   for (const key of [
     "squad.common.title",
     "squad.common.parent",
