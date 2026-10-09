@@ -398,6 +398,14 @@ function nonNegativeInteger(value: number, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
+/** 事件载荷里的时间事实（Date）→ 毫秒；缺席/畸形回 undefined，由调用方决定兜底。 */
+function dateMs(value: unknown): number | undefined {
+  if (!(value instanceof Date)) return undefined;
+  const ms = value.getTime();
+  // 0 是「没带时间」的旧写入形态（缺省 Date 占位），不是 1970 年的任务。
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
 interface FileToolInputPreviewState {
   lastPublishedAt: number | null;
   pendingAppend: string;
@@ -4234,6 +4242,9 @@ export class ProductProjection {
       cancellable?: boolean;
       blocked?: boolean;
       childSessionId?: string;
+      /** 快照级真实起止（Bash 快照来自执行适配器）；缺席时退回事件时刻。 */
+      startedAt?: Date;
+      completedAt?: Date;
     };
     const workId = payload.taskId;
     if (!workId) return [];
@@ -4273,13 +4284,19 @@ export class ProductProjection {
       existing?.title ||
       payload.toolName ||
       workId;
+    // 起止时间的真实来源是 core 追踪器放在 payload 上的快照事实（Bash 快照的 startedAt/
+    // completedAt 来自执行适配器）。事件时刻只是兜底：冷恢复合成的事件、以及旧宿主缺该
+    // 字段时，行时间仍须有值——但拿合成事件时刻冒充真实起止，面板时长就会量出会话年龄
+    // （与 transcript-hydration 的 source timestamp 纪律同一件事）。
+    const startedAtMs = dateMs(payload.startedAt) ?? this.ms(event);
+    const endedAtMs = dateMs(payload.completedAt) ?? this.ms(event);
     const next: BackgroundWorkSummary = {
       workId,
       kind,
       title,
       status,
-      startedAt: existing?.startedAt ?? this.ms(event),
-      ...(status === "running" ? {} : { endedAt: this.ms(event) }),
+      startedAt: existing?.startedAt ?? startedAtMs,
+      ...(status === "running" ? {} : { endedAt: endedAtMs }),
       ...(typeof payload.cancellable === "boolean"
         ? { cancellable: payload.cancellable }
         : existing?.cancellable !== undefined

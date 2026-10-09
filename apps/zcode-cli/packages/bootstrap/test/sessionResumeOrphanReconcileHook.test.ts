@@ -24,6 +24,7 @@ import {
   type SessionStorePort,
 } from "@zcode/contracts";
 import { SESSION_ENTRY_SUBAGENT_OUTCOME } from "../src/zcode-protocol/subagent-session-query.js";
+import { SESSION_ENTRY_BACKGROUND_TASK_OUTCOME } from "../src/zcode-protocol/background-task-session-query.js";
 import {
   ProtocolRequestError,
   type ZCodeProtocolAgentServerContext,
@@ -284,5 +285,98 @@ test("挂点：收敛读面失败 ⇒ 只降级 warn，激活照常返回、不�
   assert.ok(
     state.warnings.includes("zcode_protocol.subagent.orphan_reconcile_failed"),
     "失败必须留下结构化 warn（静默吞掉就无从观测）",
+  );
+});
+
+// ── 第二个收敛面：后台 Bash work（同一次接管） ────────────────────────────────────────
+//
+// 子 agent 的孤儿收敛挂在同一处，但 bash work 没有 child 会话：持久事实是父 transcript 里的
+// launch ACK + 结果唤醒轮，收敛 entry 落**父会话**。本用例与上面三条同款，钉住「接管尾部
+// 两个收敛面都在跑」——把 bash 那一行调用删掉，下面这条必红。
+
+const BASH_WORK_ID = "exec_resume_hook_1111-4222-8333-444444444444";
+const BASH_TOOL_CALL_ID = "call_resume_hook_bash";
+
+/** 父 transcript：只有一条后台 Bash launch ACK（无结果唤醒轮 ⇒ 无持久终态）。 */
+function bashBackgroundMessages(): MessageWithParts[] {
+  return [
+    {
+      info: {
+        id: "msg_resume_hook_bash_user",
+        role: "user",
+        time: { created: RECENT - HOUR },
+        semantics: {
+          origin: "real_user",
+          kind: "user_prompt",
+          uiVisibility: "visible",
+          providerVisibility: "visible",
+          transcriptVisibility: "visible",
+        },
+        anchor: { turnId: "turn_resume_hook_bash", origin: "realUser" },
+      },
+      parts: [{ id: "part_resume_hook_bash_user", type: "text", text: "跑个长任务" }],
+    },
+    {
+      info: {
+        id: "msg_resume_hook_bash_assistant",
+        role: "assistant",
+        parentID: "msg_resume_hook_bash_user",
+        time: { created: RECENT - HOUR + 100, completed: RECENT - HOUR + 200 },
+        finish: "tool-calls",
+      },
+      parts: [
+        {
+          id: "part_resume_hook_bash",
+          type: "tool",
+          callID: BASH_TOOL_CALL_ID,
+          tool: "Bash",
+          state: {
+            status: "completed",
+            input: {
+              command: "sleep 100000",
+              description: "长跑终端",
+              run_in_background: true,
+            },
+            output: `Command running in background with ID: ${BASH_WORK_ID}. Output is being written to: /tmp/${BASH_WORK_ID}.log.`,
+            time: { start: RECENT - HOUR + 150, end: RECENT - HOUR + 200 },
+          },
+        },
+      ],
+    } as unknown as MessageWithParts,
+  ];
+}
+
+/** 只有父会话 + 后台 Bash ACK 的 store 场景（无 child 会话、无终态）。 */
+function createBashState(): HarnessState {
+  const state: HarnessState = {
+    sessions: new Map(),
+    messages: new Map(),
+    entries: new Map(),
+    saves: [],
+    warnings: [],
+  };
+  state.sessions.set(
+    PARENT_SESSION_ID,
+    sessionInfo({ id: PARENT_SESSION_ID, taskType: "interactive", updated: RECENT }),
+  );
+  state.messages.set(PARENT_SESSION_ID, bashBackgroundMessages());
+  return state;
+}
+
+test("挂点：接管尾部同时收敛后台 Bash work（entry 落父会话、幂等键按 workId）", async () => {
+  const state = createBashState();
+  const context = createContext(state);
+
+  const activated = await activateSessionForResume(context, { sessionId: PARENT_SESSION_ID });
+
+  assert.equal(context.sessions.get(PARENT_SESSION_ID), activated.record);
+  assert.equal(state.saves.length, 1, "接管尾部必须收敛后台 Bash 孤儿：删掉那行调用本用例必红");
+  assert.equal(state.saves[0]?.sessionID, PARENT_SESSION_ID, "bash 无 child：entry 落父会话");
+  assert.equal(state.saves[0]?.type, SESSION_ENTRY_BACKGROUND_TASK_OUTCOME);
+  assert.equal(state.saves[0]?.id, `background-task-outcome:${BASH_WORK_ID}`);
+  assert.equal(
+    (state.entries.get(PARENT_SESSION_ID) ?? []).length,
+    1,
+    "entry 是可读的终态补洞事实（幂等键覆盖写）",
   );
 });

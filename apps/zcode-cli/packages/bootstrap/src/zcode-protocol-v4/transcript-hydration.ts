@@ -193,6 +193,21 @@ function intervalEndOrStartMs(time: { start: number } & Partial<{ end: number }>
   return finiteTimeMs(time.end) ?? finiteTimeMs(time.start);
 }
 
+/**
+ * tool part 上的真实起止时间（持久化事实）。冷恢复合成事件必须带它当 source timestamp：
+ * `push` 的兜底是 `baseMs + seq`（会话首推时刻 + 序号），把它当行时间会让「切走再切回」
+ * 之后的面板时长（`now - startedAt`）量出整个会话的年龄——正是 2199 分钟级乱时长的来源。
+ * 事件全序仍由 sequenceNumber 裁决，时间戳只服务展示事实（同 `synthesizeTextPart` 的注）。
+ */
+function toolPartIntervalMs(
+  part: Extract<MessagePart, { type: "tool" }>,
+  which: "start" | "end",
+): number | undefined {
+  if (!("time" in part.state)) return undefined;
+  if (which === "start") return finiteTimeMs(part.state.time.start);
+  return "end" in part.state.time ? finiteTimeMs(part.state.time.end) : undefined;
+}
+
 function partEndAtMs(part: MessagePart): number | undefined {
   if (part.type === "reasoning") {
     return finiteTimeMs(part.time?.end) ?? finiteTimeMs(part.time?.start);
@@ -788,6 +803,7 @@ function synthesizeSubagentLifecycle(
   resolution: SubagentLifecycleResolution,
   push: PushEvent,
   turnId: string,
+  sourceTimes?: { startMs?: number; endMs?: number },
 ): void {
   const agentId = info.agentId ?? `subagent-${turnId}`;
   // 后台 spawn 必须与 live 同形带 background：渲染层（conversationTurnRenderUnits）
@@ -807,6 +823,9 @@ function synthesizeSubagentLifecycle(
       ...backgroundField,
     },
     turnId,
+    // spawn part 的真实启动时间：面板 Agent 行的「已运行」按 now - row.startedAt 算，
+    // 用合成时间（base+seq）会量出会话年龄而不是任务时长。
+    sourceTimes?.startMs,
   );
   if (!resolution.status) return;
   push(
@@ -823,6 +842,8 @@ function synthesizeSubagentLifecycle(
       ...backgroundField,
     },
     turnId,
+    // 终态时间同样取持久化 part 的 end；读不到时退回 start（宁可用启动时刻也不编 time）。
+    sourceTimes?.endMs ?? sourceTimes?.startMs,
   );
 }
 
@@ -842,6 +863,11 @@ function synthesizeToolPart(
   const persistedMetadata = parseCompletedToolPartMetadata(
     "metadata" in part.state ? part.state.metadata : part.metadata,
   );
+  // part 的真实起止时间（tool part 持久化里有 created/completed 级事实）：三段合成事件
+  // 一律以它当 source timestamp。否则行的 createdAt（ToolCallScheduled 事件时刻）与
+  // startedAt（ToolCallStarted 事件时刻）都取到 base+seq 合成值，面板/终端行的时间全错。
+  const partStartedAtMs = toolPartIntervalMs(part, "start");
+  const partEndedAtMs = toolPartIntervalMs(part, "end");
   push(
     SessionEventType.ToolCallScheduled,
     {
@@ -853,6 +879,7 @@ function synthesizeToolPart(
       schedule: stableToolSchedule(toolCallId),
     },
     turnId,
+    partStartedAtMs,
   );
 
   const started =
@@ -873,6 +900,7 @@ function synthesizeToolPart(
         ),
       },
       turnId,
+      partStartedAtMs,
     );
   }
 
@@ -883,6 +911,10 @@ function synthesizeToolPart(
       subagentLifecycleResolution(part, subagentInfo, subagentChildFacts),
       push,
       turnId,
+      {
+        ...(partStartedAtMs === undefined ? {} : { startMs: partStartedAtMs }),
+        ...(partEndedAtMs === undefined ? {} : { endMs: partEndedAtMs }),
+      },
     );
   }
 
@@ -899,6 +931,7 @@ function synthesizeToolPart(
         },
       },
       turnId,
+      partEndedAtMs,
     );
     return { resultType: "success", toolCallCount: 1 };
   }
@@ -919,6 +952,7 @@ function synthesizeToolPart(
         },
       },
       turnId,
+      partEndedAtMs,
     );
     return { resultType: "success", toolCallCount: 1 };
   }
@@ -1062,6 +1096,62 @@ function synthesizeGoalVerificationPart(
   if (!fact) return false;
   pushGoalVerificationFact(fact, emittedGoalVerifications, push, turnId);
   return true;
+}
+
+// ── 后台 work 的收敛事实 → terminal 合成事件 ──
+//
+// `background-task-orphan-reconcile.ts` 在接管会话时把「进程已死、没有任何持久终态」的后台 Bash
+// work 落成 `background_task_outcome` entry。事件日志的契约是「引擎发过什么」，所以收敛者**不**
+// 合成父会话事件（对齐 subagent-orphan-reconcile 的三条边界）；但投影要收口就得有事件——
+// 这一层与 transcript 反向合成同职责：按持久事实重建视图。收口事件由 cold merge 追加在内存事件
+// **之后**，于是「内存里还是 running、持久事实说已收敛」的陈旧 work 在重建投影里收敛为 lost。
+//
+// 只在收敛的事实上合成（读面只把带 entry 的 work 传进来）。真实终态（结果唤醒轮/内存里的真实
+// 完成事件）优先级永远更高，由 cold merge 与读面各自把住。
+
+export interface HydratedReconciledBackgroundTask {
+  workId: string;
+  toolCallId?: string;
+  title?: string;
+  command?: string;
+  /** launch ACK 的持久落库时间；行时间的真实来源（缺省时事件时间退回 start）。 */
+  startedAtMs?: number;
+  /** 收敛时刻（entry.reconciledAt）：收敛行的 endedAt 按 0ecb862 的定案取它。 */
+  endedAtMs?: number;
+}
+
+/**
+ * 收敛 work → `BackgroundTaskCompleted{status:"lost"}` 合成事件（收口用）。
+ *
+ * 只发终态一条：work 已不在运行，补一条 `BackgroundTaskStarted` 只会让「曾经运行」多一个
+ * 无展示价值的行；投影的 `onBackgroundTaskLifecycle` 对终态事件即以 payload 的
+ * startedAt/completedAt 建行（真实时间），不依赖 Started 事件兜底。
+ */
+export function synthesizeReconciledBackgroundTaskEvents(
+  facts: readonly HydratedReconciledBackgroundTask[],
+  sessionId: string,
+): SessionEvent[] {
+  return facts.map((fact, index) => ({
+    id: `hydrate-bgwork-${index + 1}` as EventId,
+    sessionId: sessionId as SessionId,
+    type: SessionEventType.BackgroundTaskCompleted,
+    timestamp: new Date(fact.endedAtMs ?? fact.startedAtMs ?? 0),
+    traceId: HYDRATION_TRACE_ID as TraceId,
+    sequenceNumber: 0,
+    payload: {
+      taskId: fact.workId,
+      ...(fact.toolCallId ? { toolCallId: fact.toolCallId } : {}),
+      toolName: "Bash",
+      taskKind: "bash",
+      ...(fact.command ? { command: fact.command } : {}),
+      ...(fact.title ? { description: fact.title } : {}),
+      status: "lost",
+      // 已收敛的 work 没有可取消的东西：Stop 入口必须缺席。
+      cancellable: false,
+      ...(fact.startedAtMs === undefined ? {} : { startedAt: new Date(fact.startedAtMs) }),
+      ...(fact.endedAtMs === undefined ? {} : { completedAt: new Date(fact.endedAtMs) }),
+    },
+  }));
 }
 
 // ── session_entry legacy 源──
@@ -1391,7 +1481,12 @@ function isTurnBoundaryStarter(message: MessageWithParts): boolean {
   return getConversationModelOnlyTurnTriggerSource(message) !== null;
 }
 
-function backgroundResultOriginMetaOfMessage(
+/**
+ * 后台结果唤醒轮的持久元数据（originMeta）读取器。**唯一解释者**：`synthesizeEventsFromMessages`
+ * 的 model-only 唤醒轮、以及后台 work 的终态对账读面（`background-task-session-query.ts`）
+ * 都从这里取——各写一份解析就会造出「谁是这条通知的 work」的第二解读。
+ */
+export function backgroundResultOriginMetaOfMessage(
   message: MessageWithParts,
 ): BackgroundResultOriginMeta | undefined {
   const messageMetadata = message.info.metadata;
