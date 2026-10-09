@@ -11,6 +11,7 @@ import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { squadDiscardableWorkItemIds } from "../src/squad/squadEntryViewModel.js";
 import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
 import {
+  applyWorkItemSurfaceIntent,
   workItemSurfaceDefaultState,
   type WorkItemSurfaceState,
   type WorkItemViewMode,
@@ -351,6 +352,47 @@ test("list 行项目 chip：清单还没读到（projects=null）⇒ 不画（�
   });
   assert.ok(!markup.includes('data-testid="work-item-project-chip"'));
   assert.ok(!markup.includes("proj-alpha"), "清单缺席时连 id 都不画（读面回来后才画名字）");
+});
+
+/* R-P2：项目过滤在**真宿主**上生效（判据在纯函数，这里钉「视图真的吃到了它」）——
+   只勾「无项目」⇒ 有项目的行消失；勾一个项目 ⇒ 只有它的行留下。 */
+test("list 行项目过滤（R-P2）：只勾「无项目」只留无项目行；勾项目只留它的行", () => {
+  const items = [
+    wi({ id: "wi-a", title: "甲", projectId: "proj-alpha" }),
+    wi({ id: "wi-b", title: "乙", projectId: "proj-beta" }),
+    wi({ id: "wi-free", title: "丙" }),
+  ];
+  const idsOf = (markup: string) =>
+    [...markup.matchAll(/data-work-item-id="([^"]+)"/g)].map((m) => m[1]);
+  const noneOnly = renderView("list", {
+    items,
+    runs: [],
+    surface: applyWorkItemSurfaceIntent(workItemSurfaceDefaultState(), {
+      kind: "toggleNoProjectFilter",
+    }),
+  });
+  assert.deepEqual(idsOf(noneOnly), ["wi-free"], "只勾「无项目」⇒ 隐藏所有有项目项");
+  const oneProject = renderView("list", {
+    items,
+    runs: [],
+    surface: applyWorkItemSurfaceIntent(workItemSurfaceDefaultState(), {
+      kind: "toggleProjectFilter",
+      projectId: "proj-beta",
+    }),
+  });
+  assert.deepEqual(idsOf(oneProject), ["wi-b"], "勾一个项目 ⇒ 只留它里面的行");
+  const both = renderView("list", {
+    items,
+    runs: [],
+    surface: applyWorkItemSurfaceIntent(
+      applyWorkItemSurfaceIntent(workItemSurfaceDefaultState(), {
+        kind: "toggleProjectFilter",
+        projectId: "proj-alpha",
+      }),
+      { kind: "toggleNoProjectFilter" },
+    ),
+  });
+  assert.deepEqual(idsOf(both), ["wi-a", "wi-free"], "项目 + 无项目一起勾 ⇒ 并集");
 });
 
 // ---------- ⑥ 结构守卫（全 src 树扫描） ----------

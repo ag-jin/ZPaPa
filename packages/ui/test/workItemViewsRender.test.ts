@@ -15,6 +15,8 @@ import { WorkItemsPageActions } from "../src/squad/WorkItemsPageActions.js";
 import { WorkItemsSurface } from "../src/squad/WorkItemsSurface.js";
 import {
   workItemViewBaseline,
+  normalizeWorkItemSurfaceForLaneDimension,
+  workItemBoardReorderEnabled,
   workItemSortKeysForLaneDimension,
   workItemViewDialogProjection,
   workItemViewTabs,
@@ -344,6 +346,31 @@ test("排序档位（验收 5）｜lane=assignee 无 Manual：档位清单由纯
     workItemSortKeysForLaneDimension("assignee"),
     ["priority", "startDate", "dueDate", "title"],
     "同一份判据的反面逐档钉住（与 workItemViews.test.ts 同一枚函数）",
+  );
+  /* R-P2：按**项目**分组同样不给 Manual（position 是「全库一段」的序，项目列不是它的落点；
+     拖拽本身也只在 statusCategory 开放）—— 用户派发单点名的「回落逻辑已有」在这里可执行化。 */
+  assert.deepEqual(
+    workItemSortKeysForLaneDimension("project"),
+    ["priority", "startDate", "dueDate", "title"],
+    "按项目分组也不给 Manual（加了它 = 一个拖不动的档位留在控件里）",
+  );
+  assert.deepEqual(
+    normalizeWorkItemSurfaceForLaneDimension(
+      { ...workItemSurfaceDefaultState(), sort: { key: "manual", direction: "asc" } },
+      "project",
+    ).sort,
+    { key: "startDate", direction: "desc" },
+    "切到按项目分组时手动档**回落**到最近似的时间档（既有回落逻辑，未新增判据）",
+  );
+  assert.equal(
+    workItemBoardReorderEnabled({
+      view: "board",
+      laneDimension: "project",
+      sortKey: "manual",
+      hasWriter: true,
+    }),
+    false,
+    "拖拽启用判据不变：只有 statusCategory + 手动档才给把手（项目列没有 Manual 拖拽）",
   );
 });
 

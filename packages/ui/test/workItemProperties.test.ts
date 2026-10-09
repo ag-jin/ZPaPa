@@ -243,6 +243,20 @@ test("概览真渲染｜四族字段各有稳定 testid 与文本（优先级 / 
   assert.ok(markup.includes("本地用户"), "创建人显示 displayName");
 });
 
+/* R-P2：详情概览的编号吃**短码快照**（`PLT-12`）—— 与看板/列表/表格/搜索同一份文本口径
+   （判据在 shared 的 `formatWorkItemIdentifier`；这里钉的是「详情页也真的换过去了」）。 */
+test("概览真渲染（R-P2）｜绑项目的行显示 `{短码}-{序号}`（前缀快照随读模型带出）", () => {
+  const markup = renderOverviewDetail({
+    ...OVERVIEW_BASE,
+    identifierSeq: 12,
+    identifierPrefix: "PLT",
+  });
+  assert.ok(markup.includes("PLT-12"), "编号 = 短码-序号（详情页与列表同源）");
+  assert.ok(!markup.includes("#12"), "有项目时不再显示 `#12`（同一份文本口径）");
+  const plain = renderOverviewDetail({ ...OVERVIEW_BASE, identifierSeq: 12 });
+  assert.ok(plain.includes("#12"), "无项目 ⇒ 既有 `#N` 形态逐字保持");
+});
+
 test("概览真渲染｜未设置的字段**整块不渲染**（不留空行、不写「未知/系统」）", () => {
   const markup = renderOverviewDetail(OVERVIEW_BASE);
   for (const testId of [
