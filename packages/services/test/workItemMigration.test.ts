@@ -36,6 +36,16 @@ function ledger(db: DatabaseSync): Array<{ id: string; checksum: string }> {
   }>;
 }
 
+/** 「未登记即失败」规则本体：返回登记表里查不到的迁移号（空数组 = 登记齐备）。
+ *  抽成纯函数只为一件事——让规则自己也有守卫：把语义悄悄改回「未登记就跳过」（恒返回空）
+ *  时，下面的守卫自证用例会红。规则若只写成 inline 的 if，改回跳过就再也无人拦。 */
+function unregisteredMigrationIds(
+  rows: ReadonlyArray<{ id: string }>,
+  registry: Readonly<Record<string, string>>,
+): string[] {
+  return rows.filter((row) => registry[row.id] === undefined).map((row) => row.id);
+}
+
 // 0004 建表时是 3 条；0018（工作项 Surface 对齐·阶段一 R1）给 work_items 追加了
 // `UNIQUE(workspace_key, identifier_seq)` 一条 —— 这是这张表**唯一**一次索引追加。
 const EXPECTED_WORK_ITEM_INDEXES = [
@@ -48,13 +58,38 @@ const EXPECTED_WORK_ITEM_INDEXES = [
 // 与已发布数据库的契约：这些 checksum 一旦被改动，老库升级会抛 checksum_mismatch。
 // 值是**字面量**，不是「在测试里再用当前代码算一遍」——两侧重算等于什么都没测。
 // 这里只登记「已经发布过」的迁移；**最新那一条无需登记**，会被用例自动排除（见下），
-// 所以新增迁移不会让本用例假红。
+// 所以新增迁移不会让本用例假红。登记范围必须**恰好覆盖**账本里除最新一条之外的全部：
+// 少登记一条即失败（缺号会在报错里逐个列出），多登记一条也会失败（见下方的反向边界断言）。
 const PINNED_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
   "0001_adopt_task_schema": "3e8337b015d94b05dd31a6003f3acc649e821794cfa288bc0af3022698bd4d17",
   "0002_provider_selection": "7244ef7c351f8d02750ab1953fff09f493a71befbf1b6e2d4bab726b0c6b48fc",
   "0003_official_glm_selection": "8987adb50ae412a46c294141c1af89ccfc252f22d41351bdf4c7528f56edc8b4",
   "0004_work_items": "4624e06f937f4112752c7d24238e78c004eda45400475357231e08c050082d7f",
   "0005_wake_rules": "a2308d0724eae27813d92b5c8742a2de9aad68c5c6429601312483a0bd21b618",
+  // 0006–0021（2026-10-09 G1 补登记）：值取自本分支已提交的迁移常量跑出的
+  // tasks_schema_migration 账本，与上面五条同一口径（同一条 sha256(JSON.stringify(checksumInput))）。
+  // 这 16 条此前一直漏登记，而旧用例体对未登记行静默跳过 ⇒ 漏登记不红（见下方「未登记即失败」）。
+  "0006_squad_runs": "724298df32a87bfc1c5385f3671216a0c1c16b80f8d2a430aea259bd9f0899b9",
+  "0007_inbox_items": "4fa09c984986ebe7104e850fbc83517062ad241745a950e7b066a4fcadfe563c",
+  "0008_squad_run_cause": "41c0697298ee697c3c3c0ede8bd03e85d3e17086f76fc6d30f9e4be9c3099ff6",
+  "0009_squad_run_queue": "2439a595bab1aa7fd4b21293db83fcf637d9989361cefb5c2e5256d2e56af969",
+  "0010_workitem_collaboration": "25d5294ca8ae43e74b419ec4d9e96e70cfea96acb3f06ff4dc9f74697022aca0",
+  "0011_workitem_activity_decision":
+    "96343ad19f272594e088140f1edd8afb4ccad03d3a6cafc7a1b49881a7b806c6",
+  "0012_comment_dispatch_receipts":
+    "f3d67897ebf45a15a3c5a338fea41e0f054bbd969121262bac06205209918461",
+  "0013_collaboration_source_run_and_origin":
+    "1f8cb6bd1ad3881e534dab766d2c53dab41aa84d2b8065f0e5453186b816df64",
+  "0014_squad_run_watchdog": "e21414f1fdb965b06ab849c025b18be369a5c8eac286a9d0f989681a6f269bc0",
+  "0015_squad_run_usage": "c02640c377048a2e15278b19e9ffda63e09813725ce06bcb99bb3fc76c181f40",
+  "0016_work_item_deliverables": "61d1cbe6506fb9deb73e9f84df807feef2e756cba11c1a12fce925b89b756490",
+  "0017_work_item_pull_requests":
+    "37bbc0635188dc8a0cef729c4bda71cf3de730da124d9520059454be171815b6",
+  "0018_work_item_surface_fields":
+    "180325a73ba6ecb34bf3802da582081526ab7d495fbbf551f3191eed399f5f02",
+  "0019_work_item_subscribers": "3e2e0c42152e64c5d161bf47de2a6897b3660ffe402680d5656ded7a5e0253e7",
+  "0020_work_item_views": "e32697328e3d49e3477c7920b6e0b513d09e155e028215205c06e081170dd9b9",
+  "0021_work_item_reactions": "ce47388fd7a25670225d26537842da96b1ae8a9d37bf50747cc31e1d71e704ca",
 };
 
 // 「最新那条迁移建出了什么」无法从库里反推，故在此显式登记，用来把库退回上一版的样子。
@@ -599,16 +634,24 @@ test("老库升级只补跑最新一条迁移", () => {
   assert.ok(published.length > 0, "账本至少要两条迁移，否则模拟不出「老库」");
 
   // 冻结契约（字面量钉法）：已登记的每条必须逐一命中字面量，防「有人改冻结声明」。
-  // 未登记项（刚新增的迁移）不判红；反过来，登记表不得留下库里已不存在的 id，防边界漂移。
-  for (const row of published) {
-    const pinned = PINNED_MIGRATION_CHECKSUMS[row.id];
-    if (pinned !== undefined)
-      assert.equal(
-        row.checksum,
-        pinned,
-        `${row.id} 的冻结 checksum 被改动（老库升级会抛 checksum_mismatch）`,
-      );
-  }
+  /* 「未登记即失败」（2026-10-09 G1）：本用例原先对未登记行**静默跳过**，于是 0006–0021
+     一路漏登记而无人发现（依据：`.superpowers/sdd/…/reports/2026-10-09-plan-vs-code-reconciliation.md`
+     的 G1）。现在改成响亮失败，并一次列出全部缺号——「已发布」= 账本里除最新一条之外的全部，
+     所以刚新增的那条不必登记（不会假红）；但它一旦被下一条迁移顶成已发布，本用例就会红在这里，
+     逼着补登记（这就是堵住「新迁移再漏登记」的口子）。
+     下面这段必须与逐条比对分开写：否则有人把比对循环改回「未登记就跳过」时，缺号会重新静默。 */
+  const unregistered = unregisteredMigrationIds(published, PINNED_MIGRATION_CHECKSUMS);
+  assert.deepEqual(
+    unregistered,
+    [],
+    `以下已发布迁移未登记冻结 checksum（老库升级会抛 checksum_mismatch 而无人拦）：${unregistered.join("、")}`,
+  );
+  for (const row of published)
+    assert.equal(
+      row.checksum,
+      PINNED_MIGRATION_CHECKSUMS[row.id],
+      `${row.id} 的冻结 checksum 被改动（老库升级会抛 checksum_mismatch）`,
+    );
   for (const id of Object.keys(PINNED_MIGRATION_CHECKSUMS))
     assert.ok(
       published.some((row) => row.id === id),
@@ -651,6 +694,31 @@ test("老库升级只补跑最新一条迁移", () => {
   });
   assert.equal(executedAgain, 0);
   assert.deepEqual(ledger(db), fullLedger);
+});
+
+/* 守卫自证（围住守卫的守卫）：上面那条用例之所以能在漏登记时响亮失败，靠的是
+   `unregisteredMigrationIds` 的语义。若有人把规则改回「未登记就静默跳过」（规则恒返回空数组），
+   上面那条用例在登记齐备时照样绿 —— 刚堵上的口子会重新打开且无人察觉。故此处直接钉住规则本身：
+   给它一份**故意缺号**的账本，它必须逐个点名。值全是手写字面量，不由被测规则反推。 */
+test("守卫自证：未登记即失败规则必须点名缺号（语义退回「跳过」即在此红）", () => {
+  assert.deepEqual(
+    unregisteredMigrationIds(
+      [{ id: "0006_squad_runs" }, { id: "0022_projects" }, { id: "9999_probe" }],
+      { "0006_squad_runs": "a", "0022_projects": "b" },
+    ),
+    ["9999_probe"],
+    "缺号必须被点名（只报第一条、或整段不报，都会在这里红）",
+  );
+  assert.deepEqual(
+    unregisteredMigrationIds([], { "0001_adopt_task_schema": "a" }),
+    [],
+    "空账本不得报缺号——规则不是恒非空",
+  );
+  assert.deepEqual(
+    unregisteredMigrationIds([{ id: "0001_adopt_task_schema" }], {}),
+    ["0001_adopt_task_schema"],
+    "空登记表下每条账本行都算缺号，不是只看第一行",
+  );
 });
 
 // ---------------------------------------------------------------------------
