@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.16.6](https://github.com/ag-jin/ZPaPa/compare/v3.16.5...v3.16.6) (2026-10-09)
+
+### Bug Fixes
+
+* **cli:** 后台 Bash 收敛补批量唤醒轮终态覆盖并锚定 ACK 解析 ([ea171aa](https://github.com/ag-jin/ZPaPa/commit/ea171aade54d317149b514f83d646bbc44e937d0))
+
+* **cli:** 后台 Bash 重启收敛与冷恢复真实时间戳 ([5ea0823](https://github.com/ag-jin/ZPaPa/commit/5ea0823c1c89a0001d62ecb269e67608e3eca042))
+  * 新读面 background-task-session-query.ts：候选 = Bash launch ACK（三种模板文本 +
+  * 新模块 background-task-orphan-reconcile.ts：判据 J1-J5（后台启动 / 已知 work /
+  * 挂点：activateSessionForResume 尾部、子 agent 收敛之后（同一「本 runtime 零在飞」时刻），
+  * 投影同源：cold merge 新增 reconciledBackgroundTasks 输入，把收敛事实合成
+  * bootstrap/test/coldHydrationRealTimestamps.test.ts 5 例（修前 1/5 绿：行时间 = 1700000000004
+  * bootstrap/test/background-task-orphan-reconcile.test.ts 13 例（读面模板解析、判据 skip
+  * sessionResumeOrphanReconcileHook.test.ts 补 1 例：接管尾部同时收敛后台 Bash（删掉那行
+  * 既有套件逐例不回归：bootstrap 45 → 64 全绿（含 coldHydrationSubagentStatus 14 例），
+
+
+### Documentation
+
+* **cli:** 同进程悬死 running 对账设计（R1 看门狗方案） ([859b54c](https://github.com/ag-jin/ZPaPa/commit/859b54c4208816d1dc5b0bfc96df003b50ff149b))
+
 ## [3.16.5](https://github.com/ag-jin/ZPaPa/compare/v3.16.4...v3.16.5) (2026-10-09)
 
 ### Features
