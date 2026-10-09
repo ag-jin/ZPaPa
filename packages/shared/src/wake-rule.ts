@@ -104,15 +104,48 @@ export type WakeRule = z.infer<typeof wakeRuleSchema>;
 /** 校验结论：`ok:true` 之外只给中文可读的 `problems`，让 UI 直接把「哪里不行」说给人听。 */
 export type WakeRuleValidationResult = { ok: true } | { ok: false; problems: string[] };
 
-/* TODO(P2)：本阶段（P1）**故意留白**、只在域模型层无法判定的几处，集中登记在此，避免被当成漏检：
-   1. `nextFireAt` 的 kind 约束：event 规则当前也允许带 `nextFireAt`（互斥清单未列，且 T4 的
-      部分索引建在 `next_fire_at` 上，不排除「event 也参与排期扫描」的合法用法）。
-   2. `timezone` 的 IANA 合法性：只校验非空（域模型不引入 tz 数据库依赖），非法时区名会留到调度器运行时才炸。
-   3. `at` / `expiresAt` 已过去：需要与「当前时间」比较，而校验必须是确定的纯函数（同一 rule 任何时候结果一致），
-      故域模型不做时间判定，由调度器（T5）按入参 `now` 判。
-   4. `pausedReason` / `enabled` / `fireCount` **三者相互的一致性**（如 `fireCount >= maxFires` 就该带
-      `pausedReason`、`fireCount > maxFires`、`once` 却 `fireCount > 0`、已带 `pausedReason` 但 `enabled` 仍为真）：
-      属于防失控判定与状态机语义（T5 `decideWake`），域模型不重复实现。 */
+/**
+ * `timeZone` 是否是**引擎认识的时区名**（G5：TODO-2 收口）。
+ *
+ * 用 `Intl.DateTimeFormat` 试构造：不认识的时区名会抛 `RangeError`，构造成功即认。
+ * 三个理由：① **零新依赖**——本文件被 renderer 直接解析（见下方 SHA-256 段的同一条理由），
+ * 引 tz 数据库（如 `luxon` / `moment-timezone`）会往浏览器包体里塞几十 KB；
+ * ② **确定性纯函数**——同一输入恒同一结论，符合 `validateWakeRule` 的纯函数契约；
+ * ③ 与将来接线 croner `timeZone` 选项时**同一个判据源**（同一个引擎的时区库），
+ * 不会出现「域层放行、调度器却认不出」的两套口径。
+ *
+ * 注意它只判「这个名字引擎认不认」，**不判**该时区下某个时刻是否合法（那是调度器的事，
+ * 与 TODO-3 同一条边界）：域模型不做时间判定。
+ */
+export function isValidTimeZoneName(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* 域层留白登记（G5 收口，2026-10-09；原 TODO(P2) 四条在此轮各归其位）。
+   留在这里的**只剩裁定不进域层的两条**——它们是「裁定」不是「漏检」，故理由随条目写清；
+   已闭项留档在末尾，避免下一轮对账按旧结论排产。
+
+   1. 【裁定不闭】`event` 允许携带 `nextFireAt`（不受 kind 约束）：事件规则的排期点是**事实侧**
+      写进 `next_fire_at` 的（见 `wakeSchedule.ts` 的 event 分支：本模块对它返回 null，
+      排期点由事实侧写入）。域层禁掉会堵死该写者；排班三支的排期状态改由服务/调度构造保证
+      （死配置拒绝 + 两种暂停清排期），域层只补「暂停必有空排期」这一条状态约束（第 10 条）。
+   2. 【裁定不闭】`fireCount >= maxFires ⇒ 必须带 pausedReason`（以及「带 `pausedReason` 但 `enabled`
+      仍为真」）**不是**不变量：推进时同时写 `fireCount = maxFires` 与下一格排期，闸要到下一次到点
+      才落原因——中间态合法且必要；「带原因 + 开关为真」正是闸暂停的法定形态。写成域约束会误伤
+      合法态，故按裁定登记、不做校验。防失控判定属调度器 `decideWake`（T5），域模型不重复实现。
+
+   已闭项（留档）：
+   · `timezone` 的 IANA 合法性 —— 已闭于本文件 `isValidTimeZoneName` + 第 9 条；
+   · `at` / `expiresAt` 已过去 —— 已闭于调度侧（G3：首格 `initialNextFireAt` 判、fire 前置守卫、
+     网格收口 `nextFireAtAfter`）。域模型维持「不做时间判定」的纯函数契约（同一 rule 任何时候结论一致），
+     故不在此处重复实现；
+   · `fireCount > maxFires` / `once && fireCount > 1` / `pausedReason ⇒ 排期空` —— 已闭于第 10 条。
+   仍开放：`event` kind 的服务面入口未开（G10 裁定，不属本文件）。 */
 
 /**
  * 唤醒规则的**互斥校验**（schema 管形状，这里管关系）。
@@ -239,6 +272,37 @@ export function validateWakeRule(rule: WakeRule): WakeRuleValidationResult {
         );
       }
     }
+  }
+
+  // 9. timezone 必须是引擎认识的 IANA 名（G5：TODO-2 收口）。非空由 schema 保证，合法性只能在这里判
+  //    （schema 层放不下「引擎认不认」这件事）。此前非法名会**零告警落盘**，等到将来调度器真的拿它
+  //    去算触发时刻时才炸——用户看到的是「规则不生效」，而真正的成因（一个拼错的时区名）被完全隐藏。
+  //    合法名（如 `Asia/Shanghai`）必须零问题：过度拦截会把能用的规则也拦在门外（见测试的补集方向）。
+  if (rule.timezone !== undefined && !isValidTimeZoneName(rule.timezone)) {
+    problems.push(
+      `timezone「${rule.timezone}」不是合法的 IANA 时区名：引擎无法解析它，将来按它算触发时刻时会失败`,
+    );
+  }
+
+  /* 10. 触发计数的三态一致性（G5：TODO-4 的三条**可闭项**）。三条都在查「库里的状态自相矛盾」，
+     且都能只靠规则自身判定（不需要当前时间、不需要调度器状态），故属域层。
+     边界一律取**严格大于 / 明确并存**：合法中间态必须零告警 —— `fireCount === maxFires`
+     （停在上限、下一格已排、闸待下次到点才落原因）与 once 的 `fireCount === 1`（正常跑完）
+     都是构造路径真的会产生的形态，写成 `>=` / `>= 1` 会误伤它们（用例已钉两个方向）。 */
+  if (rule.maxFires !== undefined && rule.fireCount > rule.maxFires) {
+    problems.push(
+      `fireCount（${rule.fireCount}）已超过 maxFires（${rule.maxFires}）：超过上限还活着的规则说明防失控闸没有生效`,
+    );
+  }
+  if (rule.mode === "once" && rule.fireCount > 1) {
+    problems.push(
+      `mode「once」的规则 fireCount 只能到 1（当前 ${rule.fireCount}）：一次性规则不该触发第二次，这是推进路径写错或 mode 写错的信号`,
+    );
+  }
+  if (rule.pausedReason !== undefined && rule.nextFireAt !== undefined) {
+    problems.push(
+      `带 pausedReason「${rule.pausedReason}」的规则不得再有排期（当前 nextFireAt ${rule.nextFireAt}）：两种暂停形态都清空排期，暂停中还在排期只可能来自绕过构造路径的写入`,
+    );
   }
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
