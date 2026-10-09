@@ -25,13 +25,23 @@ export const BOARD_ATTENTION_BADGE_IDS: Record<BoardAttentionCode, string> = {
   "unmerged-worktree": "board.attention.unmergedWorktree",
 };
 
-/** 提示条四段词条（文案逐字，契约 §3.1）。 */
-export const BOARD_ATTENTION_SUMMARY_IDS = [
-  ["interviewedNotArranged", "board.attention.summary.interviewedNotArranged"],
-  ["arrangedNotExpanded", "board.attention.summary.arrangedNotExpanded"],
-  ["interruptedResume", "board.attention.summary.interruptedResume"],
-  ["unmergedWorktree", "board.attention.summary.unmergedWorktree"],
-] as const satisfies ReadonlyArray<readonly [keyof BoardAttentionSummary, string]>;
+/**
+ * 提示条四段（文案逐字，契约 §3.1）：summary 键 → 缺口码 → 词条 id。顺序即渲染序。
+ * 段落级渲染（#32 遗留「提示条点击滚动到对应卡」）从这张表派生：跳转落点按缺口码在板上找节点，
+ * 全文仍是同一模板拼出来的（分隔符 ` · `），词条与顺序只有这一份。
+ */
+export const BOARD_ATTENTION_SUMMARY_ROWS = [
+  [
+    "interviewedNotArranged",
+    "interviewed-not-arranged",
+    "board.attention.summary.interviewedNotArranged",
+  ],
+  ["arrangedNotExpanded", "arranged-not-expanded", "board.attention.summary.arrangedNotExpanded"],
+  ["interruptedResume", "interrupted-resume", "board.attention.summary.interruptedResume"],
+  ["unmergedWorktree", "unmerged-worktree", "board.attention.summary.unmergedWorktree"],
+] as const satisfies ReadonlyArray<
+  readonly [keyof BoardAttentionSummary, BoardAttentionCode, string]
+>;
 
 const BOARD_RUN_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
   month: "2-digit",
@@ -66,13 +76,23 @@ export function formatAttentionBadgeText(
   return formatMessage({ id: BOARD_ATTENTION_BADGE_IDS[code] });
 }
 
-/** 置顶提示条全文（契约 §3.1 逐字；四段都用当前计数渲染）。 */
+/** 置顶提示条单段文案（契约 §3.1 逐字；`count` 由调用方从 summary 取）。 */
+export function formatAttentionSummarySegment(
+  code: BoardAttentionCode,
+  count: number,
+  formatMessage: BoardMessageFormatter,
+): string {
+  const row = BOARD_ATTENTION_SUMMARY_ROWS.find((entry) => entry[1] === code);
+  return row ? formatMessage({ id: row[2] }, { count }) : "";
+}
+
+/** 置顶提示条全文（契约 §3.1 逐字；四段都用当前计数渲染）：段落 + ` · ` 分隔。 */
 export function formatAttentionSummaryText(
   summary: BoardAttentionSummary,
   formatMessage: BoardMessageFormatter,
 ): string {
-  return BOARD_ATTENTION_SUMMARY_IDS.map(([key, id]) =>
-    formatMessage({ id }, { count: summary[key] }),
+  return BOARD_ATTENTION_SUMMARY_ROWS.map(([key, code]) =>
+    formatAttentionSummarySegment(code, summary[key], formatMessage),
   ).join(" · ");
 }
 
@@ -204,4 +224,37 @@ export function formatBoardStatusText(
   const messageId = BOARD_STATUS_MESSAGE_IDS[status as BoardStatusValue];
   if (!messageId) return status;
   return formatMessage({ id: messageId });
+}
+
+/* ---------------- 陈旧检测（契约 §5 的应用侧轻量版） ---------------- */
+
+/**
+ * 陈旧阈值：`updatedAt` 距当前超过 24 小时即提示「板可能已过期」。
+ *
+ * 契约 §5 原文要求「比对 `sources[]` 各文件 mtime 与 `updatedAt`」，但那需要逐条 fs stat；
+ * 应用侧的读取缝只有「存在性 + 读文本」，本期**不发明 fs 通道**（契约 §5 勘误一行，
+ * 见 `.zcode/board/board-consumption-contract.md` §5），改为纯时间启发式：
+ * 板是活动物（本工作区的板按会话重编译），跨天没动过就该提醒重编译。
+ */
+export const BOARD_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/** 陈旧判定：`updatedAt` 解析不了（没有信号）→ false，不编造陈旧。 */
+export function isBoardStale(updatedAt: string | null, now: number): boolean {
+  if (!updatedAt) return false;
+  const epochMs = Date.parse(updatedAt);
+  if (!Number.isFinite(epochMs)) return false;
+  return now - epochMs > BOARD_STALE_AFTER_MS;
+}
+
+/**
+ * 陈旧提示行文案（契约 §5 的「可能已过期」角标的轻量呈现：一行提示，不是错误态，
+ * 不改变既有内容渲染）。`updatedAt` 缺省/解析不了 → null（不提示）。
+ */
+export function formatBoardStaleHint(
+  updatedAt: string | null,
+  now: number,
+  formatMessage: BoardMessageFormatter,
+): string | null {
+  if (!updatedAt || !isBoardStale(updatedAt, now)) return null;
+  return formatMessage({ id: "board.stale.hint" }, { time: formatBoardRunTime(updatedAt) });
 }

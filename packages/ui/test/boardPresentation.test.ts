@@ -12,7 +12,10 @@ import {
   formatAttentionBadgeText,
   formatAttentionSummaryText,
   formatBoardLastRunText,
+  formatBoardRunTime,
   formatBoardStageText,
+  formatBoardStaleHint,
+  isBoardStale,
 } from "../src/board/boardPresentation.js";
 import {
   BOARD_ATTENTION_CODES,
@@ -211,6 +214,24 @@ test("来源行的键枚举与词条表同模块：呈现叶子不反依赖弹�
   );
 });
 
+test("陈旧判定（契约 §5 应用侧轻量版）：updatedAt 距今超 24 小时才提示；没有时间戳不猜", () => {
+  const updatedAt = "2026-10-09T16:05:00+08:00";
+  const later = (offsetHours: number) => Date.parse(updatedAt) + offsetHours * 60 * 60 * 1000;
+  assert.equal(isBoardStale(updatedAt, later(23)), false, "未超阈值不提示");
+  assert.equal(isBoardStale(updatedAt, later(24)), false, "恰在阈值上不提示（严格大于）");
+  assert.equal(isBoardStale(updatedAt, later(25)), true);
+  assert.equal(isBoardStale(null, later(25)), false, "缺 updatedAt 不猜陈旧");
+  assert.equal(isBoardStale("不是时间", later(25)), false, "解析不了不猜陈旧");
+
+  const hint = formatBoardStaleHint(updatedAt, later(25), t);
+  assert.ok(hint?.startsWith("板可能已过期"), `陈旧提示文案：${hint}`);
+  assert.ok(hint?.includes("建议在会话内重新编译板"), "提示要给出可做的动作");
+  assert.ok(hint?.includes(formatBoardRunTime(updatedAt)), "提示带板的更新时间");
+  assert.equal(formatBoardStaleHint(updatedAt, later(1), t), null, "未超阈值无提示");
+  const hintEn = formatBoardStaleHint(updatedAt, later(25), tEn);
+  assert.ok(hintEn && !/[\u4e00-\u9fff]/.test(hintEn), `en-US 陈旧提示漏中文：${hintEn}`);
+});
+
 test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存在）", () => {
   const ids = [
     ...STAGE_VALUES.map((stage) => BOARD_STAGE_MESSAGE_IDS[stage]),
@@ -226,6 +247,9 @@ test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存
     "board.filter.stage",
     "board.filter.status",
     "board.filter.attention",
+    "board.filter.kind",
+    "board.kind.feature",
+    "board.kind.task",
     "board.filter.sort",
     "board.filter.all",
     "board.sort.recent",
@@ -247,6 +271,9 @@ test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存
     "board.dialog.prTitle",
     "board.dialog.createdAt",
     "board.dialog.updatedAt",
+    // 卡 #35：暂时不可读与陈旧提示（评审 #32-P3 / 契约 §5 勘误）。
+    "board.unavailable",
+    "board.stale.hint",
   ];
   for (const id of ids) {
     assert.ok(zhCN[id], `缺 zh-CN 词条：${id}`);

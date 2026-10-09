@@ -36,15 +36,28 @@ export interface BoardFileServicePort {
   readTextFile(params: { path: string; offset?: number; length?: number }): Promise<FileTextSlice>;
 }
 
-/** 面板四态：missing=空态 A；empty=空态 B；damaged=空态 C；ready=可渲染。 */
+/**
+ * 面板四态：missing=空态 A；empty=空态 B；damaged=空态 C；ready=可渲染。
+ * `unavailable` = **暂时不可读**（RPC 未就绪 / 断连），与 damaged 分开（评审 #32-P3）：
+ * 断连不是板的错，指引「重编译」在断连时是假动作。
+ */
 export type BoardLoadState =
   | { kind: "missing" }
   | { kind: "empty" }
   | { kind: "damaged" }
+  | { kind: "unavailable" }
   | { kind: "ready"; board: BoardViewModel };
 
-/** 面板对外状态：加载中 + 四态。 */
+/** 面板对外状态：加载中 + 五态。 */
 export type BoardPaneLoadState = { kind: "loading" } | BoardLoadState;
+
+/**
+ * 连接门禁（评审 #32-P3）：RPC 未就绪（`connectionKind === "remote-waiting"`）时不发读取。
+ * 收**回调**而不是布尔：断连可能发生在读取途中，失败后要能再探一次（调用方读最新连接态）。
+ */
+export type BoardRpcReadyGate = () => boolean;
+
+const ALWAYS_RPC_READY: BoardRpcReadyGate = () => true;
 
 /** 与 PreviewPane 的缺失文件判定同一约定：RPC 错误带 code 或文案 ENOENT。 */
 export function isBoardFileMissingError(error: unknown): boolean {
@@ -58,8 +71,15 @@ export function isBoardFileMissingError(error: unknown): boolean {
 export async function loadBoardDocument(params: {
   fileService: BoardFileServicePort;
   workspacePath: string;
+  /** 连接门禁（缺省视为就绪）：未就绪 → 不发 RPC，呈现「暂时不可读」。 */
+  isRpcReady?: BoardRpcReadyGate;
 }): Promise<BoardLoadState> {
   const boardPath = resolveBoardJsonPath(params.workspacePath);
+  const isRpcReady = params.isRpcReady ?? ALWAYS_RPC_READY;
+  if (!isRpcReady()) {
+    // 断连代理上的请求只会得到可恢复错误；直接给「暂时不可读」，不误判成损坏。
+    return { kind: "unavailable" };
+  }
 
   let exists = false;
   try {
@@ -67,7 +87,7 @@ export async function loadBoardDocument(params: {
     exists = existence?.exists === true;
   } catch {
     // 存在性检查本身失败（如 host 断连）：读不到就按空态 C 呈现，不假装没有板。
-    return { kind: "damaged" };
+    return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
   if (!exists) {
     return { kind: "missing" };
@@ -89,8 +109,10 @@ export async function loadBoardDocument(params: {
     }
     content = file.content;
   } catch (error) {
-    // 检查通过后文件消失（竞态）仍属「无板」；其余读取失败归空态 C。
-    return isBoardFileMissingError(error) ? { kind: "missing" } : { kind: "damaged" };
+    // 检查通过后文件消失（竞态）仍属「无板」；读取途中断连按「暂时不可读」；
+    // 连接仍在的其余读取失败归空态 C（评审 #32-P3）。
+    if (isBoardFileMissingError(error)) return { kind: "missing" };
+    return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
 
   const outcome = parseBoardJson(content);

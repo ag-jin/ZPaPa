@@ -54,6 +54,31 @@ export function boardCardOpenProps(params: {
 }
 
 /**
+ * 跳转高亮的宿主状态：**带 nonce**（评审 #34-P2）。
+ * 只存 id 的旧形态里，「同目标再跳一次」不产生新状态 → 宿主的滚动/限时 effect 不重跑
+ * （用户看到的是「点了没反应」）；nonce 每次自增，同目标重跳也重新起算滚动与高亮时限。
+ */
+export interface BoardCardHighlightState {
+  id: string;
+  nonce: number;
+}
+
+export function nextBoardCardHighlight(
+  previous: BoardCardHighlightState | null,
+  id: string,
+): BoardCardHighlightState {
+  return { id, nonce: (previous?.nonce ?? 0) + 1 };
+}
+
+/**
+ * 落点在折叠容器（`<details>`：已完成列 / 访谈汇总子区）里的跳转可见性（评审 #34-P2）：
+ * 折叠着就**先展开再滚动**，否则滚到了也看不见。判据在这里一处，DOM 读写在宿主。
+ */
+export function boardRevealDetailsIntent(details: { open: boolean } | null): "expand" | "none" {
+  return details !== null && !details.open ? "expand" : "none";
+}
+
+/**
  * 跳转落点高亮 props：锚点与**视觉样式**同源一处生成（只有落在 `highlightId` 上的卡片带
  * `data-board-card-highlight` 与高亮类片段）；高亮的时限与清除在宿主。
  * 调用方解构出 `className` 与其余 props 分别落位即可（不要在视图层重写配色）。

@@ -398,6 +398,37 @@ test("列表：行保留 §13.2 要求的角标（待合并/受阻/执行角色�
 
 /* ---------------- 视图切换（树形/看板/列表，会话内保持） ---------------- */
 
+test("树形：已取消节点的行尾显示取消原因（§13.2 树形格「节点行尾徽章 + 取消原因」）", () => {
+  const raw = structuredClone(STAGE_MATRIX_BOARD) as unknown as {
+    features: Array<{ id?: string; stage?: string; statusRule?: string; tasks: unknown[] }>;
+  };
+  const feature = raw.features.find((entry) => entry.id === "spec:payment-split");
+  assert.ok(feature, "夹具应有 spec:payment-split");
+  feature.stage = "已取消";
+  feature.statusRule = "progress.stages.implementation=cancelled";
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const tree = render({ kind: "ready", board: outcome.board }, { viewMode: "tree" });
+
+  const cancelledFeature = /data-board-feature="spec:payment-split"[\s\S]*?<\/section>/.exec(tree);
+  assert.ok(cancelledFeature, "已取消的特性行应渲染");
+  assert.ok(cancelledFeature[0].includes("data-board-status-rule"), "特性行尾展示取消原因");
+  assert.ok(cancelledFeature[0].includes("progress.stages.implementation=cancelled"));
+
+  const cancelledTask = tree.slice(
+    tree.indexOf('data-board-task="task:12"'),
+    tree.indexOf('data-board-task="task:13"'),
+  );
+  assert.ok(cancelledTask.includes("data-board-status-rule"), "已取消卡行尾展示取消原因");
+  assert.ok(cancelledTask.includes("cancelled: 上游方案作废（取消留痕、号不复用）"));
+  const runningTask = tree.slice(
+    tree.indexOf('data-board-task="task:8"'),
+    tree.indexOf('data-board-task="task:9"'),
+  );
+  assert.ok(!runningTask.includes("data-board-status-rule"), "非终态卡不铺溯源噪声");
+});
+
 test("视图切换：四态控件常驻，当前视图 aria-pressed（不靠颜色表达选中）", () => {
   const switcherOf = (viewMode?: BoardViewMode) => {
     const markup = render(matrixBoard(), viewMode ? { viewMode } : {});

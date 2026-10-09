@@ -145,6 +145,15 @@ function BoardFeatureSection({
           status={feature.status}
         />
       </div>
+      {feature.stage === "已取消" && feature.statusRule ? (
+        // §13.2 树形「已取消」格：节点行尾徽章 + 取消原因（与列表/看板同一字段 statusRule）。
+        <div
+          data-board-status-rule=""
+          className="truncate px-2 text-ui-xs text-foreground-subtle"
+        >
+          {feature.statusRule}
+        </div>
+      ) : null}
       {updatedAtText || progressText ? (
         <div className="px-2 text-ui-xs text-foreground-subtle">
           {[updatedAtText, progressText].filter(Boolean).join(" · ")}

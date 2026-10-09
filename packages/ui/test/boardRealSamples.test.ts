@@ -103,6 +103,43 @@ function flattenTasks(features: BoardFeatureNode[]): BoardTaskNode[] {
   return out;
 }
 
+/** 提示条可见文本（剥标签后归一空白）：每段现在是独立元素，逐字比对要比可见文本。 */
+function bannerTextOf(markup: string): string {
+  const anchor = markup.indexOf("data-board-attention-banner");
+  assert.ok(anchor >= 0, "markup 里找不到提示条");
+  const start = markup.indexOf(">", anchor) + 1;
+  const slice = markup.slice(start, markup.indexOf("</div>", start));
+  return slice
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * 契约 §3.1 提示条模板：从样本自身的 `attentionSummary` 构造期望（独立真源是契约文案，
+ * 不是实现），零缺口时按契约不出现提示条——健康板（全零）因此不会把套件弄红。
+ */
+function assertAttentionBanner(params: { markup: string; summary: Record<string, unknown> }): void {
+  const count = (key: string): number => {
+    const value = params.summary[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  };
+  const expected = [
+    `${count("interviewedNotArranged")} 已访谈未安排`,
+    `${count("arrangedNotExpanded")} 已安排未展开`,
+    `${count("interruptedResume")} 执行中断可续`,
+    `${count("unmergedWorktree")} 待合并`,
+  ].join(" · ");
+  const hasSignal = ["interviewedNotArranged", "arrangedNotExpanded", "interruptedResume", "unmergedWorktree"].some(
+    (key) => count(key) > 0,
+  );
+  if (hasSignal) {
+    assert.equal(bannerTextOf(params.markup), expected, `提示条应逐字渲染：${expected}`);
+    return;
+  }
+  assert.ok(!params.markup.includes("data-board-attention-banner"), "零缺口不出现提示条");
+}
+
 async function stageWorkspace(boardContent: string | null): Promise<{
   workspace: string;
   cleanup: () => Promise<void>;
@@ -219,15 +256,8 @@ test(
         assert.ok(markup.includes(stage), `段位徽章应渲染：${stage}`);
       }
 
-      // 提示条：按契约 §3.1 模板从样本自身的计数构造期望，逐字比对。
-      const summary = raw.attentionSummary;
-      const expectedBanner = [
-        `${summary.interviewedNotArranged ?? 0} 已访谈未安排`,
-        `${summary.arrangedNotExpanded ?? 0} 已安排未展开`,
-        `${summary.interruptedResume ?? 0} 执行中断可续`,
-        `${summary.unmergedWorktree ?? 0} 待合并`,
-      ].join(" · ");
-      assert.ok(markup.includes(expectedBanner), `提示条应逐字渲染：${expectedBanner}`);
+      // 提示条：按契约 §3.1 模板从样本自身的计数构造期望，逐字比对（可见文本，剥标签）。
+      assertAttentionBanner({ markup, summary: raw.attentionSummary });
 
       // 四缺口码徽章文案：样本里每种码取自己的数据构造期望。
       assert.ok(markup.includes("已访谈，尚未落卡"));
@@ -312,11 +342,9 @@ test("本工作区真实板：全部可渲染，段位都在七段位词表内",
     stageNodes.some((node) => node.stage && markup.includes(node.stage)),
     "应渲染段位徽章",
   );
-  // 提示条四段词（板是活动物，只钉结构不钉计数）。
-  assert.ok(markup.includes("已访谈未安排"));
-  assert.ok(markup.includes("已安排未展开"));
-  assert.ok(markup.includes("执行中断可续"));
-  assert.ok(markup.includes("待合并"));
+  // 提示条（有缺口才出现）：从真实板自身的计数构造期望——板是活动物，**不写死计数**，
+  // 也不假设「一定有缺口」（健康板的四计数全零，此时期望按契约是不出现提示条）。
+  assertAttentionBanner({ markup, summary: { ...board.attentionSummary } });
   // 数量进证据日志（板是活动物，测试只钉结构不钉计数）。
   console.log(
     `[board] 真实板：${board.features.length} 特性 / ${tasks.length} 卡 / 段位节点 ${stageNodes.filter((n) => n.stage).length} / 缺口计数 ${JSON.stringify(board.attentionSummary)}`,

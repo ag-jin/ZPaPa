@@ -7,6 +7,8 @@ import {
   boardCardKeyIntent,
   boardCardOpenProps,
   boardCardSelector,
+  boardRevealDetailsIntent,
+  nextBoardCardHighlight,
 } from "../src/board/boardCardInteraction.js";
 
 /**
@@ -90,6 +92,21 @@ test("高亮 props：命中跳转落点才挂 data 锚点 + 类片段（其余�
   assert.deepEqual(boardCardHighlightProps("task:8", "task:9"), {});
   assert.deepEqual(boardCardHighlightProps("task:9", null), {}, "没有跳转就没有高亮");
   assert.deepEqual(boardCardHighlightProps("task:9", undefined), {});
+});
+
+test("跳转可见性：折叠容器（<details>）内的落点先展开，再滚动（纯判定，DOM 装配在宿主）", () => {
+  assert.equal(boardRevealDetailsIntent(null), "none", "不在折叠容器里：直接滚");
+  assert.equal(boardRevealDetailsIntent({ open: true }), "none", "已展开：不必动它");
+  assert.equal(boardRevealDetailsIntent({ open: false }), "expand", "折叠着：先展开再滚");
+});
+
+test("同目标重跳续时：highlight 带 nonce，每次跳转都是新状态（滚动与时限重新起算）", () => {
+  const first = nextBoardCardHighlight(null, "task:8");
+  assert.deepEqual(first, { id: "task:8", nonce: 1 });
+  const again = nextBoardCardHighlight(first, "task:8");
+  assert.deepEqual(again, { id: "task:8", nonce: 2 }, "同目标重跳必须产生新状态（否则 effect 不重跑）");
+  const other = nextBoardCardHighlight(again, "task:9");
+  assert.deepEqual(other, { id: "task:9", nonce: 3 }, "换目标同样自增（一次一状态）");
 });
 
 test("高亮样式单点（源码守卫）：四视图不得各自写高亮类（评审 #34-S2）", () => {

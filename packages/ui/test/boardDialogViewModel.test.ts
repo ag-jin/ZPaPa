@@ -5,6 +5,7 @@ import {
   boardCardDialogKeyIntent,
   boardJumpRequiresListView,
   buildBoardCardDialog,
+  resolveBoardAttentionJumpTarget,
   resolveBoardCardJumpTarget,
   resolveBoardDialogNode,
 } from "../src/board/boardDialogViewModel.js";
@@ -291,4 +292,34 @@ test("跳转降级：看板列视图遇到段位缺省的目标 → 切列表视
   );
   assert.equal(boardJumpRequiresListView("list", stageUnknown), false);
   assert.equal(boardJumpRequiresListView("tree", stageUnknown), false);
+});
+
+/* ---------------- 提示条段落跳转（#32 遗留「提示条点击滚动到对应卡」） ---------------- */
+
+test("提示条段落跳转：按缺口码取节点集合序的第一个节点（树形阅读序）；陈旧摘要 → null", () => {
+  const board = goldenBoard();
+  assert.deepEqual(
+    resolveBoardAttentionJumpTarget(board, "unmerged-worktree"),
+    { id: "task:8", stage: "执行中" },
+    "第一个挂该码的节点（特性在前、卡按文档序）",
+  );
+  assert.deepEqual(resolveBoardAttentionJumpTarget(board, "interviewed-not-arranged"), {
+    id: "interview:itw-20261009-c3d4",
+    stage: null,
+    });
+  assert.deepEqual(
+    resolveBoardAttentionJumpTarget(board, "arranged-not-expanded"),
+    { id: "plan:sess_f1a2d0bb", stage: null },
+    "夹具里 plan:sess_f1a2d0bb 没有 stage 字段（形态真源：golden 的 plan 条目不带段位）",
+  );
+  // 陈旧摘要：计数还在、节点已无该码 → 没有落点（视图层渲染纯文本，不给死按钮）。
+  const withoutCodes = {
+    ...board,
+    features: board.features.map((feature) => ({
+      ...feature,
+      attention: [],
+      tasks: feature.tasks.map((task) => ({ ...task, attention: [] })),
+    })),
+  };
+  assert.equal(resolveBoardAttentionJumpTarget(withoutCodes, "unmerged-worktree"), null);
 });

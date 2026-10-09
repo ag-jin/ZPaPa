@@ -242,6 +242,70 @@ test("计数映射：只认正整数（小数/负数/非数一律 0，不 trunc 
   assert.deepEqual(state.board.features[0]?.progress, { totalTasks: 0, completedTasks: 2 });
 });
 
+/* ---------------- 连接门禁（评审 #32-P3：暂时不可读 vs 损坏） ---------------- */
+
+test("连接未就绪：不发读取，呈现「暂时不可读」而不是「损坏」（评审 #32-P3）", async () => {
+  let rpcCalls = 0;
+  const fileService = {
+    checkFilesExist: async () => {
+      rpcCalls += 1;
+      return [{ path: BOARD_PATH, exists: true }];
+    },
+    readTextFile: async () => {
+      rpcCalls += 1;
+      throw new Error("remote workspace disconnected");
+    },
+  };
+  const state = await loadBoardDocument({
+    fileService,
+    workspacePath: WORKSPACE,
+    isRpcReady: () => false,
+  });
+  assert.equal(state.kind, "unavailable", "断连不是板的错：不给「损坏」空态");
+  assert.equal(rpcCalls, 0, "未就绪时一个 RPC 都不发（断连代理的请求都是无效请求）");
+});
+
+test("读取途中断连（首探就绪、失败时已未就绪）→ 暂时不可读；连接仍在才判损坏（评审 #32-P3）", async () => {
+  let rpcReady = true;
+  const flaky = {
+    checkFilesExist: async () => [{ path: BOARD_PATH, exists: true }],
+    readTextFile: async () => {
+      rpcReady = false;
+      throw new Error("EACCES: permission denied");
+    },
+  };
+  const interrupted = await loadBoardDocument({
+    fileService: flaky,
+    workspacePath: WORKSPACE,
+    isRpcReady: () => rpcReady,
+  });
+  assert.equal(interrupted.kind, "unavailable", "读取途中断连按「暂时不可读」呈现");
+
+  const stillReady = await loadBoardDocument({
+    fileService: {
+      checkFilesExist: async () => [{ path: BOARD_PATH, exists: true }],
+      readTextFile: async () => {
+        throw new Error("EACCES: permission denied");
+      },
+    },
+    workspacePath: WORKSPACE,
+    isRpcReady: () => true,
+  });
+  assert.equal(stillReady.kind, "damaged", "连接正常时读失败仍是损坏（既有口径不变）");
+});
+
+test("黄金路径不受门禁影响：就绪时照常 ready（同一夹具前后对照）", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },
+  });
+  const state = await loadBoardDocument({
+    fileService,
+    workspacePath: WORKSPACE,
+    isRpcReady: () => true,
+  });
+  assert.equal(state.kind, "ready");
+});
+
 test("stage 缺省（无 stage 字段的旧版板）不阻断渲染，也不猜测段位", async () => {
   const boardWithoutStage = structuredClone(GOLDEN_SHAPED_BOARD);
   for (const feature of boardWithoutStage.features) {

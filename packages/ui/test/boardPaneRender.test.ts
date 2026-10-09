@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BoardPaneView } from "../src/board/BoardPaneView.js";
+import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
@@ -16,11 +16,11 @@ import { GOLDEN_SHAPED_BOARD } from "./boardTestFixture.js";
  * 逐字文案以字面量钉在这里 —— 只查词条 key 或只查原文表会漏掉「渲染了错误文案」这一类坏法。
  */
 
-function render(state: BoardPaneLoadState): string {
+function render(state: BoardPaneLoadState, props: Partial<BoardPaneViewProps> = {}): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(BoardPaneView, { state, onRefresh: () => {} }),
+      children: createElement(BoardPaneView, { state, onRefresh: () => {}, ...props }),
     }),
   );
 }
@@ -115,7 +115,7 @@ test("最近执行行：lastRun 四要素；无断点不编造断点", () => {
 test("四缺口码徽章逐字（契约 §4）与 attentionSummary 置顶提示条（§3.1）", () => {
   const markup = render(readyState());
   assert.equal(
-    textInside(markup, "data-board-attention-banner"),
+    bannerText(markup),
     "1 已访谈未安排 · 2 已安排未展开 · 1 执行中断可续 · 1 待合并",
   );
   assert.ok(markup.includes("执行中断，可续（停在 #8）"), "interrupted-resume 徽章应逐字");
@@ -195,4 +195,133 @@ test("英文界面：段位徽章走英文词条，不出现中文段位（评�
   assert.ok(markup.includes('data-board-stage="执行中"'), "段位锚点应保留字段原值");
   assert.ok(texts.includes("In progress"), `执行中 的英文词条应为 In progress：${texts.join("|")}`);
   assert.ok(texts.includes("To do"), `待办 的英文词条应为 To do：${texts.join("|")}`);
+});
+
+/* ---------------- 面板级入口与暂时不可读（评审 #32-P3/P5） ---------------- */
+
+test("暂时不可读（连接未就绪）：专门文案 + 刷新入口，不指引重编译（评审 #32-P3）", () => {
+  const markup = render({ kind: "unavailable" });
+  assert.equal(
+    textInside(markup, 'data-board-empty="unavailable"'),
+    "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  );
+  assert.ok(!markup.includes("运行编译器重建"), "断连不该指引重编译（那是损坏态的动作）");
+  assert.ok(markup.includes("data-board-refresh"), "暂时不可读态也要能手动刷新");
+});
+
+test("刷新按钮提到面板级：空态 A/B/C、暂时不可读与加载态都能点（评审 #32-P5）", () => {
+  const states: BoardPaneLoadState[] = [
+    { kind: "missing" },
+    { kind: "empty" },
+    { kind: "damaged" },
+    { kind: "unavailable" },
+    { kind: "loading" },
+  ];
+  for (const state of states) {
+    assert.ok(render(state).includes("data-board-refresh"), `${state.kind} 态应有刷新按钮`);
+  }
+  assert.ok(
+    render(readyState()).includes("data-board-refresh"),
+    "就绪态既有头部的刷新按钮仍在",
+  );
+  const readOnly = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(BoardPaneView, { state: { kind: "missing" } }),
+    }),
+  );
+  assert.ok(!readOnly.includes("data-board-refresh"), "没有刷新回调时不渲染死按钮");
+});
+
+/* ---------------- 陈旧提示（契约 §5 的应用侧轻量版） ---------------- */
+
+test("陈旧提示：updatedAt 距今超阈值才出现，纯提示不改变内容渲染（契约 §5）", () => {
+  const updatedAt = "2026-10-09T16:05:00+08:00";
+  const justAfter = render(readyState(), { now: Date.parse("2026-10-10T15:00:00+08:00") });
+  assert.ok(!justAfter.includes("data-board-stale-hint"), "未超阈值不提示");
+  const stale = render(readyState(), { now: Date.parse("2026-10-11T17:00:00+08:00") });
+  const hint = textInside(stale, "data-board-stale-hint");
+  assert.ok(hint.includes("板可能已过期"), `陈旧提示文案：${hint}`);
+  assert.ok(hint.includes("建议在会话内重新编译板"), "提示要给出可做的动作");
+  assert.ok(stale.includes("预览通道（Preview Channel）"), "陈旧提示不改变既有内容渲染");
+  assert.ok(
+    !stale.includes("data-board-empty="),
+    "陈旧不是空态（契约 §5：不改变空态判定）",
+  );
+  // updatedAt 缺省（旧板）→ 没有陈旧信号，不编造。
+  const state = readyState();
+  if (state.kind !== "ready") throw new Error("准备失败");
+  const withoutUpdatedAt = render(
+    { kind: "ready", board: { ...state.board, updatedAt: null } },
+    { now: Date.parse("2026-10-20T00:00:00+08:00") },
+  );
+  assert.ok(!withoutUpdatedAt.includes("data-board-stale-hint"), "没有时间戳就不猜陈旧");
+});
+
+/* ---------------- 提示条段落跳转（#32 遗留） ---------------- */
+
+/** 提示条可见文本（剥标签后归一空白）：文案仍须逐字等于契约 §3.1 模板。 */
+function bannerText(markup: string): string {
+  const anchor = markup.indexOf("data-board-attention-banner");
+  assert.ok(anchor >= 0, "提示条应存在");
+  const start = markup.indexOf(">", anchor) + 1;
+  const slice = markup.slice(start, markup.indexOf("</div>", start));
+  return slice
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+test("提示条每段可跳（#32 遗留）：文案逐字不变，有落点的段落是按钮", () => {
+  const markup = render(readyState(), { onJumpToCard: () => {} });
+  assert.equal(bannerText(markup), "1 已访谈未安排 · 2 已安排未展开 · 1 执行中断可续 · 1 待合并");
+  for (const code of [
+    "interviewed-not-arranged",
+    "arranged-not-expanded",
+    "interrupted-resume",
+    "unmerged-worktree",
+  ]) {
+    assert.ok(
+      markup.includes(`data-board-attention-jump="${code}"`),
+      `${code} 段有对应卡片时应可跳`,
+    );
+  }
+  assert.ok(
+    /<button[^>]*data-board-attention-jump="unmerged-worktree"[^>]*>/.test(markup),
+    "段落跳转用一个按钮承载（键盘可达）",
+  );
+});
+
+test("提示条计数没有对应卡片时不给死按钮（陈旧摘要的合法形态）", () => {
+  const state = readyState();
+  if (state.kind !== "ready") throw new Error("准备失败");
+  const staleSummary = render(
+    {
+      kind: "ready",
+      board: {
+        ...state.board,
+        attentionSummary: {
+          interviewedNotArranged: 0,
+          arrangedNotExpanded: 0,
+          interruptedResume: 0,
+          unmergedWorktree: 3,
+        },
+        features: state.board.features.map((feature) => ({
+          ...feature,
+          attention: [],
+          tasks: feature.tasks.map((task) => ({ ...task, attention: [] })),
+        })),
+      },
+    },
+    { onJumpToCard: () => {} },
+  );
+  assert.equal(bannerText(staleSummary), "0 已访谈未安排 · 0 已安排未展开 · 0 执行中断可续 · 3 待合并");
+  assert.ok(
+    staleSummary.includes('data-board-attention-jump-none="unmerged-worktree"'),
+    "没有落点的段落渲染为纯文本锚点",
+  );
+  assert.ok(
+    !staleSummary.includes('data-board-attention-jump="unmerged-worktree"'),
+    "不得给一个跳不到任何卡的死按钮",
+  );
 });

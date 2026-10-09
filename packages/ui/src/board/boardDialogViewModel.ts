@@ -54,14 +54,21 @@ export interface BoardDialogOriginRow {
   value: string;
 }
 
-/** 依赖跳转目标：板上那张卡自身（按稳定号定位），不是复制一份字段。 */
-export interface BoardDialogJumpTarget {
+/**
+ * 跳转落点的**最小形状**：面板的「滚动 + 高亮 + 必要时切视图」只需要 `id` 与 `stage`
+ * （弹窗 dependency 跳转与提示条段落跳转共用同一条机制——提示条的目标可能未领号/无稳定号）。
+ */
+export interface BoardJumpTarget {
   id: string;
+  /** 目标段位（视图层判「当前视图能不能渲染它」用；不自算、只搬运）。 */
+  stage: string | null;
+}
+
+/** 弹窗 dependency 的跳转目标：稳定号定位 + 卡片自身的展示字段（弹窗显示对方编号用）。 */
+export interface BoardDialogJumpTarget extends BoardJumpTarget {
   no: number;
   label: string | null;
   title: string;
-  /** 目标段位（视图层判「当前视图能不能渲染它」用；不自算、只搬运）。 */
-  stage: string | null;
 }
 
 export interface BoardDialogBlocker {
@@ -166,9 +173,23 @@ export function boardCardDialogKeyIntent(input: {
  */
 export function boardJumpRequiresListView(
   viewMode: BoardViewMode,
-  target: BoardDialogJumpTarget,
+  target: BoardJumpTarget,
 ): boolean {
   return viewMode === "kanban" && !isBoardStage(target.stage);
+}
+
+/**
+ * 提示条四段的跳转落点（#32 遗留「提示条点击滚动到对应卡」）：按缺口码在**当前板**上找
+ * 第一个挂该码的节点（节点集合序 = 特性在前、卡按文档序，即树形视图的阅读序）。
+ * 找不到（陈旧摘要：计数 >0 但节点已无该码）→ null：视图层渲染纯文本，不给死按钮。
+ */
+export function resolveBoardAttentionJumpTarget(
+  board: BoardViewModel,
+  code: BoardAttentionCode,
+): BoardJumpTarget | null {
+  const node = collectBoardViewNodes(board).find((entry) => entry.attention.includes(code));
+  if (!node) return null;
+  return { id: node.id, stage: node.stage };
 }
 
 /** 节点 + 板 → 弹窗模型（纯函数：入参不改写、不读其他文件）。 */ export function buildBoardCardDialog(
