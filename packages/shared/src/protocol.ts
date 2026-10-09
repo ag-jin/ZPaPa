@@ -431,6 +431,8 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
+  /** 多智能体小队实验开关（默认 false）。 */
+  experimentalAgentSquadsEnabled?: boolean;
   /**
    * 项目知识库（wiki）配置：生成选项与定时自动更新。
    * 产物落 `<workspace>/wiki/`。

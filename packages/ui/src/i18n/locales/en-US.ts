@@ -4362,6 +4362,11 @@ const enUS: Record<string, string> = {
   "settings.hooks.review.reason.host_unavailable": "This connection cannot review this Hook",
   "settings.hooks.review.reason.rejected": "Request rejected",
   "settings.hooks.title": "Hooks",
+  "settings.experiments.title": "Experiments",
+  "settings.experiments.squadToggle.label": "Multi-agent squads",
+  "settings.experiments.squadToggle.description":
+    "Enable collaborative agents, squads, and worktree isolation",
+  "settings.experiments.saveFailed": "Could not save. Please try again.",
   "settings.workspaceFileSearch.title": "Workspace Search Scope",
   "settings.workspaceFileSearch.description":
     "Edit .zcodeignore rules (gitignore syntax) that scope workspace file search. Takes effect on the next search after saving.",

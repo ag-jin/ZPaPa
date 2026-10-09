@@ -185,3 +185,32 @@ export const OFF_PEAK_SCHEMA = `
       CREATE INDEX IF NOT EXISTS idx_off_peak_ws
       ON off_peak_tasks (workspace_key, status);
     `;
+
+// 0004 追加：工作项表。只新增，不改既有表/列，老库升级安全（IF NOT EXISTS 可重复应用）。
+// assignee_type 不建外键：归档对象长期保留（只归档不硬删），外键会让写入失败。
+export const WORK_ITEM_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS work_items (
+    id                 TEXT PRIMARY KEY,
+    workspace_key      TEXT NOT NULL,
+    workspace_path     TEXT NOT NULL,
+    parent_id          TEXT,
+    stage              INTEGER,
+    title              TEXT NOT NULL,
+    body               TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL,
+    assignee_type      TEXT NOT NULL,
+    assignee_id        TEXT NOT NULL,
+    labels             TEXT NOT NULL DEFAULT '[]',
+    properties         TEXT NOT NULL DEFAULT '{}',
+    position           REAL NOT NULL DEFAULT 0,
+    archived_at        INTEGER,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_items_parent
+    ON work_items(parent_id) WHERE parent_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_work_items_status
+    ON work_items(workspace_key, status) WHERE archived_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_work_items_workspace
+    ON work_items(workspace_key, updated_at DESC);
+`;
