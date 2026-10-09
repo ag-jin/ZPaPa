@@ -53,6 +53,48 @@ function attributeValue(markup: string, attribute: string): string {
   return match[1] ?? "";
 }
 
+/**
+ * 元素切片：从锚点所在标签的 `<` 起，到下一锚点所在标签的 `<`（或切片尾）。
+ * 与 `columnSlice` 的区别：这里保留标签本身，供开标签祖先链扫描用（评审 #35-S1 的结构断言）。
+ */
+function elementSlice(markup: string, anchor: string, nextAnchor: string | null): string {
+  const at = markup.indexOf(anchor);
+  assert.ok(at >= 0, `markup 里找不到 ${anchor}`);
+  const start = markup.lastIndexOf("<", at);
+  const end =
+    nextAnchor === null ? markup.length : markup.lastIndexOf("<", markup.indexOf(nextAnchor, at));
+  assert.ok(end > start, `下一锚点 ${nextAnchor} 应在 ${anchor} 之后`);
+  return markup.slice(start, end);
+}
+
+/** 列体开标签：列内执行 `overflow-y-auto` 的那层（滚动容器）。 */
+function scrollBodyTag(slice: string): string {
+  const match = /<div[^>]*\boverflow-y-auto\b[^>]*>/.exec(slice);
+  assert.ok(match, `列内应有 overflow-y-auto 的滚动容器：\n${slice.slice(0, 400)}`);
+  return match[0];
+}
+
+/** 本渲染片段里不会出现的自闭合/空元素（扫描时按不开栈处理）。 */
+const VOID_TAGS = new Set(["br", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+
+/** 目标元素的开标签祖先链（简易深度扫描，从外到内；本片段无自闭合标签）。 */
+function openTagChain(slice: string, targetIndex: number): string[] {
+  const stack: string[] = [];
+  const pattern = /<(\/?)([a-zA-Z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(slice)) !== null && match.index < targetIndex) {
+    const closing = match[1] ?? "";
+    const name = match[2] ?? "";
+    const attrs = match[3] ?? "";
+    if (closing === "/") {
+      stack.pop();
+    } else if (!VOID_TAGS.has(name.toLowerCase()) && !/\/\s*$/.test(attrs)) {
+      stack.push(match[0]);
+    }
+  }
+  return stack;
+}
+
 /** 某锚点元素的直接文本子节点（逐字文案断言用）。 */
 function textInside(markup: string, attr: string): string {
   const match = new RegExp(`<[^>]*${attr}[^>]*>([^<]*)<`).exec(markup);
@@ -270,6 +312,58 @@ test("看板：已完成列是可折叠分区（默认展开，归档前可见�
   const doneMatch = /<details[^>]*data-board-column-details="已完成"[^>]*>/.exec(markup);
   assert.ok(doneMatch, "已完成列应是可折叠分区");
   assert.ok(doneMatch[0].includes("open"), "默认展开（归档前要看得见）");
+});
+
+test("看板：已完成列的列体拿到剩余高度，与六列同款滚动链（评审 #35-S1）", () => {
+  // 真源：契约 §13.2 已完成列 = 可折叠分区（列内滚动与六列同行为）；本断言钉住滚动链的
+  // 结构前提——列体 overflow-y-auto 必须处在「父链给出确定高度」的形态里，否则永不滚动。
+  const markup = kanban();
+  const normal = elementSlice(markup, 'data-board-column="待办"', 'data-board-column="执行中"');
+  const done = elementSlice(
+    markup,
+    'data-board-column-details="已完成"',
+    'data-board-column="已取消"',
+  );
+
+  // ① 同款滚动容器：两处都出自同一列体（overflow-y-auto + min-h-0 才能缩进定高里）。
+  const normalBody = scrollBodyTag(normal);
+  const doneBody = scrollBodyTag(done);
+  assert.equal(doneBody, normalBody, "已完成列的列体应与六列同款（同一滚动容器形态）");
+  assert.ok(
+    /\bmin-h-0\b/.test(normalBody),
+    "列体自身要能缩（flex 的 min-height:auto 会顶开定高链）",
+  );
+
+  // ② 定高链上游（七列共用，稳定锚点起算）：列行 min-h-0 + flex-1；看板根 h-full + min-h-0。
+  const firstColumnAt = markup.indexOf('data-board-column="待设计"');
+  assert.ok(firstColumnAt > 0, "待设计列应在 markup 里");
+  const rowTag = (markup.slice(0, firstColumnAt).match(/<div[^>]*>/g) ?? []).at(-1) ?? "";
+  assert.match(rowTag, /\bmin-h-0\b/, `列行应 min-h-0：${rowTag}`);
+  assert.match(rowTag, /\bflex-1\b/, `列行应 flex-1：${rowTag}`);
+  const rootTag = /<div[^>]*data-board-view="kanban"[^>]*>/.exec(markup)?.[0] ?? "";
+  assert.match(rootTag, /\bh-full\b/, `看板根应 h-full：${rootTag}`);
+  assert.match(rootTag, /\bmin-h-0\b/, `看板根应 min-h-0：${rootTag}`);
+
+  // ③ 六列：列根是列方向 flex 容器，作为列行的拉伸 flex 项拿到满列高（列体随行 shrink）。
+  const normalRoot = openTagChain(normal, normal.indexOf(normalBody))[0] ?? "";
+  assert.match(normalRoot, /<section[^>]*data-board-column="待办"/, "六列列根带稳定锚点");
+  assert.match(normalRoot, /\bflex\b/, "六列列根应是 flex 容器（拉伸定高）");
+  assert.match(normalRoot, /\bflex-col\b/, "六列列根应是列方向");
+
+  // ④ 已完成列：列根仍是 <details>（原生折叠 + 宿主展开路径不变），靠 grid 行模板给剩余高：
+  // summary 一行 auto + 其余 minmax(0,1fr)；内包 div 保持列方向 flex + min-h-0。
+  const doneChain = openTagChain(done, done.indexOf(doneBody));
+  const doneRoot = doneChain[0] ?? "";
+  const doneParent = doneChain.at(-1) ?? "";
+  assert.match(doneRoot, /^<details/, "已完成列列根应是 details");
+  assert.match(doneParent, /\bflex-col\b/, `已完成列内包容器应是列方向 flex：${doneParent}`);
+  assert.match(doneParent, /\bmin-h-0\b/, `已完成列内包容器应 min-h-0：${doneParent}`);
+  assert.match(doneRoot, /\bgrid\b/, `已完成列列根应是 grid：${doneRoot}`);
+  assert.match(
+    doneRoot,
+    /grid-rows-\[auto_minmax\(0,1fr\)\]/,
+    `已完成列应以 grid 行模板把剩余高度给列体（否则列体拿到 auto 高，overflow-y-auto 永不滚动）：${doneRoot}`,
+  );
 });
 
 test("看板：段位缺失/不认识的节点数给提示，不静默丢失（列表视图仍全量）", () => {

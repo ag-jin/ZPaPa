@@ -192,14 +192,15 @@ export function BoardKanbanView({
         {columns.map((column) =>
           column.stage === "已完成" ? (
             // 「已完成」列是可折叠分区（§13.2）：默认展开（归档前要看得见），用户可折叠。
-            // `<details>` 本身不挂 flex（评审 #33-S5 的跨浏览器风险）：flex 布局收进内包 div。
-            // 折叠列里的跳转落点由宿主在滚动前展开（`revealBoardCardElement`）。
+            // 高度链（评审 #33-S5/#35-S1）：details 本身不挂 flex（跨浏览器风险），改挂 grid 两行
+            // ——summary「auto」+ 内包 div「minmax(0,1fr)」；否则列体 overflow-y-auto 拿到 auto 高，
+            // 内容溢出列盒且永不滚动。折叠列里的跳转落点由宿主在滚动前展开（`boardRevealDetailsIntent`）。
             <details
               key={column.stage}
               open
               data-board-column={column.stage}
               data-board-column-details={column.stage}
-              className="w-56 shrink-0 rounded-xl border border-border/50 bg-background"
+              className="grid w-56 shrink-0 grid-rows-[auto_minmax(0,1fr)] rounded-xl border border-border/50 bg-background"
             >
               <summary className="flex cursor-pointer items-center gap-1.5 px-1.5 py-1">
                 <BoardKanbanHeaderContent column={column} />
