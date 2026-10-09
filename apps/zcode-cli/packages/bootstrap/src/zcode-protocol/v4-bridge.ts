@@ -83,6 +83,10 @@ import type {
 } from "@zcode/contracts";
 import { HYDRATION_TRACE_ID } from "../zcode-protocol-v4/projection-state.js";
 import { resolveWorkspaceRefFromId } from "./mapper.js";
+import {
+  readSessionBackgroundTaskInventory,
+  reconciledBackgroundTaskHydrationFacts,
+} from "./background-task-session-query.js";
 import { buildLiveWorkspaceConfigStateV4 } from "./v4-workspace-config.js";
 import {
   hasSessionModelProvider,
@@ -1867,6 +1871,17 @@ export function createConversationV4Gateway(
           subagentInventory.ended.map((item) => [item.childSessionId, { status: item.status }]),
         ),
       };
+      // 已收敛的后台 work（接管时落盘的 background_task_outcome）与 child 事实同一批读：
+      // 收敛行在投影里的收口靠它——映射只在读面一处（只带 entry 来源的终态合成；通知终局
+      // 是真实结果轮，内存事件里本来就有它的终态，重复合成会造出「补洞盖真实终局」）。
+      const backgroundTaskInventory = await readSessionBackgroundTaskInventory(
+        context,
+        sessionId,
+        persistedMessages,
+        "v4_hydrate",
+      );
+      const reconciledBackgroundTasks =
+        reconciledBackgroundTaskHydrationFacts(backgroundTaskInventory);
       const merged = mergeColdConversationEvents({
         contextWindow,
         fileChangeSummariesByMessageId,
@@ -1875,6 +1890,7 @@ export function createConversationV4Gateway(
         sessionId,
         goalVerificationEntries: source.goalVerificationEntries,
         subagentChildFacts,
+        ...(reconciledBackgroundTasks.length > 0 ? { reconciledBackgroundTasks } : {}),
         ...(Object.prototype.hasOwnProperty.call(source, "target")
           ? { target: source.target }
           : {}),

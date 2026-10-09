@@ -12,7 +12,9 @@ import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import {
   goalVerificationEntriesFromSessionEntries,
   synthesizeEventsFromMessages,
+  synthesizeReconciledBackgroundTaskEvents,
   type HydratedGoalVerificationEntry,
+  type HydratedReconciledBackgroundTask,
   type HydratedSubagentChildFacts,
 } from "./transcript-hydration.js";
 
@@ -148,6 +150,12 @@ interface MergeInput {
   sessionId: string;
   /** child session 的持久事实（后台 Agent 终态判据）；缺席表示调用方读不到 child 记录。 */
   subagentChildFacts?: HydratedSubagentChildFacts;
+  /**
+   * 已收敛的后台 work（读面注入的持久终态事实，见 `background-task-orphan-reconcile`）。
+   * 合成终态事件追加在**内存事件之后**：内存里悬着的 running（进程死了、终态事件从未落盘）
+   * 因此收敛到 lost；调用方读不到收敛事实时不传，行为与修前逐字一致。
+   */
+  reconciledBackgroundTasks?: readonly HydratedReconciledBackgroundTask[];
   target?: SessionGoal | null;
 }
 
@@ -893,6 +901,34 @@ export function mergeColdConversationEvents(input: MergeInput): ColdEventMergeRe
     supplements.push(event);
     recordDiagnostic(diagnostics, "cold_merge.unclassified_event_preserved", event);
   });
+
+  // 收敛的后台 work：只对「内存里没有真实终态」的 work 合成收口事件。
+  //
+  // 真实终态 > 收敛补洞（与读面同一条优先级）：内存事件里已经有终态（completed/failed/
+  // cancelled/lost）时，收敛事件必须缺席——否则一条 lost 会把真实终局盖掉。追加进
+  // supplements（trailing）而不是 durableEvents：这类 work 的陈旧 running 只活在内存事件里，
+  // 收口事件必须排在它之后才能赢；只有持久事实（entry）证明它已死时才合成。
+  const memoryTerminalWorkIds = new Set<string>();
+  for (const event of input.memoryEvents) {
+    if (
+      event.type !== SessionEventType.BackgroundTaskStarted &&
+      event.type !== SessionEventType.BackgroundTaskUpdated &&
+      event.type !== SessionEventType.BackgroundTaskCompleted
+    ) {
+      continue;
+    }
+    const status = stringField(event.payload, "status");
+    const taskId = stringField(event.payload, "taskId");
+    if (taskId && status && status !== "running") memoryTerminalWorkIds.add(taskId);
+  }
+  const reconciledBackgroundTasks = (input.reconciledBackgroundTasks ?? []).filter(
+    (fact) => !memoryTerminalWorkIds.has(fact.workId),
+  );
+  if (reconciledBackgroundTasks.length > 0) {
+    supplements.push(
+      ...synthesizeReconciledBackgroundTaskEvents(reconciledBackgroundTasks, input.sessionId),
+    );
+  }
 
   return {
     diagnostics: [...diagnostics.values()],
