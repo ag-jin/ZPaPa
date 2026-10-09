@@ -24,7 +24,9 @@ const boardKeys = (table: Record<string, string>): string[] =>
 
 /** 词条里的 {占位符} 集合（去重后排序）：只译一侧会露出原始花括号。 */
 function placeholders(message: string | undefined): string[] {
-  return [...new Set([...(message ?? "").matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? ""))].sort();
+  return [
+    ...new Set([...(message ?? "").matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? "")),
+  ].sort();
 }
 
 test("board.* 词条两语键集逐字一致（无单边键）", () => {
@@ -36,11 +38,7 @@ test("board.* 词条两语键集逐字一致（无单边键）", () => {
 
 test("board.* 词条的占位符两语一致（{count}/{time}/… 不得只译一侧）", () => {
   for (const key of boardKeys(zhCN)) {
-    assert.deepEqual(
-      placeholders(enUS[key]),
-      placeholders(zhCN[key]),
-      `${key} 的占位符两语不一致`,
-    );
+    assert.deepEqual(placeholders(enUS[key]), placeholders(zhCN[key]), `${key} 的占位符两语不一致`);
   }
 });
 

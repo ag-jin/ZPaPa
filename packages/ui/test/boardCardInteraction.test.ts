@@ -104,7 +104,11 @@ test("同目标重跳续时：highlight 带 nonce，每次跳转都是新状态�
   const first = nextBoardCardHighlight(null, "task:8");
   assert.deepEqual(first, { id: "task:8", nonce: 1 });
   const again = nextBoardCardHighlight(first, "task:8");
-  assert.deepEqual(again, { id: "task:8", nonce: 2 }, "同目标重跳必须产生新状态（否则 effect 不重跑）");
+  assert.deepEqual(
+    again,
+    { id: "task:8", nonce: 2 },
+    "同目标重跳必须产生新状态（否则 effect 不重跑）",
+  );
   const other = nextBoardCardHighlight(again, "task:9");
   assert.deepEqual(other, { id: "task:9", nonce: 3 }, "换目标同样自增（一次一状态）");
 });

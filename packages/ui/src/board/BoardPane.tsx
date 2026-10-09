@@ -20,10 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { BoardPaneView } from "./BoardPaneView.js";
-import {
-  boardCardDialogKeyIntent,
-  type BoardJumpTarget,
-} from "./boardDialogViewModel.js";
+import { boardCardDialogKeyIntent, type BoardJumpTarget } from "./boardDialogViewModel.js";
 import {
   boardCardSelector,
   boardRevealDetailsIntent,

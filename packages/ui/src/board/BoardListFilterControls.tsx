@@ -15,11 +15,7 @@ import {
   BOARD_STATUS_MESSAGE_IDS,
   BOARD_STAGE_MESSAGE_IDS,
 } from "./boardPresentation.js";
-import {
-  BOARD_ATTENTION_CODES,
-  BOARD_STATUS_VALUES,
-  BOARD_STAGES,
-} from "./boardViewModel.js";
+import { BOARD_ATTENTION_CODES, BOARD_STATUS_VALUES, BOARD_STAGES } from "./boardViewModel.js";
 import {
   BOARD_VIEW_NODE_KIND_MESSAGE_IDS,
   BOARD_VIEW_NODE_KINDS,

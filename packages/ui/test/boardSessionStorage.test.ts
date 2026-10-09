@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  readBoardSessionValue,
-  writeBoardSessionValue,
-} from "../src/board/boardSessionStorage.js";
+import { readBoardSessionValue, writeBoardSessionValue } from "../src/board/boardSessionStorage.js";
 
 /**
  * 看板面板会话偏好（sessionStorage）的共享骨架（评审 #34-S1：三处 try/catch 各写一份）。

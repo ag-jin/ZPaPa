@@ -331,8 +331,7 @@ function BoardPlaceholder({
   message: string;
   onRefresh?: () => void;
 }) {
-  const anchor =
-    kind === "loading" ? { "data-board-loading": "" } : { "data-board-empty": kind };
+  const anchor = kind === "loading" ? { "data-board-loading": "" } : { "data-board-empty": kind };
   return (
     <div data-board-pane="" className="flex h-full min-h-0 flex-col">
       {onRefresh ? (

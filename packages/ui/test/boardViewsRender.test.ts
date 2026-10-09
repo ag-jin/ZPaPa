@@ -564,7 +564,10 @@ test("面板：四视图的卡片都接线打开弹窗（锚点 + role/tabindex/
   // 没有打开回调时四视图都不宣称可点（只读展示的退化路径）。
   for (const viewMode of ["tree", "kanban", "list", "table"] as const) {
     const markup = render(matrixBoard(), { viewMode });
-    assert.ok(markup.includes('data-board-card="task:8"'), `${viewMode} 仍渲染卡片锚点（跳转定位用）`);
+    assert.ok(
+      markup.includes('data-board-card="task:8"'),
+      `${viewMode} 仍渲染卡片锚点（跳转定位用）`,
+    );
     assert.ok(
       !/data-board-card="task:8"[^>]*role="button"/.test(markup),
       `${viewMode} 没有回调时不得宣称可点`,

@@ -22,11 +22,7 @@ import {
   type BoardDialogBlocker,
   type BoardDialogJumpTarget,
 } from "./boardDialogViewModel.js";
-import {
-  BoardNodeBadges,
-  BoardNodeNumber,
-  BoardStageBadge,
-} from "./boardNodeParts.js";
+import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
 import {
   formatBoardLastRunText,
   formatBoardRunTime,

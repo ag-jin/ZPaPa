@@ -316,7 +316,11 @@ test("过滤控件取值归一：空串/不认识的值一律 null，排序坏�
   assert.equal(boardAttentionFilterValue("future-code"), null);
   assert.equal(boardAttentionFilterValue("unmerged-worktree"), "unmerged-worktree");
   assert.equal(boardViewNodeKindFilterValue(""), null);
-  assert.equal(boardViewNodeKindFilterValue("interview-only"), null, "视图节点类型只有 feature/task");
+  assert.equal(
+    boardViewNodeKindFilterValue("interview-only"),
+    null,
+    "视图节点类型只有 feature/task",
+  );
   assert.equal(boardViewNodeKindFilterValue("task"), "task");
   assert.equal(boardSortFilterValue(""), "recent", "排序是闭集二选一，坏值回落默认视角");
   assert.equal(boardSortFilterValue("future-sort"), "recent");

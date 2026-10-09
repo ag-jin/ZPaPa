@@ -201,7 +201,10 @@ test("段位缺省/不认识：null 不渲染徽章，未知段位原样透出�
 });
 
 test("来源行的键枚举与词条表同模块：呈现叶子不反依赖弹窗 VM（评审 S6）", () => {
-  const source = readFileSync(new URL("../src/board/boardPresentation.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../src/board/boardPresentation.ts", import.meta.url),
+    "utf8",
+  );
   assert.doesNotMatch(
     source,
     /boardDialogViewModel/,

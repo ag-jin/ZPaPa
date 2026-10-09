@@ -972,7 +972,8 @@ const zhCN: Record<string, string> = {
   "board.empty.features": "尚无规格或计划。",
   "board.empty.damaged": "板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。",
   // 暂时不可读（连接未就绪）：与「损坏」分开——不在断连时指引重编译（评审 #32-P3）。
-  "board.unavailable": "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  "board.unavailable":
+    "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
   // 陈旧提示（契约 §5 的应用侧轻量版：纯时间启发式，不做 fs mtime 比对——见契约 §5 勘误）。
   "board.stale.hint": "板可能已过期（更新于 {time}）：建议在会话内重新编译板。",
   "board.attention.interviewedNotArranged": "已访谈，尚未落卡",

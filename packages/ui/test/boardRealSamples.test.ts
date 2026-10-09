@@ -130,9 +130,12 @@ function assertAttentionBanner(params: { markup: string; summary: Record<string,
     `${count("interruptedResume")} 执行中断可续`,
     `${count("unmergedWorktree")} 待合并`,
   ].join(" · ");
-  const hasSignal = ["interviewedNotArranged", "arrangedNotExpanded", "interruptedResume", "unmergedWorktree"].some(
-    (key) => count(key) > 0,
-  );
+  const hasSignal = [
+    "interviewedNotArranged",
+    "arrangedNotExpanded",
+    "interruptedResume",
+    "unmergedWorktree",
+  ].some((key) => count(key) > 0);
   if (hasSignal) {
     assert.equal(bannerTextOf(params.markup), expected, `提示条应逐字渲染：${expected}`);
     return;

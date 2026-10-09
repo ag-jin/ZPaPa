@@ -63,12 +63,14 @@ test("树渲染：特性节点行 = 编号 + 标题 + 段位徽章 + 状态色",
   assert.ok(markup.includes('data-board-status="active"'), "状态色应带可辨别的状态标记");
   // 负向断言要有真判据（评审：`未领号">未领号` 这种模式永远命中不了）：
   // 有号的特性行不得挂「未领号」角标，而未领号角标只出现在真正缺号的节点上。
-  const featureRow = /data-board-feature="spec:preview-channel"[^>]*>([\s\S]*?)<div class="flex flex-col">/.exec(
-    markup,
-  );
+  const featureRow =
+    /data-board-feature="spec:preview-channel"[^>]*>([\s\S]*?)<div class="flex flex-col">/.exec(
+      markup,
+    );
   assert.ok(featureRow, "特性行应可切片");
+  const featureRowMarkup = featureRow[1] ?? "";
   assert.ok(
-    !featureRow[1].includes("data-board-unassigned"),
+    !featureRowMarkup.includes("data-board-unassigned"),
     "有 label 的特性行不得带未领号角标",
   );
   assert.ok(markup.includes("data-board-unassigned"), "夹具里的未领号节点应带该锚点");
@@ -176,10 +178,7 @@ test("最近执行行：lastRun 四要素；无断点不编造断点", () => {
 
 test("四缺口码徽章逐字（契约 §4）与 attentionSummary 置顶提示条（§3.1）", () => {
   const markup = render(readyState());
-  assert.equal(
-    bannerText(markup),
-    "1 已访谈未安排 · 2 已安排未展开 · 1 执行中断可续 · 1 待合并",
-  );
+  assert.equal(bannerText(markup), "1 已访谈未安排 · 2 已安排未展开 · 1 执行中断可续 · 1 待合并");
   assert.ok(markup.includes("执行中断，可续（停在 #8）"), "interrupted-resume 徽章应逐字");
   assert.ok(markup.includes("待合并（执行现场未回流）"), "unmerged-worktree 徽章应逐字");
   assert.ok(markup.includes("已安排，尚未拆解任务"), "arranged-not-expanded 徽章应逐字");
@@ -282,10 +281,7 @@ test("刷新按钮提到面板级：空态 A/B/C、暂时不可读与加载态�
   for (const state of states) {
     assert.ok(render(state).includes("data-board-refresh"), `${state.kind} 态应有刷新按钮`);
   }
-  assert.ok(
-    render(readyState()).includes("data-board-refresh"),
-    "就绪态既有头部的刷新按钮仍在",
-  );
+  assert.ok(render(readyState()).includes("data-board-refresh"), "就绪态既有头部的刷新按钮仍在");
   const readOnly = renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
@@ -298,7 +294,7 @@ test("刷新按钮提到面板级：空态 A/B/C、暂时不可读与加载态�
 /* ---------------- 陈旧提示（契约 §5 的应用侧轻量版） ---------------- */
 
 test("陈旧提示：updatedAt 距今超阈值才出现，纯提示不改变内容渲染（契约 §5）", () => {
-  const updatedAt = "2026-10-09T16:05:00+08:00";
+  // 夹具 updatedAt = 2026-10-09T16:05+08:00；阈值 24h 的两侧各取一个时刻。
   const justAfter = render(readyState(), { now: Date.parse("2026-10-10T15:00:00+08:00") });
   assert.ok(!justAfter.includes("data-board-stale-hint"), "未超阈值不提示");
   const stale = render(readyState(), { now: Date.parse("2026-10-11T17:00:00+08:00") });
@@ -306,10 +302,7 @@ test("陈旧提示：updatedAt 距今超阈值才出现，纯提示不改变内�
   assert.ok(hint.includes("板可能已过期"), `陈旧提示文案：${hint}`);
   assert.ok(hint.includes("建议在会话内重新编译板"), "提示要给出可做的动作");
   assert.ok(stale.includes("预览通道（Preview Channel）"), "陈旧提示不改变既有内容渲染");
-  assert.ok(
-    !stale.includes("data-board-empty="),
-    "陈旧不是空态（契约 §5：不改变空态判定）",
-  );
+  assert.ok(!stale.includes("data-board-empty="), "陈旧不是空态（契约 §5：不改变空态判定）");
   // updatedAt 缺省（旧板）→ 没有陈旧信号，不编造。
   const state = readyState();
   if (state.kind !== "ready") throw new Error("准备失败");
@@ -377,7 +370,10 @@ test("提示条计数没有对应卡片时不给死按钮（陈旧摘要的合�
     },
     { onJumpToCard: () => {} },
   );
-  assert.equal(bannerText(staleSummary), "0 已访谈未安排 · 0 已安排未展开 · 0 执行中断可续 · 3 待合并");
+  assert.equal(
+    bannerText(staleSummary),
+    "0 已访谈未安排 · 0 已安排未展开 · 0 执行中断可续 · 3 待合并",
+  );
   assert.ok(
     staleSummary.includes('data-board-attention-jump-none="unmerged-worktree"'),
     "没有落点的段落渲染为纯文本锚点",

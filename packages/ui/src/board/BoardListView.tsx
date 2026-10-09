@@ -10,11 +10,7 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import {
-  BoardNodeBadges,
-  BoardNodeNumber,
-  BoardStageBadge,
-} from "./boardNodeParts.js";
+import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 import {
   boardListControlsToQuery,

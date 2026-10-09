@@ -306,7 +306,7 @@ test("提示条段落跳转：按缺口码取节点集合序的第一个节点�
   assert.deepEqual(resolveBoardAttentionJumpTarget(board, "interviewed-not-arranged"), {
     id: "interview:itw-20261009-c3d4",
     stage: null,
-    });
+  });
   assert.deepEqual(
     resolveBoardAttentionJumpTarget(board, "arranged-not-expanded"),
     { id: "plan:sess_f1a2d0bb", stage: null },
