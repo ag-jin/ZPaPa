@@ -49,6 +49,8 @@ import {
   ICuaPipSessionService,
   IProviderProvisioningTargetService,
   ISquadRuntimeService,
+  /* G7（§8.4-3）：半途事务扫描的公开入口（协作门面）—— host 只调它，自己不拼 repo、不建连接。 */
+  IWorkItemCollaborationService,
   createUntrustedProviderProvisioningTarget,
   isProviderProvisioningTrustedClientMode,
   createZCodeAgentConnectionScope,
@@ -1221,6 +1223,43 @@ async function replayUnfinalizedBatchesBestEffort(
       logger.warn(`[squad] startup batch replay failed workspace=${target.path}`, error);
     }
   });
+}
+
+/**
+ * G7（spec §8.4-3）：**半途事务扫描** —— 把本 workspace 崩溃残留缺失的派生 Activity 补齐
+ * （只补缺、只写 Activity、绝不重复 Comment；幂等 ⇒ 每次启动跑都安全）。
+ *
+ * 为什么在启动路径上、且在**第四步之后**：第四步的补投会先把未收敛 receipt 推进到当时的结论
+ * （`settleIfUnsettled`）；扫描随后按**已持久事实**投影。顺序相反的话，投影会对着一个马上要被
+ * 改写的结论写一份历史，而 receipt 侧的收敛又不会回来改投影 ⇒ 时间线与 receipt 静默不一致。
+ *
+ * 为什么走协作门面而不是 host 自己拼 repo：补写必须落在写侧那张表上 —— 门面背后是组合根
+ * `createCommentServiceFor` 的**同一份 repo 构造**（同一连接、同一键构造）；host 侧另拼一份，
+ * 就是第二条写路径（键一漂移就重复补，且不报错）。
+ *
+ * 为什么失败只记日志：一次维护失败不该让 Host 起不来；但逐条带原文 warn（静默会让「没补上」
+ * 与「本来就没有残行」长得一样）。
+ */
+async function backfillCommentFactsBestEffort(
+  services: ServiceCollection | null,
+  target: { path: string; identity: string },
+): Promise<void> {
+  const collaboration = services?.getOptional(IWorkItemCollaborationService);
+  if (!collaboration) {
+    logger.warn("[squad] comment facts backfill skipped: 协作门面未注册");
+    return;
+  }
+  try {
+    const report = await collaboration.backfillWorkItemCommentFacts(target);
+    logger.info(
+      `[squad] startup comment facts backfill done workspace=${target.path}` +
+        ` scannedComments=${report.scannedComments} scannedReceipts=${report.scannedReceipts}` +
+        ` replayedCommentActivities=${report.replayedCommentActivities}` +
+        ` replayedDispatchActivities=${report.replayedDispatchActivities}`,
+    );
+  } catch (error) {
+    logger.warn(`[squad] startup comment facts backfill failed workspace=${target.path}`, error);
+  }
 }
 
 /**
@@ -5029,6 +5068,18 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 "queue reconciliation",
                 async (target) => {
                   await advanceSquadQueueAfterSettlement(activeServices, target);
+                },
+              );
+
+              /* 第五步（G7，spec §8.4-3）：**半途事务扫描** —— 补齐崩溃残留缺失的派生 Activity
+                 （只补缺、只写 Activity、绝不重复 Comment）；幂等 ⇒ 每次启动跑都安全。
+                 排在第四步之后：补投先收口 receipt 的未收敛态，扫描再按**已持久事实**投影
+                 （见 backfillCommentFactsBestEffort 的次序理由）。 */
+              await forEachSquadWorkspaceTarget(
+                candidates,
+                "comment facts backfill",
+                async (target) => {
+                  await backfillCommentFactsBestEffort(activeServices, target);
                 },
               );
             })();

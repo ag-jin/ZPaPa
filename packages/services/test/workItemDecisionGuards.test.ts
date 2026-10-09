@@ -255,6 +255,8 @@ test("steering 边界（回归）｜目标忙 ⇒ 评论走 deferred 义务，�
   const runRowBefore = JSON.stringify(db.prepare("SELECT * FROM squad_runs").all());
 
   const service = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments,
     activities,
     receipts,

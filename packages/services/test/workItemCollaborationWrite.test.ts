@@ -206,6 +206,8 @@ test("写入口｜软删/解决/回应三入口走真实服务面：墓碑 + 根
     localHumanActor: () => LOCAL_HUMAN,
     createCommentService: () =>
       createCommentService({
+        /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+        transact: (fn) => fn(),
         comments,
         activities,
         receipts,
@@ -341,6 +343,8 @@ test("写入口｜跨 workspace 的动作响亮拒绝（门面不把「写错的
     localHumanActor: () => LOCAL_HUMAN,
     createCommentService: () =>
       createCommentService({
+        /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+        transact: (fn) => fn(),
         comments,
         activities,
         receipts,
@@ -736,5 +740,77 @@ test("读面｜判据只在服务层判：门面读面恰一次 canView（主体
     calls,
     [`view:${tagged(LOCAL_HUMAN)}`],
     "门面写入口不得调用判据（判据面在服务层）",
+  );
+});
+
+/* ---------- G7（§8.4-3）：半途事务扫描的公开入口 ---------- */
+
+test("G7 门面｜backfillWorkItemCommentFacts：workspaceKey 取自 runtime 绑定值、报告原样透传", async () => {
+  const seen: string[] = [];
+  // 独立真源：报告由注入实现给出，门面必须**原样**透传（不重算、不包装）。
+  const report = {
+    scannedComments: 7,
+    scannedReceipts: 3,
+    replayedCommentActivities: 2,
+    replayedDispatchActivities: 1,
+  };
+  const service = createWorkItemCollaborationService({
+    createRuntime: async () =>
+      ({
+        boundWorkspace: OTHER_WORKSPACE,
+        readSquadMergeMode: () => "local",
+      }) as unknown as SquadRuntime,
+    getRepos: () => {
+      throw new Error("补写扫描不得走读面 repo（懒取口不是它的依赖）");
+    },
+    localHumanActor: () => LOCAL_HUMAN,
+    backfillCommentFacts: (workspaceKey) => {
+      seen.push(workspaceKey);
+      return report;
+    },
+  });
+
+  // 调用方传 ws-a 的 target，但 runtime 绑 ws-other（模拟「取错了目标」的接线 bug）。
+  const returned = await service.backfillWorkItemCommentFacts(WORKSPACE);
+
+  assert.deepEqual(
+    seen,
+    [OTHER_WORKSPACE.identity],
+    "扫的是 runtime 绑定的 workspace（target 不参与 key 计算）",
+  );
+  assert.deepEqual(returned, report, "报告原样透传（挂点日志与用例断言读到同一份结论）");
+});
+
+test("G7 门面｜backfillCommentFacts 未注入 ⇒ 响亮抛（静默 no-op 会把残行伪装成「本来就没有」）", async () => {
+  const service = createWorkItemCollaborationService({
+    createRuntime: async () =>
+      ({ boundWorkspace: WORKSPACE, readSquadMergeMode: () => "local" }) as unknown as SquadRuntime,
+    getRepos: () => ({}) as never,
+    localHumanActor: () => LOCAL_HUMAN,
+  });
+
+  await assert.rejects(
+    () => service.backfillWorkItemCommentFacts(WORKSPACE),
+    /backfillCommentFacts/,
+    "缺接线必须抛（且点名缺的是哪一格）",
+  );
+});
+
+test("G7 组合根接线｜补写扫描与 CommentService 复用同一份评论族 repo 构造（唯一出处）", () => {
+  const definitions = NODE_SOURCE.match(/const commentFactReposFor = /g) ?? [];
+  assert.equal(
+    definitions.length,
+    1,
+    "评论族 repo 构造只能有一处（两处 = 两条写路径，键一漂移就重复补）",
+  );
+  assert.match(
+    commentServiceConstruction(),
+    /\.\.\.commentFactReposFor\(\)/,
+    "CommentService 的 comments/activities/receipts 必须来自那份共用构造",
+  );
+  assert.match(
+    NODE_SOURCE,
+    /backfillCommentFacts:\s*\(workspaceKey\)\s*=>\s*backfillMissingCommentFacts\(commentFactReposFor\(\), workspaceKey\)/,
+    "补写扫描必须复用同一份构造（host 侧零 repo、零连接、零键拼装）",
   );
 });

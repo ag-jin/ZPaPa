@@ -43,6 +43,8 @@ function harness() {
   const deferred = createSquadDeferredDispatchRepo(db);
   const published: SquadDispatchRequest[] = [];
   const service: CommentService = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments,
     activities,
     receipts,
@@ -328,6 +330,8 @@ test("X2.2 不可达态：insertIfAbsent=false 但 find 找不到 ⇒ 响亮抛�
     find: (): null => null,
   };
   const service: CommentService = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments: h.comments,
     activities: h.activities,
     receipts: h.receipts,

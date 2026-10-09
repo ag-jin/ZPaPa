@@ -1,3 +1,7 @@
+/* oxlint-disable eslint(max-lines) -- 门面契约（读模型 + 全部入口的纪律）与实现刻意同文件：
+   本文件是「UI 只经这一个口碰协作域」的证明面，每个入口都是「现构 runtime → 取绑定 workspace →
+   交给注入实现」的同形三行；按入口拆文件会让「某个入口忘了取绑定值」这类接线 bug 无处一眼对照，
+   而它的表现（写到了别的 workspace）不报错。与 commentService.ts / squadRunRepo 的例外同款理由。 */
 import { resolveWorkspaceKey, type SquadMergeMode, type WorkItem } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type {
@@ -12,7 +16,11 @@ import {
   resolveAccessSubject,
   type CollaborationAccessPolicy,
 } from "./collaborationAccessPolicy.js";
-import type { CommentService, CreateCommentResult } from "./commentService.js";
+import type {
+  CommentFactsBackfillReport,
+  CommentService,
+  CreateCommentResult,
+} from "./commentService.js";
 import type { SquadRuntime } from "./squadContracts.js";
 import type { SquadWorkspaceTarget } from "./squadRuntimeService.js";
 import type { WorkItemActivityRepo, WorkItemActivityRecord } from "./workItemActivityRepo.js";
@@ -368,6 +376,20 @@ export interface IWorkItemCollaborationService {
     target: SquadWorkspaceTarget,
     input: RefreshWorkItemPullRequestsRequest,
   ): Promise<PullRequestSyncReport>;
+
+  /* ---------- G7（§8.4-3）：半途事务扫描（启动期维护动作，非 UI 入口） ---------- */
+
+  /**
+   * **扫描并补齐本 workspace 缺失的派生 Activity**（崩溃残留回收）。
+   *
+   * 为什么挂在门面上而不是让 host 自己拼 repo：补写必须落在**写侧那张表**上 —— 由组合根复用
+   * `createCommentServiceFor` 同一份 repo 构造（`deps.backfillCommentFacts`），host 侧零 repo、
+   * 零连接、零键拼装。
+   *
+   * 幂等（Activity 的 dedupKey 唯一索引）⇒ 每次启动跑都安全；调用点是启动维护步骤，不是 UI 路径。
+   * `workspaceKey` 由本层从 `runtime.boundWorkspace` 派生（与读写入口同一条式子，调用方不参与）。
+   */
+  backfillWorkItemCommentFacts(target: SquadWorkspaceTarget): Promise<CommentFactsBackfillReport>;
 }
 
 export const IWorkItemCollaborationService =
@@ -427,6 +449,21 @@ export type WorkItemCollaborationServiceDeps = {
    */
   createDecisionService?: (runtime: SquadRuntime) => WorkItemDecisionService;
   /**
+   * G7（§8.4-3）半途事务扫描的转发目标：**组合根构造的补写实现**（复用评论族 repo 的同一份构造）。
+   *
+   * 为什么是注入而不是本文件 import 实现：`commentService.ts` 值导入加密内建模块（randomUUID），
+   * 本文件必须保持浏览器安全（值导入会把 node 侧带进 renderer 包，browserSafeRootEntry.test.ts 守这条）
+   * —— 与 `createCommentService` / `createDecisionService` 同款。
+   *
+   * 入参只有 `workspaceKey`（由本层从 runtime 绑定值派生）：补写是纯存储面动作，
+   * 不需要 runtime，也就拿不到任何生命周期写入口。
+   *
+   * **可选**：只消费读面的装配不必构造它；缺它时 `backfillWorkItemCommentFacts` **响亮抛**
+   * （`requireBackfillCommentFacts`）—— 静默 no-op 会让「崩溃残留没被回收」与「本来就没有残行」
+   * 长得一模一样（挂点日志里那行「补 0 枚」也就失去了意义）。
+   */
+  backfillCommentFacts?: (workspaceKey: string) => CommentFactsBackfillReport;
+  /**
    * 时钟注入面（#8 D2）：`link` 的 `created_at`/`updated_at` 取自它，缺省 `Date.now`。
    * 存在的唯一理由是让「登记时刻」这一格在测试里可钉死（与各 repo 的 `now?` 同一条惯例）。
    */
@@ -479,6 +516,19 @@ export function createWorkItemCollaborationService(
       );
     }
     return deps.createDecisionService(runtime);
+  };
+
+  /** 补写扫描的同一道缺失守卫（G7；理由见 `deps.backfillCommentFacts`）。 */
+  const requireBackfillCommentFacts = (): ((
+    workspaceKey: string,
+  ) => CommentFactsBackfillReport) => {
+    if (!deps.backfillCommentFacts) {
+      throw new Error(
+        "工作项协作门面未接通半途事务扫描：组合根没有注入 backfillCommentFacts（§8.4-3）。" +
+          "静默 no-op 会让「崩溃残留没被回收」与「本来就没有残行」长得一模一样，故一律抛。",
+      );
+    }
+    return deps.backfillCommentFacts;
   };
 
   /* workspace 的唯一口径与来源（读与写**共用这一条**式子）：runtime 的绑定值 ——
@@ -742,6 +792,15 @@ export function createWorkItemCollaborationService(
         actor: requireLocalHumanActor,
         now,
       }).refresh(input);
+    },
+
+    /* G7（§8.4-3）：半途事务扫描。与其余入口同形 —— **现构 runtime → 取绑定 workspace → 交给
+       组合根注入的实现**；本层只定「扫哪个 workspace」，缺行判据/键构造/幂等全在 commentService。
+       不经门禁（不是派发，是启动期维护）；不读 repo（`getRepos` 与本动作无关）。 */
+    async backfillWorkItemCommentFacts(target) {
+      const runtime = await deps.createRuntime(target);
+      const { workspaceKey } = boundWorkspaceOf(runtime);
+      return requireBackfillCommentFacts()(workspaceKey);
     },
   };
 }

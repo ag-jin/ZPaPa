@@ -34,7 +34,7 @@ import {
   subscriberSubjectOfActor,
   type SubscriberFactRecorder,
 } from "./subscriberFacts.js";
-import type { WorkItemActivityRepo } from "./workItemActivityRepo.js";
+import type { WorkItemActivityKind, WorkItemActivityRepo } from "./workItemActivityRepo.js";
 import type {
   AuthorRef,
   CommentCommand,
@@ -291,6 +291,22 @@ export type CommentServiceDeps = {
   newId?: () => string;
   /** 时钟（测试可注入）；缺省 Date.now。 */
   now?: () => number;
+  /**
+   * **显式事务口**（§8.3 / G8）：`createComment` 的「评论落库 → Activity → 裁决读窗 → receipt 落库」
+   * 整段在这个回调里跑，**必填**——组合根必须注入真实现（生产 = tasks-index 同一连接上的
+   * `BEGIN IMMEDIATE`，见 `createSqliteTransact`），绝不出现「未注入 ⇒ 静默不包事务」的路径：
+   * §8.3 要的正是「事实已落库则请求可重放」，而静默退化只会在崩溃事故之后才被发现。
+   *
+   * **为什么事务边界在服务层而不是 repo**：先例是 `workItemProjectRepo.remove`（repo 自己的两句 SQL
+   * 的事务边界在 repo 内，不把 BEGIN/COMMIT 交给调用方）。这里要包住的是**跨 repo 的不变量**
+   * （评论 + Activity + receipt 三张表的半条事实），不变量所有者是本服务 ⇒ 边界归它；
+   * 两条纪律随之而来：`transact` 内**不得再开事务**（嵌套 BEGIN 会抛），
+   * 且**不是**用来兜幂等的（见 `createComment` 里幂等键/事务的分工说明）。
+   *
+   * 测试替身穿同一个 seam（identity 函数即可；原子性用例注入真事务，见
+   * `commentServiceTransaction.test.ts`）。
+   */
+  transact<T>(fn: () => T): T;
 };
 
 export type CreateCommentInput = {
@@ -414,6 +430,15 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
   const now = deps.now ?? (() => Date.now());
   /* 判据面**取一次**：五个入口共用同一份策略对象（双判/漂移都无处藏）。 */
   const accessPolicy = deps.accessPolicy ?? SINGLE_USER_ACCESS_POLICY;
+  /* 事务口的**运行时兜底**（与门面那几个 `requireX` 同款理由）：类型上必填只挡编译期，组合根是
+     运行时接线（JS 侧漏接不会被类型挡住），而漏接的后果是「评论照写、三条事实各写各的」——
+     正是 §8.3 要关掉的那个窗口，且只在崩溃时才现形。故缺它在这里响亮抛，绝不静默放行。 */
+  if (typeof deps.transact !== "function") {
+    throw new Error(
+      "CommentServiceDeps.transact 未注入：§8.3 要求 createComment 的「评论落库 → Activity → " +
+        "裁决读窗 → receipt 落库」在显式事务内提交，静默不包事务会把原子性悄悄降级成崩溃后才现形的缺口。",
+    );
+  }
 
   return {
     createComment(input) {
@@ -485,88 +510,109 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         throw new Error(collaborationAccessDeniedMessage(commentAccess.reason, subject));
       }
       const timestamp = now();
-      const comment = deps.comments.add({
-        id: input.id ?? newId(),
-        workspaceKey: input.workspaceKey,
-        workspacePath: input.workspacePath,
-        workItemId: input.workItemId,
-        ...(parent !== null ? { threadId: parent.threadId } : {}),
-        ...(input.parentCommentId !== undefined ? { parentCommentId: input.parentCommentId } : {}),
-        author: input.author,
-        ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
-        initiatedBy: input.initiatedBy,
-        body: input.body,
-        normalizedBody: parsed.normalizedBody,
-        mentions: toMentionRefs(parsed.mentions),
-        command: parsed.command,
-        inline: parsed.inline,
-        ...(input.clientRequestId !== undefined ? { clientRequestId: input.clientRequestId } : {}),
-        createdAt: timestamp,
-      });
-      writeCommentActivities(deps, {
-        comment,
-        parsed,
-        timestamp,
-        sourceRun: input.sourceRun,
-        initiatedBy: input.initiatedBy,
-      });
-      /* 订阅事实（SUB.1）：评论**写成功之后**才报 —— spec §7.1「不能仅因浏览评论订阅」。
-         位置在派发链**之前**：派发结论（pending / blocked / deferred）不改变「这个人写过评论」
-         这条已成立的事实，订阅行也不得随派发成败增删。事实→reason 的映射在 `subscriberFacts`
-         （本文件不拼 reason 字面量）。 */
-      const subscriptionFacts = subscriberFactsForComment({
-        author: comment.author,
-        mentions: parsed.mentions,
-      });
-      for (const fact of subscriptionFacts) {
-        deps.subscribers?.({ workItemId: comment.workItemId, fact });
-      }
-      /* 收件箱通知（SUB.2）：同一条已落地的评论再报一次**事实面**（谁写的、哪条、点名了谁）——
-         准入与收件人解析在 `inboxNotificationPolicy` 一处（本层不判「要不要产生」）。
-         · **写成功之后**才报：不能因为「浏览了评论」产生通知（与订阅事实同一时点）；
-         · `system` 作者不是可通知主体（也不会是任何收件人）⇒ 不报：走到口里再抛会把它变成
-           一条会把评论翻转成失败的路径（`subscriberSubjectOfActor` 对 system 响亮抛）；
-         · 点名集合取订阅事实里的 `mentioned` 单源：`@all` 只广播不 fan-out、`@人名` 名册未接通、
-           `unresolved` 不猜身份 —— 那三格的处置只在 `subscriberFacts` 一处，这里不重判一遍。 */
-      if (deps.inboxNotifications !== undefined && comment.author.kind !== "system") {
-        deps.inboxNotifications({
-          workspaceKey: comment.workspaceKey,
-          workspacePath: comment.workspacePath,
-          workItemId: comment.workItemId,
-          workItemTitle: workItem?.title ?? null,
-          commentId: comment.id,
-          author: subscriberSubjectOfActor(comment.author),
-          mentioned: mentionedSubscriberSubjects(subscriptionFacts),
+      /* §8.3（G8）**事务边界**：从这里到 receipt 落库整段是一个原子单元——崩溃在中间就整段回滚，
+         绝不留下「评论在、Activity/receipt 不在」的半条事实（§8.4-3 的扫描兜的是本卡之前落下的残行）。
+         顺带把队列状态窗的**读 + 写**收进同一把 IMMEDIATE 锁：多窗口 Host 共用同一库文件时，
+         「读到无排队行 ⇒ 写 pending」的跨窗口窗口一并关闭（`workItemActivityRepo` 头注释点名的并发面）。
+         **分工**（两层各司其职，谁也不替谁）：事务关的是**崩溃窗口**（进程死在中间）；
+         `clientRequestId` / `dedupKey` 管的是**重放**（同一请求重投不写第二条事实）。
+         反过来说：事务不提供幂等（重投照样会重新进入本段，靠幂等键收敛），
+         幂等键也不提供原子性（它保证同键只有一条，不保证三条事实同生共死）。 */
+      const written = deps.transact(() => {
+        const comment = deps.comments.add({
+          id: input.id ?? newId(),
+          workspaceKey: input.workspaceKey,
+          workspacePath: input.workspacePath,
+          workItemId: input.workItemId,
+          ...(parent !== null ? { threadId: parent.threadId } : {}),
+          ...(input.parentCommentId !== undefined
+            ? { parentCommentId: input.parentCommentId }
+            : {}),
+          author: input.author,
+          ...(input.sourceRun !== undefined ? { sourceRun: input.sourceRun } : {}),
+          initiatedBy: input.initiatedBy,
+          body: input.body,
+          normalizedBody: parsed.normalizedBody,
+          mentions: toMentionRefs(parsed.mentions),
+          command: parsed.command,
+          inline: parsed.inline,
+          ...(input.clientRequestId !== undefined
+            ? { clientRequestId: input.clientRequestId }
+            : {}),
+          createdAt: timestamp,
         });
-      }
-      // 线程根：根评论 threadId = id（§3.2），故按 id 取恒可命中（含墓碑行）。
-      const threadRoot = parent !== null ? deps.comments.get(parent.threadId) : null;
-      const resolution = resolveCommentTrigger({
-        author: comment.author,
-        command: comment.command,
-        mentions: parsed.mentions,
-        assignee: workItem?.assignee ?? null,
-        parent: parent === null ? null : { author: parent.author, deletedAt: parent.deletedAt },
-        threadRoot:
-          threadRoot === null
-            ? null
-            : { author: threadRoot.author, deletedAt: threadRoot.deletedAt },
-        squadLeaders: roster.squadLeaders,
+        writeCommentActivities(deps, {
+          comment,
+          parsed,
+          timestamp,
+          sourceRun: input.sourceRun,
+          initiatedBy: input.initiatedBy,
+        });
+        /* 订阅事实（SUB.1）：评论**写成功之后**才报 —— spec §7.1「不能仅因浏览评论订阅」。
+           位置在派发链**之前**：派发结论（pending / blocked / deferred）不改变「这个人写过评论」
+           这条已成立的事实，订阅行也不得随派发成败增删。事实→reason 的映射在 `subscriberFacts`
+           （本文件不拼 reason 字面量）。
+           为什么它在事务内：订阅行与收件箱条目都是**这条评论的派生投影**，且写的是同一条连接上的
+           库——放在事务外，一次回滚会留下指着不存在评论的孤儿投影行（比缺投影更难收拾）。 */
+        const subscriptionFacts = subscriberFactsForComment({
+          author: comment.author,
+          mentions: parsed.mentions,
+        });
+        for (const fact of subscriptionFacts) {
+          deps.subscribers?.({ workItemId: comment.workItemId, fact });
+        }
+        /* 收件箱通知（SUB.2）：同一条已落地的评论再报一次**事实面**（谁写的、哪条、点名了谁）——
+           准入与收件人解析在 `inboxNotificationPolicy` 一处（本层不判「要不要产生」）。
+           · **写成功之后**才报：不能因为「浏览了评论」产生通知（与订阅事实同一时点）；
+           · `system` 作者不是可通知主体（也不会是任何收件人）⇒ 不报：走到口里再抛会把它变成
+             一条会把评论翻转成失败的路径（`subscriberSubjectOfActor` 对 system 响亮抛）；
+           · 点名集合取订阅事实里的 `mentioned` 单源：`@all` 只广播不 fan-out、`@人名` 名册未接通、
+             `unresolved` 不猜身份 —— 那三格的处置只在 `subscriberFacts` 一处，这里不重判一遍。 */
+        if (deps.inboxNotifications !== undefined && comment.author.kind !== "system") {
+          deps.inboxNotifications({
+            workspaceKey: comment.workspaceKey,
+            workspacePath: comment.workspacePath,
+            workItemId: comment.workItemId,
+            workItemTitle: workItem?.title ?? null,
+            commentId: comment.id,
+            author: subscriberSubjectOfActor(comment.author),
+            mentioned: mentionedSubscriberSubjects(subscriptionFacts),
+          });
+        }
+        // 线程根：根评论 threadId = id（§3.2），故按 id 取恒可命中（含墓碑行）。
+        const threadRoot = parent !== null ? deps.comments.get(parent.threadId) : null;
+        const resolution = resolveCommentTrigger({
+          author: comment.author,
+          command: comment.command,
+          mentions: parsed.mentions,
+          assignee: workItem?.assignee ?? null,
+          parent: parent === null ? null : { author: parent.author, deletedAt: parent.deletedAt },
+          threadRoot:
+            threadRoot === null
+              ? null
+              : { author: threadRoot.author, deletedAt: threadRoot.deletedAt },
+          squadLeaders: roster.squadLeaders,
+        });
+        /* 门禁快照**取一次**，位置与次数与既有实现逐字对齐（这行原样就是无条件读一次）：门禁判定搬进
+           canInvokeTarget 之后不得改成「只对目标读」——那会让 readDispatchEnabled 的调用次数随级联结论
+           变化，既有行为就不再逐格中立。优先序仍由判据给出：**归档 > 门禁 > 名册**（= `restriction ?? 名册`）。 */
+        const dispatchEnabled = deps.readDispatchEnabled();
+        const { dispatches, pendingRequests } = writeDispatchReceipts(deps, {
+          comment,
+          resolution,
+          accessContext,
+          dispatchEnabled,
+          accessPolicy,
+          knownAgentIds: roster.knownAgentIds,
+          timestamp,
+        });
+        return { comment, dispatches, pendingRequests };
       });
-      /* 门禁快照**取一次**，位置与次数与既有实现逐字对齐（这行原样就是无条件读一次）：门禁判定搬进
-         canInvokeTarget 之后不得改成「只对目标读」——那会让 readDispatchEnabled 的调用次数随级联结论
-         变化，既有行为就不再逐格中立。优先序仍由判据给出：**归档 > 门禁 > 名册**（= `restriction ?? 名册`）。 */
-      const dispatchEnabled = deps.readDispatchEnabled();
-      const dispatches = writeDispatchReceipts(deps, {
-        comment,
-        resolution,
-        accessContext,
-        dispatchEnabled,
-        accessPolicy,
-        knownAgentIds: roster.knownAgentIds,
-        timestamp,
-      });
-      return { comment, dispatches };
+      /* 外发**在提交之后**（既有契约「请求事实已全部落库才外发」的加强版）：出口的消费者
+         （host 派发入口）按 dispatchKey 回库读事实——事务未提交就外发，它读到的是尚不存在的行；
+         若那次事务随后回滚，这条请求更是一条永远不会存在的行。 */
+      for (const request of written.pendingRequests) deps.publishDispatchRequest?.(request);
+      return { comment: written.comment, dispatches: written.dispatches };
     },
 
     softDeleteComment(input) {
@@ -588,7 +634,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       const deleted = deps.comments.get(comment.id)!;
       const timestamp = now();
       deps.activities.add({
-        id: `activity-${comment.id}-deleted`,
+        ...commentActivityKeys.deleted(comment.id),
         workspaceKey: comment.workspaceKey,
         workspacePath: comment.workspacePath,
         workItemId: comment.workItemId,
@@ -598,7 +644,6 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         initiatedBy: input.initiatedBy ?? input.actor,
         commentId: comment.id,
         payload: { deletedAt: deleted.deletedAt },
-        dedupKey: `comment:${comment.id}:deleted`,
         createdAt: timestamp,
       });
       return deleted;
@@ -633,7 +678,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       // 置/消各一条：dedupKey 带状态后缀——同键重投不写第二条（§8.1），置↔消互不吞并。
       const state = input.resolved ? "set" : "cleared";
       deps.activities.add({
-        id: `activity-${comment.id}-resolved-${state}`,
+        ...commentActivityKeys.resolved(comment.id, state),
         workspaceKey: comment.workspaceKey,
         workspacePath: comment.workspacePath,
         workItemId: comment.workItemId,
@@ -643,7 +688,6 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         initiatedBy: input.initiatedBy ?? input.actor,
         commentId: comment.id,
         payload: { resolved: input.resolved },
-        dedupKey: `comment:${comment.id}:resolved:${state}`,
         createdAt: timestamp,
       });
       return updated;
@@ -675,7 +719,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         createdAt: timestamp,
       });
       deps.activities.add({
-        id: `activity-${comment.id}-reaction-${input.author.kind}-${input.author.id}-${reaction.emoji}`,
+        ...commentActivityKeys.reaction(comment.id, input.author, reaction.emoji),
         workspaceKey: comment.workspaceKey,
         workspacePath: comment.workspacePath,
         workItemId: comment.workItemId,
@@ -685,7 +729,6 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         initiatedBy: input.initiatedBy ?? input.author,
         commentId: comment.id,
         payload: { emoji: reaction.emoji },
-        dedupKey: `reaction:${comment.id}:${input.author.kind}:${input.author.id}:${reaction.emoji}`,
         createdAt: timestamp,
       });
       // §4.4：回应永不触发派发——本方法结构上不碰 receipts / runs / deferred（负向断言见测试）。
@@ -803,8 +846,51 @@ function adjudicateQueueWindow(
 /**
  * 按级联结论落 receipt（逐目标）：本卡只做**队列状态窗裁决**（并入 / 义务 / pending），
  * 不写 squad_runs——实际派发归 X2.1 的 host 接线（§5.2 明令：评论服务不得自己开 run）。
- * 返回逐目标结论（§12.1-12：评论响应如实上报「谁被触发、结果如何」）。
+ * 返回逐目标结论（§12.1-12：评论响应如实上报「谁被触发、结果如何」）与**待外发**的请求
+ * （外发由调用方在事务**提交之后**做，见 `createComment` —— 本函数不知道也不该知道事务边界）。
  */
+/* 评论族 Activity 的 id / dedupKey 的**单一出处**：写路径（createComment / softDeleteComment /
+   setCommentResolved / addCommentReaction）与 §8.4-3 补写扫描共用同一份构造。
+   为什么必须收在一处（G7）：扫描做的是「按 id/dedupKey 找缺行」——在扫描里重新拼一遍串，
+   写侧一改键就成了「写侧写新键、扫描找旧键」：每次启动都判缺、每次都补一条**重复**投影，且不报错。
+   故键表与事实投影同属一个所有者（本模块），扫描只许引用、不许拼串。 */
+const commentActivityKeys = {
+  created: (commentId: string) => ({
+    id: `activity-${commentId}-created`,
+    dedupKey: `comment:${commentId}:created`,
+  }),
+  /** 点名解析投影（**不在 §8.4-3 的补写范围**：崩溃残留只回收 created 与派发两族；键仍收在这里，
+      免得下次扩范围时多出第二个拼串点）。 */
+  mentionParsed: (commentId: string) => ({
+    id: `activity-${commentId}-mention-parsed`,
+    dedupKey: `comment:${commentId}:mention_parsed`,
+  }),
+  /** 派发请求投影（至少一个非 blocked 目标）。 */
+  dispatchRequested: (commentId: string) => ({
+    id: `activity-${commentId}-requested`,
+    dedupKey: `comment:${commentId}:dispatch_requested`,
+  }),
+  /** 抑制投影：写侧两处共用（无目标抑制 `{reason}` / 受限目标 `{reason:"blocked",blocked}`）——
+      同一评论至多一枚（同 id/dedupKey），补写扫描按同一枚判定缺行。 */
+  dispatchSuppressed: (commentId: string) => ({
+    id: `activity-${commentId}-dispatch-suppressed`,
+    dedupKey: `comment:${commentId}:dispatch_suppressed`,
+  }),
+  deleted: (commentId: string) => ({
+    id: `activity-${commentId}-deleted`,
+    dedupKey: `comment:${commentId}:deleted`,
+  }),
+  resolved: (commentId: string, state: "set" | "cleared") => ({
+    id: `activity-${commentId}-resolved-${state}`,
+    dedupKey: `comment:${commentId}:resolved:${state}`,
+  }),
+  /** 回应投影：键带 (author, emoji)——同人同表情幂等，异人/异表情各一枚。 */
+  reaction: (commentId: string, author: AuthorRef, emoji: string) => ({
+    id: `activity-${commentId}-reaction-${author.kind}-${author.id}-${emoji}`,
+    dedupKey: `reaction:${commentId}:${author.kind}:${author.id}:${emoji}`,
+  }),
+};
+
 function writeDispatchReceipts(
   deps: CommentServiceDeps,
   context: {
@@ -818,12 +904,12 @@ function writeDispatchReceipts(
     knownAgentIds: ReadonlySet<string>;
     timestamp: number;
   },
-): CommentDispatchReport[] {
+): { dispatches: CommentDispatchReport[]; pendingRequests: SquadDispatchRequest[] } {
   if (context.resolution.kind !== "targets") {
     if (context.resolution.kind === "suppressed") {
       // 抑制事实（@all / @人名 / /note）：不开 run、不产生 receipt——唯一语义是「不派发」并留痕。
       deps.activities.add({
-        id: `activity-${context.comment.id}-dispatch-suppressed`,
+        ...commentActivityKeys.dispatchSuppressed(context.comment.id),
         workspaceKey: context.comment.workspaceKey,
         workspacePath: context.comment.workspacePath,
         workItemId: context.comment.workItemId,
@@ -833,11 +919,10 @@ function writeDispatchReceipts(
         initiatedBy: context.comment.initiatedBy,
         commentId: context.comment.id,
         payload: { reason: context.resolution.reason },
-        dedupKey: `comment:${context.comment.id}:dispatch_suppressed`,
         createdAt: context.timestamp,
       });
     }
-    return [];
+    return { dispatches: [], pendingRequests: [] };
   }
   const dispatches: CommentDispatchReport[] = [];
   /** 未收敛（pending）的请求：循环后经出口外发（含同键重投时仍 pending 的行 —— 它还没有执行者）。 */
@@ -931,7 +1016,7 @@ function writeDispatchReceipts(
   }
   if (dispatches.some((report) => report.outcome !== "blocked")) {
     deps.activities.add({
-      id: `activity-${context.comment.id}-requested`,
+      ...commentActivityKeys.dispatchRequested(context.comment.id),
       workspaceKey: context.comment.workspaceKey,
       workspacePath: context.comment.workspacePath,
       workItemId: context.comment.workItemId,
@@ -941,14 +1026,13 @@ function writeDispatchReceipts(
       initiatedBy: context.comment.initiatedBy,
       commentId: context.comment.id,
       payload: { targets: dispatches },
-      dedupKey: `comment:${context.comment.id}:dispatch_requested`,
       createdAt: context.timestamp,
     });
   }
   if (blocked.length > 0) {
     // 被拒目标进抑制事实（带原因）：评论响应逐目标如实上报，Activity 留审计（§12.1-12）。
     deps.activities.add({
-      id: `activity-${context.comment.id}-dispatch-suppressed`,
+      ...commentActivityKeys.dispatchSuppressed(context.comment.id),
       workspaceKey: context.comment.workspaceKey,
       workspacePath: context.comment.workspacePath,
       workItemId: context.comment.workItemId,
@@ -958,14 +1042,13 @@ function writeDispatchReceipts(
       initiatedBy: context.comment.initiatedBy,
       commentId: context.comment.id,
       payload: { reason: "blocked", blocked },
-      dedupKey: `comment:${context.comment.id}:dispatch_suppressed`,
       createdAt: context.timestamp,
     });
   }
-  /* 请求事实已全部落库（receipt + Activity 之后）才外发：出口的消费者（host 派发入口）读库取事实，
-     先发后写会让它读到一条不存在的 receipt。只发 pending（见 deps.publishDispatchRequest 的理由）。 */
-  for (const request of pendingRequests) deps.publishDispatchRequest?.(request);
-  return dispatches;
+  /* 请求事实已全部落库（receipt + Activity 之后）才把待外发清单交回调用方：出口的消费者
+     （host 派发入口）读库取事实，先发后写会让它读到一条不存在的 receipt；显式事务下还要求
+     **提交之后**才发（见 createComment）。只发 pending（见 deps.publishDispatchRequest 的理由）。 */
+  return { dispatches, pendingRequests };
 }
 
 /** 评论派发请求的形状**只在 buildCommentDispatchRequest 一处拼**（出口/host 两侧读到的身份一致）。 */
@@ -999,7 +1082,7 @@ function writeCommentActivities(
 ): void {
   const { comment } = context;
   deps.activities.add({
-    id: `activity-${comment.id}-created`,
+    ...commentActivityKeys.created(comment.id),
     workspaceKey: comment.workspaceKey,
     workspacePath: comment.workspacePath,
     workItemId: comment.workItemId,
@@ -1010,12 +1093,11 @@ function writeCommentActivities(
     initiatedBy: context.initiatedBy,
     commentId: comment.id,
     payload: { command: comment.command, parentCommentId: comment.parentCommentId },
-    dedupKey: `comment:${comment.id}:created`,
     createdAt: context.timestamp,
   });
   if (context.parsed.mentions.length > 0) {
     deps.activities.add({
-      id: `activity-${comment.id}-mention-parsed`,
+      ...commentActivityKeys.mentionParsed(comment.id),
       workspaceKey: comment.workspaceKey,
       workspacePath: comment.workspacePath,
       workItemId: comment.workItemId,
@@ -1026,8 +1108,203 @@ function writeCommentActivities(
       initiatedBy: context.initiatedBy,
       commentId: comment.id,
       payload: { mentions: context.parsed.mentions },
-      dedupKey: `comment:${comment.id}:mention_parsed`,
       createdAt: context.timestamp,
     });
   }
+}
+
+/* ────────────────────────── §8.4-3（G7）：半途事务扫描补写 ────────────────────────── */
+
+/**
+ * 扫描的**唯一**依赖面：三个读口 + Activity 写口。
+ *
+ * 刻意窄于 `CommentServiceDeps`（`Pick` 而不是整个类型）：类型上就拿不到 runs / 义务表 / 名册 /
+ * 派发外发口，也拿不到 comments / receipts 的**写**方法——「只补缺、只写 Activity、不重跑队列状态窗、
+ * 绝不触碰 comments 表」因此是依赖图上的不可能，不是运行期纪律（与 `WorkItemDecisionService`
+ * 的依赖封顶同款手法）。真实装配直接传 `CommentServiceDeps`（结构上满足本类型）。
+ */
+export type CommentFactsBackfillDeps = {
+  /** `listByWorkspace`：全 workspace 的评论事实（含软删行——扫描按「有没有投影」判缺，不先过滤）。 */
+  comments: Pick<WorkItemCommentRepo, "listByWorkspace">;
+  /** 时间线读面按工作项取（既有读口，归档项也在内：Activity 不随归档消失）。 */
+  activities: Pick<WorkItemActivityRepo, "listByWorkItem" | "add">;
+  /** `listByWorkspace`：**全量** receipt（含已收敛的——它们同样拥有派发投影）。 */
+  receipts: Pick<CommentDispatchReceiptRepo, "listByWorkspace">;
+};
+
+/** 一次扫描的可观测结论（挂点的日志与用例的断言面）。 */
+export type CommentFactsBackfillReport = {
+  /** 本 workspace 已落库的评论行数（含软删）。 */
+  scannedComments: number;
+  scannedReceipts: number;
+  /**
+   * 本次判定缺行并请求补写的投影枚数（并发扫描下同键行由唯一索引收敛为一条，计数按「判定缺行」计）；
+   * 第二次跑恒为 0（幂等由 Activity 的 dedupKey 唯一索引兜底）。
+   */
+  replayedCommentActivities: number;
+  replayedDispatchActivities: number;
+};
+
+/** blocked receipt 的判据原因读取（写侧存的是 `{triggerSource, reason}`）。
+    读法收在这一处：`detail` 是自由形状列，`as string` 会把「列被写坏」静默读成 `undefined`，
+    投影里就出现一条 `reason=undefined` 的抑制事实——**写坏的事实比缺事实更难收拾**，故一律抛。 */
+function blockedReasonOf(receipt: CommentDispatchReceiptRecord): string {
+  const reason = receipt.detail["reason"];
+  if (typeof reason !== "string" || reason.trim().length === 0) {
+    throw new Error(
+      `receipt「${receipt.dispatchKey}」outcome=blocked，但 detail.reason 不是非空字符串` +
+        `（读到「${String(reason)}」）：列被写坏或写入方绕过了本模块，一律抛。`,
+    );
+  }
+  return reason;
+}
+
+/**
+ * **§8.4-3 半途事务扫描**：把本 workspace 缺失的派生 Activity 补齐。幂等 ⇒ 每次启动跑都安全
+ * （`workItemActivityRepo.add` 的 `UNIQUE(workspace_key, dedup_key)` + `INSERT OR IGNORE`），
+ * 故扫描自身不持有任何去重状态。
+ *
+ * 两条反连接扫描，**只补缺、只写 Activity**：
+ * ① 评论 ⟖ `work_item_activities(comment_id, kind='comment_created')` ⇒ 缺行重放 created 投影；
+ * ② receipt ⟖ 各自派发投影（`comment_dispatch_requested` / `comment_dispatch_suppressed`）⇒
+ *    **从已持久事实投影，不重跑队列状态窗**（首写即事实：receipt 那一刻的裁决结论就是事实，
+ *    重跑会把窗口变化后的新结论写进历史）。
+ *
+ * 与 G8 的分工：显式事务关掉的是**新**崩溃窗口；本函数兜的是库里**已经**落下的半条事实
+ * （G8 之前的残留，以及未来任何绕过事务的写入面）。两者是「先收窄窗口、扫描兜残余」的关系。
+ *
+ * **边界（不在本函数范围，逐条显式）**：
+ * · `comment_mention_parsed` 不重放 —— §8.4-3 只要求 created 与派发两族；mention 的解析结论要重算
+ *   解析器（重放会引入「扫描执行时刻的解析器版本」这一非事实输入）；
+ * · 无 receipt 的评论级抑制（`/note`、`@all`、`@人名`）不重放 —— 它的投影键由**触发解析结论**驱动，
+ *   不是「receipt 落库的裁决结果」；重放要重跑触发级联（同上，非事实输入）；
+ * · 不重放 `comment_deleted` / `comment_resolved` / `comment_reaction_added`（同族：键由动作驱动，
+ *   且它们的源事实不在本函数的依赖面里）；
+ * · receipt 指向的评论行不存在 ⇒ **响亮抛**（投影缺 actor/initiatedBy 的出处，不猜）。
+ */
+export function backfillMissingCommentFacts(
+  deps: CommentFactsBackfillDeps,
+  workspaceKey: string,
+): CommentFactsBackfillReport {
+  const comments = deps.comments.listByWorkspace(workspaceKey);
+  const receipts = deps.receipts.listByWorkspace(workspaceKey);
+
+  /* 缺行判据：本 workspace 每个工作项的时间线各读一次，建「commentId ⇒ 已有 kind 集合」。 */
+  const kindsByComment = new Map<string, Set<WorkItemActivityKind>>();
+  const workItemIds = new Set<string>();
+  for (const comment of comments) workItemIds.add(comment.workItemId);
+  for (const receipt of receipts) workItemIds.add(receipt.workItemId);
+  for (const workItemId of workItemIds) {
+    for (const activity of deps.activities.listByWorkItem(workspaceKey, workItemId)) {
+      if (activity.commentId === null) continue;
+      const kinds = kindsByComment.get(activity.commentId) ?? new Set<WorkItemActivityKind>();
+      kinds.add(activity.kind);
+      kindsByComment.set(activity.commentId, kinds);
+    }
+  }
+
+  /* ① comment_created：重放的是**投影**不是裁决 —— 全部输入取自评论行自己
+     （actor / initiatedBy / sourceRun / command / parentCommentId / createdAt）。 */
+  let replayedCommentActivities = 0;
+  for (const comment of comments) {
+    if (kindsByComment.get(comment.id)?.has("comment_created")) continue;
+    deps.activities.add({
+      ...commentActivityKeys.created(comment.id),
+      workspaceKey: comment.workspaceKey,
+      workspacePath: comment.workspacePath,
+      workItemId: comment.workItemId,
+      kind: "comment_created",
+      occurredAt: comment.createdAt,
+      actor: comment.author,
+      ...(comment.sourceRun !== null ? { sourceRun: comment.sourceRun } : {}),
+      initiatedBy: comment.initiatedBy,
+      commentId: comment.id,
+      payload: { command: comment.command, parentCommentId: comment.parentCommentId },
+      createdAt: comment.createdAt,
+    });
+    replayedCommentActivities += 1;
+  }
+
+  /* ② 派发投影：按评论归组（receipt 定序 = 时间线口径 created_at ASC → dispatch_key ASC，
+     同一评论至多两枚：requested 一枚 + suppressed 一枚，与写侧一一对应）。 */
+  const commentsById = new Map(comments.map((comment) => [comment.id, comment]));
+  const receiptsByComment = new Map<string, CommentDispatchReceiptRecord[]>();
+  for (const receipt of receipts) {
+    const group = receiptsByComment.get(receipt.commentId);
+    if (group === undefined) receiptsByComment.set(receipt.commentId, [receipt]);
+    else group.push(receipt);
+  }
+
+  let replayedDispatchActivities = 0;
+  for (const [commentId, group] of receiptsByComment) {
+    const comment = commentsById.get(commentId);
+    if (comment === undefined) {
+      throw new Error(
+        `receipt（dispatchKey=${group[0]!.dispatchKey}）指向的评论「${commentId}」在 workspace` +
+          `「${workspaceKey}」里不存在：投影缺 actor / initiatedBy 的出处，一律抛 —— ` +
+          "猜一个作者写进审计列会把事实写坏。",
+      );
+    }
+    const kinds = kindsByComment.get(commentId);
+    const occurredAtOf = (rows: readonly CommentDispatchReceiptRecord[]): number =>
+      Math.min(...rows.map((row) => row.createdAt));
+    // 非 blocked 目标存在 ⇒ 请求投影（与写侧 `dispatches.some(outcome !== "blocked")` 同一判据）。
+    if (
+      group.some((receipt) => receipt.outcome !== "blocked") &&
+      !kinds?.has("comment_dispatch_requested")
+    ) {
+      deps.activities.add({
+        ...commentActivityKeys.dispatchRequested(commentId),
+        workspaceKey: comment.workspaceKey,
+        workspacePath: comment.workspacePath,
+        workItemId: comment.workItemId,
+        kind: "comment_dispatch_requested",
+        occurredAt: occurredAtOf(group),
+        actor: comment.author,
+        initiatedBy: comment.initiatedBy,
+        commentId,
+        payload: {
+          targets: group.map((receipt) => ({
+            targetAgentId: receipt.targetAgentId,
+            source: receipt.source,
+            outcome: receipt.outcome,
+            detail: receipt.detail,
+          })),
+        },
+        createdAt: occurredAtOf(group),
+      });
+      replayedDispatchActivities += 1;
+    }
+    const blocked = group.filter((receipt) => receipt.outcome === "blocked");
+    if (blocked.length > 0 && !kinds?.has("comment_dispatch_suppressed")) {
+      deps.activities.add({
+        ...commentActivityKeys.dispatchSuppressed(commentId),
+        workspaceKey: comment.workspaceKey,
+        workspacePath: comment.workspacePath,
+        workItemId: comment.workItemId,
+        kind: "comment_dispatch_suppressed",
+        occurredAt: occurredAtOf(blocked),
+        actor: comment.author,
+        initiatedBy: comment.initiatedBy,
+        commentId,
+        payload: {
+          reason: "blocked",
+          blocked: blocked.map((receipt) => ({
+            targetAgentId: receipt.targetAgentId,
+            source: receipt.source,
+            reason: blockedReasonOf(receipt),
+          })),
+        },
+        createdAt: occurredAtOf(blocked),
+      });
+      replayedDispatchActivities += 1;
+    }
+  }
+
+  return {
+    scannedComments: comments.length,
+    scannedReceipts: receipts.length,
+    replayedCommentActivities,
+    replayedDispatchActivities,
+  };
 }

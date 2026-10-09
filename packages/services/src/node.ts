@@ -537,7 +537,15 @@ import { createWorkItemCommentReactionRepo } from "./workitem/workItemCommentRea
 /* B5.2 轮 2：评论服务（写事实 + 队列状态窗裁决 + receipt）——**组合根唯一构造点**（见下面
    `createCommentServiceFor`）：门面的四个写入口只转发到它，评论链自己不碰生命周期写接口。
    X2.1 已落 host 侧的评论派发入口，但组合根这一半（构造 + 请求出口）此前未落，本轮补齐。 */
-import { createCommentService, type CommentService } from "./workitem/commentService.js";
+import {
+  backfillMissingCommentFacts,
+  createCommentService,
+  type CommentService,
+  type CommentServiceDeps,
+} from "./workitem/commentService.js";
+/* G8（§8.3）：评论写入段的事务口 —— 与 `workItemProjectRepo.remove` 同一套 BEGIN IMMEDIATE 口径
+   （`createSqliteTransact` 是那份先例的逐字实现），连接取下面那条 `openSharedDatabase()`。 */
+import { createSqliteTransact } from "./workitem/sqliteTransact.js";
 /* C3.1：决定写入服务（1 行决定 + 1 枚带 decisionId 锚的 decision_created 活动）——
    **组合根唯一构造点**（见下面 `createDecisionServiceFor`）：门面第五写入口只转发到它。
    依赖集有意封顶（decisions/activities/workItems）：结构上碰不到 run / receipt / 义务表 / 状态机。 */
@@ -3005,13 +3013,30 @@ export function createLocalServices(options: {
      ——表现在「在 A 项目评论却触发了 B 项目的 agent」，且不报错。
      连接取 `openSharedDatabase()`：与其余协作 repo 同一条（走过迁移的那一条）；调用点在
      `createRuntime` 之后，库已 `ensureReady()`。 */
-  const createCommentServiceFor = (runtime: SquadRuntime): CommentService => {
+  /* G7（§8.4-3）：评论族事实面的 repo 构造 —— **唯一出处**。CommentService 的 deps 与半途事务
+     补写扫描共用它：两处各拼一份 repo，会让「扫描读的库」与「写侧写的库」在连接形态变化时分叉，
+     而且不报错（`openSharedDatabase()` 取的是共享单例，两处取到的是同一条连接）。 */
+  const commentFactReposFor = (): Pick<
+    CommentServiceDeps,
+    "comments" | "activities" | "receipts"
+  > => {
     const db = taskIndexRepo.openSharedDatabase();
-    return createCommentService({
+    return {
       comments: createWorkItemCommentRepo(db),
       activities: createWorkItemActivityRepo(db),
       receipts: createCommentDispatchReceiptRepo(db),
+    };
+  };
+
+  const createCommentServiceFor = (runtime: SquadRuntime): CommentService => {
+    const db = taskIndexRepo.openSharedDatabase();
+    return createCommentService({
+      ...commentFactReposFor(),
       reactions: createWorkItemCommentReactionRepo(db),
+      /* G8（§8.3）：**必填**的事务口，生产组合根注入真实现（同一连接的 BEGIN IMMEDIATE）——
+         「评论落库 → Activity → 裁决读窗 → receipt 落库」整段原子，且状态窗的读+写同锁。
+         这里是全仓唯一注入点：漏了它 `createCommentService` 会响亮抛（不静默不包事务）。 */
+      transact: createSqliteTransact(db),
       runs: runtime.squadRunRepo,
       deferred: runtime.squadDeferredDispatchRepo,
       workItems: runtime.workItemRepo,
@@ -3291,6 +3316,7 @@ export function createLocalServices(options: {
     .register(IModelSelectionService, providerRuntime.modelSelection)
     // 小队运行时：UI / host / 工具三处都经它取数或触发派发，门禁判据只有 runtime 里那一处。
     .register(ISquadRuntimeService, squadRuntimeService)
+
     /* B5.1：工作项协作读门面（独立描述符，不扩 ISquadRuntimeService / 快照）。五个 repo 全部
        懒取（`ensureReady()` 之后才拿到同一条走过迁移的连接）；`createRuntime` 复用同一个按目标
        现构的工厂 —— workspace 身份与「工作项在不在」的唯一权威。
@@ -3316,6 +3342,11 @@ export function createLocalServices(options: {
         localHumanActor: () => LOCAL_HUMAN_ACTOR,
         createCommentService: createCommentServiceFor,
         createDecisionService: createDecisionServiceFor,
+        /* G7（§8.4-3）：半途事务扫描的公开入口（host 启动第 5 步按 workspace 调一次）。
+           复用 `commentFactReposFor` —— 与 CommentService 同一份 repo 构造，host 侧不另拼 repo、
+           不另建连接（补写投影必须落在写侧那张表上，两处各建一份就是两条路）。 */
+        backfillCommentFacts: (workspaceKey) =>
+          backfillMissingCommentFacts(commentFactReposFor(), workspaceKey),
       }),
     );
   if (

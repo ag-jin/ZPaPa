@@ -177,3 +177,25 @@ test("X2.1 回写：闭集外 outcome 拒绝落盘（写路径闸同款）", () 
   );
   assert.equal(repo.get("cd-1")!.outcome, "pending", "非法值绝不落盘（原行保持）");
 });
+
+test("G7 扫描读面：listByWorkspace 覆盖全量（含已收敛）、定序、workspace 隔离", () => {
+  /* 扫描必须看**全量** receipt 而非 listUnsettledByWorkspace 的未收敛子集：
+     一条 opened 的 receipt 同样拥有派发投影 Activity，缺了照样要补。 */
+  const { repo } = setup();
+  repo.insertIfAbsent(receipt({ dispatchKey: "cd-b", createdAt: 200 }));
+  repo.insertIfAbsent(receipt({ dispatchKey: "cd-a", createdAt: 100 }));
+  repo.insertIfAbsent(receipt({ dispatchKey: "cd-tie", createdAt: 200, commentId: "c-2" }));
+  repo.insertIfAbsent(receipt({ dispatchKey: "cd-opened", outcome: "opened", createdAt: 300 }));
+  repo.insertIfAbsent(receipt({ dispatchKey: "cd-other", workspaceKey: "ws2" }));
+
+  assert.deepEqual(
+    repo.listByWorkspace("ws").map((r) => r.dispatchKey),
+    ["cd-a", "cd-b", "cd-tie", "cd-opened"],
+    "同 created_at 以 dispatch_key 定序（与 listByWorkItem 同一 ORDER）；opened 也在内",
+  );
+  assert.deepEqual(
+    repo.listByWorkspace("ws2").map((r) => r.dispatchKey),
+    ["cd-other"],
+  );
+  assert.deepEqual(repo.listByWorkspace("ws-absent"), []);
+});

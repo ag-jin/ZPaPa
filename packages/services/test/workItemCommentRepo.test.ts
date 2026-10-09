@@ -142,3 +142,26 @@ test("Reaction：同 (comment,author,emoji) 幂等；不写派发相关列", () 
   ).map((c) => c.name);
   assert.ok(!cols.some((c) => c.includes("dispatch")), "回应表无派发列（永不触发，§4.4）");
 });
+
+test("G7 扫描读面：listByWorkspace 覆盖全工作项、按 created_at/id 定序、workspace 隔离", () => {
+  /* §8.4-3 半途事务扫描要按 workspace 枚举「已落库的评论事实」做反连接，
+     故独立于 listByWorkItem 加一条读面；软删行照样读出——它是已发生的事实，
+     扫描以「有没有 comment_created Activity」判定，不由这里替扫描先过滤。 */
+  const { repo } = setup();
+  repo.add(input({ id: "c-b", createdAt: 200, workItemId: "wi-2" }));
+  repo.add(input({ id: "c-a", createdAt: 100, workItemId: "wi-1" }));
+  repo.add(input({ id: "c-tie", createdAt: 200, workItemId: "wi-1" }));
+  repo.add(input({ id: "c-other", workspaceKey: "ws2" }));
+  repo.softDelete("c-a");
+
+  assert.deepEqual(
+    repo.listByWorkspace("ws").map((c) => c.id),
+    ["c-a", "c-b", "c-tie"],
+    "同 created_at 以 id 定序（与 listByWorkItem/listByThread 同一 ORDER），软删行仍在",
+  );
+  assert.deepEqual(
+    repo.listByWorkspace("ws2").map((c) => c.id),
+    ["c-other"],
+  );
+  assert.deepEqual(repo.listByWorkspace("ws-absent"), []);
+});

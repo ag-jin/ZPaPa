@@ -121,6 +121,8 @@ function harness(
   const policyDep =
     options.accessPolicy !== undefined ? { accessPolicy: options.accessPolicy } : {};
   const service = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments,
     activities,
     receipts,

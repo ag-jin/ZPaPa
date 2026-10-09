@@ -87,6 +87,14 @@ export interface CommentDispatchReceiptRepo {
    */
   listUnsettledByWorkspace(workspaceKey: string): CommentDispatchReceiptRecord[];
   /**
+   * **本 workspace 的全量 receipt**（§8.4-3 半途事务扫描的反连接读面；时间线口径同 `listByWorkItem`）。
+   *
+   * 为什么不能拿 `listUnsettledByWorkspace` 顶替：扫描补的是「缺派发投影 Activity」，
+   * 而已收敛的 receipt（opened/queued/coalesced/blocked/failed）照样拥有投影行——只读未收敛子集
+   * 会让这些缺行永远补不上。
+   */
+  listByWorkspace(workspaceKey: string): CommentDispatchReceiptRecord[];
+  /**
    * **回写口**（X2.1 新增；文件头的「只增」纪律在此**有意开了唯一的推进口**）：
    * host 评论派发通道执行完一次派发后，把当时的队列状态窗结论写回 receipt。
    *
@@ -269,6 +277,13 @@ export function createCommentDispatchReceiptRepo(db: DatabaseSync): CommentDispa
           `SELECT * FROM comment_dispatch_receipts WHERE workspace_key = ? AND outcome IN (${placeholders}) ${ORDER}`,
         )
         .all(workspaceKey, ...COMMENT_DISPATCH_UNSETTLED_OUTCOMES) as unknown as ReceiptRow[];
+      return rows.map(rowToReceipt);
+    },
+
+    listByWorkspace(workspaceKey) {
+      const rows = db
+        .prepare(`SELECT * FROM comment_dispatch_receipts WHERE workspace_key = ? ${ORDER}`)
+        .all(workspaceKey) as unknown as ReceiptRow[];
       return rows.map(rowToReceipt);
     },
 

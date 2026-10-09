@@ -87,6 +87,12 @@ export interface WorkItemCommentRepo {
   get(id: string): WorkItemCommentRecord | null;
   listByWorkItem(workspaceKey: string, workItemId: string): WorkItemCommentRecord[];
   listByThread(workspaceKey: string, threadId: string): WorkItemCommentRecord[];
+  /**
+   * 全 workspace 枚举（§8.4-3 半途事务扫描的反连接读面）。定序与 `listByWorkItem` 同一 ORDER
+   * （created_at + id，§8.2 单源）；软删行照样读出——扫描按「有没有对应 Activity」判定，
+   * 过滤权不在读面（这里先过滤会让缺 Activity 的已删行永远补不上）。
+   */
+  listByWorkspace(workspaceKey: string): WorkItemCommentRecord[];
   /** 软删墓碑（§3.2 裁定#3）：只写 deletedAt，正文/作者/锚点一字不动；已删幂等。 */
   softDelete(id: string): void;
   /** 线程解决态（仅线程根，裁定#4）：只写 resolvedAt；置/消各写一次；解决态不影响触发。 */
@@ -291,6 +297,13 @@ export function createWorkItemCommentRepo(db: DatabaseSync): WorkItemCommentRepo
           `SELECT * FROM work_item_comments WHERE workspace_key = ? AND thread_id = ? ${ORDER}`,
         )
         .all(workspaceKey, threadId) as unknown as CommentRow[];
+      return rows.map(rowToComment);
+    },
+
+    listByWorkspace(workspaceKey) {
+      const rows = db
+        .prepare(`SELECT * FROM work_item_comments WHERE workspace_key = ? ${ORDER}`)
+        .all(workspaceKey) as unknown as CommentRow[];
       return rows.map(rowToComment);
     },
 

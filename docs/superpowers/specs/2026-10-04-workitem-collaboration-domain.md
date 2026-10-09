@@ -373,7 +373,7 @@ Comment 线程内按 `createdAt ASC, id ASC`；Activity 时间线按 `sequence`�
 ### 8.3 并发
 
 - 同一工作项的 Comment/Activity/Decision 写入按 workspace → workItem 固定锁序；不得出现 Comment handler 与 WakeRule handler 互相等待的反向锁序。
-- Comment 与派发 receipt 必须在能保证“事实已落库则请求可重放”的事务边界内提交；若 dispatch bridge 暂不可用，保留待投递 receipt，不丢评论。（**实现状态（2026-10-06）**：现行实现为顺序语句、无显式事务包裹；崩溃窗口的半成品态由 `clientRequestId`/`dedupKey` 幂等键的持久性兜底可重放，并由未收敛回执读口保持可见——**显式缓办**，不入本期验收；需强一致时再补事务包裹层。）
+- Comment 与派发 receipt 必须在能保证“事实已落库则请求可重放”的事务边界内提交；若 dispatch bridge 暂不可用，保留待投递 receipt，不丢评论。（**实现状态（2026-10-09，G8 闭合；原 2026-10-06「显式缓办」登记作废）**：`createComment` 的「评论落库 → Activity → 裁决读窗 → receipt 落库」整段已在显式事务内提交——`CommentServiceDeps.transact`（**必填**，组合根在 `node.ts` 注入同一 tasks-index 连接上的 `BEGIN IMMEDIATE`，见 `workitem/sqliteTransact.ts`，逐字照 `workItemProjectRepo.remove` 先例）；事务同时把队列状态窗的**读 + 写**收进同一把写锁，多窗口 Host 共用库文件时的跨窗口并发窗一并关闭。外层发（`publishDispatchRequest`）在**提交之后**。原子性、外发次序与锁窗的真实输出见 `packages/services/test/commentServiceTransaction.test.ts`；分工口径：事务关**崩溃窗口**，`clientRequestId`/`dedupKey` 管**重放**，两者互不替代。）
 - 连续评论合并由数据库/持久 receipt 决定，不由单个进程内的 timer 决定。
 - WorkItem 状态仍使用既有 CAS；并发触发的状态变更失败是可预期 no-op/审计事实，不应覆盖后来状态。
 
@@ -383,7 +383,7 @@ Comment 线程内按 `createdAt ASC, id ASC`；Activity 时间线按 `sequence`�
 
 1. 扫描未完成的 comment dispatch receipt，按 `dedupKey` 重投；
 2. 恢复连续评论合并窗口/代次，不能因重启把同一串评论再次开多个 Run；
-3. 扫描缺失关联 Activity 的半成品事务，只允许补写缺失的派生 Activity，不重复 Comment；（**实现状态（2026-10-06）**：本项未实现、**显式缓办**——顺序语句崩溃窗口的半成品概率极低且经未收敛回执读口可见可复盘；X 线收官评审已将本项显式排除出验收范围。）
+3. 扫描缺失关联 Activity 的半成品事务，只允许补写缺失的派生 Activity，不重复 Comment；（**实现状态（2026-10-09，G7 闭合；原 2026-10-06「未实现、显式缓办」登记作废）**：`backfillMissingCommentFacts(deps, workspaceKey)` 已实现——两条反连接扫描：① 评论 ⟖ `work_item_activities(comment_id, kind='comment_created')`；② receipt ⟖ 各自派发投影（`comment_dispatch_requested` / `comment_dispatch_suppressed`，**从已持久事实投影、不重跑队列状态窗**）。只补缺、只写 Activity、绝不触碰 comments 表；键构造与写侧共用 `commentService` 的同一份键表；幂等由 Activity 的 dedupKey 唯一索引兜底（重复启动安全）。挂点：host 启动维护**第四步之后**、每 workspace 一次（`backfillCommentFactsBestEffort`，经协作门面公开入口，host 侧零 repo）。扫描的依赖面**类型上**只有 comments/activities/receipts 三个读口 + Activity 写口。证据：`packages/services/test/commentFactsBackfill.test.ts`、`packages/desktop/test/g7CommentFactsBackfillWiring.test.ts`。）
 4. 继续遵守 P2b 的 Run/worktree orphan recovery；Comment 恢复不能复活已归档 WorkItem，也不能恢复已被取消的 Run；
 5. WakeRule 仍按既有 `revision + eventKey` 重算，评论事实若被 event rule 消费，必须沿统一 eventKey 规则处理。
 

@@ -446,6 +446,8 @@ function chainFixture() {
     if (item !== null) inbox.insertIfAbsent(item);
   };
   const commentService = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments: createWorkItemCommentRepo(db),
     activities: createWorkItemActivityRepo(db),
     receipts: createCommentDispatchReceiptRepo(db),
@@ -667,6 +669,8 @@ test("SUB.2 写链｜未注入通知口 ⇒ 零条目（既有行为逐格不变
   const f = chainFixture();
   const item = ownedItem(f, "wi-1");
   const bare = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments: createWorkItemCommentRepo(f.db),
     activities: createWorkItemActivityRepo(f.db),
     receipts: createCommentDispatchReceiptRepo(f.db),

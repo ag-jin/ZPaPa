@@ -53,6 +53,8 @@ function matrixHarness(
   const workItems = createWorkItemRepo(db);
   let seq = 0;
   const service = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments,
     activities,
     receipts,
@@ -1155,6 +1157,8 @@ test("跨组边界：评论 deferred 义务（run_id=dispatchKey、cause=NULL）
   const activities = createWorkItemActivityRepo(db);
   const reactions = createWorkItemCommentReactionRepo(db);
   const service = createCommentService({
+    /* G8：事务口（本文件是既有用例，注入 identity 替身 —— 行为逐字不变；真事务的证据在 commentServiceTransaction.test.ts）。 */
+    transact: (fn) => fn(),
     comments,
     activities,
     receipts,
