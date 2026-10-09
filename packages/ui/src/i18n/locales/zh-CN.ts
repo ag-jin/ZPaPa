@@ -4298,6 +4298,10 @@ const zhCN: Record<string, string> = {
   // 快速创建（T-P3-R1，视图顶部条）：占位即用法（必填仅标题；回车 = 建）。其余文案复用
   // squad.common.title / .parent / .parent.none / .submit 与失败四键（不新增第二套词汇）。
   "squad.workItems.quickCreate.placeholder": "输入标题，回车即建",
+  // 响应式收口（T-P3-R4，窄屏抽屉）：**恰两枚**键 —— 窄屏下快速创建的触发钮（同时是抽屉标题）/
+  // 抽屉头部的关闭钮可及名称。桌面分栏（peek）与抽屉内容全部复用既有键（peek 四枚照旧）。
+  "squad.workItems.quickCreate.open": "快速创建",
+  "squad.workItems.sheet.close": "关闭",
   // 侧边 peek（T-P3-R2，行预览右侧轻量面板）：**恰四枚**键 —— 面板身份 / 通往完整详情页的唯一入口 /
   // 关闭钮的可及名称 / 活动摘要标题。其余文案全部复用既有键（状态、优先级、标签、起止、创建人、
   // 加载·失败·重试·不存在、活动 kind 与空态、「关联活动不可用」）。

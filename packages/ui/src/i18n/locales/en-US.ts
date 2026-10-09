@@ -4594,6 +4594,11 @@ const enUS: Record<string, string> = {
   // (title is the only required field; Enter creates). Other copy reuses squad.common.title /
   // .parent / .parent.none / .submit and the four failure keys (no second vocabulary).
   "squad.workItems.quickCreate.placeholder": "Type a title, press Enter to create",
+  // Responsive closure (T-P3-R4, compact drawer): **exactly two** keys — the compact quick-create
+  // trigger (also the drawer title) and the drawer header close button's accessible name.
+  // The desktop split (peek) and drawer contents reuse existing keys (the four peek keys as-is).
+  "squad.workItems.quickCreate.open": "Quick create",
+  "squad.workItems.sheet.close": "Close",
   // Side peek (T-P3-R2, lightweight row-preview panel): **exactly four** keys — panel identity,
   // the one entry to the full detail page, the close button's accessible name, activity summary
   // heading. Everything else reuses existing keys (status, priority, labels, start/due, creator,

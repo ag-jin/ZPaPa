@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import type { SquadSnapshot, WorkItemCollaborationRead } from "@zcode/services";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
+import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import { useWorkItemCollaboration } from "./useWorkItemCollaboration.js";
@@ -46,6 +47,7 @@ export function WorkItemPeek({
   snapshot,
   onClose,
   onOpenDetail,
+  className,
 }: {
   /** 当前预览的工作项（宿主持有打开态；`null` 不渲染本组件）。 */
   workItemId: string;
@@ -56,6 +58,10 @@ export function WorkItemPeek({
   onClose: () => void;
   /** 「打开完整详情页」：交回宿主的导航回调（本层不持有导航意图）。 */
   onOpenDetail: () => void;
+  /** 面板外壳的**附加**类（T-P3-R4 的接缝）：窄屏抽屉里传 `w-full ...` 让面板铺满并摘掉分栏卡片
+      的外框；缺省 ⇒ 桌面分栏那一套逐字不变（`cn` 合并，宽度类冲突时后者胜 —— 两份宽度类同时
+      留着的话谁生效取决于 CSS 顺序，那是不可判的形态）。 */
+  className?: string;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -92,7 +98,10 @@ export function WorkItemPeek({
       ref={panelRef}
       data-testid="work-item-peek"
       aria-label={t("squad.workItems.peek.title")}
-      className="flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-card-border bg-card px-4 py-4"
+      className={cn(
+        "flex w-80 shrink-0 flex-col gap-3 rounded-xl border border-card-border bg-card px-4 py-4",
+        className,
+      )}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-ui-xs text-foreground-subtlest">

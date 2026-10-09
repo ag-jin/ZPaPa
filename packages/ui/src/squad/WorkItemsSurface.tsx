@@ -1,22 +1,30 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
+import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
 import { squadWorkspaceTarget } from "./squadRuntimeAccess.js";
 import type { WorkItemRowSelection } from "./workItemBulkViewModel.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemListView } from "./WorkItemListView.js";
+import { WorkItemMobileSheet } from "./WorkItemMobileSheet.js";
 import { WorkItemPeek } from "./WorkItemPeek.js";
 import { WorkItemQuickCreate } from "./WorkItemQuickCreate.js";
 import { useWorkItemRowFocus, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import { WorkItemTableView } from "./WorkItemTableView.js";
 import { useWorkItemInlineEdit } from "./useWorkItemInlineEdit.js";
+import { useWorkItemSurfaceViewport } from "./useWorkItemSurfaceViewport.js";
 import { WorkItemsBoard } from "./WorkItemsBoard.js";
 import type { WorkItemRowReorder } from "./workItemRowParts.js";
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import { workItemBoardReorderEnabled } from "./workItemViewsViewModel.js";
 import { workItemPeekKeyIntent } from "./workItemPeekViewModel.js";
+import {
+  workItemCompactSheetKeyIntent,
+  workItemCompactSheetTarget,
+  type WorkItemSurfaceViewport,
+} from "./workItemResponsiveViewModel.js";
 import {
   workItemSurfaceEmptyKind,
   workItemSurfaceVisibleItems,
@@ -26,8 +34,11 @@ import {
 import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
 import type { WorkItemQuickCreateRequest } from "./workItemQuickCreateViewModel.js";
 
-/* **工作项 Surface 宿主**（阶段二 · T-P2-R1 的接口冻结点）：三视图分派 + 投影 + 空态 + 共用状态。
+/** 窄屏抽屉里的 peek 面板形态（T-P3-R4）：铺满宽度，并摘掉分栏卡片的外框与内边距
+    —— 抽屉面板本身已是那张卡片（不摘的话就是卡片套卡片）。只动几何，不动配色的语义 token。 */
+const WORK_ITEM_PEEK_DRAWER_CLASS = "w-full rounded-none border-0 px-0 py-0";
 
+/* **工作项 Surface 宿主**（阶段二 · T-P2-R1 的接口冻结点）：三视图分派 + 投影 + 空态 + 共用状态。
    为什么要有宿主（而不是让页面直接渲染看板）：阶段二起「同一批工作项」有三种视图，
    视图的**取数口径必须只有一份** —— 投影（过滤/搜索/排序）在 `workItemSurfaceViewModel`（纯函数），
    **在这里被应用一次**，三个视图只消费结果。若让每个视图各自投影，三份口径迟早分叉
@@ -51,7 +62,15 @@ import type { WorkItemQuickCreateRequest } from "./workItemQuickCreateViewModel.
    宿主没有别的注入方，见交付报告的「接线」段），行点击的预览意图经**行环境加法**
    `environment.onOpenPeek` 传回来（缺省 ⇒ 行级「打开」仍是详情页导航、面板一个节点都不渲染）。
    面板本身（`WorkItemPeek`）复用详情页的**同一读模型**、零写调用；本宿主只负责三件事 ——
-   打开/关闭、分栏壳与 Esc（判据在 `workItemPeekKeyIntent`）、把焦点还给触发行（验收 ③）。 */
+   打开/关闭、分栏壳与 Esc（判据在 `workItemPeekKeyIntent`）、把焦点还给触发行（验收 ③）。
+
+   响应式收口（T-P3-R4）：**窄屏 = 底部抽屉、桌面 = 分栏/行内**，两档**互斥**（不是靠 CSS 藏一套——
+   藏起来的那套仍在 DOM 里，两套同时在场就是卡面明令的变异）。形态判据全在纯函数里
+   （`workItemResponsiveViewModel`：断点与 Tailwind `md:` 同一枚；判不出宽度 ⇒ 桌面默认），
+   本宿主只消费结论：窄屏分支**提前返回**（分栏壳在它之后 ⇒ 结构性不可达），抽屉至多一个
+   （`workItemCompactSheetTarget`：peek 优先），快速创建的窄屏入口是触发钮 + 抽屉里的**同一个**
+   `WorkItemQuickCreate`（写路径、可点性、失败就地显示全部照旧）。`viewport` 是形态的**唯一注入点**
+   （缺省 ⇒ 去问浏览器；测试/嵌入方注入时不订阅）。 */
 
 export function WorkItemsSurface({
   workItems,
@@ -76,6 +95,7 @@ export function WorkItemsSurface({
   onOpenSession,
   onReorderPosition,
   onQuickCreate,
+  viewport: viewportOverride,
 }: {
   /** 页面的原始投影（`snapshot.workItems`）：过滤/搜索/排序由本宿主按 `surface` 应用。 */
   workItems: WorkItem[];
@@ -116,6 +136,9 @@ export function WorkItemsSurface({
       （默认值判据在 `workItemQuickCreateViewModel`），接线层负责调 `createWorkItem` 单源 +
       **服务回读**刷新（本层不做乐观插入、不碰行）。 */
   onQuickCreate?: (request: WorkItemQuickCreateRequest) => Promise<SquadEntryFeedback | null>;
+  /** 形态的**唯一注入点**（T-P3-R4）：缺省 ⇒ 按 `matchMedia` 的窄屏查询判（判不出来 ⇒ 桌面）；
+      注入时不订阅浏览器（测试注入两档，也供嵌入方接管）。 */
+  viewport?: WorkItemSurfaceViewport;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -156,6 +179,23 @@ export function WorkItemsSurface({
     closePeek();
     if (id !== null) onOpenWorkItemDetail(id);
   }, [peekWorkItemId, closePeek, onOpenWorkItemDetail]);
+
+  /* 形态与抽屉（T-P3-R4）：视口形态经**唯一注入点**求值；窄屏快速创建的打开态是会话内状态
+     （本宿主自持）——触发钮只存在于窄屏分支，桌面这一支永远开不起来。 */
+  const viewportMode = useWorkItemSurfaceViewport(viewportOverride);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const peekOpen = peekWorkItemId !== null;
+  /* 窄屏抽屉目标（**至多一个**，判据在纯函数）：peek 优先 —— 行点击的直接结果不该被另一个抽屉盖住。 */
+  const sheetTarget =
+    viewportMode === "compact" ? workItemCompactSheetTarget({ peekOpen, quickCreateOpen }) : "none";
+  /* 窄屏键盘层（验收 ③）：Esc 关**当前**那一个抽屉 —— 键位判据复用 peek 那一枚
+     （`workItemPeekKeyIntent`），「关谁」由纯函数回答（不在这里另写一份键位链）。 */
+  const compactKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    const intent = workItemCompactSheetKeyIntent({ key: event.key, peekOpen, quickCreateOpen });
+    if (intent === "peek") closePeek();
+    else if (intent === "quickCreate") setQuickCreateOpen(false);
+  };
 
   /* 拖拽能力（T-P2-R6b）：**唯一判据**在 `workItemBoardReorderEnabled`（看板 + statusCategory +
      手动档 + 有写入口）。未启用 ⇒ 环境里没有这个键 ⇒ 行连把手都不渲染（结构槽位逐槽不变）。 */
@@ -258,6 +298,55 @@ export function WorkItemsSurface({
         {surfaceBody}
       </div>
     );
+
+  /* 面板本体**只构造一次**（两档共用；React 元素是惰性的，未打开时它一个节点都不渲染）：
+     窄屏抽屉里铺满（覆盖分栏的固定宽），桌面保持原样。 */
+  const peekPanel =
+    peekWorkItemId === null ? null : (
+      <WorkItemPeek
+        workItemId={peekWorkItemId}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        snapshot={snapshot}
+        onClose={closePeek}
+        onOpenDetail={openPeekDetail}
+        {...(viewportMode === "compact" ? { className: WORK_ITEM_PEEK_DRAWER_CLASS } : {})}
+      />
+    );
+
+  /* 窄屏 ⇒ **提前返回**（分栏壳在它之后 ⇒ 结构性不可达）：快速创建换成触发钮 + 抽屉里的同一条，
+     至多一个抽屉（peek 优先）。**不套分栏壳** —— 藏一套不如不渲染一套（两套同时在场 = 卡面变异）。 */
+  if (viewportMode === "compact") {
+    return (
+      <div className="flex flex-col gap-2" onKeyDown={compactKeyDown}>
+        {quickCreate === null ? null : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="self-start"
+            data-testid="work-items-quick-create-open"
+            onClick={() => setQuickCreateOpen(true)}
+          >
+            {t("squad.workItems.quickCreate.open")}
+          </Button>
+        )}
+        {surfaceBody}
+        {sheetTarget === "none" ? null : (
+          <WorkItemMobileSheet
+            title={
+              sheetTarget === "quickCreate" ? t("squad.workItems.quickCreate.open") : undefined
+            }
+            onClose={sheetTarget === "peek" ? closePeek : () => setQuickCreateOpen(false)}
+          >
+            {sheetTarget === "peek" ? peekPanel : quickCreate}
+          </WorkItemMobileSheet>
+        )}
+      </div>
+    );
+  }
+
+  /* 桌面（含 SSR 默认）：没打开面板 ⇒ 原样返回 body（默认路径逐字节不变）。 */
   if (peekWorkItemId === null) return body;
   /* 打开态 ⇒ **桌面分栏**：左侧是既有面（`min-w-0` 允许它被压窄、不给面板让位时溢出），
      右侧是只读 peek。Esc 的键盘层挂在这个壳上（而不是 document）：全局 Esc 属于 App 的
@@ -274,14 +363,7 @@ export function WorkItemsSurface({
       }}
     >
       <div className="min-w-0 flex-1">{body}</div>
-      <WorkItemPeek
-        workItemId={peekWorkItemId}
-        workspacePath={workspacePath}
-        workspaceIdentity={workspaceIdentity}
-        snapshot={snapshot}
-        onClose={closePeek}
-        onOpenDetail={openPeekDetail}
-      />
+      {peekPanel}
     </div>
   );
 }
