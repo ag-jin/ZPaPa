@@ -1,10 +1,14 @@
 /**
  * 项目看板面板的四视图（卡 #32 树形；卡 #33 增看板列视图与列表视图 + 视图切换；
- * 卡 #34 增表格视图、卡片弹窗宿主与跳转落点高亮）。
+ * 卡 #34 增表格视图、卡片弹窗宿主与跳转落点高亮）。四视图各在自己的模块里
+ * （`BoardTreeView` / `BoardKanbanView` / `BoardListView` / `BoardTableView`），本文件只管
+ * 面板骨架：头部（标题/时间戳/四态切换/刷新）、置顶提示条、视图分派、诊断尾区与弹窗挂载。
  *
  * 渲染骨架与逐字文案的单一真源：`.zcode/board/board-consumption-contract.md` §2/§3.1/§3.3/§4
- * 与 §13（视图矩阵/待设计聚合/待合并角标）。纯展示组件：只吃 `BoardPaneLoadState` 与视图状态，
- * 不经服务、不写任何东西（契约 §7.1）；分组/排序/过滤判据全在 `boardViewsViewModel` 纯函数层。
+ * 与 §13（视图矩阵/待设计聚合/待合并角标）；弹窗按 §6 逐字。纯展示组件：只吃
+ * `BoardPaneLoadState` 与视图状态，不经服务、不写任何东西（契约 §7.1）；
+ * 分组/排序/过滤判据全在纯函数层（`boardViewsViewModel` / `boardTableViewModel` /
+ * `boardDialogViewModel`），本文件与各视图组件只投影 + 回传意图。
  */
 import { RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button.js";

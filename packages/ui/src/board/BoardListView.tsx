@@ -1,9 +1,10 @@
 /**
- * 看板列表视图（卡 #33）：全卡平铺（不分特性组），过滤（段位/状态/缺口码）+ 排序（updatedAt 卡龄）。
+ * 看板列表视图（卡 #33）：全卡平铺（不分特性组），过滤（段位/状态/缺口码）+ 排序（updatedAt 卡龄）；
+ * 卡 #34 补行点击 → 弹窗与跳转落点高亮（`boardCardInteraction` 一处生成的 props）。
  *
  * 单一真源：消费契约 §13.2「列表」列（行首段位徽章、attention 置顶排序、待合并/受阻角标）+
- * §3.5（排序：attention 置顶 + updatedAt 倒序；「最老未动」第二视角）。判据全在纯函数层
- * （`boardViewsViewModel`），本组件只投影 + 回传意图。
+ * §3.5（排序：attention 置顶 + updatedAt 倒序；「最老未动」第二视角）+ §3.1/§3.3（点击 → 弹窗）。
+ * 判据全在纯函数层（`boardViewsViewModel`），本组件只投影 + 回传意图。
  */
 import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
