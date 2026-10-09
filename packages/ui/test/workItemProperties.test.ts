@@ -294,10 +294,13 @@ test("看板行真渲染｜identifier 与优先级**有值才画**（未设置�
   assert.equal(badgeText(plain), null, "未设置优先级就不画徽标（连空壳都不留）");
 });
 
-/* 密度 token（差距报告 §5）：行不再是「卡片」（`rounded-lg border` 包裹感 + 行间 gap），
+/* 密度 token（差距报告 §5）：**列表/平铺**的行不再是「卡片」（`rounded-lg border` 包裹感 + 行间 gap），
    而是**细分隔线 + hover surface** 的高密度列表行；行高不小于 44px（可点目标的下限）。
+   口径更新（2026-10-09 看板形态重排）：`ROW_CLASSNAME` 现由 **list 视图 + 看板的「不分组」平铺**
+   使用（卡片是**分组列**形态，常量另立为 `CARD_CLASSNAME`，由 `workItemsBoardForm.test.ts`
+   按真实渲染钉住）—— 本守卫的判据（这一支不得退回卡片）不变。
    变异：把 ROW_CLASSNAME 改回卡片形态（或去掉 min-h-11）⇒ 本守卫必红。 */
-test("守卫｜看板行视觉密度：细分隔线 + hover surface + 44px 行高（不是卡片包裹）", () => {
+test("守卫｜列表行视觉密度：细分隔线 + hover surface + 44px 行高（不是卡片包裹）", () => {
   // T-P2-R1：行样式常量随行渲染抽到共用行模块（三视图共用同一份行外观）。
   const board = readSource("squad/WorkItemRows.tsx");
   const match = /const ROW_CLASSNAME\s*=\s*([\s\S]*?);/.exec(board);

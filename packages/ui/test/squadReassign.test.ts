@@ -84,8 +84,11 @@ test("往返：parseAssigneeValue(assigneeOptionValue(x)) 原样还原 x", () =>
    变异：删掉钮（或把它挪进某个条件分支）⇒ 本用例必红。
    所有行都有（**含子项**）：钮在**行内动作簇**里、与编辑同级 —— 中间不得隔一个条件门。 */
 test("守卫｜行有「改派」钮：在行内动作簇里、与编辑同级、所有行都给", () => {
-  // T-P2-R1：行动作簇随行渲染抽到共用行模块（三视图共用同一份行）。
-  const board = readSource("squad/WorkItemRows.tsx");
+  /* T-P2-R1：行动作簇随行渲染抽到共用行模块（三视图共用同一份行）。
+     2026-10-09（看板形态重排）口径更新：动作簇随卡片形态重构搬到**行零件**
+     （`workItemRowParts.tsx` 的 `WorkItemRowActions`：卡片把它放在 meta 带右侧、表格放进动作格）。
+     判据与强度**不变**（恰一处 + 与编辑同级 + 不挂条件门 + 置灰 + 意图交给页面），只换被读文件。 */
+  const board = readSource("squad/workItemRowParts.tsx");
   assert.equal(
     (board.match(/work-item-reassign/g) ?? []).length,
     1,

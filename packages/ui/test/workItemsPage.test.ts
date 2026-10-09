@@ -338,8 +338,12 @@ test("守卫｜WorkItemsPage 走响亮取数通路，写动作齐全，放弃整
   // T-P2-R1：行锚点与行动作随行渲染抽到共用行模块（三视图共用）。
   const board = readSource("squad/WorkItemRows.tsx");
   assert.ok(board.includes("data-work-item-id"), "行上要有 data-work-item-id");
+  /* 2026-10-09（看板形态重排）口径更新：行内动作簇搬进**行零件**（`workItemRowParts.tsx` 的
+     `WorkItemRowActions`）—— 卡片形态复用同一个簇，行模块的 400 行余量留给卡片四带。
+     单点性质不变（全树只有这一处产出这几个钮），锚点随之换文件，判据不降。 */
+  const parts = readSource("squad/workItemRowParts.tsx");
   for (const testid of ["work-item-edit", "work-item-discard"]) {
-    assert.ok(board.includes(testid), `行内动作 testid ${testid} 不得缺（锚点）`);
+    assert.ok(parts.includes(testid), `行内动作 testid ${testid} 不得缺（锚点）`);
   }
   assert.ok(
     readSource("squad/WorkItemsBoard.tsx").includes("flattenWorkItemBoard("),
@@ -402,15 +406,19 @@ test("运行可审查性：produced / rejected 可审，其余三态（open / me
   assert.equal(runReviewable({ status: "discarded" }), false);
 });
 
-/* 守卫 g（L1 泳道回归，2026-10-07；默认值口径 2026-10-09 用户裁定）：**显式「不分组」**路径的
-   既有锚点、行序与 DOM 形状零回归 —— 「默认改按阶段分组」不等于「把不分组这条路径改掉」。
-   变异：不分组也套泳道壳（或 `none` 分支不再与 flatten 等价）⇒ 第一 / 四 / 五条必红；
+/* 守卫 g（L1 泳道回归，2026-10-07；默认值口径 2026-10-09 用户裁定；形态口径 2026-10-09 重排）：
+   **显式「不分组」**路径的既有锚点、行序与 DOM 形状零回归 —— 「默认改按阶段分组」不等于
+   「把不分组这条路径改掉」，形态换向（纵堆泳道 → 横排卡列）也不碰这条平铺路径。
+   变异：不分组也套列壳（或 `none` 分支不再与 flatten 等价）⇒ 第一 / 四 / 五条必红；
    默认维度改回 `none`（或不再按阶段分组）⇒ 下面第二条断言必红。 */
 test("守卫｜显式「不分组」路径零回归：单 ul + 既有行锚点 + none 与 flatten 逐格等价", () => {
   /* T-P2-R1 口径更新：行渲染抽到共用行模块后，「单 ul + 行序」的判据改为
      ① 看板的不分组分支把 `flattenWorkItemBoard(workItems)` 交给共用行列表，并给既有锚点
         `work-items-list`（DOM 逐字保留由 workItemsSurfaceRender 的逐字节对照承担）；
-     ② 宿主默认视图 = board，且默认状态下投影**原样返回输入**（默认路径零加工）。 */
+     ② 宿主默认视图 = board，且默认状态下投影**原样返回输入**（默认路径零加工）。
+     口径更新（2026-10-09 形态重排）：分组列改用**卡片容器**（`CARD_LIST_CLASSNAME`），
+     平铺这一支仍走 `LIST_CLASSNAME`；容器仍是那个单 ul、锚点仍由消费方给 —— 判据不变，
+     只把「容器类名的三元」写进断言（不再要求字面量恰好是旧表达式）。 */
   const board = readSource("squad/WorkItemsBoard.tsx");
   const rows = readSource("squad/WorkItemRows.tsx");
   assert.ok(board.includes('testId="work-items-list"'), "不分组仍是单 ul（锚点在共用列表上）");
@@ -418,9 +426,10 @@ test("守卫｜显式「不分组」路径零回归：单 ul + 既有行锚点 +
     board.includes("rows={flattenWorkItemBoard(workItems)}"),
     "不分组把 flattenWorkItemBoard 的结果交给共用行列表（行序判据不变）",
   );
-  assert.ok(
-    rows.includes("<ul className={LIST_CLASSNAME} data-testid={testId}>"),
-    "容器仍是那个单 ul（由共用列表实现，锚点由消费方给）",
+  assert.match(
+    rows,
+    /<ul className=\{[^}]*LIST_CLASSNAME[^}]*\} data-testid=\{testId\}>/,
+    "容器仍是那个单 ul（由共用列表实现，锚点由消费方给；卡片形态只换容器类名）",
   );
   const page = readSource("squad/WorkItemsPage.tsx");
   assert.ok(

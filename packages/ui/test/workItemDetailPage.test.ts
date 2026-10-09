@@ -640,14 +640,18 @@ test("守卫｜S7：App 意图态与 props 链完整（意图 → shell → 详�
 });
 
 test("守卫｜S8：两个入口——行覆盖按钮 + agent 任务表行标题（各自 testid）", () => {
-  // T-P2-R1：行覆盖按钮随行渲染抽到共用行模块（三视图共用）。
+  /* T-P2-R1：行覆盖按钮随行渲染抽到共用行模块（三视图共用）。
+     2026-10-09（看板形态重排）口径更新：覆盖按钮的**定义**随行词汇件搬进**行零件**
+     （`workItemRowParts.tsx`，行模块 400 行硬线），行模块仍挂载它、消费方 import 路径不变；
+     判据（锚点 / 绝对定位透明层 / 动作区 z-10）逐条不变，只换被读文件。 */
   const board = readSource("squad/WorkItemRows.tsx");
+  const parts = readSource("squad/workItemRowParts.tsx");
   assert.ok(
-    board.includes('data-testid="work-item-row-open-detail"'),
+    parts.includes('data-testid="work-item-row-open-detail"'),
     "看板行必须有透明覆盖按钮（行内已有独立按钮，整行 button 嵌套非法）",
   );
   assert.ok(
-    board.includes("absolute inset-0"),
+    parts.includes("absolute inset-0"),
     "覆盖按钮必须是绝对定位透明层（照 SquadAgentsList 先例）",
   );
   assert.ok(board.includes("relative z-10"), "动作区必须抬到 z-10（点击命中的硬要求）");

@@ -59,12 +59,15 @@ test("标签 chip 投影：上限可注入（默认 3），且不改写入参", 
    变异：把 chip 的 class 常量复制一份到详情页（各自一套外观）⇒ 第二/三条必红。 */
 test("守卫｜行渲染标签 chip 与「+N」；chip 定义只有一处（详情页复用同一个组件）", () => {
   // T-P2-R1：行渲染（含标签 chip）抽到共用行模块 —— 断言不变，只换被读的文件（口径：跨三视图共用）。
+  // 2026-10-09（看板形态重排）：chip 的**组件与样式常量**随卡片形态重构搬进**行零件**
+  // （`workItemRowParts.tsx`，行模块 400 行硬线），行模块仍消费它并原样转出；判据与强度不变。
   const board = readSource("squad/WorkItemRows.tsx");
+  const chipParts = readSource("squad/workItemRowParts.tsx");
   assert.ok(board.includes("workItemLabelChips("), "看板行必须走纯函数投影（截断规则一处实现）");
-  assert.ok(board.includes('data-testid="work-item-label"'), "chip 的 testid 锚点");
-  assert.ok(board.includes('data-testid="work-item-label-more"'), "「+N」的 testid 锚点");
+  assert.ok(chipParts.includes('data-testid="work-item-label"'), "chip 的 testid 锚点");
+  assert.ok(chipParts.includes('data-testid="work-item-label-more"'), "「+N」的 testid 锚点");
   assert.equal(
-    (board.match(/const WORK_ITEM_LABEL_CHIP_CLASSNAME/g) ?? []).length,
+    (chipParts.match(/const WORK_ITEM_LABEL_CHIP_CLASSNAME/g) ?? []).length,
     1,
     "chip 的样式常量只有**一处定义**（各写一份外观 = 两个面迟早长得不一样）",
   );
@@ -79,7 +82,8 @@ test("守卫｜行渲染标签 chip 与「+N」；chip 定义只有一处（详�
    状态只由语义色表达；标签是描述，不是状态 —— 用绿色 chip 会让「这个标签」读成「这件事成了」）。
    变异：把 chip 的样式常量改成含 `destructive` / `success` / `warning` / `brand` 的 token ⇒ 本守卫必红。 */
 test("守卫｜标签 chip 只用中性 token，不含任何语义状态色", () => {
-  const board = readSource("squad/WorkItemRows.tsx");
+  // 2026-10-09：常量随行词汇件搬进行零件（见上一条的口径说明）—— 判据不变。
+  const board = readSource("squad/workItemRowParts.tsx");
   const match = /const WORK_ITEM_LABEL_CHIP_CLASSNAME\s*=\s*([\s\S]*?);/.exec(board);
   assert.ok(match, "chip 的样式常量必须存在且可被文本断言（一处定义）");
   const classname = match[1]!;

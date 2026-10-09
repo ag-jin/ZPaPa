@@ -26,6 +26,13 @@ import {
    · 泳道**只切根**、子树整体随根落位 —— 按行自身状态分组会把一个批次劈成几条泳道（否决）；
    · 状态维度只认 **4 category**，不认 6 键 —— category 才是机器判定依据（键只是标签）。
 
+   口径更新（2026-10-09 用户裁定「看板 multica 形态重排」）：**泳道**一词在本文件里指
+   `groupWorkItemBoard` 的**数据分组**（lane 仍是 view model 的单位）；它的**渲染形态**已从
+   「纵堆泳道」改为「横排固定 280px 列 + 卡片」（spec §10-A）—— 渲染形态的判据在
+   `workItemsBoardForm.test.ts`（真实渲染），本文件只管分组判据与**跨分支**的结构守卫：
+   下面「看板两分支共用同一份行列表」「不分组保留现状 DOM」等断言在重排后逐条仍成立
+   （重排只换分组那一支的壳与行容器类名，不分组那一支逐字未动）。
+
    为什么分组也要在纯函数里：看板是「树 + 分组」两个投影的合成，组件里算 = 不可测；
    而判据分叉不报错（错的泳道看起来只是「分组有点怪」）。 */
 
@@ -320,7 +327,7 @@ const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relat
 
 /* 守卫 a（L1-5，**核心**，T-P2-R1 口径更新）：行渲染**单点**。
    旧口径是「`WorkItemsBoard` 内恰一处 renderRow」；阶段二起三个视图（board / list / table）与
-   看板的两个分支（不分组 / 泳道）都渲染**同一批行**，所以口径改为：
+   看板的两个分支（不分组 / 分组列）都渲染**同一批行**，所以口径改为：
    **行模块里各恰一处，且四个消费点全部走共用列表组件**。
    复制一份行渲染能通过 typecheck，却会让 `rowElementsRef` 在其中一条路径上静默不注册 ⇒
    收件箱「打开工作项」的聚焦/高亮失败且不报错。
@@ -342,7 +349,7 @@ test("守卫｜行渲染单点（口径更新）：锚点与聚焦注册各恰�
   assert.equal(
     (board.match(/<WorkItemRowList/g) ?? []).length,
     2,
-    "不分组与泳道两个分支共用同一个列表组件（两次挂载、同一份实现）",
+    "不分组与分组列两个分支共用同一个列表组件（两次挂载、同一份实现）",
   );
   for (const file of [
     "squad/WorkItemsSurface.tsx",
@@ -356,20 +363,26 @@ test("守卫｜行渲染单点（口径更新）：锚点与聚焦注册各恰�
   }
   const listTag = board.indexOf('data-testid="work-items-list"');
   const laneTag = board.indexOf('data-testid="work-items-lane"');
-  assert.ok(listTag > 0 && laneTag > 0, "none 分支与泳道分支都要有各自的容器锚点");
+  assert.ok(listTag > 0 && laneTag > 0, "none 分支与分组列分支都要有各自的容器锚点");
   const rowsTag = rows.indexOf("data-testid={testId}");
   assert.ok(rowsTag > 0, "行列表的 testid 由消费方给（容器锚点仍是各视图的属性）");
 });
 
-test("守卫｜none 分支保留现状 DOM（单 ul），泳道分支带 data-lane-key；泳道不做折叠", () => {
+test("守卫｜none 分支保留现状 DOM（单 ul），分组列带 data-lane-key；列不做折叠（重排口径）", () => {
   const board = readSource("squad/WorkItemsBoard.tsx");
   assert.ok(
     board.includes('laneDimension === "none"'),
-    "必须显式分叉：不分组走现状 DOM，不得把现状也塞进泳道壳",
+    "必须显式分叉：不分组走现状 DOM，不得把现状也塞进列壳",
   );
-  assert.ok(board.includes("data-lane-key={lane.key}"), "泳道容器要带 lane key 锚点");
+  assert.ok(
+    board.includes("data-lane-key={lane.key}"),
+    "分组列容器要带 lane key 锚点（lane 仍是数据分组的键）",
+  );
   for (const forbidden of ["collapsed", "laneExpanded", "setLaneCollapsed"]) {
-    assert.ok(!board.includes(forbidden), `泳道 v1 不做折叠（${forbidden} 说明有人顺手加了）`);
+    assert.ok(
+      !board.includes(forbidden),
+      `列 v1 不做折叠（分组数据仍是 lane；渲染形态换了，折叠这件事没做）（${forbidden} 说明有人顺手加了）`,
+    );
   }
   /* 批根判据的输入只算一次（T-P2-R1：随行列表实现搬进 `WorkItemRowList`，每张列表算一次，
      仍**不在行内**重算）；变异：搬进行渲染里 ⇒ 每行各算一遍（行数 × run 数的无谓重复）。 */

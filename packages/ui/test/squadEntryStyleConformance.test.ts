@@ -47,6 +47,10 @@ const IN_SCOPE_FILES = [
   "squad/WorkItemsPageDialogs.tsx",
   "squad/WorkItemsViewsSection.tsx",
   "squad/WorkItemsSurface.tsx",
+  /* 2026-10-09（看板形态重排）：看板的列头/列底色进入本清单 —— 列底色的语义色变体
+     （`bg-warning/5` / `bg-success/5`）与列头图标色都必须落在**主题已定义**的 token 上
+     （本主题没有 `--color-info` / `-muted`，写错是静默丢色）。 */
+  "squad/WorkItemsBoard.tsx",
   "squad/WorkItemViewsBar.tsx",
   "squad/WorkItemViewDialogs.tsx",
   "squad/WorkItemQuickCreate.tsx",

@@ -163,11 +163,14 @@ test("零回归｜显式「不分组」（laneDimension=none）：渲染 markup 
 });
 
 /* 用户 2026-10-09 裁定「默认按阶段进行分组」：**默认态**（页面 useState 的默认维度 = statusCategory）
-   的真实渲染 = 泳道形态（`work-items-lanes` 锚点 + 每 lane 计数），逐字节基线机械捕捉
+   的真实渲染 = 按阶段分成 4 列（`work-items-lanes` 锚点 + 每列计数），逐字节基线机械捕捉
    （照 R1 的独立真源做法：基线取自真实渲染输出，不手工改写）。
+   口径更新（2026-10-09 用户裁定「看板 multica 形态重排」）：分组容器从**纵堆泳道**改为
+   **横排固定 280px 列 + 卡片**（spec §10-A），两份看板分组基线按新实现的真实渲染**机械重捕捉**；
+   行序/列次序/计数口径不变（本用例的后半段断言仍逐项成立）。「不分组」与「空态」基线未动。
    变异：默认维度改回 `none`（或页面不再按阶段分组）⇒ 本用例 + 两个页面源码守卫必红；
    基线改一字节 ⇒ 必红。 */
-test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度渲染 = 泳道（锚点 + 每 lane 计数），与基线逐字节相同", () => {
+test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度渲染 = 4 列（锚点 + 每列计数），与基线逐字节相同", () => {
   /* 先钉「本用例测的真是默认态」：页面 useState 的默认值必须就是本文件的默认维度常量
      （两处不一致 = 下面这条基线描述的已经不是默认态，而是一份没人解释的状态）。 */
   assert.ok(
@@ -180,10 +183,11 @@ test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度�
   assert.equal(
     markup,
     WORK_ITEMS_SURFACE_BASELINE_DEFAULT_LANES,
-    "默认态的真实泳道渲染逐字节对照（锚点 / 泳道 4 键 / 计数 / 行内容）",
+    "默认态的真实列渲染逐字节对照（锚点 / 4 列键 / 计数 / 卡片内容）",
   );
-  /* 每 lane 的计数由夹具语义手算（独立真源）：批根 in_progress ⇒ started（子项随根 = 2 行）、
-     孤儿 todo ⇒ unstarted（1 行）、done / closed 空泳道保留为 0。 */
+  /* 每列的计数由夹具语义手算（独立真源）：批根 in_progress ⇒ started（子项随根 = 2 行）、
+     孤儿 todo ⇒ unstarted（1 行）、done / closed 空列保留为 0。
+     切片窗口 = 从列键到列体（`<ul`）之间：列头带图标（SVG 占几百字符）⇒ 窗口取 1200。 */
   for (const [laneKey, count] of [
     ["unstarted", 1],
     ["started", 2],
@@ -191,9 +195,9 @@ test("默认态｜按阶段分组（用户 2026-10-09 裁定）：默认维度�
     ["closed", 0],
   ] as const) {
     const start = markup.indexOf(`data-lane-key="${laneKey}"`);
-    assert.ok(start >= 0, `默认态必须是按 stage 分组的泳道（缺 ${laneKey}）`);
-    const header = markup.slice(start, start + 400);
-    assert.ok(header.includes(`${count} 项`), `泳道 ${laneKey} 的计数必须是 ${count} 项`);
+    assert.ok(start >= 0, `默认态必须是按 stage 分组的列（缺 ${laneKey}）`);
+    const column = markup.slice(start, markup.indexOf("<ul", start));
+    assert.ok(column.includes(`${count} 项`), `列 ${laneKey} 的计数必须是 ${count} 项`);
   }
   // 「不分组」保留为 Group by 可选项：显式选它 ⇒ 回平铺（既有单 ul 锚点），不出现泳道壳。
   const flat = renderSurface({
