@@ -7,7 +7,8 @@ export type OpenTabLauncherItemId =
   | "terminal"
   | "browser"
   | "developer-tools"
-  | "wiki";
+  | "wiki"
+  | "board";
 
 export function resolveOpenTabLauncherItemIds({
   developerToolsEnabled,
@@ -47,6 +48,10 @@ export function resolveOpenTabLauncherItemIds({
   if (developerToolsEnabled) {
     itemIds.push("developer-tools");
   }
+
+  // 「项目看板」按要求落在「打开标签页」区块之下：排在既有入口之后。
+  // workspace 级只读面板，工件缺失时面板内呈现空态，所以入口本身不做条件裁剪。
+  itemIds.push("board");
 
   return itemIds;
 }

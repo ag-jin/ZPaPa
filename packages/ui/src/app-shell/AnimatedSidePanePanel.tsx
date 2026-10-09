@@ -21,6 +21,7 @@ import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import { WorkspaceSidePaneToggleButton } from "@/WorkspaceSidePaneToggleButton.js";
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
 import { BrowserUseSidePaneContent } from "@/browser-use/BrowserUseSidePaneContent.js";
+import { BoardPane } from "@/board/BoardPane.js";
 import { findScreenshotSurfaceTabForRender } from "@/browser-use/useBrowserScreenshotSurfaceRequest.js";
 import { HumanBrowserView } from "@/browser-use/HumanBrowserView.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
@@ -99,6 +100,7 @@ import {
   ListTreeIcon,
   MessageSquareTextIcon,
   PlusIcon,
+  SquareKanbanIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -318,6 +320,7 @@ export function AnimatedSidePanePanel({
   onOpenWhiteboard: _onOpenWhiteboard,
   onOpenDeveloperTools,
   onOpenWiki,
+  onOpenBoard,
   onOpenFileTree,
   onOpenTerminalTab,
   onOpenReviewTab,
@@ -385,6 +388,8 @@ export function AnimatedSidePanePanel({
   onOpenWhiteboard: () => void;
   onOpenDeveloperTools: () => void;
   onOpenWiki: () => void;
+  /** 「项目看板」入口：打开(或聚焦)只读看板面板（位于「打开标签页」区块之下）。 */
+  onOpenBoard: () => void;
   /** 「查看文件」入口：打开(或聚焦)workspace 文件树 tab。 */
   onOpenFileTree: () => void;
   onOpenTerminalTab: () => void;
@@ -800,6 +805,16 @@ export function AnimatedSidePanePanel({
             <span>{intl.formatMessage({ id: "developerTools.title" })}</span>
           </DropdownMenuItem>
         ) : null}
+        {/* 看板是 workspace 级只读面板，工件缺失时面板内呈现空态，入口不做条件裁剪。 */}
+        <DropdownMenuItem
+          data-side-pane-add-item="board"
+          onSelect={() => {
+            onOpenBoard();
+          }}
+        >
+          <SquareKanbanIcon className="size-4" />
+          <span>{intl.formatMessage({ id: "board.title" })}</span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -845,6 +860,12 @@ export function AnimatedSidePanePanel({
       label: intl.formatMessage({ id: "workspaceSidebar.showFileTree" }),
       icon: ListTreeIcon,
       onOpen: onOpenFileTree,
+    },
+    board: {
+      id: "board",
+      label: intl.formatMessage({ id: "board.title" }),
+      icon: SquareKanbanIcon,
+      onOpen: onOpenBoard,
     },
   };
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
@@ -941,6 +962,7 @@ export function AnimatedSidePanePanel({
           id: "developerTools.title",
         }),
         wikiTitle: intl.formatMessage({ id: "wiki.title" }),
+        boardTitle: intl.formatMessage({ id: "board.title" }),
         fileTreeTitle: intl.formatMessage({ id: "workspaceSidebar.showFileTree" }),
         terminalTitle: intl.formatMessage({ id: "terminal.title" }),
         subagentTypeLabel: intl.formatMessage({ id: "sidePane.subagent" }),
@@ -1301,6 +1323,17 @@ export function AnimatedSidePanePanel({
                             workspacePath={workspaceAbsPath}
                             workspaceIdentity={workspaceIdentity}
                             remoteSessionId={workspaceRemoteSessionId}
+                          />
+                        ) : tab.type === "board" ? (
+                          <BoardPane
+                            // 同 wiki：切仓库要重建面板状态（读数与展开都按 workspace 隔离）。
+                            key={`board:${workspaceIdentity ?? workspaceAbsPath}`}
+                            workspacePath={workspaceAbsPath}
+                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                            {...(workspaceRemoteSessionId
+                              ? { remoteSessionId: workspaceRemoteSessionId }
+                              : {})}
+                            focused={isVisible && tab.id === visibleActiveTabId}
                           />
                         ) : tab.type === "model-trajectory" ? (
                           <ModelTrajectoryPane

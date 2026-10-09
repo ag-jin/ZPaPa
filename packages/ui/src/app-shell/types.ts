@@ -240,6 +240,8 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenDeveloperTools: () => void;
   /** 打开项目知识库（wiki）面板。 */
   handleOpenWiki: () => void;
+  /** 打开(或聚焦)项目看板（只读树形视图）面板。 */
+  handleOpenBoard: () => void;
   /** 打开(或聚焦)文件树面板；带 request 时按请求的 workspace 作用域与 revealPath 定位。 */
   handleOpenFileTree: (request?: OpenFileTreeSidePaneRequest) => void;
   handleOpenTerminalTab: () => void;

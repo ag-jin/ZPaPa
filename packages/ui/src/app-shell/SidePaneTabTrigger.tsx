@@ -15,6 +15,7 @@ import {
   NotepadTextIcon,
   PackageIcon,
   PaletteIcon,
+  SquareKanbanIcon,
   SquareTerminalIcon,
   TerminalIcon,
   WaypointsIcon,
@@ -333,6 +334,10 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <BookOpenIcon className="size-3.5" />;
   }
 
+  if (tab.type === "board") {
+    return <SquareKanbanIcon className="size-3.5" />;
+  }
+
   // 与左栏原「查看文件」按钮同一枚图标：入口换了位置，字形不该跟着换。
   if (tab.type === "file-tree") {
     return <ListTreeIcon className="size-3.5" />;
@@ -561,6 +566,11 @@ export function getSidePaneTabTitle(
   // `tab.source.title` 读 undefined.title 崩溃。
   if (tab.type === "wiki") {
     return formatMessage({ id: "wiki.title" });
+  }
+
+  // board tab 与 wiki 同形：无 source，标题固定走词条，不按板内容命名（名字随工作区变）。
+  if (tab.type === "board") {
+    return formatMessage({ id: "board.title" });
   }
 
   // file-tree tab 同样无 source；标题固定为入口文案（workspace 名在面板内部显示）。

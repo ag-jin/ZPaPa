@@ -100,6 +100,21 @@ export interface WikiSidePaneTab {
 }
 
 /**
+ * 项目看板（board）面板。
+ *
+ * workspace 级而不是对话级：板是 `<workspace>/.zcode/board/board.json` 的只读投影，
+ * 与具体会话无关，换对话时不应卸载（参照 wiki / file-tree 的 workspace-global 语义）。
+ * 不携带任何 board 载荷：内容由面板打开时按固定路径读取（消费契约 §0/§1）。
+ */
+export interface BoardSidePaneTab {
+  id: "board";
+  type: "board";
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+}
+
+/**
  * 文件树面板（右侧）。
  *
  * 原本只在左侧栏有入口（覆盖式滑出）。挪到右侧后：
@@ -559,6 +574,7 @@ export type WorkspaceSidePaneTab =
   | ModelTrajectorySidePaneTab
   | DeveloperToolsSidePaneTab
   | WikiSidePaneTab
+  | BoardSidePaneTab
   | FileTreeSidePaneTab
   | TerminalSidePaneTab
   | BrowserUseSidePaneTab
@@ -714,6 +730,13 @@ export function activateWikiSidePane(
   current: WorkspaceSidePaneState | null,
 ): WorkspaceSidePaneState {
   return activateSidePaneTab(current, { id: "wiki", type: "wiki", openedAt: Date.now() });
+}
+
+/** 打开(或聚焦)项目看板标签：workspace 级单例，内容在面板内按固定路径读取。 */
+export function activateBoardSidePane(
+  current: WorkspaceSidePaneState | null,
+): WorkspaceSidePaneState {
+  return activateSidePaneTab(current, { id: "board", type: "board", openedAt: Date.now() });
 }
 
 export interface OpenFileTreeSidePaneRequest {
@@ -1137,6 +1160,7 @@ const WORKSPACE_GLOBAL_SIDE_PANE_TAB_TYPES = new Set<WorkspaceSidePaneTab["type"
   "developer-tools",
   "treemapping",
   "wiki",
+  "board",
   "file-tree",
 ]);
 

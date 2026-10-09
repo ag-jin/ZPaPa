@@ -10,6 +10,7 @@ export interface SidePaneTabPresentationLabels {
   modelTrajectoryTitle: string;
   developerToolsTitle: string;
   wikiTitle: string;
+  boardTitle: string;
   fileTreeTitle: string;
   terminalTitle: string;
   subagentTypeLabel: string;
@@ -69,6 +70,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   if (tab.type === "wiki") {
     return "wiki knowledge base documentation project overview catalog 知识库 项目文档";
   }
+  if (tab.type === "board") {
+    return "project board 项目看板 .zcode/board stage 段位 attention 缺口";
+  }
   if (tab.type === "file-tree") {
     // 定位路径也进搜索面：用户从 Git 面板或聊天里点过来时，手里往往只有那个文件名。
     return `${tab.workspaceName ?? ""} ${tab.revealPath ?? ""} ${tab.workspacePath} file tree explorer 文件树 目录`;
@@ -92,6 +96,7 @@ export function getLocalizedSidePaneTabTitle(
       "modelTrajectory.title": labels.modelTrajectoryTitle,
       "developerTools.title": labels.developerToolsTitle,
       "wiki.title": labels.wikiTitle,
+      "board.title": labels.boardTitle,
       "workspaceSidebar.showFileTree": labels.fileTreeTitle,
       "terminal.title": labels.terminalTitle,
       "sidePane.subagent": labels.subagentTypeLabel,
@@ -129,6 +134,7 @@ export function getSidePaneTabTypeLabel(
   if (tab.type === "model-trajectory") return labels.modelTrajectoryTitle;
   if (tab.type === "developer-tools") return labels.developerToolsTitle;
   if (tab.type === "wiki") return labels.wikiTitle;
+  if (tab.type === "board") return labels.boardTitle;
   if (tab.type === "file-tree") return labels.fileTreeTitle;
   if (tab.type === "terminal" || tab.type === "bash-output") return labels.terminalTitle;
   return labels.codeViewerTitle;

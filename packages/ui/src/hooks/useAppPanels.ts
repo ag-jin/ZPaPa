@@ -35,6 +35,7 @@ import {
   openWorkflowArtifactSidePane,
   activateDeveloperToolsSidePane,
   activateWikiSidePane,
+  activateBoardSidePane,
   openFileTreeSidePane,
   type OpenFileTreeSidePaneRequest,
   openBrowserSidePane,
@@ -795,6 +796,17 @@ export function useAppPanels(options: {
       const next = activateWikiSidePane(current);
       logger.info(
         `[App] 打开右侧面板 mode=wiki workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
+      );
+      return next;
+    });
+  }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath]);
+
+  const handleOpenBoard = useCallback(() => {
+    revealSidePaneForCurrentOwner();
+    commitOpenedSidePaneState((current) => {
+      const next = activateBoardSidePane(current);
+      logger.info(
+        `[App] 打开右侧面板 mode=board workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
       );
       return next;
     });
@@ -1653,6 +1665,7 @@ export function useAppPanels(options: {
     handleOpenWhiteboard,
     handleOpenDeveloperTools,
     handleOpenWiki,
+    handleOpenBoard,
     handleOpenFileTree,
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
