@@ -4,6 +4,7 @@
  * 契约逐字文案的落点：`.zcode/board/board-consumption-contract.md` §3.1/§3.3/§4。
  * 词条 id 在 zh-CN / en-US 词条表；本模块只做「字段 → 文案/样式」的映射，不做状态推导。
  */
+import type { BoardDialogOriginKey } from "./boardDialogViewModel.js";
 import type {
   BoardAttentionCode,
   BoardAttentionSummary,
@@ -169,4 +170,48 @@ export function boardTaskLabelIndentLevel(label: string | null): number {
   if (!label) return 1;
   const segments = label.split(".").filter((segment) => segment.length > 0);
   return Math.max(1, segments.length) - 1;
+}
+
+/**
+ * 卡龄 = `updatedAt` 距 `now` 的整天数（floor）。缺字段/解析不了 → null（没有卡龄信号）；
+ * 时钟回拨（未来时间）按 0 天，不出现负数。纯函数：`now` 由调用方传入，同一屏内一致。
+ */
+export function boardCardAgeDays(updatedAt: string | null, now: number): number | null {
+  if (!updatedAt) return null;
+  const epochMs = Date.parse(updatedAt);
+  if (!Number.isFinite(epochMs)) return null;
+  return Math.max(0, Math.floor((now - epochMs) / (24 * 60 * 60 * 1000)));
+}
+
+/** 卡龄文案（表格「卡龄」列）：`N 天`；没有卡龄信号 → null（空单元格）。 */
+export function formatBoardCardAge(
+  updatedAt: string | null,
+  now: number,
+  formatMessage: BoardMessageFormatter,
+): string | null {
+  const days = boardCardAgeDays(updatedAt, now);
+  return days === null ? null : formatMessage({ id: "board.age.days" }, { days });
+}
+
+/** 弹窗来源区块的行标签词条（`Record<…>` 穷尽：origin 键加值在编译期报缺，不落裸 key）。 */
+export const BOARD_ORIGIN_MESSAGE_IDS: Record<BoardDialogOriginKey, string> = {
+  type: "board.dialog.origin.type",
+  interviewId: "board.dialog.origin.interviewId",
+  sessionId: "board.dialog.origin.sessionId",
+  specRoot: "board.dialog.origin.specRoot",
+  planRef: "board.dialog.origin.planRef",
+};
+
+/**
+ * status 文案（表格「状态」列 + 过滤控件）：与 `formatBoardStageText` 同款姿态
+ * —— null 不渲染；不认识的新状态原样透出（不吞字段、不自造词）。
+ */
+export function formatBoardStatusText(
+  status: string | null,
+  formatMessage: BoardMessageFormatter,
+): string | null {
+  if (status === null) return null;
+  const messageId = BOARD_STATUS_MESSAGE_IDS[status as BoardStatusValue];
+  if (!messageId) return status;
+  return formatMessage({ id: messageId });
 }

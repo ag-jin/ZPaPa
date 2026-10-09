@@ -12,11 +12,14 @@
 import {
   BOARD_STAGES,
   type BoardAttentionCode,
+  type BoardOrigin,
+  type BoardPr,
   type BoardStage,
   type BoardStatusValue,
 } from "./boardViewModel.js";
 import type {
   BoardActiveRun,
+  BoardBlocker,
   BoardFeatureNode,
   BoardLastRun,
   BoardProgress,
@@ -25,8 +28,9 @@ import type {
 } from "./boardViewModel.js";
 
 /**
- * 视图节点（看板列与列表共用）：特性节点与任务卡在同一集合里，`kind` 只用于呈现分组标记，
- * 不合并节点、不改字段（§13.2）。
+ * 视图节点（四视图共用）：特性节点与任务卡在同一集合里，`kind` 只用于呈现分组标记，
+ * 不合并节点、不改字段（§13.2）。字段一律是 board.json 的只读映射结果（含弹窗/表格所需：
+ * `details`/`blockers`/`origin`/`evidence`/`createdAt`/`pr`/`assignees`，契约 §6/§13.5）。
  */
 export interface BoardViewNode {
   id: string;
@@ -36,14 +40,20 @@ export interface BoardViewNode {
   no: number | null;
   label: string | null;
   title: string;
+  details: string | null;
   status: string | null;
   statusRule: string | null;
   stage: string | null;
   attention: BoardAttentionCode[];
-  blockerCount: number;
+  blockers: BoardBlocker[];
+  assignees: string[];
+  origin: BoardOrigin | null;
+  evidence: string[];
   activeRun: BoardActiveRun | null;
   lastRun: BoardLastRun | null;
   worktree: string | null;
+  pr: BoardPr | null;
+  createdAt: string | null;
   updatedAt: string | null;
   progress: BoardProgress | null;
   draft: boolean;
@@ -57,15 +67,22 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
     no: feature.no,
     label: feature.label,
     title: feature.title,
+    details: feature.details,
     status: feature.status,
     statusRule: feature.statusRule,
     stage: feature.stage,
     attention: feature.attention,
-    // 特性级没有 blockers/run/worktree 字段：不猜、不借子树的值（§13.2 各格按节点自身字段呈现）。
-    blockerCount: 0,
+    // 特性级字段照实搬（有 blockers 就带）：不猜、不借子树的值（§13.2 各格按节点自身字段呈现）。
+    blockers: feature.blockers,
+    assignees: feature.assignees,
+    origin: feature.origin,
+    evidence: feature.evidence,
+    // 特性级没有 run/worktree/pr 字段：不猜、不借子树的值。
     activeRun: null,
     lastRun: null,
     worktree: null,
+    pr: null,
+    createdAt: feature.createdAt,
     updatedAt: feature.updatedAt,
     progress: feature.progress,
     draft: false,
@@ -80,14 +97,20 @@ function taskViewNode(task: BoardTaskNode): BoardViewNode {
     no: task.no,
     label: task.label,
     title: task.title,
+    details: task.details,
     status: task.status,
     statusRule: task.statusRule,
     stage: task.stage,
     attention: task.attention,
-    blockerCount: task.blockerCount,
+    blockers: task.blockers,
+    assignees: task.assignees,
+    origin: task.origin,
+    evidence: task.evidence,
     activeRun: task.activeRun,
     lastRun: task.lastRun,
     worktree: task.worktree,
+    pr: task.pr,
+    createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     progress: null,
     draft: task.draft,
@@ -122,16 +145,17 @@ export type BoardViewSort = "recent" | "oldest";
 
 /* ---------------- 视图模式（闭集） ---------------- */
 
-/** 面板内三视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
-export type BoardViewMode = "tree" | "kanban" | "list";
+/** 面板内四视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
+export type BoardViewMode = "tree" | "kanban" | "list" | "table";
 
-export const BOARD_VIEW_MODES: readonly BoardViewMode[] = ["tree", "kanban", "list"];
+export const BOARD_VIEW_MODES: readonly BoardViewMode[] = ["tree", "kanban", "list", "table"];
 
 /** 视图名文案（`Record<…>` 穷尽：加视图 ⇒ 编译期在这里报缺失，而不是界面上多一个裸 key）。 */
 export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
   tree: "board.view.tree",
   kanban: "board.view.kanban",
   list: "board.view.list",
+  table: "board.view.table",
 };
 
 export function isBoardViewMode(value: unknown): value is BoardViewMode {
@@ -273,6 +297,14 @@ export function boardListControlsToQuery(controls: BoardListControls): BoardList
   if (controls.status !== null) filter.status = controls.status;
   if (controls.attention !== null) filter.attention = controls.attention;
   return { filter, sort: controls.sort };
+}
+
+/**
+ * 清过滤（只清三个筛子，保留排序视角）：弹窗内的依赖跳转用——过滤是临时视角，
+ * 目标卡若被筛掉就「跳了个寂寞」，跳转前先清筛子；「最老未动」这类第二视角不属于筛子，保留。
+ */
+export function clearBoardListFilter(controls: BoardListControls): BoardListControls {
+  return { ...controls, stage: null, status: null, attention: null };
 }
 
 /** 段位是否在七段位词表内（不自算段位，只做「认识/不认识」判定）。 */

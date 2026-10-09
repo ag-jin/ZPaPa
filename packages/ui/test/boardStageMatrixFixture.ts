@@ -5,6 +5,9 @@
  * 与 `GOLDEN_SHAPED_BOARD` 分开是刻意的：本夹具要**七段位全覆盖**（含 golden 也有的阻塞特性、
  * 已取消卡），而既有夹具的形态已被 #32 的守卫钉住，不搅动。
  *
+ * 卡 #34 补两处 `assignees`（v2.1 形态：卡 #8 标准管线、卡 #13 非标准管线 debugger → test-verifier），
+ * 供表格 assignees 列与弹窗的映射断言——只新增字段，不动 #33 已钉住的形态。
+ *
  * 列分配期望（测试里逐条写死，独立于实现）：
  * 待设计 = 2 个 plan 安排类 + 2 个 interview-only（聚合）；待办 = #7/#10/#14；
  * 执行中 = 特性 1 + #8；审核中 = #13；阻塞 = 特性 2；已完成 = #9；已取消 = #12。
@@ -69,6 +72,7 @@ export const STAGE_MATRIX_BOARD = {
             stoppedAt: 8,
             next: "补 updater 单测后重新验证",
           },
+          assignees: ["implementer", "test-verifier", "code-reviewer", "integrator"],
           activeRun: { role: "implementer", at: "2026-10-09T14:20:00+08:00" },
           worktree: ".zcode/worktrees/task-8",
           updatedAt: "2026-10-09T14:20:00+08:00",
@@ -191,6 +195,7 @@ export const STAGE_MATRIX_BOARD = {
             stoppedAt: 13,
             next: "复核缺口清单",
           },
+          assignees: ["debugger", "test-verifier"],
           activeRun: { role: "test-verifier", at: "2026-10-09T13:10:00+08:00" },
           worktree: null,
           updatedAt: "2026-10-09T13:10:00+08:00",

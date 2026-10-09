@@ -1,150 +1,55 @@
 /**
- * 项目看板面板的三视图（卡 #32 树形；卡 #33 增看板列视图与列表视图 + 视图切换）。
+ * 项目看板面板的四视图（卡 #32 树形；卡 #33 增看板列视图与列表视图 + 视图切换；
+ * 卡 #34 增表格视图、卡片弹窗宿主与跳转落点高亮）。
  *
  * 渲染骨架与逐字文案的单一真源：`.zcode/board/board-consumption-contract.md` §2/§3.1/§3.3/§4
  * 与 §13（视图矩阵/待设计聚合/待合并角标）。纯展示组件：只吃 `BoardPaneLoadState` 与视图状态，
  * 不经服务、不写任何东西（契约 §7.1）；分组/排序/过滤判据全在 `boardViewsViewModel` 纯函数层。
  */
 import { RefreshCwIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
-import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { BoardCardDialog } from "./BoardCardDialog.js";
+import { BoardTreeView } from "./BoardTreeView.js";
 import { BoardKanbanView } from "./BoardKanbanView.js";
 import { BoardListView } from "./BoardListView.js";
-import {
-  BoardAttentionBadges,
-  BoardBlockerBadge,
-  BoardDraftBadge,
-  BoardNodeNumber,
-  BoardStageBadge,
-  BoardStatusDot,
-} from "./boardNodeParts.js";
-import {
-  boardTaskLabelIndentLevel,
-  formatAttentionSummaryText,
-  formatBoardActiveRunText,
-  formatBoardLastRunText,
-  formatBoardRunTime,
-} from "./boardPresentation.js";
+import { BoardTableView } from "./BoardTableView.js";
+import { resolveBoardDialogNode, type BoardDialogJumpTarget } from "./boardDialogViewModel.js";
+import { formatAttentionSummaryText, formatBoardRunTime } from "./boardPresentation.js";
 import type { BoardPaneLoadState } from "./loadBoardDocument.js";
-import {
-  hasAttentionSignal,
-  type BoardTaskNode,
-  type BoardViewModel,
-  type BoardFeatureNode,
-} from "./boardViewModel.js";
+import { hasAttentionSignal, type BoardViewModel } from "./boardViewModel.js";
 import {
   BOARD_VIEW_MODES,
   BOARD_VIEW_MODE_MESSAGE_IDS,
   type BoardViewMode,
   type BoardListControls,
 } from "./boardViewsViewModel.js";
+import type { BoardTableColumnVisibility } from "./boardTableViewModel.js";
 
 export interface BoardPaneViewProps {
   state: BoardPaneLoadState;
   onRefresh?: () => void;
   /** 面板内视图（会话内保持，由宿主 BoardPane 持有；缺省树形 = tracer 的既有视图）。 */
   viewMode?: BoardViewMode;
-  /** 列表视图的过滤/排序状态（宿主持有；缺省 = 不筛 + 默认排序）。 */
+  /** 列表/表格视图的过滤与排序状态（宿主持有；缺省 = 不筛 + 默认排序）。 */
   listControls?: BoardListControls;
   onListControlsChange?: (controls: BoardListControls) => void;
-  /** 视图切换（宿主持有并做会话记忆）。切三态控件常驻：它是本面板的骨架，不因缺省 handler 消失。 */
+  /** 表格视图的列可见性（宿主持有并做会话记忆；缺省 = 契约默认列 + 卡龄）。 */
+  tableColumns?: BoardTableColumnVisibility;
+  onTableColumnsChange?: (columns: BoardTableColumnVisibility) => void;
+  /** 视图切换（宿主持有并做会话记忆）。切四态控件常驻：它是本面板的骨架，不因缺省 handler 消失。 */
   onViewModeChange?: (mode: BoardViewMode) => void;
+  /** 打开态卡片 id（同一时刻最多一个弹窗；板上找不到该 id 就不渲染）。 */
+  openCardId?: string | null;
+  onOpenCard?: (id: string) => void;
+  onCloseCard?: () => void;
+  /** 依赖跳转（滚动 + 高亮由宿主执行）。 */
+  onJumpToCard?: (target: BoardDialogJumpTarget) => void;
+  /** 跳转落点（该卡片元素带高亮锚点）。 */
+  highlightCardId?: string | null;
 }
 
-/** 缩进层级 → 左侧内边距（层级=label 段数；未领号卡按第二层）。 */
-const TASK_INDENT_CLASSES = ["pl-2", "pl-6", "pl-10", "pl-14"] as const;
-
-function taskIndentClass(level: number): string {
-  return (
-    TASK_INDENT_CLASSES[Math.min(Math.max(level, 0), TASK_INDENT_CLASSES.length - 1)] ?? "pl-2"
-  );
-}
-
-function BoardTaskRow({ task, depth }: { task: BoardTaskNode; depth: number }) {
-  const { intl } = useZCodeIntl();
-  const lastRunText = formatBoardLastRunText(task.lastRun, intl.formatMessage);
-  return (
-    <>
-      <div
-        data-board-task={task.id}
-        data-board-indent={depth}
-        className={cn(
-          "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
-          taskIndentClass(depth),
-        )}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <BoardNodeNumber no={task.no} label={task.label} />
-          <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{task.title}</span>
-          <BoardStageBadge stage={task.stage} />
-          {task.draft ? <BoardDraftBadge /> : null}
-          <BoardAttentionBadges attention={task.attention} lastRun={task.lastRun} />
-          <BoardBlockerBadge count={task.blockerCount} />
-          {task.activeRun ? (
-            <Badge
-              variant="secondary"
-              data-board-active-run={task.activeRun.role}
-              className="shrink-0"
-            >
-              {formatBoardActiveRunText(task.activeRun.role, intl.formatMessage)}
-            </Badge>
-          ) : null}
-          <BoardStatusDot status={task.status} />
-        </div>
-        {lastRunText ? (
-          <div className="truncate font-mono text-ui-xs text-foreground-subtle">{lastRunText}</div>
-        ) : null}
-      </div>
-      {task.children.map((child) => (
-        <BoardTaskRow key={child.id} task={child} depth={depth + 1} />
-      ))}
-    </>
-  );
-}
-
-function BoardFeatureSection({ feature }: { feature: BoardFeatureNode }) {
-  const { intl } = useZCodeIntl();
-  const progressText =
-    feature.progress && feature.progress.totalTasks > 0
-      ? intl.formatMessage(
-          { id: "board.progress" },
-          {
-            completed: feature.progress.completedTasks,
-            total: feature.progress.totalTasks,
-          },
-        )
-      : null;
-  const updatedAtText = feature.updatedAt
-    ? intl.formatMessage({ id: "board.updatedAt" }, { time: formatBoardRunTime(feature.updatedAt) })
-    : null;
-  return (
-    <section data-board-feature={feature.id} className="flex flex-col gap-0.5 pb-3">
-      <div className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-2 py-1.5">
-        <BoardNodeNumber no={feature.no} label={feature.label} />
-        <span className="min-w-0 flex-1 truncate text-ui-base font-medium text-foreground">
-          {feature.title}
-        </span>
-        <BoardStageBadge stage={feature.stage} />
-        <BoardAttentionBadges attention={feature.attention} lastRun={null} />
-        <BoardStatusDot status={feature.status} />
-      </div>
-      {updatedAtText || progressText ? (
-        <div className="px-2 text-ui-xs text-foreground-subtle">
-          {[updatedAtText, progressText].filter(Boolean).join(" · ")}
-        </div>
-      ) : null}
-      <div className="flex flex-col">
-        {feature.tasks.map((task) => (
-          <BoardTaskRow key={task.id} task={task} depth={boardTaskLabelIndentLevel(task.label)} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/** 面板内视图切换（树形/看板/列表）：常驻头部，选中态走 `aria-pressed`（不靠颜色表达）。 */
+/** 面板内视图切换（树形/看板/列表/表格）：常驻头部，选中态走 `aria-pressed`（不靠颜色表达）。 */
 function BoardViewSwitcher({
   viewMode,
   onViewModeChange,
@@ -187,17 +92,33 @@ function BoardReadyView({
   viewMode,
   listControls,
   onListControlsChange,
+  tableColumns,
+  onTableColumnsChange,
   onViewModeChange,
+  openCardId,
+  onOpenCard,
+  onCloseCard,
+  onJumpToCard,
+  highlightCardId,
 }: {
   board: BoardViewModel;
   onRefresh?: () => void;
   viewMode: BoardViewMode;
   listControls?: BoardListControls;
   onListControlsChange?: (controls: BoardListControls) => void;
+  tableColumns?: BoardTableColumnVisibility;
+  onTableColumnsChange?: (columns: BoardTableColumnVisibility) => void;
   onViewModeChange?: (mode: BoardViewMode) => void;
+  openCardId?: string | null;
+  onOpenCard?: (id: string) => void;
+  onCloseCard?: () => void;
+  onJumpToCard?: (target: BoardDialogJumpTarget) => void;
+  highlightCardId?: string | null;
 }) {
   const { intl } = useZCodeIntl();
   const showBanner = hasAttentionSignal(board.attentionSummary);
+  // 同一时刻最多一个弹窗：宿主只持一个 id，这里按 id 解析（悬空 id → null，不留幽灵弹窗）。
+  const dialogNode = resolveBoardDialogNode(board, openCardId ?? null);
   return (
     <div data-board-pane="" className="flex h-full min-h-0 flex-col">
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3">
@@ -248,19 +169,35 @@ function BoardReadyView({
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
         {viewMode === "kanban" ? (
-          <BoardKanbanView board={board} />
+          <BoardKanbanView
+            board={board}
+            {...(onOpenCard ? { onOpenCard } : {})}
+            highlightCardId={highlightCardId ?? null}
+          />
         ) : viewMode === "list" ? (
           <BoardListView
             board={board}
             {...(listControls ? { controls: listControls } : {})}
             {...(onListControlsChange ? { onControlsChange: onListControlsChange } : {})}
+            {...(onOpenCard ? { onOpenCard } : {})}
+            highlightCardId={highlightCardId ?? null}
+          />
+        ) : viewMode === "table" ? (
+          <BoardTableView
+            board={board}
+            {...(listControls ? { controls: listControls } : {})}
+            {...(onListControlsChange ? { onControlsChange: onListControlsChange } : {})}
+            {...(tableColumns ? { columns: tableColumns } : {})}
+            {...(onTableColumnsChange ? { onColumnsChange: onTableColumnsChange } : {})}
+            {...(onOpenCard ? { onOpenCard } : {})}
+            highlightCardId={highlightCardId ?? null}
           />
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-            {board.features.map((feature) => (
-              <BoardFeatureSection key={feature.id} feature={feature} />
-            ))}
-          </div>
+          <BoardTreeView
+            board={board}
+            {...(onOpenCard ? { onOpenCard } : {})}
+            highlightCardId={highlightCardId ?? null}
+          />
         )}
       </div>
       {board.diagnostics.length > 0 ? (
@@ -283,6 +220,14 @@ function BoardReadyView({
             ))}
           </ul>
         </div>
+      ) : null}
+      {dialogNode ? (
+        <BoardCardDialog
+          board={board}
+          node={dialogNode}
+          {...(onCloseCard ? { onClose: onCloseCard } : {})}
+          {...(onJumpToCard ? { onJumpToCard } : {})}
+        />
       ) : null}
     </div>
   );
@@ -315,7 +260,14 @@ export function BoardPaneView({
   viewMode = "tree",
   listControls,
   onListControlsChange,
+  tableColumns,
+  onTableColumnsChange,
   onViewModeChange,
+  openCardId = null,
+  onOpenCard,
+  onCloseCard,
+  onJumpToCard,
+  highlightCardId = null,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
   if (state.kind === "ready") {
@@ -323,10 +275,17 @@ export function BoardPaneView({
       <BoardReadyView
         board={state.board}
         viewMode={viewMode}
+        openCardId={openCardId}
+        highlightCardId={highlightCardId}
         {...(onRefresh ? { onRefresh } : {})}
         {...(listControls ? { listControls } : {})}
         {...(onListControlsChange ? { onListControlsChange } : {})}
+        {...(tableColumns ? { tableColumns } : {})}
+        {...(onTableColumnsChange ? { onTableColumnsChange } : {})}
         {...(onViewModeChange ? { onViewModeChange } : {})}
+        {...(onOpenCard ? { onOpenCard } : {})}
+        {...(onCloseCard ? { onCloseCard } : {})}
+        {...(onJumpToCard ? { onJumpToCard } : {})}
       />
     );
   }

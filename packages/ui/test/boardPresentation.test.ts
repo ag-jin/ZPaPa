@@ -6,6 +6,7 @@ import {
   boardStatusDotClassName,
   boardTaskLabelIndentLevel,
   BOARD_ATTENTION_LABEL_MESSAGE_IDS,
+  BOARD_ORIGIN_MESSAGE_IDS,
   BOARD_STAGE_MESSAGE_IDS,
   BOARD_STATUS_MESSAGE_IDS,
   formatAttentionBadgeText,
@@ -19,6 +20,11 @@ import {
   hasAttentionSignal,
   type BoardLastRun,
 } from "../src/board/boardViewModel.js";
+import { BOARD_DIALOG_ORIGIN_KEYS } from "../src/board/boardDialogViewModel.js";
+import {
+  BOARD_TABLE_COLUMNS,
+  BOARD_TABLE_COLUMN_MESSAGE_IDS,
+} from "../src/board/boardTableViewModel.js";
 
 /**
  * 看板呈现层的纯函数缝（卡 #32）。
@@ -207,6 +213,23 @@ test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存
     "board.filter.all",
     "board.sort.recent",
     "board.sort.oldest",
+    // 卡 #34：表格列头与卡龄、卡片弹窗区块。
+    "board.view.table",
+    "board.table.columns",
+    "board.age.days",
+    ...BOARD_TABLE_COLUMNS.map((key) => BOARD_TABLE_COLUMN_MESSAGE_IDS[key]),
+    ...BOARD_DIALOG_ORIGIN_KEYS.map((key) => BOARD_ORIGIN_MESSAGE_IDS[key]),
+    "board.dialog.close",
+    "board.dialog.jump",
+    "board.dialog.detailsTitle",
+    "board.dialog.blockersTitle",
+    "board.dialog.lastRunTitle",
+    "board.dialog.originTitle",
+    "board.dialog.evidenceTitle",
+    "board.dialog.timestampsTitle",
+    "board.dialog.prTitle",
+    "board.dialog.createdAt",
+    "board.dialog.updatedAt",
   ];
   for (const id of ids) {
     assert.ok(zhCN[id], `缺 zh-CN 词条：${id}`);

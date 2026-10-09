@@ -132,7 +132,7 @@ test("golden 形态 board.json → ready，映射特性树与卡片字段", asyn
   assert.ok(card7 && card8 && card9);
   assert.equal(card7.no, 7);
   assert.equal(card7.label, "1.1");
-  assert.equal(card7.blockerCount, 1);
+  assert.equal(card7.blockers.length, 1);
   assert.equal(card7.attention.length, 0);
   assert.deepEqual(card7.lastRun, {
     at: "2026-10-09T14:05:00+08:00",
@@ -165,9 +165,9 @@ test("golden 形态 board.json → ready，映射特性树与卡片字段", asyn
   assert.equal(draftTask1.no, null);
   assert.equal(draftTask1.label, null);
   assert.equal(draftTask1.draft, true);
-  assert.equal(draftTask1.blockerCount, 1);
+  assert.equal(draftTask1.blockers.length, 1);
   assert.equal(draftTask1.lastRun, null);
-  assert.equal(draftTask2.blockerCount, 2);
+  assert.equal(draftTask2.blockers.length, 2);
 
   // interview-only 节点同层渲染
   assert.equal(interview.kind, "interview-only");
@@ -240,6 +240,113 @@ test("未知缺口码不进徽章渲染（只有四个固定词汇有逐字文�
   assert.equal(state.kind, "ready");
   if (state.kind !== "ready") return;
   assert.deepEqual(state.board.features[0]?.tasks[1]?.attention, ["interrupted-resume"]);
+});
+
+/* ---------------- 弹窗字段映射（卡 #34，契约 §6） ---------------- */
+
+test("弹窗字段映射：details 全文与空串降级（契约 §6「细节」空串 → 隐藏区块）", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+  const spec = state.board.features[0];
+  assert.ok(spec);
+  assert.equal(
+    spec.details,
+    "确认 tag 规则 vX.Y.Z-preview.N 与四项实施任务，产物为 plan-sess_e5545aac。",
+    "特性 details 应全文映射（≤200 字符，存储即有界）",
+  );
+  const [card7, card8] = spec.tasks;
+  assert.ok(card7 && card8);
+  assert.equal(
+    card8.details,
+    "把「应用通道到 updater」抽成一个函数，初始化与拨开关两条路径都调它。",
+    "卡片 details 应全文映射",
+  );
+  assert.equal(card7.details, null, "空串 details 归一为 null（由视图层隐藏区块），不渲染空段落");
+  assert.equal(state.board.features[1]?.details, null, "plan 夹具的 details 也是空串");
+});
+
+test("弹窗字段映射：blockers 结构化（external 与 dependency 两种，含 blockedBy 缺省）", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+  const spec = state.board.features[0];
+  const draftPlan = state.board.features[2];
+  assert.ok(spec && draftPlan);
+  const card7 = spec.tasks[0];
+  assert.ok(card7);
+  assert.deepEqual(card7.blockers, [
+    {
+      kind: "external",
+      blockedBy: null,
+      summary: "dev 污染 atom feed 待验证（决定方案 (a)/(b)）",
+      evidence: ["specs/preview-channel/progress.json"],
+    },
+  ]);
+  const [draftTask1, draftTask2] = draftPlan.tasks;
+  assert.ok(draftTask1 && draftTask2);
+  assert.equal(draftTask1.blockers[0]?.kind, "dependency");
+  assert.equal(draftTask1.blockers[0]?.blockedBy, 9, "dependency 的对方稳定号应映射");
+  assert.equal(draftTask2.blockers.length, 2);
+  assert.equal(draftTask2.blockers[1]?.kind, "dependency");
+  assert.equal(
+    draftTask2.blockers[1]?.blockedBy,
+    null,
+    "blockedBy 缺省（golden 真实形态）不编造目标号",
+  );
+});
+
+test("弹窗字段映射：origin/evidence/createdAt/pr/assignees（契约 §6 来源、证据路径、时间戳、PR）", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+  const spec = state.board.features[0];
+  assert.ok(spec);
+  const [card7, card8, card9] = spec.tasks;
+  assert.ok(card7 && card8 && card9);
+
+  assert.deepEqual(card8.origin, {
+    type: null,
+    interviewId: "itw-20261009-a1b2",
+    sessionId: null,
+    specRoot: "specs/preview-channel/",
+    planRef: null,
+  });
+  assert.equal(card7.origin?.type, "spec-driven-workflow");
+  assert.deepEqual(spec.origin, {
+    type: "spec-driven-workflow",
+    interviewId: null,
+    sessionId: null,
+    specRoot: "specs/preview-channel/",
+    planRef: null,
+  });
+  assert.deepEqual(card8.evidence, [
+    "specs/preview-channel/progress.json",
+    "ZPaPa/packages/desktop/src/updateStatusModel.ts",
+  ]);
+  assert.deepEqual(card9.evidence, [], "空 evidence 不编造指针");
+  assert.equal(card8.createdAt, "2026-10-08T10:00:00+08:00");
+  assert.equal(card7.createdAt, "2026-10-08T10:00:00+08:00");
+  assert.deepEqual(card9.pr, { number: 41, url: "https://github.com/ag-jin/ZPaPa/pull/41" });
+  assert.equal(card8.pr, null, "pr 缺省 → null（视图层隐藏区块）");
+  assert.deepEqual(card8.assignees, [
+    "implementer",
+    "test-verifier",
+    "code-reviewer",
+    "integrator",
+  ]);
+  assert.deepEqual(spec.assignees, [], "特性节点没有 assignees 字段：不借子树的值");
+  assert.equal(card9.origin, null, "缺 origin 的卡不编造来源");
+  assert.equal(spec.statusRule, "progress.stages.design=active");
 });
 
 /* ---------------- P1 回归（第三绿 changes_required）：读取上限 ---------------- */

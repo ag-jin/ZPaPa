@@ -84,22 +84,63 @@ export interface BoardProgress {
   completedTasks: number;
 }
 
+/**
+ * 阻拦项（契约 §6「阻拦」区块；形态真源 `board.golden.json`）：
+ * `external` → summary + 证据；`dependency` → 对方稳定号 `blockedBy`（可跳转）。
+ * 两者都可能缺字段（golden 真实形态：dependency 可以没有 `blockedBy`）——缺就留 null，不编造。
+ */
+export interface BoardBlocker {
+  /** 原值透出（契约只给 external / dependency 两种文案；不认识的 kind 不猜语义）。 */
+  kind: string;
+  /** dependency 的对方稳定号；缺省即无跳转目标。 */
+  blockedBy: number | null;
+  summary: string | null;
+  evidence: string[];
+}
+
+/**
+ * 来源（契约 §6「来源」区块）：interviewId / specRoot / sessionId / planRef / type。
+ * 契约点名的五个键之外不映射（应用侧只读契约字段，不搬运未知字段）。
+ */
+export interface BoardOrigin {
+  type: string | null;
+  interviewId: string | null;
+  sessionId: string | null;
+  specRoot: string | null;
+  planRef: string | null;
+}
+
+/** PR 区块（契约 §6「PR（远程模式）」）：远程号 + 链接；两者全缺 → null（区块隐藏）。 */
+export interface BoardPr {
+  number: number | null;
+  url: string | null;
+}
+
 export interface BoardTaskNode {
   /** 渲染 key：有稳定号用号，否则用父节点下序号。 */
   id: string;
   no: number | null;
   label: string | null;
   title: string;
+  /** 契约 §6「细节」：全文（存储即有界 ≤200 字符）；空串归一为 null（区块隐藏）。 */
+  details: string | null;
   status: string | null;
   /** 段位溯源（契约 §13.1；应用侧只读，不自算段位）。 */
   statusRule: string | null;
   stage: string | null;
   draft: boolean;
   attention: BoardAttentionCode[];
-  blockerCount: number;
+  blockers: BoardBlocker[];
+  /** 责任管线（§13.5 `assignees` 列）：顺序即管线序；缺省不编造标准管线。 */
+  assignees: string[];
+  origin: BoardOrigin | null;
+  /** 证据路径（契约 §6「证据路径」）：展示路径文本，不承诺编辑器打开（A3 未验证）。 */
+  evidence: string[];
   lastRun: BoardLastRun | null;
   activeRun: BoardActiveRun | null;
   worktree: string | null;
+  pr: BoardPr | null;
+  createdAt: string | null;
   /** 卡龄排序基准（契约 §3.5；= max(源推导时间, 最新 run.at)，编译器已算好）。 */
   updatedAt: string | null;
   children: BoardTaskNode[];
@@ -111,11 +152,19 @@ export interface BoardFeatureNode {
   label: string | null;
   kind: string | null;
   title: string;
+  /** 契约 §6「细节」：全文；空串归一为 null（区块隐藏）。 */
+  details: string | null;
   status: string | null;
   /** 段位溯源（契约 §13.1；已取消列展示取消原因的来源）。 */
   statusRule: string | null;
   stage: string | null;
   attention: BoardAttentionCode[];
+  /** 特性级无 blockers 字段时为空数组；真有也照实映射（不借子树的值）。 */
+  blockers: BoardBlocker[];
+  assignees: string[];
+  origin: BoardOrigin | null;
+  evidence: string[];
+  createdAt: string | null;
   progress: BoardProgress | null;
   updatedAt: string | null;
   tasks: BoardTaskNode[];
@@ -195,8 +244,57 @@ function readProgress(value: unknown): BoardProgress | null {
   return { totalTasks, completedTasks };
 }
 
-function readBlockerCount(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
+/** 字符串数组（evidence / assignees）：非字符串项丢弃，空串丢弃（不渲染空路径）。 */
+function readTextList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const text = readText(entry);
+    return text === null ? [] : [text];
+  });
+}
+
+function readBlockers(value: unknown): BoardBlocker[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const kind = readText(entry.kind);
+    if (kind === null) return [];
+    return [
+      {
+        kind,
+        blockedBy: readPositiveInteger(entry.blockedBy),
+        summary: readText(entry.summary),
+        evidence: readTextList(entry.evidence),
+      },
+    ];
+  });
+}
+
+function readOrigin(value: unknown): BoardOrigin | null {
+  if (!isRecord(value)) return null;
+  const origin: BoardOrigin = {
+    type: readText(value.type),
+    interviewId: readText(value.interviewId),
+    sessionId: readText(value.sessionId),
+    specRoot: readText(value.specRoot),
+    planRef: readText(value.planRef),
+  };
+  const hasAny = Object.values(origin).some((entry) => entry !== null);
+  return hasAny ? origin : null;
+}
+
+function readPr(value: unknown): BoardPr | null {
+  if (!isRecord(value)) return null;
+  const pr: BoardPr = {
+    number: readPositiveInteger(value.number),
+    url: readText(value.url),
+  };
+  return pr.number === null && pr.url === null ? null : pr;
+}
+
+/** 契约 §6「细节」：空串 → null（区块隐藏）；≤200 字符的存储上限由编译器保证，这里不动文本。 */
+function readDetails(value: unknown): string | null {
+  return readText(value);
 }
 
 function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
@@ -209,15 +307,21 @@ function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
     no,
     label,
     title: readText(node.title) ?? "",
+    details: readDetails(node.details),
     status: readText(node.status),
     statusRule: readText(node.statusRule),
     stage: readText(node.stage),
     draft: node.draft === true,
     attention: readAttentionCodes(node.attention),
-    blockerCount: readBlockerCount(node.blockers),
+    blockers: readBlockers(node.blockers),
+    assignees: readTextList(node.assignees),
+    origin: readOrigin(node.origin),
+    evidence: readTextList(node.evidence),
     lastRun: readLastRun(node.lastRun),
     activeRun: readActiveRun(node.activeRun),
     worktree: readText(node.worktree),
+    pr: readPr(node.pr),
+    createdAt: readText(node.createdAt),
     updatedAt: readText(node.updatedAt),
     children: Array.isArray(node.tasks)
       ? node.tasks.map((child, childIndex) => mapTask(child, id, childIndex))
@@ -237,10 +341,16 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     label,
     kind: readText(node.kind),
     title: readText(node.title) ?? "",
+    details: readDetails(node.details),
     status: readText(node.status),
     statusRule: readText(node.statusRule),
     stage: readText(node.stage),
     attention: readAttentionCodes(node.attention),
+    blockers: readBlockers(node.blockers),
+    assignees: readTextList(node.assignees),
+    origin: readOrigin(node.origin),
+    evidence: readTextList(node.evidence),
+    createdAt: readText(node.createdAt),
     progress: readProgress(node.progress),
     updatedAt: readText(node.updatedAt),
     tasks: Array.isArray(node.tasks)

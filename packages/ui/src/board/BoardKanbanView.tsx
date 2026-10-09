@@ -11,6 +11,7 @@
 import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
 import {
   BoardAttentionBadges,
   BoardBlockerBadge,
@@ -30,16 +31,26 @@ import {
 function BoardKanbanCard({
   node,
   showStatusRule,
+  onOpenCard,
+  highlightCardId,
 }: {
   node: BoardViewNode;
   /** 仅「已取消」列展示取消原因（§13.2）。 */
   showStatusRule: boolean;
+  onOpenCard?: (id: string) => void;
+  highlightCardId: string | null;
 }) {
   const { intl } = useZCodeIntl();
+  const highlighted = boardCardHighlightProps(node.id, highlightCardId);
   return (
     <div
       data-board-card={node.id}
-      className="flex flex-col gap-1 rounded-lg border border-border/50 bg-surface px-2 py-1.5"
+      {...highlighted}
+      {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
+      className={cn(
+        "flex flex-col gap-1 rounded-lg border border-border/50 bg-surface px-2 py-1.5",
+        highlighted["data-board-card-highlight"] ? "border-warning bg-warning/15" : null,
+      )}
     >
       <div className="flex min-w-0 items-center gap-1.5">
         <BoardNodeNumber no={node.no} label={node.label} />
@@ -53,7 +64,7 @@ function BoardKanbanCard({
           </Badge>
         ) : null}
         <BoardAttentionBadges attention={node.attention} lastRun={node.lastRun} />
-        <BoardBlockerBadge count={node.blockerCount} />
+        <BoardBlockerBadge count={node.blockers.length} />
         {node.activeRun ? (
           <Badge
             variant="secondary"
@@ -74,13 +85,27 @@ function BoardKanbanCard({
   );
 }
 
-function BoardKanbanColumnBody({ column }: { column: BoardKanbanColumn }) {
+function BoardKanbanColumnBody({
+  column,
+  onOpenCard,
+  highlightCardId,
+}: {
+  column: BoardKanbanColumn;
+  onOpenCard?: (id: string) => void;
+  highlightCardId: string | null;
+}) {
   const { intl } = useZCodeIntl();
   const cancelled = column.stage === "已取消";
   return (
     <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto p-1.5">
       {column.nodes.map((node) => (
-        <BoardKanbanCard key={node.id} node={node} showStatusRule={cancelled} />
+        <BoardKanbanCard
+          key={node.id}
+          node={node}
+          showStatusRule={cancelled}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
+        />
       ))}
       {column.nodes.length === 0 && column.interview === null ? (
         <div className="px-1 py-0.5 text-ui-xs text-foreground-subtle">0</div>
@@ -102,7 +127,13 @@ function BoardKanbanColumnBody({ column }: { column: BoardKanbanColumn }) {
           </summary>
           <div className="flex flex-col gap-1.5 p-1.5 pt-0">
             {column.interview.nodes.map((node) => (
-              <BoardKanbanCard key={node.id} node={node} showStatusRule={false} />
+              <BoardKanbanCard
+                key={node.id}
+                node={node}
+                showStatusRule={false}
+                {...(onOpenCard ? { onOpenCard } : {})}
+                highlightCardId={highlightCardId}
+              />
             ))}
           </div>
         </details>
@@ -138,7 +169,17 @@ function BoardKanbanHeader({ column }: { column: BoardKanbanColumn }) {
   );
 }
 
-export function BoardKanbanView({ board }: { board: BoardViewModel }) {
+export function BoardKanbanView({
+  board,
+  onOpenCard,
+  highlightCardId = null,
+}: {
+  board: BoardViewModel;
+  /** 卡片点击（打开弹窗）；缺省时看板退化为只读展示。 */
+  onOpenCard?: (id: string) => void;
+  /** 跳转落点（该卡带高亮锚点）。 */
+  highlightCardId?: string | null;
+}) {
   const { intl } = useZCodeIntl();
   const { columns, unplacedCount } = buildBoardKanban(board);
   return (
@@ -167,7 +208,11 @@ export function BoardKanbanView({ board }: { board: BoardViewModel }) {
               <summary className="flex cursor-pointer items-center gap-1.5 px-1.5 py-1">
                 <BoardKanbanHeaderContent column={column} />
               </summary>
-              <BoardKanbanColumnBody column={column} />
+              <BoardKanbanColumnBody
+                column={column}
+                {...(onOpenCard ? { onOpenCard } : {})}
+                highlightCardId={highlightCardId}
+              />
             </details>
           ) : (
             <section
@@ -180,7 +225,11 @@ export function BoardKanbanView({ board }: { board: BoardViewModel }) {
               )}
             >
               <BoardKanbanHeader column={column} />
-              <BoardKanbanColumnBody column={column} />
+              <BoardKanbanColumnBody
+                column={column}
+                {...(onOpenCard ? { onOpenCard } : {})}
+                highlightCardId={highlightCardId}
+              />
             </section>
           ),
         )}

@@ -82,7 +82,8 @@ export function buildLargeBoard(params: { minBytes: number }): LargeBoardFixture
 
 /**
  * 字段形态夹具：逐项覆盖 `board.golden.json` 的真实形态（四种缺口码、lastRun 三形态、
- * progress 有/无、未领号缺省、draft 卡、blockers 计数、pr、diagnostics）。
+ * progress 有/无、未领号缺省、draft 卡、blockers 计数、pr、diagnostics；卡 #34 起补
+ * 弹窗所需形态：details/origin/evidence/createdAt/assignees 与两种 blockers）。
  * 期望值直接取自 golden 样例（独立真源），不是按实现回算。
  */
 export const GOLDEN_SHAPED_BOARD = {
@@ -112,10 +113,15 @@ export const GOLDEN_SHAPED_BOARD = {
           no: 7,
           label: "1.1",
           title: "预览发布通道（workflow）",
+          details: "",
           status: "pending",
           stage: "待办",
           statusRule: "tasks.md checkbox unchecked",
           draft: false,
+          origin: { type: "spec-driven-workflow", specRoot: "specs/preview-channel/" },
+          evidence: ["specs/preview-channel/progress.json"],
+          assignees: ["implementer", "test-verifier", "code-reviewer", "integrator"],
+          createdAt: "2026-10-08T10:00:00+08:00",
           blockers: [
             {
               kind: "external",
@@ -140,9 +146,17 @@ export const GOLDEN_SHAPED_BOARD = {
           no: 8,
           label: "1.2",
           title: "让开关立刻生效（核心）",
+          details: "把「应用通道到 updater」抽成一个函数，初始化与拨开关两条路径都调它。",
           status: "active",
           stage: "执行中",
           draft: false,
+          origin: { interviewId: "itw-20261009-a1b2", specRoot: "specs/preview-channel/" },
+          evidence: [
+            "specs/preview-channel/progress.json",
+            "ZPaPa/packages/desktop/src/updateStatusModel.ts",
+          ],
+          assignees: ["implementer", "test-verifier", "code-reviewer", "integrator"],
+          createdAt: "2026-10-08T10:00:00+08:00",
           blockers: [],
           attention: ["interrupted-resume", "unmerged-worktree"],
           lastRun: {
@@ -164,6 +178,9 @@ export const GOLDEN_SHAPED_BOARD = {
           status: "completed",
           stage: "已完成",
           draft: false,
+          evidence: [],
+          assignees: ["implementer", "test-verifier", "code-reviewer", "integrator"],
+          createdAt: "2026-10-08T10:00:00+08:00",
           blockers: [],
           attention: [],
           lastRun: {
@@ -217,6 +234,9 @@ export const GOLDEN_SHAPED_BOARD = {
           status: "pending",
           stage: "待办",
           draft: true,
+          origin: { planRef: "docs/plans/plan-payment-split.md" },
+          evidence: [],
+          createdAt: "2026-09-30T09:00:00+08:00",
           blockers: [
             {
               kind: "dependency",
@@ -238,8 +258,10 @@ export const GOLDEN_SHAPED_BOARD = {
           status: "pending",
           stage: "待办",
           draft: true,
+          evidence: [],
           blockers: [
             { kind: "external", summary: "上游 tag 规则未定", evidence: [] },
+            // golden 真实形态：dependency 可以没有 blockedBy（目标号缺省）——跳转必须降级。
             { kind: "dependency", summary: "", evidence: [] },
           ],
           attention: [],

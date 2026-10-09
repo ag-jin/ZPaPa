@@ -46,6 +46,8 @@ test("视图切换：写什么读回什么（会话内保持），缺省回落�
     assert.equal(readBoardViewMode(), "kanban");
     writeBoardViewMode("list");
     assert.equal(readBoardViewMode(), "list");
+    writeBoardViewMode("table");
+    assert.equal(readBoardViewMode(), "table", "表格视图也记（卡 #34）");
     writeBoardViewMode("tree");
     assert.equal(readBoardViewMode(), "tree");
   } finally {
@@ -69,8 +71,8 @@ test("无 sessionStorage（纯 node / 隐私模式）时不抛，读回默认值
   assert.doesNotThrow(() => writeBoardViewMode("kanban"));
 });
 
-test("三视图闭集与词条 id：zh/en 两语都齐（不出现裸 key）", () => {
-  assert.deepEqual([...BOARD_VIEW_MODES], ["tree", "kanban", "list"]);
+test("四视图闭集与词条 id：zh/en 两语都齐（不出现裸 key）", () => {
+  assert.deepEqual([...BOARD_VIEW_MODES], ["tree", "kanban", "list", "table"]);
   for (const mode of BOARD_VIEW_MODES) {
     const messageId = BOARD_VIEW_MODE_MESSAGE_IDS[mode as BoardViewMode];
     assert.ok(messageId, `${mode} 应有词条 id`);

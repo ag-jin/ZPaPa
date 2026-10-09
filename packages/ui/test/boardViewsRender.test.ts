@@ -301,22 +301,22 @@ test("列表：行保留 §13.2 要求的角标（待合并/受阻/执行角色�
 
 /* ---------------- 视图切换（树形/看板/列表，会话内保持） ---------------- */
 
-test("视图切换：三态控件常驻，当前视图 aria-pressed（不靠颜色表达选中）", () => {
+test("视图切换：四态控件常驻，当前视图 aria-pressed（不靠颜色表达选中）", () => {
   const switcherOf = (viewMode?: BoardViewMode) => {
     const markup = render(matrixBoard(), viewMode ? { viewMode } : {});
     const match = /data-board-view-switcher[\s\S]*?<\/div>/.exec(markup);
     assert.ok(match, "面板头部应有视图切换控件");
     return match[0];
   };
-  for (const mode of ["tree", "kanban", "list"] as const) {
+  for (const mode of ["tree", "kanban", "list", "table"] as const) {
     const switcher = switcherOf(mode);
     const options = [...switcher.matchAll(/<button[^>]*>/g)]
       .map((match) => match[0])
       .filter((tag) => tag.includes("data-board-view-option"));
     assert.deepEqual(
       options.map((tag) => attributeValue(tag, "data-board-view-option")),
-      ["tree", "kanban", "list"],
-      "三个选项固定序（树形/看板/列表）",
+      ["tree", "kanban", "list", "table"],
+      "四个选项固定序（树形/看板/列表/表格，契约 §13.2 视图矩阵）",
     );
     assert.deepEqual(
       options
@@ -328,19 +328,24 @@ test("视图切换：三态控件常驻，当前视图 aria-pressed（不靠颜�
   }
 });
 
-test("视图切换：缺省树形（tracer 既有视图零变化），三态各渲染自己的根锚点", () => {
+test("视图切换：缺省树形（tracer 既有视图零变化），四态各渲染自己的根锚点", () => {
   const tree = render(matrixBoard());
   assert.ok(tree.includes('data-board-feature="spec:preview-channel"'), "缺省渲染树形");
   assert.ok(!tree.includes('data-board-view="kanban"'));
   assert.ok(render(matrixBoard(), { viewMode: "kanban" }).includes('data-board-view="kanban"'));
   assert.ok(render(matrixBoard(), { viewMode: "list" }).includes('data-board-view="list"'));
+  assert.ok(render(matrixBoard(), { viewMode: "table" }).includes('data-board-view="table"'));
+  assert.ok(
+    render(matrixBoard(), { viewMode: "table" }).includes('data-board-column-header="no"'),
+    "表格视图渲染自己的列头",
+  );
 });
 
-test("视图切换：控件文案走词条（zh 逐字 树形/看板/列表）", () => {
+test("视图切换：控件文案走词条（zh 逐字 树形/看板/列表/表格）", () => {
   const markup = render(matrixBoard(), { viewMode: "kanban" });
   const switcher = /data-board-view-switcher[\s\S]*?<\/div>/.exec(markup);
   assert.ok(switcher);
-  for (const label of ["树形", "看板", "列表"]) {
+  for (const label of ["树形", "看板", "列表", "表格"]) {
     assert.ok(switcher[0].includes(`>${label}<`), `切换控件应含「${label}」`);
   }
 });
@@ -371,4 +376,56 @@ test("英文界面：看板/列表的段位与控件文案走英文词条（评�
   for (const label of ["Stage", "Status", "Gap", "Sort"]) {
     assert.ok(listEn.includes(`>${label}<`), `en-US 列表应含过滤标签「${label}」`);
   }
+});
+
+/* ---------------- 卡片弹窗宿主与跳转高亮（卡 #34，契约 §6） ---------------- */
+
+test("面板：点行 → 弹窗（openCardId 命中一张卡时渲染恰好一个弹窗）", () => {
+  const opened = render(matrixBoard(), { viewMode: "table", openCardId: "task:8" });
+  const dialogs = [...opened.matchAll(/data-board-dialog="([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual(dialogs, ["task:8"], "同一时刻最多一个弹窗（同 id 也只渲染一处）");
+  assert.ok(opened.includes("让开关立刻生效（核心）"), "弹窗渲染被点卡片自身的内容");
+  assert.ok(opened.includes("停在 #8"), "弹窗带最近执行摘要（与卡片行同源）");
+});
+
+test("面板：没有打开态 / 打开态悬空（刷新后卡片消失）→ 一个弹窗都不渲染", () => {
+  assert.ok(!render(matrixBoard(), { viewMode: "table" }).includes("data-board-dialog="));
+  assert.ok(
+    !render(matrixBoard(), { viewMode: "table", openCardId: "task:404" }).includes(
+      "data-board-dialog=",
+    ),
+    "悬空 id 不留幽灵弹窗",
+  );
+});
+
+test("面板：跳转落点高亮锚点跟着 highlightCardId 走（表格行与树形卡片行同一判据）", () => {
+  const table = render(matrixBoard(), {
+    viewMode: "table",
+    highlightCardId: "task:8",
+    onOpenCard: () => {},
+  });
+  assert.ok(
+    /data-board-card="task:8"[^>]*data-board-card-highlight="true"/.test(table),
+    "表格行带高亮锚点",
+  );
+  const tree = render(matrixBoard(), { highlightCardId: "task:7" });
+  assert.ok(
+    /data-board-task="task:7"[^>]*data-board-card-highlight="true"/.test(tree),
+    "树形卡片行带高亮锚点（跳转目标可能是各视图里的卡）",
+  );
+  assert.ok(
+    !/data-board-task="task:8"[^>]*data-board-card-highlight/.test(tree),
+    "其余卡片不带高亮锚点",
+  );
+});
+
+test("面板：四视图的卡片都接线打开弹窗（data 锚点仍是卡片 id）", () => {
+  for (const viewMode of ["tree", "kanban", "list", "table"] as const) {
+    const markup = render(matrixBoard(), { viewMode, onOpenCard: () => {} });
+    assert.ok(markup.includes('data-board-card="task:8"'), `${viewMode} 渲染卡片锚点`);
+  }
+  const kanban = render(matrixBoard(), { viewMode: "kanban", onOpenCard: () => {} });
+  assert.ok(/data-board-card="task:8"[^>]*role="button"/.test(kanban), "看板卡可点（role=button）");
+  const list = render(matrixBoard(), { viewMode: "list", onOpenCard: () => {} });
+  assert.ok(/data-board-card="spec:preview-channel"[^>]*role="button"/.test(list), "列表行可点");
 });
