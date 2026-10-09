@@ -3,6 +3,7 @@ import type { SquadSnapshot } from "@zcode/services";
 import { WorkItemDialog, type WorkItemDialogSubmitInput } from "./SquadCreateDialogs.js";
 import { ReassignWorkItemDialog } from "./ReassignWorkItemDialog.js";
 import { SquadDiscardDialog } from "./SquadDiscardDialog.js";
+import type { WorkItemProjectsHandle } from "./useWorkItemProjects.js";
 
 /**
  * WorkItemsPage 的对话框装配区：只投影页面已经拥有的状态，并把用户意图回传给页面。
@@ -18,6 +19,7 @@ export function WorkItemsPageDialogs({
   discardTargetItem,
   discarding,
   busyWorkItemId,
+  workItemProjects,
   onCancelDiscard,
   onConfirmDiscard,
   onCloseWorkItem,
@@ -32,6 +34,9 @@ export function WorkItemsPageDialogs({
   discardTargetItem: WorkItem | null;
   discarding: boolean;
   busyWorkItemId: string | null;
+  /** 项目清单与内联新建的**唯一 handle**（R-P2；页面经接线层注入）：新建表单的项目选择器与
+      「新建项目…」都只读它（本组件不取服务）。 */
+  workItemProjects?: WorkItemProjectsHandle;
   onCancelDiscard: () => void;
   onConfirmDiscard: () => void;
   onCloseWorkItem: () => void;
@@ -53,7 +58,12 @@ export function WorkItemsPageDialogs({
       ) : null}
 
       {canRenderDialogs && dialog?.kind === "create" ? (
-        <WorkItemDialog snapshot={snapshot} onClose={onCloseWorkItem} onSubmit={onSubmitWorkItem} />
+        <WorkItemDialog
+          snapshot={snapshot}
+          onClose={onCloseWorkItem}
+          onSubmit={onSubmitWorkItem}
+          {...(workItemProjects === undefined ? {} : { workItemProjects })}
+        />
       ) : null}
 
       {canRenderDialogs && dialog?.kind === "edit" ? (

@@ -1,8 +1,4 @@
-import {
-  isProjectShortCode,
-  resolveProjectShortCode,
-  type ProjectStatusKey,
-} from "@zcode/shared";
+import { isProjectShortCode, resolveProjectShortCode, type ProjectStatusKey } from "@zcode/shared";
 
 /* 工作项↔项目绑定在 **UI 面的呈现判据**（R-P2 项目绑定 · UI 轮）。
 
@@ -140,13 +136,12 @@ export type WorkItemProjectDraftResult =
   | { kind: "invalid"; field: "name" }
   | { kind: "invalid"; field: "shortCode"; value: string };
 
-export function parseWorkItemProjectDraft(
-  draft: WorkItemProjectDraft,
-): WorkItemProjectDraftResult {
+export function parseWorkItemProjectDraft(draft: WorkItemProjectDraft): WorkItemProjectDraftResult {
   const name = draft.name.trim();
   if (name.length === 0) return { kind: "invalid", field: "name" };
   const shortCode = resolveProjectShortCode(draft.shortCode);
-  if (shortCode.kind !== "ok") return { kind: "invalid", field: "shortCode", value: shortCode.value };
+  if (shortCode.kind !== "ok")
+    return { kind: "invalid", field: "shortCode", value: shortCode.value };
   return { kind: "ok", name, shortCode: shortCode.shortCode };
 }
 
@@ -191,6 +186,55 @@ export function workItemProjectFilterOptions(
     { kind: "none" },
     ...(projects ?? []).map((project) => ({ kind: "project" as const, ...project })),
   ];
+}
+
+/* ---------------- 拾取器的**取值域**（UI 哨兵，与领域值分开） ---------------- */
+
+/**
+ * 「不挂项目」的 UI 取值（**哨兵**，不是领域值）。
+ *
+ * 为什么需要哨兵：@radix-ui 的下拉把空串保留给「没有选中」的 placeholder（`<SelectItem value="">`
+ * 会**直接抛**，与 `WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE` / `WORK_ITEM_PRIORITY_CLEAR_VALUE`
+ * 同款理由）——所以「无项目」在 UI 取值域里必须有一个非空取值。它只活在 UI 侧：
+ * 请求里是 `projectId: undefined`（不传这个键 ⇒ 无项目）。
+ */
+export const WORK_ITEM_PROJECT_SELECT_NONE = "__none__";
+
+/** 「新建项目…」的 UI 取值（哨兵：它不是一个项目，而是一个**动作**；同样只活在 UI 侧）。 */
+export const WORK_ITEM_PROJECT_SELECT_NEW = "__new__";
+
+/** 挂接值 ⇒ 下拉取值（`undefined` = 无项目 ⇒ 哨兵）。 */
+export function workItemProjectSelectValue(projectId: string | undefined): string {
+  return projectId ?? WORK_ITEM_PROJECT_SELECT_NONE;
+}
+
+/** 下拉取值 ⇒ 挂接值（两个哨兵 ⇒ `undefined`；其余原样回 id）。 */
+export function workItemProjectSelectId(value: string): string | undefined {
+  return value === WORK_ITEM_PROJECT_SELECT_NONE || value === WORK_ITEM_PROJECT_SELECT_NEW
+    ? undefined
+    : value;
+}
+
+/**
+ * 拾取器**触发器**上那行字（三种情形分开，不合并成一个字符串）——与
+ * `workItemQuickCreateParentDisplay` 同款理由：草稿里选着一个项目 id，而清单回读后那个项目不在了
+ * （被删 / 别的 workspace），若显示成「无项目」，用户会以为没挂项目，而请求里**仍然带着那个 id**。
+ */
+export type WorkItemProjectPickerDisplay =
+  | { kind: "none" }
+  | { kind: "project"; name: string }
+  | { kind: "missing"; id: string };
+
+export function workItemProjectPickerDisplay(input: {
+  value: string;
+  projects: readonly WorkItemProjectOption[] | null;
+}): WorkItemProjectPickerDisplay {
+  const projectId = workItemProjectSelectId(input.value);
+  if (projectId === undefined) return { kind: "none" };
+  const project = findWorkItemProject(input.projects ?? [], projectId);
+  return project === null
+    ? { kind: "missing", id: projectId }
+    : { kind: "project", name: project.name };
 }
 
 /* ---------------- 创建流的**项目预填**（子项继承） ---------------- */

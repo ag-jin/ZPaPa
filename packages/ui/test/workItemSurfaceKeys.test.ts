@@ -137,7 +137,9 @@ test("键目录冻结｜破例段之二用满且不越界：两语 locale 里的
     ["zh-CN", zhCN],
     ["en-US", enUS],
   ] as const) {
-    const declared = Object.keys(locale).filter((key) => key.startsWith("squad.workItems.project."));
+    const declared = Object.keys(locale).filter((key) =>
+      key.startsWith("squad.workItems.project."),
+    );
     assert.deepEqual(
       [...declared].sort(),
       [

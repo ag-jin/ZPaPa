@@ -36,6 +36,36 @@ const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relat
 const stripComments = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
+/* ---------- R-P2（项目绑定 · UI 轮）：新建对话框的项目选择器 ----------
+
+   变异：把选择器移到 create/edit 两支之外（edit 也渲染）⇒ 第一条必红；提交不带 projectId
+   ⇒ 第二条必红（界面选了、库里没有）。 */
+test("守卫｜新建对话框：create 给项目选择器（含内联新建入口），edit **不给**（编辑面不写挂接）", () => {
+  const dialogs = stripComments(readSource("squad/SquadCreateDialogs.tsx"));
+  assert.ok(
+    dialogs.includes('testId="work-item-dialog-project"'),
+    "新建表单必须挂项目选择器（与快速创建同款拾取器）",
+  );
+  const pickerIndex = dialogs.indexOf('testId="work-item-dialog-project"');
+  const editBranch = dialogs.indexOf("{!isEdit ? (");
+  assert.ok(
+    editBranch > 0 && pickerIndex > editBranch,
+    "选择器必须在 `!isEdit` 分支里（编辑面不给）",
+  );
+  assert.ok(
+    dialogs.includes("{ onCreateProject: workItemProjects.createProject }"),
+    "内联新建写路径来自注入的 handle（缺省 ⇒ 只有「无项目」一档，没有新建入口）",
+  );
+  assert.ok(
+    dialogs.includes("projectId: workItemProjectSelectId(projectValue)"),
+    "提交时把 UI 取值翻成 projectId（两个哨兵 ⇒ undefined = 不传这个键）",
+  );
+  assert.ok(
+    dialogs.includes("workItemProjectPrefillForParent({"),
+    "父项变化 ⇒ 项目按新父项重新继承（与快速创建同一条判据）",
+  );
+});
+
 /** 真渲染优先级字段（真 ZCodeIntlProvider，zh-CN；受控值由用例给）。 */
 function renderPriorityField(value: string): string {
   return renderToStaticMarkup(

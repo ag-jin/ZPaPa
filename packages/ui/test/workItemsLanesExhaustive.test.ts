@@ -593,22 +593,28 @@ test("穷举｜project：清单里没有的挂接（跨版本残留/坏数据）
     roster: EMPTY_ROSTER,
     projects: PROJECTS,
   });
-  assert.deepEqual(result.map((lane) => [lane.key, lane.count]), [
-    ["project:none", 0],
-    ["project:p-alpha", 1],
-    ["project:p-beta", 0],
-    ["project:p-gone", 1],
-  ]);
+  assert.deepEqual(
+    result.map((lane) => [lane.key, lane.count]),
+    [
+      ["project:none", 0],
+      ["project:p-alpha", 1],
+      ["project:p-beta", 0],
+      ["project:p-gone", 1],
+    ],
+  );
   assertEachRowExactlyOnce(result, items);
 });
 
 test("穷举｜project：缺项目清单 ⇒ 无项目列 + 挂接行各成一条（读不到清单也不静默丢行）", () => {
   const items = [wi("a", { projectId: "p-1" }), wi("b")];
   const result = groupWorkItemBoard({ items, dimension: "project", roster: EMPTY_ROSTER });
-  assert.deepEqual(result.map((lane) => [lane.key, lane.count]), [
-    ["project:none", 1],
-    ["project:p-1", 1],
-  ]);
+  assert.deepEqual(
+    result.map((lane) => [lane.key, lane.count]),
+    [
+      ["project:none", 1],
+      ["project:p-1", 1],
+    ],
+  );
 });
 
 test("穷举｜project：空输入 ⇒ 空数组（不造空骨架；空态由看板的空态分支负责）", () => {
@@ -634,9 +640,12 @@ test("穷举｜project：确定性（两次调用逐项相同）", () => {
    （回落 id —— 不显示成「无项目」：那会把「挂在某个已看不见的项目上」读成「没挂项目」，
    与 `workItemQuickCreateParentDisplay` 的 missing 同一条纪律）。 */
 test("穷举｜project 列头投影：none / 项目名 / 未知挂接回落 id 三态分开，不用同一个说法", () => {
-  assert.deepEqual(workItemProjectLaneDisplay({ laneKey: WORK_ITEM_NO_PROJECT_LANE_KEY, projects: PROJECTS }), {
-    kind: "none",
-  });
+  assert.deepEqual(
+    workItemProjectLaneDisplay({ laneKey: WORK_ITEM_NO_PROJECT_LANE_KEY, projects: PROJECTS }),
+    {
+      kind: "none",
+    },
+  );
   assert.deepEqual(workItemProjectLaneDisplay({ laneKey: "project:p-beta", projects: PROJECTS }), {
     kind: "project",
     name: "贝塔",

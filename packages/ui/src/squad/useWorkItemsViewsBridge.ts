@@ -3,6 +3,7 @@ import type { IServiceAccessor, SquadWorkspaceTarget, WorkItemViewRecord } from 
 import { logger } from "@/logger.js";
 import { squadEntryErrorFeedback, type SquadEntryFeedback } from "./squadEntryViewModel.js";
 import { resolveSquadRuntimeService } from "./squadRuntimeAccess.js";
+import { useWorkItemProjects, type WorkItemProjectsHandle } from "./useWorkItemProjects.js";
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import { executeWorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import {
@@ -62,6 +63,9 @@ export function useWorkItemsViewsBridge(input: {
   movePosition: (plan: WorkItemPositionPlan) => void;
   /** 快速创建的写路径（T-P3-R1）：`null` = 成功（新行由回读后的快照投影出来）。 */
   createWorkItem: (request: WorkItemQuickCreateRequest) => Promise<SquadEntryFeedback | null>;
+  /** 项目清单与内联新建（R-P2）：页面把它投给三处消费面（动作行的项目过滤 / 宿主下的看板·chip·
+      快速创建条 / 新建对话框）—— **一份**取数、**一份**写路径（三处各自 useState 会分叉）。 */
+  workItemProjects: WorkItemProjectsHandle;
   openView: (viewId: string | null) => void;
   openCreateDialog: (sourceViewId?: string) => void;
   openManage: () => void;
@@ -104,6 +108,11 @@ export function useWorkItemsViewsBridge(input: {
   const notifyViewMissing = useCallback(() => {
     notify({ tone: "warning", messageId: "squad.workItems.views.missingToast" });
   }, [notify]);
+
+  /* 项目清单 + 内联新建（R-P2）：**一份**取数与写路径，返回给页面投给三处消费面
+     （动作行的项目过滤 / 宿主下的看板·chip·快速创建条 / 新建对话框）—— 三处各自取数会在
+     「在这一处建的项目，另一处的清单里没有」上分叉，而分叉不报错。 */
+  const workItemProjects = useWorkItemProjects({ services, target });
 
   const views = useWorkItemViews({
     io: viewIo,
@@ -215,6 +224,7 @@ export function useWorkItemsViewsBridge(input: {
     changeLaneDimension,
     movePosition,
     createWorkItem,
+    workItemProjects,
     openView: views.open,
     openCreateDialog: views.openCreateDialog,
     openManage: views.openManage,

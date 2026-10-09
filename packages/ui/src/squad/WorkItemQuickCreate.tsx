@@ -13,8 +13,12 @@ import { Spinner } from "@/components/ui/spinner.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { squadEntryErrorFeedback, type SquadEntryFeedback } from "./squadEntryViewModel.js";
 import { resolveWorkItemInlineTitleKeyIntent } from "./workItemInlineEditViewModel.js";
+import { WorkItemProjectPicker } from "./WorkItemProjectPicker.js";
+import type { WorkItemProjectCreateResult } from "./useWorkItemProjects.js";
+import type { WorkItemProjectDraft, WorkItemProjectOption } from "./workItemProjectViewModel.js";
 import {
   WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+  workItemQuickCreateDraftAfterParentChange,
   workItemQuickCreateDraftAfterSubmit,
   workItemQuickCreateEmptyDraft,
   workItemQuickCreateParentDisplay,
@@ -56,6 +60,8 @@ export function WorkItemQuickCreate({
   busy,
   onSubmit,
   focusToken,
+  projects,
+  onCreateProject,
 }: {
   /** 父项候选 = 快照的全量工作项（**不按 depth / 子项数预筛**：拒绝与否是服务面的判据，
       任何本地预筛都会把"服务面本来接受的父项"静默藏掉）。顺序即快照顺序（本层不重排）。 */
@@ -72,6 +78,10 @@ export function WorkItemQuickCreate({
   /** 聚光令牌（列头 `+` 的落点）：每次**递增**都把光标送进标题框 —— 列头新建入口落在
       这条既有入口上，不新开第二条写路径（值不变 ⇒ 不重复聚焦；`0` = 从未请求过）。 */
   focusToken?: number;
+  /** 项目清单（R-P2；`null` / 缺省 = 还没读到 ⇒ 下拉只给「无项目」这一档）。 */
+  projects?: readonly WorkItemProjectOption[] | null;
+  /** 内联新建项目的写路径（缺省 ⇒ 下拉里没有「新建项目…」；没写路径就不给入口）。 */
+  onCreateProject?: (draft: WorkItemProjectDraft) => Promise<WorkItemProjectCreateResult>;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -129,7 +139,9 @@ export function WorkItemQuickCreate({
       }
       setSubmitting(false);
       setFailure(feedback);
-      setDraft((current) => workItemQuickCreateDraftAfterSubmit({ draft: current, feedback }));
+      setDraft((current) =>
+        workItemQuickCreateDraftAfterSubmit({ draft: current, feedback, workItems }),
+      );
       // 成功（已清标题）把光标留在输入框：接着敲下一条即连续创建，不用再点一次。
       if (feedback === null) titleRef.current?.focus();
     })();
@@ -184,7 +196,15 @@ export function WorkItemQuickCreate({
       <Select
         value={draft.parentValue}
         onValueChange={(value) => {
-          setDraft((current) => ({ ...current, parentValue: value }));
+          /* 换父项 ⇒ 项目按**新父项**重新继承（有项目则预填，否则回无项目）——
+             判据在 `workItemQuickCreateDraftAfterParentChange`（不记忆上一次的选择）。 */
+          setDraft((current) =>
+            workItemQuickCreateDraftAfterParentChange({
+              draft: current,
+              parentValue: value,
+              workItems,
+            }),
+          );
         }}
       >
         <SelectTrigger
@@ -211,6 +231,18 @@ export function WorkItemQuickCreate({
           ))}
         </SelectContent>
       </Select>
+      {/* 项目（R-P2）：默认「无项目」（multica A2：工作区级新建**没有**默认项目）；选了父项且父项
+          有项目 ⇒ 预填父项的（子项继承）。「不记忆上次选择」由草稿折叠保证（见 viewmodel）。 */}
+      <WorkItemProjectPicker
+        testId="work-items-quick-create-project"
+        value={draft.projectValue}
+        onChange={(value) => {
+          setDraft((current) => ({ ...current, projectValue: value }));
+        }}
+        projects={projects ?? null}
+        {...(onCreateProject === undefined ? {} : { onCreateProject })}
+        disabled={blocked}
+      />
       <Button
         size="sm"
         disabled={!canSubmit}

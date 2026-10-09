@@ -103,6 +103,10 @@ const CARD_LIST_CLASSNAME =
 /* 行内容的外层（覆盖按钮 + 字段 + 动作簇）：行形态横排、卡片形态四带纵排（带在 `WorkItemRowCardBands`）。 */
 const ROW_BODY_CLASSNAME = "relative flex items-center justify-between gap-3";
 const CARD_BODY_CLASSNAME = "relative flex flex-col gap-1.5";
+/* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
+   不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
+const FOCUS_HIGHLIGHT_MS = 1600;
+
 /**
  * 聚焦（收件箱「打开工作项」的落点）：行 DOM 引用按 id 收在 ref 里（不用 querySelector：
  * 它是字符串拼选择器，id 里将来出现特殊字符就静默找不到）。

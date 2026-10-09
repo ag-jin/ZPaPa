@@ -77,7 +77,10 @@ export function useWorkItemProjects(input: {
   const createProject = useCallback(
     async (draft: WorkItemProjectDraft): Promise<WorkItemProjectCreateResult> => {
       if (!target) {
-        return { kind: "failed", feedback: { tone: "error", messageId: "squad.common.noWorkspace" } };
+        return {
+          kind: "failed",
+          feedback: { tone: "error", messageId: "squad.common.noWorkspace" },
+        };
       }
       const startedAt = generationRef.current;
       try {

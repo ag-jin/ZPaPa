@@ -103,10 +103,7 @@ test("项目过滤选项：无项目恒第一 + 每项目一项（次序 = 清�
 // ---------- ④ 创建流的项目预填（子项继承父项项目；**不记忆上次选择**） ----------
 
 test("项目预填：父项有项目 ⇒ 预填它的；父项无项目/未选/不在候选里 ⇒ 无项目（不记忆上次）", () => {
-  const candidates = [
-    { id: "parent-a", projectId: "p-alpha" },
-    { id: "parent-free" },
-  ];
+  const candidates = [{ id: "parent-a", projectId: "p-alpha" }, { id: "parent-free" }];
   assert.equal(
     workItemProjectPrefillForParent({ parentId: "parent-a", candidates }),
     "p-alpha",
@@ -177,14 +174,8 @@ test("内联新建预检：名称 trim 后非空 + 短码走 shared 闭集（2-8
   );
   // 短码即时提示：空串不提示（一打开表单就一片红是噪音）；边界长度按 shared 常量。
   assert.equal(workItemProjectShortCodeLooksValid(""), true);
-  assert.equal(
-    workItemProjectShortCodeLooksValid("A".repeat(PROJECT_SHORT_CODE_MIN_LENGTH)),
-    true,
-  );
-  assert.equal(
-    workItemProjectShortCodeLooksValid("A".repeat(PROJECT_SHORT_CODE_MAX_LENGTH)),
-    true,
-  );
+  assert.equal(workItemProjectShortCodeLooksValid("A".repeat(PROJECT_SHORT_CODE_MIN_LENGTH)), true);
+  assert.equal(workItemProjectShortCodeLooksValid("A".repeat(PROJECT_SHORT_CODE_MAX_LENGTH)), true);
   assert.equal(
     workItemProjectShortCodeLooksValid("A".repeat(PROJECT_SHORT_CODE_MAX_LENGTH + 1)),
     false,

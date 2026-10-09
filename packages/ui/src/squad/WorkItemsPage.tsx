@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
-import type { SquadSnapshot, ISquadRuntimeServiceShape } from "@zcode/services";
+import type { SquadSnapshot } from "@zcode/services";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -35,6 +35,7 @@ import { useWorkItemBulk } from "./useWorkItemBulk.js";
 import type { WorkItemInlineEditPatch } from "./workItemInlineEditViewModel.js";
 import { WorkItemsPageActions } from "./WorkItemsPageActions.js";
 import { WorkItemsPageStatus } from "./WorkItemsPageStatus.js";
+import { useWorkItemsWriteAction } from "./useWorkItemsWriteAction.js";
 import {
   workItemSurfaceDefaultState,
   type WorkItemSurfaceState,
@@ -183,33 +184,18 @@ export function WorkItemsPage({
   const views = viewsBridge.views;
 
   /**
-   * 一次写动作的公共执行路径：置忙 → 调服务 → 成功提示 + 重载 / 失败提示（不吞错）→ 复位。
-   * 所有写动作（新建 / 编辑）都走这里，于是"失败可见"只有一处实现。
+   * 一次写动作的公共执行路径（新建 / 编辑共用；**接线在 hooks 层** —— 页面已到 `max-lines`
+   * 硬线，R-P2 把这段原样搬进 `useWorkItemsWriteAction`，行为逐字不变：置忙 → 调服务 →
+   * 成功提示 + 收起对话框 + 回读 / 失败提示（不吞错）→ 复位）。
    */
-  const runAction = useCallback(
-    async (
-      workItemId: string,
-      action: (service: ISquadRuntimeServiceShape) => Promise<unknown>,
-      successMessageId: string,
-    ) => {
-      if (!target) return;
-      setBusyWorkItemId(workItemId);
-      try {
-        await action(resolveSquadRuntimeService(services));
-        setDialog(null);
-        notify({ tone: "success", messageId: successMessageId });
-        await reload();
-      } catch (error) {
-        logger.warn("[WorkItemsPage] 工作项操作失败", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        notify(squadEntryErrorFeedback(error));
-      } finally {
-        setBusyWorkItemId(null);
-      }
-    },
-    [notify, reload, services, target],
-  );
+  const runAction = useWorkItemsWriteAction({
+    services,
+    target,
+    notify,
+    reload,
+    onSuccess: () => setDialog(null),
+    markBusy: setBusyWorkItemId,
+  });
 
   /** 审查裁决：四种结果各有其词（`reviewOutcomeFeedback`），失败同样可见（不吞错）。 */
   const review = useCallback(
@@ -301,6 +287,8 @@ export function WorkItemsPage({
               priority: input.priority,
               startDate: input.startDate,
               dueDate: input.dueDate,
+              // 项目（R-P2）：表单给的是 id 或 undefined（无项目 = 不传这个键）。
+              projectId: input.projectId,
             }),
           "squad.workItems.created",
         );
@@ -461,6 +449,7 @@ export function WorkItemsPage({
         surface={surface}
         onSurfaceIntent={viewsBridge.applySurfaceIntent}
         baseline={views.baseline}
+        workItemProjects={viewsBridge.workItemProjects}
         bulk={bulk.toolbar}
         t={t}
         onReload={() => void reload()}
@@ -497,6 +486,7 @@ export function WorkItemsPage({
             onOpenSession={onOpenSession}
             onReorderPosition={viewsBridge.movePosition}
             onQuickCreate={viewsBridge.createWorkItem}
+            workItemProjects={viewsBridge.workItemProjects}
           />
           <SquadRunsReview
             runs={state.snapshot.runs}
@@ -527,6 +517,7 @@ export function WorkItemsPage({
         discardTargetItem={discardTargetItem}
         discarding={discardingId !== null}
         busyWorkItemId={busyWorkItemId}
+        workItemProjects={viewsBridge.workItemProjects}
         onCancelDiscard={() => setDiscardConfirm(cancelSquadDiscard())}
         onConfirmDiscard={() => {
           void runDiscard();

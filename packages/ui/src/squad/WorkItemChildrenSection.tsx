@@ -69,6 +69,11 @@ export function WorkItemChildrenSection({
   const composingRef = useRef(false);
   const titleRef = useRef<HTMLInputElement | null>(null);
 
+  /* 本体在名册里的那一行（R-P2）：子项的项目从它**继承** —— 详情页是冻结页面（400/400），
+     拿不到页面手里的读模型，故取同一 workspace 快照里的那一行（归档的本体不在快照里 ⇒
+     `undefined`，而那时添加入口本就置灰，服务面 validateParent 必拒）。 */
+  const parentItem = snapshot?.workItems.find((item) => item.id === parentId);
+  const parentProjectId = parentItem?.projectId;
   const disabledReason = workItemChildAddDisabledReason({ archived });
   /* 可写 = 名册就绪（写后能回读出新行）且未归档；忙碌 = 本次提交在飞（一次写一条）。 */
   const createEnabled = view.kind === "ready" && disabledReason === null;
@@ -82,14 +87,21 @@ export function WorkItemChildrenSection({
     void (async () => {
       let feedback: SquadEntryFeedback | null;
       try {
-        feedback = await onSubmit(workItemChildCreateRequest({ title, parentId }));
+        feedback = await onSubmit(workItemChildCreateRequest({ title, parentId, parentProjectId }));
       } catch (error) {
         /* 接线层按契约不 reject；万一 reject 也不静默 —— 翻成同一条可见提示。 */
         feedback = squadEntryErrorFeedback(error);
       }
       setSubmitting(false);
       setFailure(feedback);
-      setTitle((current) => workItemChildDraftAfterSubmit({ title: current, parentId, feedback }));
+      setTitle((current) =>
+        workItemChildDraftAfterSubmit({
+          title: current,
+          parentId,
+          parentProjectId,
+          feedback,
+        }),
+      );
       // 成功（已清标题）把光标留在输入框：接着敲下一条即连续添加，不用再点一次。
       if (feedback === null) titleRef.current?.focus();
     })();

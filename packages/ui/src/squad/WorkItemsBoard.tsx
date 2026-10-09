@@ -30,7 +30,6 @@ import { workItemBoardDrop } from "./workItemPositionViewModel.js";
 import {
   WORK_ITEM_NO_PROJECT_LANE_KEY,
   workItemProjectLaneDisplay,
-  type WorkItemProjectOption,
 } from "./workItemProjectViewModel.js";
 import { AssigneeMarker, type WorkItemRowReorder } from "./workItemRowParts.js";
 import { WorkItemRowList, type WorkItemRowEnvironment } from "./WorkItemRows.js";

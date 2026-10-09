@@ -12,10 +12,7 @@ import type { WorkItemBoardRow, WorkItemLaneDimension } from "./workItemsViewMod
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import type { WorkItemInlineEditApi } from "./useWorkItemInlineEdit.js";
 import { workItemBulkSelectable, type WorkItemRowSelection } from "./workItemBulkViewModel.js";
-import {
-  workItemProjectText,
-  type WorkItemProjectOption,
-} from "./workItemProjectViewModel.js";
+import { workItemProjectText, type WorkItemProjectOption } from "./workItemProjectViewModel.js";
 import { workItemPriorityMessageId } from "./workItemPropertiesViewModel.js";
 
 /* 行模块的**零件与契约**（阶段二 · T-P2-R3 抽出）。
@@ -151,7 +148,11 @@ export function WorkItemProjectChip({
   if (projectId === undefined || projects === null) return null;
   const text = workItemProjectText({ projectId, projects });
   return (
-    <span className={WORK_ITEM_PROJECT_CHIP_CLASSNAME} data-testid="work-item-project-chip" title={text}>
+    <span
+      className={WORK_ITEM_PROJECT_CHIP_CLASSNAME}
+      data-testid="work-item-project-chip"
+      title={text}
+    >
       <Folder aria-hidden className="size-3 shrink-0" />
       <span className="truncate">{text}</span>
     </span>

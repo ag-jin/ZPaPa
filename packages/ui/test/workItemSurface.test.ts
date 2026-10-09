@@ -704,7 +704,12 @@ test("意图折叠：清除查询只清搜索与 facet（视图/排序/列配置
   const dirty: WorkItemSurfaceState = {
     view: "table",
     search: "foo",
-    filter: { statusCategory: "done", priority: "unset", projectIds: ["p-1"], includeNoProject: true },
+    filter: {
+      statusCategory: "done",
+      priority: "unset",
+      projectIds: ["p-1"],
+      includeNoProject: true,
+    },
     sort: { key: "dueDate", direction: "desc" },
     columns: { hidden: ["labels"] },
   };

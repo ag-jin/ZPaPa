@@ -255,26 +255,26 @@ export function WorkItemsPageActions({
           >
             <SelectValue />
           </SelectTrigger>
-        <SelectContent>
-          {WORK_ITEM_PRIORITY_FILTER_VALUES.map((value) => (
-            <SelectItem key={value} value={value}>
-              {t(WORK_ITEM_PRIORITY_FILTER_MESSAGE_IDS[value])}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {/* 项目过滤（R-P2）：与状态/优先级同一组（读屏听到「筛选 组 → 状态 / 优先级 / 项目」）。
+          <SelectContent>
+            {WORK_ITEM_PRIORITY_FILTER_VALUES.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(WORK_ITEM_PRIORITY_FILTER_MESSAGE_IDS[value])}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {/* 项目过滤（R-P2）：与状态/优先级同一组（读屏听到「筛选 组 → 状态 / 优先级 / 项目」）。
           多选 + 「无项目」独立开关 + chips 回显，判据/语义全在 `WorkItemProjectFilter` 与
           `workItemSurfaceViewModel`（本组件只投影取值、只回传意图）。 */}
-      <WorkItemProjectFilter
-        filter={surface.filter}
-        projects={workItemProjects?.projects ?? null}
-        disabled={controlsDisabled}
-        title={disabledTitle}
-        locked={lockedProject}
-        onIntent={onSurfaceIntent}
-      />
-    </div>
+        <WorkItemProjectFilter
+          filter={surface.filter}
+          projects={workItemProjects?.projects ?? null}
+          disabled={controlsDisabled}
+          title={disabledTitle}
+          locked={lockedProject}
+          onIntent={onSurfaceIntent}
+        />
+      </div>
       {/* 搜索（T-P2-R4）：受控草稿 + 防抖提交；`type="text"` 是**有意**的 ——
           `type="search"` 在 WebKit/Chromium 下自带「Esc 清空输入框」（且与是否显示原生取消按钮
           有关），那条路径会绕过本组件的键盘判据，同一个 Esc 于是在两种输入类型下走两套语义。

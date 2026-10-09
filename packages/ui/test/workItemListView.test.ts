@@ -332,7 +332,10 @@ test("list 行项目 chip：有项目才有（静态文字、带项目名、无�
   const chipTag =
     /<[a-z]+[^>]*data-testid="work-item-project-chip"[^>]*>/.exec(boundRow.markup)?.[0] ?? "";
   assert.ok(chipTag.length > 0, "挂了项目的行有 chip");
-  assert.ok(chipTag.startsWith("<span"), "chip 是**静态文字**元素（不是按钮/下拉 = 第二个项目写路径）");
+  assert.ok(
+    chipTag.startsWith("<span"),
+    "chip 是**静态文字**元素（不是按钮/下拉 = 第二个项目写路径）",
+  );
   assert.ok(!chipTag.includes('role="button"'), "chip 不可点（绑定入口只在创建流）");
   assert.ok(boundRow.markup.includes("阿尔法"), "chip 显示项目名（不是 id）");
   assert.ok(

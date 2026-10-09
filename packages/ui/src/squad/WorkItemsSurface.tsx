@@ -247,6 +247,11 @@ export function WorkItemsSurface({
         onSubmit={onQuickCreate}
         /* 列头 `+` 的落点（形态重排轮）：把光标送进这条**唯一**的创建入口（不新开写路径）。 */
         focusToken={quickCreateFocusToken}
+        /* 项目（R-P2）：清单与内联新建都来自页面注入的**同一个 handle**（宿主不自己取服务）。 */
+        projects={workItemProjects?.projects ?? null}
+        {...(workItemProjects === undefined
+          ? {}
+          : { onCreateProject: workItemProjects.createProject })}
       />
     );
 

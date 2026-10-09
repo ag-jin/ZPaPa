@@ -5,6 +5,12 @@ import {
   WORK_ITEM_USER_ASSIGNEE_ID,
   type SquadEntryFeedback,
 } from "./squadEntryViewModel.js";
+import {
+  WORK_ITEM_PROJECT_SELECT_NONE,
+  workItemProjectPrefillForParent,
+  workItemProjectSelectId,
+  workItemProjectSelectValue,
+} from "./workItemProjectViewModel.js";
 
 /* 「快速创建」（阶段三 · T-P3-R1）的**默认值判据**：视图顶部「输入标题即建」，
    必填仅标题，其余默认；写路径只有一条（宿主注入的 `createWorkItem` 单源）。
@@ -80,16 +86,49 @@ export function workItemQuickCreateParentDisplay(
  * 回读之前先说"它存在了"（乐观插入）—— 服务若把它写成别的样子（序号、位置、时间戳），
  * 界面显示的就是一个没人确认过的形状。类型上不给这个位置，比注释里禁止更硬。
  */
-export type WorkItemQuickCreateDraft = { title: string; parentValue: string };
+export type WorkItemQuickCreateDraft = {
+  title: string;
+  parentValue: string;
+  /** 项目（R-P2）：**UI 取值**（哨兵见 `workItemProjectViewModel`；`__none__` = 无项目）。 */
+  projectValue: string;
+};
 
-/** 空草稿（默认父项 = 不挂父项）。 */
+/** 空草稿（默认父项 = 不挂父项；默认项目 = **无项目** —— multica A2：工作区级新建默认无项目）。 */
 export function workItemQuickCreateEmptyDraft(): WorkItemQuickCreateDraft {
-  return { title: "", parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE };
+  return {
+    title: "",
+    parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
+  };
 }
 
 /** 父项取值 → `CreateWorkItemRequest.parentId`：哨兵 ⇒ `undefined`（不传这个键）。 */
 export function workItemQuickCreateParentId(parentValue: string): string | undefined {
   return parentValue === WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE ? undefined : parentValue;
+}
+
+/**
+ * 父项变化 ⇒ 草稿（**子项继承**，R-P2）：父项有项目 ⇒ 预填它的；否则 ⇒ 无项目。
+ *
+ * 为什么不保留用户此前手动选的项目：那正是 multica MUL-5862 禁止的「记忆上次选择」——
+ * 用户换了一个父项，说明这一行说的已经是另一个语境；把上一个项目带过来会把它静默挂进一个
+ * 用户这次**没有**选过的项目里。用户想覆盖，改一下下拉即可（那是显式动作）。
+ */
+export function workItemQuickCreateDraftAfterParentChange(input: {
+  draft: WorkItemQuickCreateDraft;
+  parentValue: string;
+  /** 父项候选（只读 id 与 projectId 两列）。 */
+  workItems: readonly { id: string; projectId?: string }[];
+}): WorkItemQuickCreateDraft {
+  const inherited = workItemProjectPrefillForParent({
+    parentId: workItemQuickCreateParentId(input.parentValue),
+    candidates: input.workItems,
+  });
+  return {
+    ...input.draft,
+    parentValue: input.parentValue,
+    projectValue: workItemProjectSelectValue(inherited),
+  };
 }
 
 /**
@@ -105,6 +144,8 @@ export function workItemQuickCreateParentId(parentValue: string): string | undef
  *    替用户选）。身份 id 的常量来自 `squadEntryViewModel`（单源），不另抄字面量。
  * 3. **父项**：选了就原样传 `workItem.id`（是否合法、深度与子项上限是**服务面**的判据 ——
  *    这里不预判、不筛候选）；没选就**不传这个键**。
+ * 4. **项目**（R-P2）：选了就原样传 id（是否属于本 workspace 是服务面判据）；无项目 /
+ *    还没选（含「新建项目…」这个动作值）⇒ **不传这个键**（服务面把缺省读成无项目）。
  */
 export function workItemQuickCreateRequest(
   input: WorkItemQuickCreateDraft,
@@ -112,6 +153,7 @@ export function workItemQuickCreateRequest(
   return {
     title: workItemQuickCreateTitle(input.title),
     parentId: workItemQuickCreateParentId(input.parentValue),
+    projectId: workItemProjectSelectId(input.projectValue),
     assignee: { type: "user", id: WORK_ITEM_USER_ASSIGNEE_ID },
   };
 }
@@ -137,10 +179,12 @@ export function workItemQuickCreateSubmittable(input: {
 /**
  * 一次提交的结论 → 表单草稿的**下一步**（验收 2「失败就地原因 + 保留输入」的唯一判据）。
  *
- * · 成功（`feedback === null`，即接线层写完并**已回读**）：清标题、**保留父项** —— 清标题
- *   才能接着敲下一条（连续创建），保留父项才能在同一个批根下连建多条成员而不用每次重选；
- * · 失败：草稿**原样返回**（含未 trim 的原文）—— 用户重试时不用重打一遍，原因由 feedback
- *   就地显示（不吞错）。
+ * · 成功（`feedback === null`，即接线层写完并**已回读**）：清标题、**保留父项**、项目回落到
+ *   **父项继承**的取值 —— 清标题才能接着敲下一条（连续创建）；保留父项才能在同一个批根下
+ *   连建多条成员；而项目**不记忆**上一次（含用户手动挑的那个 —— multica MUL-5862 的纪律），
+ *   只按仍留着的父项重新继承（父项没项目 ⇒ 回无项目）；
+ * · 失败：草稿**原样返回**（含未 trim 的原文与手动选的项目）—— 用户重试时不用重打一遍，
+ *   原因由 feedback 就地显示（不吞错）。
  *
  * 为什么这条也放进纯函数：它决定"用户看得见的输入还在不在"，而组件里写就成了不可测的分支；
  * 且"失败时顺手清空"这类坏法**不报错**，只有逐格钉住才看得见。
@@ -148,9 +192,19 @@ export function workItemQuickCreateSubmittable(input: {
 export function workItemQuickCreateDraftAfterSubmit(input: {
   draft: WorkItemQuickCreateDraft;
   feedback: SquadEntryFeedback | null;
+  /** 父项候选（成功路径据此重算项目继承；失败路径不看它）。 */
+  workItems: readonly { id: string; projectId?: string }[];
 }): WorkItemQuickCreateDraft {
   if (input.feedback !== null) return input.draft;
-  return { title: "", parentValue: input.draft.parentValue };
+  return {
+    title: "",
+    parentValue: input.draft.parentValue,
+    projectValue: workItemQuickCreateDraftAfterParentChange({
+      draft: { ...input.draft, title: "" },
+      parentValue: input.draft.parentValue,
+      workItems: input.workItems,
+    }).projectValue,
+  };
 }
 
 /**

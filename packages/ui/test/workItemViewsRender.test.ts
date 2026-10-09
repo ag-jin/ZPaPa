@@ -175,7 +175,13 @@ function dialogProjection(dialog: Parameters<typeof workItemViewDialogProjection
 /** 对话框的 draft = 定义快照（本组用例只关心投影，故给一份"空定义"的完整文档）。 */
 function emptyDraft() {
   return {
-    query: { statusCategory: "all" as const, priority: "all" as const },
+    query: {
+      statusCategory: "all" as const,
+      priority: "all" as const,
+      /* R-P2：项目维也在 query 文档里（空数组 + 开关关 = 这一维不筛）。 */
+      projectIds: [],
+      includeNoProject: false,
+    },
     display: {
       viewMode: "board" as const,
       grouping: "none" as const,
@@ -448,10 +454,7 @@ test("baseline（验收 ...）｜视图固定值锁定置灰；「清除筛选�
     "勾了一个项目 ⇒ 有增量（清除筛选可点）",
   );
   const lockedBaseline = workItemViewBaseline(view({ query: { projectIds: ["p-1"] } }));
-  assert.ok(
-    lockedBaseline.locked.project,
-    "视图固定了项目维 ⇒ 该维算固定（锁定判据与另两维同款）",
-  );
+  assert.ok(lockedBaseline.locked.project, "视图固定了项目维 ⇒ 该维算固定（锁定判据与另两维同款）");
 });
 
 // ---------- ⑤ 拖拽把手：四格判据（验收 4/5） ----------

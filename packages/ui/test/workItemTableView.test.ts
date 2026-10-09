@@ -70,7 +70,14 @@ test("列 → 排序键：只有闭集里真有键的列可排序（title + prio
   assert.equal(workItemTableColumnSortKey("dueDate"), "dueDate");
   /* 项目列（R-P2）：没有冻结的排序键 ⇒ 表头只读（按项目名排序要引入第二份名字/locale 真相源，
      与「排序结果不得随界面语言变化」冲突 —— 登记后续，不在这里发明键）。 */
-  for (const column of ["identifier", "status", "assignee", "project", "labels", "creator"] as const) {
+  for (const column of [
+    "identifier",
+    "status",
+    "assignee",
+    "project",
+    "labels",
+    "creator",
+  ] as const) {
     assert.equal(
       workItemTableColumnSortKey(column),
       null,
@@ -373,7 +380,11 @@ test("项目列（R-P2）：静态文字（项目名）；无项目 ⇒ 空单�
     return /<td data-column="project"[^>]*>([\s\S]*?)<\/td>/.exec(segment)?.[1] ?? "";
   };
 
-  const withNames = renderTable({ items: [bound, free], runs: [], workItemProjects: projects }).markup;
+  const withNames = renderTable({
+    items: [bound, free],
+    runs: [],
+    workItemProjects: projects,
+  }).markup;
   assert.ok(cellOf(withNames, "wi-bound").includes("阿尔法"), "项目格显示项目名");
   assert.ok(
     !cellOf(withNames, "wi-bound").includes("<button") &&

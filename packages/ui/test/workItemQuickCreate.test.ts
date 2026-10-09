@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -19,8 +19,13 @@ import {
   type WorkItemSurfaceState,
 } from "../src/squad/workItemSurfaceViewModel.js";
 import {
+  WORK_ITEM_PROJECT_SELECT_NONE,
+  WORK_ITEM_PROJECT_SELECT_NEW,
+} from "../src/squad/workItemProjectViewModel.js";
+import {
   WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
   executeWorkItemQuickCreate,
+  workItemQuickCreateDraftAfterParentChange,
   workItemQuickCreateDraftAfterSubmit,
   workItemQuickCreateParentDisplay,
   workItemQuickCreateParentId,
@@ -37,6 +42,22 @@ import {
    每条结构守卫都写明变异方式，交付报告里逐条实测。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+
+/** 全 src 树遍历（判据是「某个符号的出现文件集合」；注释去掉再扫）。返回 `true` 即停止。 */
+function walkProjectFiles(
+  dir: string,
+  visit: (file: string, source: string) => boolean | void,
+): void {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      walkProjectFiles(full, visit);
+      continue;
+    }
+    if (!/\.tsx?$/.test(full) || full.endsWith(".d.ts")) continue;
+    if (visit(full, stripComments(readFileSync(full, "utf8"))) === true) return;
+  }
+}
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 /** 去掉注释再扫：注释里提到 `createWorkItem` / `.filter(` 是**说明**，不是代码本身。 */
 const stripComments = (source: string) =>
@@ -90,8 +111,18 @@ function renderQuickCreate(input: {
   workItems?: WorkItem[];
   createEnabled?: boolean;
   busy?: boolean;
+  /** 项目清单（R-P2）：注入后项目下拉有清单可列（缺省 = 还没读到 ⇒ 只给「无项目」一档）。 */
+  projects?: readonly { id: string; name: string; shortCode: string }[];
+  /** 是否注入内联新建的写路径（缺省 = 不注入 ⇒ 下拉里没有「新建项目…」）。 */
+  withCreateProject?: boolean;
 }): string {
-  const { workItems = [], createEnabled = true, busy = false } = input;
+  const {
+    workItems = [],
+    createEnabled = true,
+    busy = false,
+    projects,
+    withCreateProject = false,
+  } = input;
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
@@ -100,6 +131,15 @@ function renderQuickCreate(input: {
         createEnabled,
         busy,
         onSubmit: async () => null,
+        ...(projects === undefined ? {} : { projects }),
+        ...(withCreateProject
+          ? {
+              onCreateProject: async () => ({
+                kind: "failed" as const,
+                feedback: { tone: "error" as const, messageId: "squad.common.operationFailed" },
+              }),
+            }
+          : {}),
       }),
     }),
   );
@@ -111,13 +151,19 @@ function renderQuickCreate(input: {
    键集断言必红 —— 服务面把「不传这个键」读成未设置，替用户编一个默认值就是伪造事实。 */
 test("默认值：请求只带标题（trim）+ 可选父项 + 默认指派给本机用户，其余键**不传**", () => {
   assert.deepEqual(
-    workItemQuickCreateRequest({ title: "  一条新工作项  ", parentValue: "wi-root" }),
+    workItemQuickCreateRequest({
+      title: "  一条新工作项  ",
+      parentValue: "wi-root",
+      projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
+    }),
     {
       title: "一条新工作项",
       parentId: "wi-root",
+      // R-P2：无项目 = 不传这个键（服务面把缺省读成无项目）。
+      projectId: undefined,
       assignee: { type: "user", id: WORK_ITEM_USER_ASSIGNEE_ID },
     },
-    "必填仅标题：正文 / 标签 / 优先级 / 起止日期都不得被顺手填上（未设置就是未设置）",
+    "必填仅标题：正文 / 标签 / 优先级 / 起止日期 / 项目都不得被顺手填上（未设置就是未设置）",
   );
 });
 
@@ -125,6 +171,7 @@ test("父项：哨兵值 ⇒ 不传 parentId（服务面把缺省读成无父项
   const request = workItemQuickCreateRequest({
     title: "顶层工作项",
     parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
   });
   assert.equal(request.parentId, undefined, "哨兵不得被当成一个 id 发出去");
   assert.equal(
@@ -190,23 +237,134 @@ test("父项显示：哨兵 ⇒ 无 / 命中 ⇒ 快照标题 / 仅在快照缺�
    「成功清标题、保留父项」不是审美：清标题 = 可以接着敲下一条（连续创建）；保留父项 =
    在同一个批根下连建多条成员不用每次重选。 */
 test("提交结论：成功 ⇒ 清标题、保留父项（可连续建同批成员）", () => {
-  const draft: WorkItemQuickCreateDraft = { title: "  一条  ", parentValue: "wi-root" };
+  const draft: WorkItemQuickCreateDraft = {
+    title: "  一条  ",
+    parentValue: "wi-root",
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
+  };
   assert.deepEqual(
-    workItemQuickCreateDraftAfterSubmit({ draft, feedback: null }),
-    { title: "", parentValue: "wi-root" },
-    "成功之后草稿只剩「空标题 + 原父项」—— 没有任何地方能塞进一条本地临时行",
+    workItemQuickCreateDraftAfterSubmit({ draft, feedback: null, workItems: [] }),
+    { title: "", parentValue: "wi-root", projectValue: WORK_ITEM_PROJECT_SELECT_NONE },
+    "成功之后草稿只剩「空标题 + 原父项 + 项目继承值」—— 没有任何地方能塞进一条本地临时行",
   );
 });
 
 test("提交结论：失败 ⇒ 草稿**原样保留**（用户输入不丢，原因由 feedback 就地显示）", () => {
-  const draft: WorkItemQuickCreateDraft = { title: "  一条  ", parentValue: "wi-root" };
+  const draft: WorkItemQuickCreateDraft = {
+    title: "  一条  ",
+    parentValue: "wi-root",
+    projectValue: "proj-beta",
+  };
   assert.deepEqual(
     workItemQuickCreateDraftAfterSubmit({
       draft,
       feedback: { tone: "error", messageId: "squad.common.operationFailed", detail: "深度超限" },
+      workItems: [],
     }),
     draft,
-    "失败不得吞掉输入、也不得改动草稿（否则用户要重打一遍）",
+    "失败不得吞掉输入、也不得改动草稿（否则用户要重打一遍）—— 手动选的项目也一并留着",
+  );
+});
+
+// ---------- ①c 项目（R-P2）：请求取值 / 父项继承预填 / 不记忆上次选择 ----------
+
+/* 语义真源：multica A2（三个预填来源里本仓 v1 只做「子项继承父项项目」）与 MUL-5862
+   （**不记忆「上次用的项目」**：带过来就会把下一条静默挂进一个用户这次没选过的项目）。
+   变异：成功后保留用户手动的项目选择 ⇒ 第三条必红；父项换成无项目的那个仍留着旧项目 ⇒ 第二条必红。 */
+test("项目：哨兵 ⇒ 请求里不传 projectId（无项目）；选中项目 ⇒ 原样透传 id", () => {
+  const free = workItemQuickCreateRequest({
+    title: "x",
+    parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
+  });
+  assert.equal(free.projectId, undefined, "无项目 = 不传这个键（服务面把缺省读成无项目）");
+  assert.deepEqual(
+    Object.keys(free).sort(),
+    ["assignee", "parentId", "projectId", "title"],
+    "键集固定（值可以是 undefined，但不得多出「编出来」的键）",
+  );
+  assert.equal(
+    workItemQuickCreateRequest({
+      title: "x",
+      parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+      projectValue: "proj-alpha",
+    }).projectId,
+    "proj-alpha",
+    "选中项目 ⇒ id 原样透传（是否属于本 workspace 是服务面判据）",
+  );
+  assert.equal(
+    workItemQuickCreateRequest({
+      title: "x",
+      parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+      projectValue: WORK_ITEM_PROJECT_SELECT_NEW,
+    }).projectId,
+    undefined,
+    "「新建项目…」是**动作**不是项目：没真的选中项目时不带 projectId",
+  );
+});
+
+test("子项继承：父项有项目 ⇒ 预填父项的；父项无项目 / 未选 ⇒ 无项目", () => {
+  const items = [{ id: "wi-root", projectId: "proj-alpha" }, { id: "wi-free" }];
+  const base: WorkItemQuickCreateDraft = {
+    title: "一条",
+    parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
+  };
+  assert.equal(
+    workItemQuickCreateDraftAfterParentChange({
+      draft: base,
+      parentValue: "wi-root",
+      workItems: items,
+    }).projectValue,
+    "proj-alpha",
+    "选了有项目的父项 ⇒ 预填父项的项目",
+  );
+  assert.equal(
+    workItemQuickCreateDraftAfterParentChange({
+      draft: base,
+      parentValue: "wi-free",
+      workItems: items,
+    }).projectValue,
+    WORK_ITEM_PROJECT_SELECT_NONE,
+    "父项没有项目 ⇒ 无项目",
+  );
+  assert.equal(
+    workItemQuickCreateDraftAfterParentChange({
+      draft: base,
+      parentValue: "wi-gone",
+      workItems: items,
+    }).projectValue,
+    WORK_ITEM_PROJECT_SELECT_NONE,
+    "父项不在候选里 ⇒ 无项目（不猜）",
+  );
+  // 换父项时**不保留**用户此前手动选的项目（MUL-5862）：新语境按新父项重新继承。
+  assert.equal(
+    workItemQuickCreateDraftAfterParentChange({
+      draft: { ...base, projectValue: "proj-beta" },
+      parentValue: "wi-free",
+      workItems: items,
+    }).projectValue,
+    WORK_ITEM_PROJECT_SELECT_NONE,
+    "手动挑的项目不跨父项沿用（否则会把下一条静默挂进一个没选过的项目）",
+  );
+});
+
+test("提交结论：成功 ⇒ 项目回落到**父项继承**（手动挑的那个不被记忆）", () => {
+  const items = [{ id: "wi-root", projectId: "proj-alpha" }];
+  const draft: WorkItemQuickCreateDraft = {
+    title: "  一条  ",
+    parentValue: "wi-root",
+    projectValue: "proj-beta",
+  };
+  assert.deepEqual(
+    workItemQuickCreateDraftAfterSubmit({ draft, feedback: null, workItems: items }),
+    { title: "", parentValue: "wi-root", projectValue: "proj-alpha" },
+    "连续创建时项目跟着仍留着的父项走（而不是记住上一次手动挑的那个）",
+  );
+  assert.deepEqual(
+    workItemQuickCreateDraftAfterSubmit({ draft, feedback: null, workItems: [] }),
+    { title: "", parentValue: "wi-root", projectValue: WORK_ITEM_PROJECT_SELECT_NONE },
+    "没有父项候选（父项已归档）⇒ 无项目（不猜、不记忆）",
   );
 });
 
@@ -282,6 +440,32 @@ test("壳：容器 + 标题输入（占位即用法）+ 父项下拉 + 创建钮
   assert.ok(
     markup.includes(zhText("squad.common.submit")),
     "提交钮文案 = squad.common.submit（与对话框提交同词）",
+  );
+});
+
+/* R-P2：项目下拉在条上（默认「无项目」；清单注入后才列得出项目）。变异：默认给一个项目 ⇒
+   第一条必红（工作区级新建**没有默认项目**）。 */
+test("项目：条上给项目下拉，默认「无项目」（清单未读到也只显示无项目）", () => {
+  const plain = renderQuickCreate({});
+  assert.ok(
+    plain.includes('data-testid="work-items-quick-create-project"'),
+    "条上有项目下拉（与父项同排）",
+  );
+  assert.ok(plain.includes(zhText("squad.workItems.project.none")), "默认显示「无项目」");
+  const withList = renderQuickCreate({
+    projects: [{ id: "proj-alpha", name: "阿尔法", shortCode: "ALP" }],
+  });
+  assert.ok(withList.includes("无项目"), "有清单时默认仍是「无项目」（不替用户挑一个项目）");
+  assert.ok(
+    withList.includes(`aria-label="${zhText("squad.workItems.project")}"`),
+    "下拉的可及名称 = 项目（与过滤/表头同一句话）",
+  );
+  /* 内联新建入口在**下拉打开时**才进 DOM（Radix 的 presence）⇒ 选项层的判据在纯函数与
+     `WorkItemProjectPicker` 的源码守卫里（缺写路径就不渲染那一项 —— 见 ⑦b 的接线守卫）。 */
+  const picker = stripComments(readSource("squad/WorkItemProjectPicker.tsx"));
+  assert.ok(
+    picker.includes("onCreateProject === undefined ? null : ("),
+    "没有写路径 ⇒ 连「新建项目…」选项都不渲染",
   );
 });
 
@@ -507,6 +691,7 @@ const quickCreateRequest = () =>
   workItemQuickCreateRequest({
     title: "一条",
     parentValue: WORK_ITEM_QUICK_CREATE_NO_PARENT_VALUE,
+    projectValue: WORK_ITEM_PROJECT_SELECT_NONE,
   });
 
 test("执行：唯一写入口先写、成功才服务回读，返回 null（没有任何行从这条路径出来）", async () => {
@@ -613,6 +798,77 @@ test("守卫｜页面接线：把接线层动作交给宿主（页面自己不�
       !page.includes(forbidden),
       `页面不得出现 ${forbidden}（挂载点与请求构造都在宿主与条的模块里）`,
     );
+  }
+});
+
+/* ---------- ⑦b 项目接线守卫（R-P2）：一份取数 / 一份写路径 / 页面三处 prop ----------
+
+   变异（一一对应）：让某个视图自己取项目清单（→「唯一调用点」必红）；页面自己拼项目请求
+   （→ 页面不得出现项目符号的负扫必红）；漏传某一处 prop（→ 计数必红）。 */
+test("守卫｜项目清单与新建项目：全树唯一调用点都在 `useWorkItemProjects`（消费面只投影）", () => {
+  const SRC_DIR_TREE = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+  walkProjectFiles(SRC_DIR_TREE, (file, source) => {
+    const relative = file.slice(SRC_DIR_TREE.length + 1);
+    const inHook = relative === "squad/useWorkItemProjects.ts";
+    for (const needle of ["listProjects(", "createProject("]) {
+      if (source.includes(needle)) {
+        assert.ok(
+          inHook,
+          `${relative} 出现 ${needle} —— 项目取数/写路径只能在 useWorkItemProjects`,
+        );
+      }
+    }
+    return false;
+  });
+  const hook = stripComments(readSource("squad/useWorkItemProjects.ts"));
+  assert.equal(
+    (hook.match(/listProjects\(/g) ?? []).length,
+    2,
+    "读面两处（挂载读一次 + 新建后回读一次），且都在这一个 hook 里",
+  );
+  assert.equal((hook.match(/createProject\(/g) ?? []).length, 1, "写路径恰一处");
+  assert.ok(
+    hook.includes("resolveSquadRuntimeService(services).createProject(target,"),
+    "写走服务面唯一入口（不直写 repo / 不拼第二条请求）",
+  );
+});
+
+test("守卫｜页面接线：项目 handle 投给三处（动作行 / 宿主 / 对话框），页面自己不拼项目请求", () => {
+  const page = stripComments(readSource("squad/WorkItemsPage.tsx"));
+  assert.equal(
+    (page.match(/workItemProjects=\{viewsBridge\.workItemProjects\}/g) ?? []).length,
+    3,
+    "三处 prop（动作行的项目过滤 / 宿主下的看板·chip·快速创建条 / 新建对话框）",
+  );
+  assert.ok(
+    page.includes("projectId: input.projectId"),
+    "创建请求必须带上表单选中的项目（漏了 = 界面上选了、库里没有）",
+  );
+  for (const forbidden of ["listProjects", "createProject", "WorkItemProjectPicker"]) {
+    assert.ok(
+      !page.includes(forbidden),
+      `页面不得出现 ${forbidden}（取数与拾取器都在各自模块，页面只透传 handle）`,
+    );
+  }
+  const bridge = stripComments(readSource("squad/useWorkItemsViewsBridge.ts"));
+  assert.ok(
+    bridge.includes("useWorkItemProjects({ services, target })"),
+    "接线层持有**一份**项目状态（三处消费同一个 handle）",
+  );
+});
+
+test("守卫｜宿主→条：条目接收项目清单与内联新建写路径（宿主自己不取服务）", () => {
+  const host = stripComments(readSource("squad/WorkItemsSurface.tsx"));
+  assert.ok(
+    host.includes("projects={workItemProjects?.projects ?? null}"),
+    "宿主把清单投影给快速创建条",
+  );
+  assert.ok(
+    host.includes("onCreateProject: workItemProjects.createProject"),
+    "内联新建的写路径同样来自注入的 handle",
+  );
+  for (const forbidden of ["useServices", "resolveSquadRuntimeService", "createProject("]) {
+    assert.ok(!host.includes(forbidden), `宿主不得出现 ${forbidden}（唯一写路径在接线层）`);
   }
 });
 

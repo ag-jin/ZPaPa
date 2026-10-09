@@ -185,9 +185,17 @@ test("添加请求：复用 P3-R1 的请求构造 —— 标题 trim + parentId 
     {
       title: "一条子项",
       parentId: "wi-root",
+      // R-P2：没有父项项目 ⇒ 无项目（不传这个键）。
+      projectId: undefined,
       assignee: { type: "user", id: WORK_ITEM_USER_ASSIGNEE_ID },
     },
     "必填仅标题：其余键**不传**（服务面把缺省读成未设置，不替用户编默认）",
+  );
+  assert.equal(
+    workItemChildCreateRequest({ title: "x", parentId: "wi-root", parentProjectId: "proj-alpha" })
+      .projectId,
+    "proj-alpha",
+    "R-P2：子项**继承父项的项目**（与快速创建条同一条判据）",
   );
 });
 

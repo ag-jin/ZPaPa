@@ -1,6 +1,7 @@
 import type { SquadSnapshot } from "@zcode/services";
 import { isTerminalWorkItemStatus, type WorkItem } from "@zcode/shared";
 import type { SquadEntryFeedback } from "./squadEntryViewModel.js";
+import { workItemProjectSelectValue } from "./workItemProjectViewModel.js";
 import {
   workItemQuickCreateDraftAfterSubmit,
   workItemQuickCreateRequest,
@@ -115,8 +116,14 @@ export function workItemChildAddDisabledReason(input: { archived: boolean }): st
 export function workItemChildCreateRequest(input: {
   title: string;
   parentId: string;
+  /** 父项的项目（R-P2）：子项**继承**父项的项目（与快速创建条同一条判据与语义）。 */
+  parentProjectId?: string;
 }): WorkItemQuickCreateRequest {
-  return workItemQuickCreateRequest({ title: input.title, parentValue: input.parentId });
+  return workItemQuickCreateRequest({
+    title: input.title,
+    parentValue: input.parentId,
+    projectValue: workItemProjectSelectValue(input.parentProjectId),
+  });
 }
 
 /**
@@ -129,10 +136,18 @@ export function workItemChildCreateRequest(input: {
 export function workItemChildDraftAfterSubmit(input: {
   title: string;
   parentId: string;
+  /** 父项的项目（R-P2）：与请求同一条继承口径（父项固定，故成功路径不重算）。 */
+  parentProjectId?: string;
   feedback: SquadEntryFeedback | null;
 }): string {
   return workItemQuickCreateDraftAfterSubmit({
-    draft: { title: input.title, parentValue: input.parentId },
+    draft: {
+      title: input.title,
+      parentValue: input.parentId,
+      projectValue: workItemProjectSelectValue(input.parentProjectId),
+    },
     feedback: input.feedback,
+    /* 父项在本区是常量（本体）⇒ 成功路径不需要候选重算项目继承（值是现成带进来的）。 */
+    workItems: [],
   }).title;
 }

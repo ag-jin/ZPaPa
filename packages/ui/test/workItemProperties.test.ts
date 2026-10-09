@@ -60,7 +60,10 @@ test("identifier 展示文本：有短码快照 ⇒ `{短码}-{序号}`；无 �
     "没有前缀字段（无项目）⇒ 既有 `#N` 形态逐字保持",
   );
   assert.equal(workItemIdentifierText({ identifierSeq: 1 }), "#1");
-  assert.equal(workItemIdentifierText({ identifierSeq: 999, identifierPrefix: "ABC12" }), "ABC12-999");
+  assert.equal(
+    workItemIdentifierText({ identifierSeq: 999, identifierPrefix: "ABC12" }),
+    "ABC12-999",
+  );
   assert.equal(
     workItemIdentifierText({ identifierSeq: 3, identifierPrefix: "" }),
     "#3",

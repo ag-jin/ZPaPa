@@ -41,6 +41,14 @@ import {
 import { WorkItemPriorityField, workItemPriorityFieldInput } from "./WorkItemPriorityField.js";
 import { workItemInlinePrioritySelectValue } from "./workItemInlineEditViewModel.js";
 import { CreateDialogShell, Field, FieldGroup } from "./squadDialogParts.js";
+import { WorkItemProjectPicker } from "./WorkItemProjectPicker.js";
+import type { WorkItemProjectsHandle } from "./useWorkItemProjects.js";
+import {
+  WORK_ITEM_PROJECT_SELECT_NONE,
+  workItemProjectPrefillForParent,
+  workItemProjectSelectId,
+  workItemProjectSelectValue,
+} from "./workItemProjectViewModel.js";
 import type { TeamAgentDialogInitial } from "./teamAgentDialogInitial.js";
 import { TeamAgentMcpSection } from "./TeamAgentMcpSection.js";
 import { mcpServersSubmitPatch } from "./teamAgentMcpViewModel.js";
@@ -615,6 +623,8 @@ export type WorkItemDialogSubmitInput =
       priority: WorkItemPriorityKey | null;
       startDate: string | null;
       dueDate: string | null;
+      /** 项目（R-P2）：`undefined` = 无项目（服务面把缺省读成无项目，不是空串 id）。 */
+      projectId?: string;
     }
   | {
       mode: "edit";
@@ -646,6 +656,7 @@ export function WorkItemDialog({
   initial,
   titleId = "squad.workItems.create",
   submitLabelId = "squad.common.submit",
+  workItemProjects,
 }: {
   snapshot: SquadSnapshot;
   onClose: () => void;
@@ -666,6 +677,9 @@ export function WorkItemDialog({
   titleId?: string;
   /** 提交按钮文案键；省略即「创建」。 */
   submitLabelId?: string;
+  /** 项目清单与内联新建的**唯一 handle**（R-P2；页面经接线层注入）。缺省 = 项目选择器只给
+      「无项目」这一档、没有「新建项目…」入口（没有写路径的入口比没有更糟）。**只在 create 用**。 */
+  workItemProjects?: WorkItemProjectsHandle;
 }) {
   const { intl } = useZCodeIntl();
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -691,6 +705,9 @@ export function WorkItemDialog({
   } | null>(null);
   const [assigneeValue, setAssigneeValue] = useState("user");
   const [parentValue, setParentValue] = useState(NO_PARENT_VALUE);
+  /* 项目（R-P2）：UI 取值域（哨兵见 `workItemProjectViewModel`）；默认**无项目**
+     （multica A2：没有「默认项目」概念）。换父项 ⇒ 按新父项重新继承（与快速创建同一条判据）。 */
+  const [projectValue, setProjectValue] = useState<string>(WORK_ITEM_PROJECT_SELECT_NONE);
 
   // 候选只含**可派发**的智能体 / 小队（停用与归档的不给：给了再被拒等于替用户制造一次失败）。
   const assigneeOptions = workItemAssigneeOptions(snapshot);
@@ -761,6 +778,8 @@ export function WorkItemDialog({
           priority: surfaceFields.patch.priority,
           startDate: surfaceFields.patch.startDate,
           dueDate: surfaceFields.patch.dueDate,
+          // 项目（R-P2）：两个哨兵（无项目 / 「新建项目…」）⇒ undefined（不传这个键 = 无项目）。
+          projectId: workItemProjectSelectId(projectValue),
         });
       }}
     >
@@ -860,7 +879,22 @@ export function WorkItemDialog({
           </Field>
           <Field labelId="squad.common.parent">
             {(controlId) => (
-              <Select value={parentValue} onValueChange={setParentValue}>
+              <Select
+                value={parentValue}
+                onValueChange={(value) => {
+                  setParentValue(value);
+                  /* 子项继承（R-P2）：父项有项目 ⇒ 预填它的；否则回无项目。
+                     判据与快速创建**同一份**（`workItemProjectPrefillForParent`）。 */
+                  setProjectValue(
+                    workItemProjectSelectValue(
+                      workItemProjectPrefillForParent({
+                        parentId: value === NO_PARENT_VALUE ? undefined : value,
+                        candidates: snapshot.workItems,
+                      }),
+                    ),
+                  );
+                }}
+              >
                 <SelectTrigger id={controlId}>
                   <SelectValue />
                 </SelectTrigger>
@@ -875,6 +909,22 @@ export function WorkItemDialog({
                   ))}
                 </SelectContent>
               </Select>
+            )}
+          </Field>
+          {/* 项目（R-P2）：与快速创建条**同一个**拾取器（含「新建项目…」内联表单 —— v1 的
+              项目管理入口）；「无项目」置顶可清。edit 模式不给：本表单的编辑路径不写挂接字段
+              （服务面白名单里没有它，给一个提交后不生效的下拉比不给更糟）。 */}
+          <Field labelId="squad.workItems.project">
+            {() => (
+              <WorkItemProjectPicker
+                testId="work-item-dialog-project"
+                value={projectValue}
+                onChange={setProjectValue}
+                projects={workItemProjects?.projects ?? null}
+                {...(workItemProjects === undefined
+                  ? {}
+                  : { onCreateProject: workItemProjects.createProject })}
+              />
             )}
           </Field>
         </>
