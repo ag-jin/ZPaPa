@@ -24,7 +24,11 @@ import {
   type BrowserViewRestoredTabShell,
   type BrowserViewportSize,
 } from "@zcode/shared";
-import { executeBrowserCommandOnView, type ControlledView } from "./browserCommandExecutor.js";
+import {
+  executeBrowserCommandOnView,
+  type ControlledView,
+  type ControlledViewInputEvent,
+} from "./browserCommandExecutor.js";
 import { executeIabPlaywrightLocator } from "./browserPlaywrightLocatorExecutor.js";
 import { recordBrowserVideo, type BrowserWebmRecorderFactory } from "./browserVideoRecorder.js";
 import { normalizePlaywrightTimeout } from "./browserPlaywrightTimeout.js";
@@ -63,6 +67,8 @@ interface GuestWebContents {
   stop(): void;
   capturePage(): Promise<{ toPNG(): Buffer }>;
   executeJavaScript(script: string, userGesture?: boolean): Promise<unknown>;
+  /** 键盘注入通道（用途与理由见 ControlledViewWebContents.sendInputEvent）。 */
+  sendInputEvent(event: ControlledViewInputEvent): void;
   navigationHistory: {
     canGoBack(): boolean;
     canGoForward(): boolean;
@@ -3605,6 +3611,12 @@ export class BrowserGuestManager {
         executeJavaScript: (script) => {
           assertCurrent();
           return guest.executeJavaScript(script, true);
+        },
+        sendInputEvent: (event) => {
+          assertCurrent();
+          // 键盘注入通道见 ControlledViewWebContents.sendInputEvent 注释：以 webContents 为单位投递，
+          // 不依赖窗口当前聚焦的 widget（CDP 键事件的静默丢失/串台就是这条路要绕开的坏法）。
+          guest.sendInputEvent(event);
         },
       },
       cdp: {
