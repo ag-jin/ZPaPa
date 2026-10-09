@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { SquadSnapshot } from "@zcode/services";
+import { Folder } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveAssigneeName } from "./squadEntryViewModel.js";
 import {
@@ -14,6 +15,7 @@ import {
   workItemDateText,
   workItemIdentifierText,
 } from "./workItemPropertiesViewModel.js";
+import { workItemProjectChipText, type WorkItemProjectOption } from "./workItemProjectViewModel.js";
 import type { WorkItemSurfaceColumnKey } from "./workItemSurfaceViewModel.js";
 import {
   workItemLabelChips,
@@ -65,6 +67,7 @@ export function WorkItemTableRowCells({
   row,
   columns,
   snapshot,
+  projects,
   onOpenWorkItemDetail,
   actions,
   select,
@@ -72,6 +75,8 @@ export function WorkItemTableRowCells({
   row: WorkItemBoardRow;
   columns: readonly WorkItemSurfaceColumnKey[];
   snapshot: SquadSnapshot;
+  /** 项目清单（R-P2；`null` = 还没读到）：项目格只读它 —— 与行上的 chip 同一份（宿主单通道）。 */
+  projects: readonly WorkItemProjectOption[] | null;
   /** 行级「打开」= 详情页导航（2026-10-09 用户裁定「点击进详情页，预览先下线」：peek 通道
       已整体摘除 —— 表格与行模块仍是**同一份**打开语义，只是换个宿主格子）。 */
   onOpenWorkItemDetail: (workItemId: string) => void;
@@ -85,11 +90,15 @@ export function WorkItemTableRowCells({
     intl.formatMessage({ id }, values);
   const { item, depth } = row;
   /* 每格的值先经单源纯函数（未设置 ⇒ null ⇒ 空单元格）。 */
-  const identifierText = workItemIdentifierText(item.identifierSeq);
+  const identifierText = workItemIdentifierText(item);
   const startDateText = workItemDateText(item.startDate);
   const dueDateText = workItemDateText(item.dueDate);
   const creatorText = workItemCreatorText(item.creator);
   const labelChips = workItemLabelChips(item.labels);
+  /* 项目格（R-P2）：**静态文字**（项目名；清单里查不到 ⇒ 回落 id —— 与 chip 同一份判据）；
+     `null` = 无项目 **或** 清单还没读到 ⇒ 空单元格（不写「无项目」占位，也不显示 uuid）。 */
+  const projectText =
+    projects === null ? null : workItemProjectChipText({ projectId: item.projectId, projects });
   /* `null` = 指派给当前用户；由本地化文案补上（与行同一份口径，纯函数不碰 i18n）。 */
   const assigneeName =
     resolveAssigneeName(snapshot, item.assignee) ?? t("squad.common.assignee.user");
@@ -109,6 +118,14 @@ export function WorkItemTableRowCells({
           <span className="inline-flex items-center gap-1.5">
             <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
             {assigneeName}
+          </span>
+        );
+      case "project":
+        /* 静态文字（与行上的 chip 同一形态口径：中性、无入口）；未知挂接已由纯函数回落成 id。 */
+        return projectText === null ? null : (
+          <span className="inline-flex min-w-0 items-center gap-1" title={projectText}>
+            <Folder aria-hidden className="size-3 shrink-0 text-foreground-subtle" />
+            <span className="truncate">{projectText}</span>
           </span>
         );
       case "labels":

@@ -62,8 +62,15 @@ import {
 /** 定义的客户端契约版本（multica 客户端恒写 1；服务端只存不解释）。 */
 export const WORK_ITEM_VIEW_DEFINITION_VERSION = 1;
 
-/** query 文档的键（**闭集**）：每枚对应 R1 的一个 facet；`all` = 该维不约束。 */
-export const WORK_ITEM_VIEW_QUERY_KEYS = ["statusCategory", "priority"] as const;
+/** query 文档的键（**闭集**）：每枚对应 R1 的一个 facet；`all` / 空 = 该维不约束。 */
+export const WORK_ITEM_VIEW_QUERY_KEYS = [
+  "statusCategory",
+  "priority",
+  /* R-P2（项目绑定 · UI 轮）加的两枚：项目维是「多选 id 数组 + 独立『无项目』开关」两面
+     （与 surface 的过滤状态同形）—— 不写进定义的话，用户存下的项目筛选会在下次打开时**静默消失**。 */
+  "projectIds",
+  "includeNoProject",
+] as const;
 
 /** display 文档的键（**闭集**）：布局 / 分组 / 排序 / 列配置（搜索词有意不在其中）。 */
 export const WORK_ITEM_VIEW_DISPLAY_KEYS = [
@@ -77,6 +84,10 @@ export const WORK_ITEM_VIEW_DISPLAY_KEYS = [
 export type WorkItemViewQueryDocument = {
   statusCategory: WorkItemStatusFilterValue;
   priority: WorkItemPriorityFilterValue;
+  /** 项目维（R-P2）：勾选的项目 id（次序 = 勾选次序；空 = 这一维不筛）。 */
+  projectIds: string[];
+  /** 项目维（R-P2）：「无项目」独立开关（不是一个项目，故不是 ids 里的一枚）。 */
+  includeNoProject: boolean;
 };
 
 export type WorkItemViewDisplayDocument = {
@@ -94,6 +105,8 @@ export function workItemViewQueryFromSurface(
   return {
     statusCategory: surface.filter.statusCategory,
     priority: surface.filter.priority,
+    projectIds: [...surface.filter.projectIds],
+    includeNoProject: surface.filter.includeNoProject,
   };
 }
 
@@ -136,7 +149,23 @@ export function sanitizeWorkItemViewQuery(raw: unknown): WorkItemViewQueryDocume
       WORK_ITEM_PRIORITY_FILTER_VALUES,
       "all",
     ),
+    projectIds: sanitizeProjectIds(readDocumentKey(raw, "projectIds")),
+    /* 「无项目」只认显式 `true`（其余形态一律按「没开」—— 闭集外的值不静默交给状态）。 */
+    includeNoProject: readDocumentKey(raw, "includeNoProject") === true,
   };
+}
+
+/** 项目 id 列表的**清洗**：只留非空字符串（去重、保持文档给出的次序）。
+ *  为什么不去项目清单里对账：本层是纯函数，拿不到清单；而清单里没有的 id 是**服务面**的判据
+ *  （跨版本残留的挂接仍应能被这个视图筛出来，静默丢掉会让「这个视图少了几条」无从解释）。 */
+function sanitizeProjectIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || entry.length === 0) continue;
+    if (!ids.includes(entry)) ids.push(entry);
+  }
+  return ids;
 }
 
 /** display 文档 ⇒ 显示取值（闭集外的值丢弃；列配置**逐枚**过闭集，不是整份丢掉）。 */
@@ -151,7 +180,7 @@ export function sanitizeWorkItemViewDisplay(raw: unknown): WorkItemViewDisplayDo
        （再进一个常量 import 就超线），故这里以字面量与它同一口径，不共用一个常量。 */
     grouping: closedValue(
       readDocumentKey(raw, "grouping"),
-      ["none", "statusCategory", "assignee"] as const,
+      ["none", "statusCategory", "assignee", "project"] as const,
       "statusCategory",
     ),
     sortBy: closedValue(readDocumentKey(raw, "sortBy"), WORK_ITEM_SORT_KEYS, "manual"),
@@ -198,7 +227,12 @@ export function workItemViewSeed(view: WorkItemViewRecord): {
     surface: {
       view: display.viewMode,
       search: defaults.search,
-      filter: { statusCategory: query.statusCategory, priority: query.priority },
+      filter: {
+        statusCategory: query.statusCategory,
+        priority: query.priority,
+        projectIds: [...query.projectIds],
+        includeNoProject: query.includeNoProject,
+      },
       sort: { key: display.sortBy, direction: display.sortDirection },
       columns: { hidden: display.hiddenColumns },
     },
@@ -215,7 +249,7 @@ export function workItemViewSeed(view: WorkItemViewRecord): {
  */
 export type WorkItemViewBaseline = {
   filter: WorkItemViewQueryDocument;
-  locked: { statusCategory: boolean; priority: boolean };
+  locked: { statusCategory: boolean; priority: boolean; project: boolean };
 };
 
 export function workItemViewBaseline(view: WorkItemViewRecord): WorkItemViewBaseline {
@@ -225,6 +259,8 @@ export function workItemViewBaseline(view: WorkItemViewRecord): WorkItemViewBase
     locked: {
       statusCategory: filter.statusCategory !== "all",
       priority: filter.priority !== "all",
+      /* 项目维「固定了」= 勾了至少一个项目，或打开了「无项目」开关（空数组 + 关着 = 不约束）。 */
+      project: filter.projectIds.length > 0 || filter.includeNoProject,
     },
   };
 }
@@ -246,7 +282,13 @@ export function applyWorkItemSurfaceIntentWithBaseline(
   if (baseline === null || intent.kind !== "clearQuery") {
     return applyWorkItemSurfaceIntent(state, intent);
   }
-  return { ...state, search: "", filter: baseline.filter };
+  /* 基线条件是**文档**（可能来自某条视图的内存副本）：复制一层再落状态 —— 状态是可变引用，
+     共享同一份数组迟早被某处就地改到（与 `workItemViewSeed` 同一条纪律）。 */
+  return {
+    ...state,
+    search: "",
+    filter: { ...baseline.filter, projectIds: [...baseline.filter.projectIds] },
+  };
 }
 
 /**
@@ -262,8 +304,19 @@ export function workItemViewHasIncrement(
   if (workItemSurfaceSearchText(state.search).length > 0) return true;
   return (
     state.filter.statusCategory !== baseline.filter.statusCategory ||
-    state.filter.priority !== baseline.filter.priority
+    state.filter.priority !== baseline.filter.priority ||
+    state.filter.includeNoProject !== baseline.filter.includeNoProject ||
+    /* 项目多选按**集合**比较：勾选次序不是条件（先勾 A 后勾 B 与反过来的筛选结果一样）。 */
+    !sameProjectIdSet(state.filter.projectIds, baseline.filter.projectIds)
   );
+}
+
+/** 项目 id 集合相等（去重、忽略次序）—— 「有增量吗」的唯一判据之一。 */
+function sameProjectIdSet(left: readonly string[], right: readonly string[]): boolean {
+  const unique = (ids: readonly string[]) => [...new Set(ids)];
+  const a = unique(left);
+  const b = unique(right);
+  return a.length === b.length && a.every((id) => b.includes(id));
 }
 
 /* ---------------- 视图条投影（内建锚 + 保存视图同列 + 权限） ---------------- */
@@ -360,16 +413,17 @@ export function workItemViewListAfterLoad(input: {
 /* ---------------- 手动顺序（Manual）的分组维度可用性 ---------------- */
 
 /**
- * 该分组维度下**可选**的排序档：按指派分组不给 `manual`。
+ * 该分组维度下**可选**的排序档：按指派 / 按项目分组不给 `manual`。
  *
  * 为什么（证据 §6 的形态）：`position` 是**全库一段**的序（不是每视图/每泳道一份快照），
  * 拖拽改序的落点只在「列内」语义下成立 —— statusCategory 分组下"列"= 状态列；
- * 按指派分组时"列"是同一个位置序的另一段，改它对"这个指派对象内部的次序"没有意义。
+ * 按指派/按项目分组时"列"是同一个位置序的另一段，改它对"这个指派对象 / 这个人项目内部的次序"
+ * 没有意义（拖拽本身也只在 statusCategory 开放，见 `workItemBoardReorderEnabled`）。
  */
 export function workItemSortKeysForLaneDimension(
   dimension: WorkItemLaneDimension,
 ): readonly WorkItemSortKey[] {
-  if (dimension === "assignee") {
+  if (dimension === "assignee" || dimension === "project") {
     return WORK_ITEM_SORT_KEYS.filter((key) => key !== "manual");
   }
   return WORK_ITEM_SORT_KEYS;

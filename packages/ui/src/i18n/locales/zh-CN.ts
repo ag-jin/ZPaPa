@@ -4356,11 +4356,23 @@ const zhCN: Record<string, string> = {
   // 行内编辑（阶段一轮 D）：标题是行内唯一有「取值合法性」的字段（空白 = 没有标题）；
   // 优先级的失败文案复用上面那一条（同一个字段同一句话）。
   "squad.workItems.titleRequired": "标题不能为空",
-  // 看板泳道（欠账 #15）：维度闭集 = 不分组 / 状态 category（4 类骨架） / 指派对象。
+  // 项目绑定（R-P2 · UI 轮）：项目 / 无项目 / 新建项目 / 短码 + 短码与名称的预检文案。
+  // 「无项目」是**显式合法状态**（multica 的三层语义：过滤开关 / 分组列 / 选择器清除），
+  // 与「清单里查不到的项目」不是同一件事（后者回落 id，不显示成「无项目」）。
+  "squad.workItems.project": "项目",
+  "squad.workItems.project.none": "无项目",
+  "squad.workItems.project.new": "新建项目…",
+  "squad.workItems.project.shortCode": "短码",
+  "squad.workItems.project.shortCodePlaceholder": "例如 PLT",
+  "squad.workItems.project.shortCodeInvalid":
+    "「{value}」不是合法短码（2–8 位大写字母或数字，例如 PLT）",
+  "squad.workItems.project.nameRequired": "项目名称不能为空",
+  // 看板泳道（欠账 #15）：维度闭集 = 不分组 / 状态 category（4 类骨架） / 指派对象 / 项目（R-P2）。
   "squad.workItems.lane.dimension": "分组",
   "squad.workItems.lane.dimension.none": "不分组",
   "squad.workItems.lane.dimension.statusCategory": "按状态",
   "squad.workItems.lane.dimension.assignee": "按指派",
+  "squad.workItems.lane.dimension.project": "按项目",
   "squad.workItems.lane.statusCategory.unstarted": "未开始",
   "squad.workItems.lane.statusCategory.started": "进行中",
   "squad.workItems.lane.statusCategory.done": "已完成",

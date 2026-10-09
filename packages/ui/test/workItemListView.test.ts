@@ -134,7 +134,13 @@ function snapshotWith(workItems: WorkItem[], runs: SquadRunRecord[]): SquadSnaps
 /** 经**真宿主**渲染某个视图：走的就是页面 → 宿主 → 视图 → 共用行模块那条链。 */
 function renderView(
   view: WorkItemViewMode,
-  over: Partial<{ items: WorkItem[]; runs: SquadRunRecord[]; surface: WorkItemSurfaceState }> = {},
+  over: Partial<{
+    items: WorkItem[];
+    runs: SquadRunRecord[];
+    surface: WorkItemSurfaceState;
+    /** 项目清单（R-P2）：注入后行上的项目 chip 才有名字可画（缺省 = 还没读到 ⇒ 不画）。 */
+    workItemProjects: readonly { id: string; name: string; shortCode: string }[];
+  }> = {},
 ) {
   const items = over.items ?? TREE;
   const runs = over.runs ?? [run("wi-root")];
@@ -164,6 +170,18 @@ function renderView(
         onToggleTimeline: () => {},
         onOpenWorkItemDetail: () => {},
         workspacePath: "/w/a",
+        ...(over.workItemProjects === undefined
+          ? {}
+          : {
+              workItemProjects: {
+                projects: over.workItemProjects,
+                createProject: async () => ({
+                  kind: "failed" as const,
+                  feedback: { tone: "error" as const, messageId: "squad.common.operationFailed" },
+                }),
+                reload: async () => {},
+              },
+            }),
       }),
     }),
   );
@@ -295,7 +313,44 @@ test("聚焦（渲染证据）｜list 视图下每条可见项都有行锚点（
   );
 });
 
-// ---------- ⑤ 结构守卫（全 src 树扫描） ----------
+// ---------- ⑤ 项目 chip（R-P2：list 行是**静态文字** chip，不是 picker） ----------
+
+/* 形态真源：multica `list-row.tsx:172-177`（列表行的项目是静态文字，不是 picker）——
+   本仓 v1 的绑定入口只在创建流（快速创建条 / 新建对话框），行上不引入第二个写路径。
+   变异：给某一行的 chip 加按钮/下拉 ⇒ 第三条必红；无项目也画一个空 chip ⇒ 第二条必红。 */
+test("list 行项目 chip：有项目才有（静态文字、带项目名、无按钮），无项目整块不渲染", () => {
+  const bound = wi({ id: "wi-bound", title: "挂了项目", projectId: "proj-alpha" });
+  const free = wi({ id: "wi-free", title: "无项目" });
+  const markup = renderView("list", {
+    items: [bound, free],
+    runs: [],
+    workItemProjects: [{ id: "proj-alpha", name: "阿尔法", shortCode: "ALP" }],
+  });
+  const segments = rowSegments(markup);
+  const boundRow = segments.find((row) => row.id === "wi-bound")!;
+  const freeRow = segments.find((row) => row.id === "wi-free")!;
+  const chipTag =
+    /<[a-z]+[^>]*data-testid="work-item-project-chip"[^>]*>/.exec(boundRow.markup)?.[0] ?? "";
+  assert.ok(chipTag.length > 0, "挂了项目的行有 chip");
+  assert.ok(chipTag.startsWith("<span"), "chip 是**静态文字**元素（不是按钮/下拉 = 第二个项目写路径）");
+  assert.ok(!chipTag.includes('role="button"'), "chip 不可点（绑定入口只在创建流）");
+  assert.ok(boundRow.markup.includes("阿尔法"), "chip 显示项目名（不是 id）");
+  assert.ok(
+    !freeRow.markup.includes('data-testid="work-item-project-chip"'),
+    "无项目 ⇒ 整块不渲染（空 chip 是噪音）",
+  );
+});
+
+test("list 行项目 chip：清单还没读到（projects=null）⇒ 不画（不显示 uuid）", () => {
+  const markup = renderView("list", {
+    items: [wi({ id: "wi-bound", projectId: "proj-alpha" })],
+    runs: [],
+  });
+  assert.ok(!markup.includes('data-testid="work-item-project-chip"'));
+  assert.ok(!markup.includes("proj-alpha"), "清单缺席时连 id 都不画（读面回来后才画名字）");
+});
+
+// ---------- ⑥ 结构守卫（全 src 树扫描） ----------
 
 /* 验收 1（行复用共用模块）：`data-work-item-id` 与聚焦注册**全树各恰一处**，且都在共用行模块。
    变异（M-复制行）：把行 JSX 复制给某个视图/分支（哪怕只多一个 `data-work-item-id` 或一句

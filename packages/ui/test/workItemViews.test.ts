@@ -74,7 +74,13 @@ test("首开 seed：query + display 逐格灌进 surface 状态（含列配置�
       view: "table",
       // 搜索词**不存**在定义里（multica 同款：query 无 free-text 键）⇒ 打开视图 = 搜索回到空。
       search: "",
-      filter: { statusCategory: "started", priority: "high" },
+      filter: {
+        statusCategory: "started",
+        priority: "high",
+        // R-P2：项目 facet 也在定义里（没写进定义的视图 ⇒ 两维都是「不筛」）。
+        projectIds: [],
+        includeNoProject: false,
+      },
       sort: { key: "dueDate", direction: "desc" },
       columns: { hidden: ["creator", "labels"] },
     },
@@ -90,7 +96,7 @@ test("首开 seed：定义缺项/缺文档 ⇒ 缺的那一格回默认值（不
     {
       view: "board",
       search: "",
-      filter: { statusCategory: "all", priority: "all" },
+      filter: { statusCategory: "all", priority: "all", projectIds: [], includeNoProject: false },
       sort: { key: "manual", direction: "asc" },
       columns: { hidden: [] },
     },
@@ -118,7 +124,7 @@ test("首开 seed：未知枚举成员丢弃（闭集外的值回落默认，不
   );
   assert.deepEqual(
     seed.surface.filter,
-    { statusCategory: "all", priority: "all" },
+    { statusCategory: "all", priority: "all", projectIds: [], includeNoProject: false },
     "闭集外的 facet 值丢掉（界面按一个自己不认识的值渲染 = 一份没人能解释的状态）",
   );
   assert.equal(seed.surface.view, "board", "闭集外的视图名回落默认");
@@ -164,16 +170,21 @@ test("baseline｜locking：视图固定了的维度进锁定集，`all`（不约
       }),
     ),
     {
-      filter: { statusCategory: "started", priority: "all" },
-      locked: { statusCategory: true, priority: false },
+      filter: {
+        statusCategory: "started",
+        priority: "all",
+        projectIds: [],
+        includeNoProject: false,
+      },
+      locked: { statusCategory: true, priority: false, project: false },
     },
     "固定值 = 定义里真的约束了那一维（`all` 是不约束，不是固定成「全部」）",
   );
   assert.deepEqual(
     workItemViewBaseline(view({ query: {}, display: {} })),
     {
-      filter: { statusCategory: "all", priority: "all" },
-      locked: { statusCategory: false, priority: false },
+      filter: { statusCategory: "all", priority: "all", projectIds: [], includeNoProject: false },
+      locked: { statusCategory: false, priority: false, project: false },
     },
     "空定义 ⇒ 不固定任何维度（内建锚的 baseline 是「全不约束」）",
   );
@@ -196,7 +207,12 @@ test("baseline｜「清除筛选」回到**视图条件**而非全空（清空�
     {
       ...local,
       search: "",
-      filter: { statusCategory: "started", priority: "high" },
+      filter: {
+        statusCategory: "started",
+        priority: "high",
+        projectIds: [],
+        includeNoProject: false,
+      },
     },
     "清空筛选回到视图自身条件（全空会让用户以为这个视图「清了」就是没有任何条件）",
   );

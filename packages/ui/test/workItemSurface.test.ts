@@ -62,7 +62,13 @@ test("默认状态：board + 无过滤 + 无搜索 + 无排序 + 零隐藏列（
   assert.deepEqual(workItemSurfaceDefaultState(), {
     view: "board",
     search: "",
-    filter: { statusCategory: "all", priority: "all" },
+    filter: {
+      statusCategory: "all",
+      priority: "all",
+      /* R-P2（项目绑定 · UI 轮）：项目 facet 的默认 = 不筛（多选空 + 「无项目」开关关）。 */
+      projectIds: [],
+      includeNoProject: false,
+    },
     sort: { key: "manual", direction: "asc" },
     columns: { hidden: [] },
   });
@@ -151,6 +157,26 @@ test("搜索匹配：标题 / 标签 / identifier 文本三处命中；大小写
     true,
     "没有标签也能按编号搜到（identifier 是标识符，搜不到会让「按编号找人」失效）",
   );
+});
+
+/* R-P2（项目绑定）：编号文本跟着**前缀快照**走 ⇒ 搜索也必须跟着走 —— 绑了项目的行按
+   `{短码}-{序号}` 搜得到，而 `#{序号}` 形态**不再命中**它（否则搜出来的东西看不见，
+   用户会以为搜索坏了；「搜的东西 = 看得见的东西」是这里的口径）。 */
+test("搜索匹配（项目绑定轮）：绑项目的行按 `{短码}-{序号}` 命中，`#` 形态不命中", () => {
+  const bound = wi("wi-bound", { identifierSeq: 12, identifierPrefix: "PLT" });
+  for (const query of ["PLT-12", "plt-12", "  PLT-12  ", "pl"]) {
+    assert.equal(workItemMatchesSearch(bound, query), true, `「${query}」应当命中绑定项目的那条`);
+  }
+  for (const query of ["#12", "MUL-12"]) {
+    assert.equal(
+      workItemMatchesSearch(bound, query),
+      false,
+      `「${query}」不应命中：编号显示为 PLT-12（搜索与显示同一份文本）`,
+    );
+  }
+  // 未绑项目的行仍走既有 `#N` 口径（逐字保持）。
+  assert.equal(workItemMatchesSearch(wi("wi-free", { identifierSeq: 12 }), "#12"), true);
+  assert.equal(workItemMatchesSearch(wi("wi-free", { identifierSeq: 12 }), "PLT-12"), false);
 });
 
 /* 归一化单源：trim + 小写（不按 locale 折叠 —— 搜索结果不该随界面语言变化）。 */
@@ -285,6 +311,158 @@ test("过滤生效即算「有查询」：facet 非 all ⇒ hasActiveQuery=true�
   assert.equal(workItemSurfaceHasActiveQuery(filterState({ priority: "unset" })), true);
   assert.equal(workItemSurfaceHasActiveQuery(filterState({ statusCategory: "done" })), true);
   assert.equal(workItemSurfaceHasActiveQuery(searchState("  ")), false, "纯空白不算查询");
+});
+
+// ---------- ③b 项目 facet（R-P2 项目绑定 · UI 轮） ----------
+
+/* 语义真源：multica `utils/filter.ts:257-266` + `view-store.ts:247-256`（证据报告 A4）——
+   项目过滤是**多选 id 数组 + 独立「无项目」开关**（不是单选、不是 tab）：
+   · 两维都不勾 ⇒ 不筛（`all`）；
+   · 勾了若干项目 ⇒ 只留这些项目里的行；
+   · **只勾「无项目」⇒ 隐藏所有有项目项**（这条是 A4 明确点出的语义）；
+   · 项目维不勾但「无项目」勾上 ⇒ 无项目的行留下。 */
+test("项目 facet：多选 ids 命中 + 「无项目」独立开关（只勾无项目 ⇒ 隐藏全部有项目项）", () => {
+  const items = [
+    wi("a", { projectId: "p-1" }),
+    wi("b", { projectId: "p-2" }),
+    wi("free-1"),
+    wi("free-2"),
+  ];
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: filterState({ projectIds: ["p-1"], includeNoProject: false }),
+      }),
+    ),
+    ["a"],
+    "勾一个项目 ⇒ 只留它里面的行（无项目行被隐藏）",
+  );
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: filterState({ projectIds: ["p-1", "p-2"], includeNoProject: false }),
+      }),
+    ),
+    ["a", "b"],
+    "多选是**并集**（不是单选）",
+  );
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: filterState({ projectIds: [], includeNoProject: true }),
+      }),
+    ),
+    ["free-1", "free-2"],
+    "**只勾「无项目」⇒ 隐藏所有有项目项**（multica A4 的显式语义）",
+  );
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: filterState({ projectIds: ["p-2"], includeNoProject: true }),
+      }),
+    ),
+    ["b", "free-1", "free-2"],
+    "项目与「无项目」一起勾 ⇒ 并集（两维是**同一维度的两个面**）",
+  );
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: filterState({ projectIds: [], includeNoProject: false }),
+      }),
+    ),
+    ids(items),
+    "两维都不勾 = 不筛（默认路径）",
+  );
+});
+
+test("项目 facet：与状态/优先级/搜索是**同一行**的合取，再按树单元取并集", () => {
+  const items = [
+    wi("batch", { title: "批根", priority: "urgent", projectId: "p-1" }),
+    wi("child", { parentId: "batch", title: "看这里", priority: "low" }),
+    wi("other", { title: "看这里", priority: "urgent", projectId: "p-2" }),
+  ];
+  const state: WorkItemSurfaceState = {
+    ...filterState({ projectIds: ["p-1"], includeNoProject: false }),
+    search: "看这里",
+  };
+  assert.deepEqual(
+    ids(workItemSurfaceVisibleItems({ items, state })),
+    [],
+    "batch 的根在项目里但子项命中搜索（不同行）⇒ 整棵不命中；other 项目不符 ⇒ 也不命中",
+  );
+  assert.deepEqual(
+    ids(
+      workItemSurfaceVisibleItems({
+        items,
+        state: { ...state, filter: { ...state.filter, projectIds: ["p-1", "p-2"] } },
+      }),
+    ),
+    ["other"],
+    "把 other 的项目也勾上 ⇒ 它自己同一行满足两条件（搜索 + 项目）",
+  );
+});
+
+test("项目 facet 算「有查询」：勾项目或勾无项目 ⇒ hasActiveQuery=true；clearQuery 清回不筛", () => {
+  assert.equal(
+    workItemSurfaceHasActiveQuery(filterState({ projectIds: ["p-1"], includeNoProject: false })),
+    true,
+  );
+  assert.equal(
+    workItemSurfaceHasActiveQuery(filterState({ projectIds: [], includeNoProject: true })),
+    true,
+  );
+  assert.equal(
+    workItemSurfaceHasActiveQuery(filterState({ projectIds: [], includeNoProject: false })),
+    false,
+    "两维都不勾不算查询（「清除筛选」的可点性靠它）",
+  );
+  const cleared = applyWorkItemSurfaceIntent(
+    filterState({ projectIds: ["p-1", "p-2"], includeNoProject: true }),
+    { kind: "clearQuery" },
+  );
+  assert.deepEqual(
+    cleared.filter,
+    { statusCategory: "all", priority: "all", projectIds: [], includeNoProject: false },
+    "「清除筛选」必须把项目这一维也清掉（漏掉的表现是界面看着清了、结果里还在筛）",
+  );
+});
+
+test("项目 facet 意图折叠：toggle 一次加、再一次减（幂等往返）；无项目开关同理", () => {
+  const base = workItemSurfaceDefaultState();
+  const one = applyWorkItemSurfaceIntent(base, {
+    kind: "toggleProjectFilter",
+    projectId: "p-1",
+  });
+  assert.deepEqual(one.filter.projectIds, ["p-1"]);
+  const two = applyWorkItemSurfaceIntent(one, { kind: "toggleProjectFilter", projectId: "p-2" });
+  assert.deepEqual(two.filter.projectIds, ["p-1", "p-2"], "多选：追加（不是替换）");
+  const back = applyWorkItemSurfaceIntent(two, { kind: "toggleProjectFilter", projectId: "p-1" });
+  assert.deepEqual(back.filter.projectIds, ["p-2"], "再 toggle 同一项 = 移除");
+  assert.deepEqual(
+    applyWorkItemSurfaceIntent(base, { kind: "toggleNoProjectFilter" }).filter.includeNoProject,
+    true,
+  );
+  assert.deepEqual(
+    applyWorkItemSurfaceIntent(
+      applyWorkItemSurfaceIntent(base, { kind: "toggleNoProjectFilter" }),
+      { kind: "toggleNoProjectFilter" },
+    ).filter.includeNoProject,
+    false,
+    "「无项目」开关来回是幂等往返",
+  );
+  // 项目维的折叠不得动别的维（防止「用默认状态整体替换」这种静默覆盖）。
+  const dirty = filterState({ statusCategory: "done", priority: "high" });
+  const toggled = applyWorkItemSurfaceIntent(dirty, {
+    kind: "toggleProjectFilter",
+    projectId: "p-9",
+  });
+  assert.equal(toggled.filter.statusCategory, "done");
+  assert.equal(toggled.filter.priority, "high");
 });
 
 // ---------- ④ 排序（承重验收 4：排序键是闭集） ----------
@@ -427,12 +605,24 @@ test("排序与过滤叠加：先筛树、再排根（顺序对结果无影响�
 // ---------- ⑤ 列目录与意图折叠（承重验收 1/4/6） ----------
 
 /* 列目录是**闭集**：目录数组与文案映射的键集必须一致（少一枚 ⇒ 表格少一列或界面上多一个裸 key）。
-   本阶段只列**服务面真有的**字段（project / progress / updated 没有数据面 ⇒ 不造空列）。 */
+   本阶段只列**服务面真有的**字段（parent-child progress / updated 没有数据面 ⇒ 不造空列）；
+   R-P2（项目绑定 · UI 轮）把 `project` 补进来 —— `projectId`（工作项实体）与项目清单（R-P1 五件）
+   两条数据面都已就绪。 */
 test("列目录：闭集与文案映射键集一致，只有领域对象上真有的字段", () => {
   assert.deepEqual(
     [...WORK_ITEM_SURFACE_COLUMNS].sort(),
-    ["assignee", "creator", "dueDate", "identifier", "labels", "priority", "startDate", "status"],
-    "八列（phase-2 可配置列的范围由这条钉住；加列必须同时改目录与文案映射）",
+    [
+      "assignee",
+      "creator",
+      "dueDate",
+      "identifier",
+      "labels",
+      "priority",
+      "project",
+      "startDate",
+      "status",
+    ],
+    "九列（phase-2 八列 + R-P2 的项目列；加列必须同时改目录与文案映射）",
   );
   assert.deepEqual(
     Object.keys(WORK_ITEM_COLUMN_MESSAGE_IDS).sort(),
@@ -452,7 +642,7 @@ test("列配置：可见列 = 目录顺序减去隐藏集（隐藏顺序不影�
   );
   assert.deepEqual(
     visibleWorkItemColumns({ hidden: ["creator", "identifier"] }),
-    ["status", "priority", "assignee", "labels", "startDate", "dueDate"],
+    ["status", "priority", "assignee", "project", "labels", "startDate", "dueDate"],
     "隐藏两列：输出仍是目录顺序（不是隐藏集顺序），且恰好少这两列",
   );
   assert.deepEqual(
@@ -514,7 +704,7 @@ test("意图折叠：清除查询只清搜索与 facet（视图/排序/列配置
   const dirty: WorkItemSurfaceState = {
     view: "table",
     search: "foo",
-    filter: { statusCategory: "done", priority: "unset" },
+    filter: { statusCategory: "done", priority: "unset", projectIds: ["p-1"], includeNoProject: true },
     sort: { key: "dueDate", direction: "desc" },
     columns: { hidden: ["labels"] },
   };
@@ -522,7 +712,7 @@ test("意图折叠：清除查询只清搜索与 facet（视图/排序/列配置
   assert.deepEqual(cleared, {
     view: "table",
     search: "",
-    filter: { statusCategory: "all", priority: "all" },
+    filter: { statusCategory: "all", priority: "all", projectIds: [], includeNoProject: false },
     sort: { key: "dueDate", direction: "desc" },
     columns: { hidden: ["labels"] },
   });

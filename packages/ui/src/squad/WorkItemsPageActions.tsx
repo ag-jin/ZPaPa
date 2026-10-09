@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/select.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { WorkItemBulkToolbar, type WorkItemBulkToolbarInput } from "./WorkItemBulkToolbar.js";
+import { WorkItemProjectFilter } from "./WorkItemProjectFilter.js";
+import type { WorkItemProjectsHandle } from "./useWorkItemProjects.js";
 import {
   WORK_ITEM_SURFACE_SEARCH_DEBOUNCE_MS,
   resolveWorkItemSurfaceSearchKeyIntent,
@@ -58,6 +60,7 @@ export function WorkItemsPageActions({
   surface,
   onSurfaceIntent,
   baseline = null,
+  workItemProjects,
   bulk,
   t,
   onReload,
@@ -78,6 +81,9 @@ export function WorkItemsPageActions({
       **可选**：缺省 = 没有打开视图（内建锚）⇒ 逐格走 R1 的既有行为 —— 既有调用方（测试与
       将来的其它宿主）不必为了"没有视图"多传一个 `null`。 */
   baseline?: WorkItemViewBaseline | null;
+  /** 项目清单与内联新建的**唯一 handle**（页面经接线层注入；缺省 ⇒ 项目过滤只给「无项目」这一档
+      —— 与拾取器/看板同一份清单，第二个通道 = 两处迟早说的不是一件事）。本组件只用它的 `.projects`。 */
+  workItemProjects?: WorkItemProjectsHandle;
   /** 批量工具栏（T-P2-R5）：状态与草稿都在页面（本组件只**挂载**它，并把手里那份置灰原因
       传下去 —— 「取数不可用 = 置灰 + 原因」只有 `workItemSurfaceControlsDisabledReason` 一份判据）。 */
   bulk: WorkItemBulkToolbarInput;
@@ -155,6 +161,8 @@ export function WorkItemsPageActions({
        打开一个视图就让清除钮常亮，用户点了什么也不会变）。 */
   const lockedStatus = baseline?.locked.statusCategory === true;
   const lockedPriority = baseline?.locked.priority === true;
+  /* R-P2：项目维的锁定与另两维同款（视图固定了项目条件 ⇒ 控件锁定）。 */
+  const lockedProject = baseline?.locked.project === true;
   const clearEnabled =
     baseline === null
       ? workItemSurfaceHasActiveQuery(surface)
@@ -247,15 +255,26 @@ export function WorkItemsPageActions({
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
-            {WORK_ITEM_PRIORITY_FILTER_VALUES.map((value) => (
-              <SelectItem key={value} value={value}>
-                {t(WORK_ITEM_PRIORITY_FILTER_MESSAGE_IDS[value])}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+        <SelectContent>
+          {WORK_ITEM_PRIORITY_FILTER_VALUES.map((value) => (
+            <SelectItem key={value} value={value}>
+              {t(WORK_ITEM_PRIORITY_FILTER_MESSAGE_IDS[value])}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* 项目过滤（R-P2）：与状态/优先级同一组（读屏听到「筛选 组 → 状态 / 优先级 / 项目」）。
+          多选 + 「无项目」独立开关 + chips 回显，判据/语义全在 `WorkItemProjectFilter` 与
+          `workItemSurfaceViewModel`（本组件只投影取值、只回传意图）。 */}
+      <WorkItemProjectFilter
+        filter={surface.filter}
+        projects={workItemProjects?.projects ?? null}
+        disabled={controlsDisabled}
+        title={disabledTitle}
+        locked={lockedProject}
+        onIntent={onSurfaceIntent}
+      />
+    </div>
       {/* 搜索（T-P2-R4）：受控草稿 + 防抖提交；`type="text"` 是**有意**的 ——
           `type="search"` 在 WebKit/Chromium 下自带「Esc 清空输入框」（且与是否显示原生取消按钮
           有关），那条路径会绕过本组件的键盘判据，同一个 Esc 于是在两种输入类型下走两套语义。

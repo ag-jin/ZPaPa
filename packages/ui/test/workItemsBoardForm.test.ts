@@ -79,8 +79,16 @@ function renderBoard(input: {
   laneDimension?: WorkItemLaneDimension;
   surface?: WorkItemSurfaceState;
   withWriter?: boolean;
+  /** 项目清单（R-P2）：注入后卡片 chip 与「按项目」列才有名字可画。 */
+  workItemProjects?: readonly { id: string; name: string; shortCode: string }[];
 }): string {
-  const { workItems, laneDimension = "statusCategory", surface, withWriter = false } = input;
+  const {
+    workItems,
+    laneDimension = "statusCategory",
+    surface,
+    withWriter = false,
+    workItemProjects,
+  } = input;
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
@@ -101,6 +109,18 @@ function renderBoard(input: {
         onOpenWorkItemDetail: () => {},
         workspacePath: "/w/a",
         ...(withWriter ? { onQuickCreate: async () => null } : {}),
+        ...(workItemProjects === undefined
+          ? {}
+          : {
+              workItemProjects: {
+                projects: workItemProjects,
+                createProject: async () => ({
+                  kind: "failed" as const,
+                  feedback: { tone: "error" as const, messageId: "squad.common.operationFailed" },
+                }),
+                reload: async () => {},
+              },
+            }),
       }),
     }),
   );
@@ -211,6 +231,62 @@ test("形态｜列头新建入口：没有写路径就不给入口（与快速�
     !markup.includes('data-testid="work-items-lane-create"'),
     "没有 onQuickCreate ⇒ 列头不出现「+」（点得动但写不下去的入口比没有更糟）",
   );
+});
+
+// ---------- ②卡 项目 chip 与「按项目」列（R-P2 项目绑定 · UI 轮） ----------
+
+/* 两条形态真源（证据 `reports/2026-10-09-multica-issue-project-binding.md` A3）：
+   · 卡片 chip 的**门控**：有项目 ∧ **当前分组不是项目**（按项目分组时列头已经说了项目，
+     卡片再画一遍是噪音）；
+   · 项目分组：**「无项目」列恒第一且恒保留** + 每项目一列（空列也在），列头 = 项目名 + 计数。
+   变异：摘掉门控（按项目分组仍画 chip）⇒ 第一条必红；删掉「无项目」列 ⇒ 第二条必红。 */
+test("形态｜卡片项目 chip：有项目才画，且按项目分组时不再重复画（gating 与 multica A3 同款）", () => {
+  const bound = wi({ id: "wi-bound", title: "挂了项目", projectId: "p-1" });
+  const free = wi({ id: "wi-free", title: "无项目" });
+  const projects = [{ id: "p-1", name: "阿尔法", shortCode: "ALP" }];
+
+  const plain = renderBoard({ workItems: [bound, free], workItemProjects: projects });
+  const segments = plain.split('data-work-item-id="').slice(1);
+  const boundRow = segments.find((row) => row.startsWith("wi-bound"))!;
+  const freeRow = segments.find((row) => row.startsWith("wi-free"))!;
+  assert.ok(boundRow.includes('data-testid="work-item-project-chip"'), "有项目的卡片有 chip");
+  assert.ok(boundRow.includes("阿尔法"), "chip 显示项目名（不是 id）");
+  assert.ok(!freeRow.includes('data-testid="work-item-project-chip"'), "无项目不画 chip");
+
+  const grouped = renderBoard({
+    workItems: [bound, free],
+    laneDimension: "project",
+    workItemProjects: projects,
+  });
+  assert.ok(
+    !grouped.includes('data-testid="work-item-project-chip"'),
+    "按项目分组时卡片不重复显示项目（列头已经说了）",
+  );
+});
+
+test("形态｜项目列：无项目列恒第一（计数 0 也在），其后每项目一列；列头是项目名 + 计数", () => {
+  const markup = renderBoard({
+    workItems: [wi({ id: "wi-a", title: "甲", projectId: "p-2" })],
+    laneDimension: "project",
+    workItemProjects: [
+      { id: "p-1", name: "阿尔法", shortCode: "ALP" },
+      { id: "p-2", name: "贝塔", shortCode: "BET" },
+    ],
+  });
+  const keys = [...markup.matchAll(/data-lane-key="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(
+    keys,
+    ["project:none", "project:p-1", "project:p-2"],
+    "无项目列恒第一且恒保留；每项目一列（空列也在）",
+  );
+  const lanes = markup.split('data-testid="work-items-lane"').slice(1);
+  const noneHead = lanes[0]!.slice(0, lanes[0]!.indexOf("<ul"));
+  assert.ok(noneHead.includes("无项目"), "无项目列的列名走「无项目」文案");
+  assert.ok(noneHead.includes("0 项"), "空的无项目列显示 0（列不消失）");
+  assert.ok(noneHead.includes("<svg"), "列头有图标（中性文件夹字形）");
+  const betaHead = lanes[2]!.slice(0, lanes[2]!.indexOf("<ul"));
+  assert.ok(betaHead.includes("贝塔"), "项目列的列名 = 项目名");
+  assert.ok(betaHead.includes("1 项"), "项目列的计数 = 该项目的行数");
 });
 
 // ---------- ③ 卡片化：条目形态从表格行换成卡片（行契约三锚点不丢） ----------

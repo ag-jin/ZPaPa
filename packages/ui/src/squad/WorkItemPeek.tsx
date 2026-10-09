@@ -186,7 +186,7 @@ export function WorkItemPeekContent({
   const t = (id: string) => intl.formatMessage({ id });
   const workItem = read.workItem;
   /* 呈现判据全在纯函数里（`workItemPropertiesViewModel` / `workItemsViewModel`）：本层只负责画与不画。 */
-  const identifierText = workItemIdentifierText(workItem.identifierSeq);
+  const identifierText = workItemIdentifierText(workItem);
   const startDateText = workItemDateText(workItem.startDate);
   const dueDateText = workItemDateText(workItem.dueDate);
   const creatorText = workItemCreatorText(workItem.creator);

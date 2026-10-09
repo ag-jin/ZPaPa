@@ -177,6 +177,7 @@ export function WorkItemTableView({
                   row={row}
                   columns={columns}
                   snapshot={environment.snapshot}
+                  projects={environment.projects}
                   onOpenWorkItemDetail={environment.onOpenWorkItemDetail}
                   actions={actions}
                   select={select}

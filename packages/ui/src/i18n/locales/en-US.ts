@@ -4660,12 +4660,25 @@ const enUS: Record<string, string> = {
   // Inline editing (Surface round D): the title is the only inline-editable field with a value rule
   // (blank = no title); the priority failure reuses the key above (same field, same sentence).
   "squad.workItems.titleRequired": "Title cannot be empty",
+  // Project binding (R-P2 UI round): project / no project / new project / short code plus the
+  // short-code and name pre-checks. "No project" is an explicit legal state (multica's three layers:
+  // filter switch, grouping column, picker clear) — distinct from "a project this list cannot find"
+  // (that one falls back to the id instead of pretending to be "No project").
+  "squad.workItems.project": "Project",
+  "squad.workItems.project.none": "No project",
+  "squad.workItems.project.new": "New project…",
+  "squad.workItems.project.shortCode": "Short code",
+  "squad.workItems.project.shortCodePlaceholder": "e.g. PLT",
+  "squad.workItems.project.shortCodeInvalid":
+    '"{value}" is not a valid short code (2-8 uppercase letters or digits, e.g. PLT)',
+  "squad.workItems.project.nameRequired": "Project name is required",
   // Board lanes (#15): closed set of dimensions = no grouping / status category (4-lane skeleton) /
-  // assignee (user first, then first appearance).
+  // assignee (user first, then first appearance) / project (R-P2).
   "squad.workItems.lane.dimension": "Group by",
   "squad.workItems.lane.dimension.none": "No grouping",
   "squad.workItems.lane.dimension.statusCategory": "By status",
   "squad.workItems.lane.dimension.assignee": "By assignee",
+  "squad.workItems.lane.dimension.project": "By project",
   "squad.workItems.lane.statusCategory.unstarted": "Not started",
   "squad.workItems.lane.statusCategory.started": "In progress",
   "squad.workItems.lane.statusCategory.done": "Done",

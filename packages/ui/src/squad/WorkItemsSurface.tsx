@@ -31,6 +31,7 @@ import {
 } from "./workItemSurfaceViewModel.js";
 import { workItemCreateEnabled, type WorkItemLaneDimension } from "./workItemsViewModel.js";
 import type { WorkItemQuickCreateRequest } from "./workItemQuickCreateViewModel.js";
+import type { WorkItemProjectsHandle } from "./useWorkItemProjects.js";
 
 /* **工作项 Surface 宿主**（阶段二 · T-P2-R1 的接口冻结点）：三视图分派 + 投影 + 空态 + 共用状态。
    为什么要有宿主（而不是让页面直接渲染看板）：阶段二起「同一批工作项」有三种视图，
@@ -98,6 +99,7 @@ export function WorkItemsSurface({
   onOpenSession,
   onReorderPosition,
   onQuickCreate,
+  workItemProjects,
   viewport: viewportOverride,
 }: {
   /** 页面的原始投影（`snapshot.workItems`）：过滤/搜索/排序由本宿主按 `surface` 应用。 */
@@ -139,6 +141,10 @@ export function WorkItemsSurface({
       （默认值判据在 `workItemQuickCreateViewModel`），接线层负责调 `createWorkItem` 单源 +
       **服务回读**刷新（本层不做乐观插入、不碰行）。 */
   onQuickCreate?: (request: WorkItemQuickCreateRequest) => Promise<SquadEntryFeedback | null>;
+  /** 项目清单与内联新建的**唯一 handle**（页面经接线层注入；缺省 = 项目维度只给「无项目」一档、
+      行上不画项目 chip、快速创建条没有项目下拉 —— 「点得动但写不下去」在接线层面凑不出来）。
+      宿主**不自己取服务**（守卫钉住：本文件不得出现 useServices / resolveSquadRuntimeService）。 */
+  workItemProjects?: WorkItemProjectsHandle;
   /** 形态的**唯一注入点**（T-P3-R4）：缺省 ⇒ 按 `matchMedia` 的窄屏查询判（判不出来 ⇒ 桌面）；
       注入时不订阅浏览器（测试注入两档，也供嵌入方接管）。 */
   viewport?: WorkItemSurfaceViewport;
@@ -201,6 +207,9 @@ export function WorkItemsSurface({
     rowFocus,
     inlineEdit,
     selection,
+    laneDimension,
+    /* 项目清单（`null` = 还没读到）：行上的项目 chip 与看板的项目列**同一份**（单通道）。 */
+    projects: workItemProjects?.projects ?? null,
     onEdit,
     onReassign,
     onDiscard,

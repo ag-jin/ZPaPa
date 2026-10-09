@@ -46,7 +46,7 @@ export function WorkItemDetailOverview({
     intl.formatMessage({ id }, values);
   /* 四族新字段的呈现判据全在纯函数里（`workItemPropertiesViewModel`）：identifier 文本
      （前缀不入库，**唯一**拼接点）、优先级文案、日期逐字、创建人回落。组件只负责画与不画。 */
-  const identifierText = workItemIdentifierText(workItem.identifierSeq);
+  const identifierText = workItemIdentifierText(workItem);
   const startDateText = workItemDateText(workItem.startDate);
   const dueDateText = workItemDateText(workItem.dueDate);
   const creatorText = workItemCreatorText(workItem.creator);

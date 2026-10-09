@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -28,20 +28,50 @@ import {
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const readSource = (relativePath: string) => readFileSync(resolve(SRC_DIR, relativePath), "utf8");
 
+/** 全 src 树遍历（照 `workItemReactions.test.ts` 的全树守卫手法：判据是「符号的消费点集合」）。 */
+function walkSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) walkSourceFiles(full, out);
+    else if (/\.tsx?$/.test(full) && !full.endsWith(".d.ts")) out.push(full);
+  }
+  return out;
+}
+
 /* 工作项 Surface 字段（阶段一 · 轮 C）在 UI 面的用例：**呈现判据的纯函数**逐格 +
    结构守卫（单源/零日期换算/中性徽标）+ 两语文案成对。
 
    shared 的解析规则（优先级闭集 / 日历日期）不在这里重复：它们的逐格用例在
    `packages/shared/test/`。UI 侧只钉「这些值怎么被展示、怎么被送进表单」。 */
 
-// ---------- ① identifier 展示文本（UI 单源纯函数；前缀不入库） ----------
+// ---------- ① identifier 展示文本（UI 门面 → shared 单源；前缀是项目短码快照） ----------
 
-test("identifier 展示文本：恰为 `#<序号>`；未设置 ⇒ null（调用方据此不渲染）", () => {
-  assert.equal(workItemIdentifierText(12), "#12");
-  assert.equal(workItemIdentifierText(1), "#1");
-  assert.equal(workItemIdentifierText(999), "#999");
-  assert.equal(workItemIdentifierText(undefined), null);
-  assert.equal(workItemIdentifierText(null), null);
+/* R-P2 口径（项目绑定 · UI 轮）：编号文本**不再是** UI 自己拼的 `#<序号>` —— 前缀来自
+   `work_items.identifier_prefix`（绑定项目时落的**短码快照**），文本形态由 shared 的
+   `formatWorkItemIdentifier` 单源给出（有项目 = `{短码}-{序号}`；无 = `#{序号}`）。
+   UI 这一层只剩「把行的两个字段交给它」，不再持有任何前缀常量。
+   期望值取自 shared 的契约（`packages/shared/test/projectDomain.test.ts`），不重算实现。 */
+test("identifier 展示文本：有短码快照 ⇒ `{短码}-{序号}`；无 ⇒ `#{序号}`；序号缺失 ⇒ null", () => {
+  assert.equal(workItemIdentifierText({ identifierSeq: 12, identifierPrefix: "PLT" }), "PLT-12");
+  assert.equal(workItemIdentifierText({ identifierSeq: 12, identifierPrefix: null }), "#12");
+  assert.equal(
+    workItemIdentifierText({ identifierSeq: 7 }),
+    "#7",
+    "没有前缀字段（无项目）⇒ 既有 `#N` 形态逐字保持",
+  );
+  assert.equal(workItemIdentifierText({ identifierSeq: 1 }), "#1");
+  assert.equal(workItemIdentifierText({ identifierSeq: 999, identifierPrefix: "ABC12" }), "ABC12-999");
+  assert.equal(
+    workItemIdentifierText({ identifierSeq: 3, identifierPrefix: "" }),
+    "#3",
+    "空串是坏快照（手改库残留）⇒ 按无前缀呈现，不拼出 `-3` 这种残形",
+  );
+  assert.equal(
+    workItemIdentifierText({ identifierSeq: undefined, identifierPrefix: "PLT" }),
+    null,
+    "没有序号就没有编号（返回 null 而不是空串 —— 调用方据此整块不渲染）",
+  );
+  assert.equal(workItemIdentifierText({ identifierSeq: null }), null);
 });
 
 // ---------- ② 优先级（闭集四档 + 未设置） ----------
@@ -321,18 +351,26 @@ test("守卫｜列表行视觉密度：细分隔线 + hover surface + 44px 行�
   );
 });
 
-test("守卫｜优先级徽标只有一处定义（行模块与详情概览共用同一个组件）", () => {
-  // T-P2-R1：徽标是「行词汇」，行词汇的拥有者随行渲染一起抽到 WorkItemRows。
-  const board = readSource("squad/WorkItemRows.tsx");
+test("守卫｜优先级徽标只有一处定义（行零件模块定义，行模块转出，详情概览共用同一个组件）", () => {
+  /* R-P2 口径更新（项目绑定 · UI 轮）：徽标的定义从 `WorkItemRows` 迁到**行零件的家**
+     （`workItemRowParts.tsx`）—— 理由与标签 chip / 动作簇 / 勾选件当初迁过去时同款：
+     行模块的 400 行硬线要给项目 chip 腾位置。**单点性质不变**：全树仍只有一处定义，
+     行模块把它原样转出，消费方（详情概览 / 表格单元格 / peek）的 import 路径不变。 */
+  const parts = readSource("squad/workItemRowParts.tsx");
+  const rows = readSource("squad/WorkItemRows.tsx");
   const overview = readSource("squad/WorkItemDetailOverview.tsx");
   assert.ok(
-    board.includes("export function WorkItemPriorityBadge("),
-    "徽标的唯一定义在共用行模块（行词汇的拥有者）",
+    parts.includes("export function WorkItemPriorityBadge("),
+    "徽标定义在行零件的家（单点）",
   );
   assert.equal(
-    (board.match(/const WORK_ITEM_PRIORITY_BADGE_CLASSNAME/g) ?? []).length,
+    (parts.match(/WORK_ITEM_PRIORITY_BADGE_CLASSNAME\s*=/g) ?? []).length,
     1,
     "徽标样式常量只有一处定义",
+  );
+  assert.ok(
+    rows.includes("WorkItemPriorityBadge,") && rows.includes("<WorkItemPriorityBadge"),
+    "行模块转出徽标并消费它（定义仍只有一处）",
   );
   assert.ok(
     overview.includes("<WorkItemPriorityBadge"),
@@ -391,16 +429,39 @@ test("守卫｜日期零转换：轮 C 的呈现与编辑面不得出现时刻�
   }
 });
 
-test("守卫｜identifier 前缀不入库：展示文本单源拼接，领域形状只收整数序号", () => {
+test("守卫｜编号文本单源：UI 委托 shared 的 formatWorkItemIdentifier（前缀 = 项目短码快照，UI 不再自拼）", () => {
   const vm = stripComments(readSource("squad/workItemPropertiesViewModel.ts"));
-  assert.equal(
-    (vm.match(/WORK_ITEM_IDENTIFIER_PREFIX/g) ?? []).length,
-    2,
-    "前缀常量只有「定义 + 拼接」两处（多一处 = 有人自己拼）",
+  assert.ok(
+    vm.includes("formatWorkItemIdentifier("),
+    "编号文本必须委托 shared 单源（有项目 = {短码}-{序号}；无 = #{序号}）",
   );
-  assert.ok(vm.includes('export const WORK_ITEM_IDENTIFIER_PREFIX = "#";'), "前缀是 UI 常量短码");
-  // T-P2-R1：行上的 identifier 呈现随行渲染抽到 WorkItemRows（仍是同一个单源函数）。
-  for (const file of ["squad/WorkItemDetailOverview.tsx", "squad/WorkItemRows.tsx"]) {
+  assert.ok(
+    !vm.includes("WORK_ITEM_IDENTIFIER_PREFIX"),
+    "UI 自己的前缀常量已随项目短码上线退役（第二处拼接 = 编号形态的分叉点）",
+  );
+  assert.ok(!/["'`]#\$\{/.test(vm), "UI 不得自己拼前缀（前缀的形态是 shared 的事）");
+  /* 全 src 树：shared 的 `formatWorkItemIdentifier` 只准在**一个**模块里被调用（UI 的门面），
+     其余呈现面一律走那个门面 —— 第二处直接调用就是第二份形态判据。 */
+  const callers: string[] = [];
+  for (const file of walkSourceFiles(SRC_DIR)) {
+    const source = stripComments(readFileSync(file, "utf8"));
+    if (source.includes("formatWorkItemIdentifier(")) {
+      callers.push(file.slice(SRC_DIR.length + 1));
+    }
+  }
+  assert.deepEqual(
+    callers.sort(),
+    ["squad/workItemPropertiesViewModel.ts"],
+    "编号文本的 shared 调用点恰一处（其余面走 workItemIdentifierText 门面）",
+  );
+  // 呈现面必须真的走门面函数，且不得自己拼前缀。
+  for (const file of [
+    "squad/WorkItemDetailOverview.tsx",
+    "squad/WorkItemRows.tsx",
+    "squad/WorkItemTableCell.tsx",
+    "squad/WorkItemPeek.tsx",
+    "squad/workItemSurfaceViewModel.ts",
+  ]) {
     const source = stripComments(readSource(file));
     assert.ok(source.includes("workItemIdentifierText("), `${file} 必须走单源函数`);
     assert.ok(

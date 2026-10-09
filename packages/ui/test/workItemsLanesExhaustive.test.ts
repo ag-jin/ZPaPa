@@ -15,6 +15,12 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import { RUN_SETTLE_REASON_MESSAGE_IDS } from "../src/squad/squadRunHistoryViewModel.js";
 import {
+  WORK_ITEM_NO_PROJECT_LANE_KEY,
+  projectIdFromLaneKey,
+  workItemProjectLaneDisplay,
+  workItemProjectLaneKey,
+} from "../src/squad/workItemProjectViewModel.js";
+import {
   WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS,
   flattenWorkItemBoard,
   groupWorkItemBoard,
@@ -519,7 +525,135 @@ test("零耦合｜4 category 文案映射穷尽且与 6 键词表不重合（两
   }
 });
 
-// ---------- ⑧ 标签 chip 投影（看板行截断，独立夹具） ----------
+// ---------- ⑩ project：每项目一列 + 「无项目」列恒保留（R-P2 项目绑定 · UI 轮） ----------
+
+/* 形态真源：multica `board-view.tsx:184-198`（`grouping === "project"` 分支）+ `:95-134`
+   （`projectColumn` / `withNoProjectColumn`）—— **无项目列就是一条普通列且恒保留**
+   （multica 里它是拖拽落点；本仓 v1 拖拽只在状态分组开放，但「恒保留」这条形态不变）。
+   项目列的**次序**取项目清单本身的次序（repo 已按 `created_at ASC, id ASC` 给好），本层不重排
+   —— 按名字/locale 排序会让列序随改名漂移（与 assignee 维度同一理由）。 */
+const PROJECTS = [
+  { id: "p-alpha", name: "阿尔法", shortCode: "ALP" },
+  { id: "p-beta", name: "贝塔", shortCode: "BET" },
+];
+
+test("穷举｜project：无项目列恒第一（为 0 也在），其后每项目一列（空列同样保留）", () => {
+  const result = groupWorkItemBoard({
+    items: [wi("only", { projectId: "p-beta" })],
+    dimension: "project",
+    roster: EMPTY_ROSTER,
+    projects: PROJECTS,
+  });
+  assert.deepEqual(
+    result.map((lane) => [lane.key, lane.count]),
+    [
+      ["project:none", 0],
+      ["project:p-alpha", 0],
+      ["project:p-beta", 1],
+    ],
+    "骨架不随数据跳动：无项目列恒第一、空项目列保留（与 statusCategory 同一条口径）",
+  );
+});
+
+test("穷举｜project：只切根 —— 子项的项目与根不同也随根落位；无项目行落 `project:none`", () => {
+  const items = [
+    wi("root", { projectId: "p-beta" }),
+    wi("child", { parentId: "root" }), // 子项无项目：仍随根
+    wi("free", {}), // 无项目根
+  ];
+  const result = groupWorkItemBoard({
+    items,
+    dimension: "project",
+    roster: EMPTY_ROSTER,
+    projects: PROJECTS,
+  });
+  assert.deepEqual(
+    result.map((lane) => [lane.key, lane.rows.map((row) => [row.item.id, row.depth])]),
+    [
+      ["project:none", [["free", 0]]],
+      ["project:p-alpha", []],
+      [
+        "project:p-beta",
+        [
+          ["root", 0],
+          ["child", 1],
+        ],
+      ],
+    ],
+    "分组键取**根**的项目（子树整体随根；与状态/指派维度同一份 DFS 判据）",
+  );
+  assertEachRowExactlyOnce(result, items);
+});
+
+test("穷举｜project：清单里没有的挂接（跨版本残留/坏数据）自成一条，不丢行", () => {
+  const items = [wi("stale", { projectId: "p-gone" }), wi("known", { projectId: "p-alpha" })];
+  const result = groupWorkItemBoard({
+    items,
+    dimension: "project",
+    roster: EMPTY_ROSTER,
+    projects: PROJECTS,
+  });
+  assert.deepEqual(result.map((lane) => [lane.key, lane.count]), [
+    ["project:none", 0],
+    ["project:p-alpha", 1],
+    ["project:p-beta", 0],
+    ["project:p-gone", 1],
+  ]);
+  assertEachRowExactlyOnce(result, items);
+});
+
+test("穷举｜project：缺项目清单 ⇒ 无项目列 + 挂接行各成一条（读不到清单也不静默丢行）", () => {
+  const items = [wi("a", { projectId: "p-1" }), wi("b")];
+  const result = groupWorkItemBoard({ items, dimension: "project", roster: EMPTY_ROSTER });
+  assert.deepEqual(result.map((lane) => [lane.key, lane.count]), [
+    ["project:none", 1],
+    ["project:p-1", 1],
+  ]);
+});
+
+test("穷举｜project：空输入 ⇒ 空数组（不造空骨架；空态由看板的空态分支负责）", () => {
+  assert.deepEqual(
+    groupWorkItemBoard({
+      items: [],
+      dimension: "project",
+      roster: EMPTY_ROSTER,
+      projects: PROJECTS,
+    }),
+    [],
+  );
+});
+
+test("穷举｜project：确定性（两次调用逐项相同）", () => {
+  const items = [wi("a", { projectId: "p-beta" }), wi("b"), wi("c", { projectId: "p-alpha" })];
+  const build = () =>
+    groupWorkItemBoard({ items, dimension: "project", roster: EMPTY_ROSTER, projects: PROJECTS });
+  assert.deepEqual(build(), build());
+});
+
+/* 列头的**显示投影**（纯函数，组件只投影它）：无项目列 / 命中项目（名字）/ 清单里没有的挂接
+   （回落 id —— 不显示成「无项目」：那会把「挂在某个已看不见的项目上」读成「没挂项目」，
+   与 `workItemQuickCreateParentDisplay` 的 missing 同一条纪律）。 */
+test("穷举｜project 列头投影：none / 项目名 / 未知挂接回落 id 三态分开，不用同一个说法", () => {
+  assert.deepEqual(workItemProjectLaneDisplay({ laneKey: WORK_ITEM_NO_PROJECT_LANE_KEY, projects: PROJECTS }), {
+    kind: "none",
+  });
+  assert.deepEqual(workItemProjectLaneDisplay({ laneKey: "project:p-beta", projects: PROJECTS }), {
+    kind: "project",
+    name: "贝塔",
+    shortCode: "BET",
+  });
+  assert.deepEqual(workItemProjectLaneDisplay({ laneKey: "project:p-gone", projects: PROJECTS }), {
+    kind: "missing",
+    id: "p-gone",
+  });
+  // 列键是稳定身份（= 行的挂接值），无项目列有专用常量键（不与任何项目 id 撞：id 是 uuid）。
+  assert.equal(workItemProjectLaneKey(undefined), WORK_ITEM_NO_PROJECT_LANE_KEY);
+  assert.equal(workItemProjectLaneKey("p-1"), "project:p-1");
+  assert.equal(projectIdFromLaneKey("project:p-1"), "p-1");
+  assert.equal(projectIdFromLaneKey(WORK_ITEM_NO_PROJECT_LANE_KEY), null);
+});
+
+// ---------- ⑪ 标签 chip 投影（看板行截断，独立夹具） ----------
 
 test("穷举｜chip 投影：0 / 1 / 2 / 恰好 3 / 4 / 10 条，默认上限 3，且不改写入参", () => {
   assert.deepEqual(workItemLabelChips([]), { shown: [], hiddenCount: 0 });

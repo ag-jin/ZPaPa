@@ -1,5 +1,6 @@
 import {
   WORK_ITEM_PRIORITY_KEYS,
+  formatWorkItemIdentifier,
   resolveWorkItemDateOnly,
   resolveWorkItemPriority,
   type WorkItemCreator,
@@ -21,24 +22,24 @@ import {
    共用同一份，UI 不得复制第二份）。这里只加「UI 怎么显示 / 表单怎么取值」。 */
 
 /**
- * identifier 展示文本的**前缀常量**（用户裁定 Q6：前缀**不入库**，DB 只存整数序号；
- * 展示文本由 UI 单源纯函数生成）。
+ * identifier 的展示文本（**UI 门面 → shared 单源**）：有项目短码快照 ⇒ `{短码}-{序号}`、
+ * 无 ⇒ `#{序号}`、序号缺失 ⇒ `null`。
  *
- * 为什么是常量而不是 workspace 派生 / 入库：前缀入库要新增 workspace 级配置与迁移面，
- * 本阶段不需要；形态可后续单独裁定 —— 到那时**只改这一处**，展示面全跟着走。
- */
-export const WORK_ITEM_IDENTIFIER_PREFIX = "#";
-
-/**
- * identifier 的展示文本：`#<序号>`；未设置（`undefined` / `null`）⇒ `null`。
+ * 为什么不再由 UI 自己拼（R-P2 项目绑定 · UI 轮）：前缀从"UI 常量 `#`"变成了**行上的事实**
+ * （`identifier_prefix` = 绑定项目时落的短码快照），而「短码 + 分隔符 + 序号」的形态判据
+ * 已在 shared 单源（`formatWorkItemIdentifier`，两个消费面共用）。UI 这一层只做**取值搬运**
+ * （把行的两个字段交给它）—— 再拼一遍就会在「空串前缀算不算有前缀」「分隔符是不是连字符」
+ * 上与 shared 分叉，而分叉只体现在用户看到的编号上（不报错）。
  *
- * 返回 `null` 而不是空串：调用方据此**整块不渲染**（空行是噪音，与「未设置」不是同一件事）。
- * 入参是**整数序号**（`identifierSeq`），不是格式化后的字符串 —— 前缀不在库里，此处是唯一
- * 拼接点；反过来，任何「从字符串里再解析出序号」的写法都没有必要（也没有第二个来源）。
+ * 返回 `null`（而不是空串）：调用方据此**整块不渲染**（空行是噪音，与「未设置」不是同一件事）。
+ * 入参形状故意与领域字段**逐名对应**（`identifierPrefix` / `identifierSeq`），因此可以直接把
+ * 一行工作项传进来。
  */
-export function workItemIdentifierText(seq: number | null | undefined): string | null {
-  if (seq === null || seq === undefined) return null;
-  return `${WORK_ITEM_IDENTIFIER_PREFIX}${seq}`;
+export function workItemIdentifierText(item: {
+  identifierPrefix?: string | null;
+  identifierSeq?: number | null;
+}): string | null {
+  return formatWorkItemIdentifier({ prefix: item.identifierPrefix, seq: item.identifierSeq });
 }
 
 /** 优先级 → 文案 id 的**穷尽**映射（`Record<WorkItemPriorityKey, string>`：闭集加一枚键

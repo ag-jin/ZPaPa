@@ -2,16 +2,21 @@ import type { ReactNode } from "react";
 import type { WorkItem } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { useSortable } from "@dnd-kit/sortable";
-import { GripVertical } from "lucide-react";
+import { GripVertical, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SUBAGENT_COLOR_CLASS, resolveSubagentColorFromName } from "@/lib/subagentColors.js";
-import type { WorkItemBoardRow } from "./workItemsViewModel.js";
+import type { WorkItemBoardRow, WorkItemLaneDimension } from "./workItemsViewModel.js";
 import type { WorkItemPositionPlan } from "./workItemPositionViewModel.js";
 import type { WorkItemInlineEditApi } from "./useWorkItemInlineEdit.js";
 import { workItemBulkSelectable, type WorkItemRowSelection } from "./workItemBulkViewModel.js";
+import {
+  workItemProjectText,
+  type WorkItemProjectOption,
+} from "./workItemProjectViewModel.js";
+import { workItemPriorityMessageId } from "./workItemPropertiesViewModel.js";
 
 /* 行模块的**零件与契约**（阶段二 · T-P2-R3 抽出）。
  *
@@ -46,6 +51,11 @@ export type WorkItemRowEnvironment = {
   /** 批量选择（阶段二 · T-P2-R5）：`undefined` = 未进入批量选择模式 ⇒ 行**不渲染**勾选件
       （默认界面的行结构因此逐槽不变，见 `WorkItemRows` 的结构纪律）。 */
   selection?: WorkItemRowSelection;
+  /** 当前分组维度：行上的项目 chip 要据此判「按项目分组时不再重复显示项目」
+      （判据是纯函数 `workItemRowProjectChipVisible`，行只在用点调它一次 —— 不自己再写一份）。 */
+  laneDimension: WorkItemLaneDimension;
+  /** 项目清单（`null` = 还没读到 ⇒ chip 不渲染：显示一个 uuid 是噪音；读面回来后才画名字）。 */
+  projects: readonly WorkItemProjectOption[] | null;
   /** 拖拽改序（阶段二 · T-P2-R6b）：`undefined` = 不给把手（非看板 / 非状态分组 / 非手动档 /
       页面没接写入口）。判据在 `workItemBoardReorderEnabled`（宿主投影，行与视图不各判一遍）。 */
   reorder?: WorkItemRowReorder;
@@ -76,6 +86,77 @@ export type WorkItemRowFocus = {
       （T-P2-R3 的加法参数化 —— 原为 `HTMLLIElement`）。 */
   registerRow: (id: string, element: HTMLElement | null) => void;
 };
+
+/**
+ * 工作项优先级徽标（**一处定义，多面共用**：行的 picker 与详情概览；R-P2 从 `WorkItemRows`
+ * 迁到行零件的家 —— 迁来的唯一理由是行模块的 400 行硬线要给项目 chip 腾位置，单点性质不变，
+ * 行模块原样转出给消费方）；未设置（NULL）⇒ 不渲染。`testId` 由调用方给：两个面的稳定锚点不同
+ * （行锚 `work-item-priority` / 概览锚带 `-detail-`），锚点是**面的属性**，不是徽标的属性。
+ *
+ * 闭集外的值（坏数据 / 未来新增档位的旧界面）⇒ 整个徽标不渲染：显示一个看不懂的裸 key
+ * 只会让人以为那是个合法档位。
+ */
+export function WorkItemPriorityBadge({
+  priority,
+  testId,
+}: {
+  /** 工作项优先级原文（闭集判定在纯函数里；这里不猜、不折算）。 */
+  priority: unknown;
+  /** 本面的稳定锚点（e2e 依赖）。 */
+  testId: string;
+}) {
+  const { intl } = useZCodeIntl();
+  const messageId = workItemPriorityMessageId(priority);
+  if (messageId === null) return null;
+  return (
+    <span className={WORK_ITEM_PRIORITY_BADGE_CLASSNAME} data-testid={testId}>
+      {intl.formatMessage({ id: messageId })}
+    </span>
+  );
+}
+
+/** 优先级徽标的**中性**外观（阶段一轮 C）：同样不借语义色 —— 优先级是**分类**，不是「成了/出事了」；
+    借用 success / destructive 让某一档「看起来更响」会把档位读成故障（DESIGN：语义色只编码状态）。
+    常量一处定义（本模块），行与详情概览共用同一个组件（见 `WorkItemPriorityBadge`）；行内 picker 的
+    「未设置」占位也复用它（`unsetClassName`）—— 占位与有值徽标是同一个外观。 */
+export const WORK_ITEM_PRIORITY_BADGE_CLASSNAME =
+  "rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle";
+
+/* 项目 chip 的**中性**外观（R-P2；multica `board-card.tsx:232-237` 的形态取中性档）：项目是
+   **分类**，不编码状态 —— 底色用本主题的中性弱底色 token `bg-surface`（本主题没有 `--color-muted`，
+   shadcn 上游的 `bg-muted` 在本仓编译不出任何规则、会静默丢色，见风格守卫），圆角走显式档位
+   `rounded-sm`（禁裸 `rounded`）；`max-w-36` 是标准档位（列表行窄，长项目名截断而不是把行撑开）。 */
+const WORK_ITEM_PROJECT_CHIP_CLASSNAME =
+  "inline-flex min-w-0 max-w-36 shrink-0 items-center gap-1 rounded-sm bg-surface px-1.5 py-0.5 text-ui-xs text-foreground-subtle";
+
+/**
+ * 工作项**项目 chip**（**一处定义，多面共用**：卡片 chip 行、列表行、表格的项目格后的静态文字）。
+ *
+ * 两条口径（与 multica A3 同款）：
+ * ① **有项目才有 chip**（`projectId === undefined` ⇒ 整块不渲染：空 chip 是噪音，与「没挂项目」
+ *    不是一回事）；**清单还没读到**（`projects === null`）也不渲染 —— 显示一串 uuid 不如不显示，
+ *    读面回来后才画名字；
+ * ② 清单里查不到这个 id（跨版本残留）⇒ **回落 id**（`workItemProjectText` 的单源判据）：
+ *    那说明这条**确实挂在某个项目上**，显示成「无项目」是在说一件不成立的事。
+ *
+ * `title` 给全名（窄容器里截断的是显示，不是事实）。
+ */
+export function WorkItemProjectChip({
+  projectId,
+  projects,
+}: {
+  projectId?: string;
+  projects: readonly WorkItemProjectOption[] | null;
+}) {
+  if (projectId === undefined || projects === null) return null;
+  const text = workItemProjectText({ projectId, projects });
+  return (
+    <span className={WORK_ITEM_PROJECT_CHIP_CLASSNAME} data-testid="work-item-project-chip" title={text}>
+      <Folder aria-hidden className="size-3 shrink-0" />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
 
 /**
  * 指派人前面的圆点（**只表达身份，不编码状态**，spec §11.3）：

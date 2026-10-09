@@ -269,8 +269,15 @@ function renderActions(over: {
   laneDimension?: WorkItemLaneDimension;
   surface?: WorkItemSurfaceState;
   baseline?: ReturnType<typeof workItemViewBaseline> | null;
+  /** 项目清单（R-P2）：注入后项目过滤控件有清单可列（缺省 = 还没读到 ⇒ 只给「无项目」一档）。 */
+  projects?: readonly { id: string; name: string; shortCode: string }[];
 }): string {
-  const { laneDimension = "none", surface = workItemSurfaceDefaultState(), baseline = null } = over;
+  const {
+    laneDimension = "none",
+    surface = workItemSurfaceDefaultState(),
+    baseline = null,
+    projects,
+  } = over;
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
@@ -283,6 +290,18 @@ function renderActions(over: {
         surface,
         onSurfaceIntent: () => {},
         baseline,
+        ...(projects === undefined
+          ? {}
+          : {
+              workItemProjects: {
+                projects,
+                createProject: async () => ({
+                  kind: "failed" as const,
+                  feedback: { tone: "error" as const, messageId: "squad.common.operationFailed" },
+                }),
+                reload: async () => {},
+              },
+            }),
         t,
         onReload: () => {},
         bulk: {
@@ -322,6 +341,65 @@ test("排序档位（验收 5）｜lane=assignee 无 Manual：档位清单由纯
   );
 });
 
+// ---------- ③b 项目过滤（R-P2）：触发器 + 过滤态 chips 回显 + 锁定 ----------
+
+/* 形态/语义真源：multica A4（多选 + 独立「无项目」开关）与用户派发单的「过滤态 chips 回显」。
+   变异：把 chips 换成只读文本（点不掉）⇒ 第一条必红；拿掉锁定 ⇒ 第三条必红。 */
+test("项目过滤｜触发器常驻 + 共用了置灰原因；视图固定项目维 ⇒ 控件锁定", () => {
+  const plain = renderActions({ projects: [{ id: "p-alpha", name: "阿尔法", shortCode: "ALP" }] });
+  const trigger = tagWithTestId(plain, "work-items-project-filter");
+  assert.ok(trigger.length > 0, "项目过滤入口常驻动作行（缺数据只置灰，不消失）");
+  assert.ok(trigger.includes("项目"), "触发器带「项目」文案（可及名称同源）");
+  assert.ok(
+    !hasDisabledAttr(trigger),
+    "有目标 + 快照就绪 ⇒ 可用（与状态/优先级同一份置灰判据的结论）",
+  );
+  /* 菜单内容在**关闭态**不进 SSR markup（Radix 的 presence）⇒ 选项清单的判据在纯函数
+     `workItemProjectFilterOptions`（独立用例逐格钉住）；这里只钉入口与回显。 */
+  assert.ok(
+    !plain.includes('data-testid="work-items-project-filter-chip"'),
+    "没勾任何项目 ⇒ 没有 chip（空 chip 行是噪音）",
+  );
+
+  const selected = renderActions({
+    projects: [{ id: "p-alpha", name: "阿尔法", shortCode: "ALP" }],
+    surface: applyWorkItemSurfaceIntent(workItemSurfaceDefaultState(), {
+      kind: "toggleProjectFilter",
+      projectId: "p-alpha",
+    }),
+  });
+  assert.equal(
+    (selected.match(/data-testid="work-items-project-filter-chip"/g) ?? []).length,
+    1,
+    "勾了一个项目 ⇒ 恰一枚 chip（回显）",
+  );
+  assert.ok(selected.includes("阿尔法"), "chip 显示项目名（不是 id）");
+  assert.ok(
+    selected.includes('data-testid="work-items-project-filter-active"'),
+    "触发器给「这一维生效了」的记号",
+  );
+
+  const noneOnly = renderActions({
+    surface: applyWorkItemSurfaceIntent(workItemSurfaceDefaultState(), {
+      kind: "toggleNoProjectFilter",
+    }),
+  });
+  assert.ok(
+    noneOnly.includes('data-testid="work-items-project-filter-chip-none"') &&
+      noneOnly.includes("无项目"),
+    "「无项目」开关也回显成一枚 chip（与项目 chip 分开：它不是一个项目）",
+  );
+
+  const locked = renderActions({
+    baseline: workItemViewBaseline(view({ query: { projectIds: ["p-alpha"] } })),
+    projects: [{ id: "p-alpha", name: "阿尔法", shortCode: "ALP" }],
+  });
+  assert.ok(
+    hasDisabledAttr(tagWithTestId(locked, "work-items-project-filter")),
+    "视图固定了项目维 ⇒ 该控件锁定（与另两维同款；固定值不是用户能随手改的）",
+  );
+});
+
 // ---------- ④ baseline：固定值锁定 + 清除筛选的可点性 ----------
 
 test("baseline（验收 ...）｜视图固定值锁定置灰；「清除筛选」只在有增量时可点", () => {
@@ -329,7 +407,12 @@ test("baseline（验收 ...）｜视图固定值锁定置灰；「清除筛选�
   const baseline = workItemViewBaseline(record);
   const seeded = {
     ...workItemSurfaceDefaultState(),
-    filter: { statusCategory: "started" as const, priority: "all" as const },
+    filter: {
+      statusCategory: "started" as const,
+      priority: "all" as const,
+      projectIds: [],
+      includeNoProject: false,
+    },
   };
   const locked = renderActions({ surface: seeded, baseline });
   assert.ok(
@@ -351,6 +434,23 @@ test("baseline（验收 ...）｜视图固定值锁定置灰；「清除筛选�
   assert.ok(
     !hasDisabledAttr(tagWithTestId(incremented, "work-items-filter-clear")),
     "有增量（搜索）⇒ 清除筛选可点（点了回到视图条件）",
+  );
+
+  /* R-P2：项目 facet 与另两维**同一套**增量/锁定语义（勾一个视图没固定的项目 = 增量；
+     视图固定了项目维 ⇒ 该控件锁定）。 */
+  const projectIncrement = applyWorkItemSurfaceIntent(seeded, {
+    kind: "toggleProjectFilter",
+    projectId: "p-1",
+  });
+  const withProject = renderActions({ surface: projectIncrement, baseline });
+  assert.ok(
+    !hasDisabledAttr(tagWithTestId(withProject, "work-items-filter-clear")),
+    "勾了一个项目 ⇒ 有增量（清除筛选可点）",
+  );
+  const lockedBaseline = workItemViewBaseline(view({ query: { projectIds: ["p-1"] } }));
+  assert.ok(
+    lockedBaseline.locked.project,
+    "视图固定了项目维 ⇒ 该维算固定（锁定判据与另两维同款）",
   );
 });
 

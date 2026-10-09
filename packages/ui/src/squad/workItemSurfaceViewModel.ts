@@ -122,14 +122,16 @@ export const WORK_ITEM_PRIORITY_FILTER_MESSAGE_IDS: Record<WorkItemPriorityFilte
 
 /**
  * 列目录（**闭集**）：表格视图（R3）与列配置（R3）消费它。**只有领域对象上真有的字段**
- * —— 差距清单里的 project / parent-child progress / updated 本阶段**没有**数据面
- * （服务面零改动是本轮硬约束），不造空列（登记为后续）。
+ * —— 差距清单里的 parent-child progress / updated 本阶段**没有**数据面（服务面零改动是本轮
+ * 硬约束），不造空列（登记为后续）。`project` 在 R-P2（项目绑定 · UI 轮）补上：`projectId`
+ * 与项目清单两条数据面都已就绪（R-P1 服务面五件）。
  */
 export type WorkItemSurfaceColumnKey =
   | "identifier"
   | "status"
   | "priority"
   | "assignee"
+  | "project"
   | "labels"
   | "startDate"
   | "dueDate"
@@ -140,6 +142,7 @@ export const WORK_ITEM_SURFACE_COLUMNS: readonly WorkItemSurfaceColumnKey[] = [
   "status",
   "priority",
   "assignee",
+  "project",
   "labels",
   "startDate",
   "dueDate",
@@ -152,6 +155,8 @@ export const WORK_ITEM_COLUMN_MESSAGE_IDS: Record<WorkItemSurfaceColumnKey, stri
   status: "squad.workItems.field.status",
   priority: "squad.workItems.priority",
   assignee: "squad.workItems.field.assignee",
+  /* 项目列与项目过滤/拾取器**同一句话**（同一个概念一句话：R-P2 新增键最小集）。 */
+  project: "squad.workItems.project",
   labels: "squad.workItems.labels",
   startDate: "squad.workItems.startDate",
   dueDate: "squad.workItems.dueDate",
@@ -170,10 +175,14 @@ export function visibleWorkItemColumns(
 
 /* ---------------- Surface 状态与默认值 ---------------- */
 
-/** 过滤 facet 的当前取值（`all` = 不筛）。 */
+/** 过滤 facet 的当前取值（`all` = 不筛；项目维是**多选 + 独立「无项目」开关** —— multica A4）。 */
 export type WorkItemSurfaceFilter = {
   statusCategory: WorkItemStatusFilterValue;
   priority: WorkItemPriorityFilterValue;
+  /** 勾选的项目 id（空 = 这一维不筛；与 `includeNoProject` 一起决定「谁留下」）。 */
+  projectIds: readonly string[];
+  /** 「无项目」开关（独立布尔，不是 ids 里的一枚 —— 无项目不是一个项目）。 */
+  includeNoProject: boolean;
 };
 
 /** Surface 的**会话内**状态（页面持有；与 `laneDimension` 同款：本域无偏好持久化先例）。 */
@@ -196,7 +205,12 @@ export function workItemSurfaceDefaultState(): WorkItemSurfaceState {
   return {
     view: "board",
     search: "",
-    filter: { statusCategory: "all", priority: "all" },
+    filter: {
+      statusCategory: "all",
+      priority: "all",
+      projectIds: [],
+      includeNoProject: false,
+    },
     sort: { key: "manual", direction: "asc" },
     columns: { hidden: [] },
   };
@@ -215,29 +229,37 @@ export function workItemSurfaceSearchText(raw: string): string {
  * 一条工作项**命中搜索**吗：标题 / 标签 / identifier 展示文本（Q3 裁定），
  * 大小写与 trim 口径走 `workItemSurfaceSearchText` 单源；空查询 ⇒ `true`（不过滤）。
  *
- * identifier 走 `workItemIdentifierText` 单源（前缀常量只此一处）—— 按编号搜索才有意义
- * （「按编号找人」是 identifier 这个字段存在的理由）；标签是本地的内存匹配，不是索引。
+ * identifier 走 `workItemIdentifierText` 门面（文本形态的单源在 shared 的
+ * `formatWorkItemIdentifier`）—— 按编号搜索才有意义（「按编号找人」是 identifier 这个字段
+ * 存在的理由）；**绑了项目的行按 `{短码}-{序号}` 搜**（跟着显示走：搜的东西必须是看得见的东西）。
+ * 标签是本地的内存匹配，不是索引。
  */
 export function workItemMatchesSearch(
-  item: Pick<WorkItem, "title" | "labels" | "identifierSeq">,
+  item: Pick<WorkItem, "title" | "labels" | "identifierSeq" | "identifierPrefix">,
   rawQuery: string,
 ): boolean {
   const query = workItemSurfaceSearchText(rawQuery);
   if (query.length === 0) return true;
   if (workItemSurfaceSearchText(item.title).includes(query)) return true;
   if (item.labels.some((label) => workItemSurfaceSearchText(label).includes(query))) return true;
-  const identifier = workItemIdentifierText(item.identifierSeq);
+  const identifier = workItemIdentifierText(item);
   return identifier !== null && workItemSurfaceSearchText(identifier).includes(query);
 }
 
-/** 有没有**生效的**过滤/搜索（空查询 + 全 `all` ⇒ false）。「清除筛选」的可点性、空结果态的
-    措辞都问它 —— 两处各判一遍，迟早在「只有空格」这类输入上分叉。 */
+/** 有没有**生效的**过滤/搜索（空查询 + 全 `all` + 项目不筛 ⇒ false）。「清除筛选」的可点性、
+    空结果态的措辞都问它 —— 两处各判一遍，迟早在「只有空格」这类输入上分叉。 */
 export function workItemSurfaceHasActiveQuery(state: WorkItemSurfaceState): boolean {
   return (
     workItemSurfaceSearchText(state.search).length > 0 ||
     state.filter.statusCategory !== "all" ||
-    state.filter.priority !== "all"
+    state.filter.priority !== "all" ||
+    workItemSurfaceProjectFilterActive(state.filter)
   );
+}
+
+/** 项目维**生效了吗**（勾了至少一个项目，或打开了「无项目」开关）—— 唯一判据（过滤与清除共用）。 */
+export function workItemSurfaceProjectFilterActive(filter: WorkItemSurfaceFilter): boolean {
+  return filter.projectIds.length > 0 || filter.includeNoProject;
 }
 
 /**
@@ -343,7 +365,29 @@ function workItemMatchesSurfaceQuery(item: WorkItem, state: WorkItemSurfaceState
     return false;
   }
   if (!workItemMatchesPriorityFilter(item.priority, state.filter.priority)) return false;
+  if (!workItemMatchesProjectFilter(item.projectId, state.filter)) return false;
   return workItemMatchesSearch(item, state.search);
+}
+
+/**
+ * 项目 facet（multica `utils/filter.ts:257-266` 的等价物）：**多选 id 数组 + 独立「无项目」开关**。
+ *
+ * 三条口径：
+ * ① 两维都不生效（没勾项目、开关也关着）⇒ **不筛**（每一维都能单独把行留下，也能一起并集）；
+ * ② 勾了项目 ⇒ `projectId ∈ ids` 的行留下；「无项目」开关打开 ⇒ `projectId === undefined` 的行留下；
+ * ③ **只勾「无项目」⇒ 隐藏所有有项目项**（A4 明确点出的语义 —— 它是「这一维生效了，而生效的取值
+ *    只有『无项目』」，不是「什么都没勾」）。
+ *
+ * 为什么把 `includeNoProject` 做成独立参数（不塞进 ids 的一个哨兵值）：无项目**不是一个项目** ——
+ * 塞哨兵迟早与某个项目的真实 id 形态撞上，而且「勾了几个项目」的计数/回显会算错一位。
+ */
+function workItemMatchesProjectFilter(
+  projectId: string | undefined,
+  filter: WorkItemSurfaceFilter,
+): boolean {
+  if (!workItemSurfaceProjectFilterActive(filter)) return true;
+  if (projectId === undefined) return filter.includeNoProject;
+  return filter.projectIds.includes(projectId);
 }
 
 /** 优先级 facet：`all` 全过；`unset` = 未设置（`undefined`/`null`，与「显式选了某一档」分开）；其余要求精确相等。 */
@@ -366,6 +410,8 @@ export type WorkItemSurfaceIntent =
   | { kind: "setSearch"; search: string }
   | { kind: "setStatusFilter"; value: WorkItemStatusFilterValue }
   | { kind: "setPriorityFilter"; value: WorkItemPriorityFilterValue }
+  | { kind: "toggleProjectFilter"; projectId: string }
+  | { kind: "toggleNoProjectFilter" }
   | { kind: "setSortKey"; key: WorkItemSortKey }
   | { kind: "setSortDirection"; direction: WorkItemSortDirection }
   | { kind: "toggleColumn"; column: WorkItemSurfaceColumnKey }
@@ -374,8 +420,9 @@ export type WorkItemSurfaceIntent =
 /**
  * 意图 → 新状态（**纯**：不改入参；未提及的字段原样保留）。
  *
- * `toggleColumn` 是唯一「往返」意图（同一枚列键两次回到原状）；`clearQuery` 只清搜索与两个 facet，
- * **不动**视图 / 排序 / 列配置 —— 用户点的是「去掉这个筛选条件」，不是「把我配好的视图重置」。
+ * `toggleColumn` / `toggleProjectFilter` / `toggleNoProjectFilter` 是三个「往返」意图
+ * （同一项两次回到原状）；`clearQuery` 只清搜索与三维 facet，**不动**视图 / 排序 / 列配置
+ * —— 用户点的是「去掉这个筛选条件」，不是「把我配好的视图重置」。
  */
 export function applyWorkItemSurfaceIntent(
   state: WorkItemSurfaceState,
@@ -390,6 +437,17 @@ export function applyWorkItemSurfaceIntent(
       return { ...state, filter: { ...state.filter, statusCategory: intent.value } };
     case "setPriorityFilter":
       return { ...state, filter: { ...state.filter, priority: intent.value } };
+    case "toggleProjectFilter": {
+      const projectIds = state.filter.projectIds.includes(intent.projectId)
+        ? state.filter.projectIds.filter((id) => id !== intent.projectId)
+        : [...state.filter.projectIds, intent.projectId];
+      return { ...state, filter: { ...state.filter, projectIds } };
+    }
+    case "toggleNoProjectFilter":
+      return {
+        ...state,
+        filter: { ...state.filter, includeNoProject: !state.filter.includeNoProject },
+      };
     case "setSortKey":
       return { ...state, sort: { ...state.sort, key: intent.key } };
     case "setSortDirection":
@@ -404,7 +462,12 @@ export function applyWorkItemSurfaceIntent(
       return {
         ...state,
         search: "",
-        filter: { statusCategory: "all", priority: "all" },
+        filter: {
+          statusCategory: "all",
+          priority: "all",
+          projectIds: [],
+          includeNoProject: false,
+        },
       };
   }
 }

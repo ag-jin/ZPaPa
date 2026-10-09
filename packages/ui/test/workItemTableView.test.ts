@@ -46,6 +46,8 @@ const FROZEN_COLUMNS: WorkItemSurfaceColumnKey[] = [
   "status",
   "priority",
   "assignee",
+  // R-P2（项目绑定 · UI 轮）补上的那一列：`projectId` 与项目清单两条数据面已就绪（R-P1 五件）。
+  "project",
   "labels",
   "startDate",
   "dueDate",
@@ -66,7 +68,9 @@ test("列 → 排序键：只有闭集里真有键的列可排序（title + prio
   assert.equal(workItemTableColumnSortKey("priority"), "priority");
   assert.equal(workItemTableColumnSortKey("startDate"), "startDate");
   assert.equal(workItemTableColumnSortKey("dueDate"), "dueDate");
-  for (const column of ["identifier", "status", "assignee", "labels", "creator"] as const) {
+  /* 项目列（R-P2）：没有冻结的排序键 ⇒ 表头只读（按项目名排序要引入第二份名字/locale 真相源，
+     与「排序结果不得随界面语言变化」冲突 —— 登记后续，不在这里发明键）。 */
+  for (const column of ["identifier", "status", "assignee", "project", "labels", "creator"] as const) {
     assert.equal(
       workItemTableColumnSortKey(column),
       null,
@@ -225,6 +229,8 @@ function renderTable(
     items?: WorkItem[];
     runs?: SquadRunRecord[];
     surface?: Partial<WorkItemSurfaceState>;
+    /** 项目清单（R-P2）：注入后「项目」列才有名字可画（缺省 = 还没读到 ⇒ 该格为空）。 */
+    workItemProjects?: readonly { id: string; name: string; shortCode: string }[];
   } = {},
 ): { markup: string; intents: WorkItemSurfaceIntent[] } {
   const items = input.items ?? TABLE;
@@ -257,6 +263,18 @@ function renderTable(
           intents.push(intent);
         },
         workspacePath: "/w/a",
+        ...(input.workItemProjects === undefined
+          ? {}
+          : {
+              workItemProjects: {
+                projects: input.workItemProjects,
+                createProject: async () => ({
+                  kind: "failed" as const,
+                  feedback: { tone: "error" as const, messageId: "squad.common.operationFailed" },
+                }),
+                reload: async () => {},
+              },
+            }),
       }),
     }),
   );
@@ -312,6 +330,7 @@ test("表头：标题列在首、目录 8 列按目录顺序、动作列在尾�
   assert.equal(labelOf("status"), "状态");
   assert.equal(labelOf("priority"), "优先级");
   assert.equal(labelOf("assignee"), "指派");
+  assert.equal(labelOf("project"), "项目", "项目列（R-P2）表头走合并后的项目文案键");
   assert.equal(labelOf("labels"), "标签");
   assert.equal(labelOf("startDate"), "起始");
   assert.equal(labelOf("dueDate"), "截止");
@@ -344,6 +363,33 @@ test("表头排序：可排序列给原生 button + aria-sort；不可排序列�
   assert.equal(ariaOf("identifier"), null, "不可排序列没有 aria-sort（没有排序这回事）");
 });
 
+test("项目列（R-P2）：静态文字（项目名）；无项目 ⇒ 空单元格；清单未读到 ⇒ 也不显示 uuid", () => {
+  const bound = wi({ id: "wi-bound", title: "挂了项目", projectId: "p-1" });
+  const free = wi({ id: "wi-free", title: "无项目" });
+  const projects = [{ id: "p-1", name: "阿尔法", shortCode: "ALP" }];
+  const cellOf = (markup: string, id: string): string => {
+    const row = markup.slice(markup.indexOf(`data-work-item-id="${id}"`));
+    const segment = row.slice(0, row.indexOf("data-work-item-id=", 1));
+    return /<td data-column="project"[^>]*>([\s\S]*?)<\/td>/.exec(segment)?.[1] ?? "";
+  };
+
+  const withNames = renderTable({ items: [bound, free], runs: [], workItemProjects: projects }).markup;
+  assert.ok(cellOf(withNames, "wi-bound").includes("阿尔法"), "项目格显示项目名");
+  assert.ok(
+    !cellOf(withNames, "wi-bound").includes("<button") &&
+      !cellOf(withNames, "wi-bound").includes("<select"),
+    "静态文字：单元格不给第二个项目写路径（绑定入口只在创建流）",
+  );
+  assert.equal(cellOf(withNames, "wi-free").trim(), "", "无项目 ⇒ 空单元格（不写「无项目」占位）");
+
+  const withoutNames = renderTable({ items: [bound, free], runs: [] }).markup;
+  assert.equal(
+    cellOf(withoutNames, "wi-bound").trim(),
+    "",
+    "清单还没读到 ⇒ 不显示 uuid（读面回来后才画名字）",
+  );
+});
+
 test("列配置：控件只回传意图（aria-pressed 反映显隐），隐藏列从表头消失且**不重排**其余列", () => {
   const config = renderTable().markup;
   const hiddenNow = renderTable({ surface: { columns: { hidden: ["labels", "creator"] } } }).markup;
@@ -353,7 +399,7 @@ test("列配置：控件只回传意图（aria-pressed 反映显隐），隐藏�
   assert.equal(
     (config.match(/data-testid="work-items-column-toggle-/g) ?? []).length,
     WORK_ITEM_SURFACE_COLUMNS.length,
-    "目录 8 列各一枚开关（控件集 = 目录，不多不少）",
+    "目录各列恰一枚开关（控件集 = 目录，不多不少）",
   );
   for (const column of WORK_ITEM_SURFACE_COLUMNS) {
     const toggle =
@@ -371,8 +417,18 @@ test("列配置：控件只回传意图（aria-pressed 反映显隐），隐藏�
   // 渲染结果：隐藏列整列消失，其余列**次序不变**（可见列 = 目录顺序减去隐藏集）。
   assert.deepEqual(
     headerCells(hiddenNow).map((cell) => cell.column),
-    ["title", "identifier", "status", "priority", "assignee", "startDate", "dueDate", "actions"],
-    "隐藏 labels/creator 后：这两列消失，其余列仍在目录顺序上",
+    [
+      "title",
+      "identifier",
+      "status",
+      "priority",
+      "assignee",
+      "project",
+      "startDate",
+      "dueDate",
+      "actions",
+    ],
+    "隐藏 labels/creator 后：这两列消失，其余列（含 R-P2 的项目列）仍在目录顺序上",
   );
   assert.ok(hiddenNow.includes("批根标题"), "行仍在（列配置只改列，不改行）");
 });
@@ -553,10 +609,12 @@ test("时间线：展开态是**独立一行**（colspan = 标题 + 可见列 + 
   );
   const timelineRow =
     /<tr[^>]*data-testid="work-items-timeline-row"[\s\S]*?<\/tr>/.exec(expanded)?.[0] ?? "";
+  /* 跨列数**从目录算**（不写死）：标题 1 + 可见列 N + 动作 1 —— 目录加列时这条断言跟着对
+     （R-P2 加项目列时正是这里先红，提醒「跨列数也是目录的函数」）。 */
   assert.match(
     timelineRow,
-    /colspan="10"/i,
-    "跨全部列：标题 1 + 可见列 8 + 动作 1（大小写不敏感：HTML 属性名不区分大小写）",
+    new RegExp(`colspan="${1 + WORK_ITEM_SURFACE_COLUMNS.length + 1}"`, "i"),
+    "跨全部列：标题 1 + 可见列（目录全量）+ 动作 1（HTML 属性名不区分大小写）",
   );
   assert.ok(
     !timelineRow.includes("data-work-item-id"),

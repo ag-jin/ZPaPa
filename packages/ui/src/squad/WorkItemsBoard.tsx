@@ -17,6 +17,8 @@ import {
   CircleDashed,
   CircleDot,
   CircleSlash,
+  Folder,
+  FolderMinus,
   Plus,
   type LucideIcon,
 } from "lucide-react";
@@ -25,6 +27,11 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { parseAssigneeValue } from "./squadEntryViewModel.js";
 import { workItemBoardDrop } from "./workItemPositionViewModel.js";
+import {
+  WORK_ITEM_NO_PROJECT_LANE_KEY,
+  workItemProjectLaneDisplay,
+  type WorkItemProjectOption,
+} from "./workItemProjectViewModel.js";
 import { AssigneeMarker, type WorkItemRowReorder } from "./workItemRowParts.js";
 import { WorkItemRowList, type WorkItemRowEnvironment } from "./WorkItemRows.js";
 import {
@@ -85,7 +92,8 @@ export function WorkItemsBoard({
   workItems: WorkItem[];
   /** 分组维度（看板泳道）：`none` = 单 ul（现状 DOM 逐字保留）；其余按泳道分组（只切根）。 */
   laneDimension: WorkItemLaneDimension;
-  /** 三视图共用的行环境（宿主装配一次；行模块消费它）。 */
+  /** 三视图共用的行环境（宿主装配一次；行模块消费它）。项目清单也在它里面
+      （`environment.projects`，与行上的 project chip **同一份** —— 第二个通道 = 两处迟早说的不是一件事）。 */
   environment: WorkItemRowEnvironment;
   /** 列头新建入口的**意图出口**（列头 `+`）：宿主接到既有的唯一写路径上（聚焦快速创建条）。
       缺省 ⇒ 列头不渲染该钮（没有写路径的入口比没有更糟）。 */
@@ -116,10 +124,16 @@ export function WorkItemsBoard({
   }
 
   /** 泳道名：状态维度走穷尽的 category 文案；指派维度走 `resolveAssigneeName` 单源
-      （`null` = 当前用户，由本地化文案补；未知对象的 id 后面补一句说明，避免被读成「没指派」）。 */
+      （`null` = 当前用户，由本地化文案补；未知对象的 id 后面补一句说明，避免被读成「没指派」）；
+      项目维度走 `workItemProjectLaneDisplay` 单源（无项目 / 项目名 / 未知挂接回落 id 三态分开）。 */
   const laneTitle = (key: string): string => {
     if (laneDimension === "statusCategory") {
       return t(WORK_ITEM_STATUS_CATEGORY_MESSAGE_IDS[key as WorkItemStatusCategory]);
+    }
+    if (laneDimension === "project") {
+      const display = workItemProjectLaneDisplay({ laneKey: key, projects: projectList });
+      if (display.kind === "none") return t("squad.workItems.project.none");
+      return display.kind === "project" ? display.name : display.id;
     }
     if (key === "user") return t("squad.workItems.lane.assignee.user");
     const resolved = workItemLaneAssigneeName(environment.snapshot, parseAssigneeValue(key));
@@ -130,10 +144,12 @@ export function WorkItemsBoard({
   };
 
   const reorder = environment.reorder;
+  const projectList = environment.projects ?? [];
   const lanes = groupWorkItemBoard({
     items: workItems,
     dimension: laneDimension,
     roster: environment.snapshot,
+    projects: projectList,
   });
 
   /** 一次拖拽的落点：**只做事件绑定与调用** —— 取 id、找泳道、算计划、交回写路径全在
@@ -177,6 +193,15 @@ export function WorkItemsBoard({
             ? STATUS_CATEGORY_CHROME[lane.key as WorkItemStatusCategory]
             : undefined;
         const CategoryIcon = chrome?.Icon;
+        /* 项目维度的列头图标（**中性色**：项目是分类，不编码状态 —— DESIGN「语义色只编码状态」）：
+           无项目列 = 空文件夹（multica `FolderMinus`），项目列 = 文件夹；未知挂接也是文件夹
+           （它挂在某个项目上，只是名字没读到）。 */
+        const ProjectIcon =
+          laneDimension !== "project"
+            ? null
+            : lane.key === WORK_ITEM_NO_PROJECT_LANE_KEY
+              ? FolderMinus
+              : Folder;
         return (
           <section
             key={lane.key}
@@ -191,12 +216,16 @@ export function WorkItemsBoard({
             >
               <span className="flex min-w-0 items-center gap-1.5">
                 {CategoryIcon === undefined ? (
-                  <span className="flex size-3 shrink-0 items-center justify-center">
-                    <AssigneeMarker
-                      snapshot={environment.snapshot}
-                      assignee={parseAssigneeValue(lane.key)}
-                    />
-                  </span>
+                  ProjectIcon === null ? (
+                    <span className="flex size-3 shrink-0 items-center justify-center">
+                      <AssigneeMarker
+                        snapshot={environment.snapshot}
+                        assignee={parseAssigneeValue(lane.key)}
+                      />
+                    </span>
+                  ) : (
+                    <ProjectIcon aria-hidden className="size-3 shrink-0 text-foreground-subtle" />
+                  )
                 ) : (
                   <CategoryIcon
                     aria-hidden

@@ -34,6 +34,9 @@ export const WORK_ITEM_TABLE_COLUMN_SORT_KEYS: Record<
   status: null,
   priority: "priority",
   assignee: null,
+  /* 项目列没有冻结的排序键（R-P2 也不发明：按项目名排序要引入第二份 locale/名字真相源，
+     与 R1 的「排序结果不得随界面语言变化」冲突 —— 登记为后续）。 */
+  project: null,
   labels: null,
   startDate: "startDate",
   dueDate: "dueDate",

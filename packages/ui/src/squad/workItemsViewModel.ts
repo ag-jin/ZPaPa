@@ -8,6 +8,12 @@ import {
 } from "@zcode/shared";
 import type { SquadSnapshot } from "@zcode/services";
 import { assigneeOptionValue, resolveAssigneeName } from "./squadEntryViewModel.js";
+import {
+  WORK_ITEM_NO_PROJECT_LANE_KEY,
+  projectLaneKey,
+  workItemProjectLaneKey,
+  type WorkItemProjectOption,
+} from "./workItemProjectViewModel.js";
 
 /* 「工作项」一级页面（WorkItemsPage）的**纯逻辑**。
 
@@ -137,9 +143,11 @@ function walkWorkItemBoardForest(
  * · `none`：不分组（看板 DOM 逐字保留现状；**不再是默认值** —— 2026-10-09 用户裁定默认改为
  *   `statusCategory`，默认值的单点在 `WorkItemsPage` 的 `useState`）；
  * · `statusCategory`：按**根**的状态 category（4 条固定泳道）；
- * · `assignee`：按**根**的指派对象（user 固定第一条，其余按首现顺序）。
+ * · `assignee`：按**根**的指派对象（user 固定第一条，其余按首现顺序）；
+ * · `project`：按**根**的挂接项目（「无项目」列恒第一且恒保留 —— multica `board-view.tsx:184-198`
+ *   的形态真源；每项目一列，空列保留，清单里没有的挂接自成一条）。R-P2 项目绑定 · UI 轮加法。
  */
-export type WorkItemLaneDimension = "none" | "statusCategory" | "assignee";
+export type WorkItemLaneDimension = "none" | "statusCategory" | "assignee" | "project";
 
 /** 一条泳道：`key` 是稳定身份（category 值 / `user` / `agent:<id>` / `squad:<id>`），`count` = 行数。 */
 export type WorkItemBoardLane = { key: string; count: number; rows: WorkItemBoardRow[] };
@@ -185,7 +193,10 @@ export function workItemLaneAssigneeName(
  *   数据跳动 —— 泳道忽有忽无会让人以为数据在动）；键取自 `WORK_ITEM_STATUS_CATEGORY[root.status]`，
  *   **不认 6 键**（category 才是机器判定依据）；
  * · `assignee`：`user` 固定第一条（本地用户是常路），其余按**首现顺序**（确定性；不按名册名或
- *   locale 排序 —— 那是另一个真相源，且会让泳道顺序随改名漂移）；不产生空泳道（开放集）。
+ *   locale 排序 —— 那是另一个真相源，且会让泳道顺序随改名漂移）；不产生空泳道（开放集）；
+ * · `project`（R-P2）：**无项目列恒第一且恒保留**（multica 的 drop 目标形态）+ 每个项目一列
+ *   （空列保留：骨架不随数据跳动，与 statusCategory 同款）；列次序 = 项目清单次序；清单里没有的
+ *   挂接按首现补一条（不丢行）。
  *
  * 空输入 ⇒ `[]`（任何维度都不造空骨架：空态由看板的空态分支负责，泳道不替它说话）。
  * 输入次序即泳道内次序（repo 已按 `position → created_at → id` 排好），本函数不重排。
@@ -194,8 +205,11 @@ export function groupWorkItemBoard(input: {
   items: WorkItem[];
   dimension: WorkItemLaneDimension;
   roster: { teamAgents: TeamAgent[]; squads: Squad[] };
+  /** 项目维度需要的**项目清单**（次序 = 服务面给的次序 `created_at ASC, id ASC`；本层不重排）。
+      其余维度不看它；缺省 = 清单还没读到 ⇒ 无项目列 + 挂接行各成一条（不静默丢行）。 */
+  projects?: readonly WorkItemProjectOption[];
 }): WorkItemBoardLane[] {
-  const { items, dimension, roster } = input;
+  const { items, dimension, roster, projects } = input;
   if (items.length === 0) return [];
   const rows = walkWorkItemBoardForest(items).map(({ item, depth, root }) => ({
     item,
@@ -209,7 +223,8 @@ export function groupWorkItemBoard(input: {
     ];
   }
 
-  // 泳道顺序：statusCategory 是固定骨架；assignee 是「user 先、其余按首现」。
+  // 泳道顺序：statusCategory 是固定骨架；assignee 是「user 先、其余按首现」；
+  // project 是「无项目列恒第一、其余按项目清单次序」（空列保留：骨架不随数据跳动）。
   const orderedKeys: string[] = [];
   const buckets = new Map<string, WorkItemBoardRow[]>();
   if (dimension === "statusCategory") {
@@ -218,12 +233,21 @@ export function groupWorkItemBoard(input: {
       buckets.set(category, []);
     }
   }
+  if (dimension === "project") {
+    for (const key of projectLaneSkeleton(projects ?? [])) {
+      orderedKeys.push(key);
+      buckets.set(key, []);
+    }
+  }
   for (const row of rows) {
     const key =
       dimension === "statusCategory"
         ? WORK_ITEM_STATUS_CATEGORY[row.root.status]
-        : assigneeOptionValue(row.root.assignee);
+        : dimension === "project"
+          ? workItemProjectLaneKey(row.root.projectId)
+          : assigneeOptionValue(row.root.assignee);
     if (!buckets.has(key)) {
+      // 骨架之外**首现**的键（清单里没有的挂接 / 骨架从未见过的指派对象）：补一条，不丢行。
       buckets.set(key, []);
       orderedKeys.push(key);
     }
@@ -240,12 +264,30 @@ export function groupWorkItemBoard(input: {
   });
 }
 
-/** 三个分组维度的文案键（闭集：加维度时这里必须跟着改 —— 与 `WorkItemLaneDimension` 同源）。
+/** 项目维度的**固定骨架**：无项目列恒第一 + 每个项目一列（空列保留）。次序 = 清单次序。 */
+function projectLaneSkeleton(projects: readonly WorkItemProjectOption[]): string[] {
+  return [WORK_ITEM_NO_PROJECT_LANE_KEY, ...projects.map((project) => projectLaneKey(project.id))];
+}
+
+/**
+ * 行上**项目 chip 显示吗**（判据单源；multica `board-card.tsx:113-114` 的 gating 同款）：
+ * **有项目** ∧ **当前分组不是项目** —— 按项目分组时每张卡片都在自己的项目列里，再画一遍项目
+ * 只是噪音（列头已经说了）。`none`/`statusCategory`/`assignee` 三种分组与「不分组」都给 chip。
+ */
+export function workItemRowProjectChipVisible(input: {
+  projectId: string | undefined;
+  laneDimension: WorkItemLaneDimension;
+}): boolean {
+  return input.projectId !== undefined && input.laneDimension !== "project";
+}
+
+/** 四个分组维度的文案键（闭集：加维度时这里必须跟着改 —— 与 `WorkItemLaneDimension` 同源）。
     住在纯词汇层（R6b：保存视图的 display 摘要也要按它渲染用户能读的词，第二处若各写一份迟早分叉）。 */
 export const WORK_ITEM_LANE_DIMENSION_MESSAGE_IDS: Record<WorkItemLaneDimension, string> = {
   none: "squad.workItems.lane.dimension.none",
   statusCategory: "squad.workItems.lane.dimension.statusCategory",
   assignee: "squad.workItems.lane.dimension.assignee",
+  project: "squad.workItems.lane.dimension.project",
 };
 
 /** 工作项状态的文案 id：用 `Record<WorkItemStatusKey, string>` **强制穷尽** ——

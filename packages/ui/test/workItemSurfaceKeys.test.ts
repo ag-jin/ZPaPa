@@ -83,6 +83,76 @@ const REUSED_MESSAGE_IDS: string[] = [
   "squad.workItems.creator",
 ];
 
+/* ---------- 破例段之二（R-P2 项目绑定 · UI 轮） ----------
+
+   背景：用户裁定「项目绑定完整做」，UI 轮要在三处表达项目（拾取器 / 分组列 / 过滤 + 卡片 chip）
+   并在拾取器里内联新建项目 —— 原 30 枚冻结清单与 views 破例段里一枚都没有。派发单给的额度是
+   **≤10 枚**，本段用 **8 枚**（每枚都有落点）：
+   · `project`（拾取器 / 过滤 / 表头 / 列配置共用一句）；
+   · `project.none`（无项目：下拉选项 + 分组列 + 过滤开关共用一句）；
+   · `project.new`（拾取器里的「新建项目…」入口）；
+   · `project.shortCode` / `shortCodePlaceholder`（内联表单的两枚标签/占位）；
+   · `project.shortCodeInvalid` / `project.nameRequired`（两枚预检句，成对：坏在哪一项说哪一项）；
+   · `lane.dimension.project`（Group by 的第四档）。
+   **不允许的第 9、10 枚留给后续轮**：本段断言「恰 8 枚 + locale 里 project.* 也恰好这 7 枚」。 */
+const PROJECT_BINDING_MESSAGE_IDS: string[] = [
+  "squad.workItems.project",
+  "squad.workItems.project.none",
+  "squad.workItems.project.new",
+  "squad.workItems.project.shortCode",
+  "squad.workItems.project.shortCodePlaceholder",
+  "squad.workItems.project.shortCodeInvalid",
+  "squad.workItems.project.nameRequired",
+  "squad.workItems.lane.dimension.project",
+];
+
+test("键目录冻结｜破例段之二（R-P2 项目绑定）：恰 8 枚（额度 10）、不与前两段重号、两语齐备", () => {
+  assert.equal(
+    new Set(PROJECT_BINDING_MESSAGE_IDS).size,
+    PROJECT_BINDING_MESSAGE_IDS.length,
+    "本段不得有重复键",
+  );
+  assert.equal(PROJECT_BINDING_MESSAGE_IDS.length, 8, "R-P2 新增键数（派发单额度 ≤10）");
+  assert.ok(
+    PROJECT_BINDING_MESSAGE_IDS.length <= 10,
+    "越过派发单给的 10 枚额度 ⇒ 这里必红（先上报、再决定加不加）",
+  );
+  for (const id of PROJECT_BINDING_MESSAGE_IDS) {
+    assert.ok(
+      !FROZEN_NEW_MESSAGE_IDS.includes(id) && !VIEW_BAR_EXCEPTION_MESSAGE_IDS.includes(id),
+      `${id} 不得与前两段重号（三段各管一段历史）`,
+    );
+  }
+  for (const key of PROJECT_BINDING_MESSAGE_IDS) {
+    const zh = zhCN[key];
+    const en = enUS[key];
+    assert.ok(zh, `zh-CN 缺 ${key}`);
+    assert.ok(en, `en-US 缺 ${key}`);
+    assert.equal(placeholders(zh), placeholders(en), `${key} 的占位符两语必须一致`);
+  }
+});
+
+test("键目录冻结｜破例段之二用满且不越界：两语 locale 里的 project.* 键**恰好**这 7 枚", () => {
+  for (const [localeName, locale] of [
+    ["zh-CN", zhCN],
+    ["en-US", enUS],
+  ] as const) {
+    const declared = Object.keys(locale).filter((key) => key.startsWith("squad.workItems.project."));
+    assert.deepEqual(
+      [...declared].sort(),
+      [
+        "squad.workItems.project.nameRequired",
+        "squad.workItems.project.new",
+        "squad.workItems.project.none",
+        "squad.workItems.project.shortCode",
+        "squad.workItems.project.shortCodeInvalid",
+        "squad.workItems.project.shortCodePlaceholder",
+      ].sort(),
+      `${localeName} 的 project.* 键集必须与破例段逐枚一致（多的 = 越界加键，少的 = 用了裸 key）`,
+    );
+  }
+});
+
 const placeholders = (value: string) =>
   [...value.matchAll(/\{(\w+)\}/g)]
     .map((match) => match[1])
@@ -99,9 +169,14 @@ test("键目录冻结｜新增键恰 30 枚、无重复，且与闭集映射（�
   for (const id of [...FROZEN_NEW_MESSAGE_IDS, ...REUSED_MESSAGE_IDS]) {
     assert.ok(id.startsWith("squad.workItems."), `${id} 必须在本面的命名空间下`);
   }
-  // 闭集映射指向的键必须恰好是「新增 ∪ 复用」——漏一枚（映射指向一个没人核对的键）或
+  // 闭集映射指向的键必须恰好是「新增 ∪ 复用 ∪ 两段破例」——漏一枚（映射指向一个没人核对的键）或
   // 多一枚（清单里有键没人用）都在这里现形。
-  const declared = new Set([...FROZEN_NEW_MESSAGE_IDS, ...REUSED_MESSAGE_IDS]);
+  const declared = new Set([
+    ...FROZEN_NEW_MESSAGE_IDS,
+    ...REUSED_MESSAGE_IDS,
+    ...VIEW_BAR_EXCEPTION_MESSAGE_IDS,
+    ...PROJECT_BINDING_MESSAGE_IDS,
+  ]);
   for (const [what, values] of [
     ["视图名", Object.values(WORK_ITEM_VIEW_MODE_MESSAGE_IDS)],
     ["排序键", Object.values(WORK_ITEM_SORT_MESSAGE_IDS)],

@@ -13,8 +13,11 @@ import {
 } from "./WorkItemInlineEditParts.js";
 import {
   AssigneeMarker,
+  WORK_ITEM_PRIORITY_BADGE_CLASSNAME,
   WorkItemLabelChip,
   WorkItemLabelMoreChip,
+  WorkItemPriorityBadge,
+  WorkItemProjectChip,
   WorkItemRowActions,
   WorkItemRowCardBands,
   WorkItemRowOpenDetailOverlay,
@@ -25,12 +28,10 @@ import {
   type WorkItemRowFocus,
 } from "./workItemRowParts.js";
 import { workItemInlineEditUnavailableReason } from "./workItemInlineEditViewModel.js";
-import {
-  workItemIdentifierText,
-  workItemPriorityMessageId,
-} from "./workItemPropertiesViewModel.js";
+import { workItemIdentifierText } from "./workItemPropertiesViewModel.js";
 import {
   workItemLabelChips,
+  workItemRowProjectChipVisible,
   workItemStatusMessageId,
   type WorkItemBoardRow,
 } from "./workItemsViewModel.js";
@@ -39,13 +40,15 @@ import {
    「为什么这些不放在 WorkItemRows 里」），消费方仍从本模块 import —— 契约的入口不变。 */
 export type { WorkItemRowEnvironment, WorkItemRowFocus } from "./workItemRowParts.js";
 
-/* 行词汇件（标签 chip / 「+N」/ 行级覆盖按钮）的定义随卡片形态重构搬进**行零件的家**
+/* 行词汇件（标签 chip / 「+N」/ 优先级徽标 / 项目 chip / 行级覆盖按钮）的定义住在**行零件的家**
    （`workItemRowParts.tsx`：无锚点零散件的家，也是勾选件/拖拽把手/动作簇的家）。
    本模块把它们**原样转出**：消费方（详情页 / peek / 表格单元格）的 import 路径不变，
    单点性质不变（全树仍只有一处定义）—— 行模块的 400 行硬线（`.oxlintrc.json`）留给卡片形态。 */
 export {
   WorkItemLabelChip,
   WorkItemLabelMoreChip,
+  WorkItemPriorityBadge,
+  WorkItemProjectChip,
   WorkItemRowOpenDetailOverlay,
 } from "./workItemRowParts.js";
 
@@ -100,42 +103,6 @@ const CARD_LIST_CLASSNAME =
 /* 行内容的外层（覆盖按钮 + 字段 + 动作簇）：行形态横排、卡片形态四带纵排（带在 `WorkItemRowCardBands`）。 */
 const ROW_BODY_CLASSNAME = "relative flex items-center justify-between gap-3";
 const CARD_BODY_CLASSNAME = "relative flex flex-col gap-1.5";
-/* 优先级徽标的**中性**外观（阶段一轮 C）：同样不借语义色 —— 优先级是**分类**，不是「成了/出事了」；
-   借用 success / destructive 让某一档「看起来更响」会把档位读成故障（DESIGN：语义色只编码状态）。
-   常量一处定义，行与详情概览共用同一个组件（见 `WorkItemPriorityBadge`）。 */
-const WORK_ITEM_PRIORITY_BADGE_CLASSNAME =
-  "rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtle";
-/* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
-   不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
-const FOCUS_HIGHLIGHT_MS = 1600;
-
-/**
- * 工作项优先级徽标（**一处定义，多面共用**：行的 picker 与详情概览）；未设置（NULL）⇒ 不渲染。
- * `testId` 由调用方给：两个面的稳定锚点不同（行锚 `work-item-priority` / 概览锚带 `-detail-`），
- * 锚点是**面的属性**，不是徽标的属性。
- *
- * 闭集外的值（坏数据 / 未来新增档位的旧界面）⇒ 整个徽标不渲染：显示一个看不懂的裸 key
- * 只会让人以为那是个合法档位。
- */
-export function WorkItemPriorityBadge({
-  priority,
-  testId,
-}: {
-  /** 工作项优先级原文（闭集判定在纯函数里；这里不猜、不折算）。 */
-  priority: unknown;
-  /** 本面的稳定锚点（e2e 依赖）。 */
-  testId: string;
-}) {
-  const { intl } = useZCodeIntl();
-  const messageId = workItemPriorityMessageId(priority);
-  if (messageId === null) return null;
-  return (
-    <span className={WORK_ITEM_PRIORITY_BADGE_CLASSNAME} data-testid={testId}>
-      {intl.formatMessage({ id: messageId })}
-    </span>
-  );
-}
-
 /**
  * 聚焦（收件箱「打开工作项」的落点）：行 DOM 引用按 id 收在 ref 里（不用 querySelector：
  * 它是字符串拼选择器，id 里将来出现特殊字符就静默找不到）。
@@ -246,7 +213,7 @@ function WorkItemRow({
   const timelineExpanded = timelineExpandedWorkItemId === item.id;
   const labelChips = workItemLabelChips(item.labels);
   /* identifier（Q6：前缀不入库）：与详情概览**同一个**纯函数；未设置 ⇒ null ⇒ 不画。 */
-  const identifierText = workItemIdentifierText(item.identifierSeq);
+  const identifierText = workItemIdentifierText(item);
   /* 归档行不给行内编辑入口：判据复用详情写面同一份（`writeDisabledReason`），本层不写第二份。 */
   const inlineEditUnavailableReason = workItemInlineEditUnavailableReason(item);
   const titleDraft = inlineEdit.titleDraftOf(item);
@@ -312,6 +279,17 @@ function WorkItemRow({
         {identifierText}
       </span>
     );
+  /* 项目 chip（R-P2）：**有项目才有**，且**只在当前分组不是项目时**显示（gating 判据在宿主的
+     `workItemRowProjectChipVisible` —— 按项目分组时卡片不再重复显示项目，multica A3 同款）。
+     chip 自己处理「清单还没读到 ⇒ 不渲染」（显示 uuid 是噪音）。**追加在每层孩子列表的末尾**：
+     新增槽位不得挪动同层既有兄弟的索引（React 把「这一层的孩子数」编进 `useId`，插在中间会让
+     Radix 的 `aria-controls` 漂移、逐字节基线当场红 —— 见文件头的结构纪律）。 */
+  const projectChip = workItemRowProjectChipVisible({
+    projectId: item.projectId,
+    laneDimension: environment.laneDimension,
+  }) ? (
+    <WorkItemProjectChip projectId={item.projectId} projects={environment.projects} />
+  ) : null;
   /* 卡片标题带：占满整带（`w-full`）+ 中文字重 + 2 行截断（spec §3 的 `line-clamp-2`）。 */
   const titleCardClass =
     card === true ? "block w-full font-medium leading-snug line-clamp-2" : undefined;
@@ -457,6 +435,7 @@ function WorkItemRow({
                   <>
                     {statusNode}
                     {labelsNode}
+                    {projectChip}
                   </>
                 }
                 meta={
@@ -480,6 +459,7 @@ function WorkItemRow({
                 {statusNode}
                 {priorityNode}
                 {assigneeNode}
+                {projectChip}
               </span>
             )}
             {/* 动作簇：行形态在右端；卡片形态在 meta 带右侧（见上），故此处不重复挂。 */}
