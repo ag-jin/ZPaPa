@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { WorkItem } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -55,6 +55,7 @@ export function WorkItemQuickCreate({
   createEnabled,
   busy,
   onSubmit,
+  focusToken,
 }: {
   /** 父项候选 = 快照的全量工作项（**不按 depth / 子项数预筛**：拒绝与否是服务面的判据，
       任何本地预筛都会把"服务面本来接受的父项"静默藏掉）。顺序即快照顺序（本层不重排）。 */
@@ -68,6 +69,9 @@ export function WorkItemQuickCreate({
   onSubmit: (
     request: ReturnType<typeof workItemQuickCreateRequest>,
   ) => Promise<SquadEntryFeedback | null>;
+  /** 聚光令牌（列头 `+` 的落点）：每次**递增**都把光标送进标题框 —— 列头新建入口落在
+      这条既有入口上，不新开第二条写路径（值不变 ⇒ 不重复聚焦；`0` = 从未请求过）。 */
+  focusToken?: number;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -91,6 +95,17 @@ export function WorkItemQuickCreate({
      `SelectValue` 在"选中项从未打开过"时不渲染任何文本（它靠 item 挂载时回填），显式给
      children 才能让"当前挂着哪个父项"在首屏就说得出来。 */
   const parentDisplay = workItemQuickCreateParentDisplay(workItems, draft.parentValue);
+
+  /* 列头 `+`（形态重排轮）：令牌一变就把光标送进标题框 —— 入口只有一个（本组件），
+     所以「+ 新建」与「在这里敲标题」是同一件事的两步，不存在第二条创建路径。
+     记下**已消费的令牌**而不是「布尔开关」：`busy`/`submitting` 变化不会重跑这一支
+     （否则别的写动作结束时会把光标从用户手上抢走）。置灰时 `focus()` 是 no-op（不抢焦点）。 */
+  const focusedTokenRef = useRef(0);
+  useEffect(() => {
+    if (focusToken === undefined || focusToken === focusedTokenRef.current) return;
+    focusedTokenRef.current = focusToken;
+    titleRef.current?.focus();
+  }, [focusToken]);
 
   /** 提交：唯一判据 → 唯一请求构造 → 唯一写入口；结论只演进草稿与就地失败（不碰任何列表）。 */
   const submit = () => {

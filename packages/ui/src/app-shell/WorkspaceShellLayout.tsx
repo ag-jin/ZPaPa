@@ -2165,7 +2165,11 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                                 variant="panel"
                                 className="min-h-full"
                               >
-                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                {/* 工作项面**放宽居中窄栏**（2026-10-09 用户裁定，登记在实现报告）：
+                                    `max-w-4xl`(896px) 只装得下 2–3 列 —— 横排 280px 列是看板形态的
+                                    结构前提（spec §10-A2/§11 的「唯一硬结构冲突」）。只动这一个分支：
+                                    其余页面（插件市场/收件箱/智能体/小队/详情）的窄栏逐字保留。 */}
+                                <div className="flex min-h-full w-full flex-col px-4 py-4 md:px-6 md:py-6">
                                   <WorkItemsPage
                                     workspacePath={workspaceAbsPath}
                                     workspaceIdentity={workspaceIdentity}

@@ -149,6 +149,113 @@ export function WorkItemRowSelect({
   );
 }
 
+/**
+ * 行**动作簇**（编辑 / 改派 / 放弃整批 / 拖拽把手）：**一处定义，两种布局共用** ——
+ * 表格的动作格不是第二份动作簇，卡片把它放在 meta 带右侧，只是同一个簇换了个宿主。
+ *
+ * 为什么搬到这里（与 R3/R5 的零散件同款：换 `WorkItemRows` 的 400 行余量给卡片形态）：
+ * 簇内没有**判据**（挂不挂时间线钮由行模块判好后作为 `timelineToggle` 节点传入），
+ * 只有按钮与锚点；单点性质不变（全 `src` 树只有这一处产出这四个钮 + 把手）。
+ */
+export function WorkItemRowActions({
+  item,
+  busy,
+  discardable,
+  reorder,
+  timelineToggle,
+  onEdit,
+  onReassign,
+  onDiscard,
+}: {
+  item: WorkItem;
+  busy: boolean;
+  /** 判据（`discardableIds.has(item.id)`）由行模块给：本层不判、不重算。 */
+  discardable: boolean;
+  /** 拖拽把手（看板 statusCategory + 手动档才注入）；未启用 ⇒ 连元素都不挂。 */
+  reorder?: WorkItemRowReorder;
+  /** 时间线展开钮（**只在批根行**）：判据与按钮都在行模块（`isSquadBatchRoot` 单源），此处只挂它。 */
+  timelineToggle: ReactNode;
+  onEdit: (item: WorkItem) => void;
+  onReassign: (item: WorkItem) => void;
+  onDiscard: (workItemId: string) => void;
+}) {
+  const { intl } = useZCodeIntl();
+  const t = (id: string) => intl.formatMessage({ id });
+  return (
+    <span className="relative z-10 flex shrink-0 items-center gap-2">
+      <WorkItemRowDragHandle itemId={item.id} reorder={reorder} />
+      {timelineToggle}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        data-testid="work-item-edit"
+        onClick={() => onEdit(item)}
+      >
+        {t("squad.common.edit")}
+      </Button>
+      {/* 改派：**所有行都给**（含子项）—— 改负责人是派发语义（改派 = 新派发），与"改个错别字"
+          （编辑）是两类动作，故单列一个钮；点它只把意图交给页面。 */}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        data-testid="work-item-reassign"
+        onClick={() => onReassign(item)}
+      >
+        {t("squad.workItems.reassign")}
+      </Button>
+      {/* 放弃整批：只给判据认下的行；点它**只进入待确认态**。 */}
+      {discardable ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          data-testid="work-item-discard"
+          onClick={() => onDiscard(item.id)}
+        >
+          {t("squad.discard.action")}
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * 看板**卡片的四带纵排**（multica `BoardCardContent` 的形态，spec §3/§10-A3）：编号+优先级 /
+ * 标题（2 行截断）/ chip 行 / meta 行。内容由行模块给（字段与判据都在那里，单点不变），
+ * 这里只负责**带的次序与包裹**（所以它没有状态、没有判据）。
+ *
+ * 每带 `pointer-events-none relative z-10`：覆盖按钮在下层（整卡可点开），带内的按钮自己
+ * 抬 `pointer-events-auto` —— 与行形态同一套命中规则，卡片不是第二套。
+ */
+export function WorkItemRowCardBands({
+  head,
+  title,
+  chips,
+  meta,
+}: {
+  head: ReactNode;
+  title: ReactNode;
+  chips: ReactNode;
+  meta: ReactNode;
+}) {
+  return (
+    <>
+      <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
+        {head}
+      </div>
+      <div className="pointer-events-none relative z-10 min-w-0">{title}</div>
+      <div className="pointer-events-none relative z-10 flex flex-wrap items-center gap-1.5">
+        {chips}
+      </div>
+      <div className="pointer-events-none relative z-10 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        {meta}
+      </div>
+    </>
+  );
+}
+
 /** 展开态时间线所在的整行格：内容自适应高度（它不是数据行，不给 44px 行高）。 */
 const TABLE_TIMELINE_CELL_CLASSNAME = "border-b border-border px-3 py-2 align-top";
 
@@ -246,3 +353,61 @@ export type WorkItemRowReorder = {
   /** 一次拖拽的落点计划（位置值已按纯函数算好；页面是唯一写入口）。 */
   onPlan: (plan: WorkItemPositionPlan) => void;
 };
+
+/* 行词汇件（2026-10-09 从 `WorkItemRows` 迁来）：标签 chip 与行级覆盖按钮 —— 纯呈现、无判据；
+   迁来的唯一理由是行模块的 400 行硬线，而卡片形态（四带 + 两种布局）必须在行模块里落位。
+   定义仍只有一处，`WorkItemRows` 原样转出给消费方（import 路径不变）。 */
+/* 标签 chip 的**中性**外观（#11 v1）：只用 `border` / `foreground-subtlest` ——
+   标签是**描述**，不是状态（spec §11.3：状态只由语义色表达；借 success / destructive 上色
+   会让「这个标签」被读成「这件事成了 / 出事了」）。常量一处定义，三视图与详情页共用同一个组件。 */
+const WORK_ITEM_LABEL_CHIP_CLASSNAME =
+  "shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest";
+/**
+ * 工作项标签 chip（**一处定义，多面共用**：三视图的行与详情页概览）。
+ * 它是**纯呈现**（无状态、无判据），故不违反「本模块是行呈现层」。
+ */
+export function WorkItemLabelChip({ label }: { label: string }) {
+  return (
+    <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label">
+      {label}
+    </span>
+  );
+}
+
+/**
+ * 标签「+N」折合 chip（**一处定义，多面共用**：行的标签块与 table 的标签单元格）。
+ * 外观与普通 chip 同一个常量 —— 它不是另一种东西，只是「还有几个没显示」。
+ */
+export function WorkItemLabelMoreChip({ hiddenCount }: { hiddenCount: number }) {
+  const { intl } = useZCodeIntl();
+  return (
+    <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label-more">
+      {intl.formatMessage({ id: "squad.workItems.labelsMore" }, { count: hiddenCount })}
+    </span>
+  );
+}
+/**
+ * 行级「打开详情」的**透明覆盖按钮**（**一处定义，多面共用**：看板/列表的整行与 table 的标题格）。
+ *
+ * 为什么是覆盖层而不是整行 button：行内本来就有按钮，button 嵌套 button 是非法 HTML
+ * （点内层会连带触发外层）。覆盖层只盖标题区域，行内动作区抬到 `relative z-10`。
+ */
+export function WorkItemRowOpenDetailOverlay({
+  title,
+  onOpen,
+}: {
+  /** 用于可及名称（读屏听到「打开工作项「标题」」）。 */
+  title: string;
+  onOpen: () => void;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <button
+      type="button"
+      aria-label={intl.formatMessage({ id: "squad.workItemDetail.activity.open" }, { title })}
+      data-testid="work-item-row-open-detail"
+      onClick={onOpen}
+      className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
+    />
+  );
+}

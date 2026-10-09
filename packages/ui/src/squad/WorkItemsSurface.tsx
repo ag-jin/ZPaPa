@@ -184,6 +184,9 @@ export function WorkItemsSurface({
      （本宿主自持）——触发钮只存在于窄屏分支，桌面这一支永远开不起来。 */
   const viewportMode = useWorkItemSurfaceViewport(viewportOverride);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  /* 列头 `+` 的**聚焦令牌**（形态重排轮）：递增 ⇒ 快速创建条把光标送进标题框（桌面）或
+     打开抽屉（窄屏，见 `requestCreate`）。用令牌而不是布尔：连点两次 `+` 每次都要落到输入框。 */
+  const [quickCreateFocusToken, setQuickCreateFocusToken] = useState(0);
   const peekOpen = peekWorkItemId !== null;
   /* 窄屏抽屉目标（**至多一个**，判据在纯函数）：peek 优先 —— 行点击的直接结果不该被另一个抽屉盖住。 */
   const sheetTarget =
@@ -254,8 +257,20 @@ export function WorkItemsSurface({
         createEnabled={quickCreateEnabled}
         busy={busyWorkItemId !== null}
         onSubmit={onQuickCreate}
+        /* 列头 `+` 的落点（形态重排轮）：把光标送进这条**唯一**的创建入口（不新开写路径）。 */
+        focusToken={quickCreateFocusToken}
       />
     );
+
+  /* 列头新建入口（`WorkItemsBoard` 的 `onRequestCreate`）：**只在有写路径时**给出 ——
+     桌面把光标聚焦进快速创建条；窄屏额外把抽屉打开（那里才是这条入口的宿主）。 */
+  const requestCreate =
+    quickCreate === null
+      ? undefined
+      : () => {
+          setQuickCreateOpen(true);
+          setQuickCreateFocusToken((token) => token + 1);
+        };
 
   const surfaceBody =
     emptyKind === "none" ? (
@@ -284,6 +299,7 @@ export function WorkItemsSurface({
         workItems={visibleItems}
         laneDimension={laneDimension}
         environment={environment}
+        onRequestCreate={requestCreate}
       />
     );
 

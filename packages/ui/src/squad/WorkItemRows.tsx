@@ -13,7 +13,11 @@ import {
 } from "./WorkItemInlineEditParts.js";
 import {
   AssigneeMarker,
-  WorkItemRowDragHandle,
+  WorkItemLabelChip,
+  WorkItemLabelMoreChip,
+  WorkItemRowActions,
+  WorkItemRowCardBands,
+  WorkItemRowOpenDetailOverlay,
   type WorkItemTableRowInput,
   WorkItemRowSelect,
   WorkItemTableTimelineRow,
@@ -34,6 +38,16 @@ import {
 /* 行环境 / 聚焦注册表的**类型**从 `workItemRowParts` 转出（那里是它们的新家：见该文件头
    「为什么这些不放在 WorkItemRows 里」），消费方仍从本模块 import —— 契约的入口不变。 */
 export type { WorkItemRowEnvironment, WorkItemRowFocus } from "./workItemRowParts.js";
+
+/* 行词汇件（标签 chip / 「+N」/ 行级覆盖按钮）的定义随卡片形态重构搬进**行零件的家**
+   （`workItemRowParts.tsx`：无锚点零散件的家，也是勾选件/拖拽把手/动作簇的家）。
+   本模块把它们**原样转出**：消费方（详情页 / peek / 表格单元格）的 import 路径不变，
+   单点性质不变（全树仍只有一处定义）—— 行模块的 400 行硬线（`.oxlintrc.json`）留给卡片形态。 */
+export {
+  WorkItemLabelChip,
+  WorkItemLabelMoreChip,
+  WorkItemRowOpenDetailOverlay,
+} from "./workItemRowParts.js";
 
 /* 工作项**行的呈现词汇与行渲染**（阶段二 · T-P2-R1 抽件）：**跨三视图共用的唯一模块**。
 
@@ -72,11 +86,20 @@ const ROW_CLASSNAME =
 /* 表格布局的行（T-P2-R3）：`<tr>` 不接受 padding/圆角，故行只保留 hover 与过渡；
    分隔线、行高（44px 可点目标下限）落在**单元格**上（数据格与动作格都在 `WorkItemTableCell`）。 */
 const TABLE_ROW_CLASSNAME = "transition-colors hover:bg-hover";
-/* 标签 chip 的**中性**外观（#11 v1）：只用 `border` / `foreground-subtlest` ——
-   标签是**描述**，不是状态（spec §11.3：状态只由语义色表达；借 success / destructive 上色
-   会让「这个标签」被读成「这件事成了 / 出事了」）。常量一处定义，三视图与详情页共用同一个组件。 */
-const WORK_ITEM_LABEL_CHIP_CLASSNAME =
-  "shrink-0 rounded border border-border px-1.5 py-0.5 text-ui-xs text-foreground-subtlest";
+/* 看板**卡片**（2026-10-09 用户裁定「看板 multica 形态重排」；形态取 spec §3 的 `BoardCardContent`）：
+   圆角 8px + 0.5px 发丝边 + 卡片面（`bg-card`）+ 极淡投影 + py-3 px-2.5（12px / 10px）。
+   宽度 256px = 列 280 − 列 p-2(16) − 列体 p-1(8)：由「列内块级拉伸 + 列体 p-1」自然得到，
+   卡片不写死宽度（列宽改了卡片跟着对）。行高下限 44px（可点目标）仍给 —— 卡片中位高 ~110px。
+   与 ROW_CLASSNAME（列表视图的高密度行）是两种形态，互不替代（list/table 视图保持行/表格）。 */
+const CARD_CLASSNAME =
+  "flex min-h-11 flex-col rounded-lg border-[0.5px] border-border bg-card py-3 px-2.5 shadow-sm transition-colors hover:border-border-hover hover:bg-hover";
+/* 卡片所在的**列体**（看板的行容器）：列头不滚、列体滚 —— 最小高 200px + 独立纵向滚 +
+   4px 内边距 + 卡片间距 8px（spec §2 与 §10-A2）。`flex-1` 让列体吃满列高（列被容器拉伸成等高）。 */
+const CARD_LIST_CLASSNAME =
+  "flex min-h-[200px] flex-1 flex-col gap-2 overflow-y-auto rounded-lg p-1";
+/* 行内容的外层（覆盖按钮 + 字段 + 动作簇）：行形态横排、卡片形态四带纵排（带在 `WorkItemRowCardBands`）。 */
+const ROW_BODY_CLASSNAME = "relative flex items-center justify-between gap-3";
+const CARD_BODY_CLASSNAME = "relative flex flex-col gap-1.5";
 /* 优先级徽标的**中性**外观（阶段一轮 C）：同样不借语义色 —— 优先级是**分类**，不是「成了/出事了」；
    借用 success / destructive 让某一档「看起来更响」会把档位读成故障（DESIGN：语义色只编码状态）。
    常量一处定义，行与详情概览共用同一个组件（见 `WorkItemPriorityBadge`）。 */
@@ -85,57 +108,6 @@ const WORK_ITEM_PRIORITY_BADGE_CLASSNAME =
 /* 聚焦高亮的驻留时长（ms）：够看见"它在这里"，然后就消失 —— 高亮是**一次性提示**，
    不是状态编码（spec §11.3：状态只由语义色表达；这个环只借语义色 token 说"看这里"）。 */
 const FOCUS_HIGHLIGHT_MS = 1600;
-
-/**
- * 工作项标签 chip（**一处定义，多面共用**：三视图的行与详情页概览）。
- * 它是**纯呈现**（无状态、无判据），故不违反「本模块是行呈现层」。
- */
-export function WorkItemLabelChip({ label }: { label: string }) {
-  return (
-    <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label">
-      {label}
-    </span>
-  );
-}
-
-/**
- * 标签「+N」折合 chip（**一处定义，多面共用**：行的标签块与 table 的标签单元格）。
- * 外观与普通 chip 同一个常量 —— 它不是另一种东西，只是「还有几个没显示」。
- */
-export function WorkItemLabelMoreChip({ hiddenCount }: { hiddenCount: number }) {
-  const { intl } = useZCodeIntl();
-  return (
-    <span className={WORK_ITEM_LABEL_CHIP_CLASSNAME} data-testid="work-item-label-more">
-      {intl.formatMessage({ id: "squad.workItems.labelsMore" }, { count: hiddenCount })}
-    </span>
-  );
-}
-
-/**
- * 行级「打开详情」的**透明覆盖按钮**（**一处定义，多面共用**：看板/列表的整行与 table 的标题格）。
- *
- * 为什么是覆盖层而不是整行 button：行内本来就有按钮，button 嵌套 button 是非法 HTML
- * （点内层会连带触发外层）。覆盖层只盖标题区域，行内动作区抬到 `relative z-10`。
- */
-export function WorkItemRowOpenDetailOverlay({
-  title,
-  onOpen,
-}: {
-  /** 用于可及名称（读屏听到「打开工作项「标题」」）。 */
-  title: string;
-  onOpen: () => void;
-}) {
-  const { intl } = useZCodeIntl();
-  return (
-    <button
-      type="button"
-      aria-label={intl.formatMessage({ id: "squad.workItemDetail.activity.open" }, { title })}
-      data-testid="work-item-row-open-detail"
-      onClick={onOpen}
-      className="absolute inset-0 z-0 rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
-    />
-  );
-}
 
 /**
  * 工作项优先级徽标（**一处定义，多面共用**：行的 picker 与详情概览）；未设置（NULL）⇒ 不渲染。
@@ -231,6 +203,7 @@ function WorkItemRow({
   environment,
   runParentWorkItemIds,
   table,
+  card,
 }: {
   row: WorkItemBoardRow;
   environment: WorkItemRowEnvironment;
@@ -239,6 +212,9 @@ function WorkItemRow({
   runParentWorkItemIds: readonly string[];
   /** 表格布局（`undefined` = 列表/看板的横排信息带）；见 `WorkItemTableRowInput`。 */
   table?: WorkItemTableRowInput;
+  /** 看板卡片形态（`true` = 卡片 + 四带纵排；缺省 = 高密度行 —— list 视图与「不分组」平铺）。
+      锚点、ref 注册、勾选件槽位与时间线挂载点两种形态**同一份**（卡片不是第二份行渲染）。 */
+  card?: boolean;
 }) {
   const { item, depth } = row;
   const { intl } = useZCodeIntl();
@@ -286,59 +262,33 @@ function WorkItemRow({
   const openDetailOverlay = (
     <WorkItemRowOpenDetailOverlay title={item.title} onOpen={() => onOpenRow(item.id)} />
   );
-  /* 行内动作簇（编辑 / 改派 / 放弃整批 / 时间线）：**一处定义，两种布局共用** ——
-     表格的动作列不是第二份动作簇，只是同一个簇换了个宿主格子（`<td data-column="actions">`）。 */
+  /* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。判据与钮都留在
+     行模块，钮作为节点交给动作簇（`WorkItemRowActions`，行零件的家）—— 命中判据的位置不变。 */
+  const timelineToggle = isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
+    <Button
+      size="sm"
+      variant="outline"
+      aria-expanded={timelineExpanded}
+      data-testid="work-item-timeline-toggle"
+      onClick={() => onToggleTimeline(item)}
+    >
+      {t("squad.timeline.toggle")}
+    </Button>
+  ) : null;
+  /* 行内动作簇（编辑 / 改派 / 放弃整批 / 拖拽把手）：**一处定义，两种布局共用** ——
+     表格的动作格不是第二份动作簇，卡片把它放在 meta 带右侧，只是同一个簇换了个宿主。
+     挂在行零件的家（与勾选件/拖拽把手同款：单点不变，行模块的 400 行余量留给卡片形态）。 */
   const actions = (
-    <span className="relative z-10 flex shrink-0 items-center gap-2">
-      {/* 拖拽把手（T-P2-R6b）：只有看板在「statusCategory + 手动档」下注入 reorder 时才渲染 ——
-          未启用时**连元素都不挂**（多一个槽位会让同层兄弟的 useId 漂移，默认路径基线会红）。
-          判据在 workItemBoardReorderEnabled（宿主投影），本层不判一次。 */}
-      <WorkItemRowDragHandle itemId={item.id} reorder={environment.reorder} />
-      {/* 时间线展开钮：**只在批根行**给（判据 = 服务面唯一实现 isSquadBatchRoot）。 */}
-      {isSquadBatchRoot({ workItem: item, runParentWorkItemIds }) ? (
-        <Button
-          size="sm"
-          variant="outline"
-          aria-expanded={timelineExpanded}
-          data-testid="work-item-timeline-toggle"
-          onClick={() => onToggleTimeline(item)}
-        >
-          {t("squad.timeline.toggle")}
-        </Button>
-      ) : null}
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        data-testid="work-item-edit"
-        onClick={() => onEdit(item)}
-      >
-        {t("squad.common.edit")}
-      </Button>
-      {/* 改派：**所有行都给**（含子项）—— 改负责人是派发语义（改派 = 新派发），
-          与"改个错别字"（编辑）是两类动作，故单列一个钮；点它只把意图交给页面。 */}
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        data-testid="work-item-reassign"
-        onClick={() => onReassign(item)}
-      >
-        {t("squad.workItems.reassign")}
-      </Button>
-      {/* 放弃整批：只给判据（纯函数）认下的行；点它**只进入待确认态**。 */}
-      {discardableIds.has(item.id) ? (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          data-testid="work-item-discard"
-          onClick={() => onDiscard(item.id)}
-        >
-          {t("squad.discard.action")}
-        </Button>
-      ) : null}
-    </span>
+    <WorkItemRowActions
+      item={item}
+      busy={busy}
+      discardable={discardableIds.has(item.id)}
+      reorder={environment.reorder}
+      timelineToggle={timelineToggle}
+      onEdit={onEdit}
+      onReassign={onReassign}
+      onDiscard={onDiscard}
+    />
   );
   /* 展开的时间线（批根行）：列表布局挂在 `<li>` 内；表格布局渲染为**独立的 `<tr>`**
      （块级内容塞进 `<td>` 同行会破坏表格结构）。同一个值，两种宿主。 */
@@ -352,6 +302,104 @@ function WorkItemRow({
       onOpenSession={onOpenSession}
     />
   ) : null;
+  /* 行的**字段节点**：每枚只定义一次、两种布局共用同一份 —— 行形态横排一串，卡片形态按四带
+     分派（`WorkItemRowCardBands`）。这就是「卡片 = 改行内槽位内容，不是新增槽位」的落地：
+     标题的行内编辑入口、优先级 picker、标签 chip 都仍只有一处实现（判据与入口不复制）。 */
+  const identifierNode =
+    identifierText === null ? null : (
+      <span className="shrink-0 font-mono text-ui-xs text-foreground-subtlest">
+        {identifierText}
+      </span>
+    );
+  /* 卡片标题带：占满整带（`w-full`）+ 中文字重 + 2 行截断（spec §3 的 `line-clamp-2`）。 */
+  const titleCardClass =
+    card === true ? "block w-full font-medium leading-snug line-clamp-2" : undefined;
+  const titleNode =
+    titleDraft !== null ? (
+      <Input
+        value={titleDraft}
+        data-testid="work-item-title-input"
+        aria-label={t("squad.common.title")}
+        size="sm"
+        autoFocus
+        className="pointer-events-auto relative z-10 min-w-0"
+        onChange={(event) => inlineEdit.changeTitleDraft(event.target.value)}
+        {...inlineEdit.titleCompositionHandlers}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => inlineEdit.handleTitleKeyDown(item, event)}
+        onBlur={() => inlineEdit.commitTitleEdit(item)}
+      />
+    ) : inlineEditUnavailableReason === null ? (
+      <button
+        type="button"
+        data-testid="work-item-title-edit"
+        onClick={(event) => {
+          event.stopPropagation();
+          inlineEdit.beginTitleEdit(item);
+        }}
+        className={cn(
+          "pointer-events-auto relative z-10 min-w-0 rounded-sm text-left break-words text-ui-base text-foreground hover:bg-hover focus-visible:ring-2 focus-visible:ring-brand",
+          titleCardClass,
+        )}
+      >
+        {item.title}
+      </button>
+    ) : (
+      <span
+        className={cn("break-words text-ui-base text-foreground", titleCardClass)}
+        title={t(inlineEditUnavailableReason)}
+      >
+        {item.title}
+      </span>
+    );
+  /* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。 */
+  const labelsNode =
+    labelChips.shown.length > 0 ? (
+      <span className="flex shrink-0 items-center gap-1">
+        {labelChips.shown.map((label) => (
+          <WorkItemLabelChip key={label} label={label} />
+        ))}
+        {labelChips.hiddenCount > 0 ? (
+          <WorkItemLabelMoreChip hiddenCount={labelChips.hiddenCount} />
+        ) : null}
+      </span>
+    ) : null;
+  /* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */
+  const statusNode = (
+    <span className="shrink-0 text-ui-xs text-foreground-subtle">
+      {t(workItemStatusMessageId(item.status))}
+    </span>
+  );
+  /* 优先级（阶段一轮 C 的徽标 + 阶段一轮 D 的**行内 picker**）：点徽标即入口。
+     未设置给一枚中性占位 chip（不给入口就永远设不上这一档）；归档行只读（不给入口）。 */
+  const priorityNode =
+    inlineEditUnavailableReason === null ? (
+      <WorkItemPriorityPicker
+        priority={priorityValue}
+        busy={busy}
+        onPick={(value) => inlineEdit.commitPriorityEdit(item, value)}
+        unsetClassName={WORK_ITEM_PRIORITY_BADGE_CLASSNAME}
+      >
+        <WorkItemPriorityBadge priority={priorityValue} testId="work-item-priority" />
+      </WorkItemPriorityPicker>
+    ) : (
+      <WorkItemPriorityBadge priority={item.priority} testId="work-item-priority" />
+    );
+  /* 指派节点：`null` = 指派给当前用户（由本地化文案补上，纯函数不碰 i18n）。 */
+  const assigneeNode = (
+    <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
+      <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
+      {assigneeName ?? t("squad.common.assignee.user")}
+    </span>
+  );
+  /* 树深度：行形态缩进**内容**（`paddingLeft`，照 WikiCatalogTree 的既有手法）；卡片形态缩进
+   **整张卡**（`marginLeft`）—— 卡片面仍是整块，不被 padding 切成半张。表格布局不吃缩进。 */
+  const rowStyle =
+    table !== undefined
+      ? undefined
+      : card === true
+        ? { marginLeft: depth * 12 }
+        : { paddingLeft: `${depth * 12 + 8}px` };
   /* 行的**容器元素**由布局决定（`<li>` / `<tr>`）：锚点、ref 注册、动作簇**只写一次** ——
      「复制一份表格版行渲染」正是本模块要禁的形态（锚点/注册各恰一处，见 T-P2-R1/R3 守卫）。 */
   const RowElement = table === undefined ? "li" : "tr";
@@ -363,10 +411,10 @@ function WorkItemRow({
       ref={(element: HTMLElement | null) => {
         rowFocus.registerRow(item.id, element);
       }}
-      style={table === undefined ? { paddingLeft: `${depth * 12 + 8}px` } : undefined}
+      style={rowStyle}
       className={cn(
-        table === undefined ? ROW_CLASSNAME : TABLE_ROW_CLASSNAME,
-        table === undefined ? "flex flex-col gap-2" : undefined,
+        table !== undefined ? TABLE_ROW_CLASSNAME : card === true ? CARD_CLASSNAME : ROW_CLASSNAME,
+        table === undefined && card !== true ? "flex flex-col gap-2" : undefined,
         // 聚焦高亮：**语义色 token**（brand 环，照 WhiteboardPane 的既有手法），
         // 不引九色板、不编码状态 —— 它只回答"刚才是这一条"。
         rowFocus.highlightedWorkItemId === item.id && "ring-2 ring-brand",
@@ -378,7 +426,7 @@ function WorkItemRow({
         table.cells(row, actions, rowSelectControl)
       ) : (
         <>
-          <div className="relative flex items-center justify-between gap-3">
+          <div className={card === true ? CARD_BODY_CLASSNAME : ROW_BODY_CLASSNAME}>
             {/* 行级「打开详情」：**透明覆盖按钮**（整行 button 会与行内既有按钮嵌套非法）。
                 覆盖层只盖**标题行**（不含展开的时间线），动作区抬到 `relative z-10` ——
                 点击命中是硬要求，不是样式偏好。
@@ -393,89 +441,48 @@ function WorkItemRow({
                 {openDetailOverlay}
               </>
             )}
-            <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
-              {/* identifier 在标题**之前**（它是这条记录的编号，等宽字形；DESIGN：标识符用 font-mono）。
-              未设置（存量行）⇒ 不画，也不占位。 */}
-              {identifierText === null ? null : (
-                <span className="shrink-0 font-mono text-ui-xs text-foreground-subtlest">
-                  {identifierText}
-                </span>
-              )}
-              {/* 标题（阶段一轮 D）：**行内编辑入口** —— 普通行是可点按钮（点开即编辑），
-              归档行是纯文本（连入口都不给，且把原因写在 title 上）。
-              编辑态在同一个位置换成输入框：blur / Enter 提交、Escape 恢复，期间事件不冒泡
-              （行导航与全局快捷键不该吃这几个键；点进标题也不再打开详情 —— 这就是原文语义）。 */}
-              {titleDraft !== null ? (
-                <Input
-                  value={titleDraft}
-                  data-testid="work-item-title-input"
-                  aria-label={t("squad.common.title")}
-                  size="sm"
-                  autoFocus
-                  className="pointer-events-auto relative z-10 min-w-0"
-                  onChange={(event) => inlineEdit.changeTitleDraft(event.target.value)}
-                  {...inlineEdit.titleCompositionHandlers}
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => inlineEdit.handleTitleKeyDown(item, event)}
-                  onBlur={() => inlineEdit.commitTitleEdit(item)}
-                />
-              ) : inlineEditUnavailableReason === null ? (
-                <button
-                  type="button"
-                  data-testid="work-item-title-edit"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    inlineEdit.beginTitleEdit(item);
-                  }}
-                  className="pointer-events-auto relative z-10 min-w-0 rounded-sm text-left break-words text-ui-base text-foreground hover:bg-hover focus-visible:ring-2 focus-visible:ring-brand"
-                >
-                  {item.title}
-                </button>
-              ) : (
-                <span
-                  className="break-words text-ui-base text-foreground"
-                  title={t(inlineEditUnavailableReason)}
-                >
-                  {item.title}
-                </span>
-              )}
-              {/* 标签（#11 v1）：中性 chip，最多 3 个 + 「+N」（截断投影在纯函数里；0 个 ⇒ 整块不渲染）。
-              放在标题**之后**、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
-              {labelChips.shown.length > 0 ? (
-                <span className="flex shrink-0 items-center gap-1">
-                  {labelChips.shown.map((label) => (
-                    <WorkItemLabelChip key={label} label={label} />
-                  ))}
-                  {labelChips.hiddenCount > 0 ? (
-                    <WorkItemLabelMoreChip hiddenCount={labelChips.hiddenCount} />
-                  ) : null}
-                </span>
-              ) : null}
-              {/* 状态徽标：六态各自文案（`WORK_ITEM_STATUS_MESSAGE_IDS` 强制穷尽）。 */}
-              <span className="shrink-0 text-ui-xs text-foreground-subtle">
-                {t(workItemStatusMessageId(item.status))}
+            {card === true ? (
+              /* 卡片形态（spec §3 的 `BoardCardContent`）：四带纵排，字段节点与行形态**同一份**
+                 （编号+优先级 / 标题 2 行截断 / chip 行 / meta 行）。 */
+              <WorkItemRowCardBands
+                head={
+                  <>
+                    {identifierNode}
+                    {priorityNode}
+                  </>
+                }
+                title={titleNode}
+                chips={
+                  <>
+                    {statusNode}
+                    {labelsNode}
+                  </>
+                }
+                meta={
+                  <>
+                    {assigneeNode}
+                    {actions}
+                  </>
+                }
+              />
+            ) : (
+              <span className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2">
+                {/* identifier 在标题**之前**（它是这条记录的编号，等宽字形；DESIGN：标识符用 font-mono）。
+                未设置（存量行）⇒ 不画，也不占位。
+                标题（阶段一轮 D）：**行内编辑入口** —— 普通行是可点按钮（点开即编辑），归档行是
+                纯文本（连入口都不给，且把原因写在 title 上）。编辑态在同一个位置换成输入框：
+                blur / Enter 提交、Escape 恢复，期间事件不冒泡（行导航与全局快捷键不该吃这几个键）。
+                标签放在标题之后、状态文案之前：标题是行的主信息，标签是它的修饰。 */}
+                {identifierNode}
+                {titleNode}
+                {labelsNode}
+                {statusNode}
+                {priorityNode}
+                {assigneeNode}
               </span>
-              {/* 优先级（阶段一轮 C 的徽标 + 阶段一轮 D 的**行内 picker**）：点徽标即入口。
-              未设置给一枚中性占位 chip（不给入口就永远设不上这一档）；归档行只读（不给入口）。 */}
-              {inlineEditUnavailableReason === null ? (
-                <WorkItemPriorityPicker
-                  priority={priorityValue}
-                  busy={busy}
-                  onPick={(value) => inlineEdit.commitPriorityEdit(item, value)}
-                  unsetClassName={WORK_ITEM_PRIORITY_BADGE_CLASSNAME}
-                >
-                  <WorkItemPriorityBadge priority={priorityValue} testId="work-item-priority" />
-                </WorkItemPriorityPicker>
-              ) : (
-                <WorkItemPriorityBadge priority={item.priority} testId="work-item-priority" />
-              )}
-              <span className="flex shrink-0 items-center gap-1.5 text-ui-xs text-foreground-subtle">
-                <AssigneeMarker snapshot={snapshot} assignee={item.assignee} />
-                {/* `null` = 指派给当前用户；由这里的本地化文案补上，纯函数不碰 i18n。 */}
-                {assigneeName ?? t("squad.common.assignee.user")}
-              </span>
-            </span>
-            {actions}
+            )}
+            {/* 动作簇：行形态在右端；卡片形态在 meta 带右侧（见上），故此处不重复挂。 */}
+            {card === true ? null : actions}
           </div>
           {/* 行内编辑的**就地**失败原因（阶段一轮 D）：不清行 —— 用户能在原处改完再提交。 */}
           {inlineFailure === null ? null : (
@@ -514,12 +521,16 @@ export function WorkItemRowList({
   environment,
   testId,
   table,
+  card,
 }: {
   rows: WorkItemBoardRow[];
   environment: WorkItemRowEnvironment;
   testId?: string;
   /** 表格布局（`undefined` = 列表/看板；有它 ⇒ 容器是 `<tbody>`，由视图放进自己的 `<table>`）。 */
   table?: WorkItemTableRowInput;
+  /** 看板卡片形态（看板的**分组列**给 `true`）：容器换成列体（独立纵滚 + 卡片间距），
+      行换成卡片。缺省（list 视图 / 「不分组」平铺 / 表格）= 高密度行列表，视觉零变化。 */
+  card?: boolean;
 }) {
   // 「是不是批根」的唯一输入：本 workspace 的 run 行按 parentWorkItemId 归拢（与页面
   // squadDiscardableWorkItemIds 同一份口径 —— 从 snapshot.runs 取，不另查一次）。
@@ -535,6 +546,7 @@ export function WorkItemRowList({
       environment={environment}
       runParentWorkItemIds={runParentWorkItemIds}
       table={table}
+      card={card}
     />
   ));
   if (table !== undefined) {
@@ -542,7 +554,7 @@ export function WorkItemRowList({
     return <tbody>{rowElements}</tbody>;
   }
   return (
-    <ul className={LIST_CLASSNAME} data-testid={testId}>
+    <ul className={card === true ? CARD_LIST_CLASSNAME : LIST_CLASSNAME} data-testid={testId}>
       {rowElements}
     </ul>
   );
