@@ -11,7 +11,11 @@
  */
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
+import {
+  BOARD_KANBAN_COLLAPSIBLE_STAGE,
+  boardCardHighlightProps,
+  boardCardOpenProps,
+} from "./boardCardInteraction.js";
 import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
 import { formatBoardStageText } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
@@ -20,6 +24,14 @@ import {
   type BoardKanbanColumn,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
+
+/**
+ * 看板列根（七列同款，评审 #35-S1 二轮）：行内拉伸的定高 flex 列，列体 `overflow-y-auto`
+ * 是列内唯一滚动容器。已完成列必须与六列共用这一条链——`<details>` 承载高度链在 Chromium
+ * 里不生效（非 summary 内容在 UA 影子容器内，列体拿内容高、永不滚动），故改为条件渲染。
+ */
+const BOARD_KANBAN_COLUMN_CLASS =
+  "flex w-56 shrink-0 flex-col rounded-xl border border-border/50 bg-background";
 
 /** 列内卡片（紧凑形态，契约 §13.2/§3.3）：号 + 标题 + 段位徽章 + 缺口徽章（+ 该格要求的角标）。 */
 function BoardKanbanCard({
@@ -163,16 +175,47 @@ function BoardKanbanHeader({ column }: { column: BoardKanbanColumn }) {
   );
 }
 
+/**
+ * 可折叠列的列头（评审 #35-S1 二轮）：状态化按钮，`aria-expanded` 表达展开态；
+ * 缺省 handler 时按钮不折叠（视图仍可只读展示，与卡片打开态的退化口径一致）。
+ */
+function BoardKanbanToggleHeader({
+  column,
+  expanded,
+  onToggle,
+}: {
+  column: BoardKanbanColumn;
+  expanded: boolean;
+  onToggle?: (expanded: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-board-column-toggle={column.stage}
+      aria-expanded={expanded}
+      onClick={() => onToggle?.(!expanded)}
+      className="flex items-center gap-1.5 px-1.5 py-1 text-left"
+    >
+      <BoardKanbanHeaderContent column={column} />
+    </button>
+  );
+}
+
 export function BoardKanbanView({
   board,
   onOpenCard,
   highlightCardId = null,
+  completedExpanded = true,
+  onCompletedExpandedChange,
 }: {
   board: BoardViewModel;
   /** 卡片点击（打开弹窗）；缺省时看板退化为只读展示。 */
   onOpenCard?: (id: string) => void;
   /** 跳转落点（该卡带高亮锚点）。 */
   highlightCardId?: string | null;
+  /** 「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开 = 归档前默认可见）。 */
+  completedExpanded?: boolean;
+  onCompletedExpandedChange?: (expanded: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
   const { columns, unplacedCount } = buildBoardKanban(board);
@@ -190,39 +233,37 @@ export function BoardKanbanView({
       {/* 列：固定宽 + 容器横滚（仓库既有看板形态，squad/WorkItemsBoard 同款）。 */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-3 py-3">
         {columns.map((column) =>
-          column.stage === "已完成" ? (
-            // 「已完成」列是可折叠分区（§13.2）：默认展开（归档前要看得见），用户可折叠。
-            // 高度链（评审 #33-S5/#35-S1）：details 本身不挂 flex（跨浏览器风险），改挂 grid 两行
-            // ——summary「auto」+ 内包 div「minmax(0,1fr)」；否则列体 overflow-y-auto 拿到 auto 高，
-            // 内容溢出列盒且永不滚动。折叠列里的跳转落点由宿主在滚动前展开（`boardRevealDetailsIntent`）。
-            <details
+          column.stage === BOARD_KANBAN_COLLAPSIBLE_STAGE ? (
+            // 「已完成」列是可折叠分区（§13.2）：默认展开（归档前要看得见），列头按钮可折叠。
+            // 折叠 = 条件渲染（列体整块不渲染），不是 CSS 藏起来：列根因此与六列同款 flex 链，
+            // 列体照常拿到剩余高度、照常滚动（评审 #35-S1 二轮；浏览器行为断言见
+            // `test/boardKanbanBrowserLayout.ts`）。跳转落点在折叠列里时由宿主先置展开态
+            // （`boardRevealKanbanColumnIntent`）。
+            <section
               key={column.stage}
-              open
               data-board-column={column.stage}
-              data-board-column-details={column.stage}
-              className="grid w-56 shrink-0 grid-rows-[auto_minmax(0,1fr)] rounded-xl border border-border/50 bg-background"
+              className={BOARD_KANBAN_COLUMN_CLASS}
             >
-              <summary className="flex cursor-pointer items-center gap-1.5 px-1.5 py-1">
-                <BoardKanbanHeaderContent column={column} />
-              </summary>
-              <div className="flex min-h-0 flex-col">
+              <BoardKanbanToggleHeader
+                column={column}
+                expanded={completedExpanded}
+                {...(onCompletedExpandedChange ? { onToggle: onCompletedExpandedChange } : {})}
+              />
+              {completedExpanded ? (
                 <BoardKanbanColumnBody
                   column={column}
                   {...(onOpenCard ? { onOpenCard } : {})}
                   highlightCardId={highlightCardId}
                 />
-              </div>
-            </details>
+              ) : null}
+            </section>
           ) : (
             <section
               key={column.stage}
               data-board-column={column.stage}
               // 「已取消」列灰显（§13.2）：取消不清理现场，灰显表达终态；锚点让守卫断言可辨。
               {...(column.stage === "已取消" ? { "data-board-column-muted": "true" } : {})}
-              className={cn(
-                "flex w-56 shrink-0 flex-col rounded-xl border border-border/50 bg-background",
-                column.stage === "已取消" && "opacity-70",
-              )}
+              className={cn(BOARD_KANBAN_COLUMN_CLASS, column.stage === "已取消" && "opacity-70")}
             >
               <BoardKanbanHeader column={column} />
               <BoardKanbanColumnBody

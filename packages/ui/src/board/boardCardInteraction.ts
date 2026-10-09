@@ -71,11 +71,27 @@ export function nextBoardCardHighlight(
 }
 
 /**
- * 落点在折叠容器（`<details>`：已完成列 / 访谈汇总子区）里的跳转可见性（评审 #34-P2）：
+ * 落点在折叠容器（`<details>`：访谈汇总子区，契约 §13.3）里的跳转可见性（评审 #34-P2）：
  * 折叠着就**先展开再滚动**，否则滚到了也看不见。判据在这里一处，DOM 读写在宿主。
+ * （看板「已完成」列不再由 `<details>` 承载——见 `boardRevealKanbanColumnIntent`。）
  */
 export function boardRevealDetailsIntent(details: { open: boolean } | null): "expand" | "none" {
   return details !== null && !details.open ? "expand" : "none";
+}
+
+/**
+ * 看板可折叠列的段位（契约 §13.2：「已完成」列 = 可折叠分区；归档前默认展开）。
+ * 单一真源：视图层的折叠按钮与宿主侧的跳转揭示共用这一个字面量。
+ */
+export const BOARD_KANBAN_COLLAPSIBLE_STAGE = "已完成";
+
+/**
+ * 落点在**看板可折叠列**（已完成）里的跳转可见性（评审 #35-S1 二轮）：
+ * 该列的卡是条件渲染——折叠着就不在 DOM 里，宿主必须先置展开态（与其他状态同一次提交，
+ * 滚动 effect 才找得到落点）。判据在这里一处，DOM 读写在宿主。
+ */
+export function boardRevealKanbanColumnIntent(stage: string | null): "expand" | "none" {
+  return stage === BOARD_KANBAN_COLLAPSIBLE_STAGE ? "expand" : "none";
 }
 
 /**

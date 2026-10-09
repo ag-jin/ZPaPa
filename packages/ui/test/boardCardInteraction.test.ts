@@ -8,6 +8,7 @@ import {
   boardCardOpenProps,
   boardCardSelector,
   boardRevealDetailsIntent,
+  boardRevealKanbanColumnIntent,
   nextBoardCardHighlight,
 } from "../src/board/boardCardInteraction.js";
 
@@ -94,10 +95,21 @@ test("高亮 props：命中跳转落点才挂 data 锚点 + 类片段（其余�
   assert.deepEqual(boardCardHighlightProps("task:9", undefined), {});
 });
 
-test("跳转可见性：折叠容器（<details>）内的落点先展开，再滚动（纯判定，DOM 装配在宿主）", () => {
+test("跳转可见性：折叠容器（<details>，访谈汇总子区）内的落点先展开，再滚动（纯判定，DOM 装配在宿主）", () => {
   assert.equal(boardRevealDetailsIntent(null), "none", "不在折叠容器里：直接滚");
   assert.equal(boardRevealDetailsIntent({ open: true }), "none", "已展开：不必动它");
   assert.equal(boardRevealDetailsIntent({ open: false }), "expand", "折叠着：先展开再滚");
+});
+
+test("跳转可见性：落在看板可折叠列（已完成）里的落点先置展开态（评审 #35-S1 二轮，纯判定）", () => {
+  // 已完成列的卡是条件渲染：折叠着就不在 DOM 里，宿主不先置展开态就「跳了个寂寞」。
+  assert.equal(boardRevealKanbanColumnIntent("已完成"), "expand", "折叠的已完成列要先展开");
+  assert.equal(boardRevealKanbanColumnIntent("待办"), "none", "六列常驻可见，不用动它");
+  assert.equal(
+    boardRevealKanbanColumnIntent(null),
+    "none",
+    "段位缺失的节点不看板列（走列表视图兜底）",
+  );
 });
 
 test("同目标重跳续时：highlight 带 nonce，每次跳转都是新状态（滚动与时限重新起算）", () => {

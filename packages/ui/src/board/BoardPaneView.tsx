@@ -62,6 +62,9 @@ export interface BoardPaneViewProps {
   onJumpToCard?: (target: BoardJumpTarget) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
   highlightCardId?: string | null;
+  /** 看板「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开）。 */
+  kanbanCompletedExpanded?: boolean;
+  onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
   /** 陈旧判定的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -183,6 +186,8 @@ function BoardReadyView({
   onCloseCard,
   onJumpToCard,
   highlightCardId,
+  kanbanCompletedExpanded,
+  onKanbanCompletedExpandedChange,
   now,
 }: {
   board: BoardViewModel;
@@ -198,6 +203,8 @@ function BoardReadyView({
   onCloseCard?: () => void;
   onJumpToCard?: (target: BoardJumpTarget) => void;
   highlightCardId?: string | null;
+  kanbanCompletedExpanded?: boolean;
+  onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
   now: number;
 }) {
   const { intl } = useZCodeIntl();
@@ -256,6 +263,12 @@ function BoardReadyView({
             board={board}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
+            {...(kanbanCompletedExpanded !== undefined
+              ? { completedExpanded: kanbanCompletedExpanded }
+              : {})}
+            {...(onKanbanCompletedExpandedChange
+              ? { onCompletedExpandedChange: onKanbanCompletedExpandedChange }
+              : {})}
           />
         ) : viewMode === "list" ? (
           <BoardListView
@@ -373,6 +386,8 @@ export function BoardPaneView({
   onCloseCard,
   onJumpToCard,
   highlightCardId = null,
+  kanbanCompletedExpanded,
+  onKanbanCompletedExpandedChange,
   now,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
@@ -394,6 +409,8 @@ export function BoardPaneView({
         {...(onOpenCard ? { onOpenCard } : {})}
         {...(onCloseCard ? { onCloseCard } : {})}
         {...(onJumpToCard ? { onJumpToCard } : {})}
+        {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
+        {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
       />
     );
   }
