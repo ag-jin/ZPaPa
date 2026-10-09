@@ -1,5 +1,98 @@
 # Changelog
 
+## [3.16.5](https://github.com/ag-jin/ZPaPa/compare/v3.16.4...v3.16.5) (2026-10-09)
+
+### Features
+
+* **cli:** 后台子 agent 孤儿收敛判据与 subagent_outcome 落盘模块 ([9d84528](https://github.com/ag-jin/ZPaPa/commit/9d84528c2526dde717133ae20b2bcac7632215b0))
+  * 新模块 subagent-orphan-reconcile.ts：判据纯函数 selectSubagentOrphans（J1 后台启动 /
+  * 权威清单读取（readSessionSubagentInventory）补两个判据事实，与 running/ended 同一次读：
+  * 判据我不自造：J2/J3 直接消费权威清单的 childSessionIds/running，不自己判活/判终态。
+
+* **cli:** 重启后孤儿收敛——接管时落盘 subagent_outcome ([071b444](https://github.com/ag-jin/ZPaPa/commit/071b444150ce03eea6e00cd23caabfec46050ea9))
+  * 读面消费（subagent-session-query / readSessionSubagentInventory）：读取 child 时顺带读
+  * 挂点（activateSessionForResume 尾部一行）：app.resume() 返回后本 runtime 对该会话零在飞
+  * bootstrap/test/subagent-orphan-reconcile.test.ts 20 例（判据分支、落盘形状、幂等、读面优先级、
+  * bootstrap/test/coldHydrationSubagentStatus.test.ts 13 例（原 11 例**逐例保持绿** + 新增
+  * core backgroundSubagentTerminalEvent 4/4、squadTools 11/11 绿；bootstrap/core typecheck 通过；
+
+* **desktop:** 帮助菜单四入口改指 ZPaPa GitHub 仓库 ([32fa094](https://github.com/ag-jin/ZPaPa/commit/32fa0942102cb00fe18315024daab3b487c1b9fb))
+
+* **ui:** T1 网页元素上下文契约支持评语与身份合并 ([e30824c](https://github.com/ag-jin/ZPaPa/commit/e30824c92e5150edd7d63aa057bab12b79cc9960))
+
+* **ui:** T2 网页元素注入脚本改为阶段状态机与祖先链滑轨 ([e7c2463](https://github.com/ag-jin/ZPaPa/commit/e7c2463aa7add3ef3172066e1b53430c9c064ff5))
+
+* **ui:** T3 网页元素附件支持评语展示与内联编辑 ([2df7111](https://github.com/ag-jin/ZPaPa/commit/2df7111a2698ce47e3b423322324f946fc001cc9))
+
+* **ui:** T4 网页元素拾取会话循环支持层级调整与评语阶段 ([3c3c0a7](https://github.com/ag-jin/ZPaPa/commit/3c3c0a71fbcbb6c09d893a7a771a52e35da3b5ec))
+
+* **ui:** T5 网页元素拾取浮条与 UnifiedBrowserView 接线 ([4bcd036](https://github.com/ag-jin/ZPaPa/commit/4bcd0369c0de30739ec65b42cd7202e75d0e608a))
+
+* **ui:** 子智能体目录补孤儿收敛摘要文案（可选增强） ([64eb54e](https://github.com/ag-jin/ZPaPa/commit/64eb54e42688c019b6bd096d827e19e07f4c7dee))
+  * zh-CN：subagentDirectory.summary.reconciled =「运行时已退出，结果未知」
+  * en-US：Runtime exited, result unknown
+
+* **ui:** 子智能体表单增加后台派发开关 ([93bccd2](https://github.com/ag-jin/ZPaPa/commit/93bccd2efbf7bd600ed2ffe96f5f3cb1686df55f))
+
+
+### Bug Fixes
+
+* **cli:** 冷恢复按 child 真实终态判定后台 agent，不再把 spawn part 当终态 ([54a95e6](https://github.com/ag-jin/ZPaPa/commit/54a95e6e138af3bc7d85910eaedc781cd1f40bda))
+  * transcript-hydration 新增 subagentChildFacts（knownChildSessionIds + terminalStates）：
+  * server-operations 抽出 readSessionSubagentInventory（RPC 分页只是展示层包装）；
+  * 阻塞式 Agent 语义不变：它等 child 真正结束才 completed/error，part 终态即 child 终态。
+
+* **cli:** 后台 Agent 终态不再委派发布，修后台面板卡片永久「执行中」 ([5185c97](https://github.com/ag-jin/ZPaPa/commit/5185c9787280a8730633c741fc222711718a632e))
+
+* **cli:** 孤儿收敛加固——TUI 同源读面、挂点测试、收敛行时间 ([97fba74](https://github.com/ag-jin/ZPaPa/commit/97fba74f3924a336e4720bfc166aa9bea7b47cc3))
+
+* **ui:** 子智能体目录给收敛落 lost 的条目补成因副文案 ([6435054](https://github.com/ag-jin/ZPaPa/commit/64350546390e496896a8bacba0f18d39a65cea8b))
+
+* **ui:** 审查收尾——stateKey 移除与注入脚本去名加固 ([abc88a1](https://github.com/ag-jin/ZPaPa/commit/abc88a1ef59fafde49258411e87775dbb9de9855))
+
+* **ui:** 拾取计数按元素身份去重 ([b49388f](https://github.com/ag-jin/ZPaPa/commit/b49388fd2985291a5258edfb891523ba48f6f015))
+
+* **ui:** 注入脚本组装改为压缩安全的位置参数注入 + 防回归测试 ([6b188b9](https://github.com/ag-jin/ZPaPa/commit/6b188b98f3f10145b80a8f814fa89d10bd83338d))
+
+
+### Chores
+
+* **repo:** 补 issue 模板并将社群徽章指向仓库 Discussions ([48ab973](https://github.com/ag-jin/ZPaPa/commit/48ab97389a36bb6f5d361326e261c3e840ae427a))
+
+
+### Documentation
+
+* **cli:** 后台子 agent 重启后孤儿收敛行为 spec ([98f2e4c](https://github.com/ag-jin/ZPaPa/commit/98f2e4c18128c8a31104573b3581a24cbe7bd390))
+
+* **cli:** 核实 J4 认领信号覆盖不到进程内活 child，记录会话关闭例外 ([ad2a5e4](https://github.com/ag-jin/ZPaPa/commit/ad2a5e438b265e2dff4175ba42d8bbd991c9fc00))
+  * J4 的 liveInProcess 只认 host record；生产拓扑里 subagent child 没有 record ⇒ 该判据
+  * 主路径仍然安全，靠的是「挂点位置 + 后台 child 钉住常驻池 + 无连带终止入口 + 宽容期」，
+  * 唯一例外（已确认可达）：显式会话关闭（deleteSession / session/close）绕过常驻池闸门，
+  * 未决修法（新建进程级认领信号 / 会话关闭时收走后会话的后台 agent）涉及新状态所有者与
+
+* **cli:** 补孤儿收敛三面同源与收敛行呈现的验收条文 ([f580ad8](https://github.com/ag-jin/ZPaPa/commit/f580ad878fe2733ad5a7813f3bdf0f0deb6670b3))
+
+* **update:** 纠正「正式版发布 ⇒ 预览用户自动升回」—— 只在**开关关着**时成立 ([79dc0f6](https://github.com/ag-jin/ZPaPa/commit/79dc0f6c19e6f212bc3becbac6889331e9c656de))
+
+* 内置浏览器元素拾取设计文档（评审输入） ([e714812](https://github.com/ag-jin/ZPaPa/commit/e714812fe51022a5cb3bf643ec5a7d87a48b661e))
+
+
+### Refactorings
+
+* **cli:** 孤儿收敛收尾（写入口绑定 store，测试去无用解构） ([ad690db](https://github.com/ag-jin/ZPaPa/commit/ad690db549a613b25621e0f759b4af970c161118))
+  * 写入口取 store 上的绑定引用再调用：一是 adapter 的实现依赖 this，二是避免
+  * 混合场景用例去掉未使用的解构变量（测试目录 lint 归零）。
+
+* **cli:** 收紧孤儿收敛模块的导出面 ([80051d0](https://github.com/ag-jin/ZPaPa/commit/80051d081997d3942bba64d4e06d0efffe934100))
+
+* **ui:** 拾取浮条合并层级与评语为一步提交 ([702f26f](https://github.com/ag-jin/ZPaPa/commit/702f26f9d6ddd5a446700860137caa1b227d05ff))
+  * 浮条调整阶段：删掉多行祖先链面包屑，改为一行紧凑层级指示（当前档位短标签
+  * 会话状态机：hover → adjust →「加入对话」→ hover，confirmSelection 直接携带
+  * i18n：删 browser.elementPicker.bar.confirm / bar.done / comment.skip，新增
+  * test-ids：删 CONFIRM_BUTTON / COMMENT_SKIP_BUTTON，DONE_BUTTON 更名
+  * 设计文档 §1/§3/§4.3/§4.4/§5.1/§6/§9/§10/§11/§14 同步到新实现。
+  * 测试：会话单次派发（带/不带评语）、计数去重改断言；新增浮条结构守卫
+
 ## [3.16.4](https://github.com/ag-jin/ZPaPa/compare/v3.16.3...v3.16.4) (2026-10-03)
 
 ### Features
