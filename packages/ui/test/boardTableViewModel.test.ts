@@ -17,6 +17,7 @@ import {
   clearBoardListFilter,
   collectBoardViewNodes,
   EMPTY_BOARD_LIST_CONTROLS,
+  type BoardListControls,
 } from "../src/board/boardViewsViewModel.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { STAGE_MATRIX_BOARD } from "./boardStageMatrixFixture.js";
@@ -322,7 +323,37 @@ test("阻碍/缺口列：计数与短标签摘要；空值 → 空单元格", ()
   assert.equal(boardTableCellText(card7, "title", t, NOW_2026_10_12), "预览发布通道（workflow）");
 });
 
-test("表格行 = 列表视图同一管线：同一集合、同一过滤、同一排序语义（派发指令「复用」）", () => {
+test("表格行 = 列表视图同一管线：字面 id 序列写死（契约 §3.5 排序规则的手推样例）", () => {
+  // 期望值是**手推的**：先缺口置顶组（attention 非空，按 updatedAt 倒序、同刻按 id 字典序），
+  // 再其余组（updatedAt 倒序，已完成沉底到组尾）。
+  assert.deepEqual(
+    buildBoardTableRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
+    ["task:8", "spec:preview-channel"],
+    "执行中 = #8（带缺口，置顶）→ 特性（15:30）",
+  );
+  assert.deepEqual(
+    buildBoardTableRows(matrixBoard()).map((node) => node.id),
+    [
+      "task:8", // 缺口组：14:20
+      "plan:sess_1f3c5d7e", // 13:10（与 #13 同刻，id 字典序在前）
+      "task:13", // 13:10
+      "interview:itw-b", // 11:00
+      "interview:itw-a", // 10:00
+      "task:14", // 08:00
+      "plan:sess_f1a2d0bb", // 10-01 10:42
+      "spec:preview-channel", // 非缺口组：15:30
+      "task:7", // 14:05
+      "spec:payment-split", // 09:00（与 #10 同刻，id 字典序在前）
+      "task:10", // 09:00
+      "task:12", // 08:00
+      "task:9", // 已完成沉底（§13.2 列表列）
+    ],
+    "默认排序（attention 置顶 + updatedAt 倒序 + 已完成沉底）",
+  );
+  assert.equal(buildBoardTableRows(matrixBoard()).length, 13, "全卡平铺：6 特性 + 7 卡一个不丢");
+});
+
+test("表格行 = 列表视图同一管线（同一集合/过滤/排序语义，派发指令「复用」）", () => {
   const rows = buildBoardTableRows(matrixBoard(), { filter: { stage: "执行中" } });
   assert.deepEqual(
     rows.map((node) => node.id),
@@ -332,19 +363,19 @@ test("表格行 = 列表视图同一管线：同一集合、同一过滤、同�
   assert.deepEqual(
     buildBoardTableRows(matrixBoard()).map((node) => node.id),
     buildBoardListRows(matrixBoard()).map((node) => node.id),
-    "默认排序（attention 置顶 + updatedAt 倒序 + 已完成沉底）逐位一致",
+    "默认排序逐位一致",
   );
-  assert.equal(buildBoardTableRows(matrixBoard()).length, 13, "全卡平铺：6 特性 + 7 卡一个不丢");
 });
 
 test("跳转前清过滤：只清四个筛子，保留排序视角（第二视角不被跳转重置）", () => {
-  const cleared = clearBoardListFilter({
+  const controls: BoardListControls = {
     stage: "执行中",
     status: "active",
     attention: "unmerged-worktree",
     kind: "task",
     sort: "oldest",
-  });
+  };
+  const cleared = clearBoardListFilter(controls);
   assert.deepEqual(cleared, {
     stage: null,
     status: null,
@@ -352,9 +383,29 @@ test("跳转前清过滤：只清四个筛子，保留排序视角（第二视�
     kind: null,
     sort: "oldest",
   });
+  // 幂等要有判据（评审 T1：`清(常量) == 常量` 那种自比自的字面量换不来信息）：
+  // ① 再清一次结果不变；② 入参不被就地改写；③ 返回新对象（React 依赖引用变化）。
+  assert.deepEqual(clearBoardListFilter(cleared), cleared, "幂等：再清一次结果一致");
+  assert.deepEqual(
+    controls,
+    {
+      stage: "执行中",
+      status: "active",
+      attention: "unmerged-worktree",
+      kind: "task",
+      sort: "oldest",
+    },
+    "入参对象不得被就地改写",
+  );
+  assert.notEqual(cleared, controls, "返回新对象（供 React 依赖比较）");
   assert.deepEqual(
     clearBoardListFilter(EMPTY_BOARD_LIST_CONTROLS),
     EMPTY_BOARD_LIST_CONTROLS,
-    "本来就无过滤 → 原样（幂等）",
+    "本来就无过滤 → 值原样（但仍是新对象）",
+  );
+  assert.notEqual(
+    clearBoardListFilter(EMPTY_BOARD_LIST_CONTROLS),
+    EMPTY_BOARD_LIST_CONTROLS,
+    "常量本身不被返回（冻结常量不可被调用方改写）",
   );
 });

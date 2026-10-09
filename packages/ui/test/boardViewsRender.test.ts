@@ -547,13 +547,27 @@ test("面板：跳转落点高亮锚点跟着 highlightCardId 走（表格行与
   );
 });
 
-test("面板：四视图的卡片都接线打开弹窗（data 锚点仍是卡片 id）", () => {
+test("面板：四视图的卡片都接线打开弹窗（锚点 + role/tabindex/键盘路径逐视图断言）", () => {
+  // 评审 T3：接线不能只抽查两个视图——四视图各断言一次交互 props 齐备。
   for (const viewMode of ["tree", "kanban", "list", "table"] as const) {
     const markup = render(matrixBoard(), { viewMode, onOpenCard: () => {} });
     assert.ok(markup.includes('data-board-card="task:8"'), `${viewMode} 渲染卡片锚点`);
+    assert.ok(
+      /data-board-card="task:8"[^>]*role="button"/.test(markup),
+      `${viewMode} 的卡片应挂打开态 role（点击 → 弹窗）`,
+    );
+    assert.ok(
+      /data-board-card="task:8"[^>]*tabindex="0"/.test(markup),
+      `${viewMode} 的卡片应可键盘聚焦`,
+    );
   }
-  const kanban = render(matrixBoard(), { viewMode: "kanban", onOpenCard: () => {} });
-  assert.ok(/data-board-card="task:8"[^>]*role="button"/.test(kanban), "看板卡可点（role=button）");
-  const list = render(matrixBoard(), { viewMode: "list", onOpenCard: () => {} });
-  assert.ok(/data-board-card="spec:preview-channel"[^>]*role="button"/.test(list), "列表行可点");
+  // 没有打开回调时四视图都不宣称可点（只读展示的退化路径）。
+  for (const viewMode of ["tree", "kanban", "list", "table"] as const) {
+    const markup = render(matrixBoard(), { viewMode });
+    assert.ok(markup.includes('data-board-card="task:8"'), `${viewMode} 仍渲染卡片锚点（跳转定位用）`);
+    assert.ok(
+      !/data-board-card="task:8"[^>]*role="button"/.test(markup),
+      `${viewMode} 没有回调时不得宣称可点`,
+    );
+  }
 });

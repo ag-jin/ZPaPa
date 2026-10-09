@@ -61,7 +61,17 @@ test("树渲染：特性节点行 = 编号 + 标题 + 段位徽章 + 状态色",
   assert.ok(markup.includes("预览通道（Preview Channel）"), "特性标题应渲染");
   assert.ok(markup.includes('data-board-stage="执行中"'), "特性段位徽章应渲染 stage 字段文本");
   assert.ok(markup.includes('data-board-status="active"'), "状态色应带可辨别的状态标记");
-  assert.ok(!markup.includes('未领号">未领号'), "合法未领号形态不得误标");
+  // 负向断言要有真判据（评审：`未领号">未领号` 这种模式永远命中不了）：
+  // 有号的特性行不得挂「未领号」角标，而未领号角标只出现在真正缺号的节点上。
+  const featureRow = /data-board-feature="spec:preview-channel"[^>]*>([\s\S]*?)<div class="flex flex-col">/.exec(
+    markup,
+  );
+  assert.ok(featureRow, "特性行应可切片");
+  assert.ok(
+    !featureRow[1].includes("data-board-unassigned"),
+    "有 label 的特性行不得带未领号角标",
+  );
+  assert.ok(markup.includes("data-board-unassigned"), "夹具里的未领号节点应带该锚点");
 });
 
 test("每张卡片也渲染自己的段位徽章（stage 字段按节点独立取）", () => {
@@ -89,11 +99,63 @@ test("卡片行：草案/未领号/受阻 N 三枚角标与执行角色徽记", 
   assert.ok(markup.includes("受阻 1"), "blockers 非空应渲染「受阻 N」");
   // 卡片 1.2：activeRun 非空
   assert.ok(markup.includes("implementer 执行中"), "activeRun 应渲染执行角色徽记");
-  // 未领号的草案卡（plan-payment-split 的两张卡）
-  assert.ok(markup.includes("支付拆分（旧稿）"), "未领号特性应照常渲染");
-  assert.ok(markup.includes("未领号"), "no/label 缺省应渲染「未领号」角标（合法缺省形态）");
-  assert.ok(markup.includes("草案"), "draft 卡应渲染「草案」角标");
+  // 未领号的草案卡（plan-payment-split 的两张卡）：断言要**指向那张卡**（评审：只查全文有
+  // 「未领号/草案」会被同词诊断行（"按未领号上板"）喂饱，卡上没渲染也照样绿）。
+  const draftCard = markup.slice(
+    markup.indexOf('data-board-task="task:plan:plan-payment-split#0"'),
+    markup.indexOf('data-board-task="task:plan:plan-payment-split#1"'),
+  );
+  assert.ok(draftCard.length > 0, "未领号草案卡应可切片");
+  assert.ok(draftCard.includes("data-board-unassigned"), "缺 no/label 的卡带「未领号」角标");
+  assert.ok(draftCard.includes("data-board-draft"), "draft: true 的卡带「草案」角标");
+  assert.ok(draftCard.includes("拆出支付回调服务（草案）"), "切到的确实是那张卡");
+  // 非草案卡不得带草案角标（负向判据指向具体卡片，不是全文搜索）。
+  const card7 = markup.slice(
+    markup.indexOf('data-board-task="task:7"'),
+    markup.indexOf('data-board-task="task:8"'),
+  );
+  assert.ok(!card7.includes("data-board-draft"), "#7 不是草案卡");
+  assert.ok(!card7.includes("data-board-unassigned"), "#7 有号，不带未领号角标");
   assert.ok(markup.includes("受阻 2"), "两张 draft 卡的第二张 blockers 为 2");
+});
+
+test("编号兜底：有稳定号、无 label 的节点渲染 ID-<no>（golden 与真实板都没有的形态）", () => {
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as unknown as {
+    features: Array<{ tasks: unknown[] }>;
+  };
+  const spec = raw.features[0];
+  assert.ok(spec, "夹具应有第一个特性");
+  spec.tasks.push({
+    no: 21,
+    title: "只有稳定号的卡",
+    status: "pending",
+    stage: "待办",
+    draft: false,
+    attention: [],
+    blockers: [],
+    evidence: [],
+    lastRun: null,
+    activeRun: null,
+    worktree: null,
+    pr: null,
+    updatedAt: "2026-10-09T12:00:00+08:00",
+  });
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const markup = render({ kind: "ready", board: outcome.board });
+  assert.ok(markup.includes('data-board-task="task:21"'), "缺 label 的卡按稳定号定位");
+  const cardStart = markup.indexOf('data-board-task="task:21"');
+  const boundaries = [
+    markup.indexOf('data-board-task="', cardStart + 1),
+    markup.indexOf('data-board-feature="', cardStart + 1),
+  ].filter((index) => index > cardStart);
+  const card = markup.slice(
+    cardStart,
+    boundaries.length > 0 ? Math.min(...boundaries) : cardStart + 3000,
+  );
+  assert.ok(card.includes("ID-21"), `缺 label 时应回退 ID-<no>：${card}`);
+  assert.ok(!card.includes("data-board-unassigned"), "有稳定号就不是「未领号」");
 });
 
 test("最近执行行：lastRun 四要素；无断点不编造断点", () => {

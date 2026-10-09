@@ -103,20 +103,36 @@ test("表格：隐藏列同时消失（列头与单元格一起收），可见�
   assert.ok(!firstRow.includes("implementer"), "被隐藏列的单元格不渲染内容");
 });
 
-test("表格：行 = 列表视图同一管线（全卡平铺，顺序逐位一致）", () => {
+test("表格：行序 = 手推的字面 id 序列（attention 置顶 + updatedAt 倒序 + 已完成沉底）", () => {
+  // 期望值手推自夹具（契约 §3.5 排序规则），不是拿列表视图的输出自比自（评审 T2）。
   const rowIds = anchors(render(), "data-board-card");
-  assert.deepEqual(
-    rowIds,
-    buildBoardListRows(matrixBoard()).map((node) => node.id),
-    "过滤/排序与列表视图同源（attention 置顶 + updatedAt 倒序 + 已完成沉底）",
-  );
+  assert.deepEqual(rowIds, [
+    "task:8",
+    "plan:sess_1f3c5d7e",
+    "task:13",
+    "interview:itw-b",
+    "interview:itw-a",
+    "task:14",
+    "plan:sess_f1a2d0bb",
+    "spec:preview-channel",
+    "task:7",
+    "spec:payment-split",
+    "task:10",
+    "task:12",
+    "task:9",
+  ]);
   assert.equal(rowIds.length, 13, "6 特性 + 7 卡全部平铺");
   assert.ok(rowIds.includes("spec:preview-channel"), "特性节点也在表里");
   const filtered = anchors(
     render({ controls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: "执行中" } }),
     "data-board-card",
   );
-  assert.deepEqual(filtered, ["task:8", "spec:preview-channel"], "走同一过滤条件");
+  assert.deepEqual(filtered, ["task:8", "spec:preview-channel"], "段位筛后只剩两行（#8 置顶）");
+  assert.deepEqual(
+    filtered,
+    buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
+    "同一管线（过滤/排序语义复用，不另写一份表格排序）",
+  );
 });
 
 test("表格：单元格值（号/名称/段位/状态/最近执行/卡龄/阻碍/缺口）", () => {
@@ -148,8 +164,7 @@ test("表格：行可点开弹窗（role=button + tabindex），跳转落点带�
     assert.ok(row.includes('tabindex="0"'), `行应可键盘聚焦：${row}`);
   }
   assert.ok(
-    markup.includes('data-board-card="task:8"') &&
-      /data-board-card="task:8"[^>]*data-board-card-highlight="true"/.test(markup),
+    /data-board-card="task:8"[^>]*data-board-card-highlight="true"/.test(markup),
     "命中跳转落点的行带高亮锚点",
   );
   assert.ok(

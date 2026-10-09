@@ -339,6 +339,33 @@ test("未知缺口码不进徽章渲染（只有四个固定词汇有逐字文�
   assert.deepEqual(state.board.features[0]?.tasks[1]?.attention, ["interrupted-resume"]);
 });
 
+test("有稳定号、无 label 的卡：no 保留、label 为 null、id 按号定位（ID-兜底分支的映射面）", async () => {
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as unknown as {
+    features: Array<{ tasks: unknown[] }>;
+  };
+  const spec = raw.features[0];
+  assert.ok(spec, "夹具应有第一个特性");
+  spec.tasks.push({
+    no: 21,
+    title: "只有稳定号的卡",
+    status: "pending",
+    stage: "待办",
+    attention: [],
+    blockers: [],
+    lastRun: null,
+    updatedAt: "2026-10-09T12:00:00+08:00",
+  });
+  const fileService = createFakeFileService({ [BOARD_PATH]: { content: JSON.stringify(raw) } });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready");
+  if (state.kind !== "ready") return;
+  const card = state.board.features[0]?.tasks.at(-1);
+  assert.ok(card, "新增的卡应映射出来");
+  assert.equal(card.no, 21, "稳定号保留");
+  assert.equal(card.label, null, "缺 label 是合法缺省（不是编造 label=no）");
+  assert.equal(card.id, "task:21", "渲染定位按稳定号（缺 label 不影响 id）");
+});
+
 /* ---------------- 弹窗字段映射（卡 #34，契约 §6） ---------------- */
 
 test("弹窗字段映射：details 全文与空串降级（契约 §6「细节」空串 → 隐藏区块）", async () => {
