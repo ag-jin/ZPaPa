@@ -10,11 +10,11 @@ import {
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 /**
- * 「项目看板」入口注册守卫（卡 #32）。
+ * 「项目看板」入口注册守卫（卡 #32；卡 #58 起入口挂在实验开关下，默认关）。
  *
- * 需求真源：任务卡 #32「侧边面板新增『项目看板』入口，位于『打开标签页』区块之下」
- * 与 `.zcode/board/board-consumption-contract.md` §12 入口落位。入口跟随既有 wiki/file-tree
- * 的标签注册模式：launcher 条目 + workspace 级标签 + 词条标题。
+ * 需求真源：任务卡 #32（入口落位「打开标签页」区块之下）与卡 #58（门禁点：入口与
+ * BoardPane 挂载只在开关开启时出现，默认关）。入口跟随既有 wiki/file-tree 的标签注册模式：
+ * launcher 条目 + workspace 级标签 + 词条标题。
  */
 
 const t = (descriptor: { id: string }, values?: Record<string, string>) => {
@@ -25,12 +25,13 @@ const t = (descriptor: { id: string }, values?: Record<string, string>) => {
   return message;
 };
 
-test("看板入口存在，且排在「打开标签页」列表最后（位于既有入口之下）", () => {
+test("开关开启时看板入口存在，且排在「打开标签页」列表最后（位于既有入口之下）", () => {
   const ids = resolveOpenTabLauncherItemIds({
     developerToolsEnabled: true,
     hasReviewTab: false,
     canOpenSelectionSideConversation: true,
     supportsEmbeddedBrowser: true,
+    projectBoardEnabled: true,
   });
   const boardIndex = ids.indexOf("board");
   assert.ok(boardIndex >= 0, `看板入口应存在，实际顺序：${ids.join(",")}`);
@@ -41,12 +42,41 @@ test("看板入口存在，且排在「打开标签页」列表最后（位于�
   );
 });
 
-test("看板入口不受条件裁剪（任何 workspace 都能打开）", () => {
+// 卡 #58：入口整体挂在实验开关下。缺省（不传 = 关）必须零渲染——这是「默认关」的入口面。
+test("开关关闭（缺省）时看板入口零渲染", () => {
+  const omitted = resolveOpenTabLauncherItemIds({
+    developerToolsEnabled: true,
+    hasReviewTab: false,
+    supportsEmbeddedBrowser: true,
+  });
+  assert.equal(
+    omitted.includes("board"),
+    false,
+    `未开启实验开关时不得出现看板入口，实际顺序：${omitted.join(",")}`,
+  );
+
+  const explicitOff = resolveOpenTabLauncherItemIds({
+    developerToolsEnabled: true,
+    hasReviewTab: false,
+    supportsEmbeddedBrowser: true,
+    projectBoardEnabled: false,
+  });
+  assert.equal(
+    explicitOff.includes("board"),
+    false,
+    `显式关闭同样零渲染：${explicitOff.join(",")}`,
+  );
+  // 其它入口不受影响（关掉看板不等于少一排入口）。
+  assert.ok(explicitOff.includes("wiki"), "wiki 入口不因看板关闭而消失");
+});
+
+test("开关开启时看板入口不受条件裁剪（任何 workspace 都能打开）", () => {
   const ids = resolveOpenTabLauncherItemIds({
     developerToolsEnabled: false,
     hasReviewTab: true,
     canOpenSelectionSideConversation: false,
     supportsEmbeddedBrowser: false,
+    projectBoardEnabled: true,
   });
   assert.ok(ids.includes("board"), `实际顺序：${ids.join(",")}`);
 });

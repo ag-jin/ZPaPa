@@ -69,6 +69,12 @@ import {
   shouldRenderPreviewPaneHeavyContent,
   type OpenTabLauncherItemId,
 } from "@/app-shell/animatedSidePanePanelModel.js";
+import {
+  SidePaneOpenTabLauncher,
+  type OpenTabLauncherItem,
+} from "@/app-shell/SidePaneOpenTabLauncher.js";
+import { projectBoardEntryVisible } from "@/board/boardEntryVisibility.js";
+import { useSettings } from "@/hooks/useSettingService.js";
 import type { BrowserNavigationRequest, RecentClosedSidePaneTab } from "@/hooks/useAppPanels.js";
 import { useDeveloperToolsVisibility } from "@/hooks/useDeveloperToolsVisibility.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
@@ -102,7 +108,6 @@ import {
   PlusIcon,
   SquareKanbanIcon,
   SquareTerminalIcon,
-  type LucideIcon,
 } from "lucide-react";
 
 const SIDE_PANE_CONTENT_WIDTH_LOCK_DURATION_MS = 200;
@@ -110,12 +115,6 @@ const PREVIEW_PANE_RESIZE_SETTLE_DELAY_MS = 220;
 type TabsScrollMaskEdges = {
   left: boolean;
   right: boolean;
-};
-type OpenTabLauncherItem = {
-  id: OpenTabLauncherItemId;
-  label: string;
-  icon: LucideIcon;
-  onOpen: () => void;
 };
 const EMPTY_SIDE_PANE_TABS: WorkspaceSidePaneState["tabs"] = [];
 const EMPTY_TABS_SCROLL_MASK_EDGES: TabsScrollMaskEdges = {
@@ -418,6 +417,10 @@ export function AnimatedSidePanePanel({
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const developerToolsEnabled = useDeveloperToolsVisibility();
+  // 卡 #58：项目看板实验开关（默认关）。判据只有一份纯函数（boardEntryVisibility），
+  // 设置快照走既有 useSettings 通路 —— 不另建状态、不加第二个开关读取点。
+  const { settings } = useSettings();
+  const projectBoardVisible = projectBoardEntryVisible(settings);
   const isDragCollapsible = !isVisible;
   const isResizeDisabled = !isVisible;
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
@@ -434,8 +437,12 @@ export function AnimatedSidePanePanel({
       getVisibleSidePaneTabs(tabs, {
         workspaceKey,
         ownerTaskId: sidePaneOwnerId,
-      }),
-    [sidePaneOwnerId, tabs, workspaceKey],
+      }).filter(
+        // #58：实验开关关闭时看板 tab 不进渲染面——包括会话恢复（内存 side pane 状态）
+        // 带回来的残留 tab：不留空 tab、不复活入口。
+        (tab) => tab.type !== "board" || projectBoardVisible,
+      ),
+    [projectBoardVisible, sidePaneOwnerId, tabs, workspaceKey],
   );
   const activeTabId = sidePaneState?.activeTabId ?? "";
   const visibleActiveTabId = visibleTabs.some((tab) => tab.id === activeTabId)
@@ -805,16 +812,18 @@ export function AnimatedSidePanePanel({
             <span>{intl.formatMessage({ id: "developerTools.title" })}</span>
           </DropdownMenuItem>
         ) : null}
-        {/* 看板是 workspace 级只读面板，工件缺失时面板内呈现空态，入口不做条件裁剪。 */}
-        <DropdownMenuItem
-          data-side-pane-add-item="board"
-          onSelect={() => {
-            onOpenBoard();
-          }}
-        >
-          <SquareKanbanIcon className="size-4" />
-          <span>{intl.formatMessage({ id: "board.title" })}</span>
-        </DropdownMenuItem>
+        {/* #58：看板入口挂在实验开关下（默认关）——未开启时条目本身不渲染。 */}
+        {projectBoardVisible ? (
+          <DropdownMenuItem
+            data-side-pane-add-item="board"
+            onSelect={() => {
+              onOpenBoard();
+            }}
+          >
+            <SquareKanbanIcon className="size-4" />
+            <span>{intl.formatMessage({ id: "board.title" })}</span>
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -873,6 +882,8 @@ export function AnimatedSidePanePanel({
     developerToolsEnabled,
     hasReviewTab,
     supportsEmbeddedBrowser,
+    // 入口裁剪的唯一判据（#58）：关闭时列表里没有 board 这一项。
+    projectBoardEnabled: projectBoardVisible,
   })
     .filter((itemId) => !isOfficeMode || (itemId !== "terminal" && itemId !== "review"))
     .map((itemId) => openTabLauncherItemById[itemId]);
@@ -888,50 +899,12 @@ export function AnimatedSidePanePanel({
       </div>
     ) : null;
   const openTabLauncher = (
-    <div className="side-pane-open-tab-shell flex h-full min-h-0 flex-col bg-background">
-      {
-        <div
-          className={cn(
-            "flex h-12 shrink-0 items-center justify-end px-2",
-            isDesktop && "[app-region:drag]",
-          )}
-          style={captionControlsStyle}
-        >
-          {closeSidePaneButton}
-        </div>
-      }
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-10">
-        <div className="side-pane-open-tab-content flex w-full max-w-[20rem] flex-col gap-5">
-          <div className="flex flex-col gap-2 text-center">
-            <h2 className="text-xl font-semibold leading-7 text-foreground">
-              {intl.formatMessage({ id: "sidePane.openTab" })}
-            </h2>
-            <p className="text-ui-base leading-5 text-foreground-subtle">
-              {intl.formatMessage({ id: "sidePane.openTabDescription" })}
-            </p>
-          </div>
-          <div className="side-pane-open-tab-list flex w-full flex-col gap-2">
-            {openTabLauncherItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-side-pane-open-tab-item={item.id}
-                  className="side-pane-open-tab-button flex h-12 min-w-0 items-center gap-3 rounded-xl bg-surface px-3 text-ui-base font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={item.onOpen}
-                >
-                  <Icon className="size-4 text-foreground-subtle" />
-                  <span className="side-pane-open-tab-button-label min-w-0 flex-1 truncate text-left">
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
+    <SidePaneOpenTabLauncher
+      items={openTabLauncherItems}
+      {...(isDesktop === undefined ? {} : { isDesktop })}
+      {...(captionControlsStyle === undefined ? {} : { captionControlsStyle })}
+      headerControls={closeSidePaneButton}
+    />
   );
   const sidePaneTabOverview = (
     <SidePaneTabOverview
@@ -1138,6 +1111,11 @@ export function AnimatedSidePanePanel({
 
                 <div className="relative min-h-0 flex-1 isolate">
                   {tabs.map((tab) => {
+                    // #58：开关关闭时不挂载看板面板——包括会话恢复（内存 side pane 状态）
+                    // 带回来的残留 board tab；关闭态零渲染，不后台起读数。
+                    if (tab.type === "board" && !projectBoardVisible) {
+                      return null;
+                    }
                     if (
                       (tab.type === "browser" || tab.type === "browser-use") &&
                       !shouldMountBrowserTabGuest(tab)
