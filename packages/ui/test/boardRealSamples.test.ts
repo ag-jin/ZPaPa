@@ -401,8 +401,13 @@ test(
       cardsWithNext.length > 0,
       "真实板应有带 nextAssignee 的卡（前提：板由 v2.3 编译器产出，#53 已落地）",
     );
+    // 正在执行的角色不重复标「下一个」（boardNodeParts 有意为之：current === next 时同角色不双标），
+    // 故断言面只覆盖非活跃卡；全部活跃时降级为打印——板是活动物，活卡状态不得成为套件红的来源（T-2 方向）。
+    const assertableNext = cardsWithNext.filter(
+      (task) => task.currentAssignee !== task.nextAssignee,
+    );
     const table = markups.get("table") ?? "";
-    for (const task of cardsWithNext) {
+    for (const task of assertableNext) {
       const no = task.no;
       if (typeof no !== "number") continue;
       const start = table.indexOf(`data-board-card="task:${no}"`);
