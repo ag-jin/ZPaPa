@@ -16,7 +16,7 @@
     "feature 的 origin.type 冻结为 spec-driven-workflow|plan-session|interview 三值（§3.3 三处示例的实测词汇）。",
     "特性 label = 其稳定号字符串；任务 label 首段 = 所属特性稳定号，子级段随树位派生（§4.2）；label 绝不进入引用位。契约 v2.2/#46 改造：计划特性的任务 label = **计划内层级路径**（顶层 1..n、子 = <父>.<序>，如 1/1.1/1.1.1；与 planCode 组合保证项目内唯一，计划间可重复），spec 特性的任务 label 维持「首段 = 所属特性稳定号」。",
     "updatedAt 为必需（§8.3 渲染与卡龄信号的基础），createdAt 为 best-effort 可选（§3.3 示例中 interview-only 节点两者均未画）。聚合口径（T21 成文）：特性 updatedAt = max(源推导, progress.activity 最新 at, 子树卡片 updatedAt)；卡 updatedAt = max(源推导, 最新 run.at)。",
-    "stage/stageRule 为 v2.1 正式化的产物必填字段（T7 实现、T21 契约化）：七段位词表 待设计|待办|执行中|审核中|阻塞|已完成|已取消；优先级（照 lib/derive.mjs deriveStage）阻塞 > 已取消 > 已完成 > 待设计（安排类缺口）> 审核中（判断角色 activeRun）> 执行中（干活角色 activeRun 或 status=active）> 待办。v2.3/#53 增补（compile 侧，deriveStage 纯函数不变）：计划稿特性段位随子卡汇总——全部子卡 completed → 已完成（stageRule 记 N/M）；否则按上表推导（active→执行中 / pending→待办）；零卡且 arranged-not-expanded 缺口 → 待设计；带 roadmap 标记的占位稿特性与全部任务卡段位恒为待设计（#66 例外：cancelled 为终态不让位——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」）。",
+    "stage/stageRule 为 v2.1 正式化的产物必填字段（T7 实现、T21 契约化）：七段位词表 待设计|待办|执行中|审核中|阻塞|已完成|已取消；优先级（照 lib/derive.mjs deriveStage）阻塞 > 已取消 > 已完成 > 待设计（安排类缺口）> 审核中（判断角色 activeRun）> 执行中（干活角色 activeRun 或 status=active）> 待办。v2.3/#53 增补（compile 侧，deriveStage 纯函数不变；子卡汇总三态口径并齐 D3-3/#155——与契约 §13.1/§9 同句、stageRule 文案与实现产物一致）：计划稿特性段位随子卡汇总，三态并齐——①全完成：全部子卡 completed（子卡数>0）→ 已完成，stageRule 记「子卡汇总 N/M 全部 completed → 已完成」；②全取消：全部子卡 cancelled（子卡数>0）→ 已取消（#66 终态优先，先于 roadmap 压制），stageRule 记「子卡汇总 N/M 全部 cancelled → 已取消」（与①对称）；③其余有卡（非全完成/全取消）：按上表推导（active→执行中 / pending→待办），stageRule 在原推导文案后追加「 · 子卡汇总 N/M（契约 v2.3）」（N=completed 计数）；零卡不追加汇总后缀（无汇总可言；零卡且 arranged-not-expanded 缺口 → 待设计）；带 roadmap 标记的占位稿特性与全部任务卡段位恒为待设计（#66 例外：cancelled 为终态不让位——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」）。",
     "任务卡 assignees[]（v2.1 新增）为字符串数组、顺序即管线序：默认管线 implementer→test-verifier→code-reviewer→integrator 免写（缺省即此值）；`> agents:` 行整行覆盖（角色须在角色词表内，markers.md v2.1）。",
     "planCode（v2.2/#46 新增，仅特性层）为 4 位显示码 `[A-Z][A-Z0-9]{3}`（如 IMPL/UI01/DREM/PREV）：计划类特性首轮 --assign 分配（手工 --plan-code 指定或按文件名/标题派生；已有码不重分配）；registry 条目是唯一存储位置，board.json 只读透出；**不参与全局序列号与引用位**，与任务 label 组合成 `UI01-1.2` 显示形态。",
     "currentAssignee（v2.2/#46 新增）为特性/任务两级必填字段：卡级 = activeRun.role ∩ assignees[]（角色在责任管线内才成立，否则 null）；特性级 = 子树首个非空 currentAssignee（无则 null）；null 也显式写出（UI 无第三种形态）。",
@@ -26,7 +26,9 @@
     "arranged-not-expanded 判据（v2.3/#53 收窄）：特性节点无 tasks.md/progress.json 且——plan 判**零卡**（计划稿任务卡按契约恒为 draft，“全部为 draft”无区分度，会把有卡稿永久误挂）；spec 维持「零卡或全部为 draft」（spec 卡 draft=false 有区分度）。",
     "epic 层（#76 规格冻结，AD-1/AD-3/AD-7；itw-20261010-5372 拍板）：三层容器 epic ⊃ phase ⊃ 稿——epic 与期次住 registry（`epics` 登记行 code/title/status + 计划条目 `epic`/`phase` 字段），board.json 以追加键派生透出（`epics[]` / `features[].epic` / `features[].phase`）；`epic` 是引用位，只认稳定号（正整数）或登记 id `epic:<码>`（**码不进引用位**，裸码形态拒收）；`phase` 为单值正整数（epic 内期次序，永不复用；同期次可含多稿——一期两稿合法）；显示层 `KANB1` = epic 码 + phase 序号**双字段合成**（AD-3：码位宽不放宽、全部历史码零变动；合成名不进卡编号命名空间——卡编号维持 计划码-层级，AD-2）；无 epic 合法（AD-8，顶层渲染）。细目与正/反例见 markers.md §10（A1-5 收口：契约 v2.5 / schema v2.4 已冻结）。",
     "epic 壳层终态优先序（#77 规格冻结，AD-9①；itw-20261010-5372 拍板）：`epics[].status` 的 `cancelled`/`archived` 为 epic 壳层终态——优先序：epic 登记行终态 > 成员稿 rollup（全完成/全取消）> 成员稿 roadmap 压制 > 其余推导（卡级/特性级同序，`#66` 已落）；**不因成员活跃复活**——epic 取消后成员稿照常活跃/上板，epic 与码位呈现终态、不回落进行态（壳层终态与成员派生同层独立）；**期号与 epic 码永不复用**（AD-9①）：取消/归档后 `code` 不重分配、`phase` 序号不回收（与稳定号只增不复用同源）；整体取消留痕、归档冷却时钟 = 成员稿 `updatedAt` 之 max、归档 = 成员稿 + 登记行指向改写（勘误 10 第四种改写）名目见 markers.md §10.5，细则见 §10.6（#78）；不变量断言（不复用/seq 高水位）归 A2-3、epics[] rollup 与渲染归 A3-*。",
-    "epic 整体取消与归档（#78 规格冻结，AD-9②③④；itw-20261010-5372 拍板）：整体取消 = 登记行置 `cancelled` + 成员稿逐稿 `> cancelled:` 留痕 + 在途 run 处置清单点名（成员稿缺留痕 → 逐稿对账点名、非失败级；机械断言归 A2、点名单归 B 线对账面）；归档冷却时钟 = 成员稿 `updatedAt` 之 max（>7 天判候选，冷却未到不点名——不是 min/最早）；归档 = 成员稿归档 + 登记面指向改写（勘误 10 第四种改写：成员条目 `file`/`specRoot` 改指归档路径 + epic 登记行置 `archived`；号/`assignedAt`/`epic`/`phase` 一律不改）。细则 markers.md §10.6；机具承接（断言归 A2、点名归 B 线、渲染归 A3-*）见该节；A1-5 收口：契约 v2.5 / schema v2.4 已冻结。"
+    "epic 整体取消与归档（#78 规格冻结，AD-9②③④；itw-20261010-5372 拍板）：整体取消 = 登记行置 `cancelled` + 成员稿逐稿 `> cancelled:` 留痕 + 在途 run 处置清单点名（成员稿缺留痕 → 逐稿对账点名、非失败级；机械断言归 A2、点名单归 B 线对账面）；归档冷却时钟 = 成员稿 `updatedAt` 之 max（>7 天判候选，冷却未到不点名——不是 min/最早）；归档 = 成员稿归档 + 登记面指向改写（勘误 10 第四种改写：成员条目 `file`/`specRoot` 改指归档路径 + epic 登记行置 `archived`；号/`assignedAt`/`epic`/`phase` 一律不改）。细则 markers.md §10.6；机具承接（断言归 A2、点名归 B 线、渲染归 A3-*）见该节；A1-5 收口：契约 v2.5 / schema v2.4 已冻结。",
+    "epics[] rollup 最小字段集（A3-1/#84 落段，追加键；不改版本位）：派生产物 = 登记行 `code`/`title`/`status` 原样透出（登记序；壳层终态由登记行唯一承载，成员活跃不复活——§10.5）+ `plans`（成员稿总数）+ `phases[]`（`{phase, plans}` 期次序升序，只含确有成员的期次）。口径 = 板面活成员的归属对计数（离板归档成员/期次预留不计入；登记 id 引用按 `epic:<码>` 精确配对，稳定号引用仅透出不计——不猜）；段位/缺口等渲染面 rollup 归 A3-2/A4。落地：lib/derive.mjs `deriveEpics`/`normalizeEpicPair` + compile-board 装配；含/无 epic 顶层不回归与追加键双向兼容由场景 84 守卫。",
+    "四段索引派生（C2-1/#133 落段，追加键；不改版本位，AD-11③）：board.json 根级 `frontier[]`/`active[]`/`blocked[]`/`recent[]` ——「frontier/摘要的唯一所有者＝编译器」，UI 与 hook 注入只读消费、禁自算、禁二份口径。选取域＝任务卡级节点（有稳定号，含嵌套子卡；特性/容器不进段——容器进度由组头 rollup 承载）。段口径（逐段单一判据）：①`frontier[]`＝可执行前沿——stage=待办 且无未解除阻塞项（依赖全终态/无依赖），按板序（features 序 × 任务树序）rank=1..n；条目 `{rank,no,title,stage,nextAssignee,resolvedDeps[]}`，`resolvedDeps` = 已解除依赖号数组（命名避开引用位保留字 `blockedBy`：--check 引用位深扫把 `blockedBy` 键视为单号引用位，数组形态判非法）；②`active[]`＝在途活跃——stage∈{执行中,审核中}（板级五槽「运行/待收口」同源于本段，以 stage 判别），按板序；条目 `{no,title,stage,currentAssignee,activeRun,nextAssignee}`；③`blocked[]`＝受阻归因——非终态卡（stage∉已完成/已取消）的未解除阻塞项逐项一行（一卡多项出多行），按板序、卡内按 blockers 原文序；条目 `{no,title,stage,blockerKind,targetId,summary}`——`external` 恒未解除，`dependency` 仅当目标卡段位∈终态才解除，`blockedBy` 缺省（§12 不造引用）或目标离板按未解除处置（不猜，保守计入受阻）；④`recent[]`＝最近活动——runs 事件按 `at` 新→旧（同刻按追加序）取前 10 条（N=10 成文），每 (run × 卡) 一行（多卡 run 各成一行），仅板上有号卡计入（离板引用不进活动面，编译侧已 diagnostics 点名）；条目 `{no,title,at,role,result,stoppedAt,next}`——不带 runId（板面纪律「单一事件单一家」勘误 4 + 场景 24 守卫「板内无 runId」：事件身份由 (no, at, role) 承载，runs 全史在 runs.json）。四段恒写出（空段=[]）——消费面无需存在性判空；段间对偶：待办卡 ∈ frontier ⟺ 不在 blocked。落地：lib/derive.mjs `deriveBoardIndex`（纯函数）+ compile-board 装配；段间派生不变量断言归 C2-2，L0 注入与 UI 同源消费归 C2-3。"
   ],
   "type": "object",
   "required": ["version", "project", "updatedAt", "generatedBy", "sources", "features", "attentionSummary", "diagnostics"],
@@ -190,7 +192,7 @@
                       "required": ["at", "role", "result", "stoppedAt", "next"],
                       "properties": {
                         "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
-                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
                         "result": { "enum": ["done", "partial", "failed", "interrupted"] },
                         "stoppedAt": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
                         "next": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
@@ -205,7 +207,7 @@
                       "type": "object",
                       "required": ["role", "at"],
                       "properties": {
-                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
                         "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
                       }
                     }
@@ -304,7 +306,7 @@
                             "required": ["at", "role", "result", "stoppedAt", "next"],
                             "properties": {
                               "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
-                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
                               "result": { "enum": ["done", "partial", "failed", "interrupted"] },
                               "stoppedAt": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
                               "next": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
@@ -319,7 +321,7 @@
                             "type": "object",
                             "required": ["role", "at"],
                             "properties": {
-                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
                               "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
                             }
                           }
@@ -348,6 +350,91 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "frontier": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rank", "no", "title", "stage", "nextAssignee", "resolvedDeps"],
+        "properties": {
+          "rank": { "type": "integer" },
+          "no": { "type": "integer" },
+          "title": { "type": "string" },
+          "stage": { "const": "待办" },
+          "nextAssignee": {
+            "oneOf": [{ "type": "null" }, { "type": "string" }]
+          },
+          "resolvedDeps": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    },
+    "active": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["no", "title", "stage", "currentAssignee", "activeRun", "nextAssignee"],
+        "properties": {
+          "no": { "type": "integer" },
+          "title": { "type": "string" },
+          "stage": { "enum": ["执行中", "审核中"] },
+          "currentAssignee": {
+            "oneOf": [{ "type": "null" }, { "type": "string" }]
+          },
+          "activeRun": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "required": ["role", "at"],
+                "properties": {
+                  "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
+                  "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
+                }
+              }
+            ]
+          },
+          "nextAssignee": {
+            "oneOf": [{ "type": "null" }, { "type": "string" }]
+          }
+        }
+      }
+    },
+    "blocked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["no", "title", "stage", "blockerKind", "targetId", "summary"],
+        "properties": {
+          "no": { "type": "integer" },
+          "title": { "type": "string" },
+          "stage": { "enum": ["待设计", "待办", "执行中", "审核中", "阻塞"] },
+          "blockerKind": { "enum": ["external", "dependency"] },
+          "targetId": {
+            "oneOf": [{ "type": "null" }, { "type": "integer" }]
+          },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "recent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["no", "title", "at", "role", "result", "stoppedAt", "next"],
+        "properties": {
+          "no": { "type": "integer" },
+          "title": { "type": "string" },
+          "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+          "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator", "ui-designer"] },
+          "result": { "enum": ["done", "partial", "failed", "interrupted"] },
+          "stoppedAt": {
+            "oneOf": [{ "type": "null" }, { "type": "integer" }]
+          },
+          "next": {
+            "oneOf": [{ "type": "null" }, { "type": "string" }]
           }
         }
       }

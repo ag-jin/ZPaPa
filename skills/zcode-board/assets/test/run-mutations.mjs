@@ -2,17 +2,39 @@
 /**
  * zcode-board / 反向断言（夹具有效性自证：T6 骨架 + T7 派生层 + T9 发号）
  *
- * 做法：把 assets/ 整树复制到系统临时目录，对副本施加一处**语义突变**，再跑指定场景；
- * 若突变未被任何断言捕获（全绿），说明夹具/断言对该行为不敏感 → 判为失败。
- * 真实交付物不被修改；每个突变自带"锚点必须命中"检查，防止重构后突变静默失效。
+ * 做法：把待突变域（`--source`，缺省 assets/）**整树快照进 mktemp 副本域**，每个突变在副本域里
+ * 复制一份快照再施加一处**语义突变**，跑指定场景；若突变未被任何断言捕获（全绿），说明夹具/断言
+ * 对该行为不敏感 → 判为失败。真实交付物与真实板一律只读。
  *
- * 用法：node assets/test/run-mutations.mjs [--list]
- * 退出码：0 = 全部突变都被捕获；1 = 有突变未被捕获（断言不敏感）。
+ * 副本域口径（V24：T57v §11「变异窗口撞并发重编译」事故后成文，本工具机械化）：
+ *   - 默认即副本域：整轮共用**一个冻结快照**（快照前后指纹互证 ≥3 次）——源域在复制窗口内被并发
+ *     改写（半写态）时拒跑（exit 2），不把撕裂态当验证对象；并行卡的半写态也不再污染本轮结果；
+ *   - 误用活板域被拦（fail-closed，exit 2）：`--source` 指向活板域/持板域者、副本域落点在源域
+ *     或活板域内 → 拒跑，零写入；
+ *   - `--guard-board <板根|板目录>`：真实板面文件窗口前后 sha256 断言，变化即失败（exit 3）。
+ *
+ * 每个突变自带"锚点必须命中"检查，防止重构后突变静默失效。
+ *
+ * 用法：node assets/test/run-mutations.mjs [--list] [--source <dir>] [--guard-board <dir>] [--keep]
+ * 退出码：0 = 全部突变都被捕获；1 = 有突变未被捕获 / 锚点失配；2 = 域守卫拒跑或输入非法；
+ *         3 = 受护真实板在窗口内发生变化。
  */
 
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { ASSETS_DIR } from "./fixtures/build-fixture.mjs";
@@ -24,6 +46,178 @@ const DERIVE = "lib/derive.mjs";
 const FIXTURE_INVARIANTS = "lib/fact-invariants.mjs";
 /** #72 扫描面配置解析（默认收窄 / opt-in 池 / excludeGlobs / 兜底）。 */
 const SCAN_CONFIG = "lib/scan-config.mjs";
+
+const USAGE =
+  "用法：node assets/test/run-mutations.mjs [--list] [--source <dir>] [--guard-board <dir>] [--keep]";
+
+/** 快照取一致的最多尝试次数（源域被并发半写时退让重试，超限拒跑）。 */
+const SNAPSHOT_ATTEMPTS = 3;
+
+// ---------------------------------------------------------------- 副本域（V24）
+
+/** 目录是否为板目录本体（board.json + board.md 同在）。 */
+function isBoardDir(dir) {
+  return existsSync(join(dir, "board.json")) && existsSync(join(dir, "board.md"));
+}
+
+/** 目录自身是否持有板域（板目录本体，或含 `.zcode/board/`）——源域误用判据。 */
+function holdsBoardDomain(dir) {
+  return isBoardDir(dir) || existsSync(join(dir, ".zcode", "board"));
+}
+
+/** 自身上溯：返回首个持板域的祖先（找不到 → null）——副本域落点判据。 */
+function boardDomainAncestor(dir) {
+  let cur = resolve(dir);
+  for (;;) {
+    if (holdsBoardDomain(cur)) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+/** child 是否位于 parent 之内（含相等）；只比较 resolve 后路径，不做符号链接归一。 */
+function isInside(parent, child) {
+  const p = resolve(parent);
+  const c = resolve(child);
+  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** 域内全部条目（相对路径 + 内容摘要；符号链接记目标文本）。 */
+function collectFiles(root) {
+  const out = [];
+  const walk = (dir, rel) => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+    for (const e of entries) {
+      const abs = join(dir, e.name);
+      const r = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(abs, r);
+      else if (e.isSymbolicLink()) out.push({ rel: r, kind: "link", digest: readlinkSync(abs) });
+      else if (e.isFile()) out.push({ rel: r, kind: "file", digest: sha256File(abs) });
+    }
+  };
+  walk(root, "");
+  return out;
+}
+
+/** 域指纹：文件清单（路径 + 内容摘要）整体哈希。 */
+function fingerprintDomain(root) {
+  const files = collectFiles(root);
+  const h = createHash("sha256");
+  for (const f of files) h.update(`${f.rel}\0${f.kind}\0${f.digest}\n`);
+  return { hash: h.digest("hex"), count: files.length, files };
+}
+
+/** 两份文件清单的路径级差异。 */
+function diffFileLists(before, after) {
+  const b = new Map(before.map((f) => [f.rel, f.digest]));
+  const a = new Map(after.map((f) => [f.rel, f.digest]));
+  const changed = [];
+  const added = [];
+  const removed = [];
+  for (const [rel, v] of a) {
+    if (!b.has(rel)) added.push(rel);
+    else if (b.get(rel) !== v) changed.push(rel);
+  }
+  for (const rel of b.keys()) if (!a.has(rel)) removed.push(rel);
+  return { changed, added, removed, total: changed.length + added.length + removed.length };
+}
+
+/** 板面文件（板目录一层，非递归；evidence/ 等高频面不入断言）指纹。 */
+function fingerprintBoardSurface(boardDir) {
+  const files = [];
+  const entries = readdirSync(boardDir, { withFileTypes: true }).sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    files.push({ rel: e.name, digest: sha256File(join(boardDir, e.name)) });
+  }
+  const h = createHash("sha256");
+  for (const f of files) h.update(`${f.rel}\0${f.digest}\n`);
+  return { hash: h.digest("hex"), count: files.length, files };
+}
+
+/** 板根（含 `.zcode/board/`）/ 板目录两形态 → 板面文件所在目录。 */
+function resolveBoardDir(p) {
+  const abs = resolve(p);
+  return existsSync(join(abs, ".zcode", "board")) ? join(abs, ".zcode", "board") : abs;
+}
+
+/**
+ * 源域与落点守卫（fail-closed；V24：突变/篡改验证一律副本域）。
+ * 返回 null = 放行；否则返回拒跑文案（逐条）。
+ */
+function domainGuardFailures(source, tempBase) {
+  const problems = [];
+  if (holdsBoardDomain(source)) {
+    problems.push(
+      `--source 指向活板域或其父域（检出板域：${source}）——突变验证一律副本域（V24），请对副本执行`,
+    );
+  }
+  if (isInside(source, tempBase)) {
+    problems.push(
+      `系统临时目录落在源域内（tmpdir=${resolve(tempBase)}，源域=${resolve(source)}）——副本域必须与源域分离，否则突变落进待突变树`,
+    );
+  }
+  const ancestor = boardDomainAncestor(tempBase);
+  if (ancestor != null) {
+    problems.push(`系统临时目录落在活板域内（${ancestor}）——副本域不得落进活板域（真实板零污染）`);
+  }
+  return problems.length > 0 ? problems : null;
+}
+
+/** 快照：复制源域 → 副本域，前后指纹互证（撕裂即重试；超限 → null，调用侧拒跑）。 */
+function snapshotDomain(source, dest, attempts = SNAPSHOT_ATTEMPTS) {
+  for (let i = 1; i <= attempts; i += 1) {
+    rmSync(dest, { recursive: true, force: true });
+    cpSync(source, dest, { recursive: true });
+    const from = fingerprintDomain(source);
+    const copy = fingerprintDomain(dest);
+    if (from.hash === copy.hash) return { ...copy, sourceHash: from.hash, attempts: i };
+  }
+  return null;
+}
+
+/**
+ * 缺值标志 fail-closed（B6 回炉轮 STD-1，2026-10-11）：尾随缺值（undefined）或以 `--` 开头 →
+ * 记 error（exit 2）。修复原因：原 `argv[i + 1] ?? null` 使 `--source` 尾随缺值静默回落默认
+ * 源域照跑整轮、`--guard-board` 尾随缺值静默关闭板面断言——与同批三工具口径不一致
+ * （build-dispatch-prompt.mjs:106 / create-worktree.mjs:76 / baseline-redlist.mjs:78 的
+ * `die("选项 X 缺少取值")`），且违反本工具 fail-closed 自我定位（#126/V24）。
+ */
+function takeValue(argv, i, name, errors) {
+  const v = argv[i + 1];
+  if (v === undefined || v.startsWith("--")) {
+    errors.push(`选项 ${name} 缺少取值（${USAGE}）`);
+    return null;
+  }
+  return v;
+}
+
+function parseArgs(argv) {
+  const opts = { list: false, help: false, keep: false, source: null, guardBoard: null, errors: [] };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === "--list") opts.list = true;
+    else if (a === "--keep") opts.keep = true;
+    else if (a === "--help" || a === "-h") opts.help = true;
+    else if (a === "--source") {
+      opts.source = takeValue(argv, i, a, opts.errors);
+      i += 1;
+    } else if (a === "--guard-board") {
+      opts.guardBoard = takeValue(argv, i, a, opts.errors);
+      i += 1;
+    } else opts.errors.push(`未知参数：${a}（${USAGE}）`);
+  }
+  return opts;
+}
 
 function mutate(src, from, to, label) {
   if (!src.includes(from)) {
@@ -469,25 +663,192 @@ const MUTATIONS = [
         "m44",
       ),
   },
+  {
+    name: "m45-reuse-checks-off",
+    scenario: "83",
+    expect:
+      "期号/epic 码复用判定关停（同码多行不咬、同期次跨批不点名）必须被 83 的码复用/复用候选断言咬住",
+    apply: (src) =>
+      mutate(
+        mutate(src, "if (idx.length < 2) continue;", "if (true) continue;", "m45a（epic 码复用）"),
+        "if (byStamp.size < 2) continue;",
+        "if (true) continue;",
+        "m45b（期号跨批）",
+      ),
+  },
+  {
+    name: "m46-seq-highwater-off",
+    scenario: "83",
+    expect: "seq 高水位判定关停（seq 回落与缺失/非法两态都不咬）必须被 83 的 seq 高水位断言咬住",
+    apply: (src) =>
+      mutate(
+        mutate(src, "if (!Number.isInteger(seq) || seq < 0) {", "if (false) {", "m46a（缺失/非法）"),
+        "if (seq < top.no) {",
+        "if (false) {",
+        "m46b（回落）",
+      ),
+  },
+  {
+    name: "m47-double-ownership-off",
+    scenario: "82",
+    expect:
+      "同稿双归属判定关停（一稿一 epic 不再咬）必须被 82 的「恰 6 项」与双归属点名断言咬住（A2-2 §7 转交）",
+    apply: (src) => mutate(src, "if (list.length < 2 || distinct.size < 2) continue;", "if (true) continue;", "m47"),
+  },
+  {
+    name: "m48-phantom-guard-off",
+    scenario: "114",
+    expect:
+      "幻影根判定关停（板项目子目录照写副板/错位证据无拦——祖先板根逐级上溯失效）必须被 114 的拦截面/零副板断言咬住",
+    apply: (src) => mutate(src, "    if (isFile(join(cur, BOARD_JSON_REL))) {", "    if (false) {", "m48"),
+  },
+  {
+    name: "m49-ownership-pair-shape-off",
+    file: COMPILER,
+    scenario: "82",
+    expect:
+      "归属对形态判定关停（裸码/半对/非正整数 phase 不再咬——A2-2 §7 转交的 pair 形态 push）必须被 82 的「恰 6 项」与形态点名断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "    const pair = normalizeEpicPair(e.epic, e.phase);\n    if (!pair.ok) {",
+        "    const pair = normalizeEpicPair(e.epic, e.phase);\n    if (false) {",
+        "m49（checkEpicOwnership 归属对形态）",
+      ),
+  },
+  {
+    name: "m50-epic-refs-reachability-off",
+    file: FIXTURE_INVARIANTS,
+    scenario: "82",
+    expect:
+      "板面登记 id 可达反查关停（悬空引用 epic:GONE 不再咬——A2-2 §7 转交的 checkEpicRefs 可达反查）必须被 82 的悬空两面与「恰 6 项」断言咬住",
+    apply: (src) => mutate(src, "    if (codes.has(code)) return;", "    if (true) return;", "m50（checkEpicRefs 可达反查）"),
+  },
+  {
+    name: "m51a-frontier-includes-blocked",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "frontier 选取放宽（受阻卡混入可执行前沿）必须被 134 的 i1 多出行/i4 两面断言咬住",
+    apply: (src) => mutate(src, "    if (card.stage === STAGE.TODO && unresolved.length === 0) {", "    if (card.stage === STAGE.TODO) {", "m51a"),
+  },
+  {
+    name: "m51b-frontier-emptied",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "frontier 恒空（可执行前沿漏行）必须被 134 的 i1 缺行/i4 空洞断言咬住",
+    apply: (src) => mutate(src, "    if (card.stage === STAGE.TODO && unresolved.length === 0) {", "    if (card.stage === STAGE.TODO && false) {", "m51b"),
+  },
+  {
+    name: "m51c-blocked-first-only",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "blocked 归因截断（一卡多项只记首项）必须被 134 的 i3「一卡多项出多行」断言咬住",
+    apply: (src) => mutate(src, "      for (const u of unresolved) blocked.push({ no: card.no, title: card.title, stage: card.stage, ...u });", "      for (const u of unresolved.slice(0, 1)) blocked.push({ no: card.no, title: card.title, stage: card.stage, ...u });", "m51c"),
+  },
+  {
+    name: "m51d-recent-order-reversed",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "recent 排序反向（旧→新）必须被 134 的 i2 非升序断言咬住",
+    apply: (src) => mutate(src, "    .sort((a, b) => (atOf(a) === atOf(b) ? idxOf(a) - idxOf(b) : atOf(b) - atOf(a)));", "    .sort((a, b) => (atOf(a) === atOf(b) ? idxOf(a) - idxOf(b) : atOf(a) - atOf(b)));", "m51d"),
+  },
+  {
+    name: "m51e-recent-truncation-off",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "recent 截断关闭（超出 N=10 不截断）必须被 134 截断探针与 i2 上限断言咬住",
+    apply: (src) => mutate(src, "      if (recent.length >= limit) return { frontier, active, blocked, recent };", "      if (false) return { frontier, active, blocked, recent };", "m51e"),
+  },
+  {
+    name: "m51f-recent-cap-lowered",
+    file: DERIVE,
+    scenario: "134",
+    expect:
+      "RECENT_LIMIT 收紧（N 调小、recent 被提前截断）——i2 上界只判 ≤N 不判下界（合法少填），承载面 = S-1 词表守卫：fact-invariants 独立复写常量 RECENT_LIMIT 与 derive 对照，常量改动必被守卫咬住（C2 评审 std-2 承接：若场景侧无咬合断言，本条期望以 S-1 必红为准）",
+    apply: (src) => mutate(src, "const RECENT_LIMIT = 10;", "const RECENT_LIMIT = 3;", "m51f"),
+  },
 ];
 
 function main(argv) {
-  if (argv.includes("--list")) {
+  const opts = parseArgs(argv);
+  if (opts.help) {
+    console.log(USAGE);
+    console.log("  --list               只列出突变清单（不建副本域）");
+    console.log("  --source <dir>       待突变域（缺省 = 本技能 assets/；一律先在副本域快照）");
+    console.log("  --guard-board <dir>  真实板守卫：板根或板目录，窗口前后逐文件 sha256 断言（变化 → exit 3）");
+    console.log("  --keep               保留副本域（排障用；缺省跑完即清）");
+    return 0;
+  }
+  if (opts.errors.length > 0) {
+    for (const e of opts.errors) console.error(e);
+    return 2;
+  }
+  if (opts.list) {
     for (const m of MUTATIONS) console.log(`${m.name}\t场景 ${m.scenario}\t${m.expect}`);
     return 0;
   }
 
+  const source = resolve(opts.source ?? ASSETS_DIR);
+  if (!existsSync(source) || !statSync(source).isDirectory()) {
+    console.error(`源域不存在或不是目录：${source}`);
+    return 2;
+  }
+
+  const tempBase = tmpdir();
+  const guardFailures = domainGuardFailures(source, tempBase);
+  if (guardFailures != null) {
+    console.error("突变域守卫拒跑（V24：突变/篡改验证一律副本域，真实板零污染）：");
+    for (const p of guardFailures) console.error(`  - ${p}`);
+    return 2;
+  }
+
+  const guardBoardDir = opts.guardBoard != null ? resolveBoardDir(opts.guardBoard) : null;
+  if (guardBoardDir != null && (!existsSync(guardBoardDir) || !statSync(guardBoardDir).isDirectory())) {
+    console.error(`--guard-board 不是目录：${opts.guardBoard}`);
+    return 2;
+  }
+  const boardBefore = guardBoardDir != null ? fingerprintBoardSurface(guardBoardDir) : null;
+
+  const domainRoot = mkdtempSync(join(tempBase, "zcode-board-mut-domain-"));
+  const baseAssets = join(domainRoot, "base", "assets");
+  mkdirSync(dirname(baseAssets), { recursive: true });
+  const snapshot = snapshotDomain(source, baseAssets);
+  if (snapshot == null) {
+    console.error(
+      `源域在复制窗口内被并发改写（半写态）：${SNAPSHOT_ATTEMPTS} 次复制均未取到一致快照（源域 ${source}）——` +
+        "待并发写入停稳后重跑；V24：不把撕裂态当验证对象（不猜、不静默）。",
+    );
+    rmSync(domainRoot, { recursive: true, force: true });
+    return 2;
+  }
+
   console.log("zcode-board · T6 反向断言（突变必须被夹具捕获）");
-  console.log(`assets: ${ASSETS_DIR}`);
+  console.log(`源域（只读）：${source}`);
+  console.log(`副本域：${domainRoot}`);
+  console.log(
+    `快照：${snapshot.count} 文件 · sha256 ${snapshot.hash}${
+      snapshot.attempts > 1 ? `（第 ${snapshot.attempts} 次取到一致）` : ""
+    }`,
+  );
+  console.log(
+    boardBefore != null
+      ? `真实板守卫：${guardBoardDir}（${boardBefore.count} 文件 · sha256 ${boardBefore.hash}）`
+      : "真实板守卫：未启用（--guard-board <板根|板目录> 可开启真实板窗口前后哈希断言）",
+  );
   console.log("");
 
   let uncaught = 0;
   let errors = 0;
   let caught = 0;
   for (const m of MUTATIONS) {
-    const dir = mkdtempSync(join(tmpdir(), `zcode-board-t6-mut-${m.name}-`));
+    const dir = join(domainRoot, m.name);
     const target = join(dir, "assets");
-    cpSync(ASSETS_DIR, target, { recursive: true });
+    cpSync(baseAssets, target, { recursive: true });
     const path = join(target, m.file ?? COMPILER);
     try {
       writeFileSync(path, m.apply(readFileSync(path, "utf8")));
@@ -518,12 +879,66 @@ function main(argv) {
     console.log("");
   }
 
+  // 源域漂移：整轮结果对应冻结快照；窗口内并发写入只报不咬（半写态不再污染本轮，V24）。
+  const drift = diffFileLists(snapshot.files, collectFiles(source));
+  if (drift.total === 0) {
+    console.log(`源域窗口内零写入（本工具写入面 = 副本域；快照 sha256 ${snapshot.hash}）`);
+  } else {
+    const sample = [
+      ...drift.changed,
+      ...drift.added.map((r) => `+${r}`),
+      ...drift.removed.map((r) => `-${r}`),
+    ].slice(0, 10);
+    console.log(
+      `⚠ 源域窗口内被并发改写（${drift.total} 处）：${sample.join("、")}${
+        drift.total > sample.length ? " …" : ""
+      }`,
+    );
+    console.log(
+      `  本轮结果对应冻结快照（sha256 ${snapshot.hash}），与窗口内改写无关（V24：半写态不再误咬）。`,
+    );
+  }
+
+  // 真实板守卫：窗口前后逐文件哈希断言（变化即失败；未启用则跳过）。
+  let boardChanged = false;
+  if (guardBoardDir != null) {
+    const after = fingerprintBoardSurface(guardBoardDir);
+    if (after.hash === boardBefore.hash) {
+      console.log(
+        `真实板守卫：${guardBoardDir} 窗口前后逐文件一致（${after.count} 文件 · sha256 ${after.hash}）——真实板零污染`,
+      );
+    } else {
+      boardChanged = true;
+      const d = diffFileLists(boardBefore.files, after.files);
+      for (const rel of [...d.changed, ...d.added, ...d.removed]) {
+        const b = boardBefore.files.find((f) => f.rel === rel);
+        const a = after.files.find((f) => f.rel === rel);
+        console.log(
+          `FAIL  真实板在突变窗口内变化：${rel}（${(b?.digest ?? "缺").slice(0, 12)} → ${(a?.digest ?? "缺").slice(0, 12)}）`,
+        );
+      }
+      console.log(
+        `真实板守卫：比对失败——窗口内变化 ${d.total} 处。本工具写入面仅副本域 ${domainRoot}；` +
+          "请排查并发 record-run/重编译后重跑（真实板零污染口径见 V24）。",
+      );
+    }
+  }
+
   console.log(
     `结论：捕获 ${caught} / 未捕获 ${uncaught} / 锚点失配 ${errors}（共 ${MUTATIONS.length} 个突变）`,
   );
-  const ok = uncaught === 0 && errors === 0;
-  console.log(ok ? "全部突变被夹具捕获（断言敏感）" : "存在未被捕获的突变或锚点失配");
-  return ok ? 0 : 1;
+  const ok = uncaught === 0 && errors === 0 && !boardChanged;
+  console.log(
+    boardChanged
+      ? "存在窗口内变化的真实板文件（见上）"
+      : ok
+        ? "全部突变被夹具捕获（断言敏感）"
+        : "存在未被捕获的突变或锚点失配",
+  );
+
+  if (opts.keep) console.log(`副本域保留（--keep）：${domainRoot}`);
+  else rmSync(domainRoot, { recursive: true, force: true });
+  return boardChanged ? 3 : ok ? 0 : 1;
 }
 
 process.exit(main(process.argv.slice(2)));

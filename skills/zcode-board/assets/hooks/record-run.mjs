@@ -13,8 +13,14 @@
  *   1. 抽取报告内每一处 run_event 块（对象或对象数组；一个块 = 一条记录，逐块落账、互不合并）；
  *   2. appendRun（lib/runs.mjs，runs.json 唯一写路径）原子追加：机械字段 runId/sessionId/at 由
  *      appendRun 补齐（报告自报一律忽略）；块内缺省按契约不造字段值；
- *   3. 落账后触发一次重编译（CLI 方式调 compile-board.mjs；编译器本脚本不做任何解析）；
- *   4. 无块 / 块解析失败 / 表外值 / 落账失败 → stderr diagnostics，进程退出码恒 0——
+ *   3. 报告同源代存归档（#123/V13）：落账后把本次解析出的报告原文（parsed.text——与 run_event
+ *      抽取同一次解析的输出，同一实现、同一解析）逐字归档到
+ *      .zcode/board/evidence/<runId>/report.md——"报告正本"走归档文件，runs.json 记录 schema
+ *      零变化（不加字段）。一份报告一份正本：evidence/ 一层下已有同内容副本（代存归档或手写
+ *      第二份）→ 不重复写入 + 点名既有路径（疑似重复落账）；同 runId 首写为准（不覆盖首份）；
+ *      去重只作用归档面，runs.json 照常追加（落账行为零变化）；归档失败只 stderr 不阻塞；
+ *   4. 落账后触发一次重编译（CLI 方式调 compile-board.mjs；编译器本脚本不做任何解析）；
+ *   5. 无块 / 块解析失败 / 表外值 / 落账失败 → stderr diagnostics，进程退出码恒 0——
  *      hook 失败永不阻塞主流程（设计 §10.4；落账失败由 Stop 对账点名"未登记"兜底）。
  *
  * 输出纪律（A6 实测）：stdout 恒为空（PostToolUse 无注入输出）；一切日志走 stderr。
@@ -25,16 +31,17 @@
  * 选项：--cwd <路径> / --session-id <id> / --tool-name <名> / -h|--help
  * 退出码：恒 0（hook 不阻塞主流程；问题一律以 stderr diagnostics 表达）。
  *
- * 无第三方依赖（仅 node 内置）。本脚本只调用 lib/runs.mjs 的 appendRun 与编译器 CLI，不改写
- * 任何板源文件；runs.json 的唯一写入者仍是 appendRun 一处。
+ * 无第三方依赖（仅 node 内置）。本脚本只调用 lib/runs.mjs 的 appendRun、lib/board-io.mjs 的原子写
+ * 与编译器 CLI；除报告代存归档（.zcode/board/evidence/<runId>/report.md）外不改写任何文件，
+ * runs.json 的唯一写路径仍是 appendRun 一处。
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, readSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { normalizeHandle } from "../lib/board-io.mjs";
+import { normalizeHandle, writeFileAtomic } from "../lib/board-io.mjs";
 import { appendRun } from "../lib/runs.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +50,9 @@ const COMPILER = resolve(HERE, "..", "compile-board.mjs");
 /** 派发工具名（A5 §4 定案：Agent 主名 / Task 兼容别名）。 */
 const DISPATCH_TOOLS = ["Agent", "Task"];
 const COMPILE_TIMEOUT_MS = 20_000;
+/** 报告同源代存归档位（#123）：<项目根>/.zcode/board/evidence/<runId>/report.md。 */
+const EVIDENCE_REL = ".zcode/board/evidence";
+const REPORT_FILE = "report.md";
 
 const USAGE = `zcode-board record-run（run 事件机械落账；runs.json 唯一写路径）
 
@@ -57,8 +67,10 @@ const USAGE = `zcode-board record-run（run 事件机械落账；runs.json 唯�
   --tool-name <名>     代触发时声明角色工具名（诊断用；派发工具应为 Agent|Task）
   -h, --help           显示本帮助
 
-契约：stdin 解析 run_event 块 → appendRun 原子追加 runs.json → 触发重编译。
-无块/解析失败/落账失败 → stderr diagnostics，退出码恒 0（hook 永不阻塞主流程）。
+契约：stdin 解析 run_event 块 → appendRun 原子追加 runs.json → 报告原文代存
+      .zcode/board/evidence/<runId>/report.md（逐字同源；已有同内容副本 → 点名去重，
+      不重复写入——双触发/手写第二份必咬）→ 触发重编译。
+无块/解析失败/落账失败/代存失败 → stderr diagnostics，退出码恒 0（hook 永不阻塞主流程）。
 `;
 
 function log(msg) {
@@ -217,6 +229,75 @@ function parseRecordStdin(raw) {
   return { mode: "payload", text, sessionId, toolName, cwd, diagnostics };
 }
 
+// ---------------------------------------------------------------- 报告同源代存归档（V13；#123）
+
+/** 既有副本枚举（evidence/ 一层下任意 report.md：代存归档与手写副本同面），按路径排序保证诊断确定性。 */
+function collectExistingReportCopies(root) {
+  let entries;
+  try {
+    entries = readdirSync(join(root, EVIDENCE_REL), { withFileTypes: true });
+  } catch {
+    return []; // evidence/ 不存在或不可读：无既有副本（写侧失败由各自诊断承载，不阻塞）
+  }
+  const out = [];
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const rel = `${EVIDENCE_REL}/${ent.name}/${REPORT_FILE}`;
+    try {
+      out.push({ rel, text: readFileSync(join(root, rel), "utf8") });
+    } catch {
+      /* 该目录无 report.md / 不可读：不作为候选（不阻塞） */
+    }
+  }
+  return out.sort((a, b) => (a.rel < b.rel ? -1 : 1));
+}
+
+/**
+ * 代存归档（#123，V13）：落账后把本次解析出的报告原文（parsed.text——与 run_event 抽取同一次
+ * 解析的输出，同一实现、同一解析）归档到 evidence/<runId>/report.md。语义（定性成文）：
+ *   - runs.json 记录 schema 零变化（不改记录结构、不加字段）——"报告正本"走归档文件；
+ *   - 逐字同源：写入内容 = 解析输出原样，不重新提取、不改造（byte 级可核）；
+ *   - 一份报告一份正本（去重 + 点名）：evidence/ 一层下已有逐字一致的 report.md（代存归档或
+ *     手写副本）→ 不重复写入 + 点名既有路径——疑似重复落账（双触发/手写第二份必咬）；
+ *     去重只作用归档面：runs.json 照常追加（落账行为零变化）；
+ *   - 同 runId 首写为准：目标已存在时保持首份（内容一致 → 去重提示；不一致 → 拒写并点名冲突）；
+ *   - 失败只 stderr 不阻塞（与 watch-sources 同先例）：归档失败不影响落账结果与退出码。
+ */
+function archiveRunReports(root, runIds, text) {
+  const diagnostics = [];
+  const duplicates = collectExistingReportCopies(root).filter((e) => e.text === text);
+  if (duplicates.length > 0) {
+    const shown = duplicates.slice(0, 3).map((e) => e.rel).join("；");
+    const more = duplicates.length > 3 ? `等 ${duplicates.length} 处` : "";
+    diagnostics.push(`报告代存去重：已存在同内容副本（${shown}${more}）——疑似重复落账（双触发/手写第二份）；不重复写入，保持既有正本（落账不受影响）。`);
+    return diagnostics;
+  }
+  for (const runId of runIds) {
+    const rel = `${EVIDENCE_REL}/${runId}/${REPORT_FILE}`;
+    let current = null;
+    try {
+      current = readFileSync(join(root, rel), "utf8");
+    } catch {
+      current = null; // 不存在（或不可读）：继续写（写失败由下方诊断承载）
+    }
+    if (current !== null) {
+      diagnostics.push(
+        current === text
+          ? `报告代存去重：同 runId 归档已存在且内容一致（${rel}）——保持首份，不重复写入。`
+          : `报告代存拒写：同 runId 归档已存在且内容不同（${rel}）——保持首份（疑手写抢占/复用 runId），本次未代存该 runId 副本。`,
+      );
+      continue;
+    }
+    try {
+      writeFileAtomic(join(root, rel), text);
+      diagnostics.push(`报告代存：${rel}（与报告原文逐字同源）。`);
+    } catch (e) {
+      diagnostics.push(`报告代存归档失败（${rel}：${e.message}）——只 stderr 诊断，不阻塞落账。`);
+    }
+  }
+  return diagnostics;
+}
+
 // ---------------------------------------------------------------- CLI / 主流程
 
 function isDirectory(p) {
@@ -328,16 +409,22 @@ function main(argv) {
   }
 
   let written = 0;
+  const landedRunIds = [];
   blocks.forEach((block, idx) => {
     const res = appendRun(root, block, { sessionId: sessionId ?? null });
     for (const d of res.diagnostics) log(`块 #${idx + 1}：${d.message}`);
     if (res.ok) {
       written += 1;
+      landedRunIds.push(res.record.runId);
       log(`块 #${idx + 1} 已落账：${res.record.runId}（role=${res.record.role} result=${res.record.result} cards=[${res.record.cards.join(",")}]）`);
     } else {
       log(`块 #${idx + 1} 未落账（跳过，不阻塞）。`);
     }
   });
+
+  if (landedRunIds.length > 0) {
+    for (const d of archiveRunReports(root, landedRunIds, parsed.text)) log(d);
+  }
 
   log(`落账 ${written}/${blocks.length} 条；触发重编译。`);
   recompile(root);

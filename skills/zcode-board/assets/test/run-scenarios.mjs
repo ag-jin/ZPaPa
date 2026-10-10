@@ -126,6 +126,111 @@
  *           .zcode/design/ 后点名自清（绿）；design/ 不进扫描面（scan.json 池外引用拒绝、零吸入、
  *           文件零触碰）
  *
+ * A2-1（#81）覆盖（--assign --epic 自动占 phase 序号；§10.3/§10.7.2 补录通道；登记行前置边界）：
+ *   场景 81a 新稿自动占下一 phase 序号（领号 + registry 条目 epic/phase 原子对；源文件不承载归属）；
+ *           重复运行零变化（幂等：期号不重发、registry/计划稿零写入）；--epic-file 指向已有归属稿零改写；
+ *           不可归属清单拒绝 + 用法错误（码形态/缺 --assign/缺 --epic/重复/与 --check 混用）——全部零写入
+ *   场景 81b 冲突顺延（已消耗期号不回收：归档成员 phase=2 → 新批次顺延 3）；同批同期次（一期多稿）；
+ *           缺省目标 = 未领号稿（既有未归属稿不被广谱抓取）；--epic-file 补录既有稿只加归属对
+ *           （号/计划码/assignedAt/源标记零变动）；重跑零变化；归属对原子性与引用位形态全册复核；
+ *           --check 复核通过（归档条目直查 note「已归档」不回归）
+ *   场景 81c 前置裁定：登记行缺失/形态非法按缺失处置/终态（cancelled）拒绝——退出码 1 且真零写入
+ *           （机具只读既有登记行：不代造、不改写；创建仅走 --epic-title，见 81e）；用法错误退出码 2
+ *   场景 81d 防 mass 改写闸不回归：>10 未领号计划稿在 --epic 批次下同样拒绝（零写入、逐份点名）；
+ *           --force 放行并整批归属同 phase（首期 = 1）
+ *   回炉（A2 批评审 changes_required 处置，2026-10-11）：STD-1 延续改写归属对保留（场景 115 ⑦ 组合
+ *           夹具：延续前经 --epic-file 写入 epic/phase——字面量显式携带，§10.6.3 归属字段一律不改）；
+ *           SPEC-1 登记行创建通道（场景 81e）；TQ-3 期次基准口径（场景 81f）；突变 m49/m50 随动
+ *   场景 81e 登记行创建通道（--epic-title；SPEC-1 裁定 a）：登记行缺失+非空标题 → 机具创建
+ *           {code,title,status:"active"}（唯一写者、追加在既有行后）并照常归属；缺 title 维持 §3.9 拒绝
+ *           （exit 1、真零写入）；已存在 → title 忽略 + 幂等提示（不改写既有行）；终态不复活；epics 段
+ *           非数组 fail-closed；用法错误（缺 --epic/缺值/重复/空白标题/与 --check 混用）exit 2 零写入
+ *   场景 81f 下一期次基准口径（TQ-3/STD-3）：活跃 spec 成员（specRoot 在扫描面，含延续后的 spec 条目）
+ *           入基准；离板/归档成员只入已消耗集合（期号不回收）；整数稳定号引用不参与判定（SPEC-2 边界成文）
+ *
+ * A3-1（#84）覆盖（board.json epic 层派生；schema 定义已由 A1 冻结、登记行与归属对写入路径已由 A2-1 落地）：
+ *   场景 84 含 epic 板：`epics[]` = 登记行原样透出（code/title/status，登记序；壳层终态不让位）+ 最小
+ *           rollup（plans 总数 + phases 各期次计数，期次序升序）；`features[].epic`/`phase` = registry
+ *           条目归属对透出（登记 id 反查；同期次两稿同 phase）；无归属缺省不透出（无键非 null）、裸码/
+ *           半对反例不采纳 + 诊断不静默、孤儿引用原样透出（不造行；登记行断言归 A2-2）；schema 子集校验
+ *           放行；独立探针核对无 epic 顶层不回归（零 epics 键）与追加键双向兼容
+ *           （含 epic 板删净追加键后与无 epic 板逐字段相等）
+ *   派生库 normalizeEpicPair / deriveEpics 纯函数契约（原子对与引用位形态、登记行透出与 rollup 计数）
+ *   边界注记（承接标注）：golden 扩样（epic/无 epic/取消 epic 三类样例）由 A3-3 落地（golden 含
+ *           epics[]/归属对 + validate-sample 不变量与覆盖断言；见 A3-3 条目）；归属断言包（引用形态/
+ *           孤儿/双归属失败级）归 A2-2；整批补录执行归 A5
+ *   A3-2（#85）随动 → A3-3（#86）收口：场景 84 原「board.md 不渲染 epic / 合成名不出现 / --check 全绿」
+ *           断言为 A3-2 落地前过渡期口径（epic 章渲染落地后按规格变更作废）；A3-2 过渡态（(c) 对照面
+ *           暂缺 epic 成员号 → --check 暂退 1）已由 A3-3 扩面收口；A2-2（#82）落地后本夹具四类反例
+ *           （裸码/半对/孤儿/形态非法登记行）转「epic 归属」失败 5 项——原「--check 全绿」口径按规格
+ *           变更作废（(c) 零差异断言保留），绿侧归下方兼容探针与场景 82
+ *
+ * A3-2（#85）覆盖（board.md epic 章 M-1a；契约 v2.5 §10.1/§10.2/§10.5，AD-2/3/4/8 拍板）：
+ *   场景 85 三层容器：epic 章头 `# <码> · <标题>`（含 status 终态标注）→ 期次组头
+ *           `## <码><期次> · 期次 <n>`（AD-3 双字段合成；组头 = 期次号，按期次序升序 AD-4）→ 既有
+ *           稿/卡节 `### <计划码> · <标题>` 照旧；卡编号维持 计划码-层级（KANB1-N 不进卡编号，AD-2）；
+ *           无 epic 稿顶层照旧（既有「## 特性」章平铺、无容器层、不标「未归属」，AD-8/§10.7）；
+ *           待处理/待合并节编号链照旧（TQ-1 对照面零差异——嵌套渲染不回归）；孤儿引用不造章（§10.2）；
+ *           终态登记行（cancelled/archived）原样透出、成员不复活不压制（同层独立，§10.5）
+ *   夹具三类：嵌套（多期次多稿 + 零卡 + 未合并现场）/ 无 epic（零容器——逐章回归断言）/ 取消 epic
+ *
+ * A3-3（#86）覆盖（事实互证 (c) 扩面 + golden 扩样）：
+ *   场景 86 编号对照面扩面：epic 章头/期次组头（合成编号 KANB1——对照位 = 合成码 + 期次号）与章内
+ *           稿节/任务行同入 (c) 对照面（对照序列 = 渲染序：顶层稿块 → 各 epic 章带；独立复写
+ *           renderBoardMd 装配序）；手改 board.md 任一编号位（合成号/章头码/稿节码/期次号/终态标注/
+ *           组内顺序/卡号）→ --check 必咬（单点篡改恰 1 项事实互证失败，顺序篡改按位点对照）；
+ *           epic 板 (c) 对照面零差异（A3-2 过渡态自清；A2-2 落地后夹具孤儿引用转「epic 归属」失败 2 项——
+ *           原「基线 --check 全绿」口径随归属引用断言失败级作废，绿侧基线归 82/84/85/81a/81b）
+ *   场景 78/81a/81b 随动回绿：过渡态助手（assertCheckTransientEpicGap）删除 → assertCheckEpicGreen
+ *           （退出码 0 + 结论通过 + 零 (c) 差异）；场景 84/85 过渡态承接断言同批回绿
+ *   词表漂移守卫（S-1）扩项：epic 登记 id 前缀/状态词表/章头终态标注/期次组形态常量 ↔
+ *           derive.deriveEpics 与 compile-board 渲染侧逐项对照（改名即红，防判据静默失效）
+ *   golden 扩样（validate-sample）：三类夹具同源——epic 归属（epics[] + features[].epic/phase 原子对、
+ *           登记 id 反查）+ 无 epic 合法（删净追加键后仍过 schema/不变量）+ 取消 epic（终态词表覆盖）；
+ *           变异断言（裸码进引用位/归属对不成对/悬空登记行/期次非正整数）必被拒
+ *
+ * A2-3（#83）覆盖（期号/epic 码不复用 + registry seq 高水位；§10.5 AD-9① / E4-10；判据成文见下）：
+ *   场景 83 ①a epic 码复用【失败级】：`epics[]` 同码 ≥2 登记行（码位复用/复制分叉）→ 并条点名各行
+ *           索引 + 码；② seq 高水位回落【失败级】：seq < max(条目号, 活标记号)（E4-10 原文；手工回退/
+ *           复制回滚）→ 逐条点名两值 + 见证源（条目路径/活标记所在源）；①b 期号复用候选【对账点名级，
+ *           非失败、不阻断】：同 epic 同期次成员跨 ≥2 个 assignedAt 批次（合法补录批/同批跨秒边界同形，
+ *           机械不可区分 → 人工确认；历史事实不可由重编译修复——与 (e)/(f) 同域）。
+ *           夹具四组：主根（三断言同场 + 恰 2 项失败零额外噪声）；复制/回滚探针（registry 回滚、源标记
+ *           幸存 → 活标记见证，兼触发既有「活标记无 registry 条目」）；绿侧（同批同期次 / 单成员期次 /
+ *           无 epic 零噪声——误判必咬）；补录边界探针（单次 --epic-file 多稿 = 合法跨批：点名但退出码 0）。
+ *           纯函数契约块：checkEpicCodeReuse / checkPhaseReuse / checkSeqHighWater（形态非法/孤儿/段非
+ *           数组归 A2-2 面不叠加；空源/纯函数稳定性零噪声）。
+ *   突变 m45-m50（A2-2 转交 + A2-3 + A2 回炉）：码复用/期号跨批判定关停、seq 高水位判定关停、
+ *           A2-2 归属断言包关停（双归属 m47 + 归属对形态 m49 + 可达反查 m50）→ 场景 83/82 必咬
+ *           （见 run-mutations.mjs）。
+ *
+ * B5-2（#114）覆盖（编译输出路径＝板根断言；E1 V20 幻影板；dispatch-checklist 2026-10-10 两次事故）：
+ *   场景 114 板根既有板 + 子目录事故几何（ZPaPa/：有 `.zcode/board/` 目录但无板文件）夹具——错误 cwd
+ *           （默认根=cwd / 显式传子目录 / 深层子目录）触发编译 → 非零退出 + 点名正确板根（cd <板根>
+ *           指引）+ 子目录零副板（board.json/board.md 均不生成）+ 板根板文件字节不变（拦截面零写入）；
+ *           --check 从幻影根 → 失败级点名、不假绿（错位证据源头）；正确路径（板根自身）编译与 --check
+ *           全绿；非嵌套新项目首建不误拦（守卫只在板项目子目录触发——判据 = 祖先有既有板且自根无）。
+ *   突变 m48  幻影根判定关停（子目录照写副板）→ 场景 114 的拦截面/零副板断言必咬。
+ *
+ * B5-3（#115）覆盖（--assign 注入 assignedBy ＋ 非编排者（worktree 内）发号点名；E1 V12）：
+ *   判据（最小判据成文）= 自 --assign 的 <项目根> 逐级上溯的**最近仓根**（最近含 `.git` 的祖先目录）：
+ *   `.git` 为目录 → 主检出（main）；`.git` 为文件（gitdir 指针）→ 链接工作树（worktree:<仓根名>）
+ *   ＝非主检出（SKILL.md「发号只在主检出、由编排者单写者执行」）；无 `.git` 祖先（非 git 项目/
+ *   夹具域）→ 视同主检出（不误拦、零噪声）。assignedBy = `<会话标识>@<执行现场>`（会话标识 =
+ *   --assign --session-id，缺省 unknown）：--assign 本次运行写入 registry 的条目逐条注入；
+ *   --check 判定域 = 现场段 `worktree:` 前缀 → 逐条对账点名「非编排者发号」（对账点名级、非失败、
+ *   不阻断退出码）；`@main`/缺省/未知形态不判（零噪声）。
+ *   场景 115 执行现场三形态 + 存量/延续夹具——主检出：新建条目逐条 assignedBy=<会话>@main（registry
+ *           原文可见）、--check 零对账点名；非 git 域缺省会话：assignedBy=unknown@main（视同主检出）；
+ *           链接工作树内 --assign：条目注入 @worktree:<仓根名> + 运行当场点名（stderr 载「非主检出/
+ *           发号只在主检出」纪律）且 --check 对账点名（退出码 0——点名非拦截）；存量缺省条目（真实板
+ *           形态）零误报；计划→spec 延续改写保留原 assignedBy 与归属对（epic/phase——⑦组合夹具：延续前
+ *           先经 --epic-file 写入归属对，延续后逐字段零变动；键白名单已知键显式携带，不作额外字段丢弃）；
+ *           用法错误（--session-id 缺 --assign/含 @/缺值）退出码 2 零写入。
+ *   纯函数契约块：checkAssignedBy（worktree 前缀判定 / main・缺省・未知形态不判 / 入参零改动）。
+ *   锚点守卫：夹具几何（.git 目录/.git 文件/无 .git 三形态）以「锚点：」前置断言先行，注入与点名
+ *           断言即后续「关停注入/关停现场判定」突变的必咬面（本卡不动 run-mutations.mjs）。
+ *
  * 用法：
  *   node assets/test/run-scenarios.mjs                 # 全部场景
  *   node assets/test/run-scenarios.mjs --scenario 1,4  # 只跑指定场景
@@ -170,11 +275,23 @@ import {
   w,
 } from "./fixtures/build-fixture.mjs";
 
-import { PLAN_OVERGROWN_THRESHOLD, checkProject } from "../compile-board.mjs";
+import {
+  PLAN_OVERGROWN_THRESHOLD,
+  checkAssignedBy,
+  checkEpicCodeReuse,
+  checkPhaseReuse,
+  checkProject,
+  checkSeqHighWater,
+} from "../compile-board.mjs";
 
 import { SKILL_MD_PATH, SKILL_VERSION, formatVersionLine, readContractVersion, readSchemaVersion, readVersionInfo } from "../lib/version.mjs";
 
 import { EXEMPTIONS_REL, checkBoardInvariants, checkExemptionsDoc, validateSchemaValue } from "../lib/schema-check.mjs";
+
+// B2-1（#99）第四绿落账：写侧（lib/runs.mjs）与读侧（lib/derive.mjs）词表的静态引用——
+// 场景 99 用两侧公开导出做「可落账 ↔ 可入板」同步守卫与落账行为反例（不触内部实现）。
+import { RUN_ROLES as RUNS_LIB_RUN_ROLES, mapRunEvent } from "../lib/runs.mjs";
+import { RUN_ROLES as DERIVE_LIB_RUN_ROLES, normalizeRuns } from "../lib/derive.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
@@ -360,6 +477,18 @@ function maskedIso(text) {
 function truncate(s, n = 400) {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
   return t.length > n ? `${t.slice(0, n)}…` : t;
+}
+
+/**
+ * A3-3（#86）(c) 扩面收口口径：epic 章头/期次组（合成编号）/章内稿节同入编号对照面后，epic 板
+ * --check 与无 epic 板同口径全绿（退出码 0 + 结论通过 + 零 (c) 差异）。A3-2 过渡态助手
+ * （assertCheckTransientEpicGap，"(c) 对照面暂缺 epic 成员号" 暂报差异）随扩面落地删除——
+ * 相应断言自过渡态回绿。红侧留档 evidence/T86/。
+ */
+function assertCheckEpicGreen(c, check, label) {
+  c.eq(check?.code, 0, `${label}：epic 板 --check 退出码 0（(c) 扩面收口后与无 epic 板同口径）`);
+  c.inc(check?.stdout ?? "", "结论：--check 通过（0 项失败）", `${label}：--check 结论通过（0 项失败）`);
+  c.ok(!(check?.stdout ?? "").includes("不变量 c"), `${label}：零 (c) 编号对照差异（过渡态自清）`, truncate(check?.stdout ?? ""));
 }
 
 // ---------------------------------------------------------------- 编译器调用
@@ -5056,6 +5185,67 @@ function deriveLibChecks(c, mod) {
   const state43 = mod.deriveCardRuns(normRuns.byNo.get(43), { existingWorktrees: normFacts });
   c.eq(state43?.worktree, null, "未互证 → worktree null（不猜状态）");
   c.eq(state43?.demotedWorktree, "ZPaPa/.zcode/worktrees/task-43", "降级保留声明原文（供调用方逐卡点名，不归一为不存在的路径）");
+
+  // epic 层派生（A3-1/#84）：归属对归一（§10.3 原子对/引用位形态）与 epics[] 登记行透出 + 最小 rollup。
+  c.eq(mod.EPIC_CODE_RE?.source, "^[A-Z][A-Z0-9]{3}$", "导出 EPIC_CODE_RE = 4 位冻结形态（§10.2；与 planCode 同 regex 单源）");
+  c.eq(mod.EPIC_STATUSES, ["active", "cancelled", "archived"], "导出 EPIC_STATUSES 终态词表（§10.5：cancelled/archived 为壳层终态）");
+  c.eq(typeof mod.normalizeEpicPair, "function", "lib/derive.mjs 导出 normalizeEpicPair（归属对归一纯函数）");
+  const pairCases = [
+    [undefined, undefined, { ok: true, epic: null, phase: null }],
+    [null, null, { ok: true, epic: null, phase: null }],
+    ["epic:KANB", 1, { ok: true, epic: "epic:KANB", phase: 1 }],
+    [68, 2, { ok: true, epic: 68, phase: 2 }],
+    ["KANB", 1, { ok: false, epic: null, phase: null }],
+    ["epic:kanb", 1, { ok: false, epic: null, phase: null }],
+    ["epic:KANB", 0, { ok: false, epic: null, phase: null }],
+    ["epic:KANB", undefined, { ok: false, epic: null, phase: null }],
+    [undefined, 1, { ok: false, epic: null, phase: null }],
+  ];
+  for (const [e, p, expected] of pairCases) {
+    const r = mod.normalizeEpicPair?.(e, p);
+    c.eq(
+      { ok: r?.ok, epic: r?.epic, phase: r?.phase },
+      expected,
+      `normalizeEpicPair(${show(e)}, ${show(p)}) → ${expected.ok ? (expected.epic == null ? "合法无归属" : "透出") : "不透出"}`,
+    );
+    if (!expected.ok) {
+      c.ok(typeof r?.reason === "string" && r.reason.trim() !== "", "  ↑ 不成对/形态非法带 reason（不静默）", show(r));
+    }
+  }
+
+  c.eq(typeof mod.deriveEpics, "function", "lib/derive.mjs 导出 deriveEpics（登记行透出 + 最小 rollup 纯函数）");
+  const epicRows = [
+    { code: "KANB", title: "看板系统", status: "active" },
+    { code: "OLD1", title: "旧史诗", status: "archived" },
+  ];
+  const epicMembers = [
+    { epic: "epic:KANB", phase: 2 },
+    { epic: "epic:KANB", phase: 1 },
+    { epic: "epic:KANB", phase: 1 },
+    { epic: 68, phase: 1 },
+    { epic: "epic:NOPE", phase: 1 },
+  ];
+  const derivedEpics = mod.deriveEpics?.({ epics: epicRows, members: epicMembers, registryPath: ".zcode/board/registry.json" });
+  c.eq(
+    derivedEpics?.epics,
+    [
+      { code: "KANB", title: "看板系统", status: "active", plans: 3, phases: [{ phase: 1, plans: 2 }, { phase: 2, plans: 1 }] },
+      { code: "OLD1", title: "旧史诗", status: "archived", plans: 0, phases: [] },
+    ],
+    "deriveEpics：登记行原样透出（终态不让位）+ plans 总数与各期次计数（期次序升序）",
+  );
+  c.eq(mod.deriveEpics?.({ epics: undefined, members: epicMembers }).epics, null, "无 epics 段 → null（零 epic 项目不落 epics 键，AD-8）");
+  c.eq(mod.deriveEpics?.({ epics: [], members: epicMembers }).epics, null, "空 epics 段 → null（同上）");
+  c.eq(mod.deriveEpics?.({ epics: epicRows, members: epicMembers }).epics, derivedEpics?.epics, "纯函数：同输入两次调用结果逐字相等");
+  const badRowResult = mod.deriveEpics?.({ epics: [{ code: "bad", title: "x", status: "active" }], members: [], registryPath: "r.json" });
+  c.eq(badRowResult?.epics, [], "形态非法登记行跳过（不采纳；不静默——诊断见下）");
+  c.eq((badRowResult?.diagnostics ?? []).length, 1, "非法登记行逐行诊断（恰 1 条）", show(badRowResult?.diagnostics));
+  c.inc(badRowResult?.diagnostics?.[0]?.message ?? "", "epics[0]", "诊断点名行号 epics[0]");
+  c.eq(badRowResult?.diagnostics?.[0]?.path, "r.json", "诊断带传入 path");
+  const corruptEpics = mod.deriveEpics?.({ epics: { code: "KANB" }, members: [], registryPath: "r.json" });
+  c.eq(corruptEpics?.epics, null, "epics 段非数组：按无登记行处置（null——不落键，不猜）");
+  c.eq((corruptEpics?.diagnostics ?? []).length, 1, "epics 段非数组逐条诊断（不静默）");
+  c.inc(corruptEpics?.diagnostics?.[0]?.message ?? "", "非数组", "诊断点名非数组形态");
 }
 
 // ---------------------------------------------------------------- A1-1（#76）epic 层规格首章：三层容器与登记行语法（schema 面）
@@ -5264,8 +5454,13 @@ scenario("77", "#77：epic 壳层终态优先序扩条——登记行 cancelled/
 //      边界注记（承接标注）：改写机具（--assign 整批 + epic 登记行置态）与 --check 断言归 A2；待归档 /
 //      缺留痕 / 在途 run 处置清单点名归 B 线对账面（reconcile 待归档类扩展）；渲染归 A3-*——本场景断言域 =
 //      规格/schema 层可表达性 + 既有归档机具的指向改写事实（缺条必咬，写入前为红侧）。
+//      A3-2（#85）随动 → A3-3（#86）收口：末步 --check 曾因 (c) 对照面暂缺 epic 成员号转过渡态；
+//      A3-3 扩面（epic 章/期次组/合成编号入对照面）后「修复后 --check 通过」断言回绿
+//      （assertCheckEpicGreen：退出码 0 + 结论通过 + 零 (c) 差异）。
 scenario("78", "#78：epic 整体取消与归档——三件套 / 缺留痕对账点名 / 冷却=max updatedAt / 第四种指向改写；三类反例（缺留痕、冷却未到、改写指向错误）可判", {
-  steps: [{ args: ["--check"] }, { args: ["--assign"] }, { args: [] }, { args: ["--check"] }],
+  // A3-2（#85）随动：末步保留默认编译作 ctx.run（commonChecks 末步口径 = 退出码 0；A3-3 扩面后
+  // epic 板 --check 同为 0，本步维持不改动 steps 结构）
+  steps: [{ args: ["--check"] }, { args: ["--assign"] }, { args: [] }, { args: ["--check"] }, { args: [] }],
   build(root) {
     // 成员稿甲（有特性级取消留痕；mtime 拨到 10 天前）+ 成员稿乙（缺留痕；mtime 3 天前）+ 成员稿丙
     // （已移入归档目录、登记条目仍指活路径——反例③半态）
@@ -5410,7 +5605,9 @@ scenario("78", "#78：epic 整体取消与归档——三件套 / 缺留痕对�
     );
     c.eq(registry?.epics, [{ code: "KANB", title: "看板系统", status: "archived" }], "epic 登记行原样保留（置态写入归 A2 机具；现有 --assign 不擅动登记行）");
     c.eq(compile?.code, 0, "重编译退出码 0（归档成员离板、活成员照常上板）");
-    c.eq(finalCheck?.code, 0, "修复后 --check 通过（归档件按指向直查）");
+    // A3-3（#86）扩面收口：epic 成员号入 epic 章后 (c) 对照面同入（原 A3-2 过渡态断言回绿）——
+    // 「修复后 --check 通过（0 项失败）」恢复为直接断言；归档直查 note 断言维持不变
+    assertCheckEpicGreen(c, finalCheck, "修复后 --check（归档件按指向直查）");
     c.inc(finalCheck.stdout, "已归档", "check note 明写「已归档」");
     c.ok(
       (board?.features ?? []).length === 2 &&
@@ -5864,6 +6061,172 @@ scenario("97b", "#97 豁免登记：合法登记后点名消失（非失败级�
   },
 });
 
+// ---------------------------------------------------------------- B2-1（#99）第四绿落账：RUN_ROLES 扩 ui-designer
+
+/**
+ * 场景 99（B2-1/#99，AD-10②「第四绿扩词表」；itw-20261010-5372 拍板）：
+ *   ① 落账：run_event role=ui-designer 经 record-run 代触发（裸报告 stdin）落账 runs.json（写侧词表接受）；
+ *   ② 入板：编译后 done 卡 lastRun.role=ui-designer、在途卡 activeRun.role=ui-designer 且 currentAssignee
+ *      交叉推导成立；`> agents:` 管线含 ui-designer 逐字保留；board.md 人读面渲染；
+ *   ③ schema 证据位：含 ui-designer 的板过 board.schema.json 子集校验（全零错误），且全部 role 枚举
+ *      证据位（lastRun/activeRun × 两层任务展开）逐槽含 ui-designer 与旧六角色；
+ *   ④ 反例：表外角色（plan-reviewer）仍按既有规则处理——record-run 拒收 + 点名单外（零写入）；
+ *      纯函数层 mapRunEvent/normalizeRuns 同拒并落 diagnostics；
+ *   ⑤ 旧角色零回归：六个旧角色落账照旧接受，两词表照旧含旧六角色；
+ *   ⑥ 词表同步守卫：写侧 runs.RUN_ROLES ↔ 读侧 derive.RUN_ROLES 集合相等（防「可落账不可入板」分裂）。
+ * 期望值来源（独立，不借实现复算）：角色字面值 = AD-10② 拍板词表与 SKILL.md「UI 面卡第四绿」成文。
+ */
+const S99_LEGACY_ROLES = ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"];
+const S99_PIPELINE = ["implementer", "test-verifier", "code-reviewer", "ui-designer", "integrator"];
+let S99_HOOK = null;
+scenario("99", "B2-1/#99：RUN_ROLES 扩 ui-designer——第四绿可落账、可入板、过 schema 证据位；表外角色仍拒（反例）", {
+  build(root) {
+    w(
+      root,
+      ".zcode/plans/plan-sess_00000000-0000-4000-8000-000000000099.md",
+      [
+        "# 第四绿夹具",
+        "<!-- zcode-board: no=98 -->",
+        "",
+        "- [ ] 1. UI 面卡（第四绿已落账） <!-- zcode-board: no=99 -->",
+        "  - Scope: 用户可见面改动，第四绿复核 done。",
+        `  > agents: ${S99_PIPELINE.join(" | ")}`,
+        "",
+        "- [ ] 2. 第四绿在途卡 <!-- zcode-board: no=100 -->",
+        "  - Scope: 视觉复核进行中（partial）。",
+        `  > agents: ${S99_PIPELINE.join(" | ")}`,
+        "",
+      ].join("\n"),
+    );
+    // 落账通道 = record-run 代触发（裸报告 stdin；后台派发主力路径）：两条 ui-designer 记录 + 一条表外反例块。
+    const report = [
+      "## 实施报告",
+      "",
+      "第四绿复核完成；附一条表外角色块（反例）。",
+      "",
+      "```json",
+      '{"run_event":{"role":"ui-designer","result":"done","cards":[99],"evidence":["evidence/T99/ui-review.md"],"nextStep":"交 integrator 合并"}}',
+      '{"run_event":{"role":"ui-designer","result":"partial","cards":[100],"stoppedAt":100,"nextStep":"视觉复核中"}}',
+      '{"run_event":{"role":"plan-reviewer","result":"done","cards":[100]}}',
+      "```",
+      "",
+    ].join("\n");
+    S99_HOOK = spawnSync(
+      process.execPath,
+      [join(ASSETS_DIR, "hooks", "record-run.mjs"), "--cwd", root, "--session-id", "sess_boardv2_99"],
+      { input: report, encoding: "utf8" },
+    );
+  },
+  assert(c, ctx) {
+    const { board, run, root } = ctx;
+    const planRel = ".zcode/plans/plan-sess_00000000-0000-4000-8000-000000000099.md";
+    const feature = featureByTitle(board, "第四绿夹具");
+    const approved = taskByTitle(feature, "UI 面卡（第四绿已落账）");
+    const active = taskByTitle(feature, "第四绿在途卡");
+
+    // ① 落账（写侧词表）：record-run 代触发实况——ui-designer 落账、表外块拒收零写入
+    c.eq(S99_HOOK?.status, 0, "record-run 退出码 0（hook 永不阻塞）");
+    const runs = readRuns(root);
+    c.eq(runs.length, 2, "runs.json 恰两条记录（ui-designer × 2；plan-reviewer 块被拒零写入）", show(runs.map((r) => r.role)));
+    c.eq(runs.map((r) => r.role), ["ui-designer", "ui-designer"], "两条记录 role=ui-designer（写侧词表接受第四绿）");
+    c.eq(runs[0]?.cards, [99], "记录 #1 cards=[99]（卡号引用位为整数稳定号）");
+    c.eq(runs[1]?.result, "partial", "记录 #2 result=partial（在途半场）");
+    c.ok(
+      /表外/.test(String(S99_HOOK?.stderr ?? "")) && /plan-reviewer/.test(String(S99_HOOK?.stderr ?? "")),
+      "反例：表外角色 plan-reviewer 被点名单外（不静默）",
+      show(String(S99_HOOK?.stderr ?? "").slice(0, 300)),
+    );
+
+    // ② 入板（读侧词表/解析）：done 卡与在途卡都可解析
+    c.eq(approved?.lastRun?.role, "ui-designer", "入板：lastRun.role=ui-designer（读侧词表接受，不再被拒）");
+    c.eq(approved?.lastRun?.result, "done", "lastRun.result=done（第四绿 verdict 证据可读）");
+    c.eq(approved?.activeRun, null, "done 记录 → activeRun=null（无在途）");
+    c.eq(active?.activeRun?.role, "ui-designer", "在途卡：activeRun.role=ui-designer（partial 记录入板）");
+    c.eq(active?.currentAssignee, "ui-designer", "currentAssignee=ui-designer（activeRun × 管线交叉推导成立）");
+    c.eq(approved?.assignees, S99_PIPELINE, "`> agents:` 管线含 ui-designer 逐字保留（管线词表接受）");
+    c.eq(diagFor(board, planRel), [], "两卡管线行零诊断（ui-designer 不再被当表外角色）");
+    c.eq(diagFor(board, ".zcode/board/runs.json"), [], "runs.json 零词表诊断（两条 ui-designer 记录全解析）");
+    const mdLines = String(run.md ?? "").split(/\r?\n/);
+    c.ok(
+      mdLines.some((l) => /最近执行：.*· ui-designer · done/.test(l)),
+      "board.md 人读面渲染第四绿最近执行行（ui-designer · done；不借诊断行虚过）",
+      show(mdLines.filter((l) => l.includes("ui-designer")).slice(0, 3)),
+    );
+
+    // ③ schema 证据位（board.schema.json）：承载 ui-designer 的板过子集校验；四处 role 枚举逐槽对齐
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    c.eq(validateSchemaValue(schema, board), [], "含 ui-designer 的板过 board.schema.json 子集校验（证据位枚举已对齐，全零错误）");
+    const roleSlots = [];
+    (function walk(node, ptr) {
+      if (node === null || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach((v, i) => walk(v, `${ptr}[${i}]`));
+        return;
+      }
+      const roleEnum = node.properties?.role?.enum;
+      if (Array.isArray(roleEnum)) roleSlots.push({ ptr, roles: roleEnum });
+      for (const [k, v] of Object.entries(node)) walk(v, `${ptr}.${k}`);
+    })(schema, "$");
+    c.eq(
+      roleSlots.map((s) => s.ptr).sort(),
+      [
+        "$.properties.features.items.properties.tasks.items.properties.activeRun.oneOf[1]",
+        "$.properties.features.items.properties.tasks.items.properties.lastRun.oneOf[1]",
+        "$.properties.features.items.properties.tasks.items.properties.tasks.items.properties.activeRun.oneOf[1]",
+        "$.properties.features.items.properties.tasks.items.properties.tasks.items.properties.lastRun.oneOf[1]",
+        "$.properties.active.items.properties.activeRun.oneOf[1]",
+        "$.properties.recent.items",
+      ].sort(),
+      "schema role 枚举证据位逐槽点名恰 6 槽（节点四槽 + C2-1/#133 四段 active[].activeRun.role / recent[].role 两槽）",
+    );
+    c.eq(
+      roleSlots.filter((s) => !s.roles.includes("ui-designer")).map((s) => s.ptr),
+      [],
+      "证据位逐槽点名：任一处漏 ui-designer 必咬",
+    );
+    c.eq(
+      roleSlots.filter((s) => !S99_LEGACY_ROLES.every((r) => s.roles.includes(r))).map((s) => s.ptr),
+      [],
+      "证据位保留旧六角色（零回归）",
+    );
+
+    // ④ 反例（纯函数层）：表外角色仍按既有规则处理
+    const blockedBlock = mapRunEvent({ role: "plan-reviewer", result: "done", cards: [100] });
+    c.eq(blockedBlock.record, null, "mapRunEvent：表外角色仍跳过该块（record=null）");
+    c.ok(
+      (blockedBlock.diagnostics ?? []).length > 0 && blockedBlock.diagnostics[0].message.includes("表外"),
+      "mapRunEvent：表外角色落 diagnostics（不静默）",
+    );
+    const normalized = normalizeRuns(
+      [{ runId: "run-x", at: "2026-10-10T10:00:00+08:00", role: "plan-reviewer", result: "done", cards: [100] }],
+      { runsPath: ".zcode/board/runs.json" },
+    );
+    c.eq(normalized.order, [], "normalizeRuns：表外角色仍跳过（不猜执行事实）");
+    c.ok(
+      normalized.diagnostics.some((d) => d.message.includes("不在角色词表")),
+      "normalizeRuns：表外角色落 diagnostics",
+      show(normalized.diagnostics),
+    );
+
+    // ⑤ 旧角色零回归（写侧行为层）：六个旧角色落账照旧接受
+    for (const role of S99_LEGACY_ROLES) {
+      const mapped = mapRunEvent({ role, result: "done", cards: [99] });
+      c.ok(mapped.record !== null && mapped.record.role === role, `旧角色零回归：${role} 落账照旧接受`);
+    }
+
+    // ⑥ 词表同步守卫：写侧 ↔ 读侧集合相等（防「可落账不可入板」分裂——本卡红侧即此分裂）
+    c.ok(RUNS_LIB_RUN_ROLES.includes("ui-designer"), "写侧 runs.RUN_ROLES 含 ui-designer");
+    c.ok(DERIVE_LIB_RUN_ROLES.includes("ui-designer"), "读侧 derive.RUN_ROLES 含 ui-designer（入板解析同词表）");
+    c.eq([...RUNS_LIB_RUN_ROLES].sort(), [...DERIVE_LIB_RUN_ROLES].sort(), "写侧 ↔ 读侧 RUN_ROLES 集合相等（词表同步守卫）");
+    for (const role of S99_LEGACY_ROLES) {
+      c.ok(
+        RUNS_LIB_RUN_ROLES.includes(role) && DERIVE_LIB_RUN_ROLES.includes(role),
+        `旧角色零回归：两词表照旧含 ${role}`,
+      );
+    }
+  },
+});
+
 // ---------------------------------------------------------------- D2-2（#152）卡号绑定断言：worktree 名 ↔ 卡号（对账点名级）
 
 // ---- 场景 152：板面 worktree（#151 归一后的现场实际路径）末段 task-<no> 必须等于该卡稳定号——
@@ -6162,10 +6525,1996 @@ scenario("159", "#159 苗圃位置规则：裁决稿/设计稿/纲领稿被 --ch
   },
 });
 
+// ---------------------------------------------------------------- A2-1（#81）--assign --epic：自动占 phase 序号（§10.3/§10.7.2 补录通道）
+
+// ---- 场景 81a（#81）：新稿自动占下一 phase 序号（领号 + 归属对写 registry 条目）+ 重复运行零变化 +
+//      --epic-file 指向已有归属稿零改写 + 不可归属清单拒绝 + 用法错误（全部零写入）
+//      A3-2（#85）随动 → A3-3（#86）收口：epic 板 --check 曾因 (c) 对照面暂缺 epic 成员号转过渡态；
+//      A3-3 扩面后断言回绿（assertCheckEpicGreen：退出码 0 + 结论通过 + 零 (c) 差异）。
+scenario(
+  "81a",
+  "#81：--assign --epic KANB——新稿自动占下一 phase 序号；重复运行零变化（幂等）；--epic-file 已有归属零改写；不可归属清单拒绝与用法错误零写入",
+  {
+    steps: [
+      { args: [] },
+      { args: ["--assign", "--epic", "KANB"] },
+      { args: ["--check"] },
+      { args: ["--assign", "--epic", "KANB"] },
+      { args: [] },
+    ],
+    build(root) {
+      w(root, ".zcode/plans/plan-81-kanb-a.md", ["# 看板一期 A（已归属）", "<!-- zcode-board: no=301 -->", ""].join("\n"));
+      w(root, ".zcode/plans/plan-81-kanb-b-new.md", ["# 看板二期 B（新稿）", "", "- [ ] 1. 二期首卡", ""].join("\n"));
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 301,
+            epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+            entries: [
+              {
+                no: 301,
+                kind: "plan",
+                file: ".zcode/plans/plan-81-kanb-a.md",
+                title: "看板一期 A（已归属）",
+                assignedAt: "2026-10-01T00:00:00+08:00",
+                planCode: "KANA",
+                epic: "epic:KANB",
+                phase: 1,
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const [base, assign, check, rerun, final] = ctx.steps;
+      const registryRel = ".zcode/board/registry.json";
+      const newPlanRel = ".zcode/plans/plan-81-kanb-b-new.md";
+      const memberPlanRel = ".zcode/plans/plan-81-kanb-a.md";
+      const readRegistry = () => readJsonFile(join(root, registryRel)).value;
+      const entryOf = (reg, no) => (reg?.entries ?? []).find((e) => e.no === no) ?? null;
+      const changedRels = (step) => diffSnapshot(step.before, step.after).changed.map((x) => x.rel);
+      const probe = (args) => {
+        const before = treeSnapshot(root);
+        const res = spawnSync(process.execPath, [COMPILER, root, ...args], { encoding: "utf8" });
+        const after = treeSnapshot(root);
+        return { res, diff: diffSnapshot(before, after) };
+      };
+      const assertZeroWrite = (p, label) => {
+        const d = p.diff;
+        c.ok(
+          d.changed.length === 0 && d.added.length === 0 && d.removed.length === 0,
+          label,
+          show({ changed: d.changed.map((x) => x.rel), added: d.added, removed: d.removed }),
+        );
+      };
+
+      c.eq(base.code, 0, "基线编译退出码 0（前置）");
+
+      // ---- 1. 新稿自动占号：领稳定号 + 自动占下一 phase 序号（成员期次 max=1 → 2）
+      c.eq(assign.code, 0, "--assign --epic KANB 退出码 0（§10.7.2 同通道补录）");
+      const reg1 = readRegistry();
+      const e301 = entryOf(reg1, 301);
+      const e302 = entryOf(reg1, 302);
+      const e303 = entryOf(reg1, 303);
+      c.eq(reg1?.seq, 303, "seq 前进到 303（新稿特性 302 + 首卡任务 303）");
+      c.ok(e302 && e302.kind === "plan" && e302.file === newPlanRel, "新稿条目落 registry（kind=plan、file 指向新稿）", show(e302));
+      c.eq(e302?.epic, "epic:KANB", "归属引用位 = 登记 id 形态 epic:KANB（码不进引用位，§10.3）");
+      c.eq(e302?.phase, 2, "自动占下一 phase 序号（KANB 成员期次 max=1 → 2）");
+      c.ok(/^[A-Z][A-Z0-9]{3}$/.test(e302?.planCode ?? ""), "计划码照常派生且形态合规", show(e302?.planCode));
+      c.ok(ISO_RE.test(e302?.assignedAt ?? ""), "assignedAt 带时区 ISO 8601", show(e302?.assignedAt));
+      c.ok(e303 && !Object.hasOwn(e303, "epic") && !Object.hasOwn(e303, "phase"), "归属只落计划条目（稿级）：任务条目不带 epic/phase", show(e303));
+      c.eq(
+        e301,
+        {
+          no: 301,
+          kind: "plan",
+          file: memberPlanRel,
+          title: "看板一期 A（已归属）",
+          assignedAt: "2026-10-01T00:00:00+08:00",
+          planCode: "KANA",
+          epic: "epic:KANB",
+          phase: 1,
+        },
+        "既有成员条目零改写（号/计划码/assignedAt/归属对逐字段原样）",
+      );
+      c.eq(reg1?.epics, [{ code: "KANB", title: "看板系统", status: "active" }], "登记行原样（机具只读既有登记行：不代造、不改写；创建通道见 81e）");
+      const newText = readFileSync(join(root, newPlanRel), "utf8");
+      c.inc(newText, "<!-- zcode-board: no=302 -->", "新稿盖文件头号标记（302）");
+      c.inc(newText, "<!-- zcode-board: no=303 -->", "首卡行尾盖任务号（303）");
+      const memberText = readFileSync(join(root, memberPlanRel), "utf8");
+      c.ok(!memberText.includes("epic") && !memberText.includes("phase"), "源文件不承载 epic/phase（载体 = registry 条目；补录只加归属对）");
+      c.inc(assign.stdout, "epic:KANB", "完成输出点名归属（epic:KANB）");
+      c.inc(assign.stdout, "phase=2", "完成输出点名期号（phase=2）");
+      const rels1 = changedRels(assign);
+      c.ok(
+        rels1.every((r) => [newPlanRel, registryRel, ".zcode/board/board.json", ".zcode/board/board.md"].includes(r)),
+        "写面 = 新稿标记 + registry + board 产物（成员稿与其它文件零触碰）",
+        show(rels1),
+      );
+
+      // ---- 2. --check：epic 登记行/归属字段不破坏三方一致（归属断言包归 A2-2，本卡不新增失败级）
+      //          A3-3（#86）扩面后回绿：epic 成员稿入 epic 章 → (c) 对照面同入（退出码 0 + 结论通过）
+      assertCheckEpicGreen(c, check, "--check（归属写入后）");
+
+      // ---- 3. 幂等双跑：重复运行零变化（无待归属目标；registry 与计划稿零写入、期号不重发）
+      c.eq(rerun.code, 0, "重复运行退出码 0");
+      c.inc(rerun.stdout, "零变化", "重复运行零变化（幂等口径）");
+      const rels2 = changedRels(rerun);
+      c.ok(rels2.every((r) => ALLOWED_OUTPUTS.includes(r)), "重复运行仅重编译 board 产物：registry 与计划稿零写入", show(rels2));
+      const regAfter = readRegistry();
+      c.eq(entryOf(regAfter, 302)?.phase, 2, "期号不重发（302 仍 phase=2）");
+      c.eq(regAfter?.seq, 303, "seq 不回落、不前进（高水位只增）");
+
+      // ---- 4. --epic-file 指向已有归属稿：零变化（不重归、不改写）
+      const pOwned = probe(["--assign", "--epic", "KANB", "--epic-file", memberPlanRel]);
+      c.eq(pOwned.res.status, 0, "--epic-file 指向已有归属稿：退出码 0（零变化）");
+      c.inc(pOwned.res.stdout, "零变化", "已有归属不重复写（期号不重发）");
+      c.ok(
+        pOwned.diff.changed.every((x) => ALLOWED_OUTPUTS.includes(x.rel)),
+        "已有归属目标零改写（registry 字节不变）",
+        show(pOwned.diff.changed.map((x) => x.rel)),
+      );
+
+      // ---- 5. 拒绝/用法错误：先于任何写裁定 → 真零写入
+      const pNoTarget = probe(["--assign", "--epic", "KANB", "--epic-file", ".zcode/plans/does-not-exist.md"]);
+      c.eq(pNoTarget.res.status, 1, "--epic-file 全不可归属：拒绝执行退出码 1");
+      c.inc(pNoTarget.res.stdout, "无可归属目标", "拒绝输出点名（epic-no-target）");
+      c.inc(pNoTarget.res.stderr, "does-not-exist.md", "诊断点名不可归属文件");
+      assertZeroWrite(pNoTarget, "拒绝执行零写入（裁定先于任何写）");
+
+      const pNoAssign = probe(["--epic", "KANB"]);
+      c.eq(pNoAssign.res.status, 2, "--epic 缺 --assign：用法错误退出码 2");
+      c.inc(pNoAssign.res.stderr, "--assign", "用法错误说明仅配合 --assign");
+      assertZeroWrite(pNoAssign, "用法错误零写入");
+
+      const pBadShape = probe(["--assign", "--epic", "kanb"]);
+      c.eq(pBadShape.res.status, 2, "码形态非法（小写）：用法错误退出码 2");
+      c.inc(pBadShape.res.stderr, "4 位", "用法错误说明 4 位冻结形态");
+      assertZeroWrite(pBadShape, "码形态非法零写入");
+
+      const pRepeat = probe(["--assign", "--epic", "KANB", "--epic", "KANB"]);
+      c.eq(pRepeat.res.status, 2, "--epic 重复给出：用法错误退出码 2");
+      c.inc(pRepeat.res.stderr, "重复", "用法错误说明重复");
+      assertZeroWrite(pRepeat, "重复 --epic 零写入");
+
+      const pFileNoEpic = probe(["--assign", "--epic-file", memberPlanRel]);
+      c.eq(pFileNoEpic.res.status, 2, "--epic-file 缺 --epic：用法错误退出码 2");
+      c.inc(pFileNoEpic.res.stderr, "--epic", "用法错误说明 --epic-file 仅配合 --epic");
+      assertZeroWrite(pFileNoEpic, "--epic-file 缺 --epic 零写入");
+
+      const pCheckEpic = probe(["--check", "--epic", "KANB"]);
+      c.eq(pCheckEpic.res.status, 2, "--check 与 --epic 混用：用法错误退出码 2");
+      c.inc(pCheckEpic.res.stderr, "--assign", "用法错误说明 --epic 仅配合 --assign");
+      assertZeroWrite(pCheckEpic, "--check 混用零写入");
+
+      c.eq(final.code, 0, "收尾编译退出码 0（commonChecks 断言面）");
+    },
+  },
+);
+
+// ---- 场景 81b（#81）：冲突顺延（已消耗期号不回收）+ 同批同期次 + --epic-file 补录只加归属对 + 期号不重发
+//      A3-2（#85）随动 → A3-3（#86）收口：epic 板 --check 曾因 (c) 对照面暂缺 epic 成员号转过渡态；
+//      A3-3 扩面后断言回绿（assertCheckEpicGreen：退出码 0 + 结论通过 + 零 (c) 差异）。
+scenario(
+  "81b",
+  "#81：冲突顺延——已消耗期号（归档成员 phase=2）不回收，新批次占 3；同批同期次；缺省目标不广谱；--epic-file 补录只加归属对；重跑零变化",
+  {
+    steps: [
+      { args: [] },
+      { args: ["--assign", "--epic", "KANB"] },
+      { args: ["--check"] },
+      // A3-2（#85）随动：末步保留默认编译作 ctx.run（commonChecks 末步口径 = 退出码 0；A3-3 扩面后
+      // epic 板 --check 同为 0，本步维持不改动 steps 结构）
+      { args: [] },
+    ],
+    build(root) {
+      w(root, ".zcode/plans/plan-81-kanb-live.md", ["# 看板一期（活跃成员）", "<!-- zcode-board: no=401 -->", ""].join("\n"));
+      w(root, ".zcode/archive/plan-81-kanb-arch.md", ["# 看板二期（已归档成员）", "<!-- zcode-board: no=402 -->", ""].join("\n"));
+      w(root, ".zcode/plans/plan-81-old-unowned.md", ["# 看板历史稿（补录前无归属）", "<!-- zcode-board: no=403 -->", ""].join("\n"));
+      w(root, ".zcode/plans/plan-81-new-1.md", ["# 看板三期新稿一（未领号）", ""].join("\n"));
+      w(root, ".zcode/plans/plan-81-new-2.md", ["# 看板三期新稿二（未领号）", ""].join("\n"));
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 403,
+            epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+            entries: [
+              {
+                no: 401,
+                kind: "plan",
+                file: ".zcode/plans/plan-81-kanb-live.md",
+                title: "看板一期（活跃成员）",
+                assignedAt: "2026-10-01T00:00:00+08:00",
+                planCode: "KANL",
+                epic: "epic:KANB",
+                phase: 1,
+              },
+              {
+                no: 402,
+                kind: "plan",
+                file: ".zcode/archive/plan-81-kanb-arch.md",
+                title: "看板二期（已归档成员）",
+                assignedAt: "2026-10-01T00:00:00+08:00",
+                planCode: "KANA",
+                epic: "epic:KANB",
+                phase: 2,
+              },
+              {
+                no: 403,
+                kind: "plan",
+                file: ".zcode/plans/plan-81-old-unowned.md",
+                title: "看板历史稿（补录前无归属）",
+                assignedAt: "2026-10-01T00:00:00+08:00",
+                planCode: "KANO",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const [base, batch, midCheck] = ctx.steps;
+      const registryRel = ".zcode/board/registry.json";
+      const registryAbs = join(root, registryRel);
+      const oldRel = ".zcode/plans/plan-81-old-unowned.md";
+      const readRegistry = () => readJsonFile(registryAbs).value;
+      const entryOf = (reg, no) => (reg?.entries ?? []).find((e) => e.no === no) ?? null;
+      const changedRels = (step) => diffSnapshot(step.before, step.after).changed.map((x) => x.rel);
+      const probeAssign = (args) => {
+        const before = treeSnapshot(root);
+        const res = spawnSync(process.execPath, [COMPILER, root, ...args], { encoding: "utf8" });
+        const after = treeSnapshot(root);
+        return { res, diff: diffSnapshot(before, after) };
+      };
+
+      c.eq(base.code, 0, "基线编译退出码 0（前置）");
+
+      // ---- 1. 冲突顺延：已消耗期号 2（归档成员）不回收 → 新批次顺延 3；同批两稿同 phase
+      //        （本断言面 = 两步后的磁盘态：后续补录只动 403，不回写 404/405）
+      c.eq(batch.code, 0, "新批次归属退出码 0");
+      // A3-3（#86）扩面后回绿：epic 成员稿入 epic 章 → (c) 对照面同入（退出码 0 + 结论通过）
+      assertCheckEpicGreen(c, midCheck, "--check（批次后）");
+      const reg1 = readRegistry();
+      c.eq(entryOf(reg1, 404)?.epic, "epic:KANB", "新稿一条目归属 epic:KANB");
+      c.eq(entryOf(reg1, 404)?.phase, 3, "冲突顺延：活跃成员 max=1 → 候选 2 已被消耗 → 顺延 3（期号不回收）");
+      c.eq(entryOf(reg1, 405)?.epic, "epic:KANB", "新稿二条目归属 epic:KANB（同批同期次）");
+      c.eq(entryOf(reg1, 405)?.phase, 3, "同批同期次：两稿同 phase=3（一期多稿合法，AD-2）");
+      c.eq(
+        (reg1?.entries ?? []).filter((e) => e.phase === 2).map((e) => e.no),
+        [402],
+        "phase 2 仅由已消耗的归档成员持有（不回收给新稿）",
+      );
+      const arch = entryOf(reg1, 402);
+      c.eq(
+        { file: arch?.file, phase: arch?.phase, epic: arch?.epic },
+        { file: ".zcode/archive/plan-81-kanb-arch.md", phase: 2, epic: "epic:KANB" },
+        "归档成员条目原样（不动指向/归属）",
+      );
+      const e403a = entryOf(reg1, 403);
+      c.ok(e403a && !Object.hasOwn(e403a, "epic") && !Object.hasOwn(e403a, "phase"), "缺省目标 = 未领号稿：既有未归属稿（403）不被广谱抓取（机具不广谱改写）", show(e403a));
+      c.inc(batch.stdout, "phase=3", "完成输出点名 phase=3（顺延结果）");
+      c.inc(readFileSync(join(root, ".zcode/plans/plan-81-new-1.md"), "utf8"), "<!-- zcode-board: no=404 -->", "新稿一盖号标记（404）");
+      c.inc(readFileSync(join(root, ".zcode/plans/plan-81-new-2.md"), "utf8"), "<!-- zcode-board: no=405 -->", "新稿二盖号标记（405）");
+      const rels1 = changedRels(batch);
+      c.ok(
+        rels1.every((r) =>
+          [".zcode/plans/plan-81-new-1.md", ".zcode/plans/plan-81-new-2.md", registryRel, ".zcode/board/board.json", ".zcode/board/board.md"].includes(r),
+        ),
+        "写面 = 两份新稿标记 + registry + board 产物（活跃稿/归档稿/历史稿零触碰）",
+        show(rels1),
+      );
+
+      // ---- 2. 补录既有稿（--epic-file）：只加归属对（号/计划码/assignedAt/指向零变动）
+      const backfill = probeAssign(["--assign", "--epic", "KANB", "--epic-file", oldRel]);
+      c.eq(backfill.res.status, 0, "--epic-file 补录退出码 0");
+      const reg2 = readRegistry();
+      const e403 = entryOf(reg2, 403);
+      c.eq(e403?.epic, "epic:KANB", "补录写入 epic:KANB（归属对原子）");
+      c.eq(e403?.phase, 4, "补齐期次：活跃成员 max=3 → 4（已消耗 2 不回收）");
+      c.eq(
+        { no: e403?.no, kind: e403?.kind, file: e403?.file, planCode: e403?.planCode, assignedAt: e403?.assignedAt },
+        { no: 403, kind: "plan", file: oldRel, planCode: "KANO", assignedAt: "2026-10-01T00:00:00+08:00" },
+        "补录只加归属对：号/计划码/assignedAt/指向逐字段零变动",
+      );
+      c.inc(backfill.res.stdout, "phase=4", "完成输出点名 phase=4");
+      const rels2 = backfill.diff.changed.map((x) => x.rel);
+      c.ok(!rels2.includes(oldRel), "源文件标记零变动（历史稿文件未写）", show(rels2));
+      c.ok(
+        rels2.every((r) => [registryRel, ".zcode/board/board.json", ".zcode/board/board.md"].includes(r)),
+        "补录写面 = registry + board 产物（无号标记写回）",
+        show(rels2),
+      );
+
+      // ---- 3. 期号不重发：同清单重跑零变化（registry 逐字节一致）
+      const regTextAfterBackfill = readFileSync(registryAbs, "utf8");
+      const rerun = probeAssign(["--assign", "--epic", "KANB", "--epic-file", oldRel]);
+      c.eq(rerun.res.status, 0, "重跑退出码 0");
+      c.inc(rerun.res.stdout, "零变化", "期号不重发（重跑零变化）");
+      const rels3 = rerun.diff.changed.map((x) => x.rel);
+      c.ok(rels3.every((r) => ALLOWED_OUTPUTS.includes(r)), "重跑仅重编译 board 产物（registry 零写入）", show(rels3));
+      c.eq(readFileSync(registryAbs, "utf8"), regTextAfterBackfill, "重跑后 registry 逐字节一致（幂等）");
+      const reg3 = readRegistry();
+      c.eq(entryOf(reg3, 403)?.phase, 4, "403 仍 phase=4（不重发、不动）");
+
+      // ---- 4. 归属对原子性与引用位形态（全册复核）
+      c.ok(
+        (reg3?.entries ?? []).every((e) => Object.hasOwn(e, "epic") === Object.hasOwn(e, "phase")),
+        "归属对原子性：epic/phase 同时存在或同时缺省（§10.3）",
+        show((reg3?.entries ?? []).map((e) => ({ no: e.no, epic: e.epic, phase: e.phase }))),
+      );
+      c.ok(
+        (reg3?.entries ?? [])
+          .filter((e) => Object.hasOwn(e, "epic"))
+          .every((e) => e.epic === "epic:KANB" && Number.isInteger(e.phase) && e.phase >= 1),
+        "引用位逐条 = 登记 id 形态、phase 单值正整数（无裸码/无 5 位码写入）",
+      );
+
+      // ---- 5. 补录后复核（§3.9 第 3 步）：归属字段不破坏三方一致；归档成员按指向直查通过
+      //          A3-3（#86）扩面后回绿：epic 板 --check 退出码 0 + 结论通过 + 零 (c) 差异
+      const finalCheck = probeAssign(["--check"]);
+      assertCheckEpicGreen(c, { code: finalCheck.res.status, stdout: finalCheck.res.stdout }, "补录后 --check");
+      c.inc(finalCheck.res.stdout, "已归档", "归档成员条目按指向直查通过并 note「已归档」（勘误 10 不回归）");
+    },
+  },
+);
+
+// ---- 场景 81c（#81）：前置裁定——登记行缺失/形态非法按缺失处置/终态拒绝（零写入）；用法错误退出码 2
+scenario(
+  "81c",
+  "#81：登记行缺失/形态非法（按缺失处置）/终态 epic 不接纳新成员——拒绝执行且真零写入；码形态非法/缺 --assign/与 --check 混用 → 用法错误",
+  {
+    steps: [{ args: [] }],
+    build(root) {
+      w(root, ".zcode/plans/plan-81c-new.md", ["# 看板候选新稿（未领号）", ""].join("\n"));
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 0,
+            epics: [
+              { code: "TERM", title: "终态史诗", status: "cancelled" },
+              { code: "BAD1", title: "", status: "active" },
+            ],
+            entries: [],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const probe = (args) => {
+        const before = treeSnapshot(root);
+        const res = spawnSync(process.execPath, [COMPILER, root, ...args], { encoding: "utf8" });
+        const after = treeSnapshot(root);
+        return { res, diff: diffSnapshot(before, after) };
+      };
+      const assertZeroWrite = (p, label) => {
+        const d = p.diff;
+        c.ok(
+          d.changed.length === 0 && d.added.length === 0 && d.removed.length === 0,
+          label,
+          show({ changed: d.changed.map((x) => x.rel), added: d.added, removed: d.removed }),
+        );
+      };
+
+      const pMissing = probe(["--assign", "--epic", "NOPE"]);
+      c.eq(pMissing.res.status, 1, "登记行缺失（未给 --epic-title）：拒绝执行退出码 1（登记与补录分离——缺 title 不代造；创建通道见 81e）");
+      c.inc(pMissing.res.stdout, "§3.9", "拒绝指引按 §3.9 第 1 步登记");
+      c.inc(pMissing.res.stdout, "未写任何文件", "拒绝声明零写入");
+      c.inc(pMissing.res.stderr, "登记行", "诊断点名登记行缺失");
+      assertZeroWrite(pMissing, "登记行缺失零写入（未领号稿不盖号、registry/板零触碰）");
+
+      const pBadRow = probe(["--assign", "--epic", "BAD1"]);
+      c.eq(pBadRow.res.status, 1, "登记行形态非法（title 空）：按缺失处置、拒绝执行");
+      c.inc(pBadRow.res.stderr, "形态非法", "诊断点名登记行形态非法");
+      assertZeroWrite(pBadRow, "登记行形态非法零写入");
+
+      const pTerminal = probe(["--assign", "--epic", "TERM"]);
+      c.eq(pTerminal.res.status, 1, "终态 epic（cancelled）：拒绝执行退出码 1");
+      c.inc(pTerminal.res.stdout, "终态", "拒绝输出点名终态");
+      c.inc(pTerminal.res.stdout, "cancelled", "拒绝输出点名登记行终态值");
+      assertZeroWrite(pTerminal, "终态 epic 零写入（不接纳新成员，§10.6 收口纪律）");
+
+      const pNoAssign = probe(["--epic", "KANB"]);
+      c.eq(pNoAssign.res.status, 2, "--epic 缺 --assign：用法错误退出码 2");
+      c.inc(pNoAssign.res.stderr, "--assign", "用法错误说明仅配合 --assign");
+      assertZeroWrite(pNoAssign, "用法错误零写入");
+
+      const pCheckMix = probe(["--check", "--epic", "TERM"]);
+      c.eq(pCheckMix.res.status, 2, "--check 与 --epic 混用：用法错误退出码 2");
+      c.inc(pCheckMix.res.stderr, "--assign", "用法错误说明 --epic 仅配合 --assign");
+      assertZeroWrite(pCheckMix, "--check 混用零写入");
+
+      // 收口：候选稿仍无号标记（全部探针零触碰）
+      c.ok(
+        !readFileSync(join(root, ".zcode/plans/plan-81c-new.md"), "utf8").includes("zcode-board"),
+        "候选新稿仍无任何号标记（拒绝/用法错误均零发号）",
+      );
+      c.ok(isFile(join(root, ".zcode/plans/plan-81c-new.md")), "候选新稿文件仍在（零触碰）");
+    },
+  },
+);
+
+// ---- 场景 81d（#81）：防 mass 改写闸不回归（--epic 批次同闸；--force 放行整批归属同 phase）
+scenario(
+  "81d",
+  "#81：防 mass 改写闸在 --epic 批次上同纪律（>10 未领号计划稿拒绝执行零写入、逐份点名）；--force 放行并整批归属同 phase（首期 = 1）",
+  {
+    steps: [
+      { args: ["--assign", "--epic", "KANB"] },
+      { args: ["--assign", "--epic", "KANB", "--force"] },
+      { args: [] },
+    ],
+    build(root) {
+      for (let i = 1; i <= 11; i += 1) {
+        const nn = String(i).padStart(2, "0");
+        w(root, `.zcode/plans/plan-81d-${nn}.md`, [`# 看板批量稿 ${nn}（未领号）`, ""].join("\n"));
+      }
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify({ version: 1, seq: 100, epics: [{ code: "KANB", title: "看板系统", status: "active" }], entries: [] }, null, 2)}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const [refused, forced, final] = ctx.steps;
+      const readRegistry = () => readJsonFile(join(root, ".zcode/board/registry.json")).value;
+
+      c.eq(refused.code, 1, ">10 未领号计划稿：拒绝执行（退出码 1，与不带 --epic 同闸）");
+      c.inc(refused.stdout, "防 mass 改写闸", "拒绝文案点名防 mass 改写闸");
+      c.inc(refused.stdout, "零写入", "拒绝声明零写入、零发号");
+      c.inc(refused.stderr, "plan-81d-01.md", "诊断清单逐份点名（首份）");
+      c.inc(refused.stderr, "plan-81d-11.md", "诊断清单逐份点名（末份）");
+      const refDiff = diffSnapshot(refused.before, refused.after);
+      c.eq(
+        [refDiff.changed.length, refDiff.added.length, refDiff.removed.length],
+        [0, 0, 0],
+        "拒绝执行零写入（源与板零触碰）",
+        show({ changed: refDiff.changed.map((x) => x.rel), added: refDiff.added }),
+      );
+
+      c.eq(forced.code, 0, "--force 放行：退出码 0");
+      c.inc(forced.stderr, "放行", "放行痕迹留诊断（stderr）");
+      const reg = readRegistry();
+      c.eq(reg?.seq, 111, "seq 前进 100 → 111（11 份整批发号）");
+      const owned = (reg?.entries ?? []).filter((e) => e.kind === "plan" && e.epic === "epic:KANB");
+      c.eq(owned.length, 11, "11 个计划稿整批归属 epic:KANB");
+      c.eq([...new Set(owned.map((e) => e.phase))], [1], "同批同期次：phase=1（首期 = 1）");
+      c.inc(forced.stdout, "epic:KANB", "完成输出点名归属");
+      c.inc(forced.stdout, "phase=1", "完成输出点名 phase=1");
+      c.inc(forced.stdout, "新写入 11 个", "完成输出点名新写入计数");
+      let markers = 0;
+      for (let i = 1; i <= 11; i += 1) {
+        const nn = String(i).padStart(2, "0");
+        if (readFileSync(join(root, `.zcode/plans/plan-81d-${nn}.md`), "utf8").includes("<!-- zcode-board: no=")) markers += 1;
+      }
+      c.eq(markers, 11, "11 份计划稿逐份盖号标记（只增不改）");
+      c.eq(final.code, 0, "收尾编译退出码 0（commonChecks 断言面）");
+    },
+  },
+);
+
+// ---- 场景 81e（#81；SPEC-1 裁定 a 回炉）：`--assign --epic --epic-title` 登记行创建通道——
+//      登记行缺失且给 title → 创建 {code,title,status:"active"}（机具保持唯一写者；§10.2 三字段，
+//      追加在既有登记行后）；缺失且缺 title → 仍按 §3.9 指引拒绝（exit 1、真零写入）；
+//      已存在 → title 忽略（幂等提示、不改写既有登记行）；终态不复活、epics 段结构损坏不静默覆盖；
+//      用法错误（缺 --epic/缺值/重复/空白标题/与 --check 混用）exit 2 零写入。
+scenario(
+  "81e",
+  "#81：--assign --epic --epic-title 登记行创建通道（SPEC-1 裁定 a）——缺失+title 创建登记行；缺 title 仍拒绝；已存在 title 忽略；用法错误零写入",
+  {
+    steps: [{ args: [] }],
+    build(root) {
+      w(root, ".zcode/plans/plan-81e-new.md", ["# 看板登记通道稿（未领号）", ""].join("\n"));
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 0,
+            epics: [{ code: "TERM", title: "终态史诗", status: "cancelled" }],
+            entries: [],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const registryRel = ".zcode/board/registry.json";
+      const registryAbs = join(root, registryRel);
+      const planRel = ".zcode/plans/plan-81e-new.md";
+      const readRegistry = () => readJsonFile(registryAbs).value;
+      const probe = (args, at = root) => {
+        const before = treeSnapshot(at);
+        const res = spawnSync(process.execPath, [COMPILER, at, ...args], { encoding: "utf8" });
+        const after = treeSnapshot(at);
+        return { res, diff: diffSnapshot(before, after) };
+      };
+      const assertZeroWrite = (p, label) => {
+        const d = p.diff;
+        c.ok(
+          d.changed.length === 0 && d.added.length === 0 && d.removed.length === 0,
+          label,
+          show({ changed: d.changed.map((x) => x.rel), added: d.added, removed: d.removed }),
+        );
+      };
+
+      // ---- A. 登记行缺失 + title：同一 run 创建 {code,title,status:active} 并照常归属
+      const created = probe(["--assign", "--epic", "NREG", "--epic-title", "新建史诗"]);
+      c.eq(created.res.status, 0, "A 缺失+title：创建并归属退出码 0", `退出码 ${created.res.status}`);
+      const reg1 = readRegistry();
+      c.eq(
+        reg1?.epics,
+        [
+          { code: "TERM", title: "终态史诗", status: "cancelled" },
+          { code: "NREG", title: "新建史诗", status: "active" },
+        ],
+        "A 已创建登记行 {code,title,status:active}（追加在既有行后；三字段齐备）",
+        show(reg1?.epics),
+      );
+      const e1 = (reg1?.entries ?? []).find((e) => e.kind === "plan" && e.file === planRel) ?? null;
+      c.eq(e1?.epic, "epic:NREG", "A 目标稿照常写入归属对 epic:NREG");
+      c.eq(e1?.phase, 1, "A 首期自动占号 phase=1");
+      c.inc(String(created.res.stderr ?? ""), "创建登记行", "A 诊断点名「创建登记行」（机具唯一写者留痕）");
+      c.inc(String(created.res.stdout ?? ""), "epic:NREG", "A 完成输出点名归属");
+      const rels1 = created.diff.changed.map((x) => x.rel);
+      c.ok(
+        rels1.every((r) => [planRel, registryRel, ".zcode/board/board.json", ".zcode/board/board.md"].includes(r)),
+        "A 写面 = 计划稿标记 + registry + board 产物",
+        show(rels1),
+      );
+      const check1 = probe(["--check"]);
+      assertCheckEpicGreen(c, { code: check1.res.status, stdout: check1.res.stdout }, "A 创建后 --check");
+
+      // ---- B. 已存在 + 同 title（幂等重跑）：title 忽略、registry 逐字节一致
+      const regBytes = readFileSync(registryAbs, "utf8");
+      const rerun = probe(["--assign", "--epic", "NREG", "--epic-title", "新建史诗"]);
+      c.eq(rerun.res.status, 0, "B 已存在+同 title：幂等重跑退出码 0");
+      c.eq(readFileSync(registryAbs, "utf8"), regBytes, "B 已存在：registry 逐字节一致（title 不重写）");
+      c.inc(String(rerun.res.stderr ?? ""), "忽略", "B 幂等提示：--epic-title 忽略（机具不改写既有登记行）");
+
+      // ---- C. 已存在 + 异 title：忽略（不改名）+ 提示
+      const kept = probe(["--assign", "--epic", "NREG", "--epic-title", "改名尝试"]);
+      c.eq(kept.res.status, 0, "C 已存在+异 title：仍退出码 0（title 忽略不拦截）");
+      c.eq((readRegistry()?.epics ?? [])[1]?.title, "新建史诗", "C title 零改写（登记行改名非机具路径）");
+      c.inc(String(kept.res.stderr ?? ""), "忽略", "C 提示点名忽略（定性成文：已存在时 title 忽略）");
+      c.eq(readFileSync(registryAbs, "utf8"), regBytes, "C registry 逐字节一致（异 title 亦零改写）");
+
+      // ---- D. 缺失 + 缺 title：维持拒绝（exit 1、指引 §3.9、真零写入）
+      const noTitle = probe(["--assign", "--epic", "MISS"]);
+      c.eq(noTitle.res.status, 1, "D 缺失+缺 title：拒绝执行退出码 1（指引不变）");
+      c.inc(String(noTitle.res.stdout ?? ""), "§3.9", "D 指引按 §3.9 第 1 步登记");
+      c.inc(String(noTitle.res.stdout ?? ""), "未写任何文件", "D 拒绝声明零写入");
+      c.inc(String(noTitle.res.stderr ?? ""), "--epic-title", "D 诊断点名 --epic-title 通道（合法替代路径）");
+      assertZeroWrite(noTitle, "D 缺失+缺 title 真零写入");
+
+      // ---- E. 终态登记行 + title：不覆盖、不复活（§10.5/§10.6 收口纪律）
+      const terminal = probe(["--assign", "--epic", "TERM", "--epic-title", "复活尝试"]);
+      c.eq(terminal.res.status, 1, "E 终态+title：拒绝执行退出码 1");
+      c.eq((readRegistry()?.epics ?? [])[0]?.status, "cancelled", "E 终态登记行零改写（title 不复活 epic）");
+      assertZeroWrite(terminal, "E 终态+title 真零写入");
+
+      // ---- F. epics 段结构损坏（非数组）：fail-closed——拒绝且不静默覆盖损坏段
+      const corruptRoot = newRoot("s81e-corrupt");
+      try {
+        w(corruptRoot, ".zcode/plans/plan-81e-new.md", ["# 看板登记通道稿（未领号）", ""].join("\n"));
+        w(
+          corruptRoot,
+          ".zcode/board/registry.json",
+          `${JSON.stringify({ version: 1, seq: 0, epics: "KANB", entries: [] }, null, 2)}\n`,
+        );
+        const corrupt = probe(["--assign", "--epic", "KANB", "--epic-title", "结构损坏尝试"], corruptRoot);
+        c.eq(corrupt.res.status, 1, "F epics 段非数组：拒绝执行（不静默覆盖损坏段）");
+        c.inc(String(corrupt.res.stderr ?? ""), "非数组", "F 诊断点名 epics 段非数组（结构损坏）");
+        assertZeroWrite(corrupt, "F 结构损坏真零写入");
+      } finally {
+        removeRoot(corruptRoot);
+      }
+
+      // ---- G. 用法错误（exit 2、零写入）
+      const usageRoot = newRoot("s81e-usage");
+      try {
+        const probes = [
+          [["--epic-title", "X"], "--epic-title 缺 --epic"],
+          [["--assign", "--epic", "NREG", "--epic-title"], "--epic-title 缺值"],
+          [["--assign", "--epic", "NREG", "--epic-title", "A", "--epic-title", "B"], "--epic-title 重复"],
+          [["--assign", "--epic", "NREG", "--epic-title", "   "], "--epic-title 空白标题"],
+          [["--check", "--epic-title", "X"], "--check 与 --epic-title 混用"],
+        ];
+        for (const [args, label] of probes) {
+          const p = probe(args, usageRoot);
+          c.eq(p.res.status, 2, `G ${label}：用法错误退出码 2`, `退出码 ${p.res.status}`);
+          assertZeroWrite(p, `G ${label} 零写入`);
+        }
+        const help = spawnSync(process.execPath, [COMPILER, "--help"], { encoding: "utf8" });
+        c.eq(help.status, 0, "G --help 退出码 0");
+        c.inc(String(help.stdout ?? ""), "--epic-title", "G 帮助文档记录 --epic-title（登记行创建通道）");
+      } finally {
+        removeRoot(usageRoot);
+      }
+
+      // 收口：候选稿仍盖号（A 正常路径发号；后续拒绝/用法错误不再触碰）
+      c.inc(readFileSync(join(root, planRel), "utf8"), "<!-- zcode-board: no=", "收口：计划稿已盖号标记（A 正常路径）");
+    },
+  },
+);
+
+// ---- 场景 81f（#81；TQ-3/STD-3 回炉）：下一期次基准口径——活跃成员含 spec 稿（specRoot 在扫描面；
+//      含计划→spec 延续后的 spec 条目）；离板/归档成员只入「已消耗期号集合」（不抬基准、期号不回收）；
+//      整数稳定号引用（epic:42 形态）不参与判定（不猜、不计——SPEC-2 边界成文，同 checkEpicRefs 口径）。
+//      期望值推导（独立于实现）：基准 = max(活跃 plan phase 1, 活跃 spec phase 3) = 3 → 候选 4；
+//      已消耗集合含离板 spec 成员 phase 4 → 顺延 5；整数引用成员 phase 5 不入集合 → 5 可用。
+scenario(
+  "81f",
+  "#81：下一期次基准含活跃 spec 成员（含延续条目）；离板成员只入已消耗集合；整数稳定号引用不参与判定（边界成文）",
+  {
+    steps: [{ args: [] }],
+    build(root) {
+      const at = "2026-10-01T00:00:00+08:00";
+      w(root, ".zcode/plans/plan-81f-live.md", ["# 看板活跃成员稿", "<!-- zcode-board: no=1 -->", ""].join("\n"));
+      w(root, ".zcode/plans/plan-81f-int.md", ["# 看板整数引用成员稿", "<!-- zcode-board: no=2 -->", ""].join("\n"));
+      w(
+        root,
+        "specs/live/tasks.md",
+        ["# Implementation Plan: 活跃特性", "", "## Tasks", "", "- [ ] 1. 活跃特性卡 <!-- zcode-board: no=4 -->", ""].join("\n"),
+      );
+      w(root, ".zcode/plans/plan-81f-new.md", ["# 看板新稿（未领号）", ""].join("\n"));
+      w(
+        root,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 5,
+            epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+            entries: [
+              { no: 1, kind: "plan", file: ".zcode/plans/plan-81f-live.md", title: "看板活跃成员稿", assignedAt: at, planCode: "F1LV", epic: "epic:KANB", phase: 1 },
+              // 整数稳定号引用（合法引用形态、无登记面映射）：不入 used、不抬基准（SPEC-2 边界成文）
+              { no: 2, kind: "plan", file: ".zcode/plans/plan-81f-int.md", title: "看板整数引用成员稿", assignedAt: at, planCode: "F2IN", epic: 42, phase: 5 },
+              // 活跃 spec 成员（specRoot 在扫描面；延续后的 spec 条目同形态）：入 used + 抬基准
+              { no: 3, kind: "spec", specRoot: "specs/live/", title: "活跃特性", assignedAt: at, epic: "epic:KANB", phase: 3 },
+              { no: 4, kind: "task", file: "specs/live/tasks.md", title: "活跃特性卡", assignedAt: at },
+              // 离板/归档 spec 成员（specRoot 不在扫描面）：只入 used（期号不回收）——phase=4 已消耗
+              { no: 5, kind: "spec", specRoot: "specs/arch/", title: "归档特性", assignedAt: at, epic: "epic:KANB", phase: 4 },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const [base] = ctx.steps;
+      const registryRel = ".zcode/board/registry.json";
+      const readRegistry = () => readJsonFile(join(root, registryRel)).value;
+      const entryOf = (reg, no) => (reg?.entries ?? []).find((e) => e.no === no) ?? null;
+      const probe = (args) => {
+        const before = treeSnapshot(root);
+        const res = spawnSync(process.execPath, [COMPILER, root, ...args], { encoding: "utf8" });
+        const after = treeSnapshot(root);
+        return { res, diff: diffSnapshot(before, after) };
+      };
+
+      c.eq(base.code, 0, "基线编译退出码 0（前置）");
+      const batch = probe(["--assign", "--epic", "KANB"]);
+      c.eq(batch.res.status, 0, "新批次归属退出码 0");
+      const reg = readRegistry();
+      const n6 = entryOf(reg, 6);
+      c.eq(n6?.epic, "epic:KANB", "新稿条目归属 epic:KANB");
+      // 三条独立反证（每条同一结果值，标签各自载明反事实）：
+      c.eq(n6?.phase, 5, "活跃 spec 成员入基准：基准 = max(活跃 plan 1, 活跃 spec 3) = 3 → 候选 4（若只算 plan 成员则 phase=2——STD-3 口径缺口必咬）");
+      c.eq(n6?.phase, 5, "离板 spec 成员入已消耗集合：phase 4 不回收 → 顺延 5（若离板成员不入集合则 phase=4）");
+      c.eq(n6?.phase, 5, "整数稳定号引用不参与判定：若误入 used（phase 5）则顺延 6（现 5 可用——SPEC-2 边界，成文锁定）");
+      c.eq(entryOf(reg, 1)?.phase, 1, "活跃 plan 成员原样（phase=1 对照锚点）");
+      c.eq(entryOf(reg, 3)?.phase, 3, "活跃 spec 成员原样（phase=3 对照锚点）");
+      c.eq(
+        { specRoot: entryOf(reg, 5)?.specRoot, phase: entryOf(reg, 5)?.phase },
+        { specRoot: "specs/arch/", phase: 4 },
+        "离板 spec 成员原样（不回收、不改写——只入已消耗集合）",
+        show(entryOf(reg, 5)),
+      );
+      c.eq(
+        { epic: entryOf(reg, 2)?.epic, phase: entryOf(reg, 2)?.phase, file: entryOf(reg, 2)?.file },
+        { epic: 42, phase: 5, file: ".zcode/plans/plan-81f-int.md" },
+        "整数引用成员逐字段零改写（判定域外不猜、不动）",
+        show(entryOf(reg, 2)),
+      );
+      c.eq(entryOf(reg, 4)?.no, 4, "活跃 spec 卡号稳定（marker 4 绑定不回归）");
+      c.inc(batch.res.stdout, "phase=5", "完成输出点名 phase=5（顺延结果）");
+      c.inc(readFileSync(join(root, ".zcode/plans/plan-81f-new.md"), "utf8"), "<!-- zcode-board: no=6 -->", "新稿盖号标记（6）");
+      const rels = batch.diff.changed.map((x) => x.rel);
+      c.ok(
+        rels.every((r) => [".zcode/plans/plan-81f-new.md", registryRel, ".zcode/board/board.json", ".zcode/board/board.md"].includes(r)),
+        "写面 = 新稿标记 + registry + board 产物（既有成员稿零触碰）",
+        show(rels),
+      );
+    },
+  },
+);
+
+// ---------------------------------------------------------------- A2-2（#82）--check 归属与引用断言包
+
+// ---- 场景 82（#82，A2-2）：--check 归属与引用断言包——①归属唯一（一稿一 epic；同稿两条目两对必咬）；
+//      ②`epic` 引用只允许稳定号/登记 id（码形态拒收；源侧条目与板面 features[].epic 两面成文）；
+//      ③登记行无孤儿（`epic:<码>` 悬空引用必咬；登记行形态非法必咬）；④无 epic 合法不判失败（零噪声）。
+//      判级（A2-2 定性，成文理由）：三类均归**失败级**（非零退出）——与结构矛盾类先例同层
+//      （「码进引用位」schema oneOf 已拒、「blockedBy 目标不在板上活条目」checkBoardInvariants 已判失败）；
+//      修复可达（清理/补登记行 + 重编译），非收尾对账域（与 (e)/(f)/(g) 点名级判据相反）。
+//      夹具：主根四类反例各一 + 合规/无 epic 零噪声对照；隔离探针（板面手改两态、登记行形态非法、绿侧）。
+scenario("82", "#82：--check 归属与引用断言包——码进引用位/归属对不成对/双归属/悬空登记行必咬（逐条点名路径+两值）；无 epic 零噪声", {
+  steps: [{ args: ["--check"] }, { args: [] }],
+  build(root) {
+    const plan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        root,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    plan(".zcode/plans/plan-82-ok.md", "合规归属稿（KANB 一期）", 821, 822, "合规首卡");
+    plan(".zcode/plans/plan-82-badref.md", "码进引用位稿（归属非法）", 823, 824, "坏引用稿的卡");
+    plan(".zcode/plans/plan-82-solo.md", "无 epic 稿（合法缺省）", 825, 826, "无归属稿的卡");
+    plan(".zcode/plans/plan-82-dup.md", "双归属稿（两对残留）", 827, 828, "双归属稿的卡");
+    plan(".zcode/plans/plan-82-half.md", "半对引用稿（归属不成对）", 835, 836, "半对稿的卡");
+    plan(".zcode/plans/plan-82-orphan.md", "孤儿引用稿（登记行缺失）", 829, 830, "孤儿稿的卡");
+    const at = "2026-10-01T00:00:00+08:00";
+    const planEntry = (no, file, title, extra = {}) => ({ no, kind: "plan", file, title, assignedAt: at, ...extra });
+    const taskEntry = (no, file, title) => ({ no, kind: "task", file, title, assignedAt: at });
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 836,
+          epics: [
+            { code: "KANB", title: "看板系统", status: "active" },
+            { code: "OLD1", title: "旧史诗", status: "active" },
+            { code: "bad", title: "形态非法登记行", status: "active" },
+          ],
+          entries: [
+            planEntry(821, ".zcode/plans/plan-82-ok.md", "合规归属稿（KANB 一期）", { planCode: "QA82", epic: "epic:KANB", phase: 1 }),
+            taskEntry(822, ".zcode/plans/plan-82-ok.md", "合规首卡"),
+            planEntry(823, ".zcode/plans/plan-82-badref.md", "码进引用位稿（归属非法）", { planCode: "QB82", epic: "KANB", phase: 1 }),
+            taskEntry(824, ".zcode/plans/plan-82-badref.md", "坏引用稿的卡"),
+            planEntry(825, ".zcode/plans/plan-82-solo.md", "无 epic 稿（合法缺省）", { planCode: "QS82" }),
+            taskEntry(826, ".zcode/plans/plan-82-solo.md", "无归属稿的卡"),
+            planEntry(827, ".zcode/plans/plan-82-dup.md", "双归属稿（两对残留）", { planCode: "QD82", epic: "epic:KANB", phase: 1 }),
+            taskEntry(828, ".zcode/plans/plan-82-dup.md", "双归属稿的卡"),
+            // 双写/迁移残留：同稿第二条目（号 833 无对应标记 → 编译侧按号空洞 note；归属对残留在此）
+            planEntry(833, ".zcode/plans/plan-82-dup.md", "双归属稿（迁移残留条目）", { planCode: "QD82", epic: "epic:OLD1", phase: 2 }),
+            // 悬空引用/孤儿引用：登记 id 形式合法、`epics[]` 无 GONE 登记行（板面原样透出 → 本断言必咬）
+            planEntry(829, ".zcode/plans/plan-82-orphan.md", "孤儿引用稿（登记行缺失）", { planCode: "QO82", epic: "epic:GONE", phase: 1 }),
+            taskEntry(830, ".zcode/plans/plan-82-orphan.md", "孤儿稿的卡"),
+            // 半对（原子对违反）：有 epic 无 phase——源侧同判据面（条目 11）
+            planEntry(835, ".zcode/plans/plan-82-half.md", "半对引用稿（归属不成对）", { planCode: "QH82", epic: "epic:KANB" }),
+            taskEntry(836, ".zcode/plans/plan-82-half.md", "半对稿的卡"),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const [check, compile] = ctx.steps;
+    const epicsFailures = (res) => (res?.failures ?? []).filter((f) => f.category === "epic 归属");
+
+    c.eq(compile?.code, 0, "默认编译退出码 0（源侧矛盾不阻断默认编译——板按不采纳形态产出）");
+
+    // ---- 1. ② 码进引用位（源侧条目 epic:"KANB" 裸码）：--check 非零退出 + 逐条点名（路径 + 两值）
+    c.eq(check?.code, 1, "源侧码进引用位/双归属：--check 非零退出（必咬）");
+    const items = epicsFailures(checkProject(root));
+    c.eq(items.length, 6, "断言恰 6 项失败（码进引用位 1 + 双归属 1 + 悬空引用两面 2 + 半对 1 + 登记行形态 1；零额外噪声）", show(items));
+    const msg = (find) => items.filter((f) => f.message.includes(find)).map((f) => f.message).join("\n");
+    const badrefMsg = msg("registry.entries[2]");
+    c.inc(badrefMsg, "823", "失败项点名稳定号 823");
+    c.inc(badrefMsg, '"KANB"', "失败项给出实际值（裸码 \"KANB\"）");
+    c.inc(badrefMsg, "epic:", "失败项给出合法形态（登记 id epic:<4位码>）");
+    c.inc(check?.stdout ?? "", "[epic 归属]", "--check 报告面成文（[epic 归属] 失败项）");
+
+    // ---- 2. ① 归属唯一（一稿一 epic）：同稿两条目登记两个不同归属对 → 必咬（两对值 + 两条目号同列）
+    const dupMsg = msg("plan-82-dup.md");
+    c.inc(dupMsg, "registry.entries[6]", "双归属失败项点名首条目路径 registry.entries[6]");
+    c.inc(dupMsg, "registry.entries[8]", "双归属失败项点名残留条目路径 registry.entries[8]");
+    c.inc(dupMsg, '"epic:KANB"', "双归属失败项给出归属对一（epic:KANB）");
+    c.inc(dupMsg, '"epic:OLD1"', "双归属失败项给出归属对二（epic:OLD1）");
+    c.inc(dupMsg, "一稿一 epic", "双归属失败项点名一稿一 epic 纪律（§10.1）");
+
+    // ---- 2b. ② 归属对原子性（源侧半对：有 epic 无 phase）——与码进引用位同判据面
+    const halfMsg = msg("registry.entries[11]");
+    c.inc(halfMsg, "835", "半对失败项点名稳定号 835");
+    c.inc(halfMsg, "原子对", "半对失败项点名原子对纪律（§10.3）");
+    c.inc(halfMsg, '"epic:KANB"', "半对失败项给出实际值（epic=epic:KANB）");
+    c.inc(halfMsg, "phase=null", "半对失败项给出缺省半边（phase=null——不猜哪一半有效）");
+
+    // ---- 2c. ③ 登记行形态非法（`epics[]` 行 code/title/status 三字段）：失败级点名 epics[2]
+    const regMsg = msg("epics[2]");
+    c.inc(regMsg, '"bad"', "登记行形态非法失败项给出实际码（bad）");
+    c.inc(regMsg, "登记行", "登记行形态非法失败项点名登记行（§10.2 三字段）");
+
+    // ---- 3. ③ 登记行无孤儿（悬空引用必咬）：`epic:GONE` 无登记行 → 两面（磁盘板 + 重编译基线）逐条点名
+    const orphanItems = items.filter((f) => f.message.includes("epic:GONE"));
+    c.eq(orphanItems.length, 2, "悬空引用两面各点名 1 项（磁盘板 + 重编译基线；路径 + 两值）", show(items));
+    const orphanMsgs = orphanItems.map((f) => f.message);
+    c.ok(orphanMsgs.some((m) => m.startsWith(".zcode/board/board.json：")), "磁盘板面点名（.zcode/board/board.json：…）");
+    c.ok(orphanMsgs.some((m) => m.startsWith("重编译产物：")), "重编译基线面点名（重编译产物：…）");
+    c.inc(orphanMsgs.join("\n"), "features[4]", "悬空引用失败项点名节点路径 features[4]");
+    c.inc(orphanMsgs.join("\n"), '"epic:GONE"', "悬空引用失败项给出实际值 epic:GONE");
+    c.inc(orphanMsgs.join("\n"), "登记行", "悬空引用失败项点名登记行（epic 唯一机器载体，§10.2）");
+    c.inc(check?.stdout ?? "", "epics[]", "--check 报告承文悬空引用应然面（epics[] 登记行）");
+
+    // ---- 2. ④ 无 epic 合法不判失败（合规稿与无归属稿零点名——误判必咬）
+    const noise = (checkProject(root).failures ?? []).filter(
+      (f) => f.message.includes("plan-82-solo") || f.message.includes("plan-82-ok"),
+    );
+    c.eq(noise, [], "合规归属稿/无 epic 稿零点名（无 epic 不判失败——误判必咬）", show(noise));
+
+    // ---- 4. 板面手改探针（②引用形态的结构面成文 + 归属对原子性/phase 值域）：板结构校验失败项
+    //         （板面 epic 形态与可达性同守；schema oneOf 已拒裸码——本探针断言报告面逐条点名路径+两值）
+    const at2 = "2026-10-01T00:00:00+08:00";
+    const probeRoot = newRoot("s82-boardedit");
+    w(
+      probeRoot,
+      ".zcode/plans/plan-82-probe.md",
+      ["# 板面探针稿（KANB 一期）", "<!-- zcode-board: no=841 -->", "", "- [ ] 探针卡 <!-- zcode-board: no=842 -->", ""].join("\n"),
+    );
+    w(
+      probeRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 842,
+          epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+          entries: [
+            { no: 841, kind: "plan", file: ".zcode/plans/plan-82-probe.md", title: "板面探针稿（KANB 一期）", assignedAt: at2, planCode: "QPR8", epic: "epic:KANB", phase: 1 },
+            { no: 842, kind: "task", file: ".zcode/plans/plan-82-probe.md", title: "探针卡", assignedAt: at2 },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const probeCompile = spawnSync(process.execPath, [COMPILER, probeRoot], { encoding: "utf8" });
+    c.eq(probeCompile.status, 0, "板面探针：基线编译退出码 0");
+    const editBoard = (mutate) => {
+      const b = JSON.parse(readFileSync(join(probeRoot, ".zcode/board/board.json"), "utf8"));
+      const f = b.features[0];
+      f.epic = "epic:KANB";
+      f.phase = 1;
+      mutate(f, b);
+      w(probeRoot, ".zcode/board/board.json", `${JSON.stringify(b, null, 2)}\n`);
+      return checkProject(probeRoot);
+    };
+    const structuralOf = (res) => (res?.failures ?? []).filter((x) => x.category === "板结构校验").map((x) => x.message);
+    const epicsOf = (res) => (res?.failures ?? []).filter((x) => x.category === "epic 归属").map((x) => x.message);
+
+    // 4a. 手改 features[0].epic = "KANB"（裸码进引用位）：板结构校验逐条点名（码不进引用位）
+    const pBare = structuralOf(editBoard((f) => { f.epic = "KANB"; }));
+    c.ok(pBare.some((m) => m.includes("features[0].epic") && m.includes('"KANB"') && m.includes("码不进引用位")), "板面裸码进引用位：板结构校验点名（features[0].epic + 实际值 + 码不进引用位）", show(pBare));
+
+    // 4b. 手改归属对不成对（删 epic 留 phase）：原子对纪律点名
+    const pHalf = structuralOf(editBoard((f) => { delete f.epic; f.phase = 1; }));
+    c.ok(pHalf.some((m) => m.includes("features[0]") && m.includes("归属对") && m.includes("同时存在或同时缺省")), "板面归属对不成对（删 epic 留 phase）：板结构校验点名原子对纪律", show(pHalf));
+
+    // 4c. 手改 phase=0（非正整数）：值域点名
+    const pPhase = structuralOf(editBoard((f) => { f.phase = 0; }));
+    c.ok(pPhase.some((m) => m.includes("features[0].phase") && m.includes("正整数") && m.includes("0")), "板面 phase=0：板结构校验点名正整数值域", show(pPhase));
+
+    // 4d. 手改 features[0].epic = "epic:NOPE"（形态合法、登记行缺失）：悬空引用必咬（磁盘板面恰 1 项——
+    //     基线源合法，重编译面不触发）
+    const pDangling = epicsOf(editBoard((f) => { f.epic = "epic:NOPE"; }));
+    c.eq(pDangling.length, 1, "板面悬空引用（手改 epic:NOPE）：磁盘板面恰 1 项 epic 归属失败", show(pDangling));
+    c.inc(pDangling[0] ?? "", "features[0].epic", "板面悬空引用点名节点路径 features[0].epic");
+    c.inc(pDangling[0] ?? "", '"epic:NOPE"', "板面悬空引用给出实际值 epic:NOPE");
+    c.inc(pDangling[0] ?? "", "登记行", "板面悬空引用点名登记行缺失（epic 唯一机器载体）");
+    removeRoot(probeRoot);
+
+    // ---- 5. ④ 绿侧探针：合规归属 + 无 epic 混合板 → --check 0 失败、零 epic 归属失败项（零噪声）
+    const greenRoot = newRoot("s82-green");
+    w(
+      greenRoot,
+      ".zcode/plans/plan-82-green-a.md",
+      ["# 合规稿甲（KANB 一期）", "<!-- zcode-board: no=851 -->", "", "- [ ] 甲卡 <!-- zcode-board: no=852 -->", ""].join("\n"),
+    );
+    w(
+      greenRoot,
+      ".zcode/plans/plan-82-green-b.md",
+      ["# 无 epic 稿乙（合法缺省）", "<!-- zcode-board: no=853 -->", "", "- [ ] 乙卡 <!-- zcode-board: no=854 -->", ""].join("\n"),
+    );
+    w(
+      greenRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 854,
+          epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+          entries: [
+            { no: 851, kind: "plan", file: ".zcode/plans/plan-82-green-a.md", title: "合规稿甲（KANB 一期）", assignedAt: at2, planCode: "QGA8", epic: "epic:KANB", phase: 1 },
+            { no: 852, kind: "task", file: ".zcode/plans/plan-82-green-a.md", title: "甲卡", assignedAt: at2 },
+            { no: 853, kind: "plan", file: ".zcode/plans/plan-82-green-b.md", title: "无 epic 稿乙（合法缺省）", assignedAt: at2, planCode: "QGB8" },
+            { no: 854, kind: "task", file: ".zcode/plans/plan-82-green-b.md", title: "乙卡", assignedAt: at2 },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const greenCli = runCompiler(greenRoot, ["--check"]);
+    c.eq(greenCli.code, 0, "绿侧：合规归属 + 无 epic 板 --check 退出码 0");
+    c.inc(greenCli.stdout, "结论：--check 通过（0 项失败）", "绿侧：--check 结论通过（0 项失败）");
+    c.ok(!greenCli.stdout.includes("[epic 归属]"), "绿侧：零 epic 归属失败项（无 epic 不判失败——零噪声）", truncate(greenCli.stdout));
+    removeRoot(greenRoot);
+
+    // ---- 6. ③b 登记行段非数组（`epics` 段存在但非数组）：失败级点名段与两值（编译侧按无登记行处置）
+    const badSegRoot = newRoot("s82-badseg");
+    w(
+      badSegRoot,
+      ".zcode/plans/plan-82-badseg.md",
+      ["# 坏段稿", "<!-- zcode-board: no=861 -->", "", "- [ ] 坏段卡 <!-- zcode-board: no=862 -->", ""].join("\n"),
+    );
+    w(
+      badSegRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 862,
+          epics: "KANB",
+          entries: [
+            { no: 861, kind: "plan", file: ".zcode/plans/plan-82-badseg.md", title: "坏段稿", assignedAt: at2, planCode: "QBS8" },
+            { no: 862, kind: "task", file: ".zcode/plans/plan-82-badseg.md", title: "坏段卡", assignedAt: at2 },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const badSegCompile = spawnSync(process.execPath, [COMPILER, badSegRoot], { encoding: "utf8" });
+    c.eq(badSegCompile.status, 0, "坏段探针：默认编译退出码 0（按无登记行处置、不阻断）");
+    const badSegFails = (checkProject(badSegRoot).failures ?? []).filter((f) => f.category === "epic 归属").map((f) => f.message);
+    c.eq(badSegFails.length, 1, "epics 段非数组：恰 1 项 epic 归属失败（段级；不叠加行级）", show(badSegFails));
+    c.inc(badSegFails[0] ?? "", "epics", "坏段失败项点名 epics 段");
+    c.inc(badSegFails[0] ?? "", '"KANB"', "坏段失败项给出实际值（string 形态）");
+    removeRoot(badSegRoot);
+  },
+});
+
+// ---------------------------------------------------------------- A2-3（#83）期号不复用与 seq 高水位（E4-10）
+
+// ---- 场景 83（#83，A2-3）：①期号/epic 码不复用 + ②registry seq 高水位单调（E4-10）。
+//      判据成文（本卡定义；AD-9①「期号与 epic 码同守永不复用」，§10.2/§10.5）：
+//        ①a epic 码复用【失败级】= `epics[]` 同一 code 出现 ≥2 登记行（码一经分配不复用/不重分配/
+//            不重登记；重复 = 复制分叉或码位复用，编译器只认首行、其余行被静默吞掉）。
+//        ①b 期号复用候选【对账点名级】= 同一 epic 码、同一 phase 的成员跨 ≥2 个 `assignedAt` 批次片
+//            （批 = 秒级分片；「已消耗期次集合」= 全部条目 phase 值，含归档/空洞）。判级依据：单次
+//            `--epic-file` 多稿补录（合法，成员号各自派号时刻）与同批次跨秒边界亦现同形，机械不可
+//            与复用区分；且复用是历史事实（重编译/--assign 不可修复）——故对账点名、不阻断退出码，
+//            文案载成因与人工确认（与 (e)/(f)/(g) 同域口径）。
+//        ② seq 高水位【失败级】= seq ≥ max(entries.no, 活标记号)（E4-10 原文：seq 高水位回退不复查）；
+//            违反=号位记忆丢失（复制/回滚/手改），继续发号即复用已发号——逐条点名两值 + 见证源。
+//      夹具四组：主根（码复用 + seq 回落 + 同期次跨批，三断言同场）；复制/回滚探针（registry 回滚、
+//      源标记幸存 → 活标记见证）；绿侧（同批同期次 / 单成员期次 / 无 epic 零噪声）；补录边界探针
+//      （单次 --epic-file 多稿 = 合法跨批：点名但退出码 0，边界成文必咬）。
+const S83_AT_OLD = "2026-09-01T10:00:00+08:00";
+const S83_AT_NEW = "2026-09-02T11:30:00+08:00";
+const S83_AT_BF1 = "2026-07-01T09:00:00+08:00";
+const S83_AT_BF2 = "2026-09-03T09:00:00+08:00";
+scenario("83", "#83：期号/epic 码不复用（码复用失败级、同期次跨批点名）与 seq 高水位回落失败级（逐条点名两值）；单批与补录边界成文；零噪声", {
+  steps: [{ args: ["--check"] }, { args: [] }],
+  build(root) {
+    const plan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        root,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    plan(".zcode/plans/plan-83-ruse-a.md", "看板一期 A 稿（复制批取证）", 931, 932, "一期 A 首卡");
+    plan(".zcode/plans/plan-83-ruse-b.md", "看板一期 B 稿（复用同期次）", 933, 934, "一期 B 首卡");
+    plan(".zcode/plans/plan-83-solo.md", "单稿小功能（无归属）", 935, 936, "小步改进");
+    const atOld = S83_AT_OLD; // 已消耗批次（早）
+    const atNew = S83_AT_NEW; // 复制/复用批次（晚——「新条目又占了同期」）
+    const planEntry = (no, file, title, extra = {}) => ({ no, kind: "plan", file, title, assignedAt: atOld, ...extra });
+    const taskEntry = (no, file, title, at = atOld) => ({ no, kind: "task", file, title, assignedAt: at });
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 930, // 回落：已发号最大值 936（E4-10/H4 形态：手工回退高水位）
+          epics: [
+            { code: "RUSE", title: "看板复用史", status: "active" },
+            { code: "RUSE", title: "看板复用史（重复登记行/复制分叉）", status: "active" },
+          ],
+          entries: [
+            planEntry(931, ".zcode/plans/plan-83-ruse-a.md", "看板一期 A 稿（复制批取证）", { planCode: "RUA1", epic: "epic:RUSE", phase: 1 }),
+            taskEntry(932, ".zcode/plans/plan-83-ruse-a.md", "一期 A 首卡"),
+            planEntry(933, ".zcode/plans/plan-83-ruse-b.md", "看板一期 B 稿（复用同期次）", {
+              assignedAt: atNew,
+              planCode: "RUB1",
+              epic: "epic:RUSE",
+              phase: 1,
+            }),
+            taskEntry(934, ".zcode/plans/plan-83-ruse-b.md", "一期 B 首卡", atNew),
+            planEntry(935, ".zcode/plans/plan-83-solo.md", "单稿小功能（无归属）", { assignedAt: atNew, planCode: "SOL8" }),
+            taskEntry(936, ".zcode/plans/plan-83-solo.md", "小步改进", atNew),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const [check, compile] = ctx.steps;
+    const atOld = S83_AT_OLD;
+    const atNew = S83_AT_NEW;
+    const codeReuseFails = (res) => (res?.failures ?? []).filter((f) => f.category === "epic 码复用").map((f) => f.message);
+    const seqFails = (res) => (res?.failures ?? []).filter((f) => f.category === "seq 高水位").map((f) => f.message);
+    const reuseItems = (res) => (res?.rollcall ?? []).filter((m) => m.includes("期号复用候选"));
+
+    // ---- 1. 主根三断言同场：--check 非零退出 + 恰 2 项失败（码复用 1 + seq 回落 1；零额外噪声）
+    c.eq(compile?.code, 0, "默认编译退出码 0（复用/回落形态不阻断默认编译——审计面必咬）");
+    c.eq(check?.code, 1, "主根：--check 非零退出（epic 码复用 + seq 回落必咬）");
+    const res = checkProject(root);
+    c.eq(res.failures.length, 2, "主根恰 2 项失败（epic 码复用 1 + seq 高水位 1；零额外噪声）", show(res.failures));
+    const codeMsgs = codeReuseFails(res);
+    c.eq(codeMsgs.length, 1, "epic 码复用恰 1 项（同码 N 行合并为一条点名，不逐对膨胀）", show(codeMsgs));
+    const codeMsg = codeMsgs.join("\n");
+    c.inc(codeMsg, "epics[0]", "码复用失败项点名首个登记行 epics[0]");
+    c.inc(codeMsg, "epics[1]", "码复用失败项点名重复登记行 epics[1]");
+    c.inc(codeMsg, '"RUSE"', "码复用失败项给出实际码（RUSE）");
+    c.inc(codeMsg, "不复用", "码复用失败项点名永不复用纪律（§10.2/§10.5 AD-9①）");
+    const seqMsgs = seqFails(res);
+    c.eq(seqMsgs.length, 1, "seq 高水位恰 1 项", show(seqMsgs));
+    const seqMsg = seqMsgs.join("\n");
+    c.inc(seqMsg, "seq=930", "seq 回落失败项给出 seq 值（930）");
+    c.inc(seqMsg, "936", "seq 回落失败项给出已发号最大值（936）");
+    c.inc(seqMsg, "registry.entries[5]", "seq 回落失败项给出见证源（registry.entries[5]（号 936））");
+    c.inc(seqMsg, "回落", "seq 回落失败项点名「只增不回落」（E4-10）");
+    const reuse = reuseItems(res);
+    c.eq(reuse.length, 1, "期号复用候选恰 1 项（RUSE 期次 1 跨 2 批：931/atOld 与 933/atNew）", show(res.rollcall));
+    c.inc(reuse[0] ?? "", "epic RUSE", "复用点名给出 epic 码");
+    c.inc(reuse[0] ?? "", "期次 1", "复用点名给出期次号（两值之一）");
+    c.inc(reuse[0] ?? "", atOld, "复用点名给出早批次 assignedAt");
+    c.inc(reuse[0] ?? "", atNew, "复用点名给出晚批次 assignedAt（「新条目又占了同期且更晚」）");
+    c.inc(reuse[0] ?? "", "registry.entries[0]", "复用点名给出早批成员路径（entries[0]）");
+    c.inc(reuse[0] ?? "", "registry.entries[2]", "复用点名给出晚批成员路径（entries[2]）");
+    c.inc(reuse[0] ?? "", "人工确认", "复用点名标注人工确认（补录/跨秒边界同形成文）");
+    c.inc(check?.stdout ?? "", "[epic 码复用]", "--check 报告面成文（[epic 码复用] 失败项）");
+    c.inc(check?.stdout ?? "", "[seq 高水位]", "--check 报告面成文（[seq 高水位] 失败项）");
+    c.inc(check?.stdout ?? "", "期号复用候选", "--check 报告面点名期号复用候选（对账级）");
+    c.inc(check?.stdout ?? "", "对账点名 1 项", "报告面「对账点名 1 项」（源侧复用候选；对账级不阻断退出码）");
+
+    // ---- 2. 纯函数契约（EPIC_CODE_RE/EPICS 词表单源在 derive；本组只测公开导出）
+    c.eq(checkEpicCodeReuse(null), [], "库契约：registry 缺失 → 零断言（损坏源由源完整性拦下，不叠加）");
+    c.eq(
+      checkEpicCodeReuse({
+        epics: [
+          { code: "KANB", title: "甲", status: "active" },
+          { code: "OLD1", title: "乙", status: "archived" },
+        ],
+      }),
+      [],
+      "库契约：异码登记行 → 零断言",
+    );
+    const dupThree = checkEpicCodeReuse({
+      epics: [
+        { code: "KANB", title: "甲", status: "active" },
+        { code: "KANB", title: "乙", status: "active" },
+        { code: "KANB", title: "丙", status: "active" },
+      ],
+    });
+    c.eq(dupThree.length, 1, "库契约：同码三行合并为一条失败（一点名多行）", show(dupThree));
+    c.inc(dupThree[0] ?? "", "epics[0]、epics[1]、epics[2]", "库契约：三行逐一点名");
+    c.eq(
+      checkEpicCodeReuse({
+        epics: [
+          { code: "bad", title: "甲", status: "active" },
+          { code: "bad", title: "乙", status: "active" },
+        ],
+      }),
+      [],
+      "库契约：形态非法码的重复归 A2-2 形态面（本面不叠加）",
+    );
+    c.eq(checkEpicCodeReuse({ epics: "KANB" }), [], "库契约：epics 段非数组 → 零断言（段级归 A2-2）");
+
+    const epics1 = [{ code: "KANB", title: "看板", status: "active" }];
+    const mem = (no, phase, at, extra = {}) => ({
+      no,
+      kind: "plan",
+      file: `.zcode/plans/plan-x-${no}.md`,
+      title: `稿 ${no}`,
+      assignedAt: at,
+      epic: "epic:KANB",
+      phase,
+      ...extra,
+    });
+    c.eq(checkPhaseReuse(null), [], "库契约：registry 缺失 → 零断言");
+    c.eq(checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld), mem(2, 1, atOld)] }), [], "库契约：同期次同批（同 assignedAt）→ 零断言（AD-2 一期多稿）");
+    c.eq(checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld), mem(2, 2, atOld)] }), [], "库契约：不同期次 → 零断言");
+    c.eq(checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld)] }), [], "库契约：单成员期次 → 零断言（补录单稿不点名）");
+    const split = checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld), mem(2, 1, atNew)] });
+    c.eq(split.length, 1, "库契约：同期次跨 2 批 → 恰 1 条点名", show(split));
+    c.inc(split[0] ?? "", atOld, "库契约：点名给出早批 assignedAt");
+    c.inc(split[0] ?? "", atNew, "库契约：点名给出晚批 assignedAt");
+    c.inc(split[0] ?? "", "registry.entries[0]", "库契约：点名给出早批条目路径");
+    c.inc(split[0] ?? "", "registry.entries[1]", "库契约：点名给出晚批条目路径");
+    c.eq(
+      checkPhaseReuse({
+        epics: epics1,
+        entries: [mem(1, 1, atOld, { file: ".zcode/archive/plan-x-1.md" }), mem(2, 1, atNew)],
+      }).length,
+      1,
+      "库契约：归档成员（指向归档路径）同入判定域（registry 全量，含归档条目）",
+    );
+    c.eq(checkPhaseReuse({ epics: [], entries: [mem(1, 1, atOld), mem(2, 1, atNew)] }), [], "库契约：无登记行（孤儿引用）归 A2-2 面（本面不叠加）");
+    c.eq(
+      checkPhaseReuse({
+        epics: epics1,
+        entries: [
+          { no: 1, kind: "plan", file: "a.md", title: "裸码", assignedAt: atOld, epic: "KANB", phase: 1 },
+          { no: 2, kind: "plan", file: "b.md", title: "裸码二", assignedAt: atNew, epic: "KANB", phase: 1 },
+        ],
+      }),
+      [],
+      "库契约：裸码进引用位（形态非法）归 A2-2 面（本面不叠加）",
+    );
+    c.eq(
+      checkPhaseReuse({
+        epics: epics1,
+        entries: [
+          { no: 1, kind: "plan", file: "a.md", title: "稳定号引用", assignedAt: atOld, epic: 900, phase: 1 },
+          { no: 2, kind: "plan", file: "b.md", title: "登记 id 引用", assignedAt: atNew, epic: "epic:KANB", phase: 1 },
+        ],
+      }),
+      [],
+      "库契约：整数稳定号引用无登记面映射不参与组（同 checkEpicRefs 口径）——组内仅 1 个登记 id 成员 → 零点名",
+    );
+    c.eq(checkPhaseReuse({ epics: epics1, entries: [mem(1, 0, atOld), mem(2, 0, atNew)] }), [], "库契约：phase 非正整数归 A2-2 面（本面不叠加）");
+    c.eq(checkPhaseReuse({ epics: "KANB", entries: [mem(1, 1, atOld), mem(2, 1, atNew)] }), [], "库契约：epics 段非数组 → 零断言（段级归 A2-2）");
+    c.eq(
+      checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld), mem(2, 1, atNew)] }),
+      checkPhaseReuse({ epics: epics1, entries: [mem(1, 1, atOld), mem(2, 1, atNew)] }),
+      "库契约：纯函数稳定性（两次调用逐字节一致）",
+    );
+
+    c.eq(checkSeqHighWater({ seq: 5, entries: [{ no: 5 }], markers: [] }), [], "库契约：seq = max(entries) → 零断言");
+    c.eq(checkSeqHighWater({ seq: 9, entries: [{ no: 5 }], markers: [{ no: 7, witness: "x" }] }), [], "库契约：seq 高于全部已发号 → 零断言");
+    c.eq(checkSeqHighWater({ seq: 0, entries: [], markers: [] }), [], "库契约：空源 seq=0 → 零断言（空项目零噪声）");
+    const rollback = checkSeqHighWater({ seq: 4, entries: [{ no: 5 }], markers: [] });
+    c.eq(rollback.length, 1, "库契约：seq < entries 最大号 → 恰 1 项（E4-10/H4 形态）", show(rollback));
+    c.inc(rollback[0] ?? "", "seq=4", "库契约：点名 seq 值");
+    c.inc(rollback[0] ?? "", "5", "库契约：点名已发号最大值");
+    c.inc(rollback[0] ?? "", "registry.entries[0]", "库契约：见证 = 条目路径");
+    const rbMarker = checkSeqHighWater({
+      seq: 1,
+      entries: [],
+      markers: [{ no: 3, witness: ".zcode/plans/plan-x.md（文件头标记）" }],
+    });
+    c.eq(rbMarker.length, 1, "库契约：seq < 活标记号 → 恰 1 项（复制/回滚：标记为身份真相）");
+    c.inc(rbMarker[0] ?? "", ".zcode/plans/plan-x.md", "库契约：见证 = 活标记所在源");
+    const badSeq = checkSeqHighWater({ seq: "168", entries: [{ no: 1 }], markers: [] });
+    c.eq(badSeq.length, 1, "库契约：seq 缺失/非整数 → 恰 1 项（高水位必须可判定，E4-10）");
+    c.inc(badSeq[0] ?? "", '"168"', "库契约：点名 seq 实际值（非整数形态）");
+
+    // ---- 3. 复制/回滚探针：registry 整体回滚（seq/条目落后）、源标记幸存 → 活标记见证必咬
+    const rbRoot = newRoot("s83-rollback");
+    w(rbRoot, ".zcode/plans/plan-83-rb-a.md", ["# 回滚探针 A 稿（旧登记面）", "<!-- zcode-board: no=921 -->", ""].join("\n"));
+    w(rbRoot, ".zcode/plans/plan-83-rb-b.md", ["# 回滚探针 B 稿（回滚后发号幸存于源）", "<!-- zcode-board: no=922 -->", ""].join("\n"));
+    w(
+      rbRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 920,
+          entries: [
+            { no: 920, kind: "plan", file: ".zcode/plans/plan-83-rb-a.md", title: "回滚探针 A 稿（旧登记面）", assignedAt: atOld, planCode: "RB20" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    runCompiler(rbRoot, []);
+    const rbCheck = runCompiler(rbRoot, ["--check"]);
+    c.eq(rbCheck.code, 1, "回滚探针：--check 非零退出");
+    const rbRes = checkProject(rbRoot);
+    const rbSeq = seqFails(rbRes);
+    c.eq(rbSeq.length, 1, "回滚探针：seq 高水位恰 1 项（seq=920 < 活标记 922）", show(rbRes.failures));
+    c.inc(rbSeq[0] ?? "", "seq=920", "回滚探针点名 seq 值（920）");
+    c.inc(rbSeq[0] ?? "", "922", "回滚探针点名已发号最大值（922）");
+    c.inc(rbSeq[0] ?? "", ".zcode/plans/plan-83-rb-b.md", "回滚探针见证 = 活标记所在源（文件头标记）");
+    c.ok(
+      (rbRes.failures ?? []).some((f) => f.category === "registry 不一致" && f.message.includes("活标记号")),
+      "回滚探针同时触发「活标记无 registry 条目」（条目随回滚丢失——既有防线不回归）",
+      show(rbRes.failures.map((f) => f.category)),
+    );
+    c.eq(reuseItems(rbRes).length, 0, "回滚探针：无 epic 成员 → 零复用候选（判定域外零噪声）");
+    removeRoot(rbRoot);
+
+    // ---- 4. 绿侧：同批同期次（单分片）+ 单成员期次 + 无 epic 稿 → 零失败、零复用点名
+    const greenRoot = newRoot("s83-green");
+    const atG = "2026-09-03T09:00:00+08:00";
+    const atG2 = "2026-08-01T08:00:00+08:00";
+    const g = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(greenRoot, rel, [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"));
+    g(".zcode/plans/plan-83-ok-a.md", "看板一期 A 稿（同批）", 951, 952, "一期 A 首卡");
+    g(".zcode/plans/plan-83-ok-b.md", "看板一期 B 稿（同批）", 953, 954, "一期 B 首卡");
+    g(".zcode/plans/plan-83-ok-c.md", "看板二期 C 稿（单成员补录）", 955, 956, "二期 C 首卡");
+    g(".zcode/plans/plan-83-ok-solo.md", "单稿小功能（无归属）", 957, 958, "小步改进");
+    w(
+      greenRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 958,
+          epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+          entries: [
+            { no: 951, kind: "plan", file: ".zcode/plans/plan-83-ok-a.md", title: "看板一期 A 稿（同批）", assignedAt: atG, planCode: "OKA1", epic: "epic:KANB", phase: 1 },
+            { no: 952, kind: "task", file: ".zcode/plans/plan-83-ok-a.md", title: "一期 A 首卡", assignedAt: atG },
+            { no: 953, kind: "plan", file: ".zcode/plans/plan-83-ok-b.md", title: "看板一期 B 稿（同批）", assignedAt: atG, planCode: "OKB1", epic: "epic:KANB", phase: 1 },
+            { no: 954, kind: "task", file: ".zcode/plans/plan-83-ok-b.md", title: "一期 B 首卡", assignedAt: atG },
+            { no: 955, kind: "plan", file: ".zcode/plans/plan-83-ok-c.md", title: "看板二期 C 稿（单成员补录）", assignedAt: atG2, planCode: "OKC2", epic: "epic:KANB", phase: 2 },
+            { no: 956, kind: "task", file: ".zcode/plans/plan-83-ok-c.md", title: "二期 C 首卡", assignedAt: atG2 },
+            { no: 957, kind: "plan", file: ".zcode/plans/plan-83-ok-solo.md", title: "单稿小功能（无归属）", assignedAt: atG, planCode: "OKS0" },
+            { no: 958, kind: "task", file: ".zcode/plans/plan-83-ok-solo.md", title: "小步改进", assignedAt: atG },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const greenCheck = runCompiler(greenRoot, ["--check"]);
+    c.eq(greenCheck.code, 0, "绿侧：--check 退出码 0（同批同期次 + 单成员期次零噪声）");
+    c.inc(greenCheck.stdout, "结论：--check 通过（0 项失败）", "绿侧：结论通过（0 项失败）");
+    c.ok(!greenCheck.stdout.includes("[epic 码复用]") && !greenCheck.stdout.includes("[seq 高水位]"), "绿侧：零失败项（码唯一 + seq 高水位达标）");
+    c.ok(!greenCheck.stdout.includes("期号复用候选"), "绿侧：零复用候选点名（同批/单成员不点名——误判必咬）", truncate(greenCheck.stdout));
+    removeRoot(greenRoot);
+
+    // ---- 5. 补录边界探针：单次 --epic-file 多稿补录（合法）与复用同形 → 点名但退出码 0（判级成文）
+    const bfRoot = newRoot("s83-backfill");
+    const atB1 = S83_AT_BF1;
+    const atB2 = S83_AT_BF2;
+    const b = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(bfRoot, rel, [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"));
+    b(".zcode/plans/plan-83-bf-a.md", "看板历史稿 A（补录批成员）", 961, 962, "历史 A 首卡");
+    b(".zcode/plans/plan-83-bf-b.md", "看板新稿 B（补录批新成员）", 963, 964, "新稿 B 首卡");
+    w(
+      bfRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 964,
+          epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+          entries: [
+            { no: 961, kind: "plan", file: ".zcode/plans/plan-83-bf-a.md", title: "看板历史稿 A（补录批成员）", assignedAt: atB1, planCode: "BFA1", epic: "epic:KANB", phase: 1 },
+            { no: 962, kind: "task", file: ".zcode/plans/plan-83-bf-a.md", title: "历史 A 首卡", assignedAt: atB1 },
+            { no: 963, kind: "plan", file: ".zcode/plans/plan-83-bf-b.md", title: "看板新稿 B（补录批新成员）", assignedAt: atB2, planCode: "BFB1", epic: "epic:KANB", phase: 1 },
+            { no: 964, kind: "task", file: ".zcode/plans/plan-83-bf-b.md", title: "新稿 B 首卡", assignedAt: atB2 },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const bfCheck = runCompiler(bfRoot, ["--check"]);
+    c.eq(bfCheck.code, 0, "补录边界：跨批同期次为对账级——退出码 0（不阻断；判级成文必咬）");
+    const bfItems = reuseItems(checkProject(bfRoot));
+    c.eq(bfItems.length, 1, "补录边界：恰 1 条复用候选（单次 --epic-file 多稿补录合法但同形）", show(bfItems));
+    c.inc(bfItems[0] ?? "", "补录", "边界文案载「补录」合法形态说明");
+    c.inc(bfItems[0] ?? "", "人工确认", "边界文案要求人工确认（不可机械区分成因文）");
+    c.inc(bfItems[0] ?? "", atB1, "边界文案给出早批 assignedAt（成员号各自派号时刻）");
+    c.inc(bfItems[0] ?? "", atB2, "边界文案给出晚批 assignedAt");
+    c.inc(bfCheck.stdout, "期号复用候选", "补录边界：报告面点名（对账级可见，不阻断）");
+    removeRoot(bfRoot);
+  },
+});
+
+// ---------------------------------------------------------------- A3-1（#84）board.json epic 层派生：epics[] 与 features[].epic/phase
+
+// ---- 场景 84（#84）：board.json 追加键派生——`epics[]`（登记行 code/title/status 原样透出 + 最小 rollup：
+//      plans 总数与各期次计数，期次序升序）与 `features[].epic`/`phase`（registry 条目归属对透出，登记 id
+//      反查；无归属缺省不透出 = 无键非 null）。含 epic 夹具（一期两稿同 phase + 二期一稿 + 零成员终态登记行 +
+//      形态非法登记行 + 裸码/半对两类反例 + 孤儿引用）逐一断言；无 epic 顶层不回归（零 epics 键）与追加键
+//      双向兼容（含 epic 板删净追加键后与无 epic 板逐字段相等）以独立探针核对；schema 子集校验放行、
+//      --check 全绿（归属断言包/失败级归 A2-2，本卡不新增）。
+//      边界注记（承接标注）：golden 扩样（epic/无 epic/取消 epic 三类样例）由 A3-3 落地；整批补录执行归 A5。
+//      A3-2（#85）随动注明：本卡原断言「board.md 不渲染 epic / 合成名 KANB1 不出现」为 A3-2 落地前的
+//      过渡期口径——epic 章渲染落地后该断言按规格变更作废（红侧留档 evidence/T85/red-prechange-*）。
+//      A3-3（#86）收口：epic 成员号入 epic 章后 (c) 对照面同入对照（epic 章/期次组/合成编号渲染位）——
+//      本组 --check 断言回绿（退出码 0 + 结论通过）；steps 保持 --check 先行 / 默认编译收尾
+//      （commonChecks 末步「编译器退出码 0」口径按末步默认编译判定；两步骤语义与断言面不变）。
+scenario("84", "#84：board.json epic 层派生——epics[] 登记行透出与最小 rollup、features[].epic/phase 登记 id 反查；无 epic 键缺省与追加键双向兼容", {
+  steps: [{ args: ["--check"] }, { args: [] }],
+  build(root) {
+    const plan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        root,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    plan(".zcode/plans/plan-84-kanb-a.md", "看板一期 A 稿（KANB）", 401, 402, "一期 A 首卡");
+    plan(".zcode/plans/plan-84-kanb-b.md", "看板一期 B 稿（KANB）", 403, 404, "一期 B 首卡");
+    plan(".zcode/plans/plan-84-kanb-c.md", "看板二期 C 稿（KANB）", 405, 406, "二期 C 首卡");
+    plan(".zcode/plans/plan-84-solo.md", "单稿小功能（无归属）", 407, 408, "小步改进");
+    plan(".zcode/plans/plan-84-badref.md", "裸码引用稿（归属非法）", 409, 410, "坏引用稿的卡");
+    plan(".zcode/plans/plan-84-half.md", "半对引用稿（归属不成对）", 411, 412, "半对稿的卡");
+    plan(".zcode/plans/plan-84-orphan.md", "孤儿引用稿（登记行缺失）", 413, 414, "孤儿稿的卡");
+    const at = "2026-10-01T00:00:00+08:00";
+    const planEntry = (no, file, title, extra = {}) => ({ no, kind: "plan", file, title, assignedAt: at, ...extra });
+    const taskEntry = (no, file, title) => ({ no, kind: "task", file, title, assignedAt: at });
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 414,
+          epics: [
+            { code: "KANB", title: "看板系统", status: "active" },
+            { code: "OLD1", title: "旧史诗（已归档）", status: "archived" },
+            { code: "bad", title: "形态非法登记行", status: "active" },
+          ],
+          entries: [
+            planEntry(401, ".zcode/plans/plan-84-kanb-a.md", "看板一期 A 稿（KANB）", { planCode: "KANA", epic: "epic:KANB", phase: 1 }),
+            taskEntry(402, ".zcode/plans/plan-84-kanb-a.md", "一期 A 首卡"),
+            planEntry(403, ".zcode/plans/plan-84-kanb-b.md", "看板一期 B 稿（KANB）", { planCode: "KANB", epic: "epic:KANB", phase: 1 }),
+            taskEntry(404, ".zcode/plans/plan-84-kanb-b.md", "一期 B 首卡"),
+            planEntry(405, ".zcode/plans/plan-84-kanb-c.md", "看板二期 C 稿（KANB）", { planCode: "KANC", epic: "epic:KANB", phase: 2 }),
+            taskEntry(406, ".zcode/plans/plan-84-kanb-c.md", "二期 C 首卡"),
+            planEntry(407, ".zcode/plans/plan-84-solo.md", "单稿小功能（无归属）", { planCode: "SOLO" }),
+            taskEntry(408, ".zcode/plans/plan-84-solo.md", "小步改进"),
+            planEntry(409, ".zcode/plans/plan-84-badref.md", "裸码引用稿（归属非法）", { planCode: "BADR", epic: "KANB", phase: 1 }),
+            taskEntry(410, ".zcode/plans/plan-84-badref.md", "坏引用稿的卡"),
+            planEntry(411, ".zcode/plans/plan-84-half.md", "半对引用稿（归属不成对）", { planCode: "HALF", epic: "epic:KANB" }),
+            taskEntry(412, ".zcode/plans/plan-84-half.md", "半对稿的卡"),
+            planEntry(413, ".zcode/plans/plan-84-orphan.md", "孤儿引用稿（登记行缺失）", { planCode: "ORPH", epic: "epic:GONE", phase: 1 }),
+            taskEntry(414, ".zcode/plans/plan-84-orphan.md", "孤儿稿的卡"),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { board, run, root } = ctx;
+    const [check, compile] = ctx.steps;
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+
+    // ---- 1. epics[]：登记行原样透出（登记序）+ 最小 rollup（plans 总数 / phases 各期次计数）
+    c.eq(compile?.code, 0, "含 epic 板默认编译退出码 0");
+    c.eq(
+      board?.epics,
+      [
+        { code: "KANB", title: "看板系统", status: "active", plans: 3, phases: [{ phase: 1, plans: 2 }, { phase: 2, plans: 1 }] },
+        { code: "OLD1", title: "旧史诗（已归档）", status: "archived", plans: 0, phases: [] },
+      ],
+      "epics[] = 合法登记行原样透出（code/title/status，登记序）+ 最小 rollup（plans 总数、phases 期次序计数）",
+    );
+    c.eq(board?.epics?.[1]?.status, "archived", "终态登记行 status 原样透出（成员活跃/成员计数不复活壳层终态，§10.5）");
+    c.ok(!(board?.epics ?? []).some((e) => e?.code === "bad"), "形态非法登记行不采纳（不静默：见诊断断言）");
+
+    // ---- 2. features[].epic/phase：登记 id 反查（同期次两稿同 phase；二期 phase=2）
+    const fA = featureByTitle(board, "看板一期 A 稿（KANB）");
+    const fB = featureByTitle(board, "看板一期 B 稿（KANB）");
+    const fC = featureByTitle(board, "看板二期 C 稿（KANB）");
+    c.eq({ epic: fA?.epic ?? null, phase: fA?.phase ?? null }, { epic: "epic:KANB", phase: 1 }, "A 稿归属透出（epic:KANB / phase=1）");
+    c.eq({ epic: fB?.epic ?? null, phase: fB?.phase ?? null }, { epic: "epic:KANB", phase: 1 }, "同期次两稿：B 稿同 epic 同 phase（AD-2 期次只作组头）");
+    c.eq({ epic: fC?.epic ?? null, phase: fC?.phase ?? null }, { epic: "epic:KANB", phase: 2 }, "C 稿归属透出（二期 phase=2）");
+
+    // ---- 3. 无归属缺省不透出（无键，非 null——schema oneOf 缺省形态）
+    const fSolo = featureByTitle(board, "单稿小功能（无归属）");
+    c.ok(fSolo != null, "无归属稿照常上板");
+    c.ok(fSolo != null && !Object.hasOwn(fSolo, "epic") && !Object.hasOwn(fSolo, "phase"), "无归属稿 epic/phase 双缺省（无键非 null；不凭空补字段）");
+
+    // ---- 4. 反例：不采纳 + 不静默（诊断点名；KANB 计数不含反例——见上 plans=3）
+    const fBad = featureByTitle(board, "裸码引用稿（归属非法）");
+    const fHalf = featureByTitle(board, "半对引用稿（归属不成对）");
+    c.ok(fBad != null && !Object.hasOwn(fBad, "epic") && !Object.hasOwn(fBad, "phase"), "裸码 \"KANB\" 进引用位：不采纳、不透出（码不进引用位，§10.3）");
+    c.ok(fHalf != null && !Object.hasOwn(fHalf, "epic") && !Object.hasOwn(fHalf, "phase"), "半对（有 epic 无 phase）：原子对不成立 → 不透出");
+    c.eq((board?.diagnostics ?? []).length, 3, "诊断恰 3 条（裸码 + 半对 + 非法登记行；零额外噪声）", show(board?.diagnostics));
+    const diagText = (board?.diagnostics ?? []).map((d) => `${d.path}｜${d.message}`).join("\n");
+    c.inc(diagText, "plan-84-badref.md", "裸码反例诊断点名源文件（不静默）");
+    c.inc(diagText, "登记 id", "裸码反例诊断给出合法形态（稳定号 / 登记 id epic:<4位码>）");
+    c.inc(diagText, "plan-84-half.md", "半对反例诊断点名源文件");
+    c.inc(diagText, "原子对", "半对反例诊断点名原子对纪律（§10.3）");
+    c.inc(diagText, "epics[2]", "形态非法登记行逐行诊断点名 epics[2]（不采纳、不静默）");
+
+    // ---- 4b. 孤儿引用（登记 id 形式合法、登记行缺失）：原样透出（faithful——不猜、不静默丢弃；登记行
+    //          无孤儿断言（失败级）归 A2-2）；rollup 无处计数（不造行）、不新增诊断（形式合法）。
+    const fOrphan = featureByTitle(board, "孤儿引用稿（登记行缺失）");
+    c.eq(
+      { epic: fOrphan?.epic ?? null, phase: fOrphan?.phase ?? null },
+      { epic: "epic:GONE", phase: 1 },
+      "孤儿引用（无登记行）原样透出（登记 id 形式合法；失败级断言归 A2-2）",
+    );
+    c.ok(!(board?.epics ?? []).some((e) => e?.code === "GONE"), "孤儿引用不造登记行（epics[] 仍只有真实登记行——不猜）");
+    c.eq((board?.diagnostics ?? []).length, 3, "孤儿引用不新增诊断（形式合法；诊断数仍 3——零噪声）");
+
+    // ---- 5. schema 放行（A1 已定义）：派生产物过子集校验（epics[]/epic/phase 分支）
+    c.eq(validateSchemaValue(schema, board), [], "含 epic 板过 board.schema.json 子集校验（epics[] 与 epic/phase 定义放行）");
+
+    // ---- 6. --check 归属与引用断言包（A2-2/#82 落地）：本夹具含四类反例（裸码 409 / 半对 411 /
+    //          孤儿引用 413 / 形态非法登记行 epics[2]）——原「含 epic 板 --check 全绿」为 A2-2 落地前
+    //          的过渡期口径（A3-1 承接标注「归属断言包/失败级归 A2-2」），随本卡按规格变更作废；
+    //          (c) 编号对照零差异断言保留（渲染面不回归）；绿侧口径由下方兼容探针与场景 82 承载。
+    const epicsFails = (checkProject(root).failures ?? []).filter((f) => f.category === "epic 归属");
+    c.eq(check?.code, 1, "含 epic 反例夹具板：--check 非零退出（归属断言包必咬——原「全绿」口径随 A2-2 作废）");
+    c.eq(epicsFails.length, 5, "epic 归属恰 5 项失败（裸码 1 + 半对 1 + 孤儿两面 2 + 登记行形态 1；零额外噪声）", show(epicsFails));
+    const epicsText = epicsFails.map((f) => f.message).join("\n");
+    c.inc(epicsText, "registry.entries[8]", "裸码条目点名（registry.entries[8]）");
+    c.inc(epicsText, '"KANB"', "裸码反例给出实际值（码不进引用位）");
+    c.inc(epicsText, "registry.entries[10]", "半对条目点名（registry.entries[10]）");
+    c.inc(epicsText, "epics[2]", "形态非法登记行点名（epics[2]）");
+    c.inc(epicsText, '"epic:GONE"', "孤儿引用点名（epic:GONE 无登记行）");
+    c.ok(!(check?.stdout ?? "").includes("不变量 c"), "零 (c) 编号对照差异（渲染面不回归——失败项仅归属断言）", truncate(check?.stdout ?? ""));
+    c.inc(check?.stdout ?? "", "plan-84-badref.md", "--check 报告承接归属诊断（提示级不阻断）");
+
+    // ---- 7. board.md epic 章渲染（A3-2/#85 随动：原断言「board.md 不渲染 epic / 不出现合成名 KANB1」
+    //         为 A3-2 落地前的过渡期口径——三层容器渲染落地后该断言按规格变更作废；红侧留档
+    //         evidence/T85/red-prechange-full-scenario85.txt 与 red-slice1.txt）
+    const md = run?.md ?? "";
+    const mdBody = md.split(/\n## 诊断/)[0];
+    c.inc(mdBody, "# KANB · 看板系统", "epic 章头渲染（A3-2 规格变更：原「不渲染 epic」断言随动作废）");
+    c.inc(mdBody, "## KANB1 · 期次 1", "期次组头合成编号 KANB1 渲染（原「不出现 KANB1」断言随动作废，AD-3）");
+    c.inc(mdBody, "### KANA · 看板一期 A 稿（KANB）", "稿/卡节照旧（### 计划码；容器层不吞稿节——AD-2）");
+    c.inc(mdBody, "# OLD1 · 旧史诗（已归档）", "零成员终态登记行照常出章（章头携终态标注、登记行标题透出——终态原样透出，§10.5）");
+    c.ok(!mdBody.includes("epic:"), "board.md 渲染主体不出现登记 id（epic: 前缀不入 md——渲染面用显示码/合成名）");
+
+    // ---- 8. 无 epic 顶层不回归 + 追加键双向兼容（独立探针，独立根）
+    const probeRoot = newRoot("s84-compat");
+    const compatPlan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        probeRoot,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    compatPlan(".zcode/plans/plan-84-compat-a.md", "兼容稿甲（含归属）", 501, 502, "兼容甲首卡");
+    compatPlan(".zcode/plans/plan-84-compat-b.md", "兼容稿乙（无归属）", 503, 504, "兼容乙首卡");
+    const at2 = "2026-10-01T00:00:00+08:00";
+    const baseEntries = () => [
+      { no: 501, kind: "plan", file: ".zcode/plans/plan-84-compat-a.md", title: "兼容稿甲（含归属）", assignedAt: at2, planCode: "CMPA" },
+      { no: 502, kind: "task", file: ".zcode/plans/plan-84-compat-a.md", title: "兼容甲首卡", assignedAt: at2 },
+      { no: 503, kind: "plan", file: ".zcode/plans/plan-84-compat-b.md", title: "兼容稿乙（无归属）", assignedAt: at2, planCode: "CMPB" },
+      { no: 504, kind: "task", file: ".zcode/plans/plan-84-compat-b.md", title: "兼容乙首卡", assignedAt: at2 },
+    ];
+    const writeCompatRegistry = (withEpic) =>
+      w(
+        probeRoot,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          withEpic
+            ? {
+                version: 1,
+                seq: 504,
+                epics: [{ code: "KANB", title: "看板系统", status: "active" }],
+                entries: baseEntries().map((e) => (e.no === 501 ? { ...e, epic: "epic:KANB", phase: 1 } : e)),
+              }
+            : { version: 1, seq: 504, entries: baseEntries() },
+          null,
+          2,
+        )}\n`,
+      );
+    const probeCompile = () => {
+      const res = spawnSync(process.execPath, [COMPILER, probeRoot], { encoding: "utf8" });
+      const loaded = readJsonFile(join(probeRoot, ".zcode/board/board.json"));
+      return { res, board: loaded.ok ? loaded.value : null };
+    };
+    writeCompatRegistry(true);
+    const withEpicProbe = probeCompile();
+    c.eq(withEpicProbe.res.status, 0, "兼容探针（含 epic）编译退出码 0");
+    c.eq(withEpicProbe.board?.epics?.length, 1, "兼容探针（含 epic）：board.epics 落键（1 行登记）");
+    const compatA = (withEpicProbe.board?.features ?? []).find((f) => f.title === "兼容稿甲（含归属）");
+    c.eq({ epic: compatA?.epic ?? null, phase: compatA?.phase ?? null }, { epic: "epic:KANB", phase: 1 }, "兼容探针（含 epic）：归属透出");
+    // A2-2 绿侧承接：合法归属（登记行齐备 + 引用形态合法）+ 无归属稿 → --check 0 失败（原主夹具全绿口径
+    // 随失败级落地作废后，绿侧由本探针承载）
+    const compatCheck = spawnSync(process.execPath, [COMPILER, probeRoot, "--check"], { encoding: "utf8" });
+    c.eq(compatCheck.status, 0, "兼容探针（合法归属 + 无归属稿）：--check 退出码 0（A2-2 绿侧不回归）");
+    c.inc(compatCheck.stdout ?? "", "结论：--check 通过（0 项失败）", "兼容探针：--check 结论通过（0 项失败）");
+    c.ok(!(compatCheck.stdout ?? "").includes("[epic 归属]"), "兼容探针：零 epic 归属失败项（合法归属不误报）");
+
+    writeCompatRegistry(false);
+    const noEpicProbe = probeCompile();
+    c.eq(noEpicProbe.res.status, 0, "兼容探针（无 epic）编译退出码 0");
+    c.ok(!Object.hasOwn(noEpicProbe.board ?? {}, "epics"), "无 epic：board.json 无 epics 键（AD-8 顶层不回归；误挂键必咬）");
+    c.ok(
+      (noEpicProbe.board?.features ?? []).every((f) => !Object.hasOwn(f, "epic") && !Object.hasOwn(f, "phase")),
+      "无 epic：全特性 epic/phase 双缺省（零变化）",
+    );
+    const stripEpicKeys = (b) => {
+      const out = JSON.parse(JSON.stringify(b));
+      delete out.epics;
+      delete out.updatedAt;
+      for (const f of out.features ?? []) {
+        delete f.epic;
+        delete f.phase;
+      }
+      return out;
+    };
+    c.eq(
+      stripEpicKeys(withEpicProbe.board),
+      stripEpicKeys(noEpicProbe.board),
+      "追加键双向兼容：含 epic 板删净追加键（epics[]/features[].epic/phase）后与无 epic 板逐字段相等（旧消费面读板不回归）",
+    );
+  },
+});
+
+// ---- 场景 85（#85，A3-2）：board.md epic 章（M-1a）——三层容器渲染（epic 章 → 期次组 → 稿/卡）。
+//      形态（对齐 markers §10.1 冻结语义 + 任务卡冻结形态）：epic 章头 `# <码> · <标题>`（含 status
+//      终态标注）→ 期次组头 `## <码><期次> · 期次 <n>`（AD-3 双字段合成；组头 = 期次号，按期次序升序
+//      ——AD-4）→ 既有稿/卡节 `### <计划码> · <标题>` 照旧；**卡编号维持 计划码-层级，合成名不进卡编号
+//      命名空间（AD-2 冻结）**；无 epic 稿顶层照旧（既有「## 特性」章平铺，无容器层——AD-8）。
+//      夹具三类（交付面②渲染夹具）：嵌套（多期次多稿）/ 无 epic / 取消 epic（见各探针）。
+//      边界注记（承接标注）：与 fact-invariants (c) 的编号对照扩面（epic 章与合成编号渲染位）由
+//      A3-3 收口；(c) 零差异口径随 A2-2（#82）落地后仍保留——主夹具的孤儿引用稿（862，epic:GONE）
+//      转为「epic 归属」失败项（悬空引用必咬），见断言 7；绿侧（无 epic / 零成员 epic）见样本 B/D。
+scenario("85", "#85：board.md epic 章（M-1a）——epic 章头/期次组头（合成编号 KANB1）/既有稿节三层容器；卡编号维持 计划码-层级 不混号；无 epic 稿顶层照旧", {
+  // --check 先行（A3-3 扩面后为绿侧对照）+ 默认编译收尾（ctx.run = 末尾默认编译，md 取重编译产物）
+  steps: [{ args: ["--check"] }, { args: [] }],
+  build(root) {
+    const plan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        root,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    // 文件名序故意与期次序相反（a-ph2 < b-ph1 < c-ph1）：锁定期次组按期次序升序（非 board.json 特性序）
+    plan(".zcode/plans/plan-85-a-ph2.md", "看板二期 C 稿（KANB）", 851, 852, "二期 C 首卡");
+    plan(".zcode/plans/plan-85-b-ph1.md", "看板一期 A 稿（KANB）", 853, 854, "一期 A 首卡");
+    plan(".zcode/plans/plan-85-c-ph1.md", "看板一期 B 稿（KANB）", 855, 856, "一期 B 首卡");
+    plan(".zcode/plans/plan-85-solo.md", "单稿小功能（无 epic 稿）", 857, 858, "小步改进");
+    // 零卡稿（arranged-not-expanded → 待处理节编号链）与未合并现场稿（unmerged-worktree → 待合并节编号链）：
+    // 验证 epic 容器渲染不吞既有节的 walkBoardNodes 渲染位（TQ-1 对照面）
+    w(root, ".zcode/plans/plan-85-d-ph1-zero.md", ["# 看板一期 D 稿（零卡）", "<!-- zcode-board: no=859 -->", ""].join("\n"));
+    plan(".zcode/plans/plan-85-e-ph1-merge.md", "看板一期 E 稿（未合并现场）", 860, 861, "现场未收口卡");
+    mkdirSync(join(root, ".zcode/worktrees/task-861"), { recursive: true });
+    seedRuns(root, [
+      {
+        runId: "run-20261001-n861",
+        sessionId: "sess_0085",
+        role: "implementer",
+        at: "2026-10-01T05:00:00+08:00",
+        result: "interrupted",
+        cards: [861],
+        worktree: ".zcode/worktrees/task-861",
+        branch: "task-861",
+        evidence: [],
+        breakpoint: null,
+      },
+    ]);
+    // 孤儿引用稿（登记 id 形式合法、登记行缺失——不造章、顶层平铺；失败级断言归 A2-2）
+    plan(".zcode/plans/plan-85-orphan.md", "孤儿引用稿（登记行缺失）", 862, 863, "孤儿稿的卡");
+    const at = "2026-10-01T00:00:00+08:00";
+    const planEntry = (no, file, title, extra = {}) => ({ no, kind: "plan", file, title, assignedAt: at, ...extra });
+    const taskEntry = (no, file, title) => ({ no, kind: "task", file, title, assignedAt: at });
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 863,
+          epics: [
+            { code: "KANB", title: "看板系统", status: "active" },
+            { code: "OLD1", title: "旧史诗", status: "archived" },
+          ],
+          entries: [
+            planEntry(851, ".zcode/plans/plan-85-a-ph2.md", "看板二期 C 稿（KANB）", { planCode: "KBC1", epic: "epic:KANB", phase: 2 }),
+            taskEntry(852, ".zcode/plans/plan-85-a-ph2.md", "二期 C 首卡"),
+            planEntry(853, ".zcode/plans/plan-85-b-ph1.md", "看板一期 A 稿（KANB）", { planCode: "KBA1", epic: "epic:KANB", phase: 1 }),
+            taskEntry(854, ".zcode/plans/plan-85-b-ph1.md", "一期 A 首卡"),
+            planEntry(855, ".zcode/plans/plan-85-c-ph1.md", "看板一期 B 稿（KANB）", { planCode: "KBB1", epic: "epic:KANB", phase: 1 }),
+            taskEntry(856, ".zcode/plans/plan-85-c-ph1.md", "一期 B 首卡"),
+            planEntry(857, ".zcode/plans/plan-85-solo.md", "单稿小功能（无 epic 稿）", { planCode: "SOLO" }),
+            taskEntry(858, ".zcode/plans/plan-85-solo.md", "小步改进"),
+            planEntry(859, ".zcode/plans/plan-85-d-ph1-zero.md", "看板一期 D 稿（零卡）", { planCode: "KBD1", epic: "epic:KANB", phase: 1 }),
+            planEntry(860, ".zcode/plans/plan-85-e-ph1-merge.md", "看板一期 E 稿（未合并现场）", { planCode: "KBE1", epic: "epic:KANB", phase: 1 }),
+            taskEntry(861, ".zcode/plans/plan-85-e-ph1-merge.md", "现场未收口卡"),
+            planEntry(862, ".zcode/plans/plan-85-orphan.md", "孤儿引用稿（登记行缺失）", { planCode: "ORPH", epic: "epic:GONE", phase: 1 }),
+            taskEntry(863, ".zcode/plans/plan-85-orphan.md", "孤儿稿的卡"),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const [check, compile] = ctx.steps;
+    const md = compile?.md ?? ctx.run.md ?? "";
+    const at = "2026-10-01T00:00:00+08:00";
+    const root = ctx.root;
+
+    // ---- 1. 三层容器：epic 章头（H1）/ 期次组头（H2，合成编号 AD-3）/ 既有稿节（H3 照旧）
+    c.inc(md, "# KANB · 看板系统", "epic 章头渲染（`# <码> · <标题>`，三层容器第一层）");
+    c.inc(md, "## KANB1 · 期次 1", "期次组头渲染（`## <码><期次> · 期次 <n>`，AD-3 双字段合成 KANB1）");
+    c.inc(md, "## KANB2 · 期次 2", "二期次组头渲染（合成编号随期次序号：KANB2）");
+    c.inc(md, "### KBA1 · 看板一期 A 稿（KANB）", "既有稿/卡节照旧（`### <计划码> · <标题>`——三层容器第三层）");
+    c.inc(md, "### KBB1 · 看板一期 B 稿（KANB）", "一期两稿各成稿节（期次只作分组头，AD-2）");
+    c.inc(md, "- KBA1-1 · 一期 A 首卡", "卡编号维持 计划码-层级（KBA1-1；AD-2 冻结）");
+
+    // ---- 2. 合成名不进卡编号命名空间（AD-2）+ 登记 id 形态不入 md
+    c.ok(!/KANB1-/.test(md), "KANB1- 不进卡编号命名空间（合成名只作组头；AD-2 冻结必咬）");
+    c.ok(!md.includes("epic:KANB"), "登记 id 形态（epic:）不入 board.md（渲染面用显示码 + 合成名）");
+
+    // ---- 3. 期次组按期次序升序（AD-4 纯期次序）；组内稿按 board.json 特性序
+    const i1 = md.indexOf("## KANB1 · 期次 1");
+    const i2 = md.indexOf("## KANB2 · 期次 2");
+    const iA = md.indexOf("### KBA1 · ");
+    const iB = md.indexOf("### KBB1 · ");
+    const iC = md.indexOf("### KBC1 · ");
+    c.ok(i1 >= 0 && i2 >= 0 && i1 < i2, "期次组按期次序升序（KANB1 → KANB2；纯期次序，AD-4）", show({ i1, i2 }));
+    c.ok(iC > i2, "二期稿落 KANB2 组内（board.json 特性序里二期稿在首位——组序取期次序不取板序）", show({ i2, iC }));
+    c.ok(iA > i1 && iB > iA && iB < i2, "同期次组内稿按 board.json 特性序（一期两稿 A → B），且不越出组界", show({ i1, iA, iB, i2 }));
+
+    // ---- 4. 无 epic 稿顶层照旧（既有「## 特性」章平铺、无容器层；不标「未归属」——AD-8/§10.7）
+    c.inc(md, "### SOLO · 单稿小功能（无 epic 稿）", "无 epic 稿照旧渲染（既有「## 特性」章顶层平铺，无容器层）");
+    const iFeature = md.indexOf("## 特性");
+    const iEpic = md.indexOf("# KANB · 看板系统");
+    const iDiag = md.indexOf("## 诊断");
+    c.ok(iFeature >= 0 && iFeature < iEpic && iEpic < iDiag, "epic 章带落位：「## 特性」章之后、「## 诊断」章之前（增量层，不吞既有章序）", show({ iFeature, iEpic, iDiag }));
+    c.ok(!md.includes("未归属") && !md.includes("无归属"), "不标注「未归属/无归属」角标（无 epic = 正常形态而非缺口；误判必咬）");
+
+    // ---- 5. 登记行透出形态：计数详情行 + 终态标注原样透出（§10.2/§10.5）；孤儿引用不造章
+    c.inc(md, "- epic：KANB；status：active；期次 2 · 稿 5", "epic 章头详情行：状态原文 + 期次/稿计数（零卡/未合并成员同计）");
+    c.inc(md, "# OLD1 · 旧史诗（已归档）", "终态登记行（archived）章头携终态标注（原样透出，目标成员不复活，§10.5）");
+    c.inc(md, "- epic：OLD1；status：archived（登记行终态；成员活跃不复活，§10.5）；期次 0 · 稿 0", "零成员终态章：计数 0/0、无期次组（不造内容）");
+    c.inc(md, "### ORPH · 孤儿引用稿（登记行缺失）", "孤儿引用稿（无登记行）顶层平铺（登记行是 epic 唯一机器载体——不为孤儿造章，§10.2）");
+    c.ok(!md.includes("# GONE ·"), "不为孤儿引用合成 epic 章头（无登记行不造行/不造章）");
+
+    // ---- 6. 嵌套渲染不回归：待处理/待合并节照常渲染，编号链维持 walkBoardNodes 渲染位（计划码链）
+    c.inc(md, "## 待处理", "epic 板「## 待处理」节照常渲染（既有节不回归）");
+    c.inc(md, "  - KBD1 看板一期 D 稿（零卡）", "待处理节编号链 = 计划码（非合成名 KANB1——AD-2 渲染位照旧）");
+    c.inc(md, "## 待合并（unmerged-worktree 聚合）", "epic 板「## 待合并」节照常渲染（既有节不回归）");
+    c.inc(md, "KBE1 > KBE1-1 现场未收口卡 —— .zcode/worktrees/task-861", "待合并节编号链照旧（计划码 > 计划码-层级 —— 现场；AD-2）");
+
+    // ---- 7. --check 归属与引用断言包（A2-2/#82 落地）：本夹具含孤儿引用稿 862（epic:GONE）——
+    //          原「epic 板 --check 全绿」为 A2-2 落地前的过渡期口径，随本卡按规格变更作废：悬空引用
+    //          必咬（两面各 1 项）；(c) 编号对照与 TQ-1 链零差异断言保留（渲染面不回归）；
+    //          绿侧口径由样本 B（无 epic）/样本 D（零成员 epic）与场景 82/84 承载。
+    const epicRefFails = (checkProject(root).failures ?? []).filter((f) => f.category === "epic 归属");
+    c.eq(check?.code, 1, "含孤儿引用夹具板：--check 非零退出（归属引用断言必咬——原「全绿」口径随 A2-2 作废）");
+    c.eq(epicRefFails.length, 2, "epic 归属恰 2 项（悬空引用两面；渲染面零差异）", show(epicRefFails));
+    const epicRefText = epicRefFails.map((f) => f.message).join("\n");
+    c.inc(epicRefText, '"epic:GONE"', "悬空引用点名（epic:GONE 无登记行——登记行是 epic 唯一机器载体）");
+    c.inc(epicRefText, "features[", "悬空引用点名节点路径（features[…].epic）");
+    c.ok(!(check?.stdout ?? "").includes("不变量 c"), "零 (c) 编号对照差异（epic 章/期次组/合成编号渲染面不回归）", truncate(check?.stdout ?? ""));
+    c.ok(
+      !(check?.stdout ?? "").includes("待处理节") && !(check?.stdout ?? "").includes("待合并节"),
+      "待处理/待合并节编号链零差异（TQ-1 对照面在 epic 板照常绿——嵌套渲染不回归）",
+    );
+
+    // ---- 8. 夹具样本 B：无 epic 板——board.md 顶层照旧（零容器层/零合成名；--check 仍绿）
+    const soloRoot = newRoot("s85-noepic");
+    const soloPlan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        soloRoot,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    soloPlan(".zcode/plans/plan-85-noepic-a.md", "无 epic 稿甲", 871, 872, "甲首卡");
+    soloPlan(".zcode/plans/plan-85-noepic-b.md", "无 epic 稿乙", 873, 874, "乙首卡");
+    w(
+      soloRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 874,
+          entries: [
+            { no: 871, kind: "plan", file: ".zcode/plans/plan-85-noepic-a.md", title: "无 epic 稿甲", assignedAt: at, planCode: "NEP1" },
+            { no: 872, kind: "task", file: ".zcode/plans/plan-85-noepic-a.md", title: "甲首卡", assignedAt: at },
+            { no: 873, kind: "plan", file: ".zcode/plans/plan-85-noepic-b.md", title: "无 epic 稿乙", assignedAt: at, planCode: "NEP2" },
+            { no: 874, kind: "task", file: ".zcode/plans/plan-85-noepic-b.md", title: "乙首卡", assignedAt: at },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const soloCompile = spawnSync(process.execPath, [COMPILER, soloRoot], { encoding: "utf8" });
+    const soloCheck = spawnSync(process.execPath, [COMPILER, soloRoot, "--check"], { encoding: "utf8" });
+    const soloMd = readFileSync(join(soloRoot, ".zcode/board/board.md"), "utf8");
+    c.eq(soloCompile.status, 0, "无 epic 探针：编译退出码 0");
+    c.eq(soloMd.split("\n").filter((l) => l.startsWith("# ")).length, 1, "无 epic 板：board.md 仅文档标题一行 H1（零 epic 章层——零容器）");
+    c.eq(soloMd.split("\n").filter((l) => l.startsWith("## ")).length, 2, "无 epic 板：H2 章恰「## 特性」+「## 诊断」两行（章序与章集合不回归）");
+    c.ok(!soloMd.includes("KANB") && !soloMd.includes("期次"), "无 epic 板：零合成名/零期次组（照旧渲染）");
+    c.inc(soloMd, "### NEP1 · 无 epic 稿甲", "无 epic 板：稿照旧平铺（顶层，无容器层）");
+    c.ok(soloMd.indexOf("### NEP1 · ") < soloMd.indexOf("### NEP2 · "), "无 epic 板：稿序 = board.json 特性序（照旧）");
+    c.eq(soloCheck.status, 0, "无 epic 板：--check 退出码 0（零 epic 不新增差异）");
+
+    // ---- 9. 夹具样本 C：取消 epic（登记行终态 + 成员活跃）——终态原样透出、成员不复活不压制（§10.5）
+    const cancelRoot = newRoot("s85-cancel");
+    w(
+      cancelRoot,
+      ".zcode/plans/plan-85-cancel.md",
+      ["# 取消史诗成员稿（KANB）", "<!-- zcode-board: no=881 -->", "", "- [ ] 成员首卡 <!-- zcode-board: no=882 -->", ""].join("\n"),
+    );
+    w(
+      cancelRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 882,
+          epics: [{ code: "KANB", title: "看板系统", status: "cancelled" }],
+          entries: [
+            { no: 881, kind: "plan", file: ".zcode/plans/plan-85-cancel.md", title: "取消史诗成员稿（KANB）", assignedAt: at, planCode: "CNCL", epic: "epic:KANB", phase: 1 },
+            { no: 882, kind: "task", file: ".zcode/plans/plan-85-cancel.md", title: "成员首卡", assignedAt: at },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const cancelCompile = spawnSync(process.execPath, [COMPILER, cancelRoot], { encoding: "utf8" });
+    const cancelMd = readFileSync(join(cancelRoot, ".zcode/board/board.md"), "utf8");
+    c.eq(cancelCompile.status, 0, "取消 epic 探针：编译退出码 0");
+    c.inc(cancelMd, "# KANB · 看板系统（已取消）", "取消 epic：章头终态标注（登记行终态不让位，§10.5）");
+    c.inc(cancelMd, "- epic：KANB；status：cancelled（登记行终态；成员活跃不复活，§10.5）；期次 1 · 稿 1", "取消 epic：详情行 status 原文透出 + 终态规则注记");
+    c.inc(cancelMd, "### CNCL · 取消史诗成员稿（KANB）", "取消 epic：成员稿照旧渲染（同层独立——成员活跃不复活 epic 终态，也不被压制，§10.5）");
+    c.inc(cancelMd, "- CNCL-1 · 成员首卡", "取消 epic：成员卡编号照旧 计划码-层级");
+
+    // ---- 10. 夹具样本 D：零成员 epic 板——章头入对照位（A3-3）、零期次组零成员稿，--check 仍绿
+    const zeroRoot = newRoot("s85-zeroepic");
+    w(
+      zeroRoot,
+      ".zcode/plans/plan-85-zero-a.md",
+      ["# 零成员史诗旁的无归属稿", "<!-- zcode-board: no=891 -->", "", "- [ ] 旁挂卡 <!-- zcode-board: no=892 -->", ""].join("\n"),
+    );
+    w(
+      zeroRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 892,
+          epics: [{ code: "OLD2", title: "零成员史诗", status: "cancelled" }],
+          entries: [
+            { no: 891, kind: "plan", file: ".zcode/plans/plan-85-zero-a.md", title: "零成员史诗旁的无归属稿", assignedAt: at, planCode: "ZERO" },
+            { no: 892, kind: "task", file: ".zcode/plans/plan-85-zero-a.md", title: "旁挂卡", assignedAt: at },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const zeroCompile = spawnSync(process.execPath, [COMPILER, zeroRoot], { encoding: "utf8" });
+    const zeroCheck = spawnSync(process.execPath, [COMPILER, zeroRoot, "--check"], { encoding: "utf8" });
+    const zeroMd = readFileSync(join(zeroRoot, ".zcode/board/board.md"), "utf8");
+    c.eq(zeroCompile.status, 0, "零成员 epic 探针：编译退出码 0");
+    c.inc(zeroMd, "# OLD2 · 零成员史诗（已取消）", "零成员 epic 照常出章（终态标注原样透出）");
+    c.inc(zeroMd, "### ZERO · 零成员史诗旁的无归属稿", "零成员 epic 旁的无归属稿照旧顶层平铺");
+    c.eq(zeroCheck.status, 0, "零成员 epic 板：--check 退出码 0（章头为对照位、零期次组零成员稿——(c) 对照面零差异）");
+    c.inc(zeroCheck.stdout ?? "", "结论：--check 通过（0 项失败）", "零成员 epic 板：--check 结论通过（章头入对照位、零期次组零成员稿——零差异）");
+    removeRoot(soloRoot);
+    removeRoot(cancelRoot);
+    removeRoot(zeroRoot);
+  },
+});
+
+// ---- 场景 86（#86，A3-3）：事实互证 (c) 扩面收口——epic 章（`# <码> · <标题>`，含终态标注）/期次组
+//      （`## <码><期次> · 期次 <n>`，AD-3 合成编号渲染位）/成员稿节（`### <计划码>` + 任务行）同入编号
+//      对照面：对照序列 = board.md 渲染序 ↔ board.json 派生序（顶层稿块 → 各 epic 章带；期次组按
+//      期次序升序、组内成员按特性序——与场景 85 渲染断言同源）。手改 board.md 任一编号位 → --check
+//      必咬（红侧夹具：合成号/章头码/稿节码/期次号/终态标注/组内顺序/卡号）；单点篡改恰 1 项事实互证
+//      失败（不刷屏），顺序篡改按位点对照。无 epic 板与待处理/待合并对照面不回归见场景 56c/57c/85。
+scenario("86", "#86：不变量 (c) 扩面——epic 章/期次组（合成编号）/成员稿节同入编号对照面；手改 board.md 编号（章头码/合成号/期次号/稿节码/终态标注/顺序）--check 必咬", {
+  steps: [{ args: [] }],
+  build(root) {
+    const plan = (rel, title, featureNo, taskNo, taskTitle) =>
+      w(
+        root,
+        rel,
+        [`# ${title}`, `<!-- zcode-board: no=${featureNo} -->`, "", `- [ ] ${taskTitle} <!-- zcode-board: no=${taskNo} -->`, ""].join("\n"),
+      );
+    // 文件序（= board.features 序）故意与渲染序不同：epic 成员稿在前、顶层稿（孤儿/单稿）在后——
+    // 锁定「顶层稿块先渲染、epic 章带后置」的对照序列（错序即咬）。
+    plan(".zcode/plans/plan-86-a-ph2.md", "看板二期 C 稿（KANB）", 901, 902, "二期 C 首卡");
+    plan(".zcode/plans/plan-86-b-ph1.md", "看板一期 A 稿（KANB）", 903, 904, "一期 A 首卡");
+    plan(".zcode/plans/plan-86-c-ph1.md", "看板一期 B 稿（KANB）", 905, 906, "一期 B 首卡");
+    plan(".zcode/plans/plan-86-d-cancel.md", "取消史诗成员稿（CNCL）", 907, 908, "取消成员首卡");
+    // 孤儿引用稿（登记 id 形式合法、登记行缺失）与单稿小功能：不归组、顶层平铺（AD-8/§10.2）
+    plan(".zcode/plans/plan-86-orphan.md", "孤儿引用稿（登记行缺失）", 909, 910, "孤儿稿的卡");
+    plan(".zcode/plans/plan-86-solo.md", "单稿小功能（无 epic 稿）", 911, 912, "小步改进");
+    const at = "2026-10-01T00:00:00+08:00";
+    const planEntry = (no, file, title, extra = {}) => ({ no, kind: "plan", file, title, assignedAt: at, ...extra });
+    const taskEntry = (no, file, title) => ({ no, kind: "task", file, title, assignedAt: at });
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 912,
+          epics: [
+            { code: "KANB", title: "看板系统", status: "active" },
+            { code: "CNCL", title: "取消史诗", status: "cancelled" },
+          ],
+          entries: [
+            planEntry(901, ".zcode/plans/plan-86-a-ph2.md", "看板二期 C 稿（KANB）", { planCode: "KBC2", epic: "epic:KANB", phase: 2 }),
+            taskEntry(902, ".zcode/plans/plan-86-a-ph2.md", "二期 C 首卡"),
+            planEntry(903, ".zcode/plans/plan-86-b-ph1.md", "看板一期 A 稿（KANB）", { planCode: "KBA2", epic: "epic:KANB", phase: 1 }),
+            taskEntry(904, ".zcode/plans/plan-86-b-ph1.md", "一期 A 首卡"),
+            planEntry(905, ".zcode/plans/plan-86-c-ph1.md", "看板一期 B 稿（KANB）", { planCode: "KBB2", epic: "epic:KANB", phase: 1 }),
+            taskEntry(906, ".zcode/plans/plan-86-c-ph1.md", "一期 B 首卡"),
+            planEntry(907, ".zcode/plans/plan-86-d-cancel.md", "取消史诗成员稿（CNCL）", { planCode: "CNC2", epic: "epic:CNCL", phase: 1 }),
+            taskEntry(908, ".zcode/plans/plan-86-d-cancel.md", "取消成员首卡"),
+            planEntry(909, ".zcode/plans/plan-86-orphan.md", "孤儿引用稿（登记行缺失）", { planCode: "ORPH", epic: "epic:GONE", phase: 1 }),
+            taskEntry(910, ".zcode/plans/plan-86-orphan.md", "孤儿稿的卡"),
+            planEntry(911, ".zcode/plans/plan-86-solo.md", "单稿小功能（无 epic 稿）", { planCode: "SOLO" }),
+            taskEntry(912, ".zcode/plans/plan-86-solo.md", "小步改进"),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { root, run } = ctx;
+    const mdRel = ".zcode/board/board.md";
+    const originalMd = readBoardMd(root);
+
+    // ---- 1. 基线：(c) 扩面收口后 epic 板 (c) 对照面零差异（过渡态自清；本卡性质不变）；
+    //          A2-2（#82）落地：夹具含孤儿引用稿 909（epic:GONE）→ 「epic 归属」失败 2 项（两面必咬）——
+    //          原「--check 全绿」口径随归属引用断言失败级落地作废；绿侧基线由 82/84/85/81a/81b 承载。
+    c.eq(run.code, 0, "基线编译退出码 0");
+    const clean = checkProject(root);
+    const cleanEpic = (clean.failures ?? []).filter((f) => f.category === "epic 归属");
+    c.eq(cleanEpic.length, 2, "基线 epic 归属恰 2 项（夹具孤儿引用 909 两面必咬——A2-2 失败级落地）", show(clean.failures));
+    c.inc(cleanEpic.map((f) => f.message).join("\n"), '"epic:GONE"', "基线咬点 = 孤儿引用（引用断言，非渲染面）");
+    c.eq(factFailuresOf(clean), [], "基线事实互证零失败（(c) 对照面零差异——epic 板不再是过渡态）");
+    const cleanCli = runCompiler(root, ["--check"]);
+    c.eq(cleanCli.code, 1, "CLI --check 非零退出（夹具含孤儿引用——归属引用断言必咬）");
+    c.inc(cleanCli.stdout, "[epic 归属]", "CLI --check 报告面点名归属断言失败项");
+
+    // ---- 2. 夹具前置：三层容器与编号位形态（对照面覆盖的对象）
+    c.inc(originalMd, "# KANB · 看板系统", "夹具前置：epic 章头（`# <码> · <标题>`）");
+    c.inc(originalMd, "## KANB1 · 期次 1", "夹具前置：期次组头（合成编号 KANB1）");
+    c.inc(originalMd, "## KANB2 · 期次 2", "夹具前置：二期次组头（合成编号 KANB2）");
+    c.inc(originalMd, "# CNCL · 取消史诗（已取消）", "夹具前置：终态 epic 章头（终态标注）");
+    c.inc(originalMd, "### CNC2 · 取消史诗成员稿（CNCL）", "夹具前置：终态 epic 成员稿节（照常渲染，§10.5）");
+    const iSolo = originalMd.indexOf("### SOLO · ");
+    const iOrph = originalMd.indexOf("### ORPH · ");
+    const iEpic = originalMd.indexOf("# KANB · ");
+    c.ok(
+      iOrph >= 0 && iSolo > iOrph && iSolo < iEpic,
+      "夹具前置：顶层稿块（孤儿 → 单稿，特性序）先渲染、epic 章带后置（对照序列锁定渲染序）",
+      show({ iOrph, iSolo, iEpic }),
+    );
+
+    // ---- 3. 手改编号探针：单点篡改 → --check 必咬（恰 1 项事实互证失败，不刷屏）
+    const lineOf = (needle) => originalMd.split(/\r?\n/).findIndex((l) => l.includes(needle)) + 1;
+    const probeMd = (mutated, label) => {
+      if (mutated === originalMd) return { pre: c.ok(false, `夹具前置：命中待篡改编号位（${label}）`) };
+      w(root, mdRel, mutated);
+      const cli = runCompiler(root, ["--check"]);
+      const facts = factFailuresOf(checkProject(root));
+      return { cli, facts };
+    };
+    const probe = (from, to, label) => probeMd(originalMd.replace(from, to), label);
+    const expectSingle = (res, label) => {
+      c.eq(res?.cli?.code, 1, `${label}：--check 非零退出（必咬）`);
+      c.eq(res?.facts?.length, 1, `${label}：单点篡改恰 1 项事实互证失败（不刷屏）`, show(res?.facts));
+      const msg = res?.facts?.[0] ?? "";
+      c.inc(msg, "不变量 c", `${label}：失败项点名不变量 c`);
+      return msg;
+    };
+
+    // ① 合成编号（期次组头）手改：KANB1 → KANB9
+    const m1 = probe("## KANB1 · 期次 1", "## KANB9 · 期次 1", "① 合成编号 KANB1");
+    {
+      const msg = expectSingle(m1, "① 手改合成编号（KANB1→KANB9）");
+      c.inc(msg, "期次组", "① 失败项点名渲染位类型（期次组）");
+      c.inc(msg, `第 ${lineOf("## KANB1 · 期次 1")} 行`, "① 失败项点名 board.md 行号");
+      c.inc(msg, '"KANB9 · 期次 1"', "① 失败项给出实际渲染编号（KANB9）");
+      c.inc(msg, '"KANB1 · 期次 1"', "① 失败项给出应然派生编号（KANB1）");
+      c.inc(msg, "epics[0]", "① 失败项点名派生源（epics[0]——期次组归属该登记行）");
+    }
+
+    // ② epic 章头码手改：KANB → KANX
+    const m2 = probe("# KANB · 看板系统", "# KANX · 看板系统", "② 章头码 KANB");
+    {
+      const msg = expectSingle(m2, "② 手改 epic 章头码（KANB→KANX）");
+      c.inc(msg, "epic 章", "② 失败项点名渲染位类型（epic 章）");
+      c.inc(msg, '"KANX"', "② 失败项给出实际渲染码（KANX）");
+      c.inc(msg, '"KANB"', "② 失败项给出应然派生码（KANB）");
+    }
+
+    // ③ 成员稿节码（epic 章内）手改：KBA2 → KBA9
+    const m3 = probe("### KBA2 · ", "### KBA9 · ", "③ 稿节码 KBA2");
+    {
+      const msg = expectSingle(m3, "③ 手改成员稿节码（KBA2→KBA9）");
+      c.inc(msg, "稿节", "③ 失败项点名渲染位类型（稿节）");
+      c.inc(msg, '"KBA9"', "③ 失败项给出实际渲染码（KBA9）");
+      c.inc(msg, '"KBA2"', "③ 失败项给出应然派生码（KBA2）");
+      c.inc(msg, "features[1]", "③ 失败项点名派生源（features[1]）");
+    }
+
+    // ④ 期次号（组头后缀）手改：期次 1 → 期次 9（合成号不变、后缀自相矛盾）
+    const m4 = probe("## KANB1 · 期次 1", "## KANB1 · 期次 9", "④ 期次号后缀");
+    {
+      const msg = expectSingle(m4, "④ 手改期次号后缀（期次 1→期次 9）");
+      c.inc(msg, '"KANB1 · 期次 9"', "④ 失败项给出实际渲染编号位（后缀 9）");
+      c.inc(msg, '"KANB1 · 期次 1"', "④ 失败项给出应然派生编号位（后缀 1）");
+    }
+
+    // ⑤ 终态标注手改：去掉（已取消）——终态在渲染面可达的反向守卫（AD-9/§10.5）
+    const m5 = probe("# CNCL · 取消史诗（已取消）", "# CNCL · 取消史诗", "⑤ 终态标注");
+    {
+      const msg = expectSingle(m5, "⑤ 手改终态标注（去掉（已取消））");
+      c.inc(msg, '"CNCL"', "⑤ 失败项给出实际渲染（失标注形态）");
+      c.inc(msg, '"CNCL（已取消）"', "⑤ 失败项给出应然派生（含终态标注）");
+    }
+
+    // ⑥ 组内顺序手改：KBA2/KBB2 两稿节码互换 → 按位点对照恰 2 项（顺序敏感）
+    const swapped = originalMd
+      .replace("### KBA2 · ", "### @@TMP@@ · ")
+      .replace("### KBB2 · ", "### KBA2 · ")
+      .replace("### @@TMP@@ · ", "### KBB2 · ");
+    const m6 = probeMd(swapped, "⑥ 组内顺序");
+    if (m6.facts) {
+      c.eq(m6.cli.code, 1, "⑥ 组内顺序互换：--check 非零退出（必咬）");
+      c.eq(m6.facts.length, 2, "⑥ 顺序互换：按位点对照恰 2 项失败（KBA2↔KBB2 两位）", show(m6.facts));
+      c.inc(m6.facts.join("\n"), '"KBB2"', "⑥ 失败项给出实际渲染码（KBB2）");
+      c.inc(m6.facts.join("\n"), '"KBA2"', "⑥ 失败项给出应然派生码（KBA2）");
+    }
+
+    // ⑦ 卡号（epic 章内任务行）手改：KBA2-1 → KBA2-2
+    const m7 = probe("- KBA2-1 · ", "- KBA2-2 · ", "⑦ 卡号 KBA2-1");
+    {
+      const msg = expectSingle(m7, "⑦ 手改卡号（KBA2-1→KBA2-2）");
+      c.inc(msg, "任务行", "⑦ 失败项点名渲染位类型（任务行）");
+      c.inc(msg, '"KBA2-2"', "⑦ 失败项给出实际渲染卡号（KBA2-2）");
+      c.inc(msg, '"KBA2-1"', "⑦ 失败项给出应然派生卡号（KBA2-1）");
+      c.inc(msg, "features[1].tasks[0]", "⑦ 失败项点名任务节点路径");
+    }
+
+    // ---- 4. 回收：board.md 复原后自清（咬合为手改所致，非基线噪声）
+    w(root, mdRel, originalMd);
+    c.eq(readBoardMd(root), originalMd, "篡改探针全部回收（board.md 逐字节复原）");
+    const restored = checkProject(root);
+    c.eq(factFailuresOf(restored), [], "复原后零事实互证差异（手改咬合自清——--check 只读，未写板）", show(factFailuresOf(restored)));
+    c.eq((restored.failures ?? []).filter((f) => f.category === "epic 归属").length, 2, "复原后 epic 归属回基线 2 项（夹具孤儿引用；手改探针不叠加）");
+  },
+});
+
 // ---------------------------------------------------------------- 事实互证库 lib/fact-invariants.mjs 的公开契约
 
 function factLibChecks(c, mod) {
-  const { checkCompletedMergedEvidence, checkFactInvariants } = mod;
+  const { checkCompletedMergedEvidence, checkDerivedIndexInvariants, checkEpicRefs, checkFactInvariants } = mod;
   c.eq(typeof checkFactInvariants, "function", "lib/fact-invariants.mjs 导出 checkFactInvariants（纯函数）");
 
   const feature = (over) => ({
@@ -6265,6 +8614,56 @@ function factLibChecks(c, mod) {
   c.inc(cOut[0] ?? "", "#8", "(c) 文案点名节点编号 #8");
   c.eq(checkFactInvariants({ board: cBoard, boardMd: null }), [], "(c) 未提供 board.md 文本：跳过编号形态互证");
 
+  // (c) A3-3/#86 扩面（纯函数级）：epic 章头/期次组（合成编号）/章内稿节同入对照面——渲染序
+  //      （顶层稿块 → 各 epic 章带）↔ board.json 派生序；孤儿引用顶层平铺；rollup-only 期次组空组。
+  const epicBoard = {
+    epics: [
+      { code: "KANB", title: "看板系统", status: "active", phases: [{ phase: 1 }, { phase: 2 }] },
+      { code: "CNCL", title: "取消史诗", status: "cancelled", phases: [] },
+    ],
+    features: [
+      { ...feature({ no: 30, label: "30", planCode: "SOLO" }), tasks: [task({ no: 31, label: "1" })] },
+      { ...feature({ no: 32, label: "32", planCode: "KBA2", epic: "epic:KANB", phase: 1 }), tasks: [task({ no: 33, label: "1" })] },
+      { ...feature({ no: 34, label: "34", planCode: "CNC2", epic: "epic:CNCL", phase: 1 }), tasks: [] },
+      { ...feature({ no: 35, label: "35", planCode: "ORPH", epic: "epic:GONE", phase: 1 }), tasks: [] },
+    ],
+  };
+  const epicMd = () =>
+    [
+      "# 项目看板 · 夹具",
+      "",
+      "## 特性",
+      "",
+      "### SOLO · 无归属稿",
+      "- SOLO-1 · 卡 — pending（r）· 段位：待办（r）",
+      "### ORPH · 孤儿引用稿",
+      "# KANB · 看板系统",
+      "## KANB1 · 期次 1",
+      "### KBA2 · 一期稿",
+      "- KBA2-1 · 卡 — pending（r）· 段位：待办（r）",
+      "## KANB2 · 期次 2",
+      "# CNCL · 取消史诗（已取消）",
+      "## CNCL1 · 期次 1",
+      "### CNC2 · 取消稿",
+      "",
+      "## 诊断",
+      "",
+      "- 无",
+      "",
+    ].join("\n");
+  c.eq(checkFactInvariants({ board: epicBoard, boardMd: epicMd() }), [], "(c) epic 板渲染序自洽（章头/期次组/稿节/任务行）：零违例");
+  const epicOut = checkFactInvariants({ board: epicBoard, boardMd: epicMd().replace("## KANB1 · 期次 1", "## KANB9 · 期次 1") });
+  c.eq(epicOut.length, 1, "(c) 合成编号手改（KANB1→KANB9）：恰 1 条违例", show(epicOut));
+  c.inc(epicOut[0] ?? "", "期次组", "(c) 违例点名渲染位类型（期次组）");
+  c.inc(epicOut[0] ?? "", "KANB9 · 期次 1", "(c) 违例给出实际渲染编号位");
+  c.inc(epicOut[0] ?? "", "epics[0]", "(c) 违例点名派生源 epics[0]");
+  const terminalOut = checkFactInvariants({ board: epicBoard, boardMd: epicMd().replace("# CNCL · 取消史诗（已取消）", "# CNCL · 取消史诗") });
+  c.eq(terminalOut.length, 1, "(c) 终态标注丢失：恰 1 条违例", show(terminalOut));
+  c.inc(terminalOut[0] ?? "", '"CNCL（已取消）"', "(c) 违例给出应然终态标注形态（终态在渲染面可达）");
+  const kindOut = checkFactInvariants({ board: epicBoard, boardMd: epicMd().replace("### SOLO · 无归属稿", "# SOLO · 无归属稿") });
+  c.eq(kindOut.length, 1, "(c) 同号不同层位（稿节被改为 epic 章头形态）：恰 1 条违例", show(kindOut));
+  c.inc(kindOut[0] ?? "", "层位", "(c) 违例按容器层位判定（不静默当同号通过）");
+
   // (d) stageSummary 携带时逐项复算；不携带不判
   const dBoard = {
     features: [
@@ -6348,6 +8747,200 @@ function factLibChecks(c, mod) {
     "(e) 纯函数：同输入两次调用结果逐字相等",
   );
 
+  // (h) 归属引用可达断言（A2-2/#82；独立导出：失败级，不并入 checkFactInvariants——(a)-(d) 契约不动）：
+  //     features[].epic 登记 id（`epic:<4位码>`）反查 epics[] 登记行；无登记行 = 悬空/孤儿引用 → 必咬。
+  c.eq(typeof checkEpicRefs, "function", "(h) 导出 checkEpicRefs（归属引用可达断言入口）");
+  const hBoards = {
+    refKb: { epic: "epic:KANB", phase: 1 },
+    refGone: { epic: "epic:GONE", phase: 1 },
+  };
+  const hRow = (code) => ({ code, title: `${code} 标题`, status: "active" });
+  c.eq(
+    checkEpicRefs({ board: { epics: [hRow("KANB")], features: [{ ...feature({ no: 1, label: "1", ...hBoards.refKb }) }] } }),
+    [],
+    "(h) 登记行在（码反查命中）：零违例",
+  );
+  const hOut = checkEpicRefs({ board: { epics: [hRow("KANB")], features: [{ ...feature({ no: 2, label: "2", ...hBoards.refGone }) }] } });
+  c.eq(hOut.length, 1, "(h) 悬空引用（epic:GONE 无登记行）：恰 1 条违例", show(hOut));
+  c.inc(hOut[0] ?? "", "features[0].epic", "(h) 文案点名路径 features[0].epic");
+  c.inc(hOut[0] ?? "", '"epic:GONE"', "(h) 文案给出实际引用值");
+  c.inc(hOut[0] ?? "", "登记行", "(h) 文案点名登记行（epic 唯一机器载体，§10.2）");
+  c.eq(
+    checkEpicRefs({ board: { features: [{ ...feature({ no: 3, label: "3" }) }] } }),
+    [],
+    "(h) 无 epic 字段：零噪声（AD-8 无 epic 不判失败）",
+  );
+  c.eq(
+    checkEpicRefs({ board: { features: [{ ...feature({ no: 4, label: "4", epic: 68, phase: 1 }) }] } }),
+    [],
+    "(h) 整数稳定号引用：不判（合法形态、无登记面映射——不猜）",
+  );
+  c.eq(
+    checkEpicRefs({ board: { features: [{ ...feature({ no: 5, label: "5", epic: "KANB", phase: 1 }) }] } }),
+    [],
+    "(h) 裸码进引用位：形态违规归结构面（checkBoardInvariants），本面不叠加",
+  );
+  c.eq(checkEpicRefs({ board: null }), [], "(h) 板非对象：不判（失败级另一路点名）");
+  const hBoard = { epics: [hRow("KANB")], features: [{ ...feature({ no: 6, label: "6", ...hBoards.refGone }) }] };
+  c.eq(checkEpicRefs({ board: hBoard }), checkEpicRefs({ board: hBoard }), "(h) 纯函数：同输入两次调用结果逐字相等");
+  // (h) 对 (a)-(d) 既有契约零影响：同一含孤儿引用板，checkFactInvariants 仍按四不变量面判定（不新增违例）
+  c.eq(
+    checkFactInvariants({ board: { features: [{ ...feature({ no: 7, label: "7", ...hBoards.refGone }) }] } }),
+    [],
+    "(h) 独立导出：checkFactInvariants 对悬空引用不新增违例（(a)-(d) 契约不动——A3-3 夹具零噪声语义不变）",
+  );
+
+  // (i) 派生四段不变量（C2-2/#134；失败级；独立导出 checkDerivedIndexInvariants，由 checkFactInvariants
+  //     并入失败级出口）：板面卡级节点独立复算 ↔ frontier/blocked/recent 与段间对偶逐条对照；
+  //     缺段键不判（旧板/手写夹具零噪声——缺键由板/源互检与 schema 面承载）。
+  c.eq(typeof checkDerivedIndexInvariants, "function", "(i) 导出 checkDerivedIndexInvariants（派生四段不变量入口）");
+  const iCard = (no, over = {}) => task({ no, ...over });
+  const iBoard = {
+    features: [
+      {
+        ...feature({ no: 100, label: "100" }),
+        tasks: [
+          iCard(101, { stage: "待办", nextAssignee: "implementer" }),
+          iCard(102, {
+            stage: "待办",
+            nextAssignee: "test-verifier",
+            blockers: [{ kind: "dependency", blockedBy: 104, summary: "依赖 104（已终态）" }],
+          }),
+          iCard(103, {
+            stage: "待办",
+            nextAssignee: null,
+            blockers: [
+              { kind: "external", summary: "等回执" },
+              { kind: "dependency", blockedBy: 105, summary: "依赖 105（执行中）" },
+            ],
+          }),
+          iCard(104, { stage: "已完成", status: "completed" }),
+          iCard(105, { stage: "执行中" }),
+        ],
+      },
+    ],
+    frontier: [
+      { rank: 1, no: 101, title: "卡", stage: "待办", nextAssignee: "implementer", resolvedDeps: [] },
+      { rank: 2, no: 102, title: "卡", stage: "待办", nextAssignee: "test-verifier", resolvedDeps: [104] },
+    ],
+    blocked: [
+      { no: 103, title: "卡", stage: "待办", blockerKind: "external", targetId: null, summary: "等回执" },
+      { no: 103, title: "卡", stage: "待办", blockerKind: "dependency", targetId: 105, summary: "依赖 105（执行中）" },
+    ],
+    recent: [
+      { no: 102, title: "卡", at: "2026-10-10T10:00:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null },
+      { no: 101, title: "卡", at: "2026-10-10T09:00:00+08:00", role: "implementer", result: "partial", stoppedAt: 101, next: "续跑" },
+    ],
+  };
+  c.eq(checkDerivedIndexInvariants({ board: iBoard }), [], "(i) 四段与板面复算一致：零违例（含多阻塞项逐项一行、依赖已解除入 frontier）");
+  c.eq(checkFactInvariants({ board: iBoard }), [], "(i) 并入出口后同一自洽板：checkFactInvariants 仍零违例");
+  c.eq(checkDerivedIndexInvariants({ board: { features: iBoard.features } }), [], "(i) 四段键缺省：不判（旧板/手写夹具零噪声）");
+  c.eq(checkDerivedIndexInvariants({ board: null }), [], "(i) 板非对象：不判（失败级另一路点名）");
+  const iTamper = (mutate) => {
+    const b = JSON.parse(JSON.stringify(iBoard));
+    mutate(b);
+    return checkDerivedIndexInvariants({ board: b });
+  };
+  const iOf = (msgs, invariant) => msgs.filter((m) => m.includes(invariant));
+
+  // i1 frontier 复算一致：缺行/多出行/字段错位/顺序错位/段形态
+  // （同一篡改可能同时命中 i4 段间对偶——各面按自身判据独立点名，此处按不变量逐面隔离断言）
+  const i1Missing = iOf(iTamper((b) => b.frontier.splice(1, 1)), "不变量 i1");
+  c.eq(i1Missing.length, 1, "(i1) frontier 删一行：i1 面恰 1 项（缺行）", show(i1Missing));
+  c.inc(i1Missing[0] ?? "", "不变量 i1", "(i1) 文案点名不变量 i1");
+  c.inc(i1Missing[0] ?? "", "缺行", "(i1) 判定为缺行");
+  c.inc(i1Missing[0] ?? "", "#102", "(i1) 缺行点名稳定号 #102");
+  const i1Extra = iOf(iTamper((b) => b.frontier.push({ rank: 3, no: 103, title: "卡", stage: "待办", nextAssignee: null, resolvedDeps: [] })), "不变量 i1");
+  c.eq(i1Extra.length, 1, "(i1) frontier 混入受阻卡：i1 面恰 1 项（多出行）", show(i1Extra));
+  c.inc(i1Extra[0] ?? "", "多出行", "(i1) 判定为多出行（板面无可复算来源）");
+  c.inc(i1Extra[0] ?? "", "#103", "(i1) 多出行点名稳定号 #103");
+  const i1Field = iOf(iTamper((b) => {
+    b.frontier[0].nextAssignee = "code-reviewer";
+  }), "不变量 i1");
+  c.eq(i1Field.length, 1, "(i1) nextAssignee 错位：i1 面恰 1 项（字段对照）", show(i1Field));
+  c.inc(i1Field[0] ?? "", "frontier[0]", "(i1) 点名段内位点 frontier[0]");
+  c.inc(i1Field[0] ?? "", "code-reviewer", "(i1) 给出实际值 code-reviewer");
+  c.inc(i1Field[0] ?? "", "implementer", "(i1) 给出应然值 implementer（板面节点同值）");
+  const i1Order = iOf(iTamper((b) => {
+    b.frontier.reverse().forEach((row, i) => {
+      row.rank = i + 1;
+    });
+  }), "不变量 i1");
+  c.ok(i1Order.length >= 1, "(i1) frontier 顺序反转（rank 同步重排）：必咬（板序是口径的一部分）", show(i1Order));
+  c.inc(i1Order.join("\n"), "不变量 i1", "(i1) 顺序反转命中不变量 i1");
+  const i1Shape = iOf(iTamper((b) => {
+    b.frontier = { 0: b.frontier[0] };
+  }), "不变量 i1");
+  c.eq(i1Shape.length, 1, "(i1) frontier 非数组：恰 1 项（段形态）", show(i1Shape));
+  c.inc(i1Shape[0] ?? "", "frontier 应为数组", "(i1) 段形态失败项点名应然形态");
+
+  // i2 recent 排序与截断：非升序/超上限/离板引用/同值失配/at 非法
+  const i2Order = iOf(iTamper((b) => b.recent.unshift(b.recent.pop())), "不变量 i2");
+  c.eq(i2Order.length, 1, "(i2) 最旧行置顶（新→旧被破坏）：恰 1 项", show(i2Order));
+  c.inc(i2Order[0] ?? "", "不变量 i2", "(i2) 文案点名不变量 i2");
+  c.inc(i2Order[0] ?? "", "recent[1]", "(i2) 点名段内位点 recent[1]");
+  const i2Limit = iOf(iTamper((b) => {
+    while (b.recent.length < 11) b.recent.push({ ...b.recent[b.recent.length - 1] });
+  }), "不变量 i2");
+  c.eq(i2Limit.length, 1, "(i2) 11 条超上限：恰 1 项（N=10 截断）", show(i2Limit));
+  c.inc(i2Limit[0] ?? "", "超过上限 10", "(i2) 点名上限 N=10（成文）");
+  const i2Board = iOf(iTamper((b) => {
+    b.recent.push({ no: 998, title: "离板卡", at: "2026-10-10T08:00:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null });
+  }), "不变量 i2");
+  c.eq(i2Board.length, 1, "(i2) 离板卡行混入：恰 1 项", show(i2Board));
+  c.inc(i2Board[0] ?? "", "#998", "(i2) 点名离板卡号 #998");
+  const i2Title = iOf(iTamper((b) => {
+    b.recent[0].title = "改名卡";
+  }), "不变量 i2");
+  c.eq(i2Title.length, 1, "(i2) title 与板面节点失配：恰 1 项（同值消费）", show(i2Title));
+  c.inc(i2Title[0] ?? "", "改名卡", "(i2) 给出实际值");
+  c.inc(i2Title[0] ?? "", '"卡"', "(i2) 给出应然值（板面节点 title）");
+  const i2Iso = iOf(iTamper((b) => {
+    b.recent[0].at = "昨天";
+  }), "不变量 i2");
+  c.eq(i2Iso.length, 1, "(i2) at 非带时区 ISO：恰 1 项", show(i2Iso));
+  c.inc(i2Iso[0] ?? "", "ISO 8601", "(i2) 点名 at 形态（不猜时钟）");
+
+  // i3 blocked 归因完整：缺行/多出行/目标错位/卡内顺序
+  const i3Missing = iOf(iTamper((b) => b.blocked.splice(1, 1)), "不变量 i3");
+  c.eq(i3Missing.length, 1, "(i3) 删 103 第二项归因：i3 面恰 1 项（缺行）", show(i3Missing));
+  c.inc(i3Missing[0] ?? "", "不变量 i3", "(i3) 文案点名不变量 i3");
+  c.inc(i3Missing[0] ?? "", "缺行", "(i3) 判定为缺行");
+  c.inc(i3Missing[0] ?? "", "依赖 105（执行中）", "(i3) 给出应然归因（summary 原文）");
+  const i3Extra = iOf(
+    iTamper((b) => b.blocked.push({ no: 101, title: "卡", stage: "待办", blockerKind: "external", targetId: null, summary: "伪造" })),
+    "不变量 i3",
+  );
+  c.eq(i3Extra.length, 1, "(i3) 无阻塞卡伪造归因行：i3 面恰 1 项（多出行）", show(i3Extra));
+  c.inc(i3Extra[0] ?? "", "多出行", "(i3) 判定为多出行");
+  const i3Target = iOf(iTamper((b) => {
+    b.blocked[1].targetId = 104;
+  }), "不变量 i3");
+  c.eq(i3Target.length, 1, "(i3) 归因目标错位（105→104）：恰 1 项（字段对照）", show(i3Target));
+  c.inc(i3Target[0] ?? "", '"targetId":104', "(i3) 给出实际值（错位目标）");
+  c.inc(i3Target[0] ?? "", '"targetId":105', "(i3) 给出应然值（原文依赖目标）");
+  const i3Order = iOf(iTamper((b) => {
+    b.blocked = [b.blocked[1], b.blocked[0]];
+  }), "不变量 i3");
+  c.eq(i3Order.length, 1, "(i3) 卡内归因顺序互换：恰 1 项（顺序对照——卡内按 blockers 原文序）", show(i3Order));
+  c.inc(i3Order[0] ?? "", "顺序与板序不符", "(i3) 判定为顺序错位");
+
+  // i4 段间对偶：两面同时命中 / 两面皆无（漏归因静默空洞）
+  const i4Both = iOf(iTamper((b) => b.frontier.push({ rank: 3, no: 103, title: "卡", stage: "待办", nextAssignee: null, resolvedDeps: [] })), "不变量 i4");
+  c.eq(i4Both.length, 1, "(i4) 待办卡同时入 frontier 与 blocked：恰 1 项（两面自相矛盾）", show(i4Both));
+  c.inc(i4Both.join("\n"), "同时出现在", "(i4) 点名「同时出现在」形态");
+  const i4Hole = iOf(iTamper((b) => {
+    b.blocked = b.blocked.filter((row) => row.no !== 103);
+  }), "不变量 i4");
+  c.eq(i4Hole.length, 1, "(i4) 待办卡从两段同时消失：恰 1 项（派生漏归因）", show(i4Hole));
+  c.inc(i4Hole.join("\n"), "既不在 frontier 也不在 blocked", "(i4) 点名「两面皆无」形态");
+
+  // 失败级出口：checkFactInvariants 并入派生四段违例（磁盘板与重编译基线两面对称消费）
+  c.ok(
+    checkFactInvariants({ board: (() => { const b = JSON.parse(JSON.stringify(iBoard)); b.frontier.splice(1, 1); return b; })() }).some((m) => m.includes("不变量 i1")),
+    "(i) checkFactInvariants 并入派生四段违例（失败级出口——--check 两面对称）",
+  );
+
   // 纯函数：同输入两次调用逐字相同（无隐藏状态/IO）
   c.eq(checkFactInvariants({ board: cBoard, boardMd: mdWith("ID-2.1") }), cOut, "纯函数：同输入两次调用结果逐字相等");
 }
@@ -6376,6 +8969,19 @@ function vocabularyGuardChecks(c, fact, derive, compiler, runs) {
   c.eq(snap.attentionCodes, derive.ATTENTION_CODES, "S-1：缺口码序列 ↔ derive.ATTENTION_CODES（待处理节渲染序 + 计数复算的判据词表）");
   // 编号形态里的计划码段 ↔ 编译器 PLAN_CODE_RE 同口径（渲染位形态常量）
   c.eq(`^${snap.planCodeSource}$`, compiler.PLAN_CODE_RE.source, "S-1：计划码形态常量 ↔ compile-board.PLAN_CODE_RE 同口径（渲染位形态）");
+  // A3-3（#86）：epic 层渲染位常量 ↔ derive/compile-board 词表（改名/改值即红——(c) 扩面判据静默失效防线）
+  c.eq(snap.epicIdPrefix, "epic:", "S-1：epic 登记 id 前缀字面值 = epic:（契约 §10.3；引用位 kind 限定句柄）");
+  c.eq(snap.epicStatuses, derive.EPIC_STATUSES, "S-1：epic 登记行状态词表 ↔ derive.EPIC_STATUSES 逐项相等（§10.2/§10.5）");
+  c.eq(`^${snap.epicCodeSource}$`, derive.EPIC_CODE_RE.source, "S-1：epic 码形态 ↔ derive.EPIC_CODE_RE 同口径（4 位冻结形态）");
+  c.eq(snap.epicTerminalMarks.cancelled, "（已取消）", "S-1：章头终态标注字面值 = （已取消）（渲染面；契约 §10.5）");
+  c.eq(snap.epicTerminalMarks.archived, "（已归档）", "S-1：章头终态标注字面值 = （已归档）（渲染面；契约 §10.5）");
+  const phaseRe = new RegExp(snap.phaseHeadingSource);
+  for (const t of ["KANB1 · 期次 1", "KANB12 · 期次 12"]) {
+    c.ok(phaseRe.test(t), `S-1：期次组头形态匹配合法编号位 ${JSON.stringify(t)}`, snap.phaseHeadingSource);
+  }
+  for (const t of ["KANB-1 · 期次 1", "KANB1 · 期次 0", "kanb1 · 期次 1", "KANB1"]) {
+    c.ok(!phaseRe.test(t), `S-1：期次组头形态拒收非法编号位 ${JSON.stringify(t)}`, snap.phaseHeadingSource);
+  }
   const idRe = new RegExp(snap.idTokenSource);
   for (const t of ["未领号", "#7", "ID-3", "IMPL", "IMPL-1.2"]) {
     c.ok(idRe.test(t), `编号形态匹配合法 token ${JSON.stringify(t)}`, `${snap.idTokenSource}`);
@@ -6388,6 +8994,22 @@ function vocabularyGuardChecks(c, fact, derive, compiler, runs) {
   c.eq(snap.mergedResult, "done", "S-1：合并证据结果字面值 = done（report 三值表）");
   c.ok(runs.RUN_ROLES.includes(snap.mergedRole), "S-1：合并证据角色 ↔ runs.RUN_ROLES 词表成员（#97 第五不变量判据常量）");
   c.ok(runs.RUN_REPORT_RESULTS.includes(snap.mergedResult), "S-1：合并证据结果 ↔ runs.RUN_REPORT_RESULTS 词表成员（#97 第五不变量判据常量）");
+  // C2-2（#134）：派生四段不变量（i1–i4）判据常量 ↔ derive / schema 侧对照（改名/改值即红，
+  // 防判据静默失效：如 recent 上限改值后 i2 永远不命中且无人察觉）
+  c.eq(snap.todoStage, derive.STAGE.TODO, "S-1：TODO_STAGE ↔ derive.STAGE.TODO（i1/i4 入选面判据常量）");
+  c.eq(snap.terminalStages, derive.TERMINAL_STAGES, "S-1：终态段位词表 ↔ derive.TERMINAL_STAGES（i3 选取域 / 依赖解除判据）");
+  c.eq(snap.recentLimit, derive.RECENT_LIMIT, "S-1：RECENT_LIMIT ↔ derive.RECENT_LIMIT（i2 截断上限 N=10 成文）");
+  c.eq(snap.isoSource, derive.ISO_RE.source, "S-1：带时区 ISO 形态 ↔ derive.ISO_RE 同口径（i2 at 排序判据）");
+  const segSchema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+  c.ok(
+    ["frontier", "active", "blocked", "recent"].every((k) => Object.prototype.hasOwnProperty.call(segSchema.properties ?? {}, k)),
+    "S-1：schema 根级声明四段追加键（C2-1/#133——i1–i4 的判定域/字段面存在）",
+  );
+  c.eq(
+    snap.blockerKinds,
+    segSchema.properties?.blocked?.items?.properties?.blockerKind?.enum ?? null,
+    "S-1：阻塞归因词表 ↔ schema blocked[].blockerKind 枚举（i1/i3 判据词表，改名即红）",
+  );
 }
 
 // ---------------------------------------------------------------- 标记写回库 lib/marker-write.mjs 的公开契约（TQ-3，T5356r）
@@ -6473,6 +9095,1156 @@ function scanConfigLibChecks(c, mod) {
     removeRoot(root);
   }
 }
+
+// ---- 场景 114（B5-2/#114）：编译输出路径＝板根断言（E1 V20 幻影板防线）
+
+/**
+ * 判据（契约口径）：编译输出路径 = `<resolved-root>/.zcode/board/`，而**板根** = 既有板所在项目根的
+ * `.zcode/board/`（`board.json` 存在即板根标记；只有目录/错位证据残留不算）。当 resolved root 自身
+ * 无既有板、而祖先目录是板项目时，输出落点必然是子目录副板（幻影板）+ 错位证据（V20）；
+ * 守卫应拦（写模式非零退出 + 点名正确板根）或失败级点名（--check 不假绿）。
+ * 反例（不得误拦）：无板项目祖先的新项目首建（tmp 夹具域全部既有场景即广义反例）。
+ */
+scenario(
+  "114",
+  "B5-2/#114：编译输出路径＝板根——错误 cwd 触发编译被拦并点名正确板根（默认根/显式子目录/深层子目录三形态）、子目录零副板；--check 从幻影根失败级点名不假绿；正确路径与非嵌套首建绿",
+  {
+    build(root) {
+      // 板根既有板（幻影判据对照面：<根>/.zcode/board/board.json 存在 → 该根即板根；默认编译会覆盖）
+      w(root, ".zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "板根既有板标记（幻影判据对照面）" }, null, 2)}\n`);
+      // 事故几何（dispatch-checklist 2026-10-10）：子目录有 `.zcode/board/`（错位证据残留）但无板文件——
+      // 判据必须只看板文件（board.json），不能把「有 board 目录」当板根
+      w(root, "ZPaPa/.zcode/board/evidence/T64v2/red.txt", "错位证据残留（子目录板目录存在、无 board.json）\n");
+      w(root, "ZPaPa/inner/.keep", "");
+      w(root, ".zcode/plans/plan-114-phantom.md", ["# 幻影板夹具 114", "", "- [ ] 1. 板根卡片（未领号）", ""].join("\n"));
+    },
+    assert(c, ctx) {
+      const { root, board: harnessBoard } = ctx;
+      const boardRootAbs = join(root, ".zcode", "board");
+      const realBoardAbs = join(boardRootAbs, "board.json");
+      const phantomAbs = join(root, "ZPaPa");
+      const innerAbs = join(phantomAbs, "inner");
+      const phantomBoardAbs = join(phantomAbs, ".zcode", "board", "board.json");
+      const runAt = (args, cwd) => spawnSync(process.execPath, [COMPILER, ...args], { encoding: "utf8", cwd });
+      const detail = (r) => `退出码 ${r.status}；stderr=${truncate(r.stderr ?? "")}`;
+
+      // 前置：夹具几何（板根有既有板；子目录只有板目录壳）
+      c.ok(isFile(realBoardAbs), "前置：板根既有板已建（<根>/.zcode/board/board.json）");
+      c.ok(
+        isDir(join(phantomAbs, ".zcode", "board")) && !isFile(phantomBoardAbs),
+        "前置：子目录有 board 目录（错位证据残留）但无板文件——判据只看板文件",
+      );
+
+      const realBytes = readFileSync(realBoardAbs, "utf8");
+
+      // ① 错误 cwd（无位置参数：默认根 = cwd）→ 拦（非零退出 + 点名正确板根 + 零副板）
+      const noArg = runAt([], phantomAbs);
+      c.eq(noArg.status, 1, "①错误 cwd（默认根=cwd）触发编译被拦（拒绝写出退出码 1）", detail(noArg));
+      c.inc(String(noArg.stderr ?? ""), "幻影板防线", "①点名判据（幻影板防线/幻影板/E1 V20）");
+      c.inc(String(noArg.stderr ?? ""), boardRootAbs, "①给出正确板根路径（<项目根>/.zcode/board）");
+      c.inc(String(noArg.stderr ?? ""), "cd ", "①给出正确路径指引（cd <板根> 或显式传入）");
+      c.inc(String(noArg.stderr ?? ""), phantomAbs, "①点名错误根（当前项目根）");
+      c.ok(!isFile(phantomBoardAbs), "①拒写：子目录零副板（board.json 不生成）");
+      c.ok(!isFile(join(phantomAbs, ".zcode", "board", "board.md")), "①拒写：子目录零副板（board.md 不生成）");
+      c.eq(readFileSync(realBoardAbs, "utf8"), realBytes, "①拦截面零写入：板根 board.json 字节不变");
+
+      // ② 显式传子目录（hook 形态：payload.cwd 解析结果作为位置参数传入）→ 同样拦
+      const withArg = runAt([phantomAbs], root);
+      c.eq(withArg.status, 1, "②显式传子目录被拦（hook 形态：显式位置参数也拦，退出码 1）", detail(withArg));
+      c.inc(String(withArg.stderr ?? ""), "幻影板防线", "②点名判据");
+      c.inc(String(withArg.stderr ?? ""), boardRootAbs, "②给出正确板根路径");
+      c.ok(!isFile(phantomBoardAbs), "②拒写：子目录零副板（board.json 不生成）");
+      c.eq(readFileSync(realBoardAbs, "utf8"), realBytes, "②拦截面零写入：板根 board.json 字节不变");
+
+      // ③ 深层子目录（祖先板根逐级上溯，不只看一层）→ 拦
+      const deep = runAt([], innerAbs);
+      c.eq(deep.status, 1, "③深层子目录（子目录的子目录）被拦（祖先板根逐级上溯）", detail(deep));
+      c.inc(String(deep.stderr ?? ""), boardRootAbs, "③给出正确板根路径（跨层上溯命中）");
+      c.ok(!isFile(join(innerAbs, ".zcode", "board", "board.json")), "③拒写：深层子目录零副板");
+
+      // ④ --check 从幻影根（默认根形态）→ 失败级点名、不假绿（错位证据源头）
+      const checkPhantom = runAt(["--check"], phantomAbs);
+      c.eq(checkPhantom.status, 1, "④幻影根 --check 非零退出（失败级，不假绿）", `退出码 ${checkPhantom.status}`);
+      c.inc(String(checkPhantom.stdout ?? ""), "输出路径", "④失败项类别点名（输出路径＝板根断言）");
+      c.inc(String(checkPhantom.stdout ?? ""), boardRootAbs, "④点名正确板根路径");
+      c.ok(
+        !String(checkPhantom.stdout ?? "").includes("结论：--check 通过"),
+        "④不假绿：幻影根审计报告不出现「通过」结论",
+        show(String(checkPhantom.stdout ?? "").slice(0, 600)),
+      );
+
+      // ⑤ 正确路径绿（板根自身：写盘 + --check 0 失败）
+      const okRun = runAt([root], tmpdir());
+      c.eq(okRun.status, 0, "⑤正确路径（板根自身）编译退出码 0", detail(okRun));
+      c.inc(String(okRun.stdout ?? ""), "board.json 已写出", "⑤正常写出回显（正确路径不受守卫影响）");
+      const okCheck = runAt([root, "--check"], tmpdir());
+      c.eq(okCheck.status, 0, "⑤正确路径 --check 退出码 0", `退出码 ${okCheck.status}`);
+      c.inc(String(okCheck.stdout ?? ""), "结论：--check 通过（0 项失败）", "⑤正确路径 --check 结论通过（零噪声）");
+
+      // ⑥ 反例：非嵌套新项目首建不误拦（守卫只在「祖先有板且自根无板」时触发）
+      const fresh = newRoot("s114-fresh");
+      try {
+        const freshRun = runAt([], fresh);
+        c.eq(freshRun.status, 0, "⑥非嵌套新项目（无板项目祖先）首建退出码 0（不误拦）", detail(freshRun));
+        c.ok(isFile(join(fresh, ".zcode", "board", "board.json")), "⑥首建板照常写出（输出路径=该根 .zcode/board）");
+        c.ok(!String(freshRun.stderr ?? "").includes("幻影板防线"), "⑥首建零幻影告警（反例：不误报）", truncate(freshRun.stderr ?? ""));
+      } finally {
+        removeRoot(fresh);
+      }
+
+      // ⑦ 错位证据不入板（板 sources 不含子目录）
+      c.ok(
+        !(harnessBoard?.sources ?? []).some((s) => String(s.path ?? "").includes("ZPaPa")),
+        "⑦板 sources 不含幻影子目录（错位证据不入板）",
+        show((harnessBoard?.sources ?? []).map((s) => s.path)),
+      );
+
+      // ⑧ --assign 同拦（写面含号标记/registry/板文件：幻影根上必须零写入，不落半成品）
+      const assignPhantom = runAt(["--assign"], phantomAbs);
+      c.eq(assignPhantom.status, 1, "⑧--assign 在幻影根被拦（退出码 1，零写入）", detail(assignPhantom));
+      c.inc(String(assignPhantom.stderr ?? ""), boardRootAbs, "⑧--assign 拦截面同样点名正确板根");
+      c.ok(!isFile(join(phantomAbs, ".zcode", "board", "registry.json")), "⑧拒写：registry.json 不生成（号不发）");
+      c.ok(!isFile(phantomBoardAbs), "⑧拒写：board.json 不生成");
+    },
+  },
+);
+
+// ---- 场景 115（B5-3/#115）：--assign 注入 assignedBy ＋ 非编排者（worktree 内）发号点名（E1 V12）
+
+/**
+ * 判据（最小判据成文；与 compile-board.mjs detectAssignSite / checkAssignedBy 注释同源）：
+ *   执行现场 = 自 --assign 的 <项目根> 逐级上溯的**最近仓根**（最近含 `.git` 的祖先目录）：
+ *   - `.git` 为目录 → 主检出（main）；
+ *   - `.git` 为文件（gitdir 指针，链接工作树标记）→ worktree:<仓根目录名> ＝非主检出
+ *     （SKILL.md：「发号只在主检出、由编排者单写者执行」）；
+ *   - 无 `.git` 祖先（非 git 项目/夹具域）→ 视同主检出（不误拦、零噪声）。
+ *   assignedBy = `<会话标识>@<执行现场>`（会话标识 = --assign --session-id，缺省 unknown）：
+ *   --assign 本次运行写入 registry 的条目（新建/补登记/重建）逐条注入；既有条目零改动（不补造）；
+ *   --check 判定域 = 现场段 `worktree:` 前缀 → 逐条对账点名「非编排者发号」（非失败级、不阻断）。
+ */
+scenario(
+  "115",
+  "B5-3/#115：--assign 注入 assignedBy（会话@现场）＋非编排者（worktree 内）发号点名——主检出/非 git 域/链接工作树三形态、存量缺省零噪声、延续改写保留原值",
+  {
+    build(root) {
+      // 夹具几何（锚点）：三形态仓根——.git 目录=主检出；.git 文件=链接工作树；无 .git=非 git 域
+      w(root, "main/.git/HEAD", "ref: refs/heads/main\n");
+      w(root, "main/.zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "主检出板根既有板标记" }, null, 2)}\n`);
+      w(root, "main/.zcode/plans/plan-115-main.md", ["# 主检出夹具 115", "", "- [ ] 1. 主检出发号（夹具）", ""].join("\n"));
+      w(root, "wt/.git", "gitdir: ../main/.git/worktrees/wt\n");
+      w(root, "wt/.zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "工作树板根既有板标记" }, null, 2)}\n`);
+      w(
+        root,
+        "wt/.zcode/plans/plan-115-wt.md",
+        ["# 执行现场夹具 115", "", "- [ ] 1. 工作树内发号（夹具）", ""].join("\n"),
+      );
+      w(root, "plain/.zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "非 git 域板根既有板标记" }, null, 2)}\n`);
+      w(
+        root,
+        "plain/.zcode/plans/plan-115-plain.md",
+        ["# 非 git 域夹具 115", "", "- [ ] 1. 缺省会话发号（夹具）", ""].join("\n"),
+      );
+      // 存量夹具（真实板形态：条目无 assignedBy——反例：不判、不补造）
+      w(root, "legacy/.zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "存量板根既有板标记" }, null, 2)}\n`);
+      w(root, "legacy/.zcode/plans/plan-115-legacy.md", ["# 存量夹具 115", "<!-- zcode-board: no=901 -->", "", "- [ ] 1. 存量卡 <!-- zcode-board: no=902 -->", ""].join("\n"));
+      // 延续夹具：首轮发号（计划稿领号）→ 次轮补 spec + 访谈（计划→spec 延续改写保 assignedBy）
+      w(root, "cont/.zcode/board/board.json", `${JSON.stringify({ version: 2, _seed: "延续板根既有板标记" }, null, 2)}\n`);
+      w(
+        root,
+        "cont/.zcode/plans/plan-115-cont.md",
+        ["# 延续夹具 115", "<!-- zcode-board: no=951 -->", "", "- [ ] 1. 延续卡（草案） <!-- zcode-board: no=952 -->", ""].join("\n"),
+      );
+      w(
+        root,
+        "legacy/.zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 902,
+            entries: [
+              { no: 901, kind: "plan", file: ".zcode/plans/plan-115-legacy.md", title: "存量夹具 115", assignedAt: "2026-10-01T00:00:00+08:00" },
+              { no: 902, kind: "task", file: ".zcode/plans/plan-115-legacy.md", title: "存量卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    },
+    assert(c, ctx) {
+      const { root } = ctx;
+      const mainAbs = join(root, "main");
+      const wtAbs = join(root, "wt");
+      const plainAbs = join(root, "plain");
+      const runAt = (args, cwd) => spawnSync(process.execPath, [COMPILER, ...args], { encoding: "utf8", cwd });
+      const detail = (r) => `退出码 ${r.status}；stderr=${truncate(r.stderr ?? "")}`;
+      const readRegistry = (base) => {
+        const p = join(base, ".zcode/board/registry.json");
+        return isFile(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+      };
+
+      // 锚点：夹具几何（三形态）——后续注入/点名断言以此为准（锚点守卫）
+      c.ok(isDir(join(mainAbs, ".git")) && isFile(join(mainAbs, ".git", "HEAD")), "锚点：主检出仓根 .git 为目录（判据锚点）");
+      c.ok(isFile(join(wtAbs, ".git")), "锚点：链接工作树仓根 .git 为 gitdir 指针文件（判据锚点）");
+      c.ok(
+        !isFile(join(plainAbs, ".git")) && !isDir(join(plainAbs, ".git")),
+        "锚点：非 git 域无 .git（视同主检出口径的反例面）",
+      );
+
+      // ① 主检出：--assign --session-id → 新建条目逐条注入 assignedBy=<会话>@main
+      const mainAssign = runAt([mainAbs, "--assign", "--session-id", "sess_115-main"], root);
+      c.eq(mainAssign.status, 0, "①主检出 --assign --session-id 退出码 0", detail(mainAssign));
+      c.ok(!String(mainAssign.stderr ?? "").includes("非主检出"), "①主检出零非主检出告警（反例：不误报）", truncate(mainAssign.stderr ?? ""));
+      const mainRaw = isFile(join(mainAbs, ".zcode/board/registry.json"))
+        ? readFileSync(join(mainAbs, ".zcode/board/registry.json"), "utf8")
+        : "";
+      const mainReg = mainRaw === "" ? null : JSON.parse(mainRaw);
+      c.ok(mainReg !== null, "①主检出 --assign 产出 registry.json", detail(mainAssign));
+      c.eq(mainReg?.entries?.length, 2, "①主检出夹具恰 2 条目（特性号 + 卡号）");
+      c.eq(
+        mainReg?.entries?.map((e) => e.assignedBy),
+        ["sess_115-main@main", "sess_115-main@main"],
+        "①新条目逐条注入 assignedBy=<会话标识>@main",
+      );
+      c.inc(mainRaw, '"assignedBy": "sess_115-main@main"', "①registry 原文可见 assignedBy（用户直读面）");
+      const mainCheck = runAt([mainAbs, "--check"], root);
+      c.eq(mainCheck.status, 0, "①主检出 --check 退出码 0", detail(mainCheck));
+      c.inc(String(mainCheck.stdout ?? ""), "结论：--check 通过（0 项失败）", "①主检出 --check 结论通过");
+      c.ok(
+        !String(mainCheck.stdout ?? "").includes("非编排者发号"),
+        "①合法发号零点名（反例：main 现场不判）",
+        truncate(mainCheck.stdout ?? ""),
+      );
+
+      // ② 非 git 域（无 .git）：视同主检出；缺省会话 → assignedBy=unknown@main（夹具域回归面）
+      const plainAssign = runAt([plainAbs, "--assign"], root);
+      c.eq(plainAssign.status, 0, "②非 git 域 --assign（缺省会话）退出码 0", detail(plainAssign));
+      const plainReg = readRegistry(plainAbs);
+      c.eq(
+        plainReg?.entries?.map((e) => e.assignedBy),
+        ["unknown@main", "unknown@main"],
+        "②非 git 域视同主检出：缺省会话注入 unknown@main",
+      );
+      const plainCheck = runAt([plainAbs, "--check"], root);
+      c.eq(plainCheck.status, 0, "②非 git 域 --check 退出码 0", detail(plainCheck));
+      c.ok(
+        !String(plainCheck.stdout ?? "").includes("非编排者发号"),
+        "②非 git 域零点名（反例：不误判）",
+        truncate(plainCheck.stdout ?? ""),
+      );
+
+      // ④ 链接工作树内 --assign = 非编排者形态：条目注 @worktree:<仓根名> + 运行当场点名；--check 对账点名
+      const wtAssign = runAt([wtAbs, "--assign", "--session-id", "sess_115-wt"], root);
+      c.eq(wtAssign.status, 0, "④工作树内 --assign 退出码 0（点名不拦截——历史留痕，可追溯）", detail(wtAssign));
+      c.inc(String(wtAssign.stderr ?? ""), "非编排者发号", "④运行当场点名（assign 诊断）");
+      c.inc(String(wtAssign.stderr ?? ""), "非主检出", "④点名判据（链接工作树内 = 非主检出）");
+      c.inc(String(wtAssign.stderr ?? ""), "worktree:wt", "④点名现场标识（worktree:<仓根名>）");
+      c.inc(String(wtAssign.stderr ?? ""), "发号只在主检出", "④点名纪律依据（SKILL.md 单写者纪律）");
+      const wtReg = readRegistry(wtAbs);
+      c.eq(
+        wtReg?.entries?.map((e) => e.assignedBy),
+        ["sess_115-wt@worktree:wt", "sess_115-wt@worktree:wt"],
+        "④工作树内新建条目逐条注入 assignedBy=<会话>@worktree:<仓根名>",
+      );
+      const wtCheck = runAt([wtAbs, "--check"], root);
+      c.eq(wtCheck.status, 0, "④工作树根 --check 退出码 0（对账点名级：非失败、不阻断）", detail(wtCheck));
+      c.inc(String(wtCheck.stdout ?? ""), "结论：--check 通过（0 项失败）", "④--check 结论通过（点名不假红）");
+      c.inc(String(wtCheck.stdout ?? ""), "非编排者发号", "④--check 对账点名「非编排者发号」");
+      c.eq(
+        (String(wtCheck.stdout ?? "").match(/非编排者发号/g) ?? []).length,
+        2,
+        "④对账点名逐条（2 条目 → 2 条点名；点名清单即复核输入）",
+        truncate(wtCheck.stdout ?? ""),
+      );
+      c.inc(String(wtCheck.stdout ?? ""), "sess_115-wt@worktree:wt", "④点名载 assignedBy 原值（用户可核）");
+
+      // ⑤ 存量缺省零噪声（真实板形态：条目无 assignedBy）——反例：不判、不补造、--check 只读零写入
+      const legacyRegistryAbs = join(root, "legacy/.zcode/board/registry.json");
+      const legacyBefore = readFileSync(legacyRegistryAbs, "utf8");
+      const legacyCompile = runAt([join(root, "legacy")], root);
+      c.eq(legacyCompile.status, 0, "⑤存量夹具编译退出码 0", detail(legacyCompile));
+      const legacyCheck = runAt([join(root, "legacy"), "--check"], root);
+      c.eq(legacyCheck.status, 0, "⑤存量板 --check 退出码 0", detail(legacyCheck));
+      c.ok(
+        !String(legacyCheck.stdout ?? "").includes("非编排者发号"),
+        "⑤存量条目（无 assignedBy）零误报（判定域外不判、零噪声）",
+        truncate(legacyCheck.stdout ?? ""),
+      );
+      c.eq(readFileSync(legacyRegistryAbs, "utf8"), legacyBefore, "⑤--check 只读：存量 registry 字节不变（不补造 assignedBy）");
+
+      // ⑥ 纯函数契约：checkAssignedBy（判定域 = 现场段 worktree: 前缀）
+      const byDoc = (entries) => ({ version: 1, seq: 0, entries });
+      c.eq(
+        checkAssignedBy(byDoc([{ no: 7, assignedBy: "sess_x@worktree:task-7" }])).length,
+        1,
+        "⑥worktree 现场段 → 恰 1 条点名（判定域命中）",
+      );
+      c.inc(
+        checkAssignedBy(byDoc([{ no: 7, assignedBy: "sess_x@worktree:task-7" }]))[0] ?? "",
+        "号 7",
+        "⑥点名载条目号（复核锚点）",
+      );
+      c.inc(
+        checkAssignedBy(byDoc([{ no: 7, assignedBy: "sess_x@worktree:task-7" }]))[0] ?? "",
+        "sess_x@worktree:task-7",
+        "⑥点名载 assignedBy 原值（两值对照）",
+      );
+      for (const [label, doc] of [
+        ["@main 现场段", byDoc([{ no: 7, assignedBy: "sess_x@main" }])],
+        ["缺省 assignedBy", byDoc([{ no: 7 }])],
+        ["未知形态（不猜）", byDoc([{ no: 7, assignedBy: "hand-written" }])],
+        ["空串", byDoc([{ no: 7, assignedBy: "" }])],
+        ["非对象条目", byDoc([null, 7])],
+      ]) {
+        c.eq(checkAssignedBy(doc).length, 0, `⑥${label} → 不判（零噪声）`);
+      }
+      c.eq(checkAssignedBy(null).length, 0, "⑥registry 缺失（null）→ 零点名");
+      c.eq(checkAssignedBy({ entries: "bad" }).length, 0, "⑥entries 非数组 → 零点名（不猜）");
+      {
+        const input = { version: 1, seq: 9, entries: [{ no: 1, assignedBy: "s@worktree:x" }, { no: 2 }] };
+        const snapshot = JSON.stringify(input);
+        checkAssignedBy(input);
+        c.eq(JSON.stringify(input), snapshot, "⑥纯函数只读：入参零改动（无隐藏状态）");
+      }
+
+      // ⑦ 计划→spec 延续改写：assignedBy 是已知条目键（ENTRY_KNOWN_KEYS）——改写显式保留原值，
+      //    不作额外字段丢弃；本次运行的新建条目照常注当前会话值（两值并存可溯）
+      const contAbs = join(root, "cont");
+      const contFirst = runAt([contAbs, "--assign", "--session-id", "sess_115-cont-a"], root);
+      c.eq(contFirst.status, 0, "⑦延续夹具首轮 --assign 退出码 0", detail(contFirst));
+      const contFirstReg = readRegistry(contAbs);
+      const cont951a = contFirstReg?.entries?.find((e) => e.no === 951) ?? null;
+      c.eq(cont951a?.assignedBy, "sess_115-cont-a@main", "⑦首轮：计划条目 951 注首轮会话值");
+      c.ok(typeof cont951a?.planCode === "string", "⑦首轮：计划码已分配（延续须保留的对照值）", show(cont951a));
+      // ⑦组合夹具（STD-1 回炉）：延续改写前先给计划条目写入归属对（epic/phase）——延续改写是显式字面量
+      //    重建（kind/file→specRoot 指向改写），epic/phase 属 ENTRY_KNOWN_KEYS 已知键：必须显式携带，
+      //    不得因「已知键不进 extras」而无声丢弃（markers §10.6.3「归属字段一律不改」）。
+      const contRegPath = join(contAbs, ".zcode/board/registry.json");
+      const contDoc = JSON.parse(readFileSync(contRegPath, "utf8"));
+      contDoc.epics = [{ code: "KANB", title: "延续夹具史诗", status: "active" }];
+      w(root, "cont/.zcode/board/registry.json", `${JSON.stringify(contDoc, null, 2)}\n`);
+      const contEpic = runAt(
+        [contAbs, "--assign", "--epic", "KANB", "--epic-file", ".zcode/plans/plan-115-cont.md"],
+        root,
+      );
+      c.eq(contEpic.status, 0, "⑦组合夹具：延续前 --epic-file 归属写入退出码 0", detail(contEpic));
+      const cont951epic = readRegistry(contAbs)?.entries?.find((e) => e.no === 951) ?? null;
+      c.eq(cont951epic?.epic, "epic:KANB", "⑦组合夹具前置：951 已归 epic:KANB（延续须保留的对照值）");
+      c.eq(cont951epic?.phase, 1, "⑦组合夹具前置：951 phase=1（首期自动占号）");
+      // 次轮前置：补 spec + 访谈（resolvedBy=spec:cont；artifacts=计划稿）——触发计划→spec 延续
+      w(root, "cont/specs/cont/requirements.md", "# Requirements: 延续特性 115\n");
+      w(root, "cont/specs/cont/tasks.md", ["# Implementation Plan: 延续特性 115", "", "## Tasks", "", "- [ ] 1. 延续后新卡", ""].join("\n"));
+      w(
+        root,
+        "cont/.zcode/board/interviews.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            interviews: [
+              {
+                id: "itw-20261011-115",
+                at: "2026-10-11T10:00:00+08:00",
+                sessionId: "sess_115",
+                topic: "延续夹具",
+                summary: "计划→spec 延续夹具（B5-3）。",
+                decisions: [],
+                artifacts: [".zcode/plans/plan-115-cont.md"],
+                outcome: "plan",
+                resolvedBy: "spec:cont",
+                status: "open",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const contSecond = runAt([contAbs, "--assign", "--session-id", "sess_115-cont-b"], root);
+      c.eq(contSecond.status, 0, "⑦延续夹具次轮 --assign 退出码 0", detail(contSecond));
+      c.inc(String(contSecond.stderr ?? ""), "计划→spec 延续", "⑦次轮发生延续改写（诊断留痕）");
+      const contSecondReg = readRegistry(contAbs);
+      const cont951b = contSecondReg?.entries?.find((e) => e.no === 951) ?? null;
+      c.eq(cont951b?.kind, "spec", "⑦条目 951 改写为 spec（延续成立）");
+      c.eq(cont951b?.specRoot, "specs/cont/", "⑦条目 951 指向改 spec 根");
+      c.eq(cont951b?.assignedBy, "sess_115-cont-a@main", "⑦延续改写保留原 assignedBy（已知键显式携带，不丢弃）");
+      c.eq(cont951b?.planCode, cont951a?.planCode, "⑦延续改写计划码零变动（对照锚点）");
+      c.eq(cont951b?.epic, "epic:KANB", "⑦延续后归属对仍在：epic 零变动（§10.6.3 归属字段一律不改）");
+      c.eq(cont951b?.phase, 1, "⑦延续后归属对仍在：phase 零变动（不丢弃、不改写）");
+      const contTask = contSecondReg?.entries?.find((e) => e.kind === "task" && e.file === "specs/cont/tasks.md") ?? null;
+      c.eq(contTask?.assignedBy, "sess_115-cont-b@main", "⑦次轮新建条目注当前会话值（新旧两值并存可溯）");
+
+      // ③ 用法错误：--session-id 仅配合 --assign；形态非法/缺值拒绝（退出码 2、零写入）
+      const usageRoot = newRoot("s115-usage");
+      try {
+        const noAssign = runAt([usageRoot, "--session-id", "sess_x"], tmpdir());
+        c.eq(noAssign.status, 2, "③--session-id 缺 --assign → 用法错误退出码 2", detail(noAssign));
+        c.inc(String(noAssign.stderr ?? ""), "--session-id", "③用法错误点名 --session-id（仅 --assign 有效）");
+        const badAt = runAt([usageRoot, "--assign", "--session-id", "bad@id"], tmpdir());
+        c.eq(badAt.status, 2, "③--session-id 含 @ → 形态非法退出码 2（@ 是 assignedBy 分段符）", detail(badAt));
+        const noValue = runAt([usageRoot, "--assign", "--session-id"], tmpdir());
+        c.eq(noValue.status, 2, "③--session-id 缺值 → 用法错误退出码 2", detail(noValue));
+        c.ok(!isDir(join(usageRoot, ".zcode")), "③用法错误零写入（未创建 .zcode/）");
+        const help = runAt(["--help"], tmpdir());
+        c.eq(help.status, 0, "③--help 退出码 0");
+        c.inc(String(help.stdout ?? ""), "--session-id", "③帮助文档记录 --session-id（assignedBy 留痕入口）");
+      } finally {
+        removeRoot(usageRoot);
+      }
+    },
+  },
+);
+
+scenario("133", "#133：board.json 四段索引派生（frontier/active/blocked/recent；AD-11③ 编译器唯一所有者、UI/hook 只读消费）——混合态/空板/零 attention 三夹具、段间对偶、recent 新→旧 top-N", {
+  build(root) {
+    // 夹具几何（锚点）：混合态 710-718——待办（无依赖/依赖未解除/依赖已解除）、已完成、执行中、审核中、
+    // 外部阻塞、悬空依赖六形态；每卡段位/状态由下方断言的「锚点」组先行证实（后续断言以此为准）。
+    const rel = ".zcode/plans/plan-133-index.md";
+    w(
+      root,
+      rel,
+      [
+        "# 索引夹具（混合态）",
+        "<!-- zcode-board: no=701 -->",
+        "",
+        "- [ ] 1. 甲卡（无依赖待办） <!-- zcode-board: no=710 -->",
+        "- [ ] 2. 乙卡（依赖未解除） <!-- zcode-board: no=711 -->",
+        "  > blocked-by: 710 —— 依赖甲卡落地",
+        "- [ ] 3. 丙卡（依赖已解除） <!-- zcode-board: no=712 -->",
+        "  > blocked-by: 713 —— 依赖丁卡（已完成）",
+        "- [x] 4. 丁卡（已完成前置） <!-- zcode-board: no=713 -->",
+        "- [ ] 5. 戊卡（执行中） <!-- zcode-board: no=714 -->",
+        "- [ ] 6. 己卡（审核中） <!-- zcode-board: no=715 -->",
+        "- [ ] 7. 庚卡（外部阻塞） <!-- zcode-board: no=716 -->",
+        "  > blocked: 等外部供应商回执（夹具）",
+        "- [ ] 8. 辛卡（悬空依赖） <!-- zcode-board: no=717 -->",
+        "  > blocked-by: 999 —— 悬空目标（不在板上）",
+        "- [ ] 9. 壬卡（无依赖待办） <!-- zcode-board: no=718 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 718,
+          entries: [
+            { no: 701, kind: "plan", file: rel, title: "索引夹具（混合态）", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "IDX1" },
+            ...[
+              [710, "甲卡（无依赖待办）"],
+              [711, "乙卡（依赖未解除）"],
+              [712, "丙卡（依赖已解除）"],
+              [713, "丁卡（已完成前置）"],
+              [714, "戊卡（执行中）"],
+              [715, "己卡（审核中）"],
+              [716, "庚卡（外部阻塞）"],
+              [717, "辛卡（悬空依赖）"],
+              [718, "壬卡（无依赖待办）"],
+            ].map(([no, title]) => ({ no, kind: "task", file: rel, title, assignedAt: "2026-10-01T00:00:00+08:00" })),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    // runs（活动面真值）：同刻两条（tie 按追加序）；一条多卡 run（712/713）；一条离板卡 run（999 不进 recent）。
+    seedRuns(root, [
+      { runId: "run-133-01", role: "implementer", at: "2026-10-10T09:00:00+08:00", result: "partial", cards: [714], breakpoint: { stoppedAt: 714, next: "补 updater 单测后重新验证" } },
+      { runId: "run-133-02", role: "code-reviewer", at: "2026-10-10T10:00:00+08:00", result: "partial", cards: [715], breakpoint: { stoppedAt: 715, next: "等类型修正后复核" } },
+      { runId: "run-133-03", role: "implementer", at: "2026-10-10T10:00:00+08:00", result: "done", cards: [711] },
+      { runId: "run-133-04", role: "implementer", at: "2026-10-10T11:00:00+08:00", result: "done", cards: [710] },
+      { runId: "run-133-05", role: "integrator", at: "2026-10-10T12:00:00+08:00", result: "done", cards: [712, 713] },
+      { runId: "run-133-06", role: "implementer", at: "2026-10-10T13:00:00+08:00", result: "done", cards: [999] },
+    ]);
+  },
+  assert(c, ctx) {
+    const { board, run, root } = ctx;
+    const feature = featureByTitle(board, "索引夹具（混合态）");
+    const card = (no) => {
+      let hit = null;
+      walkNodes(board.features, (n) => {
+        if (n.no === no) hit = n;
+      });
+      return hit;
+    };
+
+    // ---- 0. 锚点守卫：夹具几何（段位/状态/阻塞项）——后续四段断言全部以此为准（几何漂移必先咬此处）
+    c.eq(feature?.no, 701, "锚点：夹具特性 701 上板");
+    c.eq({ no: 710, stage: card(710)?.stage, status: card(710)?.status }, { no: 710, stage: "待办", status: "pending" }, "锚点：710 无依赖待办卡");
+    c.eq({ no: 711, stage: card(711)?.stage, status: card(711)?.status }, { no: 711, stage: "待办", status: "pending" }, "锚点：711 待办卡（依赖未解除）");
+    c.eq({ no: 712, stage: card(712)?.stage, status: card(712)?.status }, { no: 712, stage: "待办", status: "pending" }, "锚点：712 待办卡（依赖已解除）");
+    c.eq({ no: 713, stage: card(713)?.stage, status: card(713)?.status }, { no: 713, stage: "已完成", status: "completed" }, "锚点：713 已完成卡（依赖目标终态）");
+    c.eq({ no: 714, stage: card(714)?.stage }, { no: 714, stage: "执行中" }, "锚点：714 执行中卡（implementer partial run）");
+    c.eq({ no: 715, stage: card(715)?.stage }, { no: 715, stage: "审核中" }, "锚点：715 审核中卡（code-reviewer partial run）");
+    c.eq({ no: 716, stage: card(716)?.stage }, { no: 716, stage: "待办" }, "锚点：716 待办卡（外部阻塞）");
+    c.eq({ no: 717, stage: card(717)?.stage }, { no: 717, stage: "待办" }, "锚点：717 待办卡（悬空依赖）");
+    c.eq({ no: 718, stage: card(718)?.stage }, { no: 718, stage: "待办" }, "锚点：718 无依赖待办卡");
+    c.eq(card(711)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", 710]], "锚点：711 依赖阻塞项 blockedBy=710");
+    c.eq(card(712)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", 713]], "锚点：712 依赖阻塞项 blockedBy=713（目标已完成）");
+    c.eq(card(716)?.blockers?.map((b) => b.kind), ["external"], "锚点：716 外部阻塞项");
+    c.eq(card(717)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", null]], "锚点：717 依赖阻塞项（目标 999 不在板上 → blockedBy 缺省，§12）");
+    c.eq(card(710)?.nextAssignee, "test-verifier", "锚点：710 nextAssignee 顺延（implementer 已有 done 证据）");
+    c.eq((board?.diagnostics ?? []).length, 2, "锚点：诊断恰 2 条（999 两处引用点名：blocked-by 悬空 + run 引号；零额外噪声）", show(board?.diagnostics));
+
+    // ---- 1. frontier[]：可执行前沿＝段位待办且依赖全终态/无依赖（板序；rank 1..n）
+    c.eq(
+      board?.frontier,
+      [
+        { rank: 1, no: 710, title: "甲卡（无依赖待办）", stage: "待办", nextAssignee: "test-verifier", resolvedDeps: [] },
+        { rank: 2, no: 712, title: "丙卡（依赖已解除）", stage: "待办", nextAssignee: "implementer", resolvedDeps: [713] },
+        { rank: 3, no: 718, title: "壬卡（无依赖待办）", stage: "待办", nextAssignee: "implementer", resolvedDeps: [] },
+      ],
+      "frontier[] = 待办卡中依赖全终态/无依赖者（板序 + rank；resolvedDeps 记已解除依赖、nextAssignee 记接手位）",
+    );
+
+    // ---- 1b. 同值断言（段内字段 ↔ 板面节点字段同源，禁二份）：逐条对照 no/title/stage/nextAssignee
+    const frontierList = board?.frontier ?? [];
+    const frontierSame = frontierList.length > 0 && frontierList.every((e) => {
+      const n = card(e.no);
+      return n != null && e.title === n.title && e.stage === n.stage && e.nextAssignee === (n.nextAssignee ?? null);
+    });
+    c.ok(frontierSame, "frontier 逐条字段与板面节点同值（同一事实源，不重算；空集不通过）");
+
+    // ---- 1c. board.md 不承载四段（C 线为 board.json 消费面；board.md 渲染面不触）
+    c.ok(!(run?.md ?? "").includes("frontier"), "board.md 不出现 frontier 段（四段为 board.json 追加键）");
+
+    // ---- 2. active[]：在途活跃卡（执行中/审核中；五槽「运行/待收口」同源，以 stage 判别）——板序
+    c.eq(
+      board?.active,
+      [
+        {
+          no: 714,
+          title: "戊卡（执行中）",
+          stage: "执行中",
+          currentAssignee: "implementer",
+          activeRun: { role: "implementer", at: "2026-10-10T09:00:00+08:00" },
+          nextAssignee: "implementer",
+        },
+        {
+          no: 715,
+          title: "己卡（审核中）",
+          stage: "审核中",
+          currentAssignee: "code-reviewer",
+          activeRun: { role: "code-reviewer", at: "2026-10-10T10:00:00+08:00" },
+          nextAssignee: "implementer",
+        },
+      ],
+      "active[] = 在途活跃卡（执行中/审核中段位；currentAssignee/activeRun/nextAssignee 板面同值）",
+    );
+    const activeNos = (board?.active ?? []).map((e) => e.no);
+    c.ok(activeNos.includes(714) && activeNos.includes(715), "active[] 覆盖执行中与审核中两段位（五槽待收口有同源数据）");
+    c.ok(!activeNos.includes(710) && !activeNos.includes(713), "active[] 不收待办/已完成卡（选取域 = 在途两段位）");
+
+    // ---- 3. blocked[]：非终态卡的未解除阻塞项（逐项一行、归因完整：kind/targetId/summary）
+    c.eq(
+      board?.blocked,
+      [
+        { no: 711, title: "乙卡（依赖未解除）", stage: "待办", blockerKind: "dependency", targetId: 710, summary: "依赖甲卡落地" },
+        { no: 716, title: "庚卡（外部阻塞）", stage: "待办", blockerKind: "external", targetId: null, summary: "等外部供应商回执（夹具）" },
+        { no: 717, title: "辛卡（悬空依赖）", stage: "待办", blockerKind: "dependency", targetId: null, summary: "悬空目标（不在板上）" },
+      ],
+      "blocked[] = 非终态卡的未解除阻塞项（逐项一行；targetId 缺号记 null——不猜）",
+    );
+    const blockedNos = (board?.blocked ?? []).map((e) => e.no);
+    c.ok(!blockedNos.includes(712), "blocked[] 不收依赖已解除卡（712 依赖 713 已完成 → 依赖解除）");
+    c.ok(!blockedNos.includes(713), "blocked[] 不收终态卡（已完成不因历史阻塞项入段）");
+
+    // ---- 3b. 段间对偶（同一判据两面）：待办卡 ∈ frontier ⟺ 不在 blocked；选取域两段不重不漏
+    const todoNos = [];
+    walkNodes(board.features, (n) => {
+      if (n.stage === "待办" && Number.isInteger(n.no)) todoNos.push(n.no);
+    });
+    const frontierNos = frontierList.map((e) => e.no);
+    const blockedTodoNos = (board?.blocked ?? []).filter((e) => e.stage === "待办").map((e) => e.no);
+    c.eq(
+      [...frontierNos, ...blockedTodoNos].sort((a, b) => a - b),
+      [...todoNos].sort((a, b) => a - b),
+      "待办卡全集 = frontier ∪ blocked(待办) 且不重不漏（段间对偶：同一判据的肯定/否定两面）",
+    );
+
+    // ---- 3c. 引用位不变量：blocked 的 targetId ∈ 板上活号 ∪ {null}（缺号不猜、不造引用）
+    const liveNos = new Set();
+    walkNodes(board.features, (n) => {
+      if (Number.isInteger(n.no)) liveNos.add(n.no);
+    });
+    c.ok(
+      (board?.blocked ?? []).every((e) => e.targetId === null || liveNos.has(e.targetId)),
+      "blocked[] 的 targetId ∈ 板上活号 ∪ {null}（引用位不变量；缺号不猜）",
+    );
+
+    // ---- 4. recent[]：runs 事件新→旧（同刻按追加序），每 (run × 卡) 一行；离板引用不进活动面
+    c.eq(
+      board?.recent,
+      [
+        { no: 712, title: "丙卡（依赖已解除）", at: "2026-10-10T12:00:00+08:00", role: "integrator", result: "done", stoppedAt: null, next: null },
+        { no: 713, title: "丁卡（已完成前置）", at: "2026-10-10T12:00:00+08:00", role: "integrator", result: "done", stoppedAt: null, next: null },
+        { no: 710, title: "甲卡（无依赖待办）", at: "2026-10-10T11:00:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null },
+        { no: 715, title: "己卡（审核中）", at: "2026-10-10T10:00:00+08:00", role: "code-reviewer", result: "partial", stoppedAt: 715, next: "等类型修正后复核" },
+        { no: 711, title: "乙卡（依赖未解除）", at: "2026-10-10T10:00:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null },
+        { no: 714, title: "戊卡（执行中）", at: "2026-10-10T09:00:00+08:00", role: "implementer", result: "partial", stoppedAt: 714, next: "补 updater 单测后重新验证" },
+      ],
+      "recent[] = runs 新→旧（同刻按追加序）+ 每 (run × 卡) 一行（多卡 run 各成一行）；不带 runId（勘误 4）",
+    );
+    c.ok(
+      (board?.recent ?? []).every((e) => !Object.hasOwn(e, "runId")),
+      "recent[] 条目不带 runId（板面纪律「单一事件单一家」勘误 4；事件身份由 no/at/role 承载）",
+    );
+    c.ok(!JSON.stringify(board?.recent ?? []).includes("999"), "离板卡 run（999）不进 recent（编译侧已 diagnostics 点名）");
+    const recentTimes = (board?.recent ?? []).map((e) => Date.parse(e.at));
+    c.ok(
+      recentTimes.length > 0 && recentTimes.every((t, i) => i === 0 || recentTimes[i - 1] >= t),
+      "recent[] 按 at 非升序（新→旧；同刻保持追加序）",
+    );
+
+    // ---- 5. schema 放行：四段追加键在 board.schema.json 根级声明（追加键不 bump 版本位）+ 段内形态必咬
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const rootProps = Object.keys(schema.properties ?? {});
+    c.ok(
+      ["frontier", "active", "blocked", "recent"].every((k) => rootProps.includes(k)),
+      "schema 根级声明四段追加键（frontier/active/blocked/recent）",
+      show(rootProps),
+    );
+    c.eq(schema["x-schemaVersion"], "2.4", "四段为追加键：schema 版本位不 bump（仍 2.4）");
+    c.eq(schema["x-contractVersion"], "2.5", "契约版本位不 bump（仍 2.5）");
+    c.eq(validateSchemaValue(schema, board), [], "含四段板过 board.schema.json 子集校验（段内字段形态放行）");
+    const tampered = JSON.parse(JSON.stringify(board ?? {}));
+    if (tampered.frontier?.[0]) tampered.frontier[0].rank = "一";
+    c.ok(
+      validateSchemaValue(schema, tampered).some((e) => e.includes("frontier[0].rank")),
+      "反例：rank 非整数被 schema 拒绝（段内形态断言必咬）",
+      show(validateSchemaValue(schema, tampered)),
+    );
+    const segDecisions = (schema["x-decisions"] ?? []).filter((d) => d.includes("四段索引"));
+    c.ok(segDecisions.length >= 1, "x-decisions 载四段索引派生条（口径成文的对照面非空）");
+
+    // ---- 6. --check 零噪声：四段派生不新增失败项（悬空引用仅提示级诊断）
+    const check = checkProject(root);
+    c.eq((check.failures ?? []).length, 0, "--check 零失败（四段派生零噪声；悬空引用仅提示级）", show(check.failures));
+
+    // ---- 7. 空板探针：四段恒写出（空段形态）——零归属零噪声
+    const probeBoard = (probeRoot) => {
+      const res = spawnSync(process.execPath, [COMPILER, probeRoot], { encoding: "utf8" });
+      const loaded = readJsonFile(join(probeRoot, ".zcode/board/board.json"));
+      return { res, board: loaded.ok ? loaded.value : null };
+    };
+    const emptyRoot = newRoot("s133-empty");
+    const emptyProbe = probeBoard(emptyRoot);
+    c.eq(emptyProbe.res.status, 0, "空板探针：编译退出码 0");
+    c.eq(
+      { frontier: emptyProbe.board?.frontier, active: emptyProbe.board?.active, blocked: emptyProbe.board?.blocked, recent: emptyProbe.board?.recent },
+      { frontier: [], active: [], blocked: [], recent: [] },
+      "空板：四段恒写出且为空数组（空段形态——消费面无需存在性判空）",
+    );
+    c.eq(validateSchemaValue(schema, emptyProbe.board), [], "空板（四段空数组）过 schema 子集校验");
+
+    // ---- 8. 零 attention 探针：无缺口板四段照常（frontier 照常 / 其余空段 / attentionSummary 全零）
+    const zeroRoot = newRoot("s133-zero");
+    const zeroRel = ".zcode/plans/plan-133-zero.md";
+    w(zeroRoot, zeroRel, ["# 零缺口夹具", "<!-- zcode-board: no=800 -->", "", "- [ ] 1. 只有一张待办卡（草案） <!-- zcode-board: no=801 -->", ""].join("\n"));
+    w(
+      zeroRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 801,
+          entries: [
+            { no: 800, kind: "plan", file: zeroRel, title: "零缺口夹具", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 801, kind: "task", file: zeroRel, title: "只有一张待办卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const zeroProbe = probeBoard(zeroRoot);
+    c.eq(zeroProbe.res.status, 0, "零 attention 探针：编译退出码 0");
+    c.eq(
+      zeroProbe.board?.attentionSummary,
+      { interviewedNotArranged: 0, arrangedNotExpanded: 0, interruptedResume: 0, unmergedWorktree: 0 },
+      "零 attention 探针：缺口计数全零",
+    );
+    c.eq(
+      zeroProbe.board?.frontier,
+      [{ rank: 1, no: 801, title: "只有一张待办卡（草案）", stage: "待办", nextAssignee: "implementer", resolvedDeps: [] }],
+      "零 attention 探针：frontier 照常（缺口为零不压制前沿）",
+    );
+    c.eq(
+      { active: zeroProbe.board?.active, blocked: zeroProbe.board?.blocked, recent: zeroProbe.board?.recent },
+      { active: [], blocked: [], recent: [] },
+      "零 attention 探针：三段空数组（空段形态仍在）",
+    );
+
+    // ---- 9. recent top-N 探针：12 条 run → 只取最近 10 条（N 成文：10，最早 2 条剔除）
+    const limitRoot = newRoot("s133-recent");
+    const limitRel = ".zcode/plans/plan-133-recent.md";
+    w(limitRoot, limitRel, ["# 活动面夹具", "<!-- zcode-board: no=900 -->", "", "- [ ] 1. 活动卡（草案） <!-- zcode-board: no=901 -->", ""].join("\n"));
+    w(
+      limitRoot,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 901,
+          entries: [
+            { no: 900, kind: "plan", file: limitRel, title: "活动面夹具", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 901, kind: "task", file: limitRel, title: "活动卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    seedRuns(
+      limitRoot,
+      Array.from({ length: 12 }, (_, i) => ({
+        runId: `run-133-l${String(i + 1).padStart(2, "0")}`,
+        role: "implementer",
+        at: `2026-10-01T00:${String(i).padStart(2, "0")}:00+08:00`,
+        result: "done",
+        cards: [901],
+      })),
+    );
+    const limitProbe = probeBoard(limitRoot);
+    c.eq(limitProbe.res.status, 0, "recent top-N 探针：编译退出码 0");
+    c.eq(limitProbe.board?.recent?.length, 10, "recent[] 上限 N=10（12 条 run 截取最近 10 条）");
+    c.eq(
+      limitProbe.board?.recent?.[0],
+      { no: 901, title: "活动卡（草案）", at: "2026-10-01T00:11:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null },
+      "recent 首条 = 最新 run",
+    );
+    c.eq(limitProbe.board?.recent?.[9]?.at, "2026-10-01T00:02:00+08:00", "recent 末条 = 第 10 新（00:02）");
+    const limitAts = (limitProbe.board?.recent ?? []).map((e) => e.at);
+    c.ok(
+      !limitAts.includes("2026-10-01T00:00:00+08:00") && !limitAts.includes("2026-10-01T00:01:00+08:00"),
+      "最早 2 条（00:00/00:01）被截断剔除",
+    );
+  },
+});
+
+// ---- 场景 134（C2-2/#134）：派生四段不变量（frontier/blocked/recent/段间对偶）——板面重算对照
+
+/**
+ * 夹具几何（锚点）：混合态 741-748——待办（无依赖/依赖已解除/依赖未解除）、已完成、执行中、审核中、
+ * 外部阻塞、悬空依赖六形态；每卡段位/阻塞项由下方「锚点」组先行证实（后续不变量断言以此为准）。
+ * 反例面 = 手工改 board.json（磁盘板面 + --check 端到端）：派生四段错位必咬（i1-i4 逐条点名）。
+ */
+scenario("134", "#134：派生不变量断言（frontier 复算一致 / blocked 归因完整 / recent 排序截断 / 段间对偶）——手工改板必咬、绿侧零噪声", {
+  build(root) {
+    const rel = ".zcode/plans/plan-134-invariants.md";
+    w(
+      root,
+      rel,
+      [
+        "# 派生不变量夹具（混合态）",
+        "<!-- zcode-board: no=740 -->",
+        "",
+        "- [ ] 1. 甲卡（无依赖待办） <!-- zcode-board: no=741 -->",
+        "- [ ] 2. 乙卡（依赖已解除） <!-- zcode-board: no=742 -->",
+        "  > blocked-by: 744 —— 依赖丁卡（已完成）",
+        "- [ ] 3. 丙卡（依赖未解除） <!-- zcode-board: no=743 -->",
+        "  > blocked-by: 745 —— 依赖戊卡（执行中）",
+        "- [x] 4. 丁卡（已完成前置） <!-- zcode-board: no=744 -->",
+        "- [ ] 5. 戊卡（执行中） <!-- zcode-board: no=745 -->",
+        "- [ ] 6. 己卡（审核中） <!-- zcode-board: no=746 -->",
+        "- [ ] 7. 庚卡（外部阻塞） <!-- zcode-board: no=747 -->",
+        "  > blocked: 等外部供应商回执（夹具 134）",
+        "- [ ] 8. 辛卡（悬空依赖） <!-- zcode-board: no=748 -->",
+        "  > blocked-by: 999 —— 悬空目标（不在板上，不造引用）",
+        "- [ ] 9. 壬卡（双阻塞项） <!-- zcode-board: no=749 -->",
+        "  > blocked-by: 745 —— 依赖戊卡（执行中）",
+        "  > blocked: 等法务回执（夹具 134 第二项）",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 749,
+          entries: [
+            { no: 740, kind: "plan", file: rel, title: "派生不变量夹具（混合态）", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "DIV1" },
+            ...[
+              [741, "甲卡（无依赖待办）"],
+              [742, "乙卡（依赖已解除）"],
+              [743, "丙卡（依赖未解除）"],
+              [744, "丁卡（已完成前置）"],
+              [745, "戊卡（执行中）"],
+              [746, "己卡（审核中）"],
+              [747, "庚卡（外部阻塞）"],
+              [748, "辛卡（悬空依赖）"],
+              [749, "壬卡（双阻塞项）"],
+            ].map(([no, title]) => ({ no, kind: "task", file: rel, title, assignedAt: "2026-10-01T00:00:00+08:00" })),
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    // runs（活动面真值）：一条多卡 run（744/741）；离板卡 run（998 不进 recent）。
+    seedRuns(root, [
+      { runId: "run-134-01", role: "implementer", at: "2026-10-10T09:00:00+08:00", result: "partial", cards: [745], breakpoint: { stoppedAt: 745, next: "补夹具断言后重跑" } },
+      { runId: "run-134-02", role: "code-reviewer", at: "2026-10-10T10:00:00+08:00", result: "partial", cards: [746], breakpoint: { stoppedAt: 746, next: "等类型修正后复核" } },
+      { runId: "run-134-03", role: "integrator", at: "2026-10-10T11:00:00+08:00", result: "done", cards: [744, 741] },
+      { runId: "run-134-04", role: "implementer", at: "2026-10-10T12:00:00+08:00", result: "done", cards: [998] },
+    ]);
+  },
+  assert(c, ctx) {
+    const { board, root } = ctx;
+    const boardRel = ".zcode/board/board.json";
+    const card = (no) => {
+      let hit = null;
+      walkNodes(board.features, (n) => {
+        if (n.no === no) hit = n;
+      });
+      return hit;
+    };
+
+    // ---- 0. 锚点守卫：夹具几何（段位/状态/阻塞项/四段落板）——后续不变量断言全部以此为准
+    c.eq(featureByTitle(board, "派生不变量夹具（混合态）")?.no, 740, "锚点：夹具特性 740 上板");
+    c.eq({ no: 741, stage: card(741)?.stage, status: card(741)?.status }, { no: 741, stage: "待办", status: "pending" }, "锚点：741 无依赖待办卡");
+    c.eq({ no: 742, stage: card(742)?.stage, status: card(742)?.status }, { no: 742, stage: "待办", status: "pending" }, "锚点：742 待办卡（依赖 744 已完成 → 已解除）");
+    c.eq({ no: 743, stage: card(743)?.stage, status: card(743)?.status }, { no: 743, stage: "待办", status: "pending" }, "锚点：743 待办卡（依赖 745 执行中 → 未解除）");
+    c.eq({ no: 744, stage: card(744)?.stage, status: card(744)?.status }, { no: 744, stage: "已完成", status: "completed" }, "锚点：744 已完成卡（依赖目标终态）");
+    c.eq(card(745)?.stage, "执行中", "锚点：745 执行中卡（implementer partial run）");
+    c.eq(card(746)?.stage, "审核中", "锚点：746 审核中卡（code-reviewer partial run）");
+    c.eq(card(747)?.stage, "待办", "锚点：747 待办卡（外部阻塞）");
+    c.eq(card(748)?.stage, "待办", "锚点：748 待办卡（悬空依赖）");
+    c.eq(card(749)?.stage, "待办", "锚点：749 待办卡（双阻塞项：依赖 + 外部）");
+    c.eq(card(742)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", 744]], "锚点：742 依赖阻塞项 blockedBy=744（目标已完成）");
+    c.eq(card(743)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", 745]], "锚点：743 依赖阻塞项 blockedBy=745（目标执行中）");
+    c.eq(card(747)?.blockers?.map((b) => b.kind), ["external"], "锚点：747 外部阻塞项");
+    c.eq(card(748)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]), [["dependency", null]], "锚点：748 依赖阻塞项（目标 999 不在板上 → blockedBy 缺省，§12）");
+    c.eq(
+      card(749)?.blockers?.map((b) => [b.kind, b.blockedBy ?? null]),
+      [["dependency", 745], ["external", null]],
+      "锚点：749 双阻塞项（依赖 745 + 外部，原文序）",
+    );
+    c.eq((board?.diagnostics ?? []).length, 2, "锚点：诊断恰 2 条（999 悬空 blocked-by + 998 离板 run 引用；零额外噪声）", show(board?.diagnostics));
+    c.eq((board?.frontier ?? []).map((e) => e.no), [741, 742], "锚点：frontier = 待办且无未解除阻塞（741/742；743/747/748/749 受阻不入）");
+    c.eq(
+      (board?.blocked ?? []).map((e) => [e.no, e.blockerKind, e.targetId, e.summary]),
+      [
+        [743, "dependency", 745, "依赖戊卡（执行中）"],
+        [747, "external", null, "等外部供应商回执（夹具 134）"],
+        [748, "dependency", null, "悬空目标（不在板上，不造引用）"],
+        [749, "dependency", 745, "依赖戊卡（执行中）"],
+        [749, "external", null, "等法务回执（夹具 134 第二项）"],
+      ],
+      "锚点：blocked = 非终态卡的未解除阻塞项（逐项一行，一卡多项出多行，板序 + 卡内原文序）",
+    );
+    c.eq((board?.recent ?? []).map((e) => [e.no, e.at]), [[744, "2026-10-10T11:00:00+08:00"], [741, "2026-10-10T11:00:00+08:00"], [746, "2026-10-10T10:00:00+08:00"], [745, "2026-10-10T09:00:00+08:00"]], "锚点：recent = 新→旧（多卡 run 各成一行；离板 998 不进）");
+
+    // ---- 1. 绿侧：编译器产物自洽 → --check 零失败（事实互证含派生四段不变量；零噪声）
+    const clean = checkProject(root);
+    c.eq((clean.failures ?? []).length, 0, "绿侧：派生四段与板面复算一致 → --check 0 失败（零噪声）", show((clean.failures ?? []).map((f) => `[${f.category}] ${f.message}`)));
+    c.eq(factFailuresOf(clean), [], "绿侧：事实互证零违例（派生不变量不产生恒名词条）", show(factFailuresOf(clean)));
+
+    // ---- 2. 手工改板（磁盘板面）必咬：frontier 注入受阻卡 → i1 多出行 + i4 两面自相矛盾
+    const originalBoard = readFileSync(join(root, boardRel), "utf8");
+    const withBoard = (mutate) => {
+      const b = JSON.parse(originalBoard);
+      mutate(b);
+      w(root, boardRel, `${JSON.stringify(b, null, 2)}\n`);
+      return checkProject(root);
+    };
+    const factOf = (res, needle) => (res?.failures ?? []).filter((f) => f.category === "事实互证").map((f) => f.message).filter((m) => m.includes(needle));
+    const injected = withBoard((b) => {
+      b.frontier.push({ rank: b.frontier.length + 1, no: 743, title: "丙卡（依赖未解除）", stage: "待办", nextAssignee: "implementer", resolvedDeps: [] });
+    });
+    c.eq(injected.ok, false, "手工注入受阻卡入 frontier：--check 非零退出（失败级必咬）");
+    const injI1 = factOf(injected, "不变量 i1");
+    c.eq(injI1.length, 1, "注入受阻卡：i1 恰 1 项点名（多出行）", show(factFailuresOf(injected)));
+    c.inc(injI1[0] ?? "", "frontier[2]", "i1 点名段内位点 frontier[2]");
+    c.inc(injI1[0] ?? "", "#743", "i1 点名稳定号 #743");
+    c.inc(injI1[0] ?? "", "多出行", "i1 判定为多出行（板面复算无此来源：受阻卡不可执行）");
+    const injI4 = factOf(injected, "不变量 i4");
+    c.eq(injI4.length, 1, "同一注入触发段间对偶必咬恰 1 项（#743 两面同时命中）", show(factFailuresOf(injected)));
+    c.inc(injI4[0] ?? "", "#743", "i4 点名稳定号 #743");
+    c.inc(injI4[0] ?? "", "同时出现在", "i4 点名「同时出现在 frontier 与 blocked」的段间矛盾");
+    w(root, boardRel, originalBoard);
+    c.eq(factFailuresOf(checkProject(root)), [], "手改复原后零事实互证差异（咬合自清；--check 只读未写板）", show(factFailuresOf(checkProject(root))));
+
+    // ---- 3. 手工改板必咬：blocked 漏行/错归因/多出行（i3 归因完整）与段间对偶空洞（i4）
+    const dropped = withBoard((b) => {
+      b.blocked = b.blocked.filter((row) => !(row.no === 749 && row.blockerKind === "external"));
+    });
+    const dropI3 = factOf(dropped, "不变量 i3");
+    c.eq(dropI3.length, 1, "删 749 第二项阻塞行：i3 恰 1 项点名（缺行——一卡多项出多行，漏项必咬）", show(factFailuresOf(dropped)));
+    c.inc(dropI3[0] ?? "", "应然序第 5 行", "i3 点名应然序位（缺行无实然位点；应然序第 5 行 = 749 的第二项）");
+    c.inc(dropI3[0] ?? "", "#749", "i3 点名稳定号 #749");
+    c.inc(dropI3[0] ?? "", "缺行", "i3 判定为缺行（归因完整：每个未解除阻塞项恰一行）");
+    c.inc(dropI3[0] ?? "", "等法务回执", "i3 给出应然归因（summary 原文）");
+
+    const misattributed = withBoard((b) => {
+      b.blocked.find((row) => row.no === 743).targetId = 741;
+    });
+    const misI3 = factOf(misattributed, "不变量 i3");
+    c.eq(misI3.length, 1, "改 743 归因目标（745→741）：i3 恰 1 项点名（字段错位）", show(factFailuresOf(misattributed)));
+    c.inc(misI3[0] ?? "", "blocked[0]", "i3 点名段内位点 blocked[0]");
+    c.inc(misI3[0] ?? "", '"targetId":741', "i3 给出实际值（错位目标 741）");
+    c.inc(misI3[0] ?? "", '"targetId":745', "i3 给出应然值（原文依赖目标 745）");
+
+    const extraRow = withBoard((b) => {
+      b.blocked.push({ no: 741, title: "甲卡（无依赖待办）", stage: "待办", blockerKind: "external", targetId: null, summary: "伪造归因" });
+    });
+    const extraI3 = factOf(extraRow, "不变量 i3");
+    c.eq(extraI3.length, 1, "给无阻塞卡伪造 blocked 行：i3 恰 1 项点名（多出行）", show(factFailuresOf(extraRow)));
+    c.inc(extraI3[0] ?? "", "blocked[5]", "i3 点名段内位点 blocked[5]");
+    c.inc(extraI3[0] ?? "", "#741", "i3 点名稳定号 #741");
+    c.inc(extraI3[0] ?? "", "多出行", "i3 判定为多出行（板面无该未解除阻塞项）");
+
+    const hole = withBoard((b) => {
+      b.blocked = b.blocked.filter((row) => row.no !== 747);
+    });
+    const holeI4 = factOf(hole, "不变量 i4");
+    c.eq(holeI4.length, 1, "删 747 阻塞行（待办卡从两段同时消失）：i4 恰 1 项点名（派生漏归因静默空洞）", show(factFailuresOf(hole)));
+    c.inc(holeI4[0] ?? "", "#747", "i4 点名稳定号 #747");
+    c.inc(holeI4[0] ?? "", "既不在 frontier 也不在 blocked", "i4 点名「两面皆无」形态（待办卡既不可执行又无阻塞归因）");
+    c.ok(
+      factOf(hole, "不变量 i3").length === 1,
+      "同一漏行在 i3 面亦有归因缺行点名（两面同源、各按自身判据点名）",
+      show(factFailuresOf(hole)),
+    );
+    w(root, boardRel, originalBoard);
+    c.eq(factFailuresOf(checkProject(root)), [], "blocked 探针复原后零事实互证差异（咬合自清）", show(factFailuresOf(checkProject(root))));
+
+    // ---- 4. 手工改板必咬：recent 排序/截断/离板引用/同值（i2）
+    const reordered = withBoard((b) => {
+      b.recent.unshift(b.recent.pop()); // 最旧一行（09:00）置顶 → 恰在位点 1 破坏新→旧
+    });
+    const reorderI2 = factOf(reordered, "不变量 i2");
+    c.eq(reorderI2.length, 1, "recent 最旧行置顶（09:00 → 首位）：i2 恰 1 项点名（at 非升序）", show(factFailuresOf(reordered)));
+    c.inc(reorderI2[0] ?? "", "recent[1]", "i2 点名段内位点 recent[1]（乱序起点）");
+    c.inc(reorderI2[0] ?? "", "2026-10-10T11:00:00+08:00", "i2 给出实际 at（新→旧被破坏处）");
+
+    const overLimit = withBoard((b) => {
+      while (b.recent.length < 11) b.recent.push({ ...b.recent[b.recent.length - 1] });
+    });
+    const limitI2 = factOf(overLimit, "不变量 i2");
+    c.eq(limitI2.length, 1, "recent 补足 11 条（超上限）：i2 恰 1 项点名（截断缺失必咬）", show(factFailuresOf(overLimit)));
+    c.inc(limitI2[0] ?? "", "11", "i2 给出实际条数（11）");
+    c.inc(limitI2[0] ?? "", "10", "i2 给出上限（N=10 成文）");
+
+    const offBoard = withBoard((b) => {
+      b.recent.push({ no: 998, title: "离板卡", at: "2026-10-10T08:00:00+08:00", role: "implementer", result: "done", stoppedAt: null, next: null });
+    });
+    const offI2 = factOf(offBoard, "不变量 i2");
+    c.eq(offI2.length, 1, "recent 混入离板卡行：i2 恰 1 项点名（离板引用不进活动面）", show(factFailuresOf(offBoard)));
+    c.inc(offI2[0] ?? "", "recent[4]", "i2 点名段内位点 recent[4]");
+    c.inc(offI2[0] ?? "", "#998", "i2 点名离板卡号 #998");
+
+    const titleDrift = withBoard((b) => {
+      b.recent[0].title = "被改名的卡";
+    });
+    const driftI2 = factOf(titleDrift, "不变量 i2");
+    c.eq(driftI2.length, 1, "recent 行 title 与板面节点失配：i2 恰 1 项点名（同值消费，禁二份口径）", show(factFailuresOf(titleDrift)));
+    c.inc(driftI2[0] ?? "", "#744", "i2 点名稳定号 #744");
+    c.inc(driftI2[0] ?? "", "被改名的卡", "i2 给出实际值（板面行 title）");
+    c.inc(driftI2[0] ?? "", "丁卡（已完成前置）", "i2 给出应然值（板面节点 title）");
+    w(root, boardRel, originalBoard);
+    c.eq(factFailuresOf(checkProject(root)), [], "recent 探针复原后零事实互证差异（咬合自清）", show(factFailuresOf(checkProject(root))));
+
+    // ---- 5. recent 截断探针（12 条 run → 恰 10 条）：截断回归（派生侧）在场景面必咬 + 不变量零噪声
+    const limitRoot = newRoot("s134-recent");
+    try {
+      const limitRel = ".zcode/plans/plan-134-recent.md";
+      w(limitRoot, limitRel, ["# 截断夹具", "<!-- zcode-board: no=760 -->", "", "- [ ] 1. 活动卡（草案） <!-- zcode-board: no=761 -->", ""].join("\n"));
+      w(
+        limitRoot,
+        ".zcode/board/registry.json",
+        `${JSON.stringify(
+          {
+            version: 1,
+            seq: 761,
+            entries: [
+              { no: 760, kind: "plan", file: limitRel, title: "截断夹具", assignedAt: "2026-10-01T00:00:00+08:00" },
+              { no: 761, kind: "task", file: limitRel, title: "活动卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      seedRuns(
+        limitRoot,
+        Array.from({ length: 12 }, (_, i) => ({
+          runId: `run-134-l${String(i + 1).padStart(2, "0")}`,
+          role: "implementer",
+          at: `2026-10-01T00:${String(i).padStart(2, "0")}:00+08:00`,
+          result: "done",
+          cards: [761],
+        })),
+      );
+      const limitCompile = runCompiler(limitRoot);
+      c.eq(limitCompile.code, 0, "截断探针：编译退出码 0");
+      c.eq(limitCompile.board?.recent?.length, 10, "截断探针：12 条 run → recent 恰 10 条（N=10 成文；最早 2 条剔除）");
+      c.eq(limitCompile.board?.recent?.[9]?.at, "2026-10-01T00:02:00+08:00", "截断探针：末条 = 第 10 新（00:02）");
+      const limitCheck = checkProject(limitRoot);
+      c.eq((limitCheck.failures ?? []).length, 0, "截断探针：--check 0 失败（i2 对合法截断零噪声）", show((limitCheck.failures ?? []).map((f) => `[${f.category}] ${f.message}`)));
+    } finally {
+      removeRoot(limitRoot);
+    }
+  },
+});
+
+// ---------------------------------------------------------------- D3-3（#155）计划稿特性子卡汇总三态并齐（schema 措辞 + 三态夹具）
+
+// ---- 场景 155（#155/D3-3；E2-15「汇总额的成文面零散」收口）：计划稿特性段位随子卡汇总的**三态口径**
+//      在 board.schema.json 与契约（§13.1 计划稿口径句 / §9 stage 对照行）及实现产物间同句并齐：
+//        ①全完成——全部子卡 completed → 已完成（stageRule 记「子卡汇总 N/M 全部 completed → 已完成」）；
+//        ②全取消——全部子卡 cancelled → 已取消（#66 终态优先于 roadmap 压制；与①对称）；
+//        ③其余（有卡非全完成/全取消）——按上表原推导 + stageRule 追加「 · 子卡汇总 N/M（契约 v2.3）」；
+//        零卡不追加汇总后缀（T5356r S-2：零卡无汇总可言）。
+//      夹具三态各一（同板：全完成/全取消/其余 + 零卡守卫），各自过 schema 子集校验与 --check；
+//      schema 文本守卫的字面值取产物文案（compile-board.mjs finalizeFeatureStage 的 stageRule 字面）
+//      与契约 §13.1/§9 成文——非本卡自造词；措辞并齐前第 3 组（②③④）必咬（红侧留档 evidence/T155/）。
+scenario("155", "#155：子卡汇总三态并齐——全完成/全取消/其余追加 N/M 三态各一夹具（过 schema 子集校验与 --check）；零卡不追加后缀；schema 汇总句与实现/契约同文案", {
+  build(root) {
+    const doneRel = ".zcode/plans/plan-155-all-completed.md";
+    w(
+      root,
+      doneRel,
+      [
+        "# 全完成稿（三态①）",
+        "<!-- zcode-board: no=551 -->",
+        "",
+        "- [x] 1. 甲卡（草案） <!-- zcode-board: no=552 -->",
+        "- [x] 2. 乙卡（草案） <!-- zcode-board: no=553 -->",
+        "",
+      ].join("\n"),
+    );
+    const cancelledRel = ".zcode/plans/plan-155-all-cancelled.md";
+    w(
+      root,
+      cancelledRel,
+      [
+        "# 全取消稿（三态②）",
+        "<!-- zcode-board: no=560 -->",
+        "",
+        "- [ ] 1. 取消甲（草案） <!-- zcode-board: no=561 -->",
+        "  > cancelled: 甲取消",
+        "- [ ] 2. 取消乙（草案） <!-- zcode-board: no=562 -->",
+        "  > cancelled: 乙取消",
+        "",
+      ].join("\n"),
+    );
+    const partialRel = ".zcode/plans/plan-155-partial.md";
+    w(
+      root,
+      partialRel,
+      [
+        "# 其余稿（三态③）",
+        "<!-- zcode-board: no=570 -->",
+        "",
+        "- [x] 1. 甲卡（草案） <!-- zcode-board: no=571 -->",
+        "- [ ] 2. 乙卡（草案） <!-- zcode-board: no=572 -->",
+        "",
+      ].join("\n"),
+    );
+    const zeroRel = ".zcode/plans/plan-155-zero-card.md";
+    w(
+      root,
+      zeroRel,
+      ["# 零卡稿（守卫：不追加后缀）", "<!-- zcode-board: no=580 -->", "", "正文（无可识别条目）。", ""].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 580,
+          entries: [
+            { no: 551, kind: "plan", file: doneRel, title: "全完成稿（三态①）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 552, kind: "task", file: doneRel, title: "甲卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 553, kind: "task", file: doneRel, title: "乙卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 560, kind: "plan", file: cancelledRel, title: "全取消稿（三态②）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 561, kind: "task", file: cancelledRel, title: "取消甲（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 562, kind: "task", file: cancelledRel, title: "取消乙（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 570, kind: "plan", file: partialRel, title: "其余稿（三态③）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 571, kind: "task", file: partialRel, title: "甲卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 572, kind: "task", file: partialRel, title: "乙卡（草案）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 580, kind: "plan", file: zeroRel, title: "零卡稿（守卫：不追加后缀）", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { board, root } = ctx;
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const stageDecision = (schema["x-decisions"] ?? []).find((d) => d.startsWith("stage/stageRule")) ?? "";
+
+    // ---- 1. 三态各一夹具（行为面；文案真值 = 契约 §13.1/§9 与产物口径字面，不借本卡新写文案复算）
+    const done = featureByTitle(board, "全完成稿（三态①）");
+    const cancelled = featureByTitle(board, "全取消稿（三态②）");
+    const partial = featureByTitle(board, "其余稿（三态③）");
+    const zeroCard = featureByTitle(board, "零卡稿（守卫：不追加后缀）");
+
+    c.eq(done?.stage, "已完成", "三态①全完成：全部子卡 completed（2/2）→ 段位已完成");
+    c.inc(
+      done?.stageRule ?? "",
+      "子卡汇总 2/2 全部 completed → 已完成",
+      "三态①：stageRule 记「子卡汇总 N/M 全部 completed → 已完成」（契约 §13.1 同句）",
+    );
+    c.eq(cancelled?.stage, "已取消", "三态②全取消：全部子卡 cancelled（2/2）→ 段位已取消（#66 终态优先）");
+    c.inc(
+      cancelled?.stageRule ?? "",
+      "子卡汇总 2/2 全部 cancelled → 已取消",
+      "三态②：stageRule 记「子卡汇总 N/M 全部 cancelled → 已取消」（与①对称）",
+    );
+    c.eq(cancelled?.status, "pending", "三态②：rollup 只改段位，特性 status 照旧派生（无勾选 → pending）");
+    c.eq(partial?.stage, "执行中", "三态③其余：非全完成/全取消（1/2）→ 按上表原推导（status=active → 执行中）");
+    c.inc(
+      partial?.stageRule ?? "",
+      "· 子卡汇总 1/2（契约 v2.3）",
+      "三态③：stageRule 原推导文案后追加「 · 子卡汇总 N/M（契约 v2.3）」（N=completed 计数）",
+    );
+    c.ok(!(partial?.stageRule ?? "").includes("全部"), "三态③：其余情形不写「全部 …」汇总判词", show(partial?.stageRule));
+    c.eq(zeroCard?.stage, "待设计", "零卡守卫：零卡且 arranged-not-expanded 缺口 → 待设计");
+    c.ok(
+      !(zeroCard?.stageRule ?? "").includes("子卡汇总"),
+      "零卡守卫：不追加汇总后缀（无汇总可言；T5356r S-2 不回退）",
+      show(zeroCard?.stageRule),
+    );
+
+    // ---- 2. 三态夹具过校验：schema 子集校验 + --check（用户「跑校验对三态夹具全通过」）
+    const schemaErrors = validateSchemaValue(schema, board);
+    c.eq(
+      schemaErrors,
+      [],
+      "三态各一同板夹具（全完成/全取消/其余/零卡）整体过 board.schema.json 子集校验（全零错误）",
+      show(schemaErrors.slice(0, 3)),
+    );
+    const check = checkProject(root);
+    c.ok(
+      check.ok,
+      "--check 通过（三态夹具零事实互证误报）",
+      show(check.failures.map((f) => `[${f.category}] ${f.message}`)),
+    );
+
+    // ---- 3. schema 汇总额成文三态并齐（E2-15；红侧：措辞并齐前本组必咬）——字面值取产物文案与契约 §13.1/§9
+    c.inc(stageDecision, "全部子卡 completed", "三态①：schema 计划稿汇总句在位（v2.3/#53 原句不回退）");
+    c.inc(
+      stageDecision,
+      "子卡汇总 N/M 全部 completed → 已完成",
+      "三态①：schema 成文全完成产物文案（与实现同句）",
+    );
+    c.inc(
+      stageDecision,
+      "子卡汇总 N/M 全部 cancelled → 已取消",
+      "三态②：schema 成文全取消 rollup 产物文案（#66，与①对称）",
+    );
+    c.inc(stageDecision, "· 子卡汇总 N/M（契约 v2.3）", "三态③：schema 成文其余情形追加后缀形态（与产物文案同句）");
+    c.inc(stageDecision, "零卡不追加", "零卡：schema 成文不追加后缀口径（T5356r S-2 不回退）");
+  },
+});
 
 // ---------------------------------------------------------------- 主流程
 

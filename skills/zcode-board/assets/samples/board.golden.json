@@ -17,6 +17,10 @@
     { "kind": "plan", "path": ".zcode/plans/plan-sess_66d1c0de-0000-4000-8000-000000000051.md" },
     { "kind": "plan", "path": "docs/plans/plan-payment-split.md" }
   ],
+  "epics": [
+    { "code": "KANB", "title": "看板系统（示例）", "status": "active" },
+    { "code": "CNCL", "title": "取消史诗（示例）", "status": "cancelled" }
+  ],
   "features": [
     {
       "id": "spec:preview-channel",
@@ -226,6 +230,8 @@
       "no": 11,
       "label": "11",
       "planCode": "PL74",
+      "epic": "epic:KANB",
+      "phase": 1,
       "kind": "plan",
       "title": "导出报表（计划）",
       "details": "访谈确认导出三格式与取消范围；细则待拆解。",
@@ -445,6 +451,8 @@
       "no": 21,
       "label": "21",
       "planCode": "DN53",
+      "epic": "epic:KANB",
+      "phase": 2,
       "kind": "plan",
       "title": "全完成计划稿（示例）",
       "details": "两条实施条目全部勾选：计划稿特性段位随子卡汇总为已完成（契约 v2.3 · #53）。",
@@ -519,6 +527,8 @@
       "no": 41,
       "label": "41",
       "planCode": "CNCL",
+      "epic": "epic:CNCL",
+      "phase": 1,
       "kind": "plan",
       "title": "特性级取消稿（示例）",
       "details": "计划稿 H1 标记行后的 > cancelled: 落点：取消的是特性本身（取消留痕、条目保留、号不复用，契约 v2.3 · #66）。",

@@ -6,13 +6,18 @@
  *   - record-run.mjs（场景 23/28）：前台 PostToolUse payload 与后台编排者代触发（裸报告 stdin）
  *     两形态零分叉；解析 run_event → appendRun（runs 唯一写路径）→ 重编译；无块跳过 + diagnostics；
  *     async_launched 分支不落账；损坏 runs.json 不阻塞；多块逐块落账、块内缺省不造字段；
+ *     报告同源代存归档（#123/V13）：落账即把报告原文（同一解析输出）逐字归档
+ *     .zcode/board/evidence/<runId>/report.md（runs.json schema 零变化）；同内容副本/双落账
+ *     必咬（点名 + 归档去重，落账行为零变化）；归档失败只 stderr 不阻塞（R10-R12）；
+ *   - 证据头模板（#123/V21）：assets/templates/card/evidence.template.md 首两行冻结形态
+ *     （可复现命令注释含 cwd + 运行环境行）+ 脚本头制式 + 不可复跑声明位（S8）；
  *   - board-context.mjs：SessionStart 单 JSON 注入（additionalContext 形态）、缺口摘要 + 断点 top-N +
  *     上次对账；无板/坏板空态；输出字节自检（≤20KB 且 ≤24k 字符）截 additionalContext 保 JSON 完整；
  *     断点遍历递归到 schema 展开上限 3——深度 3 嵌套卡（feature→task→subtask）同样注入（S4）；
  *     缺口短清单（#130）：四码按固定优先序逐条列出、每条一行处置指引；缺口多于上限时截断为
  *     top 8 + 计数行且列出条目全部保留处置行（反例 B8）；
- *     在做/该接 top-N（#131）：按在做→待接手→未开工排序取前 5 + 截断计数行；终态/占位卡不列；
- *     旧板（无 nextAssignee 字段）按 assignees 序 + runs 证据只读派生、板字段（含显式 null）优先（B9/B11）；
+ *     在做/该接 top-N（#135 同源）：成员/顺序/计数=board.json 四段投影（在做=active[]、该接=frontier[]），
+ *     取前 5 + 截断计数行；同源守卫与「另算必咬」反例（B15）；旧板缺四段不另算、指名重编译（B9/B11）；
  *     陈旧告警行（#131）：sources[] mtime 新于板 updatedAt（+1s 容差，与 reconcile-stop §3 同口径）
  *     → 点名变动源并指向重编译；板新鲜不告警（B10）；
  *     预算级截断（#132）：超量板（数百卡+长标题）下对账/处置关键行逐字保留、细节行按尾部省略、
@@ -25,8 +30,21 @@
  *     损坏→跳过，均写明语义）；写 .zcode/board/last-reconcile.md；
  *     不强推续跑（stdout 无 continue/decision JSON）、显式 exit 0；未合并遍历递归到 schema 展开上限 3
  *     （深度 3 嵌套卡同样点名，S4）；
+ *     板滚未提交（B5-5/#117，E1 V35；对账类别扩展，独立第 6 节）：板数据文件（board.json/board.md/
+ *     registry/interviews/runs/exemptions）有未提交变更即点名（提示级：板滚并入收口 commit——E5 W3/G3
+ *     churn 治理方向）；提交后消失；非 git 项目/仓不可用跳过零噪声、结论行维持四类口径（C11/C12）；
  *   - gate-merge.mjs（场景 27 夹具半场）：只拦"目标为 base 分支且无三绿证据"的合并；
- *     feature 间合并不拦；拦截文案给出缺失绿与补齐路径；其余 hook 永不阻断（exit 0）。
+ *     feature 间合并不拦；拦截文案给出缺失绿与补齐路径；其余 hook 永不阻断（exit 0）；
+ *     merge commit 格式校验（B5-6/#118，E4-17）：目标为 base 的卡片合并 -m/--message 必须精确写
+ *     `Merge task-<no> [#<no>]`（SKILL §6 第 6 条）——不符即拦并给出格式要求（校验顺序：命令形态先于绿证据）；
+ *     合规放行；无 -m 放行 + 指向 verify-cleanup 对 HEAD merge commit 的事后核对（G13）；
+ *   - verify-cleanup.mjs（B5-6/#118，E4-17 审计面）：HEAD merge 格式事后核对——卡合并迹象
+ *     （subject 含 task-<no> / [#<no>]）但非冻结格式 → 格式残留点名（exit 1）；合规给结论行；
+ *     非 merge / 非卡合并形态不适用零噪声（Q3）。
+ *   - guard-board.mjs（B5-1/#113）：PreToolUse 板文件禁写（Write|Edit|Bash 三通道；七类板数据文件
+ *     任意 `.zcode/board/` 层级，含 ZPaPa 子项目与工作树；evidence/ 与板内非数据文件不在禁写面）
+ *     + 报告 evidence 引用逐条存在性（仅 .md 目标；line/YAML/JSON run_event 三形态；缺失即拦并点名）；
+ *     阻断仅限这两类，其余一律 exit 0 零噪声（反例 P2/P4/P5 咬越拦）。
  *
  * 夹具全部位于系统临时目录；真实板文件零触碰（config.json 断言为只读）。
  * 用法：node assets/test/run-t13-hooks.mjs [--only S1,R1] [--clean]
@@ -56,6 +74,7 @@ const BOARD_CONTEXT = join(HOOKS_DIR, "board-context.mjs");
 const WATCH_SOURCES = join(HOOKS_DIR, "watch-sources.mjs");
 const RECONCILE_STOP = join(HOOKS_DIR, "reconcile-stop.mjs");
 const GATE_MERGE = join(HOOKS_DIR, "gate-merge.mjs");
+const GUARD_BOARD = join(HOOKS_DIR, "guard-board.mjs");
 const REGISTER_INTERVIEW = join(ASSETS_DIR, "register-interview.mjs");
 const HOOK_FILES = [
   ["record-run.mjs", RECORD_RUN],
@@ -63,6 +82,7 @@ const HOOK_FILES = [
   ["watch-sources.mjs", WATCH_SOURCES],
   ["reconcile-stop.mjs", RECONCILE_STOP],
   ["gate-merge.mjs", GATE_MERGE],
+  ["guard-board.mjs", GUARD_BOARD],
 ];
 
 /** 项目级 hook 声明样例（真实工作区文件；本脚本只读）。 */
@@ -72,6 +92,9 @@ const RUNS_REL = ".zcode/board/runs.json";
 const BOARD_REL = ".zcode/board/board.json";
 const BOARD_MD_REL = ".zcode/board/board.md";
 const LAST_RECONCILE_REL = ".zcode/board/last-reconcile.md";
+const EVIDENCE_REL = ".zcode/board/evidence"; // #123：record-run 报告同源代存归档位（evidence/<runId>/report.md）
+const EVIDENCE_REPORT_FILE = "report.md"; // 代存归档文件名（冻结形态，测试侧手写复述）
+const EVIDENCE_TEMPLATE = join(ASSETS_DIR, "templates", "card", "evidence.template.md"); // #123：证据头规范模板
 const TEMPLATES = join(ASSETS_DIR, "templates");
 
 /** 独立于实现的形态断言（与契约同源，此处手写复述）。 */
@@ -211,6 +234,12 @@ function allCards(board) {
 
 function cardByNo(board, no) {
   return allCards(board).find((c) => c.no === no) ?? null;
+}
+
+/** 行内卡号（「- 在做 #12 …」/「- 该接 #12 …」行首稳定号；判行序用）。 */
+function rowNo(line) {
+  const m = /#([0-9]+)/.exec(String(line ?? ""));
+  return m ? Number(m[1]) : null;
 }
 
 // ---------------------------------------------------------------- 夹具工具
@@ -355,6 +384,15 @@ function noTempFiles(c, root, label) {
   const dir = join(root, ".zcode", "board");
   if (!isDir(dir)) return c.ok(true, label, "目录不存在（无残留）");
   return c.eq(readdirSync(dir).filter((n) => n.startsWith(".")), [], label);
+}
+
+/** 目录列表（不存在/不可读 → []；供归档位断言与诊断展示）。 */
+function readdirSafe(dir) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------- 用例定义
@@ -806,16 +844,15 @@ test("B8", "SessionStart 缺口反例（#130）：缺口多于清单上限 → �
   c.ok(Buffer.byteLength(String(r.stdout), "utf8") <= OUTPUT_BYTE_BUDGET, `输出 ≤ ${OUTPUT_BYTE_BUDGET} 字节（A6 预算）`);
 });
 
-test("B9", "SessionStart 在做/该接 top-N（#131）：在做→待接手→未开工排序取前 5，终态/占位卡不列，截断保计数", (c) => {
+test("B9", "SessionStart 在做/该接 top-N（#135 同源）：在做=active[] 投影、该接=frontier[] 投影，取前 5 + 截断计数", (c) => {
   const root = newRoot("t13-b9");
-  // 待接手（tier1：#12/#13 implementer done，按 lastRun.at 新→旧）+ 在做（#14 partial→activeRun）
+  // 待办卡（frontier 候选：#12/#13/#15/#16/#17/#18）+ 在途卡（#14 partial→activeRun→执行中）
   writePlanFixture(root, { featureNo: 20, cards: [{ no: 12 }, { no: 13 }], rel: ".zcode/plans/plan-sess_t13-b9a.md" });
   writePlanFixture(root, { featureNo: 21, cards: [{ no: 14 }], rel: ".zcode/plans/plan-sess_t13-b9b.md" });
-  // 未开工（tier2：updatedAt 2/1/4 天前，#16 新于 #15；#17/#18 超 top5 被截断）
   writePlanFixture(root, { featureNo: 22, cards: [{ no: 15 }], rel: ".zcode/plans/plan-sess_t13-b9c.md" });
   writePlanFixture(root, { featureNo: 23, cards: [{ no: 16 }], rel: ".zcode/plans/plan-sess_t13-b9d.md" });
   writePlanFixture(root, { featureNo: 24, cards: [{ no: 17 }, { no: 18 }], rel: ".zcode/plans/plan-sess_t13-b9e.md" });
-  // 反例：终态（#19 已勾选=已完成）与 roadmap 占位（#27 段位恒待设计）都不算"该接"
+  // 反例：终态（#19 已勾选=已完成）与 roadmap 占位（#27 段位恒待设计）都不进四段
   writePlanFixture(root, { featureNo: 25, cards: [{ no: 19, checked: true }], rel: ".zcode/plans/plan-sess_t13-b9f.md" });
   w(root, ".zcode/plans/plan-sess_t13-b9g.md", [
     "# 占位计划 <!-- zcode-board: no=26 -->",
@@ -830,28 +867,30 @@ test("B9", "SessionStart 在做/该接 top-N（#131）：在做→待接手→�
     runRecord({ runId: "run-20261010-b9a2", cards: [13], at: "2026-10-10T11:00:00+08:00", result: "done" }),
     runRecord({ runId: "run-20261010-b9a3", cards: [14], at: "2026-10-10T12:00:00+08:00", result: "partial", breakpoint: { stoppedAt: 14, next: "修完继续" } }),
   ]);
-  setOldMtime(root, ".zcode/plans/plan-sess_t13-b9c.md", 2);
-  setOldMtime(root, ".zcode/plans/plan-sess_t13-b9d.md", 1);
-  setOldMtime(root, ".zcode/plans/plan-sess_t13-b9e.md", 4);
   c.exit(runCompiler(root), 0, "前置编译退出码 0");
   const board = readBoard(root);
   c.eq(cardByNo(board, 14)?.activeRun?.role, "implementer", "夹具确认：#14 activeRun.role=implementer");
   c.eq(cardByNo(board, 12)?.nextAssignee, "test-verifier", "夹具确认：#12 nextAssignee=test-verifier");
   c.eq(cardByNo(board, 19)?.stage, "已完成", "夹具确认：#19 已勾选=段位已完成（终态反例）");
   c.eq(cardByNo(board, 27)?.stage, "待设计", "夹具确认：#27 roadmap 卡段位待设计（占位反例）");
+  // 同源锚点：注入成员/顺序/计数只认四段（C2-1 派生）
+  c.eq(board?.active?.map((e) => e.no), [14], "夹具确认：active[]=[#14]（在途活跃）");
+  c.eq(board?.frontier?.map((e) => e.no), [12, 13, 15, 16, 17, 18], "夹具确认：frontier[]=板序 rank 1..6");
   const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
   c.exit(r, 0, "退出码 0");
   const ctx = assertSingleJsonContext(c, r, "在做/该接");
-  c.ok(/在做\/该接（在做 1 · 该接 6；按在做→待接手→未开工，列前 5）：/.test(ctx), "段头：在做/该接计数与排序口径", show(ctx.slice(0, 900)));
+  c.ok(/在做\/该接（在做 1 · 该接 6；同源 board\.json active\[\]\/frontier\[\] 派生，列前 5）：/.test(ctx), "段头：计数=四段长度（active 1 / frontier 6），口径=同源投影", show(ctx.slice(0, 900)));
   const rows = ctx.split("\n").filter((l) => /^- (在做|该接) /.test(l));
+  // 断言随动（C2 评审 std-3）：行首卡标识改与缺口行 gapRef 同形态（label≠号 → `ID-<label> #N`），旧断言锁的恰是被替换行为。
   c.eq(rows.length, 5, "列前 5 行（top-N=5）", show(rows));
-  c.ok(/^- 在做 .*#14 .*：implementer 自 2026-10-10T12:00:00\+08:00（执行中）$/.test(rows[0] ?? ""), "第 1 行=在做 #14（activeRun.role + at + 段位）", show(rows[0]));
-  c.ok(/^- 该接 .*#13 .*：test-verifier（上一手 implementer done @ 2026-10-10T11:00:00\+08:00）$/.test(rows[1] ?? ""), "第 2 行=待接手 #13（lastRun.at 新→旧）", show(rows[1]));
-  c.ok(/^- 该接 .*#12 .*：test-verifier（上一手 implementer done @ 2026-10-10T10:00:00\+08:00）$/.test(rows[2] ?? ""), "第 3 行=待接手 #12", show(rows[2]));
-  c.ok(/^- 该接 .*#16 .*：implementer（无 run 记录）$/.test(rows[3] ?? ""), "第 4 行=未开工 #16（updatedAt 1 天前，先于 2 天前的 #15）", show(rows[3]));
-  c.ok(/^- 该接 .*#15 .*：implementer（无 run 记录）$/.test(rows[4] ?? ""), "第 5 行=未开工 #15", show(rows[4]));
-  c.ok(!rows.some((l) => l.includes("#19")), "终态卡（#19 已完成）不列在做/该接", show(rows));
-  c.ok(!rows.some((l) => l.includes("#27")), "roadmap 占位卡（#27 待设计）不列在做/该接（处置在缺口清单）", show(rows));
+  c.eq(rows.map(rowNo), [14, 12, 13, 15, 16], "行序=active[] 序 + frontier[] rank 序（同源投影，不重排）", show(rows));
+  c.ok(/^- 在做 ID-1 #14 .*：implementer 自 2026-10-10T12:00:00\+08:00（执行中）$/.test(rows[0] ?? ""), "第 1 行=在做 #14（active[] 条目：角色+自何时+段位）", show(rows[0]));
+  c.ok(/^- 该接 ID-1 #12 .*：test-verifier（上一手 implementer done @ 2026-10-10T10:00:00\+08:00）$/.test(rows[1] ?? ""), "第 2 行=该接 #12（frontier rank 1；上一手 run 摘要为显示细节）", show(rows[1]));
+  c.ok(/^- 该接 ID-2 #13 .*：test-verifier（上一手 implementer done @ 2026-10-10T11:00:00\+08:00）$/.test(rows[2] ?? ""), "第 3 行=该接 #13（frontier rank 2）", show(rows[2]));
+  c.ok(/^- 该接 ID-1 #15 .*：implementer（无 run 记录）$/.test(rows[3] ?? ""), "第 4 行=该接 #15（frontier rank 3，未开工）", show(rows[3]));
+  c.ok(/^- 该接 ID-1 #16 .*：implementer（无 run 记录）$/.test(rows[4] ?? ""), "第 5 行=该接 #16（frontier rank 4）", show(rows[4]));
+  c.ok(!rows.some((l) => l.includes("#19")), "终态卡（#19 已完成）不在 frontier（段外不列）", show(rows));
+  c.ok(!rows.some((l) => l.includes("#27")), "roadmap 占位卡（#27 待设计）不在 frontier（处置在缺口清单）", show(rows));
   c.eq(ctx.split("\n").filter((l) => l.startsWith("- …其余 ")).length, 1, "截断仅一行计数", show(ctx.split("\n").filter((l) => l.includes("其余"))));
   c.ok(ctx.includes("- …其余 2 张见 board.json"), "截断计数行：其余 2 张见 board.json（#17/#18）", show(ctx.split("\n").filter((l) => l.includes("其余"))));
   c.ok(Buffer.byteLength(String(r.stdout), "utf8") <= OUTPUT_BYTE_BUDGET, `输出 ≤ ${OUTPUT_BYTE_BUDGET} 字节（A6 预算）`);
@@ -889,35 +928,33 @@ test("B10", "SessionStart 陈旧告警（#131）：已登记源 mtime 新于板 
   c.ok(/陈旧告警：板可能过期/.test(ctx2) && /specs\/alpha\/tasks\.md/.test(ctx2), "spec 条目按 root+files 展开点名变动文件", show(ctx2.slice(0, 700)));
 });
 
-test("B11", "SessionStart 旧板无 nextAssignee 字段（#131）：按 assignees 序 + runs 证据只读派生；板字段（含显式 null）优先不重算", (c) => {
+test("B11", "SessionStart 旧板缺四段（#135）：不另算（禁自算），指名重编译", (c) => {
   const root = newRoot("t13-b11");
-  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }, { no: 13 }, { no: 15 }, { no: 16 }] });
+  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }, { no: 13 }] });
   writeRuns(root, [
     runRecord({ runId: "run-20261010-b11a", cards: [12], at: "2026-10-10T10:00:00+08:00", result: "done" }),
-    runRecord({ runId: "run-20261010-b11b", cards: [13], at: "2026-10-10T10:30:00+08:00", result: "done" }),
-    runRecord({ runId: "run-20261010-b11c", role: "test-verifier", cards: [13], at: "2026-10-10T11:00:00+08:00", result: "done" }),
-    runRecord({ runId: "run-20261010-b11d", cards: [16], at: "2026-10-10T09:00:00+08:00", result: "done" }),
+    runRecord({ runId: "run-20261010-b11b", role: "test-verifier", cards: [12], at: "2026-10-10T10:30:00+08:00", result: "done" }),
   ]);
   c.exit(runCompiler(root), 0, "前置编译退出码 0");
-  // 模拟旧板（nextAssignee 字段诞生前的 schema）：任务卡整体移除该字段；#16 保留显式 null（板事实优先的反例）
+  // 模拟旧编译器产物：删四段（板面字段——含 nextAssignee——仍在，旧口径派生完全可行 → 禁自算反例必咬）
   const board = readBoard(root);
-  const strip = (list) => {
-    for (const t of list ?? []) {
-      delete t.nextAssignee;
-      strip(t.tasks);
-    }
-  };
-  strip(board.features);
-  cardByNo(board, 16).nextAssignee = null;
+  delete board.frontier;
+  delete board.active;
+  delete board.blocked;
+  delete board.recent;
   w(root, BOARD_REL, JSON.stringify(board, null, 2) + "\n");
   const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
   c.exit(r, 0, "退出码 0");
-  const ctx = assertSingleJsonContext(c, r, "旧板派生");
-  const rows = ctx.split("\n").filter((l) => /^- (在做|该接) /.test(l));
-  c.ok(/^- 该接 .*#13 .*：code-reviewer（上一手 test-verifier done @ 2026-10-10T11:00:00\+08:00）$/.test(rows[0] ?? ""), "派生顺延：#13 已两环 done → code-reviewer", show(rows));
-  c.ok(/^- 该接 .*#12 .*：test-verifier（上一手 implementer done @ 2026-10-10T10:00:00\+08:00）$/.test(rows[1] ?? ""), "派生：#12 implementer done → test-verifier", show(rows));
-  c.ok(/^- 该接 .*#15 .*：implementer（无 run 记录）$/.test(rows[2] ?? ""), "派生：无 run 卡 → 管线首角色 implementer", show(rows));
-  c.ok(!rows.some((l) => l.includes("#16")), "显式 null 是板事实（不重算）：#16 虽有 done run 也不列该接", show(rows));
+  const ctx = assertSingleJsonContext(c, r, "旧板缺四段");
+  c.ok(ctx.includes("在做/该接：此板缺四段派生（frontier[]/active[] 未写出——旧编译器产物或未重编译）"), "显式点名板缺四段派生", show(ctx.slice(0, 900)));
+  c.ok(/本 hook 不自算/.test(ctx), "随行写明禁自算口径", show(ctx.slice(0, 900)));
+  c.ok(/重编译后可见：node <zcode-board-skill>\/assets\/compile-board\.mjs <项目根>/.test(ctx), "给出重编译命令（处置可照做）", show(ctx.slice(0, 900)));
+  c.eq(
+    ctx.split("\n").filter((l) => /^- (在做|该接) /.test(l)).length,
+    0,
+    "不输出任何在做/该接行（板面字段可派生也不另算——禁自算守卫）",
+    show(ctx.split("\n").filter((l) => /^- (在做|该接) /.test(l))),
+  );
 });
 
 test("B12", "SessionStart 在做/该接零候选（#131）：无可办卡时显式报无（不留空标题）", (c) => {
@@ -928,7 +965,7 @@ test("B12", "SessionStart 在做/该接零候选（#131）：无可办卡时显�
   const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
   c.exit(r, 0, "退出码 0");
   const ctx = assertSingleJsonContext(c, r, "零候选");
-  c.ok(/在做\/该接：无（无 activeRun 且无可接手卡）/.test(ctx), "零候选显式报无（已完成的 #12 是终态，不算该接）", show(ctx.slice(0, 600)));
+  c.ok(/在做\/该接：无（active\[\] 与 frontier\[\] 段皆空——无可办卡）/.test(ctx), "零候选显式报无（已完成的 #12 不在四段）", show(ctx.slice(0, 600)));
 });
 
 test("B13", "SessionStart 预算级截断（#132）：超量板（数百卡+长标题）下对账/处置关键行逐字保留、细节行按尾部省略、JSON 仍可解析", (c) => {
@@ -963,6 +1000,8 @@ test("B13", "SessionStart 预算级截断（#132）：超量板（数百卡+长�
     "",
   ].join("\n"));
   c.exit(runCompiler(root), 0, "前置编译退出码 0");
+  const board = readBoard(root);
+  c.eq([board?.active?.length, board?.frontier?.length], [12, 288], "夹具确认：四段长度 12/288（=同源计数头真值）");
   const ahead = new Date(Date.now() + 120_000);
   utimesSync(join(root, planRel), ahead, ahead); // 陈旧告警行也在场（保留位之一）
   const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
@@ -977,7 +1016,7 @@ test("B13", "SessionStart 预算级截断（#132）：超量板（数百卡+长�
   c.ok(rows.some((l) => l.startsWith("陈旧告警：板可能过期") && l.includes(planRel)), "陈旧告警行逐字保留", show(rows.filter((l) => l.startsWith("陈旧告警"))));
   c.ok(rows.includes("处置：缺口非零——先与用户确认处理顺序，再派发（板记录事实，不自动派发）。"), "处置行逐字保留", show(rows.filter((l) => l.startsWith("处置"))));
   c.ok(rows.includes("上次对账：2026-10-10T23:30:00+08:00 · 点名 2 项（未登记 0 / 未合并 1 / 板陈旧 1 / 待归档 0）"), "上次对账行逐字保留", show(rows.filter((l) => l.startsWith("上次对账"))));
-  c.ok(rows.some((l) => l === "在做/该接（在做 12 · 该接 288；按在做→待接手→未开工，列前 5）："), "在做/该接计数头逐字保留（细节条目可省，计数头不丢）", show(rows.filter((l) => l.startsWith("在做/该接"))));
+  c.ok(rows.some((l) => l === "在做/该接（在做 12 · 该接 288；同源 board.json active[]/frontier[] 派生，列前 5）："), "在做/该接计数头逐字保留（=四段长度；细节条目可省，计数头不丢）", show(rows.filter((l) => l.startsWith("在做/该接"))));
   c.ok(rows.some((l) => l === "缺口清单（12 个，按优先级；每条一行处置，列前 8）："), "缺口清单头逐字保留", show(rows.filter((l) => l.startsWith("缺口清单"))));
   const gapRows = rows.filter((l) => /^- (已访谈未安排|已安排未展开|执行中断可续|待合并) /.test(l) && / → /.test(l));
   c.eq(gapRows.length, 8, "缺口清单各行保留（top 8，每条仍带 → 处置）", show(gapRows.length));
@@ -1015,6 +1054,48 @@ test("B14", "SessionStart 病态超限兜底（#132）：关键行单独超闸 �
   c.ok(/\[zcode-board\]/.test(ctx) && ctx.includes("缺口清单（1 个，按优先级；每条一行处置，列前 1）："), "能装下的关键行（板摘要头/缺口清单头）逐字保留", show(ctx.slice(0, 500)));
   c.ok(!ctx.includes("巨标题巨标题"), "超闸单行整体跳过（不落盘、不静默取中段）");
   c.ok(/单行或累计|按字节收口/.test(String(r.stderr ?? "")), "stderr 留兜底收口诊断（绑定修正后口径，不静默）", show(String(r.stderr ?? "").slice(0, 400)));
+});
+
+test("B15", "SessionStart 同源守卫（#135）：在做/该接=board.json 四段投影；注入侧另算必咬（反例）", (c) => {
+  const root = newRoot("t13-b15");
+  writePlanFixture(root, { featureNo: 30, cards: [{ no: 12 }, { no: 13 }] });
+  writePlanFixture(root, { featureNo: 31, cards: [{ no: 14 }], rel: ".zcode/plans/plan-sess_t13-b15b.md" });
+  writeRuns(root, [
+    // #12 无 run → nextAssignee=implementer（板面事实，供反例咬「按板面另算」）
+    runRecord({ runId: "run-20261010-b15a", role: "implementer", cards: [13], at: "2026-10-10T10:00:00+08:00", result: "done" }),
+    runRecord({ runId: "run-20261010-b15b", role: "test-verifier", cards: [13], at: "2026-10-10T10:30:00+08:00", result: "done" }),
+    runRecord({ runId: "run-20261010-b15c", role: "code-reviewer", cards: [13], at: "2026-10-10T11:00:00+08:00", result: "done" }),
+    runRecord({ runId: "run-20261010-b15d", role: "integrator", cards: [13], at: "2026-10-10T11:30:00+08:00", result: "done" }),
+    runRecord({ runId: "run-20261010-b15e", cards: [14], at: "2026-10-10T12:00:00+08:00", result: "partial", breakpoint: { stoppedAt: 14, next: "继续" } }),
+  ]);
+  c.exit(runCompiler(root), 0, "前置编译退出码 0");
+  const board = readBoard(root);
+  // 夹具确认：四段（frontier 板序 #12/#13；#13 管线走完 nextAssignee=null；active=#14）
+  c.eq(board?.active?.map((e) => e.no), [14], "夹具确认：active[]=[#14]");
+  c.eq(board?.frontier?.map((e) => e.no), [12, 13], "夹具确认：frontier[]=[#12,#13]（板序 rank 1..2）");
+  c.eq(board?.frontier?.[1]?.nextAssignee, null, "夹具确认：#13 管线走完 → frontier 条目 nextAssignee=null");
+  const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
+  c.exit(r, 0, "退出码 0");
+  const ctx = assertSingleJsonContext(c, r, "同源投影");
+  c.ok(/在做\/该接（在做 1 · 该接 2；同源 board\.json active\[\]\/frontier\[\] 派生，列前 3）：/.test(ctx), "段头计数=四段长度（1/2）——同源锚点", show(ctx.slice(0, 900)));
+  const rows = ctx.split("\n").filter((l) => /^- (在做|该接) /.test(l));
+  c.eq(rows.map(rowNo), [14, 12, 13], "行序=active[] 序 + frontier[] rank 序（同源投影）", show(rows));
+  c.ok(/^- 在做 ID-1 #14 .*：implementer 自 2026-10-10T12:00:00\+08:00（执行中）$/.test(rows[0] ?? ""), "在做行=active[] 条目投影（角色/自何时/段位）", show(rows[0]));
+  c.ok(/^- 该接 ID-1 #12 .*：implementer（无 run 记录）$/.test(rows[1] ?? ""), "该接行=frontier[] 条目投影（nextAssignee）", show(rows[1]));
+  c.ok(/^- 该接 ID-2 #13 .*：无接手位（管线走完）$/.test(rows[2] ?? ""), "frontier 条目 nextAssignee=null → 无接手位（管线走完）", show(rows[2]));
+  // 反例（必咬）：手改 board.json 四段，使其与板面可派生面不一致（features 未动）——
+  // 同源投影实现随四段改判；若注入侧按 features/assignees/runs 另算，将产出 #14/#13 与 implementer，必咬。
+  const tampered = readBoard(root);
+  tampered.active = [];
+  tampered.frontier = [{ rank: 1, no: 12, title: "甲任务1", stage: "待办", nextAssignee: "debugger", resolvedDeps: [] }];
+  w(root, BOARD_REL, JSON.stringify(tampered, null, 2) + "\n");
+  const r2 = runHook(BOARD_CONTEXT, sessionStartPayload(root));
+  c.exit(r2, 0, "反例：退出码 0");
+  const ctx2 = assertSingleJsonContext(c, r2, "反例（四段改判）");
+  c.ok(/在做\/该接（在做 0 · 该接 1；同源 board\.json active\[\]\/frontier\[\] 派生，列前 1）：/.test(ctx2), "计数随四段改判（在做 0 · 该接 1）", show(ctx2.slice(0, 900)));
+  const rows2 = ctx2.split("\n").filter((l) => /^- (在做|该接) /.test(l));
+  c.eq(rows2.length, 1, "只投影四段在列条目（另算实现会多出 #14/#13 → 必咬）", show(rows2));
+  c.ok(/^- 该接 ID-1 #12 .*：debugger（无 run 记录）$/.test(rows2[0] ?? ""), "接手位逐字取四段条目（debugger——按板面 assignees/runs 另算会得 implementer → 必咬）", show(rows2[0]));
 });
 
 // ---- S3 静态：watch-sources 交付物形态
@@ -1472,6 +1553,17 @@ function initGitRepo(root) {
   return root;
 }
 
+/** 夹具：以 main 为基新建分支并提交一个文件，随后切回原分支（返回 checkout -b 结果）。 */
+function commitFileOnBranch(root, branch, rel, content) {
+  const cur = String(git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout ?? "").trim();
+  const co = git(root, ["checkout", "-q", "-b", branch]);
+  w(root, rel, content);
+  git(root, ["add", "-A"]);
+  git(root, ["-c", "user.email=t13@fixture", "-c", "user.name=t13", "commit", "-qm", `feat ${branch}`]);
+  git(root, ["checkout", "-q", cur]);
+  return co;
+}
+
 function preToolUsePayload(root, command, { sessionId = "sess_T13_G" } = {}) {
   return {
     cwd: root,
@@ -1569,6 +1661,78 @@ test("G7", "gh pr merge：可按卡号归卡则核验证据；无法归卡则拦
     runRecord({ role: "code-reviewer", result: "done", cards: [12] }),
   ]);
   c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "gh pr merge task-12 --squash")), 0, "两绿在位 → 放行");
+});
+
+// ---- B2-2（#100）：gate-merge 对 UI 面 diff 加查第四绿（ui-designer 复核证据文件）
+
+test("G8", "第四绿（B2-2/#100）：UI 面 diff（packages/ui/）缺 ui-designer done 证据 → 拦截并点名缺第四绿与补齐路径", (c) => {
+  const root = newRoot("t13-g8");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-12", "packages/ui/panel.tsx", "export const Panel = () => null;\n"), 0, "前置：task-12 分支含 packages/ui/ 提交");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [12] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [12] }),
+    runRecord({ role: "ui-designer", result: "partial", cards: [12] }), // 复核未完成（partial）不构成第四绿
+  ]);
+  const r = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12]"'));
+  c.exit(r, 2, "UI 面 diff 缺第四绿 → 拦截（exit 2）");
+  const err = String(r.stderr ?? "");
+  c.ok(/第四绿/.test(err), "点名缺失第四绿", show(err.slice(0, 800)));
+  c.ok(/ui-designer/.test(err), "点名 ui-designer 复核", show(err.slice(0, 800)));
+  c.ok(/packages\/ui\/panel\.tsx/.test(err), "点名触发判定的 UI 面文件（diff 前缀判据）", show(err.slice(0, 800)));
+  c.ok(/#12/.test(err), "点名卡号", show(err.slice(0, 800)));
+  c.ok(/(补齐|派发|record-run)/.test(err), "给出补齐路径（派发 ui-designer → run_event → 落账）", show(err.slice(0, 900)));
+  c.ok(String(r.stdout ?? "").trim() === "", "stdout 为空（阻断原因走 stderr）");
+});
+
+test("G9", "第四绿（B2-2/#100）：ui-designer 记录在位但证据文件不存在 → 拦并点名缺哪条；证据文件在位 → 放行", (c) => {
+  const root = newRoot("t13-g9");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-12", "packages/ui/panel.tsx", "export const Panel = () => null;\n"), 0, "前置：task-12 分支含 packages/ui/ 提交");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [12] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [12] }),
+    runRecord({ role: "ui-designer", result: "done", cards: [12], evidence: ["evidence/T12/ui-review.md"] }),
+  ]);
+  const missing = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12]"'));
+  c.exit(missing, 2, "ui-designer 记录在位但证据文件不存在 → 拦截（存在性校验咬）");
+  const err = String(missing.stderr ?? "");
+  c.ok(/evidence\/T12\/ui-review\.md/.test(err), "点名缺失的证据文件路径", show(err.slice(0, 900)));
+  c.ok(/(不存在|未在位|缺)/.test(err), "写明证据文件缺失", show(err.slice(0, 900)));
+
+  w(root, ".zcode/board/evidence/T12/ui-review.md", "# 卡 12 UI 复核：视觉/信息层级\n");
+  const ok = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12]"'));
+  c.exit(ok, 0, "证据文件在位 → 放行（exit 0）");
+  c.ok(String(ok.stdout ?? "").trim() === "", "放行 stdout 为空");
+});
+
+test("G10", "第四绿反例（B2-2/#100）：非 UI 面 diff（src/）“不查第四绿”——无 ui-designer 证据仍放行（不误拦）", (c) => {
+  const root = newRoot("t13-g10");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-13", "src/app.ts", "export const app = 1;\n"), 0, "前置：task-13 分支含 src/ 提交");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [13] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [13] }),
+  ]);
+  const r = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-13 -m "Merge task-13 [#13]"'));
+  c.exit(r, 0, "非 UI 面 diff 不查第四绿 → 放行");
+  c.ok(!/已阻断/.test(String(r.stderr ?? "")), "无阻断文案（不误拦）", show(String(r.stderr ?? "").slice(0, 600)));
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "gh pr merge task-13 --squash")), 0, "PR 路径非 UI 面同样放行");
+});
+
+test("G11", "第四绿（B2-2/#100）：PR 路径（gh pr merge）同样按 UI 面 diff 加查——UI 分支缺第四绿 → 拦截", (c) => {
+  const root = newRoot("t13-g11");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-14", "packages/ui/board.tsx", "export const Board = () => null;\n"), 0, "前置：task-14 分支含 packages/ui/ 提交");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [14] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [14] }),
+  ]);
+  const r = runHook(GATE_MERGE, preToolUsePayload(root, "gh pr merge task-14 --squash"));
+  c.exit(r, 2, "PR 路径 UI 面 diff 缺第四绿 → 拦截");
+  const err = String(r.stderr ?? "");
+  c.ok(/第四绿/.test(err) && /ui-designer/.test(err), "点名第四绿与 ui-designer", show(err.slice(0, 800)));
+  c.ok(/packages\/ui\/board\.tsx/.test(err), "点名 UI 面文件", show(err.slice(0, 800)));
 });
 
 // ---- S6 静态：.zcode/config.json 终态——五项正式声明 + 探针零残留 + 一次性信任评审状态（hooks 包装层形态）
@@ -2080,6 +2244,616 @@ test("R9", "B3-3（#103）：register-interview 注册后触发重编译（新�
   c.ok(/重编译失败/.test(String(r3.stderr ?? "")), "编译失败写 stderr 诊断（不静默）", show(r3.stderr));
   const doc3 = readJsonFile(join(root3, ".zcode/board/interviews.json"));
   c.ok(doc3.ok && doc3.value?.interviews?.length === 1, "登记落盘不受编译失败影响（主流程照常成功）");
+});
+
+// ---- B6-5（#123）：record-run 报告同源代存归档（V13）——两形态同一实现同一解析
+
+test("R10", "B6-5 代存归档（#123）：落账即把报告原文（同一解析输出）代存 evidence/<runId>/report.md，逐字同源；runs.json 记录 schema 零变化", (c) => {
+  const root = newRoot("t13-r10");
+  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }, { no: 13 }] });
+  c.exit(runCompiler(root), 0, "前置编译退出码 0");
+
+  // 后台代触发主形态（裸报告 stdin）：报告原文 = 测试自造独立来源（期望值不借实现重算）
+  const reportBare = reportText(
+    '"run_event": { "role": "implementer", "result": "partial", "cards": [12], "stoppedAt": 12, "nextStep": "补 updater 单测后重新验证" }',
+  );
+  const rBare = runHook(RECORD_RUN, reportBare, { args: ["--cwd", root, "--session-id", "sess_T13_R10a"] });
+  c.exit(rBare, 0, "后台代触发退出码 0（存档为副作用，不阻塞落账）");
+  c.eq(String(rBare.stdout ?? ""), "", "stdout 恒空（代存留痕走 stderr）");
+  const doc = readRunsDoc(root);
+  c.eq(doc?.runs?.length, 1, "落账 1 条");
+  const runId1 = String(doc?.runs?.[0]?.runId ?? "");
+  c.ok(RUN_ID_RE.test(runId1), "锚点：runId 形态合法（run-<YYYYMMDD>-<4 位>），归档位可用其寻址", show(runId1));
+  const rel1 = `${EVIDENCE_REL}/${runId1}/report.md`;
+  c.ok(isFile(join(root, rel1)), `代存归档在位（${rel1}）`, show(readdirSafe(join(root, EVIDENCE_REL))));
+  c.eq(readFileSync(join(root, rel1), "utf8"), reportBare, "归档与报告原文逐字一致（同一解析输出；非二次提取、零改写）");
+  c.ok(readFileSync(join(root, rel1), "utf8").includes('"run_event"'), "归档保留 run_event 块原文（解析输入可回溯）");
+  c.ok(/报告代存/.test(String(rBare.stderr ?? "")), "stderr 留代存留痕（可观测副作用）", show(String(rBare.stderr ?? "").slice(0, 300)));
+
+  // 前台 PostToolUse payload 形态：同一实现、同一解析（两形态零分叉延伸至代存）
+  const reportPayload = reportText('"run_event": { "role": "test-verifier", "result": "done", "cards": [13] }');
+  const rPayload = runHook(RECORD_RUN, postToolUsePayload(root, reportPayload, { sessionId: "sess_T13_R10b" }));
+  c.exit(rPayload, 0, "前台 payload 退出码 0");
+  const doc2 = readRunsDoc(root);
+  c.eq(doc2?.runs?.length, 2, "前台形态同样落账");
+  const runId2 = String(doc2?.runs?.[1]?.runId ?? "");
+  const rel2 = `${EVIDENCE_REL}/${runId2}/report.md`;
+  c.ok(isFile(join(root, rel2)), `前台形态同样代存（同一实现）：${rel2}`, show(readdirSafe(join(root, EVIDENCE_REL))));
+  c.eq(readFileSync(join(root, rel2), "utf8"), reportPayload, "前台归档同样逐字同源（tool_response 全文，非预览截断）");
+
+  // 记录形态零变化 + 归档按 runId 独立成格 + 零临时残留
+  c.eq(Object.keys(doc2?.runs?.[0] ?? {}), RUN_KEYS, "记录键序仍与契约字段表一致（runs.json schema 零变化：不加 reportRef 等字段）");
+  c.eq(readdirSafe(join(root, EVIDENCE_REL)).sort(), [runId1, runId2].sort(), "归档按 runId 独立成格（每个落账 run 恰一份）");
+  for (const runId of [runId1, runId2]) {
+    c.eq(readdirSafe(join(root, EVIDENCE_REL, runId)).filter((n) => n.startsWith(".")), [], `${runId} 格内零隐藏/临时残留（无 .report.md.tmp-*）`);
+  }
+});
+
+test("R11", "B6-5 代存反例（#123）：双落账/手写第二份（同内容副本）必咬——stderr 点名既有副本 + 归档去重；落账行为零变化（仍追第二条记录）", (c) => {
+  const root = newRoot("t13-r11");
+  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }] });
+  const report = reportText('"run_event": { "role": "implementer", "result": "done", "cards": [12] }');
+
+  // 首跑：落账 + 代存（单份正本）
+  const first = runHook(RECORD_RUN, report, { args: ["--cwd", root, "--session-id", "sess_T13_R11a"] });
+  c.exit(first, 0, "首跑退出码 0");
+  const runId1 = String(readRunsDoc(root)?.runs?.[0]?.runId ?? "");
+  c.ok(RUN_ID_RE.test(runId1), "锚点：首跑 runId 形态合法", show(runId1));
+  c.ok(!/重复落账|同内容副本/.test(String(first.stderr ?? "")), "首跑零重复诊断（正常路径无噪音）", show(String(first.stderr ?? "").slice(0, 400)));
+
+  // 手写第二份：模拟旧习惯（人类在证据目录手抄一份同内容报告，与代存归档并存）
+  const handwrittenRel = `${EVIDENCE_REL}/T12/${EVIDENCE_REPORT_FILE}`;
+  w(root, handwrittenRel, report);
+
+  // 双落账：同一报告再次落账（双触发/人工重放形态）→ 必咬
+  const second = runHook(RECORD_RUN, report, { args: ["--cwd", root, "--session-id", "sess_T13_R11b"] });
+  c.exit(second, 0, "重复落账退出码 0（咬在诊断与归档面，不阻断主流程）");
+  const err = String(second.stderr ?? "");
+  c.ok(/重复落账/.test(err), "必咬：stderr 点名疑似重复落账（双触发/手写第二份）", show(err.slice(0, 500)));
+  c.ok(err.includes(handwrittenRel), "点名手写第二份路径", show(err.slice(0, 500)));
+  c.ok(err.includes(`${EVIDENCE_REL}/${runId1}/${EVIDENCE_REPORT_FILE}`), "点名既有代存归档（首份正本）", show(err.slice(0, 500)));
+
+  const doc2 = readRunsDoc(root);
+  c.eq(doc2?.runs?.length, 2, "落账行为零变化：重复报告仍落第二条记录（去重只作用归档面，不改 runs.json 语义）");
+  const runId2 = String(doc2?.runs?.[1]?.runId ?? "");
+  c.ok(runId2 !== runId1 && RUN_ID_RE.test(runId2), "锚点：第二条记录 runId 独立且形态合法", show(runId2));
+  c.ok(!isFile(join(root, EVIDENCE_REL, runId2, EVIDENCE_REPORT_FILE)), "去重：不再写入第二份同内容归档");
+  c.eq(readdirSafe(join(root, EVIDENCE_REL)).filter((n) => n.startsWith("run-")), [runId1], "归档面维持唯一正本（无 run-* 第二份）", show(readdirSafe(join(root, EVIDENCE_REL))));
+  c.eq(readFileSync(join(root, handwrittenRel), "utf8"), report, "手写件保持原样（只点名去重，不删不改）");
+  c.eq(readFileSync(join(root, EVIDENCE_REL, runId1, EVIDENCE_REPORT_FILE), "utf8"), report, "首份代存归档保持逐字同源（不被重复落账覆盖）");
+
+  // 反例对照：报告正文不同（同名文件、不同内容）不误判重复
+  const other = reportText('"run_event": { "role": "test-verifier", "result": "done", "cards": [12] }');
+  const third = runHook(RECORD_RUN, other, { args: ["--cwd", root, "--session-id", "sess_T13_R11c"] });
+  c.exit(third, 0, "异内容报告退出码 0");
+  c.ok(!/重复落账/.test(String(third.stderr ?? "")), "异内容报告零重复诊断（去重只按内容判定，不误咬）", show(String(third.stderr ?? "").slice(0, 400)));
+  const runId3 = String(readRunsDoc(root)?.runs?.[2]?.runId ?? "");
+  c.ok(isFile(join(root, EVIDENCE_REL, runId3, EVIDENCE_REPORT_FILE)), "异内容报告照常代存（不误去重）");
+});
+
+test("R12", "B6-5 代存失败边界（#123）：归档位不可用（evidence 路径被占为文件）→ 只 stderr 诊断，落账/重编译/退出码零变化（失败不阻塞）", (c) => {
+  const root = newRoot("t13-r12");
+  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }] });
+  c.exit(runCompiler(root), 0, "前置编译退出码 0");
+  const squatter = "占位文件（evidence 应为目录）\n";
+  w(root, EVIDENCE_REL, squatter); // 归档位不可用：evidence 路径被普通文件占据
+
+  const report = reportText('"run_event": { "role": "implementer", "result": "done", "cards": [12] }');
+  const r = runHook(RECORD_RUN, report, { args: ["--cwd", root, "--session-id", "sess_T13_R12"] });
+  c.exit(r, 0, "归档失败退出码仍 0（hook 失败永不阻塞主流程）");
+  c.eq(String(r.stdout ?? ""), "", "stdout 恒空（失败诊断走 stderr）");
+  const doc = readRunsDoc(root);
+  c.eq(doc?.runs?.length, 1, "落账结果零变化（归档是副作用：失败不吞落账、不吞退出码）");
+  c.ok(RUN_ID_RE.test(String(doc?.runs?.[0]?.runId ?? "")), "锚点：落账记录形态正常", show(doc?.runs?.[0]?.runId));
+  c.ok(/报告代存归档失败/.test(String(r.stderr ?? "")), "stderr 点名代存失败（不静默）", show(String(r.stderr ?? "").slice(0, 500)));
+  c.eq(readFileSync(join(root, EVIDENCE_REL), "utf8"), squatter, "占位文件零改动（不删、不覆盖、不越权）");
+  c.eq(cardByNo(readBoard(root), 12)?.lastRun?.result, "done", "重编译照常（落账主链路不受归档失败影响）");
+});
+
+// ---- B5-1（#113）：PreToolUse 板文件禁写 + 报告 evidence 逐条存在性（guard-board.mjs）
+
+/** 板数据文件统一枚举（禁写面；evidence/ 子目录与板内非数据文件不在禁写面）。 */
+const BOARD_DATA_FILES = ["board.json", "board.md", "runs.json", "interviews.json", "registry.json", "exemptions.json", "last-reconcile.md"];
+
+/** PreToolUse(Write|Edit) payload：待写文件路径与内容（Edit 内容走 new_string 片段）。 */
+function preWriteHookPayload(root, filePath, { toolName = "Write", content = "", sessionId = "sess_T13_P" } = {}) {
+  const toolInput = toolName === "Edit"
+    ? { file_path: filePath, old_string: "…", new_string: content }
+    : { file_path: filePath, content };
+  return {
+    cwd: root,
+    hookEventName: "PreToolUse",
+    hook_event_name: "PreToolUse",
+    mode: "agent",
+    sessionId,
+    session_id: sessionId,
+    toolCallId: "toolu_fixture",
+    tool_name: toolName,
+    toolName,
+    tool_input: toolInput,
+  };
+}
+
+test("P1", "B5-1：写板数据文件被拦（Write/Edit/Bash 三通道、七文件名、ZPaPa 子项目与工作树层级、通配删除），点名路径并给出唯一写路径", (c) => {
+  const root = newRoot("t13-p1");
+  w(root, ".zcode/board/board.json", "{}\n");
+  const before = readFileSync(join(root, ".zcode/board/board.json"), "utf8");
+
+  const rBoardJson = runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode/board/board.json"), { content: "{}\n" }));
+  c.exit(rBoardJson, 2, "Write board.json → 拦截（exit 2 → permissionDecision deny）");
+  const err = String(rBoardJson.stderr ?? "");
+  c.ok(err.includes(".zcode/board/board.json"), "点名目标路径", show(err.slice(0, 500)));
+  c.ok(/compile-board/.test(err), "去路指向唯一写路径（compile-board.mjs 重编译）", show(err.slice(0, 800)));
+  c.ok(/evidence/.test(err), "边界成文：evidence/ 子目录属正当写面（不在此门禁）", show(err.slice(0, 800)));
+  c.eq(String(rBoardJson.stdout ?? "").trim(), "", "stdout 为空（阻断原因走 stderr）");
+  c.eq(readFileSync(join(root, ".zcode/board/board.json"), "utf8"), before, "hook 零写入（板文件字节不变）");
+
+  for (const name of BOARD_DATA_FILES.slice(1)) {
+    c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode/board", name), { content: "x\n" })), 2, `Write ${name} → 拦截`);
+  }
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, ".zcode/board/runs.json", { content: "{}\n" })), 2, "相对 file_path 形态同样拦截");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode/board/board.md"), { toolName: "Edit", content: "改\n" })), 2, "Edit board.md → 拦截");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, "ZPaPa", ".zcode", "board", "board.json"), { content: "{}\n" })), 2, "ZPaPa 子项目板文件（**/ZPaPa/.zcode/board/**，E1 V19 面）→ 拦截");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode", "worktrees", "task-12", ".zcode", "board", "registry.json"), { content: "{}\n" })), 2, "工作树内板文件 → 拦截");
+
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "echo '{}' > ZPaPa/.zcode/board/board.json")), 2, "Bash 重定向写板 → 拦截");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "sed -i '' 's/a/b/' .zcode/board/registry.json")), 2, "Bash sed -i 写板 → 拦截");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "rm .zcode/board/board.json")), 2, "Bash rm 板文件 → 拦截");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "rm -rf .zcode/board")), 2, "Bash rm -rf 板目录（registry 号与条目不可销毁）→ 拦截");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "rm -f .zcode/board/*.json")), 2, "Bash 通配删除可命中板数据 → 拦截");
+});
+
+test("P2", "B5-1 反例：合法写放行——evidence/ 子目录（含 ZPaPa）、板内非数据文件、板外同名与相似路径、只读命令、编译器重编译零误拦", (c) => {
+  const root = newRoot("t13-p2");
+  const allowWrite = (rel, label, opts = {}) => {
+    const r = runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, rel), opts));
+    c.exit(r, 0, label);
+    c.eq(String(r.stderr ?? "").trim(), "", `${label}（放行零噪声）`);
+  };
+  allowWrite(".zcode/board/evidence/T113/report.md", "evidence/ 报告写 → 放行");
+  allowWrite("ZPaPa/.zcode/board/evidence/T64v2/report.md", "ZPaPa 子项目 evidence/ 报告 → 放行");
+  allowWrite(".zcode/board/scan.json", "板内非数据文件（scan.json 扫描面配置）→ 放行");
+  allowWrite(".zcode/board/night-log.md", "板内台账（night-log.md，非板数据文件）→ 放行");
+  allowWrite("docs/board.json", "板外同名 board.json → 放行");
+  allowWrite(".zcode/board-notes/board.json", "相似路径（board-notes 组件对不匹配）→ 放行");
+
+  const allowBash = (cmd, label) => {
+    const r = runHook(GUARD_BOARD, preToolUsePayload(root, cmd));
+    c.exit(r, 0, label);
+    c.eq(String(r.stderr ?? "").trim(), "", `${label}（放行零噪声）`);
+  };
+  allowBash("mkdir -p .zcode/board/evidence/T113", "mkdir evidence 子目录 → 放行");
+  allowBash("cp /tmp/x.md .zcode/board/evidence/T113/a.md", "cp 证据文件 → 放行");
+  allowBash("rm .zcode/board/evidence/T113/old.md", "rm evidence 内旧文件 → 放行");
+  allowBash("cat .zcode/board/board.md", "cat 板文件（只读）→ 放行");
+  allowBash(`node ${COMPILER} ${root}`, "编译器重编译（唯一写路径）→ 放行");
+  allowBash("git status --short", "无关命令 → 放行");
+});
+
+test("P3", "B5-1：报告 evidence 引用逐条存在性——在位放行（板根相对/项目根相对/绝对/YAML 列表）；缺失即拦并点名缺哪条（line/JSON run_event/Edit 片段）", (c) => {
+  const root = newRoot("t13-p3");
+  w(root, ".zcode/board/evidence/T113/a.md", "证据甲\n");
+  const report = join(root, ".zcode/board", "evidence", "T113", "report.md");
+  const absA = join(root, ".zcode", "board", "evidence", "T113", "a.md");
+  const write = (content, opts = {}) => runHook(GUARD_BOARD, preWriteHookPayload(root, report, { content, ...opts }));
+
+  c.exit(write('## 报告\n\nevidence: ["evidence/T113/a.md"]\n'), 0, "line 形态（板根相对）在位 → 放行");
+  c.exit(write('evidence: [".zcode/board/evidence/T113/a.md"]\n'), 0, "line 形态（项目根相对）在位 → 放行");
+  c.exit(write(`evidence: ["${absA}"]\n`), 0, "绝对路径在位 → 放行");
+  c.exit(write("## 报告\n\nevidence:\n  - evidence/T113/a.md\n  - .zcode/board/evidence/T113/a.md\n"), 0, "YAML 块列表全部在位 → 放行");
+
+  const bad = write('## 报告\n\nevidence: ["evidence/T113/missing.md"]\n');
+  c.exit(bad, 2, "引用不存在（line 形态）→ 拦截");
+  const err = String(bad.stderr ?? "");
+  c.ok(err.includes("evidence/T113/missing.md"), "点名缺失条（原样路径）", show(err.slice(0, 700)));
+  c.ok(/缺失/.test(err) && /(落盘|修正引用)/.test(err), "缺失去路文案（先落盘证据或修正引用）", show(err.slice(0, 900)));
+  c.eq(String(bad.stdout ?? "").trim(), "", "stdout 为空（阻断原因走 stderr）");
+
+  const mixed = write('evidence: ["evidence/T113/a.md", "evidence/T113/gone.md"]\n');
+  c.exit(mixed, 2, "混合（1 在位 + 1 缺失）→ 拦截");
+  const errMixed = String(mixed.stderr ?? "");
+  c.ok(errMixed.includes("gone.md") && /缺失 1 条/.test(errMixed), "只点名缺失的那条（在位条不列）", show(errMixed.slice(0, 700)));
+
+  const jsonBad = write(['## 报告', '', '```json', '{"run_event":{"role":"implementer","result":"done","cards":[113],"evidence":["evidence/T113/absent-json.md"]}}', '```', ''].join("\n"));
+  c.exit(jsonBad, 2, "run_event JSON 块内引用不存在 → 拦截");
+  c.ok(String(jsonBad.stderr ?? "").includes("absent-json.md"), "点名 JSON 块内缺失条", show(String(jsonBad.stderr ?? "").slice(0, 700)));
+
+  c.exit(write('evidence: ["/nonexistent-root/definitely-absent.md"]\n'), 2, "绝对路径不存在 → 拦截");
+  c.exit(write('evidence: ["evidence/T113/edit-missing.md"]\n', { toolName: "Edit" }), 2, "Edit 片段引入不存在引用 → 拦截");
+});
+
+test("P4", "B5-1 反例：evidence 面不误报——非 .md 不扫、散文/无声明不扫、空数组、占位与通配与 URL 引用跳过、Edit 无引用放行", (c) => {
+  const root = newRoot("t13-p4");
+  const write = (rel, content, opts = {}) => runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, rel), { content, ...opts }));
+
+  c.exit(write("tools/gen.mjs", 'const evidence = ["nope.md"];\n'), 0, "非 .md 文件（.mjs）不进入 evidence 校验面");
+  c.exit(write("notes/plain.md", "本仓库证据统一落 .zcode/board/evidence/ 目录，详见报告。\n"), 0, "散文提及 evidence（无声明）→ 放行");
+  c.exit(write("notes/plain.md", "evidence: []\n"), 0, "空数组（无引用）→ 放行");
+  c.exit(write("notes/plain.md", 'evidence: ["evidence/T113/..."]\n'), 0, "省略号占位引用跳过（文档模板不误报）");
+  c.exit(write("notes/plain.md", 'evidence: ["evidence/<task-id>/report.md"]\n'), 0, "尖括号占位引用跳过");
+  c.exit(write("notes/plain.md", 'evidence: ["evidence/T113/*.md"]\n'), 0, "通配引用跳过（不可机械核验）");
+  c.exit(write("notes/plain.md", 'evidence: ["https://example.com/evidence.md"]\n'), 0, "URL 引用跳过（非文件路径）");
+  c.exit(write("notes/plain.md", "普通改动一行。\n", { toolName: "Edit" }), 0, "Edit 片段无引用 → 放行");
+});
+
+test("P5", "B5-1 边界：空/坏载荷、非守卫工具、缺 file_path/command、heredoc 正文不误报 → exit 0 零动作", (c) => {
+  const root = newRoot("t13-p5");
+  c.exit(runHook(GUARD_BOARD, ""), 0, "空 stdin → 放行");
+  c.exit(runHook(GUARD_BOARD, "not-a-json"), 0, "非 JSON stdin → 放行");
+  c.exit(runHook(GUARD_BOARD, { cwd: root, tool_name: "Read", tool_input: { file_path: join(root, ".zcode/board/board.json") } }), 0, "非守卫工具（Read）→ 放行（matcher 面外不误拦）");
+  c.exit(runHook(GUARD_BOARD, { cwd: root, tool_name: "Write", tool_input: {} }), 0, "Write 无 file_path → 放行");
+  c.exit(runHook(GUARD_BOARD, { cwd: root, tool_name: "Write", tool_input: { file_path: join(root, "notes.md") } }), 0, "Write 无 content（非板文件）→ 放行");
+  c.exit(runHook(GUARD_BOARD, { cwd: root, tool_name: "Bash", tool_input: {} }), 0, "Bash 无 command → 放行");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "   ")), 0, "空白命令 → 放行");
+
+  const heredoc = ["cat <<'EOF' > /tmp/guard-ok.txt", "echo x > .zcode/board/board.json", "sed -i s/a/b/ .zcode/board/registry.json", "EOF", ""].join("\n");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, heredoc)), 0, "heredoc 正文中的板写文本不参与解析（与 B3-1 同口径）→ 放行");
+});
+
+test("P6", "B5-1：大小写变体（macOS/Windows 大小写不敏感文件系统下 .ZCODE/BOARD 即同一现场）同样命中，防字母变体绕过", (c) => {
+  const root = newRoot("t13-p6");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".ZCODE", "BOARD", "board.json"), { content: "{}\n" })), 2, "Write .ZCODE/BOARD/board.json（大小写变体）→ 拦截");
+  c.exit(runHook(GUARD_BOARD, preToolUsePayload(root, "rm -rf .Zcode/Board/RUNS.JSON")), 2, "Bash 删除大小写变体板文件 → 拦截");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode", "board", "Board.Json"), { content: "{}\n" })), 2, "文件名大小写变体 Board.Json → 拦截");
+  c.exit(runHook(GUARD_BOARD, preWriteHookPayload(root, join(root, ".zcode", "board", "EVIDENCE", "T113", "r.md"), { content: "# 报告\n" })), 0, "EVIDENCE 大小写变体仍属正当写面 → 放行");
+});
+
+test("S7", "静态：guard-board.mjs 存在、仅 node 内置/相对导入（复用 B3-1 纯函数）、语法可解析", (c) => {
+  c.ok(isFile(GUARD_BOARD), `guard-board.mjs 存在（${toPosix(GUARD_BOARD)}）`);
+  if (isFile(GUARD_BOARD)) {
+    const src = readFileSync(GUARD_BOARD, "utf8");
+    const imports = [...src.matchAll(/^\s*import\s+[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
+    c.eq(imports.filter((s) => !s.startsWith("node:") && !s.startsWith("./") && !s.startsWith("../")), [], "仅 node 内置与相对导入（无第三方依赖）");
+    c.exit(spawnSync(process.execPath, ["--check", GUARD_BOARD], { encoding: "utf8" }), 0, "node --check 语法校验通过");
+  }
+});
+
+// ---- S8 B6-5（#123）：证据头模板（V21）——首行=可复现命令注释 + 运行环境行
+
+test("S8", "静态：证据头模板（#123）——首两行冻结形态（首行可复现命令注释含 cwd + 运行环境行）；含脚本头制式、不可复跑声明位与代存归档引流", (c) => {
+  c.ok(isFile(EVIDENCE_TEMPLATE), `evidence.template.md 存在（${toPosix(EVIDENCE_TEMPLATE)}）`);
+  if (!isFile(EVIDENCE_TEMPLATE)) return;
+  const text = readFileSync(EVIDENCE_TEMPLATE, "utf8");
+  const lines = text.split("\n");
+  c.eq(lines[0], "<!-- 运行命令（可复现）：cd <项目根绝对路径> && <完整命令原文> -->", "首行=可复现命令注释（冻结形态：含 cd <项目根绝对路径> 与完整命令占位）");
+  c.eq(lines[1], "<!-- 运行环境：node <版本> · <平台/架构> · <时点 ISO 8601 带时区> -->", "次行=运行环境行（node 版本 · 平台/架构 · 时点）");
+  c.ok(/不可复跑/.test(text), "含不可复跑声明位（V21 清单固定项：声明原因后 verifier 按声明放行/退回）", show(text.slice(0, 200)));
+  c.ok(text.includes("// 运行命令（可复现）："), "含证据脚本头制式（.mjs/.ts 注释符形态，标记文案同一）", show(text.slice(0, 400)));
+  c.ok(text.includes(".zcode/board/evidence/") && text.includes("report.md"), "含证据路径纪律与代存归档引流（evidence/<runId>/report.md，无第二份手写）", show(text.slice(0, 400)));
+});
+
+// ---- B5-4（#116）：branch -D 拦截（gate-merge 拦截面扩展）+ 合并后清理核对（verify-cleanup）
+// 依据：E4-18（① gate 拦 `git branch -D task-<no>`，逼回 -d 正规路径）；V33（integrator 机械核对清单）。
+
+test("G12", "B5-4（#116）：git branch -D 卡分支拦截（-D / --delete --force / 组合旗标 / -C 形态）——逼回 -d 正规清理；-d 与非卡分支放行", (c) => {
+  const root = newRoot("t13-g12");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-116", "src/a.ts", "export const a = 1;\n"), 0, "前置：task-116 卡分支就位（含一个提交）");
+
+  const r = runHook(GATE_MERGE, preToolUsePayload(root, "git branch -D task-116"));
+  c.exit(r, 2, "git branch -D task-116 → 拦截（exit 2 → permissionDecision deny）");
+  const err = String(r.stderr ?? "");
+  c.ok(/branch -D|强制删除/.test(err), "点名强制删除形态（-D）", show(err.slice(0, 400)));
+  c.ok(/task-116/.test(err), "点名卡分支 task-116", show(err.slice(0, 400)));
+  c.ok(/-d 而非 -D/.test(err) && /git branch -d task-116/.test(err), "去路：-d 而非 -D（未合并会被拒绝，退回不 -D）", show(err.slice(0, 800)));
+  c.ok(/worktree remove/.test(err) && /prune/.test(err), "给出正规清理顺序（remove → prune → branch -d）", show(err.slice(0, 900)));
+  c.ok(/verify-cleanup/.test(err), "指向收尾机械核对（verify-cleanup，合并后清理齐备 = 绿）", show(err.slice(0, 900)));
+  c.eq(String(r.stdout ?? "").trim(), "", "stdout 为空（阻断原因走 stderr）");
+
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch --delete --force task-116")), 2, "--delete --force 等价形态 → 拦截");
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch -df task-116")), 2, "组合短旗标 -df（delete+force）→ 拦截");
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch -d -f task-116")), 2, "分列旗标 -d -f → 拦截");
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, `git -C ${root} branch -D task-116`)), 2, "git -C 目标仓形态同样拦截（-C 取值跳过不失效）");
+
+  const lower = runHook(GATE_MERGE, preToolUsePayload(root, "git branch -d task-116"));
+  c.exit(lower, 0, "git branch -d task-116（正规清理路径）→ 放行");
+  c.ok(!/已阻断/.test(String(lower.stderr ?? "")), "无阻断文案（-d 是纪律路径，non-blocking）", show(String(lower.stderr ?? "").slice(0, 400)));
+
+  const other = runHook(GATE_MERGE, preToolUsePayload(root, "git branch -D feature-x"));
+  c.exit(other, 0, "非卡分支（feature-x）→ 不在卡分支纪律面，放行（零误拦）");
+
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch -D")), 0, "无目标 -D（git 自身报错）→ 放行");
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch -m task-116 task-116b")), 0, "branch -m 改名（非删除）→ 放行（不误拦）");
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, "git branch --list task-116")), 0, "branch --list（只读）→ 放行");
+});
+
+/** verify-cleanup 调用（B5-4/#116 收尾核对工具；--root 先给，其余参数原样透传）。 */
+const VERIFY_CLEANUP = join(ASSETS_DIR, "tools", "verify-cleanup.mjs");
+function runVerifyCleanup(root, args) {
+  return spawnSync(process.execPath, [VERIFY_CLEANUP, "--root", root, ...args], { encoding: "utf8" });
+}
+
+test("Q1", "B5-4（#116）收尾核对：合并后残留 worktree/branch 点名清单（分支/现场/登记逐类计数）+ 清理后绿（V33/E4-18）", (c) => {
+  const root = newRoot("t13-q1");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-116", "src/a.ts", "export const a = 1;\n"), 0, "前置：task-116 卡分支含提交");
+  c.exit(git(root, ["merge", "--no-ff", "task-116", "-m", "Merge task-116 [#116]"]), 0, "前置：task-116 已合并进 main");
+  c.exit(git(root, ["branch", "task-118"]), 0, "前置：task-118 分支在（无现场）");
+  c.exit(git(root, ["worktree", "add", "-q", ".zcode/worktrees/task-117", "-b", "task-117"]), 0, "前置：task-117 现场在（分支 + 工作树）");
+  c.exit(git(root, ["worktree", "add", "-q", ".zcode/worktrees/task-119", "-b", "task-119"]), 0, "前置：task-119 现场在");
+  rmSync(join(root, ".zcode", "worktrees", "task-119"), { recursive: true, force: true }); // 手工删目录未 prune（登记残留）
+
+  const r = runVerifyCleanup(root, ["--cards", "116,117,118,119"]);
+  c.exit(r, 1, "残留现场 → 退出码 1（点名清单；非失败级阻断）");
+  const out = String(r.stdout ?? "");
+  c.ok(/清理核对：卡 #116 #117 #118 #119 → 残留 6 项（分支 4 \/ 现场 1 \/ 登记 1 \/ 目录 0）/.test(out), "摘要行给出逐类计数（6 = 4 分支 + 1 现场 + 1 登记）", show(out.slice(0, 900)));
+  c.ok(/- 分支残留：task-116（处置：git branch -d task-116，-d 而非 -D；未合并会被拒绝 → 退回核对）/.test(out), "#116 分支残留点名（-d 而非 -D 处置文案）", show(out.slice(0, 1200)));
+  c.ok(/- 现场残留：\.zcode\/worktrees\/task-117（处置：git worktree remove \.zcode\/worktrees\/task-117 && git worktree prune）/.test(out), "#117 现场残留点名（remove → prune 处置）", show(out.slice(0, 1200)));
+  c.ok(/- 登记残留：\.zcode\/worktrees\/task-119（prunable；处置：git worktree prune）/.test(out), "#119 登记残留点名（手工删目录未 prune 形态）", show(out.slice(0, 1400)));
+  c.ok(!out.includes("task-120"), "未列卡集合外的条目", show(out.slice(0, 900)));
+  c.ok(/结果=有残留/.test(out), "机读结果行（有残留）", show(out.slice(-300)));
+  c.ok(/verify-cleanup:/.test(String(r.stderr ?? "")) && /卡 #117/.test(String(r.stderr ?? "")), "stderr 逐卡诊断（点名残留卡号）", show(String(r.stderr ?? "").slice(0, 500)));
+
+  // 清理（正规路径）：remove → prune → branch -d 全部成功 → 绿
+  c.exit(git(root, ["worktree", "remove", ".zcode/worktrees/task-117"]), 0, "清理：worktree remove task-117");
+  c.exit(git(root, ["worktree", "prune"]), 0, "清理：prune（清 #119 残留登记）");
+  c.exit(git(root, ["branch", "-d", "task-116", "task-118", "task-117", "task-119"]), 0, "清理：branch -d 四个已合并卡分支（-d 而非 -D）");
+  const clean = runVerifyCleanup(root, ["--cards", "116,117,118,119"]);
+  c.exit(clean, 0, "清理齐备 → 退出码 0（绿）");
+  const cleanOut = String(clean.stdout ?? "");
+  c.ok(/清理核对：卡 #116 #117 #118 #119 → 清理齐备（无残留现场\/分支\/目录）/.test(cleanOut), "绿态摘要行", show(cleanOut.slice(0, 500)));
+  c.ok(/结果=清理齐备/.test(cleanOut), "绿态机读结果行", show(cleanOut.slice(-200)));
+  c.ok(!/- (分支|现场|登记|目录)残留/.test(cleanOut), "绿态零残留行（零噪音）", show(cleanOut));
+});
+
+test("Q2", "B5-4（#116）收尾核对：声明差集（runs 声明 worktree 目录残留 vs 现场登记 vs 分支存在性）与边界（用法/非仓库/help/静态形态）", (c) => {
+  const root = newRoot("t13-q2");
+  initGitRepo(root);
+  writeRuns(root, [
+    runRecord({ runId: "run-20261010-q2aa", cards: [118], worktree: ".zcode/worktrees/task-118", branch: "task-118" }),
+    runRecord({ runId: "run-20261010-q2bb", cards: [119], worktree: ".zcode/worktrees/task-119", branch: "task-119" }),
+  ]);
+  mkdirSync(join(root, ".zcode", "worktrees", "task-118"), { recursive: true }); // 声明在、目录在、登记不在（悬空/手工现场）
+
+  const r = runVerifyCleanup(root, ["--cards", "118,119"]);
+  c.exit(r, 1, "声明目录残留 → 退出码 1");
+  const out = String(r.stdout ?? "");
+  c.ok(/残留 1 项（分支 0 \/ 现场 0 \/ 登记 0 \/ 目录 1）/.test(out), "差集：仅声明目录残留 1 项（#119 声明件已清不误报）", show(out.slice(0, 900)));
+  c.ok(/- 目录残留：\.zcode\/worktrees\/task-118（登记不在；处置：核对后按 worktree-discipline §6 正规清理）/.test(out), "点名声明残留目录（runs 声明坐标 + §6 处置）", show(out.slice(0, 1000)));
+  c.ok(!out.includes("task-119"), "已清理的声明（#119）不进点名清单（清理后绿）", show(out.slice(0, 1000)));
+
+  rmSync(join(root, ".zcode", "worktrees", "task-118"), { recursive: true, force: true });
+  const clean = runVerifyCleanup(root, ["--cards", "118,119"]);
+  c.exit(clean, 0, "声明件已清 → 退出码 0（绿）");
+  c.ok(/结果=清理齐备/.test(String(clean.stdout ?? "")), "绿态机读结果行", show(String(clean.stdout ?? "")));
+  c.exit(runVerifyCleanup(root, ["--cards", "120"]), 0, "从未存在的卡（无分支/现场/声明）→ 绿（零噪音）");
+
+  // 边界与形态
+  c.exit(runVerifyCleanup(root, []), 2, "缺 --cards → 用法错误退出码 2");
+  c.exit(runVerifyCleanup(root, ["--cards", "abc"]), 2, "非法卡号 → 退出码 2");
+  c.exit(runVerifyCleanup(root, ["--cards", "0"]), 2, "非正整号（0）→ 退出码 2");
+  const noroot = newRoot("t13-q2b");
+  c.exit(runVerifyCleanup(noroot, ["--cards", "116"]), 3, "非 git 仓库根 → 前置拒绝退出码 3");
+
+  c.ok(isFile(VERIFY_CLEANUP), `verify-cleanup.mjs 存在（${toPosix(VERIFY_CLEANUP)}）`);
+  if (isFile(VERIFY_CLEANUP)) {
+    const src = readFileSync(VERIFY_CLEANUP, "utf8");
+    const imports = [...src.matchAll(/^\s*import\s+[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
+    c.eq(imports.filter((s) => !s.startsWith("node:") && !s.startsWith("./") && !s.startsWith("../")), [], "仅 node 内置与相对导入（无第三方依赖）");
+    c.exit(spawnSync(process.execPath, ["--check", VERIFY_CLEANUP], { encoding: "utf8" }), 0, "node --check 语法校验通过");
+    const help = spawnSync(process.execPath, [VERIFY_CLEANUP, "--help"], { encoding: "utf8" });
+    c.exit(help, 0, "--help 退出码 0");
+    c.ok(String(help.stdout ?? "").includes("--cards") && /残留/.test(String(help.stdout ?? "")), "--help 说明 --cards 输入面与残留语义", show(String(help.stdout ?? "").slice(0, 500)));
+  }
+});
+
+// ---- B5-6（#118）：merge commit 格式校验（E4-17）——gate-merge -m 拦截面 + verify-cleanup HEAD 事后核对
+// 冻结格式（SKILL §6 第 6 条）：merge commit 精确写 `Merge task-<no> [#<no>]`。
+// 判据同源于卡文（冷启动可复算）：卡合并的提交信息必须与合并卡号一致、形态精确——
+//   事前（gate-merge）：命令带 -m/--message 时按冻结格式校验（命令形态先于绿证据）；
+//     无信息（-m 缺省 / 交互 / -F）事前无法核对：放行 + 指向 verify-cleanup 事后核对；
+//   事后（verify-cleanup）：HEAD 为 merge commit 且呈卡合并迹象（subject 含 task-<no> / [#<no>]）
+//     时必须合规；非 merge / 非卡合并形态（上游同步等）不适用（零噪声，不误报）。
+
+test("G13", "merge commit 格式（B5-6/#118）：-m 信息不符冻结格式 `Merge task-<no> [#<no>]` → 拦截并给出格式要求；合规放行；无 -m 放行并指向事后核对", (c) => {
+  const root = newRoot("t13-g13");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-12", "src/a.ts", "export const a = 1;\n"), 0, "前置：task-12 卡分支含提交");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [12] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [12] }),
+  ]);
+
+  // ① 自由信息（无冻结格式）→ 拦 + 给出格式要求
+  const bad = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "merge stuff"'));
+  c.exit(bad, 2, "自由信息 -m（不符冻结格式）→ 拦截（exit 2 → deny）");
+  const badErr = String(bad.stderr ?? "");
+  c.ok(/格式/.test(badErr), "点名格式问题", show(badErr.slice(0, 600)));
+  c.ok(/Merge task-12 \[#12\]/.test(badErr), "给出冻结格式的本卡实例（Merge task-12 [#12]）", show(badErr.slice(0, 900)));
+  c.ok(/git merge --no-ff task-12 -m/.test(badErr), "给出正确命令形态（含合并来源与 -m）", show(badErr.slice(0, 900)));
+  c.ok(/E4-17|§6|第 6 条/.test(badErr), "点明依据（E4-17 / SKILL §6）", show(badErr.slice(0, 900)));
+  c.eq(String(bad.stdout ?? "").trim(), "", "stdout 为空（阻断原因走 stderr）");
+
+  // ② 信息卡号与合并分支不符 → 拦
+  const mismatch = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-13 [#13]"'));
+  c.exit(mismatch, 2, "信息卡号与合并分支不符 → 拦截");
+  c.ok(/Merge task-12 \[#12\]/.test(String(mismatch.stderr ?? "")), "点名应写卡号（#12 实例）", show(String(mismatch.stderr ?? "").slice(0, 900)));
+
+  // ③ 非精确形态（尾缀）→ 拦
+  c.exit(runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12] 补充"')), 2, "信息非精确形态（尾缀）→ 拦截");
+
+  // ④ 合规 → 放行（零阻断文案）
+  const ok = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12]"'));
+  c.exit(ok, 0, "合规信息 → 放行（exit 0）");
+  c.ok(!/已阻断/.test(String(ok.stderr ?? "")), "无阻断文案（合规零噪声）", show(String(ok.stderr ?? "").slice(0, 500)));
+
+  // ⑤ 无 -m（交互/默认信息形态）→ 放行 + 指向事后核对（verify-cleanup 对 HEAD merge commit）
+  const noMsg = runHook(GATE_MERGE, preToolUsePayload(root, "git merge --no-ff task-12"));
+  c.exit(noMsg, 0, "无 -m → 放行（事前无法核对，不误拦）");
+  const noMsgErr = String(noMsg.stderr ?? "");
+  c.ok(/verify-cleanup/.test(noMsgErr), "提示事后核对去向（verify-cleanup）", show(noMsgErr.slice(0, 900)));
+  c.ok(/HEAD merge/.test(noMsgErr), "点明核对对象（HEAD merge commit 格式）", show(noMsgErr.slice(0, 900)));
+  c.ok(!/已阻断/.test(noMsgErr), "无阻断文案（放行形态）", show(noMsgErr.slice(0, 600)));
+
+  // ⑥ 顺序：命令形态（格式）先于绿证据——缺证据 + 不符格式 → 先报格式
+  const root2 = newRoot("t13-g13b");
+  initGitRepo(root2);
+  c.exit(commitFileOnBranch(root2, "task-12", "src/a.ts", "export const a = 1;\n"), 0, "前置：卡分支含提交（runs.json 缺证据）");
+  const both = runHook(GATE_MERGE, preToolUsePayload(root2, 'git merge --no-ff task-12 -m "合并一下"'));
+  c.exit(both, 2, "缺证据 + 不符格式 → 拦截（exit 2）");
+  c.ok(/格式/.test(String(both.stderr ?? "")), "先报格式问题（校验顺序：命令形态 → 绿证据）", show(String(both.stderr ?? "").slice(0, 700)));
+});
+
+test("Q3", "HEAD merge 格式事后核对（B5-6/#118，E4-17 审计面）：默认信息 merge commit → 格式残留点名（exit 1）；冻结格式绿（给结论行）；非 merge/非卡合并零噪声", (c) => {
+  // ① 默认信息形态（Merge branch 'task-118'；交互/无 -m 合并的落盘形态）——清理差集清白，仅格式残留
+  const root = newRoot("t13-q3");
+  initGitRepo(root);
+  c.exit(commitFileOnBranch(root, "task-118", "src/a.ts", "export const a = 1;\n"), 0, "前置：task-118 卡分支含提交");
+  c.exit(git(root, ["merge", "--no-ff", "task-118", "--no-edit"]), 0, "前置：默认信息合并（Merge branch 'task-118'）");
+  const bad = runVerifyCleanup(root, ["--cards", "118"]);
+  c.exit(bad, 1, "HEAD merge 非冻结格式 → 退出码 1（格式残留点名）");
+  const out = String(bad.stdout ?? "");
+  c.ok(/清理核对：卡 #118 → 残留 2 项（分支 1 \/ 现场 0 \/ 登记 0 \/ 目录 0 \/ 格式 1）/.test(out), "摘要行：分支 1 + 格式 1（差集项与格式项并列计数）", show(out.slice(0, 900)));
+  c.ok(/- 格式残留：HEAD merge commit `Merge branch 'task-118'`/.test(out), "点名 HEAD merge 实际信息", show(out.slice(0, 1200)));
+  c.ok(/Merge task-118 \[#118\]/.test(out), "给出应写格式的本卡实例", show(out.slice(0, 1200)));
+  c.ok(/git commit --amend -m/.test(out), "给出处置（amend 修正信息）", show(out.slice(0, 1400)));
+  c.ok(/结果=有残留/.test(out), "机读结果行（有残留）", show(out.slice(-300)));
+
+  // ② 冻结格式重做 → 绿（含 HEAD merge 格式核对结论行）
+  c.exit(git(root, ["reset", "--hard", "HEAD~1"]), 0, "修复：回退默认信息合并");
+  c.exit(git(root, ["merge", "--no-ff", "task-118", "-m", "Merge task-118 [#118]"]), 0, "修复：按冻结格式重做合并");
+  c.exit(git(root, ["branch", "-d", "task-118"]), 0, "修复：正规清理分支（-d）");
+  const clean = runVerifyCleanup(root, ["--cards", "118"]);
+  c.exit(clean, 0, "冻结格式 HEAD merge → 退出码 0（绿）");
+  const cleanOut = String(clean.stdout ?? "");
+  c.ok(/HEAD merge 格式：卡 #118 `Merge task-118 \[#118\]`（合规/.test(cleanOut), "绿态给出格式核对结论行（卡号 + 提交信息 + 合规）", show(cleanOut.slice(0, 700)));
+  c.ok(/结果=清理齐备/.test(cleanOut), "机读结果行（清理齐备）", show(cleanOut.slice(-200)));
+
+  // ③ 非 merge HEAD（普通提交）→ 不适用：stdout 零噪声，stderr 说明
+  const root3 = newRoot("t13-q3b");
+  initGitRepo(root3);
+  const plain = runVerifyCleanup(root3, ["--cards", "118"]);
+  c.exit(plain, 0, "非 merge HEAD → 退出码 0（不适用）");
+  c.ok(!/格式/.test(String(plain.stdout ?? "")), "stdout 零格式噪声（非 merge 不适用）", show(String(plain.stdout ?? "")));
+  c.ok(/HEAD 非 merge commit/.test(String(plain.stderr ?? "")) && /不适用/.test(String(plain.stderr ?? "")), "stderr 说明不适用（不静默）", show(String(plain.stderr ?? "").slice(0, 400)));
+
+  // ④ 非卡合并形态（feature 合并/上游同步）→ 不误报（冻结格式面只约束卡合并）
+  const root4 = newRoot("t13-q3c");
+  initGitRepo(root4);
+  c.exit(commitFileOnBranch(root4, "feature-x", "src/b.ts", "export const b = 1;\n"), 0, "前置：feature-x 分支含提交");
+  c.exit(git(root4, ["merge", "--no-ff", "feature-x", "--no-edit"]), 0, "前置：非卡合并（Merge branch 'feature-x'）");
+  const feat = runVerifyCleanup(root4, ["--cards", "118"]);
+  c.exit(feat, 0, "非卡合并形态 → 退出码 0（格式面不适用，零误报）");
+  c.ok(!/格式残留/.test(String(feat.stdout ?? "")), "stdout 零格式残留噪声", show(String(feat.stdout ?? "")));
+});
+
+// ---- B5-5（#117）：板滚未提交——Stop 对账新类别（E1 V35）
+
+/** 板数据文件六件（与实现解耦字面：卡片枚举 board.json/board.md/registry/interviews/runs/exemptions；evidence/ 与 last-reconcile.md 不在本类）。 */
+const CHURN_RELS = [
+  ".zcode/board/board.json",
+  ".zcode/board/board.md",
+  ".zcode/board/registry.json",
+  ".zcode/board/interviews.json",
+  ".zcode/board/runs.json",
+  ".zcode/board/exemptions.json",
+];
+
+/** 六件板数据文件 git 未提交态（测试侧独立命令：porcelain 行；夹具内真 git 仓）。 */
+function churnPorcelain(root) {
+  const r = git(root, ["status", "--porcelain", "-uall", "--", ...CHURN_RELS]);
+  return String(r.stdout ?? "").trim();
+}
+
+function commitAll(root, message) {
+  git(root, ["add", "-A"]);
+  return git(root, ["-c", "user.email=t13@fixture", "-c", "user.name=t13", "commit", "-qm", message]);
+}
+
+/** 按 `## <n>. ` 节切块（到下一个 `## ` 标题或文末；节内正/反断言用，避免跨节误判）。 */
+function reconcileSection(md, n) {
+  const lines = String(md).split("\n");
+  const start = lines.findIndex((l) => l.startsWith(`## ${n}. `));
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (lines[i].startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
+test("C11", "B5-5（#117）：Stop 对账新类别「板滚未提交」（E1 V35）——板数据文件未提交即点名（提示级：板滚并入收口 commit）；提交后消失；只点名板数据文件", (c) => {
+  const root = newRoot("t13-c11");
+  initGitRepo(root);
+  const planRel = writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }], rel: ".zcode/plans/plan-sess_t13-c11.md" });
+  c.exit(runCompiler(root), 0, "前置编译退出码 0");
+  c.exit(commitAll(root, "baseline: board"), 0, "前置：基线（板数据文件）入库");
+  c.eq(churnPorcelain(root), "", "前置：六件板数据文件 git 干净");
+
+  // ① 干净态（提交后）：类在效但不点名；结论行按五类口径
+  const r1 = runHook(RECONCILE_STOP, stopPayload(root, "收尾（干净态）。"));
+  c.exit(r1, 0, "干净态退出码 0（提示级不阻断）");
+  c.eq(String(r1.stdout ?? "").trim(), "", "stdout 恒空（R3 语义不变）");
+  const md1 = String(readReconcile(root) ?? "");
+  c.ok(/## 6\. 板滚未提交（0）/.test(md1), "第 6 节「板滚未提交」独立成节、干净态计数 0（提交后零点名）", show(md1.slice(0, 2400)));
+  c.ok(/- 结论：五类均无（对账通过）/.test(md1), "结论行按五类口径（板滚未提交在效且为零）", show(md1.split("\n").slice(0, 6)));
+
+  // ② 改板未提交（板滚）：源追加一卡重编译 + 四件数据文件直写（含新建未跟踪）→ 六件全点名
+  w(root, planRel, readFileSync(join(root, planRel), "utf8") + "\n- [ ] 2. 甲任务乙 <!-- zcode-board: no=13 -->\n  - 甲任务乙正文首行。\n");
+  writeRuns(root, [runRecord({ cards: [12] })]);
+  w(root, ".zcode/board/interviews.json", JSON.stringify({ version: 1, interviews: [] }, null, 2) + "\n");
+  w(root, ".zcode/board/registry.json", JSON.stringify({ version: 1, seq: 0, epics: [], entries: [] }, null, 2) + "\n");
+  w(root, ".zcode/board/exemptions.json", JSON.stringify({ version: 1, exemptions: [] }, null, 2) + "\n");
+  c.exit(runCompiler(root), 0, "改板：重编译产出 board.json/board.md 变更（板滚形态）");
+  c.eq(churnPorcelain(root).split("\n").filter((l) => l !== "").length, 6, "前置：六件板数据文件均处未提交态", show(churnPorcelain(root)));
+
+  const r2 = runHook(RECONCILE_STOP, stopPayload(root, "收尾（板滚未提交态）。"));
+  c.exit(r2, 0, "未提交态退出码 0（点名不阻断、不代替提交）");
+  c.eq(String(r2.stdout ?? "").trim(), "", "stdout 恒空（点名走对账正文）");
+  const md2 = String(readReconcile(root) ?? "");
+  const sec2 = reconcileSection(md2, 6);
+  c.ok(sec2 !== null && /## 6\. 板滚未提交（6）/.test(sec2), "新类别点名 6 件板数据文件（计数 6）", show(md2.slice(0, 2400)));
+  for (const rel of CHURN_RELS) {
+    c.ok(sec2 !== null && sec2.includes(rel), `点名未提交：${rel}`, show(sec2));
+  }
+  c.ok(/板滚并入收口 commit/.test(String(sec2)), "提交建议＝板滚并入收口 commit（E5 W3/G3 churn 治理方向）", show(sec2));
+  c.ok(/提示级/.test(String(sec2)), "写明提示级（非失败、不阻断）", show(sec2));
+  c.ok(sec2 !== null && !sec2.includes("plan-sess_t13-c11"), "只点名板数据文件（源文件变更不误列本类）", show(sec2));
+  c.ok(/- 结论：点名 6 项（未登记 0 \/ 未合并 0 \/ 板陈旧 0 \/ 待归档 0 \/ 板滚未提交 6）/.test(md2), "结论行五类计数齐备（板滚未提交计入类计数）", show(md2.split("\n").slice(0, 6)));
+
+  // ③ 提交后：点名消失（类清零）
+  c.exit(commitAll(root, "chore: board churn"), 0, "收口：板滚并入 commit（提交全部未提交板数据文件）");
+  c.eq(churnPorcelain(root), "", "提交后：六件板数据文件 git 干净");
+  const r3 = runHook(RECONCILE_STOP, stopPayload(root, "收尾（提交后）。"));
+  c.exit(r3, 0, "提交后退出码 0");
+  const md3 = String(readReconcile(root) ?? "");
+  c.ok(/## 6\. 板滚未提交（0）/.test(md3), "提交后点名声消失（计数 0）", show(md3.slice(0, 2400)));
+  const sec3 = reconcileSection(md3, 6);
+  c.ok(sec3 !== null && !/- \.zcode\/board\//.test(sec3), "提交后零点名条目", show(sec3));
+  c.ok(/- 结论：五类均无（对账通过）/.test(md3), "提交后结论行回五类均无", show(md3.split("\n").slice(0, 6)));
+});
+
+test("C12", "B5-5（#117）降级（零噪声）：非 git 项目 / 仓不可用 → 新类别跳过不点名；结论行维持四类口径；stdout 恒空", (c) => {
+  // ① 非 git 项目（夹具域）：不上报、不虚增类计数
+  const root = newRoot("t13-c12");
+  writePlanFixture(root, { featureNo: 5, cards: [{ no: 12 }] });
+  c.exit(runCompiler(root), 0, "前置编译退出码 0（非 git 夹具）");
+  const r1 = runHook(RECONCILE_STOP, stopPayload(root, "收尾（非 git 项目）。"));
+  c.exit(r1, 0, "非 git 项目：退出码 0");
+  c.eq(String(r1.stdout ?? "").trim(), "", "stdout 恒空");
+  const md1 = String(readReconcile(root) ?? "");
+  const sec1 = reconcileSection(md1, 6);
+  c.ok(sec1 !== null && /## 6\. 板滚未提交（0）/.test(sec1), "非 git 项目：新类别计数 0（跳过，不误点名）", show(md1.slice(0, 2400)));
+  c.ok(/非 git/.test(String(sec1)) && /跳过/.test(String(sec1)), "写明跳过语义（零噪声来源）", show(sec1));
+  c.ok(sec1 !== null && !/- \.zcode\/board\//.test(sec1), "非 git 项目：零点名条目", show(sec1));
+  c.ok(/- 结论：四类均无（对账通过）/.test(md1), "非 git 项目：结论行维持四类口径（该维度不适用）", show(md1.split("\n").slice(0, 6)));
+
+  // ② `.git` 存在但仓不可用（坏 gitdir 指针）：子进程失败 → 跳过并提示（不误当通过）
+  const root2 = newRoot("t13-c12b");
+  writePlanFixture(root2, { featureNo: 5, cards: [{ no: 12 }] });
+  c.exit(runCompiler(root2), 0, "前置编译退出码 0（坏仓夹具）");
+  w(root2, ".git", "gitdir: /nonexistent/nope\n");
+  const r2 = runHook(RECONCILE_STOP, stopPayload(root2, "收尾（坏仓）。"));
+  c.exit(r2, 0, "坏仓：退出码 0（对账失败无副作用）");
+  const md2 = String(readReconcile(root2) ?? "");
+  const sec2 = reconcileSection(md2, 6);
+  c.ok(sec2 !== null && /## 6\. 板滚未提交（0）/.test(sec2), "坏仓：新类别计数 0（跳过）", show(md2.slice(0, 2400)));
+  c.ok(/跳过/.test(String(sec2)) && /不可用/.test(String(sec2)), "坏仓：写明跳过原因（不误当通过）", show(sec2));
+  c.ok(!/- \.zcode\/board\//.test(String(sec2)), "坏仓：零点名条目", show(sec2));
+  c.ok(/- 结论：四类均无（对账通过）/.test(md2), "坏仓：结论行不虚增类计数", show(md2.split("\n").slice(0, 6)));
 });
 
 // ---------------------------------------------------------------- 主流程

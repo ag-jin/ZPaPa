@@ -3,19 +3,19 @@
   "packageVersion": "0.5.0",
   "contractVersion": "2.5",
   "schemaVersion": "2.4",
-  "generatedAt": "2026-10-11T00:59:18+08:00",
+  "generatedAt": "2026-10-11T06:23:56+08:00",
   "files": {
-    "SKILL.md": "9a25b0038bc18292551faf917adf89364bf4472e8a2db69171e03513f036774a",
-    "assets/board.schema.json": "08890dc7df8abe52e062d7a66a06c49e1a301e7add9d000f3ec50f23d3adfc83",
-    "assets/compile-board.mjs": "244d1d8fe653892fdf97924b9957800d054f65c777490741fd754deac6fe7dd9",
-    "assets/contracts/markers.md": "cabae73e3c1f87f988decca3be4f272861817d63edb02d458f7b578a50c43b80",
+    "SKILL.md": "3975e5683f5d648d00548d4e9d32d4b6274f6ed21c38de7b5708f2e4e7f06558",
+    "assets/board.schema.json": "4bf2e5919b95bf1e81f32cf702c0e23592b8145aa72bd43d7c6b67c98860fcf8",
+    "assets/compile-board.mjs": "9a1da83843f6bb50155dca3bdd99b5c82d0c56057a749d298b33169a84e1ccfe",
+    "assets/contracts/markers.md": "790ae61c6b52bdbd8fc588bbbc033ec4bbbf730410a46fe3e422fa1047eebf1d",
     "assets/lib/board-io.mjs": "4c44ba5eda34eebd836b5aa1c9c2b38e2ed58186fff769687e6ce94f2e4ed097",
-    "assets/lib/derive.mjs": "513f9a32444a79f309b723d85fe7d512aafe40bac7f5539631a81b7dd6c27ca0",
-    "assets/lib/fact-invariants.mjs": "73448cc639227a5ee038b7742f767efeaddc3a6000841e9e08b0038b835a95f9",
+    "assets/lib/derive.mjs": "d3b2747a8a8e7bc53a562fc6acf40b9bff4301e0deab578e9467f0473a09a93b",
+    "assets/lib/fact-invariants.mjs": "ff90cd8048aa8004b220a4c1c5611e055613a0de2631b7495944dcdd22daa709",
     "assets/lib/marker-write.mjs": "1c83beb56c1789beb12d844c319d426bff8b0a1105ea0a769a65ed4f22f16323",
-    "assets/lib/runs.mjs": "58af54117976ec2ad8a0ae1742a03a94dd34f86c8a3617306ea03a4ecb17017c",
+    "assets/lib/runs.mjs": "a8509b025ecd2fbf7dcb9a25d754477b95401da1f3a14a761445ee289029bb12",
     "assets/lib/scan-config.mjs": "ff2e8284d7390bcce0b1f2e34ae6c533a153cf1f283b41e62f6f3548cbec0bd2",
-    "assets/lib/schema-check.mjs": "58f949812408a7dafa04b4a93b200f06e0946d0dd3105dc33b8c80ffb5e44124",
+    "assets/lib/schema-check.mjs": "9f328f1e42f16a92c300901690e0f2916f6a4886eba4e948b2ffa00a32fe8dcc",
     "assets/lib/version.mjs": "b6d79b677a59ed64a5597322cfa7ed3ebce535864f43788c92825a6216d3c74d"
   }
 }

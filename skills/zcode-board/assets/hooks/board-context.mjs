@@ -12,7 +12,9 @@
  *   - 板缺失/损坏 → 输出空态提示（不阻塞）；一切日志走 stderr；显式退出码 0。
  *
  * 输出范围（预算内精简）：attention 计数（四缺口）+ 缺口短清单（#130：按优先级逐条 + 一行处置指引）
- * + 在做/该接 top-N（#131：谁在做/谁该接，按在做→待接手→未开工；旧板无 nextAssignee 字段时只读派生）
+ * + 在做/该接 top-N（#135 同源消费：成员/顺序/计数一律投影 board.json 四段派生——在做=active[] 投影、
+ *   该接=frontier[] 投影；禁自算、禁二份口径（AD-11③：frontier/摘要唯一所有者＝编译器）；
+ *   旧板缺四段 → 指名重编译、不另算）
  * + 断点 top-N（停在 #N + 下一步）+ 陈旧告警行（#131：已登记源新于板 updatedAt 时点名并指向重编译）
  * + 上次对账摘要。
  * 保留位（#132 预算级截断）：板摘要头、陈旧告警行、缺口计数头与清单头、缺口清单各行
@@ -50,12 +52,8 @@ const GAP_ROWS = [
   ["interrupted-resume", "执行中断可续", "按 nextStep 续跑该卡"],
   ["unmerged-worktree", "待合并", "核对工作树现场后走 integrator 合并"],
 ];
-/** 在做/该接 top-N（#131：预算内精简；完整事实在 board.json / frontier 派生）。 */
+/** 在做/该接 top-N（#135：预算内精简；成员/顺序/计数一律直取 board.json 四段投影，完整事实在 board.json）。 */
 const ASSIGNEE_TOP_N = 5;
-/** 不做"在做/该接"候选的段位：终态（无需接手）与 roadmap 占位（动作在缺口清单：落卡/拆卡）。 */
-const NON_CANDIDATE_STAGES = new Set(["已完成", "已取消", "待设计"]);
-/** runs 第一方源缺省相对路径（board.sources 声明 kind=runs 时以声明为准）。 */
-const RUNS_REL = ".zcode/board/runs.json";
 /** 陈旧判定容差（#131，与 reconcile-stop checkStale 同口径：秒精度 +1s，防同秒写入误报）。 */
 const STALE_TOLERANCE_MS = 1000;
 /** 陈旧告警最多点名的源路径数（其余归计数）。 */
@@ -175,104 +173,70 @@ function formatGapEntry(gap) {
   return `- ${gap.short} ${gapRef(card)}${title}${site} → ${gap.action}`;
 }
 
-/**
- * 单卡 runs 证据索引（#131 旧板派生用）：card no → 记录数组。
- * 来源：board.sources 里 kind=runs 的声明路径（缺省 .zcode/board/runs.json）——只读第一方源。
- */
-function loadRunsIndex(root, board) {
-  const declared = Array.isArray(board?.sources)
-    ? board.sources.find((s) => s && s.kind === "runs" && typeof s.path === "string")
-    : null;
-  const rel = declared?.path ?? RUNS_REL;
-  const loaded = readJsonFile(join(root, rel));
-  if (!loaded.ok || !Array.isArray(loaded.value?.runs)) {
-    log(`旧板缺 nextAssignee 且 runs 源不可读（${rel}）：本轮不做只读派生（重编译可恢复）。`);
-    return null;
-  }
+/** 卡号 → 板面卡（去重取先到；显示细节查询用：上一手 run 摘要等）。 */
+function cardIndex(board) {
   const byNo = new Map();
-  for (const rec of loaded.value.runs) {
-    if (!rec || typeof rec !== "object") continue;
-    for (const n of Array.isArray(rec.cards) ? rec.cards : []) {
-      if (!Number.isInteger(n)) continue;
-      if (!byNo.has(n)) byNo.set(n, []);
-      byNo.get(n).push(rec);
-    }
+  for (const card of allCards(board)) {
+    if (Number.isInteger(card?.no) && !byNo.has(card.no)) byNo.set(card.no, card);
   }
   return byNo;
 }
 
-/** 旧板（卡无 nextAssignee 字段）只读派生：管线序首个无 done 证据角色（口径镜像 lib/derive.mjs deriveNextAssignee）。 */
-function deriveNextFromRuns(card, runsIndex) {
-  const pipeline = Array.isArray(card?.assignees) ? card.assignees : [];
-  if (pipeline.length === 0 || runsIndex === null || !Number.isInteger(card?.no)) return null;
-  const doneRoles = new Set();
-  for (const rec of runsIndex.get(card.no) ?? []) {
-    if (rec.result === "done" && typeof rec.role === "string" && rec.role !== "") doneRoles.add(rec.role);
+/**
+ * 在做/该接行（#135 同源消费；AD-11③：frontier/摘要的唯一所有者＝编译器）：
+ *   **成员、顺序、计数一律投影 board.json 四段派生**——在做=active[]（在途活跃：执行中/审核中）
+ *   逐条投影；该接=frontier[]（可执行前沿）逐条投影（rank 序即板序）。
+ * 禁自算：不按 status/blockers/activeRun/runs/assignees 重推可执行集合、接手位，也不重排
+ * （C1 期的 runs 证据派生已随 C2-1 落段删除——旧板缺四段不另算，由 buildRows 输出指名重编译行）。
+ * 显示细节（标题、上一手 run 摘要）查板面卡字段——只做展示，不参与成员/顺序/计数判定。
+ * 四段缺失（旧编译器产物/未重编译）→ 返回 null（调用方指名重编译，不派生）。
+ */
+function collectIndexRows(board) {
+  const active = board?.active;
+  const frontier = board?.frontier;
+  if (!Array.isArray(active) || !Array.isArray(frontier)) return null;
+  const byNo = cardIndex(board);
+  const rows = [];
+  for (const entry of active) {
+    if (entry && Number.isInteger(entry.no)) rows.push({ kind: "active", entry });
   }
-  for (const role of pipeline) if (!doneRoles.has(role)) return role;
-  return null;
+  for (const entry of frontier) {
+    if (entry && Number.isInteger(entry.no)) rows.push({ kind: "frontier", entry });
+  }
+  return { rows, activeCount: active.length, frontierCount: frontier.length, byNo };
 }
 
 /**
- * 在做/该接候选（#131）：谁在做（activeRun）+ 谁该接（nextAssignee）。
- * 选：段位非终态/非占位且 activeRun 或 nextAssignee 非空的卡（含深度 3 嵌套卡，不重排板内顺序）；
- * 排：在做 → 已开工待接手（lastRun 有记录）→ 未开工；同层按最近活动（在做/待接手用 run at、
- * 未开工用板卡 updatedAt）新→旧，并列按板内顺序（编译器顺序）。
- * nextAssignee 直读板字段——字段存在（含显式 null）即板事实、不重算，注入不早于板；仅旧板
- * 缺该字段才用 assignees 序 + runs 证据只读派生（旧板派生值可能新于板：此时陈旧告警行同时提醒重编译，
- * 重编译后回到板字段口径）。
- * C2 衔接注记（#131，交 C2-3 收口）：本清单是 C1 期的临时只读投影；C2-1 落地 board.json
- * frontier[]/active[] 派生后，本段应改为直接消费该派生段（同源消费、禁自算、禁二份口径），由 C2-3
- * 守卫断言咬同值；届时本函数与 runs 派生只保留旧板兼容角色。
+ * 一行"在做/该接"（逐条投影四段条目）：
+ *   在做=active[] 条目（currentAssignee ?? activeRun.role + 自 at + 段位）；
+ *   该接=frontier[] 条目（nextAssignee；null=管线走完不硬指）+ 上一手 run 摘要（显示细节，查板面字段）。
  */
-function collectAssigneeRows(board, loadRunsIndexOnce) {
-  const cards = allCards(board);
-  const needsDerive = cards.some((c) => c && !("nextAssignee" in c) && Array.isArray(c.assignees) && c.assignees.length > 0);
-  const runsIndex = needsDerive ? loadRunsIndexOnce() : null;
-  const rows = [];
-  let order = 0;
-  for (const card of cards) {
-    order += 1;
-    if (!card || NON_CANDIDATE_STAGES.has(card.stage)) continue;
-    const active = card.activeRun && typeof card.activeRun === "object" ? card.activeRun : null;
-    let next = null;
-    if ("nextAssignee" in card) {
-      next = typeof card.nextAssignee === "string" && card.nextAssignee !== "" ? card.nextAssignee : null;
-    } else {
-      next = deriveNextFromRuns(card, runsIndex);
-    }
-    if (active === null && next === null) continue;
-    rows.push({ card, active, next, order });
+function formatIndexRow(row, byNo) {
+  const entry = row.entry;
+  const title = typeof entry.title === "string" && entry.title !== "" ? ` ${entry.title}` : "";
+  // 卡标识与缺口行 gapRef 同形态（C2 评审 std-3）：有 label 且 label≠号 → `ID-<label> #N`，避免同一注入 JSON 里 #N 与 ID-<label> #N 混排。
+  const card = byNo.get(entry.no);
+  const label = card && typeof card.label === "string" && card.label !== "" && card.label !== String(entry.no)
+    ? `ID-${card.label} `
+    : "";
+  const ref = `${label}#${entry.no}`;
+  if (row.kind === "active") {
+    const role = typeof entry.currentAssignee === "string" && entry.currentAssignee !== ""
+      ? entry.currentAssignee
+      : entry.activeRun && typeof entry.activeRun.role === "string" && entry.activeRun.role !== ""
+        ? entry.activeRun.role
+        : "?";
+    const at = entry.activeRun && typeof entry.activeRun.at === "string" && entry.activeRun.at !== "" ? entry.activeRun.at : "?";
+    const stage = typeof entry.stage === "string" && entry.stage !== "" ? `（${entry.stage}）` : "";
+    return `- 在做 ${ref}${title}：${role} 自 ${at}${stage}`;
   }
-  const tierOf = (r) => (r.active ? 0 : r.card.lastRun ? 1 : 2);
-  const keyOf = (r) => {
-    if (tierOf(r) === 2) return String(r.card.updatedAt ?? "");
-    return String((r.active ? r.active.at : r.card.lastRun?.at) ?? "");
-  };
-  rows.sort((a, b) => {
-    const ta = tierOf(a);
-    const tb = tierOf(b);
-    if (ta !== tb) return ta - tb;
-    const cmp = keyOf(b).localeCompare(keyOf(a)); // 最近活动在前
-    if (cmp !== 0) return cmp;
-    return a.order - b.order;
-  });
-  return rows;
-}
-
-/** 一行"在做/该接"：在做=角色+自何时+段位；该接=角色+上一手 run 摘要（或未开工）。 */
-function formatAssigneeRow(row) {
-  const card = row.card;
-  const title = typeof card?.title === "string" && card.title !== "" ? ` ${card.title}` : "";
-  if (row.active) {
-    const stage = typeof card.stage === "string" && card.stage !== "" ? `（${card.stage}）` : "";
-    return `- 在做 ${gapRef(card)}${title}：${row.active.role ?? "?"} 自 ${row.active.at ?? "?"}${stage}`;
-  }
-  const last = card.lastRun;
+  const next = typeof entry.nextAssignee === "string" && entry.nextAssignee !== "" ? entry.nextAssignee : null;
+  if (next === null) return `- 该接 ${ref}${title}：无接手位（管线走完）`;
+  const last = byNo.get(entry.no)?.lastRun;
   const handoff = last && typeof last === "object"
     ? `（上一手 ${last.role ?? "?"} ${last.result ?? "?"} @ ${last.at ?? "?"}）`
     : "（无 run 记录）";
-  return `- 该接 ${gapRef(card)}${title}：${row.next}${handoff}`;
+  return `- 该接 ${ref}${title}：${next}${handoff}`;
 }
 
 /**
@@ -394,15 +358,24 @@ function buildRows(root, board) {
     if (gaps.length > GAP_TOP_N) row(ROW_SECONDARY, `- …其余 ${gaps.length - GAP_TOP_N} 个缺口见 board.json`);
   }
 
-  const assignees = collectAssigneeRows(b, () => loadRunsIndex(root, b));
-  if (assignees.length === 0) {
-    row(ROW_KEEP, "在做/该接：无（无 activeRun 且无可接手卡）");
+  const indexRows = collectIndexRows(b);
+  if (indexRows === null) {
+    // 旧板（缺四段派生）不另算：本 hook 禁自算（AD-11③），指名重编译后同源消费（#135 定性：删 fallback 派生）。
+    row(
+      ROW_KEEP,
+      "在做/该接：此板缺四段派生（frontier[]/active[] 未写出——旧编译器产物或未重编译）→ 本 hook 不自算，重编译后可见：node <zcode-board-skill>/assets/compile-board.mjs <项目根>",
+    );
+  } else if (indexRows.rows.length === 0) {
+    row(ROW_KEEP, "在做/该接：无（active[] 与 frontier[] 段皆空——无可办卡）");
   } else {
-    const actives = assignees.filter((r) => r.active !== null).length;
-    const shownRows = Math.min(assignees.length, ASSIGNEE_TOP_N);
-    row(ROW_KEEP, `在做/该接（在做 ${actives} · 该接 ${assignees.length - actives}；按在做→待接手→未开工，列前 ${shownRows}）：`);
-    for (const r of assignees.slice(0, ASSIGNEE_TOP_N)) row(ROW_DETAIL, formatAssigneeRow(r));
-    if (assignees.length > ASSIGNEE_TOP_N) row(ROW_SECONDARY, `- …其余 ${assignees.length - ASSIGNEE_TOP_N} 张见 board.json`);
+    const total = indexRows.rows.length;
+    const shownRows = Math.min(total, ASSIGNEE_TOP_N);
+    row(
+      ROW_KEEP,
+      `在做/该接（在做 ${indexRows.activeCount} · 该接 ${indexRows.frontierCount}；同源 board.json active[]/frontier[] 派生，列前 ${shownRows}）：`,
+    );
+    for (const r of indexRows.rows.slice(0, ASSIGNEE_TOP_N)) row(ROW_DETAIL, formatIndexRow(r, indexRows.byNo));
+    if (total > ASSIGNEE_TOP_N) row(ROW_SECONDARY, `- …其余 ${total - ASSIGNEE_TOP_N} 张见 board.json`);
   }
 
   const bps = collectBreakpoints(b);

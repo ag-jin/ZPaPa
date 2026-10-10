@@ -31,7 +31,7 @@ import { isoLocal, normalizeHandle, readJsonFile, writeJsonAtomic } from "./boar
 
 /** runs.json 相对项目根路径（设计 §5.2；与编译器 sources[] 同一路径）。 */
 export const RUNS_REL = ".zcode/board/runs.json";
-/** role 词表（设计 §5.2 / 角色矩阵 §1.3）。 */
+/** role 词表（设计 §5.2 / 角色矩阵 §1.3；B2-1/#99 第四绿扩词：ui-designer 可落账）。 */
 export const RUN_ROLES = [
   "implementer",
   "debugger",
@@ -39,6 +39,7 @@ export const RUN_ROLES = [
   "code-reviewer",
   "test-verifier",
   "integrator",
+  "ui-designer",
 ];
 /** 报告块允许的 result（run-event.md §2：报告只能给这三值）。 */
 export const RUN_REPORT_RESULTS = ["done", "partial", "failed"];

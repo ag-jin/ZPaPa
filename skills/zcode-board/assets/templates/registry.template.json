@@ -1,6 +1,7 @@
 {
-  "_note": "zcode-board 模板：registry.json（第一方可写·全局发号登记，设计 §3.2）。version=1；seq 为高水位（已发最大号；空序列为 0，永不可回落）；entries 为发号登记，模板为空数组，可直接复制为 <项目根>/.zcode/board/registry.json。条目完整字段：no（全局单序列正整数，计划号与任务号同一条序列）、kind（plan|task|spec）、file（可随苗圃迁移与计划→spec 延续更新指向，号不变）、specRoot（kind=spec 时 spec 特性号以 spec 根为键）、title（发号时快照，仅供人读）、planCode（仅计划类特性：4 位显示码 [A-Z][A-Z0-9]{3}，首轮 --assign 分配——手工 --plan-code 指定或按文件名/标题派生；不参与序列号与引用位）、assignedAt。只增不复用：条目删除后号成空洞，seq 绝不回落；写权限仅编排者经 --assign（原子写），人不得手写号。",
+  "_note": "zcode-board 模板：registry.json（第一方可写·全局发号登记，设计 §3.2）。version=1；seq 为高水位（已发最大号；空序列为 0，永不可回落）；epics 为 epic 登记行段（code/title/status 三字段：code 为 4 位显示码 [A-Z][A-Z0-9]{3}（与 planCode 同一冻结形态、唯一、永不复用）、title 为非空显示名、status 取 active|cancelled|archived 三词表；无 no 无 file——epic 不占全局号序列；写入面仅 --assign --epic 与存量一次性补录，人不得手写码；模板为空数组，零 epic 项目不落该段、board.json 不落 epics 键）；entries 为发号登记，模板为空数组，可直接复制为 <项目根>/.zcode/board/registry.json。条目完整字段：no（全局单序列正整数，计划号与任务号同一条序列）、kind（plan|task|spec）、file（可随苗圃迁移与计划→spec 延续更新指向，号不变）、specRoot（kind=spec 时 spec 特性号以 spec 根为键）、title（发号时快照，仅供人读）、planCode（仅计划类特性：4 位显示码 [A-Z][A-Z0-9]{3}，首轮 --assign 分配——手工 --plan-code 指定或按文件名/标题派生；不参与序列号与引用位）、epic（引用位：正整数稳定号或登记 id epic:<4位码>——码不进引用位；与 phase 成对出现，缺省=无归属合法）、phase（单值正整数期次序；期号不复用）、assignedAt、assignedBy（发号/登记运行留痕：<会话标识>@<执行现场>——会话标识来自 --assign --session-id（缺省 unknown），现场 main｜worktree:<仓根名>；链接工作树（.git 为 gitdir 指针文件=非主检出）内运行 --assign 属非编排者形态（单写者纪律：发号只在主检出、由编排者执行），运行当场点名且 --check 逐条对账点名；既有条目不补造，计划→spec 延续改写保留原值）。只增不复用：条目删除后号成空洞，seq 绝不回落；写权限仅编排者经 --assign（原子写），人不得手写号。",
   "version": 1,
   "seq": 0,
+  "epics": [],
   "entries": []
 }

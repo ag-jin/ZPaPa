@@ -3,7 +3,7 @@
  * zcode-board / reconcile-stop（T13 交付物）——Stop 收尾对账（点名四类 + 勾选=已合并点名，不阻断）
  *
  * 职责（设计 §5.4 / §10.4 第 2 项 / 勘误 10；R3 裁决）：
- *   会话结束时机械对账（四类点名 + 勾选=已合并点名）：
+ *   会话结束时机械对账（四类点名 + 勾选=已合并点名 + 板滚未提交点名）：
  *     1. 未登记——Stop 载荷（responseText）中出现但 runs.json 无对应记录的 run_event 块
  *        （后台派发未代触发落账的机械可查半边；无块可核验时在正文注明"编排者自查"）；
  *     2. 未合并——板上 attention 含 unmerged-worktree 的卡（执行现场未回流）；
@@ -15,6 +15,11 @@
  *   6. 兜底重编译（B3-3/#103；E1 V20 幻影板防线）——对账写盘后一律重编译（幂等：同输入同输出，
  *      根 updatedAt 除外）：Bash 通道漏检/人工编辑的漏网变更由此收口。顺序=检查先、重编译后
  *      （对账如实观察修复前状态：板陈旧等点名照常写入，C1 口径不变）；失败不阻塞、退出码恒 0。
+ *   7. 板滚未提交（B5-5/#117；E1 V35；对账类别扩展）——板数据文件（board.json/board.md/registry/
+ *      interviews/runs/exemptions）有变更而 `git status` 显示未提交 → 点名（提示级：提交建议=
+ *      板滚并入收口 commit，E5 W3/G3 churn 治理方向）。非 git 项目/仓不可用跳过零噪声（结论行
+ *      维持四类口径）；对账正文节号取 6——第 5 节已冻结归 B1-2「勾选=已合并点名」（两维并存：
+ *      本类=板滚未提交，第 5 节=epic 勾选点名，互不混算）。
  *
  * 投递形态（A6 实测 / R3 裁决）：**不强推续跑**——Stop 的 additionalContext 仅在
  * continue/decision:block 时投递且每会话限 3 次，退出码 2 会被译为阻断并意外续跑；
@@ -44,6 +49,15 @@ const COMPILE_TIMEOUT_MS = 20_000;
 const BOARD_REL = ".zcode/board/board.json";
 const RUNS_REL = ".zcode/board/runs.json";
 const LAST_RECONCILE_REL = ".zcode/board/last-reconcile.md";
+/** 板目录（第五类「板滚未提交」检测面的相对路径基准）。 */
+const BOARD_DIR_REL = ".zcode/board";
+/**
+ * 板数据文件（B5-5/#117；E1 V35；卡片枚举六件）：发号/落账/编译的板侧数据写入面。
+ * evidence/ 子目录与 last-reconcile.md 不在本类（前者属证据域；后者归属未裁——E1 V34）。
+ */
+const CHURN_FILES = ["board.json", "board.md", "registry.json", "interviews.json", "runs.json", "exemptions.json"];
+/** 一次有界 git 子进程（先例 gate-merge STD-1：单次 2s；本 hook 仅此一次 git 查询）。 */
+const GIT_TIMEOUT_MS = 2_000;
 /** schema 展开上限（board.schema.json x-decisions：feature → task → subtask，深度 3）。 */
 const SCHEMA_CARD_DEPTH = 3;
 /** 归档冷却期（天；勘误 10 建议值——常量可配，本期不引入旋钮）。 */
@@ -59,6 +73,15 @@ const ROLLCALL_RULE_NOTE =
   "对账点名级（非失败、不阻断）：completed 任务卡（含嵌套）须有该卡 integrator done 的 run 证据（勾选=已合并 6.3）；" +
   "补录 integrator done 的 run 记录，或把速修/管理卡登记进 .zcode/board/exemptions.json" +
   "（编排者单写者；条目 {no, reason, at}——no 稳定号、reason 登记原因、at 带时区 ISO 8601）后不再点名。";
+/**
+ * 第五类（板滚未提交）口径说明——写明判据面、提交建议与噪声边界（B5-5/#117；E1 V35）：
+ * 判据 = 六件板数据文件的 `git status --porcelain` 未提交态（含未跟踪/已暂存）；提示级不阻断；
+ * 提交建议 = 板滚并入收口 commit（E5 W3/G3 churn 治理方向）——板真相源不跨会话裸奔。
+ */
+const CHURN_RULE_NOTE =
+  "板滚未提交（提示级，非失败、不阻断）：板数据文件（board.json/board.md/registry/interviews/runs/exemptions）" +
+  "有未提交变更即点名；提交建议＝板滚并入收口 commit（E5 W3/G3 churn 治理方向——板真相源随卡收口一并提交，" +
+  "不重复开发、不单独增卡）。";
 
 function log(msg) {
   process.stderr.write(`reconcile-stop: ${msg}\n`);
@@ -200,6 +223,69 @@ function checkArchive(board, now = Date.now()) {
 }
 
 /**
+ * 最近仓根（纯 fs 上溯；先例 compile-board.mjs detectAssignSite——`.git` 文件亦算仓根，gitdir 指针形态）。
+ * 非 git 项目（上溯至文件系统根无 .git）→ null：第五类整类跳过（零噪声、零子进程——夹具域不产 git 噪音）。
+ */
+function nearestRepoRoot(root) {
+  let cur = resolve(root);
+  for (;;) {
+    try {
+      statSync(join(cur, ".git"));
+      return cur;
+    } catch {
+      // 本层无 .git：继续上溯
+    }
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+/**
+ * 6. 板滚未提交（B5-5/#117；E1 V35）：板数据文件有变更而 `git status` 显示未提交 → 点名。
+ * 判据 = `git status --porcelain -uall -- <六件>`（未跟踪文件逐条列出；含已暂存未提交；2s 有界子进程）。
+ * 非 git 项目 / 查询不可用 → 跳过并在节内写明（不误当通过、不静默）；对账级：只点名、不阻断、不写板。
+ */
+function checkBoardChurn(root) {
+  if (nearestRepoRoot(root) === null) {
+    return {
+      entries: [],
+      note: `${CHURN_RULE_NOTE}本工作区非 git 项目（上溯无 .git）：检测跳过（零噪声）。`,
+      checked: false,
+    };
+  }
+  const rels = CHURN_FILES.map((f) => `${BOARD_DIR_REL}/${f}`);
+  const r = spawnSync("git", ["status", "--porcelain", "-uall", "--", ...rels], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+  });
+  if (r.error != null || r.status !== 0) {
+    const first = String(r.stderr ?? "").trim().split("\n")[0] ?? "";
+    const why = r.error != null ? r.error.message : first !== "" ? first : `git status 退出码 ${String(r.status)}`;
+    return {
+      entries: [],
+      note: `${CHURN_RULE_NOTE}git status 不可用（${why}）：检测跳过（不误当通过；仓状态修复后重跑本对账即恢复）。`,
+      checked: false,
+    };
+  }
+  // porcelain 为定宽状态位（XY + 空格 + 路径）：不得整体 trim（会吃掉首位空格并错切路径）
+  const entries = String(r.stdout ?? "")
+    .split("\n")
+    .map((l) => l.replace(/\r$/, ""))
+    .filter((l) => l !== "")
+    .map((line) => {
+      const code = line.slice(0, 2).trim() || "?";
+      let p = line.slice(3);
+      const arrow = p.indexOf(" -> ");
+      if (arrow >= 0) p = p.slice(arrow + 4); // 改名行取新路径（旧路径命中 pathspec 时的形态）
+      if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+      return `- ${p}（未提交：${code}）——板滚并入收口 commit`;
+    });
+  return { entries, note: CHURN_RULE_NOTE, checked: true };
+}
+
+/**
  * 豁免登记读取（只读；B1-2/#98，口径与 --check 同源）：
  *   - 文件缺失 ≡ 零豁免（静默合法——豁免是例外登记，不是必填件）；
  *   - 解析失败 / 结构非法 / 条目非法 → 归 checkExemptionsDoc（lib/schema-check.mjs，禁二份实现），
@@ -254,15 +340,17 @@ function checkMergedEvidence({ board, runsLoaded, runsDoc, exemptNos, exemptionN
 
 // ---------------------------------------------------------------- 报告渲染
 
-function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archive, rollcall, boardState }) {
+function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archive, churn, rollcall, boardState }) {
   const counts = {
     unregistered: unregistered.entries.length,
     unmerged: unmerged.entries.length,
     stale: stale.entries.length,
     archive: archive.entries.length,
+    churn: churn.entries.length,
     rollcall: rollcall.entries.length,
   };
-  const total = counts.unregistered + counts.unmerged + counts.stale + counts.archive;
+  // 类计数：板滚未提交完成检查时计入（非 git 项目/仓不可用 → 跳过，维持四类口径不虚增）
+  const total = counts.unregistered + counts.unmerged + counts.stale + counts.archive + counts.churn;
   const lines = [];
   lines.push("# 收尾对账（Stop hook 自动生成）");
   lines.push("");
@@ -272,8 +360,10 @@ function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archiv
   else if (boardState !== "ok") lines.push(`- 板状态：${BOARD_REL} 损坏（无法读取）——板侧四类无法检查；请运行编译器重建。`);
   const verdict =
     total === 0
-      ? "- 结论：四类均无（对账通过）"
-      : `- 结论：点名 ${total} 项（未登记 ${counts.unregistered} / 未合并 ${counts.unmerged} / 板陈旧 ${counts.stale} / 待归档 ${counts.archive}）`;
+      ? churn.checked
+        ? "- 结论：五类均无（对账通过）"
+        : "- 结论：四类均无（对账通过）"
+      : `- 结论：点名 ${total} 项（未登记 ${counts.unregistered} / 未合并 ${counts.unmerged} / 板陈旧 ${counts.stale} / 待归档 ${counts.archive}${churn.checked ? ` / 板滚未提交 ${counts.churn}` : ""}）`;
   lines.push(
     rollcall.checked && counts.rollcall > 0
       ? `${verdict}；勾选=已合并点名另计 ${counts.rollcall} 项（第 5 节——补录 integrator done 的 run 证据或登记豁免）`
@@ -297,6 +387,7 @@ function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archiv
   section(3, "板陈旧", "stale", stale);
   section(4, "待归档特性", "archive", archive);
   section(5, "勾选=已合并点名", "rollcall", rollcall);
+  section(6, "板滚未提交", "churn", churn);
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
@@ -370,6 +461,7 @@ function main() {
   const unmerged = board === null ? { entries: [], note: null } : checkUnmerged(board);
   const stale = board === null ? { entries: [], note: null } : checkStale(board, root);
   const archive = board === null ? { entries: [], note: null } : checkArchive(board);
+  const churn = checkBoardChurn(root);
   const exemptions = loadExemptions(root);
   const rollcall = checkMergedEvidence({ board, runsLoaded, runsDoc, exemptNos: exemptions.exemptNos, exemptionNotes: exemptions.notes });
 
@@ -380,12 +472,13 @@ function main() {
     unmerged,
     stale,
     archive,
+    churn,
     rollcall,
     boardState,
   });
   try {
     writeFileAtomic(join(root, LAST_RECONCILE_REL), md);
-    log(`对账已写入 ${LAST_RECONCILE_REL}（点名 ${unregistered.entries.length + unmerged.entries.length + stale.entries.length + archive.entries.length} 项；勾选=已合并点名 ${rollcall.entries.length} 项）。`);
+    log(`对账已写入 ${LAST_RECONCILE_REL}（点名 ${unregistered.entries.length + unmerged.entries.length + stale.entries.length + archive.entries.length + churn.entries.length} 项；勾选=已合并点名 ${rollcall.entries.length} 项）。`);
   } catch (e) {
     log(`对账写盘失败（${e.message}）：不阻塞（stderr 已留痕）。`);
   }

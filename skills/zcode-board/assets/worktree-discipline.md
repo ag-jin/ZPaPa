@@ -60,6 +60,34 @@ git worktree list                                   # 后核：新条目已出�
 - **禁止**：在任一工作树内执行 `git worktree add`（递归收纳）；在本工作区内手工 `cp`/`git clone` 造现场。
 - 发号（`--assign`）同理只在主检出运行——执行现场不发号（设计 §6.4，单写者无锁）。
 
+### 3.1 建树单点脚本（B6-4/#122，E1 V31；2026-10-11 增）
+
+编排者建树走 `assets/tools/create-worktree.mjs`（本节 §3 冻结步骤的脚本化，只增不改；人不再手抄步骤）：
+
+```bash
+node <skill>/assets/tools/create-worktree.mjs --no <卡号> [--root <项目根>]
+node <skill>/assets/tools/create-worktree.mjs --source <计划稿> --card <标签|稳定号> [--root <项目根>]
+node <skill>/assets/tools/create-worktree.mjs --no <卡号> --expect-name task-<卡号>   # 交接材料声明的树名须逐字相符
+```
+
+- **执行序**（与 §3 同构）：① 先查现场 `git worktree list`（复用优先）→ ② `git worktree add .zcode/worktrees/task-<no> -b task-<no>` → ③ `git check-ignore` 断言命中 → ④ 后核 `git worktree list`（路径 + 分支在册）。
+  脚本内 check-ignore 以**前置断言**执行（忽略未命中即拒建，不让半成品现场先落地；判据与 §3 方向一致，仅时序前移）。`--no` 与 `--source/--card` 抽取号双给须一致（错号零容忍）。
+- **幂等复用**：同名树已登记且分支 = `task-<no>` → 零动作返回「结果=复用」，不重复 `add`（重复 add 必失败）。
+- **树名下发（stdout 五条机读线；派发 prompt/交接材料原样引用，与 B6-3 需齐绿清单可拼「现场=…」行）**：
+
+  ```
+  结果=新建|复用
+  树名=task-<no>
+  分支=task-<no>
+  现场=.zcode/worktrees/task-<no>
+  路径=<绝对路径>
+  ```
+
+  诊断（步骤/拒因）只走 stderr，前缀 `create-worktree: `；stdout 恰 4 条相对下发线 + 1 条绝对路径线，无多余噪声。
+- **树名与卡号不符必咬（四类，均零建树/零分支）**：① `--expect-name` 声明名 ≠ `task-<卡号>`（拒建，exit 3）；② 现场路径已登记但挂着别的分支（拒建，exit 3）；③ `--no` 与 `--source/--card` 抽取号不一致（拒建，exit 3）；④ 非法号形态（0 / 标签 / `#100` / 小数——用法错误，exit 2）。
+  前置拒绝（同为零建树）：未领号、忽略未命中、工作树内执行（只开一层）、root 非仓库顶层、空仓库（unborn HEAD）、分支遗留（无现场登记）。
+- 退出码：0 = 完成（新建/复用）；2 = 用法/输入错误；3 = 前置/环境断言拒绝（不建树）。
+
 ## 4. 多角色按序进出同一工作树（设计 §6.2）
 
 工作树按**卡**分配，不按角色分配；同卡角色串行，顺序即门禁顺序：

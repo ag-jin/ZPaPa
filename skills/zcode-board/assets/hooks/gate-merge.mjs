@@ -1,23 +1,40 @@
 #!/usr/bin/env node
 /**
- * zcode-board / gate-merge（T13 交付物）——PreToolUse(Bash) 合并门禁（唯一有意阻断者）
+ * zcode-board / gate-merge（T13 交付物；B2-2/#100 加查第四绿；B5-4/#116 加拦 branch -D；B5-6/#118 加 merge 提交信息格式校验）——PreToolUse(Bash) 合并门禁（唯一有意阻断者）
  *
- * 职责（设计 §7.4 / §10.4 第 5 项；场景 27）：
- *   只拦一种情形——**合并/push 的目标为 base 分支，且前两绿判据证据不在 runs.json**：
+ * 职责（设计 §7.4 / §10.4 第 5 项；场景 27；B2-2/#100；B5-4/#116；B5-6/#118）：
+ *   只拦目标为 base 分支的合并/push，且判据证据不在位的情形：
  *     第 1 绿 code-reviewer verdict = approved（run: role=code-reviewer, result=done, cards 含该卡）
  *     第 2 绿 test-verifier verdict = pass（run: role=test-verifier, result=done, cards 含该卡）
  *     第 3 绿（base 存在 + 该卡分支 rebase 无冲突）由 integrator 执行时机械验证，不在本 hook 判定面。
+ *     第 4 绿（B2-2/#100）：卡分支 diff 触及 UI 面（路径前缀 `packages/ui/`，判据从简、理由见下）时，
+ *       另查 ui-designer verdict = approved（run: role=ui-designer, result=done, cards 含该卡，且其
+ *       evidence 至少一条文件在位）——无证据不得进待合并。依据：dispatch-checklist「UI 卡第四绿」
+ *       （2026-10-10 用户批准）+ AD-10②（itw-20261010-5372）；与 B6-3「需齐绿清单」同口径
+ *       （UI 卡 = 第四绿 + 浏览器断言；浏览器断言归 test-verifier 检查单，不在本 hook 判定面）。
+ *   另拦 `git branch -D` 强制删除卡分支 `task-<no>`（B5-4/#116；E4-18）：
+ *     `-D`（含 `--delete --force` / 组合短旗标）绕过「-d 未合并会被拒绝」的安全网，机械逼回 -d；
+ *     非卡分支的 -D 不在卡分支纪律面（放行，去路文案走 stderr）。合并后 worktree/branch 差集核对
+ *     归 `assets/tools/verify-cleanup.mjs`（V33；本 hook 只拦 -D，不做现场核对）。
+ *   另拦 目标为 base 的卡片合并 `-m`/`--message` 不符冻结格式 `Merge task-<no> [#<no>]`（B5-6/#118；E4-17；
+ *     SKILL §6 第 6 条）：merge commit 信息是卡号的机械回链锚点，必须与合并卡号一致且形态精确。
+ *     校验顺序：命令形态（格式）→ 绿证据。无 -m/--message（交互、默认信息、-F 读文件）事前无法核对：
+ *     放行 + stderr 指向 `verify-cleanup.mjs` 对 HEAD merge commit 的事后核对（E4-17 审计面）。
  *   "feature 分支间合并不拦"：在卡片工作树（.git 为 gitdir 指针）内执行的合并一律放行。
  *
  * 阻断形态：PreToolUse 退出码 2 被运行时译为 permissionDecision: deny（阻断原因取 stderr），
  * 拦截文案给出缺失绿与补齐路径；其余命令/无法判定时放行（exit 0，去路文案走 stderr）。
- * 本 hook 不做任何 git 子进程调用，只读 `<root>/.git/HEAD` 与 `<root>/.zcode/board/runs.json`。
+ * 三绿证据读取只读 `<root>/.git/HEAD` 与 `<root>/.zcode/board/runs.json`；第四绿的 UI 面判定需要
+ * 一次有界 `git diff --name-only`（PR 路径另有 `git rev-parse --verify` 解析头分支）——这是本 hook
+ * 仅有的子进程（超时 5s）；子进程失败 → 记录边界（stderr）并按"无法判定"放行（同一合并命令自身也会
+ * 因同因失败）；证据缺失仍是 fail-closed。
  *
  * 无第三方依赖（仅 node 内置）。
  */
 
-import { readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { readJsonFile } from "../lib/board-io.mjs";
 
@@ -158,7 +175,7 @@ function cardFromText(text) {
 /**
  * 命令分类：
  *   {kind:"merge", ref, cardNo} | {kind:"push", dst, toBase, allRefs} |
- *   {kind:"pr-merge", cardNo} | {kind:"none"}
+ *   {kind:"pr-merge", cardNo} | {kind:"branch-delete", delete, force, targets} | {kind:"none"}
  */
 function classify(tokens) {
   const gh = tokens.findIndex((t) => t === "gh" || t.endsWith("/gh"));
@@ -200,7 +217,8 @@ function classify(tokens) {
       }
       if (t.startsWith("-")) {
         if (MERGE_VALUE_OPTS.has(t)) {
-          if (t === "-m" || t === "--message") message = rest[k + 1] ?? message;
+          // B5-6/#118：-m 可多次（git 按空行拼接，subject 取第一条）——冻结格式校验对象为第一条 -m。
+          if ((t === "-m" || t === "--message") && message === null) message = rest[k + 1] ?? null;
           k += 1;
         }
         continue;
@@ -211,7 +229,7 @@ function classify(tokens) {
     const ref = positionals.length > 0 ? positionals[positionals.length - 1] : null;
     let cardNo = cardFromText(ref);
     if (cardNo === null) cardNo = cardFromText(message);
-    return { kind: "merge", ref, cardNo };
+    return { kind: "merge", ref, cardNo, message };
   }
 
   if (sub === "push") {
@@ -234,16 +252,190 @@ function classify(tokens) {
     return { kind: "push", dst, allRefs };
   }
 
+  if (sub === "branch") return classifyBranch(rest);
+
   return { kind: "none" };
+}
+
+/** 卡分支形态（B5-4/#116）：`task-<正整数>`；接受 `refs/heads/` 全形态（git branch 两形态均收）。 */
+const CARD_BRANCH_RE = /^(refs\/heads\/)?task-[1-9][0-9]*$/;
+
+/**
+ * branch 子命令分类（B5-4/#116；E4-18）：只提取"删除 + 强制"形态。
+ *   - 删除旗标：短旗标串含 `d`/`D`，或 `--delete`；
+ *   - 强制旗标：短旗标串含 `D`/`f`，或 `--force`；
+ *   - targets = 位置参数（分支名）；`--` 后仍按位置参数收（与 git 词法一致）。
+ * 判据从简：仅删除+强制（`-D`/`--delete --force`/`-df`/`-d -f`）触发拦截面；分支管理其余动作（-m/-c/-l 等）不在此面。
+ */
+function classifyBranch(rest) {
+  let del = false;
+  let force = false;
+  const targets = [];
+  for (const t of rest) {
+    if (t === "--") continue;
+    if (t === "--delete") {
+      del = true;
+      continue;
+    }
+    if (t === "--force") {
+      force = true;
+      continue;
+    }
+    if (t.startsWith("--")) continue;
+    if (t.startsWith("-") && t.length > 1) {
+      const chars = t.slice(1);
+      if (chars.includes("d") || chars.includes("D")) del = true;
+      if (chars.includes("D") || chars.includes("f")) force = true;
+      continue;
+    }
+    targets.push(t);
+  }
+  return { kind: "branch-delete", delete: del, force: del && force, targets };
+}
+
+// ---------------------------------------------------------------- merge 提交信息格式（B5-6/#118；E4-17）
+
+/**
+ * 冻结格式（B5-6/#118；E4-17；SKILL §6 第 6 条）：merge commit 精确写 `Merge task-<no> [#<no>]`。
+ * 判据：-m 信息的第一行（subject）trim 后须逐字等于 `Merge task-<cardNo> [#<cardNo>]`——
+ * 卡号须与本次合并卡号一致（信息是卡号的机械回链锚点，错号会指错卡）。
+ * 边界：仅核 `-m`/`--message` 第一条（git 多 -m 按空行拼接，subject 取第一条）；
+ * 无 -m（交互/默认信息/-F 读文件）不做事前判定（放行 + 事后核对提示）。
+ */
+function mergeMessageSubject(message) {
+  return String(message).split("\n")[0].trim();
+}
+
+function mergeFormatLines(cardNo, message) {
+  const subject = mergeMessageSubject(message);
+  const expected = `Merge task-${cardNo} [#${cardNo}]`;
+  return [
+    `[zcode-board 合并门禁] 已阻断：merge 提交信息不符冻结格式（卡 #${cardNo}）。`,
+    `- 判别：命令 -m 信息为 ${JSON.stringify(subject)}；冻结格式精确写 \`Merge task-<no> [#<no>]\`（本卡应为 \`${expected}\`，SKILL §6 第 6 条；卡号须与合并卡号一致）。`,
+    `- 去路：重写合并命令 \`git merge --no-ff task-${cardNo} -m "${expected}"\`（merge commit 信息是卡号的机械回链锚点，须与本次合并卡号一致且形态精确）。`,
+    "- 依据：E4-17（merge commit 格式校验）；无 -m 的交互/默认信息形态由收尾核对 verify-cleanup 对 HEAD merge commit 事后核对。",
+  ];
+}
+
+// ---------------------------------------------------------------- 第四绿（UI 面 diff，B2-2/#100）
+
+/**
+ * UI 面判据（判据从简，成文于此）：卡分支 diff 触及文件路径前缀 `packages/ui/` 即 UI 面。
+ * 理由：`packages/ui` 是共享 React 组件、hooks 与 store 的用户可见界面代码（AGENTS.md 模块表）；
+ * 前缀判据宁多勿漏——多判只多查一道第四绿（有证据即放行），漏判会让 UI 改动绕过 ui-designer 复核。
+ * 非该前缀（apps/、packages/desktop 主进程壳、packages/services 等）不判 UI 面。
+ * 与 B6-3「需齐绿清单」同口径：UI 卡 = 第四绿 + 浏览器断言；本 hook 只机检第四绿。
+ */
+const UI_FACE_PREFIX = "packages/ui/";
+/** UI 面判据（B2 评审 SPEC-1 硬化）：段级锚定——嵌套根（如从工作区根对 ZPaPa/packages/ui/... 做 diff）同样命中；desktop renderer/web 扩面待用户裁定。 */
+const UI_FACE_RE = /(^|\/)packages\/ui\//;
+
+/** 一次有界 git 子进程：base...ref 的变更文件清单（--no-renames：改名按增/删两路径全列，宁多勿漏）。 */
+function changedFiles(root, base, ref) {
+  const r = spawnSync("git", ["diff", "--name-only", "--no-renames", `${base}...${ref}`, "--"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 2_000, // B2 评审 STD-1：单次 2s × 最坏 3 次 = 6s < 声明 timeoutMs 10000（防 harness 超时静默跳过门禁）
+  });
+  if (r.error !== undefined && r.error !== null) return { ok: false, error: r.error.message };
+  if (r.status !== 0) {
+    const first = String(r.stderr ?? "").trim().split("\n")[0] ?? "";
+    return { ok: false, error: first !== "" ? first : `git diff 退出码 ${String(r.status)}` };
+  }
+  return { ok: true, files: String(r.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== "") };
+}
+
+/** PR 头分支解析：本地 task-<no> 优先，其次 origin/task-<no>（不可得返回 null → 边界，不阻断）。 */
+function prHeadRef(root, cardNo) {
+  for (const cand of [`task-${cardNo}`, `origin/task-${cardNo}`]) {
+    const r = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${cand}^{commit}`], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 2_000, // STD-1：预算收窄（最坏 3×2s=6s < timeoutMs 10000）
+    });
+    if ((r.error === undefined || r.error === null) && r.status === 0 && String(r.stdout ?? "").trim() !== "") return cand;
+  }
+  return null;
+}
+
+/** evidence 引用解析候选（与 guard-board 断言 B 同形子集：绝对 / 项目根相对 / 板根相对）。 */
+function evidenceRefCandidates(root, ref) {
+  if (isAbsolute(ref)) return [resolve(ref)];
+  return [...new Set([resolve(root, ref), resolve(root, ".zcode/board", ref)])];
+}
+
+/** 第四绿状态：记录在位（role=ui-designer, result=done）且 evidence 至少一条文件在位。 */
+function uiDesignerStatus(root, forCard) {
+  const runs = forCard.filter((r) => r && r.role === "ui-designer" && r.result === "done");
+  if (runs.length === 0) return { present: false, refs: [], missing: [] };
+  const refs = [];
+  for (const run of runs) {
+    if (!Array.isArray(run.evidence)) continue;
+    for (const s of run.evidence) if (typeof s === "string" && s.trim() !== "") refs.push(s);
+  }
+  const missing = refs.filter((ref) => !evidenceRefCandidates(root, ref).some((c) => existsSync(c)));
+  return { present: true, refs, missing };
+}
+
+/**
+ * UI 面门禁判定：
+ *   {checked:false, reason}          —— diff 不可得（分支/基线不可解析或 git 失败），调用方记边界、不阻断；
+ *   {checked:true, uiFace:false}     —— diff 未触及 UI 面，免第四绿；
+ *   {checked:true, uiFace:true, ok}  —— UI 面 diff；ok = 第四绿记录与证据文件均在位。
+ */
+function uiFaceGate(root, base, ref, status) {
+  if (typeof ref !== "string" || ref === "") return { checked: false, reason: "合并来源不可解析为分支名" };
+  const diff = changedFiles(root, base !== null && base !== "" ? base : "HEAD", ref);
+  if (!diff.ok) return { checked: false, reason: diff.error };
+  const files = diff.files.filter((f) => UI_FACE_RE.test(f));
+  if (files.length === 0) return { checked: true, uiFace: false, files: [] };
+  return { checked: true, uiFace: true, files, ok: status.present && status.refs.length > 0 && status.missing.length < status.refs.length, status };
+}
+
+function uiGreenLines(cardNo, ui, { header = true } = {}) {
+  const lines = header ? [`[zcode-board 合并门禁] 已阻断：UI 面合并缺第四绿（卡 #${cardNo}）。`] : [];
+  const preview = ui.files.length > 3 ? `${ui.files.slice(0, 3).join("、")} 等 ${ui.files.length} 个文件` : ui.files.join("、");
+  lines.push(`- 判别：卡分支 diff 触及 UI 面（前缀 ${UI_FACE_PREFIX}）：${preview}。`);
+  if (!ui.status.present) {
+    lines.push(`- 缺第 4 绿 ui-designer verdict = approved：runs.json 无 role=ui-designer result=done cards 含 #${cardNo} 的记录。`);
+    lines.push(
+      `  → 补齐路径：派发 ui-designer 复核卡 #${cardNo} 的最终 diff（视觉/信息层级）；报告带 run_event ` +
+        `{"role":"ui-designer","result":"done","cards":[${cardNo}],"evidence":["evidence/T${cardNo}/ui-review.md"]}，` +
+        "由 record-run.mjs 落账（#99 词表已支持），先落证再引用，随后重试同一合并命令。",
+    );
+  } else if (ui.status.refs.length === 0) {
+    lines.push("- 缺证据文件：ui-designer 记录在位，但该记录 evidence 为空——无复核证据文件。");
+    lines.push(`  → 补齐路径：先把 ui-designer 复核证据落盘（板根相对 evidence/T${cardNo}/… 或项目根相对 .zcode/board/evidence/T${cardNo}/…），在记录中引用后重试。`);
+  } else {
+    lines.push(`- 缺证据文件：ui-designer 记录在位，但引用的证据文件均不在位——未在位：${ui.status.missing.join("、")}。`);
+    lines.push(`  → 补齐路径：先把 ui-designer 复核证据落盘（板根相对 evidence/T${cardNo}/… 或项目根相对 .zcode/board/evidence/T${cardNo}/…），或修正 runs.json 引用后重试。`);
+  }
+  lines.push(
+    "- 依据：dispatch-checklist「UI 卡第四绿（code-reviewer 之后、用户实测之前强制 ui-designer 复核；无证据文件不得进待合并）」" +
+      "（2026-10-10 用户批准）+ AD-10②（itw-20261010-5372）；与 B6-3「需齐绿清单」同口径（UI 卡 = 第四绿 + 浏览器断言）。",
+  );
+  return lines;
+}
+
+/** 通过放行时的第四绿注记（stderr 去路文案；diff 不可得的边界已在上一行 log 单列，不重复）。 */
+function uiPassNote(ui) {
+  if (!ui.checked) return "";
+  return ui.uiFace ? `；UI 面 diff（${ui.files.length} 个文件）：第四绿 ui-designer 证据在位。` : "；diff 未触及 UI 面（packages/ui/）：免第四绿。";
 }
 
 // ---------------------------------------------------------------- 门禁证据
 
-/** 前两绿判据（runs.json 的 verdict 事件；第 3 绿归 integrator 执行时机械验证）。 */
+/** 前两绿判据（runs.json 的 verdict 事件；第 3 绿归 integrator 执行时机械验证）+ 第四绿状态。 */
 function verdictEvidence(root, cardNo) {
   const loaded = readJsonFile(join(root, RUNS_REL));
   if (!loaded.ok) {
-    return { readable: false, error: loaded.missing ? "runs.json 不存在" : `runs.json 无法读取（${loaded.error}）`, approved: false, pass: false };
+    return {
+      readable: false,
+      error: loaded.missing ? "runs.json 不存在" : `runs.json 无法读取（${loaded.error}）`,
+      approved: false,
+      pass: false,
+      uiDesigner: { present: false, refs: [], missing: [] },
+    };
   }
   const runs = Array.isArray(loaded.value?.runs) ? loaded.value.runs : [];
   const forCard = runs.filter((r) => r && Array.isArray(r.cards) && r.cards.includes(cardNo));
@@ -252,6 +444,7 @@ function verdictEvidence(root, cardNo) {
     error: null,
     approved: forCard.some((r) => r.role === "code-reviewer" && r.result === "done"),
     pass: forCard.some((r) => r.role === "test-verifier" && r.result === "done"),
+    uiDesigner: uiDesignerStatus(root, forCard),
   };
 }
 
@@ -351,12 +544,27 @@ function main() {
         "- feature 分支间合并请在卡片工作树内执行（不受本门禁拦截）。",
       ]);
     }
+    // B5-6/#118：命令形态先于绿证据——-m 信息必须是冻结格式（Merge task-<no> [#<no>]）。
+    if (typeof cls.message === "string") {
+      const expected = `Merge task-${cls.cardNo} [#${cls.cardNo}]`;
+      if (mergeMessageSubject(cls.message) !== expected) return block(mergeFormatLines(cls.cardNo, cls.message));
+    } else {
+      log(
+        `merge 未提供 -m/--message 提交信息：冻结格式（Merge task-<no> [#<no>]，SKILL §6 第 6 条）无法事前核对——` +
+          `事后核对：node <zcode-board 技能>/assets/tools/verify-cleanup.mjs --cards ${cls.cardNo} --root <项目根>（对 HEAD merge commit 格式核对，E4-17）。`,
+      );
+    }
     const ev = verdictEvidence(root, cls.cardNo);
+    const ui = uiFaceGate(root, ctx.base, ref, ev.uiDesigner);
+    if (!ui.checked) log(`第四绿：diff 不可得（${ui.reason}）：本次不判定 UI 面（边界：仅按本地可解析的 ${ctx.base ?? "HEAD"}...<来源> 计算）。`);
     if (ev.approved && ev.pass) {
-      log(`门禁通过：卡 #${cls.cardNo} 前两绿证据在位（code-reviewer approved / test-verifier pass）；第三绿归 integrator 机械验证。`);
+      if (ui.checked && ui.uiFace && !ui.ok) return block(uiGreenLines(cls.cardNo, ui));
+      log(`门禁通过：卡 #${cls.cardNo} 前两绿证据在位（code-reviewer approved / test-verifier pass）；第三绿归 integrator 机械验证${uiPassNote(ui)}`);
       return 0;
     }
-    return block(gateLines(cls.cardNo, ev, ctx.base));
+    const lines = gateLines(cls.cardNo, ev, ctx.base);
+    if (ui.checked && ui.uiFace && !ui.ok) lines.push("", ...uiGreenLines(cls.cardNo, ui, { header: false }));
+    return block(lines);
   }
 
   if (cls.kind === "push") {
@@ -378,6 +586,28 @@ function main() {
     return 0;
   }
 
+  if (cls.kind === "branch-delete") {
+    if (cls.force !== true) {
+      log("git branch 非强制删除形态（-d 正规清理或分支管理）：放行。");
+      return 0;
+    }
+    const cardTargets = cls.targets.filter((t) => CARD_BRANCH_RE.test(t));
+    if (cardTargets.length === 0) {
+      const shown = cls.targets.length > 0 ? cls.targets.join("、") : "无目标";
+      log(`git branch -D 目标非卡分支（${shown}）：不在卡分支纪律面，放行（仍建议 -d，让 git 拒绝未合并删除）。`);
+      return 0;
+    }
+    const branches = cardTargets.join("、");
+    return block([
+      `[zcode-board 合并门禁] 已阻断：git branch -D 强制删除卡分支（${branches}）。`,
+      "- 判别：`-D`（含 `--delete --force` / `-df` / `-d -f` 组合）绕过「未合并会被拒绝」的安全网；SKILL §3.4 明确 `git branch -d`，-d 而非 -D（未合并会被拒绝，退回，不 -D）。",
+      `- 去路：改用 \`git branch -d ${cardTargets[0]}\`；若被拒绝 = 该分支尚未合并——退回核对合并现场（integrator 合并 + 勾选），不得 -D 丢弃。`,
+      `- 正规清理顺序：合并（Merge task-<no> [#<no>]）→ \`git worktree remove .zcode/worktrees/${cardTargets[0]}\` → \`git worktree prune\` → \`git branch -d ${cardTargets[0]}\`。`,
+      "- 收尾机械核对：`node <zcode-board-skill>/assets/tools/verify-cleanup.mjs --cards <卡号> --root <项目根>`（残留点名清单；清理齐备 = 绿）。",
+      "- 依据：E4-18（合并后清理半场：「-d 而非 -D」成文无机械面）+ E1 V33（收口断尾）。",
+    ]);
+  }
+
   if (cls.kind === "pr-merge") {
     let cardNo = cls.cardNo;
     if (cardNo === null) cardNo = cardFromText(ctx.branch ?? "");
@@ -389,11 +619,17 @@ function main() {
       ]);
     }
     const ev = verdictEvidence(root, cardNo);
+    const headRef = prHeadRef(root, cardNo);
+    const ui = uiFaceGate(root, ctx.base, headRef, ev.uiDesigner);
+    if (!ui.checked) log(`第四绿：PR 头分支 diff 不可得（${ui.reason}）：本次不判定 UI 面（边界：仅按本地 task-<no> / origin/task-<no> 计算）。`);
     if (ev.approved && ev.pass) {
-      log(`门禁通过：卡 #${cardNo} 前两绿证据在位（PR 模式）。`);
+      if (ui.checked && ui.uiFace && !ui.ok) return block(uiGreenLines(cardNo, ui));
+      log(`门禁通过：卡 #${cardNo} 前两绿证据在位（PR 模式）${uiPassNote(ui)}`);
       return 0;
     }
-    return block(gateLines(cardNo, ev, ctx.base));
+    const lines = gateLines(cardNo, ev, ctx.base);
+    if (ui.checked && ui.uiFace && !ui.ok) lines.push("", ...uiGreenLines(cardNo, ui, { header: false }));
+    return block(lines);
   }
 
   return 0;

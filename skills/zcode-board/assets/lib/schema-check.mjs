@@ -9,7 +9,9 @@
  *   3. checkBoardInvariants(board)：子系统无法表达的公共不变量——
  *      T7 公共不变量（status/stage 词表、statusRule/stageRule 可溯源、attentionSummary 与节点 attention
  *      逐码相等、执行字段一致性）+ "号是身份"引用位整数断言（no/blockedBy 只认稳定号整数）+
- *      活号唯一 / label 形态与归属（含 §2.4 过渡态例外：未领号特性下的带号卡 label 缺省合法）；
+ *      活号唯一 / label 形态与归属（含 §2.4 过渡态例外：未领号特性下的带号卡 label 缺省合法）+
+ *      epic 归属对结构语义（A2-2/#82；§10.1/§10.3：原子对 / 引用位形态（码不进引用位）/ phase 单值
+ *      正整数；`epic:<码>` 的登记行反查归 lib/fact-invariants.mjs checkEpicRefs）；
  *   4. checkExemptionsDoc(doc)（B1-1/#97）：豁免登记（.zcode/board/exemptions.json，第五不变量 (e)
  *      的点名抑制）格式校验——结构非法整份拒收；条目级非法该条拒绝 + 点名，合法条目照常生效。
  *
@@ -52,6 +54,12 @@ const ISO_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]
 /** generatedBy 形态（#67）：`zcode-board/<主>.<次>.<修订>`——包版本语义化三段（两段式 0.2 为编译器历史版本形态，已退场）。 */
 const GENERATED_BY_RE = /^zcode-board\/[0-9]+\.[0-9]+\.[0-9]+$/;
 const LABEL_RE = /^[1-9][0-9]*(\.[1-9][0-9]*)*$/;
+/**
+ * epic 登记 id 形态（A2-2/#82；§10.3：`epic:<4位码>` 是 kind 限定句柄）——本模块独立复写（零依赖纪律），
+ * 与 lib/derive.mjs 的 EPIC_CODE_RE（码本体）同口径：4 位冻结形态 `[A-Z][A-Z0-9]{3}`；码不重分配。
+ * 裸码（如 `"KANB"`）与其它任何形态一律不入引用位（「码不进引用位，标签不是句柄」同纪律）。
+ */
+const EPIC_REF_RE = /^epic:[A-Z][A-Z0-9]{3}$/;
 /** 工作树路径接受集（#71 两形态，与 lib/derive.mjs WORKTREE_PATH_RE 同口径）：短形态或一层子项目根相对路径。 */
 const WORKTREE_RE = /^(?:[^/.][^/]*\/)?\.zcode\/worktrees\/task-[1-9][0-9]*$/;
 const PR_URL_RE = /^https?:\/\/.+/;
@@ -223,7 +231,9 @@ function deepScan(value, ptr, fn) {
  *     特性 label=稳定号、任务 label 首段=所属特性稳定号；attention ∈ 四码；
  *     interrupted-resume/unmerged-worktree 与 lastRun/activeRun/worktree 的一致性；
  *   - blockers：external 无 blockedBy；dependency 的 blockedBy 为正整数且落在板上活号集合；
- *   - 引用位深扫：任何 no/blockedBy 出现非整数 → 违规（标签不得进入引用位）。
+ *   - 引用位深扫：任何 no/blockedBy 出现非整数 → 违规（标签不得进入引用位）；
+ *   - epic 归属对（A2-2/#82，仅特性层）：epic/phase 同时存在或同时缺省（原子对）；epic 只认正整数
+ *     稳定号或登记 id `epic:<4位码>`（码不进引用位）；phase 单值正整数；无 epic/phase 键 = 合法缺省。
  * 返回错误字符串数组（空数组 = 通过）。
  */
 export function checkBoardInvariants(board) {
@@ -303,6 +313,27 @@ export function checkBoardInvariants(board) {
     if ("planCode" in node && node.planCode !== undefined) {
       if (typeof node.planCode !== "string" || !/^[A-Z][A-Z0-9]{3}$/.test(node.planCode)) {
         errors.push(`${ptr}.planCode: 形态应为 4 位 [A-Z][A-Z0-9]{3}（实际 ${brief(node.planCode)}）`);
+      }
+    }
+    // epic 归属对结构语义（A2-2/#82；§10.1/§10.3；仅特性层——schema 的 epic/phase 定义位）：
+    //   原子对（epic/phase 同时存在或同时缺省）+ 引用位形态（正整数稳定号或登记 id `epic:<4位码>`；
+    //   码不进引用位）+ phase 单值正整数；无 epic/phase 键 = 合法缺省（AD-8：无 epic 不判失败，零噪声）。
+    //   `epic:<码>` 的登记行反查（引用可达）归 lib/fact-invariants.mjs 的 checkEpicRefs（(h) 失败级）。
+    if (owner == null) {
+      const hasEpic = Object.prototype.hasOwnProperty.call(node, "epic") && node.epic !== undefined;
+      const hasPhase = Object.prototype.hasOwnProperty.call(node, "phase") && node.phase !== undefined;
+      if (hasEpic !== hasPhase) {
+        errors.push(
+          `${ptr}: epic/phase 归属对应同时存在或同时缺省（原子对纪律，§10.3）——epic=${brief(hasEpic ? node.epic : null)}、phase=${brief(hasPhase ? node.phase : null)}`,
+        );
+      }
+      if (hasEpic && !((Number.isInteger(node.epic) && node.epic >= 1) || (typeof node.epic === "string" && EPIC_REF_RE.test(node.epic)))) {
+        errors.push(
+          `${ptr}.epic: 引用位只认正整数稳定号或登记 id \`epic:<4位码>\`（码不进引用位，§10.3），实际 ${brief(node.epic)}`,
+        );
+      }
+      if (hasPhase && !(Number.isInteger(node.phase) && node.phase >= 1)) {
+        errors.push(`${ptr}.phase: 应为单值正整数期次序号（§10.3），实际 ${brief(node.phase)}`);
       }
     }
     // 当前执行者（#46 A3）：出现且非空 → 必须等于 activeRun.role 且在 assignees 管线内（**卡级**；

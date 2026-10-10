@@ -7,6 +7,8 @@
  *   1. board.schema.json 只使用受约束关键字子集（type/required/properties/items/enum/const/oneOf/pattern）+ 根级 x-* 元数据；
  *   2. board.golden.json 通过 board.schema.json 子集校验；
  *   3. golden 不变量（号为正整数且唯一、未领号形态、引用位只认稳定号、attention 与 attentionSummary 一致、四码一致语义、覆盖清单等）；
+ *      A3-3/#86 三类夹具：epic 归属（epics[] 登记行 + features[].epic/phase 原子对、登记 id 反查登记行）
+ *      + 无 epic 合法（删净追加键后过 schema/不变量——AD-8）+ 取消 epic（终态词表覆盖、终态成员可观察）；
  *   4. 三份模板与设计 §3.1/§3.2/§5.2 的字段清单一致（_note 逐字段点名 + 顶层键集合 + version 1 + 空数组）。
  *
  * 用法：
@@ -31,8 +33,17 @@ const GOLDEN_PATH = join(ASSETS, "samples", "board.golden.json");
 
 const ALLOWED_KEYWORDS = new Set(["type", "required", "properties", "items", "enum", "const", "oneOf", "pattern"]);
 const ATTENTION_CODES = ["interviewed-not-arranged", "arranged-not-expanded", "interrupted-resume", "unmerged-worktree"];
-const ROLES = ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"];
+/**
+ * 角色词表（B2-1/#99 七角色：ui-designer 第四绿为词表成员，与 lib/derive.mjs RUN_ROLES 同步）。
+ * 此处为独立字面量（不引实现常量）：golden 出现词表外角色即红——词表漂移须同批改此表，防样例静默脱表。
+ */
+const ROLES = ["implementer", "debugger", "refactoring-optimizer", "test-verifier", "code-reviewer", "integrator", "ui-designer"];
 const STATUSES = ["pending", "active", "blocked", "completed", "cancelled"];
+/** epic 登记行（A3-3/#86；契约 §10.2/§10.5）：码 4 位冻结形态（与 planCode 同）、状态三词表。 */
+const EPIC_CODE_RE = /^[A-Z][A-Z0-9]{3}$/;
+const EPIC_STATUSES = ["active", "cancelled", "archived"];
+const EPIC_ID_PREFIX = "epic:";
+const EPIC_ID_RE = /^epic:[A-Z][A-Z0-9]{3}$/;
 const ISO_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$/;
 /** 标准管线（契约 v2.1；此处为独立字面量，不引实现常量——判断"非标准管线样例"覆盖用）。 */
 const DEFAULT_ASSIGNEES = "implementer|test-verifier|code-reviewer|integrator";
@@ -49,8 +60,11 @@ const TEMPLATE_SPECS = {
   },
   "registry.template.json": {
     arrayKey: "entries",
-    topKeys: ["_note", "version", "seq", "entries"],
-    fields: ["no", "kind", "file", "specRoot", "title", "assignedAt", "planCode", "seq"],
+    // A2-2/#82：epics 登记行段随模板落地（空段起步）——顶层键与字段清单同步（epic 行三字段 code/title/status
+    // 须在 _note 点名；epic/phase 为条目归属对字段，见 markers.md §10.2/§10.3）。
+    // B5-3/#115：assignedBy（--assign 注入的发号留痕 <会话标识>@<执行现场>）入字段清单（14 字段）。
+    topKeys: ["_note", "version", "seq", "epics", "entries"],
+    fields: ["no", "kind", "file", "specRoot", "title", "assignedAt", "assignedBy", "planCode", "epic", "phase", "seq", "epics", "code", "status"],
   },
   "runs.template.json": {
     arrayKey: "runs",
@@ -234,9 +248,17 @@ const STATS = () => ({
   planFeatureCancelled: 0,
   roadmapCancelledCard: 0,
   sectionSet: 0,
+  // A3-3/#86：epic 层覆盖（三类夹具计数）
+  epicsTotal: 0,
+  epicsActive: 0,
+  epicsCancelled: 0,
+  epicsArchived: 0,
+  epicMemberFeature: 0,
+  epicCancelledMember: 0,
+  epicUnassignedFeature: 0,
 });
 
-function checkInvariants(board, errors) {
+function checkInvariants(board, errors, { coverage = true } = {}) {
   const stats = STATS();
   const noMap = new Map();
   const featureLabelMap = new Map();
@@ -360,11 +382,90 @@ function checkInvariants(board, errors) {
     }
   };
 
+  // epic 登记行（A3-3/#86；契约 §10.2/§10.5）：零 epic 不落键（出现即须为非空数组，AD-8）；
+  // 逐行 code/title/status 三字段形态 + 码唯一（永不复用）；码表供 features[].epic 登记 id 反查。
+  const epicByCode = new Map();
+  if (Object.prototype.hasOwnProperty.call(board, "epics") && board.epics !== undefined) {
+    if (!Array.isArray(board.epics)) {
+      errors.push("epics: 出现时应为数组（epic 登记行；零 epic 项目不落该键，AD-8）");
+    } else if (board.epics.length === 0) {
+      errors.push("epics: 空数组非规范形态（零 epic 不落键——删键而非置空，AD-8/§10.7）");
+    } else {
+      board.epics.forEach((row, i) => {
+        const ptr = `epics[${i}]`;
+        stats.epicsTotal += 1;
+        if (!isPlainObject(row)) {
+          errors.push(`${ptr}: 应为对象（code/title/status 三字段，§10.2）`);
+          return;
+        }
+        if (typeof row.code !== "string" || !EPIC_CODE_RE.test(row.code)) {
+          errors.push(`${ptr}.code: 应为 4 位冻结形态 ^[A-Z][A-Z0-9]{3}$，实际 ${JSON.stringify(row.code)}`);
+        }
+        if (typeof row.title !== "string" || row.title.trim() === "") {
+          errors.push(`${ptr}.title: 应为非空字符串，实际 ${JSON.stringify(row.title)}`);
+        }
+        if (!EPIC_STATUSES.includes(row.status)) {
+          errors.push(`${ptr}.status: 不在词表 ${JSON.stringify(EPIC_STATUSES)}（§10.2），实际 ${JSON.stringify(row.status)}`);
+        } else if (row.status === "active") stats.epicsActive += 1;
+        else if (row.status === "cancelled") stats.epicsCancelled += 1;
+        else if (row.status === "archived") stats.epicsArchived += 1;
+        if (typeof row.code === "string") {
+          if (epicByCode.has(row.code)) errors.push(`${ptr}.code: 码 ${row.code} 与 ${epicByCode.get(row.code)} 重复（码唯一、永不复用，§10.2/§10.5）`);
+          else epicByCode.set(row.code, ptr);
+        }
+      });
+    }
+  }
+
+  // 角色词表（B2-1/#99 七角色）：golden 出现的角色值（assignees 管线 / lastRun·activeRun 的 role /
+  // currentAssignee / nextAssignee）须全在词表内——词表外角色即红（样例须能落账，词表漂移同批改此表）。
+  const roleValues = [];
+  deepScan(board, "$", (key, value, ptr) => {
+    if (key === "assignees" && Array.isArray(value)) {
+      value.forEach((r, i) => roleValues.push([`${ptr}[${i}]`, r]));
+      return;
+    }
+    if ((key === "role" || key === "currentAssignee" || key === "nextAssignee") && typeof value === "string" && value !== "") {
+      roleValues.push([ptr, value]);
+    }
+  });
+  for (const [ptr, role] of roleValues) {
+    if (!ROLES.includes(role)) errors.push(`${ptr}: 角色 ${JSON.stringify(role)} 不在七角色词表（${ROLES.join("/")}）——词表漂移须同批同步`);
+  }
+
   // 特性层
   for (const [fi, f] of (board.features ?? []).entries()) {
     const ptr = `features[${fi}]`;
     stats.features += 1;
     checkCardCommon(f, ptr);
+    // epic 归属对（A3-3/#86；契约 §10.3）：epic/phase 同时存在或同时缺省；引用位只认正整数稳定号
+    // 或登记 id `epic:<4位码>`（码不进引用位）；登记 id 须反查登记行（悬空即红——登记行是 epic
+    // 唯一机器载体，§10.2）；phase 单值正整数。
+    const hasEpic = Object.prototype.hasOwnProperty.call(f, "epic");
+    const hasPhase = Object.prototype.hasOwnProperty.call(f, "phase");
+    if (hasEpic !== hasPhase) {
+      errors.push(`${ptr}: epic/phase 应同时存在或同时缺省（归属对原子性，§10.3）——实际 ${JSON.stringify({ epic: f.epic, phase: f.phase })}`);
+    } else if (hasEpic) {
+      const epicOk = (Number.isInteger(f.epic) && f.epic >= 1) || (typeof f.epic === "string" && EPIC_ID_RE.test(f.epic));
+      if (!epicOk) {
+        errors.push(`${ptr}.epic: 引用位只认正整数稳定号或登记 id ${EPIC_ID_PREFIX}<4位码>（码不进引用位，§10.3），实际 ${JSON.stringify(f.epic)}`);
+      }
+      if (!Number.isInteger(f.phase) || f.phase < 1) {
+        errors.push(`${ptr}.phase: 应为正整数期次序号（单值，§10.3），实际 ${JSON.stringify(f.phase)}`);
+      }
+      if (typeof f.epic === "string" && EPIC_ID_RE.test(f.epic)) {
+        const code = f.epic.slice(EPIC_ID_PREFIX.length);
+        const rowPtr = epicByCode.get(code);
+        if (rowPtr == null) {
+          errors.push(`${ptr}.epic: 登记 id ${f.epic} 在 epics[] 无登记行（悬空引用——登记行是 epic 唯一机器载体，§10.2）`);
+        } else if (board.epics.find((r) => r?.code === code)?.status === "cancelled") {
+          stats.epicCancelledMember += 1;
+        }
+        stats.epicMemberFeature += 1;
+      }
+    } else {
+      stats.epicUnassignedFeature += 1;
+    }
     // 计划码（#46 A1）：只在有计划码时计数（覆盖清单断言用）
     if (typeof f.planCode === "string") {
       if (f.kind === "plan") stats.planCodeFeature += 1;
@@ -607,7 +708,10 @@ function checkInvariants(board, errors) {
     if (typeof d.message !== "string" || d.message === "") errors.push(`diagnostics[${i}].message: 应为非空原因说明`);
   }
 
-  // 覆盖断言（T1 验收：golden 必须含四种 attention 码、两类 blockers、执行字段、全量 statusRule、未领号形态）
+  // 覆盖断言（T1 验收：golden 必须含四种 attention 码、两类 blockers、执行字段、全量 statusRule、未领号形态）；
+  // A3-3/#86：无 epic 类派生夹具（删净追加键）只做结构/语义校验、跳过覆盖断言（coverage=false——夹具
+  // 本就不含 epic 样例，覆盖清单只对 golden 本体成立）。
+  if (!coverage) return { stats, codeCounts, statusSeen };
   const coverageErrors = [];
   for (const code of ATTENTION_CODES) {
     if (codeCounts[code] < 1) coverageErrors.push(`golden 覆盖缺口：attention 码 ${code} 未出现`);
@@ -646,6 +750,17 @@ function checkInvariants(board, errors) {
     coverageErrors.push("golden 覆盖缺口：全取消计划稿（全部子卡 cancelled → 段位已取消）样例缺失（#66）");
   }
   if (stats.sectionSet < 1) coverageErrors.push("golden 覆盖缺口：计划任务 section（章节）样例缺失（#46 B2）");
+  // A3-3/#86 三类夹具覆盖：epic 归属（登记 id 反查）/ 无 epic 合法 / 取消 epic（终态 + 成员）
+  if (stats.epicsActive < 1) coverageErrors.push("golden 覆盖缺口：active epic 登记行样例缺失（A3-3）");
+  if (stats.epicMemberFeature < 1) {
+    coverageErrors.push("golden 覆盖缺口：epic 归属成员稿（features[].epic/phase 原子对，登记 id 反查）样例缺失（A3-3 三类夹具之 epic 类）");
+  }
+  if (stats.epicUnassignedFeature < 1) {
+    coverageErrors.push("golden 覆盖缺口：无 epic 稿（epic/phase 双缺省——顶层平铺合法）样例缺失（A3-3 三类夹具之无 epic 类）");
+  }
+  if (stats.epicsCancelled < 1 || stats.epicCancelledMember < 1) {
+    coverageErrors.push("golden 覆盖缺口：取消 epic（登记行终态 + 成员稿）样例缺失（A3-3 三类夹具之取消 epic 类）");
+  }
   for (const s of STATUSES) {
     if (!statusSeen.has(s)) coverageErrors.push(`golden 覆盖缺口：status=${s} 样例缺失`);
   }
@@ -678,6 +793,10 @@ function checkTemplates(errors) {
     const actualTop = [...keys].sort().join(",");
     if (expectedTop !== actualTop) errors.push(`templates/${file}: 顶层键应为 ${expectedTop}，实际 ${actualTop}`);
     if (file === "registry.template.json" && t.seq !== 0) errors.push(`templates/${file}: seq 应为 0（空序列高水位），实际 ${JSON.stringify(t.seq)}`);
+    // A2-2/#82：registry 模板的 epics 段同样空段起步（登记行段存在但为空；零 epic 项目 board.json 不落 epics 键）。
+    if (file === "registry.template.json" && (!Array.isArray(t.epics) || t.epics.length !== 0)) {
+      errors.push(`templates/${file}: epics 应为空数组（epic 登记行段空段起步），实际 ${JSON.stringify(t.epics ?? null)}`);
+    }
     const note = typeof t._note === "string" ? t._note : "";
     if (note === "") errors.push(`templates/${file}: _note 缺失（模板字段清单的文件头说明）`);
     for (const field of spec.fields) {
@@ -899,6 +1018,59 @@ const MUTATIONS = [
       target.stage = "待设计";
     },
   },
+  // A3-3/#86：epic 归属对与登记行变异（三类夹具的反向断言——每项必须被拒）
+  {
+    name: "epic-bare-code-in-reference",
+    expect: "裸码进 epic 引用位必须被拒（引用位只认稳定号/登记 id epic:<码>，§10.3）",
+    apply: (b) => {
+      const target = (b.features ?? []).find((f) => typeof f.epic === "string");
+      if (!target) throw new Error("golden 无 epic 归属样例，无法构造变异");
+      target.epic = target.epic.slice("epic:".length);
+    },
+  },
+  {
+    name: "epic-dangling-registration",
+    expect: "登记 id 悬空（epics[] 无该登记行）必须被拒（登记行是 epic 唯一机器载体，§10.2）",
+    apply: (b) => {
+      const target = (b.features ?? []).find((f) => typeof f.epic === "string");
+      if (!target) throw new Error("golden 无 epic 归属样例，无法构造变异");
+      target.epic = "epic:ZZZZ";
+    },
+  },
+  {
+    name: "epic-phase-half-pair",
+    expect: "归属对不成对（有 epic 无 phase）必须被拒（原子对纪律，§10.3）",
+    apply: (b) => {
+      const target = (b.features ?? []).find((f) => typeof f.epic === "string" && Number.isInteger(f.phase));
+      if (!target) throw new Error("golden 无 epic 归属样例，无法构造变异");
+      delete target.phase;
+    },
+  },
+  {
+    name: "epic-phase-nonpositive",
+    expect: "期次序号非正整数必须被拒（phase 单值正整数，§10.3）",
+    apply: (b) => {
+      const target = (b.features ?? []).find((f) => Number.isInteger(f.phase) && f.phase >= 1);
+      if (!target) throw new Error("golden 无 phase 样例，无法构造变异");
+      target.phase = 0;
+    },
+  },
+  {
+    name: "epic-status-off-vocabulary",
+    expect: "epic 登记行状态出词表必须被拒（active|cancelled|archived，§10.2）",
+    apply: (b) => {
+      if (!Array.isArray(b.epics) || !b.epics[0]) throw new Error("golden 无 epics 登记行，无法构造变异");
+      b.epics[0].status = "done";
+    },
+  },
+  {
+    name: "epic-code-reuse-duplicate",
+    expect: "epic 码重复登记必须被拒（码唯一、永不复用，§10.2/§10.5）",
+    apply: (b) => {
+      if (!Array.isArray(b.epics) || !b.epics[0]) throw new Error("golden 无 epics 登记行，无法构造变异");
+      b.epics.push({ ...b.epics[0] });
+    },
+  },
 ];
 
 function runMutation(name, schema, golden) {
@@ -1008,6 +1180,32 @@ function main(argv) {
         say(`  指派管线  : 标准=${info.stats.assigneesDefault}/非标准=${info.stats.assigneesCustom}`);
         say(`  计划码    : plan=${info.stats.planCodeFeature}/spec 延续=${info.stats.planCodeSpec}`);
         say(`  细节      : details 空串=${info.stats.emptyDetails}`);
+        say(
+          `  epic 层   : 登记行=${info.stats.epicsTotal}（active=${info.stats.epicsActive}/cancelled=${info.stats.epicsCancelled}/archived=${info.stats.epicsArchived}），归属成员=${info.stats.epicMemberFeature}（取消 epic 成员=${info.stats.epicCancelledMember}），无归属稿=${info.stats.epicUnassignedFeature}`,
+        );
+      }
+      // A3-3/#86 三类夹具之「无 epic 类」：golden 删净追加键（epics[] / features[].epic/phase）后仍过
+      // schema 与不变量（零 epic 合法——AD-8/§10.7：顶层平铺、`--check` 不判失败；含 epic 板删净
+      // 追加键 ↔ 无 epic 板同构，与场景 84 的逐字段对称断言同源）。
+      if (!schemaLoaded.error) {
+        const variant = clone(goldenLoaded.value);
+        delete variant.epics;
+        for (const f of variant.features ?? []) {
+          delete f.epic;
+          delete f.phase;
+        }
+        const variantErrors = [];
+        validate(schemaLoaded.value, variant, "$", variantErrors);
+        try {
+          checkInvariants(variant, variantErrors, { coverage: false });
+        } catch (e) {
+          variantErrors.push(`不变量检查异常：${e.message}`);
+        }
+        if (variantErrors.length === 0) {
+          pass("无 epic 类夹具（删净 epics[]/features[].epic/phase 追加键）过 schema 与不变量——零 epic 合法（AD-8）");
+        } else {
+          variantErrors.forEach(record);
+        }
       }
     }
   }

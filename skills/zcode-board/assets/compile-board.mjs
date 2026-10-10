@@ -6,6 +6,7 @@
  *   node compile-board.mjs [<project-root>]            默认只读编译（<project-root> 默认当前工作目录）
  *   node compile-board.mjs [<project-root>] --assign   发号：无号条目领全局稳定号，写源头标记 + registry + 自动重编译
  *   node compile-board.mjs [<project-root>] --check    审计（只读）：源/registry/board.json 三方一致 + 结构校验，不一致非零退出
+ *   node compile-board.mjs [<project-root>] --assign --session-id <id>  发号者留痕（B5-3/#115：registry 条目 assignedBy）
  *   node compile-board.mjs --version                    版本：一行 包版本 / 契约版本 / schema 版本（#67；读 lib/version.mjs）
  *   node compile-board.mjs --manifest                   重新生成 assets/manifest.json（#67：三版本 + 关键文件 sha256）
  *   node compile-board.mjs --help
@@ -29,6 +30,9 @@
  *     arranged-not-expanded 判据收窄为零卡、roadmap 占位稿段位恒待设计、卡级 nextAssignee
  *     （管线序首个无 done run 证据角色）；#66 终态优先序：取消（卡级/特性级标记或全取消子卡汇总
  *     → 已取消）不让位于 roadmap 段位压制（特性自身取消 > rollup > roadmap 压制 > 其余推导）；
+ *     epic 层（A3-1/#84；契约 v2.5 §10.1–§10.3）：registry `epics` 登记行 → board.json `epics[]` 追加键
+ *     （code/title/status 原样透出 + plans/phases 最小 rollup）+ `features[].epic`/`phase` 归属透出
+ *     （登记 id/稳定号原文；无归属缺省不透出；半对/形态非法不采纳 + diagnostics）；零 epic 不落键——
  *   - 发号（T9，--assign）：按确定性扫描顺序（specs 字典序 → PLAN_DIRS 冻结序 × 文件名字典序 →
  *     文件内文档序）给无号条目发全局单序列号；计划稿盖文件头标记、条目行尾盖号（lib/marker-write.mjs
  *     逐文件原子写，只增不改）；spec 特性号 registry 内绑定；seq 高水位只增；registry 指向更新
@@ -48,8 +52,29 @@
  *     #152 卡号绑定 (f)：板面 worktree（#151 归一后现场实际路径）末段 task-<no> 须等于该卡
  *     稳定号——对账点名级、不阻塞退出码，现场合并/清理后自清；
  *     #159/E1b-1 苗圃位置规则 (g)：`.zcode/plans/` 扫描面内裁决稿/设计稿/纲领稿（文件名/标题族词）
- *     → 对账点名级、不阻塞退出码，指向新位置 `.zcode/design/`（契约 §11），移位后自清）；修复 = 重编译；
- *   - 写出：<root>/.zcode/board/board.json + board.md（原子写：临时文件 + 改名）。
+ *     → 对账点名级、不阻塞退出码，指向新位置 `.zcode/design/`（契约 §11），移位后自清；
+ *     A2-2/#82 归属与引用断言包（失败级，逐条点名路径 + 两值对照）：源侧条目归属对形态/原子性
+ *     （码不进引用位）、一稿一 epic（双归属必咬）、登记行形态（checkEpicOwnership）；板面
+ *     `features[].epic` 登记 id 反查 `epics[]` 登记行——悬空/孤儿引用必咬（lib/fact-invariants.mjs
+ *     checkEpicRefs，磁盘板与重编译基线各判一遍）；无 epic/phase 缺省合法、零噪声（AD-8）；
+ *     A2-3/#83 期号不复用与 seq 高水位（§10.5 AD-9① / E4-10）：①a epic 码复用（`epics[]` 同码 ≥2
+ *     登记行 = 码位复用/复制分叉）失败级（checkEpicCodeReuse）；①b 期号复用候选（同 epic 同期次成员
+ *     跨 ≥2 个 assignedAt 批次）对账点名级、不阻塞退出码（checkPhaseReuse——合法补录/跨秒边界同形，
+ *     人工确认）；② seq 高水位回落（seq < max(条目号, 活标记号)，手工回退/复制回滚 → 号位记忆丢失）
+ *     失败级、逐条点名两值 + 见证源（checkSeqHighWater，E4-10 原文）；修复 = 重编译/修正 registry；
+ *   - 写出：<root>/.zcode/board/board.json + board.md（原子写：临时文件 + 改名）；写盘前幻影板防线
+ *     （B5-2/#114；E1 V20）：编译输出路径必须等于板根——<root> 自身有既有板（.zcode/board/board.json）
+ *     才可写（= 该根即板根）；resolved root 是板项目子目录且自身无既有板（cwd 漂移/相对路径误解析的
+ *     幻影板落点，dispatch-checklist 2026-10-10 两次事故）→ 默认/--assign 拒绝写出（退出码 1、零写入）
+ *     并点名正确板根与 cd 指引；--check 同判据归失败级点名（错位证据/假绿源头）；首建（无板项目祖先）
+ *     合法不拦；
+ *   - 发号留痕与现场点名（B5-3/#115；E1 V12）：--assign 向本次写入 registry 的条目注入
+ *     `assignedBy`（`<会话标识>@<执行现场>`；会话 = --session-id，缺省 unknown；现场 = main（主检出/
+ *     非 git 域）｜worktree:<仓根名>（链接工作树内））。执行现场判定 = 自 resolved root 上溯的最近仓根
+ *     （.git 为目录 = 主检出；.git 为文件 = gitdir 指针 = 链接工作树 = 非主检出；无 .git 祖先视同主检出）
+ *     ——链接工作树内运行 --assign 属非编排者形态（SKILL.md「发号只在主检出、由编排者单写者执行」），
+ *     运行当场点名（诊断），--check 另按条目 assignedBy 现场段逐条对账点名（非失败级、不阻断退出码；
+ *     既有条目零改动、不补造）。
  *
  * 硬约束：默认模式对源文件**零写入**；--check 全程**只读**；--assign 对源头的写入仅限号标记 +
  * registry（§12 副作用边界，roadmap 子旗标由作者手写、--assign 不写入不改写）；不解析不触碰
@@ -60,7 +85,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -86,12 +111,16 @@ import {
   ATTENTION_CODES,
   ATTENTION_LABELS,
   DEGRADED_RULE,
+  EPIC_CODE_RE,
+  EPIC_STATUSES,
   RUN_ROLES,
   STAGE,
   STAGE_VALUES,
   deriveArrangedNotExpanded,
+  deriveBoardIndex,
   deriveCardRuns,
   deriveCurrentAssignee,
+  deriveEpics,
   deriveNextAssignee,
   derivePlanFeatureStatus,
   derivePlanTaskStatus,
@@ -102,6 +131,7 @@ import {
   diagnoseProgressMismatch,
   diagnoseWorktrees,
   maxIso,
+  normalizeEpicPair,
   normalizeRuns,
   parseWorktreePath,
   summarizeAttention,
@@ -118,7 +148,7 @@ import {
   validateSchemaValue,
 } from "./lib/schema-check.mjs";
 
-import { checkCompletedMergedEvidence, checkFactInvariants } from "./lib/fact-invariants.mjs";
+import { checkCompletedMergedEvidence, checkEpicRefs, checkFactInvariants } from "./lib/fact-invariants.mjs";
 
 import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
 
@@ -137,6 +167,12 @@ const ELLIPSIS = "…";
 export const PLAN_OVERGROWN_THRESHOLD = 60;
 /** 工作树收纳目录（§6.1 条件 1；编译器只做纯文件存在性检查，不执行 git）。 */
 const WORKTREES_REL = ".zcode/worktrees";
+/**
+ * assignedBy 执行现场段前缀（B5-3/#115；E1 V12）：`<会话标识>@<现场>`，现场 = `main`（主检出/
+ * 非 git 域）或 `worktree:<仓根目录名>`（链接工作树内 = 非主检出）。判定见 detectAssignSite /
+ * checkAssignedBy；口径同 hooks/gate-merge.mjs（`.git` 文件 = gitdir 指针）。
+ */
+const WORKTREE_SITE_PREFIX = "worktree:";
 /** 板产物相对路径（--check 的第三份互检对象；写出点见 main）。 */
 const BOARD_JSON_REL = ".zcode/board/board.json";
 /** 板渲染产物（--check 的编号形态互证对象；#56 不变量 c）。 */
@@ -1313,8 +1349,9 @@ function resolveNumbers(features, registry, diag) {
 /**
  * 计划码冻结形态（契约 v2.2）：4 位、首字符字母、其余大写字母数字（如 IMPL/UI01/DREM/PREV）。
  * 计划码是**额外显示层**：全局序列号（no）不变，计划码不进入任何引用位。
+ * A3-1/#84：与 epic 码同一冻结形态——单一事实源 = lib/derive.mjs 的 EPIC_CODE_RE（禁二份）。
  */
-export const PLAN_CODE_RE = /^[A-Z][A-Z0-9]{3}$/;
+export const PLAN_CODE_RE = EPIC_CODE_RE;
 
 /** 派生用停用词（无区分度的通用词不参与取词）。 */
 const PLAN_CODE_STOPWORDS = new Set(["plan", "the", "and", "for", "with"]);
@@ -1644,6 +1681,10 @@ function finalizeFeature(node) {
   }
   // 计划码（#46 A1）：仅当 registry 已分配时写出（附加显示层，不参与引用与序列号）。
   if (meta.planCode != null) out.planCode = meta.planCode;
+  // epic 归属（A3-1/#84，§10.3）：registry 条目归属对透出（登记 id/稳定号原文）；无归属不落键
+  // （缺省非 null——与 schema oneOf 缺省形态对齐；不凭空补字段）。
+  if (meta.epic != null) out.epic = meta.epic;
+  if (meta.phase != null) out.phase = meta.phase;
   // roadmap 占位稿（#53，契约 v2.3）：出现即 true（false 不写字段——与 section 同口径）。
   if (meta.roadmap) out.roadmap = true;
   out.kind = node.kind;
@@ -1677,6 +1718,12 @@ function finalizeFeature(node) {
   out.attention = node.attention;
   return out;
 }
+
+/**
+ * 登记 id 前缀（§10.3：`epic:<4位码>` 是 kind 限定句柄；裸码只是显示码，不进引用位）。
+ * A3-2/#85：渲染面归组只认该前缀 + 登记行 code 反查（本文件内已多处字面使用，收此单点）。
+ */
+const EPIC_ID_PREFIX = "epic:";
 
 function renderBoardMd(board) {
   const lines = [];
@@ -1730,25 +1777,42 @@ function renderBoardMd(board) {
     lines.push("（空板：无 specs、无 plans、无登记）");
     lines.push("");
   }
+  // A3-2/#85（markers §10.1/§10.5）：三层容器渲染——epic 章（`# <码> · <标题>`，含登记行终态标注）→
+  // 期次组（`## <码><期次> · 期次 <n>`：AD-3 双字段合成；组头 = 期次号，按期次序升序——AD-4）→ 既有
+  // 稿/卡节（`### <计划码> · <标题>` 照旧；**卡编号维持 计划码-层级，合成名不进卡编号命名空间**——
+  // AD-2）。容器成员按 `features[].epic` 归组，只认登记行 code 反查（`epic:<码>`——登记行是 epic 唯一
+  // 机器载体，§10.2）：无归属稿与孤儿引用稿（无登记行）顶层平铺、不为孤儿造章（AD-8）。epic 登记行
+  // 终态只作章头/详情行标注，既不被成员活跃复活、也不压制成员稿各自呈现（同层独立，§10.5）。
+  // 零 epics 键/空数组 → 容器零渲染（零 epic 项目 board.md 不回归）。
+  const epicRows = Array.isArray(board.epics) ? board.epics : [];
+  const epicCodeOf = (f) => {
+    if (typeof f?.epic !== "string" || !f.epic.startsWith(EPIC_ID_PREFIX)) return null;
+    const code = f.epic.slice(EPIC_ID_PREFIX.length);
+    return epicRows.some((e) => e?.code === code) ? code : null;
+  };
   for (const f of board.features) {
-    const id = renderNodeId(f);
-    lines.push(`### ${id} · ${f.title}`);
+    if (epicCodeOf(f) != null) continue;
+    lines.push(...renderFeatureBlock(f));
+  }
+  for (const epic of epicRows) {
+    const members = board.features.filter((f) => epicCodeOf(f) === epic.code);
+    // 期次组 = 派生 rollup（epic.phases，升序）∪ 成员 phase 并集（稳健：手改板漏组不吞稿）
+    const phaseNos = [
+      ...new Set([...(Array.isArray(epic.phases) ? epic.phases.map((p) => p?.phase) : []), ...members.map((f) => f.phase)]),
+    ]
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    const terminal = epic.status === "cancelled" ? "（已取消）" : epic.status === "archived" ? "（已归档）" : "";
+    const statusRule = terminal === "" ? "" : "（登记行终态；成员活跃不复活，§10.5）";
+    lines.push(`# ${epic.code} · ${epic.title}${terminal}`);
     lines.push("");
-    lines.push(`- kind：${f.kind}；status：${f.status}（${f.statusRule}）；段位：${f.stage}（${f.stageRule}）`);
-    if ((f.attention ?? []).length > 0) {
-      lines.push(`- 缺口：${f.attention.map((c) => `${ATTENTION_LABELS[c] ?? c}（${c}）`).join("、")}`);
+    lines.push(`- epic：${epic.code}；status：${epic.status}${statusRule}；期次 ${phaseNos.length} · 稿 ${members.length}`);
+    lines.push("");
+    for (const phase of phaseNos) {
+      lines.push(`## ${epic.code}${phase} · 期次 ${phase}`);
+      lines.push("");
+      for (const f of members.filter((m) => m.phase === phase)) lines.push(...renderFeatureBlock(f));
     }
-    if (f.details) lines.push(`- 细节：${f.details}`);
-    if (f.origin?.interviewId) lines.push(`- 访谈：${f.origin.interviewId}`);
-    if (f.origin?.specRoot) lines.push(`- spec：${f.origin.specRoot}`);
-    if (f.origin?.planRef) lines.push(`- 计划：${f.origin.planRef}`);
-    if (f.progress) lines.push(`- 进度：${f.progress.completedTasks}/${f.progress.totalTasks}`);
-    lines.push(`- 时间戳：updatedAt ${f.updatedAt}${f.createdAt ? ` · createdAt ${f.createdAt}` : ""}`);
-    if (f.evidence?.length) lines.push(`- 证据：${f.evidence.join("、")}`);
-    if ((f.tasks ?? []).length === 0) lines.push("- 任务：无");
-    else lines.push("- 任务：");
-    for (const line of renderTaskLines(f.tasks, 1, f.planCode ?? null)) lines.push(line);
-    lines.push("");
   }
   lines.push("## 诊断");
   lines.push("");
@@ -1756,6 +1820,33 @@ function renderBoardMd(board) {
   for (const d of board.diagnostics) lines.push(`- ${d.path}：${d.message}`);
   lines.push("");
   return lines.join("\n");
+}
+
+/**
+ * 稿/卡节渲染块（A3-2/#85 自 renderBoardMd 提取：既有「## 特性」顶层稿与 epic 章内成员稿共用一份，
+ * 禁二份——两者唯一差异是所在容器层，行内容零差异）。
+ */
+function renderFeatureBlock(f) {
+  const lines = [];
+  const id = renderNodeId(f);
+  lines.push(`### ${id} · ${f.title}`);
+  lines.push("");
+  lines.push(`- kind：${f.kind}；status：${f.status}（${f.statusRule}）；段位：${f.stage}（${f.stageRule}）`);
+  if ((f.attention ?? []).length > 0) {
+    lines.push(`- 缺口：${f.attention.map((c) => `${ATTENTION_LABELS[c] ?? c}（${c}）`).join("、")}`);
+  }
+  if (f.details) lines.push(`- 细节：${f.details}`);
+  if (f.origin?.interviewId) lines.push(`- 访谈：${f.origin.interviewId}`);
+  if (f.origin?.specRoot) lines.push(`- spec：${f.origin.specRoot}`);
+  if (f.origin?.planRef) lines.push(`- 计划：${f.origin.planRef}`);
+  if (f.progress) lines.push(`- 进度：${f.progress.completedTasks}/${f.progress.totalTasks}`);
+  lines.push(`- 时间戳：updatedAt ${f.updatedAt}${f.createdAt ? ` · createdAt ${f.createdAt}` : ""}`);
+  if (f.evidence?.length) lines.push(`- 证据：${f.evidence.join("、")}`);
+  if ((f.tasks ?? []).length === 0) lines.push("- 任务：无");
+  else lines.push("- 任务：");
+  for (const line of renderTaskLines(f.tasks, 1, f.planCode ?? null)) lines.push(line);
+  lines.push("");
+  return lines;
 }
 
 function attentionOfCode(board, code) {
@@ -1885,6 +1976,34 @@ export function compileProject(rootInput) {
       );
     }
   }
+
+  // epic 归属（A3-1/#84；§10.1/§10.3）：registry 条目 `epic`/`phase` 原子对是唯一来源（--assign --epic
+  // 写入；编译器只读）——归一出「透出或拒绝」：无归属（双缺省）不透出（无键，非 null）；半对/形态非法
+  // 不采纳 + diagnostics（不静默、不猜哪一半有效；失败级断言归 A2-2）。透出值 = 条目原文（登记 id/稳定号）。
+  const epicMembers = [];
+  for (const f of features) {
+    const meta = META(f);
+    if (meta.kind === "interview-only" || !meta.registryKey || !registry) continue;
+    const entry = findRegistryEntry(registry, meta.registryKey);
+    if (!entry) continue;
+    const pair = normalizeEpicPair(entry.epic, entry.phase);
+    if (!pair.ok) {
+      diag(meta.diagPath, `registry 条目（${meta.sourcePath}）的${pair.reason}：不采纳、不透出（不猜、不静默；机械断言归 A2-2）。`);
+      continue;
+    }
+    if (pair.epic == null) continue;
+    meta.epic = pair.epic;
+    meta.phase = pair.phase;
+    epicMembers.push({ epic: pair.epic, phase: pair.phase });
+  }
+  // epics[]（追加键，A3-1/#84；§10.1/§10.2）：登记行透出 + 最小 rollup（plans/phases）。
+  // 零登记行（无 epics 段/空段/非数组）→ null → 不落键（AD-8：零 epic 项目零变化、旧消费面照旧）。
+  const epicsState = deriveEpics({
+    epics: registry?.epics,
+    members: epicMembers,
+    registryPath: FIRST_PARTY_SOURCES[1].path,
+  });
+  for (const d of epicsState.diagnostics) diag(d.path, d.message);
 
   resolveBlockers(features, registry, diag);
 
@@ -2098,13 +2217,20 @@ export function compileProject(rootInput) {
   }
 
   const finalizedFeatures = features.map(finalizeFeature);
+  // 四段索引（C2-1/#133，AD-11③）：frontier/active/blocked/recent——编译器为唯一所有者，四段恒写出；
+  // UI 与 hook 注入只读消费（口径与消费边界见 board.schema.json x-decisions 四段条）。
+  const boardIndex = deriveBoardIndex({ features: finalizedFeatures, runs: runsState.order });
   const board = {
     version: BOARD_VERSION,
     project: { root, name: basename(root) },
     updatedAt: nowIso(),
     generatedBy: GENERATED_BY,
     sources: buildSources(scan),
+    // epic 层（A3-1/#84，§10.1）：追加键——零登记行（无 epics 段/空段）不落键（AD-8 顶层不回归；
+    // 旧消费面双向兼容：删净 epics[]/features[].epic/phase 后与无 epic 板逐字段相等）。
+    ...(epicsState.epics != null ? { epics: epicsState.epics } : {}),
     features: finalizedFeatures,
+    ...boardIndex,
     attentionSummary: summarizeAttention(finalizedFeatures),
     diagnostics,
   };
@@ -2197,15 +2323,54 @@ function readSpecAssignFacts(spec) {
   return { title, tasks, tasksText, id: `spec:${spec.dir}` };
 }
 
-/** registry 条目（冻结字段序：no, kind, file|specRoot, title, assignedAt；额外字段由调用方保留）。 */
-function entryFor(target, no, assignedAt) {
-  if (target.type === "feature" && target.kind === "spec") {
-    return { no, kind: "spec", specRoot: target.specRoot, title: target.title, assignedAt };
+/**
+ * 执行现场判定（B5-3/#115；E1 V12；判据成文——最小判据）：
+ *   自 --assign 的 resolved root 逐级上溯取**最近仓根**（最近含 `.git` 的祖先目录）：
+ *   - `.git` 为目录 → 主检出（site=`main`）；
+ *   - `.git` 为文件（gitdir 指针 = 链接工作树标记）→ 非主检出（site=`worktree:<仓根目录名>`）；
+ *   - 上溯至文件系统根无 `.git`（非 git 项目/夹具域）→ 视同主检出（`main`，不误拦、零噪声）。
+ * 纯 fs 读（statSync），不执行任何 git 命令（硬约束同款）；判据先例 = hooks/gate-merge.mjs gitContext
+ * （同「.git 文件 = gitdir 指针」口径）。
+ */
+function detectAssignSite(rootInput) {
+  let cur = resolve(rootInput);
+  for (;;) {
+    let st = null;
+    try {
+      st = statSync(join(cur, ".git"));
+    } catch {
+      st = null;
+    }
+    if (st !== null) {
+      return st.isFile() ? { site: `${WORKTREE_SITE_PREFIX}${basename(cur)}`, repoRoot: cur } : { site: "main", repoRoot: cur };
+    }
+    const parent = dirname(cur);
+    if (parent === cur) return { site: "main", repoRoot: null };
+    cur = parent;
   }
-  return { no, kind: target.kind, file: target.file, title: target.title, assignedAt };
 }
 
-const ENTRY_KNOWN_KEYS = ["no", "kind", "file", "specRoot", "title", "assignedAt", "planCode"];
+/** registry 条目（冻结字段序：no, kind, file|specRoot, title, assignedAt, assignedBy；额外字段由调用方保留）。 */
+function entryFor(target, no, assignedAt, assignedBy = null) {
+  if (target.type === "feature" && target.kind === "spec") {
+    return {
+      no,
+      kind: "spec",
+      specRoot: target.specRoot,
+      title: target.title,
+      assignedAt,
+      ...(assignedBy === null ? {} : { assignedBy }),
+    };
+  }
+  return { no, kind: target.kind, file: target.file, title: target.title, assignedAt, ...(assignedBy === null ? {} : { assignedBy }) };
+}
+
+// epic/phase（A2-1/#81；markers §10.2/§10.3）：登记行与归属字段是已知条目字段（非"额外字段"）——计划→spec
+// 延续改写等保留路径按已知键对待，字段序稳定（epic/phase 跟随 planCode 之后，§10.2 示例同序；延续改写的
+// 显式装配见步骤 7 的 rewritten——STD-1 回炉：已知键不进 entryExtras，必须逐键显式携带）。
+// assignedBy（B5-3/#115；E1 V12）：--assign 注入的发号留痕（<会话标识>@<执行现场>）同为已知条目字段——
+// 延续改写显式携带原值（见步骤 7 的 rewritten 装配），不得按"额外字段"透传或丢弃。
+const ENTRY_KNOWN_KEYS = ["no", "kind", "file", "specRoot", "title", "assignedAt", "assignedBy", "planCode", "epic", "phase"];
 function entryExtras(e) {
   return Object.fromEntries(Object.entries(e).filter(([k]) => !ENTRY_KNOWN_KEYS.includes(k)));
 }
@@ -2220,6 +2385,157 @@ function targetRef(t) {
  * 由来：远端新赛马项目 docs/design-notes/ 296 份活历史档曾被默认扫描面吸入、逐份盖号改写。
  */
 const MASS_PLAN_FILE_THRESHOLD = 10;
+
+// ---------------------------------------------------------------- epic 归属（--assign --epic，A2-1/#81；markers §10）
+
+/**
+ * epic 码冻结形态（§10.2：与 planCode 同一冻结形态，4 位；KANB1 是显示层合成名，不进任何码位）
+ * 与登记行终态词表（§10.2/§10.5：只用三词；终态词表冻结）：
+ * A3-1/#84 起单一事实源在 lib/derive.mjs（派生层按同一形态校验登记行与引用位——禁二份）；
+ * 此处重导出保持既有导出面（--assign 前置裁定与测试消费）。
+ */
+export { EPIC_CODE_RE, EPIC_STATUSES };
+
+/**
+ * 下一期次（§10.3「自动占下一 phase 序号（幂等；冲突顺延）」；AD-9① 期号永不复用）：
+ *   基准 = **扫描面内仍活跃的 epic 成员**期次之 max（无成员 → 0）；候选 = 基准 + 1；
+ *   候选与「已消耗期次集合」冲突（该集合取全部条目——含归档/离板/空洞条目，期号不回收）→ 顺延到
+ *   下一个未被消耗的序号。幂等：已归属稿不重发期号（调用方按归属对判定跳过）。
+ *   活跃成员口径（TQ-3/STD-3 回炉）：plan 稿（`file` 在扫描面）与 spec 稿（`specRoot` 在扫描面——
+ *   含计划→spec 延续后的 spec 条目）同入基准；离板/归档成员只入「已消耗期次集合」，不抬基准。
+ *   边界成文（SPEC-2，转批收口）：整数稳定号引用（如 `epic: 42`）无登记面映射，不参与本函数判定
+ *   （不猜、不计——同 checkEpicRefs/deriveEpics 口径）；裸码等形态非法引用归 A2-2 面点名，此处跳过。
+ */
+function nextPhaseForEpic(entries, epicId, scanPlans, scanSpecs) {
+  const livePlans = new Set((scanPlans ?? []).map((p) => p.rel));
+  const liveSpecs = new Set((scanSpecs ?? []).map((s) => s.rel));
+  const used = new Set();
+  let liveMax = 0;
+  for (const e of entries) {
+    if (!e || typeof e !== "object" || e.epic !== epicId) continue;
+    if (!Number.isInteger(e.phase) || e.phase < 1) continue;
+    used.add(e.phase);
+    const live =
+      (e.kind === "plan" && typeof e.file === "string" && livePlans.has(e.file)) ||
+      (e.kind === "spec" && typeof e.specRoot === "string" && liveSpecs.has(e.specRoot));
+    if (live) liveMax = Math.max(liveMax, e.phase);
+  }
+  let phase = liveMax + 1;
+  while (used.has(phase)) phase += 1; // 冲突顺延：已消耗期号不回收
+  return phase;
+}
+
+/**
+ * epic 归属前置裁定（§10.7.2 步骤①→②「登记与补录分离」；§3.9 第 1 步）：
+ *   登记行缺失/形态非法（code/title/status，§10.2）按缺失处置、终态（cancelled/archived，§10.5/§10.6）
+ *   不接纳新成员——都拒绝执行且零写入，提示按 §3.9 第 1 步登记。
+ *   `--epic-title`（SPEC-1 裁定 a）：登记行**缺失**且给非空标题时由本机具创建
+ *   `{code,title,status:"active"}`（机具保持唯一写者：仅缺失时创建、绝不覆盖/改写既有行；epics 段
+ *   结构损坏（存在但非数组）fail-closed 拒执行不静默覆盖）；已有登记行时 title 忽略 + 幂等提示
+ *   （改名/置态非本机具路径）。缺 title 仍按 §3.9 指引拒绝。
+ *   显式目标清单（--epic-file）逐项解析（扫描面内计划稿）；全不可归属 → 拒绝（机具不广谱改写，§10.7.2）。
+ * 返回 { ok: true, code, epicId, targets, createdRow } 或 { ok: false, reason, code, status }；
+ * 调用方在**任何写之前**按 reason 拒绝，createdRow 非空时由调用方随 registry 原子落盘。
+ */
+function resolveEpicRequest(epicRequest, { rawRegistry, rebuilt, registryRel, scan, targets, diag }) {
+  const code = epicRequest.code;
+  const title = typeof epicRequest.title === "string" ? epicRequest.title : null;
+  if (!EPIC_CODE_RE.test(code)) {
+    diag(registryRel, `--assign --epic ${JSON.stringify(code)}：码形态非法（冻结 4 位，§10.2）——拒绝执行，零写入。`);
+    return { ok: false, reason: "epic-registration-missing", code };
+  }
+  // epics 段结构损坏（键存在但非数组）≠ 登记行缺失：fail-closed 拒绝，不静默覆盖损坏段（SPEC-1 边界成文）。
+  if (rawRegistry != null && typeof rawRegistry === "object" && Object.hasOwn(rawRegistry, "epics") && !Array.isArray(rawRegistry.epics)) {
+    diag(
+      registryRel,
+      `--assign --epic ${code}：registry 的 epics 段非数组（结构损坏：实际 ${JSON.stringify(rawRegistry.epics)}，须为登记行数组，§10.2）——先修复该段；本机具不静默覆盖损坏段（--epic-title 仅创建缺失登记行）。拒绝执行，零写入。`,
+    );
+    return { ok: false, reason: "epic-registration-missing", code };
+  }
+  const rows = rawRegistry && Array.isArray(rawRegistry.epics) ? rawRegistry.epics : null;
+  const row = rows ? rows.find((r) => r && typeof r === "object" && r.code === code) ?? null : null;
+  let createdRow = null;
+  if (!row) {
+    if (title != null) {
+      // SPEC-1 裁定 a：登记行缺失 + --epic-title → 机具创建（唯一写者；码一经分配不复用，§10.5）。
+      createdRow = { code, title, status: "active" };
+      diag(
+        registryRel,
+        `--assign --epic ${code}：登记行缺失——已按 --epic-title 创建登记行 {code:${JSON.stringify(code)}, title:${JSON.stringify(title)}, status:"active"}（§10.2 三字段；机具唯一写者：仅缺失时创建、不覆盖既有行）。`,
+      );
+    } else {
+      diag(
+        registryRel,
+        rebuilt
+          ? `--assign --epic ${code}：registry 缺失/损坏（按活标记重建）且无 epic 登记行——先按 §3.9 第 1 步登记 {code,title,status}，或用 --epic-title <非空标题> 交机具创建（本机具仅缺失时创建）；拒绝执行，零写入。`
+          : `--assign --epic ${code}：registry 无该 epic 登记行（epics 段缺失或数组中无该码）——先按 §3.9 第 1 步登记 {code,title,status}，或用 --epic-title <非空标题> 交机具创建（本机具仅缺失时创建）；拒绝执行，零写入。`,
+      );
+      return { ok: false, reason: "epic-registration-missing", code };
+    }
+  } else {
+    if (title != null) {
+      diag(
+        registryRel,
+        `--assign --epic ${code}：登记行已存在——--epic-title 忽略（幂等口径：机具不改写既有登记行；改名/置态非本机具路径，§10.5/§10.6）。`,
+      );
+    }
+    if (
+      !EPIC_CODE_RE.test(row.code ?? "") ||
+      typeof row.title !== "string" ||
+      row.title.trim() === "" ||
+      !EPIC_STATUSES.includes(row.status)
+    ) {
+      diag(
+        registryRel,
+        `--assign --epic ${code}：登记行形态非法（code/title/status 三字段，§10.2）——按缺失处置（不猜、不覆盖；--epic-title 不改写既有行，仅缺失时创建——先人工修该行）；拒绝执行，零写入。`,
+      );
+      return { ok: false, reason: "epic-registration-missing", code };
+    }
+    if (row.status !== "active") {
+      diag(
+        registryRel,
+        `--assign --epic ${code}：登记行 status=${row.status}（终态）——终态 epic 不接纳新成员归属（成员收口见 §10.6；恢复 = 人工改写登记行，非机具路径，§10.5；--epic-title 不复活终态行）。`,
+      );
+      return { ok: false, reason: "epic-terminal", code, status: row.status };
+    }
+  }
+  // 显式目标清单（--epic-file，可重复）：项目根相对 posix 路径、须在扫描面内且为计划稿；
+  // 缺省目标 = 未领号计划稿（新稿）；不广谱抓取既有未归属稿（§10.7.2 防 mass 改写闸同纪律）。
+  const planFeatureTargets = targets.filter((t) => t.type === "feature" && t.kind === "plan");
+  if (epicRequest.files.length > 0) {
+    const resolved = [];
+    const seen = new Set();
+    for (const input of epicRequest.files) {
+      const rel = String(input).trim().replace(/^\.\//, "");
+      if (rel === "" || rel.startsWith("/") || rel.includes("..")) {
+        diag(registryRel, `--epic-file ${JSON.stringify(input)}：形态非法（须项目根相对 posix 路径）——跳过。`);
+        continue;
+      }
+      const t = planFeatureTargets.find((x) => x.file === rel);
+      if (!t) {
+        if (/^specs\//.test(rel) || rel.endsWith("tasks.md")) {
+          diag(rel, "--epic-file 仅计划稿可承载 epic 归属（spec 特性号以 spec 根为键，§10.3）——跳过。");
+        } else if (scan.plans.some((p) => p.rel === rel)) {
+          diag(rel, "--epic-file 计划稿读取失败——本文件不归属（不撕碎其它源）。");
+        } else {
+          diag(rel, "--epic-file 不在扫描面（.zcode/plans/ 或 scan.json opt-in 目录内的计划稿）——不触碰。");
+        }
+        continue;
+      }
+      if (!seen.has(rel)) {
+        seen.add(rel);
+        resolved.push(t);
+      }
+    }
+    if (resolved.length === 0) {
+      diag(registryRel, `--assign --epic ${code}：--epic-file 清单逐项不可归属（明细见上）——拒绝执行，零写入。`);
+      return { ok: false, reason: "epic-no-target", code };
+    }
+    return { ok: true, code, epicId: `epic:${code}`, targets: resolved, createdRow };
+  }
+  const defaults = planFeatureTargets.filter((t) => !Number.isInteger(t.markerNo));
+  return { ok: true, code, epicId: `epic:${code}`, targets: defaults, createdRow };
+}
 
 /**
  * 发号（设计 §3.2/§3.4/§6.4/§12；任务 T9）：
@@ -2236,12 +2552,38 @@ const MASS_PLAN_FILE_THRESHOLD = 10;
  *   优先于自动派生；形态非法或与已占用码冲突 → diagnostics + 该计划回退自动派生（不静默覆盖）。
  * `force`（#72）：未领号计划文件 > MASS_PLAN_FILE_THRESHOLD 时是否放行（默认拒绝——防批量改写；
  *   放行亦留诊断痕迹）。
- * 返回 `refused: true`（防 mass 改写闸拦截）时：零写入、零发号，`board`/`registry` 均为 null。
+ * `epicRequest`（A2-1/#81，可选）：`{ code, files, title } | null`——`--assign --epic <code>` 补录通道
+ *   （§10.7.2）：registry 须有该 epic 登记行（登记与补录分离；既有行只读、不改写）；`title`（--epic-title，
+ *   SPEC-1 裁定 a）非空时：登记行缺失则由本机具创建 `{code,title,status:"active"}`（唯一写者、仅缺失时
+ *   创建、不覆盖既有行/损坏段；已有行时 title 忽略 + 幂等提示）。目标稿写入
+ *   `epic:"epic:<code>"` + `phase` 原子对（只加归属对：号/计划码/assignedAt/源标记零变动；自动占下一
+ *   phase 序号，幂等，已消耗期号不回收、冲突顺延）。`files` 非空 = 显式目标清单（--epic-file，可重复，
+ *   逐项须为扫描面内计划稿）；缺省目标 = 未领号计划稿（不广谱抓取既有未归属稿）。登记行缺失且无 title/
+ *   形态非法/epics 段损坏/终态或清单全不可归属 → `refused`（零写入）。
+ * `sessionId`（B5-3/#115，可选；E1 V12）：`--session-id <会话标识>`——assignedBy 的会话段。
+ *   assignedBy = `<会话标识>@<执行现场>`（现场由 detectAssignSite 定：main｜worktree:<仓根名>）注入
+ *   本次运行写入 registry 的条目（新建/补登记/重建；见 entryFor 调用点）；既有条目零改动。
+ *   非主检出（worktree 内）运行 --assign 另落一条「非编排者发号」诊断（运行时点名；--check 侧
+ *   按条目 assignedBy 逐条对账点名——checkAssignedBy）。
+ * 返回 `refused: true`（防 mass 改写闸或 epic 前置裁定拦截）时：零写入、零发号，`board`/`registry` 均为 null。
  */
-export function assignProject(rootInput, { planCodeRequests = [], force = false } = {}) {
+export function assignProject(rootInput, { planCodeRequests = [], force = false, epicRequest = null, sessionId = null } = {}) {
   const root = resolve(rootInput);
   const diagnostics = [];
   const diag = (path, message) => diagnostics.push({ path, message });
+
+  // ---- 0. 执行现场与发号者标识（B5-3/#115；E1 V12）：assignedBy = `<会话标识>@<执行现场>`；
+  //         链接工作树内运行 --assign = 非编排者形态（SKILL.md「发号只在主检出、由编排者单写者执行」）
+  //         ——运行当场点名（诊断；--check 侧另有按条目留痕的对账点名 checkAssignedBy）。
+  const assignSite = detectAssignSite(root);
+  const assignedBy = `${sessionId ?? "unknown"}@${assignSite.site}`;
+  const inWorktree = assignSite.site.startsWith(WORKTREE_SITE_PREFIX);
+  if (inWorktree) {
+    diag(
+      FIRST_PARTY_SOURCES[1].path,
+      `非编排者发号（E1 V12）：本次 --assign 在执行现场 ${root}（${assignSite.site}——.git 为 gitdir 指针文件 = 链接工作树，属非主检出）内运行——「发号只在主检出、由编排者单写者执行」（SKILL.md §发号）。本次新建/补登记的 registry 条目已按现场留痕 assignedBy=${JSON.stringify(assignedBy)}，--check 将逐条对账点名（非失败级）；请复核该现场发号产物（号不复用，§3.2/§5 裁决序）。`,
+    );
+  }
 
   // ---- 1. 扫描与发号目标（复用编译同一扫描顺序与同一语法族；扫描面由 scan.json 解析，#72）
   const scanSurface = loadScanConfig(root);
@@ -2357,9 +2699,36 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false 
     for (const t of targets) {
       if (!Number.isInteger(t.markerNo) || t.markerNo < 1 || seen.has(t.markerNo)) continue;
       seen.add(t.markerNo);
-      entries.push(entryFor(t, t.markerNo, nowIso()));
+      entries.push(entryFor(t, t.markerNo, nowIso(), assignedBy));
     }
     entries.sort((a, b) => a.no - b.no);
+  }
+
+  // ---- 2b. epic 归属前置裁定（--assign --epic，A2-1/#81）：登记行只读（登记与补录分离，§10.7.2/§3.9）；
+  //         拒绝发生在任何写之前（号标记/registry/板全零触碰）。登记行本身零改写（§10.2 写入面）。
+  //         --epic-title（SPEC-1 裁定 a）：登记行缺失且给非空标题时创建（createdRow 随 registry 落盘，
+  //         见步骤 7e）——机具保持唯一写者，仅缺失时创建。
+  let epicPlan = null;
+  let epicCreatedRow = null;
+  if (epicRequest) {
+    const verdict = resolveEpicRequest(epicRequest, { rawRegistry: raw, rebuilt, registryRel, scan, targets, diag });
+    if (!verdict.ok) {
+      return {
+        refused: true,
+        refusedReason: verdict.reason,
+        refusedStatus: verdict.status ?? null,
+        epicCode: verdict.code,
+        unnumberedPlanFiles,
+        diagnostics,
+        board: null,
+        registry: null,
+        assignedCount: 0,
+        changedMarkerFiles: [],
+        registryWritten: false,
+      };
+    }
+    epicPlan = verdict;
+    epicCreatedRow = verdict.createdRow ?? null;
   }
 
   // ---- 3. 高水位只增：seq / 条目 / 活标记三者取 max；活标记高于声明高水位 → 跳号警示
@@ -2471,7 +2840,7 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false 
     if (t.superseded || t.no == null) continue;
     const existing = outByNo.get(t.no);
     if (!existing) {
-      const created = entryFor(t, t.no, nowIso());
+      const created = entryFor(t, t.no, nowIso(), assignedBy);
       out.push(created);
       outByNo.set(t.no, created);
       if (!rebuilt) {
@@ -2488,7 +2857,15 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false 
         specRoot: t.specRoot,
         title: existing.title,
         ...(typeof existing.planCode === "string" ? { planCode: existing.planCode } : {}),
+        // epic/phase（A2-1/#81 归属对；STD-1 回炉）：归属字段一律不改（markers §10.6.3）——延续改写是
+        // 显式字面量重建，epic/phase 属 ENTRY_KNOWN_KEYS 已知键（不再经 entryExtras 透传）：必须显式
+        // 携带原值（存在即保留、半对也原样留证据），置于 planCode 之后保持 §10.2 示例字段序。
+        ...(Object.hasOwn(existing, "epic") ? { epic: existing.epic } : {}),
+        ...(Object.hasOwn(existing, "phase") ? { phase: existing.phase } : {}),
         assignedAt: existing.assignedAt,
+        // assignedBy（B5-3/#115）：已知键显式携带——延续改写只改 kind/指向，发号留痕零变动
+        // （不因白名单归类被 entryExtras 过滤丢弃，见 ENTRY_KNOWN_KEYS 注释）。
+        ...(typeof existing.assignedBy === "string" ? { assignedBy: existing.assignedBy } : {}),
         ...entryExtras(existing),
       };
       out[idx] = rewritten;
@@ -2585,6 +2962,69 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false 
     entry.planCode = code;
   }
 
+  // ---- 7d. epic 归属（--assign --epic，A2-1/#81；§10.3/§10.7.2）：目标稿在 registry 条目写入
+  //         `epic:"epic:<code>"` + `phase` 原子对；只加归属对——号/计划码/assignedAt/源标记零变动，
+  //         登记行零改写。已有归属：同 epic 幂等跳过（期号不重发）；异 epic/半对跳过 + 诊断（不猜、不覆盖）。
+  let epicInfo = null;
+  if (epicPlan) {
+    const epicId = epicPlan.epicId;
+    const pTargets = epicPlan.targets.filter((t) => Number.isInteger(t.no) && !t.superseded);
+    const assignedFiles = [];
+    const skippedFiles = [];
+    const pending = [];
+    for (const t of pTargets) {
+      const entry = outByNo.get(t.no);
+      if (!entry) continue; // 防御：未领号目标已在第 7 步建条目，理论不可达
+      const hasEpic = Object.hasOwn(entry, "epic");
+      const hasPhase = Object.hasOwn(entry, "phase");
+      if (hasEpic && hasPhase) {
+        if (entry.epic !== epicId) {
+          diag(
+            registryRel,
+            `registry 条目 ${t.no}（${t.file}）已归 ${JSON.stringify(entry.epic)}：不重归、不覆盖（一稿一 epic，§10.4）——跳过。`,
+          );
+        }
+        skippedFiles.push(t.file);
+        continue;
+      }
+      if (hasEpic !== hasPhase) {
+        diag(
+          registryRel,
+          `registry 条目 ${t.no}（${t.file}）归属对不完整（epic=${JSON.stringify(entry.epic ?? null)} phase=${JSON.stringify(entry.phase ?? null)}）：待人工修（归属对原子性，§10.4；断言归 A2-2）——跳过，不猜。`,
+        );
+        skippedFiles.push(t.file);
+        continue;
+      }
+      pending.push({ t, entry });
+    }
+    let phase = null;
+    if (pending.length > 0) {
+      phase = nextPhaseForEpic(out, epicId, scan.plans, scan.specs);
+      for (const { t, entry } of pending) {
+        entry.epic = epicId;
+        entry.phase = phase;
+        assignedFiles.push(t.file);
+      }
+    }
+    epicInfo = {
+      code: epicPlan.code,
+      phase,
+      assigned: assignedFiles,
+      skipped: skippedFiles,
+      targetCount: pTargets.length,
+      listGiven: epicRequest.files.length > 0,
+      createdRow: epicCreatedRow,
+    };
+  }
+
+  // ---- 7e. 登记行创建（--epic-title，SPEC-1 裁定 a）：登记行缺失且给非空标题时由本机具创建
+  //         {code,title,status:"active"}——唯一写者、仅缺失时创建（已存在行零改写，见 2b 幂等提示）；
+  //         追加在既有登记行后（登记序），随 registry 同一次原子写落盘（重跑逐字节一致）。
+  if (epicCreatedRow) {
+    const rows = Array.isArray(extras.epics) ? extras.epics : [];
+    extras.epics = [...rows, epicCreatedRow];
+  }
+
   const registryDoc = { version: Number.isInteger(raw?.version) ? raw.version : 1, seq, entries: out, ...extras };
 
   // ---- 8. 号标记写回（逐文件原子写；只增不改；内容不变不写）
@@ -2620,7 +3060,7 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false 
   writeFileAtomic(join(boardDir, "board.md"), renderBoardMd(board));
   writeJsonAtomic(join(boardDir, "board.json"), board);
 
-  return { board, registry: registryDoc, diagnostics, assignedCount, changedMarkerFiles, registryWritten };
+  return { board, registry: registryDoc, diagnostics, assignedCount, changedMarkerFiles, registryWritten, epic: epicInfo };
 }
 
 // ---------------------------------------------------------------- 审计（--check，T10）
@@ -2693,6 +3133,10 @@ function collectCheckFacts(root, fail) {
   const registryEntries = readFirstParty(FIRST_PARTY_SOURCES[1].path, "entries");
   const interviews = readFirstParty(FIRST_PARTY_SOURCES[0].path, "interviews");
   readFirstParty(FIRST_PARTY_SOURCES[2].path, "runs"); // 只判完整性（runs 形态细节归编译 diagnostics）
+  // epic 断言（A2-2/#82）另需 registry 原文（epics 登记行段；条目归属对）——解析失败已由上方
+  // readFirstParty 失败项拦下（此处只取结构合法对象，损坏 ≡ null ≡ 零断言，不叠加噪音）。
+  const registryDocLoaded = readJsonFile(join(root, FIRST_PARTY_SOURCES[1].path));
+  const registryDoc = registryDocLoaded.ok && registryDocLoaded.value && typeof registryDocLoaded.value === "object" ? registryDocLoaded.value : null;
 
   // 扫描面配置（#72/契约 v2.4）：配置错误是失败级——静默忽略会让 opt-in 目录整批消失而无人察觉
   // （编译器侧已按默认扫描面兜底并落 diagnostics；此处归入 --check 失败项，退出码非零）。
@@ -2757,7 +3201,7 @@ function collectCheckFacts(root, fail) {
     }
     planFacts.set(plan.rel, facts);
   }
-  return { root, registryEntries, interviews, specs, plans, specFacts, planFacts };
+  return { root, registryEntries, registryDoc, interviews, specs, plans, specFacts, planFacts };
 }
 
 /**
@@ -2904,6 +3348,256 @@ function checkRegistryConsistency(facts, fail, note) {
 }
 
 /**
+ * 源侧 epic 归属与引用断言（A2-2/#82；markers §10.2/§10.3）——**失败级**（逐条点名 entries[i] + 号 + 两值）：
+ *   ② `epic` 引用只允许**正整数稳定号**或**登记 id `epic:<4位码>`**（码不进引用位）；`phase` 单值正整数；
+ *      `epic`/`phase` 成对出现（原子对）——形态/原子性违反即源侧矛盾（与「码进引用位」schema 面拒收同层；
+ *      编译侧已按"不采纳、不透出 + 诊断"降级，此处把机械断言落到 --check 失败面，成文于报告）。
+ *   ① 归属唯一（一稿一 epic）：同一计划稿（同一 `file`）出现 ≥2 个**不同**归属对 = 双写/迁移残留——
+ *      编译器按首条目透出、次条目成"号空洞"，双归属会被静默吞掉；此处必咬（两对值 + 两条目号同列）。
+ *   ③ 登记行形态：`epics[]` 行须 code（4 位冻结形态）/title（非空）/status（三词表）三字段齐备——
+ *      形态非法行编译侧按"不采纳、不透出 + 诊断"处置（deriveEpics diagnostics），此处承接为失败级。
+ * 边界：同一条目重复登记同对（同 epic 同 phase）不判（非双归属）；值域与复用断言归 A2-3；
+ *   引用可达（`epic:<码>` 反查登记行）归 lib/fact-invariants.mjs `checkEpicRefs`（板面互证）。
+ * 纯函数：不改写入参、无隐藏状态；`--assign` 修复面不受影响（本断言只读、不自动修）。
+ * @param {object|null} registry registry.json 原文对象（缺失/损坏 → null ≡ 零断言）
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkEpicOwnership(registry) {
+  const out = [];
+  if (!registry || typeof registry !== "object") return out;
+  const entries = Array.isArray(registry.entries) ? registry.entries : [];
+
+  // ---- ②：条目归属对（形态 / 原子性）
+  const ownership = new Map(); // file -> [{index, no, epic, phase}]（①归属唯一判据面）
+  entries.forEach((e, i) => {
+    if (!e || typeof e !== "object") return;
+    const hasEpic = e.epic !== undefined && e.epic !== null;
+    const hasPhase = e.phase !== undefined && e.phase !== null;
+    if (!hasEpic && !hasPhase) return;
+    const who = Number.isInteger(e.no) ? `号 ${e.no}` : `条目形态非法（no=${JSON.stringify(e.no ?? null)}）`;
+    const pair = normalizeEpicPair(e.epic, e.phase);
+    if (!pair.ok) {
+      out.push(
+        `registry.entries[${i}]（${who}）：${pair.reason}——归属对是 epic 层的唯一来源（§10.3），源侧矛盾归失败级（A2-2 机械断言）；清理该条目的 epic/phase 后重跑 --check（不猜、不自动修）。`,
+      );
+      return;
+    }
+    if (pair.epic == null) return;
+    if (e.kind !== "plan" || typeof e.file !== "string" || e.file === "") return;
+    if (!ownership.has(e.file)) ownership.set(e.file, []);
+    ownership.get(e.file).push({ index: i, no: e.no, epic: pair.epic, phase: pair.phase });
+  });
+
+  // ---- ①：归属唯一（一稿一 epic；同一计划稿 ≥2 个不同归属对 = 双写/迁移残留）
+  for (const [file, list] of ownership) {
+    const distinct = new Set(list.map((o) => `${JSON.stringify(o.epic)}/${JSON.stringify(o.phase)}`));
+    if (list.length < 2 || distinct.size < 2) continue;
+    const pairs = list
+      .map((o) => `registry.entries[${o.index}]（号 ${JSON.stringify(o.no ?? null)}）epic=${JSON.stringify(o.epic)}、phase=${JSON.stringify(o.phase)}`)
+      .join("；");
+    out.push(
+      `一稿一 epic（归属唯一，§10.1）：${file} 被 ${list.length} 个计划条目登记了 ${distinct.size} 个不同归属对——${pairs}。双写/迁移残留（编译器只按首条目透出，其余被静默吞掉）：需人工定夺保留哪一对并清理重复条目，重跑 --check（--assign 不自动修）。`,
+    );
+  }
+
+  // ---- ③：登记行（`epics[]`）形态（code/title/status 三字段；形态非法 ≈ 缺失处置）
+  if (registry.epics !== undefined && registry.epics !== null && !Array.isArray(registry.epics)) {
+    // 段级：`epics` 段存在但非数组（编译侧按无登记行处置 + diagnostics；deriveEpics 原文「结构断言归 A2-2」）。
+    out.push(
+      `epics 段非数组（实际 ${typeof registry.epics}=${JSON.stringify(registry.epics)}）：按无登记行处置（编译侧不猜、不静默）——失败级（A2-2 机械断言）：整段改为登记行数组（每行 code/title/status 三字段，§10.2）或删除该段后重跑 --check。`,
+    );
+  }
+  if (Array.isArray(registry.epics)) {
+    registry.epics.forEach((row, i) => {
+      const obj = row !== null && typeof row === "object" && !Array.isArray(row);
+      const codeOk = obj && typeof row.code === "string" && EPIC_CODE_RE.test(row.code);
+      const titleOk = obj && typeof row.title === "string" && row.title.trim() !== "";
+      const statusOk = obj && EPIC_STATUSES.includes(row.status);
+      if (codeOk && titleOk && statusOk) return;
+      const shown = obj ? row : null;
+      out.push(
+        `epics[${i}] 登记行形态非法（§10.2 三字段 code/title/status）：code=${JSON.stringify(shown?.code ?? null)}、title=${JSON.stringify(shown?.title ?? null)}、status=${JSON.stringify(shown?.status ?? null)}——登记行形态非法即按缺失处置（编译侧不采纳、不透出）；失败级（A2-2 机械断言）：补齐 4 位码 ${String(EPIC_CODE_RE)}/非空标题/状态词表 ${JSON.stringify(EPIC_STATUSES)} 后重跑 --check。`,
+      );
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- 期号/epic 码复用与 seq 高水位（A2-3/#83；§10.5 AD-9① / E4-10）
+
+/**
+ * seq 高水位断言（A2-3/#83；E4-10 原文「--check registry 互检增断言：seq ≥ max(entries.no, 活标记号)；
+ * 违反 → 失败级」；§3.1/§12「seq 高水位只增」「号永不复用」）——**失败级**（逐条点名两值 + 见证源）：
+ *   判定域 = registry.seq（高水位记忆）↔ 「已发号最大值」= max(registry 条目号 ∪ 活标记号)。活标记号由调用方
+ *   以 `{no, witness}` 传入（计划稿文件头标记 / 条目行尾标记 / spec tasks.md 行尾标记）——标记为身份真相
+ *   （§3.2）：复制/回滚场景下 registry 整体落后而源标记幸存，由此咬住（号位记忆丢失 → 继续发号即复用已发号）。
+ *   违反两态（都失败级）：①seq 为整数但 < 已发号最大值（手工回退高水位 / 复制回滚；E4-10/H4 假想反例形态）；
+ *   ②seq 缺失/非整数（高水位不可判定，编译侧按 0 自愈 = 静默吞掉）。
+ *   边界（勿扩）：空源（无条目无标记）→ 已发号最大值 0，seq=0 通过（空项目零噪声）；registry 不可解析/
+ *   条目段非数组由「损坏源」失败项拦下（调用方不调用本断言，不叠加噪音）；本函数只读、不改入参、无隐藏状态。
+ * @param {object} input
+ * @param {unknown} input.seq       registry.seq 原文值
+ * @param {unknown} input.entries   registry 条目数组（含归档/空洞条目——registry 只增不清洗）
+ * @param {unknown} input.markers   活标记号清单 `[{no, witness}]`（源侧扫描事实，调用方收集）
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkSeqHighWater({ seq, entries, markers } = {}) {
+  const issued = [];
+  for (const [i, e] of (Array.isArray(entries) ? entries : []).entries()) {
+    if (Number.isInteger(e?.no) && e.no >= 1) issued.push({ no: e.no, witness: `registry.entries[${i}]（号 ${e.no}）` });
+  }
+  for (const m of Array.isArray(markers) ? markers : []) {
+    if (Number.isInteger(m?.no) && m.no >= 1) issued.push({ no: m.no, witness: String(m.witness ?? "活标记号") });
+  }
+  let top = null; // 已发号最大值（并列取首个见证——条目序在前，源标记紧随）
+  for (const it of issued) if (top === null || it.no > top.no) top = it;
+  if (top === null) return []; // 空源：无号可背（seq=0 正常）
+
+  if (!Number.isInteger(seq) || seq < 0) {
+    return [
+      `registry.seq 缺失/非法（实际 ${JSON.stringify(seq ?? null)}）：seq 应 ≥ 已发号最大值=${top.no}（来源：${top.witness}）——seq 是发号高水位记忆（只增不回落，§3.1/§12），缺失/非整数即不可判定（编译侧按 0 自愈属静默吞掉）；失败级（A2-3 号位复用断言，E4-10）：补齐 seq=${top.no} 后重跑 --check（--check 只读，不自动修）。`,
+    ];
+  }
+  if (seq < top.no) {
+    return [
+      `registry.seq 高水位回落：seq=${seq} < 已发号最大值=${top.no}（来源：${top.witness}）——seq 只增不回落（§3.1/§12 高水位记忆；E4-10：手工回退/复制回滚不复查）：号位记忆落后于已发号，继续按此发号将复用已发号（号永不复用纪律被破坏）。修复：以 ${top.no} 修正 registry.seq（或从最新 registry 恢复）后重跑 --check（--check 只读，不自动修）。失败级（A2-3 号位复用断言）。`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * epic 码复用断言（A2-3/#83；§10.2「code 唯一、永不复用、不重分配」/§10.5 AD-9①「码不重分配」；
+ * §10.4 反例表「epic 取消/归档后其 code 被后发 epic 复用」）——**失败级**（并条点名多行）：
+ *   判定域 = registry `epics[]` 内同一 code 出现 ≥2 行（登记行只增、一行一码）。重复 = 码位复用/登记面
+ *   分叉：编译器与派生层只认首行（其余行被静默吞掉），码的「唯一」前提被破坏。
+ *   边界（勿扩）：形态非法码（不匹配 EPIC_CODE_RE）的重复归 A2-2 登记行形态面；`epics` 段非数组归 A2-2
+ *   段级；registry 缺失/损坏 → 「损坏源」已拦（零断言，不叠加）。修复可达：保留应然行、其余行删除或以
+ *   新码顺延重登 → 重跑 --check（--check 只读，不自动修）。纯函数只读、不改入参。
+ * @param {object|null} registry registry.json 原文对象
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkEpicCodeReuse(registry) {
+  const out = [];
+  if (!registry || typeof registry !== "object") return out;
+  if (!Array.isArray(registry.epics)) return out;
+  const rowsByCode = new Map();
+  registry.epics.forEach((row, i) => {
+    const obj = row !== null && typeof row === "object" && !Array.isArray(row);
+    if (!obj || typeof row.code !== "string" || !EPIC_CODE_RE.test(row.code)) return;
+    if (!rowsByCode.has(row.code)) rowsByCode.set(row.code, []);
+    rowsByCode.get(row.code).push(i);
+  });
+  for (const [code, idx] of rowsByCode) {
+    if (idx.length < 2) continue;
+    out.push(
+      `epic 码复用（§10.2：code 唯一、永不复用、不重分配；§10.5 AD-9①）：code ${JSON.stringify(code)} 出现 ${idx.length} 次登记行（epics[${idx.join("]、epics[")}]）——一行一码，码一经分配不复用、不重登（重复 = 复制分叉或码位复用；编译器只认首行，其余行被静默吞掉）。失败级（A2-3 复用断言）：人工定夺保留应然登记行、其余行删除或以新码顺延重登后重跑 --check（--check 只读，不自动修）。`,
+    );
+  }
+  return out;
+}
+
+/**
+ * 期号复用候选断言（A2-3/#83；§10.5 AD-9①「期号不回收」；C1-4「期号复用未定义」裁决：期号同守永不复用）
+ * ——**对账点名级（非失败级、不阻断退出码）**，判定域与判级依据成文（勿擅升失败级）：
+ *   判据 = 同一 epic 码（有效登记行：形态合法 + 三字段齐备）下同一 `phase` 的成员——registry 全量
+ *   （plan/spec 条目，含归档/空洞条目；归属对形态合法者，形态/可达违规归 A2-2 面不叠加）——按
+ *   `assignedAt` 分片（「批」= 秒级时间戳分片，缺 assignedAt 单列一片）；≥2 个分片 = 「同期次跨批」
+ *   = 「已消耗期次集合被重新分配」的矛盾形态候选（--assign 一次运行只写一个新期次、已消耗期号不回收）。
+ *   判级依据（为何不是失败级）：①工具可达的合法态同形——单次 `--epic-file` 多稿补录（AD-2 一期多稿；
+ *   补录成员保留各自派号时刻的 assignedAt）与同批次跨秒边界（大批量 run 跨秒）都会出现「同期次跨 ≥2
+ *   分片」，机械不可与复用区分，判失败级会把工具产出判红（自相矛盾）；②复用是历史事实，重编译/--assign
+ *   不可修复——与 (e) 缺合并证据 / (f) worktree 名错配同域，归对账点名。文案载两值（早/晚分片时刻）+
+ *   成员取证（路径 + 号），请人工确认；确认复用后修正 registry 并留痕（期号不重算）。
+ *   纯函数只读、不改入参、无隐藏状态。
+ * @param {object|null} registry registry.json 原文对象
+ * @returns {string[]} 点名文案（空数组 = 通过）
+ */
+export function checkPhaseReuse(registry) {
+  const out = [];
+  if (!registry || typeof registry !== "object") return out;
+  if (!Array.isArray(registry.epics) || !Array.isArray(registry.entries)) return out;
+  const codes = new Set();
+  for (const row of registry.epics) {
+    const obj = row !== null && typeof row === "object" && !Array.isArray(row);
+    if (!obj || typeof row.code !== "string" || !EPIC_CODE_RE.test(row.code)) continue;
+    if (typeof row.title !== "string" || row.title.trim() === "" || !EPIC_STATUSES.includes(row.status)) continue;
+    codes.add(row.code);
+  }
+  if (codes.size === 0) return out;
+  const groups = new Map(); // `${code}\u0000${phase}` → [{index, no, at}]
+  registry.entries.forEach((e, i) => {
+    if (!e || typeof e !== "object") return;
+    // 归属对形态/原子性归 A2-2（checkEpicOwnership）面——此处按同一归一器（derive.normalizeEpicPair，
+    // 单一事实源）过滤：非法/半对/缺省不叠加；整数稳定号引用无登记面映射（不猜、不判，同 checkEpicRefs 口径）。
+    const pair = normalizeEpicPair(e.epic, e.phase);
+    if (!pair.ok || typeof pair.epic !== "string") return;
+    const code = pair.epic.slice(EPIC_ID_PREFIX.length);
+    if (!codes.has(code)) return; // 无登记行/码形态非法 → A2-2 面（不叠加）
+    const key = `${code}\u0000${pair.phase}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({
+      index: i,
+      no: Number.isInteger(e.no) ? e.no : null,
+      at: typeof e.assignedAt === "string" && e.assignedAt !== "" ? e.assignedAt : null,
+    });
+  });
+  const keys = [...groups.keys()].sort((a, b) => {
+    const [ca, pa] = a.split("\u0000");
+    const [cb, pb] = b.split("\u0000");
+    return ca < cb ? -1 : ca > cb ? 1 : Number(pa) - Number(pb);
+  });
+  for (const key of keys) {
+    const [code, phase] = key.split("\u0000");
+    const members = groups.get(key);
+    const byStamp = new Map(); // stamp → members
+    for (const m of members) {
+      const stamp = m.at ?? "（缺 assignedAt）";
+      if (!byStamp.has(stamp)) byStamp.set(stamp, []);
+      byStamp.get(stamp).push(m);
+    }
+    if (byStamp.size < 2) continue; // 单批（含单成员期次）→ 合法形态，零噪声
+    const stamps = [...byStamp.keys()].sort();
+    const pairs = members
+      .map((m) => `registry.entries[${m.index}]（号 ${m.no ?? "—"} · ${m.at ?? "（缺 assignedAt）"}）`)
+      .join("；");
+    out.push(
+      `期号复用候选（期号不复用，§10.5 AD-9①；C1-4 裁决「期号同守永不复用」）：epic ${code} 期次 ${phase} 的成员跨 ${byStamp.size} 个 assignedAt 批次（早 ${stamps[0]} → 晚 ${stamps[stamps.length - 1]}）——同一期次应只由单一批次写入（--assign 一次运行 = 一个新期次；已消耗期号不回收）；跨批次可能为「期号回收再发/复制回滚」的复用形态，也可能为单次 --epic-file 多稿补录（合法）或同批次跨秒边界——机械不可区分，请人工确认。取证：${pairs}。确认复用请修正 registry 并留痕（期号不重算）；对账点名级（非失败级、不阻断退出码；历史事实不可由重编译修复——与 (e)/(f) 同域）。`,
+    );
+  }
+  return out;
+}
+
+/**
+ * 非编排者发号点名（B5-3/#115；E1 V12）——**对账点名级（非失败级、不阻断退出码）**：
+ *   registry 条目 `assignedBy`（`<会话标识>@<执行现场>`，--assign 注入）的**现场段**为
+ *   `worktree:<仓根名>`（链接工作树内运行 --assign = 非主检出；SKILL.md「发号只在主检出、由编排者
+ *   单写者执行」）→ 逐条点名「非编排者发号」。判定域（最小判据）：现场段取 `assignedBy` 末段 `@`
+ *   之后（无 `@` 取整串）；命中 `worktree:` 前缀才判——`@main`/缺省/未知形态一律不判（不猜、零噪声，
+ *   存量条目无字段即真实板形态，零误报）。判级依据：发号是历史事实、号不复算不回收，不可由重编译
+ *   修复——与 (e) 缺合并证据 / (f) worktree 名错配 / (g) 苗圃位置同域，归收尾对账（点名清单即复核输入）。
+ *   纯函数只读、不改入参、无隐藏状态。
+ * @param {object|null} registry registry.json 原文对象
+ * @returns {string[]} 点名文案（空数组 = 通过）
+ */
+export function checkAssignedBy(registry) {
+  const out = [];
+  if (!registry || typeof registry !== "object" || !Array.isArray(registry.entries)) return out;
+  registry.entries.forEach((e, i) => {
+    if (!e || typeof e !== "object" || Array.isArray(e)) return;
+    const v = e.assignedBy;
+    if (typeof v !== "string" || v === "") return;
+    const at = v.lastIndexOf("@");
+    const site = at >= 0 ? v.slice(at + 1) : v;
+    if (!site.startsWith(WORKTREE_SITE_PREFIX)) return; // main/缺省/未知形态：不判（不猜、零噪声）
+    out.push(
+      `非编排者发号（E1 V12）：registry.entries[${i}]（号 ${Number.isInteger(e.no) ? e.no : "—"}）assignedBy=${JSON.stringify(v)}——执行现场（${site}）内运行 --assign 属非编排者形态（判据：链接工作树内 = 非主检出；SKILL.md「发号只在主检出、由编排者单写者执行」）；该条目由执行现场会话写入，请复核登记（号不复算、不回收；历史事实不可由重编译修复——与 (e)/(f) 同域）。对账点名级（非失败级、不阻断退出码）。`,
+    );
+  });
+  return out;
+}
+
+/**
  * 非计划稿族词表（#159/E1b-1；契约 §11「位置分层」）——判定依据 = 文件名首段 / 首个标题首字段的**族词**：
  *   - 裁决稿族（一次拍板清单/裁决包）：`adjudication`、`裁决`；
  *   - 设计稿族（设计稿/设计说明）：`design`、`设计稿`；
@@ -3039,6 +3733,10 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
     fail("事实互证", `重编译产物：${m}`);
   }
 
+  // 归属引用可达断言（h，A2-2/#82；失败级）：features[].epic 登记 id 反查 epics[] 登记行——悬空/孤儿
+  // 引用必咬（判定域与判级理由见 lib/fact-invariants.mjs checkEpicRefs 注释）；磁盘板与重编译基线各判一遍。
+  for (const m of checkEpicRefs({ board: freshBoard })) fail("epic 归属", `重编译产物：${m}`);
+
   // 卡号绑定断言（#152；对账点名级）：重编译基线的板面 worktree 末段号 ↔ 卡号，错配逐条点名
   // （判级/判定域见 checkWorktreeCardBinding 注释；磁盘板偏差由下方「board 不一致」失败项咬住）。
   for (const m of checkWorktreeCardBinding(freshBoard)) rollcall.push(m);
@@ -3058,6 +3756,8 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
   for (const m of checkFactInvariants({ board: loaded.value, boardMd: mdLoaded.ok ? mdLoaded.text : null })) {
     fail("事实互证", `${rel}：${m}`);
   }
+  // 归属引用可达断言（h，A2-2/#82）——磁盘板面同判（与上方重编译基线面对称；同一缺陷按面各点名一次）。
+  for (const m of checkEpicRefs({ board: loaded.value })) fail("epic 归属", `${rel}：${m}`);
   if (!mdLoaded.ok) {
     note(
       BOARD_MD_REL,
@@ -3120,6 +3820,73 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
 }
 
 /**
+ * 活标记号清单（A2-3/#83；E4-10「seq ≥ max(entries.no, 活标记号)」的源侧半边）：扫描面内计划稿
+ * 文件头标记 / 计划条目行尾标记 / spec tasks.md 行尾标记（标记为身份真相，§3.2）——逐项带见证源文案。
+ * 只收扫描成功（facts.ok）的源：损坏源已由源完整性失败项拦下（不叠加噪音）。
+ */
+function collectLiveMarkerNos(facts) {
+  const out = [];
+  for (const [rel, f] of facts.planFacts ?? []) {
+    if (!f?.ok) continue;
+    if (Number.isInteger(f.headMarkerNo) && f.headMarkerNo >= 1) {
+      out.push({ no: f.headMarkerNo, witness: `${rel}（文件头标记）` });
+    }
+    for (const e of f.entries ?? []) {
+      if (Number.isInteger(e?.markerNo) && e.markerNo >= 1) {
+        out.push({ no: e.markerNo, witness: `${rel}:${e.lineIndex + 1}（条目行尾标记）` });
+      }
+    }
+  }
+  for (const [rel, f] of facts.specFacts ?? []) {
+    for (const t of f?.tasks ?? []) {
+      if (Number.isInteger(t?.markerNo) && t.markerNo >= 1) {
+        out.push({ no: t.markerNo, witness: `${rel}tasks.md:${t.lineIndex + 1}（行尾标记）` });
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- 幻影板防线（B5-2/#114；E1 V20）
+
+/**
+ * 幻影板防线（B5-2/#114；E1 V20）：编译输出路径必须等于板根。
+ *
+ * 判据（契约口径）：输出路径 = `<resolved-root>/.zcode/board/`；**板根** = 既有板（`.zcode/board/board.json`
+ * 存在）的板项目根的 `.zcode/board/`（只有板目录/错位证据残留不算板根——2026-10-10 事故现场
+ * `ZPaPa/.zcode/board/evidence/` 即「有目录无板文件」形态）。自身无既有板而祖先目录是板项目 →
+ * 输出落点必然是子目录副板（幻影板）且证据相对路径随之错位（dispatch-checklist：「相对路径在
+ * ZPaPa 子目录下会写出幻影板/错位证据」）。
+ * 返回最近的板项目祖先 `{ root, ancestor, boardRoot }`；自根即板根、或逐级上溯至文件系统根都无
+ * 板项目祖先 → null（新项目首建合法：不误拦，测试夹具域默认即此类）。
+ * 单源消费：默认/--assign 写盘前拒绝写出（main）+ --check 失败级点名（checkProject）——两处同判据同文案。
+ */
+function detectPhantomBoardRoot(rootInput) {
+  const root = resolve(rootInput);
+  // 自根有既有板：输出路径 = 板根（该根就是板根；重编译/首建后的正常写面）
+  if (isFile(join(root, BOARD_JSON_REL))) return null;
+  let cur = dirname(root);
+  while (true) {
+    if (isFile(join(cur, BOARD_JSON_REL))) {
+      return { root, ancestor: cur, boardRoot: join(cur, ".zcode", "board") };
+    }
+    const parent = dirname(cur);
+    if (parent === cur) return null; // 到文件系统根：无板项目祖先（独立新项目，首建合法）
+    cur = parent;
+  }
+}
+
+/** 幻影板防线文案（单源：CLI 拒绝写出与 --check 失败项同文案，防二份漂移）。 */
+function phantomBoardMessage({ root, ancestor, boardRoot }) {
+  return (
+    `幻影板防线（E1 V20）：编译输出路径 ${join(root, ".zcode", "board")} ≠ 板根 ${boardRoot}——` +
+    `当前项目根 ${root} 是上层板项目 ${ancestor} 的子目录，且自身无既有板（${BOARD_JSON_REL} 不存在）：` +
+    `相对路径/cwd 漂移会把板写进子目录（幻影板）并造成证据错位（dispatch-checklist 2026-10-10 两次事故）。` +
+    `正确路径：cd ${ancestor}（或显式传入 ${ancestor}）后重跑`
+  );
+}
+
+/**
  * 审计（--check；设计 §3.2 附加校验 / §13 场景 9/10/19；任务 T10）：
  *   全程只读——不写板、不写 registry、不改任何源文件。
  *   1. 内存重编译（与默认模式同一编译管线）作为期望基线；其诊断作为提示级 notes（不阻断）；
@@ -3134,7 +3901,19 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
  *      末段 task-<no> 须等于该卡稳定号（重编译基线上判定）——错配进 rollcall[] 点名、不阻塞退出码；
  *      第七项 (g) 苗圃位置规则【对账点名级，非失败，#159/E1b-1】`.zcode/plans/` 扫描面内裁决稿/
  *      设计稿/纲领稿（文件名首段/首个标题首字段族词命中；`plan-*` 命名约定豁免）逐条点名，指向新位置
- *      `.zcode/design/`（契约 §11）——移位后自清，点名清单即 A5-4 处置输入。
+ *      `.zcode/design/`（契约 §11）——移位后自清，点名清单即 A5-4 处置输入；
+ *      第八项 (h) 非编排者发号【对账点名级，非失败，B5-3/#115】registry 条目 `assignedBy` 现场段为
+ *      `worktree:<仓根名>`（链接工作树内运行 --assign = 非主检出；SKILL.md 单写者纪律）逐条点名
+ *      （checkAssignedBy）——历史事实不可由重编译修复，与 (e)/(f)/(g) 同域；`@main`/缺省/未知形态不判；
+ *      6. 归属与引用断言包（A2-2/#82）【失败级】：源侧条目归属对形态/原子性（码不进引用位）、一稿一 epic
+ *      （双归属必咬）、登记行形态（checkEpicOwnership）；板面 `features[].epic` 登记 id 反查 `epics[]`
+ *      登记行——悬空/孤儿引用必咬（checkEpicRefs，磁盘板与重编译基线各判一遍）；无 epic/phase 缺省
+ *      合法（AD-8）——判级与判定域见两函数注释。
+ *      7. 期号不复用与 seq 高水位（A2-3/#83；§10.5 AD-9① / E4-10）：①a epic 码复用【失败级】
+ *      （epics[] 同码 ≥2 登记行；checkEpicCodeReuse）；①b 期号复用候选【对账点名级，非失败】同 epic
+ *      同期次成员跨 ≥2 个 assignedAt 批次（合法补录/跨秒边界同形 → 人工确认；checkPhaseReuse）；
+ *      ② seq 高水位【失败级】seq ≥ max(条目号, 活标记号)——复制/回滚/手工回退必咬，点名两值 + 见证源
+ *      （checkSeqHighWater，E4-10 原文）。
  * 返回 { root, board, failures, notes, rollcall, ok, compared }；退出码归 CLI（0 通过 / 非零有失败项）。
  */
 export function checkProject(rootInput) {
@@ -3146,6 +3925,13 @@ export function checkProject(rootInput) {
     failures.push({ category, message, ...(Array.isArray(detail) && detail.length > 0 ? { detail } : {}) });
   const note = (path, message) => notes.push({ path, message });
 
+  // 幻影板防线（B5-2/#114；E1 V20）——失败级：resolved root 不是板根（自身无既有板、祖先是板项目）时，
+  // 审计对象错位、报告会成为错位证据（假绿源头）；判据与写盘守卫同源（detectPhantomBoardRoot 单点）。
+  const phantom = detectPhantomBoardRoot(root);
+  if (phantom !== null) {
+    fail("输出路径", `${phantomBoardMessage(phantom)}——本次审计对象不是板根，结论不可作证据；请对板根重跑 --check。`);
+  }
+
   const board = compileProject(root);
   // 扫描面配置错误（#72）：编译侧作为 diagnostics 落板，审计侧另归「扫描面配置」失败项（见 collectCheckFacts），
   // 此处不重复进提示级 notes。
@@ -3156,6 +3942,31 @@ export function checkProject(rootInput) {
 
   const facts = collectCheckFacts(root, fail);
   checkRegistryConsistency(facts, fail, note);
+  // 源侧 epic 归属与引用断言包（A2-2/#82；§10.2/§10.3）——**失败级**：条目归属对形态/原子性（码不进引用位）、
+  // 一稿一 epic（双归属残留）、登记行形态；逐条点名（判定域与判级理由见 checkEpicOwnership 注释）。
+  for (const m of checkEpicOwnership(facts.registryDoc)) fail("epic 归属", m);
+  // epic 码复用断言（A2-3/#83；§10.2/§10.5 AD-9①）——**失败级**：同码 ≥2 登记行 = 码位复用/复制分叉
+  // （判定域与判级理由见 checkEpicCodeReuse 注释；形态非法码重复归 A2-2 形态面）。
+  for (const m of checkEpicCodeReuse(facts.registryDoc)) fail("epic 码复用", m);
+  // seq 高水位断言（A2-3/#83；E4-10）——**失败级**：seq ≥ max(条目号, 活标记号)；复制/回滚/手改致
+  // 高水位回落必咬（判定域与判级理由见 checkSeqHighWater 注释）。registry 不可解析/条目段非数组 →
+  // 「损坏源」已拦下，此处不叠加（仅 registry 结构合法时判）。
+  if (facts.registryDoc && Array.isArray(facts.registryDoc.entries)) {
+    for (const m of checkSeqHighWater({
+      seq: facts.registryDoc.seq,
+      entries: facts.registryEntries,
+      markers: collectLiveMarkerNos(facts),
+    })) {
+      fail("seq 高水位", m);
+    }
+  }
+  // 期号复用候选（A2-3/#83；§10.5 AD-9①）——**对账点名级**：同一 epic 同期次成员跨 ≥2 个 assignedAt
+  // 批次逐条点名（合法补录/跨秒边界同形、历史事实不可由重编译修复；判定域与判级依据见 checkPhaseReuse 注释）。
+  for (const m of checkPhaseReuse(facts.registryDoc)) rollcall.push(m);
+  // 非编排者发号（B5-3/#115；E1 V12）——**对账点名级**：registry 条目 assignedBy 现场段为
+  // `worktree:<名>`（链接工作树内发号 = 非主检出）逐条点名（历史事实不可由重编译修复——与 (e)/(f) 同域；
+  // 判定域与判级依据见 checkAssignedBy 注释）。
+  for (const m of checkAssignedBy(facts.registryDoc)) rollcall.push(m);
   // 苗圃位置规则（#159/E1b-1；对账点名级）：裁决稿/设计稿/纲领稿禁入 .zcode/plans/——逐条点名，
   // 不阻塞退出码（判级依据与判定域见 checkPlanNurseryPlacement 注释）。
   for (const m of checkPlanNurseryPlacement(facts.plans, facts.planFacts)) rollcall.push(m);
@@ -3204,17 +4015,38 @@ export function buildManifest() {
 const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 审计；--version / --manifest 辅助）
 
 用法：
-  node compile-board.mjs [<project-root>] [--assign] [--force] [--check]
+  node compile-board.mjs [<project-root>] [--assign] [--force] [--check] [--session-id <id>]
   node compile-board.mjs --version
   node compile-board.mjs --manifest
 
 参数：
   <project-root>   项目根目录（默认：当前工作目录）
+  幻影板防线（B5-2/#114；E1 V20）  编译输出路径必须等于板根（<project-root>/.zcode/board/）：当前根
+                   自身无既有板（.zcode/board/board.json 不存在）而祖先目录是板项目时（cwd 漂移/
+                   相对路径误解析的幻影板落点），默认与 --assign 拒绝写出（退出码 1、零写入）并点名
+                   正确板根（cd <板根> 或显式传入）；--check 同判据归失败级点名（防错位证据/假绿）；
+                   无板项目祖先的独立新项目首建不拦（判据见 detectPhantomBoardRoot 注释）。
   --assign         发号：无号条目领全局稳定号，写源头号标记 + 原子写 registry.json + 自动重编译
   --force          仅配合 --assign：单次发现 >10 个未领号计划文件时强制放行（默认拒绝——防 mass 改写；
                    放行留诊断痕迹；先核查扫描面 .zcode/board/scan.json 或拆分登记）
   --plan-code <文件>=<码>   仅配合 --assign：手工指定计划码（4 位：首字符字母 + 大写字母数字，如 UI01）；
                    可重复；缺省按文件名/标题自动派生（已有码不重分配）
+  --epic <码>      仅配合 --assign：epic 归属写入（§10.7.2 补录通道）——registry 须有该 epic 登记行
+                   {code,title,status}（先按 §3.9 第 1 步登记，或用 --epic-title 由机具创建；登记与补录
+                   分离——既有登记行只读、不改写）；目标稿自动占下一 phase 序号（幂等；已消耗期号不回收、
+                   冲突顺延），写入 registry 条目 epic+phase 原子对（只加归属对：号/计划码/assignedAt/
+                   源标记零变动）。缺省目标 = 未领号计划稿；对既有稿补录用 --epic-file 显式清单。
+  --epic-title <标题>  仅配合 --epic：登记行创建通道（SPEC-1 裁定 a）——登记行**缺失**且给非空标题时由
+                   本机具创建 {code,title,status:"active"}（唯一写者：仅缺失时创建；既有登记行零改写
+                   〔已存在时忽略并提示〕、终态不复活、epics 段损坏 fail-closed 不覆盖）；缺 title 时
+                   维持 §3.9 指引拒绝（退出码 1、零写入）。
+  --epic-file <相对路径>  仅配合 --epic：显式目标清单（可重复；项目根相对 posix 路径、须在扫描面内且为
+                   计划稿），按清单批量补录。
+  --session-id <会话标识>  仅配合 --assign：发号者留痕（E1 V12）——本次运行写入 registry 的条目
+                   逐条注入 assignedBy=<会话标识>@<执行现场>；现场 = 主检出 main 或链接工作树
+                   worktree:<仓根目录名>（在链接工作树内运行 --assign = 非编排者形态，运行当场点名且
+                   --check 逐条对账点名；判据见 detectAssignSite 注释）。缺省会话标识 = unknown；
+                   形态：非空且不含 @ 与空白。
   --check          审计（只读）：源/registry/board.json 三方一致、活号唯一、结构校验；不一致非零退出
   --version        显示版本（单行：包版本 / 契约版本 / schema 版本）；只读，不需要 <project-root>
   --manifest       重新生成 assets/manifest.json（技能包清单：三版本 + 关键文件 sha256，内容寻址）；
@@ -3234,7 +4066,15 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
   计划稿盖文件头标记、条目行尾盖号（只增不改，逐文件原子写），spec 特性号 registry 内绑定；
   seq 高水位只增；registry 丢失按活标记重建；冲突/篡改不静默改写（diagnostics + 未领号降级）；
   归档条目按勘误 10 映射改写指向（file/specRoot → 归档路径，号不变、assignedAt 保留）；
+  本次运行写入 registry 的条目注入 assignedBy=<会话标识>@<执行现场>（--session-id；B5-3/#115）；
   发号后自动重编译。写入面仅限号标记与 registry（设计 §12）。
+
+  --assign --epic 模式（A2-1/#81；markers §10.3/§10.7.2 补录通道）：登记行前置——registry 无该 epic
+  登记行且未给 --epic-title、形态非法、epics 段结构损坏或终态 → 拒绝执行、零写入（先按 §3.9 第 1 步
+  登记，或缺失时用 --epic-title 交机具创建 {code,title,status:"active"}——唯一写者、仅缺失时创建、
+  既有登记行零改写）；目标稿在 registry 条目写入 epic+phase 原子对（自动占下一 phase 序号：幂等、
+  已消耗期号不回收、冲突顺延）；只加归属对（号/计划码/assignedAt/源标记零变动）；缺省目标 = 未领号
+  计划稿（不广谱改写），既有稿补录走 --epic-file 显式清单。
 
   --check 模式（全程只读，不写板/registry/源）：内存重编译为期望基线，随后——
   (1) 源完整性：解析失败/结构不合法/不受支持版本 → 失败（退出码 1）；
@@ -3263,6 +4103,26 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
           design/设计稿、program/纲要；\`plan-*\` 命名约定豁免、无法判族不判）逐条点名，指向新位置
           \`.zcode/design/\`（约定层：既不在默认扫描面也不在 opt-in 池，永不上板）；移位不改名、
           移位后本项自清；点名清单即 A5-4 处置输入（--check 只读，不移动任何文件）。
+      (h) 非编排者发号【对账点名级，非失败、不阻断退出码】（B5-3/#115；E1 V12）：registry 条目
+          \`assignedBy\`（--assign 注入：\`<会话标识>@<执行现场>\`）的现场段为 \`worktree:<仓根名>\`
+          （链接工作树内运行 --assign = 非主检出——.git 为 gitdir 指针文件；SKILL.md「发号只在主检出、
+          由编排者单写者执行」）逐条点名（含条目号 + assignedBy 原值）；\`@main\`/缺省/未知形态不判
+          （存量条目零误报）；历史事实不可由重编译修复（号不复算、不回收，与 (e)/(f)/(g) 同域）。
+  (5) 归属与引用断言包（A2-2/#82；§10.1/§10.2/§10.3）【失败级，逐条点名路径 + 两值对照】：
+      源侧（compile-board checkEpicOwnership）：条目归属对形态/原子性（\`epic\` 只认正整数稳定号或
+      登记 id \`epic:<4位码>\`——码不进引用位；\`phase\` 单值正整数）、一稿一 epic（同稿 ≥2 个不同归属对
+      = 双写/迁移残留必咬）、登记行形态（code/title/status 三字段）；
+      板面（lib/fact-invariants.mjs checkEpicRefs，磁盘板与重编译基线各跑一遍）：\`features[].epic\`
+      登记 id 反查 \`epics[]\` 登记行——悬空/孤儿引用必咬（登记行是 epic 唯一机器载体）；
+      无 epic/phase 键 = 合法缺省（AD-8：无 epic 不判失败、零噪声）。
+  (6) 期号不复用与 seq 高水位（A2-3/#83；§10.5 AD-9① / E4-10）：
+      epic 码复用【失败级】：\`epics[]\` 同一 code 出现 ≥2 登记行（码一经分配不复用/不重分配/不重登——
+      重复 = 复制分叉或码位复用；编译器只认首行、其余行被静默吞掉），并条点名各行索引 + 码；
+      期号复用候选【对账点名级，非失败、不阻断退出码】：同 epic 码同期次成员跨 ≥2 个 assignedAt 批次
+      （\`--assign\` 一次运行只写一个新期次、已消耗期号不回收）——单次 \`--epic-file\` 多稿补录（合法）与
+      同批次跨秒边界同形，机械不可区分 → 人工确认（历史事实不可由重编译修复）；
+      seq 高水位【失败级】：seq ≥ max(registry 条目号, 活标记号)（E4-10）——seq 缺失/非整数或低于已发号
+      最大值（手工回退/复制回滚 → 号位记忆丢失，继续发号即复用已发号）逐条点名两值 + 见证源。
   通过退出码 0；有失败项退出码 1；用法错误退出码 2。修复 = 重编译（或 --assign），--check 不自动修。
 
   --manifest 模式（#67）：重新生成 assets/manifest.json（技能包清单）——packageVersion / contractVersion /
@@ -3286,24 +4146,106 @@ function main(argv) {
   }
   const args = [...argv];
   const planCodeRequests = [];
+  let epicCode = null;
+  let epicTitle = null;
+  const epicFiles = [];
+  let sessionId = null;
   for (let i = 0; i < args.length; i += 1) {
-    if (args[i] !== "--plan-code") continue;
-    const value = args[i + 1] ?? "";
-    const eq = value.indexOf("=");
-    if (eq <= 0) {
-      process.stderr.write(
-        `compile-board: --plan-code 需要 <计划稿相对路径>=<4位码> 形态，实际 ${JSON.stringify(value)}\n`,
-      );
-      return 2;
+    if (args[i] === "--session-id") {
+      const value = args[i + 1] ?? "";
+      if (value === "" || value.startsWith("-")) {
+        process.stderr.write("compile-board: --session-id 需要 <会话标识> 参数（如 sess_xxx）\n");
+        return 2;
+      }
+      if (sessionId !== null) {
+        process.stderr.write("compile-board: --session-id 重复给出（只接受一个会话标识）\n");
+        return 2;
+      }
+      if (value.includes("@") || /\s/.test(value)) {
+        process.stderr.write(
+          `compile-board: --session-id 形态非法 ${JSON.stringify(value)}（不得含 @ 或空白——@ 是 assignedBy 的会话/现场分段符）\n`,
+        );
+        return 2;
+      }
+      sessionId = value;
+      args.splice(i, 2);
+      i -= 1;
+      continue;
     }
-    planCodeRequests.push({ file: value.slice(0, eq), code: value.slice(eq + 1) });
-    args.splice(i, 2);
-    i -= 1;
+    if (args[i] === "--plan-code") {
+      const value = args[i + 1] ?? "";
+      const eq = value.indexOf("=");
+      if (eq <= 0) {
+        process.stderr.write(
+          `compile-board: --plan-code 需要 <计划稿相对路径>=<4位码> 形态，实际 ${JSON.stringify(value)}\n`,
+        );
+        return 2;
+      }
+      planCodeRequests.push({ file: value.slice(0, eq), code: value.slice(eq + 1) });
+      args.splice(i, 2);
+      i -= 1;
+      continue;
+    }
+    if (args[i] === "--epic") {
+      const value = args[i + 1] ?? "";
+      if (value === "" || value.startsWith("-")) {
+        process.stderr.write("compile-board: --epic 需要 <4位码> 参数（如 KANB）\n");
+        return 2;
+      }
+      if (epicCode !== null) {
+        process.stderr.write("compile-board: --epic 重复给出（只接受一个码）\n");
+        return 2;
+      }
+      if (!EPIC_CODE_RE.test(value)) {
+        process.stderr.write(
+          `compile-board: --epic 码形态非法 ${JSON.stringify(value)}（冻结为 4 位：首字符字母 + 大写字母数字，如 KANB）\n`,
+        );
+        return 2;
+      }
+      epicCode = value;
+      args.splice(i, 2);
+      i -= 1;
+      continue;
+    }
+    if (args[i] === "--epic-file") {
+      const value = args[i + 1] ?? "";
+      if (value === "" || value.startsWith("-")) {
+        process.stderr.write("compile-board: --epic-file 需要 <计划稿相对路径> 参数\n");
+        return 2;
+      }
+      epicFiles.push(value);
+      args.splice(i, 2);
+      i -= 1;
+      continue;
+    }
+    if (args[i] === "--epic-title") {
+      const value = args[i + 1] ?? "";
+      if (value === "" || value.startsWith("-")) {
+        process.stderr.write("compile-board: --epic-title 需要 <标题> 参数（非空字符串；登记行缺失时用于创建）\n");
+        return 2;
+      }
+      if (epicTitle !== null) {
+        process.stderr.write("compile-board: --epic-title 重复给出（只接受一个标题）\n");
+        return 2;
+      }
+      if (value.trim() === "") {
+        process.stderr.write(
+          `compile-board: --epic-title 形态非法 ${JSON.stringify(value)}（须非空标题——登记行 title 形态，§10.2）\n`,
+        );
+        return 2;
+      }
+      epicTitle = value;
+      args.splice(i, 2);
+      i -= 1;
+      continue;
+    }
   }
   const flags = args.filter((a) => a.startsWith("-"));
   const unknown = flags.filter((f) => f !== "--assign" && f !== "--check" && f !== "--manifest" && f !== "--force");
   if (unknown.length > 0) {
-    process.stderr.write(`compile-board: 未知选项 ${unknown.join(" ")}（可用：--assign / --check / --manifest / --force / --version / --plan-code）\n`);
+    process.stderr.write(
+      `compile-board: 未知选项 ${unknown.join(" ")}（可用：--assign / --check / --manifest / --force / --version / --plan-code / --epic / --epic-file / --epic-title / --session-id）\n`,
+    );
     return 2;
   }
   const assign = flags.includes("--assign");
@@ -3320,6 +4262,24 @@ function main(argv) {
   }
   if (planCodeRequests.length > 0 && !assign) {
     process.stderr.write("compile-board: --plan-code 仅在 --assign 模式下有效（计划码在发号时分配）\n");
+    return 2;
+  }
+  if (epicCode !== null && !assign) {
+    process.stderr.write("compile-board: --epic/--epic-file 仅在 --assign 模式下有效（归属写入发生在发号时，§10.7.2）\n");
+    return 2;
+  }
+  if (epicCode === null && epicFiles.length > 0) {
+    process.stderr.write("compile-board: --epic-file 仅在 --epic 模式下有效（--epic-file 是 --epic 的显式目标清单）\n");
+    return 2;
+  }
+  if (epicTitle !== null && epicCode === null) {
+    process.stderr.write(
+      "compile-board: --epic-title 仅在 --epic 模式下有效（登记行创建只随 epic 归属通道；先给 --epic <码>）\n",
+    );
+    return 2;
+  }
+  if (sessionId !== null && !assign) {
+    process.stderr.write("compile-board: --session-id 仅在 --assign 模式下有效（会话标识写进 registry 条目的 assignedBy）\n");
     return 2;
   }
   const positional = args.filter((a) => !a.startsWith("-"));
@@ -3345,6 +4305,15 @@ function main(argv) {
     return 2;
   }
 
+  // 幻影板防线（B5-2/#114；E1 V20）：写盘前自检——编译输出路径必须等于板根；违例零写入拒执行
+  // （默认与 --assign 同拦：--assign 还会写号标记/registry，幻影根上同样必须零写入）。
+  // --check 不在此拦（只读审计）：由 checkProject 归「输出路径」失败项点名（同判据同文案，单源）。
+  const phantomBoard = detectPhantomBoardRoot(root);
+  if (phantomBoard !== null && !check) {
+    process.stderr.write(`compile-board: 拒绝写出（${phantomBoardMessage(phantomBoard)}）；本次零写入。\n`);
+    return 1;
+  }
+
   if (check) {
     const res = checkProject(root);
     const taskCount = res.board.features.reduce((n, f) => n + countTasks(f.tasks ?? []), 0);
@@ -3360,7 +4329,7 @@ function main(argv) {
     }
     if (res.rollcall.length > 0) {
       out.push(
-        `对账点名 ${res.rollcall.length} 项（对账级，非失败、不阻断；逐条为对账域交叉核对——runs 域缺合并证据可补录或登记豁免 .zcode/board/exemptions.json，工作树名与卡号不符按 §6.1 命名纪律收口，苗圃位置违例（裁决稿/设计稿/纲领稿）移至 .zcode/design/ 收口）：`,
+        `对账点名 ${res.rollcall.length} 项（对账级，非失败、不阻断；逐条为对账域交叉核对——runs 域缺合并证据可补录或登记豁免 .zcode/board/exemptions.json，工作树名与卡号不符按 §6.1 命名纪律收口，苗圃位置违例（裁决稿/设计稿/纲领稿）移至 .zcode/design/ 收口，期号复用候选（同 epic 同期次跨 ≥2 批次）请人工确认——合法补录/跨秒边界同形，确认复用后修正 registry 并留痕，非主检出发号留痕（worktree 内 --assign，E1 V12）请复核登记——号不复算不回收）：`,
       );
       for (const m of res.rollcall) out.push(`  - ${m}`);
     }
@@ -3379,11 +4348,34 @@ function main(argv) {
   }
 
   if (assign) {
-    const res = assignProject(root, { planCodeRequests, force });
+    const res = assignProject(root, {
+      planCodeRequests,
+      force,
+      epicRequest: epicCode === null ? null : { code: epicCode, files: epicFiles, title: epicTitle },
+      sessionId,
+    });
     for (const d of res.diagnostics) {
       process.stderr.write(`assign 诊断：${d.path}：${d.message}\n`);
     }
     if (res.refused) {
+      if (res.refusedReason === "epic-registration-missing") {
+        process.stdout.write(
+          `--assign --epic 拒绝执行（epic 登记行，epic-registration-missing）：registry 无 epic 登记行 ${res.epicCode}（或登记行形态非法/registry 缺失/epics 段损坏）——先按 §3.9 第 1 步登记（epics 段 {code,title,status}），或用 --epic-title <非空标题> 交机具创建（仅登记行缺失时创建、不改写既有行）；未写任何文件。\n`,
+        );
+        return 1;
+      }
+      if (res.refusedReason === "epic-terminal") {
+        process.stdout.write(
+          `--assign --epic 拒绝执行（epic 终态，epic-terminal）：epic ${res.epicCode} 登记行 status=${res.refusedStatus}（终态）——终态 epic 不接纳新成员归属（成员收口见 §10.6）；未写任何文件。\n`,
+        );
+        return 1;
+      }
+      if (res.refusedReason === "epic-no-target") {
+        process.stdout.write(
+          `--assign --epic 拒绝执行（无可归属目标，epic-no-target）：--epic-file 清单逐项不可归属（明细见 assign 诊断）；未写任何文件。\n`,
+        );
+        return 1;
+      }
       process.stdout.write(
         `--assign 拒绝执行（防 mass 改写闸，${res.refusedReason}）：发现 ${res.unnumberedPlanFiles.length} 个未领号计划文件（阈值：单次 >${MASS_PLAN_FILE_THRESHOLD}）——零写入、零发号；确认扫描面无误后加 --force 继续。\n`,
       );
@@ -3395,6 +4387,28 @@ function main(argv) {
         `号标记写回 ${res.changedMarkerFiles.length} 个文件；registry ${res.registryWritten ? "已原子写" : "无变化（未写）"}；` +
         `诊断 ${res.diagnostics.length} 条\n`,
     );
+    if (res.epic) {
+      if (res.epic.createdRow) {
+        process.stdout.write(
+          `epic 登记行：已创建 {code:${JSON.stringify(res.epic.createdRow.code)}, title:${JSON.stringify(res.epic.createdRow.title)}, status:"active"}（--epic-title 通道；机具唯一写者，仅缺失时创建）\n`,
+        );
+      }
+      if (res.epic.assigned.length > 0) {
+        process.stdout.write(
+          `epic 归属：epic:${res.epic.code} phase=${res.epic.phase}，新写入 ${res.epic.assigned.length} 个稿（跳过 ${res.epic.skipped.length} 个）\n`,
+        );
+      } else if (res.epic.targetCount > 0) {
+        process.stdout.write(
+          `epic 归属：零变化（目标 ${res.epic.targetCount} 个均已有归属或已跳过，期号不重发）\n`,
+        );
+      } else if (res.epic.listGiven) {
+        process.stdout.write("epic 归属：零变化（--epic-file 清单无可归属目标）\n");
+      } else {
+        process.stdout.write(
+          "epic 归属：零变化（无待归属目标：未领号计划稿 0 个；补录既有稿请用 --epic-file <相对路径>）\n",
+        );
+      }
+    }
     process.stdout.write(
       `board.json 已写出：.zcode/board/board.json（features=${res.board.features.length} tasks=${taskCount} diagnostics=${res.board.diagnostics.length}）\n`,
     );

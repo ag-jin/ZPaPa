@@ -9,12 +9,35 @@
  *       roadmap 占位稿同理——roadmap 压制段位，但不该挂"未拆解"）；
  *   (c) board.md 渲染的编号形态与 board.json 的 planCode/label 派生一致（D1 类守卫：嵌套任务行
  *       全覆盖，含递归深度 ≥2——渲染器漏传计划码时由此咬住）；TQ-1 扩面（T5356r）：## 待处理 /
- *       ## 待合并 节（walkBoardNodes 渲染位）的编号链同入对照面；
+ *       ## 待合并 节（walkBoardNodes 渲染位）的编号链同入对照面；A3-3/#86 扩面：epic 章头
+ *       （`# <码> · <标题>` + 终态标注）/期次组头（`## <码><期次> · 期次 <n>`，AD-3 合成编号渲染位）
+ *       与 epic 章内成员稿节同入对照面——对照序列 = 渲染序（顶层稿块 → 各 epic 章带）↔ board.json
+ *       派生序（独立复写 renderBoardMd 装配序，不导入编译器）；
  *   (d) 段位计数（board.json 内如携带 stageSummary）与全板节点 stage 逐项复算相等。
  *
  * 第五不变量（e，B1-1/#97；对账点名级，非失败级——独立导出 checkCompletedMergedEvidence）：
  *   (e) completed 的任务卡须有该卡 integrator done 的 run 证据（runs.json 为准）；缺证据逐条点名
  *       （路径 + 稳定号），不使 --check 非零退出；速修/管理卡按稳定号登记豁免后不再点名。
+ *
+ * 派生四段不变量（i1–i4，C2-2/#134；失败级——独立导出 checkDerivedIndexInvariants，由
+ * checkFactInvariants 并入失败级出口）：
+ *   (i1) frontier 复算一致：可执行前沿 = 板面卡级节点中「段位=待办 且无未解除阻塞项」者，按板序
+ *        （features 序 × 任务树序）rank=1..n；四段恒写出后由本断言逐行对照——受阻卡混入/漏行/
+ *        顺序错位/字段错位（title/stage/nextAssignee/resolvedDeps）逐条点名；
+ *   (i2) recent 排序与截断：条目 at 须对称降序（新→旧），条数 ≤ 上限（N=10 成文），且每行须落在
+ *        板上活号卡（离板引用不进活动面）且 title 与该卡同值；
+ *   (i3) blocked 归因完整：非终态卡的每个未解除阻塞项恰一行（一卡多项出多行；external 恒未解除，
+ *        dependency 仅当目标卡段位 ∈ 终态才解除；缺号/离板保守计入），逐行对照（no/title/stage/
+ *        blockerKind/targetId/summary）——漏行、多行、错归因逐条点名；
+ *   (i4) 段间对偶：待办卡 ∈ frontier ⟺ 不在 blocked（x-decisions 四段条）——两面同时命中
+ *        （既称可执行又称受阻）或两面皆无（既不可执行又无归因：派生漏归因）均必咬。
+ *   判定域与 derive.deriveBoardIndex 同口径（卡级节点＝有稳定号的任务卡，含嵌套；特性/容器不进段）；
+ *   携带即判（缺段键不判——缺键由板/源互检与 schema 面承载，旧板/手写夹具零噪声）。
+ *
+ * 归属引用可达断言（h，A2-2/#82；失败级——独立导出 checkEpicRefs，不并入 checkFactInvariants）：
+ *   (h) `features[].epic` 取登记 id 形态（`epic:<4位码>`）时，`epics[]` 必须有该 code 的登记行；无登记行
+ *       = 悬空/孤儿引用（板面 faithful 透出但引用不可达、零 rollup）→ 逐条点名（路径 + 两值）。裸码等
+ *       形态违规归 lib/schema-check.mjs 结构面；整数稳定号与无 epic 缺省不判（零噪声，AD-8）。
  *
  * 判定边界（与 lib/schema-check.mjs 同分层）：本模块只做纯数据判定，不读盘、不比对源——
  *   board 对象与 board.md 文本由调用方传入（磁盘板与重编译基线分别配对调用）；无第三方依赖，
@@ -49,15 +72,51 @@ const ATTENTION_CODES = Object.freeze([
   "unmerged-worktree",
 ]);
 /**
+ * 派生四段（C2-1/#133）判据的独立复写常量（C2-2/#134）——本模块零依赖不导入 derive.mjs，
+ * 由 S-1 守卫（vocabularySnapshot）逐项与 lib/derive.mjs 对照，任一侧改名/改值即红，
+ * 防止派生不变量判据随词表漂移静默失效：
+ *   - TODO_STAGE：可执行前沿的段位判据（frontier 入选面）；
+ *   - TERMINAL_STAGES：终态段位（依赖解除判据 / blocked 选取域边界）；
+ *   - RECENT_LIMIT：recent[] 条数上限（N=10 成文）；
+ *   - BLOCKER_KINDS：阻塞归因词表（schema blocked[].blockerKind 枚举同口径）。
+ */
+const TODO_STAGE = "待办";
+const TERMINAL_STAGES = Object.freeze(["已完成", "已取消"]);
+const RECENT_LIMIT = 10;
+const BLOCKER_EXTERNAL = "external";
+const BLOCKER_DEPENDENCY = "dependency";
+const BLOCKER_KINDS = Object.freeze([BLOCKER_EXTERNAL, BLOCKER_DEPENDENCY]);
+/** 带时区 ISO 8601 形态（与 lib/derive.mjs 的 ISO_RE 同口径；独立常量，S-1 守卫对照 source）。 */
+const ISO_SOURCE = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$";
+const ISO_RE = new RegExp(ISO_SOURCE);
+/** (i) 族报告上限（超出即汇总一行，避免整页刷屏——同 (c) 口径）。 */
+const MAX_SEGMENT_VIOLATIONS = 10;
+/**
  * board.md 编号 token 形态（渲染位语义的独立复写）：
  *   `未领号`（no 缺省）/ `#N`（过渡态：有号无 label）/ `ID-<层级>` / `<计划码>` / `<计划码>-<层级>`。
  * 计划码 = 4 位 [A-Z][A-Z0-9]{3}（与 compile-board.PLAN_CODE_RE 同口径，由 S-1 守卫逐项对照）；
  * 层级路径 = `1` / `1.2` / `1.2.1`。
  */
 const PLAN_CODE_SOURCE = "[A-Z][A-Z0-9]{3}";
+const PLAN_CODE_RE = new RegExp(`^${PLAN_CODE_SOURCE}$`);
 const ID_TOKEN_RE = new RegExp(`^(?:未领号|#[1-9][0-9]*|ID-[1-9][0-9]*(?:\\.[1-9][0-9]*)*|${PLAN_CODE_SOURCE}(?:-[1-9][0-9]*(?:\\.[1-9][0-9]*)*)?)$`);
 const FEATURE_HEADING_RE = /^### (.+)$/;
 const MD_TASK_LINE_RE = /^\s*- ([^ ·]+) · /;
+/**
+ * epic 层渲染位形态（A3-3/#86 扩面；独立复写 compile-board 的装配序与 derive 的词表——S-1 守卫对照）：
+ *   - 登记 id 前缀 `epic:`（§10.3：kind 限定句柄，码不进引用位）；
+ *   - 登记行状态词表（§10.2/§10.5）与章头终态标注（`（已取消）`/`（已归档）`）；
+ *   - 期次组头整行形态 `## <码><期次> · 期次 <n>`（AD-3 双字段合成：合成编号只存显示层）。
+ */
+const EPIC_ID_PREFIX = "epic:";
+const EPIC_STATUSES = Object.freeze(["active", "cancelled", "archived"]);
+const EPIC_TERMINAL_MARKS = Object.freeze({ cancelled: "（已取消）", archived: "（已归档）" });
+const EPIC_HEADING_RE = /^# (.+)$/;
+const PHASE_HEADING_RE = new RegExp(`^${PLAN_CODE_SOURCE}[1-9][0-9]* · 期次 [1-9][0-9]*$`);
+/** 编号对照面终点 = 末章「## 诊断」标题行（epic 章带落于「## 特性」与「## 诊断」之间）。 */
+const BOARD_TAIL_RE = /^## 诊断/;
+/** 渲染位类型标签（失败项点名用）。 */
+const SLOT_KIND_LABELS = Object.freeze({ epic: "epic 章", phase: "期次组", feature: "稿节", task: "任务行" });
 /** 三个编号对照节（T5356r TQ-1：待处理/待合并与特性节同入对照面）。 */
 const FEATURE_SECTION_RE = /^## 特性\s*$/;
 const PENDING_SECTION_RE = /^## 待处理\s*$/;
@@ -81,6 +140,18 @@ export function vocabularySnapshot() {
     idTokenSource: ID_TOKEN_RE.source,
     mergedRole: MERGED_ROLE,
     mergedResult: MERGED_RESULT,
+    // A3-3/#86：epic 层渲染位常量（renderBoardMd 装配序与章头/期次组形态；derive/compile-board 侧对照）
+    epicIdPrefix: EPIC_ID_PREFIX,
+    epicCodeSource: PLAN_CODE_SOURCE, // epic 码与计划码同冻结形态（§10.2；S-1 对照 derive.EPIC_CODE_RE）
+    epicStatuses: [...EPIC_STATUSES],
+    epicTerminalMarks: { ...EPIC_TERMINAL_MARKS },
+    phaseHeadingSource: PHASE_HEADING_RE.source,
+    // C2-2/#134：派生四段不变量（i1–i4）判据常量（derive / schema 侧对照）
+    todoStage: TODO_STAGE,
+    terminalStages: [...TERMINAL_STAGES],
+    recentLimit: RECENT_LIMIT,
+    blockerKinds: [...BLOCKER_KINDS],
+    isoSource: ISO_SOURCE,
   };
 }
 
@@ -125,7 +196,10 @@ function taskId(t, planCode) {
   return planCode != null ? `${planCode}-${t.label}` : `ID-${t.label}`;
 }
 
-/** board.md「## X」节行区间（[start, end)，0 起；标题按正则匹配；无该节 → null）。 */
+/**
+ * board.md「## X」节行区间（[start, end)，0 起；标题按正则匹配；无该节 → null）。TQ-1 待处理/
+ * 待合并节用（特性节对照面改用 numberingRange——epic 章带同入，不再止步于下一个「## 」行）。
+ */
 function sectionRange(lines, headingRe) {
   const start = lines.findIndex((l) => headingRe.test(l));
   if (start < 0) return null;
@@ -140,20 +214,58 @@ function sectionRange(lines, headingRe) {
 }
 
 /**
- * board.md 实际渲染的编号位序列（特性标题行 + 任务行；其余行不构成编号位——固定文案行
- * 如"最近执行："/"执行环境："/"草案"等不匹配 id 词法，不参与对照）。
+ * 编号对照面行区间（A3-3/#86）：「## 特性」标题下一行 → 末章「## 诊断」标题行之前。
+ * epic 章带（`# <码>` 章头 + `## <码><期次>` 期次组 + 章内稿节）落在两章之间，同入对照面；
+ * 待处理/待合并章在「## 特性」之前，不参与本节序列（由 TQ-1 链对照面覆盖）。
  */
-function observedIds(lines, range) {
+function numberingRange(lines) {
+  const start = lines.findIndex((l) => FEATURE_SECTION_RE.test(l));
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (BOARD_TAIL_RE.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return { start: start + 1, end };
+}
+
+/**
+ * board.md 实际渲染的编号位序列（编号对照面，渲染序）：epic 章头 / 期次组头 / 稿节标题行 / 任务行；
+ * 其余行不构成编号位——固定文案行（"最近执行："/"执行环境："/"草案"/epic 详情行等）不匹配各自词法，
+ * 不参与对照。epic 章头取码 + 终态标注（标题内容不入对照）；期次组取整行编号位（合成码 + 期次号——
+ * 两值同入对照，合成号与后缀自相矛盾也咬）。
+ */
+function observedRenderSlots(lines, range) {
   const out = [];
   for (let i = range.start; i < range.end; i += 1) {
-    const heading = FEATURE_HEADING_RE.exec(lines[i]);
-    if (heading) {
-      const id = heading[1].split(" · ")[0].trim();
-      out.push({ line: i + 1, id, parsed: ID_TOKEN_RE.test(id) });
+    const line = lines[i];
+    const epic = EPIC_HEADING_RE.exec(line);
+    if (epic) {
+      const text = epic[1];
+      const code = text.split(" · ")[0].trim();
+      const mark = text.endsWith(EPIC_TERMINAL_MARKS.cancelled)
+        ? EPIC_TERMINAL_MARKS.cancelled
+        : text.endsWith(EPIC_TERMINAL_MARKS.archived)
+          ? EPIC_TERMINAL_MARKS.archived
+          : "";
+      out.push({ line: i + 1, kind: "epic", id: `${code}${mark}`, parsed: PLAN_CODE_RE.test(code) });
       continue;
     }
-    const m = MD_TASK_LINE_RE.exec(lines[i]);
-    if (m && ID_TOKEN_RE.test(m[1])) out.push({ line: i + 1, id: m[1], parsed: true });
+    if (line.startsWith("## ")) {
+      const text = line.slice(3).trim();
+      out.push({ line: i + 1, kind: "phase", id: text, parsed: PHASE_HEADING_RE.test(text) });
+      continue;
+    }
+    const heading = FEATURE_HEADING_RE.exec(line);
+    if (heading) {
+      const id = heading[1].split(" · ")[0].trim();
+      out.push({ line: i + 1, kind: "feature", id, parsed: ID_TOKEN_RE.test(id) });
+      continue;
+    }
+    const m = MD_TASK_LINE_RE.exec(line);
+    if (m && ID_TOKEN_RE.test(m[1])) out.push({ line: i + 1, kind: "task", id: m[1], parsed: true });
   }
   return out;
 }
@@ -176,31 +288,99 @@ function observedSectionChains(lines, range, itemRe) {
 }
 
 /**
- * board.json 派生的应然编号链序列（与渲染顺序同：特性 → 各特性任务前序，含递归深度 ≥2）。
- * 链（chain）= 从根特性到该节点的渲染位 id 序列；节点 id = 链末项（特性节对照用）。
+ * 单个特性块的渲染位序列（特性标题行 + 递归任务行，渲染序）。链（chain）= 从根特性到该节点的
+ * 渲染位 id 序列；节点 id = 链末项。
  */
-function expectedChains(board) {
+function featureBlockSlots(f, ptr) {
+  const planCode = typeof f?.planCode === "string" ? f.planCode : null;
   const out = [];
-  const walkTasks = (tasks, ptr, planCode, parentChain) => {
+  const rootChain = [featureId(f)];
+  out.push({ kind: "feature", ptr, node: f, ref: `${ptr}（${nodeRef(f)}）`, id: rootChain[0], chain: rootChain });
+  const walkTasks = (tasks, tptr0, parentChain) => {
     (tasks ?? []).forEach((t, i) => {
-      const tptr = `${ptr}.tasks[${i}]`;
+      const tptr = `${tptr0}.tasks[${i}]`;
       const chain = [...parentChain, taskId(t, planCode)];
-      out.push({ ptr: tptr, node: t, chain });
-      walkTasks(t?.tasks, tptr, planCode, chain);
+      out.push({ kind: "task", ptr: tptr, node: t, ref: `${tptr}（${nodeRef(t)}）`, id: chain[chain.length - 1], chain });
+      walkTasks(t?.tasks, tptr, chain);
     });
   };
-  (board?.features ?? []).forEach((f, i) => {
-    const ptr = `features[${i}]`;
-    const chain = [featureId(f)];
-    out.push({ ptr, node: f, chain });
-    walkTasks(f?.tasks, ptr, typeof f?.planCode === "string" ? f.planCode : null, chain);
-  });
+  walkTasks(f?.tasks, ptr, rootChain);
   return out;
 }
 
-/** board.json 派生的应然编号位序列（特性/任务行；节点 id = 链末项）。 */
-function expectedIds(board) {
-  return expectedChains(board).map(({ ptr, node, chain }) => ({ ptr, node, id: chain[chain.length - 1] }));
+/**
+ * board.json 派生的应然编号链序列（与渲染顺序同：特性 → 各特性任务前序，含递归深度 ≥2）。
+ * 链（chain）= 从根特性到该节点的渲染位 id 序列；节点 id = 链末项（待处理/待合并节对照用，TQ-1）。
+ */
+function expectedChains(board) {
+  return (board?.features ?? []).flatMap((f, i) => featureBlockSlots(f, `features[${i}]`));
+}
+
+/**
+ * 可渲染 epic 登记行（A3-3/#86）：形态过滤与 derive.deriveEpics 同口径（code/title/status 三字段；
+ * 编译产物只含合法行；手改 board.json 的非法行不入应然序列——结构断言归 A2-2/schema 面）。
+ */
+function emittableEpics(board) {
+  const rows = Array.isArray(board?.epics) ? board.epics : [];
+  return rows.filter(
+    (row) =>
+      isPlainObject(row) &&
+      typeof row.code === "string" &&
+      PLAN_CODE_RE.test(row.code) &&
+      typeof row.title === "string" &&
+      row.title.trim() !== "" &&
+      EPIC_STATUSES.includes(row.status),
+  );
+}
+
+/**
+ * board.json 派生的应然渲染位序列（A3-3/#86；与 renderBoardMd 装配序同构，独立复写）：
+ *   顶层稿块（无归属/孤儿引用——AD-8 顶层平铺）→ 各 epic 章：章头 → 期次组（按期次序升序：
+ *   派生 rollup ∪ 成员并集）→ 组内成员稿块（特性序）。归组只认 `epic:<码>` 登记 id 反查登记行。
+ * 槽位 id：epic 章头 = `<码><终态标注>`；期次组 = `<码><期次> · 期次 <n>`（合成编号渲染位）；
+ * 稿节/任务行 = 既有渲染位 id（AD-2：卡编号维持 计划码-层级，合成名不进卡编号命名空间）。
+ */
+function expectedRenderSlots(board) {
+  const features = board?.features ?? [];
+  const epicRows = emittableEpics(board);
+  const groupCodeOf = (f) => {
+    if (typeof f?.epic !== "string" || !f.epic.startsWith(EPIC_ID_PREFIX)) return null;
+    const code = f.epic.slice(EPIC_ID_PREFIX.length);
+    return epicRows.some((e) => e.code === code) ? code : null;
+  };
+  const blocks = features.map((f, i) => featureBlockSlots(f, `features[${i}]`));
+  const out = [];
+  features.forEach((f, i) => {
+    if (groupCodeOf(f) == null) out.push(...blocks[i]);
+  });
+  epicRows.forEach((epic, ei) => {
+    const members = features.map((f, i) => ({ f, i })).filter(({ f }) => groupCodeOf(f) === epic.code);
+    out.push({
+      kind: "epic",
+      ptr: `epics[${ei}]`,
+      node: epic,
+      ref: `epics[${ei}]（${epic.code}）`,
+      id: `${epic.code}${EPIC_TERMINAL_MARKS[epic.status] ?? ""}`,
+      chain: [epic.code],
+    });
+    const phaseNos = [
+      ...new Set([...(Array.isArray(epic.phases) ? epic.phases.map((p) => p?.phase) : []), ...members.map(({ f }) => f.phase)]),
+    ]
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    for (const phase of phaseNos) {
+      out.push({
+        kind: "phase",
+        ptr: `epics[${ei}]`,
+        node: epic,
+        ref: `epics[${ei}]（${epic.code} · 期次 ${phase}）`,
+        id: `${epic.code}${phase} · 期次 ${phase}`,
+        chain: [`${epic.code}${phase}`],
+      });
+      for (const { f, i } of members.filter(({ f }) => f.phase === phase)) out.push(...blocks[i]);
+    }
+  });
+  return out;
 }
 
 /** 待处理节应然序列：按缺口码渲染序分组，组内前序（与 renderBoardMd 同序）；id = 全链文本。 */
@@ -308,35 +488,41 @@ export function checkFactInvariants({ board, boardMd = null } = {}) {
   // (c) board.md 渲染的编号形态 ↔ board.json 的 planCode/label 派生（D1 类守卫：渲染器漏传
   //     计划码时嵌套行回落 ID-<层级>，此处逐行对照咬住；深度 ≥2 全覆盖）。
   //     TQ-1 扩面：## 待处理 / ## 待合并 节（walkBoardNodes 渲染位）同入对照面。
+  //     A3-3/#86 扩面：epic 章头/期次组头（AD-3 合成编号渲染位）与章内稿节/任务行同入对照面——
+  //     对照序列 = 渲染序（顶层稿块 → 各 epic 章带）↔ board.json 派生序。
   if (typeof boardMd === "string" && boardMd !== "") {
     const lines = boardMd.split(/\r?\n/);
     const chains = expectedChains(board);
-    const range = sectionRange(lines, FEATURE_SECTION_RE);
+    const range = numberingRange(lines);
     if (range == null) {
       out.push("不变量 c（board.md 编号形态）：board.md 缺「## 特性」节，无法做编号形态互证——重编译即可修复");
     } else {
-      const obs = observedIds(lines, range);
-      const exp = expectedIds(board);
+      const obs = observedRenderSlots(lines, range);
+      const exp = expectedRenderSlots(board);
       const n = Math.max(obs.length, exp.length);
       let reported = 0;
       for (let k = 0; k < n && reported < MAX_NUMBERING_VIOLATIONS; k += 1) {
         const o = obs[k];
         const e = exp[k];
-        if (o && e && o.parsed && o.id === e.id) continue;
+        if (o && e && o.parsed && o.id === e.id && o.kind === e.kind) continue;
         reported += 1;
-        if (o && e) {
+        if (o && e && o.parsed && o.id === e.id) {
+          out.push(
+            `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行（${SLOT_KIND_LABELS[o.kind]}）渲染 "${o.id}"，与派生位同号但层位不同（应然层位 = ${SLOT_KIND_LABELS[e.kind]}：${e.ref}）——epic 码与计划码撞号时以容器层位判定`,
+          );
+        } else if (o && e) {
           out.push(
             o.parsed
-              ? `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行渲染 "${o.id}"，按 board.json 派生应为 "${e.id}"（${e.ptr}（${nodeRef(e.node)}））——编号多面一致（D1 守卫：嵌套任务行含递归深度 ≥2）`
-              : `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行的编号位形态无法解析（${JSON.stringify(o.id)}），按 board.json 派生应为 "${e.id}"（${e.ptr}（${nodeRef(e.node)}））`,
+              ? `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行（${SLOT_KIND_LABELS[o.kind]}）渲染 "${o.id}"，按 board.json 派生应为 "${e.id}"（${e.ref}）——编号多面一致（D1 守卫：嵌套任务行含递归深度 ≥2；epic 章/期次组/合成编号渲染位同入对照面）`
+              : `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行（${SLOT_KIND_LABELS[o.kind]}）的编号位形态无法解析（${JSON.stringify(o.id)}），按 board.json 派生应为 "${e.id}"（${e.ref}）`,
           );
         } else if (o) {
           out.push(
-            `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行渲染 "${o.id}"，board.json 中无对应编号位（多渲染）`,
+            `不变量 c（board.md 编号形态）：board.md 第 ${o.line} 行（${SLOT_KIND_LABELS[o.kind]}）渲染 "${o.id}"，board.json 中无对应编号位（多渲染）`,
           );
         } else if (e) {
           out.push(
-            `不变量 c（board.md 编号形态）：board.md 特性节缺少编号位 "${e.id}" 的渲染行（${e.ptr}（${nodeRef(e.node)}））`,
+            `不变量 c（board.md 编号形态）：board.md 编号对照面缺少编号位 "${e.id}" 的渲染行（${e.ref}）`,
           );
         }
       }
@@ -376,6 +562,301 @@ export function checkFactInvariants({ board, boardMd = null } = {}) {
       for (const k of Object.keys(carried)) {
         if (!STAGE_VALUES.includes(k)) out.push(`不变量 d（段位计数复算）：stageSummary 含未知计数键 ${JSON.stringify(k)}（七段位词表外）`);
       }
+    }
+  }
+
+  // (i) 派生四段不变量（C2-2/#134；失败级）：板面卡级节点复算 ↔ frontier/blocked/recent 逐行对照，
+  //     段间对偶复核（详见 checkDerivedIndexInvariants 注释；缺段键不判——旧板/手写夹具零噪声）
+  out.push(...checkDerivedIndexInvariants({ board }));
+
+  return out;
+}
+
+// ---------------------------------------------------------------- 派生四段不变量（i1–i4，C2-2/#134）
+
+/** 板面卡级节点（有稳定号；features[].tasks 递归——四段选取域，独立复写 derive.collectNumberedCards）。 */
+function boardCardNodes(board) {
+  const out = [];
+  const walk = (tasks, ptr) => {
+    (tasks ?? []).forEach((t, i) => {
+      const tptr = `${ptr}.tasks[${i}]`;
+      if (t && Number.isInteger(t.no)) out.push({ node: t, ptr: tptr });
+      walk(t?.tasks, tptr);
+    });
+  };
+  (board?.features ?? []).forEach((f, i) => {
+    if (isPlainObject(f)) walk(f.tasks, `features[${i}]`);
+  });
+  return out;
+}
+
+/**
+ * 卡内未解除阻塞项（独立复写 derive.unresolvedBlockers 判据；纯函数）：
+ *   - external：恒为未解除（外部事实不由板面推导）；
+ *   - dependency：目标号经 byNo 反查，目标段位 ∈ 终态 → 已解除；缺号（blockedBy 缺省，§12 不造引用）
+ *     或目标离板（手改板/离板）→ 未解除（不猜，保守计入）；
+ *   - 其它 kind：不判（词表外形态归结构面；不混入本断言，防静默误判）。
+ * 返回 [{blockerKind, targetId, summary, index}]（index = blockers 原文序位，报告点名用）。
+ */
+function unresolvedBlockersOf(card, byNo, terminal) {
+  const out = [];
+  (Array.isArray(card.blockers) ? card.blockers : []).forEach((b, index) => {
+    if (!b || typeof b !== "object") return;
+    const summary = typeof b.summary === "string" ? b.summary : "";
+    if (b.kind === BLOCKER_EXTERNAL) {
+      out.push({ blockerKind: BLOCKER_EXTERNAL, targetId: null, summary, index });
+      return;
+    }
+    if (b.kind !== BLOCKER_DEPENDENCY) return;
+    const targetId = Number.isInteger(b.blockedBy) ? b.blockedBy : null;
+    const target = targetId != null ? byNo.get(targetId) : null;
+    if (target != null && terminal.has(target.stage)) return; // 依赖已解除（目标终态）
+    out.push({ blockerKind: BLOCKER_DEPENDENCY, targetId, summary, index });
+  });
+  return out;
+}
+
+/** frontier 行对照视图（比对字段集；nullish 缺省键归一为 null——缺键不静默通过）。 */
+const frontierRowView = (row) => ({
+  rank: row.rank,
+  no: row.no,
+  title: row.title ?? null,
+  stage: row.stage,
+  nextAssignee: row.nextAssignee ?? null,
+  resolvedDeps: row.resolvedDeps,
+});
+/** blocked 行对照视图（比对字段集）。 */
+const blockedRowView = (row) => ({
+  no: row.no ?? null,
+  title: row.title ?? null,
+  stage: row.stage ?? null,
+  blockerKind: row.blockerKind ?? null,
+  targetId: row.targetId ?? null,
+  summary: row.summary ?? null,
+});
+
+/**
+ * 段行对照（i1/i3 共用）：应然行按**行键**与实际行配对（缺行/多出行逐条点名，不因单行漂移级联刷屏），
+ * 配对行逐字段对照（实际/应然两值），配对位点序列须单调递增（板序＝口径的一部分：顺序错位必咬，
+ * 如 blocked 卡内 blockers 原文序被改）。违例上限 MAX_SEGMENT_VIOLATIONS（超出汇总一行）。
+ */
+function compareSegmentRows(out, { invariant, label, segName, act, exp, view, keyOf, note }) {
+  const actRows = act.map((row, k) => ({ row, k, key: isPlainObject(row) ? keyOf(row) : null, used: false }));
+  const matched = [];
+  exp.forEach((e, ei) => {
+    const key = keyOf(e);
+    const hit = actRows.find((a) => !a.used && a.key === key) ?? null;
+    if (hit) hit.used = true;
+    matched.push({ e, ei, a: hit });
+  });
+  let reported = 0;
+  const eRef = (e) => `${e._ptr}（${nodeRef(e)}）`;
+  for (const { e, ei, a } of matched) {
+    if (reported >= MAX_SEGMENT_VIOLATIONS) break;
+    if (a == null) {
+      reported += 1;
+      out.push(`${invariant}（${label}）：${segName} 缺行（应然序第 ${ei + 1} 行）——应然 ${JSON.stringify(view(e))}（${eRef(e)}）——${note}`);
+      continue;
+    }
+    if (JSON.stringify(view(a.row)) === JSON.stringify(view(e))) continue;
+    reported += 1;
+    out.push(
+      `${invariant}（${label}）：${segName}[${a.k}]（#${a.row.no}）与板面复算不符——实际 ${JSON.stringify(view(a.row))}，应然 ${JSON.stringify(view(e))}（${eRef(e)}）——${note}`,
+    );
+  }
+  for (const a of actRows) {
+    if (reported >= MAX_SEGMENT_VIOLATIONS) break;
+    if (a.used) continue;
+    reported += 1;
+    out.push(
+      isPlainObject(a.row)
+        ? `${invariant}（${label}）：${segName}[${a.k}]（#${a.row.no}）为多出行——板面复算无此来源（受阻卡不可执行 / 无该卡 / 无该未解除阻塞项；实际 ${JSON.stringify(view(a.row))}）——${note}`
+        : `${invariant}（${label}）：${segName}[${a.k}] 非对象行（实际 ${JSON.stringify(a.row)}）——段内形态归结构面，本面点名不静默——${note}`,
+    );
+  }
+  const idx = matched.filter((m) => m.a != null).map((m) => m.a.k);
+  const orderBad = idx.findIndex((v, i) => i > 0 && idx[i - 1] >= v);
+  if (orderBad > 0 && reported < MAX_SEGMENT_VIOLATIONS) {
+    reported += 1;
+    out.push(
+      `${invariant}（${label}）：${segName} 顺序与板序不符（实然位点序列 [${idx.join(", ")}]）——按板序排列（features 序 × 任务树序；卡内按 blockers 原文序）——${note}`,
+    );
+  }
+  if (reported >= MAX_SEGMENT_VIOLATIONS && matched.length + actRows.length > MAX_SEGMENT_VIOLATIONS) {
+    out.push(`${invariant}（${label}）：${segName} 差异超过 ${MAX_SEGMENT_VIOLATIONS} 处，仅显示前 ${MAX_SEGMENT_VIOLATIONS} 处`);
+  }
+}
+
+/**
+ * 派生四段不变量（C2-2/#134；失败级；纯函数）——对 board.json 的 `frontier[]`/`blocked[]`/`recent[]`
+ * 与板面卡级节点**独立复算**对照（不导入 lib/derive.mjs，避免复算与被检对象同源退化为重言式）：
+ *   i1 frontier 复算一致 · i2 recent 排序与截断 · i3 blocked 归因完整 · i4 段间对偶。
+ * 携带即判：任一段键缺省 → 该族跳过（缺键由板/源互检与 schema 面承载；旧板/手写夹具零噪声）。
+ * 判定域同 derive.deriveBoardIndex（卡=有稳定号的任务卡，含嵌套；特性/容器不进段）；重复号先到者
+ * 为准（活号唯一归结构面断言，本面不叠加噪音）。
+ * @param {object} input
+ * @param {object} input.board board.json 形态对象
+ * @returns {string[]} 违例文案（空数组 = 通过）
+ */
+export function checkDerivedIndexInvariants({ board } = {}) {
+  const out = [];
+  if (!isPlainObject(board)) return out; // 板非对象：失败级另一路点名，不叠加
+  const hasKey = (k) => Object.prototype.hasOwnProperty.call(board, k);
+  const terminal = new Set(TERMINAL_STAGES);
+  const nodes = boardCardNodes(board);
+  const byNo = new Map();
+  for (const { node } of nodes) if (!byNo.has(node.no)) byNo.set(node.no, node);
+  const cards = nodes.map((e) => ({ ...e, unresolved: unresolvedBlockersOf(e.node, byNo, terminal) }));
+
+  // (i1) frontier 复算一致：段位待办 且 无未解除阻塞项（板序；rank 1..n；resolvedDeps 原文序）
+  if (hasKey("frontier")) {
+    if (!Array.isArray(board.frontier)) {
+      out.push(
+        `不变量 i1（frontier 复算一致）：frontier 应为数组，实际 ${typeName(board.frontier)}——四段由编译器派生（C2-1/AD-11③），手改板/派生回归在此必咬`,
+      );
+    } else {
+      const exp = cards
+        .filter((e) => e.node.stage === TODO_STAGE && e.unresolved.length === 0)
+        .map((e, i) => ({
+          rank: i + 1,
+          no: e.node.no,
+          title: e.node.title ?? null,
+          stage: e.node.stage,
+          nextAssignee: e.node.nextAssignee ?? null,
+          resolvedDeps: (Array.isArray(e.node.blockers) ? e.node.blockers : [])
+            .filter((b) => b && b.kind === BLOCKER_DEPENDENCY && Number.isInteger(b.blockedBy))
+            .map((b) => b.blockedBy),
+          _ptr: e.ptr,
+        }));
+      compareSegmentRows(out, {
+        invariant: "不变量 i1",
+        label: "frontier 复算一致",
+        segName: "frontier",
+        act: board.frontier,
+        exp,
+        view: frontierRowView,
+        keyOf: (row) => `${row.no}`,
+        note: "可执行前沿＝段位待办且无未解除阻塞项（依赖全终态/无依赖），按板序 rank=1..n（x-decisions 四段条①）",
+      });
+    }
+  }
+
+  // (i2) recent 排序与截断：条目 at 须非升序（新→旧；同刻保持 run 追加序），条数 ≤ 上限（N=10），
+  //      每行须落在板上活号卡（离板引用不进活动面）且 title 与该节点同值（同值消费，禁二份口径）
+  if (hasKey("recent")) {
+    if (!Array.isArray(board.recent)) {
+      out.push(
+        `不变量 i2（recent 排序/截断）：recent 应为数组，实际 ${typeName(board.recent)}——四段由编译器派生（C2-1/AD-11③），手改板/派生回归在此必咬`,
+      );
+    } else {
+      let reported = 0;
+      if (board.recent.length > RECENT_LIMIT) {
+        reported += 1;
+        out.push(
+          `不变量 i2（recent 排序/截断）：recent 共 ${board.recent.length} 条，超过上限 ${RECENT_LIMIT}（N=10 成文：按 at 新→旧取最近 10 条）——截断回归在此必咬`,
+        );
+      }
+      let prevT = null;
+      board.recent.forEach((row, k) => {
+        if (reported >= MAX_SEGMENT_VIOLATIONS) return;
+        if (!isPlainObject(row)) {
+          reported += 1;
+          out.push(`不变量 i2（recent 排序/截断）：recent[${k}] 非对象行（实际 ${JSON.stringify(row)}）——段内形态归结构面，本面点名不静默`);
+          return;
+        }
+        const at = row.at ?? null;
+        if (typeof at !== "string" || !ISO_RE.test(at) || Number.isNaN(Date.parse(at))) {
+          reported += 1;
+          out.push(
+            `不变量 i2（recent 排序/截断）：recent[${k}]（#${row.no}）的 at=${JSON.stringify(at)} 非带时区 ISO 8601——无法判定新→旧次序（不猜时钟）`,
+          );
+        } else {
+          const t = Date.parse(at);
+          if (prevT != null && t > prevT) {
+            reported += 1;
+            out.push(
+              `不变量 i2（recent 排序/截断）：recent[${k}]（#${row.no}）at=${at} 晚于上一行——recent 须按 at 新→旧（同刻保持 run 追加序；同刻次序无板面承载体，不可复算——不判）`,
+            );
+          }
+          prevT = t;
+        }
+        const node = Number.isInteger(row.no) ? byNo.get(row.no) : null;
+        if (node == null) {
+          reported += 1;
+          out.push(
+            `不变量 i2（recent 排序/截断）：recent[${k}]（#${row.no ?? "缺号"}）不在板上活号卡中——离板引用不进活动面（编译侧已 diagnostics 点名）`,
+          );
+          return;
+        }
+        if ((row.title ?? null) !== (node.title ?? null)) {
+          reported += 1;
+          out.push(
+            `不变量 i2（recent 排序/截断）：recent[${k}]（#${row.no}）title=${JSON.stringify(row.title ?? null)} 与板面节点 title=${JSON.stringify(node.title ?? null)} 不一致——同值消费（禁二份口径）`,
+          );
+        }
+      });
+      if (reported >= MAX_SEGMENT_VIOLATIONS && board.recent.length > MAX_SEGMENT_VIOLATIONS) {
+        out.push(`不变量 i2（recent 排序/截断）：违例超过 ${MAX_SEGMENT_VIOLATIONS} 处，仅显示前 ${MAX_SEGMENT_VIOLATIONS} 处`);
+      }
+    }
+  }
+
+  // (i3) blocked 归因完整：非终态卡的每个未解除阻塞项恰一行（板序 + 卡内 blockers 原文序）
+  if (hasKey("blocked")) {
+    if (!Array.isArray(board.blocked)) {
+      out.push(
+        `不变量 i3（blocked 归因完整）：blocked 应为数组，实际 ${typeName(board.blocked)}——四段由编译器派生（C2-1/AD-11③），手改板/派生回归在此必咬`,
+      );
+    } else {
+      const exp = [];
+      for (const e of cards) {
+        if (terminal.has(e.node.stage)) continue; // 终态卡不入选取域（历史阻塞项不复活，归因只对未终态卡）
+        for (const u of e.unresolved) {
+          exp.push({
+            no: e.node.no,
+            title: e.node.title ?? null,
+            stage: e.node.stage,
+            blockerKind: u.blockerKind,
+            targetId: u.targetId,
+            summary: u.summary,
+            _ptr: `${e.ptr}.blockers[${u.index}]`,
+          });
+        }
+      }
+      compareSegmentRows(out, {
+        invariant: "不变量 i3",
+        label: "blocked 归因完整",
+        segName: "blocked",
+        act: board.blocked,
+        exp,
+        view: blockedRowView,
+        keyOf: (row) => [row.no, row.blockerKind].join("|"),
+        note: "非终态卡的未解除阻塞项逐项一行（external 恒未解除；dependency 仅当目标段位 ∈ 终态才解除；缺号/离板保守计入），按板序、卡内按 blockers 原文序（x-decisions 四段条③）",
+      });
+    }
+  }
+
+  // (i4) 段间对偶：待办卡 ∈ frontier ⟺ 不在 blocked（两面同时命中/两面皆无均必咬）
+  if (hasKey("frontier") && hasKey("blocked") && Array.isArray(board.frontier) && Array.isArray(board.blocked)) {
+    const nosOf = (seg) => new Set(seg.filter((r) => isPlainObject(r) && Number.isInteger(r.no)).map((r) => r.no));
+    const inFrontier = nosOf(board.frontier);
+    const inBlocked = nosOf(board.blocked);
+    let reported = 0;
+    for (const e of cards) {
+      if (e.node.stage !== TODO_STAGE) continue;
+      const inF = inFrontier.has(e.node.no);
+      const inB = inBlocked.has(e.node.no);
+      if (inF !== inB) continue; // 对偶成立：一面有、一面无
+      reported += 1;
+      if (reported > MAX_SEGMENT_VIOLATIONS) break;
+      out.push(
+        inF
+          ? `不变量 i4（段间对偶）：${e.ptr}（${nodeRef(e.node)}）段位=待办，却同时出现在 frontier 与 blocked 两段（一面称可执行、一面称受阻——同一判据两面自相矛盾）——待办卡 ∈ frontier ⟺ 不在 blocked（x-decisions 四段条）`
+          : `不变量 i4（段间对偶）：${e.ptr}（${nodeRef(e.node)}）段位=待办，却既不在 frontier 也不在 blocked（既不可执行又无阻塞归因——派生漏归因静默空洞）——待办卡 ∈ frontier ⟺ 不在 blocked（x-decisions 四段条）`,
+      );
+    }
+    if (reported > MAX_SEGMENT_VIOLATIONS) {
+      out.push(`不变量 i4（段间对偶）：违例超过 ${MAX_SEGMENT_VIOLATIONS} 处，仅显示前 ${MAX_SEGMENT_VIOLATIONS} 处`);
     }
   }
 
@@ -435,6 +916,49 @@ export function checkCompletedMergedEvidence({ board, runs, exemptNos = [] } = {
   };
   (board.features ?? []).forEach((f, i) => {
     if (isPlainObject(f)) walk(f.tasks, `features[${i}]`);
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------- 归属引用可达断言（h，A2-2/#82）
+
+/**
+ * 归属引用可达断言（h，A2-2/#82；markers §10.2/§10.3）——**失败级**（与 (a)–(d) 同层；独立导出、
+ * 不并入 checkFactInvariants，保持 (a)–(d) 既有契约与计数语义不动）：
+ *   `features[].epic` 取登记 id 形态（`epic:<4位码>`）时，`epics[]` 必须有该 code 的登记行——
+ *   登记行是 epic 的唯一机器载体（无文件锚、无 `no`/无 `file`，§10.2）；无登记行的引用 = **悬空/
+ *   孤儿引用**：板面原样透出是 faithful（不造行、不猜），但引用不可达、零 rollup——结构矛盾，
+ *   逐条点名 features[i]（路径 + 实际引用值 + 缺失 code + 修复方向）。
+ * 判定域（成文，勿扩）：
+ *   - 只判登记 id 形态（`epic:` 前缀 + 4 位码冻结形态）——裸码/其它形态 = 引用位**形态**违规
+ *     （lib/schema-check.mjs `checkBoardInvariants` 结构面点名，本面不叠加）；
+ *   - 整数稳定号 = 合法引用形态但无登记面映射（不猜、不判——口径同 `derive.deriveEpics`
+ *     "稳定号引用无登记面映射，不猜、不计 rollup"）；
+ *   - 无 `epic` 字段 = 合法缺省（AD-8：无 epic 不判失败——本断言对无归属稿零噪声）。
+ * 判级 = 失败级（A2-2 定性）：与结构矛盾类先例同层（「码进引用位」schema oneOf 已拒；blockedBy
+ *   目标不在板上活条目同为引用可达失败级）；修复可达（补登记行/清引用 + 重编译），非收尾对账域。
+ * 调用面：磁盘板与重编译基线各判一遍（compile-board `checkBoardArtifact`，「epic 归属」失败项）。
+ * 纯函数：不读盘、不改入参、无隐藏状态。
+ * @param {object} input
+ * @param {object} input.board board.json 形态对象
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkEpicRefs({ board } = {}) {
+  const out = [];
+  if (!isPlainObject(board)) return out; // 板非对象：失败级已由结构面点名，此处不叠加
+  const rows = Array.isArray(board.epics) ? board.epics : [];
+  const codes = new Set();
+  for (const row of rows) if (isPlainObject(row) && typeof row.code === "string") codes.add(row.code);
+  (board.features ?? []).forEach((f, i) => {
+    if (!isPlainObject(f)) return;
+    const epic = f.epic;
+    if (typeof epic !== "string" || !epic.startsWith(EPIC_ID_PREFIX)) return;
+    const code = epic.slice(EPIC_ID_PREFIX.length);
+    if (!PLAN_CODE_RE.test(code)) return; // 形态非法 → 结构面点名（checkBoardInvariants），本面不叠加
+    if (codes.has(code)) return;
+    out.push(
+      `不变量 h（归属引用可达）：features[${i}].epic=${JSON.stringify(epic)}——epics[] 无 ${JSON.stringify(code)} 登记行（悬空引用/孤儿引用；登记行是 epic 唯一机器载体，§10.2——引用不可归组、零 rollup）。补登记行（code/title/status 三字段，§10.2）或清引用后重编译；失败级（A2-2 归属引用断言）。`,
+    );
   });
   return out;
 }
