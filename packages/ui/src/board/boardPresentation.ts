@@ -191,6 +191,40 @@ export function boardTaskLabelIndentLevel(label: string | null): number {
   return Math.max(1, segments.length) - 1;
 }
 
+/* ---------------- 编号形态（#46 B1：计划码-层级） ---------------- */
+
+/**
+ * 编号显示形态（#46 B1，规则书 v2）：
+ *   - 完整形态：有计划码 → `<计划码>-<层级>`（如 `UI01-1.2`）；无计划码 → `ID-<label>`；
+ *   - 短形态（`short: true`，树形/列表/表格在**同一计划分组内**）：只显示层级（如 `1.2`）；
+ *     无计划码时没有前缀可省，形态不变；
+ *   - 降级链：缺 label → `ID-<稳定号>`（§2.4 过渡态）；未领号 → null（组件渲染「未领号」角标）。
+ * 纯函数：字段原值取出入，不做任何推导（计划码合法性在映射层已收敛）。
+ */
+export function formatBoardNodeId(
+  node: { no: number | null; label: string | null; planCode?: string | null },
+  options: { short?: boolean } = {},
+): string | null {
+  const planCode = node.planCode ?? null;
+  if (node.label != null) {
+    if (planCode != null) return options.short === true ? node.label : `${planCode}-${node.label}`;
+    return `ID-${node.label}`;
+  }
+  return node.no !== null ? `ID-${node.no}` : null;
+}
+
+/**
+ * 特性编号形态（#46 B1）：有计划码 → 计划码本身（`UI01`，它就是计划的身份）；
+ * 否则与节点编号同链（`ID-<label>` → `ID-<no>` → null）。
+ */
+export function formatBoardFeatureId(node: {
+  no: number | null;
+  label: string | null;
+  planCode?: string | null;
+}): string | null {
+  return node.planCode ?? formatBoardNodeId(node);
+}
+
 /**
  * 卡龄 = `updatedAt` 距 `now` 的整天数（floor）。缺字段/解析不了 → null（没有卡龄信号）；
  * 时钟回拨（未来时间）按 0 天，不出现负数。纯函数：`now` 由调用方传入，同一屏内一致。

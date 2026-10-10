@@ -148,6 +148,12 @@ export interface BoardTaskNode {
   evidence: string[];
   lastRun: BoardLastRun | null;
   activeRun: BoardActiveRun | null;
+  /** 当前执行者（v2.2 / #46 A3）：管线 ∩ activeRun；无 → null（只读映射，不自算）。 */
+  currentAssignee: string | null;
+  /** 计划稿章节（v2.2 / #46 B2 数据面）：仅计划任务可能非空（树形章节子分组用）。 */
+  section: string | null;
+  /** 结构深度（1 = 特性下第一层；呈现缩进用，不信 label 段数——计划任务 label 是计划内层级）。 */
+  depth: number;
   worktree: string | null;
   pr: BoardPr | null;
   createdAt: string | null;
@@ -160,6 +166,8 @@ export interface BoardFeatureNode {
   id: string;
   no: number | null;
   label: string | null;
+  /** 计划码（v2.2 / #46 A1）：4 位显示码（如 UI01）；无计划码 → null。 */
+  planCode: string | null;
   kind: string | null;
   title: string;
   /** 契约 §6「细节」：全文；空串归一为 null（区块隐藏）。 */
@@ -172,6 +180,8 @@ export interface BoardFeatureNode {
   /** 特性级无 blockers 字段时为空数组；真有也照实映射（不借子树的值）。 */
   blockers: BoardBlocker[];
   assignees: string[];
+  /** 当前执行者（v2.2 / #46 A3）：特性级 = 子树首个非空；无 → null。 */
+  currentAssignee: string | null;
   origin: BoardOrigin | null;
   evidence: string[];
   createdAt: string | null;
@@ -307,7 +317,18 @@ function readPr(value: unknown): BoardPr | null {
   return pr.number === null && pr.url === null ? null : pr;
 }
 
-function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
+/**
+ * 计划码（v2.2 / #46 A1）：`^[A-Z][A-Z0-9]{3}$` 之外的形态一律不映射（不猜显示码；
+ * 编译器对坏值已落 diagnostics，应用侧只做形态守卫）。空串/缺省 → null。
+ */
+export const BOARD_PLAN_CODE_RE = /^[A-Z][A-Z0-9]{3}$/;
+
+function readPlanCode(value: unknown): string | null {
+  const text = readText(value);
+  return text !== null && BOARD_PLAN_CODE_RE.test(text) ? text : null;
+}
+
+function mapTask(raw: unknown, parentId: string, index: number, depth: number): BoardTaskNode {
   const node = isRecord(raw) ? raw : {};
   const no = readPositiveInteger(node.no);
   const label = readText(node.label);
@@ -329,12 +350,15 @@ function mapTask(raw: unknown, parentId: string, index: number): BoardTaskNode {
     evidence: readTextList(node.evidence),
     lastRun: readLastRun(node.lastRun),
     activeRun: readActiveRun(node.activeRun),
+    currentAssignee: readText(node.currentAssignee),
+    section: readText(node.section),
+    depth,
     worktree: readText(node.worktree),
     pr: readPr(node.pr),
     createdAt: readText(node.createdAt),
     updatedAt: readText(node.updatedAt),
     children: Array.isArray(node.tasks)
-      ? node.tasks.map((child, childIndex) => mapTask(child, id, childIndex))
+      ? node.tasks.map((child, childIndex) => mapTask(child, id, childIndex, depth + 1))
       : [],
   };
 }
@@ -349,6 +373,7 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     id,
     no,
     label,
+    planCode: readPlanCode(node.planCode),
     kind: readText(node.kind),
     title: readText(node.title) ?? "",
     details: readText(node.details),
@@ -358,13 +383,14 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     attention: readAttentionCodes(node.attention),
     blockers: readBlockers(node.blockers),
     assignees: readTextList(node.assignees),
+    currentAssignee: readText(node.currentAssignee),
     origin: readOrigin(node.origin),
     evidence: readTextList(node.evidence),
     createdAt: readText(node.createdAt),
     progress: readProgress(node.progress),
     updatedAt: readText(node.updatedAt),
     tasks: Array.isArray(node.tasks)
-      ? node.tasks.map((task, taskIndex) => mapTask(task, id, taskIndex))
+      ? node.tasks.map((task, taskIndex) => mapTask(task, id, taskIndex, 1))
       : [],
   };
 }

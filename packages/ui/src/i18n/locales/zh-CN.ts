@@ -995,6 +995,7 @@ const zhCN: Record<string, string> = {
   "board.stage.done": "已完成",
   "board.stage.cancelled": "已取消",
   // 视图切换（契约 §13.2 四视图；本期面板内三态：树形/看板/列表）。
+  "board.feature.cardCount": "{count} 张卡",
   "board.view.tree": "树形",
   "board.view.kanban": "看板",
   "board.view.list": "列表",

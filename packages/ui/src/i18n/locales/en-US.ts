@@ -1078,6 +1078,7 @@ const enUS: Record<string, string> = {
   "board.stage.done": "Done",
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
+  "board.feature.cardCount": "{count} cards",
   "board.view.tree": "Tree",
   "board.view.kanban": "Board",
   "board.view.list": "List",

@@ -11,6 +11,8 @@ import {
   boardStatusDotClassName,
   formatAttentionBadgeText,
   formatBoardActiveRunText,
+  formatBoardFeatureId,
+  formatBoardNodeId,
   formatBoardStageText,
 } from "./boardPresentation.js";
 import type { BoardAttentionCode, BoardLastRun } from "./boardViewModel.js";
@@ -65,10 +67,30 @@ export function BoardAttentionBadges({
   );
 }
 
-/** 编号：`ID-<label>`；`no`/`label` 缺省是合法形态 → 「未领号」角标（契约 §3.3）。 */
-export function BoardNodeNumber({ no, label }: { no: number | null; label: string | null }) {
+/**
+ * 编号（#46 B1）：`计划码-层级`（如 UI01-1.2）/ 无计划码 `ID-<label>`；`short`（同一计划
+ * 分组内：树形/列表/表格）只显示层级（1.2）。`no`/`label` 缺省是合法形态 → 「未领号」角标
+ * （契约 §3.3）；`data-board-node-id` 锚点携带最终形态文本（测试与定位不绑 CSS 类）。
+ */
+export function BoardNodeNumber({
+  no,
+  label,
+  planCode = null,
+  short = false,
+  variant = "task",
+}: {
+  no: number | null;
+  label: string | null;
+  planCode?: string | null;
+  short?: boolean;
+  /** "task"（默认）：计划码-层级 / ID-<label>；"feature"：计划码本身（UI01）/ ID-<label>。 */
+  variant?: "task" | "feature";
+}) {
   const { intl } = useZCodeIntl();
-  const text = label ? `ID-${label}` : no !== null ? `ID-${no}` : null;
+  const text =
+    variant === "feature"
+      ? formatBoardFeatureId({ no, label, planCode })
+      : formatBoardNodeId({ no, label, planCode }, { short });
   if (text === null) {
     return (
       <Badge variant="outline" data-board-unassigned="" className="shrink-0">
@@ -76,7 +98,14 @@ export function BoardNodeNumber({ no, label }: { no: number | null; label: strin
       </Badge>
     );
   }
-  return <span className="shrink-0 font-mono text-ui-xs text-foreground-subtle">{text}</span>;
+  return (
+    <span
+      data-board-node-id={text}
+      className="shrink-0 font-mono text-ui-xs text-foreground-subtle"
+    >
+      {text}
+    </span>
+  );
 }
 
 /** `draft: true` → 「草案」角标；`blockers` 非空 → 「受阻 N」（契约 §3.3）。 */

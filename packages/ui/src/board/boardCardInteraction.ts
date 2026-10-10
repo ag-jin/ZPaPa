@@ -34,17 +34,23 @@ export interface BoardCardOpenProps {
 /**
  * 卡片打开态 props（散到视图层既有的卡片元素上，不改布局、不新增包裹层）：
  * 有 `onOpenCard` 才挂交互；键盘走 `boardCardKeyIntent`，Space 需阻止页面滚动默认行为。
+ * `preventDefaultOnClick`：落在 `<summary>`（树形特性折叠块头）里时防一次——点「打开弹窗」
+ * 不得再触发折叠切换（事件默认动作 = summary 的 toggle）。
  */
 export function boardCardOpenProps(params: {
   id: string;
   onOpenCard?: (id: string) => void;
+  preventDefaultOnClick?: boolean;
 }): BoardCardOpenProps {
-  const { id, onOpenCard } = params;
+  const { id, onOpenCard, preventDefaultOnClick = false } = params;
   if (!onOpenCard) return {};
   return {
     role: "button",
     tabIndex: 0,
-    onClick: () => onOpenCard(id),
+    onClick: (event: MouseEvent) => {
+      if (preventDefaultOnClick) event.preventDefault();
+      onOpenCard(id);
+    },
     onKeyDown: (event: KeyboardEvent) => {
       if (boardCardKeyIntent(event.key) !== "open") return;
       event.preventDefault();

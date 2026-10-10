@@ -41,6 +41,8 @@ export interface BoardViewNode {
   featureKind: string | null;
   no: number | null;
   label: string | null;
+  /** 计划码（#46 B1）：任务节点从所属特性继承（显示层）；无 → null。 */
+  planCode: string | null;
   title: string;
   details: string | null;
   status: string | null;
@@ -49,6 +51,12 @@ export interface BoardViewNode {
   attention: BoardAttentionCode[];
   blockers: BoardBlocker[];
   assignees: string[];
+  /** 当前执行者（#46 A3/B6）：管线 ∩ activeRun；无 → null。 */
+  currentAssignee: string | null;
+  /** 计划稿章节（#46 B2）：仅计划任务可能非空。 */
+  section: string | null;
+  /** 结构深度（0 = 特性；1 = 其下第一层任务；呈现缩进用，不信 label 段数）。 */
+  depth: number;
   origin: BoardOrigin | null;
   evidence: string[];
   activeRun: BoardActiveRun | null;
@@ -68,6 +76,7 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
     featureKind: feature.kind,
     no: feature.no,
     label: feature.label,
+    planCode: feature.planCode,
     title: feature.title,
     details: feature.details,
     status: feature.status,
@@ -77,6 +86,9 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
     // 特性级字段照实搬（有 blockers 就带）：不猜、不借子树的值（§13.2 各格按节点自身字段呈现）。
     blockers: feature.blockers,
     assignees: feature.assignees,
+    currentAssignee: feature.currentAssignee,
+    section: null,
+    depth: 0,
     origin: feature.origin,
     evidence: feature.evidence,
     // 特性级没有 run/worktree/pr 字段：不猜、不借子树的值。
@@ -91,13 +103,15 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
   };
 }
 
-function taskViewNode(task: BoardTaskNode): BoardViewNode {
+function taskViewNode(task: BoardTaskNode, owner: BoardFeatureNode): BoardViewNode {
   return {
     id: task.id,
     kind: "task",
     featureKind: null,
     no: task.no,
     label: task.label,
+    // 任务不携带 planCode 字段：显示层从所属特性继承（UI01-1.2 的完整形态同源）。
+    planCode: owner.planCode,
     title: task.title,
     details: task.details,
     status: task.status,
@@ -106,6 +120,9 @@ function taskViewNode(task: BoardTaskNode): BoardViewNode {
     attention: task.attention,
     blockers: task.blockers,
     assignees: task.assignees,
+    currentAssignee: task.currentAssignee,
+    section: task.section,
+    depth: task.depth,
     origin: task.origin,
     evidence: task.evidence,
     activeRun: task.activeRun,
@@ -122,16 +139,41 @@ function taskViewNode(task: BoardTaskNode): BoardViewNode {
 /** 同一个节点集合（§13.2）：特性节点在前、其任务卡按文档序前序展开（含嵌套子卡）。 */
 export function collectBoardViewNodes(board: BoardViewModel): BoardViewNode[] {
   const nodes: BoardViewNode[] = [];
-  const walkTasks = (tasks: BoardTaskNode[]) => {
+  const walkTasks = (tasks: BoardTaskNode[], owner: BoardFeatureNode) => {
     for (const task of tasks) {
-      nodes.push(taskViewNode(task));
-      walkTasks(task.children);
+      nodes.push(taskViewNode(task, owner));
+      walkTasks(task.children, owner);
     }
   };
   for (const feature of board.features) {
     nodes.push(featureViewNode(feature));
-    walkTasks(feature.tasks);
+    walkTasks(feature.tasks, feature);
   }
+  return nodes;
+}
+
+/**
+ * 特性分组视图节点（#46 B3/B4）：每组 = 特性头 + 其任务卡（文档序前序，含嵌套子卡）。
+ * 列表/表格的分组行与看板的分组头共用这一份形态（分组只是呈现，节点字段一字不改）。
+ */
+export function collectBoardFeatureGroups(
+  board: BoardViewModel,
+): Array<{ feature: BoardViewNode; nodes: BoardViewNode[] }> {
+  return board.features.map((feature) => ({
+    feature: featureViewNode(feature),
+    nodes: collectFeatureTaskNodes(feature),
+  }));
+}
+
+function collectFeatureTaskNodes(feature: BoardFeatureNode): BoardViewNode[] {
+  const nodes: BoardViewNode[] = [];
+  const walk = (tasks: BoardTaskNode[]) => {
+    for (const task of tasks) {
+      nodes.push(taskViewNode(task, feature));
+      walk(task.children);
+    }
+  };
+  walk(feature.tasks);
   return nodes;
 }
 
