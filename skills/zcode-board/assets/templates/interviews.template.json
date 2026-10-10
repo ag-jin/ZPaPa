@@ -1,0 +1,5 @@
+{
+  "_note": "zcode-board 模板：interviews.json（第一方真相·登记簿，设计 §3.1）。version=1；interviews 为追加式数组，模板为空数组，可直接复制为 <项目根>/.zcode/board/interviews.json。条目完整字段：id（登记时生成 itw-<日期>-<短后缀>，不可变）、at、sessionId、topic、summary、decisions[]、artifacts[]、outcome（none|plan|spec|tasks）、resolvedBy（产物落盘后回填特性节点 id）、status（open|resolved）。未知信息留空、不得猜测填充；号不进登记簿——访谈事件不占号，interview-only 节点的句柄就是 itw-* 登记 id；唯一写入者是编排者经 register。",
+  "version": 1,
+  "interviews": []
+}

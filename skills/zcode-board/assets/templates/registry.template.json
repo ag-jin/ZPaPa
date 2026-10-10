@@ -1,0 +1,6 @@
+{
+  "_note": "zcode-board 模板：registry.json（第一方可写·全局发号登记，设计 §3.2）。version=1；seq 为高水位（已发最大号；空序列为 0，永不可回落）；entries 为发号登记，模板为空数组，可直接复制为 <项目根>/.zcode/board/registry.json。条目完整字段：no（全局单序列正整数，计划号与任务号同一条序列）、kind（plan|task|spec）、file（可随苗圃迁移与计划→spec 延续更新指向，号不变）、specRoot（kind=spec 时 spec 特性号以 spec 根为键）、title（发号时快照，仅供人读）、planCode（仅计划类特性：4 位显示码 [A-Z][A-Z0-9]{3}，首轮 --assign 分配——手工 --plan-code 指定或按文件名/标题派生；不参与序列号与引用位）、assignedAt。只增不复用：条目删除后号成空洞，seq 绝不回落；写权限仅编排者经 --assign（原子写），人不得手写号。",
+  "version": 1,
+  "seq": 0,
+  "entries": []
+}

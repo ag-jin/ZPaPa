@@ -1,0 +1,355 @@
+{
+  "x-contractVersion": "2.4",
+  "x-schemaVersion": "2.3",
+  "x-note": "供无第三方依赖实现校验：本文件只使用受约束关键字子集 type/required/properties/items/enum/const/oneOf/pattern；根级 x-* 键为元数据，非校验关键字。本 schema 只描述编译产物 board.json（设计 §3.3，version 主版本 2；契约 v2.1/T21：status 增 cancelled、任务卡增 assignees[]、stage/stageRule 正式化；契约 v2.2/#46：特性增 planCode、两级增 currentAssignee、计划任务增 section 且 label 改计划内层级路径；契约 v2.3/#53：特性增 roadmap、任务卡增 nextAssignee、计划稿特性段位随子卡汇总、arranged-not-expanded 判据收窄为零卡；v2.3 补篇/#66：cancelled 终态优先于 roadmap 段位压制——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」；契约 v2.4/#72：编译面契约——扫描面配置化（默认只扫 .zcode/plans/，docs 计划目录走 .zcode/board/scan.json opt-in）+ --assign 防 mass 改写闸（>10 未领号计划文件拒绝），board.json 字段不变）；interviews/registry/runs 三类第一方真相的字段契约见 assets/templates/*.template.json 与设计 §3.1/§3.2/§5.2；pr 字段写入通道见 assets/contracts/run-event.md v2.1。x-schemaVersion 为本 schema 自身版本（#67）；包版本映射见 SKILL.md「版本策略」节，当前包 0.4.0 = 契约 v2.4 + schema v2.3。",
+  "x-decisions": [
+    "version 冻结为主版本 2（const 2）；应用遇更大主版本走设计 §8.2 空态 C，不猜测渲染。",
+    "未领号缺省形态 = no 与 label 同时缺省或同时存在（关键字子集无 additionalProperties，该断言由 --check 子集校验器补：见 assets/tools/validate-sample.mjs 的实现范式）。过渡态例外（T21 成文）：未领号特性下允许存在已领号的卡——卡保留 no、label 缺省，直到特性领号后按树位补派生（markers.md v2.1 §2.4）。",
+    "diagnostics[] 条目冻结为 {path, message} 二字段（设计 §12 只规定“记录路径与原因”，无从细化）。",
+    "时间戳冻结为带时区的 ISO 8601（+HH:MM 或 Z，如 2026-10-09T15:00:00+08:00）。",
+    "attention 为节点级字段（特性与任务都可挂——设计 §8.4 的卡片徽章判决；§3.3 示例任务未画该字段属示例省略）；attentionSummary 为全板计数，与节点 attention 逐码相等。",
+    "tasks 支持嵌套：schema 展开到 depth 3（feature → task → subtask，设计 §4.2）；更深层级因子集无递归手段不在 v2 展开，编译器仍可支持。",
+    "worktree 命名接受两形态（#71 修订级成文；设计 §6.1 条件 5、消费契约 §4.5）：① `.zcode/worktrees/task-<no>`；② 嵌套项目根相对路径 `<子目录>/.zcode/worktrees/task-<no>`（板根与一层子项目根并存时的常态，如 ZPaPa/.zcode/worktrees/task-64；末段号为 task-<no>，其余形态拒收 + diagnostics。fs 互证面 = 板根与一层子项目根下的 .zcode/worktrees/，声明两形态经 exact/后缀匹配命中）。pr 仅远程门禁模式非空（设计 §7.3），本地模式恒为 null。pr 写入通道（T21 定案成文）：integrator 报告经 run_event 携带 pr、record-run 转抄入 runs 记录（contracts/run-event.md v2.1）；schema 侧 pr 形态不变。",
+    "status 词汇冻结为 pending|active|blocked|completed|cancelled（前四词与 progress.json 一致，设计 §4.3；cancelled 为 v2.1/T21 终态：取消留痕、条目保留、号不复用，来源 `> cancelled:` 语法族，markers.md v2.1）；run 事件不参与 status 推导（§4.5）。任务级不产出 blocked（T21 成文：blocked 仅由 progress.stages 在特性级产出；任务受阻以 blockers[] 徽章呈现）。降级状态表达（勘误 9a 成文）：源解析失败的子树以 status=pending 占位 + statusRule 写明“源解析失败：状态未知（降级保留标题与 mtime，§12）” + diagnostics——不新增“未知”状态词，未知性由 statusRule 溯源表达。",
+    "lastRun 为 null 或 {at, role, result, stoppedAt, next} 全字段对象（§4.5 派生）；activeRun 为 null 或 {role, at}，仅在 lastRun.result ∈ {partial, interrupted} 时非空。",
+    "blockers[] 二分：external 无 blockedBy；dependency 的 blockedBy 可缺省（目标不在板上时按 §12 不造引用，保留 kind 与 summary 原文 + diagnostics）。",
+    "feature 的 origin.type 冻结为 spec-driven-workflow|plan-session|interview 三值（§3.3 三处示例的实测词汇）。",
+    "特性 label = 其稳定号字符串；任务 label 首段 = 所属特性稳定号，子级段随树位派生（§4.2）；label 绝不进入引用位。契约 v2.2/#46 改造：计划特性的任务 label = **计划内层级路径**（顶层 1..n、子 = <父>.<序>，如 1/1.1/1.1.1；与 planCode 组合保证项目内唯一，计划间可重复），spec 特性的任务 label 维持「首段 = 所属特性稳定号」。",
+    "updatedAt 为必需（§8.3 渲染与卡龄信号的基础），createdAt 为 best-effort 可选（§3.3 示例中 interview-only 节点两者均未画）。聚合口径（T21 成文）：特性 updatedAt = max(源推导, progress.activity 最新 at, 子树卡片 updatedAt)；卡 updatedAt = max(源推导, 最新 run.at)。",
+    "stage/stageRule 为 v2.1 正式化的产物必填字段（T7 实现、T21 契约化）：七段位词表 待设计|待办|执行中|审核中|阻塞|已完成|已取消；优先级（照 lib/derive.mjs deriveStage）阻塞 > 已取消 > 已完成 > 待设计（安排类缺口）> 审核中（判断角色 activeRun）> 执行中（干活角色 activeRun 或 status=active）> 待办。v2.3/#53 增补（compile 侧，deriveStage 纯函数不变）：计划稿特性段位随子卡汇总——全部子卡 completed → 已完成（stageRule 记 N/M）；否则按上表推导（active→执行中 / pending→待办）；零卡且 arranged-not-expanded 缺口 → 待设计；带 roadmap 标记的占位稿特性与全部任务卡段位恒为待设计（#66 例外：cancelled 为终态不让位——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」）。",
+    "任务卡 assignees[]（v2.1 新增）为字符串数组、顺序即管线序：默认管线 implementer→test-verifier→code-reviewer→integrator 免写（缺省即此值）；`> agents:` 行整行覆盖（角色须在角色词表内，markers.md v2.1）。",
+    "planCode（v2.2/#46 新增，仅特性层）为 4 位显示码 `[A-Z][A-Z0-9]{3}`（如 IMPL/UI01/DREM/PREV）：计划类特性首轮 --assign 分配（手工 --plan-code 指定或按文件名/标题派生；已有码不重分配）；registry 条目是唯一存储位置，board.json 只读透出；**不参与全局序列号与引用位**，与任务 label 组合成 `UI01-1.2` 显示形态。",
+    "currentAssignee（v2.2/#46 新增）为特性/任务两级必填字段：卡级 = activeRun.role ∩ assignees[]（角色在责任管线内才成立，否则 null）；特性级 = 子树首个非空 currentAssignee（无则 null）；null 也显式写出（UI 无第三种形态）。",
+    "section（v2.2/#46 新增，仅计划任务，出现即非空）为计划稿二级及以下标题的最近章节名：用于 UI 的章节子分组（如「UI 期 / 梦 / backlog / 远期」）；章节前条目与 spec 任务无该字段。",
+    "nextAssignee（v2.3/#53 新增，仅任务卡级必填）为 assignees[] 序中第一个**无 done run 证据**的角色（该卡归一后 runs 记录；partial/failed/interrupted 不算证据）：三绿卡（implementer/test-verifier/code-reviewer done）→ integrator；integrator done=已合并——管线全部有 done 证据 → null；无 run 卡 → 管线首角色；assignees 为空 → null；null 也显式写出（UI 无第三种形态）。",
+    "roadmap（v2.3/#53 新增，仅计划稿特性层，出现即 true）来源 markers.md v2.3 §2.5 的 roadmap 子旗标（独立注释或与号标记同注释，只在计划稿 H1 层合法；--check 对非法位置非零退出）：占位稿「本稿条目本身不执行」——特性与全部任务卡段位恒为待设计（status/勾选事实照常派生不受影响；#66 例外：cancelled 终态不让位，已取消的卡/特性照常「已取消」——终态优先序见 markers.md v2.3 §2.5 补篇）；非 roadmap 特性不写该字段（false 省略）。",
+    "arranged-not-expanded 判据（v2.3/#53 收窄）：特性节点无 tasks.md/progress.json 且——plan 判**零卡**（计划稿任务卡按契约恒为 draft，“全部为 draft”无区分度，会把有卡稿永久误挂）；spec 维持「零卡或全部为 draft」（spec 卡 draft=false 有区分度）。"
+  ],
+  "type": "object",
+  "required": ["version", "project", "updatedAt", "generatedBy", "sources", "features", "attentionSummary", "diagnostics"],
+  "properties": {
+    "version": { "type": "integer", "const": 2 },
+    "project": {
+      "type": "object",
+      "required": ["root", "name"],
+      "properties": {
+        "root": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "updatedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+    "generatedBy": { "type": "string", "pattern": "^zcode-board/[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "sources": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "const": "interviews" }, "path": { "type": "string" } } },
+          { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "const": "registry" }, "path": { "type": "string" } } },
+          { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "const": "runs" }, "path": { "type": "string" } } },
+          { "type": "object", "required": ["kind", "root", "files"], "properties": { "kind": { "const": "spec" }, "root": { "type": "string" }, "files": { "type": "array", "items": { "type": "string" } } } },
+          { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "const": "plan" }, "path": { "type": "string" } } }
+        ]
+      }
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "title", "details", "status", "statusRule", "stage", "stageRule", "origin", "evidence", "updatedAt", "tasks", "attention", "currentAssignee"],
+        "properties": {
+          "id": { "type": "string" },
+          "no": { "type": "integer" },
+          "label": { "type": "string", "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$" },
+          "planCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{3}$" },
+          "roadmap": { "type": "boolean" },
+          "kind": { "enum": ["spec", "plan", "interview-only"] },
+          "title": { "type": "string" },
+          "details": { "type": "string" },
+          "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] },
+          "statusRule": { "type": "string" },
+          "stage": { "enum": ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"] },
+          "stageRule": { "type": "string" },
+          "origin": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "pattern": "^(spec-driven-workflow|plan-session|interview)$" },
+              "specRoot": { "type": "string" },
+              "interviewId": { "type": "string" },
+              "planRef": { "type": "string" },
+              "sessionId": { "type": "string" }
+            }
+          },
+          "progress": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "object", "required": ["totalTasks", "completedTasks"], "properties": { "totalTasks": { "type": "integer" }, "completedTasks": { "type": "integer" } } }
+            ]
+          },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+          "updatedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+          "attention": { "type": "array", "items": { "enum": ["interviewed-not-arranged", "arranged-not-expanded", "interrupted-resume", "unmerged-worktree"] } },
+          "currentAssignee": {
+            "oneOf": [{ "type": "null" }, { "type": "string" }]
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "details", "status", "statusRule", "stage", "stageRule", "source", "origin", "requirements", "evidence", "assignees", "draft", "blockers", "attention", "lastRun", "activeRun", "worktree", "pr", "updatedAt", "currentAssignee", "nextAssignee"],
+              "properties": {
+                "no": { "type": "integer" },
+                "label": { "type": "string", "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$" },
+                "title": { "type": "string" },
+                "details": { "type": "string" },
+                "section": { "type": "string" },
+                "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] },
+                "statusRule": { "type": "string" },
+                "stage": { "enum": ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"] },
+                "stageRule": { "type": "string" },
+                "assignees": { "type": "array", "items": { "type": "string" } },
+                "source": {
+                  "type": "object",
+                  "required": ["file", "selector"],
+                  "properties": { "file": { "type": "string" }, "selector": { "type": "string" } }
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "pattern": "^(spec-driven-workflow|plan-session|interview)$" },
+                    "specRoot": { "type": "string" },
+                    "interviewId": { "type": "string" },
+                    "planRef": { "type": "string" },
+                    "sessionId": { "type": "string" }
+                  }
+                },
+                "requirements": { "type": "array", "items": { "type": "string" } },
+                "evidence": { "type": "array", "items": { "type": "string" } },
+                "draft": { "type": "boolean" },
+                "blockers": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": ["kind", "summary", "evidence"],
+                        "properties": {
+                          "kind": { "const": "external" },
+                          "summary": { "type": "string" },
+                          "evidence": { "type": "array", "items": { "type": "string" } }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "required": ["kind", "summary", "evidence"],
+                        "properties": {
+                          "kind": { "const": "dependency" },
+                          "summary": { "type": "string" },
+                          "blockedBy": { "type": "integer" },
+                          "evidence": { "type": "array", "items": { "type": "string" } }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "attention": { "type": "array", "items": { "enum": ["interviewed-not-arranged", "arranged-not-expanded", "interrupted-resume", "unmerged-worktree"] } },
+                "currentAssignee": {
+                  "oneOf": [{ "type": "null" }, { "type": "string" }]
+                },
+                "nextAssignee": {
+                  "oneOf": [{ "type": "null" }, { "type": "string" }]
+                },
+                "lastRun": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["at", "role", "result", "stoppedAt", "next"],
+                      "properties": {
+                        "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                        "result": { "enum": ["done", "partial", "failed", "interrupted"] },
+                        "stoppedAt": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
+                        "next": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+                      }
+                    }
+                  ]
+                },
+                "activeRun": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["role", "at"],
+                      "properties": {
+                        "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                        "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
+                      }
+                    }
+                  ]
+                },
+                "worktree": {
+                  "oneOf": [
+                    { "type": "null" },
+                    { "type": "string", "pattern": "^(?:[^/.][^/]*/)?\\.zcode/worktrees/task-[1-9][0-9]*$" }
+                  ]
+                },
+                "pr": {
+                  "oneOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "required": ["number", "url"],
+                      "properties": { "number": { "type": "integer" }, "url": { "type": "string", "pattern": "^https?://.+" } }
+                    }
+                  ]
+                },
+                "createdAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+                "updatedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+                "tasks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["title", "details", "status", "statusRule", "stage", "stageRule", "source", "origin", "requirements", "evidence", "assignees", "draft", "blockers", "attention", "lastRun", "activeRun", "worktree", "pr", "updatedAt", "currentAssignee", "nextAssignee"],
+                    "properties": {
+                      "no": { "type": "integer" },
+                      "label": { "type": "string", "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$" },
+                      "title": { "type": "string" },
+                      "details": { "type": "string" },
+                      "section": { "type": "string" },
+                      "status": { "enum": ["pending", "active", "blocked", "completed", "cancelled"] },
+                      "statusRule": { "type": "string" },
+                      "stage": { "enum": ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"] },
+                      "stageRule": { "type": "string" },
+                      "assignees": { "type": "array", "items": { "type": "string" } },
+                      "source": {
+                        "type": "object",
+                        "required": ["file", "selector"],
+                        "properties": { "file": { "type": "string" }, "selector": { "type": "string" } }
+                      },
+                      "origin": {
+                        "type": "object",
+                        "properties": {
+                          "type": { "type": "string", "pattern": "^(spec-driven-workflow|plan-session|interview)$" },
+                          "specRoot": { "type": "string" },
+                          "interviewId": { "type": "string" },
+                          "planRef": { "type": "string" },
+                          "sessionId": { "type": "string" }
+                        }
+                      },
+                      "requirements": { "type": "array", "items": { "type": "string" } },
+                      "evidence": { "type": "array", "items": { "type": "string" } },
+                      "draft": { "type": "boolean" },
+                      "blockers": {
+                        "type": "array",
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "required": ["kind", "summary", "evidence"],
+                              "properties": {
+                                "kind": { "const": "external" },
+                                "summary": { "type": "string" },
+                                "evidence": { "type": "array", "items": { "type": "string" } }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "required": ["kind", "summary", "evidence"],
+                              "properties": {
+                                "kind": { "const": "dependency" },
+                                "summary": { "type": "string" },
+                                "blockedBy": { "type": "integer" },
+                                "evidence": { "type": "array", "items": { "type": "string" } }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "attention": { "type": "array", "items": { "enum": ["interviewed-not-arranged", "arranged-not-expanded", "interrupted-resume", "unmerged-worktree"] } },
+                      "currentAssignee": {
+                        "oneOf": [{ "type": "null" }, { "type": "string" }]
+                      },
+                      "nextAssignee": {
+                        "oneOf": [{ "type": "null" }, { "type": "string" }]
+                      },
+                      "lastRun": {
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "object",
+                            "required": ["at", "role", "result", "stoppedAt", "next"],
+                            "properties": {
+                              "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                              "result": { "enum": ["done", "partial", "failed", "interrupted"] },
+                              "stoppedAt": { "oneOf": [{ "type": "null" }, { "type": "integer" }] },
+                              "next": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+                            }
+                          }
+                        ]
+                      },
+                      "activeRun": {
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "object",
+                            "required": ["role", "at"],
+                            "properties": {
+                              "role": { "enum": ["implementer", "debugger", "refactoring-optimizer", "code-reviewer", "test-verifier", "integrator"] },
+                              "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
+                            }
+                          }
+                        ]
+                      },
+                      "worktree": {
+                        "oneOf": [
+                          { "type": "null" },
+                          { "type": "string", "pattern": "^(?:[^/.][^/]*/)?\\.zcode/worktrees/task-[1-9][0-9]*$" }
+                        ]
+                      },
+                      "pr": {
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "object",
+                            "required": ["number", "url"],
+                            "properties": { "number": { "type": "integer" }, "url": { "type": "string", "pattern": "^https?://.+" } }
+                          }
+                        ]
+                      },
+                      "createdAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" },
+                      "updatedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "attentionSummary": {
+      "type": "object",
+      "required": ["interviewedNotArranged", "arrangedNotExpanded", "interruptedResume", "unmergedWorktree"],
+      "properties": {
+        "interviewedNotArranged": { "type": "integer" },
+        "arrangedNotExpanded": { "type": "integer" },
+        "interruptedResume": { "type": "integer" },
+        "unmergedWorktree": { "type": "integer" }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "message"],
+        "properties": {
+          "path": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

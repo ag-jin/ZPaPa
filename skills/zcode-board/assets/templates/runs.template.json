@@ -1,0 +1,5 @@
+{
+  "_note": "zcode-board 模板：runs.json（第一方真相·执行记录，设计 §5.2）。version=1；runs 为追加式数组，模板为空数组，可直接复制为 <项目根>/.zcode/board/runs.json。条目完整字段：runId（hook 生成 run-<日期>-<短后缀>，不可变）、sessionId 与 at（hook 补齐的机械字段，不由报告自报，防伪造时钟）、role（implementer|debugger|refactoring-optimizer|code-reviewer|test-verifier|integrator）、result（done|partial|failed|interrupted）、cards（涉及卡号正整数数组，可为空数组=无卡关联事件）、worktree 与 branch（未开工作树的轻量执行可缺省；**仅显式声明时转抄，缺省一律 null + diagnostics「未声明工作树」——v2.1 勘误 #42（2026-10-10），不按卡号推导**）、evidence（相对项目根路径数组）、breakpoint（断点语义：{stoppedAt: 卡号, next: 一句话 ≤200 字符}，done/failed 可为 null）、pr（可选·契约 v2.1：远程门禁模式合并凭据 {number: 正整数, url: http(s) 链接}，缺省不落该字段——见 contracts/run-event.md v2.1）。追加式 + 原子写 + 入 git；未知信息留空不猜；唯一写入者是 hook/应用（角色报告的 run_event 块经机械落账），编排者与子智能体都不直写。",
+  "version": 1,
+  "runs": []
+}
