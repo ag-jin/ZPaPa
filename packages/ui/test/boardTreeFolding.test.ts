@@ -231,7 +231,9 @@ function blockSlice(markup: string, featureId: string, nextFeatureId: string | n
   const start = markup.lastIndexOf("<details", anchor);
   assert.ok(start >= 0 && start < anchor, `特性块 ${featureId} 应是 <details> 大块`);
   const nextAnchor =
-    nextFeatureId === null ? -1 : markup.indexOf(`data-board-feature-block="${nextFeatureId}"`, anchor);
+    nextFeatureId === null
+      ? -1
+      : markup.indexOf(`data-board-feature-block="${nextFeatureId}"`, anchor);
   const end = nextFeatureId === null ? markup.length : markup.lastIndexOf("<details", nextAnchor);
   assert.ok(end > anchor, `下一个特性块应在 ${featureId} 之后`);
   return markup.slice(start, end);
@@ -245,7 +247,11 @@ test("树形：特性节点是可折叠大块（含 open 属性判据与摘要�
     "有 attention 缺口的特性默认展开（details open）",
   );
   assert.match(withGap, /data-board-feature-block-summary="plan:plan-zcode-ui"/, "折叠块摘要锚点");
-  assert.match(withGap, /data-board-feature-card-count="4"/, "摘要显示卡片数（含嵌套子卡：46/47/48/49）");
+  assert.match(
+    withGap,
+    /data-board-feature-card-count="4"/,
+    "摘要显示卡片数（含嵌套子卡：46/47/48/49）",
+  );
   assert.match(withGap, />4 张卡</, "摘要文案 [N 张卡]（逐字）");
   const done = blockSlice(markup, "plan:plan-done", null);
   const detailsTag = done.slice(done.indexOf("<details"), done.indexOf(">"));

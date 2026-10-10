@@ -4,10 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
-import {
-  buildBoardKanban,
-  buildBoardListGroups,
-} from "../src/board/boardViewsViewModel.js";
+import { buildBoardKanban, buildBoardListGroups } from "../src/board/boardViewsViewModel.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { GROUPING_BOARD } from "./boardGroupingFixture.js";
@@ -87,7 +84,11 @@ test("看板渲染：特性分组头不是独立卡（卡片锚点只出现在�
     markup.indexOf('data-board-column="审核中"'),
   );
   assert.match(doing, /data-board-kanban-group="plan:plan-zcode-ui"/, "执行中列带分组头锚点");
-  assert.deepEqual(anchors(doing, "data-board-kanban-card"), ["task:46"], "列内卡片锚点只有任务卡（特性不再占卡位）");
+  assert.deepEqual(
+    anchors(doing, "data-board-kanban-card"),
+    ["task:46"],
+    "列内卡片锚点只有任务卡（特性不再占卡位）",
+  );
   assert.match(doing, /data-board-feature-code="UI01"/, "分组头显示计划码（完整形态）");
   const todo = markup.slice(
     markup.indexOf('data-board-column="待办"'),
@@ -153,7 +154,11 @@ test("表格渲染：分组行（列宽整行占位 + 特性头），子行在�
 test("责任管线：当前执行者加粗变色，其余灰色小字（表格 assignees 列）", () => {
   const markup = render({ viewMode: "table" });
   const pipeline = markup.slice(markup.indexOf("data-board-pipeline="));
-  assert.match(pipeline, /data-board-pipeline-role="implementer"[^>]*data-board-pipeline-current="true"/, "当前执行者标记");
+  assert.match(
+    pipeline,
+    /data-board-pipeline-role="implementer"[^>]*data-board-pipeline-current="true"/,
+    "当前执行者标记",
+  );
   assert.ok(
     /data-board-pipeline-current="true"[^>]*class="[^"]*font-medium[^"]*"/.test(pipeline) ||
       /class="[^"]*font-medium[^"]*"[^>]*data-board-pipeline-current="true"/.test(pipeline),
@@ -165,8 +170,12 @@ test("责任管线：当前执行者加粗变色，其余灰色小字（表格 a
     "当前执行者变色（text-primary）",
   );
   assert.ok(
-    /data-board-pipeline-role="test-verifier"[^>]*class="[^"]*text-foreground-subtle/.test(pipeline) ||
-      /class="[^"]*text-foreground-subtle[^"]*"[^>]*data-board-pipeline-role="test-verifier"/.test(pipeline),
+    /data-board-pipeline-role="test-verifier"[^>]*class="[^"]*text-foreground-subtle/.test(
+      pipeline,
+    ) ||
+      /class="[^"]*text-foreground-subtle[^"]*"[^>]*data-board-pipeline-role="test-verifier"/.test(
+        pipeline,
+      ),
     "其余角色灰色小字（text-foreground-subtle）",
   );
   assert.ok(

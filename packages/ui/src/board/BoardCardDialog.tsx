@@ -68,9 +68,7 @@ function DialogSection({
   return (
     <section
       data-board-dialog-section={name}
-      className={
-        className ?? "flex flex-col gap-1 border-t border-border/50 px-3 py-2"
-      }
+      className={className ?? "flex flex-col gap-1 border-t border-border/50 px-3 py-2"}
     >
       <h3 className="text-ui-xs font-medium text-foreground-subtle">{title}</h3>
       {children}
@@ -158,13 +156,7 @@ function DialogBlockerRow({
   );
 }
 
-export function BoardCardDialog({
-  board,
-  node,
-  onClose,
-  onJumpToCard,
-  now,
-}: BoardCardDialogProps) {
+export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: BoardCardDialogProps) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
   const ageBase = now ?? Date.now();
@@ -196,11 +188,7 @@ export function BoardCardDialog({
         className="relative my-auto flex max-h-[85vh] w-full max-w-[26rem] flex-col overflow-hidden rounded-2xl border border-popover-border bg-popover text-ui-base/relaxed text-foreground shadow-md"
       >
         <div data-board-dialog-section="header" className="flex items-start gap-2 px-3 py-2">
-          <BoardNodeNumber
-            no={dialog.no}
-            label={dialog.label}
-            planCode={node.planCode}
-          />
+          <BoardNodeNumber no={dialog.no} label={dialog.label} planCode={node.planCode} />
           <span className="min-w-0 flex-1 text-ui-sm font-medium text-foreground">
             {dialog.title}
           </span>

@@ -132,7 +132,9 @@ test("表格：行序 = 分组行 + 组内手推序列（#46 B4；组序 = 成�
     "data-board-card",
   );
   assert.deepEqual(filtered, ["spec:preview-channel", "task:8"], "段位筛后只剩一组（组头 + #8）");
-  const flat = buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id);
+  const flat = buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map(
+    (node) => node.id,
+  );
   assert.deepEqual(flat, ["task:8", "spec:preview-channel"], "平铺管线（分组的数据源）语义不变");
 });
 

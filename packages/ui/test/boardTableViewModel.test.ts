@@ -5,7 +5,6 @@ import {
   BOARD_TABLE_COLUMNS,
   DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY,
   boardTableCellText,
-  buildBoardListRows,
   parseBoardTableColumnVisibility,
   serializeBoardTableColumnVisibility,
   toggleBoardTableColumn,

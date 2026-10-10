@@ -295,9 +295,7 @@ function BoardReadyView({
             {...(tableColumns ? { columns: tableColumns } : {})}
             {...(onTableColumnsChange ? { onColumnsChange: onTableColumnsChange } : {})}
             {...(collapsedFeatureIds ? { collapsedFeatureIds } : {})}
-            {...(onToggleFeatureCollapsed
-              ? { onToggleFeatureCollapsed }
-              : {})}
+            {...(onToggleFeatureCollapsed ? { onToggleFeatureCollapsed } : {})}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
           />
@@ -326,10 +324,7 @@ function BoardReadyView({
                   key={`${diagnostic.path}:${index}`}
                   className="text-ui-xs text-foreground-subtle"
                 >
-                  <span
-                    className="font-mono"
-                    title={diagnostic.path}
-                  >
+                  <span className="font-mono" title={diagnostic.path}>
                     {formatBoardPathTail(diagnostic.path)}
                   </span>{" "}
                   {diagnostic.message}

@@ -74,7 +74,11 @@ const PLAN = {
       label: "6",
       title: "待办卡",
       blockers: [
-        { kind: "external", summary: "外部依赖未定（沙箱凭据缺失）", evidence: [".zcode/plans/plan-zcode-ui.md"] },
+        {
+          kind: "external",
+          summary: "外部依赖未定（沙箱凭据缺失）",
+          evidence: [".zcode/plans/plan-zcode-ui.md"],
+        },
       ],
       evidence: [".zcode/plans/plan-zcode-ui.md"],
     }),
@@ -116,7 +120,6 @@ export const GROUPING_BOARD = {
   },
   diagnostics: [],
 };
-
 
 /** 夹具 → ready 态（解析失败即抛，防夹具漂移导致断言静默失效）。 */
 export function readyGroupingBoard(): BoardPaneLoadState {

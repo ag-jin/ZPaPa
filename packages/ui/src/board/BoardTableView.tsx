@@ -130,7 +130,10 @@ function BoardTableRow({
         >
           {key === "assignees" ? (
             // 责任管线（#46 B6）：当前执行者加粗变色，其余灰色小字
-            <BoardAssigneePipeline assignees={node.assignees} currentAssignee={node.currentAssignee} />
+            <BoardAssigneePipeline
+              assignees={node.assignees}
+              currentAssignee={node.currentAssignee}
+            />
           ) : key === "no" ? (
             // 号列走共用编号零件（#46 B1 短形态 + data-board-node-id 锚点与其余视图一致）
             <BoardNodeNumber no={node.no} label={node.label} planCode={node.planCode} short />
@@ -283,7 +286,9 @@ export function BoardTableView({
                 indentKey={indentKey}
                 now={ageBase}
                 collapsed={collapsed.has(group.feature.id)}
-                {...(onToggleFeatureCollapsed ? { onToggleCollapsed: onToggleFeatureCollapsed } : {})}
+                {...(onToggleFeatureCollapsed
+                  ? { onToggleCollapsed: onToggleFeatureCollapsed }
+                  : {})}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
               />

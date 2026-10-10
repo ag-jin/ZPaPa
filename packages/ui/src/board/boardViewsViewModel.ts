@@ -477,10 +477,11 @@ export function buildBoardKanban(
       if (!featureInColumn && taskNodes.length === 0) continue;
       const sortedTasks = sortBoardViewNodes(taskNodes, sort);
       // 分组排序键 = 组内最高优先成员（特性自身也算成员：attention 置顶，updatedAt 倒序）
-      const sortKey = sortBoardViewNodes(
+      const members = sortBoardViewNodes(
         featureInColumn ? [feature, ...sortedTasks] : sortedTasks,
         sort,
-      )[0];
+      );
+      const sortKey = members[0] ?? feature;
       groups.push({ feature, nodes: sortedTasks, featureInColumn, sortKey });
     }
     groups.sort((left, right) => {

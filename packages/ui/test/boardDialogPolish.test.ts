@@ -55,8 +55,15 @@ test("弹窗：面板内定位（面板根 relative；overlay absolute，非 fix
     "面板根带 relative（弹窗的定位上下文）",
   );
   const dialog = dialogSlice(markup);
-  assert.match(dialog, /<div data-board-dialog-root=""[^>]*class="[^"]*absolute inset-0/, "overlay 是面板内 absolute");
-  assert.ok(!/data-board-dialog-root=""[^>]*class="[^"]*fixed/.test(dialog), "overlay 不得再用 fixed 全局");
+  assert.match(
+    dialog,
+    /<div data-board-dialog-root=""[^>]*class="[^"]*absolute inset-0/,
+    "overlay 是面板内 absolute",
+  );
+  assert.ok(
+    !/data-board-dialog-root=""[^>]*class="[^"]*fixed/.test(dialog),
+    "overlay 不得再用 fixed 全局",
+  );
 });
 
 test("弹窗：区块顺序 = 标题 → 阻碍 → 执行摘要 → 细节 → 来源 → 证据路径 → 时间戳（底部）；阻碍突出", () => {
@@ -69,7 +76,10 @@ test("弹窗：区块顺序 = 标题 → 阻碍 → 执行摘要 → 细节 → 
     "区块顺序：标题 → 状态 → 阻碍 → 执行摘要 → 来源 → 证据 → 时间戳（末尾）",
   );
   const blockersStart = dialog.indexOf('data-board-dialog-section="blockers"');
-  const blockersSlice = dialog.slice(blockersStart, dialog.indexOf('data-board-dialog-section="execution"'));
+  const blockersSlice = dialog.slice(
+    blockersStart,
+    dialog.indexOf('data-board-dialog-section="execution"'),
+  );
   assert.match(blockersSlice, /border-warning/, "阻碍区块突出（warning 描边）");
 });
 
@@ -106,13 +116,19 @@ test("弹窗：执行摘要 = 最近执行四要素 + 责任管线（当前执�
 });
 
 test("诊断区：默认折叠为一行「诊断 N 条」，明细在折叠体内", () => {
+  const base = readyGroupingBoard();
+  assert.equal(base.kind, "ready");
+  if (base.kind !== "ready") return;
   const markup = render({
     state: {
       kind: "ready",
-      board: { ...readyGroupingBoard().board, diagnostics: [
-        { path: ".zcode/plans/plan-x.md", message: "条目未领号：按未领号上板。" },
-        { path: ".zcode/board/runs.json", message: "run 引用卡号 99 不在板上。" },
-      ] },
+      board: {
+        ...base.board,
+        diagnostics: [
+          { path: ".zcode/plans/plan-x.md", message: "条目未领号：按未领号上板。" },
+          { path: ".zcode/board/runs.json", message: "run 引用卡号 99 不在板上。" },
+        ],
+      },
     },
   });
   const slice = markup.slice(markup.indexOf('data-board-diagnostics="'));
