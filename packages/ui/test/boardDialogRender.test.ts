@@ -63,7 +63,8 @@ test("弹窗：编号 + 名称 + 状态/缺口徽章（词汇与卡片一致，�
   const status = sectionOf(markup, "status");
   assert.ok(status, "状态/缺口区块应存在");
   assert.ok(status.includes('data-board-stage="执行中"'), "段位徽章（与卡片同一零件）");
-  assert.ok(status.includes('data-board-status="active"'), "状态色点");
+  // #46 B5：弹窗状态色点去重（段位徽章已含状态），只保留段位徽章 + status 词条文本。
+  assert.ok(!status.includes('data-board-status="'), "弹窗不重复状态色点（B5）");
   assert.ok(status.includes(">进行中<"), "状态词汇与卡片徽章一致（status 词条）");
   assert.ok(status.includes('data-board-attention="interrupted-resume"'), "缺口徽章 1");
   assert.ok(status.includes('data-board-attention="unmerged-worktree"'), "缺口徽章 2");
@@ -147,10 +148,10 @@ test("弹窗：特性节点（label 缺省）显示未领号；阻拦区块隐�
   assert.equal(sectionOf(markup, "blockers"), null, "特性节点弹窗不渲染阻拦区块");
 });
 
-test("弹窗：最近执行四要素 / 来源行 / 证据路径 / 时间戳（§6 后四区块）", () => {
+test("弹窗：执行摘要四要素 / 来源行 / 证据路径 / 时间戳（§6 后四区块；#46 B5 区块改名为执行摘要）", () => {
   const markup = render("task:8");
-  const lastRun = sectionOf(markup, "lastRun");
-  assert.ok(lastRun, "最近执行区块存在");
+  const lastRun = sectionOf(markup, "execution");
+  assert.ok(lastRun, "执行摘要区块存在（最近执行四要素 + 责任管线）");
   assert.ok(lastRun.includes("partial"), "result");
   assert.ok(lastRun.includes("停在 #8"), "断点");
   assert.ok(lastRun.includes("补 updater 单测后重新验证"), "下一步摘要");
@@ -174,10 +175,13 @@ test("弹窗：最近执行四要素 / 来源行 / 证据路径 / 时间戳（§
   assert.ok(timestamps.includes('data-board-dialog-timestamp="updatedAt"'));
 });
 
-test("弹窗：lastRun 为 null 时不渲染最近执行区块（§6 / §3.3 同口径）", () => {
+test("弹窗：lastRun 为 null 时不渲染最近执行行（§6 / §3.3 同口径；执行摘要仍含管线）", () => {
   // 草案第二张：无 lastRun、无 origin、无证据路径（形态见 boardTestFixture）。
   const markup = render("task:plan:plan-payment-split#1");
-  assert.equal(sectionOf(markup, "lastRun"), null, "无 run → 区块整块不渲染");
+  const execution = sectionOf(markup, "execution");
+  assert.ok(execution, "执行摘要区块仍在（#46 B6：管线单独成行）");
+  assert.ok(!execution.includes("停在 #"), "无 run → 不渲染最近执行行");
+  assert.ok(!/\d{2}\/\d{2}, \d{2}:\d{2}/.test(execution), "无 run → 无绝对时间行");
   assert.equal(sectionOf(markup, "origin"), null, "无 origin → 来源区块隐藏");
   assert.equal(sectionOf(markup, "evidence"), null, "无证据路径 → 区块隐藏");
   const timestamps = sectionOf(markup, "timestamps");
@@ -215,12 +219,12 @@ test("弹窗：关闭路径的锚点（× 与遮罩）都在（Esc 判据在宿�
 
 test("弹窗：英文界面全部区块标题与状态词汇走英文词条（界面文案不漏中文）", () => {
   const markup = render("task:8", {}, "en-US");
-  for (const label of ["Details", "Last run", "Source", "Evidence", "Timestamps"]) {
+  for (const label of ["Details", "Execution", "Source", "Evidence", "Timestamps"]) {
     assert.ok(markup.includes(`>${label}<`), `en-US 弹窗应含区块标题「${label}」`);
   }
   assert.equal(textInside(markup, "data-board-dialog-status"), "Active", "状态词汇走英文词条");
   // 只查界面文案（词条渲染出的可见文本）；板上数据（标题/细节/路径）照原样透出，不参与本地化。
-  const sectionTitles = ["Details", "Last run", "Source", "Evidence", "Timestamps"];
+  const sectionTitles = ["Details", "Execution", "Source", "Evidence", "Timestamps"];
   const uiCopy = [textInside(markup, "data-board-dialog-status"), ...sectionTitles];
   for (const copy of uiCopy) {
     assert.ok(!/[\u4e00-\u9fff]/.test(copy), `en-US 界面文案漏了中文：${copy}`);

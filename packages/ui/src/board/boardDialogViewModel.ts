@@ -96,6 +96,10 @@ export interface BoardCardDialogModel {
   activeRun: BoardActiveRun | null;
   draft: boolean;
   worktree: string | null;
+  /** 责任管线（#46 B6 执行摘要用）：顺序即管线序。 */
+  assignees: string[];
+  /** 当前执行者（#46 A3）：管线 ∩ activeRun；无 → null。 */
+  currentAssignee: string | null;
   /** 细节全文；空串在映射层已归一为 null（区块隐藏）。 */
   details: string | null;
   /** 阻拦区块是否可见：**仅任务卡**且 blockers 非空（§6：特性节点弹窗的阻拦区块隐藏）。 */
@@ -211,6 +215,8 @@ export function resolveBoardAttentionJumpTarget(
     activeRun: node.activeRun,
     draft: node.draft,
     worktree: node.worktree,
+    assignees: node.assignees,
+    currentAssignee: node.currentAssignee,
     details: node.details,
     showBlockers: blockerSource.length > 0,
     blockers: blockerSource.map((blocker, index) => {

@@ -1079,6 +1079,12 @@ const enUS: Record<string, string> = {
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
   "board.feature.cardCount": "{count} cards",
+  "board.relative.justNow": "just now",
+  "board.relative.minutes": "{count} min ago",
+  "board.relative.hours": "{count} h ago",
+  "board.relative.days": "{count} d ago",
+  "board.diagnostics.collapsed": "{count} diagnostics",
+  "board.dialog.executionTitle": "Execution",
   "board.view.tree": "Tree",
   "board.view.kanban": "Board",
   "board.view.list": "List",

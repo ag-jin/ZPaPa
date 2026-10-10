@@ -308,7 +308,8 @@ test(
 
       // 诊断只读展示（diagnostics 非空属合法形态）。
       const diagnosticCount = Array.isArray(raw.diagnostics) ? raw.diagnostics.length : 0;
-      assert.ok(markup.includes(`板级诊断（${diagnosticCount}）`));
+      // #46 B7：诊断区默认折叠为一行「诊断 N 条」。
+      assert.ok(markup.includes(`诊断 ${diagnosticCount} 条`));
     } finally {
       await cleanup();
     }

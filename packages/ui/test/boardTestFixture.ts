@@ -259,6 +259,8 @@ export const GOLDEN_SHAPED_BOARD = {
           stage: "待办",
           draft: true,
           evidence: [],
+          assignees: ["implementer", "test-verifier", "code-reviewer", "integrator"],
+          currentAssignee: null,
           blockers: [
             { kind: "external", summary: "上游 tag 规则未定", evidence: [] },
             // golden 真实形态：dependency 可以没有 blockedBy（目标号缺省）——跳转必须降级。

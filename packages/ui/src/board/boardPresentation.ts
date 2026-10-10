@@ -103,16 +103,53 @@ export function formatAttentionSummaryText(
 export function formatBoardLastRunText(
   lastRun: BoardLastRun | null,
   formatMessage: BoardMessageFormatter,
+  options: { formatTime?: (at: string) => string } = {},
 ): string | null {
   if (!lastRun) return null;
+  const formatTime = options.formatTime ?? formatBoardRunTime;
   const parts: string[] = [];
-  if (lastRun.at) parts.push(formatBoardRunTime(lastRun.at));
+  if (lastRun.at) parts.push(formatTime(lastRun.at));
   if (lastRun.result) parts.push(lastRun.result);
   if (lastRun.stoppedAt !== null) {
     parts.push(formatMessage({ id: "board.lastRun.stoppedAt" }, { no: lastRun.stoppedAt }));
   }
   if (lastRun.next) parts.push(lastRun.next);
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/* ---------------- 弹窗信息精简（#46 B5） ---------------- */
+
+/**
+ * 路径截断（#46 B5「路径截断」）：只显示文件名（basename），目录层级不进弹窗正文；
+ * 全路径由视图层放进 `title` 悬停可查，信息不丢失。
+ */
+export function formatBoardPathTail(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  const index = trimmed.lastIndexOf("/");
+  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
+}
+
+/**
+ * 相对时间（#46 B5「时间相对化」）：`刚刚 / N 分钟前 / N 小时前 / N 天前`；
+ * 超过 30 天回落绝对时间（`formatBoardRunTime`）；解析不了 → null（视图层回退原值，不编造）。
+ * 纯函数：`now` 由调用方传入，同一屏内一致；时钟回拨（未来时间）按「刚刚」。
+ */
+export function formatBoardRelativeTime(
+  at: string,
+  now: number,
+  formatMessage: BoardMessageFormatter,
+): string | null {
+  const epochMs = Date.parse(at);
+  if (!Number.isFinite(epochMs)) return null;
+  const delta = now - epochMs;
+  if (delta < 60_000) return formatMessage({ id: "board.relative.justNow" });
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 60) return formatMessage({ id: "board.relative.minutes" }, { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return formatMessage({ id: "board.relative.hours" }, { count: hours });
+  const days = Math.floor(hours / 24);
+  if (days < 30) return formatMessage({ id: "board.relative.days" }, { count: days });
+  return formatBoardRunTime(at);
 }
 
 /** 执行角色徽记：显示字段，不新增状态词汇（契约 §3.3）。 */
