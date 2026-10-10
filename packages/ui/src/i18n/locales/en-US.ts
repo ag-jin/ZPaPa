@@ -1082,6 +1082,9 @@ const enUS: Record<string, string> = {
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
   "board.feature.cardCount": "{count} cards",
+  // Container-layer count chips (A4-1): draft counts on epic/phase headers plus the epic layer's phase count.
+  "board.layer.planCount": "{count} drafts",
+  "board.layer.phaseCount": "{count} phases",
   // Accessible names for the fold toggles (#55 S-3): the button only shows ▸/▾.
   "board.group.expand": "Expand {name}",
   "board.group.collapse": "Collapse {name}",
@@ -1120,6 +1123,9 @@ const enUS: Record<string, string> = {
   "board.status.blocked": "Blocked",
   "board.status.completed": "Completed",
   "board.status.cancelled": "Cancelled",
+  // Epic registry-row terminal states (§10.5): cancelled reuses board.status.cancelled; archived exists
+  // only on epic shells (feature status has no such value), so it gets its own key.
+  "board.epic.archived": "Archived",
   // Short labels for the four gap codes (filter control; badges keep the §4 verbatim copy).
   "board.attention.label.interviewedNotArranged": "Interviewed, not carded",
   "board.attention.label.arrangedNotExpanded": "Arranged, not broken down",

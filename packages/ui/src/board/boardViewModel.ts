@@ -167,12 +167,33 @@ export interface BoardTaskNode {
   children: BoardTaskNode[];
 }
 
+/**
+ * epic 登记行透出（§10.2；A4-1 三层容器第一层）：`code`/`title`/`status` 三字段。
+ *
+ * 只读透出，不做终态推导：`status ∈ {active, cancelled, archived}` 是 epic 壳层终态载体
+ * （§10.5「成员活跃不复活 epic 终态」），**不认识的取值原样保留**——由呈现层决定标不标注，
+ * 应用侧不猜语义、不把未知值当进行态。
+ */
+export interface BoardEpicNode {
+  code: string;
+  title: string;
+  status: string | null;
+}
+
 export interface BoardFeatureNode {
   id: string;
   no: number | null;
   label: string | null;
   /** 计划码（v2.2 / #46 A1）：4 位显示码（如 UI01）；无计划码 → null。 */
   planCode: string | null;
+  /**
+   * epic 归属引用（§10.3；A4-1）：登记 id 形态 `epic:<4位码>` 或稳定号（正整数，十进制文本）。
+   * 原值形态透出——**归组判据在容器装配层单点判定**（与 board.md 同口径：只有登记 id 且能反查
+   * 到 `epics[]` 登记行才归组；稳定号与孤儿引用顶层平铺）。缺省/非法形态 → null（不猜）。
+   */
+  epic: string | null;
+  /** 期次序（§10.3）：单值正整数；缺省/非法 → null。与 `epic` 成对（原子对），单写其一是违规板。 */
+  phase: number | null;
   kind: string | null;
   title: string;
   /** 契约 §6「细节」：全文；空串归一为 null（区块隐藏）。 */
@@ -205,6 +226,11 @@ export interface BoardViewModel {
   projectName: string;
   projectRoot: string | null;
   updatedAt: string | null;
+  /**
+   * epic 登记行（§10.2；A4-1）：登记序透出。**无 `epics` 键 = 零 epic 项目**（AD-8）——
+   * 归一为空数组，渲染层据此平铺（不造容器、不标「未归属」）。
+   */
+  epics: BoardEpicNode[];
   features: BoardFeatureNode[];
   attentionSummary: BoardAttentionSummary;
   diagnostics: BoardDiagnostic[];
@@ -333,6 +359,29 @@ function readPlanCode(value: unknown): string | null {
   return text !== null && BOARD_PLAN_CODE_RE.test(text) ? text : null;
 }
 
+/**
+ * epic 归属引用（§10.3；A4-1）：登记 id `epic:<4位码>` 与稳定号（正整数）**原值形态透出**：
+ * 稳定号归一为十进制文本（`31` → `"31"`），其余字符串去空白保留。值域/形态校验（前缀、码位、
+ * 登记行反查）归 A2-2 的 `--check` 断言包——应用侧只读，不在这里拒收、也不在渲染层猜语义。
+ */
+function readEpicReference(value: unknown): string | null {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? String(value) : null;
+  }
+  return readText(value);
+}
+
+/** epic 登记行（§10.2）：缺 `code` 的行不采纳（归组靠 code 反查，无码行不可归组）；其余字段宽松透出。 */
+function readEpics(value: unknown): BoardEpicNode[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const code = readText(entry.code);
+    if (code === null) return [];
+    return [{ code, title: readText(entry.title) ?? "", status: readText(entry.status) }];
+  });
+}
+
 function mapTask(raw: unknown, parentId: string, index: number, depth: number): BoardTaskNode {
   const node = isRecord(raw) ? raw : {};
   const no = readPositiveInteger(node.no);
@@ -380,6 +429,8 @@ function mapFeature(raw: unknown, index: number): BoardFeatureNode {
     no,
     label,
     planCode: readPlanCode(node.planCode),
+    epic: readEpicReference(node.epic),
+    phase: readPositiveInteger(node.phase),
     kind: readText(node.kind),
     title: readText(node.title) ?? "",
     details: readText(node.details),
@@ -451,6 +502,7 @@ export function parseBoardJson(raw: string): BoardParseOutcome {
       projectName: readText(project.name) ?? "",
       projectRoot: readText(project.root),
       updatedAt: readText(parsed.updatedAt),
+      epics: readEpics(parsed.epics),
       features: parsed.features.map((feature, index) => mapFeature(feature, index)),
       attentionSummary: readAttentionSummary(parsed.attentionSummary),
       diagnostics: readDiagnostics(parsed.diagnostics),
