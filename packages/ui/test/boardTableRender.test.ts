@@ -138,6 +138,32 @@ test("表格：行序 = 分组行 + 组内手推序列（#46 B4；组序 = 成�
   assert.deepEqual(flat, ["task:8", "spec:preview-channel"], "平铺管线（分组的数据源）语义不变");
 });
 
+test("表格：折叠态子行不渲染（D3：交付套件内钉住，不靠独立脚本）", () => {
+  // 真源：T36u 第二绿发现 D3——折叠只是条件渲染（子行整块不渲染），交付套件当时没有断言。
+  const expanded = render();
+  assert.ok(rowOf(expanded, "task:8").includes("ID-1.2"), "对照组：展开态 #8 行在 DOM 里");
+
+  const collapsed = render({ collapsedFeatureIds: ["spec:preview-channel"] });
+  const groupStart = collapsed.indexOf('data-board-table-group="spec:preview-channel"');
+  assert.ok(groupStart >= 0, "折叠组仍渲染（分组行是折叠开关本身）");
+  const group = collapsed.slice(groupStart, collapsed.indexOf("</tbody>", groupStart));
+  assert.ok(
+    !group.includes('data-board-card="task:8"'),
+    "折叠后组内子行不渲染（条件渲染，不是 CSS 藏起来）",
+  );
+  assert.ok(!group.includes('data-board-card="task:7"'), "折叠后组内其余子行同样不渲染");
+  assert.ok(
+    group.includes('data-board-card="spec:preview-channel"'),
+    "折叠态组头仍在（否则无处再展开）",
+  );
+  assert.ok(collapsed.includes('data-board-card="task:13"'), "折叠只影响该组：其余组的行照常渲染");
+  assert.match(
+    group,
+    /data-board-group-toggle="spec:preview-channel"[^>]*aria-expanded="false"/,
+    "折叠态的可访问性状态同步（aria-expanded=false）",
+  );
+});
+
 test("表格：单元格值（号/名称/段位/状态/最近执行/卡龄/阻碍/缺口）", () => {
   const markup = render();
   const row = rowOf(markup, "task:8");

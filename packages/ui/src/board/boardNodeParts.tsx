@@ -44,7 +44,12 @@ export function BoardStatusDot({ status }: { status: string | null }) {
   );
 }
 
-/** 四缺口码徽章（文案逐字，契约 §4；`interrupted-resume` 的 #N 取自该卡 lastRun.stoppedAt）。 */
+/**
+ * 四缺口码徽章（文案逐字，契约 §4；`interrupted-resume` 的 #N 取自该卡 lastRun.stoppedAt）。
+ *
+ * 溢出防线（#54-3）：窄容器（看板 w-56 列）里长徽章不得撑出列盒——徽章允许收缩并按需截断
+ * （`min-w-0 max-w-full truncate`），全文进 `title` 悬停可查（信息不丢，与路径截断同款姿态）。
+ */
 export function BoardAttentionBadges({
   attention,
   lastRun,
@@ -55,16 +60,20 @@ export function BoardAttentionBadges({
   const { intl } = useZCodeIntl();
   return (
     <>
-      {attention.map((code) => (
-        <Badge
-          key={code}
-          variant="outline"
-          data-board-attention={code}
-          className="border-warning/40 bg-warning/10 text-warning"
-        >
-          {formatAttentionBadgeText(code, lastRun, intl.formatMessage)}
-        </Badge>
-      ))}
+      {attention.map((code) => {
+        const text = formatAttentionBadgeText(code, lastRun, intl.formatMessage);
+        return (
+          <Badge
+            key={code}
+            variant="outline"
+            data-board-attention={code}
+            title={text}
+            className="min-w-0 max-w-full truncate border-warning/40 bg-warning/10 text-warning"
+          >
+            {text}
+          </Badge>
+        );
+      })}
     </>
   );
 }
@@ -147,6 +156,8 @@ export function BoardActiveRunBadge({ role }: { role: string }) {
  * ——它们在各视图的位置不同（行首/行尾），由视图自行摆放。
  *
  * `showStatusDot`（#46 B5）：弹窗里段位徽章已含状态，状态色点去重（其余三视图保留）。
+ * `mergeUnmergedBlocked`（#54-5）：弹窗里「待合并」+「受阻 N」并列像两个独立问题 → 合并成
+ * 单一徽章；**两个锚点各带原值**（`data-board-attention` / `data-board-blockers`），语义不丢。
  */
 export function BoardNodeBadges({
   attention,
@@ -156,6 +167,8 @@ export function BoardNodeBadges({
   activeRunRole,
   status,
   showStatusDot = true,
+  mergeUnmergedBlocked = false,
+  className,
 }: {
   attention: BoardAttentionCode[];
   /** 节点自身的 blockers（特性级照实传；不借子树的值）。 */
@@ -165,12 +178,37 @@ export function BoardNodeBadges({
   activeRunRole: string | null;
   status: string | null;
   showStatusDot?: boolean;
+  mergeUnmergedBlocked?: boolean;
+  /** 弱化形态（#54-9/P-2 跨列轻量分组头）：只调强调度，不改角标取舍。 */
+  className?: string;
 }) {
+  const { intl } = useZCodeIntl();
+  const unmerged = attention.includes("unmerged-worktree");
+  const merged = mergeUnmergedBlocked && unmerged && blockers > 0;
   return (
-    <span data-board-badges="" className="flex min-w-0 flex-wrap items-center gap-1">
+    <span
+      data-board-badges=""
+      className={cn("flex min-w-0 flex-wrap items-center gap-1", className)}
+    >
       {draft ? <BoardDraftBadge /> : null}
-      <BoardAttentionBadges attention={attention} lastRun={lastRun} />
-      <BoardBlockerBadge count={blockers} />
+      <BoardAttentionBadges
+        attention={merged ? attention.filter((code) => code !== "unmerged-worktree") : attention}
+        lastRun={lastRun}
+      />
+      {merged ? (
+        // 合并徽章（#54-5）：单一视觉单元，两个锚点各保留原值。
+        <Badge
+          variant="outline"
+          data-board-attention="unmerged-worktree"
+          data-board-blockers={blockers}
+          title={intl.formatMessage({ id: "board.attention.unmergedBlocked" })}
+          className="min-w-0 max-w-full truncate border-warning/40 bg-warning/10 text-warning"
+        >
+          {intl.formatMessage({ id: "board.attention.unmergedBlocked" })}
+        </Badge>
+      ) : (
+        <BoardBlockerBadge count={blockers} />
+      )}
       {activeRunRole ? <BoardActiveRunBadge role={activeRunRole} /> : null}
       {showStatusDot ? <BoardStatusDot status={status} /> : null}
     </span>
@@ -181,16 +219,29 @@ export function BoardNodeBadges({
  * 特性分组头内容（#46 B3/B4 共用）：编号（计划码 / ID-<label>）+ 名称 + 段位徽章 + 角标 +
  * `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要（`<summary>`、分组 `<div>`、
  * 表头 `<tr>`），卡片锚点与视觉外壳由宿主决定。
+ *
+ * `lightweight`（#54-9/P-2，契约 §13.7 B3）：跨列随行的分组头降级轻量标签——段位徽章属于
+ * 特性自己的列，跨列时不带；名称弱化为小字，角标与计数保留但压低强调度（缺口不许被埋）。
  */
 export function BoardFeatureGroupHeaderContent({
   feature,
   cardCount,
+  lightweight = false,
+  titleRegionProps = null,
 }: {
   feature: BoardViewNode;
   cardCount: number;
+  lightweight?: boolean;
+  /**
+   * 开弹窗落点（#54-4 列表组头点击分区）：给了就把「编号 + 名称」包进这个落点 div 并展开
+   * 这些 props（宿主用 `boardCardOpenProps` 生成，含 `data-board-card` 锚点与高亮），
+   * 段位/角标/计数留在落点外——点它们走宿主容器（`<summary>`）的默认动作（折叠/展开）。
+   * 不传 = 整行由宿主统一处理（看板分组头现状）。
+   */
+  titleRegionProps?: (Record<string, unknown> & { className?: string }) | null;
 }) {
   const { intl } = useZCodeIntl();
-  return (
+  const numberAndTitle = (
     <>
       <BoardNodeNumber
         no={feature.no}
@@ -200,11 +251,30 @@ export function BoardFeatureGroupHeaderContent({
       />
       <span
         {...(feature.planCode !== null ? { "data-board-feature-code": feature.planCode } : {})}
-        className="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground"
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          lightweight
+            ? "text-ui-xs text-foreground-subtle"
+            : "text-ui-sm font-medium text-foreground",
+        )}
       >
         {feature.title}
       </span>
-      <BoardStageBadge stage={feature.stage} />
+    </>
+  );
+  return (
+    <>
+      {titleRegionProps ? (
+        <div
+          {...titleRegionProps}
+          className={cn("flex min-w-0 flex-1 items-center gap-2", titleRegionProps.className ?? "")}
+        >
+          {numberAndTitle}
+        </div>
+      ) : (
+        numberAndTitle
+      )}
+      {lightweight ? null : <BoardStageBadge stage={feature.stage} />}
       <BoardNodeBadges
         attention={feature.attention}
         blockers={feature.blockers.length}
@@ -212,10 +282,14 @@ export function BoardFeatureGroupHeaderContent({
         draft={false}
         activeRunRole={null}
         status={feature.status}
+        {...(lightweight ? { className: "opacity-70" } : {})}
       />
       <span
         data-board-feature-card-count={cardCount}
-        className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle"
+        className={cn(
+          "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle",
+          lightweight ? "" : "bg-surface",
+        )}
       >
         {intl.formatMessage({ id: "board.feature.cardCount" }, { count: cardCount })}
       </span>
@@ -224,20 +298,28 @@ export function BoardFeatureGroupHeaderContent({
 }
 
 /**
- * 责任管线（#46 B6）：角色按管线序排列，**当前执行者加粗变色**（`text-primary` + `font-medium`），
- * 其余灰色小字（`text-foreground-subtle`）。`currentAssignee` 为 null 时全部按灰字
- * （没有正在执行的角色，不硬指；字段来自编译器 A3 交叉推导）。
+ * 责任管线（#46 B6；#54-1 三态）：角色按管线序排列——
+ *   - `currentAssignee`（"谁在做"）：主色加粗（`text-primary` + `font-medium`）；
+ *   - `nextAssignee`（v2.3/#53"下一个接手人"，管线序首个无 done 证据角色）：次强调
+ *     （`text-foreground` + `font-medium`）并带词条化「下一个」标记（`data-board-pipeline-next`）；
+ *   - 管线序**早于** nextAssignee 的角色：有 done 证据 → 弱化（dim + 勾形，`data-board-pipeline-done`）。
+ * 三者都来自板字段透传，**不在视图层自算**（契约 §13.7：nextAssignee 是编译器派生字段）。
+ * `nextAssignee` 为 null（字段缺省或管线走完）时只画前两态——不编造接手位、也不把全管线画成已完成。
  */
 export function BoardAssigneePipeline({
   assignees,
   currentAssignee,
+  nextAssignee = null,
   className,
 }: {
   assignees: string[];
   currentAssignee: string | null;
+  nextAssignee?: string | null;
   className?: string;
 }) {
+  const { intl } = useZCodeIntl();
   if (assignees.length === 0) return null;
+  const nextIndex = nextAssignee === null ? -1 : assignees.indexOf(nextAssignee);
   return (
     <span
       data-board-pipeline=""
@@ -245,6 +327,9 @@ export function BoardAssigneePipeline({
     >
       {assignees.map((role, index) => {
         const current = role === currentAssignee;
+        // 当前执行者优先：正在做的角色即使正是接手位，也不重复标「下一个」。
+        const next = !current && index === nextIndex;
+        const done = !current && nextIndex >= 0 && index < nextIndex;
         return (
           <Fragment key={role}>
             {index > 0 ? (
@@ -255,11 +340,29 @@ export function BoardAssigneePipeline({
             <span
               data-board-pipeline-role={role}
               {...(current ? { "data-board-pipeline-current": "true" } : {})}
+              {...(next ? { "data-board-pipeline-next": role } : {})}
+              {...(done ? { "data-board-pipeline-done": "true" } : {})}
               className={cn(
                 "text-ui-xs",
-                current ? "font-medium text-primary" : "text-foreground-subtle",
+                current
+                  ? "font-medium text-primary"
+                  : done
+                    ? "text-foreground-subtlest line-through"
+                    : next
+                      ? "font-medium text-foreground"
+                      : "text-foreground-subtle",
               )}
             >
+              {done ? (
+                <span aria-hidden="true" className="mr-0.5">
+                  ✓
+                </span>
+              ) : null}
+              {next ? (
+                <span data-board-pipeline-next-marker="" className="mr-0.5 text-foreground-subtle">
+                  {intl.formatMessage({ id: "board.pipeline.next" })}
+                </span>
+              ) : null}
               {role}
             </span>
           </Fragment>

@@ -7,6 +7,8 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView } from "../src/board/BoardPaneView.js";
+import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
+import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
@@ -354,6 +356,127 @@ test("本工作区真实板：全部可渲染，段位都在七段位词表内",
     `[board] 真实板：${board.features.length} 特性 / ${tasks.length} 卡 / 段位节点 ${stageNodes.filter((n) => n.stage).length} / 缺口计数 ${JSON.stringify(board.attentionSummary)}`,
   );
 });
+
+test(
+  "本工作区真实板：#54 冒烟 —— 四视图渲染 + 接手位「下一个」+ 依赖行走计划码编号",
+  { skip: !hasRealBoard },
+  async () => {
+    // 期望值全部取自板自身（板是活动物：不写死卡号/计数；#53 的 nextAssignee 是编译器输出）。
+    const raw = JSON.parse(await readFile(REAL_BOARD_PATH, "utf8")) as {
+      features: Array<RawRecord & { planCode?: string; tasks?: unknown[] }>;
+    };
+    const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
+    assert.equal(state.kind, "ready", `真实板应可加载：${REAL_BOARD_PATH}`);
+    if (state.kind !== "ready") return;
+    const board = state.board;
+
+    // 1) 四视图渲染冒烟：四个根锚点都在（视图矩阵 §13.2 的四态载体）。
+    const views: Array<[string, string]> = [
+      ["tree", 'data-board-view="tree"'],
+      ["kanban", 'data-board-view="kanban"'],
+      ["list", 'data-board-view="list"'],
+      ["table", 'data-board-view="table"'],
+    ];
+    const markups = new Map<string, string>();
+    for (const [mode, anchor] of views) {
+      const markup = renderToStaticMarkup(
+        createElement(ZCodeIntlProvider, {
+          initialLocale: "zh-CN" as const,
+          children: createElement(BoardPaneView, {
+            state,
+            viewMode: mode as "tree" | "kanban" | "list" | "table",
+          }),
+        }),
+      );
+      assert.ok(markup.includes(anchor), `真实板应渲染出 ${mode} 视图根锚点`);
+      markups.set(mode, markup);
+    }
+
+    // 2) 接手位（#54-1）：每张带 nextAssignee 的卡在表格责任管线列都显示对应接手位 + 词条标记。
+    const rawTasks = collectRawTasks(raw.features);
+    const cardsWithNext = rawTasks.filter(
+      (task) => typeof task.nextAssignee === "string" && task.nextAssignee.length > 0,
+    );
+    assert.ok(
+      cardsWithNext.length > 0,
+      "真实板应有带 nextAssignee 的卡（前提：板由 v2.3 编译器产出，#53 已落地）",
+    );
+    const table = markups.get("table") ?? "";
+    for (const task of cardsWithNext) {
+      const no = task.no;
+      if (typeof no !== "number") continue;
+      const start = table.indexOf(`data-board-card="task:${no}"`);
+      assert.ok(start >= 0, `表格视图应渲染卡 #${no}`);
+      const rowEnd = table.indexOf("<tr", start + 1);
+      const row = table.slice(start, rowEnd === -1 ? table.length : rowEnd);
+      assert.ok(
+        row.includes(`data-board-pipeline-next="${String(task.nextAssignee)}"`),
+        `卡 #${no} 的管线应标出接手位 ${String(task.nextAssignee)}`,
+      );
+      assert.ok(row.includes("下一个"), `卡 #${no} 的接手位应带词条标记「下一个」`);
+    }
+
+    // 3) 依赖行（#54-6）：取板上第一个「依赖目标有计划码」的卡，弹窗里编号应是计划码-层级 + 稳定号。
+    const allTasks: Array<{ task: RawRecord; planCode: string | null; feature: RawRecord }> = [];
+    const walk = (value: unknown, planCode: string | null, feature: RawRecord) => {
+      if (!Array.isArray(value)) return;
+      for (const entry of value) {
+        if (!isRawRecord(entry)) continue;
+        allTasks.push({ task: entry, planCode, feature });
+        walk(entry.tasks, planCode, feature);
+      }
+    };
+    for (const feature of raw.features) {
+      const planCode = typeof feature.planCode === "string" ? feature.planCode : null;
+      walk(feature.tasks, planCode, feature);
+    }
+    const byNo = new Map<number, { task: RawRecord; planCode: string | null }>();
+    for (const entry of allTasks) {
+      if (typeof entry.task.no === "number") {
+        byNo.set(entry.task.no, { task: entry.task, planCode: entry.planCode });
+      }
+    }
+    const dependency = allTasks.find(({ task }) =>
+      (Array.isArray(task.blockers) ? task.blockers : []).some((blocker) => {
+        if (!isRawRecord(blocker) || blocker.kind !== "dependency") return false;
+        const target =
+          typeof blocker.blockedBy === "number" ? byNo.get(blocker.blockedBy) : undefined;
+        return (
+          target !== undefined && target.planCode !== null && typeof target.task.label === "string"
+        );
+      }),
+    );
+    assert.ok(dependency, "真实板应有「依赖目标带计划码」的卡（#54-6 的当场形态）");
+    const blocker = (dependency.task.blockers as RawRecord[]).find((entry) => {
+      const target = typeof entry.blockedBy === "number" ? byNo.get(entry.blockedBy) : undefined;
+      return (
+        entry.kind === "dependency" &&
+        target !== undefined &&
+        target.planCode !== null &&
+        typeof target.task.label === "string"
+      );
+    });
+    assert.ok(blocker && typeof blocker.blockedBy === "number");
+    const target = byNo.get(blocker.blockedBy as number);
+    assert.ok(target && target.planCode !== null);
+    const expectedTargetText = `${target.planCode}-${String(target.task.label)} · #${String(blocker.blockedBy)}`;
+    const dialogNode = resolveBoardDialogNode(board, `task:${String(dependency.task.no)}`);
+    assert.ok(dialogNode, "依赖卡应能在弹窗里解析到");
+    const dialogMarkup = renderToStaticMarkup(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "zh-CN" as const,
+        children: createElement(BoardCardDialog, { board, node: dialogNode }),
+      }),
+    );
+    assert.ok(
+      dialogMarkup.includes(expectedTargetText),
+      `依赖行应显示 ${expectedTargetText}（不落回 ID-<label> 形态）：\n${dialogMarkup.slice(0, 600)}`,
+    );
+    console.log(
+      `[board] #54 冒烟：接手位卡 ${cardsWithNext.length} 张；依赖样例 #${String(dependency.task.no)} → ${expectedTargetText}`,
+    );
+  },
+);
 
 test("空态 A（真实文件系统：无板）逐字不静默", async () => {
   const { workspace, cleanup } = await stageWorkspace(null);

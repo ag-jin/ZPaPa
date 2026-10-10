@@ -259,6 +259,29 @@ test("树形：特性节点是可折叠大块（含 open 属性判据与摘要�
   assert.match(done, /data-board-feature-card-count="1"/, "折叠态仍显示 [N 张卡] 摘要");
 });
 
+test("树形：特性头点击分区与列表一致（#54-4）——编号+名称区=开弹窗，段位/徽章/计数区=折叠", () => {
+  const markup = renderTree();
+  const withGap = blockSlice(markup, "plan:plan-zcode-ui", "plan:plan-done");
+  const summaryStart = withGap.indexOf('data-board-feature-block-summary="plan:plan-zcode-ui"');
+  assert.ok(summaryStart >= 0, "特性块摘要应存在");
+  const summary = withGap.slice(summaryStart, withGap.indexOf("</summary>", summaryStart));
+  const openStart = summary.indexOf('data-board-card="plan:plan-zcode-ui"');
+  assert.ok(openStart >= 0, "开弹窗落点锚点应仍在");
+  const titleAt = summary.indexOf("ZCode 看板 UI", openStart);
+  assert.ok(titleAt > openStart, "落点里应有名称");
+  const openRegion = summary.slice(openStart, summary.indexOf("</div>", titleAt));
+  assert.ok(openRegion.includes("data-board-node-id"), "落点含编号");
+  assert.ok(
+    !openRegion.includes("data-board-stage="),
+    "段位徽章在落点外（点它 = summary 默认动作，折叠）",
+  );
+  assert.ok(!openRegion.includes("data-board-badges"), "角标簇在落点外");
+  assert.ok(!openRegion.includes("data-board-feature-card-count"), "计数在落点外");
+  const outside = summary.slice(summary.indexOf("</div>", titleAt));
+  assert.ok(outside.includes("data-board-stage="), "段位徽章留在 summary 内");
+  assert.ok(outside.includes("data-board-feature-card-count"), "计数留在 summary 内");
+});
+
 test("树形：同计划分组内任务编号省略计划码前缀（只显示层级），完整形态可回溯", () => {
   const markup = renderTree();
   const withGap = blockSlice(markup, "plan:plan-zcode-ui", "plan:plan-done");

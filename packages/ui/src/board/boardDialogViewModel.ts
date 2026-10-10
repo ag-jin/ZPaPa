@@ -16,6 +16,7 @@ import {
   type BoardViewMode,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
+import { formatBoardNodeId } from "./boardPresentation.js";
 import type {
   BoardActiveRun,
   BoardAttentionCode,
@@ -68,6 +69,8 @@ export interface BoardJumpTarget {
 export interface BoardDialogJumpTarget extends BoardJumpTarget {
   no: number;
   label: string | null;
+  /** 目标卡所属特性的计划码（#54-6）：编号文本与其余三视图同源（`formatBoardNodeId`）。 */
+  planCode: string | null;
   title: string;
 }
 
@@ -100,6 +103,8 @@ export interface BoardCardDialogModel {
   assignees: string[];
   /** 当前执行者（#46 A3）：管线 ∩ activeRun；无 → null。 */
   currentAssignee: string | null;
+  /** 下一接手人（v2.3/#53）：管线序首个无 done 证据角色；全完成/缺省 → null。 */
+  nextAssignee: string | null;
   /** 细节全文；空串在映射层已归一为 null（区块隐藏）。 */
   details: string | null;
   /** 阻拦区块是否可见：**仅任务卡**且 blockers 非空（§6：特性节点弹窗的阻拦区块隐藏）。 */
@@ -128,14 +133,27 @@ export function resolveBoardCardJumpTarget(
     id: node.id,
     no: node.no,
     label: node.label,
+    planCode: node.planCode,
     title: node.title,
     stage: node.stage,
   };
 }
 
+/**
+ * 对方编号文本（#54-6）：复用四视图同一份 `formatBoardNodeId` 形态——
+ * 有计划码 → `<计划码>-<层级> · #<no>`（如 `UI01-1 · #32`）；无计划码的降级链不变
+ * （`ID-<label> · #<no>` → 缺 label 只给 `#<no>`）。
+ */
 function blockerTargetText(target: BoardDialogJumpTarget | null): string | null {
   if (!target) return null;
-  return target.label ? `ID-${target.label} · #${target.no}` : `#${target.no}`;
+  const nodeId = formatBoardNodeId({
+    no: target.no,
+    label: target.label,
+    planCode: target.planCode,
+  });
+  // 缺 label 时 formatBoardNodeId 回落到 `ID-<no>`：那不是契约的「对方编号」形态，取稳定号。
+  if (nodeId === null || target.label === null) return `#${target.no}`;
+  return `${nodeId} · #${target.no}`;
 }
 
 function originRows(origin: BoardOrigin | null): BoardDialogOriginRow[] {
@@ -217,6 +235,7 @@ export function resolveBoardAttentionJumpTarget(
     worktree: node.worktree,
     assignees: node.assignees,
     currentAssignee: node.currentAssignee,
+    nextAssignee: node.nextAssignee,
     details: node.details,
     showBlockers: blockerSource.length > 0,
     blockers: blockerSource.map((blocker, index) => {

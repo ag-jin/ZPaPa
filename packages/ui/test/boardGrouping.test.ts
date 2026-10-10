@@ -24,13 +24,32 @@ function readyState(): BoardPaneLoadState {
   return { kind: "ready", board: outcome.board };
 }
 
-function render(props: Partial<BoardPaneViewProps> = {}): string {
+function renderState(
+  state: BoardPaneLoadState,
+  props: Partial<BoardPaneViewProps> = {},
+  locale: "zh-CN" | "en-US" = "zh-CN",
+): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
-      initialLocale: "zh-CN" as const,
-      children: createElement(BoardPaneView, { state: readyState(), ...props }),
+      initialLocale: locale,
+      children: createElement(BoardPaneView, { state, ...props }),
     }),
   );
+}
+
+function render(
+  props: Partial<BoardPaneViewProps> = {},
+  locale: "zh-CN" | "en-US" = "zh-CN",
+): string {
+  return renderState(readyState(), props, locale);
+}
+
+/** 某张卡的渲染切片（到下一张卡为止）：管线断言按卡片范围取，不扫全页。 */
+function cardSlice(markup: string, cardId: string): string {
+  const start = markup.indexOf(`data-board-card="${cardId}"`);
+  assert.ok(start >= 0, `markup 里应有卡片 ${cardId}`);
+  const next = markup.indexOf('data-board-card="', start + 1);
+  return markup.slice(start, next === -1 ? markup.length : next);
 }
 
 function anchors(markup: string, attribute: string): string[] {
@@ -75,6 +94,66 @@ test("看板模型：列内按特性分组；特性节点自身段位所在列 =
     "跨列分组只带本列的任务卡",
   );
   assert.equal(review?.groups.length, 0, "无节点列无分组");
+});
+
+test("看板渲染：分组头卡数 = 特性卡总数（#54-2），列内张数由列头计数表达", () => {
+  // 真源：用户第四轮标注②——组头显示的是「本列有几张」会让人把特性规模读小（甚至读出「0 张卡」）；
+  // 组头表达特性自身规模（全部子卡），列头计数表达本列排布数。
+  const markup = render({ viewMode: "kanban" });
+  const doing = markup.slice(
+    markup.indexOf('data-board-column="执行中"'),
+    markup.indexOf('data-board-column="审核中"'),
+  );
+  const group = doing.slice(doing.indexOf('data-board-kanban-group="plan:plan-zcode-ui"'));
+  assert.match(
+    group,
+    /data-board-feature-card-count="2"/,
+    "执行中列该特性只排 1 张卡，但组头显示特性卡总数 2",
+  );
+  assert.equal(
+    (doing.match(/data-board-kanban-card="[^"]*"/g) ?? []).length,
+    1,
+    "列内实际只渲染本列的那 1 张卡（组头数字不改变卡列归属）",
+  );
+
+  const todo = markup.slice(
+    markup.indexOf('data-board-column="待办"'),
+    markup.indexOf('data-board-column="执行中"'),
+  );
+  const specGroup = todo.slice(todo.indexOf('data-board-kanban-group="spec:alpha"'));
+  assert.match(specGroup, /data-board-feature-card-count="1"/, "单卡特性组头 = 1（总数即列内数）");
+});
+
+test("看板渲染：跨列分组头降级轻量标签（#54-9/P-2；不带段位徽章、角标弱化）", () => {
+  // 真源：契约 §13.7 B3「特性自身段位在本列时分组头带自身徽章，跨列随行时只作轻量标签」。
+  const markup = render({ viewMode: "kanban" });
+  const todo = markup.slice(
+    markup.indexOf('data-board-column="待办"'),
+    markup.indexOf('data-board-column="执行中"'),
+  );
+  const headerOf = (column: string, featureId: string): string => {
+    const start = column.indexOf(`data-board-kanban-group-header="${featureId}"`);
+    assert.ok(start >= 0, `列里应有分组头 ${featureId}`);
+    const end = column.indexOf("data-board-kanban-card=", start);
+    return column.slice(start, end === -1 ? column.length : end);
+  };
+
+  const crossColumn = headerOf(todo, "plan:plan-zcode-ui");
+  assert.match(crossColumn, /data-board-group-lightweight="true"/, "跨列分组头带轻量锚点");
+  assert.ok(
+    !/data-board-stage="/.test(crossColumn),
+    "跨列标签不带段位徽章（特性段位属于它自己那一列）",
+  );
+  assert.match(
+    crossColumn,
+    /data-board-feature-card-count="2"/,
+    "轻量标签仍显示特性卡总数（规模不因跨列而缩水）",
+  );
+
+  const inColumn = headerOf(todo, "spec:alpha");
+  assert.ok(!inColumn.includes("data-board-group-lightweight"), "同列分组头维持全量形态");
+  assert.match(inColumn, /data-board-stage="待办"/, "同列分组头带自身段位徽章");
+  assert.match(inColumn, /data-board-feature-card-count="1"/, "同列分组头计数照旧");
 });
 
 test("看板渲染：特性分组头不是独立卡（卡片锚点只出现在任务卡上）", () => {
@@ -122,6 +201,32 @@ test("列表模型：分组 = 特性头 + 过滤排序后的子行（组间 atte
   );
 });
 
+test("列表组头点击分区（#54-4）：编号+名称区=开弹窗，段位/徽章/计数区=折叠", () => {
+  // 真源：用户第四轮标注④——整行 preventDefault 吃掉折叠；开弹窗落点收窄到编号+名称，
+  // 右区（段位/徽章/计数）与 summary 空白保留 summary 默认动作（折叠/展开）。
+  const markup = render({ viewMode: "list" });
+  const summaryStart = markup.indexOf('data-board-list-group-summary="plan:plan-zcode-ui"');
+  assert.ok(summaryStart >= 0, "列表分组摘要应存在");
+  const summary = markup.slice(summaryStart, markup.indexOf("</summary>", summaryStart));
+  const openStart = summary.indexOf('data-board-card="plan:plan-zcode-ui"');
+  assert.ok(openStart >= 0, "开弹窗落点锚点应仍在（跳转/高亮依赖它）");
+  const titleAt = summary.indexOf("ZCode 看板 UI", openStart);
+  assert.ok(titleAt > openStart, "落点里应有名称");
+  const openRegion = summary.slice(openStart, summary.indexOf("</div>", titleAt));
+  assert.ok(openRegion.includes("data-board-node-id"), "落点含编号");
+  assert.ok(
+    !openRegion.includes("data-board-stage="),
+    "段位徽章在落点外（点它 = summary 默认动作，折叠）",
+  );
+  assert.ok(!openRegion.includes("data-board-badges"), "角标簇在落点外");
+  assert.ok(!openRegion.includes("data-board-feature-card-count"), "计数在落点外");
+
+  const outside = summary.slice(summary.indexOf("</div>", titleAt));
+  assert.ok(outside.includes("data-board-stage="), "段位徽章留在 summary 内（默认动作可及）");
+  assert.ok(outside.includes("data-board-feature-card-count"), "计数留在 summary 内");
+  assert.ok(outside.includes("data-board-badges"), "角标簇留在 summary 内");
+});
+
 test("列表渲染：分组行（<details>，特性头 + 缩进子行；子行编号短形态）", () => {
   const markup = render({ viewMode: "list" });
   const group = markup.slice(
@@ -150,6 +255,61 @@ test("表格渲染：分组行（列宽整行占位 + 特性头），子行在�
 });
 
 /* ---------------- B6：责任管线高亮 ---------------- */
+
+test("责任管线三态（#54-1）：done 弱化勾形 + current 主色加粗 + next 次强调带「下一个」", () => {
+  // 真源：消费契约 §13.7「责任管线（B6）」v2.3 段——nextAssignee（管线序首个无 done 证据角色）
+  // 以轻量标识挂在管线上，与 currentAssignee（"谁在做"）并列；全 done → 不显示接手位。
+  const raw = structuredClone(GROUPING_BOARD) as {
+    features: Array<{ tasks: Array<Record<string, unknown>> }>;
+  };
+  const card = raw.features[0]?.tasks[0];
+  assert.ok(card, "夹具应有 plan 的第一张卡（task:46）");
+  // 手推管线状态：implementer 已 done、test-verifier 正在做、code-reviewer 是下一个。
+  card.activeRun = { role: "test-verifier", at: "2026-10-10T10:00:00+08:00" };
+  card.currentAssignee = "test-verifier";
+  card.nextAssignee = "code-reviewer";
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const state: BoardPaneLoadState = { kind: "ready", board: outcome.board };
+  const markup = renderState(state, { viewMode: "table" });
+  const pipeline = cardSlice(markup, "task:46");
+  assert.match(
+    pipeline,
+    /data-board-pipeline-role="implementer"[^>]*data-board-pipeline-done="true"/,
+    "已 done 的角色带弱化锚点",
+  );
+  assert.ok(pipeline.includes("✓"), "已 done 的角色带勾形（dim + 勾形）");
+  assert.match(
+    pipeline,
+    /data-board-pipeline-role="test-verifier"[^>]*data-board-pipeline-current="true"/,
+    "当前执行者仍是主色加粗（#46 B6 口径不变）",
+  );
+  assert.ok(
+    !/data-board-pipeline-role="test-verifier"[^>]*data-board-pipeline-(done|next)/.test(pipeline),
+    "当前执行者不得被误标为 done / next",
+  );
+  assert.match(
+    pipeline,
+    /data-board-pipeline-next="code-reviewer"/,
+    "下一接手人锚点带角色名（data-board-pipeline-next=<role>）",
+  );
+  assert.ok(pipeline.includes("下一个"), "接手位带词条化的「下一个」标记");
+  assert.ok(
+    !/data-board-pipeline-role="integrator"[^>]*data-board-pipeline-(done|next)/.test(pipeline),
+    "未开始的角色不误标（只有管线序早于 nextAssignee 的角色才算 done）",
+  );
+
+  const english = renderState(state, { viewMode: "table" }, "en-US");
+  assert.ok(cardSlice(english, "task:46").includes("Next"), "接手位标记走英文词条（Next）");
+});
+
+test("责任管线：无 nextAssignee（字段缺省/全 done）时不编造接手位", () => {
+  const markup = render({ viewMode: "table" });
+  const pipeline = cardSlice(markup, "task:46");
+  assert.ok(!pipeline.includes("data-board-pipeline-next"), "缺省 → 不显示接手位");
+  assert.ok(!pipeline.includes("data-board-pipeline-done"), "缺省 → 不把任何角色画成已完成");
+});
 
 test("责任管线：当前执行者加粗变色，其余灰色小字（表格 assignees 列）", () => {
   const markup = render({ viewMode: "table" });

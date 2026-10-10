@@ -151,6 +151,35 @@ test("看板：卡片紧凑形态 = 号 + 标题 + 段位徽章 + 缺口徽章",
   assert.ok(running.includes("待合并（执行现场未回流）"), "待合并角标应逐字渲染");
 });
 
+test("看板：长徽章不撑出列盒 —— 组头行允许折行，徽章可截断且全文进 title（#54-3）", () => {
+  // 真源：用户第四轮标注①——w-56 列里「编号 + 名称 + 段位 + 长缺口徽章 + 计数」撑出横向滚动；
+  // 版面行为由浏览器断言（test/boardKanbanBrowserLayout.ts 溢出探针）钉住，这里钉两个静态前提：
+  // 组头行可折行（徽章落第二行）、徽章自身可收缩截断（max-w + truncate + title 全文）。
+  const markup = kanban();
+  const header = /<div[^>]*data-board-kanban-group-header="spec:preview-channel"[^>]*>/.exec(
+    markup,
+  );
+  assert.ok(header, "执行中列应有计划分组头");
+  assert.ok(
+    /class="[^"]*flex-wrap/.test(header[0]),
+    "组头行应允许折行（徽章可落第二行，不撑出列盒）",
+  );
+  assert.ok(markup.includes('data-board-attention="unmerged-worktree"'), "夹具前提：长徽章在场");
+  const badge =
+    /<span[^>]*data-board-attention="unmerged-worktree"[^>]*>/.exec(markup) ??
+    /<[^>]*data-board-attention="unmerged-worktree"[^>]*>/.exec(markup);
+  assert.ok(badge, "缺口徽章应存在");
+  assert.ok(
+    /class="[^"]*max-w-full[^"]*truncate/.test(badge[0]) ||
+      /class="[^"]*truncate[^"]*max-w-full/.test(badge[0]),
+    "长徽章应可收缩截断（max-w-full + truncate）",
+  );
+  assert.ok(
+    badge[0].includes('title="待合并（执行现场未回流）"'),
+    "截图后全文进 title（信息不丢）",
+  );
+});
+
 test("看板：已取消列灰显并展示 statusRule 取消原因（§13.2）", () => {
   const markup = kanban();
   const cancelled = columnSlice(markup, "已取消", null);

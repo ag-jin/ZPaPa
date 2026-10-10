@@ -110,18 +110,22 @@ function BoardListGroup({
         data-board-list-group-summary={feature.id}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       >
-        <div
-          data-board-card={feature.id}
-          {...highlightProps}
-          {...boardCardOpenProps({
-            id: feature.id,
-            ...(onOpenCard ? { onOpenCard } : {}),
-            preventDefaultOnClick: true,
-          })}
-          className={cn("flex min-w-0 flex-1 items-center gap-2", highlightClassName)}
-        >
-          <BoardFeatureGroupHeaderContent feature={feature} cardCount={nodes.length} />
-        </div>
+        {/* 点击分区（#54-4）：编号+名称区 = 开弹窗（preventDefault 保住不折叠）；段位/角标/计数区
+            与 summary 空白 = 折叠/展开（不再被 preventDefault 吃掉——用户第四轮标注④）。 */}
+        <BoardFeatureGroupHeaderContent
+          feature={feature}
+          cardCount={nodes.length}
+          titleRegionProps={{
+            "data-board-card": feature.id,
+            ...highlightProps,
+            ...boardCardOpenProps({
+              id: feature.id,
+              ...(onOpenCard ? { onOpenCard } : {}),
+              preventDefaultOnClick: true,
+            }),
+            ...(highlightClassName ? { className: highlightClassName } : {}),
+          }}
+        />
       </summary>
       <div className="flex flex-col gap-0.5 px-1 pb-1">
         {nodes.map((node) => (

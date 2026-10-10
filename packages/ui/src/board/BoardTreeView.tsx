@@ -175,7 +175,8 @@ function BoardFeatureSection({
         data-board-feature-block-summary={feature.id}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       >
-        {/* 特性头 = 打开弹窗的落点（preventDefault：点它不触发折叠切换——那是 summary 的默认动作） */}
+        {/* 特性头 = 打开弹窗的落点（preventDefault：点它不触发折叠切换——那是 summary 的默认动作）。
+            #54-4 点击分区与列表一致：编号+名称+执行者区 = 开弹窗；段位/角标/计数区 = 折叠。 */}
         <div
           data-board-card={feature.id}
           {...highlightProps}
@@ -184,7 +185,7 @@ function BoardFeatureSection({
             ...(onOpenCard ? { onOpenCard } : {}),
             preventDefaultOnClick: true,
           })}
-          className="flex min-w-0 flex-1 items-center gap-2"
+          className={cn("flex min-w-0 flex-1 items-center gap-2", highlightClassName)}
         >
           <BoardNodeNumber
             no={feature.no}
@@ -206,16 +207,16 @@ function BoardFeatureSection({
               {feature.currentAssignee}
             </span>
           ) : null}
-          <BoardStageBadge stage={feature.stage} />
-          <BoardNodeBadges
-            attention={feature.attention}
-            blockers={feature.blockers.length}
-            lastRun={null}
-            draft={false}
-            activeRunRole={null}
-            status={feature.status}
-          />
         </div>
+        <BoardStageBadge stage={feature.stage} />
+        <BoardNodeBadges
+          attention={feature.attention}
+          blockers={feature.blockers.length}
+          lastRun={null}
+          draft={false}
+          activeRunRole={null}
+          status={feature.status}
+        />
         <span
           data-board-feature-card-count={cardCount}
           className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle"

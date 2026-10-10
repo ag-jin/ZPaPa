@@ -1048,6 +1048,8 @@ const enUS: Record<string, string> = {
   "board.draft": "Draft",
   "board.blockedByCount": "Blocked by {count}",
   "board.activeRun": "{role} running",
+  // Next-owner marker (v2.3/#53 nextAssignee; #54-1 pipeline third state).
+  "board.pipeline.next": "Next",
   "board.lastRun.stoppedAt": "stopped at #{no}",
   "board.empty.none":
     "This project has no board yet. It is generated automatically after the first interview registration or spec creation.",
@@ -1064,6 +1066,8 @@ const enUS: Record<string, string> = {
   "board.attention.interruptedResume": "Interrupted, resumable (stopped at #{no})",
   "board.attention.interruptedResumeNoBreakpoint": "Interrupted, resumable",
   "board.attention.unmergedWorktree": "Unmerged (execution not yet returned)",
+  // Merged badge (#54-5): unmerged + blocked upstream are two faces of one situation.
+  "board.attention.unmergedBlocked": "Unmerged · blocked upstream",
   "board.attention.summary.interviewedNotArranged": "{count} interviewed, unarranged",
   "board.attention.summary.arrangedNotExpanded": "{count} arranged, unexpanded",
   "board.attention.summary.interruptedResume": "{count} interrupted, resumable",

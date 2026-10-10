@@ -96,7 +96,10 @@ function BoardKanbanCard({
 
 /**
  * 列内分组（B3）：分组头 = 特性名（非独立卡——没有卡片外壳，不占卡位）；
- * 特性自身段位在本列时分组头带自身徽章（可点开特性弹窗），跨列随行时只作轻量标签。
+ * 特性自身段位在本列时分组头带自身徽章（可点开特性弹窗），跨列随行时只作轻量标签（#54-9/P-2）。
+ *
+ * 组头行允许 `flex-wrap`（#54-3）：w-56 列里「编号 + 名称 + 段位 + 徽章 + 计数」挤不下时，
+ * 徽章落第二行——长徽章不得撑出列盒横向滚动。
  */
 function BoardKanbanGroupBlock({
   group,
@@ -117,15 +120,20 @@ function BoardKanbanGroupBlock({
     <div data-board-kanban-group={group.feature.id} className="flex flex-col gap-1">
       <div
         data-board-kanban-group-header={group.feature.id}
+        {...(!group.featureInColumn ? { "data-board-group-lightweight": "true" } : {})}
         data-board-card={group.feature.id}
         {...highlightProps}
         {...boardCardOpenProps({ id: group.feature.id, ...(onOpenCard ? { onOpenCard } : {}) })}
         className={cn(
-          "flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5",
+          "flex min-w-0 flex-wrap items-center gap-1.5 rounded-md px-1 py-0.5",
           highlightClassName,
         )}
       >
-        <BoardFeatureGroupHeaderContent feature={group.feature} cardCount={group.nodes.length} />
+        <BoardFeatureGroupHeaderContent
+          feature={group.feature}
+          cardCount={group.totalCards}
+          lightweight={!group.featureInColumn}
+        />
       </div>
       {group.nodes.map((node) => (
         <BoardKanbanCard

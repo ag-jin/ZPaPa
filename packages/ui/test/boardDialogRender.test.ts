@@ -39,12 +39,6 @@ function render(
   );
 }
 
-function textInside(markup: string, attr: string): string {
-  const match = new RegExp(`${attr}[^>]*>([^<]*)<`).exec(markup);
-  assert.ok(match, `markup 里找不到 ${attr} 的文本：\n${markup.slice(0, 400)}`);
-  return (match[1] ?? "").trim();
-}
-
 function sectionOf(markup: string, section: string): string | null {
   const match = new RegExp(`data-board-dialog-section="${section}"`).exec(markup);
   if (!match) return null;
@@ -63,13 +57,114 @@ test("弹窗：编号 + 名称 + 状态/缺口徽章（词汇与卡片一致，�
   const status = sectionOf(markup, "status");
   assert.ok(status, "状态/缺口区块应存在");
   assert.ok(status.includes('data-board-stage="执行中"'), "段位徽章（与卡片同一零件）");
-  // #46 B5：弹窗状态色点去重（段位徽章已含状态），只保留段位徽章 + status 词条文本。
+  // #46 B5：弹窗状态色点去重（段位徽章已含状态）；#54-5：statusText 与段位徽章同义 → 不重复渲染。
   assert.ok(!status.includes('data-board-status="'), "弹窗不重复状态色点（B5）");
-  assert.ok(status.includes(">进行中<"), "状态词汇与卡片徽章一致（status 词条）");
+  assert.ok(
+    !status.includes("data-board-dialog-status"),
+    "段位徽章在场时不重复 statusText（#54-5；去「待办 待办中」）",
+  );
   assert.ok(status.includes('data-board-attention="interrupted-resume"'), "缺口徽章 1");
   assert.ok(status.includes('data-board-attention="unmerged-worktree"'), "缺口徽章 2");
   assert.ok(status.includes("执行中断，可续（停在 #8）"), "缺口文案逐字（§4）");
   assert.ok(status.includes("implementer 执行中"), "执行角色徽记（activeRun）");
+});
+
+test("弹窗：状态行精简 —— 段位徽章在场时不重复 statusText（#54-5）", () => {
+  // 真源：用户第四轮标注⑤——「待办 待办中」重复；段位徽章已经表达状态轴。
+  const markup = render("task:8");
+  const status = sectionOf(markup, "status");
+  assert.ok(status, "状态/缺口区块应存在");
+  assert.ok(status.includes('data-board-stage="执行中"'), "段位徽章是状态行的唯一状态表达");
+  assert.ok(
+    !status.includes("data-board-dialog-status"),
+    "段位徽章在场 → 不再渲染同义的 statusText 行",
+  );
+  assert.ok(!status.includes(">进行中<"), "不出现「进行中」这类与段位同义的重复文案");
+  // 段位缺省的卡：没有了段位徽章，status 文本是唯一状态来源，照常渲染（值空才不渲染）。
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as {
+    features: Array<{ tasks: Array<Record<string, unknown>> }>;
+  };
+  const card8 = raw.features[0]?.tasks[1];
+  assert.ok(card8);
+  delete card8.stage;
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const node = resolveBoardDialogNode(outcome.board, "task:8");
+  assert.ok(node);
+  const fallback = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(BoardCardDialog, { board: outcome.board, node }),
+    }),
+  );
+  assert.ok(
+    sectionOf(fallback, "status")?.includes('data-board-dialog-status="active"'),
+    "无段位徽章时 statusText 仍是唯一状态来源（锚点保留，值空才不渲染）",
+  );
+});
+
+test("弹窗：待合并 + 受阻合并为单一徽章，两锚点各保留原值（#54-5）", () => {
+  // 真源：用户第四轮标注⑤——「待合并」与「受阻 N」并列像两个独立问题；
+  // 合并呈现后语义不丢：data-board-attention 与 data-board-blockers 仍各带原值。
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as {
+    features: Array<{ tasks: Array<Record<string, unknown>> }>;
+  };
+  const card8 = raw.features[0]?.tasks[1];
+  assert.ok(card8, "夹具应有 #8");
+  card8.blockers = [
+    { kind: "dependency", blockedBy: 9, summary: "等上游", evidence: [] },
+    { kind: "external", summary: "外部待定", evidence: [] },
+  ];
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const node = resolveBoardDialogNode(outcome.board, "task:8");
+  assert.ok(node);
+  const markup = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(BoardCardDialog, { board: outcome.board, node }),
+    }),
+  );
+  const status = sectionOf(markup, "status");
+  assert.ok(status);
+  assert.ok(status.includes("待合并 · 受阻于上游"), "合并为单一徽章（词条化文案）");
+  assert.ok(
+    /data-board-attention="unmerged-worktree"[^>]*data-board-blockers="2"/.test(status) ||
+      /data-board-blockers="2"[^>]*data-board-attention="unmerged-worktree"/.test(status),
+    "同一徽章上两个锚点各保留原值（attention 码与受阻数都不丢）",
+  );
+  assert.ok(!status.includes("待合并（执行现场未回流）"), "合并后不再并列渲染原始「待合并」徽章");
+  assert.ok(!/data-board-blockers="2"[^>]*>\s*受阻 2/.test(status), "也不再并列渲染「受阻 N」徽章");
+});
+
+test("弹窗：特性节点弹窗编号走 feature 形态（#54-9/P-1：UI01 而非 UI01-31）", () => {
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as {
+    features: Array<{ planCode?: string }>;
+  };
+  const feature = raw.features[0];
+  assert.ok(feature);
+  feature.planCode = "UI01";
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const node = resolveBoardDialogNode(outcome.board, "spec:preview-channel");
+  assert.ok(node);
+  const markup = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(BoardCardDialog, { board: outcome.board, node }),
+    }),
+  );
+  assert.ok(markup.includes('data-board-node-id="UI01"'), "特性弹窗编号 = 计划码本身");
+  assert.ok(
+    !markup.includes('data-board-node-id="UI01-1"'),
+    "全局稳定号不得被误读作计划内层级（UI01-31 形态）",
+  );
+  // 任务卡弹窗仍走 planCode-层级 形态（同一零件两种 variant）。
+  const taskMarkup = render("task:8");
+  assert.ok(taskMarkup.includes('data-board-node-id="ID-1.2"'), "任务卡弹窗编号形态不变");
 });
 
 test("弹窗：细节区块 —— 有文本全文渲染，空串隐藏（§6）", () => {
@@ -222,10 +317,12 @@ test("弹窗：英文界面全部区块标题与状态词汇走英文词条（�
   for (const label of ["Details", "Execution", "Source", "Evidence", "Timestamps"]) {
     assert.ok(markup.includes(`>${label}<`), `en-US 弹窗应含区块标题「${label}」`);
   }
-  assert.equal(textInside(markup, "data-board-dialog-status"), "Active", "状态词汇走英文词条");
+  // #54-5：状态行只留段位徽章 → 英文界面由段位词条表达（无重复 statusText）。
+  assert.ok(markup.includes(">In progress<"), "段位徽章走英文词条");
+  assert.ok(!markup.includes("data-board-dialog-status"), "不重复渲染同义 statusText");
   // 只查界面文案（词条渲染出的可见文本）；板上数据（标题/细节/路径）照原样透出，不参与本地化。
   const sectionTitles = ["Details", "Execution", "Source", "Evidence", "Timestamps"];
-  const uiCopy = [textInside(markup, "data-board-dialog-status"), ...sectionTitles];
+  const uiCopy = ["In progress", ...sectionTitles];
   for (const copy of uiCopy) {
     assert.ok(!/[\u4e00-\u9fff]/.test(copy), `en-US 界面文案漏了中文：${copy}`);
   }

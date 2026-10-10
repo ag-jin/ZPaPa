@@ -92,6 +92,32 @@ test("节点投影：任务卡扁平化（嵌套子卡也进集合），带 kind
   assert.equal(plan6.featureKind, "plan");
 });
 
+test("节点投影：任务卡透传 nextAssignee（v2.3/#53 卡级字段），特性节点与缺省一律 null", () => {
+  const raw = structuredClone(STAGE_MATRIX_BOARD);
+  const card8 = raw.features[0]?.tasks[1] as { nextAssignee?: string };
+  assert.ok(card8, "夹具应有 #8");
+  card8.nextAssignee = "integrator";
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const nodes = collectBoardViewNodes(outcome.board);
+  assert.equal(
+    nodes.find((node) => node.id === "task:8")?.nextAssignee,
+    "integrator",
+    "任务卡照实透传（不做管线推导，字段来自编译器）",
+  );
+  assert.equal(
+    nodes.find((node) => node.id === "task:7")?.nextAssignee,
+    null,
+    "字段缺省 → null（旧板不冒充「有接手人」）",
+  );
+  assert.equal(
+    nodes.find((node) => node.id === "spec:preview-channel")?.nextAssignee,
+    null,
+    "nextAssignee 是卡级字段（契约 §2 字段表：features[].tasks[]）",
+  );
+});
+
 test("段位缺省/不认识的节点不落列，也不静默：计入 unplacedCount", () => {
   const raw = structuredClone(STAGE_MATRIX_BOARD);
   const feature = raw.features[0] as { stage?: string };

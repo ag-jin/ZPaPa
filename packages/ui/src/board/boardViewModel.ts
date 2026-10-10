@@ -150,6 +150,11 @@ export interface BoardTaskNode {
   activeRun: BoardActiveRun | null;
   /** 当前执行者（v2.2 / #46 A3）：管线 ∩ activeRun；无 → null（只读映射，不自算）。 */
   currentAssignee: string | null;
+  /**
+   * 下一接手人（v2.3 / #53）：`assignees[]` 序中首个无 done run 证据的角色；全完成 → null。
+   * 卡级字段（特性节点没有）；缺省与 null 同形——应用侧只透传，不自算管线进度。
+   */
+  nextAssignee: string | null;
   /** 计划稿章节（v2.2 / #46 B2 数据面）：仅计划任务可能非空（树形章节子分组用）。 */
   section: string | null;
   /** 结构深度（1 = 特性下第一层；呈现缩进用，不信 label 段数——计划任务 label 是计划内层级）。 */
@@ -351,6 +356,7 @@ function mapTask(raw: unknown, parentId: string, index: number, depth: number): 
     lastRun: readLastRun(node.lastRun),
     activeRun: readActiveRun(node.activeRun),
     currentAssignee: readText(node.currentAssignee),
+    nextAssignee: readText(node.nextAssignee),
     section: readText(node.section),
     depth,
     worktree: readText(node.worktree),

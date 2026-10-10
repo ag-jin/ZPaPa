@@ -53,6 +53,8 @@ export interface BoardViewNode {
   assignees: string[];
   /** 当前执行者（#46 A3/B6）：管线 ∩ activeRun；无 → null。 */
   currentAssignee: string | null;
+  /** 下一接手人（v2.3/#53）：管线序首个无 done 证据角色；全完成/缺省 → null。 */
+  nextAssignee: string | null;
   /** 计划稿章节（#46 B2）：仅计划任务可能非空。 */
   section: string | null;
   /** 结构深度（0 = 特性；1 = 其下第一层任务；呈现缩进用，不信 label 段数）。 */
@@ -87,6 +89,8 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
     blockers: feature.blockers,
     assignees: feature.assignees,
     currentAssignee: feature.currentAssignee,
+    // nextAssignee 是卡级字段（契约 §2 字段表）：特性节点不借子树的值。
+    nextAssignee: null,
     section: null,
     depth: 0,
     origin: feature.origin,
@@ -121,6 +125,7 @@ function taskViewNode(task: BoardTaskNode, owner: BoardFeatureNode): BoardViewNo
     blockers: task.blockers,
     assignees: task.assignees,
     currentAssignee: task.currentAssignee,
+    nextAssignee: task.nextAssignee,
     section: task.section,
     depth: task.depth,
     origin: task.origin,
@@ -138,18 +143,11 @@ function taskViewNode(task: BoardTaskNode, owner: BoardFeatureNode): BoardViewNo
 
 /** 同一个节点集合（§13.2）：特性节点在前、其任务卡按文档序前序展开（含嵌套子卡）。 */
 export function collectBoardViewNodes(board: BoardViewModel): BoardViewNode[] {
-  const nodes: BoardViewNode[] = [];
-  const walkTasks = (tasks: BoardTaskNode[], owner: BoardFeatureNode) => {
-    for (const task of tasks) {
-      nodes.push(taskViewNode(task, owner));
-      walkTasks(task.children, owner);
-    }
-  };
-  for (const feature of board.features) {
-    nodes.push(featureViewNode(feature));
-    walkTasks(feature.tasks, feature);
-  }
-  return nodes;
+  // 任务侧复用唯一一份前序遍历（`collectFeatureTaskNodes`）——两份走法早晚对不上顺序。
+  return board.features.flatMap((feature) => [
+    featureViewNode(feature),
+    ...collectFeatureTaskNodes(feature),
+  ]);
 }
 
 /**
@@ -182,6 +180,11 @@ export interface BoardKanbanGroup {
   feature: BoardViewNode;
   /** 本列中属于该特性的任务卡（组内已排序）。 */
   nodes: BoardViewNode[];
+  /**
+   * 特性卡总数（#54-2）：组头展示特性自身规模；列内张数由列头计数表达。
+   * 与 `nodes.length`（本列张数）分开——跨列时两者不等，组头不能把特性读小。
+   */
+  totalCards: number;
   /** 特性节点自身段位 = 本列（分组头带自身徽章）；false = 跨列随行的轻量标签。 */
   featureInColumn: boolean;
   /** 分组排序键（组内最高优先成员；`compareBoardViewNodes` 比较）。 */
@@ -482,7 +485,8 @@ export function buildBoardKanban(
         sort,
       );
       const sortKey = members[0] ?? feature;
-      groups.push({ feature, nodes: sortedTasks, featureInColumn, sortKey });
+      const totalCards = featureNodes.length;
+      groups.push({ feature, nodes: sortedTasks, totalCards, featureInColumn, sortKey });
     }
     groups.sort((left, right) => {
       const compared = compareBoardViewNodes(left.sortKey, right.sortKey, sort);

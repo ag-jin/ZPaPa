@@ -122,6 +122,7 @@ test("弹窗阻拦区块：dependency 显示对方 ID-<label> 与稳定号 #<no>
       id: "task:9",
       no: 9,
       label: "1.3",
+      planCode: null,
       title: "通道可见 + 版本序语义",
       stage: "已完成",
     },
@@ -131,6 +132,33 @@ test("弹窗阻拦区块：dependency 显示对方 ID-<label> 与稳定号 #<no>
     dependency.summary,
     "等待 #9 的通道函数落地后再合并回调路径",
     "summary 原样保留（跳转可用时也照实展示）",
+  );
+});
+
+test("弹窗阻拦区块：目标有计划码时编号走 planCode-层级 形态（#54-6，复用 formatBoardNodeId）", () => {
+  // 真源：卡 #54 第 (6) 条——v2 计划码落地后依赖行仍硬编码 ID-<label>（#32 显示「ID-1」）。
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as {
+    features: Array<{ planCode?: string }>;
+  };
+  const feature = raw.features[0];
+  assert.ok(feature, "夹具应有首个特性");
+  feature.planCode = "UI01";
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const board = outcome.board;
+  const draft = buildBoardCardDialog(board, nodeOf(board, "task:plan:plan-payment-split#0"));
+  const dependency = draft.blockers[0];
+  assert.ok(dependency);
+  assert.equal(
+    dependency.targetText,
+    "UI01-1.3 · #9",
+    "有计划码 → 完整编号形态（计划码-层级）+ 稳定号",
+  );
+  assert.equal(
+    dependency.target?.planCode,
+    "UI01",
+    "跳转目标携带 planCode（编号形态与其余三视图同源，不在视图层重拼）",
   );
 });
 
@@ -210,6 +238,7 @@ test("跳转目标解析：按稳定号找板上的卡；找不到 / 没号 → 
     id: "task:9",
     no: 9,
     label: "1.3",
+    planCode: null,
     title: "通道可见 + 版本序语义",
     stage: "已完成",
   });

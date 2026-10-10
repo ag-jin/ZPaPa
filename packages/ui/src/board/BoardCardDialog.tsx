@@ -188,7 +188,12 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
         className="relative my-auto flex max-h-[85vh] w-full max-w-[26rem] flex-col overflow-hidden rounded-2xl border border-popover-border bg-popover text-ui-base/relaxed text-foreground shadow-md"
       >
         <div data-board-dialog-section="header" className="flex items-start gap-2 px-3 py-2">
-          <BoardNodeNumber no={dialog.no} label={dialog.label} planCode={node.planCode} />
+          <BoardNodeNumber
+            no={dialog.no}
+            label={dialog.label}
+            planCode={node.planCode}
+            variant={dialog.kind === "feature" ? "feature" : "task"}
+          />
           <span className="min-w-0 flex-1 text-ui-sm font-medium text-foreground">
             {dialog.title}
           </span>
@@ -209,7 +214,9 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
           className="flex flex-wrap items-center gap-1.5 border-t border-border/50 px-3 py-2"
         >
           <BoardStageBadge stage={dialog.stage} />
-          {statusText ? (
+          {/* #54-5 状态行精简：段位徽章已在场时不再渲染同义的 statusText（「待办 待办中」重复）。
+              段位缺失（徽章不渲染）时 status 文本是唯一状态来源，锚点保留、照常渲染。 */}
+          {statusText && dialog.stage === null ? (
             <span
               data-board-dialog-status={dialog.status ?? ""}
               className="text-ui-xs text-foreground"
@@ -217,7 +224,8 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
               {statusText}
             </span>
           ) : null}
-          {/* B5 精简：draft 徽章不重复（表里已有草案语境）、状态点去重（段位徽章已含状态）。 */}
+          {/* B5 精简：draft 徽章不重复（表里已有草案语境）、状态点去重（段位徽章已含状态）。
+              #54-5：待合并 + 受阻合并为单一徽章（两个锚点各带原值）。 */}
           <BoardNodeBadges
             attention={dialog.attention}
             blockers={dialog.blockers.length}
@@ -226,6 +234,7 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
             activeRunRole={dialog.activeRun?.role ?? null}
             status={dialog.status}
             showStatusDot={false}
+            mergeUnmergedBlocked
           />
         </div>
         {dialog.showBlockers ? (
@@ -254,6 +263,7 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
               <BoardAssigneePipeline
                 assignees={dialog.assignees}
                 currentAssignee={dialog.currentAssignee}
+                nextAssignee={dialog.nextAssignee}
               />
             ) : null}
           </DialogSection>

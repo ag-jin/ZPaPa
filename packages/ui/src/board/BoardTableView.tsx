@@ -129,10 +129,11 @@ function BoardTableRow({
           )}
         >
           {key === "assignees" ? (
-            // 责任管线（#46 B6）：当前执行者加粗变色，其余灰色小字
+            // 责任管线（#46 B6 / #54-1）：当前执行者加粗变色，done 弱化，下一接手人次强调
             <BoardAssigneePipeline
               assignees={node.assignees}
               currentAssignee={node.currentAssignee}
+              nextAssignee={node.nextAssignee}
             />
           ) : key === "no" ? (
             // 号列走共用编号零件（#46 B1 短形态 + data-board-node-id 锚点与其余视图一致）
@@ -165,7 +166,7 @@ function BoardTableGroup({
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
-  const { intl } = useZCodeIntl();
+  // D2（T36u）：本组件不用词条（无 intl 调用）——不留未使用解构，避免 lint warning 噪声。
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     group.feature.id,
     highlightCardId,

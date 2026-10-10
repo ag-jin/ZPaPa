@@ -967,6 +967,8 @@ const zhCN: Record<string, string> = {
   "board.draft": "草案",
   "board.blockedByCount": "受阻 {count}",
   "board.activeRun": "{role} 执行中",
+  // 接手位标记（v2.3/#53 nextAssignee；#54-1 责任管线三态的「下一个」）。
+  "board.pipeline.next": "下一个",
   "board.lastRun.stoppedAt": "停在 #{no}",
   "board.empty.none": "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
   "board.empty.features": "尚无规格或计划。",
@@ -981,6 +983,8 @@ const zhCN: Record<string, string> = {
   "board.attention.interruptedResume": "执行中断，可续（停在 #{no}）",
   "board.attention.interruptedResumeNoBreakpoint": "执行中断，可续",
   "board.attention.unmergedWorktree": "待合并（执行现场未回流）",
+  // 合并徽章（#54-5）：弹窗里「待合并 + 受阻」是同一件事的两面，合成单一呈现。
+  "board.attention.unmergedBlocked": "待合并 · 受阻于上游",
   "board.attention.summary.interviewedNotArranged": "{count} 已访谈未安排",
   "board.attention.summary.arrangedNotExpanded": "{count} 已安排未展开",
   "board.attention.summary.interruptedResume": "{count} 执行中断可续",

@@ -144,7 +144,11 @@ export function buildPageHtml(params: { css: string; boardJson: string; bundle: 
 let cssCompiler: Awaited<ReturnType<typeof compile>> | null = null;
 
 /** 用仓库真实 `src/styles.css` + 本页出现的全部类名（展开/折叠两态取并集）编译出真实产物 CSS。 */
-export async function compileBoardPaneCss(params: { boards: string[] }): Promise<string> {
+export async function compileBoardPaneCss(params: {
+  boards: string[];
+  /** 需要收集类名的视图（缺省看板；#54 的列表点击路由场景要列表视图的类）。 */
+  viewModes?: Array<"tree" | "kanban" | "list" | "table">;
+}): Promise<string> {
   const cssSource = readFileSync(path.join(UI_DIR, "src", "styles.css"), "utf8");
   cssCompiler = await compile(cssSource, {
     base: path.join(UI_DIR, "src"),
@@ -154,19 +158,21 @@ export async function compileBoardPaneCss(params: { boards: string[] }): Promise
   for (const boardJson of params.boards) {
     const outcome = parseBoardJson(boardJson);
     if (outcome.kind !== "ready") continue;
-    for (const expanded of [true, false]) {
-      const markup = renderToStaticMarkup(
-        createElement(ZCodeIntlProvider, {
-          initialLocale: "zh-CN" as const,
-          children: createElement(BoardPaneView, {
-            state: { kind: "ready" as const, board: outcome.board },
-            viewMode: "kanban" as const,
-            kanbanCompletedExpanded: expanded,
+    for (const viewMode of params.viewModes ?? ["kanban" as const]) {
+      for (const expanded of [true, false]) {
+        const markup = renderToStaticMarkup(
+          createElement(ZCodeIntlProvider, {
+            initialLocale: "zh-CN" as const,
+            children: createElement(BoardPaneView, {
+              state: { kind: "ready" as const, board: outcome.board },
+              viewMode,
+              kanbanCompletedExpanded: expanded,
+            }),
           }),
-        }),
-      );
-      for (const match of markup.matchAll(/class="([^"]*)"/g)) {
-        for (const token of (match[1] ?? "").split(/\s+/)) if (token) candidates.add(token);
+        );
+        for (const match of markup.matchAll(/class="([^"]*)"/g)) {
+          for (const token of (match[1] ?? "").split(/\s+/)) if (token) candidates.add(token);
+        }
       }
     }
   }
