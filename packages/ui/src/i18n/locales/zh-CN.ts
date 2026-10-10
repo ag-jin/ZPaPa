@@ -999,6 +999,9 @@ const zhCN: Record<string, string> = {
   "board.stage.cancelled": "已取消",
   // 视图切换（契约 §13.2 四视图；本期面板内三态：树形/看板/列表）。
   "board.feature.cardCount": "{count} 张卡",
+  // 三层容器层头计数片（A4-1）：epic/期次组头的稿数片与 epic 层的期数片（比「张卡」高一层）。
+  "board.layer.planCount": "{count} 稿",
+  "board.layer.phaseCount": "{count} 期",
   // 折叠控件的可及名称（#55 S-3）：按钮只有 ▸/▾ 符号，动作 + 对象走词条（{name} = 特性名）。
   "board.group.expand": "展开 {name}",
   "board.group.collapse": "收起 {name}",
@@ -1037,6 +1040,9 @@ const zhCN: Record<string, string> = {
   "board.status.blocked": "阻塞",
   "board.status.completed": "已完成",
   "board.status.cancelled": "已取消",
+  // epic 登记行终态（§10.5）：cancelled 复用 board.status.cancelled（同词同义）；archived 只在
+  // epic 壳层出现（特性 status 枚举无该值），单列一键——不冒充特性状态。
+  "board.epic.archived": "已归档",
   // 四缺口码的短标签（过滤控件用；徽章仍走 §4 逐字文案）。
   "board.attention.label.interviewedNotArranged": "访谈未落卡",
   "board.attention.label.arrangedNotExpanded": "已安排未拆解",

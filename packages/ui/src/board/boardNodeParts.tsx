@@ -238,6 +238,61 @@ export function BoardNodeBadges({
   );
 }
 
+/** 计数片外观单点（稿层「张卡」与层头「稿/期」同一形态；lightweight 只调底色强调度）。 */
+const COUNT_CHIP_CLASS =
+  "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle";
+
+/**
+ * 折叠指示符（#55 S-3；#87 起树形容器头/稿块使用；A4-1b 起与列表分组头共用一份——届时替换 BoardListView 内联件）：原生 `<details>/<summary>`
+ * 已向辅助技术暴露展开态，缺的是**视觉**指示符——装饰性 chevron（`aria-hidden`，`group-open:`
+ * 旋转），不写伪 `aria-expanded`、不夺由内容构成的可及名称。宿主 `<details>` 必须带 `group` 类。
+ */
+export function BoardFoldIndicator() {
+  return (
+    <span
+      aria-hidden="true"
+      data-board-fold-indicator=""
+      className="shrink-0 text-ui-xs text-foreground-subtle transition-transform group-open:rotate-90"
+    >
+      ▸
+    </span>
+  );
+}
+
+/**
+ * epic 登记行终态标注词条（§10.5；A4-1）：只认登记行枚举值（cancelled/archived）——
+ * 不认识的取值不标注（不猜语义、不把未知值当进行态）。cancelled 复用 `board.status.cancelled`
+ * （同词同义）；archived 只在 epic 壳层出现，单列键。
+ */
+const LAYER_STATUS_MESSAGE_IDS: Record<string, string> = {
+  cancelled: "board.status.cancelled",
+  archived: "board.epic.archived",
+};
+
+/**
+ * 容器层头（卡 #87 / A4-1 tracer 接口；A4-1b 三视图复用同一份，禁二份实现）：
+ * 三层容器的 epic / 期次层头身份与计数。
+ *
+ * 层名渲染进**稿层编号位**（`BoardNodeNumber` 同位同款）：epic 层 = 4 位登记码（`KANB`）；
+ * 期次层 = 显示层双字段合成名（`KANB1`，AD-3）——合成名只作容器层名，不进卡编号命名空间（AD-2）。
+ * 计数片走层词条（`board.layer.*`）：epic 层 = 稿数 + 期数两片；期次层 = 稿数一片。
+ * 层头不是卡：无号、无段位；终态标注（§10.5）也在这份零件里渲染（占段位徽章位，登记行 `status` 唯一承载）。
+ */
+export interface BoardGroupHeaderLayer {
+  kind: "epic" | "phase";
+  /** 层名（显示层）：epic 码（`KANB`）/ 期次合成名（`KANB1`）。 */
+  name: string;
+  /** 稿数（epic 层 = 成员稿数；期次层 = 该期稿数）——层实际承载的成员数。 */
+  planCount: number;
+  /** 期次数（epic 层次级片）；phase 层不传/传 null（不渲染该片）。 */
+  phaseCount?: number | null;
+  /**
+   * 层终态（§10.5；当前只有 epic 层承载）：登记行 `status` 原值——`cancelled`/`archived`
+   * 渲染终态标注（词条单点在零件内），其余/缺省不标注。**成员活跃不复活终态**：这里只读登记行。
+   */
+  status?: string | null;
+}
+
 /**
  * 特性分组头内容（#46 B3/B4 共用；#55 S-2 收敛树形手工装配）：编号（计划码 / ID-<label>）+
  * 名称 + 段位徽章 + 角标 + `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要
@@ -248,15 +303,11 @@ export function BoardNodeBadges({
  *
  * 视图间差异作 props（#55 S-2，评审 #46 S-2）：`titleClassName`（树形大块用 base 字号）、
  * `titleAccessory`（树形特性头尾部的当前执行者徽记）；计数片 markup 单点化，不再各装配一份。
+ *
+ * 计数片二选一（#87：`layer` 与 `cardCount` 互斥的判别联合）——层头传 `layer`（层名 + 层计数），
+ * 稿层传 `cardCount`（`[N 张卡]`，四视图现状）；不给两条计数路径并存的机会。
  */
-export function BoardFeatureGroupHeaderContent({
-  feature,
-  cardCount,
-  lightweight = false,
-  titleRegionProps = null,
-  titleClassName,
-  titleAccessory = null,
-}: {
+export type BoardFeatureGroupHeaderContentProps = {
   /** 分组头所需的最小字段面：树形传原始特性节点、看板/列表传视图节点——同一零件不挑来源。 */
   feature: {
     no: number | null;
@@ -268,7 +319,6 @@ export function BoardFeatureGroupHeaderContent({
     blockers: readonly unknown[];
     status: string | null;
   };
-  cardCount: number;
   lightweight?: boolean;
   /**
    * 开弹窗落点（#54-4 列表组头点击分区）：给了就把「编号 + 名称」包进这个落点 div 并展开
@@ -281,16 +331,72 @@ export function BoardFeatureGroupHeaderContent({
   titleClassName?: string;
   /** 标题后的附加片（树形当前执行者徽记；看板/列表不传）。 */
   titleAccessory?: ReactNode;
-}) {
+} & (
+  | { layer: BoardGroupHeaderLayer; cardCount?: never }
+  | { layer?: null | undefined; cardCount: number }
+);
+
+export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderContentProps) {
+  const {
+    feature,
+    layer = null,
+    lightweight = false,
+    titleRegionProps = null,
+    titleClassName,
+    titleAccessory = null,
+  } = props;
   const { intl } = useZCodeIntl();
+  // 层终态标注（只认登记行枚举值；未知取值不标注）。
+  const layerStatusMessageId =
+    layer?.status != null ? (LAYER_STATUS_MESSAGE_IDS[layer.status] ?? null) : null;
+  /**
+   * 计数片二选一（#87 判别联合）：条件必须是 `props.layer`（对 props 本身判别）——
+   * 这样 else 分支里 `props.cardCount` 才被收窄为 `number`，两条计数路径不可能并存。
+   */
+  const countChips = props.layer ? (
+    <>
+      {props.layer.phaseCount === undefined || props.layer.phaseCount === null ? null : (
+        <span
+          data-board-layer-phase-count={props.layer.phaseCount}
+          className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+        >
+          {intl.formatMessage({ id: "board.layer.phaseCount" }, { count: props.layer.phaseCount })}
+        </span>
+      )}
+      <span
+        data-board-layer-plan-count={props.layer.planCount}
+        className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+      >
+        {intl.formatMessage({ id: "board.layer.planCount" }, { count: props.layer.planCount })}
+      </span>
+    </>
+  ) : (
+    <span
+      data-board-feature-card-count={props.cardCount}
+      className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+    >
+      {intl.formatMessage({ id: "board.feature.cardCount" }, { count: props.cardCount })}
+    </span>
+  );
   const numberAndTitle = (
     <>
-      <BoardNodeNumber
-        no={feature.no}
-        label={feature.label}
-        planCode={feature.planCode}
-        variant="feature"
-      />
+      {layer ? (
+        // 层头身份位（A4-1）：epic 码 / 期次合成名——与稿层编号同位同款（mono 小字弱强调）。
+        <span
+          data-board-layer-kind={layer.kind}
+          data-board-layer-name={layer.name}
+          className="shrink-0 font-mono text-ui-xs text-foreground-subtle"
+        >
+          {layer.name}
+        </span>
+      ) : (
+        <BoardNodeNumber
+          no={feature.no}
+          label={feature.label}
+          planCode={feature.planCode}
+          variant="feature"
+        />
+      )}
       <span
         {...(feature.planCode !== null ? { "data-board-feature-code": feature.planCode } : {})}
         className={cn(
@@ -317,7 +423,14 @@ export function BoardFeatureGroupHeaderContent({
       ) : (
         numberAndTitle
       )}
-      {lightweight ? null : <BoardStageBadge stage={feature.stage} />}
+      {layerStatusMessageId ? (
+        // 层终态标注（#87；§10.5）：占段位徽章位——层不是卡，没有段位；终态由登记行唯一承载。
+        <Badge variant="secondary" data-board-layer-status={layer?.status ?? null}>
+          {intl.formatMessage({ id: layerStatusMessageId })}
+        </Badge>
+      ) : lightweight ? null : (
+        <BoardStageBadge stage={feature.stage} />
+      )}
       <BoardNodeBadges
         attention={feature.attention}
         blockers={feature.blockers.length}
@@ -327,15 +440,7 @@ export function BoardFeatureGroupHeaderContent({
         status={feature.status}
         {...(lightweight ? { className: "opacity-70" } : {})}
       />
-      <span
-        data-board-feature-card-count={cardCount}
-        className={cn(
-          "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle",
-          lightweight ? "" : "bg-surface",
-        )}
-      >
-        {intl.formatMessage({ id: "board.feature.cardCount" }, { count: cardCount })}
-      </span>
+      {countChips}
     </>
   );
 }
