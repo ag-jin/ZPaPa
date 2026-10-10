@@ -133,7 +133,6 @@ function panelProps(sidePaneState) {
     onOpenBrowserUrl: noop,
     onOpenCodeViewer: noop,
     onOpenSubagentSession: noop,
-    onOpenSquadRunSession: noop,
     onRefreshGit: noop,
     onBrowserNavigationRequestHandled: noop,
     onBrowserUrlChange: noop,

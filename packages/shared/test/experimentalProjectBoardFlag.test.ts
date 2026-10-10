@@ -16,7 +16,7 @@ test("看板实验开关缺省为 false（全新配置）", () => {
 test("存量设置缺本键时升级后为 false（入口不可见）", () => {
   const parsed = appSettingsSchema.parse({
     locale: "zh-CN",
-    experimentalAgentSquadsEnabled: true,
+    memoryEnabled: true,
   });
   assert.equal(parsed.experimentalProjectBoardEnabled, false);
 });
