@@ -4498,6 +4498,9 @@ const enUS: Record<string, string> = {
   "settings.workspaceFileSearch.unsaved": "Unsaved changes",
   "settings.workspaceFileSearch.noWorkspace":
     "No workspace is open, so search ignore rules cannot be configured.",
+  "settings.experiments.title": "Experiments",
+  "settings.experiments.projectBoardToggle.label": "Project board",
+  "settings.experiments.saveFailed": "Save failed, please try again",
   "settings.hooks.description":
     "Manage task lifecycle hooks to automatically execute commands on specific events.",
   "settings.hooks.enabled": "Enabled",

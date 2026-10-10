@@ -14,6 +14,7 @@ import {
   Brain,
   BookOpen,
   Blocks,
+  FlaskConical,
   Globe2,
   Cable,
   WandSparkles,
@@ -170,6 +171,15 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     icon: BarChart3,
     titleId: "settings.usageTitle",
     groupId: "dataAndStats",
+  },
+  // 实验功能：所有实验开关的统一去处（通用容器，不绑死单个功能）。
+  // 开关走运行期 appSettings 字段、不做编译期隐藏——用户必须能自行打开，
+  // 否则实验功能等于没有通路。当前只挂「项目看板」一行。
+  {
+    id: "experiments",
+    icon: FlaskConical,
+    titleId: "settings.experiments.title",
+    groupId: "basics",
   },
 ];
 
