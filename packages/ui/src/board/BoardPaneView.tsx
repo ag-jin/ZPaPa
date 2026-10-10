@@ -73,6 +73,12 @@ export interface BoardPaneViewProps {
   now?: number;
 }
 
+/**
+ * 看板面板根元素的类名（就绪态与占位态共用）：`relative` 是弹窗 overlay 的定位上下文（#46 B5）。
+ * `data-board-pane` 与选区豁免 `data-no-selection-action`（卡 #64）同落在这个根元素上。
+ */
+const BOARD_PANE_ROOT_CLASS = "relative flex h-full min-h-0 flex-col";
+
 /** 面板级刷新按钮（`data-board-refresh`）：就绪头部与占位态同一实现（评审 #32-P5）。 */
 function BoardPaneRefreshButton({ onRefresh }: { onRefresh: () => void }) {
   const { intl } = useZCodeIntl();
@@ -222,7 +228,10 @@ function BoardReadyView({
   const dialogNode = resolveBoardDialogNode(board, openCardId ?? null);
   return (
     // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
-    <div data-board-pane="" className="relative flex h-full min-h-0 flex-col">
+    // `data-no-selection-action`（卡 #64）：看板是只读投影，面板内不得出现
+    // 「选中文字→添加到会话」浮条。豁免判据在共享层 `conversationSelectionGuard`（只认这个属性，
+    // 不认看板身份）——本面板只声明约定，不在 board 模块里自建第二套选区判定。
+    <div data-board-pane="" data-no-selection-action="" className={BOARD_PANE_ROOT_CLASS}>
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3">
         <div className="min-w-0">
           <div className="truncate text-ui-base font-medium text-foreground">
@@ -367,7 +376,8 @@ function BoardPlaceholder({
   const anchor = kind === "loading" ? { "data-board-loading": "" } : { "data-board-empty": kind };
   return (
     // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
-    <div data-board-pane="" className="relative flex h-full min-h-0 flex-col">
+    // 占位态同样是看板面板（只读）：与就绪态同一份选区豁免声明（卡 #64）。
+    <div data-board-pane="" data-no-selection-action="" className={BOARD_PANE_ROOT_CLASS}>
       {onRefresh ? (
         <div className="flex h-12 shrink-0 items-center justify-end border-b border-border/50 px-3">
           <BoardPaneRefreshButton onRefresh={onRefresh} />
