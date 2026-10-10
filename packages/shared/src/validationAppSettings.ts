@@ -513,6 +513,10 @@ const appSettingsObjectSchema = z.object({
   onboardingOccupation: appSettingsOccupationSchema.nullish(),
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().default(false),
+  // 项目看板（只读板面板）实验开关。**默认关**（用户 2026-10-10 拍板：功能合进主线，
+  // 但作为设置-实验功能下的可选项）。default 只在键缺失时生效——存量设置升级后取 false，
+  // 与呈现侧「严格 === true 才可见」的判据同向。
+  experimentalProjectBoardEnabled: z.boolean().default(false),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -620,6 +624,8 @@ export const appSettingsPatchSchema = z.object({
     .nullish(),
   proactiveSuggestionsEnabled: z.boolean().optional(),
   memoryEnabled: z.boolean().optional(),
+  /* #58：项目看板实验开关的 patch 位（两处 schema 同步是既有纪律）。省略 = 不改这一格。 */
+  experimentalProjectBoardEnabled: z.boolean().optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),

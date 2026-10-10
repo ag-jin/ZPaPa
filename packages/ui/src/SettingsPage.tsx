@@ -92,6 +92,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { ExperimentsSection } from "@/settings/ExperimentsSection.js";
 import { WikiSettingsSection } from "@/settings/WikiSettingsSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
@@ -2440,6 +2441,10 @@ export function SettingsPage({
                             remoteTarget={activeWorkspaceTab?.remoteTarget}
                             localWorkspacePath={activeWorkspaceTab?.localWorkspacePath}
                           />
+                        ) : activeSection === "experiments" ? (
+                          // 实验功能：开关读写走运行期 settings（见 ExperimentsSection），
+                          // 不做编译期隐藏/平台分支。
+                          <ExperimentsSection />
                         ) : null}
                       </div>
                     </div>

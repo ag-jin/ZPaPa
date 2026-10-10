@@ -7,18 +7,25 @@ export type OpenTabLauncherItemId =
   | "terminal"
   | "browser"
   | "developer-tools"
-  | "wiki";
+  | "wiki"
+  | "board";
 
 export function resolveOpenTabLauncherItemIds({
   developerToolsEnabled,
   hasReviewTab,
   canOpenSelectionSideConversation = false,
   supportsEmbeddedBrowser = true,
+  projectBoardEnabled = false,
 }: {
   developerToolsEnabled: boolean;
   hasReviewTab: boolean;
   canOpenSelectionSideConversation?: boolean;
   supportsEmbeddedBrowser?: boolean;
+  /**
+   * 项目看板实验开关（卡 #58，默认关）。缺省 false = 未开启 ⇒ 入口零渲染；
+   * 调用方传 `projectBoardEntryVisible(settings)`，判据只有那一处。
+   */
+  projectBoardEnabled?: boolean;
 }): OpenTabLauncherItemId[] {
   const itemIds: OpenTabLauncherItemId[] = [];
 
@@ -46,6 +53,13 @@ export function resolveOpenTabLauncherItemIds({
 
   if (developerToolsEnabled) {
     itemIds.push("developer-tools");
+  }
+
+  // 「项目看板」按要求落在「打开标签页」区块之下：排在既有入口之后。
+  // 卡 #58：入口挂在实验开关下（默认关）——未开启时**零渲染**（连灰掉都不做：
+  // 实验功能的存在本身对未开启的用户不可见）。开关只裁剪入口，不动标签注册本身。
+  if (projectBoardEnabled) {
+    itemIds.push("board");
   }
 
   return itemIds;

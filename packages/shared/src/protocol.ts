@@ -432,6 +432,11 @@ export interface AppSettings {
   /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
   /**
+   * 项目看板实验开关（#58）：**默认关闭**——关闭时侧边面板既无「项目看板」入口，
+   * 也不挂载看板面板（存量设置升级后同样不可见）。
+   */
+  experimentalProjectBoardEnabled?: boolean;
+  /**
    * 项目知识库（wiki）配置：生成选项与定时自动更新。
    * 产物落 `<workspace>/wiki/`。
    */

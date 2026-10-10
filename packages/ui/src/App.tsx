@@ -232,6 +232,7 @@ export function App({
     handleOpenWhiteboard,
     handleOpenDeveloperTools,
     handleOpenWiki,
+    handleOpenBoard,
     handleOpenFileTree,
     handleOpenTerminalTab,
     handleOpenSubagentSession,
@@ -1247,6 +1248,7 @@ export function App({
         handleOpenWhiteboard={handleOpenWhiteboard}
         handleOpenDeveloperTools={handleOpenDeveloperTools}
         handleOpenWiki={handleOpenWiki}
+        handleOpenBoard={handleOpenBoard}
         handleOpenFileTree={handleOpenFileTree}
         handleOpenTerminalTab={handleOpenTerminalTabIfWritable}
         handleToggleGit={handleToggleGitIfWritable}
