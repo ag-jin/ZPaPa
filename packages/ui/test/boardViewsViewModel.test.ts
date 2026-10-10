@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   boardAttentionFilterValue,
   boardListControlsToQuery,
-  boardSortFilterValue,
   boardStageFilterValue,
   boardStatusFilterValue,
   boardViewNodeKindFilterValue,
@@ -11,10 +10,10 @@ import {
   buildBoardListRows,
   collectBoardViewNodes,
   EMPTY_BOARD_LIST_CONTROLS,
-  sortBoardViewNodes,
   type BoardKanbanColumn,
   type BoardViewNode,
 } from "../src/board/boardViewsViewModel.js";
+import { boardSortFilterValue, sortBoardViewNodes } from "../src/board/boardViewSorting.js";
 import { BOARD_STAGES, parseBoardJson, type BoardViewModel } from "../src/board/boardViewModel.js";
 import { STAGE_MATRIX_BOARD } from "./boardStageMatrixFixture.js";
 

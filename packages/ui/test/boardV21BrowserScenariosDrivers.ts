@@ -202,3 +202,67 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   };
 })()`;
 }
+
+/**
+ * 场景五（#65）：列表排序切换 + 会话记忆往返（真 DOM + 真事件 + 真 sessionStorage）。
+ *
+ * 为什么这么驱动：
+ * - 排序控件是原生 `<select>`：真实「点开下拉再选一项」的弹层由操作系统/UA 实现，
+ *   脚本无法合成那一次选择；因此**指针序列只用于打到控件本身（聚焦/点击的真路径）**，
+ *   选择动作按浏览器标准路径落地：`select.value = …` + 派发 `change`（React 的 onChange 收到
+ *   的就是这一个事件）——判据仍在 Node 侧（行序期望由夹具手推，不在页面里重算）。
+ * - 会话记忆往返：`__BOARD_REMOUNT__`（harness 提供的重挂钩子）等价于「切侧边标签 → 面板卸载 →
+ *   再打开」；重挂后视图模式与排序视角都从 sessionStorage 读回，行序必须与选择后一致。
+ */
+export function listSortDriverSource(): string {
+  return `(async () => {
+${BOARD_BROWSER_DRIVER_PRELUDE}
+  await switchToView("list");
+  const rowIds = () =>
+    [...document.querySelectorAll('[data-board-view="list"] [data-board-indent]')].map((row) =>
+      row.getAttribute("data-board-card"),
+    );
+  await waitFor(() => rowIds().length > 0, "列表行");
+  const select = () =>
+    document.querySelector('[data-board-filter="sort"]');
+  const initial = rowIds();
+  let previousRows = initial;
+  const selectSort = async (value) => {
+    const el = select();
+    if (!el) throw new Error("找不到排序控件");
+    // 真用户先点到控件上（聚焦/点击路径）；再由 change 落地选择值（原生下拉弹层不可脚本合成）。
+    dispatchPointerClick(el);
+    el.value = value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitFor(() => select() && select().value === value, "排序控件取值 " + value);
+    await waitFor(() => rowIds().join("|") !== previousRows.join("|"), "排序切换后行序应变化");
+    await sleep(30);
+    previousRows = rowIds();
+    return {
+      rows: previousRows,
+      selectValue: select().value,
+      stored: sessionStorage.getItem("zcode-board-list-sort"),
+    };
+  };
+  const stage = await selectSort("stage");
+  const oldest = await selectSort("oldest");
+  // 重挂 = 面板卸载再打开（视图模式 list + 排序视角 oldest 都从会话记忆读回）。
+  globalThis.__BOARD_REMOUNT__();
+  await waitFor(() => document.querySelector('[data-board-view="list"]'), "重挂后应回到列表视图");
+  await waitFor(() => rowIds().length > 0, "重挂后列表行");
+  await sleep(30);
+  return {
+    ua: navigator.userAgent,
+    initial,
+    stageRows: stage.rows,
+    stageStored: stage.stored,
+    stageSelectValue: stage.selectValue,
+    oldestRows: oldest.rows,
+    oldestStored: oldest.stored,
+    oldestSelectValue: oldest.selectValue,
+    remountRows: rowIds(),
+    remountSelectValue: select() ? select().value : null,
+    remountStored: sessionStorage.getItem("zcode-board-list-sort"),
+  };
+})()`;
+}

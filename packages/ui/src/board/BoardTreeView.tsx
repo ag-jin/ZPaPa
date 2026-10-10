@@ -9,6 +9,10 @@
  * 折叠形态：特性节点 = `<details>` 大块（边框/背景把特性与子卡分开）；默认展开规则
  * ——有 attention 缺口的特性展开、completed 特性折叠（attention 优先）；摘要显示
  * `[N 张卡]`（含嵌套）。跳转落在折叠块内时由宿主先置开（`boardRevealDetailsIntent`）。
+ *
+ * 完成沉底（#65，卡「完成沉底全视图落实」）：树形是**结构序**视图——特性大块、章节子分组与
+ * 其余卡片的文档序都不重排；「已完成沉底」只作用于**同级组**（章节分组内、嵌套子卡列表内），
+ * 由纯函数 `sinkCompletedTreeSiblings` 一处判定（稳定分区）。
  */
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -21,6 +25,7 @@ import {
 } from "./boardNodeParts.js";
 import { formatBoardLastRunText, formatBoardRunTime } from "./boardPresentation.js";
 import { countBoardFeatureTasks } from "./boardViewsViewModel.js";
+import { sinkCompletedTreeSiblings } from "./boardViewSorting.js";
 import type { BoardFeatureNode, BoardTaskNode, BoardViewModel } from "./boardViewModel.js";
 
 /** 缩进层级 → 左侧内边距（层级 = 结构深度：1 = 特性下第一层；不信 label 段数）。 */
@@ -121,15 +126,18 @@ function BoardTaskRow({
           </div>
         ) : null}
       </div>
-      {task.children.map((child) => (
-        <BoardTaskRow
-          key={child.id}
-          task={child}
-          planCode={planCode}
-          {...(onOpenCard ? { onOpenCard } : {})}
-          highlightCardId={highlightCardId}
-        />
-      ))}
+      {task.children.length > 0
+        ? // 嵌套同级沉底（#65）同样逐层生效：已完成子卡沉到同级末尾，其余保持文档序。
+          sinkCompletedTreeSiblings(task.children).map((child) => (
+            <BoardTaskRow
+              key={child.id}
+              task={child}
+              planCode={planCode}
+              {...(onOpenCard ? { onOpenCard } : {})}
+              highlightCardId={highlightCardId}
+            />
+          ))
+        : null}
     </>
   );
 }
@@ -239,7 +247,7 @@ function BoardFeatureSection({
                 {group.section}
               </div>
             ) : null}
-            {group.tasks.map((task) => (
+            {sinkCompletedTreeSiblings(group.tasks).map((task) => (
               <BoardTaskRow
                 key={task.id}
                 task={task}

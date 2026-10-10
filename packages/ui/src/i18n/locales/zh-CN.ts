@@ -1030,6 +1030,7 @@ const zhCN: Record<string, string> = {
   "board.kind.task": "卡片",
   "board.sort.recent": "最近更新",
   "board.sort.oldest": "最老未动",
+  "board.sort.stage": "段位序",
   // status 枚举词条（过滤控件用；机器词汇与 progress.json 一致）。
   "board.status.pending": "待办中",
   "board.status.active": "进行中",

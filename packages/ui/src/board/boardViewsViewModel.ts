@@ -7,7 +7,7 @@
  * 单一真源：
  * - §13.2 视图矩阵：四视图共用同一 board.json、同一节点集合与同一段位派生；视图差异只在呈现层。
  * - §13.3 待设计列 = interview-only 聚合子区。
- * - §3.5 排序：attention 项置顶，其余按 updatedAt 倒序；「最老未动」是第二视角。
+ * - §3.5 排序与完成沉底：判定单点在 `boardViewSorting`（行序/列内序/组序共用一份比较器）。
  */
 import {
   BOARD_STAGES,
@@ -28,6 +28,13 @@ import type {
   BoardTaskNode,
   BoardViewModel,
 } from "./boardViewModel.js";
+import {
+  BOARD_COMPLETED_STAGE,
+  compareBoardViewNodes,
+  isBoardStage,
+  sortBoardViewNodes,
+  type BoardViewSort,
+} from "./boardViewSorting.js";
 
 /**
  * 视图节点（四视图共用）：特性节点与任务卡在同一集合里，`kind` 只用于呈现分组标记，
@@ -221,9 +228,6 @@ export interface BoardListGroup {
   totalCards: number;
 }
 
-/** 排序第二视角（§3.5：「最老未动」由用户主动切换，不改变默认排序）。 */
-export type BoardViewSort = "recent" | "oldest";
-
 /* ---------------- 视图模式（闭集） ---------------- */
 
 /** 面板内四视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
@@ -258,62 +262,6 @@ export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
 
 export function isBoardViewMode(value: unknown): value is BoardViewMode {
   return typeof value === "string" && (BOARD_VIEW_MODES as readonly string[]).includes(value);
-}
-
-function updatedAtEpoch(node: BoardViewNode): number | null {
-  if (!node.updatedAt) return null;
-  const epochMs = Date.parse(node.updatedAt);
-  return Number.isFinite(epochMs) ? epochMs : null;
-}
-
-/**
- * 节点排序（§3.5）：attention 项置顶**恒定**；其余按 `updatedAt` 倒序（`recent`）或升序（`oldest`）。
- * `updatedAt` 缺失/解析不了 = 没有卡龄信号 → 沉底（不冒充最新）；同刻按 id 稳定收敛。
- * 纯函数：不改写入参数组。
- *
- * `sinkStage`（可选）：命中该段位的节点整体沉到**所在组末尾**——列表默认排序用它把「已完成」沉底
- * （§13.2 列表列：「已完成」行徽章 + 默认排序沉底）。置顶优先于沉底：带缺口的已完成卡仍在置顶组
- * （缺口不许被埋，§3.5）。
- */
-export function sortBoardViewNodes(
-  nodes: BoardViewNode[],
-  sort: BoardViewSort = "recent",
-  options: { sinkStage?: BoardStage | null } = {},
-): BoardViewNode[] {
-  return [...nodes].sort((left, right) => compareBoardViewNodes(left, right, sort, options));
-}
-
-/**
- * 单点比较器（`sortBoardViewNodes` 与看板分组排序共用）：attention 置顶恒在，其次 sinkStage，
- * 再次 updatedAt（recent 倒序 / oldest 升序），最后 id 稳定收敛。导出供分组序复用——
- * 分组排序键 = 组内最高优先成员，判定规则必须与行排序**同一份**，否则组序与行序互相矛盾。
- */
-export function compareBoardViewNodes(
-  left: BoardViewNode,
-  right: BoardViewNode,
-  sort: BoardViewSort = "recent",
-  options: { sinkStage?: BoardStage | null } = {},
-): number {
-  const sinkStage = options.sinkStage ?? null;
-  const leftPinned = left.attention.length > 0 ? 0 : 1;
-  const rightPinned = right.attention.length > 0 ? 0 : 1;
-  if (leftPinned !== rightPinned) return leftPinned - rightPinned;
-
-  if (sinkStage !== null) {
-    const leftSunk = left.stage === sinkStage ? 1 : 0;
-    const rightSunk = right.stage === sinkStage ? 1 : 0;
-    if (leftSunk !== rightSunk) return leftSunk - rightSunk;
-  }
-
-  const leftAt = updatedAtEpoch(left);
-  const rightAt = updatedAtEpoch(right);
-  if (leftAt === null || rightAt === null) {
-    if (leftAt !== rightAt) return leftAt === null ? 1 : -1;
-  } else if (leftAt !== rightAt) {
-    return sort === "oldest" ? leftAt - rightAt : rightAt - leftAt;
-  }
-
-  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
 export interface BoardKanban {
@@ -384,7 +332,7 @@ export function buildBoardListRows(
   return sortBoardViewNodes(
     filterBoardViewNodes(collectBoardViewNodes(board), query.filter ?? {}),
     sort,
-    { sinkStage: sort === "recent" ? "已完成" : null },
+    { sinkStage: sort === "recent" ? BOARD_COMPLETED_STAGE : null },
   );
 }
 
@@ -412,8 +360,8 @@ export const EMPTY_BOARD_LIST_CONTROLS: BoardListControls = Object.freeze({
 /* ---------------- UI 取值归一（UI ↔ 纯函数的唯一转换点） ---------------- */
 
 /**
- * 四个过滤 `<select>` 的取值 → 控件状态：`""`（「全部」）与不认识的值一律 `null`；
- * 排序是闭集二选一，坏值回落默认视角 `recent`。
+ * 四个过滤 `<select>` 的取值 → 控件状态：`""`（「全部」）与不认识的值一律 `null`。
+ * 排序的归一（闭集三选一，坏值回落 `recent`）在 `boardViewSorting.boardSortFilterValue`。
  * 视图层因此不需要 `as BoardStage` 之类的断言：不认识的字面量到不了判据，也不会被猜成别的词。
  */
 export function boardStageFilterValue(value: string): BoardStage | null {
@@ -430,10 +378,6 @@ export function boardAttentionFilterValue(value: string): BoardAttentionCode | n
 
 export function boardViewNodeKindFilterValue(value: string): BoardViewNodeKind | null {
   return isBoardViewNodeKind(value) ? value : null;
-}
-
-export function boardSortFilterValue(value: string): BoardViewSort {
-  return value === "oldest" ? "oldest" : "recent";
 }
 
 export function boardListControlsToQuery(controls: BoardListControls): BoardListQuery {
@@ -453,11 +397,6 @@ export function clearBoardListFilter(controls: BoardListControls): BoardListCont
   return { ...controls, stage: null, status: null, attention: null, kind: null };
 }
 
-/** 段位是否在七段位词表内（不自算段位，只做「认识/不认识」判定）。 */
-export function isBoardStage(value: string | null): value is BoardStage {
-  return value !== null && (BOARD_STAGES as readonly string[]).includes(value);
-}
-
 /**
  * interview-only 判据（§13.3 原文以缺口码定义）：节点 attention 含 `interviewed-not-arranged`。
  * 不以 `kind === "interview-only"` 判定：T21 起 resolvedBy 悬空/产物缺失的条目退回 interview-only
@@ -473,6 +412,9 @@ export function buildBoardKanban(
   options: { sort?: BoardViewSort } = {},
 ): BoardKanban {
   const sort = options.sort ?? "recent";
+  // 与列表/表格同一口径（#65）：默认序里「已完成」沉底。列 = 段位，已完成节点天然只在已完成列，
+  // 因此这里的沉底**不改动列归属与列序**（列整体位置不动），只保证组内/组序与其余视图同一条比较器。
+  const sinkStage = sort === "recent" ? BOARD_COMPLETED_STAGE : null;
   const buckets = new Map<BoardStage, BoardViewNode[]>();
   for (const stage of BOARD_STAGES) buckets.set(stage, []);
   let unplacedCount = 0;
@@ -497,17 +439,18 @@ export function buildBoardKanban(
         (node) => node.stage === stage && !isInterviewSummaryNode(node),
       );
       if (!featureInColumn && taskNodes.length === 0) continue;
-      const sortedTasks = sortBoardViewNodes(taskNodes, sort);
-      // 分组排序键 = 组内最高优先成员（特性自身也算成员：attention 置顶，updatedAt 倒序）
+      const sortedTasks = sortBoardViewNodes(taskNodes, sort, { sinkStage });
+      // 分组排序键 = 组内最高优先成员（特性自身也算成员：attention 置顶，已完成沉底，updatedAt 倒序）
       const members = sortBoardViewNodes(
         featureInColumn ? [feature, ...sortedTasks] : sortedTasks,
         sort,
+        { sinkStage },
       );
       const sortKey = members[0] ?? feature;
       groups.push({ feature, nodes: sortedTasks, totalCards, featureInColumn, sortKey });
     }
     groups.sort((left, right) => {
-      const compared = compareBoardViewNodes(left.sortKey, right.sortKey, sort);
+      const compared = compareBoardViewNodes(left.sortKey, right.sortKey, sort, { sinkStage });
       if (compared !== 0) return compared;
       return left.feature.id < right.feature.id ? -1 : left.feature.id > right.feature.id ? 1 : 0;
     });

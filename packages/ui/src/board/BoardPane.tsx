@@ -7,8 +7,9 @@
  * `.zcode/worktrees/`（契约 §7.4），也不写任何文件（§7.1）。
  *
  * 视图与打开态（卡 #33/#34）：
- * - 视图模式与表格列选择记 sessionStorage（面板切标签会卸载，组件 state 保不住）；
- *   列表/表格的过滤与排序是本次打开内的临时状态（需求只要求「切换状态会话内保持」）。
+ * - 视图模式、表格列选择与**排序视角**记 sessionStorage（面板切标签会卸载，组件 state 保不住；
+ *   排序视角自 #65 起进会话记忆）。列表/表格的**过滤条件**仍是本次打开内的临时状态
+ *   （需求只要求「切换状态会话内保持」；过滤是临时视角，排序是用户显式选择）。
  * - 弹窗打开态：**宿主只持一个卡片 id**（同一时刻最多一个弹窗）；Esc 的键位判据在纯函数
  *   `boardCardDialogKeyIntent` 一处判定，这里只消费（同 `TaskFindDialog` 的 chat 浮层口径）。
  *   Tab 循环 containment 在弹窗壳内（`boardDialogTabIntent` 判边界）；关闭后焦点恢复到
@@ -31,6 +32,7 @@ import {
   nextBoardCardHighlight,
   type BoardCardHighlightState,
 } from "./boardCardInteraction.js";
+import { readBoardListSort, writeBoardListSort } from "./boardListSortMemory.js";
 import {
   readBoardTableColumnVisibility,
   writeBoardTableColumnVisibility,
@@ -72,8 +74,12 @@ export function BoardPane({
   const [state, setState] = useState<BoardPaneLoadState>({ kind: "loading" });
   // 视图模式：初值取会话记忆（切走再回来仍是上次看的视图），切换即记。
   const [viewMode, setViewMode] = useState<BoardViewMode>(() => readBoardViewMode());
-  // 列表过滤/排序：本次打开期间的临时状态（列表与表格共用；切视图不丢；关面板即回到默认）。
-  const [listControls, setListControls] = useState<BoardListControls>(EMPTY_BOARD_LIST_CONTROLS);
+  // 列表过滤/排序：过滤条件本次打开期间的临时状态（列表与表格共用；切视图不丢；关面板即回到默认）；
+  // 排序视角初值取会话记忆（#65），切换即记——与视图模式/表格列选择同一先例。
+  const [listControls, setListControls] = useState<BoardListControls>(() => ({
+    ...EMPTY_BOARD_LIST_CONTROLS,
+    sort: readBoardListSort(),
+  }));
   // 表格列选择：会话内保持（与视图模式同一先例），切换即记。
   const [tableColumns, setTableColumns] = useState<BoardTableColumnVisibility>(() =>
     readBoardTableColumnVisibility(),
@@ -129,6 +135,13 @@ export function BoardPane({
   const handleTableColumnsChange = useCallback((columns: BoardTableColumnVisibility) => {
     writeBoardTableColumnVisibility(columns);
     setTableColumns(columns);
+  }, []);
+
+  // 过滤/排序控件变更：排序视角落会话记忆（#65）。幂等写入（过滤变更时写的也是当前排序值）——
+  // 读回路径只有挂载一处（初值），写入点只有这里，不再多一条写路径。
+  const handleListControlsChange = useCallback((controls: BoardListControls) => {
+    writeBoardListSort(controls.sort);
+    setListControls(controls);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -248,7 +261,7 @@ export function BoardPane({
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
       listControls={listControls}
-      onListControlsChange={setListControls}
+      onListControlsChange={handleListControlsChange}
       tableColumns={tableColumns}
       onTableColumnsChange={handleTableColumnsChange}
       openCardId={openCardId}
