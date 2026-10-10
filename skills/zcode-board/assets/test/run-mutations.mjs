@@ -20,7 +20,7 @@ import { ASSETS_DIR } from "./fixtures/build-fixture.mjs";
 const COMPILER = "compile-board.mjs";
 const LIB = "lib/board-io.mjs";
 const DERIVE = "lib/derive.mjs";
-/** #56 事实互证不变量（--check 的四条机械防线）。 */
+/** #56 事实互证不变量 + #97 第五不变量（--check 的机械防线）。 */
 const FIXTURE_INVARIANTS = "lib/fact-invariants.mjs";
 /** #72 扫描面配置解析（默认收窄 / opt-in 池 / excludeGlobs / 兜底）。 */
 const SCAN_CONFIG = "lib/scan-config.mjs";
@@ -254,8 +254,8 @@ const MUTATIONS = [
     apply: (src) =>
       mutate(
         src,
-        "  const corroborated = declared != null && worktreeCorroborated(declared, existingWorktrees);",
-        "  const corroborated = declared != null;",
+        "  const resolvedWorktree = declared != null ? resolveWorktree(declared, existingWorktrees) : null;\n  const unmerged = resolvedWorktree != null;",
+        "  const resolvedWorktree = declared;\n  const unmerged = declared != null;",
         "m21",
       ),
   },
@@ -416,6 +416,58 @@ const MUTATIONS = [
     script: "run-t10-scenarios.mjs",
     expect: "--check 对扫描面配置错误不判失败项（失败级降级为静默）必须被 72h 的非零退出断言咬住",
     apply: (src) => mutate(src, "  for (const e of scanSurface.errors) {", "  for (const e of []) {", "m39"),
+  },
+  {
+    name: "m40-invariant-e-evidence-off",
+    file: FIXTURE_INVARIANTS,
+    scenario: "97a",
+    expect: "第五不变量 (e) 的证据集合不再参与判定（有证据卡也被点名）必须被 97a 的「恰 2 项」计数断言咬住",
+    apply: (src) => mutate(src, "        !evidence.has(t.no) &&", "        true ||", "m40"),
+  },
+  {
+    name: "m41-invariant-e-exemption-off",
+    file: FIXTURE_INVARIANTS,
+    scenario: "97b",
+    expect: "豁免登记被忽略（登记后照常点名）必须被 97b 的「点名消失」断言咬住",
+    apply: (src) => mutate(src, "        !exempted.has(t.no)", "        true", "m41"),
+  },
+  {
+    name: "m42-worktree-normalization-off",
+    file: DERIVE,
+    scenario: "151",
+    expect: "工作树归一化关闭（字段退回声明原形态——短声明不再归一为现场路径）必须被 151 的两态归一断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "    worktree: unmerged ? resolvedWorktree : null,",
+        "    worktree: unmerged ? declared : null,",
+        "m42",
+      ),
+  },
+  {
+    name: "m43-worktree-card-binding-off",
+    scenario: "152",
+    expect: "卡号绑定判定关掉（板面 worktree 末段号不再与卡号对照）必须被 152 的「恰点名 2 项」与两卡点名断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "        if (parsed != null && parsed.no !== t.no) {",
+        "        if (parsed != null && false) {",
+        "m43",
+      ),
+  },
+  {
+    name: "m44-exemptions-version-gate-off",
+    file: "lib/schema-check.mjs",
+    scenario: "97b",
+    expect: "豁免登记结构闸关掉（version≠1 但合法条目仍生效——报错与效果自相矛盾，FINDING-1 回炉）必须被 97b 的「零豁免生效/恢复点名」断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "  if (structural.length > 0) return { exemptNos: [], errors: structural };",
+        "  if (false) return { exemptNos: [], errors: structural };",
+        "m44",
+      ),
   },
 ];
 

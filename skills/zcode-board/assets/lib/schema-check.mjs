@@ -9,7 +9,9 @@
  *   3. checkBoardInvariants(board)：子系统无法表达的公共不变量——
  *      T7 公共不变量（status/stage 词表、statusRule/stageRule 可溯源、attentionSummary 与节点 attention
  *      逐码相等、执行字段一致性）+ "号是身份"引用位整数断言（no/blockedBy 只认稳定号整数）+
- *      活号唯一 / label 形态与归属（含 §2.4 过渡态例外：未领号特性下的带号卡 label 缺省合法）。
+ *      活号唯一 / label 形态与归属（含 §2.4 过渡态例外：未领号特性下的带号卡 label 缺省合法）；
+ *   4. checkExemptionsDoc(doc)（B1-1/#97）：豁免登记（.zcode/board/exemptions.json，第五不变量 (e)
+ *      的点名抑制）格式校验——结构非法整份拒收；条目级非法该条拒绝 + 点名，合法条目照常生效。
  *
  * 判定边界：本模块只看板自身（不读盘、不比对源）；源/registry 一致性归 --check 的编译与清单层。
  * 无第三方依赖：仅 node 内置（本文件不需要任何内置模块）。
@@ -509,4 +511,66 @@ export function checkBoardInvariants(board) {
   });
 
   return errors;
+}
+
+// ---------------------------------------------------------------- 4. 豁免登记（exemptions.json，B1-1/#97）
+
+/**
+ * 豁免登记文件位置（B1-1/#97 本轮定案）：`.zcode/board/exemptions.json`——编排者单写者；
+ * 唯一用途 = --check 第五不变量 (e) 的点名抑制（速修/管理卡：勾选=已合并但无该卡 integrator done
+ * 的 run 证据，登记后不再对账点名）。--check 只读；编译器不读、不影响板产出（非编译源）。
+ */
+export const EXEMPTIONS_REL = ".zcode/board/exemptions.json";
+
+/**
+ * 豁免登记格式校验（纯函数，不读盘；读侧归 compile-board --check）。
+ * 格式冻结：`{ "version": 1, "exemptions": [ { "no": <正整数>, "reason": <非空串>, "at": <带时区 ISO 8601> } ] }`。
+ * 返回 { exemptNos, errors }（与 lib/scan-config.mjs loadScanConfig 同形）：
+ *   - 结构非法（非对象 / version≠1 / exemptions 非数组）→ 整份拒收（exemptNos=[]）；
+ *   - 条目级非法（no 非正整数 / reason 空 / at 形态非法）→ 该条拒绝 + 点名，其余合法条目照常生效；
+ *   - 同号重复 → 该号全部条目拒绝（不猜哪条为准）。
+ */
+export function checkExemptionsDoc(doc) {
+  if (!isPlainObject(doc)) {
+    return { exemptNos: [], errors: [`$: 豁免登记应为对象（{ version: 1, exemptions: [...] }），实际 ${typeOf(doc)}`] };
+  }
+  // 结构闸（FINDING-1 回炉/B1 批量验证）：非对象以外的结构非法（version≠1，含字符串/缺失；exemptions
+  // 非数组）→ 整份拒收（exemptNos 恒空）。不得"报错但条目仍生效"——失败文案与实际效果必须一致
+  // （version 闸不得形同虚设）；条目级校验只在结构合法后执行。
+  const structural = [];
+  if (doc.version !== 1) structural.push(`$.version: 应为 1（豁免登记文件版本），实际 ${brief(doc.version)}`);
+  if (!Array.isArray(doc.exemptions)) structural.push(`$.exemptions: 应为数组，实际 ${typeOf(doc.exemptions)}`);
+  if (structural.length > 0) return { exemptNos: [], errors: structural };
+  const errors = [];
+  const entries = [];
+  doc.exemptions.forEach((e, i) => {
+    const ptr = `$.exemptions[${i}]`;
+    if (!isPlainObject(e)) {
+      errors.push(`${ptr}: 应为对象（{ no, reason, at }）`);
+      return;
+    }
+    const own = [];
+    if (!Number.isInteger(e.no) || e.no < 1) own.push(`${ptr}.no: 应为正整数稳定号，实际 ${brief(e.no)}`);
+    if (typeof e.reason !== "string" || e.reason.trim() === "") own.push(`${ptr}.reason: 应为非空登记原因`);
+    if (typeof e.at !== "string" || !ISO_RE.test(e.at)) own.push(`${ptr}.at: 应为带时区 ISO 8601，实际 ${brief(e.at)}`);
+    if (own.length > 0) {
+      errors.push(...own);
+      return;
+    }
+    entries.push({ index: i, no: e.no });
+  });
+  const byNo = new Map();
+  for (const { index, no } of entries) {
+    if (!byNo.has(no)) byNo.set(no, []);
+    byNo.get(no).push(index);
+  }
+  const dupNos = new Set();
+  for (const [no, indexes] of byNo) {
+    if (indexes.length > 1) {
+      dupNos.add(no);
+      errors.push(`$.exemptions: 号 ${no} 重复登记（条目 ${indexes.join("、")}）——不猜哪条为准，均不生效`);
+    }
+  }
+  const exemptNos = entries.filter((en) => !dupNos.has(en.no)).map((en) => en.no);
+  return { exemptNos, errors };
 }

@@ -7,11 +7,17 @@
  *   - 契约版本 readContractVersion()——assets/contracts/markers.md 最新变更段头（`vX.Y 变更段` / `vX.Y 补篇段`）；
  *   - schema 版本 readSchemaVersion()——assets/board.schema.json 根级 `x-schemaVersion`。
  *
- * 映射（#67 卡文裁决；#72 更新）：包 0.4.x = 契约 v2.4 + schema v2.3 + 编译器 0.2 能力集。
+ * 映射（#67 卡文裁决；#72、#80 更新）：包 0.5.x = 契约 v2.5 + schema v2.4 + 编译器 0.2 能力集。
  *   （0.2 是编译器历史版本号；包版本自 0.3.0 起按语义化维护，策略成文见 SKILL.md「版本策略」节。
  *   0.3.1 = 修订级：#69 入口守卫 realpath 归一 + #71 嵌套工作树声明形态归一，不动契约/schema 版本。
  *   0.4.0 = 次版本级：#72 扫描面配置化（默认收窄为 .zcode/plans，docs 计划目录 opt-in）——默认值破坏性
- *   变更 → 契约升 v2.4（markers.md v2.4 变更段 + §9 扫描面配置），board.json 字段不变、schema 仍 v2.3。）
+ *   变更 → 契约升 v2.4（markers.md v2.4 变更段 + §9 扫描面配置），board.json 字段不变、schema 仍 v2.3。
+ *   0.5.0 = 次版本级：#80（A1 批收口）——契约顺延 v2.4 → v2.5（A1 批 epic 层规格 §10 + 位置分层 §11
+ *   并入契约主体；v2.4 已被 #72 扫描面配置占用），schema 顺延 v2.3 → v2.4（epics[] 与
+ *   features[].epic/phase 定义转正、草案标注解除）；本批能力新增且契约向后兼容：epic 层规格、位置分层，
+ *   叠加同夜批次包侧能力（第五不变量 #97、源变更检测 #101/#102、工作树归一化 #151 等）——旧产物
+ *   仍可被新版本读取。版本位三处同源：本常量（包 0.5.0）↔ markers.md v2.5 变更段头（契约 v2.5）↔
+ *   board.schema.json x-schemaVersion/x-contractVersion（2.4 / 2.5）；SKILL.md 映射行由批收口单飞写入。）
  *
  * 无第三方依赖：仅 node 内置模块。
  */
@@ -21,7 +27,7 @@ import { fileURLToPath } from "node:url";
 
 export const SKILL_NAME = "zcode-board";
 /** 技能包版本（语义化，唯一事实源；bump 规则见 SKILL.md「版本策略」节）。 */
-export const SKILL_VERSION = "0.4.0";
+export const SKILL_VERSION = "0.5.0";
 /** 编译产物 board.json 的 generatedBy 形态：`zcode-board/<包版本>`。 */
 export const GENERATED_BY = `${SKILL_NAME}/${SKILL_VERSION}`;
 

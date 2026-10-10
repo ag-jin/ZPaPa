@@ -5,7 +5,7 @@ description: 项目看板（.zcode/board）操作手册与纪律全量。触发�
 
 # zcode-board — 项目看板操作手册
 
-- 技能版本：`zcode-board/0.4.0`（与编译产物 `board.json.generatedBy`、`assets/manifest.json` 同源；映射：包 0.4.0 = 契约 v2.4 + schema v2.3；bump 规则见 §3.7。0.3.1 → 0.4.0 = 次版本级：#72 扫描面配置化——默认扫描面收窄为 `.zcode/plans/`，`docs/plans/`、`docs/design-notes/` 移入 opt-in 池（`.zcode/board/scan.json`），`--assign` 增防 mass 改写闸 >10 + `--force`）。
+- 技能版本：`zcode-board/0.5.0`（与编译产物 `board.json.generatedBy`、`assets/manifest.json` 同源；映射：包 0.5.0 = 契约 v2.5 + schema v2.4；bump 规则见 §3.7。0.4.0 → 0.5.0 = 次版本级：A1 批 epic 层规格（markers §10：三层容器/`epics` 登记行/终态优先序/取消归档第四种改写/归属措辞与补录路径）+ §11 位置分层（裁决稿/设计稿禁入 plans/、`.zcode/design/` 设计区）并入契约 v2.5、schema 附加键 `epics`/`features[].epic`/`features[].phase` 转正 v2.4；叠加包侧能力：第五不变量 (e) 与卡号绑定 (f) 对账点名、源变更检测（Bash 通道 + 归档分流）、worktree 归一化（#151）、Stop 兜底重编译与 register 触发（#103）、L0 注入升级（缺口清单/在做该接/截断保留位 #130-132）、run-event 报告口径成文（#152））。
 - `<skill>` = `~/.zcode/skills/zcode-board`（本文件所在目录，路径以实际安装位置为准）；`<项目根>` = 被看板管理的项目目录。
 - 无第三方依赖：全部脚本仅用 Node 内置模块（`node:fs` / `node:path` / `node:url` / `node:crypto` / `node:child_process`），直接 `node` 运行，无需安装任何依赖。
 - 分层：发现 = 技能清单一行 description；启动读板 = SessionStart hook 机械注入；操作细节 = 本文件按需加载；产品化内置注入 = P2（后续）。
@@ -17,6 +17,7 @@ description: 项目看板（.zcode/board）操作手册与纪律全量。触发�
 - **AGENTS.md 只放团队表**：看板/实验功能内容零残留（关闭实验功能时项目无痕）。
 - **本期工作区不维护 `doc/`、`docs/`**：一切开发流程资产在 `.zcode/`（计划稿/板/证据/hook 配置），技能资产在 `~/.zcode/skills/zcode-board/`。
 - **提示词四层**：发现 = 技能清单一行描述；启动读板 = SessionStart hook；操作手册 = SKILL.md；产品化 = P2。任何新约束先问"该住在哪一层"再落笔。
+- **位置分层（E1 V5；契约 §11）**：**裁决稿/设计稿/纲领稿禁入 `plans/`**——`.zcode/plans/`（计划稿苗圃）只放计划稿（命名约定 `plan-*.md`，会话稿 `plan-sess_<uuid>.md`）；裁决稿（裁决包/一次拍板清单）、设计稿、纲领稿（整体纲要）落 **`.zcode/design/`**（设计区，约定层：不在计划扫描面、不上板、不发号；`scan.json` 引用该目录按池外引用拒绝）。机械防线：`--check` 对苗圃内命中族词者（文件名首段/首个标题行任意层级首字段，判据冻结表见 `assets/contracts/markers.md` §11）逐条**对账点名**（非失败级；移位不改名、移位后自清）。
 
 ### 1.2 写入者分域（文件级单写者）
 
@@ -26,6 +27,8 @@ description: 项目看板（.zcode/board）操作手册与纪律全量。触发�
 | `.zcode/board/interviews.json` | 登记脚本 | `register-interview.mjs`（append / resolve） |
 | `.zcode/board/registry.json` | 发号模式 | `compile-board.mjs --assign` |
 | `.zcode/board/board.json`、`board.md` | 编译器 | `compile-board.mjs`（任一模态） |
+| `.zcode/board/last-reconcile.md` | Stop 对账 hook | `hooks/reconcile-stop.mjs`（对账产物：四类点名 + 第 5 节「勾选=已合并点名」+ 兜底重编译；非真相源、不进扫描面；下次 SessionStart 注入 + 人可直读） |
+| `.zcode/board/exemptions.json` | 编排者（单写者） | 手写登记（速修/管理卡豁免，条目 `{no, reason, at}`——at 带时区 ISO 8601 **秒级、不接受毫秒**）；`--check` 只读校验（结构非法失败级）；唯一用途 = 抑制第五不变量 (e) 点名（不假造 run 记录） |
 
 - 子智能体对板文件**只读**；报告带 `run_event` 块；merge 事实经 integrator 报告落账。
 - 真相源（tasks.md / progress.json / 计划稿）按既有纪律由各自作者修改，看板只在其后重编译。
@@ -59,6 +62,15 @@ description: 项目看板（.zcode/board）操作手册与纪律全量。触发�
 | `interrupted-resume` | 执行中断，可续（停在 #N） | 卡有断点 run（`stoppedAt` + `nextStep`） |
 | `unmerged-worktree` | 待合并（执行现场未回流） | 卡 `worktree` 字段命中**且**目录经 fs 互证真实存在，但无 integrator done 收尾；字段命中而目录不存在 → 仅提示级 diagnostics，不计缺口（#42） |
 
+注入清单口径（#130，SessionStart `board-context` 注入缺口短清单）：固序＝「落卡 → 拆卡 → 续跑 → 合并」（短标签：已访谈未安排 / 已安排未展开 / 执行中断可续 / 待合并），同码内按板内顺序（编译器顺序，hook 不重排，含深度 3 嵌套卡）；每条一行 `<短标签> <卡标识> <标题> [（现场 <worktree>）] → <处置行>`（处置行＝上表对应动作）；缺口多于 8 个列前 8 + 计数行；零缺口显式报「无」。
+
+### 2.1 SessionStart 注入（board-context，L0；#130-132）
+
+- 输出单个 JSON（additionalContext）、日志 stderr、显式 exit 0；预算 ≤20KB 字节且 ≤24k 字符（32KB 收集上限留余量），超限自截断。
+- **在做/该接 top-N（#131，N=5）**：在做（activeRun.role 自 at（段位））/ 该接（nextAssignee + 上一手 run 摘要或「无 run 记录」）。选取＝段位非终态/非占位且 activeRun 或 nextAssignee 非空；排序＝在做 → 已开工待接手 → 未开工（同层按最近活动新→旧，并列按板内顺序）。数据口径：nextAssignee 直读板字段（含显式 null 即板事实，不重算）；仅旧板缺该字段时按 assignees 序 + runs 证据只读派生（临时投影，**该接计数≈未走完管线的卡、≠可执行前沿**；C2-1 落地 frontier 后改同源消费）。
+- **陈旧告警行（#131）**：sources[] 逐文件 mtime > board.updatedAt + 1s 容差 → 点名路径并给出重编译命令（与 reconcile-stop 同口径；只覆盖已登记源——删除/新增/Bash 写入归 §6.4 Bash 通道）。板新鲜不输出；hook 只告警不重编译。
+- **预算级截断与保留位（#132）**：保留位（档 1/2 降级逐字保留）＝板摘要头、陈旧告警行、缺口计数头与清单头、缺口清单各行（含 → 处置）、在做/该接计数头、上次对账行、处置行；降级顺序＝自尾部起档 1 省细节行（在做/该接与断点条目）→ 档 2 省次要摘要行（断点段头、计数行）→ 档 3 兜底（关键行**单行或累计**超闸——按行贪心整行取舍，装不下的关键行整行跳过并留 stderr 诊断，绝不取中段）。任何截断写 stderr 档位诊断；stdout 恒为单个合法 JSON。
+
 3. 节点 `stage` 为七段位：`待设计 / 待办 / 执行中 / 审核中 / 阻塞 / 已完成 / 已取消`（带 `stageRule` 溯源）。
 4. 存在任一缺口时：**先向用户确认是否处理，再开始新工作**。
 5. 板可能陈旧（`updatedAt` 落后于源 mtime）：先重编译（§3.1），再看板。
@@ -85,7 +97,7 @@ node <skill>/assets/compile-board.mjs --help              # 用法与参数
 - `--assign` 防 mass 改写闸（#72）：单次发现 **>10 个未领号计划文件** → 拒绝执行（退出码 1，零写入；诊断列全清单 + 建议"核查扫描面/拆分登记"）；`--force` 才放行并留诊断痕迹。恰 10 个照常放行。
 - `--check` 不自动修复：修复 = 重编译（或 `--assign`）+ 人工修源；扫描面配置错误（坏 scan.json / 池外引用）→ 失败项「扫描面配置」非零退出。
 
-`--check` 校验项（失败级，非零退出；板正常时零噪声）：
+`--check` 校验项（第 1–4 条失败级、非零退出；第 4/e、4/f 两项对账点名级、不阻断退出码；板正常时零噪声）：
 
 1. 源完整性：解析失败 / 结构不合法 / 不受支持版本 → 失败。
 2. 活条目清单 ↔ registry：活号唯一、活标记必有条目、`kind`/指向一致；空洞条目合法；归档条目按指向路径直查（详见 §3.5）。
@@ -95,6 +107,8 @@ node <skill>/assets/compile-board.mjs --help              # 用法与参数
    - (b) 已有任务卡（`tasks.length>0`）的特性不得挂 `arranged-not-expanded`（判据为零卡；roadmap 稿同理——压制段位≠可挂"未拆解"）；
    - (c) `board.md` 渲染编号形态 ↔ `board.json` 的 `planCode`/`label` 派生一致（嵌套任务行含递归深度 ≥2；D1 类渲染回归由此咬住；T5356r TQ-1 扩面：`## 待处理`/`## 待合并` 节的编号链同入对照面）；
    - (d) 段位计数：`board.json` 如携带 `stageSummary`（七段位计数对象）→ 与全板节点 `stage` 逐项复算相等；不携带则不判。
+   - (e) **勾选=已合并证据【对账点名级，非失败、不阻断退出码】（#97）**：`completed` 任务卡须有该卡 `integrator done` 的 run 证据（证据 = runs.json 中 `role=integrator` 且 `result=done` 且 `cards` 含该号；`partial/failed/interrupted` 不算；特性汇总态与未领号卡不判）。缺证据 → 独立「对账点名 N 项」节逐条点名；补录 = 补跑 integrator 落账或登记豁免（`.zcode/board/exemptions.json`，编排者单写者；坏登记归失败项「豁免登记」——结构非法（非对象 / `version≠1` / `exemptions` 非数组）整份拒收、条目级非法该条不生效 + 点名、**同号重复仅指合法条目间**；不假造 run 记录）。
+   - (f) **卡号绑定【对账点名级，非失败】（#152；E4-09/V31）**：板面 `worktree`（#151 归一后的现场实际路径，板根相对）末段 `task-<no>` 须等于该卡稳定号（工作树命名即反查，设计 §6.1）；错配逐条点名（与 (e) 同节输出）。判定域：仅板面 `worktree` 非空且带稳定号的卡——**现场不在/已清的历史错配不进判定，由 #42 提示级承载**（判定域残余显式承认）；多卡块单一声明**逐卡判定**（推荐一卡一块）；现场合并/正规清理后字段随派生清空（自清）。
    校验失败项逐条点名（失败级；归口 `--check`，非板内 diagnostics）：路径（`features[i].tasks[j]…`）+ 节点编号（`#N`/计划码）+ 两值对照。
 
 ### 3.2 访谈登记（interviews.json 唯一写路径）
@@ -108,6 +122,7 @@ node <skill>/assets/register-interview.mjs --help
 
 - `append`：生成不可变 id（`itw-<YYYYMMDD>-<短后缀>`）与 `at`；`--topic` / `--summary` / `--outcome` 必填；未知信息留空不猜；`--session-id` / `--decisions` / `--artifacts` 可选且 `--decisions`、`--artifacts` 可重复。
 - `resolve`：按 id 回填 `resolvedBy` 并置 `status=resolved`（登记事件的唯一允许改写）；id 未命中报错且不写。
+- **注册后触发重编译（#103）**：`append`/`resolve` 成功后自动重编译——新访谈即上板（免手动编译）；板未建立或编译器缺失时跳过；编译失败只写 stderr 诊断、主流程照常成功（登记与退出码契约不变）。
 - 特性节点 id 形态：计划稿 `plan:<stem>`（如 `plan:sess_<uuid>`）、spec `spec:<f>`、访谈 `interview:itw-…`。
 - 退出码：0 成功；1 运行错误（id 未命中 / 源损坏 / IO）；2 用法错误。
 
@@ -155,6 +170,7 @@ node <skill>/assets/compile-board.mjs <项目根> --check    # 审计：归档�
 - 已归档号被 `blocked-by` 引用 → 走勘误 9d 文案 A（不造引用 `blockedBy` 缺省 + diagnostics"目标可能已归档"）。
 - 归档前先处理指向该节点的引用：访谈 `resolvedBy` 指向消失节点会退回 interview-only、卡号引用会出 diagnostics（均按 §12 降级提示，不静默）。
 - 时机：特性 `completed` 且超 7 天冷却期；Stop 对账第四类"待归档"只点名，移动由编排者执行。
+- **移动后 Bash hook 即时分流（#102）**：`git mv`/`mv` 删除源的目标命中勘误 10 归档映射候选 → `watch-sources` 判**合法转移**（不判违规）并输出「合法转移提示」，指向 `--assign` 指向改写（与 `--check` 归档直查**同一指引句**：运行 --assign 改写指向（号不变、assignedAt 保留，勘误 10）；hook 只提示、不写板、不自动重编译）。真删除 / 移出项目根 / 非归档目标 / **归档根下非映射子路径**（精确映射判据，防 --assign 无法机械修复的改写）→ 维持板陈旧告警（两文案分流，误判由 run-t13 W14 咬住）。
 - 新条目继续领 `seq+1`（归档不释放号，号永不复用）。
 
 ### 3.6 hook 安装与信任评审
@@ -189,7 +205,7 @@ node <skill>/assets/compile-board.mjs <项目根> --check    # 审计：归档�
 1. 写入声明后，在**应用内完成信任评审**（sha256 摘要；未完成前一律 pending、不执行）。
 2. 非 UI 通道（依据 `evidence/A5-posttooluse-payload.md` 记录）：`zcode hooks trust status|review|grant|revoke`，例 `zcode hooks trust grant --workspace <path-or-identity> --all-current --bundle-digest <sha256>`。
 3. 任何配置编辑（声明文本 / 顺序 / 超时 / 输出上限）都会使既有信任记录失效——改后重新评审。
-4. hook 语义：落账同步、重编译与对账 async；失败永不阻塞主流程（唯一有意阻断 = `gate-merge` 拦截无三绿证据的 base 合并）；注入型脚本中仅 board-context 输出单 JSON（日志走 stderr、显式 exit 0）；reconcile-stop 按 R3 裁决 stdout 恒空（写 `.zcode/board/last-reconcile.md`，不强推续跑）。
+4. hook 语义：落账同步、重编译与对账 async；失败永不阻塞主流程（唯一有意阻断 = `gate-merge` 拦截无三绿证据的 base 合并）；注入型脚本中仅 board-context 输出单 JSON（日志走 stderr、显式 exit 0）；reconcile-stop 按 R3 裁决 stdout 恒空（写 `.zcode/board/last-reconcile.md`：四类点名 + 第 5 节「勾选=已合并点名」+ 兜底重编译（#103，检查先/重编译后）；不强推续跑）。启用 Bash 告警通道需把 PostToolUse(Write|Edit) 声明的 matcher 扩为 `Write|Edit|Bash` 并重做信任评审（§6.4）。
 5. **本工作区现状**：探针已于 T16 通过后移除，config 为终态（五正式声明）；T19 前一次性做信任评审（先评审等于评两次）。
 
 ### 3.7 版本策略（包版本 / 契约版本 / schema 版本）
@@ -202,7 +218,7 @@ node <skill>/assets/compile-board.mjs <项目根> --check    # 审计：归档�
 | 契约版本 | `assets/contracts/markers.md` 最新变更段头（`vX.Y 变更段` / `vX.Y 补篇段`） | `--version`、`assets/manifest.json` |
 | schema 版本 | `assets/board.schema.json` 根级 `x-schemaVersion` | `--version`、`assets/manifest.json` |
 
-映射（当前）：**包 0.4.0 = 契约 v2.4 + schema v2.3**（0.2 为编译器历史版本号；包版本自 0.3.0 起按语义化维护；0.4.0 = #72 扫描面配置化——默认值破坏性变更连带升契约 v2.4，board.json 字段不变故 schema 不动）。
+映射（当前）：**包 0.5.0 = 契约 v2.5 + schema v2.4**（0.2 为编译器历史版本号；包版本自 0.3.0 起按语义化维护；0.5.0 = 次版本级——A1 批 epic 层规格（§10）+ 位置分层（§11）并入契约 v2.5、schema 附加键转正 v2.4；v2.4 已被 #72 扫描面配置占用故顺延；叠加第五不变量/卡号绑定/源变更检测/worktree 归一化/L0 注入升级等包侧能力，旧产物仍可读）。
 
 bump 规则：
 
@@ -227,7 +243,15 @@ bump 规则：
 - `excludeGlobs`：按项目根相对 posix 路径排除（`**/` 前缀匹配零或多段、`**` 跨段、`*` 段内任意、`?` 单字符）；被排除文件不扫不在板（文件零触碰）。
 - 配置错误：坏 JSON / 顶层非对象 → 整份配置拒收 + 按默认面兜底 + 失败级诊断（不猜、不部分生效）；条目级非法 → 该条拒绝 + 点名。`--check` 将配置错误归「扫描面配置」失败项（非零退出）。
 - 归档映射（§3.5）**保留给 opt-in 用户**：`docs/plans/ → docs/archive/plans/`、`docs/design-notes/ → docs/archive/plans/`。
-- 契约条文：`assets/contracts/markers.md` v2.4 §9（扫描面配置）与 §6（防 mass 改写闸）。
+- **非计划稿位置（契约 §11）**：裁决稿/设计稿/纲领稿落 `.zcode/design/`——**不属扫描面**（默认面与 opt-in 池均不含；`includeDirs` 引用按池外拒绝）；`--check` 对苗圃内该类稿逐条对账点名（非失败级、不阻断退出码），移位后自清。
+- 契约条文：`assets/contracts/markers.md` v2.5 §9（扫描面配置）、§6（防 mass 改写闸）、§11（位置分层）。
+
+### 3.9 存量补录操作节（epic 归属补录；规则权威面 = markers.md §10.7）
+
+1. **登记 epic**（若尚无）：registry `epics` 登记行 `{code, title, status}`——code 4 位冻结形态、唯一、永不复用（§10.2/§10.5）。
+2. **批量补录**：`node <skill>/assets/compile-board.mjs <项目根> --assign --epic <code>`——目标稿占期次序号（自动占下一 phase；补齐既有期次按 A2-1 口径）；按显式目标清单一次批量；幂等（重跑零变化、期号不重发、冲突顺延）。
+3. **复核**：重编译 + `--check`——归属断言包（A2-2）逐项通过；**无 epic 稿不受牵连**（照常顶层、零噪声）。
+4. **纪律**：补录只加归属对（号/计划码/`assignedAt`/源标记零变动）；不手工直改 registry、不走 `--assign --epic` 之外口径；不强行回填（单稿可不归属、PREV 型保持顶层；同产品多期次**应当**归同一 epic，散放/错放由 plan-reviewer「归类正确」项交审查门）。
 
 ## 4. 标记语法（markers.v1；`cancelled`/`agents` 为 v2.1 增补）
 
@@ -273,16 +297,16 @@ bump 规则：
 1. **会话启动读板**：先读 `board.json`/`board.md`；有缺口先向用户确认处理顺序，再开始新工作（§2）。
 2. **访谈即登记**：访谈结束（无论是否走 spec-driven-workflow）立即 `register-interview.mjs append`（主题、结论一句话、产物路径）；只谈未写的 `outcome` 填 `none`；产物落盘后用 `resolve` 回填 `resolvedBy`。
 3. **发号时机**：计划稿**首次落盘后**立即 `--assign`（发计划号）；**拆卡后**（向 plan / tasks.md 写入任务条目）再 `--assign`（发任务号）；spec 特性号 registry 内绑定。发号只在主检出、由编排者单写者执行；人不得手写号。
-4. **重编译时机**：任务勾选、阶段推进、阻塞变化之后，以及收到上下文压缩信号时；`watch-sources` hook 会在真相源 `Write|Edit` 后自动重编译；随时可手动重编译（幂等，一条命令）。
+4. **重编译时机**：任务勾选、阶段推进、阻塞变化之后，以及收到上下文压缩信号时；`watch-sources` hook 会在真相源 `Write|Edit` 后自动重编译；随时可手动重编译（幂等，一条命令）。**检测面两通道（#101/#102，语义不同）**：Write|Edit 通道 = 自动重编译（静默修复）；Bash 通道（PostToolUse(Bash)，轻量启发：`source-change-detect.mjs`）= 识别三类不经 Write/Edit 的源变更（删除源 / 新增移入源 / Bash 写入），命中**只告警不重编译**（stderr 点名类别与路径 + 重编译命令；命令非零退出不告警；派生路径与只读命令零动作防自激；非 shell 解释器——xargs/find -delete/bash -c/变量展开不解析，漏面由 Stop 兜底补齐）；归档移动命中的映射候选判「合法转移提示」（§3.5）。**Stop 兜底一律重编译（#103）**：对账写盘后兜底重编译（检查先/重编译后——对账如实记录修复前态）；幂等（连续 Stop 掩码根 updatedAt 后零 diff）；失败不阻塞（stderr 留痕）。
 5. **执行派发**：按卡开工作树（§3.4）；一卡一交付；子智能体只读板、不写任何板文件，报告必须带 `run_event` 块；后台派发由编排者代触发 `record-run.mjs` 落账；特性首卡 = tracer（除非计划稿声明豁免）。**规格纪律（2026-10-10）**：用户反馈的关键句原文引用进卡（访谈 id + 原话），验收句以"用户看到/点到什么"措辞——转译比原话窄是 plan-reviewer 的 finding。**验证等级三层**：
    - **正式卡**（新功能/架构/UI）→ 完整三绿（implementer → test-verifier 独立 → code-reviewer 两维）+ **UI 面卡第四绿**（ui-designer 视觉/信息层级复核，diff 触及用户可见面时强制，无证据不得进待合并）
    - **跟进卡**（评审发现/bug）→ 第一绿 + 回归全绿 + 批量验证（可合并多卡但需注明覆盖面）
    - **微卡**（一行改动/文案）→ 第一绿 + 回归全绿（不需独立二三绿）
    - **UI 卡浏览器断言（2026-10-10）**：改动面含布局/交互的卡，test-verifier 必须跑浏览器断言（溢出探针 scrollWidth>clientWidth、点击路由派发后断言 DOM）；SSR 结构断言不构成行为证据。
 6. **三绿门禁与 integrator 唯一出口**：三绿 = code-reviewer `approved` + test-verifier `pass` + 卡分支 rebase 无冲突；**UI 面卡加第四绿**（ui-designer `approved`，integrator 机械校验 diff 是否触及用户可见面）；合并唯一出口是 integrator（判断与执行分离，integrator 不自行评审/重测）；merge commit 精确写 `Merge task-<no> [#<no>]`；合并后 `git worktree remove` + `prune` + `git branch -d`，再报 `merge_report.v1`（含 run_event）。
-7. **勾选 = 已合并**：tasks.md 勾选发生在合并之后（checkbox 只反映已合并部分）；勾选后重编译 → 卡 `completed`、`unmerged-worktree` 缺口清除。
+7. **勾选 = 已合并**：tasks.md 勾选发生在合并之后（checkbox 只反映已合并部分）；勾选后重编译 → 卡 `completed`、`unmerged-worktree` 缺口清除。勾选=已合并的证据面 = 该卡 `integrator done` 的 run 记录（runs.json）；缺证据卡在 Stop 对账第 5 节点名（补录证据或登记豁免，见第 9 条与 §3.1 (e)）。
 8. **归档纪律**：见 §3.5（特性 completed + 7 天冷却；只移动文件；号不回滚；hook 只点名、移动归编排者）。
-9. **收尾对账**：会话结束前必须回答"本轮有什么该进板而没进的？"；Stop hook 机械点名四类——未登记（访谈无登记 / 后台 run 未代触发落账）、未合并、板陈旧、待归档——正文写 `last-reconcile.md`（下次 SessionStart 注入 + 人可直读），点名非阻断，处理或说明后再收尾。
+9. **收尾对账**：会话结束前必须回答"本轮有什么该进板而没进的？"；Stop hook 机械对账五节——四类点名（未登记（访谈无登记 / 后台 run 未代触发落账）、未合并、板陈旧、待归档）+ 第 5 节「勾选=已合并点名」（completed 任务卡缺该卡 integrator done 的 run 证据；判据与 `--check` 同源 `lib/fact-invariants.mjs`，对账级不阻断）——正文写 `last-reconcile.md`（下次 SessionStart 注入 + 人可直读），处理或说明后再收尾。**豁免登记口径**：速修/管理卡（勾选=已合并但无 integrator done 证据）由编排者单写者登记进 `.zcode/board/exemptions.json`——登记后不再点名；登记不合法不静默（条目级该条不生效、结构非法整份拒收，逐条提示）；runs.json 缺失 ≡ 空证据、损坏 → 第 5 节跳过并提示。
 10. **速修不建卡**：改错字、调颜色、补注释等琐碎修复直接 git commit，不走看板建卡（卡的维护成本大于修复成本）；收尾对账时归入"本轮速修 N 处"一句话登记或写进当日在做的计划稿备注行。判断标准：需要跟踪状态（未修完/需回归/他人要看到）→ 建卡；改完就完（无后续动作）→ 不建卡，git log 即审计。
 11. **超长拆分（预防为主）**：**拆卡拆的是粒度，不是范围**——先枚举用户意图的全量交付面（含配套件：提示词/hook/技能/文档/分发），完整范围 → 按文件域与可验证中间产物拆成可并行的卡 → 同批收口；禁止以"卡太大/避免超长"为由收窄范围——砍范围必须用户明示裁决（2026-10-10 P2 教训：UI 开关发了、注入三位一体被砍，用户在新项目裸奔踩坑）。**拆卡时**预估 >30 分钟的卡必须再拆（按可验证中间产物切），>60 分钟的卡**禁止整卡派发**——执行时间越长，agent 中断（上下文耗尽/API 超时/系统崩溃）概率越高，中断即浪费全部已执行时间。拆法示例：编译器改造+UI 四视图+契约同步+验证 = 4 张卡而非 1 张。**执行中**发现卡太大 → 立即拆——record-run 落 `result=partial`（stoppedAt=当前卡号、nextStep="剩余拆出"），计划稿追加跟进卡，原卡以已交付部分勾选 → 下游自动解锁。依赖健康度：某卡被 >3 张卡 blocked-by → 考虑先拆出"定义接口"卡让依赖方并行。
 12. **并发派发**：无阻碍且**文件域互斥**的待办卡应同时派发（run_in_background: true），不一张张挤牙膏。两个约束同时生效：文件域决定哪些卡**能**并行（task-planner 并行组），**并发上限决定最多同时跑几个子智能体**（资源约束）。实际并发 = min(并行组大小, 用户上限)。上限设定：首次会话询问用户（"并发上限设多少？"），存入记忆；后续会话沿用不重复问；用户可随时说"改并发到 N"覆盖。同文件的多张卡必须 blocked-by 串联。冲突兜底：各自工作树隔离 + integrator 冲突检测退回。完成通知驱动下一批，不需要人推。
@@ -292,10 +316,10 @@ bump 规则：
 
 | 路径 | 内容 |
 | --- | --- |
-| `assets/compile-board.mjs` | 编译器（默认只读 / `--assign` 发号（`--force` 放行防 mass 改写闸）/ `--check` 审计 / `--version` / `--manifest`；`generatedBy` 读 `lib/version.mjs` 常量（当前 zcode-board/0.4.0）） |
-| `assets/register-interview.mjs` | 访谈登记 append / resolve（interviews.json 唯一写路径） |
-| `assets/lib/` | `board-io.mjs`（原子读写与归一）、`derive.mjs`（派生/段位/缺口）、`marker-write.mjs`（标记写回）、`runs.mjs`（appendRun）、`schema-check.mjs`（schema 子集校验）、`fact-invariants.mjs`（`--check` 事实互证四条不变量，#56）、`version.mjs`（版本单一事实源，#67）、`scan-config.mjs`（扫描面配置解析，#72） |
-| `assets/hooks/` | `board-context.mjs`（SessionStart）、`record-run.mjs`（PostToolUse 落账）、`watch-sources.mjs`（PostToolUse 重编译）、`reconcile-stop.mjs`（Stop 对账）、`gate-merge.mjs`（PreToolUse 门禁） |
+| `assets/compile-board.mjs` | 编译器（默认只读 / `--assign` 发号（`--force` 放行防 mass 改写闸）/ `--check` 审计（含 (e)/(f) 对账点名）/ `--version` / `--manifest`；`generatedBy` 读 `lib/version.mjs` 常量（当前 zcode-board/0.5.0）） |
+| `assets/register-interview.mjs` | 访谈登记 append / resolve（interviews.json 唯一写路径；注册后触发重编译 #103） |
+| `assets/lib/` | `board-io.mjs`（原子读写与归一）、`derive.mjs`（派生/段位/缺口/worktree 归一化 #151）、`marker-write.mjs`（标记写回）、`runs.mjs`（appendRun）、`schema-check.mjs`（schema 子集校验 + 豁免登记校验 #97）、`fact-invariants.mjs`（事实互证 (a)-(d) 失败级 + (e) 对账点名级，#56/#97）、`version.mjs`（版本单一事实源，#67）、`scan-config.mjs`（扫描面配置解析，#72） |
+| `assets/hooks/` | `board-context.mjs`（SessionStart，L0 注入：缺口清单/在做该接/陈旧告警/截断保留位 #130-132）、`record-run.mjs`（PostToolUse 落账）、`watch-sources.mjs`（PostToolUse 重编译 + Bash 通道源变更告警与归档分流 #101/#102）、`source-change-detect.mjs`（Bash 命令→源变更宣称纯函数 #101）、`reconcile-stop.mjs`（Stop 对账五节 + 兜底重编译 #98/#103）、`gate-merge.mjs`（PreToolUse 门禁） |
 | `assets/templates/` | `interviews` / `registry` / `runs` 三份起始模板（version 1、空数组、字段齐全） |
 | `assets/contracts/` | `markers.md`（标记语法）、`run-event.md`（报告块）、`dreamer-inputs.md`（第五期输入格式） |
 | `assets/samples/` | `board.golden.json`（golden 板样例，覆盖四种 attention 码与全部字段） |

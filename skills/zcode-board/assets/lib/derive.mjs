@@ -8,7 +8,8 @@
  *   3. runs.json 归一：lastRun / activeRun / worktree / pr / attention（§4.5）；
  *      unmerged-worktree 触发判据（#42 收紧）：worktree 字段命中「且」目录经 fs 互证真实存在——
  *      互证基准（真实工作树目录清单）由调用方以纯数据传入；字段命中而目录不在 → 不触发缺口 +
- *      demotedWorktree（调用方落提示级 diagnostics）。
+ *      demotedWorktree（调用方落提示级 diagnostics）。#151：互证命中时 worktree 归一为**命中的现场
+ *      路径（板根相对）**——冻结/嵌套两形态声明归一为同一现场路径（声明形态不作输出形态）。
  *   4. 四缺口码与 attentionSummary 计数（§8.4）；
  *   5. 诊断辅助：plan-overgrown（阈值由调用方传入，来源 compile-board.mjs 导出常量）、
  *      progress.execution 与 tasks.md 勾选数不一致、worktree 目录与 runs 互证（纯数据，不触盘）。
@@ -302,16 +303,17 @@ const isMergedDone = (r) => r.role === "integrator" && r.result === "done";
  * 单卡的 run 派生（§4.5）：
  *   lastRun = 最新一条的摘要；activeRun = 最新 result ∈ {partial, interrupted} → {role, at}；
  *   worktree = 最新带 worktree 的记录，且其后无该卡 integrator done，**且该目录经 fs 互证真实存在**
- *     → 路径，否则 null（#42 判据收紧：字段命中 + 目录真实存在才触发 unmerged-worktree 缺口）；
+ *     → **归一为命中的现场路径（板根相对；#151）**，否则 null（#42 判据收紧：字段命中 + 目录真实存在
+ *     才触发 unmerged-worktree 缺口；两形态声明归一为同一现场路径——声明形态不作输出形态）；
  *   attention = interrupted-resume / unmerged-worktree。
  * #42（幽灵工作树）：字段命中而目录不存在 → 不触发缺口、worktree 降为 null，改由调用方落提示级
- *   diagnostics（本函数把它放在 demotedWorktree，供调用方带上卡号点名——derive 层不带路径与卡号）。
+ *   diagnostics（本函数把它放在 demotedWorktree——**保留声明原文**，供调用方带上卡号点名；derive 层不带卡号）。
  * @param {object[]} records 该卡的 runs 记录（normalizeRuns 归一后）
  * @param {object} [opts]
  * @param {string[]} [opts.existingWorktrees] 真实存在的工作树相对路径（fs 事实，由调用方扫描提供；
  *   缺省 [] ≡ 无互证 → 不触发缺口 + demotedWorktree 点名）。互证面 = 板根与一层子项目根下的
  *   `.zcode/worktrees/`（如 `ZPaPa/.zcode/worktrees/task-32`）；声明侧两形态（#71 短/嵌套项目根相对路径）
- *   经 exact 或后缀匹配命中。
+ *   经 exact 优先/后缀命中（resolveWorktree）归一为命中的现场路径。
  * 返回 {lastRun, activeRun, worktree, demotedWorktree, pr, latestAt, attention[]}。
  */
 export function deriveCardRuns(records, { existingWorktrees = [] } = {}) {
@@ -339,9 +341,9 @@ export function deriveCardRuns(records, { existingWorktrees = [] } = {}) {
     }
   }
   const declared = worktreeIdx >= 0 && worktreeIdx > mergedIdx ? sorted[worktreeIdx].worktree : null;
-  const corroborated = declared != null && worktreeCorroborated(declared, existingWorktrees);
-  const unmerged = corroborated;
-  const demotedWorktree = declared != null && !corroborated ? declared : null;
+  const resolvedWorktree = declared != null ? resolveWorktree(declared, existingWorktrees) : null;
+  const unmerged = resolvedWorktree != null;
+  const demotedWorktree = declared != null && resolvedWorktree == null ? declared : null;
   let prIdx = -1;
   for (let i = sorted.length - 1; i >= 0; i -= 1) {
     if (sorted[i].pr != null) {
@@ -356,7 +358,7 @@ export function deriveCardRuns(records, { existingWorktrees = [] } = {}) {
   return {
     lastRun,
     activeRun,
-    worktree: unmerged ? declared : null,
+    worktree: unmerged ? resolvedWorktree : null,
     demotedWorktree,
     pr: prIdx >= 0 ? sorted[prIdx].pr : null,
     latestAt: last.at,
@@ -365,16 +367,31 @@ export function deriveCardRuns(records, { existingWorktrees = [] } = {}) {
 }
 
 /**
+ * 声明的工作树路径 → 归一为 fs 互证命中的现场路径（#151；板根相对，两形态归一）。
+ * 命中口径（#42 判据；两态归一——声明形态不作输出形态）：
+ *   ① 精确相等优先（声明即现场，与事实清单顺序无关）；
+ *   ② 否则任一真实路径以 `/<声明路径>` 结尾——声明侧按"相对各自项目根"书写（SKILL #71 成文），
+ *      现场在子项目根下时常写作短形态（如声明 `.zcode/worktrees/task-32`、现场
+ *      `ZPaPa/.zcode/worktrees/task-32`）→ 归一为板根相对的现场实际路径；
+ *   ③ 多个后缀命中时取事实清单顺序第一个（调用方扫描序：板根在前、子项目根随后；确定性，不猜）。
+ * 不发散：反向前缀（长声明 `X/…/task-N` vs 仅板根短实事实）不复证——声明指向的现场不在即不猜状态。
+ * 返回命中的事实路径；不复证 → null。
+ */
+export function resolveWorktree(declared, existingWorktrees) {
+  if (typeof declared !== "string" || declared === "") return null;
+  const list = Array.isArray(existingWorktrees) ? existingWorktrees : [];
+  const usable = list.filter((p) => typeof p === "string" && p !== "");
+  if (usable.includes(declared)) return declared; // ① exact 优先
+  for (const p of usable) if (p.endsWith(`/${declared}`)) return p; // ② 后缀命中 → 事实路径
+  return null;
+}
+
+/**
  * 声明的工作树路径是否被真实目录互证（#42：attention 侧 fs 互证判据；#71 两形态对齐后口径不变）。
- * 命中口径：精确相等，或真实路径以 `/<声明路径>` 结尾——后者覆盖"声明侧写短形态、现场在子项目根"
- * （如声明 `.zcode/worktrees/task-32`，真实目录 `ZPaPa/.zcode/worktrees/task-32`）；声明侧写嵌套形态
- * 而现场同路径时走精确相等。#71 起两形态都进声明接受集，互证两侧方向一致（不再"一侧接受、一侧拒收"）。
- * 不猜状态：目录不在即不互证。
+ * 命中口径见 resolveWorktree（#151 起该函数为唯一命中判据；本函数保留布尔导出供 lib 契约测试与外部消费，仓内无生产调用方）。
  */
 export function worktreeCorroborated(declared, existingWorktrees) {
-  if (typeof declared !== "string" || declared === "") return false;
-  const list = Array.isArray(existingWorktrees) ? existingWorktrees : [];
-  return list.some((p) => typeof p === "string" && (p === declared || p.endsWith(`/${declared}`)));
+  return resolveWorktree(declared, existingWorktrees) != null;
 }
 
 /**

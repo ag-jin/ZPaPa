@@ -1,7 +1,7 @@
 {
-  "x-contractVersion": "2.4",
-  "x-schemaVersion": "2.3",
-  "x-note": "供无第三方依赖实现校验：本文件只使用受约束关键字子集 type/required/properties/items/enum/const/oneOf/pattern；根级 x-* 键为元数据，非校验关键字。本 schema 只描述编译产物 board.json（设计 §3.3，version 主版本 2；契约 v2.1/T21：status 增 cancelled、任务卡增 assignees[]、stage/stageRule 正式化；契约 v2.2/#46：特性增 planCode、两级增 currentAssignee、计划任务增 section 且 label 改计划内层级路径；契约 v2.3/#53：特性增 roadmap、任务卡增 nextAssignee、计划稿特性段位随子卡汇总、arranged-not-expanded 判据收窄为零卡；v2.3 补篇/#66：cancelled 终态优先于 roadmap 段位压制——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」；契约 v2.4/#72：编译面契约——扫描面配置化（默认只扫 .zcode/plans/，docs 计划目录走 .zcode/board/scan.json opt-in）+ --assign 防 mass 改写闸（>10 未领号计划文件拒绝），board.json 字段不变）；interviews/registry/runs 三类第一方真相的字段契约见 assets/templates/*.template.json 与设计 §3.1/§3.2/§5.2；pr 字段写入通道见 assets/contracts/run-event.md v2.1。x-schemaVersion 为本 schema 自身版本（#67）；包版本映射见 SKILL.md「版本策略」节，当前包 0.4.0 = 契约 v2.4 + schema v2.3。",
+  "x-contractVersion": "2.5",
+  "x-schemaVersion": "2.4",
+  "x-note": "供无第三方依赖实现校验：本文件只使用受约束关键字子集 type/required/properties/items/enum/const/oneOf/pattern；根级 x-* 键为元数据，非校验关键字。本 schema 只描述编译产物 board.json（设计 §3.3，version 主版本 2；契约 v2.1/T21：status 增 cancelled、任务卡增 assignees[]、stage/stageRule 正式化；契约 v2.2/#46：特性增 planCode、两级增 currentAssignee、计划任务增 section 且 label 改计划内层级路径；契约 v2.3/#53：特性增 roadmap、任务卡增 nextAssignee、计划稿特性段位随子卡汇总、arranged-not-expanded 判据收窄为零卡；v2.3 补篇/#66：cancelled 终态优先于 roadmap 段位压制——占位稿中已取消的卡/特性段位照常「已取消」，不回落「待设计」；契约 v2.4/#72：编译面契约——扫描面配置化（默认只扫 .zcode/plans/，docs 计划目录走 .zcode/board/scan.json opt-in）+ --assign 防 mass 改写闸（>10 未领号计划文件拒绝），board.json 字段不变）；interviews/registry/runs 三类第一方真相的字段契约见 assets/templates/*.template.json 与设计 §3.1/§3.2/§5.2；pr 字段写入通道见 assets/contracts/run-event.md v2.1。x-schemaVersion 为本 schema 自身版本（#67）；包版本映射见 SKILL.md「版本策略」节，当前包 0.5.0 = 契约 v2.5 + schema v2.4（A1 批收口/#80：epic 层规格 §10 + 位置分层 §11 并入主体 → 契约 v2.5；`epics[]` 与 `features[].epic`/`phase` 定义转正 → schema v2.4）。契约 v2.4 补篇/#76（A1-5 收口：已冻结）：epic 首章——registry `epics` 登记行（code/title/status）+ 计划条目 `epic`（引用稳定号/登记 id，码不进引用位）/`phase`，board.json 派生 `epics[]` 与 `features[].epic`/`phase`（A1-5 收口：草案标注已解除、定义转正，契约已顺延 v2.5、schema v2.4）。契约 v2.4 补篇/#77（A1-5 收口：已冻结）：epic 壳层终态优先序——登记行 `cancelled`/`archived` 为 epic 壳层终态，不因成员活跃复活（成员活跃不复活 epic 终态）；期号与 epic 码永不复用（码不重分配、期号不回收）；条文与 AD-9 五条归属见 markers.md §10.5（A1-5 收口：已随契约 v2.5 冻结）。契约 v2.4 补篇/#78（A1-5 收口：已冻结）：epic 整体取消与归档——整体取消三件套（登记行置 `cancelled` + 成员稿逐稿 `> cancelled:` 留痕 + 在途 run 处置清单点名）；成员稿缺留痕 → 对账点名级（非失败级；机械断言归 A2、点名单归 B 线对账面）；归档冷却时钟 = 成员稿 `updatedAt` 之 max（7 天；冷却未到不点名——不是 min/最早）；归档 = 成员稿归档 + 登记面指向改写（勘误 10 第四种改写：成员条目 `file`/`specRoot` 改指归档路径、epic 登记行置 `archived`；号/`assignedAt`/归属不变）；细则 markers.md §10.6（A1-5 收口：已随契约 v2.5 冻结）。",
   "x-decisions": [
     "version 冻结为主版本 2（const 2）；应用遇更大主版本走设计 §8.2 空态 C，不猜测渲染。",
     "未领号缺省形态 = no 与 label 同时缺省或同时存在（关键字子集无 additionalProperties，该断言由 --check 子集校验器补：见 assets/tools/validate-sample.mjs 的实现范式）。过渡态例外（T21 成文）：未领号特性下允许存在已领号的卡——卡保留 no、label 缺省，直到特性领号后按树位补派生（markers.md v2.1 §2.4）。",
@@ -23,7 +23,10 @@
     "section（v2.2/#46 新增，仅计划任务，出现即非空）为计划稿二级及以下标题的最近章节名：用于 UI 的章节子分组（如「UI 期 / 梦 / backlog / 远期」）；章节前条目与 spec 任务无该字段。",
     "nextAssignee（v2.3/#53 新增，仅任务卡级必填）为 assignees[] 序中第一个**无 done run 证据**的角色（该卡归一后 runs 记录；partial/failed/interrupted 不算证据）：三绿卡（implementer/test-verifier/code-reviewer done）→ integrator；integrator done=已合并——管线全部有 done 证据 → null；无 run 卡 → 管线首角色；assignees 为空 → null；null 也显式写出（UI 无第三种形态）。",
     "roadmap（v2.3/#53 新增，仅计划稿特性层，出现即 true）来源 markers.md v2.3 §2.5 的 roadmap 子旗标（独立注释或与号标记同注释，只在计划稿 H1 层合法；--check 对非法位置非零退出）：占位稿「本稿条目本身不执行」——特性与全部任务卡段位恒为待设计（status/勾选事实照常派生不受影响；#66 例外：cancelled 终态不让位，已取消的卡/特性照常「已取消」——终态优先序见 markers.md v2.3 §2.5 补篇）；非 roadmap 特性不写该字段（false 省略）。",
-    "arranged-not-expanded 判据（v2.3/#53 收窄）：特性节点无 tasks.md/progress.json 且——plan 判**零卡**（计划稿任务卡按契约恒为 draft，“全部为 draft”无区分度，会把有卡稿永久误挂）；spec 维持「零卡或全部为 draft」（spec 卡 draft=false 有区分度）。"
+    "arranged-not-expanded 判据（v2.3/#53 收窄）：特性节点无 tasks.md/progress.json 且——plan 判**零卡**（计划稿任务卡按契约恒为 draft，“全部为 draft”无区分度，会把有卡稿永久误挂）；spec 维持「零卡或全部为 draft」（spec 卡 draft=false 有区分度）。",
+    "epic 层（#76 规格冻结，AD-1/AD-3/AD-7；itw-20261010-5372 拍板）：三层容器 epic ⊃ phase ⊃ 稿——epic 与期次住 registry（`epics` 登记行 code/title/status + 计划条目 `epic`/`phase` 字段），board.json 以追加键派生透出（`epics[]` / `features[].epic` / `features[].phase`）；`epic` 是引用位，只认稳定号（正整数）或登记 id `epic:<码>`（**码不进引用位**，裸码形态拒收）；`phase` 为单值正整数（epic 内期次序，永不复用；同期次可含多稿——一期两稿合法）；显示层 `KANB1` = epic 码 + phase 序号**双字段合成**（AD-3：码位宽不放宽、全部历史码零变动；合成名不进卡编号命名空间——卡编号维持 计划码-层级，AD-2）；无 epic 合法（AD-8，顶层渲染）。细目与正/反例见 markers.md §10（A1-5 收口：契约 v2.5 / schema v2.4 已冻结）。",
+    "epic 壳层终态优先序（#77 规格冻结，AD-9①；itw-20261010-5372 拍板）：`epics[].status` 的 `cancelled`/`archived` 为 epic 壳层终态——优先序：epic 登记行终态 > 成员稿 rollup（全完成/全取消）> 成员稿 roadmap 压制 > 其余推导（卡级/特性级同序，`#66` 已落）；**不因成员活跃复活**——epic 取消后成员稿照常活跃/上板，epic 与码位呈现终态、不回落进行态（壳层终态与成员派生同层独立）；**期号与 epic 码永不复用**（AD-9①）：取消/归档后 `code` 不重分配、`phase` 序号不回收（与稳定号只增不复用同源）；整体取消留痕、归档冷却时钟 = 成员稿 `updatedAt` 之 max、归档 = 成员稿 + 登记行指向改写（勘误 10 第四种改写）名目见 markers.md §10.5，细则见 §10.6（#78）；不变量断言（不复用/seq 高水位）归 A2-3、epics[] rollup 与渲染归 A3-*。",
+    "epic 整体取消与归档（#78 规格冻结，AD-9②③④；itw-20261010-5372 拍板）：整体取消 = 登记行置 `cancelled` + 成员稿逐稿 `> cancelled:` 留痕 + 在途 run 处置清单点名（成员稿缺留痕 → 逐稿对账点名、非失败级；机械断言归 A2、点名单归 B 线对账面）；归档冷却时钟 = 成员稿 `updatedAt` 之 max（>7 天判候选，冷却未到不点名——不是 min/最早）；归档 = 成员稿归档 + 登记面指向改写（勘误 10 第四种改写：成员条目 `file`/`specRoot` 改指归档路径 + epic 登记行置 `archived`；号/`assignedAt`/`epic`/`phase` 一律不改）。细则 markers.md §10.6；机具承接（断言归 A2、点名归 B 线、渲染归 A3-*）见该节；A1-5 收口：契约 v2.5 / schema v2.4 已冻结。"
   ],
   "type": "object",
   "required": ["version", "project", "updatedAt", "generatedBy", "sources", "features", "attentionSummary", "diagnostics"],
@@ -51,6 +54,18 @@
         ]
       }
     },
+    "epics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "title", "status"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{3}$" },
+          "title": { "type": "string" },
+          "status": { "enum": ["active", "cancelled", "archived"] }
+        }
+      }
+    },
     "features": {
       "type": "array",
       "items": {
@@ -61,6 +76,13 @@
           "no": { "type": "integer" },
           "label": { "type": "string", "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$" },
           "planCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{3}$" },
+          "epic": {
+            "oneOf": [
+              { "type": "integer" },
+              { "type": "string", "pattern": "^epic:[A-Z][A-Z0-9]{3}$" }
+            ]
+          },
+          "phase": { "type": "integer" },
           "roadmap": { "type": "boolean" },
           "kind": { "enum": ["spec", "plan", "interview-only"] },
           "title": { "type": "string" },

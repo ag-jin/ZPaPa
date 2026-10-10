@@ -77,7 +77,9 @@
  *           board.schema.json x-schemaVersion 读；无项目根、只读、退出码 0）
  *   场景 67b 三处同源（lib/version.mjs SKILL_VERSION 常量）：board.json generatedBy 形态 zcode-board/<包版本>、
  *           SKILL.md 头部版本行同值、schema-check 与子集校验接受三段式（旧两段式拒收）；board.generatedBy
- *           经 --check/结构校验回读一致
+ *           经 --check/结构校验回读一致。A1-5（#80）扩展：包/契约/schema **三版本**在常量、markers 段头、
+ *           schema 版本位（x-contractVersion/x-schemaVersion）、读取器（readVersionInfo/formatVersionLine）
+ *           与 SKILL.md 映射行各处取值同源互锁（任一处漂移必咬；SKILL.md 为手写位、批收口单飞写入）
  *   场景 67c --manifest：assets/manifest.json 内容寻址（包/契约/schema 版本 + 关键文件 sha256），
  *           --manifest 重新生成（临时副本域）与仓库内 manifest 一致性
  *
@@ -94,6 +96,35 @@
  *   派生库  normalizeRuns 两形态接受集 / 拒收集逐条断言（derive-lib）
  *   突变 m32  嵌套子目录段放宽（隐藏目录/穿越进接受集）→ 归一层拒收断言必咬
  *   突变 m33  降级诊断同因合并去掉（逐卡重复噪音）→ 场景 71 合并计数断言必咬
+ *
+ * #97 覆盖（B1-1 第五不变量：completed 须有该卡 integrator done 证据；对账点名级）：
+ *   场景 97a completed 任务卡缺该卡 integrator done 的 run 证据 → 逐条对账点名（非失败级、退出码 0、
+ *           不阻塞）；有证据/未完成不点名；删掉 integrator run（红侧突变夹具）→ 该卡必被点名
+ *   场景 97b 豁免登记（.zcode/board/exemptions.json，{no, reason, at}，编排者单写者）：合法登记后
+ *           点名消失；坏登记（缺 reason / no 非整数 / JSON 解析失败）失败级点名且该条不生效
+ *   事实互证库 checkCompletedMergedEvidence 纯函数契约（partial/非 integrator/interrupted 不算证据；
+ *           未领号卡不判；豁免按稳定号抑制；纯函数稳定性）
+ *   突变 m40  证据集合不再参与判定（有证据卡也被点名）→ 场景 97a 计数断言必咬
+ *   突变 m41  豁免集合被忽略（登记后照常点名）→ 场景 97b 点名消失断言必咬
+ *
+ * #151 覆盖（D2-1：子项目根 worktree 归一化——derive 规范化层；E2-02）：
+ *   场景 151 归一化两态夹具（短/长声明 → 板面 worktree=现场实际路径；缺失降级保留声明原文；
+ *           同 run 双卡合并点名；零形态拒收噪音）；derive-lib 契约块 resolveWorktree
+ *           （exact 优先/后缀归一/多命中确定性/布尔一致性）；场景 42 断言升格为归一后现场路径。
+ *
+ * #152 覆盖（D2-2：run-event.md 报告口径成文 + --check 卡号绑定断言；E4-09/E1-V31）：
+ *   场景 152 卡号绑定（worktree 名 ↔ 卡号一致性）：板面 worktree（#151 归一后的现场实际路径）末段
+ *           task-<no> ≠ 该卡稳定号 → 对账点名（非失败级、退出码 0、不阻断）；两形态（短/嵌套归一）
+ *           都咬；合规卡（名=号）/目录缺失声明/形态非法声明/未声明 → 不进判定域（零噪声）；
+ *           错配声明移除（现场收口）→ 点名自清
+ *   突变 m43  卡号绑定判定关掉（末段号不再与卡号对照）→ 场景 152 计数断言必咬
+ *
+ * E1b-1（#159）覆盖（苗圃位置规则：裁决稿/设计稿/纲领稿禁入 plans/；契约 §11）：
+ *   场景 159 苗圃（.zcode/plans/）内裁决稿/设计稿/纲领稿（文件名首段族词或 H1 自称命中）→ --check
+ *           对账点名（非失败级、退出码 0、不阻断；点名文案给新位置 .zcode/design/ 与 A5-4 接口）；
+ *           正常计划稿（plan-* 命名约定，含标题含族词者）与无法判族名零误报；移位（不改名）至
+ *           .zcode/design/ 后点名自清（绿）；design/ 不进扫描面（scan.json 池外引用拒绝、零吸入、
+ *           文件零触碰）
  *
  * 用法：
  *   node assets/test/run-scenarios.mjs                 # 全部场景
@@ -141,9 +172,9 @@ import {
 
 import { PLAN_OVERGROWN_THRESHOLD, checkProject } from "../compile-board.mjs";
 
-import { SKILL_MD_PATH, SKILL_VERSION } from "../lib/version.mjs";
+import { SKILL_MD_PATH, SKILL_VERSION, formatVersionLine, readContractVersion, readSchemaVersion, readVersionInfo } from "../lib/version.mjs";
 
-import { checkBoardInvariants, validateSchemaValue } from "../lib/schema-check.mjs";
+import { EXEMPTIONS_REL, checkBoardInvariants, checkExemptionsDoc, validateSchemaValue } from "../lib/schema-check.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
@@ -1776,7 +1807,11 @@ scenario("42", "unmerged-worktree 判据收紧（#42）：worktree 字段命中�
       "目录在嵌套项目根下（跨项目现场，如 ZPaPa/.zcode/worktrees/task-32）→ fs 互证仍成立",
       show(cross?.attention),
     );
-    c.eq(cross?.worktree, ".zcode/worktrees/task-72", "互证通过 → 声明路径保留原样");
+    c.eq(
+      cross?.worktree,
+      "nested-proj/.zcode/worktrees/task-72",
+      "互证通过 → 归一为现场实际路径（#151：短声明按各自项目根书写，输出板根相对现场路径；原 #42「保留声明原样」口径由 #151 修订）",
+    );
 
     c.ok(!(none?.attention ?? []).includes("unmerged-worktree"), "无字段声明 → 不触发缺口（runs 侧不再按卡号推导）");
     c.eq(none?.worktree, null, "无字段声明 → worktree 恒 null");
@@ -1788,7 +1823,7 @@ scenario("42", "unmerged-worktree 判据收紧（#42）：worktree 字段命中�
     c.eq(board.attentionSummary.unmergedWorktree, 2, "计数 = 2（仅互证通过的两张：根级 + 嵌套项目根）");
     const mergeSection = String(run.md).split("## 待合并（unmerged-worktree 聚合）")[1]?.split("\n## ")[0] ?? "";
     c.inc(mergeSection, ".zcode/worktrees/task-70", "board.md 待合并聚合含真实现场");
-    c.inc(mergeSection, ".zcode/worktrees/task-72", "board.md 待合并聚合含跨项目现场");
+    c.inc(mergeSection, " —— nested-proj/.zcode/worktrees/task-72", "board.md 待合并聚合含跨项目现场（归一后现场路径）");
     c.ok(!mergeSection.includes("task-71"), "board.md 待合并聚合不列幽灵现场（缺口与聚合同源同字段）");
   },
 });
@@ -3983,15 +4018,16 @@ scenario("67a", "#67：--version 单行输出 `zcode-board <包版本> · 契约
     c.eq(res.status, 0, "--version 退出码 0（无项目根亦可）");
     c.eq(
       res.stdout,
-      `zcode-board ${SKILL_VERSION} · 契约 v2.4 · schema v2.3\n`,
-      "--version 恰一行：包版本（常量）/ 契约 v2.4 / schema v2.3（#72 卡文事实值；末位/次位随版本策略 bump）",
+      `zcode-board ${SKILL_VERSION} · 契约 v2.5 · schema v2.4\n`,
+      "--version 恰一行：包版本（常量）/ 契约 v2.5 / schema v2.4（A1-5 收口事实值：契约 v2.4 已被 #72 占用、A1 批顺延；末位/次位随版本策略 bump）",
     );
+    c.inc(res.stdout, "zcode-board 0.5.0", "--version 包版本字面 0.5.0（独立事实值，非由常量自证）");
     c.eq(res.stderr, "", "--version 无 stderr 输出");
   },
 });
 
 // ---- 场景 67b（#67-1/#67-3/#67-6）：三处同源 + 三段式接受集 + 冻结件 #66 例外成文
-scenario("67b", "#67：SKILL_VERSION 常量（0.4.0）↔ board.json generatedBy ↔ SKILL.md 头部版本行同值；三段式 generatedBy 过 schema/公共不变量、旧两段式拒收；schema 冻结文含 #66 cancelled 例外", {
+scenario("67b", "#67：SKILL_VERSION 常量（0.5.0）↔ board.json generatedBy ↔ SKILL.md 头部版本行同值；同卡扩展：包/契约/schema 三版本在常量、markers 段头、schema 版本位与读取器四处同源互锁；三段式 generatedBy 过 schema/公共不变量、旧两段式拒收", {
   build(root) {
     const rel = ".zcode/plans/plan-67b.md";
     w(
@@ -4021,12 +4057,31 @@ scenario("67b", "#67：SKILL_VERSION 常量（0.4.0）↔ board.json generatedBy
     const boardText = ctx.run.boardText ?? "";
     const md = ctx.run.md ?? "";
 
-    // 事实源常量（卡文事实值：包版本自 0.3.0 起步、0.3.1 为 #69/#71 修订、0.4.0 = #72 扫描面配置化，0.2 是编译器历史版本）
-    c.eq(SKILL_VERSION, "0.4.0", "lib/version.mjs SKILL_VERSION === 0.4.0（唯一事实源）");
+    // 事实源常量（卡文事实值：包版本自 0.3.0 起步、0.3.1 为 #69/#71 修订、0.4.0 = #72 扫描面配置化、
+    // 0.5.0 = A1 批收口顺延，0.2 是编译器历史版本）
+    c.eq(SKILL_VERSION, "0.5.0", "lib/version.mjs SKILL_VERSION === 0.5.0（唯一事实源；A1-5 #80 收口）");
+
+    // ---- 三版本同源（A1-5 #80 形态扩展）：包/契约/schema 三版本在各自唯一事实源、读取器与硬写位处取值互锁
+    // 独立事实值：契约 v2.5（v2.4 已被 #72 占用，A1 批顺延）、schema v2.4、包 0.5.0（版本策略次版本级）
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    c.eq(readContractVersion(), "2.5", "契约版本 = markers.md 最高变更段头 === 2.5（A1-5 顺延）");
+    c.eq(readSchemaVersion(), "2.4", "schema 版本 = board.schema.json x-schemaVersion === 2.4（A1-5 顺延）");
+    c.eq(
+      readVersionInfo(),
+      { name: "zcode-board", packageVersion: "0.5.0", contractVersion: "2.5", schemaVersion: "2.4" },
+      "readVersionInfo 三版本一次性读数 = 0.5.0 / v2.5 / v2.4（--version 与 --manifest 共用唯一读取口）",
+    );
+    c.eq(formatVersionLine(), "zcode-board 0.5.0 · 契约 v2.5 · schema v2.4", "版本行逐字（独立事实值；--version 与 --manifest 回显同源）");
+    c.eq(schema["x-contractVersion"], readContractVersion(), "schema x-contractVersion 与 markers 段头同源（两硬写位互锁）");
+    c.eq(schema["x-schemaVersion"], readSchemaVersion(), "schema x-schemaVersion 与读取器同源");
+    c.eq(schema["x-schemaVersion"], "2.4", "schema x-schemaVersion === 2.4（A1-5 顺延事实值）");
+    c.eq(schema["x-contractVersion"], "2.5", "schema x-contractVersion === 2.5（A1-5 顺延事实值）");
+    // 草案标注解除（A1 批规格已冻结）：x-pending 键清除 = 无未收口草案位
+    c.ok(!Object.hasOwn(schema, "x-pending"), "x-pending 草案标注已清（A1 批收口：epic 定义转正、无残留草案位）", show(schema["x-pending"]));
 
     // 第二处：board.json generatedBy（编译期读同一常量）
     c.eq(board.generatedBy, `zcode-board/${SKILL_VERSION}`, "board.json.generatedBy 由常量派生（形态 zcode-board/<包版本>）");
-    c.eq(board.generatedBy, "zcode-board/0.4.0", "board.json.generatedBy === zcode-board/0.4.0（卡文事实值）");
+    c.eq(board.generatedBy, "zcode-board/0.5.0", "board.json.generatedBy === zcode-board/0.5.0（A1-5 卡文事实值）");
     c.ok(!boardText.includes("zcode-board/0.2"), "board.json 无遗留 0.2 版本串（无第二手写位）");
     c.inc(md, `zcode-board/${SKILL_VERSION}`, "board.md 生成器行版本同源");
 
@@ -4035,7 +4090,7 @@ scenario("67b", "#67：SKILL_VERSION 常量（0.4.0）↔ board.json generatedBy
     const headerLine = skillText.split("\n").find((l) => l.startsWith("- 技能版本：")) ?? "";
     const token = headerLine.match(/`(zcode-board\/[^`]+)`/)?.[1] ?? "";
     c.eq(token, `zcode-board/${SKILL_VERSION}`, "SKILL.md 头部版本行与常量同值（手写漂移守卫）");
-    c.inc(headerLine, "v2.4", "SKILL.md 头部版本行注明契约映射 v2.4");
+    c.inc(headerLine, "v2.5", "SKILL.md 头部版本行注明契约映射 v2.5（A1-5 顺延；批收口单飞写入）");
     c.ok(!skillText.includes("zcode-board/0.2"), "SKILL.md 无遗留 0.2 版本串（含 assets 清单行）");
     c.inc(skillText, "assets/compile-board.mjs --version", "SKILL.md §3.1 命令表含 --version 逐字行");
 
@@ -4048,17 +4103,18 @@ scenario("67b", "#67：SKILL_VERSION 常量（0.4.0）↔ board.json generatedBy
     c.inc(strategy, "主 =", "策略含主版本规则（破坏性契约变更）");
     c.inc(strategy, "必须连带升包版本", "策略明确：契约破坏性变更必须连带升包版本");
 
-    // 冻结件：schema 自身版本字段 + 契约版本字段（--version / manifest 读取位）
-    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
-    c.eq(schema["x-schemaVersion"], "2.3", "board.schema.json 根级 x-schemaVersion === 2.3（#67 补字段；#72 编译面契约不动 schema）");
-    c.eq(schema["x-contractVersion"], "2.4", "x-contractVersion === 2.4（与 markers.md 变更段头一致）");
+    // 冻结件：schema 自身版本字段 + 契约版本字段（--version / manifest 读取位；同源互锁见上「三版本同源」组）
     // #72 冻结文：扫描面配置化（默认收窄 + opt-in + 防 mass 改写闸）进入 schema 元数据
     c.inc(schema["x-note"] ?? "", "扫描面配置化", "x-note 载 #72 扫描面配置化条目");
-    c.ok(/0\.4\.0/.test(schema["x-note"] ?? ""), "x-note 包版本映射更新为 0.4.0");
+    c.ok(/0\.5\.0/.test(schema["x-note"] ?? ""), "x-note 包版本映射更新为 0.5.0（A1-5 收口）");
+    c.inc(schema["x-note"] ?? "", "契约 v2.5 + schema v2.4", "x-note 载当前映射：包 0.5.0 = 契约 v2.5 + schema v2.4");
 
     // #72 契约成文：markers.md v2.4 变更段 + §9 扫描面配置（scan.json 语法）+ §6 防 mass 改写闸
     const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
-    c.inc(markersText, "v2.4 变更段", "markers.md 载 v2.4 变更段（契约版本读取位）");
+    c.inc(markersText, "v2.4 变更段", "markers.md 载 v2.4 变更段（#72 历史明细；契约版本读取位取最高段头）");
+    c.inc(markersText, "v2.5 变更段（A1 批收口 · #80", "markers.md 载 v2.5 变更段（A1-5 收口；契约版本读取位）");
+    c.inc(markersText, "契约版本顺延 v2.4 → **v2.5**", "v2.5 段载契约顺延事实（v2.4 已被 #72 占用）");
+    c.inc(markersText, "包版本连带升 **0.4.0 → 0.5.0**", "v2.5 段载包版本连带升 0.5.0（版本策略）");
     c.inc(markersText, "## 9. 扫描面配置", "markers.md §9 扫描面配置成文");
     c.inc(markersText, "scan.json", "§9 载 scan.json 语法");
     c.inc(markersText, "includeDirs", "§9 载 includeDirs");
@@ -4120,9 +4176,9 @@ scenario("67c", "#67：--manifest 重新生成 assets/manifest.json（包/契约
 
     // 三版本字段（包版本 = 常量，唯一事实源）
     c.eq(m.packageVersion, SKILL_VERSION, "manifest.packageVersion === lib/version.mjs 常量");
-    c.eq(m.packageVersion, "0.4.0", "manifest.packageVersion === 0.4.0（#72）");
-    c.eq(m.contractVersion, "2.4", "manifest.contractVersion === 2.4（markers.md 变更段头）");
-    c.eq(m.schemaVersion, "2.3", "manifest.schemaVersion === 2.3（schema x-schemaVersion）");
+    c.eq(m.packageVersion, "0.5.0", "manifest.packageVersion === 0.5.0（A1-5 收口）");
+    c.eq(m.contractVersion, "2.5", "manifest.contractVersion === 2.5（markers.md 变更段头）");
+    c.eq(m.schemaVersion, "2.4", "manifest.schemaVersion === 2.4（schema x-schemaVersion）");
     c.ok(ISO_RE.test(m.generatedAt ?? ""), "manifest.generatedAt 为带时区 ISO 8601", show(m.generatedAt));
 
     // 关键文件清单（compile-board + lib 全部 + contracts/markers.md + board.schema.json + SKILL.md）
@@ -4280,7 +4336,7 @@ scenario("71", "#71：runs 归一接受「<子目录>/.zcode/worktrees/task-<no>
     const twinB = taskByTitle(f, "同 run 双卡现场乙");
 
     // 嵌套声明进接受集 + fs 互证（精确/后缀）→ 缺口成立
-    c.eq(real?.worktree, "proj-x/.zcode/worktrees/task-80", "嵌套项目根相对路径声明被归一接受（字段保留声明原形态）");
+    c.eq(real?.worktree, "proj-x/.zcode/worktrees/task-80", "嵌套项目根相对路径声明被归一接受；exact 命中 → 字段 = 现场路径（声明与现场同值，#151 归一后同值）");
     c.eq(
       [real?.lastRun?.at, real?.lastRun?.role, real?.lastRun?.result],
       ["2026-10-10T05:00:00+08:00", "implementer", "done"],
@@ -4329,6 +4385,187 @@ scenario("71", "#71：runs 归一接受「<子目录>/.zcode/worktrees/task-<no>
     const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
     const schemaErrors = validateSchemaValue(schema, board).filter((m) => m.includes("worktree"));
     c.eq(schemaErrors, [], "schema 子集校验接受嵌套形态 worktree（板产物形态合法）");
+  },
+});
+
+// ---- 场景 151（#151）：derive 规范化层——两形态声明归一为同一现场路径（板根相对；E2-02 残余）
+scenario("151", "#151：子项目根 worktree 归一化——冻结/嵌套两形态声明归一为 fs 互证命中的现场路径（两态一致）；缺失降级保留声明原文；同因合并点名 run（#71 已落在长形态上成立）", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-sess_00000000-0000-4000-8000-000000000151.md";
+    w(
+      root,
+      planRel,
+      [
+        "# 归一化两态夹具",
+        "<!-- zcode-board: no=140 -->",
+        "",
+        "- **T1 长形态声明·同路径现场**：正文。 <!-- zcode-board: no=141 -->",
+        "- **T2 冻结形态声明·子项目根现场**：正文。 <!-- zcode-board: no=142 -->",
+        "- **T3 同卡两态声明·后行冻结形态**：正文。 <!-- zcode-board: no=143 -->",
+        "- **T4 冻结形态声明·板根现场**：正文。 <!-- zcode-board: no=144 -->",
+        "- **T5 长形态声明·目录缺失**：正文。 <!-- zcode-board: no=145 -->",
+        "- **T6 同 run 双卡·目录缺失甲**：正文。 <!-- zcode-board: no=146 -->",
+        "- **T7 同 run 双卡·目录缺失乙**：正文。 <!-- zcode-board: no=147 -->",
+        "",
+      ].join("\n"),
+    );
+    setMtime(root, planRel, "2026-01-02T03:04:05");
+    seedRuns(root, [
+      {
+        runId: "run-20261010-n141",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:00:00+08:00",
+        result: "done",
+        cards: [141],
+        worktree: "ZPaPa/.zcode/worktrees/task-141",
+        branch: "task-141",
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        // 真实数据形态（#46/T36u）：报告在子项目内相对各自项目根书写短形态，现场在子项目根下。
+        runId: "run-20261010-n142",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:01:00+08:00",
+        result: "done",
+        cards: [142],
+        worktree: ".zcode/worktrees/task-142",
+        branch: "task-142",
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        runId: "run-20261010-n143a",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:02:00+08:00",
+        result: "done",
+        cards: [143],
+        worktree: "ZPaPa/.zcode/worktrees/task-143",
+        branch: "task-143",
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        // 同一卡两态声明：后行（最新带 worktree 记录）为冻结形态——归一结果不得随声明形态翻转。
+        runId: "run-20261010-n143b",
+        sessionId: "sess_0151",
+        role: "test-verifier",
+        at: "2026-10-10T05:03:00+08:00",
+        result: "partial",
+        cards: [143],
+        worktree: ".zcode/worktrees/task-143",
+        branch: "task-143",
+        evidence: [],
+        breakpoint: { stoppedAt: 143, next: "复跑" },
+      },
+      {
+        runId: "run-20261010-n144",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:04:00+08:00",
+        result: "done",
+        cards: [144],
+        worktree: ".zcode/worktrees/task-144",
+        branch: "task-144",
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        runId: "run-20261010-n145",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:05:00+08:00",
+        result: "done",
+        cards: [145],
+        worktree: "ZPaPa/.zcode/worktrees/task-145",
+        branch: "task-145",
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        runId: "run-20261010-n146",
+        sessionId: "sess_0151",
+        role: "implementer",
+        at: "2026-10-10T05:06:00+08:00",
+        result: "done",
+        cards: [146, 147],
+        worktree: "ZPaPa/.zcode/worktrees/task-146",
+        branch: "task-146",
+        evidence: [],
+        breakpoint: null,
+      },
+    ]);
+    // fs 事实：141/142/143 现场在子项目根 ZPaPa 下；144 现场在板根；145/146 无目录（已清理）
+    for (const n of [141, 142, 143]) mkdirSync(join(root, "ZPaPa", ".zcode", "worktrees", `task-${n}`), { recursive: true });
+    mkdirSync(join(root, ".zcode", "worktrees", "task-144"), { recursive: true });
+  },
+  assert(c, ctx) {
+    const { board, run } = ctx;
+    const f = featureByTitle(board, "归一化两态夹具");
+    const t1 = taskByTitle(f, "长形态声明·同路径现场");
+    const t2 = taskByTitle(f, "冻结形态声明·子项目根现场");
+    const t3 = taskByTitle(f, "同卡两态声明·后行冻结形态");
+    const t4 = taskByTitle(f, "冻结形态声明·板根现场");
+    const t5 = taskByTitle(f, "长形态声明·目录缺失");
+    const twinA = taskByTitle(f, "同 run 双卡·目录缺失甲");
+    const twinB = taskByTitle(f, "同 run 双卡·目录缺失乙");
+
+    // 两态归一：声明形态不作输出形态，字段 = fs 互证命中的现场路径（板根相对）
+    c.eq(t1?.worktree, "ZPaPa/.zcode/worktrees/task-141", "长形态声明 exact 命中 → 字段 = 现场路径（声明与现场同值）");
+    c.eq(
+      t2?.worktree,
+      "ZPaPa/.zcode/worktrees/task-142",
+      "冻结形态声明 + 子项目根现场 → 归一为板根相对现场路径（不再输出板根下不存在的短路径）",
+    );
+    c.eq(
+      t3?.worktree,
+      "ZPaPa/.zcode/worktrees/task-143",
+      "同卡两态声明（后行为冻结形态）→ 归一结果与声明形态无关（两态一致）",
+    );
+    c.eq(t4?.worktree, ".zcode/worktrees/task-144", "冻结形态声明 + 板根现场（exact 命中）→ 字段 = 现场路径（同值）");
+    for (const [t, no] of [[t1, 141], [t2, 142], [t3, 143], [t4, 144]]) {
+      c.ok((t?.attention ?? []).includes("unmerged-worktree"), `卡 #${no}：现场经 fs 互证 → unmerged-worktree 缺口成立`, show(t?.attention));
+    }
+    c.eq(board.attentionSummary.unmergedWorktree, 4, "缺口计数 = 4（仅四个真实现场；两个缺失现场不计）");
+
+    // board.md 待合并聚合：渲染归一后的现场路径（两个原本短声明、现场在子项目根的卡）
+    const mergeSection = String(run.md).split("## 待合并（unmerged-worktree 聚合）")[1]?.split("\n## ")[0] ?? "";
+    c.inc(mergeSection, " —— ZPaPa/.zcode/worktrees/task-142", "待合并聚合：短声明归一为现场路径（#142）");
+    c.inc(mergeSection, " —— ZPaPa/.zcode/worktrees/task-143", "待合并聚合：两态声明归一为同一现场路径（#143）");
+
+    // 长形态声明而目录缺失 → 降级：worktree null、不缺口、恰 1 条点名声明原文的诊断
+    c.eq(t5?.worktree, null, "长形态声明 + 目录缺失 → worktree 降为 null（不猜状态）");
+    c.ok(!(t5?.attention ?? []).includes("unmerged-worktree"), "目录缺失 → 不触发缺口（#42 判据保留）");
+    const t5Diags = diagFor(board, ".zcode/board/runs.json").filter((d) => d.message.includes("ZPaPa/.zcode/worktrees/task-145"));
+    c.eq(t5Diags.length, 1, "长形态缺失 → 恰 1 条降级诊断（不静默）", show(t5Diags.map((d) => d.message)));
+    c.inc(t5Diags[0]?.message ?? "", "目录不存在", "文案写明「目录不存在」");
+    c.inc(t5Diags[0]?.message ?? "", "#145", "诊断点名卡 #145");
+
+    // 同一 run 的长形态声明落到两卡 → 同因合并为 1 条并点名 run（#71 已落，长形态上成立）
+    const twinDiags = diagFor(board, ".zcode/board/runs.json").filter((d) =>
+      d.message.includes("ZPaPa/.zcode/worktrees/task-146"),
+    );
+    c.eq(twinDiags.length, 1, "同一 run 的长形态声明（双卡）合并为 1 条诊断", show(twinDiags.map((d) => d.message)));
+    c.inc(twinDiags[0]?.message ?? "", "run-20261010-n146", "合并诊断点名 run");
+    c.inc(twinDiags[0]?.message ?? "", "#146", "合并诊断点名卡 #146");
+    c.inc(twinDiags[0]?.message ?? "", "#147", "合并诊断点名卡 #147");
+    c.eq(twinA?.worktree ?? null, null, "缺失现场甲：worktree null");
+    c.eq(twinB?.worktree ?? null, null, "缺失现场乙：worktree null");
+
+    // 零形态噪音：两形态声明全接受，无「不符合冻结命名」拒收
+    c.eq(
+      (board.diagnostics ?? []).filter((d) => d.message.includes("不符合冻结命名")).length,
+      0,
+      "两形态声明零拒收噪音（归一化层接受集与 #71 判据一致）",
+    );
+
+    // schema 接受集同步：归一后的现场路径仍为合法形态（短/长两形态都在接受集）
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const schemaErrors = validateSchemaValue(schema, board).filter((m) => m.includes("worktree"));
+    c.eq(schemaErrors, [], "schema 子集校验接受归一后的现场路径（板产物形态合法）");
   },
 });
 
@@ -4754,12 +4991,1181 @@ function deriveLibChecks(c, mod) {
     6,
     "拒收形态逐条诊断（6 条，不静默）",
   );
+
+  // 工作树归一（#151）：resolveWorktree = 声明 × fs 事实清单 → 命中的现场路径（exact 优先/后缀归一/
+  // 严格不复证）；deriveCardRuns 输出归一结果、降级保留声明原文——两态（短/长）声明归一一致。
+  c.eq(typeof mod.resolveWorktree, "function", "lib/derive.mjs 导出 resolveWorktree（#151 归一判据，纯函数）");
+  const exactFacts = ["ZPaPa/.zcode/worktrees/task-9", ".zcode/worktrees/task-9"];
+  c.eq(
+    mod.resolveWorktree?.(".zcode/worktrees/task-9", exactFacts),
+    ".zcode/worktrees/task-9",
+    "exact 命中优先于后缀命中（与事实清单顺序无关）",
+  );
+  c.eq(
+    mod.resolveWorktree?.(".zcode/worktrees/task-8", ["ZPaPa/.zcode/worktrees/task-8"]),
+    "ZPaPa/.zcode/worktrees/task-8",
+    "短声明 + 子项目根事实 → 归一为事实原路径（现场实际位置）",
+  );
+  c.eq(
+    mod.resolveWorktree?.("ZPaPa/.zcode/worktrees/task-6", ["ZPaPa/.zcode/worktrees/task-6"]),
+    "ZPaPa/.zcode/worktrees/task-6",
+    "长声明 exact 命中 → 事实原路径（同值）",
+  );
+  c.eq(
+    mod.resolveWorktree?.("ZPaPa/.zcode/worktrees/task-7", [".zcode/worktrees/task-7"]),
+    null,
+    "长声明 + 仅板根短事实 → 不复证（声明指向的现场不在即不猜状态）",
+  );
+  c.eq(mod.resolveWorktree?.(".zcode/worktrees/task-5", []), null, "无事实 → null（缺省无互证）");
+  c.eq(
+    mod.resolveWorktree?.(".zcode/worktrees/task-4", ["Y/.zcode/worktrees/task-4", "X/.zcode/worktrees/task-4"]),
+    "Y/.zcode/worktrees/task-4",
+    "多个同尾事实 → 取清单顺序第一个（调用方扫描序：确定性，不猜）",
+  );
+  c.eq(
+    mod.worktreeCorroborated?.(".zcode/worktrees/task-8", ["ZPaPa/.zcode/worktrees/task-8"]),
+    true,
+    "worktreeCorroborated 布尔口径与 resolveWorktree 一致（命中 → true）",
+  );
+  c.eq(
+    mod.worktreeCorroborated?.("ZPaPa/.zcode/worktrees/task-7", [".zcode/worktrees/task-7"]),
+    false,
+    "worktreeCorroborated 布尔口径与 resolveWorktree 一致（不复证 → false）",
+  );
+
+  // deriveCardRuns 两态一致：同一现场、不同声明形态 → 同一归一结果；降级保留声明原文
+  const normRuns = mod.normalizeRuns(
+    [
+      { runId: "run-norm-41", at: "2026-10-09T09:00:00+08:00", role: "implementer", result: "done", cards: [41], worktree: ".zcode/worktrees/task-41" },
+      { runId: "run-norm-42", at: "2026-10-09T10:00:00+08:00", role: "implementer", result: "done", cards: [42], worktree: "ZPaPa/.zcode/worktrees/task-42" },
+      { runId: "run-norm-43", at: "2026-10-09T11:00:00+08:00", role: "implementer", result: "done", cards: [43], worktree: "ZPaPa/.zcode/worktrees/task-43" },
+    ],
+    { runsPath: ".zcode/board/runs.json" },
+  );
+  const normFacts = ["ZPaPa/.zcode/worktrees/task-41", "ZPaPa/.zcode/worktrees/task-42"];
+  const state41 = mod.deriveCardRuns(normRuns.byNo.get(41), { existingWorktrees: normFacts });
+  const state42 = mod.deriveCardRuns(normRuns.byNo.get(42), { existingWorktrees: normFacts });
+  c.eq(state41?.worktree, "ZPaPa/.zcode/worktrees/task-41", "短声明 + 子项目根现场：deriveCardRuns 输出归一后的现场路径");
+  c.eq(state42?.worktree, "ZPaPa/.zcode/worktrees/task-42", "长声明 exact 命中：deriveCardRuns 输出现场路径");
+  c.eq(
+    [state41?.worktree, state42?.worktree],
+    ["ZPaPa/.zcode/worktrees/task-41", "ZPaPa/.zcode/worktrees/task-42"],
+    "两态声明（短/长）归一为同一形态的现场路径（声明形态不作输出形态）",
+  );
+  c.ok((state41?.attention ?? []).includes("unmerged-worktree"), "归一命中 → unmerged-worktree 缺口成立（#42 判据保留）");
+  const state43 = mod.deriveCardRuns(normRuns.byNo.get(43), { existingWorktrees: normFacts });
+  c.eq(state43?.worktree, null, "未互证 → worktree null（不猜状态）");
+  c.eq(state43?.demotedWorktree, "ZPaPa/.zcode/worktrees/task-43", "降级保留声明原文（供调用方逐卡点名，不归一为不存在的路径）");
 }
+
+// ---------------------------------------------------------------- A1-1（#76）epic 层规格首章：三层容器与登记行语法（schema 面）
+
+// ---- 场景 76（#76，tracer）：epic 首章冻结面——`epics` 登记行定义（code 4 位冻结形态/title/status）与计划
+//      归属字段 `epic`（引用位：稳定号或登记 id `epic:<码>`；码不进引用位）/`phase`（单值正整数）。
+//      合法夹具（登记行 + 归属、同期次两稿、无 epic）放行；反例（裸码进引用位/重复 phase/登记行码形态非法）拒收。
+scenario("76", "#76：epic 首章 schema——epics 登记行定义与 features.epic/phase 形态；合法夹具放行、反例（码进引用位/重复 phase）拒收", {
+  build(root) {
+    // 场景本体为 schema 面（合成夹具）断言；项目夹具只需可编译以过公共检查（空项目）
+    w(root, ".zcode/board/.keep", "");
+  },
+  assert(c, ctx) {
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const golden = JSON.parse(readFileSync(join(ASSETS_DIR, "samples", "board.golden.json"), "utf8"));
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    const epicErrs = (board, frag) => validateSchemaValue(schema, board).filter((m) => m.includes(frag));
+
+    // ---- 1. 首章冻结面在位（定义与草案标注；schema 定义未落地时本组必咬）
+    const epicsDef = schema?.properties?.epics ?? {};
+    c.eq(epicsDef.type, "array", "#76：根级 `epics` 定义在位（登记行派生透出，数组）");
+    c.eq(epicsDef?.items?.required ?? [], ["code", "title", "status"], "#76：epics[] 登记行必填三字段 code/title/status（AD-7）");
+    c.eq(epicsDef?.items?.properties?.code?.pattern, "^[A-Z][A-Z0-9]{3}$", "#76：epic code 保持 4 位冻结形态（与 planCode 同 regex；AD-3 双字段合成前提）");
+    c.eq(epicsDef?.items?.properties?.status?.enum ?? [], ["active", "cancelled", "archived"], "#76：epic 状态词表 active|cancelled|archived（终态细则归 A1-2/A1-3）");
+
+    const featureProps = schema?.properties?.features?.items?.properties ?? {};
+    const epicBranches = featureProps.epic?.oneOf ?? [];
+    c.eq(epicBranches.length, 2, "#76：features[].epic 定义在位（引用位 oneOf 两分支：稳定号 / 登记 id）");
+    c.eq(epicBranches[0]?.type, "integer", "#76：epic 引用接受稳定号形态（正整数分支）");
+    c.eq(epicBranches[1]?.pattern, "^epic:[A-Z][A-Z0-9]{3}$", "#76：epic 引用接受登记 id `epic:<4位码>`（裸码不属任一形态）");
+    c.eq(featureProps.phase?.type, "integer", "#76：features[].phase 定义在位（单值整数；多值/重复携带即被类型拒收）");
+    c.ok(
+      !Object.hasOwn(schema, "x-pending"),
+      "#76：A1-5 已收口——草案标注 x-pending 清除、epic 定义转正（不再挂待办）",
+      show(schema["x-pending"]),
+    );
+
+    // ---- 2. 合法夹具放行（合成板 = golden + 登记行 + 归属字段）
+    const legal = clone(golden);
+    legal.epics = [
+      { code: "KANB", title: "看板系统", status: "active" },
+      { code: "PREV", title: "预览通道", status: "cancelled" },
+    ];
+    const plans = legal.features.filter((f) => f.kind === "plan");
+    c.ok(plans.length >= 2, "#76：golden 含 ≥2 计划特性（一期两稿夹具可构造）", show(plans.length));
+    plans[0].epic = "epic:KANB"; // 登记 id 形态
+    plans[0].phase = 1;
+    plans[1].epic = "epic:KANB"; // 同期次两稿：同 epic 同 phase 两特性合法（AD-2 期次只作组头）
+    plans[1].phase = 1;
+    c.eq(validateSchemaValue(schema, legal), [], "#76 放行：epics[] + 登记 id 归属 + 同期次两稿整体过 schema 子集校验");
+
+    const legalNumber = clone(legal);
+    legalNumber.features.find((f) => f.kind === "plan").epic = 68; // 稳定号形态
+    c.eq(validateSchemaValue(schema, legalNumber), [], "#76 放行：epic 稳定号（正整数）形态过 schema");
+    // 无 epic 合法（AD-8）：golden 另含无归属特性（interview-only/零卡稿），已随上两断言零错误覆盖
+
+    // ---- 3. 反例拒收（红→绿：schema 定义落地前反例不被拒，本组必咬）
+    const badRef = clone(legal);
+    badRef.features.find((f) => f.kind === "plan").epic = "KANB";
+    c.ok(
+      epicErrs(badRef, ".epic").length >= 1,
+      "#76 拒收：裸码 \"KANB\" 进引用位（码不是句柄，只认稳定号/登记 id）",
+      show(validateSchemaValue(schema, badRef).slice(0, 2)),
+    );
+
+    const badPhase = clone(legal);
+    badPhase.features.find((f) => f.kind === "plan").phase = [1, 1];
+    c.ok(
+      epicErrs(badPhase, ".phase").length >= 1,
+      "#76 拒收：phase 多值/重复携带（[1, 1] 形态；phase 为单值正整数）",
+      show(validateSchemaValue(schema, badPhase).slice(0, 2)),
+    );
+
+    const badReg = clone(legal);
+    badReg.epics = [{ code: "kanb", title: "看板系统", status: "active" }];
+    c.ok(
+      epicErrs(badReg, ".code").length >= 1,
+      "#76 拒收：登记行 code 形态非法（小写；4 位冻结形态 ^[A-Z][A-Z0-9]{3}$）",
+      show(validateSchemaValue(schema, badReg).slice(0, 2)),
+    );
+
+    // ---- 4. 契约文本承接面（markers.md 首章；消费契约字段表在板目录，属文档面非本套件断言面）
+    const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
+    c.inc(markersText, "v2.4 补篇段（#76", "markers.md 载 #76 变更段（v2.4 补篇，不改版本号）");
+    c.inc(markersText, "## 10. epic 层规格", "markers.md §10 epic 首章成文");
+    c.inc(markersText, "epic:KANB", "§10 载登记 id 正例 `epic:KANB`");
+    c.inc(markersText, "KANB1", "§10 载显示层合成名 KANB1");
+    c.inc(markersText, "双字段合成", "§10 载「双字段合成」约定名（AD-3）");
+    c.inc(markersText, "码不进引用位", "§10 载引用位纪律「码不进引用位」（AD-7）");
+    c.inc(markersText, "重复携带", "§10 反例表载 phase 重复携带拒收边界");
+  },
+});
+
+// ---------------------------------------------------------------- A1-2（#77）epic 壳层终态优先序：登记行终态不让位与永不复用（规格/schema 层）
+
+// ---- 场景 77（#77）：段位/终态优先序扩条（epic 级）——`epics[]` 登记行 `cancelled`/`archived` 为 epic 壳层终态：
+//      优先序 = epic 登记行终态 > 成员稿 rollup（全完成/全取消）> 成员稿 roadmap 压制 > 其余推导（卡级/特性级
+//      #66 已落，epic 壳层本轮补条）；**成员活跃不复活 epic 终态**；期号与 epic 码永不复用（码不重分配、期号不回收）。
+//      边界注记：epic 段位 rollup / 复活判定 / 渲染的实现归 A3-*，--check 不复用与 seq 高水位断言归 A2-3——本卡不实现
+//      编译器行为；本场景断言域 = 规格/schema 层可表达性：「epic 已取消 + 成员活跃」组合可表达（登记行终态词表拒收
+//      段位词/误拼词），优先序与不复用条文落 markers.md §10.5 与 board.schema.json x-note/x-decisions——缺条必咬
+//      （本组写入前为红侧）。
+scenario("77", "#77：epic 壳层终态优先序扩条——登记行 cancelled/archived 终态（成员活跃不复活）与期号/epic 码永不复用成文；反例（终态被成员活跃盖过/码复用/段位词进登记行）可判", {
+  build(root) {
+    // 场景本体为规格/schema 面（合成夹具）断言；项目夹具只需可编译以过公共检查（空项目）
+    w(root, ".zcode/board/.keep", "");
+  },
+  assert(c, ctx) {
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const golden = JSON.parse(readFileSync(join(ASSETS_DIR, "samples", "board.golden.json"), "utf8"));
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    const epicErrs = (board, frag) => validateSchemaValue(schema, board).filter((m) => m.includes(frag));
+
+    // ---- 1. 终态词表与「epic 已取消 + 成员活跃」可表达性（成员活跃不复活 epic 终态；schema 不改写壳层事实）
+    const epicStatusEnum = schema?.properties?.epics?.items?.properties?.status?.enum ?? [];
+    c.eq(epicStatusEnum, ["active", "cancelled", "archived"], "#77：epic 登记行终态词表保持 active|cancelled|archived（cancelled/archived 为终态；不动枚举值）");
+
+    const cancelledEpic = clone(golden);
+    cancelledEpic.epics = [{ code: "KANB", title: "看板系统", status: "cancelled" }];
+    const activeMember = cancelledEpic.features.filter((f) => f.kind === "plan")[0];
+    activeMember.epic = "epic:KANB";
+    activeMember.phase = 1;
+    activeMember.status = "active"; // 成员活跃（验收场景："epic 已取消 + 成员活跃"）
+    activeMember.stage = "执行中";
+    c.eq(
+      validateSchemaValue(schema, cancelledEpic),
+      [],
+      "#77 可表达：epic 已取消 + 成员稿活跃 整体过 schema（壳层终态与成员派生同层独立，不因成员活跃复活）",
+    );
+
+    const archivedEpic = clone(cancelledEpic);
+    archivedEpic.epics[0].status = "archived";
+    c.eq(validateSchemaValue(schema, archivedEpic), [], "#77 可表达：epic 归档（archived）同为终态、与成员活跃并存");
+
+    // 反例：段位词写进登记行终态位 → 拒收（终态词表不漂移）
+    const badWord = clone(cancelledEpic);
+    badWord.epics[0].status = "已取消";
+    c.ok(
+      epicErrs(badWord, "epics[0].status").length >= 1,
+      "#77 拒收：登记行 status 写段位词「已取消」（终态词表 active|cancelled|archived，段位词不进登记行）",
+      show(validateSchemaValue(schema, badWord).slice(0, 2)),
+    );
+
+    // 反例：误拼形（canceled 单 l）→ 拒收（近似词形不复用）
+    const badSpell = clone(cancelledEpic);
+    badSpell.epics[0].status = "canceled";
+    c.ok(
+      epicErrs(badSpell, "epics[0].status").length >= 1,
+      "#77 拒收：登记行 status 误拼「canceled」（终态词表只认 cancelled）",
+      show(validateSchemaValue(schema, badSpell).slice(0, 2)),
+    );
+
+    // ---- 2. markers.md §10.5 成文（优先序扩条 + AD-9 五条归属 + 反例；写入前本组为红侧——缺条必咬）
+    const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
+    c.inc(markersText, "### 10.5", "#77：markers.md §10.5 终态优先序扩条成文（epic 壳层）");
+    c.inc(markersText, "epic 壳层", "§10.5 载「epic 壳层」术语（优先序第三层落点）");
+    c.inc(markersText, "不因成员活跃复活", "§10.5 载硬规则：epic 终态不因成员活跃复活");
+    c.inc(markersText, "不重分配、期号不回收", "§10.5 载不复用判据（AD-9①：码不重分配、期号不回收）");
+    c.inc(markersText, "成员稿逐稿", "§10.5 载 AD-9②名目（整体取消留痕 = 成员稿逐稿 > cancelled:）");
+    c.inc(markersText, "归档冷却时钟", "§10.5 载 AD-9③名目（冷却 = 成员稿 updatedAt 之 max）");
+    c.inc(markersText, "第四种改写", "§10.5 载 AD-9④名目（归档 = 成员稿 + 登记行指向改写，勘误 10）");
+    c.inc(markersText, "plan-reviewer", "§10.5 载 AD-9⑤名目（归类审查入 plan-reviewer 清单）");
+    c.inc(markersText, "epic 壳层同序见 §10.5", "§3.1 段位优先序节交叉引用 §10.5（扩条落点）");
+
+    // 优先序链位次：epic 登记行终态先于 roadmap 压制命中（roadmap 盖过 cancelled 属违规，#66 同序扩条）
+    const sec77Start = markersText.indexOf("### 10.5");
+    const sec77EndRaw = sec77Start < 0 ? -1 : markersText.indexOf("\n## ", sec77Start + 1);
+    const sec77 = sec77Start < 0 ? "" : markersText.slice(sec77Start, sec77EndRaw < 0 ? markersText.length : sec77EndRaw);
+    c.ok(
+      sec77.includes("epic 登记行终态") && sec77.indexOf("roadmap 压制") > sec77.indexOf("epic 登记行终态"),
+      "#77：§10.5 优先序链位次——epic 登记行终态先于 roadmap 压制（终态不让位；roadmap 盖过 cancelled 可判违规）",
+      show({ terminusAt: sec77.indexOf("epic 登记行终态"), roadmapAt: sec77.indexOf("roadmap 压制"), len: sec77.length }),
+    );
+    c.inc(markersText, "roadmap 盖过 cancelled", "§10.4 反例表载「roadmap 盖过 cancelled」违规判定");
+    c.inc(markersText, "epic 取消/归档后其 `code` 被后发 epic 复用", "§10.4 反例表载「码复用」违规判定");
+    c.inc(markersText, "成员活跃不复活", "§10.4 反例表载「成员活跃不复活 epic 终态」违规判定");
+
+    // ---- 3. board.schema.json 注释一致性（x-note 补篇 + x-decisions 终态条；枚举与版本位不动）
+    c.inc(schema["x-note"] ?? "", "#77", "x-note 载 #77 补篇条目（epic 壳层终态优先序）");
+    c.inc(schema["x-note"] ?? "", "不因成员活跃", "x-note 载硬规则：不因成员活跃复活 epic 终态");
+    const terminalDecisions = (schema["x-decisions"] ?? []).filter((d) => d.includes("epic 壳层终态"));
+    c.ok(terminalDecisions.length >= 1, "#77：x-decisions 载 epic 壳层终态优先序条（对照面非空）");
+    c.ok(
+      terminalDecisions.length >= 1 && terminalDecisions.every((d) => d.includes("不因成员活跃") && d.includes("永不复用")),
+      "#77：x-decisions epic 终态条含「不因成员活跃」与「永不复用」两锚点（非空且逐条）",
+      show(terminalDecisions.map((d) => d.slice(0, 80))),
+    );
+    c.ok(
+      !Object.hasOwn(schema, "x-pending"),
+      "#77：A1-5 已收口——草案标注清除，终态语义随契约 v2.5 / schema v2.4 冻结（本卡当时不动版本位）",
+      show(schema["x-pending"]),
+    );
+  },
+});
+
+// ---------------------------------------------------------------- A1-3（#78）epic 整体取消与归档：留痕、冷却时钟与第四种指向改写（规格/schema 层）
+
+// ---- 场景 78（#78）：epic 整体取消/归档语法冻结——整体取消三件套（登记行置 cancelled + 成员稿逐稿
+//      `> cancelled:` 留痕 + 在途 run 处置清单点名）；缺留痕边界（不静默 → 逐稿对账点名，非失败级）；
+//      归档冷却时钟 = 成员稿 updatedAt 之 max（7 天；冷却未到不点名）；归档 = 成员稿归档 + 登记面指向
+//      改写（勘误 10 第四种改写：成员条目 file/specRoot 改指归档路径 + epic 登记行置 archived；号 /
+//      assignedAt / epic/phase 归属一律不改）。
+//      三类反例夹具：①缺留痕（成员稿仍进行态可观察）；②冷却未到（时钟取 max 不取最早——夹具
+//      updatedAt [10 天, 3 天] → max 3 天 < 7 → 冷却未到；误取最早 10 天会误报）；③改写指向错误
+//      （半态：成员稿已归档而登记条目未随移动改指 → --check 非零咬住；--assign 修复后指向与归属逐项保真）。
+//      边界注记（承接标注）：改写机具（--assign 整批 + epic 登记行置态）与 --check 断言归 A2；待归档 /
+//      缺留痕 / 在途 run 处置清单点名归 B 线对账面（reconcile 待归档类扩展）；渲染归 A3-*——本场景断言域 =
+//      规格/schema 层可表达性 + 既有归档机具的指向改写事实（缺条必咬，写入前为红侧）。
+scenario("78", "#78：epic 整体取消与归档——三件套 / 缺留痕对账点名 / 冷却=max updatedAt / 第四种指向改写；三类反例（缺留痕、冷却未到、改写指向错误）可判", {
+  steps: [{ args: ["--check"] }, { args: ["--assign"] }, { args: [] }, { args: ["--check"] }],
+  build(root) {
+    // 成员稿甲（有特性级取消留痕；mtime 拨到 10 天前）+ 成员稿乙（缺留痕；mtime 3 天前）+ 成员稿丙
+    // （已移入归档目录、登记条目仍指活路径——反例③半态）
+    w(
+      root,
+      ".zcode/plans/plan-78-alpha.md",
+      [
+        "# 稿甲（KANB 一期）",
+        "<!-- zcode-board: no=101 -->",
+        "> cancelled: KANB 整体取消，成员稿逐稿留痕",
+        "",
+        "- [ ] 1. 甲卡 <!-- zcode-board: no=102 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/plans/plan-78-beta.md",
+      ["# 稿乙（KANB 一期）", "<!-- zcode-board: no=103 -->", "", "- [ ] 1. 乙卡 <!-- zcode-board: no=104 -->", ""].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/archive/plan-78-gamma.md",
+      ["# 稿丙（KANB 一期）", "<!-- zcode-board: no=106 -->", "", "- [ ] 1. 丙卡 <!-- zcode-board: no=107 -->", ""].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 107,
+          epics: [{ code: "KANB", title: "看板系统", status: "archived" }],
+          entries: [
+            { no: 101, kind: "plan", file: ".zcode/plans/plan-78-alpha.md", title: "稿甲（KANB 一期）", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "ALPH", epic: "epic:KANB", phase: 1 },
+            { no: 102, kind: "task", file: ".zcode/plans/plan-78-alpha.md", title: "甲卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 103, kind: "plan", file: ".zcode/plans/plan-78-beta.md", title: "稿乙（KANB 一期）", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "BETA", epic: "epic:KANB", phase: 1 },
+            { no: 104, kind: "task", file: ".zcode/plans/plan-78-beta.md", title: "乙卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 106, kind: "plan", file: ".zcode/plans/plan-78-gamma.md", title: "稿丙（KANB 一期）", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "GAMA", epic: "epic:KANB", phase: 1 },
+            { no: 107, kind: "task", file: ".zcode/plans/plan-78-gamma.md", title: "丙卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const isoDaysAgo = (days) => {
+      const t = new Date(Date.now() - days * 86400_000);
+      const p = (n) => String(n).padStart(2, "0");
+      return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}T${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+    };
+    setMtime(root, ".zcode/plans/plan-78-alpha.md", isoDaysAgo(10));
+    setMtime(root, ".zcode/plans/plan-78-beta.md", isoDaysAgo(3));
+  },
+  assert(c, ctx) {
+    const { root, board } = ctx;
+    const [preCheck, assign, compile, finalCheck] = ctx.steps;
+    const schema = JSON.parse(readFileSync(join(ASSETS_DIR, "board.schema.json"), "utf8"));
+    const golden = JSON.parse(readFileSync(join(ASSETS_DIR, "samples", "board.golden.json"), "utf8"));
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
+
+    // ---- 1. schema：终态词表不动 + 整体取消/归档后板形态可表达（本卡不动版本位；顺延已由 A1-5 #80 落地）
+    const epicStatusEnum = schema?.properties?.epics?.items?.properties?.status?.enum ?? [];
+    c.eq(epicStatusEnum, ["active", "cancelled", "archived"], "#78：epic 登记行终态词表保持 active|cancelled|archived（本卡不动枚举值）");
+    c.eq(schema["x-schemaVersion"], "2.4", "#78：本卡未动版本位——x-schemaVersion 现值 2.4 = A1-5 收口顺延后实读");
+    c.eq(schema["x-contractVersion"], "2.5", "#78：本卡未动版本位——x-contractVersion 现值 2.5 = A1-5 收口顺延后实读");
+
+    const cancelledBoard = clone(golden);
+    cancelledBoard.epics = [{ code: "KANB", title: "看板系统", status: "cancelled" }];
+    const member = cancelledBoard.features.filter((f) => f.kind === "plan")[0];
+    member.epic = "epic:KANB";
+    member.phase = 1;
+    member.status = "cancelled";
+    member.stage = "已取消";
+    for (const t of member.tasks ?? []) {
+      t.status = "cancelled";
+      t.stage = "已取消";
+    }
+    c.eq(validateSchemaValue(schema, cancelledBoard), [], "#78 可表达：整体取消后板（epic cancelled + 成员稿逐稿取消留痕）过 schema 子集校验");
+
+    const archivedBoard = clone(golden);
+    archivedBoard.epics = [{ code: "KANB", title: "看板系统", status: "archived" }];
+    c.eq(validateSchemaValue(schema, archivedBoard), [], "#78 可表达：epic 归档后登记行留档（archived）与成员稿离板并存");
+
+    // ---- 2. 契约文本：§10.6 成文与三类反例可判（缺条必咬——本组写入前为红侧）
+    c.inc(markersText, "v2.4 补篇段（#78", "#78：markers.md 载 #78 变更段（v2.4 补篇，不改版本号）");
+    c.inc(markersText, "### 10.6", "#78：markers.md §10.6「epic 整体取消与归档」成文");
+    const sec78Start = markersText.indexOf("### 10.6");
+    const sec78EndRaw = sec78Start < 0 ? -1 : markersText.indexOf("\n## ", sec78Start + 1);
+    const sec78 = sec78Start < 0 ? "" : markersText.slice(sec78Start, sec78EndRaw < 0 ? markersText.length : sec78EndRaw);
+    c.ok(sec78.length > 800, "#78：§10.6 节实体非空（完整成文，非占位）", show({ len: sec78.length }));
+    // 节内锚点（§10.5 已先有部分名目；节内锚定保证「§10.6 未成文即红」，不被上文同名文字蒙混）
+    c.inc(sec78, "在途 run 处置清单", "§10.6 载整体取消第三件套「在途 run 处置清单点名」");
+    c.inc(sec78, "勘误 10", "§10.6 载勘误 10 依据（三映射复用）");
+    c.inc(sec78, "成员稿逐稿", "§10.6 载成员稿逐稿留痕（零新语法，复用 §3.1 落点）");
+    c.inc(sec78, "登记面指向改写", "§10.6 载「登记面指向改写」（第四种改写落名）");
+    c.inc(sec78, "第四种改写", "§10.6 载第四种改写名目");
+    c.inc(sec78, "缺留痕", "§10.6 载「成员稿缺留痕 → 对账点名」边界");
+    c.inc(sec78, "对账点名级", "§10.6 载缺留痕判级（对账点名级、非失败级）");
+    c.inc(sec78, "冷却未到", "§10.6 载「冷却未到」判据（不点名、保持现状合法）");
+    c.inc(sec78, "`updatedAt` 之 max", "§10.6 载冷却时钟 = 成员稿 updatedAt 之 max");
+    c.inc(sec78, "不是 min", "§10.6 载时钟取 max 的误读拒收（不是 min/最早）");
+    c.inc(sec78, "epic 登记行置 `archived`", "§10.6 载归档登记行置态（archived）");
+    c.inc(sec78, "`file`/`specRoot` 改指归档路径", "§10.6 载成员条目指向改写（file/specRoot → 归档路径）");
+    c.inc(sec78, "B 线对账面", "§10.6 载机具承接（对账点名归 B 线对账面）");
+    c.inc(sec78, "机械断言归 A2", "§10.6 载机具承接（断言实现归 A2）");
+    c.inc(sec78, "§3.1", "#78：§10.6 交叉引用 §3.1（特性级落点复用）");
+    c.inc(sec78, "§10.5", "#78：§10.6 交叉引用 §10.5（终态优先序与永不复用）");
+    c.inc(sec78, "§10.2", "#78：§10.6 交叉引用 §10.2（登记行载体）");
+    // 反例表（§10.4）与细则指向（§10.2/§10.5 → §10.6）——全文锚，缺条必咬
+    c.inc(markersText, "缺 `> cancelled:` 留痕", "§10.4 反例表载①缺留痕判定");
+    c.inc(markersText, "冷却未到却被点名", "§10.4 反例表载②冷却未到误报判定");
+    c.inc(markersText, "仍指活路径", "§10.4 反例表载③改写指向错误判定");
+    c.inc(markersText, "见 §10.6", "§10.2/§10.5 行指向 §10.6 细则（交叉引用在位）");
+
+    // ---- 3. 反例①缺留痕（真实夹具可观察）：稿甲留痕生效、稿乙缺留痕仍进行态
+    const fAlpha = featureByTitle(board, "稿甲（KANB 一期）");
+    const fBeta = featureByTitle(board, "稿乙（KANB 一期）");
+    c.eq(fAlpha?.status, "cancelled", "反例①前置：稿甲有特性级 `> cancelled:` 留痕 → 特性 cancelled（复用 #66 落点，零新语法）");
+    c.eq(fAlpha?.stage, "已取消", "反例①：稿甲段位已取消（终态不让位）");
+    c.inc(fAlpha?.statusRule ?? "", "成员稿逐稿留痕", "反例①：留痕原因进 statusRule（取消留痕可追溯）");
+    c.eq(fBeta?.status, "pending", "反例①：稿乙缺留痕 → 仍进行态（epic 已归档而成员未留痕 = 缺留痕状态在板上可观察）");
+    c.eq(fBeta?.stage, "待办", "反例①：稿乙段位待办（未留痕可判；机械点名承接归 A2/B 线）");
+    c.ok(!featureByTitle(board, "稿丙（KANB 一期）"), "反例①前置：稿丙已归档离板（成员稿归档后不在板上）");
+
+    // ---- 4. 反例③改写指向错误（半态 → 修复；登记行置态与新整批断言归 A2）
+    c.eq(preCheck?.code, 1, "反例③：成员稿已归档而登记条目未随移动改指 → --check 非零（半态被咬住）");
+    c.inc(preCheck.stdout, "运行 --assign", "反例③：失败诊断给出修复路径（--assign 改写指向）");
+    c.inc(preCheck.stdout, "plan-78-gamma", "反例③：诊断点名成员条目（归档候选路径）");
+    c.eq(assign?.code, 0, "修复：--assign 退出码 0");
+    c.inc(assign.stderr, "归档指向改写", "修复诊断记录指向改写（不静默）");
+    const registry = readJsonFile(join(root, ".zcode/board/registry.json")).value;
+    const e106 = registry?.entries?.find((e) => e.no === 106);
+    const e107 = registry?.entries?.find((e) => e.no === 107);
+    c.eq(e106?.file, ".zcode/archive/plan-78-gamma.md", "改写后：成员条目 106 指向归档路径");
+    c.eq(e107?.file, ".zcode/archive/plan-78-gamma.md", "改写后：成员任务条目 107 同批改指（成员稿归档 = 整稿同批）");
+    c.eq(
+      { no: e106?.no, assignedAt: e106?.assignedAt, epic: e106?.epic, phase: e106?.phase, planCode: e106?.planCode },
+      { no: 106, assignedAt: "2026-10-01T00:00:00+08:00", epic: "epic:KANB", phase: 1, planCode: "GAMA" },
+      "改写只动指向：号/assignedAt/epic/phase/planCode 一律不改（第四种改写纪律）",
+    );
+    c.eq(registry?.epics, [{ code: "KANB", title: "看板系统", status: "archived" }], "epic 登记行原样保留（置态写入归 A2 机具；现有 --assign 不擅动登记行）");
+    c.eq(compile?.code, 0, "重编译退出码 0（归档成员离板、活成员照常上板）");
+    c.eq(finalCheck?.code, 0, "修复后 --check 通过（归档件按指向直查）");
+    c.inc(finalCheck.stdout, "已归档", "check note 明写「已归档」");
+    c.ok(
+      (board?.features ?? []).length === 2 &&
+        ["稿甲（KANB 一期）", "稿乙（KANB 一期）"].every((t) => featureByTitle(board, t)),
+      "归档成员稿丙离板；活成员（稿甲/稿乙）照常上板（成员稿归档不影响其余成员）",
+      show((board?.features ?? []).map((f) => f.title)),
+    );
+    c.ok(!JSON.stringify(board?.sources ?? []).includes("archive"), "sources[] 不含归档路径（成员稿归档后不在扫描面）");
+
+    // ---- 5. 反例②冷却未到（时钟 = 成员稿 updatedAt 之 max；夹具 [10 天, 3 天] → max 3 天 < 7 → 冷却未到）
+    const ageDays = (iso) => (Date.now() - Date.parse(iso ?? "")) / 86400_000;
+    const ages = [fAlpha, fBeta].map((f) => ageDays(f?.updatedAt));
+    c.ok(
+      Math.abs(ages[0] - 10) < 0.2 && Math.abs(ages[1] - 3) < 0.2,
+      "反例②前置：成员稿 updatedAt 派生自源 mtime（稿甲 10 天前 / 稿乙 3 天前）——时钟基准数据在板上可取",
+      show(ages.map((a) => Math.round(a * 10) / 10)),
+    );
+    c.ok(
+      Math.min(...ages) < 7 && Math.max(...ages) > 7,
+      "反例②：时钟取 max updatedAt = 最近动过的一份（距今 3 天）→ 冷却未到、不点名；误取最早（10 天 > 7）会误报——时钟只能取 max（§10.6.2）",
+      show({ 最近: Math.round(Math.min(...ages) * 10) / 10, 最早: Math.round(Math.max(...ages) * 10) / 10 }),
+    );
+
+    // ---- 6. board.schema.json 注释一致性（x-note 补篇 + x-decisions 细则条；枚举与版本位不动）
+    const note78 = String(schema["x-note"] ?? "");
+    c.inc(note78, "#78", "#78：x-note 载 #78 补篇条目（epic 整体取消与归档）");
+    c.inc(note78, "第四种改写", "#78：x-note 载第四种改写名目");
+    c.inc(note78, "在途 run 处置清单", "#78：x-note 载在途 run 处置清单点名");
+    const d78 = (schema["x-decisions"] ?? []).filter((d) => d.includes("#78 规格冻结"));
+    c.ok(d78.length >= 1, "#78：x-decisions 载 #78 冻结条（A1-5 收口后草案措辞随动；对照面非空）", show(d78.map((d) => d.slice(0, 60))));
+    c.ok(
+      d78.length >= 1 &&
+        d78.every(
+          (d) =>
+            d.includes("在途 run 处置清单") &&
+            d.includes("缺留痕") &&
+            d.includes("登记面指向改写") &&
+            d.includes("`updatedAt` 之 max"),
+        ),
+      "#78：x-decisions #78 条含四锚点（处置清单 / 缺留痕 / 登记面指向改写 / 冷却 max）",
+      show(d78),
+    );
+  },
+});
+
+// ---------------------------------------------------------------- A1-4（#79）迁移补录路径与无 epic 合法（规格 + 真实夹具层）
+
+// ---- 场景 79（#79）：归属措辞与补录路径成文（markers.md §10.7）——归属为「应当而非必须」：同产品
+//      多期次应当归入同一 epic；单稿小功能可不归属；无 epic 合法（顶层平铺渲染、不标「未归属」、
+//      `--check` 不判失败）；PREV 型已取消无 epic 稿保持顶层（拍板「PREV 保持顶层」）；存量补录走
+//      `--assign --epic <code>` 同通道一次性改写（补录只加归属对：不动号/计划码/assignedAt）。
+//      反例（误判必咬）：夹具构造零 epic 项目（含 PREV 型已取消无 epic 稿）——若实现引入「未归属」
+//      判定（--check 点名/失败级，或板面渲染「未归属」角标），本场景必咬；误判不存在时零噪声。
+//      边界注记（承接标注）：补录机具 `--assign --epic` 归 A2-1、归属断言包归 A2-2、存量整批补录
+//      执行归 A5、渲染实现归 A3-*——本场景断言域 = 契约成文（§10.7 缺条必咬，写入前为红侧）+
+//      现有编译/--check/--assign 对无 epic 稿的零失败零点名（无归属不得伪装为缺口/失败）。
+scenario("79", "#79：迁移补录路径与无 epic 合法——§10.7 措辞/补录通道成文；零 epic 项目编译与 --check 零失败零点名（PREV 型取消稿保持顶层；误判「未归属」必咬）", {
+  steps: [{ args: [] }, { args: ["--check"] }, { args: ["--assign"] }, { args: ["--check"] }],
+  build(root) {
+    // 零 epic 项目：单稿小功能（可不归属）+ PREV 型已取消无 epic 稿（拍板：PREV 保持顶层）
+    w(
+      root,
+      ".zcode/plans/plan-79-solo.md",
+      [
+        "# 单稿小功能（无 epic 稿）",
+        "<!-- zcode-board: no=201 -->",
+        "",
+        "- [ ] 1. 小步改进 <!-- zcode-board: no=202 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/plans/plan-79-prev.md",
+      [
+        "# 预览通道旧稿（PREV 型 · 已取消）",
+        "<!-- zcode-board: no=203 -->",
+        "> cancelled: 方案作废，按拍板保持顶层（PREV 保持顶层）",
+        "",
+        "- [ ] 1. 旧条目 <!-- zcode-board: no=204 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 204,
+          entries: [
+            {
+              no: 201,
+              kind: "plan",
+              file: ".zcode/plans/plan-79-solo.md",
+              title: "单稿小功能（无 epic 稿）",
+              assignedAt: "2026-10-01T00:00:00+08:00",
+              planCode: "SOLO",
+            },
+            { no: 202, kind: "task", file: ".zcode/plans/plan-79-solo.md", title: "小步改进", assignedAt: "2026-10-01T00:00:00+08:00" },
+            {
+              no: 203,
+              kind: "plan",
+              file: ".zcode/plans/plan-79-prev.md",
+              title: "预览通道旧稿（PREV 型 · 已取消）",
+              assignedAt: "2026-10-01T00:00:00+08:00",
+              planCode: "PREV",
+            },
+            { no: 204, kind: "task", file: ".zcode/plans/plan-79-prev.md", title: "旧条目", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  },
+  assert(c, ctx) {
+    const { root, board } = ctx;
+    const [compile, midCheck, assign, finalCheck] = ctx.steps;
+    const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
+
+    // ---- 1. 契约文本：§10.7「归属措辞与补录路径」成文（写入前为红侧——缺条必咬）
+    c.inc(markersText, "v2.4 补篇段（#79", "#79：markers.md 载 #79 变更段（v2.4 补篇，不改版本号）");
+    c.inc(markersText, "### 10.7", "#79：markers.md §10.7「归属措辞与补录路径」成文");
+    const sec79Start = markersText.indexOf("### 10.7");
+    const sec79EndRaw = sec79Start < 0 ? -1 : markersText.indexOf("\n## ", sec79Start + 1);
+    const sec79 = sec79Start < 0 ? "" : markersText.slice(sec79Start, sec79EndRaw < 0 ? markersText.length : sec79EndRaw);
+    c.ok(sec79.length > 600, "#79：§10.7 节实体非空（完整成文，非占位）", show({ len: sec79.length }));
+    c.inc(sec79, "应当归入同一 epic", "§10.7 载归属措辞（应当面）：同产品多期次应当归入同一 epic");
+    c.inc(sec79, "单稿小功能可不归属", "§10.7 载归属措辞（非必须面）：单稿小功能可不归属");
+    c.inc(sec79, "无 epic 合法", "§10.7 载无 epic 合法（AD-8 拍板）");
+    c.inc(sec79, "顶层平铺", "§10.7 载无 epic 稿顶层平铺渲染");
+    c.inc(sec79, "不把「无归属」判失败", "§10.7 载 --check 口径：不把「无归属」判失败");
+    c.inc(sec79, "PREV 保持顶层", "§10.7 载拍板原文「PREV 保持顶层」（已取消无 epic 稿保持顶层块）");
+    c.inc(sec79, "--assign --epic", "§10.7 载补录通道（--assign --epic 同通道）");
+    c.inc(sec79, "一次性改写", "§10.7 载补录形态（一次性批量改写）");
+    c.inc(sec79, "补录只加归属对", "§10.7 载补录不改身份（补录只加归属对：不动号/计划码/assignedAt）");
+    c.inc(sec79, "归类正确", "§10.7 载 AD-9⑤（归类审查入 plan-reviewer「归类正确」项）");
+    c.inc(sec79, "plan-reviewer", "§10.7 载审查门落点（plan-reviewer）");
+    const seg79Line = markersText.split("\n").find((l) => l.includes("v2.4 补篇段（#79")) ?? "";
+    c.inc(seg79Line, "不改版本号", "#79：变更段标注不改版本号（版本顺延归 A1-5）");
+    c.inc(seg79Line, "A1-5", "#79：变更段载版本顺延归属（A1-5 统一收口）");
+    // 反例表（§10.4）与交叉引用——全文锚，缺条必咬
+    c.inc(markersText, "板面渲染「未归属」角标", "§10.4 反例表载误判行（把无归属当违规 / 渲染「未归属」角标）");
+    c.inc(markersText, "手工直改 registry", "§10.4 反例表载绕过补录通道（手工直改 registry）拒收");
+    c.inc(markersText, "归类审查 finding", "§10.4 反例表载同产品多期次各立 epic 的归类审查判定");
+    c.inc(markersText, "措辞与补录路径见 §10.7", "§10.1 AD-8 行指向 §10.7 细则（交叉引用在位）");
+
+    // ---- 2. 无 epic 稿编译与板上形态（顶层渲染；误判「未归属」必咬的反例夹具）
+    c.eq(compile?.code, 0, "零 epic 项目默认编译退出码 0（无 epic 不阻断）");
+    c.ok(!Object.hasOwn(board ?? {}, "epics"), "零 epic 项目 board.json 无 epics 键（AD-8；照旧渲染）");
+    const fSolo = featureByTitle(board, "单稿小功能（无 epic 稿）");
+    const fPrev = featureByTitle(board, "预览通道旧稿（PREV 型 · 已取消）");
+    c.ok(fSolo != null, "单稿小功能照常上板（无归属不影响上板）");
+    c.ok(
+      fSolo != null && !Object.hasOwn(fSolo, "epic") && !Object.hasOwn(fSolo, "phase"),
+      "单稿小功能 epic/phase 双缺省（合法缺省形态，不凭空补字段）",
+    );
+    c.eq(fSolo?.attention, [], "单稿小功能无缺口（「未归属」不得伪装为缺口码）");
+    c.eq(fPrev?.status, "cancelled", "PREV 型稿特性级取消生效（> cancelled: 落点复用）");
+    c.eq(fPrev?.stage, "已取消", "PREV 型稿段位已取消（终态不让位）");
+    c.ok(
+      fPrev != null && !Object.hasOwn(fPrev, "epic") && !Object.hasOwn(fPrev, "phase"),
+      "PREV 型已取消稿同样无归属字段（拍板：PREV 保持顶层）",
+    );
+    c.inc(fPrev?.statusRule ?? "", "保持顶层", "PREV 型稿取消原因留痕进 statusRule（顶层即正常形态）");
+
+    // board.md 顶层渲染形态：两稿平铺在「## 特性」节内（不落入 epic 容器、不标「未归属」）
+    const md = ctx.run.md ?? "";
+    c.inc(md, "### SOLO · 单稿小功能（无 epic 稿）", "board.md 顶层渲染：单稿小功能以计划码 SOLO 平铺（顶层，非 epic 容器内）");
+    c.inc(md, "### PREV · 预览通道旧稿（PREV 型 · 已取消）", "board.md 顶层渲染：PREV 型保持顶层块（拍板）");
+    c.ok(
+      md.indexOf("## 特性") >= 0 &&
+        md.indexOf("## 特性") < md.indexOf("### PREV") &&
+        md.indexOf("### PREV") < md.indexOf("### SOLO"),
+      "两稿按顶层特性序平铺（## 特性 节内；扫描序 = 文件名字典序 prev < solo，文档序不变）",
+      show({ head: md.indexOf("## 特性"), prev: md.indexOf("### PREV"), solo: md.indexOf("### SOLO") }),
+    );
+    c.ok(
+      !md.includes("未归属") && !md.includes("无归属"),
+      "board.md 不标注/不报「未归属」「无归属」（无 epic = 正常形态而非缺口；误判必咬）",
+    );
+
+    // ---- 3. --check 零失败零点名（若实现误判「未归属」为失败或点名，本组必咬）
+    c.eq(midCheck?.code, 0, "--check 退出码 0（无 epic 不判失败）");
+    c.inc(midCheck?.stdout ?? "", "结论：--check 通过（0 项失败）", "--check 结论 = 通过（0 项失败）");
+    c.ok(
+      !(midCheck?.stdout ?? "").includes("未归属") && !(midCheck?.stdout ?? "").includes("无归属"),
+      "--check 输出零点名「未归属」「无归属」（误判必咬）",
+    );
+    c.ok(!(midCheck?.stdout ?? "").includes("对账点名"), "--check 无对账点名节（零噪声）", truncate(midCheck?.stdout ?? ""));
+
+    // ---- 4. --assign 对无 epic 稿零改写（补录须显式 --assign --epic 通道；机具归 A2-1）
+    c.eq(assign?.code, 0, "--assign 退出码 0（无 epic 项目不因缺归属报错）");
+    const registry = readJsonFile(join(root, ".zcode/board/registry.json")).value;
+    const byNo = (n) => (registry?.entries ?? []).find((e) => e.no === n);
+    c.ok(
+      [201, 202, 203, 204].every((n) => byNo(n) && !Object.hasOwn(byNo(n), "epic") && !Object.hasOwn(byNo(n), "phase")),
+      "--assign（不带 --epic）不凭空补归属对：四条目 epic/phase 均不出现（补录走显式 --assign --epic 通道）",
+      show((registry?.entries ?? []).map((e) => ({ no: e.no, epic: e.epic, phase: e.phase }))),
+    );
+    c.ok(!Object.hasOwn(registry ?? {}, "epics"), "registry 无 epics 段（零 epic 项目形态；补录时先登记 epic，§10.7.2）");
+
+    // ---- 5. 补录后复核口径：最终 --check 仍 0 失败（顶层稿不受牵连）
+    c.eq(finalCheck?.code, 0, "最终 --check 退出码 0");
+    c.inc(finalCheck?.stdout ?? "", "结论：--check 通过（0 项失败）", "最终 --check 结论 = 通过（0 项失败）");
+  },
+});
+
+// ---------------------------------------------------------------- B1-1（#97）第五不变量：completed 须有该卡 integrator done 证据（对账点名级）
+
+// ---- 场景 97a（#97 第五不变量 e）：completed 卡须有该卡 integrator done 的 run 证据；
+//      缺证据 = 对账点名级（非失败级，--check 仍通过、退出码 0）；删证据必咬（红侧突变夹具）
+scenario("97a", "#97 第五不变量 e：completed 卡须有 integrator done 证据——缺证据对账点名（非失败级、不阻塞）；删证据必咬", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-97-merged-evidence.md";
+    w(
+      root,
+      planRel,
+      [
+        "# 合并证据夹具 97",
+        "<!-- zcode-board: no=1 -->",
+        "",
+        "- [x] 1. 已合并卡 <!-- zcode-board: no=2 -->",
+        "- [x] 2. 无证据卡 <!-- zcode-board: no=3 -->",
+        "- [ ] 3. 未完成卡 <!-- zcode-board: no=4 -->",
+        "- [x] 4. 仅 partial 证据卡 <!-- zcode-board: no=5 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 5,
+          entries: [
+            { no: 1, kind: "plan", file: planRel, title: "合并证据夹具 97", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "EVID" },
+            { no: 2, kind: "task", file: planRel, title: "已合并卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 3, kind: "task", file: planRel, title: "无证据卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 4, kind: "task", file: planRel, title: "未完成卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 5, kind: "task", file: planRel, title: "仅 partial 证据卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    seedRuns(root, [
+      { runId: "run-97a-merged", sessionId: "sess_97a", role: "integrator", at: "2026-10-09T13:00:00+08:00", result: "done", cards: [2], breakpoint: null },
+      {
+        runId: "run-97a-partial",
+        sessionId: "sess_97a",
+        role: "integrator",
+        at: "2026-10-09T14:00:00+08:00",
+        result: "partial",
+        cards: [5],
+        breakpoint: { stoppedAt: 5, next: "重试合并" },
+      },
+    ]);
+  },
+  assert(c, ctx) {
+    const { root, board } = ctx;
+    const f = featureByTitle(board, "合并证据夹具 97");
+    c.eq(
+      (f?.tasks ?? []).map((t) => t.status),
+      ["completed", "completed", "pending", "completed"],
+      "夹具前置：勾选态直映（[x]=completed；仅 integrator partial 的卡亦 completed，partial 不算 done 证据）",
+    );
+
+    // 绿侧：缺证据只点名、不判失败（对账级；--check 通过，退出码 0）
+    const clean = checkProject(root);
+    c.ok(
+      clean.ok,
+      "--check 通过：对账点名不阻塞（非失败级）",
+      show((clean.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    const roll = clean.rollcall ?? [];
+    c.eq(roll.length, 2, "对账点名恰 2 项（#3 无证据、#5 仅 partial）", show(roll));
+    const joined = roll.join("\n");
+    c.inc(joined, "不变量 e", "点名文案属第五不变量 e");
+    c.inc(joined, "features[0].tasks[1]", "点名 #3 的节点路径");
+    c.inc(joined, "#3", "点名 #3 稳定号");
+    c.inc(joined, "features[0].tasks[3]", "点名 #5 的节点路径");
+    c.inc(joined, "#5", "点名 #5 稳定号");
+    c.ok(!joined.includes("#2"), "已合并卡（integrator done 证据在）不点名", joined);
+    c.ok(!joined.includes("#4"), "未完成卡不点名（只对 completed 判）", joined);
+    c.inc(joined, "runs.json", "点名写明证据源（runs.json）");
+
+    const cli = runCompiler(root, ["--check"]);
+    c.eq(cli.code, 0, "缺证据但无失败项：--check 退出码 0（不阻塞正常流）");
+    c.inc(cli.stdout, "对账点名", "stdout 有独立「对账点名」节");
+    c.inc(cli.stdout, "#3", "stdout 逐条点名 #3");
+    c.inc(cli.stdout, "#5", "stdout 逐条点名 #5");
+    c.ok(!cli.stdout.includes("校验失败"), "非失败级：报告不出现「校验失败」节", cli.stdout);
+
+    // 红侧（突变夹具：把 integrator run 删掉必咬）：删除 #2 的 done 证据 → 重编译后点名 #2
+    seedRuns(root, readRuns(root).filter((r) => r.runId !== "run-97a-merged"));
+    const recompiled = runCompiler(root, []);
+    c.eq(recompiled.code, 0, "删证据后重编译成功（前置）");
+    const bitten = checkProject(root);
+    c.ok(
+      bitten.ok,
+      "删证据不改变判级：仍非失败级",
+      show((bitten.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    const bittenRoll = bitten.rollcall ?? [];
+    c.eq(bittenRoll.length, 3, "删掉 #2 的 integrator done run → 点名增为 3 项（#2/#3/#5）", show(bittenRoll));
+    c.inc(bittenRoll.join("\n"), "features[0].tasks[0]", "失控证据后 #2 被点名（路径）");
+    c.inc(bittenRoll.join("\n"), "#2", "失控证据后 #2 被点名（稳定号）");
+    const cliBitten = runCompiler(root, ["--check"]);
+    c.eq(cliBitten.code, 0, "红侧：仍退出码 0（对账级非失败级）");
+    c.inc(cliBitten.stdout, "#2", "红侧 stdout 点名 #2");
+  },
+});
+
+// ---- 场景 97b（#97 豁免登记）：登记豁免（.zcode/board/exemptions.json，{no, reason, at}）后点名消失；
+//      坏登记 = 失败级「豁免登记」，且该条不生效（不静默放行，也不静默改写）
+scenario("97b", "#97 豁免登记：合法登记后点名消失（非失败级）；坏登记失败级点名且不生效（格式与位置本轮定案）", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-97-exemption.md";
+    w(
+      root,
+      planRel,
+      [
+        "# 豁免登记夹具 97",
+        "<!-- zcode-board: no=10 -->",
+        "",
+        "- [x] 1. 有证据卡 <!-- zcode-board: no=11 -->",
+        "- [x] 2. 速修卡（无合并证据，待登记豁免） <!-- zcode-board: no=12 -->",
+        "- [ ] 3. 未完成卡 <!-- zcode-board: no=13 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 13,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "豁免登记夹具 97", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "EXMP" },
+            { no: 11, kind: "task", file: planRel, title: "有证据卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 12, kind: "task", file: planRel, title: "速修卡（无合并证据，待登记豁免）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 13, kind: "task", file: planRel, title: "未完成卡", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    seedRuns(root, [
+      { runId: "run-97b-merged", sessionId: "sess_97b", role: "integrator", at: "2026-10-09T13:00:00+08:00", result: "done", cards: [11], breakpoint: null },
+    ]);
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    c.eq(EXEMPTIONS_REL, ".zcode/board/exemptions.json", "登记位置本轮定案：.zcode/board/exemptions.json（编排者单写者）");
+
+    // 登记格式校验器（lib/schema-check.mjs，纯函数）公开语义
+    c.eq(checkExemptionsDoc({ version: 1, exemptions: [] }).errors, [], "空登记表：合法（零错误）");
+    const okDoc = checkExemptionsDoc({ version: 1, exemptions: [{ no: 12, reason: "速修直提交（无走卡合并）", at: "2026-10-10T09:00:00+08:00" }] });
+    c.eq([okDoc.errors.length, okDoc.exemptNos], [0, [12]], "合法条目：零错误 + 生效号提取");
+    const structBad = checkExemptionsDoc({ version: 2, exemptions: "x" });
+    c.ok(structBad.errors.length >= 1, "结构非法（version≠1 / exemptions 非数组）：逐项点名", show(structBad.errors));
+    c.eq(structBad.exemptNos, [], "结构非法 → 整份拒收（零豁免生效）");
+    const dupDoc = checkExemptionsDoc({
+      version: 1,
+      exemptions: [
+        { no: 12, reason: "a", at: "2026-10-10T09:00:00+08:00" },
+        { no: 12, reason: "b", at: "2026-10-10T09:05:00+08:00" },
+      ],
+    });
+    c.ok(dupDoc.errors.some((e) => e.includes("重复")), "同号重复登记 → 失败级点名", show(dupDoc.errors));
+
+    // 未登记：点名 #12（前置）
+    const before = checkProject(root);
+    c.eq((before.rollcall ?? []).length, 1, "未登记豁免：恰点名 #12", show(before.rollcall));
+    c.inc((before.rollcall ?? [])[0] ?? "", "#12", "点名文案含 #12");
+
+    // 合法登记：点名消失、不引入失败项、CLI 零点名噪声
+    w(
+      root,
+      EXEMPTIONS_REL,
+      `${JSON.stringify(
+        { version: 1, exemptions: [{ no: 12, reason: "速修直提交 main（用户拍板，无走卡合并）", at: "2026-10-10T09:00:00+08:00" }] },
+        null,
+        2,
+      )}\n`,
+    );
+    const after = checkProject(root);
+    c.eq(after.rollcall ?? [], [], "登记豁免后点名消失（#12 不再点名）");
+    c.ok(after.ok, "合法登记不引入失败项（--check 通过）", show((after.failures ?? []).map((x) => `[${x.category}] ${x.message}`)));
+    const cliOk = runCompiler(root, ["--check"]);
+    c.eq(cliOk.code, 0, "登记豁免：--check 退出码 0");
+    c.ok(!cliOk.stdout.includes("对账点名"), "stdout 无「对账点名」节（点名消失即零噪声）", cliOk.stdout);
+
+    // FINDING-1 回炉（B1 批量验证）：结构非法路径 = version≠1/字符串/缺失 且 exemptions 为合法数组
+    // → 整份拒收（exemptNos 恒空），不得"报错但条目仍生效"（version 闸形同虚设）
+    const legalEntry = { no: 12, reason: "结构非法夹具：version 不合法时该条不得生效", at: "2026-10-10T09:00:00+08:00" };
+    for (const [label, badDoc] of [
+      ["version=2", { version: 2, exemptions: [legalEntry] }],
+      ['version="1"（字符串）', { version: "1", exemptions: [legalEntry] }],
+      ["version 缺失", { exemptions: [legalEntry] }],
+    ]) {
+      const unit = checkExemptionsDoc(badDoc);
+      c.eq(unit.exemptNos, [], `${label}：结构非法 → 零豁免生效（单测，整份拒收）`);
+      c.ok(unit.errors.some((e) => e.includes("$.version")), `${label}：失败级点名 version（单测）`, show(unit.errors));
+      w(root, EXEMPTIONS_REL, `${JSON.stringify(badDoc, null, 2)}\n`);
+      const vBad = checkProject(root);
+      c.ok((vBad.failures ?? []).some((x) => x.category === "豁免登记"), `${label}：--check 失败项类别「豁免登记」`);
+      const vRoll = vBad.rollcall ?? [];
+      c.eq(vRoll.length, 1, `${label}：整份拒收 → #12 恢复点名`, show(vRoll));
+      c.inc(vRoll.join("\n"), "#12", `${label}：恢复点名指向 #12`);
+      const vCli = runCompiler(root, ["--check"]);
+      c.eq(vCli.code, 1, `${label}：CLI 非零退出（失败级）`);
+    }
+
+    // 坏登记（条目级非法：缺 reason / no 非整数）→ 失败级「豁免登记」，该条不生效（#12 重新点名）
+    w(
+      root,
+      EXEMPTIONS_REL,
+      `${JSON.stringify(
+        {
+          version: 1,
+          exemptions: [
+            { no: 12, at: "2026-10-10T09:00:00+08:00" },
+            { no: "12", reason: "字符串号", at: "2026-10-10T09:05:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const bad = checkProject(root);
+    const regFails = (bad.failures ?? []).filter((x) => x.category === "豁免登记");
+    c.eq(regFails.length, 2, "两条非法登记各一条失败级点名（缺 reason / no 非整数）", show(regFails.map((x) => x.message)));
+    c.ok(!bad.ok, "坏登记：--check 失败（非零退出语义）");
+    c.inc((bad.rollcall ?? []).join("\n"), "#12", "非法条目不生效：#12 重新点名（不静默放行）");
+    const cliBad = runCompiler(root, ["--check"]);
+    c.eq(cliBad.code, 1, "坏登记：CLI 非零退出");
+    c.inc(cliBad.stdout, "豁免登记", "stdout 失败项点名类别「豁免登记」");
+
+    // 解析失败：整份拒收（零豁免生效），失败级点名
+    w(root, EXEMPTIONS_REL, "{ 坏 JSON\n");
+    const broken = checkProject(root);
+    c.ok((broken.failures ?? []).some((x) => x.category === "豁免登记"), "解析失败 → 失败级「豁免登记」");
+    c.eq((broken.rollcall ?? []).length, 1, "整份拒收：#12 恢复点名（豁免零生效）");
+  },
+});
+
+// ---------------------------------------------------------------- D2-2（#152）卡号绑定断言：worktree 名 ↔ 卡号（对账点名级）
+
+// ---- 场景 152：板面 worktree（#151 归一后的现场实际路径）末段 task-<no> 必须等于该卡稳定号——
+//      错配 → 对账点名（非失败级、退出码 0）；合规/不进判定域 → 零噪声；错配声明移除 → 点名自清。
+//      判级依据（成文于 compile-board.mjs checkWorktreeCardBinding 与 run-event.md §2.1）：错配源自
+//      追加式 runs 声明（不可由重编译修复），故与第五不变量 (e) 同通道——对账点名级、不阻断退出码。
+scenario("152", "#152 卡号绑定：worktree 末段号 ≠ 卡号 → 对账点名（非失败级）；短/嵌套两形态都咬；合规与不进判定域零噪声", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-152-binding.md";
+    w(
+      root,
+      planRel,
+      [
+        "# 卡号绑定夹具 152",
+        "<!-- zcode-board: no=1 -->",
+        "",
+        "- [ ] 1. 合规短形态现场 <!-- zcode-board: no=9 -->",
+        "- [ ] 2. 错配短形态现场（#10 声明 task-9） <!-- zcode-board: no=10 -->",
+        "- [ ] 3. 错配嵌套现场（#22 声明 task-21，现场在子项目根） <!-- zcode-board: no=22 -->",
+        "- [ ] 4. 合规现场（#30 声明 task-30） <!-- zcode-board: no=30 -->",
+        "- [ ] 5. 目录缺失的错配声明（#12 声明 task-13） <!-- zcode-board: no=12 -->",
+        "- [ ] 6. 形态非法声明（#14 两级嵌套） <!-- zcode-board: no=14 -->",
+        "- [ ] 7. 未声明现场 <!-- zcode-board: no=15 -->",
+        "",
+      ].join("\n"),
+    );
+    w(
+      root,
+      ".zcode/board/registry.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          seq: 30,
+          entries: [
+            { no: 1, kind: "plan", file: planRel, title: "卡号绑定夹具 152", assignedAt: "2026-10-01T00:00:00+08:00", planCode: "BIND" },
+            { no: 9, kind: "task", file: planRel, title: "合规短形态现场", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 10, kind: "task", file: planRel, title: "错配短形态现场（#10 声明 task-9）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 22, kind: "task", file: planRel, title: "错配嵌套现场（#22 声明 task-21，现场在子项目根）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 30, kind: "task", file: planRel, title: "合规现场（#30 声明 task-30）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 12, kind: "task", file: planRel, title: "目录缺失的错配声明（#12 声明 task-13）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 14, kind: "task", file: planRel, title: "形态非法声明（#14 两级嵌套）", assignedAt: "2026-10-01T00:00:00+08:00" },
+            { no: 15, kind: "task", file: planRel, title: "未声明现场", assignedAt: "2026-10-01T00:00:00+08:00" },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    seedRuns(root, [
+      // 合规：现场名 = 卡号（#9 声明 task-9；同一现场随后被 #10 错配声明——E4-09/H3 的原始构造）
+      { runId: "run-152-a9", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:00:00+08:00", result: "partial", cards: [9], worktree: ".zcode/worktrees/task-9", branch: "task-9", evidence: [], breakpoint: { stoppedAt: 9, next: "继续" } },
+      // 错配（短形态）：#10 声明 task-9（目录存在 → 板挂 unmerged）
+      { runId: "run-152-b10", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:01:00+08:00", result: "partial", cards: [10], worktree: ".zcode/worktrees/task-9", branch: "task-9", evidence: [], breakpoint: { stoppedAt: 10, next: "继续" } },
+      // 错配（嵌套归一）：#22 声明短形态，现场在子项目根 proj-x 下 → #151 归一为现场实际路径后仍错配
+      { runId: "run-152-c22", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:02:00+08:00", result: "partial", cards: [22], worktree: ".zcode/worktrees/task-21", branch: "task-21", evidence: [], breakpoint: { stoppedAt: 22, next: "继续" } },
+      // 合规：现场名 = 卡号
+      { runId: "run-152-d30", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:03:00+08:00", result: "partial", cards: [30], worktree: ".zcode/worktrees/task-30", branch: "task-30", evidence: [], breakpoint: { stoppedAt: 30, next: "继续" } },
+      // 记录级错配但目录缺失 → 不进判定域（现场不在：字段 null，由 #42 降级诊断承载）
+      { runId: "run-152-e12", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:04:00+08:00", result: "partial", cards: [12], worktree: ".zcode/worktrees/task-13", branch: "task-13", evidence: [], breakpoint: { stoppedAt: 12, next: "继续" } },
+      // 形态非法（两级嵌套）→ 归一层拒收，字段 null → 不进判定域
+      { runId: "run-152-f14", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:05:00+08:00", result: "partial", cards: [14], worktree: "proj-x/inner/.zcode/worktrees/task-14", branch: "task-14", evidence: [], breakpoint: { stoppedAt: 14, next: "继续" } },
+      // 未声明现场（缺省 null，不推导）→ 不进判定域
+      { runId: "run-152-g15", sessionId: "sess_152", role: "implementer", at: "2026-10-10T01:06:00+08:00", result: "done", cards: [15], evidence: [], breakpoint: null },
+    ]);
+    // fs 事实：① 根级 task-9（#9 合规现场 + #10 错配声明指向它）；② 根级 task-30（#30 合规）；
+    //   ③ 子项目根 proj-x 下 task-21（#22 短声明经后缀互证归一为现场实际路径）。task-13 / proj-x/inner 不存在。
+    mkdirSync(join(root, ".zcode", "worktrees", "task-9"), { recursive: true });
+    mkdirSync(join(root, ".zcode", "worktrees", "task-30"), { recursive: true });
+    mkdirSync(join(root, "proj-x", ".zcode", "worktrees", "task-21"), { recursive: true });
+  },
+  assert(c, ctx) {
+    const { root, board, run } = ctx;
+    const f = featureByTitle(board, "卡号绑定夹具 152");
+    const card9 = taskByTitle(f, "合规短形态现场");
+    const card10 = taskByTitle(f, "错配短形态现场（#10 声明 task-9）");
+    const card22 = taskByTitle(f, "错配嵌套现场（#22 声明 task-21，现场在子项目根）");
+    const card30 = taskByTitle(f, "合规现场（#30 声明 task-30）");
+    const card12 = taskByTitle(f, "目录缺失的错配声明（#12 声明 task-13）");
+    const card14 = taskByTitle(f, "形态非法声明（#14 两级嵌套）");
+    const card15 = taskByTitle(f, "未声明现场");
+
+    // 夹具前置：板面 worktree = #151 归一后的现场实际路径（判定域 = 非空字段）
+    c.eq(card9?.worktree, ".zcode/worktrees/task-9", "前置：#9 合规现场字段=声明路径（exact 命中）");
+    c.eq(card10?.worktree, ".zcode/worktrees/task-9", "前置：H3 构造——#10 现场字段=他人名下路径 task-9（目录存在 → 板挂 unmerged）");
+    c.ok((card10?.attention ?? []).includes("unmerged-worktree"), "前置：#10 挂 unmerged-worktree（错配现场被计入待合并归属）");
+    c.eq(card22?.worktree, "proj-x/.zcode/worktrees/task-21", "前置：#22 短声明经 #151 归一为子项目根现场实际路径");
+    c.eq(card30?.worktree, ".zcode/worktrees/task-30", "前置：#30 合规现场字段");
+    c.eq(card12?.worktree, null, "前置：#12 声明目录缺失 → 字段 null（历史/无现场的记录级错配不进判定域，由 #42 提示级诊断承载）");
+    c.eq(card14?.worktree, null, "前置：#14 形态非法 → 归一层拒收、字段 null（不进判定域）");
+    c.eq(card15?.worktree, null, "前置：#15 未声明现场 → 字段 null（不按卡号推导，#42）");
+
+    // 绿侧（点名级）：错配逐条点名但不判失败（--check 通过、退出码 0）
+    const res = checkProject(root);
+    c.ok(
+      res.ok,
+      "对账点名不阻塞：--check 通过（非失败级）",
+      show((res.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    const roll = res.rollcall ?? [];
+    c.eq(roll.length, 2, "卡号绑定恰点名 2 项（#10 短形态错配、#22 嵌套归一错配）", show(roll));
+    const joined = roll.join("\n");
+    c.inc(joined, "卡号绑定", "点名文案属「卡号绑定（worktree 名 ↔ 卡号）」判据");
+    c.inc(joined, "features[0].tasks[1]", "点名 #10 的节点路径（tasks[1]）");
+    c.inc(joined, "（#10）", "点名 #10 稳定号");
+    c.inc(joined, "task-9", "两值对照含工作树名 task-9");
+    c.inc(joined, "features[0].tasks[2]", "点名 #22 的节点路径（tasks[2]）");
+    c.inc(joined, "（#22）", "点名 #22 稳定号");
+    c.inc(joined, "proj-x/.zcode/worktrees/task-21", "嵌套形态按归一后现场路径点名（末段 task-21）");
+    c.inc(joined, "非失败级", "点名写明判级（对账点名级）");
+    c.ok(!joined.includes("（#9）"), "合规卡（名=号，与 #10 共享同一现场）不点名", joined);
+    c.ok(!joined.includes("（#30）"), "合规卡 #30 不点名", joined);
+    c.ok(!joined.includes("（#12）"), "目录缺失的记录级错配不点名（不进判定域，不重复 #42 提示）", joined);
+    c.ok(!joined.includes("（#14）"), "形态非法声明不点名（不进判定域，不重复归一层诊断）", joined);
+    c.ok(!joined.includes("（#15）"), "未声明现场不点名", joined);
+
+    const cli = runCompiler(root, ["--check"]);
+    c.eq(cli.code, 0, "CLI：--check 退出码 0（对账点名不阻断）");
+    c.inc(cli.stdout, "对账点名", "stdout 有独立「对账点名」节");
+    c.inc(cli.stdout, "（#10）", "stdout 逐条点名 #10");
+    c.inc(cli.stdout, "（#22）", "stdout 逐条点名 #22");
+    c.ok(!cli.stdout.includes("校验失败"), "非失败级：报告不出现「校验失败」节", cli.stdout);
+    c.inc(run.md ?? "", ".zcode/worktrees/task-9", "board.md 待合并聚合照常渲染现场（点名不改板面派生）");
+
+    // 错配声明移除（现场按命名纪律收口/清理后）→ 点名自清（自愈路径，无需机械修复）
+    seedRuns(root, readRuns(root).filter((r) => r.runId !== "run-152-b10" && r.runId !== "run-152-c22"));
+    const recompiled = runCompiler(root, []);
+    c.eq(recompiled.code, 0, "错配声明移除后重编译成功（前置）");
+    const after = checkProject(root);
+    c.eq(after.rollcall ?? [], [], "错配声明移除（现场收口）→ 点名自清（零残留）");
+    c.ok(
+      after.ok,
+      "点名自清后 --check 仍通过（0 失败）",
+      show((after.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+  },
+});
+
+// ---------------------------------------------------------------- E1b-1（#159）苗圃位置规则：裁决稿/设计稿/纲领稿禁入 plans/
+
+// ---- 场景 159（#159/E1b-1；契约 §11 位置分层）：苗圃（.zcode/plans/）内裁决稿/设计稿/纲领稿按文件名/标题
+//      特征命中 → --check 对账点名（非失败级、退出码 0、不阻断）；正常计划稿（plan-* 命名约定，含标题含
+//      族词者）零误报；无法判族不判（零噪音）；移至新位置 .zcode/design/ 后点名自清（绿）；design/ 不进
+//      扫描面（scan.json 池外引用被拒，文件零触碰）。
+scenario("159", "#159 苗圃位置规则：裁决稿/设计稿/纲领稿被 --check 点名（对账点名级）；plan-* 零误报；移至 .zcode/design/ 后点名自清", {
+  build(root) {
+    const planDoc = (title) => [`# ${title}`, "", "- **T1 条目（草案）**：正文。", ""].join("\n");
+    // 正常计划稿：plan-* 命名约定（含标题含族词的豁免反例）+ 无法判族（不判，不噪音）→ 全部零点名
+    w(root, ".zcode/plans/plan-keep.md", planDoc("苗圃稿"));
+    w(root, ".zcode/plans/plan-sess_00000000-0000-4000-8000-000000000159.md", planDoc("会话稿 159"));
+    w(root, ".zcode/plans/plan-设计稿评审计划.md", planDoc("设计稿评审计划（plan- 前缀豁免反例）"));
+    w(root, ".zcode/plans/后续期路线.md", planDoc("后续期路线（无法判族：不判）"));
+    w(root, ".zcode/plans/scratch-note.md", planDoc("便签（无法判族：不判）"));
+    // 苗圃违例 5 例：裁决稿 ×3（文件名首段 ×2 含中文、H1 自称 ×1）、设计稿 ×1、纲领稿 ×1
+    w(root, ".zcode/plans/adjudication-board.md", planDoc("裁决包 · 看板系统 board-v2（文件名首段判族）"));
+    w(root, ".zcode/plans/裁决包-board-v2.md", planDoc("裁决包 · 中文首段判族"));
+    w(root, ".zcode/plans/design-p2-内置注入.md", planDoc("设计稿 · P2 内置注入（文件名首段判族）"));
+    w(root, ".zcode/plans/program-board-v2.md", planDoc("整体开发纲要 · board-v2（文件名首段判族）"));
+    w(root, ".zcode/plans/board-v2-裁决包.md", planDoc("裁决包 · board-v2（文件名首段无族词 → H1 自称判族）"));
+    // 新位置（约定层 .zcode/design/）：不进计划扫描面、零吸入、文件零触碰
+    w(root, ".zcode/design/adjudication-board-v2.md", planDoc("裁决包 · 已落新位置"));
+  },
+  assert(c, ctx) {
+    const { root, board } = ctx;
+    const NURSERY = ".zcode/plans";
+    const DESIGN = ".zcode/design";
+    const violators = [
+      { rel: `${NURSERY}/adjudication-board.md`, family: "裁决稿" },
+      { rel: `${NURSERY}/裁决包-board-v2.md`, family: "裁决稿" },
+      { rel: `${NURSERY}/design-p2-内置注入.md`, family: "设计稿" },
+      { rel: `${NURSERY}/program-board-v2.md`, family: "纲领稿" },
+      { rel: `${NURSERY}/board-v2-裁决包.md`, family: "裁决稿" },
+    ];
+    const clean = [
+      `${NURSERY}/plan-keep.md`,
+      `${NURSERY}/plan-sess_00000000-0000-4000-8000-000000000159.md`,
+      `${NURSERY}/plan-设计稿评审计划.md`,
+      `${NURSERY}/后续期路线.md`,
+      `${NURSERY}/scratch-note.md`,
+    ];
+
+    // 前置：苗圃全扫（含违例稿——位置违例不改扫描面，只点名）；新位置 design/ 不在扫描面
+    const planSources = (board.sources ?? []).filter((s) => s.kind === "plan").map((s) => s.path);
+    c.ok(
+      violators.every((v) => planSources.includes(v.rel)),
+      "前置：苗圃内违例稿照常在扫描面（位置违例靠点名、不静默改扫描面）",
+      show(planSources),
+    );
+    c.eq(planSources.filter((p) => p.startsWith(`${DESIGN}/`)), [], "前置：新位置 .zcode/design/ 不进计划扫描面");
+    c.ok(!JSON.stringify(board).includes("已落新位置"), "前置：design/ 内文档零吸入（不上板）");
+
+    // 红侧（点名级）：文件名/标题族词命中 → 逐条对账点名，不判失败（--check 通过、退出码 0）
+    const res = checkProject(root);
+    c.ok(
+      res.ok,
+      "位置违例不阻塞：--check 通过（对账点名级、非失败级）",
+      show((res.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    const roll = res.rollcall ?? [];
+    c.eq(roll.length, 5, "苗圃位置违例恰点名 5 项（裁决稿 ×3、设计稿 ×1、纲领稿 ×1）", show(roll));
+    const joined = roll.join("\n");
+    for (const v of violators) {
+      c.inc(joined, `${v.rel} 判为${v.family}`, `点名 ${v.rel}（族：${v.family}）`);
+    }
+    c.inc(joined, "位置规则", "点名文案属「苗圃位置规则」判据（#159/E1b-1）");
+    c.inc(joined, "禁入", "点名写明禁入苗圃");
+    c.inc(joined, `.zcode/design/`, "点名给出新位置 .zcode/design/（移位收口路径）");
+    c.inc(joined, "自清", "点名写明移位后本项自清（自愈路径）");
+    c.inc(joined, "A5-4", "点名写明处置输入归 A5-4（接口注记）");
+    c.inc(joined, "非失败级", "点名写明判级（对账点名级、非失败级）");
+    for (const rel of clean) {
+      c.ok(!joined.includes(rel), `零误报：${rel} 不点名`, joined);
+    }
+
+    // CLI 红侧：stdout 有独立「对账点名」节（断言切片到该节，避免诊断节的路径命中造成假绿）、
+    // 退出码 0、不出现「校验失败」
+    const cli = runCompiler(root, ["--check"]);
+    c.eq(cli.code, 0, "CLI 红侧：--check 退出码 0（不阻断正常流）");
+    const cliRollAt = cli.stdout.indexOf("对账点名");
+    c.ok(cliRollAt >= 0, "stdout 有独立「对账点名」节");
+    const cliRoll = cliRollAt >= 0 ? cli.stdout.slice(cliRollAt) : "";
+    c.inc(cli.stdout, "--check 通过", "stdout 结论仍为通过（非失败级）");
+    for (const v of violators) c.inc(cliRoll, v.rel, `「对账点名」节逐条点名 ${v.rel}`);
+    c.ok(
+      !cliRoll.includes(`${NURSERY}/plan-keep.md`) && !cliRoll.includes(`${NURSERY}/plan-设计稿评审计划.md`),
+      "「对账点名」节：正常计划稿（含标题含族词者）零误报",
+      cliRoll.slice(0, 600),
+    );
+    c.ok(!cli.stdout.includes("校验失败"), "非失败级：报告不出现「校验失败」节", cli.stdout);
+
+    // 绿侧：三稿处置动作（移至新位置 .zcode/design/，移位不改名）→ 重编译对账 → 点名自清、扫描面照常
+    mkdirSync(join(root, DESIGN), { recursive: true });
+    for (const v of violators) {
+      const src = join(root, v.rel);
+      const dest = join(root, DESIGN, basename(v.rel));
+      writeFileSync(dest, readFileSync(src));
+      rmSync(src);
+    }
+    const recompiled = runCompiler(root, []);
+    c.eq(recompiled.code, 0, "移位后重编译退出码 0（前置：板与源同步）");
+    const after = checkProject(root);
+    c.eq(after.rollcall ?? [], [], "移至 .zcode/design/ 后点名自清（零残留）");
+    c.ok(
+      after.ok,
+      "移位后 --check 仍通过（0 失败）",
+      show((after.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    const cliGreen = runCompiler(root, ["--check"]);
+    c.eq(cliGreen.code, 0, "CLI 绿侧：--check 退出码 0");
+    c.ok(!cliGreen.stdout.includes("对账点名"), "绿侧 stdout 不再出现「对账点名」节", cliGreen.stdout);
+    c.inc(cliGreen.stdout, "通过", "绿侧结论 = 通过");
+
+    // 新位置边界：不进扫描面/不上板/文件零触碰；scan.json 池外引用被拒（design/ 永不能进计划扫描面）
+    const planSources2 = (recompiled.board?.sources ?? []).filter((s) => s.kind === "plan").map((s) => s.path);
+    c.eq(planSources2.filter((p) => p.startsWith(`${DESIGN}/`)), [], "新位置 .zcode/design/ 仍不进扫描面");
+    c.ok(!JSON.stringify(recompiled.board ?? {}).includes("已落新位置"), "design/ 文档零吸入（不上板）");
+    c.ok(
+      violators.every((v) => isFile(join(root, DESIGN, basename(v.rel)))) && isFile(join(root, DESIGN, "adjudication-board-v2.md")),
+      "design/ 内文件全部存在（编译器零触碰）",
+    );
+
+    // 忽略口径（excludeGlobs）：苗圃违例稿被项目显式排除 → 不扫不判（零点名）；与 #72 同源、不二份实现
+    w(root, ".zcode/plans/program-legacy.md", ["# 整体开发纲要 · legacy（忽略口径夹具）", "", "- **T1 条目（草案）**：正文。", ""].join("\n"));
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ excludeGlobs: ["**/program-legacy.md"] }, null, 2)}\n`);
+    const compiledIgnored = runCompiler(root, []);
+    c.eq(compiledIgnored.code, 0, "excludeGlobs 夹具重编译退出码 0");
+    const ignoredFacts = checkProject(root);
+    c.eq(ignoredFacts.rollcall ?? [], [], "被 excludeGlobs 排除的苗圃违例稿不判（项目级显式忽略口径，零点名）");
+    c.ok(
+      !(compiledIgnored.board?.sources ?? []).some((s) => s.kind === "plan" && s.path === `${NURSERY}/program-legacy.md`),
+      "排除项不扫（不在 sources[]）",
+    );
+    c.ok(isFile(join(root, NURSERY, "program-legacy.md")), "排除项文件零触碰");
+    rmSync(join(root, NURSERY, "program-legacy.md"));
+
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: [DESIGN] }, null, 2)}\n`);
+    const cfg = checkProject(root);
+    const cfgDiags = (cfg.board?.diagnostics ?? []).filter((d) => d.path === ".zcode/board/scan.json");
+    c.eq(cfgDiags.length, 1, "scan.json 引用 .zcode/design（池外）→ 恰 1 条诊断（拒绝该条）", show(cfgDiags));
+    c.inc(cfgDiags[0]?.message ?? "", DESIGN, "诊断点名被拒目录 .zcode/design");
+    c.inc(cfgDiags[0]?.message ?? "", "opt-in 池", "诊断说明「池外引用拒绝」判据");
+    c.ok(
+      (cfg.failures ?? []).some((f) => f.category === "扫描面配置" && String(f.message).includes(DESIGN)),
+      "扫描面配置错误归 --check 失败级（配置错不静默）",
+      show((cfg.failures ?? []).map((x) => `[${x.category}] ${x.message}`)),
+    );
+    c.ok(!JSON.stringify(cfg.board ?? {}).includes("已落新位置"), "池外引用不改变扫描面：design/ 仍零吸入");
+
+    // 规则成文（契约面）：markers.md §11 位置分层（规则文本可机械核对；版本仍 v2.4——不改版本号）
+    const markersText = readFileSync(join(ASSETS_DIR, "contracts", "markers.md"), "utf8");
+    c.inc(markersText, "## 11. 位置分层", "markers.md §11 位置分层成文");
+    c.inc(markersText, ".zcode/design/", "契约写明新位置 .zcode/design/");
+    c.inc(markersText, "裁决稿/设计稿禁入 plans/", "契约写明规则原话（裁决稿/设计稿禁入 plans/）");
+    c.inc(markersText, "对账点名级（非失败级、不阻断退出码）", "契约写明判级（对账点名级）");
+    c.inc(markersText, "plan-*", "契约写明计划稿命名约定豁免（正常计划稿零误报）");
+    c.inc(markersText, "A5-4", "契约写明 A5-4 处置输入接口注记");
+  },
+});
 
 // ---------------------------------------------------------------- 事实互证库 lib/fact-invariants.mjs 的公开契约
 
 function factLibChecks(c, mod) {
-  const { checkFactInvariants } = mod;
+  const { checkCompletedMergedEvidence, checkFactInvariants } = mod;
   c.eq(typeof checkFactInvariants, "function", "lib/fact-invariants.mjs 导出 checkFactInvariants（纯函数）");
 
   const feature = (over) => ({
@@ -4880,6 +6286,68 @@ function factLibChecks(c, mod) {
   c.inc(dOut[0] ?? "", 'stageSummary."已完成"=4', "(d) 文案给出携带值与路径");
   c.inc(dOut[0] ?? "", "复算 1", "(d) 文案给出复算值");
 
+  // (e) 第五不变量（#97）：completed 任务卡须有该卡 integrator done 的 run 证据；
+  //     对账点名级（独立导出 checkCompletedMergedEvidence，不改变 (a)–(d) 的失败级契约）
+  c.eq(typeof checkCompletedMergedEvidence, "function", "(e) 导出 checkCompletedMergedEvidence（第五不变量入口）");
+  const eBoard = {
+    features: [
+      {
+        ...feature({ no: 20, label: "20" }),
+        tasks: [
+          task({ no: 21, label: "1", status: "completed" }),
+          task({ no: 22, label: "2", status: "completed" }),
+          task({ no: 23, label: "3" }),
+          task({ status: "completed" }), // 未领号：无引用位（runs 只能引用稳定号），不判
+        ],
+      },
+    ],
+  };
+  const eOut = checkCompletedMergedEvidence({ board: eBoard, runs: [] });
+  c.eq(eOut.length, 2, "(e) 空 runs：恰 2 条点名（#21/#22；未领号卡不判）", show(eOut));
+  c.inc(eOut.join("\n"), "不变量 e", "(e) 文案点名不变量 e");
+  c.inc(eOut.join("\n"), "#21", "(e) 点名 #21");
+  c.inc(eOut.join("\n"), "#22", "(e) 点名 #22");
+  c.inc(eOut.join("\n"), "features[0].tasks[0]", "(e) 点名节点路径");
+  c.ok(!eOut.join("\n").includes("#23"), "(e) 未 completed 卡不点名", show(eOut));
+  c.ok(!eOut.join("\n").includes("未领号"), "(e) 未领号 completed 卡不判（无引用位边界，防恒名词条）", show(eOut));
+  const merged = (over) => ({ role: "integrator", result: "done", cards: [21], ...over });
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({})] }).length,
+    1,
+    "(e) integrator done 证据在 → 恰 1 条（仅 #22）",
+  );
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({ result: "partial" })] }).length,
+    2,
+    "(e) partial 不算 done 证据（#21 仍点名）",
+  );
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({ role: "test-verifier" })] }).length,
+    2,
+    "(e) 非 integrator 的 done 不算合并证据（#21 仍点名）",
+  );
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({ result: "interrupted" })] }).length,
+    2,
+    "(e) interrupted 不算合并证据（#21 仍点名）",
+  );
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({ result: "failed" })] }).length,
+    2,
+    "(e) failed 不算合并证据（#21 仍点名）",
+  );
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [], exemptNos: [21, 22] }).length,
+    0,
+    "(e) 登记豁免（按稳定号）后不再点名",
+  );
+  c.eq(checkCompletedMergedEvidence({ board: null, runs: [] }), [], "(e) 板非对象：不判（失败级另一路点名）");
+  c.eq(
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({}), merged({ runId: "r2" })] }),
+    checkCompletedMergedEvidence({ board: eBoard, runs: [merged({}), merged({ runId: "r2" })] }),
+    "(e) 纯函数：同输入两次调用结果逐字相等",
+  );
+
   // 纯函数：同输入两次调用逐字相同（无隐藏状态/IO）
   c.eq(checkFactInvariants({ board: cBoard, boardMd: mdWith("ID-2.1") }), cOut, "纯函数：同输入两次调用结果逐字相等");
 }
@@ -4891,7 +6359,7 @@ function factLibChecks(c, mod) {
  * 本守卫把两侧常量逐项对照——任一侧改名/改形态即红，防止不变量 (b) 之类的判据因词表漂移静默失效
  * （如 ARRANGED_NOT_EXPANDED 在 derive 侧改名后，(b) 永远不命中且无人察觉）。
  */
-function vocabularyGuardChecks(c, fact, derive, compiler) {
+function vocabularyGuardChecks(c, fact, derive, compiler, runs) {
   const snap = typeof fact.vocabularySnapshot === "function" ? fact.vocabularySnapshot() : null;
   if (!c.ok(snap != null, "lib/fact-invariants.mjs 导出 vocabularySnapshot()（S-1 守卫入口）")) return;
   // 契约字面值对照（独立来源：设计与契约文本，不借任一侧实现）
@@ -4915,6 +6383,11 @@ function vocabularyGuardChecks(c, fact, derive, compiler) {
   for (const t of ["ID-undefined", "1.2", "no=7", "impl"]) {
     c.ok(!idRe.test(t), `编号形态拒收非法 token ${JSON.stringify(t)}`, `${snap.idTokenSource}`);
   }
+  // 第五不变量 (e) 的合并证据词（#97）：字面值按契约 + 与 runs.mjs 词表成员对照（改名即红，防判据静默失效）
+  c.eq(snap.mergedRole, "integrator", "S-1：合并证据角色字面值 = integrator（契约 6.3 勾选=已合并）");
+  c.eq(snap.mergedResult, "done", "S-1：合并证据结果字面值 = done（report 三值表）");
+  c.ok(runs.RUN_ROLES.includes(snap.mergedRole), "S-1：合并证据角色 ↔ runs.RUN_ROLES 词表成员（#97 第五不变量判据常量）");
+  c.ok(runs.RUN_REPORT_RESULTS.includes(snap.mergedResult), "S-1：合并证据结果 ↔ runs.RUN_REPORT_RESULTS 词表成员（#97 第五不变量判据常量）");
 }
 
 // ---------------------------------------------------------------- 标记写回库 lib/marker-write.mjs 的公开契约（TQ-3，T5356r）
@@ -5042,7 +6515,7 @@ async function main(argv) {
   }
 
   say("");
-  say("== 事实互证库 lib/fact-invariants.mjs 的公开契约（#56 交付物：--check 四条不变量） ==");
+  say("== 事实互证库 lib/fact-invariants.mjs 的公开契约（#56 四条失败级不变量 + #97 第五不变量对账级） ==");
   {
     const c = new Checks("fact-lib");
     try {
@@ -5078,16 +6551,17 @@ async function main(argv) {
   }
 
   say("");
-  say("== 词表漂移守卫（S-1/T5356r：fact-invariants 复写词表 ↔ derive / compile-board 逐项对照） ==");
+  say("== 词表漂移守卫（S-1/T5356r：fact-invariants 复写词表 ↔ derive / compile-board / runs 逐项对照） ==");
   {
     const c = new Checks("vocab-guard");
     try {
       const fact = await import("../lib/fact-invariants.mjs");
       const derive = await import("../lib/derive.mjs");
       const compiler = await import("../compile-board.mjs");
-      vocabularyGuardChecks(c, fact, derive, compiler);
+      const runs = await import("../lib/runs.mjs");
+      vocabularyGuardChecks(c, fact, derive, compiler, runs);
     } catch (e) {
-      c.ok(false, "词表漂移守卫可执行（fact-invariants / derive / compile-board 可导入）", e.message);
+      c.ok(false, "词表漂移守卫可执行（fact-invariants / derive / compile-board / runs 可导入）", e.message);
     }
   }
 

@@ -43,7 +43,12 @@
  *     （lib/schema-check.mjs：T1 子集校验器 + T7 公共不变量/引用位整数断言）
  *     + 事实互证（#56，lib/fact-invariants.mjs：子卡全完成→已完成、有卡不得挂未拆解、
  *     board.md 编号形态 ↔ planCode/label 派生、段位计数复算；磁盘板与重编译基线各跑一遍，
- *     违例失败级点名路径 + 节点编号 + 两值对照）；修复 = 重编译；
+ *     违例失败级点名路径 + 节点编号 + 两值对照；#97 第五不变量 (e)：completed 卡须有该卡
+ *     integrator done 的 run 证据——对账点名级、不阻塞退出码，速修/管理卡登记豁免后不点名；
+ *     #152 卡号绑定 (f)：板面 worktree（#151 归一后现场实际路径）末段 task-<no> 须等于该卡
+ *     稳定号——对账点名级、不阻塞退出码，现场合并/清理后自清；
+ *     #159/E1b-1 苗圃位置规则 (g)：`.zcode/plans/` 扫描面内裁决稿/设计稿/纲领稿（文件名/标题族词）
+ *     → 对账点名级、不阻塞退出码，指向新位置 `.zcode/design/`（契约 §11），移位后自清）；修复 = 重编译；
  *   - 写出：<root>/.zcode/board/board.json + board.md（原子写：临时文件 + 改名）。
  *
  * 硬约束：默认模式对源文件**零写入**；--check 全程**只读**；--assign 对源头的写入仅限号标记 +
@@ -98,6 +103,7 @@ import {
   diagnoseWorktrees,
   maxIso,
   normalizeRuns,
+  parseWorktreePath,
   summarizeAttention,
   summarizeStages,
 } from "./lib/derive.mjs";
@@ -105,14 +111,16 @@ import {
 import { applyMarkerEdits, writeMarkersIfChanged } from "./lib/marker-write.mjs";
 
 import {
+  EXEMPTIONS_REL,
   checkBoardInvariants,
+  checkExemptionsDoc,
   checkSchemaSubset,
   validateSchemaValue,
 } from "./lib/schema-check.mjs";
 
-import { checkFactInvariants } from "./lib/fact-invariants.mjs";
+import { checkCompletedMergedEvidence, checkFactInvariants } from "./lib/fact-invariants.mjs";
 
-import { SCAN_CONFIG_REL, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
+import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
 
 import { GENERATED_BY, SKILL_ROOT_DIR, SKILL_VERSION, formatVersionLine, readVersionInfo } from "./lib/version.mjs";
 
@@ -137,6 +145,14 @@ const BOARD_MD_REL = ".zcode/board/board.md";
 const SCHEMA_PATH = fileURLToPath(new URL("./board.schema.json", import.meta.url));
 /** 技能包 manifest（#67；P2 分发比对直接用；`--manifest` 写出点，技能根相对路径）。 */
 const MANIFEST_REL = "assets/manifest.json";
+
+/**
+ * 计划稿苗圃 = 默认扫描面（#159/E1b-1：位置分层规则的判定域；契约 §11）。
+ * 只判苗圃一处：opt-in 池目录（docs/plans、docs/design-notes）由项目显式开启、语义自定，不进本判定。
+ */
+const PLAN_NURSERY_REL = DEFAULT_PLAN_DIRS[0];
+/** 非计划稿新位置（约定层；#159/E1b-1）：既不在默认扫描面也不在 opt-in 池——计划扫描面永不含该目录。 */
+const DESIGN_DOCS_REL = ".zcode/design";
 
 /** 第一方源：缺失时按空源参与编译（§12），路径恒列于 sources[] 供陈旧检测与 hook 触发判定。 */
 const FIRST_PARTY_SOURCES = [
@@ -2887,15 +2903,145 @@ function checkRegistryConsistency(facts, fail, note) {
   }
 }
 
+/**
+ * 非计划稿族词表（#159/E1b-1；契约 §11「位置分层」）——判定依据 = 文件名首段 / 首个标题首字段的**族词**：
+ *   - 裁决稿族（一次拍板清单/裁决包）：`adjudication`、`裁决`；
+ *   - 设计稿族（设计稿/设计说明）：`design`、`设计稿`；
+ *   - 纲领稿族（整体纲要/纲领）：`program`、`纲要`。
+ * 三族同属非计划稿：禁入计划稿苗圃 `.zcode/plans/`，落 `.zcode/design/`（约定层；不进计划扫描面）。
+ * 正文出现族词不作判据（防误伤）；族词表扩面须走契约变更（本表与契约 §11 同源）。
+ */
+const NON_PLAN_DOC_FAMILIES = Object.freeze([
+  Object.freeze({ family: "裁决稿", tokens: Object.freeze(["adjudication", "裁决"]) }),
+  Object.freeze({ family: "设计稿", tokens: Object.freeze(["design", "设计稿"]) }),
+  Object.freeze({ family: "纲领稿", tokens: Object.freeze(["program", "纲要"]) }),
+]);
+/** 计划稿命名约定：`plan-*`（含 `plan-sess_<uuid>`）——先于族词判定豁免（正常计划稿零误报的机械保证）。 */
+const PLAN_STEM_RE = /^plan(?:[-_.]|$)/i;
+
+/** 族词对照段：首个 `-`/`_`/`.`/空白 之前的首段（文件名首段与标题首字段共用同一取法）。 */
+function docFamilyHead(s) {
+  return String(s ?? "").trim().split(/[-_.\s]+/)[0] ?? "";
+}
+
+/** 首段归一（小写）后逐族词对照；命中 → 族名，未命中 → null（不猜）。 */
+function familyTokenIn(segment) {
+  const seg = String(segment ?? "").toLowerCase();
+  for (const { family, tokens } of NON_PLAN_DOC_FAMILIES) {
+    for (const token of tokens) {
+      if (seg.includes(token.toLowerCase())) return family;
+    }
+  }
+  return null;
+}
+
+/**
+ * 苗圃位置规则判定（#159/E1b-1；契约 §11，判定依据成文——勿扩）：
+ *   判定域 = 苗圃 `.zcode/plans/` 扫描面内文件（excludeGlobs 命中者不扫不判 = 项目级显式忽略口径）；
+ *   顺序：① `plan-*` 命名约定（含 `plan-sess_<uuid>`）→ 计划稿，豁免（标题含族词不改判）；
+ *        ② 文件名首段命中族词 → 判该族；③ 首个标题首字段命中族词 → 判该族；④ 都未命中 → 不判（不猜、不噪音）。
+ * @returns {{family: string, basis: string}|null}
+ */
+function nonPlanDocFamilyOf(plan, text) {
+  if (PLAN_STEM_RE.test(plan.stem)) return null;
+  const stemHead = docFamilyHead(plan.stem);
+  const stemFamily = familyTokenIn(stemHead);
+  if (stemFamily) return { family: stemFamily, basis: `文件名首段 "${stemHead}"` };
+  const headingHead = docFamilyHead(firstHeading(text));
+  const headingFamily = familyTokenIn(headingHead);
+  if (headingFamily) return { family: headingFamily, basis: `标题首字段 "${headingHead}"` };
+  return null;
+}
+
+/**
+ * 苗圃位置规则点名（#159/E1b-1；E1 V5 / #72 收口）——**对账点名级（非失败级、不阻断退出码）**：
+ * 苗圃 `.zcode/plans/` 内裁决稿/设计稿/纲领稿逐条点名（判据见 nonPlanDocFamilyOf），给新位置
+ * `.zcode/design/` 与处置归属。**判级依据**：真实板现存三稿（adjudication/design-p2/program，A5-4/#95
+ * 处置中）在处置完成前若判失败级，板将永久非零退出——与"板正常时零噪声"冲突；且处置 = 移文件
+ * （重编译不能修），属收尾对账通道（与 (e)/(f) 同节输出）。移位（不改名）后本项自清。
+ * 点名清单即 A5-4（三稿领号与位置处置）的处置输入；`--check` 只读，不移动任何文件。
+ * @returns {string[]} 点名文案（空数组 = 通过）
+ */
+function checkPlanNurseryPlacement(plans, planFacts) {
+  const out = [];
+  for (const plan of plans) {
+    if (plan.dir !== PLAN_NURSERY_REL) continue;
+    const facts = planFacts.get(plan.rel);
+    const hit = nonPlanDocFamilyOf(plan, facts?.ok ? facts.text : "");
+    if (hit === null) continue;
+    out.push(
+      `苗圃位置规则（#159/E1b-1，契约 §11）：${plan.rel} 判为${hit.family}（非计划稿，判据：${hit.basis}），` +
+        `禁入计划稿苗圃 ${PLAN_NURSERY_REL}/ ——请移至 ${DESIGN_DOCS_REL}/（移位不改名；移位后本项自清；` +
+        "点名清单即 A5-4/#95 的处置输入）。对账点名级（非失败级、不阻断退出码）。",
+    );
+  }
+  return out;
+}
+
+/**
+ * 卡号绑定断言（#152；D2-2/E4-09/E1-V31，--check 校验项面）——**对账点名级（非失败级）**：
+ * 板面派生字段 `worktree`（#151 互证命中后归一为**现场实际路径**，板根相对）的末段 `task-<no>`
+ * 必须等于该卡稳定号——工作树命名即反查（设计 §6.1：卡号 ↔ `.zcode/worktrees/task-<卡号>`，无映射表；
+ * run-event.md §2.1 报告口径同源）。错配（H3/真实板实例：#46 的工作树叫 task-36）意味着"待合并"
+ * 归属存疑（他人名下的现场挂在本卡上）。
+ *
+ * 判定域（成文，勿扩）：
+ *   - 仅判**板面 worktree 非空**的卡（= fs 互证命中的在册现场；声明目录不存在/形态非法 → 字段 null，
+ *     由 #42 降级提示级诊断与归一层 diagnostics 承载，本判定不重复点名）；
+ *   - 仅判**带正整数稳定号**的卡（无号卡无引用位可寻址，§4.2）；
+ *   - 形态解析复用 lib/derive.mjs 的 parseWorktreePath（唯一接受集，禁二份）——板面字段按
+ *     `.zcode/worktrees/task-<no>` 或 `<子目录>/.zcode/worktrees/task-<no>` 两形态解析末段号。
+ * 判级依据（为何不是失败级）：错配源自**追加式 runs 声明**（runId 不可变、既有记录零改写），
+ *   不可由"修复=重编译（或 --assign）"收官；且现场在合并/正规清理后字段随派生清空（自清）——
+ *   与第五不变量 (e) 同属 runs 域交叉对账，归同一"对账点名"通道（不阻塞退出码）。若归失败级：
+ *   追加式声明不可改写、本项亦无豁免通道，活现场错配只能随现场合并/正规清理解除（跨卡生命周期）——
+ *   其间将持续非零退出，与"板正常时零噪声"冲突；真实板历史错配（#46 声明 task-36、#62 声明 task-61）
+ *   属记录级且现场已清，字段为 null 不进判定，仅证明错配类别真实发生过（评审 SP-2 修正措辞）。
+ * 仅判重编译基线：磁盘板的字段偏差已由「board 不一致」失败项逐字段咬住（同一缺陷只点名一次）。
+ * @returns {string[]} 点名文案（空数组 = 通过）
+ */
+function checkWorktreeCardBinding(board) {
+  const out = [];
+  const walk = (tasks, ptr) => {
+    (tasks ?? []).forEach((t, i) => {
+      const tptr = `${ptr}.tasks[${i}]`;
+      if (
+        t &&
+        typeof t === "object" &&
+        Number.isInteger(t.no) &&
+        t.no >= 1 &&
+        typeof t.worktree === "string" &&
+        t.worktree !== ""
+      ) {
+        const parsed = parseWorktreePath(t.worktree);
+        if (parsed != null && parsed.no !== t.no) {
+          out.push(
+            `卡号绑定（worktree 名 ↔ 卡号）：${tptr}（#${t.no}）worktree="${t.worktree}" 末段 task-${parsed.no} 与卡号 #${t.no} 不一致——工作树命名即反查（§6.1：卡号 ↔ task-<卡号>，无映射表；E4-09/E1-V31），现场归属存疑；对账点名级（非失败级）——请复核该现场声明或按命名纪律收口，现场合并/正规清理后本项自清。`,
+          );
+        }
+      }
+      walk(t?.tasks, tptr);
+    });
+  };
+  (board?.features ?? []).forEach((f, i) => {
+    if (f && typeof f === "object") walk(f.tasks, `features[${i}]`);
+  });
+  return out;
+}
+
 /** 板互检：磁盘 board.json（若存在）↔ 重编译期望（掩码根 updatedAt）+ 结构校验。 */
-function checkBoardArtifact(root, freshBoard, fail, note) {
+function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
   const rel = BOARD_JSON_REL;
 
   // 事实互证（#56）：重编译基线自洽性——编译器派生回归的机械防线（板不存在也执行：
-  // 源→派生的四条不变量在内存产物上独立复算，违例即点名，不静默）。
+  // 源→派生的四条失败级不变量在内存产物上独立复算，违例即点名，不静默）。
   for (const m of checkFactInvariants({ board: freshBoard, boardMd: renderBoardMd(freshBoard) })) {
     fail("事实互证", `重编译产物：${m}`);
   }
+
+  // 卡号绑定断言（#152；对账点名级）：重编译基线的板面 worktree 末段号 ↔ 卡号，错配逐条点名
+  // （判级/判定域见 checkWorktreeCardBinding 注释；磁盘板偏差由下方「board 不一致」失败项咬住）。
+  for (const m of checkWorktreeCardBinding(freshBoard)) rollcall.push(m);
 
   const loaded = readJsonFile(join(root, rel));
   if (loaded.missing) {
@@ -2907,7 +3053,7 @@ function checkBoardArtifact(root, freshBoard, fail, note) {
     return { compared: false, diffCount: 0 };
   }
 
-  // 事实互证（#56）：磁盘板四条不变量（编号形态需 board.md 配对文本；缺失 → 跳过 (c) 并提示）
+  // 事实互证（#56）：磁盘板四条失败级不变量（编号形态需 board.md 配对文本；缺失 → 跳过 (c) 并提示）
   const mdLoaded = readTextFile(join(root, BOARD_MD_REL));
   for (const m of checkFactInvariants({ board: loaded.value, boardMd: mdLoaded.ok ? mdLoaded.text : null })) {
     fail("事实互证", `${rel}：${m}`);
@@ -2917,6 +3063,34 @@ function checkBoardArtifact(root, freshBoard, fail, note) {
       BOARD_MD_REL,
       `board.md ${mdLoaded.missing ? "不存在" : `读取失败（${mdLoaded.error}）`}：跳过编号形态互证（先运行默认编译生成板；--check 只读，不写板）。`,
     );
+  }
+
+  // 豁免登记（B1-1/#97 定案：.zcode/board/exemptions.json，编排者单写者；--check 只读不写）：
+  // 格式校验归 lib/schema-check.mjs（checkExemptionsDoc）——结构非法（解析失败/version≠1/exemptions
+  // 非数组）→ 失败级「豁免登记」+ 整份拒收；条目级非法 → 该条拒绝 + 点名（不静默放行），
+  // 其余合法条目照常生效（与 scan.json 条目级语义同口径）。豁免只抑制第五不变量点名，不豁免结构失败项。
+  let exemptNos = [];
+  const exemptionsLoaded = readJsonFile(join(root, EXEMPTIONS_REL));
+  if (!exemptionsLoaded.missing) {
+    if (!exemptionsLoaded.ok) {
+      fail("豁免登记", `${EXEMPTIONS_REL} 解析失败（${exemptionsLoaded.error}）：整份拒收（零豁免生效）——请修复后重跑。`);
+    } else {
+      const reg = checkExemptionsDoc(exemptionsLoaded.value);
+      for (const e of reg.errors) fail("豁免登记", `${EXEMPTIONS_REL}：${e}——该登记不生效（不静默放行）。`);
+      exemptNos = reg.exemptNos;
+    }
+  }
+
+  // 第五不变量（e，B1-1/#97，对账点名级）：磁盘板 completed 卡须有该卡 integrator done 的 run 证据
+  // （runs.json 为准）。缺证据只点名不判失败（补证/速修·管理卡登记属收尾对账）；runs.json 缺失 ≡ 空
+  // 证据；解析失败/结构不合法已由「损坏源」失败项拦下，此处不叠加点名噪音。
+  const runsLoaded = readJsonFile(join(root, FIRST_PARTY_SOURCES[2].path));
+  const runsUsable =
+    runsLoaded.missing ||
+    (runsLoaded.ok && runsLoaded.value && typeof runsLoaded.value === "object" && Array.isArray(runsLoaded.value.runs));
+  if (runsUsable) {
+    const runsRaw = runsLoaded.missing ? [] : runsLoaded.value.runs;
+    for (const m of checkCompletedMergedEvidence({ board: loaded.value, runs: runsRaw, exemptNos })) rollcall.push(m);
   }
 
   // 结构校验：磁盘板与重编译期望都过检（schema 子集 + T7 公共不变量；期望基线自洽性同样审计）
@@ -2952,14 +3126,22 @@ function checkBoardArtifact(root, freshBoard, fail, note) {
  *   2. 源完整性扫描：损坏源 → 失败（非零退出）；
  *   3. 活条目清单 ↔ registry 互检：活号唯一 + 条目 kind/指向一致（裁决序：标记 > registry）；
  *   4. board.json（若存在）↔ 期望基线比对（篡改/陈旧）+ 结构校验（T1 子集 + T7 公共不变量）；
- *   5. 事实互证（#56）：四条不变量（子卡全完成→已完成 / 有卡不得挂未拆解 / board.md 编号形态 ↔
- *      planCode·label 派生 / 段位计数复算）在磁盘板与重编译基线上各判定一遍，违例失败级点名。
- * 返回 { root, board, failures, notes, ok, compared }；退出码归 CLI（0 通过 / 非零有失败项）。
+ *   5. 事实互证（#56/#97）：四条失败级不变量（子卡全完成→已完成 / 有卡不得挂未拆解 / board.md 编号形态 ↔
+ *      planCode·label 派生 / 段位计数复算）在磁盘板与重编译基线上各判定一遍，违例失败级点名；
+ *      第五不变量 (e)【对账点名级，非失败】completed 卡须有该卡 integrator done 的 run 证据——
+ *      缺证据进 rollcall[] 点名、不阻塞退出码（供收尾对账消费）；
+ *      第六项 (f) 卡号绑定断言【对账点名级，非失败，#152】板面 worktree（#151 归一后现场实际路径）
+ *      末段 task-<no> 须等于该卡稳定号（重编译基线上判定）——错配进 rollcall[] 点名、不阻塞退出码；
+ *      第七项 (g) 苗圃位置规则【对账点名级，非失败，#159/E1b-1】`.zcode/plans/` 扫描面内裁决稿/
+ *      设计稿/纲领稿（文件名首段/首个标题首字段族词命中；`plan-*` 命名约定豁免）逐条点名，指向新位置
+ *      `.zcode/design/`（契约 §11）——移位后自清，点名清单即 A5-4 处置输入。
+ * 返回 { root, board, failures, notes, rollcall, ok, compared }；退出码归 CLI（0 通过 / 非零有失败项）。
  */
 export function checkProject(rootInput) {
   const root = resolve(rootInput);
   const failures = [];
   const notes = [];
+  const rollcall = [];
   const fail = (category, message, detail) =>
     failures.push({ category, message, ...(Array.isArray(detail) && detail.length > 0 ? { detail } : {}) });
   const note = (path, message) => notes.push({ path, message });
@@ -2974,9 +3156,12 @@ export function checkProject(rootInput) {
 
   const facts = collectCheckFacts(root, fail);
   checkRegistryConsistency(facts, fail, note);
-  const artifact = checkBoardArtifact(root, board, fail, note);
+  // 苗圃位置规则（#159/E1b-1；对账点名级）：裁决稿/设计稿/纲领稿禁入 .zcode/plans/——逐条点名，
+  // 不阻塞退出码（判级依据与判定域见 checkPlanNurseryPlacement 注释）。
+  for (const m of checkPlanNurseryPlacement(facts.plans, facts.planFacts)) rollcall.push(m);
+  const artifact = checkBoardArtifact(root, board, fail, note, rollcall);
 
-  return { root, board, failures, notes, ok: failures.length === 0, compared: artifact.compared };
+  return { root, board, failures, notes, rollcall, ok: failures.length === 0, compared: artifact.compared };
 }
 
 // ---------------------------------------------------------------- 技能包 manifest（#67，P2 分发前置件）
@@ -3064,7 +3249,20 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
       (b) 已有任务卡的特性不得挂 arranged-not-expanded（判据为零卡；roadmap 稿同理）；
       (c) board.md 渲染编号形态 ↔ board.json 的 planCode/label 派生一致（嵌套任务行含深度 ≥2）；
       (d) 段位计数（board.json 如携带 stageSummary）与全板节点 stage 逐项复算相等。
-      违例失败级：点名路径 + 节点编号 + 两值对照；板正常时零噪声。
+      (a)–(d) 违例失败级：点名路径 + 节点编号 + 两值对照；板正常时零噪声。
+      (e) 第五不变量【对账点名级，非失败、不阻断退出码】（#97）：completed 任务卡须有该卡
+          integrator done 的 run 证据（runs.json 为准）；缺证据逐条点名「对账点名 N 项」，
+          速修/管理卡登记豁免（.zcode/board/exemptions.json，{no, reason, at}）后不再点名。
+      (f) 卡号绑定断言【对账点名级，非失败、不阻断退出码】（#152；E4-09/E1-V31）：板面 worktree
+          （#151 归一后的现场实际路径）末段 task-<no> 须等于该卡稳定号——工作树命名即反查（§6.1）；
+          错配逐条点名（同上「对账点名」节）。判定域：仅板面 worktree 非空且带稳定号的卡
+          （现场不在/形态非法/未声明 → 字段 null，不进判定，由 #42 提示级与归一层诊断承载）；
+          判级依据：错配源自追加式 runs 声明（不可由重编译修复），现场合并/清理后自清。
+      (g) 苗圃位置规则【对账点名级，非失败、不阻断退出码】（#159/E1b-1，契约 §11）：\`.zcode/plans/\`
+          扫描面内裁决稿/设计稿/纲领稿（文件名首段或首个标题首字段命中族词：adjudication/裁决、
+          design/设计稿、program/纲要；\`plan-*\` 命名约定豁免、无法判族不判）逐条点名，指向新位置
+          \`.zcode/design/\`（约定层：既不在默认扫描面也不在 opt-in 池，永不上板）；移位不改名、
+          移位后本项自清；点名清单即 A5-4 处置输入（--check 只读，不移动任何文件）。
   通过退出码 0；有失败项退出码 1；用法错误退出码 2。修复 = 重编译（或 --assign），--check 不自动修。
 
   --manifest 模式（#67）：重新生成 assets/manifest.json（技能包清单）——packageVersion / contractVersion /
@@ -3159,6 +3357,12 @@ function main(argv) {
     if (res.notes.length > 0) {
       out.push(`诊断 ${res.notes.length} 条（提示级，不阻断）：`);
       for (const d of res.notes) out.push(`  - ${d.path}：${d.message}`);
+    }
+    if (res.rollcall.length > 0) {
+      out.push(
+        `对账点名 ${res.rollcall.length} 项（对账级，非失败、不阻断；逐条为对账域交叉核对——runs 域缺合并证据可补录或登记豁免 .zcode/board/exemptions.json，工作树名与卡号不符按 §6.1 命名纪律收口，苗圃位置违例（裁决稿/设计稿/纲领稿）移至 .zcode/design/ 收口）：`,
+      );
+      for (const m of res.rollcall) out.push(`  - ${m}`);
     }
     if (res.failures.length > 0) {
       out.push(`校验失败 ${res.failures.length} 项：`);

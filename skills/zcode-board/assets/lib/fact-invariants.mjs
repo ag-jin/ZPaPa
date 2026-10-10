@@ -12,6 +12,10 @@
  *       ## 待合并 节（walkBoardNodes 渲染位）的编号链同入对照面；
  *   (d) 段位计数（board.json 内如携带 stageSummary）与全板节点 stage 逐项复算相等。
  *
+ * 第五不变量（e，B1-1/#97；对账点名级，非失败级——独立导出 checkCompletedMergedEvidence）：
+ *   (e) completed 的任务卡须有该卡 integrator done 的 run 证据（runs.json 为准）；缺证据逐条点名
+ *       （路径 + 稳定号），不使 --check 非零退出；速修/管理卡按稳定号登记豁免后不再点名。
+ *
  * 判定边界（与 lib/schema-check.mjs 同分层）：本模块只做纯数据判定，不读盘、不比对源——
  *   board 对象与 board.md 文本由调用方传入（磁盘板与重编译基线分别配对调用）；无第三方依赖，
  *   也不需要任何 node 内置模块。词表与渲染位语义在此**独立复写**（不导入 lib/derive.mjs 与编译器），
@@ -27,6 +31,13 @@
 const STAGE_VALUES = Object.freeze(["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"]);
 const DONE_STAGE = "已完成";
 const ARRANGED_NOT_EXPANDED = "arranged-not-expanded";
+/**
+ * 合并证据词（第五不变量 (e) 的独立复写；B1-1/#97）：role=integrator 且 result=done 的记录
+ * 视为该卡"已合并"证据（与 lib/derive.mjs isMergedDone 及契约 6.3「勾选=已合并」同口径）。
+ * 由 S-1 守卫与 lib/runs.mjs 词表对照，防改名静默失效。
+ */
+const MERGED_ROLE = "integrator";
+const MERGED_RESULT = "done";
 /**
  * 四缺口码（§8.4；渲染序与 compile-board 的 ATTENTION_CODES 同序——待处理节按此序分组渲染；
  * 由 S-1 守卫逐项对照 derive.ATTENTION_CODES）。
@@ -68,6 +79,8 @@ export function vocabularySnapshot() {
     attentionCodes: [...ATTENTION_CODES],
     planCodeSource: PLAN_CODE_SOURCE,
     idTokenSource: ID_TOKEN_RE.source,
+    mergedRole: MERGED_ROLE,
+    mergedResult: MERGED_RESULT,
   };
 }
 
@@ -366,5 +379,62 @@ export function checkFactInvariants({ board, boardMd = null } = {}) {
     }
   }
 
+  return out;
+}
+
+// ---------------------------------------------------------------- 第五不变量 (e)：completed 须有 integrator done 证据
+
+/**
+ * 第五不变量（e，B1-1/#97）——**对账点名级（非失败级）**：completed 的任务卡须有该卡
+ * integrator done 的 run 证据。
+ *
+ * 判据（纯数据，无 IO；runs 由调用方传入 runs.json 原始数组，与本模块其余不变量同一边界）：
+ *   - 证据 = runs 记录中 role=integrator 且 result=done 且 cards 含该卡稳定号（正整数）；
+ *     partial/failed/interrupted 不算证据；非整数句柄不解析（不猜卡号）；
+ *   - 判定域 = **任务卡**（features[].tasks 递归，含嵌套）且 status=completed 且带稳定号正整数。
+ *     特性节点是汇总态（子卡全完成≠特性已合并），未领号卡无引用位（runs 只能引用稳定号）——
+ *     两类均不判，避免产生无法登记豁免的恒名词条。
+ * 判级：归「对账点名」而非失败级——勾选=已合并（契约 6.3）的证据补录/速修·管理卡豁免登记属收尾
+ *   对账动作，逐条点名但不使 --check 非零退出（不阻塞正常流）；登记豁免的稳定号不再点名。
+ *
+ * @param {object} input
+ * @param {object} input.board  board.json 形态对象
+ * @param {object[]} [input.runs]  runs.json 的 runs 数组（原始记录；缺省 ≡ 无证据）
+ * @param {number[]} [input.exemptNos]  已登记豁免的稳定号（登记格式/位置校验归 lib/schema-check.mjs）
+ * @returns {string[]} 点名文案（空数组 = 无点名）
+ */
+export function checkCompletedMergedEvidence({ board, runs, exemptNos = [] } = {}) {
+  const out = [];
+  if (!isPlainObject(board)) return out; // 板非对象：失败级已点名，此处不叠加
+  const evidence = new Set();
+  for (const r of Array.isArray(runs) ? runs : []) {
+    if (!isPlainObject(r)) continue;
+    if (r.role !== MERGED_ROLE || r.result !== MERGED_RESULT) continue;
+    for (const c of Array.isArray(r.cards) ? r.cards : []) {
+      if (Number.isInteger(c) && c >= 1) evidence.add(c);
+    }
+  }
+  const exempted = new Set((Array.isArray(exemptNos) ? exemptNos : []).filter((n) => Number.isInteger(n) && n >= 1));
+  const walk = (tasks, ptr) => {
+    (tasks ?? []).forEach((t, i) => {
+      const tptr = `${ptr}.tasks[${i}]`;
+      if (
+        isPlainObject(t) &&
+        t.status === "completed" &&
+        Number.isInteger(t.no) &&
+        t.no >= 1 &&
+        !evidence.has(t.no) &&
+        !exempted.has(t.no)
+      ) {
+        out.push(
+          `不变量 e（completed 须有 integrator done 证据）：${tptr}（${nodeRef(t)}）status=completed 但 .zcode/board/runs.json 无该卡 integrator done 的 run 证据——对账点名级（非失败级；勾选=已合并 6.3；速修/管理卡登记豁免后不再点名）`,
+        );
+      }
+      walk(t?.tasks, tptr);
+    });
+  };
+  (board.features ?? []).forEach((f, i) => {
+    if (isPlainObject(f)) walk(f.tasks, `features[${i}]`);
+  });
   return out;
 }

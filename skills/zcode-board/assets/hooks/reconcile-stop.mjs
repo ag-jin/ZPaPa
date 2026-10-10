@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
- * zcode-board / reconcile-stop（T13 交付物）——Stop 收尾对账（点名四类，不阻断）
+ * zcode-board / reconcile-stop（T13 交付物）——Stop 收尾对账（点名四类 + 勾选=已合并点名，不阻断）
  *
  * 职责（设计 §5.4 / §10.4 第 2 项 / 勘误 10；R3 裁决）：
- *   会话结束时机械点名四类"该进板而没进的"：
+ *   会话结束时机械对账（四类点名 + 勾选=已合并点名）：
  *     1. 未登记——Stop 载荷（responseText）中出现但 runs.json 无对应记录的 run_event 块
  *        （后台派发未代触发落账的机械可查半边；无块可核验时在正文注明"编排者自查"）；
  *     2. 未合并——板上 attention 含 unmerged-worktree 的卡（执行现场未回流）；
  *     3. 板陈旧——sources[] 任一文件 mtime 新于 board.updatedAt（秒精度 +1s 容差）；
  *     4. 待归档——特性 status=completed 且 updatedAt 超过 7 天冷却期仍留在扫描目录（只点名，移动归编排者）。
+ *   5. 勾选=已合并点名（B1-2/#98）——completed 任务卡缺该卡 integrator done 的 run 证据（第五不变量 e，
+ *      B1-1/#97）；判据复用 lib/fact-invariants.mjs（与 --check 同源，禁二份实现）；豁免登记
+ *      .zcode/board/exemptions.json 经 lib/schema-check.mjs 校验后抑制点名（对账级，不阻断）。
+ *   6. 兜底重编译（B3-3/#103；E1 V20 幻影板防线）——对账写盘后一律重编译（幂等：同输入同输出，
+ *      根 updatedAt 除外）：Bash 通道漏检/人工编辑的漏网变更由此收口。顺序=检查先、重编译后
+ *      （对账如实观察修复前状态：板陈旧等点名照常写入，C1 口径不变）；失败不阻塞、退出码恒 0。
  *
  * 投递形态（A6 实测 / R3 裁决）：**不强推续跑**——Stop 的 additionalContext 仅在
  * continue/decision:block 时投递且每会话限 3 次，退出码 2 会被译为阻断并意外续跑；
@@ -18,11 +24,22 @@
  * 无第三方依赖（仅 node 内置）。
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { isoLocal, readJsonFile, writeFileAtomic } from "../lib/board-io.mjs";
+import { isFile, isoLocal, readJsonFile, writeFileAtomic } from "../lib/board-io.mjs";
+import { checkCompletedMergedEvidence } from "../lib/fact-invariants.mjs";
+import { checkExemptionsDoc, EXEMPTIONS_REL } from "../lib/schema-check.mjs";
 import { extractRunEvents, runMatchesBlock } from "./record-run.mjs";
+
+/**
+ * 兜底重编译目标与超时（与 watch-sources 同口径）：技能包内编译器，绝对路径不由项目根派生。
+ */
+const HERE = dirname(fileURLToPath(import.meta.url));
+const COMPILER = resolve(HERE, "..", "compile-board.mjs");
+const COMPILE_TIMEOUT_MS = 20_000;
 
 const BOARD_REL = ".zcode/board/board.json";
 const RUNS_REL = ".zcode/board/runs.json";
@@ -33,6 +50,15 @@ const SCHEMA_CARD_DEPTH = 3;
 const ARCHIVE_COOLDOWN_DAYS = 7;
 /** 秒精度时间戳的比对容差（board.updatedAt 为秒精度）。 */
 const STALE_TOLERANCE_MS = 1000;
+/**
+ * 第五类（勾选=已合并点名）口径说明——写明豁免登记去向与字段（何处登记 / 字段 / 谁批）：
+ * 登记文件 = `.zcode/board/exemptions.json`（编排者单写者；批准 = 用户拍板的速修/管理卡，
+ * 由编排者登记，子智能体不得代写）；格式校验归 lib/schema-check.mjs（与 --check 同源）。
+ */
+const ROLLCALL_RULE_NOTE =
+  "对账点名级（非失败、不阻断）：completed 任务卡（含嵌套）须有该卡 integrator done 的 run 证据（勾选=已合并 6.3）；" +
+  "补录 integrator done 的 run 记录，或把速修/管理卡登记进 .zcode/board/exemptions.json" +
+  "（编排者单写者；条目 {no, reason, at}——no 稳定号、reason 登记原因、at 带时区 ISO 8601）后不再点名。";
 
 function log(msg) {
   process.stderr.write(`reconcile-stop: ${msg}\n`);
@@ -95,7 +121,7 @@ function cardLabel(card) {
   return card?.label ? `ID-${card.label}` : card?.no ? `#${card.no}` : "未领号";
 }
 
-// ---------------------------------------------------------------- 四类检查
+// ---------------------------------------------------------------- 检查（四类 + 第五类勾选=已合并点名）
 
 /** 1. 未登记：responseText 中的 run_event 块 ↔ runs.json 记录。 */
 function checkUnregistered({ responseText, runsDoc }) {
@@ -173,14 +199,68 @@ function checkArchive(board, now = Date.now()) {
   return { entries, note: null };
 }
 
+/**
+ * 豁免登记读取（只读；B1-2/#98，口径与 --check 同源）：
+ *   - 文件缺失 ≡ 零豁免（静默合法——豁免是例外登记，不是必填件）；
+ *   - 解析失败 / 结构非法 / 条目非法 → 归 checkExemptionsDoc（lib/schema-check.mjs，禁二份实现），
+ *     不生效的登记逐条提示（不静默放行）；合法条目照常生效。
+ */
+function loadExemptions(root) {
+  const loaded = readJsonFile(join(root, EXEMPTIONS_REL));
+  if (loaded.missing) return { exemptNos: [], notes: [] };
+  if (!loaded.ok) {
+    return {
+      exemptNos: [],
+      notes: [`${EXEMPTIONS_REL} 解析失败（${loaded.error}）：整份拒收（零豁免生效）——请修复后重跑 --check。`],
+    };
+  }
+  const reg = checkExemptionsDoc(loaded.value);
+  const notes = reg.errors.map((e) => `${EXEMPTIONS_REL}：${e}——该登记不生效（不静默放行）。`);
+  if (reg.exemptNos.length > 0) notes.push(`已生效豁免 ${reg.exemptNos.length} 条（${EXEMPTIONS_REL}）——对应卡不再点名。`);
+  return { exemptNos: reg.exemptNos, notes };
+}
+
+/**
+ * 5. 勾选=已合并点名（B1-2/#98）：completed 任务卡缺该卡 integrator done 的 run 证据。
+ * 判据复用 lib/fact-invariants.mjs checkCompletedMergedEvidence（与 --check 同源，禁二份实现）；
+ * 可用性门与 --check 同口径：runs.json 缺失 ≡ 空证据（逐条点名）；解析失败/结构不合法 → 跳过并提示
+ * （损坏源由其自身修复路径处理，此处不叠加点名噪音）。对账级：只点名、不阻断、不写板。
+ */
+function checkMergedEvidence({ board, runsLoaded, runsDoc, exemptNos, exemptionNotes }) {
+  if (board === null) {
+    return { entries: [], note: `板缺失或损坏：勾选=已合并取证无法检查（见上方板状态行）。`, notes: [...exemptionNotes], checked: false };
+  }
+  const runsUsable =
+    runsLoaded.missing ||
+    (runsLoaded.ok && runsDoc !== null && typeof runsDoc === "object" && !Array.isArray(runsDoc) && Array.isArray(runsDoc.runs));
+  if (!runsUsable) {
+    return {
+      entries: [],
+      note: `${RUNS_REL} 不可用（解析失败或结构不合法）：第五类跳过——先修复 runs.json（--check 会失败级点名）。`,
+      notes: [...exemptionNotes],
+      checked: false,
+    };
+  }
+  const notes = [];
+  if (runsLoaded.missing) notes.push(`${RUNS_REL} 缺失 ≡ 无 run 证据（逐条点名；落账后重跑本对账即消除）。`);
+  notes.push(...exemptionNotes);
+  return {
+    entries: checkCompletedMergedEvidence({ board, runs: runsLoaded.missing ? [] : runsDoc.runs, exemptNos }),
+    note: ROLLCALL_RULE_NOTE,
+    notes,
+    checked: true,
+  };
+}
+
 // ---------------------------------------------------------------- 报告渲染
 
-function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archive, boardState }) {
+function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archive, rollcall, boardState }) {
   const counts = {
     unregistered: unregistered.entries.length,
     unmerged: unmerged.entries.length,
     stale: stale.entries.length,
     archive: archive.entries.length,
+    rollcall: rollcall.entries.length,
   };
   const total = counts.unregistered + counts.unmerged + counts.stale + counts.archive;
   const lines = [];
@@ -188,12 +268,16 @@ function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archiv
   lines.push("");
   lines.push(`- 时间：${stamp}`);
   lines.push(`- 会话：${sessionId ?? "（未知）"}`);
-  if (boardState === "missing") lines.push(`- 板状态：${BOARD_REL} 缺失——板侧三类（未合并/板陈旧/待归档）无法检查；先运行编译器生成板。`);
-  else if (boardState !== "ok") lines.push(`- 板状态：${BOARD_REL} 损坏（无法读取）——板侧三类无法检查；请运行编译器重建。`);
-  lines.push(
+  if (boardState === "missing") lines.push(`- 板状态：${BOARD_REL} 缺失——板侧四类（未合并/板陈旧/待归档/勾选=已合并取证）无法检查；先运行编译器生成板。`);
+  else if (boardState !== "ok") lines.push(`- 板状态：${BOARD_REL} 损坏（无法读取）——板侧四类无法检查；请运行编译器重建。`);
+  const verdict =
     total === 0
       ? "- 结论：四类均无（对账通过）"
-      : `- 结论：点名 ${total} 项（未登记 ${counts.unregistered} / 未合并 ${counts.unmerged} / 板陈旧 ${counts.stale} / 待归档 ${counts.archive}）`,
+      : `- 结论：点名 ${total} 项（未登记 ${counts.unregistered} / 未合并 ${counts.unmerged} / 板陈旧 ${counts.stale} / 待归档 ${counts.archive}）`;
+  lines.push(
+    rollcall.checked && counts.rollcall > 0
+      ? `${verdict}；勾选=已合并点名另计 ${counts.rollcall} 项（第 5 节——补录 integrator done 的 run 证据或登记豁免）`
+      : verdict,
   );
   lines.push("");
   lines.push("对账非阻断（R3）：正文落本文件，下次 SessionStart 注入 + 人可直读；编排者答问后收尾（5.4）。");
@@ -205,13 +289,40 @@ function renderResults({ stamp, sessionId, unregistered, unmerged, stale, archiv
     if (res.entries.length === 0) lines.push("（无）");
     else lines.push(...res.entries);
     if (res.note) lines.push("", `说明：${res.note}`);
+    for (const note of res.notes ?? []) lines.push(`提示：${note}`);
     lines.push("");
   };
   section(1, "未登记 run", "unregistered", unregistered);
   section(2, "未合并现场", "unmerged", unmerged);
   section(3, "板陈旧", "stale", stale);
   section(4, "待归档特性", "archive", archive);
+  section(5, "勾选=已合并点名", "rollcall", rollcall);
   return `${lines.join("\n").trimEnd()}\n`;
+}
+
+// ---------------------------------------------------------------- 兜底重编译（B3-3/#103）
+
+/**
+ * 兜底重编译（B3-3/#103；E1 V20 幻影板防线）：Stop 收尾一律重编译——Bash 通道只告警不修复
+ * （B3-1/B3-2），漏网变更由本兜底收口；重编译本身幂等（同输入同输出，根 updatedAt 除外），
+ * 故连续两次 Stop 不产生额外板变更（run-t13 C10 双跑掩码断言）。
+ * 失败不阻塞（投递语义与退出码不变）：编译器缺失跳过；启动失败/超时/非零退出只写 stderr 留痕。
+ */
+function recompile(root) {
+  if (!isFile(COMPILER)) {
+    log(`兜底重编译跳过：编译器不存在（${COMPILER}）。`);
+    return;
+  }
+  const r = spawnSync(process.execPath, [COMPILER, root], { encoding: "utf8", timeout: COMPILE_TIMEOUT_MS });
+  if (r.error) {
+    log(`兜底重编译未完成（${r.error.message}）：不阻塞（下次 Stop/人工重编译兜底）。`);
+    return;
+  }
+  if (r.status !== 0) {
+    log(`兜底重编译失败（退出码 ${String(r.status)}）：${String(r.stderr ?? "").trim().slice(0, 300)}（不阻塞）`);
+    return;
+  }
+  log(`兜底重编译完成：${String(r.stdout ?? "").trim()}（无源变更时仅编译时刻戳变化）`);
 }
 
 // ---------------------------------------------------------------- 主流程
@@ -259,6 +370,8 @@ function main() {
   const unmerged = board === null ? { entries: [], note: null } : checkUnmerged(board);
   const stale = board === null ? { entries: [], note: null } : checkStale(board, root);
   const archive = board === null ? { entries: [], note: null } : checkArchive(board);
+  const exemptions = loadExemptions(root);
+  const rollcall = checkMergedEvidence({ board, runsLoaded, runsDoc, exemptNos: exemptions.exemptNos, exemptionNotes: exemptions.notes });
 
   const md = renderResults({
     stamp: isoLocal(new Date()),
@@ -267,14 +380,17 @@ function main() {
     unmerged,
     stale,
     archive,
+    rollcall,
     boardState,
   });
   try {
     writeFileAtomic(join(root, LAST_RECONCILE_REL), md);
-    log(`对账已写入 ${LAST_RECONCILE_REL}（点名 ${unregistered.entries.length + unmerged.entries.length + stale.entries.length + archive.entries.length} 项）。`);
+    log(`对账已写入 ${LAST_RECONCILE_REL}（点名 ${unregistered.entries.length + unmerged.entries.length + stale.entries.length + archive.entries.length} 项；勾选=已合并点名 ${rollcall.entries.length} 项）。`);
   } catch (e) {
     log(`对账写盘失败（${e.message}）：不阻塞（stderr 已留痕）。`);
   }
+  // B3-3：收尾兜底重编译（检查先于重编译——点名为修复前状态观察，修复即落地；失败不阻塞）
+  recompile(root);
   return 0;
 }
 

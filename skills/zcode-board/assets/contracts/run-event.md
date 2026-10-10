@@ -4,6 +4,7 @@
 - **v2.1 变更段（T21，2026-10-09）**：§2/§3 增可选字段 `pr`（`{number, url}`；integrator 报告携带、record-run 转抄入 runs 记录——写入通道定案成文）；附"未知键不转抄"兼容说明（与 `assets/lib/runs.mjs` 的转抄白名单边界）。其余冻结不变，契约版本随之升为 v2.1。
 - **v2.1 勘误段（#42，2026-10-10）——"恰一卡自动推导 worktree/branch"条款作废**：§2 缺省语义、§3 落账映射、§4 字段对齐三处的「缺省时按卡号推导 `task-<no>`（仅当 `cards` 恰含一个卡号）」一律作废，改为**仅当块内显式声明 `worktree`/`branch` 时转抄；缺省一律 `null` + diagnostics「未声明工作树」**（不推导、不造执行现场）。原因（实战）：单卡 run 未声明现场时被推导出 `task-<no>` 幽灵工作树（管理型 run —— 复核/评审/整合类 —— 尤甚），attention 侧据此误报 `unmerged-worktree` 缺口（实测板报 7 而真实工作树仅 1）。配套收紧（读侧，非本契约字段语义）：attention 的 `unmerged-worktree` 触发改为「worktree 字段命中**且**目录经 fs 互证真实存在」，字段命中而目录不存在 → 只落提示级 diagnostics，不计缺口（见 `lib/derive.mjs`、`SKILL.md` §2/§3.4）。`runs.json` 字段形态与 schema 均不变（`worktree` 仍为 `.zcode/worktrees/task-<no>` 或 `null`），故版本号不升。
 - **#71 修订级成文（2026-10-10，不改版本号）——`worktree` 声明接受两形态**：按"声明自由、互证严格"，报告/记录里的 `worktree` 可为 ① `.zcode/worktrees/task-<no>`（相对板根冻结短形态）；② `<子目录>/.zcode/worktrees/task-<no>`（相对板根的嵌套项目根相对路径——板根与一层子项目根并存时的常态，如 `ZPaPa/.zcode/worktrees/task-64`）。末段固定 `task-<no>`；其余形态拒收 + diagnostics（不猜路径）。fs 互证与缺口判据不变（目录经精确/后缀匹配互证，见 §2 字段表与 `lib/derive.mjs`）；上条"字段形态不变"句的 `worktree` 形态口径随之修订为此两形态，其余不变。
+- **#152 报告口径成文（2026-10-10，不改版本号）——单一报告形态与 `worktree` 声明绑定**：§1.1 成文"一份报告 = 正文 + 恰一 `run_event` 块（多卡按卡分块）"的单一形态（块是唯一机械落账载体，无第二形态）；§2.1 成文 `worktree` 声明两形态写法与**卡号绑定**硬约束（末段 `task-<no>` 须与本块 `cards` 中该卡号一致——工作树命名即反查 §6.1；看板侧 `compile-board --check` 卡号绑定断言消费板面归一后现场路径，对账点名级、不阻断退出码）。字段语义、缺省口径与版本号均不变（与 #42/#71 段无冲突）。
 - 上游设计：`/Users/linguojin/Workspace/ZCode/.zcode/board/design.md` §5.2、§5.3、§7.3、§7.5、§12（含场景 28）。
 - 相关方：子智能体报告（内容作者）→ PostToolUse(派发工具) hook `record-run.mjs`（机械转抄）→ `runs.json`（唯一写入者 hook/应用）。本文件只写约定，**不修改** `/Users/linguojin/.zcode/agents/integrator.md`。
 
@@ -33,6 +34,13 @@
 - **一个块 = 一次落账 = 一条 run 记录**；块内 `cards[]` 是本次事件的卡集合。推荐一卡一派发（integrator 亦按"one card at a time"约定），需要时按卡分别给块。
 - 块必须能被 JSON 解析；解析失败按第 5 节容错处理（跳过 + diagnostics，不阻塞）。
 
+### 1.1 单一报告形态（#152 成文）
+
+- **每卡事件恰一块：单卡报告 = 正文（叙事务实） + 恰一 `run_event` 块；多卡派发按卡分块**（块数组或并列块，每块一条记录）。块是**唯一**机械落账载体——不写 `runs.json`/板文件、不另立自定义块名（如 `run_event_v2`）或第二落账形态（单一事件单一家，§0）。
+- **所有角色共用同一块形态**：`implementer` / `debugger` / `refactoring-optimizer` / `code-reviewer` / `test-verifier` / `integrator` 一律按 §2 字段表取值，无按角色分设的字段或"变异形态"；integrator 的额外对齐见 §4。
+- 块内只放 §2 字段；**怎么做的、坑在哪、建议下一角色、集成模式与理由**等叙事不进块（家在报告正文与 `progress.json` activity）。缺省/非法值的回落一律走第 5 节（跳过或丢该值 + diagnostics，不阻塞、不猜）。
+- 机械字段（`runId`/`sessionId`/`at`）不自报；未知键不转抄（§2 末两行）。
+
 ## 2. 字段表
 
 | 字段 | 必填 | 类型 | 取值/约束 | 缺省语义 |
@@ -43,10 +51,18 @@
 | `stoppedAt` | 可选 | integer | 稳定号正整数（建议与 `cards` 一致）；层级标签形态拒收 | 缺省 ≡ `null`（不造、不猜卡号） |
 | `evidence` | 可选 | string[] | 相对项目根路径；worktree 内路径以 worktree 为前缀 | 缺省 ≡ `[]` |
 | `nextStep` | 可选 | string | 单行、≤200 字符 | 缺省 ≡ `null` |
-| `worktree` / `branch` | 可选 | string | 执行现场（`task-<no>` 命名，§6.1；#71 起接受两形态：`.zcode/worktrees/task-<no>` 或 `<子目录>/.zcode/worktrees/task-<no>`——见文件头 #71 修订级成文）；轻量执行可缺省 | **仅显式声明时转抄**；缺省一律 `null` + diagnostics「未声明工作树」（v2.1 勘误 #42：不按卡号推导） |
+| `worktree` / `branch` | 可选 | string | 执行现场（`task-<no>` 命名，§6.1；#71 起接受两形态：`.zcode/worktrees/task-<no>` 或 `<子目录>/.zcode/worktrees/task-<no>`——写法与**卡号绑定**见 §2.1）；轻量执行可缺省 | **仅显式声明时转抄**；缺省一律 `null` + diagnostics「未声明工作树」（v2.1 勘误 #42：不按卡号推导） |
 | `pr` | 可选 | object | `{number: 正整数, url: http(s) 链接}`；integrator 在**远程门禁模式**合并完成时携带（设计 §7.3；本地模式恒缺省） | 缺省 ≡ 不落该字段（板侧 `pr` 为 `null`，不造远程号）；形态非法 → 该值不落 + diagnostics（不猜） |
 | 未知键 | — | — | 解析器**忽略、不转抄**（保持单一事件单一家，防止契约漂移） | — |
 | `runId` / `sessionId` / `at` | **不得自报** | — | 机械字段，由 hook 补齐；报告若携带一律忽略 | — |
+
+### 2.1 `worktree` 声明口径与卡号绑定（#152 成文）
+
+- **两形态（#71 起接受，等价）**：① `.zcode/worktrees/task-<no>`（相对**板根**的冻结短形态，常用默认写法）；② `<子项目根>/.zcode/worktrees/task-<no>`（工作树实际建在子项目根下时的写法，如 `ZPaPa/.zcode/worktrees/task-64`）。**写法**：两形态皆可——短形态是默认；现场在子项目根下时写 ② 更直白，写 ① 亦可（后缀互证命中后同样归一，见下条）。末段固定 `task-<no>`（其余形态不解析 → 该值不落 + diagnostics，§5；不猜路径）。
+- **卡号绑定（硬约束）**：末段 `task-<no>` 的 `<no>` 必须与本块 `cards` 中的该卡号一致——工作树命名即反查（设计 §6.1：卡号 ↔ `.zcode/worktrees/task-<卡号>`，无映射表；同一现场不得声明到别的卡号上）。正例：`cards: [10]` + `worktree: ".zcode/worktrees/task-10"`；反例：`cards: [10]` + `worktree: ".zcode/worktrees/task-9"`——板会把该现场挂进 #10 的"待合并"归属（E4-09 / E1-V31 实测形态）。
+- **归一（写侧形态 ≠ 读侧形态）**：声明形态不作输出形态——编译侧把 fs 互证命中的声明归一为**现场实际路径**（板面 `worktree` 字段，#151），板面恒按归一后路径展示、比对与点名。多卡块声明单一现场时**逐卡判定**（未匹配的兄弟卡同样点名；推荐一卡一块）。
+- **声明纪律**：工作树由编排者按卡号建（`task-<卡号>`）；子智能体**照抄实际路径**，不自行改写、不按卡号推导；未开工作树的轻量执行**不写该字段**（缺省一律 `null` + diagnostics，v2.1 勘误 #42）。
+- **机械化防线**：看板侧 `compile-board --check` 的卡号绑定断言消费板面归一后的 `worktree` 字段——末段 `task-<no>` ≠ 该卡稳定号 → **对账点名**（对账级：非失败、不阻断退出码，与第五不变量 (e) 同节输出；判定域 = `worktree` 字段，`branch` 为辅助标识、不参与该断言）。判级依据：错配源自追加式 runs 声明（不可由重编译修复），现场合并/正规清理后字段随派生清空（自清）；声明目录不存在或形态非法 → 字段为 `null`，不进该判定（由提示级/归一层 diagnostics 承载，不重复点名）。
 
 ## 3. 落账映射（run_event → runs.json 记录）
 
@@ -117,6 +133,12 @@
 // 正例：真开了工作树就显式声明（缺省不会替你写）
 "run_event": { "role": "implementer", "result": "partial", "cards": [8], "stoppedAt": 8, "worktree": ".zcode/worktrees/task-8", "branch": "task-8" }
 
+// 正例：现场在两形态下与卡号一致（#152 卡号绑定）——短形态与嵌套形态写法等价，编译侧归一为现场实际路径
+"run_event": { "role": "implementer", "result": "partial", "cards": [10], "stoppedAt": 10, "worktree": ".zcode/worktrees/task-10", "branch": "task-10" }
+"run_event": { "role": "implementer", "result": "partial", "cards": [64], "stoppedAt": 64, "worktree": "ZPaPa/.zcode/worktrees/task-64", "branch": "task-64" }
+// 反例：工作树末段号 ≠ 本块卡号 → --check 卡号绑定断言对账点名（§2.1；板侧"待合并"归属存疑）
+"run_event": { "role": "implementer", "result": "partial", "cards": [10], "stoppedAt": 10, "worktree": ".zcode/worktrees/task-9", "branch": "task-9" }
+
 // 反例：层级标签进引用位 → 该值不解析 + diagnostics
 "run_event": { "role": "implementer", "result": "partial", "cards": ["ID-1.2"], "stoppedAt": "1.2" }
 
@@ -126,5 +148,5 @@
 
 ## 7. 版本与冻结
 
-- 本契约自 T1 冻结（v2）；**v2.1（T21）**增可选字段 `pr` 与"未知键不转抄"兼容说明，其余字段语义零变更。**v2.1 勘误（#42，2026-10-10）**：`worktree`/`branch` 的"恰一卡自动推导"作废（缺省一律 `null` + diagnostics；字段形态与 schema 不变，故版本号不升）——见文件头勘误段。`runs.json` 的字段契约以 `assets/templates/runs.template.json` 为准，本文件与之一致。
+- 本契约自 T1 冻结（v2）；**v2.1（T21）**增可选字段 `pr` 与"未知键不转抄"兼容说明，其余字段语义零变更。**v2.1 勘误（#42，2026-10-10）**：`worktree`/`branch` 的"恰一卡自动推导"作废（缺省一律 `null` + diagnostics；字段形态与 schema 不变，故版本号不升）——见文件头勘误段。**#71 修订级成文**与 **#152 报告口径成文**（单一报告形态 §1.1 + `worktree` 声明口径与卡号绑定 §2.1）均为语义无变更的成文/澄清（不改版本号）——见文件头各段。`runs.json` 的字段契约以 `assets/templates/runs.template.json` 为准，本文件与之一致。
 - 已冻结的缺省语义（第 3、5 节）与 runs 记录形态（`assets/templates/runs.template.json`）不得在下游任务中"顺手扩展"；确有需要走新任务 + 契约版本号变更。

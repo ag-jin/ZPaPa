@@ -12,17 +12,21 @@
  *     interviews.json 缺失时按空登记簿新建（version=1）；已存在时只追加，既有条目与顶层键零改写。
  *   - resolve：按 --id 回填 resolvedBy（登记事件的唯一允许改写）并置 status=resolved；id 未命中报错且不写。
  *   - 损坏源（JSON 解析失败 / interviews 非数组）一律拒绝覆盖并报错（不静默重建、不丢数据）。
+ *   - 注册后触发重编译（B3-3/#103；E1 V20 幻影板防线）：append/resolve 成功后自动重编译，
+ *     新登记即上板（免手动编译）；板未建立/编译器缺失时跳过；编译失败只写 stderr 诊断，
+ *     不阻塞主流程（退出码与 stdout 契约不变）——只读失败语义。
  *
  * 无第三方依赖（仅 node 内置）；原子写复用冻结的 lib/board-io.mjs（临时文件 + 改名）。
  * 退出码：0 = 成功；1 = 运行错误（id 未命中 / 源损坏 / IO）；2 = 用法错误。
  */
 
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isoLocal, readJsonFile, writeJsonAtomic } from "./lib/board-io.mjs";
+import { isFile, isoLocal, readJsonFile, writeJsonAtomic } from "./lib/board-io.mjs";
 
 /** interviews.json 相对项目根路径（设计 §3.1；与编译器 sources[] 同一路径）。 */
 export const INTERVIEWS_REL = ".zcode/board/interviews.json";
@@ -31,6 +35,12 @@ export const OUTCOMES = ["none", "plan", "spec", "tasks"];
 export const INTERVIEW_ID_RE = /^itw-[0-9]{8}-[0-9a-z]{4}$/;
 const FILE_VERSION = 1;
 const ID_ATTEMPTS = 8;
+
+/** 注册后触发重编译（B3-3/#103）：技能包内编译器 + 板产物相对路径 + 超时（与 watch-sources 同口径）。 */
+const HERE = dirname(fileURLToPath(import.meta.url));
+const COMPILER = resolve(HERE, "compile-board.mjs");
+const BOARD_REL = ".zcode/board/board.json";
+const COMPILE_TIMEOUT_MS = 20_000;
 
 const USAGE = `zcode-board 访谈登记（register-interview）
 
@@ -107,6 +117,38 @@ function resolveEntry(root, id, resolvedBy) {
   doc.interviews[index] = after;
   writeJsonAtomic(join(root, INTERVIEWS_REL), doc);
   return { ok: true, entry: after };
+}
+
+// ---------------------------------------------------------------- 注册后触发重编译（B3-3/#103）
+
+/**
+ * 注册后触发重编译（B3-3/#103；E1 V20 幻影板防线）：新登记即上板，免手动编译。
+ * 跳过（零板写入、stderr 留痕）：板根缺失——board.json 不存在（无板可刷新；登记先于首次编译的
+ * 窗口由首次编译连带上板）；编译器缺失（技能包不完整）。注：本脚本刚写入 interviews.json
+ * （sources[] 第一方源），成功后"无源"不可达。
+ * 失败不阻塞（只读失败语义）：启动失败/超时/非零退出只写 stderr 诊断；登记主流程照常成功
+ * （本函数不改退出码，也不向 stdout 增加内容）。
+ */
+function recompileAfterWrite(root) {
+  if (!isFile(COMPILER)) {
+    process.stderr.write("register-interview: 重编译跳过（编译器缺失）：登记已成功，板可稍后手动重编译。\n");
+    return;
+  }
+  if (!isFile(join(root, BOARD_REL))) {
+    process.stderr.write(`register-interview: 重编译跳过（板未建立：${BOARD_REL} 不存在，无板可刷新）：登记已成功，首次编译将连带上板。\n`);
+    return;
+  }
+  const r = spawnSync(process.execPath, [COMPILER, root], { encoding: "utf8", timeout: COMPILE_TIMEOUT_MS });
+  if (r.error) {
+    process.stderr.write(`register-interview: 重编译未完成（${r.error.message}）：登记已成功（不阻塞，板可手动重编译）。\n`);
+    return;
+  }
+  if (r.status !== 0) {
+    const detail = String(r.stderr ?? "").trim().split("\n").slice(0, 3).join(" / ");
+    process.stderr.write(`register-interview: 重编译失败（退出码 ${String(r.status)}）：${detail}（登记已成功，不阻塞；板可手动重编译）。\n`);
+    return;
+  }
+  process.stderr.write(`register-interview: 已重编译（新登记上板）：${String(r.stdout ?? "").trim()}\n`);
 }
 
 // ---------------------------------------------------------------- CLI 解析
@@ -229,6 +271,7 @@ function main(argv) {
       return 1;
     }
     process.stdout.write(`已登记：${res.entry.id}（${INTERVIEWS_REL}；outcome=${res.entry.outcome}）\n`);
+    recompileAfterWrite(root); // B3-3：新访谈即上板（失败不阻塞，主流程照常成功）
     return 0;
   }
 
@@ -253,6 +296,7 @@ function main(argv) {
     return 1;
   }
   process.stdout.write(`已回填：${res.entry.id} → resolvedBy=${res.entry.resolvedBy}（status=${res.entry.status}）\n`);
+  recompileAfterWrite(root); // B3-3：resolve 同样改写 interviews.json（源）→ 触发重编译
   return 0;
 }
 
