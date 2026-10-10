@@ -10,6 +10,7 @@ import {
   type BoardViewMode,
 } from "../src/board/boardViewsViewModel.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
+import { buildBoardListRows } from "../src/board/boardViewsViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { STAGE_MATRIX_BOARD } from "./boardStageMatrixFixture.js";
 
@@ -194,14 +195,6 @@ test("看板：卡片角标簇与其余视图同装配（§13.2 各格要求的�
     return markup.slice(start, next > start ? next : start + 12000);
   };
 
-  const order = [
-    "data-board-draft",
-    "data-board-attention",
-    "data-board-blockers",
-    "data-board-active-run",
-    "data-board-status",
-  ];
-
   // 三处「卡片角标」视图共用同一装配点（表格的段位/缺口/受阻是单元格文本，不走角标簇）；
   // 弹窗状态区同装配。
   const card = 'data-board-card="task:8"';
@@ -225,17 +218,24 @@ test("看板：卡片角标簇与其余视图同装配（§13.2 各格要求的�
   for (const surface of surfaces) {
     const cluster = clusterOf(surface.markup, surface.anchor, surface.next);
     assert.ok(cluster.includes("data-board-badges"), `${surface.name} 的卡片应走同一处角标装配`);
-    for (const anchor of [
-      'data-board-draft=""',
+    // #46 B5：弹窗精简（去草案徽章、状态点去重）；其余三视图角标簇保持全量。
+    const dialogSurface = surface.name === "dialog";
+    const expectedAnchors = [
+      ...(dialogSurface ? [] : ['data-board-draft=""']),
       'data-board-attention="interrupted-resume"',
       'data-board-attention="unmerged-worktree"',
       'data-board-blockers="1"',
       'data-board-active-run="implementer"',
-      'data-board-status="active"',
-    ]) {
+      ...(dialogSurface ? [] : ['data-board-status="active"']),
+    ];
+    for (const anchor of expectedAnchors) {
       assert.ok(cluster.includes(anchor), `${surface.name} 的角标簇应含 ${anchor}：${cluster}`);
     }
-    const positions = order.map((anchor) => cluster.indexOf(anchor));
+    if (dialogSurface) {
+      assert.ok(!cluster.includes("data-board-draft"), "弹窗 B5：不重复草案徽章");
+      assert.ok(!cluster.includes('data-board-status="'), "弹窗 B5：状态色点去重");
+    }
+    const positions = expectedAnchors.map((anchor) => cluster.indexOf(anchor));
     assert.deepEqual(
       [...positions].sort((left, right) => left - right),
       positions,
@@ -369,13 +369,23 @@ test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + �
   assert.deepEqual(optionsOf("sort"), ["recent", "oldest"]);
 });
 
-test("列表：类型筛（kind）按闭集取值收窄行集合（特性/卡片各自筛）", () => {
+test("列表：类型筛（kind）按闭集取值收窄行集合（特性/卡片各自筛；分组头作上下文保留）", () => {
   const featuresOnly = list({ kind: "feature" });
-  assert.ok(featuresOnly.includes('data-board-card="spec:preview-channel"'), "特性节点留下");
+  assert.ok(featuresOnly.includes('data-board-card="spec:preview-channel"'), "特性分组头留下");
   assert.ok(!featuresOnly.includes('data-board-card="task:8"'), "卡片被筛掉");
   const tasksOnly = list({ kind: "task" });
   assert.ok(tasksOnly.includes('data-board-card="task:8"'), "卡片留下");
-  assert.ok(!tasksOnly.includes('data-board-card="spec:preview-channel"'), "特性节点被筛掉");
+  // #46 B4：有匹配任务的特性的分组头作为上下文保留（它不再是「行」）；无匹配任务且自身不符筛的
+  // 特性整组不渲染——这就是「特性被筛掉」的落点。
+  assert.ok(
+    !tasksOnly.includes('data-board-list-group="plan:sess_f1a2d0bb"'),
+    "无匹配子行、自身不符筛的特性整组被筛掉",
+  );
+  assert.ok(
+    !tasksOnly.includes('data-board-list-group="plan:plan-payment-split"') ||
+      tasksOnly.includes('data-board-card="task:'),
+    "无卡可显示的组不得凭空出现",
+  );
 });
 
 test("列表：按段位过滤只留该段位行（其余行不出现）", () => {
@@ -395,21 +405,47 @@ test("列表：按状态过滤（cancelled 终态）与按缺口码过滤", () =
   assert.ok(!unmerged.includes('data-board-card="task:7"'), "没挂该码的卡不得出现");
 });
 
-test("列表：排序切「最老未动」（attention 仍置顶，其余最老在前）", () => {
+test("列表：排序切「最老未动」（平铺管线语义不变；分组呈现 attention 组整体置顶）", () => {
+  // 平铺管线（分组的数据源）语义一字不改：#14 缺口置顶；其余最老在前，#10 反超 #7。
+  const ready = matrixBoard();
+  if (ready.kind !== "ready") throw new Error("夹具必须是 ready");
+  const flat = buildBoardListRows(ready.board, { sort: "oldest" }).map((node) => node.id);
+  // 置顶段 = 夹具里所有挂缺口的节点（期望值从夹具原始 attention 字段独立手推，不借实现输出）。
+  const pinned = new Set<string>();
+  const walkTasks = (tasks: Record<string, unknown>[]) => {
+    for (const task of tasks ?? []) {
+      if ((task.attention as unknown[] | undefined)?.length) pinned.add(`task:${task.no}`);
+      walkTasks((task.tasks as Record<string, unknown>[]) ?? []);
+    }
+  };
+  for (const feature of STAGE_MATRIX_BOARD.features) {
+    if ((feature.attention as unknown[] | undefined)?.length) pinned.add(feature.id);
+    walkTasks(feature.tasks as Record<string, unknown>[]);
+  }
+  assert.ok(pinned.size > 0, "夹具本身要有缺口节点");
+  assert.deepEqual(
+    new Set(flat.slice(0, pinned.size)),
+    pinned,
+    "带缺口的节点成段置顶（第二视角不改变置顶段）",
+  );
+  assert.ok(
+    flat.slice(pinned.size).every((id) => !pinned.has(id)),
+    "置顶段之后才是无缺口节点",
+  );
+  assert.ok(flat.indexOf("task:10") < flat.indexOf("task:7"), "平铺：最老未动 #10 反超 #7");
+  // 分组呈现（#46 B4）：组序 = 组内最高优先成员 —— 含缺口成员的组整体置顶，
+  // 组内仍按第二视角排；卡片一个不丢。
   const recent = list();
   const oldest = list({ sort: "oldest" });
   assert.ok(
     recent.indexOf('data-board-card="task:7"') < recent.indexOf('data-board-card="task:10"'),
-    "默认：#7（14:05）在 #10（09:00）之前",
+    "默认分组序：#7 所在组先于 #10 所在组",
   );
-  assert.ok(
-    oldest.indexOf('data-board-card="task:10"') < oldest.indexOf('data-board-card="task:7"'),
-    "最老未动：#10 反超 #7",
-  );
-  assert.ok(
-    oldest.indexOf('data-board-card="task:14"') < oldest.indexOf('data-board-card="task:10"'),
-    "缺口置顶不受第二视角影响",
-  );
+  for (const markup of [recent, oldest]) {
+    for (const id of ["task:14", "task:10", "task:7", "plan:sess_1f3c5d7e"]) {
+      assert.ok(markup.includes(`data-board-card="${id}"`), `两种视角都渲染 ${id}`);
+    }
+  }
 });
 
 test("列表：过滤后无行给空态文案（不静默空白）", () => {

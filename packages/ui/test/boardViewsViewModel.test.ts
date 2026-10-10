@@ -148,8 +148,9 @@ test("列内排序：attention 置顶，其余按 updatedAt 倒序（§3.5）", 
   // 待办列：#14 带 unmerged-worktree 且 updatedAt 最老 —— 仍必须置顶；
   // 其余 #7（14:05）新于 #10（09:00）。
   assert.deepEqual(nodeIds(columnOf(columns, "待办").nodes), ["task:14", "task:7", "task:10"]);
-  // 执行中列：#8 带两个缺口码（14:20）→ 置顶于更晚更新的特性（15:30）。
-  assert.deepEqual(nodeIds(columnOf(columns, "执行中").nodes), ["task:8", "spec:preview-channel"]);
+  // 执行中列：#8 带两个缺口码（14:20）与特性同组（特性自身段位=执行中）——
+  // #46 B3 起列内按特性分组渲染：扁平序 = 分组头 + 组内行（组内 attention 置顶）
+  assert.deepEqual(nodeIds(columnOf(columns, "执行中").nodes), ["spec:preview-channel", "task:8"]);
 });
 
 test("列内排序：无 updatedAt 的节点沉底，不冒充最新（§3.5 卡龄信号缺省）", () => {

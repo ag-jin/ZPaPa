@@ -83,6 +83,17 @@ export function BoardPane({
   // 跳转揭示必须**先把展开态置真再滚**——因此展开态归宿主持有（与高亮同一次提交落在同一帧，
   // 滚动 effect 才找得到落点）。折叠态会话记忆是可选增强，本期不做（面板卸载即回到默认展开）。
   const [kanbanCompletedExpanded, setKanbanCompletedExpanded] = useState(true);
+  // 表格视图折叠的分组（#46 B4）：折叠行是条件渲染，跳转揭示要先把落点那个分组展开
+  //（与「已完成」列同款理由）；面板卸载即回默认（全部展开）。
+  const [collapsedFeatureIds, setCollapsedFeatureIds] = useState<string[]>([]);
+  const handleToggleFeatureCollapsed = useCallback((featureId: string, collapsed: boolean) => {
+    setCollapsedFeatureIds((previous) => {
+      const set = new Set(previous);
+      if (collapsed) set.add(featureId);
+      else set.delete(featureId);
+      return [...set];
+    });
+  }, []);
   // 读数防竞态：旧请求的结果不得覆盖新请求（切工作区/连续刷新都会触发并发读）。
   const requestSeqRef = useRef(0);
   // 连接门禁要在**读取时刻**取最新值（断连可能发生在读取途中）：渲染期同步 ref，读取回调再读它。
@@ -172,6 +183,8 @@ export function BoardPane({
       setOpenCardId(null);
       // 过滤是临时视角：目标被筛掉就跳不到，先清筛子（排序视角保留）。
       setListControls((controls) => clearBoardListFilter(controls));
+      // 折叠分组同理：落点在折叠的分组里就跳了个寂寞——跳转先把分组折叠态清掉。
+      setCollapsedFeatureIds([]);
       // 看板列视图不渲染段位缺省/不认识的节点（§13.2 未定位提示）：切列表视图兜底。
       if (boardJumpRequiresListView(viewMode, target)) {
         handleViewModeChange("list");
@@ -225,6 +238,8 @@ export function BoardPane({
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}
       onKanbanCompletedExpandedChange={setKanbanCompletedExpanded}
+      collapsedFeatureIds={collapsedFeatureIds}
+      onToggleFeatureCollapsed={handleToggleFeatureCollapsed}
       onRefresh={() => void refresh()}
     />
   );

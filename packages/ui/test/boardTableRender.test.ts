@@ -103,36 +103,37 @@ test("表格：隐藏列同时消失（列头与单元格一起收），可见�
   assert.ok(!firstRow.includes("implementer"), "被隐藏列的单元格不渲染内容");
 });
 
-test("表格：行序 = 手推的字面 id 序列（attention 置顶 + updatedAt 倒序 + 已完成沉底）", () => {
-  // 期望值手推自夹具（契约 §3.5 排序规则），不是拿列表视图的输出自比自（评审 T2）。
+test("表格：行序 = 分组行 + 组内手推序列（#46 B4；组序 = 成员首次出现序）", () => {
+  // 期望值手推自夹具（分组 = 列表同一平铺管线按特性分区；行为差异只在呈现层，评审 T2 同口径）。
   const rowIds = anchors(render(), "data-board-card");
   assert.deepEqual(rowIds, [
+    // 组 1（spec:preview-channel）：小组头 + 组内平铺序（#8 置顶 → #7 → #9）
+    "spec:preview-channel",
     "task:8",
+    "task:7",
+    "task:9",
+    // 组 2（plan:sess_1f3c5d7e）
     "plan:sess_1f3c5d7e",
     "task:13",
+    "task:14",
+    "task:12",
+    // 组 3/4（访谈聚合节点各自成组）
     "interview:itw-b",
     "interview:itw-a",
-    "task:14",
+    // 组 5（无卡安排类）
     "plan:sess_f1a2d0bb",
-    "spec:preview-channel",
-    "task:7",
+    // 组 6（spec:payment-split）
     "spec:payment-split",
     "task:10",
-    "task:12",
-    "task:9",
   ]);
-  assert.equal(rowIds.length, 13, "6 特性 + 7 卡全部平铺");
-  assert.ok(rowIds.includes("spec:preview-channel"), "特性节点也在表里");
+  assert.equal(rowIds.length, 13, "6 特性 + 7 卡：分组不丢节点（组头承载特性行）");
   const filtered = anchors(
     render({ controls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: "执行中" } }),
     "data-board-card",
   );
-  assert.deepEqual(filtered, ["task:8", "spec:preview-channel"], "段位筛后只剩两行（#8 置顶）");
-  assert.deepEqual(
-    filtered,
-    buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
-    "同一管线（过滤/排序语义复用，不另写一份表格排序）",
-  );
+  assert.deepEqual(filtered, ["spec:preview-channel", "task:8"], "段位筛后只剩一组（组头 + #8）");
+  const flat = buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id);
+  assert.deepEqual(flat, ["task:8", "spec:preview-channel"], "平铺管线（分组的数据源）语义不变");
 });
 
 test("表格：单元格值（号/名称/段位/状态/最近执行/卡龄/阻碍/缺口）", () => {
@@ -155,11 +156,12 @@ test("表格：单元格值（号/名称/段位/状态/最近执行/卡龄/阻�
 
 test("表格：行可点开弹窗（role=button + tabindex），跳转落点带高亮锚点", () => {
   const markup = render({ onOpenCard: () => {}, highlightCardId: "task:8" });
-  const rows = [...markup.matchAll(/<tr[^>]*data-board-card="([^"]*)"[^>]*>/g)].map(
+  // #46 B4：分组行后，特性行是分组头（td 内的可点 div），任务行是 <tr> —— 逐锚点断言可点。
+  const anchorsAll = [...markup.matchAll(/<[a-z]+[^>]*data-board-card="([^"]*)"[^>]*>/g)].map(
     (match) => match[0],
   );
-  assert.equal(rows.length, 13, "每行都是可点行");
-  for (const row of rows) {
+  assert.equal(anchorsAll.length, 13, "每行（含分组头）都是可点行");
+  for (const row of anchorsAll) {
     assert.ok(row.includes('role="button"'), `行应可点（无嵌套按钮的可点行）：${row}`);
     assert.ok(row.includes('tabindex="0"'), `行应可键盘聚焦：${row}`);
   }

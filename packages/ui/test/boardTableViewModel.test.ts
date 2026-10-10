@@ -5,7 +5,7 @@ import {
   BOARD_TABLE_COLUMNS,
   DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY,
   boardTableCellText,
-  buildBoardTableRows,
+  buildBoardListRows,
   parseBoardTableColumnVisibility,
   serializeBoardTableColumnVisibility,
   toggleBoardTableColumn,
@@ -327,12 +327,12 @@ test("表格行 = 列表视图同一管线：字面 id 序列写死（契约 §3
   // 期望值是**手推的**：先缺口置顶组（attention 非空，按 updatedAt 倒序、同刻按 id 字典序），
   // 再其余组（updatedAt 倒序，已完成沉底到组尾）。
   assert.deepEqual(
-    buildBoardTableRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
+    buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
     ["task:8", "spec:preview-channel"],
     "执行中 = #8（带缺口，置顶）→ 特性（15:30）",
   );
   assert.deepEqual(
-    buildBoardTableRows(matrixBoard()).map((node) => node.id),
+    buildBoardListRows(matrixBoard()).map((node) => node.id),
     [
       "task:8", // 缺口组：14:20
       "plan:sess_1f3c5d7e", // 13:10（与 #13 同刻，id 字典序在前）
@@ -350,18 +350,18 @@ test("表格行 = 列表视图同一管线：字面 id 序列写死（契约 §3
     ],
     "默认排序（attention 置顶 + updatedAt 倒序 + 已完成沉底）",
   );
-  assert.equal(buildBoardTableRows(matrixBoard()).length, 13, "全卡平铺：6 特性 + 7 卡一个不丢");
+  assert.equal(buildBoardListRows(matrixBoard()).length, 13, "全卡平铺：6 特性 + 7 卡一个不丢");
 });
 
 test("表格行 = 列表视图同一管线（同一集合/过滤/排序语义，派发指令「复用」）", () => {
-  const rows = buildBoardTableRows(matrixBoard(), { filter: { stage: "执行中" } });
+  const rows = buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } });
   assert.deepEqual(
     rows.map((node) => node.id),
     buildBoardListRows(matrixBoard(), { filter: { stage: "执行中" } }).map((node) => node.id),
     "过滤后行序与列表视图逐位一致",
   );
   assert.deepEqual(
-    buildBoardTableRows(matrixBoard()).map((node) => node.id),
+    buildBoardListRows(matrixBoard()).map((node) => node.id),
     buildBoardListRows(matrixBoard()).map((node) => node.id),
     "默认排序逐位一致",
   );

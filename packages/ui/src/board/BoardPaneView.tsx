@@ -28,6 +28,7 @@ import {
 import {
   BOARD_ATTENTION_SUMMARY_ROWS,
   formatAttentionSummarySegment,
+  formatBoardPathTail,
   formatBoardRunTime,
   formatBoardStaleHint,
 } from "./boardPresentation.js";
@@ -65,6 +66,9 @@ export interface BoardPaneViewProps {
   /** 看板「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开）。 */
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
+  /** 表格视图折叠的分组（宿主持有：跳转揭示要先展开；缺省全部展开）。 */
+  collapsedFeatureIds?: readonly string[];
+  onToggleFeatureCollapsed?: (featureId: string, collapsed: boolean) => void;
   /** 陈旧判定的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -188,6 +192,8 @@ function BoardReadyView({
   highlightCardId,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
+  collapsedFeatureIds,
+  onToggleFeatureCollapsed,
   now,
 }: {
   board: BoardViewModel;
@@ -205,6 +211,8 @@ function BoardReadyView({
   highlightCardId?: string | null;
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
+  collapsedFeatureIds?: readonly string[];
+  onToggleFeatureCollapsed?: (featureId: string, collapsed: boolean) => void;
   now: number;
 }) {
   const { intl } = useZCodeIntl();
@@ -213,7 +221,8 @@ function BoardReadyView({
   // 同一时刻最多一个弹窗：宿主只持一个 id，这里按 id 解析（悬空 id → null，不留幽灵弹窗）。
   const dialogNode = resolveBoardDialogNode(board, openCardId ?? null);
   return (
-    <div data-board-pane="" className="flex h-full min-h-0 flex-col">
+    // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
+    <div data-board-pane="" className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3">
         <div className="min-w-0">
           <div className="truncate text-ui-base font-medium text-foreground">
@@ -285,6 +294,10 @@ function BoardReadyView({
             {...(onListControlsChange ? { onControlsChange: onListControlsChange } : {})}
             {...(tableColumns ? { columns: tableColumns } : {})}
             {...(onTableColumnsChange ? { onColumnsChange: onTableColumnsChange } : {})}
+            {...(collapsedFeatureIds ? { collapsedFeatureIds } : {})}
+            {...(onToggleFeatureCollapsed
+              ? { onToggleFeatureCollapsed }
+              : {})}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
           />
@@ -298,29 +311,39 @@ function BoardReadyView({
       </div>
       {board.diagnostics.length > 0 ? (
         // 板级诊断（含「已取消卡未清理现场」的清理提示，§13.4）：四视图共用只读尾区。
-        <div
-          data-board-diagnostics=""
-          className="max-h-32 shrink-0 overflow-y-auto border-t border-border/50 px-3 py-2"
-        >
-          <div className="pb-1 text-ui-xs font-medium text-foreground-subtle">
+        // #46 B7：默认折叠为一行「诊断 N 条」，点开才列明细（细节不抢版面，但不静默隐藏）。
+        <details data-board-diagnostics="" className="shrink-0 border-t border-border/50">
+          <summary className="cursor-pointer px-3 py-2 text-ui-xs font-medium text-foreground-subtle">
             {intl.formatMessage(
-              { id: "board.diagnostics.title" },
+              { id: "board.diagnostics.collapsed" },
               { count: board.diagnostics.length },
             )}
+          </summary>
+          <div className="max-h-32 overflow-y-auto px-3 pb-2">
+            <ul className="flex flex-col gap-1">
+              {board.diagnostics.map((diagnostic, index) => (
+                <li
+                  key={`${diagnostic.path}:${index}`}
+                  className="text-ui-xs text-foreground-subtle"
+                >
+                  <span
+                    className="font-mono"
+                    title={diagnostic.path}
+                  >
+                    {formatBoardPathTail(diagnostic.path)}
+                  </span>{" "}
+                  {diagnostic.message}
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="flex flex-col gap-1">
-            {board.diagnostics.map((diagnostic, index) => (
-              <li key={`${diagnostic.path}:${index}`} className="text-ui-xs text-foreground-subtle">
-                <span className="font-mono">{diagnostic.path}</span> {diagnostic.message}
-              </li>
-            ))}
-          </ul>
-        </div>
+        </details>
       ) : null}
       {dialogNode ? (
         <BoardCardDialog
           board={board}
           node={dialogNode}
+          now={now}
           {...(onCloseCard ? { onClose: onCloseCard } : {})}
           {...(onJumpToCard ? { onJumpToCard } : {})}
         />
@@ -348,7 +371,8 @@ function BoardPlaceholder({
 }) {
   const anchor = kind === "loading" ? { "data-board-loading": "" } : { "data-board-empty": kind };
   return (
-    <div data-board-pane="" className="flex h-full min-h-0 flex-col">
+    // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
+    <div data-board-pane="" className="relative flex h-full min-h-0 flex-col">
       {onRefresh ? (
         <div className="flex h-12 shrink-0 items-center justify-end border-b border-border/50 px-3">
           <BoardPaneRefreshButton onRefresh={onRefresh} />
@@ -388,6 +412,8 @@ export function BoardPaneView({
   highlightCardId = null,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
+  collapsedFeatureIds,
+  onToggleFeatureCollapsed,
   now,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
@@ -411,6 +437,8 @@ export function BoardPaneView({
         {...(onJumpToCard ? { onJumpToCard } : {})}
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
+        {...(collapsedFeatureIds ? { collapsedFeatureIds } : {})}
+        {...(onToggleFeatureCollapsed ? { onToggleFeatureCollapsed } : {})}
       />
     );
   }

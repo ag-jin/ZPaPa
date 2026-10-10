@@ -2,13 +2,15 @@ import {
   BOARD_ATTENTION_LABEL_MESSAGE_IDS,
   formatBoardCardAge,
   formatBoardLastRunText,
+  formatBoardNodeId,
   formatBoardRunTime,
   formatBoardStageText,
   formatBoardStatusText,
   type BoardMessageFormatter,
 } from "./boardPresentation.js";
 import {
-  buildBoardListRows,
+  buildBoardListGroups,
+  type BoardListGroup,
   type BoardListQuery,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
@@ -126,7 +128,8 @@ export function boardTableCellText(
 ): string | null {
   switch (key) {
     case "no":
-      if (node.label) return `ID-${node.label}`;
+      // #46 B1：表格分组内短形态（有计划码只显示层级；无计划码维持 ID-<label>）
+      if (node.label) return formatBoardNodeId(node, { short: true });
       if (node.no !== null) return `#${node.no}`;
       return formatMessage({ id: "board.unassigned" });
     case "title":
@@ -158,12 +161,12 @@ export function boardTableCellText(
 }
 
 /**
- * 表格行 = 列表视图的同一管线（过滤 → 排序；派发指令「排序按当前列表视图语义复用」）。
- * 单一实现：不复制一份表格专用排序，避免两处语义漂移。
+ * 表格分组 = 列表视图的同一分组建模（#46 B4：分组行 + 缩进子行，表格同）。
+ * 单一实现：不复制一份表格专用排序/分组，避免两处语义漂移。
  */
-export function buildBoardTableRows(
+export function buildBoardTableGroups(
   board: BoardViewModel,
   query: BoardListQuery = {},
-): BoardViewNode[] {
-  return buildBoardListRows(board, query);
+): BoardListGroup[] {
+  return buildBoardListGroups(board, query);
 }

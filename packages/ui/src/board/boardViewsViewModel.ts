@@ -177,11 +177,31 @@ function collectFeatureTaskNodes(feature: BoardFeatureNode): BoardViewNode[] {
   return nodes;
 }
 
+export interface BoardKanbanGroup {
+  /** 分组头：特性节点（可点开弹窗；渲染为分组行，不是独立卡）。 */
+  feature: BoardViewNode;
+  /** 本列中属于该特性的任务卡（组内已排序）。 */
+  nodes: BoardViewNode[];
+  /** 特性节点自身段位 = 本列（分组头带自身徽章）；false = 跨列随行的轻量标签。 */
+  featureInColumn: boolean;
+  /** 分组排序键（组内最高优先成员；`compareBoardViewNodes` 比较）。 */
+  sortKey: BoardViewNode;
+}
+
 export interface BoardKanbanColumn {
   stage: BoardStage;
+  /** 本列的扁平节点序列（分组渲染序：分组头在前、组内按排序）——分组只是呈现。 */
   nodes: BoardViewNode[];
+  /** 列内分组（#46 B3）：特性名 = 分组头，任务卡随行。 */
+  groups: BoardKanbanGroup[];
   /** 仅「待设计」列：interview-only 聚合子区（§13.3）；其余列为 null。 */
   interview: { count: number; nodes: BoardViewNode[] } | null;
+}
+
+/** 列表/表格分组（#46 B4）：特性头 + 过滤排序后的子行（组序 = 成员首次出现序）。 */
+export interface BoardListGroup {
+  feature: BoardViewNode;
+  nodes: BoardViewNode[];
 }
 
 /** 排序第二视角（§3.5：「最老未动」由用户主动切换，不改变默认排序）。 */
@@ -243,28 +263,40 @@ export function sortBoardViewNodes(
   sort: BoardViewSort = "recent",
   options: { sinkStage?: BoardStage | null } = {},
 ): BoardViewNode[] {
+  return [...nodes].sort((left, right) => compareBoardViewNodes(left, right, sort, options));
+}
+
+/**
+ * 单点比较器（`sortBoardViewNodes` 与看板分组排序共用）：attention 置顶恒在，其次 sinkStage，
+ * 再次 updatedAt（recent 倒序 / oldest 升序），最后 id 稳定收敛。导出供分组序复用——
+ * 分组排序键 = 组内最高优先成员，判定规则必须与行排序**同一份**，否则组序与行序互相矛盾。
+ */
+export function compareBoardViewNodes(
+  left: BoardViewNode,
+  right: BoardViewNode,
+  sort: BoardViewSort = "recent",
+  options: { sinkStage?: BoardStage | null } = {},
+): number {
   const sinkStage = options.sinkStage ?? null;
-  return [...nodes].sort((left, right) => {
-    const leftPinned = left.attention.length > 0 ? 0 : 1;
-    const rightPinned = right.attention.length > 0 ? 0 : 1;
-    if (leftPinned !== rightPinned) return leftPinned - rightPinned;
+  const leftPinned = left.attention.length > 0 ? 0 : 1;
+  const rightPinned = right.attention.length > 0 ? 0 : 1;
+  if (leftPinned !== rightPinned) return leftPinned - rightPinned;
 
-    if (sinkStage !== null) {
-      const leftSunk = left.stage === sinkStage ? 1 : 0;
-      const rightSunk = right.stage === sinkStage ? 1 : 0;
-      if (leftSunk !== rightSunk) return leftSunk - rightSunk;
-    }
+  if (sinkStage !== null) {
+    const leftSunk = left.stage === sinkStage ? 1 : 0;
+    const rightSunk = right.stage === sinkStage ? 1 : 0;
+    if (leftSunk !== rightSunk) return leftSunk - rightSunk;
+  }
 
-    const leftAt = updatedAtEpoch(left);
-    const rightAt = updatedAtEpoch(right);
-    if (leftAt === null || rightAt === null) {
-      if (leftAt !== rightAt) return leftAt === null ? 1 : -1;
-    } else if (leftAt !== rightAt) {
-      return sort === "oldest" ? leftAt - rightAt : rightAt - leftAt;
-    }
+  const leftAt = updatedAtEpoch(left);
+  const rightAt = updatedAtEpoch(right);
+  if (leftAt === null || rightAt === null) {
+    if (leftAt !== rightAt) return leftAt === null ? 1 : -1;
+  } else if (leftAt !== rightAt) {
+    return sort === "oldest" ? leftAt - rightAt : rightAt - leftAt;
+  }
 
-    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-  });
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
 export interface BoardKanban {
@@ -437,16 +469,39 @@ export function buildBoardKanban(
 
   const columns: BoardKanbanColumn[] = BOARD_STAGES.map((stage) => {
     const nodes = buckets.get(stage) ?? [];
-    if (stage !== "待设计")
-      return { stage, nodes: sortBoardViewNodes(nodes, sort), interview: null };
+    const groups: BoardKanbanGroup[] = [];
+    for (const { feature, nodes: featureNodes } of collectBoardFeatureGroups(board)) {
+      if (isInterviewSummaryNode(feature)) continue; // 访谈聚合节点走子区，不成组
+      const featureInColumn = feature.stage === stage;
+      const taskNodes = featureNodes.filter((node) => node.stage === stage);
+      if (!featureInColumn && taskNodes.length === 0) continue;
+      const sortedTasks = sortBoardViewNodes(taskNodes, sort);
+      // 分组排序键 = 组内最高优先成员（特性自身也算成员：attention 置顶，updatedAt 倒序）
+      const sortKey = sortBoardViewNodes(
+        featureInColumn ? [feature, ...sortedTasks] : sortedTasks,
+        sort,
+      )[0];
+      groups.push({ feature, nodes: sortedTasks, featureInColumn, sortKey });
+    }
+    groups.sort((left, right) => {
+      const compared = compareBoardViewNodes(left.sortKey, right.sortKey, sort);
+      if (compared !== 0) return compared;
+      return left.feature.id < right.feature.id ? -1 : left.feature.id > right.feature.id ? 1 : 0;
+    });
+    // 扁平序 = 分组渲染序（分组头在前、组内按排序）——分组只是呈现，节点集合仍是同一批。
+    const flat = groups.flatMap((group) => [
+      ...(group.featureInColumn ? [group.feature] : []),
+      ...group.nodes,
+    ]);
+    if (stage !== "待设计") {
+      return { stage, nodes: flat, groups, interview: null };
+    }
     // 待设计列：interview-only 节点单独聚合为「访谈汇总」子区（§13.3）；
     // 子区计数取 `attentionSummary.interviewedNotArranged`（契约点名的来源，不由节点条数回算）。
     return {
       stage,
-      nodes: sortBoardViewNodes(
-        nodes.filter((node) => !isInterviewSummaryNode(node)),
-        sort,
-      ),
+      nodes: flat,
+      groups,
       interview: {
         count: board.attentionSummary.interviewedNotArranged,
         nodes: sortBoardViewNodes(nodes.filter(isInterviewSummaryNode), sort),
@@ -455,4 +510,41 @@ export function buildBoardKanban(
   });
 
   return { columns, unplacedCount };
+}
+
+/**
+ * 列表/表格分组（#46 B4）：先走既有平铺管线（过滤 → 排序，语义一字不改），再按「所属特性」
+ * 归组——分组只是呈现分区，行序在组内保持平铺管线的相对序（组序 = 成员首次出现序）。
+ * 特性自身匹配过滤时保留（无子行的分组头也渲染：筛选到特性时它仍看得见）。
+ */
+export function buildBoardListGroups(
+  board: BoardViewModel,
+  query: BoardListQuery = {},
+): BoardListGroup[] {
+  const flat = buildBoardListRows(board, query);
+  const ownerByTaskId = new Map<string, BoardViewNode>();
+  for (const { feature, nodes } of collectBoardFeatureGroups(board)) {
+    for (const node of nodes) ownerByTaskId.set(node.id, feature);
+  }
+  const groups: BoardListGroup[] = [];
+  const byFeatureId = new Map<string, BoardListGroup>();
+  const ensureGroup = (feature: BoardViewNode): BoardListGroup => {
+    let group = byFeatureId.get(feature.id);
+    if (!group) {
+      group = { feature, nodes: [] };
+      byFeatureId.set(feature.id, group);
+      groups.push(group);
+    }
+    return group;
+  };
+  for (const node of flat) {
+    if (node.kind === "feature") {
+      ensureGroup(node);
+      continue;
+    }
+    const owner = ownerByTaskId.get(node.id);
+    if (!owner) continue;
+    ensureGroup(owner).nodes.push(node);
+  }
+  return groups;
 }

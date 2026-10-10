@@ -1,6 +1,8 @@
 /**
  * 看板列视图（卡 #33）：七段位列（列 = 段位），节点按自身 `stage` 卡入列；
- * 卡 #34 补卡片点击 → 弹窗与跳转落点高亮（`boardCardInteraction` 一处生成的 props）。
+ * 卡 #34 补卡片点击 → 弹窗与跳转落点高亮（`boardCardInteraction` 一处生成的 props）；
+ * 卡 #46 / 规则书 v2（B3）：列内按特性分组——**特性名做卡片分组头（非独立卡，不占一列位置）**，
+ * 任务卡随分组行排布；跨列的任务用轻量分组标签带出特性名。
  *
  * 单一真源：消费契约 §13.2「看板（列视图）」列 + §13.3（待设计列 = 访谈汇总子区）+
  * §13.4（待合并角标）+ §3.5（列内排序 attention 置顶 + updatedAt 倒序）。分组/排序全在
@@ -16,12 +18,18 @@ import {
   boardCardHighlightProps,
   boardCardOpenProps,
 } from "./boardCardInteraction.js";
-import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
+import {
+  BoardFeatureGroupHeaderContent,
+  BoardNodeBadges,
+  BoardNodeNumber,
+  BoardStageBadge,
+} from "./boardNodeParts.js";
 import { formatBoardStageText } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 import {
   buildBoardKanban,
   type BoardKanbanColumn,
+  type BoardKanbanGroup,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
 
@@ -53,6 +61,7 @@ function BoardKanbanCard({
   );
   return (
     <div
+      data-board-kanban-card={node.id}
       data-board-card={node.id}
       {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
@@ -62,7 +71,7 @@ function BoardKanbanCard({
       )}
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        <BoardNodeNumber no={node.no} label={node.label} />
+        <BoardNodeNumber no={node.no} label={node.label} planCode={node.planCode} />
         <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{node.title}</span>
       </div>
       <div className="flex flex-wrap items-center gap-1">
@@ -85,6 +94,52 @@ function BoardKanbanCard({
   );
 }
 
+/**
+ * 列内分组（B3）：分组头 = 特性名（非独立卡——没有卡片外壳，不占卡位）；
+ * 特性自身段位在本列时分组头带自身徽章（可点开特性弹窗），跨列随行时只作轻量标签。
+ */
+function BoardKanbanGroupBlock({
+  group,
+  showStatusRule,
+  onOpenCard,
+  highlightCardId,
+}: {
+  group: BoardKanbanGroup;
+  showStatusRule: boolean;
+  onOpenCard?: (id: string) => void;
+  highlightCardId: string | null;
+}) {
+  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
+    group.feature.id,
+    highlightCardId,
+  );
+  return (
+    <div data-board-kanban-group={group.feature.id} className="flex flex-col gap-1">
+      <div
+        data-board-kanban-group-header={group.feature.id}
+        data-board-card={group.feature.id}
+        {...highlightProps}
+        {...boardCardOpenProps({ id: group.feature.id, ...(onOpenCard ? { onOpenCard } : {}) })}
+        className={cn(
+          "flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5",
+          highlightClassName,
+        )}
+      >
+        <BoardFeatureGroupHeaderContent feature={group.feature} cardCount={group.nodes.length} />
+      </div>
+      {group.nodes.map((node) => (
+        <BoardKanbanCard
+          key={node.id}
+          node={node}
+          showStatusRule={showStatusRule}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
+        />
+      ))}
+    </div>
+  );
+}
+
 function BoardKanbanColumnBody({
   column,
   onOpenCard,
@@ -98,10 +153,10 @@ function BoardKanbanColumnBody({
   const cancelled = column.stage === "已取消";
   return (
     <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto p-1.5">
-      {column.nodes.map((node) => (
-        <BoardKanbanCard
-          key={node.id}
-          node={node}
+      {column.groups.map((group) => (
+        <BoardKanbanGroupBlock
+          key={group.feature.id}
+          group={group}
           showStatusRule={cancelled}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
