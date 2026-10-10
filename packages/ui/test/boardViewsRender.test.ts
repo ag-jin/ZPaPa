@@ -432,7 +432,7 @@ const list = (controls?: Partial<BoardListControls>, state: BoardPaneLoadState =
     ...(controls ? { listControls: { ...EMPTY_BOARD_LIST_CONTROLS, ...controls } } : {}),
   });
 
-test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + 类型 2 + 排序 2），各带「全部」项", () => {
+test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + 类型 2 + 排序 3），各带「全部」项", () => {
   const markup = list();
   assert.ok(markup.includes('data-board-view="list"'), "列表视图应有自己的根锚点");
   const optionsOf = (filter: string): string[] => {
@@ -466,7 +466,8 @@ test("列表：过滤控件是闭集取值（段位 7 + 状态 5 + 缺口 4 + �
     "unmerged-worktree",
   ]);
   assert.deepEqual(optionsOf("kind"), ["", "feature", "task"], "类型筛（§13.2 表格待设计格）");
-  assert.deepEqual(optionsOf("sort"), ["recent", "oldest"]);
+  // 排序视角（#65）：最近更新（默认）/ 最老未动 / 段位序——闭集三选一，选项序即闭集序。
+  assert.deepEqual(optionsOf("sort"), ["recent", "oldest", "stage"]);
 });
 
 test("列表：类型筛（kind）按闭集取值收窄行集合（特性/卡片各自筛；分组头作上下文保留）", () => {

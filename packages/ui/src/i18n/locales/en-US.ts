@@ -1113,6 +1113,7 @@ const enUS: Record<string, string> = {
   "board.kind.task": "Card",
   "board.sort.recent": "Recently updated",
   "board.sort.oldest": "Oldest untouched",
+  "board.sort.stage": "Stage order",
   // Status vocabulary (filter control; machine words match progress.json).
   "board.status.pending": "Pending",
   "board.status.active": "Active",

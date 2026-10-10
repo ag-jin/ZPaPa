@@ -109,20 +109,32 @@ const fileService = {
   checkFilesExist: async (params) => params.paths.map((p) => ({ path: p, exists: p === boardPath })),
   readTextFile: async () => slice,
 };
-createRoot(document.getElementById("host")).render(
-  createElement(
-    ServiceProvider,
-    { services: { fileService } },
+const host = document.getElementById("host");
+let root = null;
+const renderPane = () => {
+  root = createRoot(host);
+  root.render(
     createElement(
-      TabStoreProvider,
-      null,
-      createElement(ZCodeIntlProvider, {
-        initialLocale: "zh-CN",
-        children: createElement(BoardPane, { workspacePath: WORKSPACE_PATH, focused: true }),
-      }),
+      ServiceProvider,
+      { services: { fileService } },
+      createElement(
+        TabStoreProvider,
+        null,
+        createElement(ZCodeIntlProvider, {
+          initialLocale: "zh-CN",
+          children: createElement(BoardPane, { workspacePath: WORKSPACE_PATH, focused: true }),
+        }),
+      ),
     ),
-  ),
-);
+  );
+};
+renderPane();
+// 浏览器断言用的重挂钩子（#65）：等价于「切侧边标签 → 面板卸载 → 再打开」——
+// 验证会话记忆的**读回**路径（只写不读的断言抓不住读回缺口）。
+globalThis.__BOARD_REMOUNT__ = () => {
+  root.unmount();
+  renderPane();
+};
 `;
 
 export function buildPageHtml(params: { css: string; boardJson: string; bundle: string }): string {

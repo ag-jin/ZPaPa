@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   boardAttentionFilterValue,
   boardListControlsToQuery,
-  boardSortFilterValue,
   boardStageFilterValue,
   boardStatusFilterValue,
   boardViewNodeKindFilterValue,
@@ -11,10 +10,10 @@ import {
   buildBoardListRows,
   collectBoardViewNodes,
   EMPTY_BOARD_LIST_CONTROLS,
-  sortBoardViewNodes,
   type BoardKanbanColumn,
   type BoardViewNode,
 } from "../src/board/boardViewsViewModel.js";
+import { boardSortFilterValue, sortBoardViewNodes } from "../src/board/boardViewSorting.js";
 import { BOARD_STAGES, parseBoardJson, type BoardViewModel } from "../src/board/boardViewModel.js";
 import { STAGE_MATRIX_BOARD } from "./boardStageMatrixFixture.js";
 
@@ -409,7 +408,7 @@ test("过滤控件取值归一：空串/不认识的值一律 null，排序坏�
     "视图节点类型只有 feature/task",
   );
   assert.equal(boardViewNodeKindFilterValue("task"), "task");
-  assert.equal(boardSortFilterValue(""), "recent", "排序是闭集二选一，坏值回落默认视角");
+  assert.equal(boardSortFilterValue(""), "recent", "排序是闭集三选一（recent/oldest/stage），坏值回落默认视角");
   assert.equal(boardSortFilterValue("future-sort"), "recent");
   assert.equal(boardSortFilterValue("oldest"), "oldest");
 });

@@ -20,12 +20,16 @@ import {
   BOARD_VIEW_NODE_KIND_MESSAGE_IDS,
   BOARD_VIEW_NODE_KINDS,
   boardAttentionFilterValue,
-  boardSortFilterValue,
   boardStageFilterValue,
   boardStatusFilterValue,
   boardViewNodeKindFilterValue,
   type BoardListControls,
 } from "./boardViewsViewModel.js";
+import {
+  BOARD_VIEW_SORTS,
+  BOARD_VIEW_SORT_MESSAGE_IDS,
+  boardSortFilterValue,
+} from "./boardViewSorting.js";
 
 export function BoardListFilterControls({
   controls,
@@ -128,8 +132,12 @@ export function BoardListFilterControls({
             onChange({ ...controls, sort: boardSortFilterValue(event.target.value) })
           }
         >
-          <option value="recent">{t("board.sort.recent")}</option>
-          <option value="oldest">{t("board.sort.oldest")}</option>
+          {/* 三视角闭集（#65）：选项与顺序来自 `BOARD_VIEW_SORTS`，不各写一份字面量。 */}
+          {BOARD_VIEW_SORTS.map((sort) => (
+            <option key={sort} value={sort}>
+              {t(BOARD_VIEW_SORT_MESSAGE_IDS[sort])}
+            </option>
+          ))}
         </select>
       </label>
     </div>

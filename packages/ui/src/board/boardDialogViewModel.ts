@@ -12,10 +12,10 @@
  */
 import {
   collectBoardViewNodes,
-  isBoardStage,
   type BoardViewMode,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
+import { isBoardStage } from "./boardViewSorting.js";
 import { formatBoardNodeId } from "./boardPresentation.js";
 import type {
   BoardActiveRun,

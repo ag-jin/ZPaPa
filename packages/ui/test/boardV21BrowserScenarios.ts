@@ -10,7 +10,9 @@
  *      编号+名称区 → 开弹窗且不误触折叠；
  *   3. 表格字号分层（#59 M1）：主阅读列 = text-ui-sm、弱元数据 = text-ui-xs（期望从 `--ui-font-size` 现算）；
  *   4. 弹窗焦点闭环（#59 M4）：autoFocus 落点、Tab/Shift+Tab 首末回绕、Esc 关闭后焦点回到打开者卡片；
- *      顺带量阻碍条目圆角（#59 N1 = rounded-xl）。
+ *      顺带量阻碍条目圆角（#59 N1 = rounded-xl）；
+ *   5. 列表排序切换 + 会话记忆往返（#65）：真事件改动排序控件 → 真 DOM 行序断言（默认/段位序/
+ *      最老未动三视角）；重挂面板（等价切标签再打开）后行序与控件取值从 sessionStorage 读回。
  *
  * 运行条件（缺一即报错退出，不静默跳过）：Electron 二进制 / `@tailwindcss/node` / esbuild
  * （解析同 `boardKanbanBrowserLayoutHarness`；worktree 未装产物时会自动找到主仓那份）。
@@ -29,6 +31,7 @@ import {
 import {
   dialogFocusDriverSource,
   listGroupHeaderClickDriverSource,
+  listSortDriverSource,
   overflowProbeDriverSource,
   tableTypographyDriverSource,
 } from "./boardV21BrowserScenariosDrivers.js";
@@ -41,6 +44,7 @@ import {
   runBoardPaneInElectron,
 } from "./boardKanbanBrowserLayoutHarness.js";
 import { STAGE_MATRIX_BOARD } from "./boardStageMatrixFixture.js";
+import { SORTING_BOARD } from "./boardSortingFixture.js";
 
 /** #59 M3 的超长假名：真实板里长中文/远端 agent 名的压力形态。 */
 const LONG_ROLE =
@@ -354,13 +358,106 @@ async function runDialogFocusScenario(params: {
   );
 }
 
+interface ListSortResult {
+  ua: string;
+  initial: string[];
+  stageRows: string[];
+  stageStored: string | null;
+  stageSelectValue: string | null;
+  oldestRows: string[];
+  oldestStored: string | null;
+  oldestSelectValue: string | null;
+  remountRows: string[];
+  remountSelectValue: string | null;
+  remountStored: string | null;
+}
+
+/**
+ * 场景五（#65 卡「完成沉底全视图落实 + 排序切换」）：列表排序切换的真交互（指针序列打到控件 +
+ * 真 change 事件）与**会话记忆往返**（重挂面板后行序与控件取值从 sessionStorage 读回）。
+ *
+ * 期望行序（手推，与 Node 侧 `boardSorting.test.ts` 同一份夹具与同一口径）：
+ * - 默认（最近更新）= 契约序：缺口置顶 → 未完成按 updatedAt 倒序 → 已完成沉底；
+ * - 段位序：#78（待办 07:30）早于 #82（执行中 08:30）；
+ * - 最老未动：#82 与 #78 之后的纯卡龄升序（不沉底）。
+ */
+async function runListSortScenario(params: {
+  css: string;
+  boardJson: string;
+  bundle: string;
+}): Promise<void> {
+  const result = (await runBoardPaneInElectron({
+    pageHtml: buildPageHtml({ ...params, boardJson: params.boardJson }),
+    driver: listSortDriverSource(),
+    label: "list-sort",
+  })) as ListSortResult | null;
+  console.log(`LIST_SORT_MEASUREMENTS=${JSON.stringify(result, null, 1)}`);
+  assert.ok(result, "列表排序场景应回传量取结果");
+  const RECENT_ROWS = [
+    "task:75",
+    "task:72",
+    "task:77",
+    "task:82",
+    "task:78",
+    "task:73",
+    "task:76",
+    "task:79",
+    "task:74",
+    "task:71",
+    "task:81",
+  ];
+  const STAGE_ROWS = [
+    "task:75",
+    "task:72",
+    "task:77",
+    "task:78",
+    "task:82",
+    "task:73",
+    "task:76",
+    "task:79",
+    "task:74",
+    "task:71",
+    "task:81",
+  ];
+  const OLDEST_ROWS = [
+    "task:75",
+    "task:71",
+    "task:78",
+    "task:74",
+    "task:82",
+    "task:79",
+    "task:77",
+    "task:76",
+    "task:72",
+    "task:73",
+    "task:81",
+  ];
+  assert.deepEqual(result.initial, RECENT_ROWS, "默认序（契约序）：完成沉底的真 DOM 行序");
+  assert.deepEqual(result.stageRows, STAGE_ROWS, "选「段位序」后行序按段位流水序重排");
+  assert.equal(result.stageStored, "stage", "选择落 sessionStorage（会话记忆的写入路径）");
+  assert.equal(result.stageSelectValue, "stage", "控件取值跟随选择");
+  assert.deepEqual(result.oldestRows, OLDEST_ROWS, "再选「最老未动」后按卡龄升序（不沉底）");
+  assert.equal(result.oldestStored, "oldest", "第二次选择同样落会话记忆");
+  assert.equal(result.oldestSelectValue, "oldest", "控件取值跟随选择");
+  // 会话记忆往返（读回路径）：重挂后视图模式（list）与排序视角（oldest）都从记忆恢复。
+  assert.deepEqual(result.remountRows, OLDEST_ROWS, "重挂后面板按记忆恢复行序（读回路径有牙）");
+  assert.equal(result.remountSelectValue, "oldest", "重挂后控件取值 = 记忆里的排序视角");
+  assert.equal(result.remountStored, "oldest", "记忆键在重挂后仍为所选视角");
+  console.log(
+    `LIST_SORT_ASSERTIONS_OK 行序 ${result.initial.length} 行：默认=${result.initial.slice(0, 4).join(",")}…；` +
+      `段位序=${result.stageRows.slice(0, 4).join(",")}…；最老未动=${result.oldestRows.slice(0, 4).join(",")}…；` +
+      `重挂读回 select=${result.remountSelectValue} stored=${result.remountStored}`,
+  );
+}
+
 async function main(): Promise<void> {
   const boardJson = buildFixtureBoardJson();
   const dialogBoardJson = buildDialogFixtureBoardJson();
+  const sortingBoardJson = JSON.stringify(SORTING_BOARD);
   const bundle = await bundleBoardPaneClient();
   const css = await compileBoardPaneCss({
-    boards: [boardJson, dialogBoardJson],
-    // 表格字号场景（#59 M1）需要表格视图类；弹窗夹具走列表视图。
+    boards: [boardJson, dialogBoardJson, sortingBoardJson],
+    // 表格字号场景（#59 M1）需要表格视图类；弹窗夹具走列表视图；排序场景（#65）走列表视图。
     viewModes: ["kanban", "list", "table"],
   });
   console.log(
@@ -370,6 +467,7 @@ async function main(): Promise<void> {
   await runListClickScenario({ css, boardJson, bundle });
   await runTableTypographyScenario({ css, boardJson, bundle });
   await runDialogFocusScenario({ css, boardJson: dialogBoardJson, bundle });
+  await runListSortScenario({ css, boardJson: sortingBoardJson, bundle });
   console.log("BOARD_V21_BROWSER_ASSERTIONS_OK");
 }
 
