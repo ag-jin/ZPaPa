@@ -20,19 +20,26 @@
  *     SKILL §6 第 6 条）：merge commit 信息是卡号的机械回链锚点，必须与合并卡号一致且形态精确。
  *     校验顺序：命令形态（格式）→ 绿证据。无 -m/--message（交互、默认信息、-F 读文件）事前无法核对：
  *     放行 + stderr 指向 `verify-cleanup.mjs` 对 HEAD merge commit 的事后核对（E4-17 审计面）。
+ *   另拦 技能包 manifest 与合并来源不一致（B6-9/#127；V25/AD-13）：diff 触及技能包键集形态路径
+ *     （SKILL.md / assets/{board.schema.json,compile-board.mjs,contracts/markers.md,lib/*.mjs} 或 manifest 本体）
+ *     即按键集根读来源内容比对 sha256（内容寻址，以 manifest.files 登记表为准）——未重生成/未登记/缺失/
+ *     不可解析即拦截（exit 2 点名文件与重生成处置）。键集形态与 compile-board.mjs manifestFileList() 同源
+ *     （#67）；hooks/tools/test/templates 不在键集（#67），不判。diff 未命中键集形态路径时零调用零噪声。
  *   "feature 分支间合并不拦"：在卡片工作树（.git 为 gitdir 指针）内执行的合并一律放行。
  *
  * 阻断形态：PreToolUse 退出码 2 被运行时译为 permissionDecision: deny（阻断原因取 stderr），
  * 拦截文案给出缺失绿与补齐路径；其余命令/无法判定时放行（exit 0，去路文案走 stderr）。
- * 三绿证据读取只读 `<root>/.git/HEAD` 与 `<root>/.zcode/board/runs.json`；第四绿的 UI 面判定需要
- * 一次有界 `git diff --name-only`（PR 路径另有 `git rev-parse --verify` 解析头分支）——这是本 hook
- * 仅有的子进程（超时 5s）；子进程失败 → 记录边界（stderr）并按"无法判定"放行（同一合并命令自身也会
- * 因同因失败）；证据缺失仍是 fail-closed。
+ * 三绿证据读取只读 `<root>/.git/HEAD` 与 `<root>/.zcode/board/runs.json`；diff 面（第四绿 UI 面判定与
+ * manifest 门禁共用）需要一次有界 `git diff --name-only`（PR 路径另有 `git rev-parse --verify` 解析头分支）；
+ * manifest 门禁仅在 diff 命中键集形态路径时追加有界只读调用（每包 `git ls-tree` 1 次 + `git cat-file --batch`
+ * 至多 2 次，各 1500ms；未命中时零调用）——子进程失败 → 记录边界（stderr）并按"无法判定"放行
+ * （同一合并命令自身也会因同因失败）；证据缺失仍是 fail-closed。
  *
  * 无第三方依赖（仅 node 内置）。
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -345,6 +352,12 @@ function changedFiles(root, base, ref) {
   return { ok: true, files: String(r.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== "") };
 }
 
+/** 变更清单（来源可解析时才跑 git；否则为边界值，调用方不阻断）。第四绿与 manifest 门禁共用一份结果。 */
+function diffOf(root, base, ref) {
+  if (typeof ref !== "string" || ref === "") return { ok: false, error: "合并来源不可解析为分支名" };
+  return changedFiles(root, base !== null && base !== "" ? base : "HEAD", ref);
+}
+
 /** PR 头分支解析：本地 task-<no> 优先，其次 origin/task-<no>（不可得返回 null → 边界，不阻断）。 */
 function prHeadRef(root, cardNo) {
   for (const cand of [`task-${cardNo}`, `origin/task-${cardNo}`]) {
@@ -382,11 +395,11 @@ function uiDesignerStatus(root, forCard) {
  *   {checked:false, reason}          —— diff 不可得（分支/基线不可解析或 git 失败），调用方记边界、不阻断；
  *   {checked:true, uiFace:false}     —— diff 未触及 UI 面，免第四绿；
  *   {checked:true, uiFace:true, ok}  —— UI 面 diff；ok = 第四绿记录与证据文件均在位。
+ * diff 由调用方经 diffOf 计算一次后传入（与 manifest 门禁共用，防重复子进程）。
  */
-function uiFaceGate(root, base, ref, status) {
+function uiFaceGate(ref, status, diff) {
   if (typeof ref !== "string" || ref === "") return { checked: false, reason: "合并来源不可解析为分支名" };
-  const diff = changedFiles(root, base !== null && base !== "" ? base : "HEAD", ref);
-  if (!diff.ok) return { checked: false, reason: diff.error };
+  if (diff === undefined || diff.ok !== true) return { checked: false, reason: diff?.error ?? "变更清单不可得" };
   const files = diff.files.filter((f) => UI_FACE_RE.test(f));
   if (files.length === 0) return { checked: true, uiFace: false, files: [] };
   return { checked: true, uiFace: true, files, ok: status.present && status.refs.length > 0 && status.missing.length < status.refs.length, status };
@@ -421,6 +434,216 @@ function uiGreenLines(cardNo, ui, { header = true } = {}) {
 function uiPassNote(ui) {
   if (!ui.checked) return "";
   return ui.uiFace ? `；UI 面 diff（${ui.files.length} 个文件）：第四绿 ui-designer 证据在位。` : "；diff 未触及 UI 面（packages/ui/）：免第四绿。";
+}
+
+// ---------------------------------------------------------------- manifest 门禁（B6-9/#127；V25/AD-13）
+
+/**
+ * 挂载（B6-9/#127；AD-13/E1 V25）：manifest sha256 比对升为合并门禁——技能包文件变更后必须重新生成
+ * manifest 且随提交入库（基线=提交而非工作区）。判据=技能包内 `assets/manifest.json` 与按来源内容重算的
+ * 期望一致（内容寻址；复用 compile-board --manifest 的键集，见下）。比对一律只读（git 对象库）。
+ */
+const MANIFEST_REL = "assets/manifest.json";
+
+/**
+ * 技能包键集形态（与 compile-board.mjs manifestFileList() 同源，#67；B6-9 复用口径）：
+ *   SKILL.md + assets/board.schema.json + assets/compile-board.mjs + assets/contracts/markers.md
+ *   + assets/lib/*.mjs（一层、非递归）。
+ * 仅用于①包根识别②「未登记」覆盖扫描；摘要比对一律以 manifest.files 登记表为准（不另立第二口径）。
+ * 键集漂移由 run-t13 G14/G15 夹具（manifest 由真编译器生成）与场景 67c 咬住。
+ */
+const PACK_FILE_RE = /^(?:(.*)\/)?(SKILL\.md|assets\/(?:manifest\.json|board\.schema\.json|compile-board\.mjs|contracts\/markers\.md|lib\/[^/]+\.mjs))$/;
+const PACK_KEY_RE = /^(?:SKILL\.md|assets\/(?:board\.schema\.json|compile-board\.mjs|contracts\/markers\.md|lib\/[^/]+\.mjs))$/;
+
+/** manifest 门禁的只读 git 调用（单次 1500ms；仅在 diff 命中键集形态路径时进入，次数有界）。 */
+function gitRead(root, args, input) {
+  return spawnSync("git", args, { cwd: root, encoding: null, input, maxBuffer: 64 * 1024 * 1024, timeout: 1_500 });
+}
+
+function firstStderrLine(r) {
+  return String(r.stderr ?? "").trim().split("\n")[0] ?? "";
+}
+
+/** 单批读取 `<ref>:<path>` 内容（git cat-file --batch）：missing/type 显式返回（不静默当空）。 */
+function readRefBlobs(root, ref, paths) {
+  if (paths.length === 0) return { ok: true, blobs: new Map() };
+  const input = paths.map((p) => `${ref}:${p}`).join("\n") + "\n";
+  const r = gitRead(root, ["cat-file", "--batch"], input);
+  if (r.error !== undefined && r.error !== null) return { ok: false, error: r.error.message };
+  if (r.status !== 0) {
+    const first = firstStderrLine(r);
+    return { ok: false, error: first !== "" ? first : `git cat-file 退出码 ${String(r.status)}` };
+  }
+  const buf = r.stdout ?? Buffer.alloc(0);
+  const blobs = new Map();
+  let pos = 0;
+  for (const p of paths) {
+    const nl = buf.indexOf(0x0a, pos);
+    if (nl < 0) return { ok: false, error: "git cat-file 输出截断" };
+    const header = buf.toString("utf8", pos, nl);
+    pos = nl + 1;
+    if (header.endsWith(" missing")) {
+      blobs.set(p, { missing: true });
+      continue;
+    }
+    const parts = header.split(" ");
+    const size = Number(parts[2]);
+    if (parts.length < 3 || !Number.isInteger(size) || size < 0) return { ok: false, error: `git cat-file 头不可解析（${header}）` };
+    blobs.set(p, { type: parts[1], data: buf.subarray(pos, pos + size) });
+    pos += size + 1;
+  }
+  return { ok: true, blobs };
+}
+
+/** ref 树中判定根 dir 的键集文件 + manifest 本体（ls-tree pathspec 单根单调用；缺件不报错）。 */
+function refTreeKeys(root, ref, dir) {
+  const prefix = dir === "." ? "" : `${dir}/`;
+  const pathspecs = [
+    `${prefix}SKILL.md`,
+    `${prefix}assets/manifest.json`,
+    `${prefix}assets/board.schema.json`,
+    `${prefix}assets/compile-board.mjs`,
+    `${prefix}assets/contracts/markers.md`,
+    `${prefix}assets/lib/`,
+  ];
+  const r = gitRead(root, ["ls-tree", "-r", "--name-only", ref, "--", ...pathspecs]);
+  if (r.error !== undefined && r.error !== null) return { ok: false, error: r.error.message };
+  if (r.status !== 0) {
+    const first = firstStderrLine(r);
+    return { ok: false, error: first !== "" ? first : `git ls-tree 退出码 ${String(r.status)}` };
+  }
+  return { ok: true, files: String(r.stdout ?? "").split("\n").map((s) => s.trim()).filter((s) => s !== "") };
+}
+
+const sha256Hex = (buf) => createHash("sha256").update(buf).digest("hex");
+
+/**
+ * manifest 门禁判定（B6-9/#127；V25/AD-13）：
+ *   {checked:false, reason}                 —— diff 不可得/来源不可解析（边界：记 stderr，不阻断）；
+ *   {checked:false, reason:null, packs:[]}  —— diff 未触及任何技能包键集形态路径（免比对，零噪声）；
+ *   {checked:true, packs:[…]}               —— 已逐包比对（packs[].violations 空 ⇔ 一致）。
+ * 包根 = diff 中键集形态路径的前缀目录；该根在来源中无 `assets/manifest.json` 时不是技能包（免判）。
+ */
+function manifestGate(root, ref, diff) {
+  if (typeof ref !== "string" || ref === "") return { checked: false, reason: "合并来源不可解析为分支名", packs: [] };
+  if (diff === undefined || diff.ok !== true) return { checked: false, reason: diff?.error ?? "变更清单不可得", packs: [] };
+  const roots = new Set();
+  for (const p of diff.files) {
+    const m = PACK_FILE_RE.exec(p);
+    if (m !== null) roots.add(m[1] === undefined || m[1] === "" ? "." : m[1]);
+  }
+  if (roots.size === 0) return { checked: false, reason: null, packs: [] };
+
+  const packs = [];
+  for (const dir of [...roots].sort()) {
+    const prefix = dir === "." ? "" : `${dir}/`;
+    const manifestPath = `${prefix}${MANIFEST_REL}`;
+    const tree = refTreeKeys(root, ref, dir);
+    if (!tree.ok) return { checked: false, reason: tree.error, packs: [] };
+    if (!tree.files.includes(manifestPath)) continue; // 该根在来源中无 manifest：非技能包（免判）
+    packs.push({
+      root: dir,
+      manifestPath,
+      keyFiles: tree.files.filter((f) => f !== manifestPath && PACK_KEY_RE.test(f.startsWith(prefix) ? f.slice(prefix.length) : f)),
+      violations: [],
+    });
+  }
+  if (packs.length === 0) return { checked: false, reason: null, packs: [] };
+
+  // ① 读 manifest 本体（单批）→ 解析登记表；② 汇总待比对键集（manifest.files ∪ 树中键集文件）后单批读取
+  const manifestRead = readRefBlobs(root, ref, packs.map((p) => p.manifestPath));
+  if (!manifestRead.ok) return { checked: false, reason: manifestRead.error, packs: [] };
+  const wanted = new Set();
+  for (const pack of packs) {
+    const prefix = pack.root === "." ? "" : `${pack.root}/`;
+    const b = manifestRead.blobs.get(pack.manifestPath);
+    if (b === undefined || b.missing === true || b.type !== "blob") {
+      pack.violations.push({ kind: "unreadable", file: pack.manifestPath, detail: "来源中 manifest 不可读取（fail-closed）" });
+      continue;
+    }
+    let filesMap = null;
+    try {
+      const doc = JSON.parse(b.data.toString("utf8"));
+      const fm = doc !== null && typeof doc === "object" && !Array.isArray(doc) ? doc.files : null;
+      if (fm !== null && typeof fm === "object" && !Array.isArray(fm)) filesMap = fm;
+    } catch {
+      filesMap = null;
+    }
+    if (filesMap === null) {
+      pack.violations.push({ kind: "unreadable", file: pack.manifestPath, detail: "manifest 不可解析或缺 files 登记表（fail-closed）" });
+      continue;
+    }
+    pack.listed = new Map(Object.entries(filesMap).filter(([, v]) => typeof v === "string"));
+    for (const k of Object.keys(filesMap)) if (typeof filesMap[k] !== "string") pack.violations.push({ kind: "unreadable", file: `${prefix}${k}`, detail: "files 登记值非摘要字符串" });
+    for (const full of pack.keyFiles) if (!pack.listed.has(full.slice(prefix.length))) pack.violations.push({ kind: "unregistered", file: full });
+    for (const rel of pack.listed.keys()) wanted.add(`${prefix}${rel}`);
+    for (const full of pack.keyFiles) wanted.add(full);
+  }
+  const keyRead = readRefBlobs(root, ref, [...wanted]);
+  if (!keyRead.ok) return { checked: false, reason: keyRead.error, packs: [] };
+
+  for (const pack of packs) {
+    if (pack.listed === undefined) continue; // unreadable：登记表不可用，已逐条记录
+    const prefix = pack.root === "." ? "" : `${pack.root}/`;
+    for (const [rel, want] of pack.listed) {
+      const full = `${prefix}${rel}`;
+      const blob = keyRead.blobs.get(full);
+      if (blob === undefined) {
+        pack.violations.push({ kind: "unreadable", file: full, detail: "来源读取面缺该登记键（fail-closed）" });
+        continue;
+      }
+      if (blob.missing === true) {
+        pack.violations.push({ kind: "missing", file: full });
+        continue;
+      }
+      if (blob.type !== "blob") {
+        pack.violations.push({ kind: "missing", file: full, detail: "非文件" });
+        continue;
+      }
+      const got = sha256Hex(blob.data);
+      if (got !== want) pack.violations.push({ kind: "mismatch", file: full, want, got });
+    }
+    delete pack.listed;
+  }
+  return { checked: true, packs };
+}
+
+/** manifest 违例存在性（供放行判定）。 */
+function manifestViolated(mf) {
+  return mf.checked && mf.packs.some((p) => p.violations.length > 0);
+}
+
+function manifestLines(cardNo, ref, mf, { header = true } = {}) {
+  const lines = header ? [`[zcode-board 合并门禁] 已阻断：技能包 manifest 与合并来源不一致（卡 #${cardNo}；V25/AD-13）。`] : [];
+  for (const pack of mf.packs) {
+    lines.push(`- 判别：合并来源 ${ref} 触及技能包（根 ${pack.root}）键集，但 ${pack.manifestPath} 的记录与来源内容不一致：`);
+    const shown = pack.violations.slice(0, 8);
+    for (const v of shown) {
+      if (v.kind === "mismatch") {
+        lines.push(`  - ${v.file}：摘要不符（manifest ${String(v.want).slice(0, 8)}…；重算 ${String(v.got).slice(0, 8)}…）——内容已变，未重生成 manifest。`);
+      } else if (v.kind === "missing") {
+        lines.push(`  - ${v.file}：manifest 有记录而来源中文件${v.detail === "非文件" ? "非文件" : "缺失"}——删除/改名，未重生成 manifest。`);
+      } else if (v.kind === "unregistered") {
+        lines.push(`  - ${v.file}：键集文件未登记——新增/改动未重生成 manifest。`);
+      } else {
+        lines.push(`  - ${v.file}：${v.detail ?? "不可核验"}。`);
+      }
+    }
+    if (pack.violations.length > shown.length) lines.push(`  - …另 ${pack.violations.length - shown.length} 项（同一判据逐条记录，重生成后复核）。`);
+  }
+  lines.push("- 去路：在卡片分支上重生成 manifest 并把结果并入提交：`node <技能包根>/assets/compile-board.mjs --manifest`，随后重试同一合并命令。");
+  lines.push(
+    "- 依据：AD-13（E1 V25）manifest sha256 比对为合并门禁——技能包文件变更后必须重新生成且入库（基线=提交而非工作区）；" +
+      "键集与 compile-board --manifest 同源（#67），仅键集形态路径在面（hooks/tools/test/templates 不在键集，不判）。",
+  );
+  return lines;
+}
+
+/** 通过放行时的 manifest 注记（stderr 去路文案；免比对与已比对两态）。 */
+function manifestPassNote(mf) {
+  if (!mf.checked) return mf.reason === null ? "；diff 未触及技能包 manifest 键集（免比对）" : "";
+  const paths = mf.packs.map((p) => p.manifestPath);
+  return paths.length > 0 ? `；技能包 manifest 比对一致（${paths.join("、")}）` : "";
 }
 
 // ---------------------------------------------------------------- 门禁证据
@@ -555,14 +778,24 @@ function main() {
       );
     }
     const ev = verdictEvidence(root, cls.cardNo);
-    const ui = uiFaceGate(root, ctx.base, ref, ev.uiDesigner);
+    const changed = diffOf(root, ctx.base, ref);
+    const ui = uiFaceGate(ref, ev.uiDesigner, changed);
+    const mf = manifestGate(root, ref, changed);
     if (!ui.checked) log(`第四绿：diff 不可得（${ui.reason}）：本次不判定 UI 面（边界：仅按本地可解析的 ${ctx.base ?? "HEAD"}...<来源> 计算）。`);
+    if (!mf.checked && mf.reason !== null) {
+      log(`manifest 门禁：不判定（${mf.reason}）：本次不比对技能包 manifest（边界：仅按本地可解析的 ${ctx.base ?? "HEAD"}...<来源> 计算）。`);
+    }
     if (ev.approved && ev.pass) {
+      if (manifestViolated(mf)) return block(manifestLines(cls.cardNo, ref, mf));
       if (ui.checked && ui.uiFace && !ui.ok) return block(uiGreenLines(cls.cardNo, ui));
-      log(`门禁通过：卡 #${cls.cardNo} 前两绿证据在位（code-reviewer approved / test-verifier pass）；第三绿归 integrator 机械验证${uiPassNote(ui)}`);
+      log(
+        `门禁通过：卡 #${cls.cardNo} 前两绿证据在位（code-reviewer approved / test-verifier pass）；第三绿归 integrator 机械验证` +
+          `${uiPassNote(ui)}${manifestPassNote(mf)}`,
+      );
       return 0;
     }
     const lines = gateLines(cls.cardNo, ev, ctx.base);
+    if (manifestViolated(mf)) lines.push("", ...manifestLines(cls.cardNo, ref, mf, { header: false }));
     if (ui.checked && ui.uiFace && !ui.ok) lines.push("", ...uiGreenLines(cls.cardNo, ui, { header: false }));
     return block(lines);
   }
@@ -620,14 +853,21 @@ function main() {
     }
     const ev = verdictEvidence(root, cardNo);
     const headRef = prHeadRef(root, cardNo);
-    const ui = uiFaceGate(root, ctx.base, headRef, ev.uiDesigner);
+    const changed = diffOf(root, ctx.base, headRef);
+    const ui = uiFaceGate(headRef, ev.uiDesigner, changed);
+    const mf = manifestGate(root, headRef, changed);
     if (!ui.checked) log(`第四绿：PR 头分支 diff 不可得（${ui.reason}）：本次不判定 UI 面（边界：仅按本地 task-<no> / origin/task-<no> 计算）。`);
+    if (!mf.checked && mf.reason !== null) {
+      log(`manifest 门禁：不判定（${mf.reason}）：本次不比对技能包 manifest（边界：仅按本地 task-<no> / origin/task-<no> 计算）。`);
+    }
     if (ev.approved && ev.pass) {
+      if (manifestViolated(mf)) return block(manifestLines(cardNo, headRef ?? "PR 头分支", mf));
       if (ui.checked && ui.uiFace && !ui.ok) return block(uiGreenLines(cardNo, ui));
-      log(`门禁通过：卡 #${cardNo} 前两绿证据在位（PR 模式）${uiPassNote(ui)}`);
+      log(`门禁通过：卡 #${cardNo} 前两绿证据在位（PR 模式）${uiPassNote(ui)}${manifestPassNote(mf)}`);
       return 0;
     }
     const lines = gateLines(cardNo, ev, ctx.base);
+    if (manifestViolated(mf)) lines.push("", ...manifestLines(cardNo, headRef ?? "PR 头分支", mf, { header: false }));
     if (ui.checked && ui.uiFace && !ui.ok) lines.push("", ...uiGreenLines(cardNo, ui, { header: false }));
     return block(lines);
   }

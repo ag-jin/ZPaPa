@@ -772,6 +772,95 @@ const MUTATIONS = [
       "RECENT_LIMIT 收紧（N 调小、recent 被提前截断）——i2 上界只判 ≤N 不判下界（合法少填），承载面 = S-1 词表守卫：fact-invariants 独立复写常量 RECENT_LIMIT 与 derive 对照，常量改动必被守卫咬住（C2 评审 std-2 承接：若场景侧无咬合断言，本条期望以 S-1 必红为准）",
     apply: (src) => mutate(src, "const RECENT_LIMIT = 10;", "const RECENT_LIMIT = 3;", "m51f"),
   },
+  {
+    name: "m52a-registry-ghost-merge-off",
+    scenario: "105a",
+    expect:
+      "registry 幽灵/悬空条目并入板 diagnostics 的调用关停（幽灵号不再落点名——E4-05 两视图分叉回归）必须被 105a 的条目面点名计数断言咬住",
+    apply: (src) => mutate(src, "  reconcileRegistryEntries(features, registry, root, diag);", "  /* 突变：幽灵/悬空并入关停 */", "m52a"),
+  },
+  {
+    name: "m52b-runs-ref-split-off",
+    scenario: "105b",
+    expect:
+      "runs 引用死号两文案分流关停（registry 有条目而板上无 也落「完全未知号」文案——两文案混用回归）必须被 105b 的文案 A 独立断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        'if (classifyDeadNumber(no, { liveNos: liveNo, registryNos: runsRegistryNos }) === "registry-not-on-board") {',
+        "if (false) {",
+        "m52b",
+      ),
+  },
+  {
+    name: "m52c-registry-ghost-visibility-off",
+    file: FIXTURE_INVARIANTS,
+    scenario: "105d",
+    expect:
+      "registry 幽灵/悬空可见性断言关停（板面删点名不再咬——两视图一致性防线失效）必须被 105d 的「registry 对账 恰 1 项失败」断言咬住",
+    apply: (src) => mutate(src, "    if (named) continue;", "    if (true) continue;", "m52c"),
+  },
+  {
+    name: "m52d-omitted-ref-visibility-off",
+    file: "lib/schema-check.mjs",
+    scenario: "105d",
+    expect:
+      "「不造引用不静默」配对断言关停（引用缺省且无点名不再咬）必须被 105d 的板结构配对断言咬住",
+    apply: (src) => mutate(src, "                if (!named) {", "                if (false) {", "m52d"),
+  },
+  {
+    name: "m53a-assign-identity-off",
+    scenario: "106a",
+    expect:
+      "发号前身份校验关停（名不符稿不再触发拒发——V29 #41 手误防线失效）必须被 106a 的拒发/点名/零写入断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "    for (const reason of planDocIdentityViolations(facts)) identityViolations.push({ file: t.file, reason });",
+        "    for (const reason of planDocIdentityViolations(facts)) void reason; /* 突变：身份校验关停 */",
+        "m53a",
+      ),
+  },
+  {
+    name: "m53b-session-uuid-rule-relaxed",
+    scenario: "106a",
+    expect:
+      "会话稿 uuid 完整性判据放宽（缺段会话名照常通过——#41 手误形态回归）必须被 106a 的「完整 uuid/实际会话段」点名断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "const COMPLETE_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;",
+        "const COMPLETE_UUID_RE = /^.+$/; /* 突变：uuid 完整性放宽 */",
+        "m53b",
+      ),
+  },
+  {
+    name: "m53c-content-feature-rule-off",
+    scenario: "106a",
+    expect:
+      "内容计划特征判据关停（无标题无条目的叙事稿照常通过）必须被 106a 的「内容无计划稿特征」点名断言咬住",
+    apply: (src) => mutate(src, "  if (!hasHeading && entryCount === 0) {", "  if (false) { /* 突变：内容特征判据关停 */", "m53c"),
+  },
+  {
+    name: "m53d-assign-plan-code-dup-off",
+    scenario: "106b",
+    expect:
+      "重码判定关停（--assign 不再对重复 planCode 拒发）必须被 106b 的拒发/逐码点名/零写入断言咬住",
+    apply: (src) => mutate(src, "  const planCodeDuplicates = planCodeConflicts(entries);", "  const planCodeDuplicates = []; /* 突变：重码判定关停 */", "m53d"),
+  },
+  {
+    name: "m53e-check-plan-code-assertion-off",
+    scenario: "106b",
+    expect:
+      "--check 面 planCode 唯一断言关停（重复注册表项不再失败级点名）必须被 106b 的「planCode 唯一 恰 1 项失败」断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "  return planCodeConflicts(registry.entries).map((c) => planCodeConflictMessage(c));",
+        "  return []; /* 突变：唯一断言关停 */",
+        "m53e",
+      ),
+  },
 ];
 
 function main(argv) {

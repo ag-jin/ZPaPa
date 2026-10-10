@@ -39,6 +39,15 @@
  *       = 悬空/孤儿引用（板面 faithful 透出但引用不可达、零 rollup）→ 逐条点名（路径 + 两值）。裸码等
  *       形态违规归 lib/schema-check.mjs 结构面；整数稳定号与无 epic 缺省不判（零噪声，AD-8）。
  *
+ * 死号对账判据与 registry 幽灵/悬空可见性断言（B4-1/#105；E4-05 / A-facts U1 / E1 V28·V29 / T20 G1）：
+ *   - `classifyDeadNumber(no, {liveNos, registryNos})`：号的可达面三分类单点纯判定——`live`（板上可达）/
+ *     `registry-not-on-board`（幽灵/悬空条目：registry 有条目而板上无）/ `unknown`（完全未知号）；
+ *     compile-board 的条目对账与引用两文案分流（勘误 9d）共用此判据（防二份口径漂移）；
+ *   - `checkRegistryGhosts({board, registryEntries, archivedNos})`（失败级）：板面 + registry **独立复算**
+ *     「两值可见性」——凡不在板上活条目、又非已验证归档件的 registry 条目，板面 diagnostics 必须点名
+ *     （registry 源路径 + 条目号 + 指向路径）；缺则两视图分叉必咬（E4-05 缺陷本体的机械防线）。
+ *     编译侧点名本身为提示级（降级可见性）；本断言只保证点名**不被吞掉**。
+ *
  * 判定边界（与 lib/schema-check.mjs 同分层）：本模块只做纯数据判定，不读盘、不比对源——
  *   board 对象与 board.md 文本由调用方传入（磁盘板与重编译基线分别配对调用）；无第三方依赖，
  *   也不需要任何 node 内置模块。词表与渲染位语义在此**独立复写**（不导入 lib/derive.mjs 与编译器），
@@ -153,6 +162,102 @@ export function vocabularySnapshot() {
     blockerKinds: [...BLOCKER_KINDS],
     isoSource: ISO_SOURCE,
   };
+}
+
+// ---------------------------------------------------------------- 死号对账判据（B4-1/#105）
+
+/**
+ * 死号（不可达号）分类判据——**单点纯判定**（B4-1/#105；E4-05 / E1 V28·V29 / 勘误 9d）：
+ *   号的可达面 = 本次编译的板（活条目集合）× registry（发号登记），「registry 有条目而板上无」与
+ *   「完全未知号」是两种独立情形（勘误 9d 两文案先例），判据必须单点复写：
+ *     - `"live"`：号在本次编译板上（可达；引用位照常成立、不点名）；
+ *     - `"registry-not-on-board"`：号在 registry 有条目、板上无活条目（幽灵/悬空条目形态——
+ *       E1 V29 #41 手误路径发号、E1 V28 #48 悬空；引用与对账走「registry 有条目而板上无」独立文案）；
+ *     - `"unknown"`：号既不在板上、也不在 registry（完全未知号；引用走「核对句柄写法」独立文案）。
+ * 非正整数形态（缺号/字符串/标签）不解析 → `"unknown"`（形态违规归结构面与「损坏源」失败项点名，
+ * 本判据不叠加噪音）。liveNos/registryNos 缺省/非 Set → 视为空集合（fail-open 到 unknown，
+ * 不猜可达——调用方传谁判谁）。
+ * 纯函数：不读盘、不改入参、无隐藏状态。
+ * @param {unknown} no 待判号（正整数稳定号）
+ * @param {{liveNos?: Set<number>, registryNos?: Set<number>}} [facts] 板面活号集合与 registry 条目号集合
+ * @returns {"live"|"registry-not-on-board"|"unknown"}
+ */
+export function classifyDeadNumber(no, { liveNos = null, registryNos = null } = {}) {
+  if (!Number.isInteger(no) || no < 1) return "unknown";
+  if (liveNos instanceof Set && liveNos.has(no)) return "live";
+  if (registryNos instanceof Set && registryNos.has(no)) return "registry-not-on-board";
+  return "unknown";
+}
+
+/**
+ * registry 幽灵/悬空条目**两值可见性**断言（B4-1/#105；E4-05 / A-facts U1 / T20 G1）——**失败级**
+ * （独立导出；由 compile-board `checkProject` 在磁盘板与重编译基线上各判一遍）。
+ *
+ * 存在原因（缺陷本体）：`--check` 的 registry 指向直查与板面 diagnostics 曾是两个视图——直查结论只在
+ * `--check` 输出、board.json diagnostics 无（E4-05 实锤 #41：冷读者打开板"板面全绿"漏掉幽灵/悬空号）。
+ * 本断言把「两视图一致」做成常驻机械防线：对「板面 + registry 条目」**独立复算**——凡号不在板上活条目、
+ * 又非已验证归档件的 registry 条目，板面 diagnostics 必须有一条点名（含 registry 源路径、条目号、
+ * 条目指向路径三项；即验收口径「含路径与两值」），缺则必咬。
+ *
+ * 判定域（成文，勿扩）：
+ *   - 判定对象 = registry 条目（号为正整数）——板上活号不判（可达，零噪声）；已验证归档件由调用方以
+ *     `archivedNos` 传入并跳过（勘误 10 直查通过 = 合法退役面，不误报）；形态非法条目（no 非正整数）
+ *     不判（归「registry 不一致」失败面）；
+ *   - 点名匹配 = diagnostics 行 path 等于板 `sources[].kind === "registry"` 的路径，且 message 含条目号
+ *     （数字边界匹配，不绑定实现文案句式）与条目指向路径（file/specRoot，指向缺省则只认号）；
+ *   - board 非对象/registry 非数组 → 零违例（失败级另一路点名，不叠加）。
+ * 判级 = 失败级：视图分叉属结构矛盾类（重编译/修复编译器即可恢复），与不变量 (a)–(d)/(h) 同层；
+ *   编译侧点名本身为提示级（降级可见性）——两级分工：编译侧**点名**、本断言保证点名**不被吞掉**。
+ * 纯函数：不读盘、不改入参、无隐藏状态。
+ * @param {object} input
+ * @param {object} input.board board.json 形态对象（含 sources/diagnostics/features）
+ * @param {unknown} input.registryEntries registry.entries 原始数组
+ * @param {number[]} [input.archivedNos] 经直查验证的归档件号（调用方按 disk 判定；缺省 = 无）
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkRegistryGhosts({ board, registryEntries, archivedNos = [] } = {}) {
+  const out = [];
+  if (!isPlainObject(board)) return out;
+  const rows = Array.isArray(board.diagnostics) ? board.diagnostics : [];
+  const registryRel =
+    (Array.isArray(board.sources) ? board.sources : []).find((s) => isPlainObject(s) && s.kind === "registry")?.path ?? null;
+  const live = new Set();
+  const walk = (tasks) => {
+    for (const t of tasks ?? []) {
+      if (isPlainObject(t) && Number.isInteger(t.no) && t.no >= 1) live.add(t.no);
+      walk(t?.tasks);
+    }
+  };
+  for (const f of board.features ?? []) {
+    if (!isPlainObject(f)) continue;
+    if (Number.isInteger(f.no) && f.no >= 1) live.add(f.no);
+    walk(f.tasks);
+  }
+  const archived = new Set((Array.isArray(archivedNos) ? archivedNos : []).filter((n) => Number.isInteger(n) && n >= 1));
+  /** 数字边界匹配（防 105 匹配到 1050/105a；不绑定实现文案句式——本断言只判"可见"，不判措辞）。 */
+  const mentionsNumber = (message, no) => new RegExp(`(?:^|[^0-9])${no}(?:[^0-9]|$)`).test(message);
+  const seen = new Set();
+  for (const entry of Array.isArray(registryEntries) ? registryEntries : []) {
+    const no = entry?.no;
+    if (!Number.isInteger(no) || no < 1 || seen.has(no)) continue;
+    seen.add(no);
+    if (live.has(no) || archived.has(no)) continue;
+    const ref = entry?.kind === "spec" ? entry?.specRoot : entry?.file;
+    const refOk = typeof ref === "string" && ref !== "";
+    const named = rows.some(
+      (d) =>
+        isPlainObject(d) &&
+        d.path === registryRel &&
+        typeof d.message === "string" &&
+        mentionsNumber(d.message, no) &&
+        (!refOk || d.message.includes(ref)),
+    );
+    if (named) continue;
+    out.push(
+      `registry 幽灵/悬空可见性（registry 有条目而板上无）：registry 条目 ${no}（kind=${JSON.stringify(entry?.kind ?? null)}，指向 ${JSON.stringify(refOk ? ref : null)}）不在板上活条目、且非已验证归档件，但 ${registryRel ?? "（板 sources[] 未列 registry 路径）"} 面 diagnostics 无对应点名（含路径与两值：registry 源路径 + 条目号 + 指向路径）——两视图分叉（E4-05/U1：--check 直查有、板面无，冷读者漏读）；重编译刷新板面点名，或修复编译器 diagnostic 出口；失败级（B4-1/#105）。`,
+    );
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- 公用件

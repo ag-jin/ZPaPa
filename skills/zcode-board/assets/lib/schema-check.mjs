@@ -11,7 +11,9 @@
  *      逐码相等、执行字段一致性）+ "号是身份"引用位整数断言（no/blockedBy 只认稳定号整数）+
  *      活号唯一 / label 形态与归属（含 §2.4 过渡态例外：未领号特性下的带号卡 label 缺省合法）+
  *      epic 归属对结构语义（A2-2/#82；§10.1/§10.3：原子对 / 引用位形态（码不进引用位）/ phase 单值
- *      正整数；`epic:<码>` 的登记行反查归 lib/fact-invariants.mjs checkEpicRefs）；
+ *      正整数；`epic:<码>` 的登记行反查归 lib/fact-invariants.mjs checkEpicRefs）+
+ *      「不造引用不静默」配对断言（B4-1/#105；§12/勘误 9d 的板面侧：dependency 引用缺省（被拒/不可达）
+ *      必须伴随该来源文件的点名 diagnostics——降级可见性，板面不得静默吞掉被拒引用）；
  *   4. checkExemptionsDoc(doc)（B1-1/#97）：豁免登记（.zcode/board/exemptions.json，第五不变量 (e)
  *      的点名抑制）格式校验——结构非法整份拒收；条目级非法该条拒绝 + 点名，合法条目照常生效。
  *
@@ -502,6 +504,26 @@ export function checkBoardInvariants(board) {
                 errors.push(`${bp}.blockedBy: 引用位只认稳定号（正整数），实际 ${brief(b.blockedBy)}`);
               } else if (!noMap.has(b.blockedBy)) {
                 errors.push(`${bp}.blockedBy: 目标号 ${b.blockedBy} 不在板上活条目（§12 应缺省并记 diagnostics）`);
+              }
+            } else {
+              // 引用缺省（被拒/不可达 → §12 不造引用）必须伴随点名（**不造引用不静默**；B4-1/#105）：
+              // 降级可见性 = 「缺省」与「点名」成对出现——板面不得静默吞掉被拒引用（冷读者漏读的正是
+              // 无点名的缺省：E4-05/U1 的板面侧）。判定域 = 有来源文件（source.file）的节点；
+              // 无 source.file（特性层/手写板）不判（不猜来源，零噪声）。
+              const srcFile =
+                isPlainObject(node.source) && typeof node.source.file === "string" && node.source.file !== ""
+                  ? node.source.file
+                  : null;
+              if (srcFile !== null) {
+                const rows = Array.isArray(board.diagnostics) ? board.diagnostics : [];
+                const named = rows.some(
+                  (d) => isPlainObject(d) && d.path === srcFile && typeof d.message === "string" && d.message !== "",
+                );
+                if (!named) {
+                  errors.push(
+                    `${bp}: dependency 引用缺省（§12 不造引用）但板上无 ${brief(srcFile)} 的点名 diagnostics——不造引用不静默（引用被拒/不可达必须落点名，勘误 9d；冷读者不得读到无点名的缺省）。`,
+                  );
+                }
               }
             }
           } else {

@@ -51,13 +51,14 @@
  * 退出码：0 = 全部通过；1 = 有失败。
  */
 
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { readJsonFile } from "../lib/board-io.mjs";
+import { manifestFileList } from "../compile-board.mjs"; // S9 同源守卫：manifest 键集唯一事实源（#67）
 import {
   ASSETS_DIR,
   COMPILER,
@@ -1500,6 +1501,18 @@ test("S5", "静态：gate-merge.mjs 存在、仅 node 内置/相对导入、语�
   }
 });
 
+// ---- S9 B6-9（#127）：manifest 键集同源守卫（gate-merge 判据 ↔ compile-board manifestFileList()，#67）
+
+test("S9", "manifest 键集同源守卫（B6-9/#127）：gate-merge 的键集形态与 compile-board manifestFileList() 同源（#67）——键集扩面必咬（两处口径不得漂移）", (c) => {
+  const keys = manifestFileList();
+  const fixed = keys.filter((p) => !p.startsWith("assets/lib/"));
+  c.eq(fixed, ["SKILL.md", "assets/board.schema.json", "assets/compile-board.mjs", "assets/contracts/markers.md"], "键集固定项（manifestFileList() 现值；扩面即改本断言与 gate-merge 判据）");
+  c.ok(keys.some((p) => /^assets\/lib\/[^/]+\.mjs$/.test(p)), "键集含 assets/lib/*.mjs 动态项（非递归一层）", show(keys));
+  const src = readFileSync(GATE_MERGE, "utf8");
+  for (const rel of fixed) c.ok(src.includes(rel), `gate-merge 键集判据含固定项：${rel}`);
+  c.ok(src.includes("assets/lib/") && src.includes("lib\\/[^/]+\\.mjs"), "gate-merge 键集判据含 assets/lib/*.mjs 形态（非递归一层）");
+});
+
 // ---- C8 B1-2（#98）：第五类降级——证据源不可用时的口径（缺失 ≡ 空证据 / 损坏 → 跳过，均不静默）
 
 test("C8", "Stop 第五类降级（B1-2/#98）：runs.json 缺失 ≡ 空证据（逐条点名）；损坏/板损坏 → 第五类跳过并提示（不误当通过）", (c) => {
@@ -2735,6 +2748,165 @@ test("Q3", "HEAD merge 格式事后核对（B5-6/#118，E4-17 审计面）：默
   const feat = runVerifyCleanup(root4, ["--cards", "118"]);
   c.exit(feat, 0, "非卡合并形态 → 退出码 0（格式面不适用，零误报）");
   c.ok(!/格式残留/.test(String(feat.stdout ?? "")), "stdout 零格式残留噪声", show(String(feat.stdout ?? "")));
+});
+
+// ---- B6-9（#127）：manifest 比对门禁（技能包键集变更未重生成 → 合并拦截；V25/AD-13）
+
+/**
+ * 夹具：技能包形态仓库（SKILL.md + assets/{board.schema.json,compile-board.mjs,contracts/markers.md,lib/*.mjs}）。
+ * manifest 基线一律由**真编译器 --manifest** 生成（复用 --manifest 的内容寻址逻辑，不手抄摘要；
+ * 仅 SKILL.md 正文为夹具自造，其余键集文件取真件副本——键集与真编译器的 manifestFileList() 同源）。
+ * dir = 技能包根（相对仓库根；默认 "."，可传 "skills/zcode-board" 构造子目录镜像形态）。
+ */
+function skillPackFixture(root, { dir = "." } = {}) {
+  const pack = dir === "." ? root : join(root, dir);
+  const copyFile = (from, to) => {
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  };
+  w(pack, "SKILL.md", "# fixture 技能包（B6-9 夹具）\n");
+  copyFile(join(ASSETS_DIR, "board.schema.json"), join(pack, "assets", "board.schema.json"));
+  copyFile(join(ASSETS_DIR, "compile-board.mjs"), join(pack, "assets", "compile-board.mjs"));
+  copyFile(join(ASSETS_DIR, "contracts", "markers.md"), join(pack, "assets", "contracts", "markers.md"));
+  for (const name of readdirSync(join(ASSETS_DIR, "lib")).sort()) {
+    if (name.endsWith(".mjs")) copyFile(join(ASSETS_DIR, "lib", name), join(pack, "assets", "lib", name));
+  }
+  return regenerateManifest(pack);
+}
+
+/** 夹具内重生成 manifest（真编译器；realpathSync 归一保证入口守卫命中——场景 67c 同因）。 */
+function regenerateManifest(packRoot) {
+  return spawnSync(process.execPath, [join(realpathSync(packRoot), "assets", "compile-board.mjs"), "--manifest"], { encoding: "utf8" });
+}
+
+/**
+ * 夹具：以 main 为基新建任务分支，提交一处技能包改动（可选：提交前用真编译器重生成 manifest）；随后切回原分支。
+ * delete=true 时删除 file（manifest 有记录而来源缺失的形态）。
+ */
+function skillChangeOnBranch(root, branch, { file, content = null, packDir = ".", regenerate = false, delete: del = false }) {
+  const cur = String(git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout ?? "").trim();
+  const co = git(root, ["checkout", "-q", "-b", branch]);
+  if (del) rmSync(join(root, file));
+  else w(root, file, content);
+  const gen = regenerate ? regenerateManifest(packDir === "." ? root : join(root, packDir)) : null;
+  git(root, ["add", "-A"]);
+  const commit = git(root, ["-c", "user.email=t13@fixture", "-c", "user.name=t13", "commit", "-qm", `feat ${branch}`]);
+  git(root, ["checkout", "-q", cur]);
+  return { co, gen, commit };
+}
+
+test("G14", "manifest 比对门禁（B6-9/#127；V25/AD-13）：键集文件变更未重生成 manifest → 合并拦截（exit 2 点名）；分支内重生成并入提交 → 放行（exit 0）", (c) => {
+  const root = newRoot("t13-g14");
+  c.exit(skillPackFixture(root), 0, "前置：夹具技能包 manifest 由真编译器 --manifest 生成（退出码 0）");
+  c.ok(isFile(join(root, "assets", "manifest.json")), "前置：assets/manifest.json 在位");
+  initGitRepo(root);
+
+  // 红：task-12 改 SKILL.md（键集文件，未提交 manifest 重生成）→ 目标为 base 的合并被拦
+  const red = skillChangeOnBranch(root, "task-12", { file: "SKILL.md", content: "# fixture 技能包 v2（未重生成）\n" });
+  c.exit(red.co, 0, "前置：task-12 分支建立");
+  c.exit(red.commit, 0, "前置：task-12 提交落地");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [12] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [12] }),
+  ]);
+  const bad = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-12 -m "Merge task-12 [#12]"'));
+  c.exit(bad, 2, "键集变更未重生成 manifest → 拦截（exit 2 → permissionDecision deny）");
+  const err = String(bad.stderr ?? "");
+  c.ok(/manifest/.test(err), "点名 manifest 判面（V25/AD-13）", show(err.slice(0, 900)));
+  c.ok(/assets\/manifest\.json/.test(err), "点名 manifest 路径", show(err.slice(0, 900)));
+  c.ok(/SKILL\.md/.test(err), "点名不一致的键集文件（摘要不符）", show(err.slice(0, 1200)));
+  c.ok(/(--manifest|重生成)/.test(err), "去路：重生成 manifest（--manifest）", show(err.slice(0, 1400)));
+  c.ok(/#12/.test(err), "点名卡号", show(err.slice(0, 400)));
+  c.ok(!/缺三绿/.test(err), "绿证据在位时不报缺绿（阻断原因=manifest 不一致）", show(err.slice(0, 600)));
+  c.ok(String(bad.stdout ?? "").trim() === "", "stdout 为空（阻断原因走 stderr）");
+
+  // 绿：task-13 改 SKILL.md + 分支内重生成 manifest 并入提交 → 放行
+  const green = skillChangeOnBranch(root, "task-13", { file: "SKILL.md", content: "# fixture 技能包 v3（已重生成）\n", regenerate: true });
+  c.exit(green.co, 0, "前置：task-13 分支建立");
+  c.exit(green.gen, 0, "前置：分支内 --manifest 重生成退出码 0");
+  c.exit(green.commit, 0, "前置：分支提交落地（manifest 同提交入库）");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [13] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [13] }),
+  ]);
+  const ok = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-13 -m "Merge task-13 [#13]"'));
+  c.exit(ok, 0, "重生成并入提交后 → 放行（exit 0）");
+  c.ok(String(ok.stdout ?? "").trim() === "", "放行 stdout 为空（不注入）");
+});
+
+test("G15", "manifest 门禁反例（B6-9/#127）：非键集路径免比对不误拦；新增未登记 / 有记录而缺失 / 子目录镜像根 / manifest 不可解析 → 均拦截点名（fail-closed）", (c) => {
+  // ① 反例：非键集路径（assets/hooks/…，hooks 不在 manifest 键集，#67）→ 免比对放行（不误拦）
+  const root = newRoot("t13-g15a");
+  c.exit(skillPackFixture(root), 0, "前置：夹具技能包 manifest 生成");
+  initGitRepo(root);
+  c.exit(skillChangeOnBranch(root, "task-20", { file: "assets/hooks/extra-hook.mjs", content: "export const x = 1;\n" }).commit, 0, "前置：task-20 触及非键集路径");
+  writeRuns(root, [
+    runRecord({ role: "test-verifier", result: "done", cards: [20] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [20] }),
+  ]);
+  const pass = runHook(GATE_MERGE, preToolUsePayload(root, 'git merge --no-ff task-20 -m "Merge task-20 [#20]"'));
+  c.exit(pass, 0, "非键集路径（hooks/）→ 放行（免比对）");
+  c.ok(/免比对/.test(String(pass.stderr ?? "")), "stderr 注记免比对（diff 未触及键集）", show(String(pass.stderr ?? "").slice(0, 500)));
+  c.ok(!/已阻断/.test(String(pass.stderr ?? "")), "无阻断文案（不误拦）", show(String(pass.stderr ?? "").slice(0, 500)));
+
+  // ② 反例：新增键集文件（assets/lib/…）未重生成 manifest → 拦截并点名「未登记」
+  const root2 = newRoot("t13-g15b");
+  c.exit(skillPackFixture(root2), 0, "前置：夹具技能包 manifest 生成");
+  initGitRepo(root2);
+  c.exit(skillChangeOnBranch(root2, "task-21", { file: "assets/lib/extra-lib.mjs", content: "export const extra = 1;\n" }).commit, 0, "前置：task-21 新增 lib 文件");
+  writeRuns(root2, [
+    runRecord({ role: "test-verifier", result: "done", cards: [21] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [21] }),
+  ]);
+  const add = runHook(GATE_MERGE, preToolUsePayload(root2, 'git merge --no-ff task-21 -m "Merge task-21 [#21]"'));
+  c.exit(add, 2, "新增键集文件未登记 → 拦截（exit 2）");
+  c.ok(/assets\/lib\/extra-lib\.mjs/.test(String(add.stderr ?? "")), "点名未登记的新增文件", show(String(add.stderr ?? "").slice(0, 1200)));
+  c.ok(/未登记/.test(String(add.stderr ?? "")), "写明「未登记」判据（新增未重生成）", show(String(add.stderr ?? "").slice(0, 1200)));
+
+  // ③ 反例：manifest 有记录而来源中文件缺失（删除 markers.md 未重生成）→ 拦截并点名「缺失」
+  const root3 = newRoot("t13-g15c");
+  c.exit(skillPackFixture(root3), 0, "前置：夹具技能包 manifest 生成");
+  initGitRepo(root3);
+  c.exit(skillChangeOnBranch(root3, "task-22", { file: "assets/contracts/markers.md", delete: true }).commit, 0, "前置：task-22 删除键集文件");
+  writeRuns(root3, [
+    runRecord({ role: "test-verifier", result: "done", cards: [22] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [22] }),
+  ]);
+  const gone = runHook(GATE_MERGE, preToolUsePayload(root3, 'git merge --no-ff task-22 -m "Merge task-22 [#22]"'));
+  c.exit(gone, 2, "键集文件缺失未重生成 manifest → 拦截（exit 2）");
+  c.ok(/assets\/contracts\/markers\.md/.test(String(gone.stderr ?? "")), "点名缺失的键集文件", show(String(gone.stderr ?? "").slice(0, 1200)));
+  c.ok(/缺失/.test(String(gone.stderr ?? "")), "写明「缺失」判据（删除/改名未重生成）", show(String(gone.stderr ?? "").slice(0, 1200)));
+
+  // ④ 反例：子目录镜像包根（skills/zcode-board/，ZPaPa 形态）同样定位并拦截（根识别非仅仓库根）
+  const root4 = newRoot("t13-g15d");
+  c.exit(skillPackFixture(root4, { dir: "skills/zcode-board" }), 0, "前置：子目录技能包 manifest 生成");
+  initGitRepo(root4);
+  c.exit(
+    skillChangeOnBranch(root4, "task-23", { file: "skills/zcode-board/SKILL.md", content: "# 镜像技能包 v2\n", packDir: "skills/zcode-board" }).commit,
+    0,
+    "前置：task-23 改子目录镜像包 SKILL.md（未重生成）",
+  );
+  writeRuns(root4, [
+    runRecord({ role: "test-verifier", result: "done", cards: [23] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [23] }),
+  ]);
+  const mirror = runHook(GATE_MERGE, preToolUsePayload(root4, 'git merge --no-ff task-23 -m "Merge task-23 [#23]"'));
+  c.exit(mirror, 2, "子目录镜像包键集变更未重生成 → 拦截（exit 2）");
+  c.ok(/skills\/zcode-board\/assets\/manifest\.json/.test(String(mirror.stderr ?? "")), "点名镜像包 manifest 路径（根识别正确）", show(String(mirror.stderr ?? "").slice(0, 1200)));
+  c.ok(/skills\/zcode-board\/SKILL\.md/.test(String(mirror.stderr ?? "")), "点名镜像包内不一致文件", show(String(mirror.stderr ?? "").slice(0, 1200)));
+
+  // ⑤ 反例：manifest 不可解析 → fail-closed 拦截（基线记录损坏不放行）
+  const root5 = newRoot("t13-g15e");
+  c.exit(skillPackFixture(root5), 0, "前置：夹具技能包 manifest 生成");
+  initGitRepo(root5);
+  c.exit(skillChangeOnBranch(root5, "task-24", { file: "assets/manifest.json", content: "{ 坏 JSON" }).commit, 0, "前置：task-24 提交损坏 manifest");
+  writeRuns(root5, [
+    runRecord({ role: "test-verifier", result: "done", cards: [24] }),
+    runRecord({ role: "code-reviewer", result: "done", cards: [24] }),
+  ]);
+  const broken = runHook(GATE_MERGE, preToolUsePayload(root5, 'git merge --no-ff task-24 -m "Merge task-24 [#24]"'));
+  c.exit(broken, 2, "manifest 不可解析 → 拦截（exit 2，fail-closed）");
+  c.ok(/不可解析|fail-closed/.test(String(broken.stderr ?? "")), "写明不可解析判据（fail-closed）", show(String(broken.stderr ?? "").slice(0, 1200)));
 });
 
 // ---- B5-5（#117）：板滚未提交——Stop 对账新类别（E1 V35）

@@ -38,7 +38,11 @@
  *     逐文件原子写，只增不改）；spec 特性号 registry 内绑定；seq 高水位只增；registry 指向更新
  *     （苗圃迁移 ②'、计划→spec 延续、归档映射（勘误 10：file/specRoot → 归档路径，号不变））；
  *     registry 丢失/损坏按活标记重建（seq=max 活号）；冲突/篡改不静默改写（diagnostics + 降级未领号）；
- *     发号后自动重编译；
+ *     发号后自动重编译；B4-2/#106 发号前双闸（拒绝执行 = 退出码 1、零写入、逐项点名，先于任何写出）：
+ *     ①「名实相符」身份校验（E1 V29，#41 手误事故防线）——本次将新领号的计划稿文件名须符合冻结形态
+ *     （plan-*.md；会话稿 plan-sess_<完整uuid>.md，8-4-4-4-12）且内容含计划稿特征（首个标题行或可识别
+ *     任务条目）；只判新身份，已领号历史文件不回溯；②计划码唯一断言（E4-11）——registry 条目（含
+ *     归档/离板同域）中形态合法的 planCode 全局唯一，重码 = 码位冲突（重复注册表项不受检的缺口）；
  *   - 审计（T10，--check）：全程只读；内存重编译为期望基线 → 源完整性（损坏源 → 失败）、
  *     活条目清单 ↔ registry 互检（活号唯一、kind/指向一致、裁决序：标记 > registry；
  *     归档条目按指向路径直查——存在且含标记 → 通过 note"已归档"；指向不存在且归档候选已验证 → 失败级诊断，
@@ -62,6 +66,15 @@
  *     跨 ≥2 个 assignedAt 批次）对账点名级、不阻塞退出码（checkPhaseReuse——合法补录/跨秒边界同形，
  *     人工确认）；② seq 高水位回落（seq < max(条目号, 活标记号)，手工回退/复制回滚 → 号位记忆丢失）
  *     失败级、逐条点名两值 + 见证源（checkSeqHighWater，E4-10 原文）；修复 = 重编译/修正 registry；
+ *     B4-2/#106 planCode 全局唯一（失败级；E4-11「重复注册表项不受检」缺口）：registry 条目（含归档/
+ *     离板，与新码发放 taken 集合同域）中形态合法的 planCode 全局唯一，重码 = 码位冲突（复制分叉/
+ *     手工改写 → 显示层两稿同码）逐码点名（码 + 各持有者号与指向；checkPlanCodeUniqueness）——
+ *     与 --assign 拒发同源单点；
+ *     B4-1/#105 registry 幽灵/悬空对账（E4-05 / U1 / E1 V28·V29）：编译期对每个 registry 条目做与
+ *     --check 直查同一纯判定（classifyDeadNumber）——号不在板上活条目、又非已验证归档件 → 提示级
+ *     diagnostics 并入板面（降级可见性：registry 有条目而板上无，含号 + 指向路径 + 直查态；runs 声明
+ *     死号按同一判据**两文案分流**：registry 有条目而板上无 vs 完全未知号，勘误 9d）；--check 侧
+ *     checkRegistryGhosts（失败级）独立复算「两值可见性」——板面吞掉点名即两视图分叉必咬；
  *   - 写出：<root>/.zcode/board/board.json + board.md（原子写：临时文件 + 改名）；写盘前幻影板防线
  *     （B5-2/#114；E1 V20）：编译输出路径必须等于板根——<root> 自身有既有板（.zcode/board/board.json）
  *     才可写（= 该根即板根）；resolved root 是板项目子目录且自身无既有板（cwd 漂移/相对路径误解析的
@@ -148,7 +161,13 @@ import {
   validateSchemaValue,
 } from "./lib/schema-check.mjs";
 
-import { checkCompletedMergedEvidence, checkEpicRefs, checkFactInvariants } from "./lib/fact-invariants.mjs";
+import {
+  checkCompletedMergedEvidence,
+  checkEpicRefs,
+  checkFactInvariants,
+  checkRegistryGhosts,
+  classifyDeadNumber,
+} from "./lib/fact-invariants.mjs";
 
 import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
 
@@ -1440,6 +1459,109 @@ export function derivePlanCode({ file, title, taken = new Set() }) {
 }
 
 /**
+ * 板上活号集合（特性层 + 任务树递归；#105：引用有效性与 registry 对账共用同一口径）。
+ */
+function collectLiveNos(features) {
+  const live = new Set();
+  for (const f of features) {
+    const fm = META(f);
+    if (fm.no != null) live.add(fm.no);
+    for (const t of allTasks(f)) {
+      const tm = META(t);
+      if (tm.no != null) live.add(tm.no);
+    }
+  }
+  return live;
+}
+
+/** registry 条目号集合（正整数；#105：条目对账 / 引用分流 / blocked-by 解析共用同一口径）。 */
+function collectRegistryNos(registry) {
+  const out = new Set();
+  for (const e of registry?.entries ?? []) {
+    if (Number.isInteger(e?.no) && e.no >= 1) out.add(e.no);
+  }
+  return out;
+}
+
+/** registry 条目描述（#105 点名用；单点形态：`条目 <号>（kind=…，title=…，指向 …）`，两处点名复用）。 */
+function describeRegistryEntry(entry) {
+  const kind = entry?.kind ?? "（kind 缺省）";
+  const title = JSON.stringify(entry?.title ?? null);
+  return `条目 ${entry?.no ?? "（无号）"}（kind=${kind}，title=${title}，指向 ${JSON.stringify(entryRefOf(entry ?? {}))}）`;
+}
+
+/**
+ * 已验证归档件号集合（B4-1/#105；勘误 10 直查通过：指向归档路径存在且含该号标记）——
+ * registry 幽灵/悬空可见性断言的合法退役豁免（验证过的归档面不误报）。
+ */
+function collectArchivedNos(root, registryDoc) {
+  const out = [];
+  for (const e of Array.isArray(registryDoc?.entries) ? registryDoc.entries : []) {
+    if (!Number.isInteger(e?.no) || e.no < 1) continue;
+    if (directRefQuery(root, e).state === "archived") out.push(e.no);
+  }
+  return out;
+}
+
+/**
+ * registry 幽灵/悬空条目对账并入板 diagnostics（B4-1/#105；E4-05 / A-facts U1 / E1 V28·V29 / T20 G1）。
+ *
+ * 存在原因（缺陷本体）：`--check` 的 registry 指向直查（`checkRegistryConsistency`）只在 --check 输出，
+ * board.json diagnostics 无——两视图不一致（E4-05/U1 实锤 #41），冷读者打开板"板面全绿"漏掉幽灵/悬空号。
+ * 修复路径（E4-05 原文「编译期做同一纯判定」）：编译期对**每个 registry 条目**做同一判定——
+ * 号不在本次编译的板上活条目中（`classifyDeadNumber` ≠ live）→ 落提示级 diagnostics（**降级可见性**：
+ * 点名但不改判级、不阻断退出码；与 --check 直查结论单源同判、两视图不再分叉）。
+ *
+ * 判定域与文案分流（勘误 9d 同款两文案纪律的条目方向落点；独立文案、不混用）：
+ *   ①指向路径存在但无该号活标记（幽灵/空洞形态：手误路径发号后残留、卡片退役——E1 V28 #48、V29 #41）
+ *     → 文案含「registry 有条目而板上无」+「无该号活标记」；
+ *   ②指向路径不存在（悬空指向形态）→ 文案含「registry 有条目而板上无」+「指向路径不存在」+ 归档候选直查
+ *     （候选存在且含该号标记 → 指向未随归档移动更新：重跑 --assign 可机械修复；无候选 → 人工核对，
+ *     勘误 10）；
+ *   同一号只出一条（条目号唯一归 --check「registry 不一致」失败面，本面不叠加）。
+ * 边界（勿扩，防误报噪音）：
+ *   - 已验证归档件（指向归档路径存在且含该号标记，勘误 10 直查通过）不点名——合法退役面；
+ *   - 板上活条目（号可达）不点名；
+ *   - 条目形态非法（no 非正整数）不解析、不猜号（归 --check「registry 不一致」失败项）；
+ *   - registry 缺失/损坏已由加载段落 diagnostics 点名（此处 registry=null 即零判定，不叠加）。
+ * 纯只读：不写盘、不改入参；点名序 = registry 条目序（确定性，重编译幂等）。
+ */
+function reconcileRegistryEntries(features, registry, root, diag) {
+  if (!registry) return;
+  const liveNos = collectLiveNos(features);
+  const registryRel = FIRST_PARTY_SOURCES[1].path;
+  const registryNos = collectRegistryNos(registry);
+  const seen = new Set();
+  for (const entry of registry.entries ?? []) {
+    const no = entry?.no;
+    if (!Number.isInteger(no) || no < 1 || seen.has(no)) continue;
+    seen.add(no);
+    if (classifyDeadNumber(no, { liveNos, registryNos }) === "live") continue;
+    const { ref, state } = directRefQuery(root, entry);
+    if (state === "archived") continue; // 已验证归档件：合法退役（勘误 10 直查通过），不点名
+    const who = `registry ${describeRegistryEntry(entry)}`;
+    if (state === "exists") {
+      diag(
+        registryRel,
+        `${who} 在当前编译的板上无对应活条目（registry 有条目而板上无，勘误 9d 同款口径）：指向路径存在但无该号活标记——该号如已退役/未上板（号不复用、条目只增，§3.2）请核对目标是否仍在扫描目录；如属手误路径发号残留（幽灵条目，E1 V29），走清理通道处置（改动指向/取消留痕，不物理删除条目）。降级可见性（提示级，不阻断）。`,
+      );
+      continue;
+    }
+    const cand = archiveCandidateOf(ref);
+    const candOk = cand !== null && archiveRefVerified(root, entry, cand);
+    const candNote = candOk
+      ? `：归档候选 ${JSON.stringify(cand)} 存在且含该号标记（已归档移动）——指向未随移动更新，重跑 --assign 改写指向（号不变、assignedAt 保留，勘误 10）。`
+      : cand === null
+        ? `：无可推导归档候选——号永不回收、条目保留（§3.2），请人工核对指向（勘误 10）。`
+        : `：归档候选 ${JSON.stringify(cand)} 亦不存在或无可验证归档件——号永不回收、条目保留（§3.2），请核对归档位置或人工核对指向（勘误 10）。`;
+    diag(
+      registryRel,
+      `${who} 在当前编译的板上无对应活条目（registry 有条目而板上无）：指向路径不存在${candNote}降级可见性（提示级，不阻断）。`,
+    );
+  }
+}
+
+/**
  * label 树位派生（§4.2；#46 A2 改造）：
  *   特性 label = 稳定号字符串（不变）；
  *   任务 label：**计划特性 → 计划内层级路径**（顶层 1..n、子 = `<父>.<序>`，如 1 / 1.2 / 1.2.1
@@ -1482,19 +1604,9 @@ function deriveLabels(features) {
  *     而板上无，提示检查目标是否已归档/未上板）；不属于 → 文案 B（完全未知号，提示核对句柄）。
  */
 function resolveBlockers(features, registry, diag) {
-  const live = new Set();
-  const registryNos = new Set();
-  for (const e of registry?.entries ?? []) {
-    if (Number.isInteger(e?.no)) registryNos.add(e.no);
-  }
-  for (const f of features) {
-    const fm = META(f);
-    if (fm.no != null) live.add(fm.no);
-    for (const t of allTasks(f)) {
-      const tm = META(t);
-      if (tm.no != null) live.add(tm.no);
-    }
-  }
+  // 板上活条目集合（#105：与 registry 幽灵/悬空对账、runs 引用分流共用同一口径 = collectLiveNos）
+  const live = collectLiveNos(features);
+  const registryNos = collectRegistryNos(registry);
 
   for (const f of features) {
     for (const t of allTasks(f)) {
@@ -2007,6 +2119,10 @@ export function compileProject(rootInput) {
 
   resolveBlockers(features, registry, diag);
 
+  // registry 幽灵/悬空条目对账 → 并入板 diagnostics（B4-1/#105；E4-05：编译期做与 --check 直查同一纯判定，
+  // 消「--check 输出有、板面 diagnostics 无」两视图分叉；降级可见性，不阻断）。
+  reconcileRegistryEntries(features, registry, root, diag);
+
   // progress blocker 挂卡（§4.2：summary 与任务标题精确匹配或含 N. 前缀 → 挂该任务卡；否则只升特性级）
   for (const f of features) {
     const meta = META(f);
@@ -2107,20 +2223,25 @@ export function compileProject(rootInput) {
     }
   }
 
-  // run 事件引用的卡号不在板上 → 不挂任何卡 + diagnostics（不静默）
-  const liveNo = new Set();
-  for (const f of features) {
-    const fm = META(f);
-    if (fm.no != null) liveNo.add(fm.no);
-    for (const t of allTasks(f)) {
-      const tm = META(t);
-      if (tm.no != null) liveNo.add(tm.no);
-    }
-  }
+  // run 事件引用的卡号不在板上 → 不挂任何卡 + diagnostics（不静默）；B4-1/#105：按号的可达面**两文案分流**
+  // （勘误 9d 同款纪律——registry 有条目而板上无（幽灵/悬空条目，E1 V28 #48 残留）vs 完全未知号（核对
+  // 报告卡号写法）；两文案互不混用，判据单点 = classifyDeadNumber，与 blocked-by 解析同口径）。
+  const liveNo = collectLiveNos(features);
+  const runsRegistryNos = collectRegistryNos(registry);
   for (const rec of runsState.order) {
     for (const no of rec.cards) {
-      if (!liveNo.has(no)) {
-        diag(runsRel, `run ${rec.runId} 引用卡号 ${no} 不在板上活条目中：不挂任何卡（§12），待人工确认。`);
+      if (liveNo.has(no)) continue;
+      if (classifyDeadNumber(no, { liveNos: liveNo, registryNos: runsRegistryNos }) === "registry-not-on-board") {
+        const entry = (registry?.entries ?? []).find((e) => e?.no === no) ?? null;
+        diag(
+          runsRel,
+          `run ${rec.runId} 引用卡号 ${no} 不在板上活条目中：不挂任何卡（§12）——registry 有条目而板上无（幽灵/悬空条目：${describeRegistryEntry(entry)}）：号可能已归档或未上板，请核对目标是否仍在扫描目录，或按清理通道处置条目（改动指向/取消留痕，不物理删除）后重跑。`,
+        );
+      } else {
+        diag(
+          runsRel,
+          `run ${rec.runId} 引用卡号 ${no} 不在板上活条目中：不挂任何卡（§12）——${no} 是完全未知号（不在板上且 registry 无此号）：请核对报告卡号写法（稳定号整数；层级标签/内部 id 不解析，勘误 9d）。`,
+        );
       }
     }
   }
@@ -2267,6 +2388,10 @@ function readPlanAssignFacts(plan) {
     text,
     title,
     headMarkerNo: headMarker ? headMarker.no : null,
+    // B4-2/#106 发号前身份校验用事实（只读派生；缺首个标题行 / 零任务条目 = 内容无计划稿特征判据）
+    stem: plan.stem,
+    hasHeading: headingLine >= 0,
+    entryCount: flat.length,
     entries: flat.map((e) => ({ lineIndex: e.lineIndex, title: e.title, markerNo: e.markerNo })),
   };
 }
@@ -2377,6 +2502,43 @@ function entryExtras(e) {
 
 function targetRef(t) {
   return t.type === "feature" && t.kind === "spec" ? t.specRoot : t.file;
+}
+
+/**
+ * 计划稿文件名冻结形态（B4-2/#106；E1 V29；#41 手误事故防线）：计划稿命名约定 `plan-*.md`
+ * （PLAN_STEM_RE，与 #159 苗圃豁免同源单点），会话稿子形态 `plan-sess_<完整uuid>.md`——uuid 须完整
+ * 8-4-4-4-12。由来：`plan-sess_3e32a5a2-7774-450a-8083fc062b87.md`（缺一段 `8754-` 的手误名）曾以
+ * 新文件身份被 --assign 当新稿发出幽灵号 #41（号燃烧不留用）。
+ */
+const SESS_PLAN_STEM_RE = /^plan-sess_(.+)$/i;
+const COMPLETE_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * 发号前身份校验判据（B4-2/#106；E1 V29「文件名符合冻结形态且文件内含任务/计划特征」；判定域成文
+ * ——只判"本次将新领号"的计划稿，已领号历史文件不回溯，勿扩）：
+ *   ① 文件名符合冻结形态：stem 匹配 PLAN_STEM_RE（`plan-*.md`）；会话稿子形态 `plan-sess_<t>` 要求
+ *      t 为完整 uuid（8-4-4-4-12）——缺段/截断 = #41 手误形态；
+ *   ② 内容含计划稿特征：首个标题行（HEADING_RE 命中）或至少一条可识别任务条目（parseEntries 产出）。
+ * 不符项逐条返回原因文案（空数组 = 名实相符）；文件名形态族外只报①（一次说清、不叠判会话段）。
+ * @param {{stem: string, hasHeading: boolean, entryCount: number}} facts 计划稿读取事实（readPlanAssignFacts）
+ * @returns {string[]} 违规原因文案
+ */
+function planDocIdentityViolations({ stem, hasHeading, entryCount }) {
+  const out = [];
+  if (!PLAN_STEM_RE.test(stem)) {
+    out.push("文件名不符计划稿冻结形态（期望 plan-*.md；会话稿 plan-sess_<完整uuid>.md）");
+    return out;
+  }
+  const sess = SESS_PLAN_STEM_RE.exec(stem);
+  if (sess && !COMPLETE_UUID_RE.test(sess[1])) {
+    out.push(
+      `会话稿文件名非法：plan-sess_ 后须为完整 uuid（8-4-4-4-12）。实际 ${JSON.stringify(sess[1])}（缺段/截断的会话名——#41 手误形态，曾致笔误文件被当新稿发出幽灵号）`,
+    );
+  }
+  if (!hasHeading && entryCount === 0) {
+    out.push("内容无计划稿特征（首个标题行与可识别任务条目双缺）——文件名主张与内容不自洽");
+  }
+  return out;
 }
 
 /**
@@ -2608,6 +2770,7 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false,
   }
   // 未领号计划文件（文件头无号标记）：防 mass 改写闸的计数对象（#72）
   const unnumberedPlanFiles = [];
+  const planIdentityFacts = new Map(); // rel → {stem, hasHeading, entryCount}（B4-2/#106 发号前身份校验）
   for (const plan of scan.plans) {
     const facts = readPlanAssignFacts(plan);
     if (!facts.ok) {
@@ -2615,6 +2778,7 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false,
       continue;
     }
     if (!Number.isInteger(facts.headMarkerNo)) unnumberedPlanFiles.push(plan.rel);
+    planIdentityFacts.set(plan.rel, { stem: facts.stem, hasHeading: facts.hasHeading, entryCount: facts.entryCount });
     fileTexts.set(plan.rel, facts.text);
     targets.push({ type: "feature", kind: "plan", file: plan.rel, title: facts.title, markerNo: facts.headMarkerNo });
     for (const e of facts.entries) {
@@ -2702,6 +2866,31 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false,
       entries.push(entryFor(t, t.markerNo, nowIso(), assignedBy));
     }
     entries.sort((a, b) => a.no - b.no);
+  }
+
+  // ---- 2a. planCode 全局唯一断言（B4-2/#106；E4-11「重复注册表项不受检」缺口）：registry 条目（含
+  //         归档/离板，与新码发放 taken 集合同域）中形态合法的 planCode 全局唯一；重码 = 码位冲突
+  //         （复制分叉/手工改写 → 显示层两稿同码）→ 拒绝执行（零写入，先于任何号标记/registry/板写出），
+  //         逐码点名（码 + 各持有者号与指向）。判定与 --check 面同源单点（planCodeConflicts）。
+  const planCodeDuplicates = planCodeConflicts(entries);
+  if (planCodeDuplicates.length > 0) {
+    for (const conflict of planCodeDuplicates) diag(registryRel, planCodeConflictMessage(conflict));
+    diag(
+      registryRel,
+      `--assign 计划码唯一断言未过：${planCodeDuplicates.length} 个计划码被重复持有（逐码点名见上；E4-11：码位全局唯一、永不复用）——拒绝执行，零写入。`,
+    );
+    return {
+      refused: true,
+      refusedReason: "plan-code-duplicate",
+      planCodeDuplicates,
+      unnumberedPlanFiles,
+      diagnostics,
+      board: null,
+      registry: null,
+      assignedCount: 0,
+      changedMarkerFiles: [],
+      registryWritten: false,
+    };
   }
 
   // ---- 2b. epic 归属前置裁定（--assign --epic，A2-1/#81）：登记行只读（登记与补录分离，§10.7.2/§3.9）；
@@ -2830,6 +3019,43 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false,
     t.no = seq;
     t.assigned = true;
     assignedCount += 1;
+  }
+
+  // ---- 6b. 发号前身份校验（B4-2/#106；E1 V29；#41 手误事故防线）：本次将新领号（assigned）的计划稿
+  //         必须"名实相符"——文件名符合计划稿冻结形态（plan-*.md；会话稿 plan-sess_<完整uuid>.md）
+  //         且内容含计划稿特征（首个标题行或可识别任务条目）。任一不符 → 整轮拒发（零写入，口径同
+  //         mass 闸/计划码唯一断言），逐份点名（路径 + 违规原因）。判定域 = 本次新身份：已领号的
+  //         历史文件不回溯（V29 缺口原文 = 发号对"新文件身份"零校验）。判定先于任何写出（第 8 步起）。
+  const identityViolations = [];
+  for (const t of targets) {
+    if (!t.assigned || !(t.type === "feature" && t.kind === "plan")) continue;
+    const facts = planIdentityFacts.get(t.file);
+    if (!facts) continue; // 防御：读取失败稿不发号（上方已点名），理论不可达
+    for (const reason of planDocIdentityViolations(facts)) identityViolations.push({ file: t.file, reason });
+  }
+  if (identityViolations.length > 0) {
+    for (const v of identityViolations) {
+      diag(
+        v.file,
+        `发号前身份校验（B4-2/#106；E1 V29）：${v.file} ${v.reason}——本次拒发（未发号）、零写入；请改名/补内容后重跑 --assign。`,
+      );
+    }
+    diag(
+      registryRel,
+      `--assign 发号前身份校验未过：${identityViolations.length} 项名实不符（逐项点名见上；E1 V29 #41 手误事故防线——计划稿文件名与内容须自洽）——拒绝执行，零写入。`,
+    );
+    return {
+      refused: true,
+      refusedReason: "identity-mismatch",
+      identityViolations,
+      unnumberedPlanFiles,
+      diagnostics,
+      board: null,
+      registry: null,
+      assignedCount: 0,
+      changedMarkerFiles: [],
+      registryWritten: false,
+    };
   }
 
   // ---- 7. registry 维护（只增；允许的指向改写：迁移 file、计划→spec specRoot、归档 file/specRoot（7b）；额外字段保留）
@@ -3467,6 +3693,55 @@ export function checkSeqHighWater({ seq, entries, markers } = {}) {
 }
 
 /**
+ * planCode 重复持有判定（B4-2/#106；E4-11）——纯函数、**同因合并**（同码一条点名，不按条目重复噪音）：
+ *   判定域 = registry 条目（含归档/离板条目——与新码发放的 `takenCodes` 集合同域：码位一经分配全局
+ *   保留，§「计划码」），形态合法（PLAN_CODE_RE，4 位冻结形态）者按码分组；同码 ≥2 = 码位冲突
+ *   （复制分叉/手工改写 → 显示层两稿同码）。
+ *   边界（勿扩）：形态非法码不参与（编译器已按「不采纳」提示，形态面不叠加）；条目 no 非正整数不参与
+ *   （形态面归「registry 不一致」）；非对象/缺 entries 由调用方拦下。
+ * @param {Array} entries registry entries 原文数组
+ * @returns {Array<{code: string, holders: Array<{no: number, ref: string}>}>}（空数组 = 全局唯一）
+ */
+function planCodeConflicts(entries) {
+  const byCode = new Map();
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || typeof e !== "object") continue;
+    if (!Number.isInteger(e.no) || e.no < 1) continue;
+    const code = e.planCode;
+    if (typeof code !== "string" || !PLAN_CODE_RE.test(code)) continue;
+    const ref = typeof e.file === "string" ? e.file : typeof e.specRoot === "string" ? e.specRoot : "—";
+    if (!byCode.has(code)) byCode.set(code, []);
+    byCode.get(code).push({ no: e.no, ref });
+  }
+  const out = [];
+  for (const [code, holders] of [...byCode.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+    if (holders.length >= 2) out.push({ code, holders });
+  }
+  return out;
+}
+
+/** planCode 冲突文案（B4-2/#106；--assign 诊断与 --check 失败项同源单点）：载码 + 各持有者号与指向。 */
+function planCodeConflictMessage({ code, holders }) {
+  const who = holders.map((h) => `号 ${h.no}（${h.ref}）`).join("、");
+  return `计划码唯一（B4-2/#106；E4-11：planCode 与 epic 码同守 4 位冻结形态，码位全局唯一、永不复用——含归档/离板条目同域）：planCode ${JSON.stringify(code)} 被 ${holders.length} 条 registry 条目持有——${who}；同一码位多个持有者 = 显示层冲突（复制分叉/手工改写），重编译不可修复——请人工定夺保留者，其余改新码或删除条目后重跑（--check 只读，不自动修）。`;
+}
+
+/**
+ * planCode 全局唯一断言（B4-2/#106；E4-11 原文「--check 增 planCode 断言：全局唯一……重复注册表项
+ * 不受检」）——**失败级**（与 checkEpicCodeReuse 同判级：码位复用/复制分叉是结构矛盾，判定依赖
+ * registry 原文、不依赖板对比的覆盖路径；真实板无重码 → 零噪声）。
+ *   边界（勿扩）：registry 缺失/非对象/entries 非数组 → 「损坏源」已拦下，零断言不叠加（与 A2-3
+ *   同款边界）。纯函数只读、不改入参、无隐藏状态。
+ * @param {object|null} registry registry.json 原文对象
+ * @returns {string[]} 失败项文案（空数组 = 通过）
+ */
+export function checkPlanCodeUniqueness(registry) {
+  if (!registry || typeof registry !== "object") return [];
+  if (!Array.isArray(registry.entries)) return [];
+  return planCodeConflicts(registry.entries).map((c) => planCodeConflictMessage(c));
+}
+
+/**
  * epic 码复用断言（A2-3/#83；§10.2「code 唯一、永不复用、不重分配」/§10.5 AD-9①「码不重分配」；
  * §10.4 反例表「epic 取消/归档后其 code 被后发 epic 复用」）——**失败级**（并条点名多行）：
  *   判定域 = registry `epics[]` 内同一 code 出现 ≥2 行（登记行只增、一行一码）。重复 = 码位复用/登记面
@@ -3765,6 +4040,15 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
     );
   }
 
+  // registry 幽灵/悬空可见性断言（B4-1/#105）的输入：registry 条目段（可解析且为数组时才算；缺失/损坏
+  // 已由「损坏源」拦下 → 零断言不叠加）。
+  const registryGhostDocLoaded = readJsonFile(join(root, FIRST_PARTY_SOURCES[1].path));
+  const registryGhostDoc =
+    registryGhostDocLoaded.ok && registryGhostDocLoaded.value && typeof registryGhostDocLoaded.value === "object"
+      ? registryGhostDocLoaded.value
+      : null;
+  const registryGhostEntries = Array.isArray(registryGhostDoc?.entries) ? registryGhostDoc.entries : null;
+
   // 豁免登记（B1-1/#97 定案：.zcode/board/exemptions.json，编排者单写者；--check 只读不写）：
   // 格式校验归 lib/schema-check.mjs（checkExemptionsDoc）——结构非法（解析失败/version≠1/exemptions
   // 非数组）→ 失败级「豁免登记」+ 整份拒收；条目级非法 → 该条拒绝 + 点名（不静默放行），
@@ -3805,6 +4089,21 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
   for (const e of checkBoardInvariants(loaded.value)) structural.push(`${rel}：${e}`);
   for (const e of checkBoardInvariants(freshBoard)) structural.push(`重编译产物自洽性：${e}`);
   for (const message of structural) fail("板结构校验", message);
+
+  // registry 幽灵/悬空可见性断言（B4-1/#105；失败级）——「板面 + registry」独立复算：凡不在板上活条目、
+  // 又非已验证归档件的 registry 条目，板面 diagnostics 必须有点名（含 registry 源路径 + 条目号 + 指向路径
+  // 两值）；缺少即两视图分叉必咬（E4-05/U1）。独立复算（非与基线比对）——编译器 diagnostic 出口回归、
+  // 手改板删点名同样咬住；磁盘板与重编译基线各判一遍。registry 不可解析/条目段非数组 →「损坏源」已拦下，
+  // 此处零断言（不叠加噪音）。
+  if (registryGhostEntries !== null) {
+    const archivedNos = collectArchivedNos(root, registryGhostDoc);
+    for (const m of checkRegistryGhosts({ board: freshBoard, registryEntries: registryGhostEntries, archivedNos })) {
+      fail("registry 对账", `重编译产物：${m}`);
+    }
+    for (const m of checkRegistryGhosts({ board: loaded.value, registryEntries: registryGhostEntries, archivedNos })) {
+      fail("registry 对账", `${rel}：${m}`);
+    }
+  }
 
   // 板/源互检（篡改或陈旧检测）：根 updatedAt 为编译时刻，掩码后逐字段比对
   const masked = (b) => ({ ...b, updatedAt: "<编译时刻>" });
@@ -3914,6 +4213,11 @@ function phantomBoardMessage({ root, ancestor, boardRoot }) {
  *      同期次成员跨 ≥2 个 assignedAt 批次（合法补录/跨秒边界同形 → 人工确认；checkPhaseReuse）；
  *      ② seq 高水位【失败级】seq ≥ max(条目号, 活标记号)——复制/回滚/手工回退必咬，点名两值 + 见证源
  *      （checkSeqHighWater，E4-10 原文）。
+ *      8. registry 幽灵/悬空**可见性**（B4-1/#105；E4-05/U1）【失败级】：板面 + registry 独立复算——
+ *      凡不在板上活条目、又非已验证归档件（勘误 10 直查通过）的 registry 条目，板面 diagnostics 必须
+ *      点名（含 registry 源路径 + 条目号 + 指向路径两值）；缺则两视图分叉必咬（checkRegistryGhosts，
+ *      磁盘板与重编译基线各判一遍）。该断言不依赖与基线的逐字段比对——编译器 diagnostic 出口回归、
+ *      手改板删点名同样咬住；registry 不可解析/条目段非数组 →「损坏源」拦下（零断言不叠加）。
  * 返回 { root, board, failures, notes, rollcall, ok, compared }；退出码归 CLI（0 通过 / 非零有失败项）。
  */
 export function checkProject(rootInput) {
@@ -3959,6 +4263,12 @@ export function checkProject(rootInput) {
     })) {
       fail("seq 高水位", m);
     }
+  }
+  // planCode 全局唯一断言（B4-2/#106；E4-11「重复注册表项不受检」缺口）——**失败级**：registry 条目
+  // （含归档/离板，与新码发放 taken 集合同域）中形态合法的 planCode 全局唯一；重码 = 码位冲突
+  // （复制分叉/手工改写——判定域与判级理由见 checkPlanCodeUniqueness 注释；与 --assign 拒发同源单点）。
+  if (facts.registryDoc && Array.isArray(facts.registryDoc.entries)) {
+    for (const m of checkPlanCodeUniqueness(facts.registryDoc)) fail("planCode 唯一", m);
   }
   // 期号复用候选（A2-3/#83；§10.5 AD-9①）——**对账点名级**：同一 epic 同期次成员跨 ≥2 个 assignedAt
   // 批次逐条点名（合法补录/跨秒边界同形、历史事实不可由重编译修复；判定域与判级依据见 checkPhaseReuse 注释）。
@@ -4373,6 +4683,18 @@ function main(argv) {
       if (res.refusedReason === "epic-no-target") {
         process.stdout.write(
           `--assign --epic 拒绝执行（无可归属目标，epic-no-target）：--epic-file 清单逐项不可归属（明细见 assign 诊断）；未写任何文件。\n`,
+        );
+        return 1;
+      }
+      if (res.refusedReason === "identity-mismatch") {
+        process.stdout.write(
+          `--assign 拒绝执行（发号前身份校验，identity-mismatch）：${res.identityViolations.length} 项名实不符（文件名与内容自洽，E1 V29；明细见 assign 诊断）；未写任何文件——请改名/补内容后重跑 --assign。\n`,
+        );
+        return 1;
+      }
+      if (res.refusedReason === "plan-code-duplicate") {
+        process.stdout.write(
+          `--assign 拒绝执行（计划码唯一断言，plan-code-duplicate）：${res.planCodeDuplicates.length} 个计划码被重复持有（E4-11；明细见 assign 诊断）；未写任何文件——请人工定夺保留者，其余改新码后重跑 --assign。\n`,
         );
         return 1;
       }

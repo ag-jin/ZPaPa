@@ -231,6 +231,18 @@
  *   锚点守卫：夹具几何（.git 目录/.git 文件/无 .git 三形态）以「锚点：」前置断言先行，注入与点名
  *           断言即后续「关停注入/关停现场判定」突变的必咬面（本卡不动 run-mutations.mjs）。
  *
+ * B4-2（#106）覆盖（发号前文件名与内容自洽 + planCode 唯一；E1 V29 / E4-11；#41 手误事故防线）：
+ *   场景 106a --assign 发号前身份校验：本次将新领号的文件必须名实相符——文件名符合计划稿冻结形态
+ *           （plan-*.md；会话稿 plan-sess_<完整uuid>.md，缺段/截断 uuid = #41 手误形态）且内容含计划稿
+ *           特征（首个标题行或可识别任务条目）；任一不符 → 整轮拒发（退出码 1、零写入）并逐份点名
+ *           （文件路径 + 期望形态/实际值）；正常稿不被点名；改名/补内容后放行（扫描序发号、号标记写回）。
+ *   场景 106b planCode 全局唯一断言（E4-11「重复注册表项不受检」缺口）：registry 两条目同码 →
+ *           ①--assign 拒发（零写入）逐码点名（码 + 两条目号 + 两指向路径）；②--check 失败级
+ *           「planCode 唯一」恰 1 项；③改正一码后放行（新稿照常领号派生计划码）+ --check 回绿；
+ *           任务条目无码/形态非法码不参与判定。
+ *   纯函数契约块：checkPlanCodeUniqueness（唯一/缺席/任务条目/形态非法/空源零噪声、两值点名）。
+ *   突变 m53a/m53b：身份校验关停 → 106a 必咬；重码判定关停 → 106b 必咬（见 run-mutations.mjs）。
+ *
  * 用法：
  *   node assets/test/run-scenarios.mjs                 # 全部场景
  *   node assets/test/run-scenarios.mjs --scenario 1,4  # 只跑指定场景
@@ -8511,6 +8523,141 @@ scenario("86", "#86：不变量 (c) 扩面——epic 章/期次组（合成编�
   },
 });
 
+// ---------------------------------------------------------------- 死号对账库契约（B4-1/#105）
+
+/**
+ * `classifyDeadNumber` + `checkRegistryGhosts`（lib/fact-invariants.mjs）公开契约：
+ * 判据独立来源 = 手写板/registry 对象（非实现复算）；覆盖三分类、两文案可见性（路径+两值）、
+ * 合法退役（archivedNos）零噪声、活号零噪声、非对象/空 registry 零叠加、纯函数入参零改动。
+ */
+function registryGhostLibChecks(c, mod) {
+  const { checkRegistryGhosts, classifyDeadNumber } = mod;
+  c.eq(typeof classifyDeadNumber, "function", "lib/fact-invariants.mjs 导出 classifyDeadNumber（死号分类纯函数）");
+  c.eq(typeof checkRegistryGhosts, "function", "lib/fact-invariants.mjs 导出 checkRegistryGhosts（幽灵/悬空点名校验纯函数）");
+
+  // ---- classifyDeadNumber 三分类（勘误 9d 两文案判据单点）
+  c.eq(classifyDeadNumber(5, { liveNos: new Set([5]), registryNos: new Set([7]) }), "live", "号在板上活条目 → live");
+  c.eq(
+    classifyDeadNumber(7, { liveNos: new Set([5]), registryNos: new Set([7]) }),
+    "registry-not-on-board",
+    "号在 registry 有 条目、板上无 → registry-not-on-board（幽灵/悬空条目）",
+  );
+  c.eq(classifyDeadNumber(9, { liveNos: new Set([5]), registryNos: new Set([7]) }), "unknown", "号两处皆无 → unknown（完全未知号）");
+  c.eq(classifyDeadNumber(0, { liveNos: new Set([0]), registryNos: new Set([0]) }), "unknown", "非正整数（0）不解析 → unknown（形态归结构面）");
+  c.eq(classifyDeadNumber("9", { liveNos: new Set(), registryNos: new Set() }), "unknown", "字符串号不解析 → unknown（不猜号）");
+  c.eq(classifyDeadNumber(9), "unknown", "缺省集合不猜可达 → unknown（fail-open）");
+
+  // ---- checkRegistryGhosts：两值可见性（路径 + 号 + 指向）↔ 板面点名
+  const board = (over = {}) => ({
+    sources: [
+      { kind: "interviews", path: ".zcode/board/interviews.json" },
+      { kind: "registry", path: ".zcode/board/registry.json" },
+      { kind: "runs", path: ".zcode/board/runs.json" },
+    ],
+    diagnostics: [],
+    features: [
+      { kind: "plan", title: "特性", status: "active", statusRule: "r", stage: "执行中", stageRule: "r", attention: [], no: 5, label: "5", tasks: [] },
+    ],
+    ...over,
+  });
+  const named = { path: ".zcode/board/registry.json", message: 'registry 条目 7（kind=task，title="幽灵"，指向 ".zcode/plans/plan-x.md"）在当前编译的板上无对应活条目（registry 有条目而板上无）……' };
+  c.eq(
+    checkRegistryGhosts({ board: board({ diagnostics: [named] }), registryEntries: [{ no: 7, kind: "task", file: ".zcode/plans/plan-x.md" }] }),
+    [],
+    "板面已点名（含 registry 路径 + 号 + 指向）→ 零违例（两视图一致）",
+  );
+  const missing = checkRegistryGhosts({ board: board(), registryEntries: [{ no: 7, kind: "task", file: ".zcode/plans/plan-x.md" }] });
+  c.eq(missing.length, 1, "板面未点名 registry 幽灵/悬空条目 → 恰 1 条违例（视图分叉必咬）", show(missing));
+  c.inc(missing[0] ?? "", "7", "违例点名条目号（两值之一）");
+  c.inc(missing[0] ?? "", ".zcode/plans/plan-x.md", "违例点名条目指向路径（两值之一）");
+  c.inc(missing[0] ?? "", ".zcode/board/registry.json", "违例点名 registry 路径（路径项）");
+  c.eq(
+    checkRegistryGhosts({
+      board: board(),
+      registryEntries: [{ no: 7, kind: "task", file: ".zcode/plans/plan-x.md" }],
+      archivedNos: [7],
+    }),
+    [],
+    "已验证归档件（archivedNos）不判（合法退役：勘误 10 直查通过）",
+  );
+  c.eq(
+    checkRegistryGhosts({ board: board(), registryEntries: [{ no: 5, kind: "plan", file: ".zcode/plans/plan-a.md" }] }),
+    [],
+    "号在板上活条目（features 层号）→ 不判（零噪声）",
+  );
+  c.eq(checkRegistryGhosts({ board: null, registryEntries: [{ no: 7 }] }), [], "board 非对象 → 零违例（失败级另一路点名，不叠加）");
+  c.eq(checkRegistryGhosts({ board: board(), registryEntries: undefined }), [], "registry 条目缺省 → 零违例（不猜）");
+  c.eq(checkRegistryGhosts({ board: board(), registryEntries: [{ no: 0 }, { no: "7" }] }), [], "条目形态非法 → 不判（归 registry 不一致失败面）");
+  const pure = board({ diagnostics: [named] });
+  const pureEntries = [{ no: 7, kind: "task", file: ".zcode/plans/plan-x.md" }];
+  const before = JSON.stringify({ pure, pureEntries });
+  checkRegistryGhosts({ board: pure, registryEntries: pureEntries });
+  c.eq(JSON.stringify({ pure, pureEntries }), before, "纯函数：入参零改动（无隐藏状态）");
+}
+
+// ---------------------------------------------------------------- 计划码唯一断言契约（B4-2/#106；E4-11）
+
+/**
+ * `checkPlanCodeUniqueness`（compile-board.mjs）公开契约：
+ * 判据独立来源 = 手写 registry 对象（字面真值，非实现复算）；覆盖唯一/缺席/任务条目零噪声、
+ * 同码点名两值（码 + 两条目号 + 两指向路径）、形态非法码与形态非法条目不参与（归既有提示/失败面）、
+ * 空源/非对象零叠加、纯函数入参零改动。
+ */
+function planCodeLibChecks(c, mod) {
+  const fn = mod.checkPlanCodeUniqueness;
+  c.eq(typeof fn, "function", "compile-board.mjs 导出 checkPlanCodeUniqueness（planCode 唯一断言纯函数）");
+  if (typeof fn !== "function") return;
+  const at = "2026-10-01T00:00:00+08:00";
+  const entry = (no, kind, file, code) => ({
+    no,
+    kind,
+    file,
+    title: `条目${no}`,
+    assignedAt: at,
+    ...(code === undefined ? {} : { planCode: code }),
+  });
+
+  // ---- 零噪声：唯一码 / 无码（任务与无码计划条目）/ 形态非法码不参与（形态面归编译器提示与既有失败面）
+  c.eq(
+    fn({ version: 1, entries: [entry(1, "plan", "a.md", "AAA1"), entry(2, "task", "a.md"), entry(3, "plan", "b.md", "BBB2")] }),
+    [],
+    "唯一码 + 任务条目无码 + 无码计划条目：零违例（缺席合法）",
+  );
+  c.eq(
+    fn({ version: 1, entries: [entry(1, "plan", "a.md", "aaa1"), entry(2, "plan", "b.md", "aaa1")] }),
+    [],
+    "形态非法码（小写）不参与唯一判定（不采纳口径与编译器同源）",
+  );
+  c.eq(fn(null), [], "registry 缺失（null）：零违例（不猜）");
+  c.eq(fn({ version: 1 }), [], "entries 非数组：零违例（损坏源由既有失败面拦下，不叠加）");
+  c.eq(
+    fn({ version: 1, entries: [{ no: 0, planCode: "AAA1" }, { no: "1", planCode: "AAA1" }] }),
+    [],
+    "条目形态非法（no 非正整数）不参与（不猜号）",
+  );
+
+  // ---- 同码两条目：恰 1 条点名，载两值（码 + 两条目号 + 两指向路径），三条目同码仍恰 1 条
+  const dup = fn({ version: 1, entries: [entry(11, "plan", ".zcode/plans/plan-a.md", "DUP1"), entry(13, "plan", ".zcode/plans/plan-b.md", "DUP1")] });
+  c.eq(dup.length, 1, "同码两条目：恰 1 条点名（同因合并，不按条目重复噪音）");
+  c.inc(dup[0] ?? "", '"DUP1"', "点名片位实际值");
+  c.inc(dup[0] ?? "", "号 11", "点名首持有者条目号（两值之一）");
+  c.inc(dup[0] ?? "", "号 13", "点名次持有者条目号（两值之一）");
+  c.inc(dup[0] ?? "", ".zcode/plans/plan-a.md", "点名首持有者指向路径");
+  c.inc(dup[0] ?? "", ".zcode/plans/plan-b.md", "点名次持有者指向路径");
+  c.eq(
+    fn({ version: 1, entries: [entry(11, "plan", "a.md", "DUP1"), entry(13, "plan", "b.md", "DUP1"), entry(15, "plan", "c.md", "DUP1")] }).length,
+    1,
+    "三条目同码：同因仍恰 1 条点名（一次点名全持有者）",
+  );
+
+  // ---- 纯函数：入参零改动、确定性（同输入同输出）
+  const reg = { version: 1, entries: [entry(11, "plan", "a.md", "DUP1"), entry(13, "plan", "b.md", "DUP1")] };
+  const frozen = JSON.stringify(reg);
+  const once = fn(reg);
+  c.eq(JSON.stringify(reg), frozen, "纯函数：入参零改动（无隐藏状态）");
+  c.eq(fn(reg), once, "纯函数：确定性（同输入同输出）");
+}
+
 // ---------------------------------------------------------------- 事实互证库 lib/fact-invariants.mjs 的公开契约
 
 function factLibChecks(c, mod) {
@@ -10246,6 +10393,532 @@ scenario("155", "#155：子卡汇总三态并齐——全完成/全取消/其余
   },
 });
 
+// ---------------------------------------------------------------- B4-1（#105）registry 幽灵/悬空条目并入板 diagnostics
+
+// ---- 场景 105a（#105/B4-1；E4-05 / U1 / E1 V28·V29 / T20 G1）：registry 幽灵/悬空对账**并入板
+//      diagnostics**（降级可见性）——E4-05 缺陷本体 = 「--check 直查结论只在 --check 输出、
+//      board.json diagnostics 无」两视图不一致；本场景断言重编译后的板面（board.json.diagnostics +
+//      board.md「## 诊断」节）逐条点名两类条目，含路径与两值（号 + 指向路径），且：
+//        ①幽灵条目（指向路径存在但无该号活标记，E1 V29/V28 #48 形态）→ 文案含「registry 有条目而板上无」；
+//        ②悬空条目（指向路径不存在且无可验证归档件，#41 形态）→ 独立子文案（指向不存在 + 归档候选直查）；
+//        ③活条目（号在板上）与已验证归档件（指向归档路径且含该号标记，勘误 10 直查通过）→ 零噪声；
+//        ④降级可见性：本条只为提示级 diagnostics——--check 照旧 0 失败（不阻断退出码）。
+//      判据独立来源：夹具条目号/指向路径由本场景自写（非实现复算）；文案关键词取卡文与契约成文原词。
+scenario("105a", "#105：registry 幽灵/悬空条目并入板 diagnostics——幽灵（指向存在无该号标记）/悬空（指向不存在）逐条点名（路径+两值），归档件与活条目零噪声", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-ghost-105a.md";
+    w(root, planRel, "# 幽灵条目夹具\n<!-- zcode-board: no=10 -->\n\n- **T1 活卡（板上可达）**：正文。 <!-- zcode-board: no=11 -->\n");
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 99,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "幽灵条目夹具", assignedAt: "2026-10-09T10:00:00+08:00" },
+            { no: 11, kind: "task", file: planRel, title: "T1 活卡（板上可达）", assignedAt: "2026-10-09T10:00:00+08:00" },
+            {
+              no: 98,
+              kind: "plan",
+              file: ".zcode/plans/plan-gone-98.md",
+              title: "悬空指向夹具",
+              assignedAt: "2026-10-09T10:01:00+08:00",
+            },
+            {
+              no: 99,
+              kind: "task",
+              file: planRel,
+              title: "幽灵条目（板上无该号）",
+              assignedAt: "2026-10-09T10:02:00+08:00",
+            },
+            {
+              no: 20,
+              kind: "plan",
+              file: ".zcode/archive/plan-archived-20.md",
+              title: "已验证归档件",
+              assignedAt: "2026-10-08T10:00:00+08:00",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    // 已验证归档件（勘误 10 直查通过：指向归档路径存在且含该号标记）——合法退役，不进点名面
+    w(root, ".zcode/archive/plan-archived-20.md", "# 已归档稿\n<!-- zcode-board: no=20 -->\n\n- **T1 遗骸**：正文。\n");
+  },
+  assert(c, ctx) {
+    const { board, root, run } = ctx;
+    const regRel = ".zcode/board/registry.json";
+    const rows = diagFor(board, regRel);
+    const byNo = (n) => rows.filter((d) => d.message.includes(`registry 条目 ${n}（`)); // 条目号锚定（防路径子串误配）
+    const row99 = byNo(99)[0] ?? { message: "" };
+    const row98 = byNo(98)[0] ?? { message: "" };
+
+    c.eq(rows.length, 2, "registry.json 面恰 2 条点名（幽灵 99 + 悬空 98；活条目 10/11 与归档件 20 零噪声）", show(rows));
+    c.inc(row99.message, "registry 有条目而板上无", "幽灵条目文案含卡文原词「registry 有条目而板上无」（勘误 9d 同款口径）");
+    c.inc(row99.message, ".zcode/plans/plan-ghost-105a.md", "幽灵条目点名含指向路径（两值之一）");
+    c.inc(row99.message, "99", "幽灵条目点名含条目号（两值之一）");
+    c.inc(row99.message, "无该号活标记", "幽灵条目子文案：指向存在但无该号活标记（E1 V28 #48 形态可辨）");
+    c.ok(!row98.message.includes("无该号活标记"), "悬空条目不与幽灵子文案混用（两独立文案分流）", show(row98.message));
+    c.inc(row98.message, "registry 有条目而板上无", "悬空条目同属「registry 有条目而板上无」类（号在 registry、板上无对应）");
+    c.inc(row98.message, ".zcode/plans/plan-gone-98.md", "悬空条目点名含指向路径（两值之一）");
+    c.inc(row98.message, ".zcode/archive/plan-gone-98.md", "悬空条目点名含归档候选直查结论（机械修复方向可见）");
+    c.ok(byNo(20).length === 0, "已验证归档件不点名（勘误 10 直查通过 = 合法退役，零噪声）", show(byNo(20)));
+    c.ok(byNo(10).length === 0 && byNo(11).length === 0, "板上活条目零噪声（号可达不点名）", show([...byNo(10), ...byNo(11)]));
+    // 用户面：打开板（board.md「## 诊断」节）能看到同一批点名（渲染不外漏）
+    c.inc(run.md, "registry 有条目而板上无", "board.md 诊断节渲染幽灵/悬空点名（用户打开板可见）");
+    // 降级可见性：提示级、不阻断退出码
+    const check = checkProject(root);
+    c.eq(check.failures.length, 0, "--check 0 失败（降级可见性：点名不改判级、不阻塞退出码）", show(check.failures.map((f) => `[${f.category}] ${f.message}`)));
+  },
+});
+
+// ---- 场景 105b（#105/B4-1；E1 V28「#48 悬空 + runs 残留」/ 勘误 9d 两文案先例）：引用方向的死号
+//      两文案分流——runs 声明卡号不在板上活条目时，按号的可达面分流两条**独立**文案：
+//        ①号在 registry 有条目（幽灵/悬空条目）→「registry 有条目而板上无」（附条目指向与直查态）；
+//        ②号既不在板上也不在 registry（悬空引用/完全未知号）→「完全未知号」（核对卡号写法）；
+//      活号引用（号可达）零噪声；两文案互不混用（判据独立来源：registry/runs 夹具由本场景自写）。
+scenario("105b", "#105：runs 引用死号两文案分流——registry 有条目而板上无（附条目指向）vs 完全未知号（核对写法）；活卡引用零噪声", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-ref-105b.md";
+    w(root, planRel, "# 引用分流夹具\n<!-- zcode-board: no=10 -->\n\n- **T1 活卡（板上可达）**：正文。 <!-- zcode-board: no=11 -->\n");
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 99,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "引用分流夹具", assignedAt: "2026-10-09T10:00:00+08:00" },
+            { no: 11, kind: "task", file: planRel, title: "T1 活卡（板上可达）", assignedAt: "2026-10-09T10:00:00+08:00" },
+            {
+              no: 99,
+              kind: "task",
+              file: planRel,
+              title: "幽灵条目（板上无该号）",
+              assignedAt: "2026-10-09T10:02:00+08:00",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    seedRuns(root, [
+      {
+        runId: "run-105b-ghost",
+        sessionId: "sess_105b",
+        role: "implementer",
+        at: "2026-10-10T02:00:00+08:00",
+        result: "failed",
+        cards: [99],
+        worktree: null,
+        branch: null,
+        evidence: ["按幽灵号登记（registry 有条目而板上无）"],
+        breakpoint: null,
+      },
+      {
+        runId: "run-105b-unknown",
+        sessionId: "sess_105b",
+        role: "implementer",
+        at: "2026-10-10T02:01:00+08:00",
+        result: "failed",
+        cards: [8888],
+        worktree: null,
+        branch: null,
+        evidence: ["按完全未知号登记"],
+        breakpoint: null,
+      },
+      {
+        runId: "run-105b-live",
+        sessionId: "sess_105b",
+        role: "implementer",
+        at: "2026-10-10T02:02:00+08:00",
+        result: "failed",
+        cards: [11],
+        worktree: null,
+        branch: null,
+        evidence: ["活卡引用"],
+        breakpoint: null,
+      },
+    ]);
+  },
+  assert(c, ctx) {
+    const { board, root, run } = ctx;
+    const runsRel = ".zcode/board/runs.json";
+    const rows = diagFor(board, runsRel);
+    const ghostMsg = rows.filter((d) => d.message.includes("99")).map((d) => d.message)[0] ?? "";
+    const unknownMsg = rows.filter((d) => d.message.includes("8888")).map((d) => d.message)[0] ?? "";
+
+    c.eq(rows.length, 2, "runs 面恰 2 条死号点名（幽灵号 99 + 未知号 8888；活卡引用 11 零噪声）", show(rows));
+    c.inc(ghostMsg, "registry 有条目而板上无", "文案 A：号在 registry 有条目而板上无（独立文案）");
+    c.inc(ghostMsg, "run-105b-ghost", "文案 A 点名来源 run（可追溯）");
+    c.inc(ghostMsg, ".zcode/plans/plan-ref-105b.md", "文案 A 附条目指向路径（两值之一：号 + 指向）");
+    c.inc(unknownMsg, "完全未知号", "文案 B：号不在板上且 registry 无此号（完全未知号，独立文案）");
+    c.inc(unknownMsg, "run-105b-unknown", "文案 B 点名来源 run（可追溯）");
+    c.inc(unknownMsg, "8888", "文案 B 给出实际号值");
+    c.ok(!unknownMsg.includes("registry 有条目而板上无"), "文案 B 不混用文案 A（两独立文案分流）", show(unknownMsg));
+    c.ok(!ghostMsg.includes("完全未知号"), "文案 A 不混用文案 B（两独立文案分流）", show(ghostMsg));
+    c.inc(run.md, "完全未知号", "board.md 诊断节渲染引用分流文案（用户打开板可见）");
+    const check = checkProject(root);
+    c.eq(check.failures.length, 0, "--check 0 失败（提示级、不阻断退出码）", show(check.failures.map((f) => `[${f.category}] ${f.message}`)));
+  },
+});
+
+// ---- 场景 105c（#105/B4-1）：对账面**零噪声与三态边界**——①全活号 registry（含 runs 活卡引用）零点名；
+//      ②已验证归档件（指向归档路径且含该号标记，勘误 10 直查通过）零点名；③归档候选已验证（指向未随
+//      移动更新：悬空 + 候选含标记）→ 编译侧提示级点名（含 --assign 机械修复方向），--check 维持既有
+//      失败级（可机械修复）——三态各一分流，不互相误报（正常交付零噪声）。
+scenario("105c", "#105：registry 对账三态边界——全活号/已验证归档件零噪声；归档候选已验证提示级点名（含 --assign 修复方向）+ --check 失败级维持", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-quiet-105c.md";
+    w(root, planRel, "# 零噪声夹具\n<!-- zcode-board: no=10 -->\n\n- **T1 活卡（板上可达）**：正文。 <!-- zcode-board: no=11 -->\n");
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 99,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "零噪声夹具", assignedAt: "2026-10-09T10:00:00+08:00" },
+            { no: 11, kind: "task", file: planRel, title: "T1 活卡（板上可达）", assignedAt: "2026-10-09T10:00:00+08:00" },
+            {
+              no: 20,
+              kind: "plan",
+              file: ".zcode/archive/plan-archived-20.md",
+              title: "已验证归档件",
+              assignedAt: "2026-10-08T10:00:00+08:00",
+            },
+            {
+              no: 77,
+              kind: "plan",
+              file: ".zcode/plans/plan-moved-77.md",
+              title: "已归档移动未改写指向",
+              assignedAt: "2026-10-08T11:00:00+08:00",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    w(root, ".zcode/archive/plan-archived-20.md", "# 已归档稿\n<!-- zcode-board: no=20 -->\n\n- **T1 遗骸**：正文。\n");
+    w(root, ".zcode/archive/plan-moved-77.md", "# 移动后归档稿\n<!-- zcode-board: no=77 -->\n\n- **T1 遗骸**：正文。\n");
+    seedRuns(root, [
+      {
+        runId: "run-105c-live",
+        sessionId: "sess_105c",
+        role: "implementer",
+        at: "2026-10-10T03:00:00+08:00",
+        result: "failed",
+        cards: [10, 11],
+        worktree: null,
+        branch: null,
+        evidence: ["活卡引用（零噪声）"],
+        breakpoint: null,
+      },
+    ]);
+  },
+  assert(c, ctx) {
+    const { board, root } = ctx;
+    const rows = diagFor(board, ".zcode/board/registry.json");
+    const runsRows = diagFor(board, ".zcode/board/runs.json");
+    c.eq(rows.length, 1, "registry 面恰 1 条点名（归档候选已验证的 77；活号 10/11 与已验证归档件 20 零噪声）", show(rows));
+    const msg = rows[0]?.message ?? "";
+    c.inc(msg, "registry 条目 77（", "点名条目号锚定（两值之一）");
+    c.inc(msg, ".zcode/archive/plan-moved-77.md", "点名归档候选已存在且含该号标记（直查结论可见）");
+    c.inc(msg, "--assign", "点名机械修复方向（重跑 --assign 改写指向，勘误 10）");
+    c.eq(runsRows.length, 0, "runs 面活卡引用零噪声（号可达不点名）", show(runsRows));
+    const check = checkProject(root);
+    c.eq(
+      check.failures.length,
+      1,
+      "归档候选已验证维持 --check 失败级（可机械修复；编译侧提示级点名与 --check 判级分工不变）",
+      show(check.failures.map((f) => `[${f.category}] ${f.message}`)),
+    );
+    c.inc(check.failures[0]?.message ?? "", "registry 条目（号 77）", "--check 失败项点名同一条目（两视图同判、不再分叉）");
+  },
+});
+
+// ---- 场景 105d（#105/B4-1）：**两视图一致性的机械防线**——E4-05 缺陷本体 =「--check 直查有、板面
+//      diagnostics 无」；`checkRegistryGhosts`（--check，失败级）对「板 + registry」独立复算：
+//      板面未点名某个 registry 死号 → 必咬（不依赖与重编译基线的逐字段比对——编译器回归/手改板
+//      同样咬住）；已点名 → 零违例。另含板面「不造引用不静默」配对断言（schema-check）：
+//      dependency 引用缺省（被拒/不可达）必须伴随该来源文件的点名 diagnostics，板面不得静默吞掉。
+scenario("105d", "#105：两视图一致性机械防线——板面删去 registry 死号点名 → --check 必咬（独立复算，不靠基线比对）；引用缺省必须有点名（不静默）", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-guard-105d.md";
+    w(root, planRel, "# 防线夹具\n<!-- zcode-board: no=10 -->\n\n- **T1 活卡**：正文。 <!-- zcode-board: no=11 -->\n");
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 99,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "防线夹具", assignedAt: "2026-10-09T10:00:00+08:00" },
+            { no: 11, kind: "task", file: planRel, title: "T1 活卡", assignedAt: "2026-10-09T10:00:00+08:00" },
+            {
+              no: 99,
+              kind: "task",
+              file: planRel,
+              title: "幽灵条目（板上无该号）",
+              assignedAt: "2026-10-09T10:02:00+08:00",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  },
+  assert(c, ctx) {
+    const { board, root } = ctx;
+    const planRel = ".zcode/plans/plan-guard-105d.md";
+    const regRel = ".zcode/board/registry.json";
+    const boardRel = ".zcode/board/board.json";
+    c.eq(diagFor(board, regRel).length, 1, "锚点：重编译板面已点名幽灵条目 99（防线咬点前置）", show(diagFor(board, regRel)));
+
+    // ---- 1. 手改板：删去 registry 面点名（模拟「--check 直查有、板面 diagnostics 无」的 E4-05 形态）
+    const tampered = JSON.parse(JSON.stringify(board));
+    tampered.diagnostics = tampered.diagnostics.filter((d) => d.path !== regRel);
+    writeJsonAtomic(join(root, boardRel), tampered);
+    const check = checkProject(root);
+    const guard = check.failures.filter((f) => f.category === "registry 对账");
+    c.eq(guard.length, 1, "板面缺 registry 死号点名 → --check「registry 对账」恰 1 项失败（两视图分叉必咬，独立复算）", show(check.failures.map((f) => `[${f.category}] ${f.message}`)));
+    c.inc(guard[0]?.message ?? "", "99", "失败项点名条目号（两值之一）");
+    c.inc(guard[0]?.message ?? "", planRel, "失败项点名条目指向路径（两值之一）");
+    c.inc(guard[0]?.message ?? "", "registry 有条目而板上无", "失败项给出卡文原词（口径与编译侧点名单源）");
+
+    // ---- 2. 复原板面点名的合法形态：删「registry 对账」失败项自清（防线只咬分叉，不咬合法板）
+    writeJsonAtomic(join(root, boardRel), board);
+    const restored = checkProject(root);
+    c.eq(
+      restored.failures.filter((f) => f.category === "registry 对账"),
+      [],
+      "板面复原后自清（防线只咬视图分叉；正常板零噪声）",
+      show(restored.failures.map((f) => `[${f.category}] ${f.message}`)),
+    );
+
+    // ---- 3. 板面「不造引用不静默」（schema-check 配对断言）：dependency 引用缺省必须有点名
+    const omittedRef = JSON.parse(JSON.stringify(board));
+    const node = omittedRef.features[0].tasks[0];
+    node.source = { file: planRel, selector: "item-1" };
+    node.blockers = [{ kind: "dependency", summary: "被拒引用（目标不可达）", evidence: [planRel] }];
+    omittedRef.diagnostics = omittedRef.diagnostics.filter((d) => d.path !== planRel); // 点名被人为吞掉
+    const silentErrors = checkBoardInvariants(omittedRef).filter((m) => m.includes("不造引用不静默") || m.includes("点名"));
+    c.ok(silentErrors.length > 0, "引用缺省且无点名 → 板结构断言必咬（不造引用不静默）", show(checkBoardInvariants(omittedRef)));
+    const namedRef = JSON.parse(JSON.stringify(omittedRef));
+    namedRef.diagnostics.push({ path: planRel, message: "blocked-by 目标号 8888 是未知号……" });
+    c.eq(
+      checkBoardInvariants(namedRef).filter((m) => m.includes("不造引用不静默")),
+      [],
+      "引用缺省但有点名 → 配对成立、零违例（合法降级形态不误报）",
+      show(checkBoardInvariants(namedRef)),
+    );
+  },
+});
+
+// ---------------------------------------------------------------- B4-2（#106）发号前身份校验 + 计划码唯一
+
+// ---- 场景 106a（#106/B4-2；E1 V29；#41 手误事故防线）：--assign 发号前"名实相符"校验——本次将新领号的
+//      计划稿，文件名须符合冻结形态（plan-*.md；会话稿 plan-sess_<完整uuid>.md）且内容含计划稿特征
+//      （首个标题行或可识别任务条目）；任一不符 → 整轮拒发（零写入）并逐份点名。夹具 = #41 事故复刻
+//      （缺段 uuid 的会话稿：8-4-4-12，无 H1）+ 纯叙事稿（无标题无条目）+ 正常稿（不得被点名）；
+//      改名/补内容后放行（扫描序发号、号标记写回、--check 回绿）。
+scenario("106a", "#106：--assign 发号前身份校验（V29/#41）——名不符（缺段会话 uuid/内容无计划特征）拒发零写入并点名；改正后正常稿放行", {
+  steps: [{ args: [] }, { args: ["--assign"] }],
+  build(root) {
+    // #41 事故复刻：文件名缺一段 uuid（8-4-4-4-12），内容与事故稿同构（无 H1、首行即条目）
+    w(root, ".zcode/plans/plan-sess_3e32a5a2-7774-450a-8083fc062b87.md", [
+      "- [ ] 跟进：unmerged-worktree 判据收紧（幽灵工作树）",
+      "  目标: 实战发现——单卡 run_event 未显式给 worktree 时被推导出幽灵工作树。",
+      "",
+    ].join("\n"));
+    // 纯叙事稿：文件名形态合法、内容无计划稿特征（无标题、无任务条目——名实不符第二种）
+    w(root, ".zcode/plans/plan-prose-only.md", "本文件只是一段叙事说明：没有标题、没有任务条目。\n");
+    // 正常稿：H1 + 任务条目（不得被点名）
+    w(root, ".zcode/plans/plan-good.md", ["# 正常稿甲", "", "- [ ] 1. 甲任务", "  - Scope: 甲任务细节。", ""].join("\n"));
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const badRel = ".zcode/plans/plan-sess_3e32a5a2-7774-450a-8083fc062b87.md";
+    const proseRel = ".zcode/plans/plan-prose-only.md";
+    const goodRel = ".zcode/plans/plan-good.md";
+    const assign = ctx.steps[1];
+
+    // ---- 红侧：名不符在场 → 拒发并点名（文件路径 + 期望形态/实际值）
+    c.eq(assign.code, 1, "名不符稿在场：--assign 拒发（退出码 1）");
+    c.inc(assign.stderr, badRel, "诊断点名缺段会话稿（全路径）");
+    c.inc(assign.stderr, '"3e32a5a2-7774-450a-8083fc062b87"', "诊断给出实际会话段（缺段 uuid 原文）");
+    c.inc(assign.stderr, "完整 uuid", "诊断给出期望形态（plan-sess_<完整uuid>.md）");
+    c.inc(assign.stderr, proseRel, "诊断点名内容无计划特征的叙事稿（全路径）");
+    c.inc(assign.stderr, "内容无计划稿特征", "诊断点名内容侧判据（首个标题行与任务条目双缺）");
+    c.ok(!assign.stderr.includes(goodRel), "正常稿不被点名（误报必咬）", truncate(assign.stderr));
+    c.inc(assign.stdout, "拒绝执行", "stdout 拒绝执行声明（发号前身份校验）");
+    c.inc(assign.stdout, "未写任何文件", "stdout 零写入口径");
+
+    // ---- 零写入：不改写源（无号标记、无改名）、不创建 registry、不写板
+    const redDiff = diffSnapshot(assign.before, assign.after);
+    c.eq(
+      [redDiff.changed.length, redDiff.added.length, redDiff.removed.length],
+      [0, 0, 0],
+      "拒发零写入（源与板全零触碰）",
+      show({ changed: redDiff.changed.map((x) => x.rel), added: redDiff.added, removed: redDiff.removed }),
+    );
+    c.ok(!isFile(join(root, ".zcode/board/registry.json")), "拒发不创建 registry（零登记）");
+    c.ok(!readFileSync(join(root, badRel), "utf8").includes("zcode-board: no="), "缺段会话稿零盖号（零改写）");
+    c.ok(!readFileSync(join(root, goodRel), "utf8").includes("zcode-board: no="), "正常稿同轮零盖号（整轮拒发、不部分执行）");
+
+    // ---- 绿侧：改正（会话稿补全 uuid + 补 H1；叙事稿补 H1 与任务条目）→ 放行；号按扫描序（g < p < s）
+    const fixedRel = ".zcode/plans/plan-sess_3e32a5a2-7774-450a-8754-8083fc062b87.md";
+    rmSync(join(root, badRel));
+    w(root, fixedRel, [
+      "# 幽灵工作树判据收紧（#41 修复稿）",
+      "",
+      "- [ ] 跟进：unmerged-worktree 判据收紧（幽灵工作树）",
+      "  目标: 实战发现——单卡 run_event 未显式给 worktree 时被推导出幽灵工作树。",
+      "",
+    ].join("\n"));
+    w(root, proseRel, ["# 正常稿乙", "", "- [ ] 1. 乙任务", "  - Scope: 乙任务细节。", ""].join("\n"));
+    const probe = runCompiler(root, ["--assign"]);
+    c.eq(probe.code, 0, "改正后 --assign 放行（退出码 0）");
+    const registryRel = ".zcode/board/registry.json";
+    const reg = JSON.parse(readFileSync(join(root, registryRel), "utf8"));
+    c.eq(reg.seq, 6, "放行：seq=6（三稿各领特性号 + 任务号）");
+    c.eq(
+      reg.entries.map((e) => [e.no, e.kind, e.file]),
+      [
+        [1, "plan", goodRel],
+        [2, "task", goodRel],
+        [3, "plan", proseRel],
+        [4, "task", proseRel],
+        [5, "plan", fixedRel],
+        [6, "task", fixedRel],
+      ],
+      "号按扫描序逐稿：特性号 + 任务号（文件名字典序 g < p < s）",
+    );
+    c.inc(readFileSync(join(root, goodRel), "utf8"), "<!-- zcode-board: no=1 -->", "正常稿头标记 no=1（放行写回）");
+    c.inc(readFileSync(join(root, proseRel), "utf8"), "<!-- zcode-board: no=3 -->", "叙事稿改正后领号 no=3");
+    c.inc(readFileSync(join(root, fixedRel), "utf8"), "<!-- zcode-board: no=5 -->", "会话稿改名改正后领号 no=5");
+    c.eq(probe.board?.features?.map((f) => f.no), [1, 3, 5], "板上三特性号 = 1/3/5（扫描序）");
+    const green = runCompiler(root, ["--check"]);
+    c.eq(green.code, 0, "放行后 --check 回绿（退出码 0）");
+  },
+});
+
+// ---- 场景 106b（#106/B4-2；E4-11「重复注册表项不受检」缺口）：planCode 全局唯一断言——registry 两条目
+//      同码（含归档/离板条目同域）→ ①--assign 拒发（零写入）逐码点名（码 + 两条目号 + 两指向路径）；
+//      ②--check 失败级「planCode 唯一」；③改正一码后放行（未领号稿照常领号 + 派生计划码）且 --check 回绿。
+scenario("106b", "#106：planCode 唯一断言（E4-11）——重码 registry 拒发并点名（零写入）；--check 失败级必咬；改正后放行回绿", {
+  steps: [{ args: [] }, { args: ["--assign"] }],
+  build(root) {
+    const at = "2026-10-01T00:00:00+08:00";
+    w(root, ".zcode/plans/plan-106-alpha.md", ["# 甲计划", "<!-- zcode-board: no=11 -->", "", "- [ ] 甲卡 <!-- zcode-board: no=12 -->", ""].join("\n"));
+    w(root, ".zcode/plans/plan-106-beta.md", ["# 乙计划", "<!-- zcode-board: no=13 -->", "", "- [ ] 乙卡 <!-- zcode-board: no=14 -->", ""].join("\n"));
+    w(root, ".zcode/plans/plan-106-gamma.md", ["# 丙计划（未领号）", "", "- [ ] 1. 丙卡", "  - Scope: 丙卡细节。", ""].join("\n"));
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 15,
+          entries: [
+            { no: 11, kind: "plan", file: ".zcode/plans/plan-106-alpha.md", title: "甲计划", assignedAt: at, planCode: "DUP1" },
+            { no: 12, kind: "task", file: ".zcode/plans/plan-106-alpha.md", title: "甲卡", assignedAt: at },
+            { no: 13, kind: "plan", file: ".zcode/plans/plan-106-beta.md", title: "乙计划", assignedAt: at, planCode: "DUP1" },
+            { no: 14, kind: "task", file: ".zcode/plans/plan-106-beta.md", title: "乙卡", assignedAt: at },
+            { no: 15, kind: "plan", file: ".zcode/plans/plan-106-gamma.md", title: "丙计划（未领号）", assignedAt: at },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const alphaRel = ".zcode/plans/plan-106-alpha.md";
+    const betaRel = ".zcode/plans/plan-106-beta.md";
+    const gammaRel = ".zcode/plans/plan-106-gamma.md";
+    const registryRel = ".zcode/board/registry.json";
+    const assign = ctx.steps[1];
+
+    // ---- 红侧：重码 registry → 拒发并逐码点名（码 + 两条目号 + 两指向路径）
+    c.eq(assign.code, 1, "重码 registry：--assign 拒发（退出码 1）");
+    c.inc(assign.stderr, '"DUP1"', "诊断点名重复码（实际值）");
+    c.inc(assign.stderr, "号 11", "诊断点名首持有者条目号");
+    c.inc(assign.stderr, "号 13", "诊断点名次持有者条目号");
+    c.inc(assign.stderr, alphaRel, "诊断点名首持有者指向路径");
+    c.inc(assign.stderr, betaRel, "诊断点名次持有者指向路径");
+    c.inc(assign.stderr, "计划码唯一", "诊断点名断言名（E4-11）");
+    c.inc(assign.stdout, "拒绝执行", "stdout 拒绝执行声明（计划码唯一断言）");
+    c.inc(assign.stdout, "未写任何文件", "stdout 零写入口径");
+    const redDiff = diffSnapshot(assign.before, assign.after);
+    c.eq(
+      [redDiff.changed.length, redDiff.added.length, redDiff.removed.length],
+      [0, 0, 0],
+      "拒发零写入（registry/源/板全零触碰——未领号稿不领号）",
+      show({ changed: redDiff.changed.map((x) => x.rel), added: redDiff.added, removed: redDiff.removed }),
+    );
+    c.ok(!readFileSync(join(root, gammaRel), "utf8").includes("zcode-board: no="), "未领号稿零盖号（整轮拒发）");
+
+    // ---- ② --check 失败级：新类别「planCode 唯一」恰 1 项（零额外噪声——重码是唯一矛盾）
+    const checkStep = runCompiler(root, ["--check"]);
+    c.eq(checkStep.code, 1, "--check 失败级非零退出（重码必咬）");
+    const failures = checkProject(root).failures;
+    const codeFailures = failures.filter((f) => f.category === "planCode 唯一");
+    c.eq(codeFailures.length, 1, "「planCode 唯一」恰 1 项失败", show(failures.map((f) => `[${f.category}] ${f.message}`)));
+    c.eq(failures.length, 1, "全量失败恰 1 项（重码是唯一矛盾，零额外噪声）", show(failures.map((f) => `[${f.category}] ${f.message}`)));
+    c.inc(codeFailures[0]?.message ?? "", '"DUP1"', "失败项点名片位实际值");
+    c.inc(codeFailures[0]?.message ?? "", "号 11", "失败项点名首持有者条目号");
+    c.inc(codeFailures[0]?.message ?? "", "号 13", "失败项点名次持有者条目号");
+    c.inc(codeFailures[0]?.message ?? "", alphaRel, "失败项点名首持有者指向路径");
+    c.inc(codeFailures[0]?.message ?? "", betaRel, "失败项点名次持有者指向路径");
+    c.inc(checkStep.stdout, "[planCode 唯一]", "--check 报告面成文（新失败类别）");
+
+    // ---- ③ 改正一码（人工定夺保留 11 的 DUP1，13 改 DUP2）→ 放行：丙稿领号 16/17 + 派生计划码；--check 回绿
+    const reg = JSON.parse(readFileSync(join(root, registryRel), "utf8"));
+    reg.entries.find((e) => e.no === 13).planCode = "DUP2";
+    w(root, registryRel, JSON.stringify(reg, null, 2) + "\n");
+    const probe = runCompiler(root, ["--assign"]);
+    c.eq(probe.code, 0, "改正一码后 --assign 放行（退出码 0）");
+    const regAfter = JSON.parse(readFileSync(join(root, registryRel), "utf8"));
+    c.eq(regAfter.seq, 17, "放行：seq 前进 15 → 17（丙稿特性号 + 任务号）");
+    c.inc(readFileSync(join(root, gammaRel), "utf8"), "<!-- zcode-board: no=16 -->", "丙稿头标记 no=16（照常领号）");
+    const gammaEntry = regAfter.entries.find((e) => e.no === 16);
+    c.eq(
+      { no: gammaEntry?.no, kind: gammaEntry?.kind, file: gammaEntry?.file },
+      { no: 16, kind: "plan", file: gammaRel },
+      "丙稿条目照常登记（plan/指向）",
+    );
+    c.ok(
+      typeof gammaEntry?.planCode === "string" && /^[A-Z][A-Z0-9]{3}$/.test(gammaEntry.planCode) && !["DUP1", "DUP2"].includes(gammaEntry.planCode),
+      "丙稿照常派生计划码（形态合规、不复用既有码）",
+      show(gammaEntry?.planCode),
+    );
+    c.eq(
+      regAfter.entries.find((e) => e.no === 11)?.planCode,
+      "DUP1",
+      "保留者码零变动（改正只动被改条目）",
+    );
+    c.eq(
+      regAfter.entries.find((e) => e.no === 13)?.planCode,
+      "DUP2",
+      "被改条目码落盘（DUP2）",
+    );
+    const green = runCompiler(root, ["--check"]);
+    c.eq(green.code, 0, "改正后 --check 回绿（退出码 0）");
+    c.inc(green.stdout, "结论：--check 通过（0 项失败）", "回归零失败结论");
+  },
+});
+
 // ---------------------------------------------------------------- 主流程
 
 async function main(argv) {
@@ -10283,6 +10956,30 @@ async function main(argv) {
       deriveLibChecks(c, mod);
     } catch (e) {
       c.ok(false, "lib/derive.mjs 可导入（T7 交付物）", e.message);
+    }
+  }
+
+  say("");
+  say("== 死号对账库 lib/fact-invariants.mjs 的公开契约（#105：classifyDeadNumber 三分类 + checkRegistryGhosts 两值可见性） ==");
+  {
+    const c = new Checks("registry-ghost-lib");
+    try {
+      const mod = await import("../lib/fact-invariants.mjs");
+      registryGhostLibChecks(c, mod);
+    } catch (e) {
+      c.ok(false, "死号对账库可执行（fact-invariants 可导入）", e.message);
+    }
+  }
+
+  say("");
+  say("== 计划码唯一断言纯函数契约（B4-2/#106；E4-11：重复注册表项不受检的缺口收口） ==");
+  {
+    const c = new Checks("plan-code-lib");
+    try {
+      const mod = await import("../compile-board.mjs");
+      planCodeLibChecks(c, mod);
+    } catch (e) {
+      c.ok(false, "compile-board 可导入（#106 交付物）", e.message);
     }
   }
 
