@@ -92,11 +92,14 @@ function BoardListRow({
 function BoardListGroup({
   feature,
   nodes,
+  totalCards,
   onOpenCard,
   highlightCardId,
 }: {
   feature: BoardViewNode;
   nodes: BoardViewNode[];
+  /** 特性卡总数（#59 S-1）：单点来自视图模型；组内行数是过滤后张数，两者含义不同。 */
+  totalCards: number;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
@@ -127,7 +130,7 @@ function BoardListGroup({
             与 summary 空白 = 折叠/展开（不再被 preventDefault 吃掉——用户第四轮标注④）。 */}
         <BoardFeatureGroupHeaderContent
           feature={feature}
-          cardCount={nodes.length}
+          cardCount={totalCards}
           titleRegionProps={{
             "data-board-card": feature.id,
             ...highlightProps,
@@ -189,6 +192,7 @@ export function BoardListView({
               key={group.feature.id}
               feature={group.feature}
               nodes={group.nodes}
+              totalCards={group.totalCards}
               {...(onOpenCard ? { onOpenCard } : {})}
               highlightCardId={highlightCardId}
             />

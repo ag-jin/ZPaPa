@@ -3,6 +3,7 @@ import test from "node:test";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import {
   BOARD_TABLE_COLUMNS,
+  BOARD_TABLE_TEXT_COLUMNS,
   DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY,
   boardTableCellText,
   parseBoardTableColumnVisibility,
@@ -236,20 +237,24 @@ test("号列降级链：ID-<label> → #<no>（无 label）→ 未领号（契�
   );
 });
 
-test("段位/状态列走词条；未知取值原样透出（不吞字段、不自造词）", () => {
+test("状态列走词条；未知取值原样透出（不吞字段、不自造词）", () => {
   const nodes = matrixNodes();
   const card8 = nodeById(nodes, "task:8");
-  assert.equal(boardTableCellText(card8, "stage", t, NOW_2026_10_12), "执行中");
   assert.equal(boardTableCellText(card8, "status", t, NOW_2026_10_12), "进行中");
-  assert.equal(boardTableCellText(nodeById(nodes, "plan:sess_f1a2d0bb"), "stage", t, 0), "待设计");
-  const unknown = { ...card8, stage: "第八段位", status: "future-status" };
-  assert.equal(boardTableCellText(unknown, "stage", t, NOW_2026_10_12), "第八段位");
+  const unknown = { ...card8, status: "future-status" };
   assert.equal(boardTableCellText(unknown, "status", t, NOW_2026_10_12), "future-status");
-  assert.equal(
-    boardTableCellText({ ...card8, stage: null }, "stage", t, 0),
-    null,
-    "段位缺省 = 空单元格",
-  );
+});
+
+test("文本投影闭集（#59 M2）：段位/受阻/缺口不再走文本路径（徽章零件单点装配）", () => {
+  // 真源：T54/design-review.md M2——这三列在四视图里必须同为徽章形态，表格不得保留第二形态；
+  // 渲染侧守卫见 boardTableRender.test.ts「段位/缺口/受阻/执行角色走共用徽章零件」。
+  const textColumns: readonly string[] = BOARD_TABLE_TEXT_COLUMNS;
+  for (const badgeColumn of ["stage", "blockers", "attention"]) {
+    assert.ok(
+      !textColumns.includes(badgeColumn),
+      `${badgeColumn} 列不得再走 boardTableCellText 文本路径`,
+    );
+  }
 });
 
 test("最近执行与卡龄列：四要素文本；卡龄 = updatedAt 距今天数（floor，未来按 0）", () => {
@@ -307,18 +312,9 @@ test("责任管线列按管线序渲染；缺省不编造标准管线（契约 �
   );
 });
 
-test("阻碍/缺口列：计数与短标签摘要；空值 → 空单元格", () => {
+test("标题列走文本；阻碍/缺口列已移交徽章零件（#59 M2）", () => {
   const nodes = matrixNodes();
   const card7 = nodeById(nodes, "task:7");
-  assert.equal(boardTableCellText(card7, "blockers", t, NOW_2026_10_12), "受阻 1");
-  assert.equal(boardTableCellText(card7, "attention", t, NOW_2026_10_12), null, "#7 无缺口码");
-  const card8 = nodeById(nodes, "task:8");
-  assert.equal(
-    boardTableCellText(card8, "attention", t, NOW_2026_10_12),
-    "执行中断可续 · 待合并（未回流）",
-    "多码摘要按闭集序（§4 词表序），不是零散拼接",
-  );
-  assert.equal(boardTableCellText(card8, "blockers", t, NOW_2026_10_12), null, "#8 无阻拦");
   assert.equal(boardTableCellText(card7, "title", t, NOW_2026_10_12), "预览发布通道（workflow）");
 });
 

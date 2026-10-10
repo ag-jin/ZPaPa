@@ -7,7 +7,8 @@ import assert from "node:assert/strict";
  *
  * 分层沿用既有形态：本模块只提供「页面内驱动原语源码」与「Node 侧断言 helper」；
  * 驱动脚本（量什么、点哪里）在各被测脚本的 Drivers 文件，判据（断言）在被测脚本本身
- * （见 test/boardV21BrowserScenarios.ts 与 test/boardKanbanBrowserLayout.ts 的引用）。
+ * （#59 S-8 指针修正：当前引用方 = test/boardV21BrowserScenarios.ts；boardKanbanBrowserLayout
+ * 为独立量法，不引用本 kit）。
  */
 
 /** 元素横向溢出量取结果（页面内量取，Node 侧断言；1px 容差吸收亚像素取整）。 */

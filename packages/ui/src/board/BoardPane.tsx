@@ -11,6 +11,8 @@
  *   列表/表格的过滤与排序是本次打开内的临时状态（需求只要求「切换状态会话内保持」）。
  * - 弹窗打开态：**宿主只持一个卡片 id**（同一时刻最多一个弹窗）；Esc 的键位判据在纯函数
  *   `boardCardDialogKeyIntent` 一处判定，这里只消费（同 `TaskFindDialog` 的 chat 浮层口径）。
+ *   Tab 循环 containment 在弹窗壳内（`boardDialogTabIntent` 判边界）；关闭后焦点恢复到
+ *   打开者（打开时按同一 `data-board-card` 锚点记录触发元素，#59 M4）。
  * - 依赖跳转与提示条段落跳转：关弹窗 → 清过滤（目标可能被筛掉）→ 必要时切列表视图
  *   （看板列不渲染无段位节点）→ 展开折叠容器（已完成列置展开态；访谈汇总子区开 `<details>`）
  *   → 高亮目标卡并滚动到它。
@@ -78,6 +80,24 @@ export function BoardPane({
   );
   // 弹窗打开态（同一时刻至多一个）与跳转高亮落点（带 nonce：同目标重跳也重新起算）。
   const [openCardId, setOpenCardId] = useState<string | null>(null);
+  // 弹窗打开者记录（#59 M4 焦点闭环）：关闭（× / 遮罩 / Esc）后焦点回到打开它的卡片元素。
+  // 打开链路 = 卡片 onClick/onKeyDown → onOpenCard(id) → 这里；触发元素按同一 `data-board-card`
+  // 锚点定位（与跳转定位共用选择器）。跳转是「换目标」不是「关闭回退」——不抢目标滚动的焦点
+  // （focus() 会滚动到焦点元素，会与跳转的滚动落点打架）。
+  const dialogOpenerRef = useRef<HTMLElement | null>(null);
+  const handleOpenCard = useCallback((id: string) => {
+    dialogOpenerRef.current =
+      typeof document === "undefined"
+        ? null
+        : document.querySelector<HTMLElement>(boardCardSelector(id));
+    setOpenCardId(id);
+  }, []);
+  const handleCloseCard = useCallback(() => {
+    setOpenCardId(null);
+    const opener = dialogOpenerRef.current;
+    dialogOpenerRef.current = null;
+    if (opener && opener.isConnected) opener.focus();
+  }, []);
   const [highlight, setHighlight] = useState<BoardCardHighlightState | null>(null);
   // 看板「已完成」列展开态（评审 #35-S1 二轮）：列改条件渲染后，折叠列里的卡不在 DOM 里，
   // 跳转揭示必须**先把展开态置真再滚**——因此展开态归宿主持有（与高亮同一次提交落在同一帧，
@@ -158,7 +178,7 @@ export function BoardPane({
     }
   }, [rpcReady, refresh]);
 
-  // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费。
+  // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走 handleCloseCard（含焦点恢复）。
   useEffect(() => {
     if (openCardId === null) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -169,13 +189,13 @@ export function BoardPane({
         return;
       }
       event.preventDefault();
-      setOpenCardId(null);
+      handleCloseCard();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [openCardId]);
+  }, [openCardId, handleCloseCard]);
 
   // 跳转（弹窗 dependency 与提示条段落共用）：先关弹窗，再让目标卡在当前视图里「看得见」。
   const handleJumpToCard = useCallback(
@@ -232,8 +252,8 @@ export function BoardPane({
       tableColumns={tableColumns}
       onTableColumnsChange={handleTableColumnsChange}
       openCardId={openCardId}
-      onOpenCard={setOpenCardId}
-      onCloseCard={() => setOpenCardId(null)}
+      onOpenCard={handleOpenCard}
+      onCloseCard={handleCloseCard}
       onJumpToCard={handleJumpToCard}
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}

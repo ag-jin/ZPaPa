@@ -82,7 +82,9 @@ export interface BoardDialogBlocker {
   evidence: string[];
   /** 有目标才可跳转；无目标（缺 `blockedBy` / 目标不在板上）→ null，视图层禁用跳转。 */
   target: BoardDialogJumpTarget | null;
-  /** 对方编号文本：`ID-<对方label> · #<对方no>`（缺 label 时只给稳定号）；无目标 → null。 */
+  /** 对方编号文本（#54-6；#59 S-6 注释随实现更新）：复用 `formatBoardNodeId` ——
+   * `<计划码>-<层级> · #<对方no>`（如 UI01-1 · #32），无计划码降级 `ID-<对方label> · #<对方no>`，
+   * 缺 label 时只给稳定号；无目标 → null。 */
   targetText: string | null;
 }
 
@@ -186,6 +188,33 @@ export function boardCardDialogKeyIntent(input: {
 }): "close" | "none" {
   if (input.defaultPrevented) return "none";
   return input.key === "Escape" ? "close" : "none";
+}
+
+export type BoardDialogTabIntent =
+  | "wrap-first"
+  | "wrap-last"
+  | "enter-first"
+  | "enter-last"
+  | "none";
+
+/**
+ * 弹窗内 Tab 循环的边界判据（#59 M4，纯函数一处判定；DOM 读写——列可聚焦元素与 focus——
+ * 在弹窗组件里，SSR 缝不受影响）：
+ * - 焦点在可聚焦序列**末尾**且按 Tab → 回绕到首个（`wrap-first`）；
+ * - 焦点在**首个**且按 Shift+Tab → 回绕到末尾（`wrap-last`）；
+ * - 焦点不在弹窗内（`activeIndex < 0`，如脚本移出）→ 按方向移入端点；
+ * - 其余情况 `none`：交回浏览器原生 Tab 移动（不重实现全量焦点算法）。
+ */
+export function boardDialogTabIntent(input: {
+  shiftKey: boolean;
+  /** 当前焦点元素在弹窗可聚焦序列中的下标；-1 = 不在序列内。 */
+  activeIndex: number;
+  focusableCount: number;
+}): BoardDialogTabIntent {
+  if (input.focusableCount <= 0) return "none";
+  if (input.activeIndex < 0) return input.shiftKey ? "enter-last" : "enter-first";
+  if (input.shiftKey) return input.activeIndex === 0 ? "wrap-last" : "none";
+  return input.activeIndex === input.focusableCount - 1 ? "wrap-first" : "none";
 }
 
 /**

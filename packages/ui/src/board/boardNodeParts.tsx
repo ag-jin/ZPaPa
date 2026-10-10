@@ -46,8 +46,12 @@ export function BoardStatusDot({ status }: { status: string | null }) {
 /**
  * 四缺口码徽章（文案逐字，契约 §4；`interrupted-resume` 的 #N 取自该卡 lastRun.stoppedAt）。
  *
- * 溢出防线（#54-3）：窄容器（看板 w-56 列）里长徽章不得撑出列盒——徽章允许收缩并按需截断
- * （`min-w-0 max-w-full truncate`），全文进 `title` 悬停可查（信息不丢，与路径截断同款姿态）。
+ * 溢出防线（#54-3；省略号形态 #59 S-3(a)）：窄容器（看板 w-56 列）里长徽章不得撑出列盒。
+ * `Badge` 是 inline-flex——`text-overflow` 不作用于匿名文本项（Chromium 直接硬裁），
+ * 因此文本移入内层 `span`（`truncate`）承载省略号；外层 `max-w-full` 兜底为裁切（不撑宽宿主），
+ * 全文进 `title` 悬停可查（信息不丢，与路径截断同款姿态）。
+ * `data-board-overflow-clip` / `data-board-overflow-ellipsis`（#59 S-4）是守卫断言的 data 锚点
+ * ——不绑 CSS 类名。
  */
 export function BoardAttentionBadges({
   attention,
@@ -66,10 +70,13 @@ export function BoardAttentionBadges({
             key={code}
             variant="outline"
             data-board-attention={code}
+            data-board-overflow-clip=""
             title={text}
-            className="min-w-0 max-w-full truncate border-warning/40 bg-warning/10 text-warning"
+            className="min-w-0 max-w-full border-warning/40 bg-warning/10 text-warning"
           >
-            {text}
+            <span data-board-overflow-ellipsis="" className="min-w-0 truncate">
+              {text}
+            </span>
           </Badge>
         );
       })}
@@ -138,12 +145,26 @@ export function BoardBlockerBadge({ count }: { count: number }) {
   );
 }
 
-/** 执行角色徽记（标记 `data-board-active-run`，与表格的 `activeRun` 列同源字段）。 */
+/**
+ * 执行角色徽记（标记 `data-board-active-run`，与表格责任管线列同源字段）。
+ *
+ * 溢出防线（#59 M3）：角色名是板上动态文本（长中文/远端 agent 名），窄列里不得撑宽宿主——
+ * `min-w-0 max-w-full` + 内层 `span` 省略号（与缺口徽章同一形态），全文进 `title`。
+ */
 export function BoardActiveRunBadge({ role }: { role: string }) {
   const { intl } = useZCodeIntl();
+  const text = formatBoardActiveRunText(role, intl.formatMessage);
   return (
-    <Badge variant="secondary" data-board-active-run={role} className="shrink-0">
-      {formatBoardActiveRunText(role, intl.formatMessage)}
+    <Badge
+      variant="secondary"
+      data-board-active-run={role}
+      data-board-overflow-clip=""
+      title={text}
+      className="min-w-0 max-w-full"
+    >
+      <span data-board-overflow-ellipsis="" className="min-w-0 truncate">
+        {text}
+      </span>
     </Badge>
   );
 }
@@ -195,15 +216,18 @@ export function BoardNodeBadges({
         lastRun={lastRun}
       />
       {merged ? (
-        // 合并徽章（#54-5）：单一视觉单元，两个锚点各保留原值。
+        // 合并徽章（#54-5）：单一视觉单元，两个锚点各保留原值；省略号形态与缺口徽章一致（#59 S-3(a)）。
         <Badge
           variant="outline"
           data-board-attention="unmerged-worktree"
           data-board-blockers={blockers}
+          data-board-overflow-clip=""
           title={intl.formatMessage({ id: "board.attention.unmergedBlocked" })}
-          className="min-w-0 max-w-full truncate border-warning/40 bg-warning/10 text-warning"
+          className="min-w-0 max-w-full border-warning/40 bg-warning/10 text-warning"
         >
-          {intl.formatMessage({ id: "board.attention.unmergedBlocked" })}
+          <span data-board-overflow-ellipsis="" className="min-w-0 truncate">
+            {intl.formatMessage({ id: "board.attention.unmergedBlocked" })}
+          </span>
         </Badge>
       ) : (
         <BoardBlockerBadge count={blockers} />
@@ -361,8 +385,10 @@ export function BoardAssigneePipeline({
               {...(current ? { "data-board-pipeline-current": "true" } : {})}
               {...(next ? { "data-board-pipeline-next": role } : {})}
               {...(done ? { "data-board-pipeline-done": "true" } : {})}
+              // 长角色名防线（#59 N2）：角色文本自身可截断、全文进 title，行高与扫读稳定。
+              title={role}
               className={cn(
-                "text-ui-xs",
+                "min-w-0 max-w-full truncate text-ui-xs",
                 current
                   ? "font-medium text-primary"
                   : done

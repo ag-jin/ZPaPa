@@ -3,6 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
+import { boardCardHighlightProps } from "../src/board/boardCardInteraction.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import {
   EMPTY_BOARD_LIST_CONTROLS,
@@ -151,33 +152,53 @@ test("看板：卡片紧凑形态 = 号 + 标题 + 段位徽章 + 缺口徽章",
   assert.ok(running.includes("待合并（执行现场未回流）"), "待合并角标应逐字渲染");
 });
 
-test("看板：长徽章不撑出列盒 —— 组头行允许折行，徽章可截断且全文进 title（#54-3）", () => {
+test("看板：长徽章不撑出列盒 —— 组头行允许折行，徽章可截断且全文进 title（#54-3；#59 S-4 data 锚点）", () => {
   // 真源：用户第四轮标注①——w-56 列里「编号 + 名称 + 段位 + 长缺口徽章 + 计数」撑出横向滚动；
-  // 版面行为由浏览器断言（test/boardKanbanBrowserLayout.ts 溢出探针）钉住，这里钉两个静态前提：
-  // 组头行可折行（徽章落第二行）、徽章自身可收缩截断（max-w + truncate + title 全文）。
+  // 版面行为由浏览器断言（test/boardV21BrowserScenarios.ts 溢出探针）钉住，这里钉两个静态前提：
+  // 组头行可折行、徽章自身可收缩截断——#59 S-4 起用 data 锚点断言，不再绑 CSS 类名。
   const markup = kanban();
   const header = /<div[^>]*data-board-kanban-group-header="spec:preview-channel"[^>]*>/.exec(
     markup,
   );
   assert.ok(header, "执行中列应有计划分组头");
   assert.ok(
-    /class="[^"]*flex-wrap/.test(header[0]),
+    header[0].includes("data-board-overflow-wrap"),
     "组头行应允许折行（徽章可落第二行，不撑出列盒）",
   );
   assert.ok(markup.includes('data-board-attention="unmerged-worktree"'), "夹具前提：长徽章在场");
-  const badge =
-    /<span[^>]*data-board-attention="unmerged-worktree"[^>]*>/.exec(markup) ??
-    /<[^>]*data-board-attention="unmerged-worktree"[^>]*>/.exec(markup);
+  const badge = /<span[^>]*data-board-attention="unmerged-worktree"[^>]*>/.exec(markup);
   assert.ok(badge, "缺口徽章应存在");
   assert.ok(
-    /class="[^"]*max-w-full[^"]*truncate/.test(badge[0]) ||
-      /class="[^"]*truncate[^"]*max-w-full/.test(badge[0]),
-    "长徽章应可收缩截断（max-w-full + truncate）",
+    badge[0].includes("data-board-overflow-clip"),
+    "长徽章外层带截断防线锚点（max-w-full 兜底为裁切）",
   );
   assert.ok(
     badge[0].includes('title="待合并（执行现场未回流）"'),
     "截图后全文进 title（信息不丢）",
   );
+  const inner = markup.slice(
+    markup.indexOf(badge[0]),
+    markup.indexOf("</span>", markup.indexOf(badge[0])),
+  );
+  assert.ok(
+    inner.includes("data-board-overflow-ellipsis"),
+    "省略号由内层 span 承载（#59 S-3(a)：inline-flex 的匿名文本项不显示省略号）",
+  );
+});
+
+test("看板：执行角色徽记带截断防线与全文 title（#59 M3）", () => {
+  // 真源：T54/design-review.md M3——动态 agent 名（长中文/远端名）不得撑宽窄列；
+  // 截断不丢信息：全文进 title。省略号形态与缺口徽章同款（#59 S-3(a)）。
+  const markup = kanban();
+  const badge = /<span[^>]*data-board-active-run="implementer"[^>]*>/.exec(markup);
+  assert.ok(badge, "任务卡执行角色徽记应渲染（夹具 #8 activeRun=implementer）");
+  assert.ok(badge[0].includes('title="implementer 执行中"'), "全文进 title（截断不丢信息）");
+  assert.ok(badge[0].includes("data-board-overflow-clip"), "外层截断防线锚点");
+  const inner = markup.slice(
+    markup.indexOf(badge[0]),
+    markup.indexOf("</span>", markup.indexOf(badge[0])),
+  );
+  assert.ok(inner.includes("data-board-overflow-ellipsis"), "省略号由内层 span 承载");
 });
 
 test("看板：已取消列灰显并展示 statusRule 取消原因（§13.2）", () => {
@@ -707,6 +728,27 @@ test("面板：跳转落点高亮锚点跟着 highlightCardId 走（表格行与
   assert.ok(
     !/data-board-task="task:8"[^>]*data-board-card-highlight/.test(tree),
     "其余卡片不带高亮锚点",
+  );
+  // #59 S-5：特性块的高亮只落在标题落点一处，不在块外壳与落点上叠两遍（与列表同款）。
+  const featureTree = render(matrixBoard(), { highlightCardId: "spec:preview-channel" });
+  const blockStart = featureTree.indexOf('data-board-feature-block="spec:preview-channel"');
+  assert.ok(blockStart >= 0, "树形特性块应渲染");
+  const blockSlice = featureTree.slice(blockStart, featureTree.indexOf("</details>", blockStart));
+  // 高亮类片段由交互单点模块给出（不在测试里硬编码配色）：整块内恰出现一次 = 未叠两遍。
+  const highlightClass =
+    boardCardHighlightProps("spec:preview-channel", "spec:preview-channel").className ?? "";
+  assert.ok(highlightClass.length > 0, "高亮类片段应由交互单点模块产出");
+  assert.equal(
+    blockSlice.split(highlightClass).length - 1,
+    1,
+    "高亮底色在特性块内只出现一次（#59 S-5：外壳与落点不叠两遍）",
+  );
+  const titleStart = featureTree.indexOf('data-board-card="spec:preview-channel"', blockStart);
+  const titleTagStart = featureTree.lastIndexOf("<div", titleStart);
+  const titleTag = featureTree.slice(titleTagStart, featureTree.indexOf(">", titleStart));
+  assert.ok(
+    titleTag.includes('data-board-card-highlight="true"'),
+    "高亮落在特性标题落点（卡片锚点）上",
   );
 });
 

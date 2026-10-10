@@ -12,9 +12,13 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
 import {
+  BoardActiveRunBadge,
   BoardAssigneePipeline,
+  BoardAttentionBadges,
+  BoardBlockerBadge,
   BoardFeatureGroupHeaderContent,
   BoardNodeNumber,
+  BoardStageBadge,
 } from "./boardNodeParts.js";
 import {
   BOARD_TABLE_COLUMNS,
@@ -39,6 +43,15 @@ import type { BoardViewModel } from "./boardViewModel.js";
 const CELL_CLASS = "whitespace-nowrap px-2 py-1.5 align-top text-foreground";
 const HEADER_CLASS =
   "whitespace-nowrap px-2 py-1 text-left text-ui-xs font-medium text-foreground-subtle";
+
+/**
+ * 主阅读列（#59 M1）：标题/状态是行内主读信息 → `text-ui-sm`；其余列是弱元数据
+ * （号/段位徽章/责任管线/最近执行/时间戳/卡龄/受阻/缺口）→ `text-ui-xs`。
+ * 字号不再由表根统一继承（DESIGN.md 禁止把主阅读信息压到最弱刻度）。
+ */
+function cellTextClass(key: BoardTableColumnKey): string {
+  return key === "title" || key === "status" ? "text-ui-sm" : "text-ui-xs";
+}
 
 /**
  * 子行缩进（结构深度）：depth=1（分组下行）→ `pl-3`，其后每层再 +3 级距。
@@ -128,20 +141,34 @@ function BoardTableRow({
           data-board-cell={key}
           className={cn(
             CELL_CLASS,
+            cellTextClass(key),
             key === "title" && "max-w-[16rem] whitespace-normal",
             key === indentKey && rowIndentClass(node.depth),
           )}
         >
           {key === "assignees" ? (
-            // 责任管线（#46 B6 / #54-1）：当前执行者加粗变色，done 弱化，下一接手人次强调
-            <BoardAssigneePipeline
-              assignees={node.assignees}
-              currentAssignee={node.currentAssignee}
-              nextAssignee={node.nextAssignee}
-            />
+            // 责任管线（#46 B6 / #54-1）：当前执行者加粗变色，done 弱化，下一接手人次强调。
+            // 执行角色徽记（#59 M2）与管线同格：契约 §13.5 无独立 activeRun 列，执行角色经
+            // 共用徽章零件呈现（与其余三视图同一零件），随「责任管线」列配置出现/消失。
+            <span className="flex min-w-0 flex-wrap items-center gap-1">
+              <BoardAssigneePipeline
+                assignees={node.assignees}
+                currentAssignee={node.currentAssignee}
+                nextAssignee={node.nextAssignee}
+              />
+              {node.activeRun ? <BoardActiveRunBadge role={node.activeRun.role} /> : null}
+            </span>
           ) : key === "no" ? (
             // 号列走共用编号零件（#46 B1 短形态 + data-board-node-id 锚点与其余视图一致）
             <BoardNodeNumber no={node.no} label={node.label} planCode={node.planCode} short />
+          ) : key === "stage" ? (
+            // 段位/受阻/缺口（#59 M2）：与树形/看板/列表同一组徽章零件，不再降为纯文本；
+            // 各格独立装配 → 隐藏列不渲染对应徽章（列配置语义不丢）。
+            <BoardStageBadge stage={node.stage} />
+          ) : key === "blockers" ? (
+            <BoardBlockerBadge count={node.blockers.length} />
+          ) : key === "attention" ? (
+            <BoardAttentionBadges attention={node.attention} lastRun={node.lastRun} />
           ) : (
             boardTableCellText(node, key, intl.formatMessage, now)
           )}
@@ -206,7 +233,7 @@ function BoardTableGroup({
             >
               <BoardFeatureGroupHeaderContent
                 feature={group.feature}
-                cardCount={group.nodes.length}
+                cardCount={group.totalCards}
               />
             </div>
           </div>
@@ -278,7 +305,7 @@ export function BoardTableView({
             {intl.formatMessage({ id: "board.list.empty" })}
           </div>
         ) : (
-          <table data-board-table="" className="w-full border-collapse text-ui-xs">
+          <table data-board-table="" className="w-full border-collapse">
             <thead>
               <tr>
                 {visibleColumns.map((key) => (

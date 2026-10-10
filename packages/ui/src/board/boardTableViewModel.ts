@@ -1,10 +1,8 @@
 import {
-  BOARD_ATTENTION_LABEL_MESSAGE_IDS,
   formatBoardCardAge,
   formatBoardLastRunText,
   formatBoardNodeId,
   formatBoardRunTime,
-  formatBoardStageText,
   formatBoardStatusText,
   type BoardMessageFormatter,
 } from "./boardPresentation.js";
@@ -113,16 +111,32 @@ export function parseBoardTableColumnVisibility(value: unknown): BoardTableColum
 /* ---------------- 单元格值（列 → 文本） ---------------- */
 
 /**
+ * 仍走文本投影的列（#59 M2）：段位/受阻/缺口已改由共用徽章零件装配（`boardNodeParts`，
+ * 与另外三视图同一形态）——文本路径不再覆盖这三列，避免同一格存在两种形态。
+ * 号与责任管线在组件里走专属零件；其文本投影保留为纯函数层的降级语义（契约 §13.5 的降级链）。
+ */
+export const BOARD_TABLE_TEXT_COLUMNS = [
+  "no",
+  "title",
+  "status",
+  "assignees",
+  "lastRun",
+  "updatedAt",
+  "age",
+] as const;
+
+export type BoardTableTextColumnKey = (typeof BOARD_TABLE_TEXT_COLUMNS)[number];
+
+/**
  * 单元格文本（列值 → 可渲染字符串）。全部字段来自 board.json 的映射结果，零推导：
  * - 号列降级链：`ID-<label>` → `#<no>`（缺 label）→「未领号」（派发指令的列定义）；
- * - 段位/状态走词条，未知取值原样透出（不吞字段、不自造词，§13.6）；
+ * - 状态走词条，未知取值原样透出（不吞字段、不自造词，§13.6）；
  * - `lastRun` 与卡片「最近执行」行同源（四要素，§3.3）；`updatedAt`/卡龄取同一 `now`；
- * - `blockers`/`attention` 用既有徽章文案（§3.3「受阻 N」/ §4 短标签），摘要按闭集序；
  * - `null` = 空单元格（视图层渲染空白，不充占位符、不编造「无」）。
  */
 export function boardTableCellText(
   node: BoardViewNode,
-  key: BoardTableColumnKey,
+  key: BoardTableTextColumnKey,
   formatMessage: BoardMessageFormatter,
   now: number,
 ): string | null {
@@ -134,8 +148,6 @@ export function boardTableCellText(
       return formatMessage({ id: "board.unassigned" });
     case "title":
       return node.title;
-    case "stage":
-      return formatBoardStageText(node.stage, formatMessage);
     case "status":
       return formatBoardStatusText(node.status, formatMessage);
     case "assignees":
@@ -146,17 +158,6 @@ export function boardTableCellText(
       return node.updatedAt ? formatBoardRunTime(node.updatedAt) : null;
     case "age":
       return formatBoardCardAge(node.updatedAt, now, formatMessage);
-    case "blockers":
-      return node.blockers.length > 0
-        ? formatMessage({ id: "board.blockedByCount" }, { count: node.blockers.length })
-        : null;
-    case "attention":
-      // `attention` 在映射层已按 §4 闭集序收敛（多码摘要的顺序不随字段书写顺序漂移）。
-      return node.attention.length > 0
-        ? node.attention
-            .map((code) => formatMessage({ id: BOARD_ATTENTION_LABEL_MESSAGE_IDS[code] }))
-            .join(" · ")
-        : null;
   }
 }
 

@@ -9,18 +9,22 @@
  * 不再是 `fixed inset-0` 的全局遮罩。
  * 关闭路径：× 与遮罩在壳内（点即关），Esc 由宿主消费纯函数 `boardCardDialogKeyIntent`
  * ——壳内不判第二遍键位（同 `WorkItemMobileSheet` 的既有纪律）。
+ * 焦点闭环（#59 M4）：壳内 `onKeyDown` 处理 Tab 首尾回绕（边界判据在 `boardDialogTabIntent`，
+ * 不引入 portal/第三方）；关闭后焦点恢复到打开者在宿主 `BoardPane`（打开时记录触发卡片元素）。
  *
  * 为什么不用 radix `Dialog`：本面板的渲染缝是 SSR（`react-dom/server`，卡 #32/#33 建立），
  * portal 里的弹窗内容在该缝里不可见；弹窗正文恰是本卡的交付主体，必须可断言。
  * 表单元素与配色仍走既有零件与语义 token（`bg-popover` / `border-popover-border` / `rounded-2xl`
  * / `shadow-md`，DESIGN.md 弹窗外壳规范）。
  */
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+import { useRef } from "react";
 import { XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
+  boardDialogTabIntent,
   buildBoardCardDialog,
   BOARD_ORIGIN_MESSAGE_IDS,
   type BoardDialogBlocker,
@@ -121,7 +125,8 @@ function DialogBlockerRow({
     <div
       data-board-dialog-blocker={blocker.index}
       data-board-dialog-blocker-kind={blocker.kind}
-      className="flex flex-col gap-1 rounded-lg bg-surface px-2 py-1.5"
+      // 首个圆角内容容器从 rounded-xl 起（#59 N1；DESIGN.md Dialog 层级：外壳不计入内容层级）。
+      className="flex flex-col gap-1 rounded-xl bg-surface px-2 py-1.5"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <Badge variant="outline" className="shrink-0">
@@ -159,6 +164,13 @@ function DialogBlockerRow({
   );
 }
 
+/** 弹窗内可聚焦元素（Tab 循环的读取面；判据在 `boardDialogTabIntent`，DOM 读写只在这里）。 */
+function boardDialogFocusables(root: HTMLElement): HTMLElement[] {
+  const selector =
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return [...root.querySelectorAll<HTMLElement>(selector)];
+}
+
 export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: BoardCardDialogProps) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
@@ -171,6 +183,31 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
     formatTime: relativeTime,
   });
   const close = onClose ?? (() => {});
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Tab 循环 containment（#59 M4）：边界判据在纯函数 `boardDialogTabIntent`，这里只做
+   * DOM 读取（可聚焦序列）与 focus。焦点恢复（关闭后回到打开者）在宿主 `BoardPane`（打开链路
+   * 的触发元素在那里记录）；本组件不引入 portal/第三方，SSR 缝（renderToStaticMarkup）不变。
+   */
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const root = shellRef.current;
+    if (!root) return;
+    const focusables = boardDialogFocusables(root);
+    const activeIndex = focusables.indexOf(document.activeElement as HTMLElement);
+    const intent = boardDialogTabIntent({
+      shiftKey: event.shiftKey,
+      activeIndex,
+      focusableCount: focusables.length,
+    });
+    if (intent === "none") return;
+    event.preventDefault();
+    const target =
+      intent === "wrap-first" || intent === "enter-first"
+        ? focusables[0]
+        : focusables[focusables.length - 1];
+    target?.focus();
+  };
   return (
     <div
       data-board-dialog-root=""
@@ -184,10 +221,12 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
         onClick={close}
       />
       <div
+        ref={shellRef}
         role="dialog"
         aria-modal="true"
         aria-label={dialog.title}
         data-board-dialog={dialog.id}
+        onKeyDown={handleTabKeyDown}
         className="relative my-auto flex max-h-[85vh] w-full max-w-[26rem] flex-col overflow-hidden rounded-2xl border border-popover-border bg-popover text-ui-base/relaxed text-foreground shadow-md"
       >
         <div data-board-dialog-section="header" className="flex items-start gap-2 px-3 py-2">
@@ -195,7 +234,8 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
             no={dialog.no}
             label={dialog.label}
             planCode={node.planCode}
-            variant={dialog.kind === "feature" ? "feature" : "task"}
+            // #59 S-7：kind 闭集与 variant 闭集同名，直接透传（去掉冗余三元）。
+            variant={dialog.kind}
           />
           <span className="min-w-0 flex-1 text-ui-sm font-medium text-foreground">
             {dialog.title}

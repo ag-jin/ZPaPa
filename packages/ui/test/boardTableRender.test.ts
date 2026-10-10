@@ -164,17 +164,74 @@ test("表格：折叠态子行不渲染（D3：交付套件内钉住，不靠独
   );
 });
 
+/** 某一格（`data-board-cell="<key>"` 到 `</td>`）的 markup 切片：徽章装配按格断言。 */
+function cellOf(markup: string, id: string, key: string): string {
+  const row = rowOf(markup, id);
+  const start = row.indexOf(`data-board-cell="${key}"`);
+  assert.ok(start >= 0, `行 ${id} 应有 ${key} 格`);
+  const end = row.indexOf("</td>", start);
+  return row.slice(start, end === -1 ? row.length : end);
+}
+
+test("表格：段位/缺口/受阻/执行角色走共用徽章零件（#59 M2：四视图同形态）", () => {
+  // 真源：T54/design-review.md M2——表格任务行不得把段位/缺口/受阻/执行角色降为纯文本；
+  // 应复用四视图共享零件（BoardStageBadge / BoardNodeBadges 的角标组成件），语义 color/形态一致。
+  const markup = render();
+  assert.match(
+    cellOf(markup, "task:8", "stage"),
+    /data-board-stage="执行中"/,
+    "段位格 = 共用段位徽章（不是纯文本）",
+  );
+  assert.match(
+    cellOf(markup, "task:7", "blockers"),
+    /data-board-blockers="1"/,
+    "受阻格 = 共用受阻徽章（锚点带原值）",
+  );
+  const attention = cellOf(markup, "task:8", "attention");
+  assert.match(attention, /data-board-attention="interrupted-resume"/, "缺口格 = 缺口徽章 1");
+  assert.match(attention, /data-board-attention="unmerged-worktree"/, "缺口格 = 缺口徽章 2");
+  assert.ok(attention.includes("执行中断，可续（停在 #8）"), "缺口徽章文案逐字（§4）");
+  assert.ok(attention.includes("待合并（执行现场未回流）"), "缺口徽章文案逐字（§13.4）");
+  assert.match(
+    cellOf(markup, "task:8", "assignees"),
+    /data-board-active-run="implementer"/,
+    "执行角色 = 共用执行角色徽记（与其余三视图同一零件）",
+  );
+});
+
+test("表格：徽章随列配置出现/消失（隐藏列不渲染对应徽章；#59 M2 列配置语义）", () => {
+  const columns = {
+    ...DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY,
+    stage: false,
+    assignees: false,
+    blockers: false,
+    attention: false,
+  };
+  const markup = render({ columns });
+  const row8 = rowOf(markup, "task:8");
+  assert.ok(!row8.includes("data-board-stage"), "隐藏段位列 → 不渲染段位徽章");
+  assert.ok(!row8.includes("data-board-attention"), "隐藏缺口列 → 不渲染缺口徽章");
+  assert.ok(!row8.includes("data-board-active-run"), "隐藏责任管线列 → 不渲染执行角色徽记");
+  assert.ok(
+    !rowOf(markup, "task:7").includes("data-board-blockers"),
+    "隐藏阻碍列 → 不渲染受阻徽章",
+  );
+});
+
 test("表格：单元格值（号/名称/段位/状态/最近执行/卡龄/阻碍/缺口）", () => {
   const markup = render();
   const row = rowOf(markup, "task:8");
   assert.ok(row.includes("ID-1.2"), "号列：ID-<label>");
   assert.ok(row.includes("让开关立刻生效（核心）"), "名称列");
-  assert.ok(row.includes(">执行中<"), "段位列（词条文本）");
+  assert.ok(row.includes(">执行中<"), "段位列（词条文本，徽章内）");
   assert.ok(row.includes(">进行中<"), "状态列（status 词条）");
   assert.ok(row.includes("停在 #8"), "最近执行列：四要素里的断点段");
   // #8 updatedAt=2026-10-09T14:20+08:00，now=2026-10-12T09:00+08:00 → 2 天。
   assert.ok(row.includes(">2 天<"), `卡龄列 = updatedAt 距今天数：${row.slice(0, 300)}`);
-  assert.ok(row.includes(">执行中断可续 · 待合并（未回流）<"), "缺口列多码摘要");
+  assert.ok(
+    row.includes(">执行中断，可续（停在 #8）<") && row.includes(">待合并（执行现场未回流）<"),
+    "缺口列按码逐枚渲染（#59 M2 后不再是拼接摘要）",
+  );
   const card7 = rowOf(markup, "task:7");
   assert.ok(card7.includes(">受阻 1<"), "阻碍列 = 受阻 N");
   // #7 updatedAt=2026-10-09T14:05+08:00 → 2 天；#10 updatedAt=2026-10-09T09:00+08:00 → 恰好 3 天。

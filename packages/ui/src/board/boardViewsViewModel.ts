@@ -153,13 +153,15 @@ export function collectBoardViewNodes(board: BoardViewModel): BoardViewNode[] {
 /**
  * 特性分组视图节点（#46 B3/B4）：每组 = 特性头 + 其任务卡（文档序前序，含嵌套子卡）。
  * 列表/表格的分组行与看板的分组头共用这一份形态（分组只是呈现，节点字段一字不改）。
+ * `totalCards`（#59 S-1）：特性卡总数单点产出（`countBoardFeatureTasks`），消费方不再各算一份。
  */
 export function collectBoardFeatureGroups(
   board: BoardViewModel,
-): Array<{ feature: BoardViewNode; nodes: BoardViewNode[] }> {
+): Array<{ feature: BoardViewNode; nodes: BoardViewNode[]; totalCards: number }> {
   return board.features.map((feature) => ({
     feature: featureViewNode(feature),
     nodes: collectFeatureTaskNodes(feature),
+    totalCards: countBoardFeatureTasks(feature),
   }));
 }
 
@@ -174,6 +176,13 @@ function collectFeatureTaskNodes(feature: BoardFeatureNode): BoardViewNode[] {
   walk(feature.tasks);
   return nodes;
 }
+
+/**
+ * 特性卡总数（含嵌套子卡，单点；#59 S-1）：四视图组头 `[N 张卡]` 共用同一口径，不受过滤影响；
+ * 复用唯一一份前序遍历，卡数与节点集合不会漂移。
+ */
+export const countBoardFeatureTasks = (feature: BoardFeatureNode): number =>
+  collectFeatureTaskNodes(feature).length;
 
 export interface BoardKanbanGroup {
   /** 分组头：特性节点（可点开弹窗；渲染为分组行，不是独立卡）。 */
@@ -205,6 +214,11 @@ export interface BoardKanbanColumn {
 export interface BoardListGroup {
   feature: BoardViewNode;
   nodes: BoardViewNode[];
+  /**
+   * 特性卡总数（#59 S-1，与看板分组头同源单点）：组头 `[N 张卡]` 表达特性规模，
+   * 不受过滤影响——过滤只减行，行数表达当前呈现。
+   */
+  totalCards: number;
 }
 
 /** 排序第二视角（§3.5：「最老未动」由用户主动切换，不改变默认排序）。 */
@@ -473,7 +487,7 @@ export function buildBoardKanban(
   const columns: BoardKanbanColumn[] = BOARD_STAGES.map((stage) => {
     const nodes = buckets.get(stage) ?? [];
     const groups: BoardKanbanGroup[] = [];
-    for (const { feature, nodes: featureNodes } of collectBoardFeatureGroups(board)) {
+    for (const { feature, nodes: featureNodes, totalCards } of collectBoardFeatureGroups(board)) {
       // 访谈聚合节点按**节点粒度**过滤（#55 S-1，评审 #46 S-1）：特性级 `continue` 会连带
       // 静默丢弃「访谈聚合特性携带任务」形状的任务节点。聚合判据只作用于节点自身——
       // 聚合节点自身不占主列（它归「访谈汇总」子区），其任务照常按自身段位入场；
@@ -490,7 +504,6 @@ export function buildBoardKanban(
         sort,
       );
       const sortKey = members[0] ?? feature;
-      const totalCards = featureNodes.length;
       groups.push({ feature, nodes: sortedTasks, totalCards, featureInColumn, sortKey });
     }
     groups.sort((left, right) => {
@@ -533,7 +546,10 @@ export function buildBoardListGroups(
 ): BoardListGroup[] {
   const flat = buildBoardListRows(board, query);
   const ownerByTaskId = new Map<string, BoardViewNode>();
-  for (const { feature, nodes } of collectBoardFeatureGroups(board)) {
+  // 特性卡总数（#59 S-1）：与看板分组头同源（`collectBoardFeatureGroups` 单点产出）。
+  const totalByFeatureId = new Map<string, number>();
+  for (const { feature, nodes, totalCards } of collectBoardFeatureGroups(board)) {
+    totalByFeatureId.set(feature.id, totalCards);
     for (const node of nodes) ownerByTaskId.set(node.id, feature);
   }
   const groups: BoardListGroup[] = [];
@@ -541,7 +557,7 @@ export function buildBoardListGroups(
   const ensureGroup = (feature: BoardViewNode): BoardListGroup => {
     let group = byFeatureId.get(feature.id);
     if (!group) {
-      group = { feature, nodes: [] };
+      group = { feature, nodes: [], totalCards: totalByFeatureId.get(feature.id) ?? 0 };
       byFeatureId.set(feature.id, group);
       groups.push(group);
     }

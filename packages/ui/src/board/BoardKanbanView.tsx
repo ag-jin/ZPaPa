@@ -120,6 +120,8 @@ function BoardKanbanGroupBlock({
     <div data-board-kanban-group={group.feature.id} className="flex flex-col gap-1">
       <div
         data-board-kanban-group-header={group.feature.id}
+        // 溢出防线锚点（#59 S-4）：守卫断言按 data 锚点判「组头行允许折行」，不绑 CSS 类名。
+        data-board-overflow-wrap=""
         {...(!group.featureInColumn ? { "data-board-group-lightweight": "true" } : {})}
         data-board-card={group.feature.id}
         {...highlightProps}

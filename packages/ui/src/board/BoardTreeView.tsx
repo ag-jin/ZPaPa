@@ -20,6 +20,7 @@ import {
   BoardStageBadge,
 } from "./boardNodeParts.js";
 import { formatBoardLastRunText, formatBoardRunTime } from "./boardPresentation.js";
+import { countBoardFeatureTasks } from "./boardViewsViewModel.js";
 import type { BoardFeatureNode, BoardTaskNode, BoardViewModel } from "./boardViewModel.js";
 
 /** 缩进层级 → 左侧内边距（层级 = 结构深度：1 = 特性下第一层；不信 label 段数）。 */
@@ -28,10 +29,6 @@ const TASK_INDENT_CLASSES = ["pl-2", "pl-6", "pl-10", "pl-14"] as const;
 function taskIndentClass(depth: number): string {
   const index = Math.min(Math.max(depth, 1), TASK_INDENT_CLASSES.length) - 1;
   return TASK_INDENT_CLASSES[index] ?? "pl-2";
-}
-
-function countFeatureTasks(tasks: BoardTaskNode[]): number {
-  return tasks.reduce((total, task) => total + 1 + countFeatureTasks(task.children), 0);
 }
 
 /**
@@ -164,18 +161,17 @@ function BoardFeatureSection({
   const updatedAtText = feature.updatedAt
     ? intl.formatMessage({ id: "board.updatedAt" }, { time: formatBoardRunTime(feature.updatedAt) })
     : null;
-  const cardCount = countFeatureTasks(feature.tasks);
+  // 特性卡总数（#59 S-1）：单点来自视图模型（与看板/列表/表格组头同一口径）。
+  const cardCount = countBoardFeatureTasks(feature);
   const groups = groupBoardTasksBySection(feature.tasks);
   return (
     <details
       data-board-feature={feature.id}
       data-board-feature-block={feature.id}
       open={boardFeatureDefaultExpanded(feature) || undefined}
-      className={cn(
-        // 折叠大块（B2）：边框 + 背景把特性与子卡分开，视觉上独立于子卡
-        "group mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40",
-        highlightClassName,
-      )}
+      // 折叠大块（B2）：边框 + 背景把特性与子卡分开，视觉上独立于子卡。
+      // 高亮底色只落在标题落点上（#59 S-5：与列表同款，不在块与落点叠两遍）。
+      className="group mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40"
     >
       <summary
         data-board-feature-block-summary={feature.id}

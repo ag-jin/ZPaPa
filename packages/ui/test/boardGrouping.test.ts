@@ -4,7 +4,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
-import { buildBoardKanban, buildBoardListGroups } from "../src/board/boardViewsViewModel.js";
+import {
+  buildBoardKanban,
+  buildBoardListGroups,
+  EMPTY_BOARD_LIST_CONTROLS,
+} from "../src/board/boardViewsViewModel.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { GROUPING_BOARD } from "./boardGroupingFixture.js";
@@ -198,6 +202,44 @@ test("列表模型：分组 = 特性头 + 过滤排序后的子行（组间 atte
       { feature: "spec:alpha", rows: ["task:21"] },
     ],
     "分组序按成员最高优先（缺口置顶）；组内行按 updatedAt 倒序",
+  );
+});
+
+test("列表/表格组头计数 = 特性卡总数（#59 S-1）：过滤只减行，不把组头读小", () => {
+  // 真源：T5455r S-1——同一「[N 张卡]」四视图必须一种口径（总数在视图模型单点产出）；
+  // 组头表达特性规模，行数表达当前过滤；列内/组内张数由行数自然表达。
+  const outcome = parseBoardJson(JSON.stringify(GROUPING_BOARD));
+  if (outcome.kind !== "ready") throw new Error("夹具必须是 ready");
+  const filtered = buildBoardListGroups(outcome.board, { filter: { stage: "执行中" } });
+  const plan = filtered.find((group) => group.feature.id === "plan:plan-zcode-ui");
+  assert.ok(plan, "执行中过滤后 plan 分组仍在（#46 卡在列）");
+  assert.equal(plan.nodes.length, 1, "组内只留执行中的 #46");
+  assert.equal(plan.totalCards, 2, "组头计数 = 特性卡总数（#46 + #47），不是过滤后行数");
+
+  const listMarkup = render({
+    viewMode: "list",
+    listControls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: "执行中" },
+  });
+  const listGroup = listMarkup.slice(
+    listMarkup.indexOf('data-board-list-group="plan:plan-zcode-ui"'),
+  );
+  assert.match(
+    listGroup,
+    /data-board-feature-card-count="2"/,
+    "列表组头 = 总数 2（列内只排 1 行）",
+  );
+
+  const tableMarkup = render({
+    viewMode: "table",
+    listControls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: "执行中" },
+  });
+  const tableGroup = tableMarkup.slice(
+    tableMarkup.indexOf('data-board-table-group="plan:plan-zcode-ui"'),
+  );
+  assert.match(
+    tableGroup,
+    /data-board-feature-card-count="2"/,
+    "表格组头 = 总数 2（组内只排 1 行）",
   );
 });
 
@@ -407,5 +449,11 @@ test("责任管线：当前执行者加粗变色，其余灰色小字（表格 a
   assert.ok(
     !/data-board-pipeline-role="test-verifier"[^>]*data-board-pipeline-current/.test(pipeline),
     "非当前执行者不得误标",
+  );
+  // #59 N2：角色文本自带截断防线与全文 title（长 agent 名行高与扫读稳定）。
+  assert.match(
+    pipeline,
+    /data-board-pipeline-role="implementer"[^>]*title="implementer"/,
+    "角色文本带 title 全文（#59 N2）",
   );
 });

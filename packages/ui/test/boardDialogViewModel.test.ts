@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BOARD_DIALOG_ORIGIN_KEYS,
   boardCardDialogKeyIntent,
+  boardDialogTabIntent,
   boardJumpRequiresListView,
   buildBoardCardDialog,
   resolveBoardAttentionJumpTarget,
@@ -297,6 +298,55 @@ test("Esc 关窗的键位判据在纯函数（一处判定，宿主只消费）"
   );
   assert.equal(boardCardDialogKeyIntent({ key: "Enter", defaultPrevented: false }), "none");
   assert.equal(boardCardDialogKeyIntent({ key: "a", defaultPrevented: false }), "none");
+});
+
+test("弹窗 Tab 循环边界（#59 M4）：首尾回绕、焦点在弹窗外移入端点、中间交回原生", () => {
+  // 真源：T54/design-review.md M4——`aria-modal` 弹窗必须焦点闭环；Tab 判据在纯函数一处，
+  // DOM 读写（列可聚焦元素、focus）在弹窗组件。3 个可聚焦元素 = 关闭钮 + 两个跳转钮的形态。
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: 2, focusableCount: 3 }),
+    "wrap-first",
+    "末尾 Tab → 回绕到首个",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: true, activeIndex: 0, focusableCount: 3 }),
+    "wrap-last",
+    "首个 Shift+Tab → 回绕到末尾",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: 0, focusableCount: 3 }),
+    "none",
+    "中间移动交回浏览器原生 Tab（不做全量重实现）",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: 1, focusableCount: 3 }),
+    "none",
+  );
+  assert.equal(boardDialogTabIntent({ shiftKey: true, activeIndex: 2, focusableCount: 3 }), "none");
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: -1, focusableCount: 3 }),
+    "enter-first",
+    "焦点不在弹窗内 → Tab 移入首个",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: true, activeIndex: -1, focusableCount: 3 }),
+    "enter-last",
+    "焦点不在弹窗内 → Shift+Tab 移入末尾",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: -1, focusableCount: 0 }),
+    "none",
+    "没有可聚焦元素 → 不制造焦点",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: false, activeIndex: 0, focusableCount: 1 }),
+    "wrap-first",
+    "单元素：正向回绕到它自己",
+  );
+  assert.equal(
+    boardDialogTabIntent({ shiftKey: true, activeIndex: 0, focusableCount: 1 }),
+    "wrap-last",
+  );
 });
 
 test("跳转降级：看板列视图遇到段位缺省的目标 → 切列表视图（列表全量可见，不静默跳空）", () => {

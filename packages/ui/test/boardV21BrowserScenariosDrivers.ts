@@ -11,8 +11,9 @@
 import { BOARD_BROWSER_DRIVER_PRELUDE } from "./boardBrowserProbeKit.js";
 
 /**
- * 场景一：溢出探针——看板分组头行（w-56 列内）与列容器都不得横向溢出；
- * 被截断的长徽章必须带 `title` 全文（截断≠信息丢失）。
+ * 场景一：溢出探针——看板分组头行（w-56 列内）、列容器与**列体 div**（#59 T-1）都不得横向溢出；
+ * 被截断的长徽章必须带 `title` 全文（截断≠信息丢失）；执行角色徽记（#59 M3）在长 agent 名夹具下
+ * 也必须被真截断（内层省略号 span）且不撑宽卡片。
  */
 export function overflowProbeDriverSource(): string {
   return `(async () => {
@@ -40,15 +41,35 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
       badgeCount: header.querySelectorAll("[data-board-attention]").length,
     };
   });
-  const badges = [...document.querySelectorAll("[data-board-attention]")].map((badge) => ({
-    code: badge.getAttribute("data-board-attention"),
-    title: badge.getAttribute("title"),
-    clientW: badge.clientWidth,
-    scrollW: badge.scrollWidth,
-    truncated: badge.scrollWidth > badge.clientWidth + 1,
-    hasTitle: badge.hasAttribute("title"),
-  }));
-  return { ua: navigator.userAgent, groups, badges };
+  // #59 T-1：列体（[data-board-column] 的直接 div 子元素，即列头行与内容体）也要探。
+  const columnBodies = [...document.querySelectorAll("[data-board-column] > div")].map((el) =>
+    probeOverflow(el),
+  );
+  const badges = [...document.querySelectorAll("[data-board-attention]")].map((badge) => {
+    const inner = badge.querySelector("[data-board-overflow-ellipsis]");
+    return {
+      code: badge.getAttribute("data-board-attention"),
+      title: badge.getAttribute("title"),
+      clientW: badge.clientWidth,
+      scrollW: badge.scrollWidth,
+      truncated: inner ? inner.scrollWidth > inner.clientWidth + 1 : badge.scrollWidth > badge.clientWidth + 1,
+      hasTitle: badge.hasAttribute("title"),
+    };
+  });
+  // #59 M3：执行角色徽记（长 agent 名防线的真排版证据）——量徽章自身、内层省略号与所在卡片。
+  const roleBadges = [...document.querySelectorAll("[data-board-active-run]")].map((badge) => {
+    const inner = badge.querySelector("[data-board-overflow-ellipsis]");
+    const card = badge.closest("[data-board-kanban-card]");
+    return {
+      role: badge.getAttribute("data-board-active-run"),
+      title: badge.getAttribute("title"),
+      hasTitle: badge.hasAttribute("title"),
+      hasClipGuard: badge.hasAttribute("data-board-overflow-clip"),
+      innerTruncated: inner ? inner.scrollWidth > inner.clientWidth + 1 : false,
+      card: card ? probeOverflow(card) : null,
+    };
+  });
+  return { ua: navigator.userAgent, groups, columnBodies, badges, roleBadges };
 })()`;
 }
 
@@ -99,6 +120,85 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     countChipBox: { w: countChip.getBoundingClientRect().width },
     titleRegionBox: { w: titleRegion.getBoundingClientRect().width },
     foldTransform,
+  };
+})()`;
+}
+
+/**
+ * 场景三（#59 M1）：表格字号分层——主阅读列（标题/状态）text-ui-sm，弱元数据（卡龄/最近执行/
+ * 时间戳）text-ui-xs；期望值由页面根上的 `--ui-font-size`（真 Tailwind 产物）现算，不写死。
+ */
+export function tableTypographyDriverSource(): string {
+  return `(async () => {
+${BOARD_BROWSER_DRIVER_PRELUDE}
+  await switchToView("table");
+  await waitFor(() => document.querySelector('[data-board-cell="title"]'), "表格任务行");
+  await sleep(60);
+  const fontSize = (selector) => {
+    const el = document.querySelector(selector);
+    return el ? getComputedStyle(el).fontSize : null;
+  };
+  return {
+    ua: navigator.userAgent,
+    baseFontSize: getComputedStyle(document.documentElement).getPropertyValue("--ui-font-size").trim(),
+    title: fontSize('[data-board-cell="title"]'),
+    status: fontSize('[data-board-cell="status"]'),
+    lastRun: fontSize('[data-board-cell="lastRun"]'),
+    updatedAt: fontSize('[data-board-cell="updatedAt"]'),
+    age: fontSize('[data-board-cell="age"]'),
+  };
+})()`;
+}
+
+/**
+ * 场景四（#59 M4）：弹窗焦点闭环——打开落点 = 关闭钮（autoFocus）；Shift+Tab 在首元素回绕到末元素、
+ * Tab 在末元素回绕到首元素（合成键事件走 React onKeyDown，浏览器默认焦点移动不参与，观察值即
+ * 我们的判定结果）；Esc 关闭后焦点恢复到打开者卡片。顺带量取阻碍条目圆角（#59 N1 = rounded-xl 12px）。
+ */
+export function dialogFocusDriverSource(): string {
+  return `(async () => {
+${BOARD_BROWSER_DRIVER_PRELUDE}
+  await switchToView("list");
+  const card = await waitFor(() => document.querySelector('[data-board-card="task:7"]'), "任务卡 task:7");
+  dispatchPointerClick(card);
+  const dialog = await waitFor(() => document.querySelector("[data-board-dialog]"), "弹窗");
+  const dialogId = dialog.getAttribute("data-board-dialog");
+  await sleep(80);
+  const describe = (el) =>
+    el
+      ? {
+          tag: el.tagName,
+          card: el.getAttribute("data-board-card"),
+          close: el.hasAttribute("data-board-dialog-close"),
+          jump: el.hasAttribute("data-board-dialog-jump"),
+        }
+      : null;
+  const focusables = () =>
+    [...dialog.querySelectorAll('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')];
+  const activeAfterOpen = describe(document.activeElement);
+  const list = focusables();
+  list[0].focus();
+  list[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+  const activeAfterShiftTabFromFirst = describe(document.activeElement);
+  const listAfter = focusables();
+  listAfter[listAfter.length - 1].focus();
+  listAfter[listAfter.length - 1].dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  const activeAfterTabFromLast = describe(document.activeElement);
+  const blockerRow = dialog.querySelector("[data-board-dialog-blocker]");
+  const blockerRadius = blockerRow ? getComputedStyle(blockerRow).borderTopLeftRadius : null;
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await waitFor(() => !document.querySelector("[data-board-dialog]"), "弹窗应关闭");
+  await sleep(30);
+  return {
+    ua: navigator.userAgent,
+    dialogId,
+    focusableCount: list.length,
+    activeAfterOpen,
+    activeAfterShiftTabFromFirst,
+    activeAfterTabFromLast,
+    dialogClosed: !document.querySelector("[data-board-dialog]"),
+    activeAfterClose: describe(document.activeElement),
+    blockerRadius,
   };
 })()`;
 }
