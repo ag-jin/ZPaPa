@@ -40,7 +40,11 @@ const CELL_CLASS = "whitespace-nowrap px-2 py-1.5 align-top text-foreground";
 const HEADER_CLASS =
   "whitespace-nowrap px-2 py-1 text-left text-ui-xs font-medium text-foreground-subtle";
 
-/** 子行缩进（结构深度）：分组行之下第一层不缩进，其后每层 +2 级间距。 */
+/**
+ * 子行缩进（结构深度）：depth=1（分组下行）→ `pl-3`，其后每层再 +3 级距。
+ * depth=0（特性行）不走这里——分组头不是行；`pl-0` 仅为越界防御
+ * （评审 #46 S-5：注释与实现对齐，不承诺「首层不缩进」）。
+ */
 const ROW_INDENT_CLASSES = ["pl-0", "pl-3", "pl-6", "pl-9"] as const;
 
 function rowIndentClass(depth: number): string {
@@ -166,7 +170,7 @@ function BoardTableGroup({
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
-  // D2（T36u）：本组件不用词条（无 intl 调用）——不留未使用解构，避免 lint warning 噪声。
+  const { intl } = useZCodeIntl();
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     group.feature.id,
     highlightCardId,
@@ -180,6 +184,11 @@ function BoardTableGroup({
               type="button"
               data-board-group-toggle={group.feature.id}
               aria-expanded={!collapsed}
+              // 可及名称（#55 S-3）：符号 ▸/▾ 不是名称——动作 + 特性名走词条，状态由 aria-expanded 表达。
+              aria-label={intl.formatMessage(
+                { id: collapsed ? "board.group.expand" : "board.group.collapse" },
+                { name: group.feature.title },
+              )}
               onClick={() => onToggleCollapsed?.(group.feature.id, !collapsed)}
               className="shrink-0 cursor-pointer rounded-sm px-1 text-ui-xs text-foreground-subtle"
             >

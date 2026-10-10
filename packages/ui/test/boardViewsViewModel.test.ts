@@ -169,6 +169,66 @@ test("子区计数取 attentionSummary（契约指定来源），不是节点条
   assert.equal(design.interview?.nodes.length, 2, "子区节点仍只列板上真有的 interview-only 节点");
 });
 
+test("访谈聚合特性携带任务（#55 S-1）：按节点粒度归并，任务不消失也不双份（评审 #46 S-1）", () => {
+  // 真源：评审 #46 S-1——原实现按**特性级**跳过访谈聚合特性，会连带静默丢弃该特性携带的任务节点。
+  // 节点级过滤后：聚合节点自身仍只进「访谈汇总」子区（待设计列），其任务按自身段位进主列；
+  // 全板节点集合里每个 id 恰出现一次（不消失、不双份）。
+  const raw = structuredClone(STAGE_MATRIX_BOARD) as unknown as {
+    features: Array<Record<string, unknown>>;
+  };
+  const interview = raw.features.find((feature) => feature.id === "interview:itw-a");
+  assert.ok(interview, "夹具应有 interview:itw-a");
+  interview.tasks = [
+    {
+      no: 90,
+      label: "90.1",
+      title: "访谈特性携带的任务",
+      status: "pending",
+      statusRule: "tasks.md checkbox unchecked",
+      stage: "执行中",
+      draft: false,
+      attention: [],
+      blockers: [],
+      lastRun: null,
+      activeRun: null,
+      worktree: null,
+      updatedAt: "2026-10-09T12:00:00+08:00",
+    },
+  ];
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const { columns } = buildBoardKanban(outcome.board);
+
+  // 旧实现在此红：任务从七列整体消失（特性级 continue 把它一起丢了）。
+  const running = columnOf(columns, "执行中");
+  assert.ok(nodeIds(running.nodes).includes("task:90"), "任务应出现在其自身段位列");
+  const group = running.groups.find((entry) => entry.feature.id === "interview:itw-a");
+  assert.ok(group, "任务应按所属特性归并为分组");
+  assert.deepEqual(nodeIds(group.nodes), ["task:90"], "分组内只带该任务的节点");
+  assert.equal(group.featureInColumn, false, "聚合节点自身不占主列（它在待设计子区）");
+
+  const occurrences = columns
+    .flatMap((column) => nodeIds(column.nodes))
+    .filter((id) => id === "task:90");
+  assert.equal(occurrences.length, 1, "任务节点在全板列集合里只出现一次（不双份）");
+
+  const design = columnOf(columns, "待设计");
+  assert.ok(
+    nodeIds(design.interview?.nodes ?? []).includes("interview:itw-a"),
+    "聚合节点自身仍在访谈汇总子区",
+  );
+  assert.ok(!nodeIds(design.nodes).includes("interview:itw-a"), "聚合节点不进主列");
+  assert.ok(
+    !nodeIds(design.interview?.nodes ?? []).includes("task:90"),
+    "任务不因所属特性聚合被拖进子区",
+  );
+  assert.ok(
+    columns.every((column) => nodeIds(column.nodes).filter((id) => id === "task:90").length <= 1),
+    "每列也不得双份",
+  );
+});
+
 test("列内排序：attention 置顶，其余按 updatedAt 倒序（§3.5）", () => {
   const { columns } = buildBoardKanban(stageMatrixBoard());
   // 待办列：#14 带 unmerged-worktree 且 updatedAt 最老 —— 仍必须置顶；

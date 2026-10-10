@@ -5,7 +5,6 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 import {
   boardStatusDotClassName,
-  boardTaskLabelIndentLevel,
   BOARD_ATTENTION_LABEL_MESSAGE_IDS,
   BOARD_STAGE_MESSAGE_IDS,
   BOARD_STATUS_MESSAGE_IDS,
@@ -164,12 +163,6 @@ test("四态配色键：pending/active/blocked/completed 各有一档样式，�
   assert.equal(boardStatusDotClassName("some-future-status"), null);
 });
 
-test("卡片缩进随 label 段数；未领号卡按第二层处理（契约 §3.3）", () => {
-  assert.equal(boardTaskLabelIndentLevel("1.2"), 1);
-  assert.equal(boardTaskLabelIndentLevel("1.2.3"), 2);
-  assert.equal(boardTaskLabelIndentLevel(null), 1);
-});
-
 /**
  * 段位词条映射（评审 S5：en-US 界面出现中文段位）。
  * 期望值的独立真源：契约 §13.1 七段位词表（与 schema v2.1 / `lib/derive.mjs` 同源）。
@@ -267,7 +260,8 @@ test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存
     "board.dialog.jump",
     "board.dialog.detailsTitle",
     "board.dialog.blockersTitle",
-    "board.dialog.lastRunTitle",
+    // #55 S-7：随 B5 区块改名（「最近执行」→「执行摘要」），键清单跟随在用键。
+    "board.dialog.executionTitle",
     "board.dialog.originTitle",
     "board.dialog.evidenceTitle",
     "board.dialog.timestampsTitle",

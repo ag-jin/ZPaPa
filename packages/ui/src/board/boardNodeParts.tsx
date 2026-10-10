@@ -4,7 +4,7 @@
  * 单点纪律：段位徽章 / 状态色点 / 缺口徽章 / 编号角标 / 角标簇在树形、看板、列表、弹窗
  * 各处**同一实现**—— 文案与 data 锚点只此一份，视图层只决定摆在哪（契约 §13.2 各格要求的呈现元素）。
  */
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -17,7 +17,6 @@ import {
   formatBoardStageText,
 } from "./boardPresentation.js";
 import type { BoardAttentionCode, BoardLastRun } from "./boardViewModel.js";
-import type { BoardViewNode } from "./boardViewsViewModel.js";
 
 /** 段位徽章：可见文本走词条（评审 S5），`data-board-stage` 保留字段原值（锚点不本地化）。 */
 export function BoardStageBadge({ stage }: { stage: string | null }) {
@@ -216,20 +215,35 @@ export function BoardNodeBadges({
 }
 
 /**
- * 特性分组头内容（#46 B3/B4 共用）：编号（计划码 / ID-<label>）+ 名称 + 段位徽章 + 角标 +
- * `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要（`<summary>`、分组 `<div>`、
- * 表头 `<tr>`），卡片锚点与视觉外壳由宿主决定。
+ * 特性分组头内容（#46 B3/B4 共用；#55 S-2 收敛树形手工装配）：编号（计划码 / ID-<label>）+
+ * 名称 + 段位徽章 + 角标 + `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要
+ * （`<summary>`、分组 `<div>`、表头 `<tr>`），卡片锚点与视觉外壳由宿主决定。
  *
  * `lightweight`（#54-9/P-2，契约 §13.7 B3）：跨列随行的分组头降级轻量标签——段位徽章属于
  * 特性自己的列，跨列时不带；名称弱化为小字，角标与计数保留但压低强调度（缺口不许被埋）。
+ *
+ * 视图间差异作 props（#55 S-2，评审 #46 S-2）：`titleClassName`（树形大块用 base 字号）、
+ * `titleAccessory`（树形特性头尾部的当前执行者徽记）；计数片 markup 单点化，不再各装配一份。
  */
 export function BoardFeatureGroupHeaderContent({
   feature,
   cardCount,
   lightweight = false,
   titleRegionProps = null,
+  titleClassName,
+  titleAccessory = null,
 }: {
-  feature: BoardViewNode;
+  /** 分组头所需的最小字段面：树形传原始特性节点、看板/列表传视图节点——同一零件不挑来源。 */
+  feature: {
+    no: number | null;
+    label: string | null;
+    planCode: string | null;
+    title: string;
+    stage: string | null;
+    attention: BoardAttentionCode[];
+    blockers: readonly unknown[];
+    status: string | null;
+  };
   cardCount: number;
   lightweight?: boolean;
   /**
@@ -239,6 +253,10 @@ export function BoardFeatureGroupHeaderContent({
    * 不传 = 整行由宿主统一处理（看板分组头现状）。
    */
   titleRegionProps?: (Record<string, unknown> & { className?: string }) | null;
+  /** 全量形态的标题字号（缺省 = 看板/列表的 sm；树形大块传 base）。 */
+  titleClassName?: string;
+  /** 标题后的附加片（树形当前执行者徽记；看板/列表不传）。 */
+  titleAccessory?: ReactNode;
 }) {
   const { intl } = useZCodeIntl();
   const numberAndTitle = (
@@ -255,11 +273,12 @@ export function BoardFeatureGroupHeaderContent({
           "min-w-0 flex-1 truncate",
           lightweight
             ? "text-ui-xs text-foreground-subtle"
-            : "text-ui-sm font-medium text-foreground",
+            : (titleClassName ?? "text-ui-sm font-medium text-foreground"),
         )}
       >
         {feature.title}
       </span>
+      {titleAccessory}
     </>
   );
   return (

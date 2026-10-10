@@ -221,13 +221,6 @@ export function formatBoardStageText(
   return formatMessage({ id: messageId });
 }
 
-/** 卡片缩进层级 = label 段数 - 1；未领号卡按第二层（契约 §3.3）。 */
-export function boardTaskLabelIndentLevel(label: string | null): number {
-  if (!label) return 1;
-  const segments = label.split(".").filter((segment) => segment.length > 0);
-  return Math.max(1, segments.length) - 1;
-}
-
 /* ---------------- 编号形态（#46 B1：计划码-层级） ---------------- */
 
 /**

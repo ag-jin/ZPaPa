@@ -254,6 +254,72 @@ test("表格渲染：分组行（列宽整行占位 + 特性头），子行在�
   assert.deepEqual(rowIds, ["task:46", "task:47"], "分组内行序 = 组内排序");
 });
 
+/* ---------------- S-3（#55）：折叠控件的可及名称与指示符 ---------------- */
+
+function toggleTag(markup: string, featureId: string): string {
+  const match = new RegExp(`<button[^>]*data-board-group-toggle="${featureId}"[^>]*>`).exec(markup);
+  assert.ok(match, `表格里应有 ${featureId} 的折叠按钮`);
+  return match[0];
+}
+
+function ariaLabelOf(markup: string, featureId: string): string {
+  const match = /aria-label="([^"]*)"/.exec(toggleTag(markup, featureId));
+  assert.ok(match, "折叠按钮应带 aria-label（可及名称不能只有 ▸/▾ 符号）");
+  return match[1] ?? "";
+}
+
+test("可及名称（#55 S-3）：表格折叠按钮 = 展开/收起 + 特性名（两语、随状态切换）", () => {
+  // 真源：评审 #46 S-3——按钮只有 ▸/▾ 符号，无可及名称。修复走词条（zh/en 两语）；
+  // 状态仍由 aria-expanded 表达，名称只补「动作 + 对象」。
+  assert.equal(
+    ariaLabelOf(render({ viewMode: "table" }), "plan:plan-zcode-ui"),
+    "收起 ZCode 看板 UI",
+  );
+  const collapsed = render({ viewMode: "table", collapsedFeatureIds: ["plan:plan-zcode-ui"] });
+  assert.equal(ariaLabelOf(collapsed, "plan:plan-zcode-ui"), "展开 ZCode 看板 UI");
+  assert.equal(
+    /aria-expanded="false"/.test(toggleTag(collapsed, "plan:plan-zcode-ui")),
+    true,
+    "折叠态仍由 aria-expanded 表达",
+  );
+  const english = renderState(readyState(), { viewMode: "table" }, "en-US");
+  assert.equal(ariaLabelOf(english, "plan:plan-zcode-ui"), "Collapse ZCode 看板 UI");
+  const englishCollapsed = renderState(
+    readyState(),
+    { viewMode: "table", collapsedFeatureIds: ["plan:plan-zcode-ui"] },
+    "en-US",
+  );
+  assert.equal(ariaLabelOf(englishCollapsed, "plan:plan-zcode-ui"), "Expand ZCode 看板 UI");
+});
+
+test("折叠指示符（#55 S-3）：树形/列表摘要带装饰性 chevron；展开态走原生 summary 语义", () => {
+  // 判断成文（#55 S-3）：树形/列表的折叠摘要是原生 `<details>/<summary>`——展开态已由原生
+  // disclosure 语义向辅助技术暴露，`aria-label` 反而会覆盖由内容（编号/名称/角标）构成的可及名称；
+  // 缺的是**视觉**指示符。因此补装饰性 chevron（`aria-hidden`，`group-open:` 旋转），
+  // 不写伪 `aria-expanded`。浏览器侧旋转行为断言见 test/boardV21BrowserScenarios.ts。
+  const list = render({ viewMode: "list" });
+  const listStart = list.indexOf('data-board-list-group-summary="plan:plan-zcode-ui"');
+  assert.ok(listStart >= 0, "列表分组摘要应存在");
+  const listSummary = list.slice(listStart, list.indexOf("</summary>", listStart));
+  const listIndicator = /<span[^>]*data-board-fold-indicator=""[^>]*>/.exec(listSummary);
+  assert.ok(listIndicator, "列表折叠摘要应有 chevron 指示符");
+  assert.ok(/aria-hidden="true"/.test(listIndicator[0]), "指示符是装饰性的（不夺可及名称）");
+  assert.ok(
+    !listSummary.slice(0, listSummary.indexOf(">")).includes("aria-expanded"),
+    "summary 不写伪 aria-expanded（原生语义已表达展开态）",
+  );
+
+  const tree = render({ viewMode: "tree" });
+  for (const featureId of ["plan:plan-zcode-ui", "spec:alpha"]) {
+    const start = tree.indexOf(`data-board-feature-block-summary="${featureId}"`);
+    assert.ok(start >= 0, `树形摘要 ${featureId} 应存在`);
+    const summary = tree.slice(start, tree.indexOf("</summary>", start));
+    const indicator = /<span[^>]*data-board-fold-indicator=""[^>]*>/.exec(summary);
+    assert.ok(indicator, `树形摘要 ${featureId} 应有 chevron 指示符（折叠不是消失）`);
+    assert.ok(/aria-hidden="true"/.test(indicator[0]), "指示符是装饰性的");
+  }
+});
+
 /* ---------------- B6：责任管线高亮 ---------------- */
 
 test("责任管线三态（#54-1）：done 弱化勾形 + current 主色加粗 + next 次强调带「下一个」", () => {

@@ -11,10 +11,17 @@
  * 运行条件（缺一即报错退出，不静默跳过）：Electron 二进制 / `@tailwindcss/node` / esbuild
  * （解析同 `boardKanbanBrowserLayoutHarness`；worktree 未装产物时会自动找到主仓那份）。
  *
+ * 复用（#55 S-8）：溢出探针（scrollWidth vs clientWidth）与点击路由序列原语已抽为
+ * `test/boardBrowserProbeKit.ts` 的固定导出——后续 UI 卡验证引用同一份，不各自复制。
+ *
  * 命令（在 `packages/ui` 下）：
  *   node --import tsx test/boardV21BrowserScenarios.ts
  */
 import assert from "node:assert/strict";
+import {
+  assertNoHorizontalOverflow,
+  type BoardBrowserOverflowProbe,
+} from "./boardBrowserProbeKit.js";
 import {
   listGroupHeaderClickDriverSource,
   overflowProbeDriverSource,
@@ -44,12 +51,7 @@ function buildFixtureBoardJson(): string {
   return JSON.stringify(raw);
 }
 
-interface Probe {
-  clientW: number;
-  scrollW: number;
-  overflows: boolean;
-  box: { left: number; right: number };
-}
+type Probe = BoardBrowserOverflowProbe;
 
 interface OverflowResult {
   ua: string;
@@ -85,13 +87,23 @@ interface ListClickResult {
   dialogAfterCollapse: boolean;
   countChipBox: { w: number };
   titleRegionBox: { w: number };
+  /** 折叠指示符的计算样式（#55 S-3）：折叠态不旋转、展开态 group-open:rotate-90 生效。 */
+  foldTransform: {
+    initial: FoldStyle | null;
+    collapsed: FoldStyle | null;
+    expanded: FoldStyle | null;
+  };
 }
 
-function assertNoHorizontalOverflow(probe: Probe, label: string): void {
-  assert.ok(
-    probe.scrollW <= probe.clientW + 1,
-    `${label}：不得横向溢出（scrollWidth ${probe.scrollW} > clientWidth ${probe.clientW}）`,
-  );
+interface FoldStyle {
+  transform: string | null;
+  rotate: string | null;
+}
+
+/** 旋转签名（Tailwind v4 的 rotate 走独立属性）：`none | none` = 未旋转。 */
+function rotationSignature(style: FoldStyle | null): string {
+  if (!style) return "missing";
+  return [style.transform, style.rotate].map((value) => (value ? value : "none")).join(" | ");
 }
 
 async function runOverflowScenario(params: {
@@ -175,8 +187,24 @@ async function runListClickScenario(params: {
     result.featureId,
     "点编号+名称区 → 开的是该特性弹窗（弹窗身份 = 被点卡片自身）",
   );
+  // #55 S-3：指示符是真 Tailwind 产物类（group-open:rotate-90）——只有真排版量得出旋转生效。
+  assert.equal(
+    rotationSignature(result.foldTransform.collapsed),
+    "none | none",
+    "折叠态指示符不旋转（computed transform/rotate = none）",
+  );
+  assert.notEqual(
+    rotationSignature(result.foldTransform.expanded),
+    "none | none",
+    "展开态指示符旋转（group-open:rotate-90 在真 CSS 产物里生效）",
+  );
+  assert.equal(
+    rotationSignature(result.foldTransform.initial),
+    rotationSignature(result.foldTransform.expanded),
+    "初始（默认展开）与再次展开后指示符姿态一致",
+  );
   console.log(
-    `LIST_CLICK_ASSERTIONS_OK 分组 ${result.featureId}：open 态 before=${states.before} → 右区=${states.afterRightRegion} → 再点=${states.afterRightRegionAgain}；标题区点击后 open=${states.afterTitleRegion}，弹窗=${result.dialogId}`,
+    `LIST_CLICK_ASSERTIONS_OK 分组 ${result.featureId}：open 态 before=${states.before} → 右区=${states.afterRightRegion} → 再点=${states.afterRightRegionAgain}；标题区点击后 open=${states.afterTitleRegion}，弹窗=${result.dialogId}；fold transform=${JSON.stringify(result.foldTransform)}`,
   );
 }
 

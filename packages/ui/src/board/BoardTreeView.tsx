@@ -13,7 +13,12 @@
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import { BoardNodeBadges, BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
+import {
+  BoardFeatureGroupHeaderContent,
+  BoardNodeBadges,
+  BoardNodeNumber,
+  BoardStageBadge,
+} from "./boardNodeParts.js";
 import { formatBoardLastRunText, formatBoardRunTime } from "./boardPresentation.js";
 import type { BoardFeatureNode, BoardTaskNode, BoardViewModel } from "./boardViewModel.js";
 
@@ -41,8 +46,9 @@ export function boardFeatureDefaultExpanded(feature: {
 }
 
 /**
- * 章节子分组（B2 数据面 = `task.section`）：按文档序取首次出现的分组；无章节的任务
- * 作为无头分组（渲染在首个有名字的章节之前）。
+ * 章节子分组（B2 数据面 = `task.section`）：按文档序**首次出现位置**成组；无章节任务的无头分组
+ * 位置 = 其首个成员在文档里的位置（文档序在前时它自然排在首个有名字的章节之前，但不强制置前
+ * ——评审 #46 P-6：注释承诺与实现一致）。
  */
 export function groupBoardTasksBySection(
   tasks: BoardTaskNode[],
@@ -167,7 +173,7 @@ function BoardFeatureSection({
       open={boardFeatureDefaultExpanded(feature) || undefined}
       className={cn(
         // 折叠大块（B2）：边框 + 背景把特性与子卡分开，视觉上独立于子卡
-        "mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40",
+        "group mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40",
         highlightClassName,
       )}
     >
@@ -175,54 +181,43 @@ function BoardFeatureSection({
         data-board-feature-block-summary={feature.id}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       >
-        {/* 特性头 = 打开弹窗的落点（preventDefault：点它不触发折叠切换——那是 summary 的默认动作）。
-            #54-4 点击分区与列表一致：编号+名称+执行者区 = 开弹窗；段位/角标/计数区 = 折叠。 */}
-        <div
-          data-board-card={feature.id}
-          {...highlightProps}
-          {...boardCardOpenProps({
-            id: feature.id,
-            ...(onOpenCard ? { onOpenCard } : {}),
-            preventDefaultOnClick: true,
-          })}
-          className={cn("flex min-w-0 flex-1 items-center gap-2", highlightClassName)}
-        >
-          <BoardNodeNumber
-            no={feature.no}
-            label={feature.label}
-            planCode={feature.planCode}
-            variant="feature"
-          />
-          <span
-            {...(feature.planCode !== null ? { "data-board-feature-code": feature.planCode } : {})}
-            className="min-w-0 flex-1 truncate text-ui-base font-medium text-foreground"
-          >
-            {feature.title}
-          </span>
-          {feature.currentAssignee !== null ? (
-            <span
-              data-board-feature-assignee={feature.currentAssignee}
-              className="shrink-0 text-ui-xs font-medium text-primary"
-            >
-              {feature.currentAssignee}
-            </span>
-          ) : null}
-        </div>
-        <BoardStageBadge stage={feature.stage} />
-        <BoardNodeBadges
-          attention={feature.attention}
-          blockers={feature.blockers.length}
-          lastRun={null}
-          draft={false}
-          activeRunRole={null}
-          status={feature.status}
-        />
+        {/* 折叠指示符（#55 S-3）：原生 <summary> 已向辅助技术暴露展开态，缺的是视觉指示符——
+            装饰性 chevron（aria-hidden，group-open 旋转），不写伪 aria-expanded、不夺内容可及名称。 */}
         <span
-          data-board-feature-card-count={cardCount}
-          className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle"
+          aria-hidden="true"
+          data-board-fold-indicator=""
+          className="shrink-0 text-ui-xs text-foreground-subtle transition-transform group-open:rotate-90"
         >
-          {intl.formatMessage({ id: "board.feature.cardCount" }, { count: cardCount })}
+          ▸
         </span>
+        {/* 特性头 = 打开弹窗的落点（preventDefault：点它不触发折叠切换——那是 summary 的默认动作）。
+            #54-4 点击分区与列表一致：编号+名称+执行者区 = 开弹窗；段位/角标/计数区 = 折叠。
+            #55 S-2：分组头内容走共用零件（差异作 props：base 字号 + 当前执行者附加片）。 */}
+        <BoardFeatureGroupHeaderContent
+          feature={feature}
+          cardCount={cardCount}
+          titleRegionProps={{
+            "data-board-card": feature.id,
+            ...highlightProps,
+            ...boardCardOpenProps({
+              id: feature.id,
+              ...(onOpenCard ? { onOpenCard } : {}),
+              preventDefaultOnClick: true,
+            }),
+            ...(highlightClassName ? { className: highlightClassName } : {}),
+          }}
+          titleClassName="text-ui-base font-medium text-foreground"
+          titleAccessory={
+            feature.currentAssignee !== null ? (
+              <span
+                data-board-feature-assignee={feature.currentAssignee}
+                className="shrink-0 text-ui-xs font-medium text-primary"
+              >
+                {feature.currentAssignee}
+              </span>
+            ) : null
+          }
+        />
       </summary>
       {feature.stage === "已取消" && feature.statusRule ? (
         // §13.2 树形「已取消」格：节点行尾徽章 + 取消原因（与列表/看板同一字段 statusRule）。

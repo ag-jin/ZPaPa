@@ -79,11 +79,14 @@ function DialogSection({
 /**
  * 路径行（B5 路径截断）：可见文本 = 文件名，`title` = 原路径（悬停可查、信息不丢）。
  * `select-all` 便于整段复制。
+ *
+ * `evidenceIndex`（#55 S-6）：显式 prop → 固定 `data-board-dialog-evidence` 锚点
+ * （不再用动态属性键 `{ [anchor]: … }` 装配：调用点一眼看清锚点名，少一层间接）。
  */
-function PathText({ path, anchor, index }: { path: string; anchor?: string; index?: number }) {
+function PathText({ path, evidenceIndex }: { path: string; evidenceIndex?: number }) {
   return (
     <span
-      {...(anchor ? { [anchor]: index ?? "" } : {})}
+      {...(evidenceIndex !== undefined ? { "data-board-dialog-evidence": evidenceIndex } : {})}
       title={path}
       className="select-all font-mono text-ui-xs break-all text-foreground-subtle"
     >
@@ -98,7 +101,7 @@ function EvidenceList({ paths }: { paths: string[] }) {
     <ul className="flex flex-col gap-0.5">
       {paths.map((path, index) => (
         <li key={`${index}:${path}`}>
-          <PathText path={path} anchor="data-board-dialog-evidence" index={index} />
+          <PathText path={path} evidenceIndex={index} />
         </li>
       ))}
     </ul>

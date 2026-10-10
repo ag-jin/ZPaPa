@@ -294,6 +294,56 @@ test("看板：待设计列的访谈汇总子区默认折叠，计数取 attenti
   assert.ok(summarySlice.includes('data-board-card="interview:itw-b"'));
 });
 
+test("看板：访谈聚合特性携带任务时任务照常入场且只渲染一份（#55 S-1 渲染守卫）", () => {
+  // 真源：评审 #46 S-1——特性级跳过会把该特性携带的任务一起丢出七列。渲染面钉两件事：
+  // 任务卡出现在其段位列、挂在该特性的分组块内；整块看板里该卡只渲染一次（主列/子区不重复投放）。
+  const raw = structuredClone(STAGE_MATRIX_BOARD) as unknown as {
+    features: Array<Record<string, unknown>>;
+  };
+  const interview = raw.features.find((feature) => feature.id === "interview:itw-a");
+  assert.ok(interview, "夹具应有 interview:itw-a");
+  interview.tasks = [
+    {
+      no: 90,
+      label: "90.1",
+      title: "访谈特性携带的任务",
+      status: "pending",
+      statusRule: "tasks.md checkbox unchecked",
+      stage: "执行中",
+      draft: false,
+      attention: [],
+      blockers: [],
+      lastRun: null,
+      activeRun: null,
+      worktree: null,
+      updatedAt: "2026-10-09T12:00:00+08:00",
+    },
+  ];
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const markup = kanban({ kind: "ready", board: outcome.board });
+  const running = columnSlice(markup, "执行中", "审核中");
+  assert.ok(
+    running.includes('data-board-kanban-group="interview:itw-a"'),
+    "任务按所属特性分组渲染",
+  );
+  assert.ok(
+    /data-board-kanban-group-header="interview:itw-a"[^>]*data-board-group-lightweight="true"/.test(
+      running,
+    ),
+    "聚合节点的分组头是轻量标签（节点自身不在主列）",
+  );
+  const rendered = markup.match(/data-board-kanban-card="task:90"/g) ?? [];
+  assert.equal(rendered.length, 1, "全板只渲染一份（不消失也不双份）");
+  const design = columnSlice(markup, "待设计", "待办");
+  assert.ok(!design.includes('data-board-kanban-card="task:90"'), "任务不被拖进访谈子区");
+  assert.ok(
+    design.includes('data-board-kanban-card="interview:itw-a"'),
+    "聚合节点自身仍只在访谈子区（对照）",
+  );
+});
+
 test("看板：已完成列是可折叠分区（默认展开；折叠走条件渲染，不藏内容）", () => {
   // 真源：契约 §13.2「已完成」列 = 可折叠分区（归档前）。列头是状态化按钮（aria-expanded），
   // 卡列表按展开态条件渲染。
@@ -410,11 +460,25 @@ test("列表：类型筛（kind）按闭集取值收窄行集合（特性/卡片
     !tasksOnly.includes('data-board-list-group="plan:sess_f1a2d0bb"'),
     "无匹配子行、自身不符筛的特性整组被筛掉",
   );
-  assert.ok(
-    !tasksOnly.includes('data-board-list-group="plan:plan-payment-split"') ||
-      tasksOnly.includes('data-board-card="task:'),
-    "无卡可显示的组不得凭空出现",
+  // 直接形式（#55 弱断言修固，评审 #46 测试质量 nit）：逐组切片断言「无行则无组」——
+  // 旧写法 `!includes(组) || includes(任务卡)` 的第二分句在 tasksOnly 下恒真，守卫形同虚设。
+  const renderedGroups = [...tasksOnly.matchAll(/data-board-list-group="([^"]*)"/g)].map(
+    (match) => match[1] ?? "",
   );
+  assert.ok(renderedGroups.length > 0, "夹具应有满足 kind=task 的分组（否则本段无意义）");
+  for (const [index, id] of renderedGroups.entries()) {
+    const start = tasksOnly.indexOf(`data-board-list-group="${id}"`);
+    const nextId = renderedGroups[index + 1];
+    const end =
+      nextId === undefined
+        ? tasksOnly.length
+        : tasksOnly.indexOf(`data-board-list-group="${nextId}"`);
+    const groupSlice = tasksOnly.slice(start, end);
+    assert.ok(
+      groupSlice.includes('data-board-card="task:'),
+      `分组 ${id} 无匹配子行则不应渲染（无行则无组）`,
+    );
+  }
 });
 
 test("列表：按段位过滤只留该段位行（其余行不出现）", () => {

@@ -27,7 +27,11 @@ import {
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
 
-/** 子行缩进（结构深度）：分组行之下第一层不缩进，其后每层 +2 级间距。 */
+/**
+ * 子行缩进（结构深度）：depth=1（分组下行）→ `pl-3`，其后每层再 +3 级距。
+ * depth=0（特性行）不走这里——分组头不是行；`pl-0` 仅为越界防御
+ * （评审 #46 S-5：注释与实现对齐，不承诺「首层不缩进」）。
+ */
 const ROW_INDENT_CLASSES = ["pl-0", "pl-3", "pl-6", "pl-9"] as const;
 
 function rowIndentClass(depth: number): string {
@@ -104,12 +108,21 @@ function BoardListGroup({
     <details
       data-board-list-group={feature.id}
       open
-      className="rounded-xl border border-border/50 bg-surface/30"
+      className="group rounded-xl border border-border/50 bg-surface/30"
     >
       <summary
         data-board-list-group-summary={feature.id}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       >
+        {/* 折叠指示符（#55 S-3）：与树形同一判断——原生 <summary> 语义已表达展开态，
+            补装饰性 chevron（aria-hidden，group-open 旋转）；不写伪 aria-expanded。 */}
+        <span
+          aria-hidden="true"
+          data-board-fold-indicator=""
+          className="shrink-0 text-ui-xs text-foreground-subtle transition-transform group-open:rotate-90"
+        >
+          ▸
+        </span>
         {/* 点击分区（#54-4）：编号+名称区 = 开弹窗（preventDefault 保住不折叠）；段位/角标/计数区
             与 summary 空白 = 折叠/展开（不再被 preventDefault 吃掉——用户第四轮标注④）。 */}
         <BoardFeatureGroupHeaderContent

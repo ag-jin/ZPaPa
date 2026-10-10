@@ -474,9 +474,14 @@ export function buildBoardKanban(
     const nodes = buckets.get(stage) ?? [];
     const groups: BoardKanbanGroup[] = [];
     for (const { feature, nodes: featureNodes } of collectBoardFeatureGroups(board)) {
-      if (isInterviewSummaryNode(feature)) continue; // 访谈聚合节点走子区，不成组
-      const featureInColumn = feature.stage === stage;
-      const taskNodes = featureNodes.filter((node) => node.stage === stage);
+      // 访谈聚合节点按**节点粒度**过滤（#55 S-1，评审 #46 S-1）：特性级 `continue` 会连带
+      // 静默丢弃「访谈聚合特性携带任务」形状的任务节点。聚合判据只作用于节点自身——
+      // 聚合节点自身不占主列（它归「访谈汇总」子区），其任务照常按自身段位入场；
+      // 主列归并与子区聚合因此不重复投放同一节点。
+      const featureInColumn = !isInterviewSummaryNode(feature) && feature.stage === stage;
+      const taskNodes = featureNodes.filter(
+        (node) => node.stage === stage && !isInterviewSummaryNode(node),
+      );
       if (!featureInColumn && taskNodes.length === 0) continue;
       const sortedTasks = sortBoardViewNodes(taskNodes, sort);
       // 分组排序键 = 组内最高优先成员（特性自身也算成员：attention 置顶，updatedAt 倒序）

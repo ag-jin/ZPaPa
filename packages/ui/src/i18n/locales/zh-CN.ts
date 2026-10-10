@@ -989,7 +989,6 @@ const zhCN: Record<string, string> = {
   "board.attention.summary.arrangedNotExpanded": "{count} 已安排未展开",
   "board.attention.summary.interruptedResume": "{count} 执行中断可续",
   "board.attention.summary.unmergedWorktree": "{count} 待合并",
-  "board.diagnostics.title": "板级诊断（{count}）",
   // 七段位词条（契约 §13.1 词表逐字；列头与段位徽章共用）。
   "board.stage.design": "待设计",
   "board.stage.todo": "待办",
@@ -1000,6 +999,9 @@ const zhCN: Record<string, string> = {
   "board.stage.cancelled": "已取消",
   // 视图切换（契约 §13.2 四视图；本期面板内三态：树形/看板/列表）。
   "board.feature.cardCount": "{count} 张卡",
+  // 折叠控件的可及名称（#55 S-3）：按钮只有 ▸/▾ 符号，动作 + 对象走词条（{name} = 特性名）。
+  "board.group.expand": "展开 {name}",
+  "board.group.collapse": "收起 {name}",
   "board.relative.justNow": "刚刚",
   "board.relative.minutes": "{count} 分钟前",
   "board.relative.hours": "{count} 小时前",
@@ -1058,7 +1060,6 @@ const zhCN: Record<string, string> = {
   "board.dialog.jump": "跳转",
   "board.dialog.detailsTitle": "细节",
   "board.dialog.blockersTitle": "阻拦",
-  "board.dialog.lastRunTitle": "最近执行",
   "board.dialog.originTitle": "来源",
   "board.dialog.evidenceTitle": "证据路径",
   "board.dialog.timestampsTitle": "时间戳",

@@ -1072,7 +1072,6 @@ const enUS: Record<string, string> = {
   "board.attention.summary.arrangedNotExpanded": "{count} arranged, unexpanded",
   "board.attention.summary.interruptedResume": "{count} interrupted, resumable",
   "board.attention.summary.unmergedWorktree": "{count} unmerged",
-  "board.diagnostics.title": "Board diagnostics ({count})",
   // Seven-stage labels (contract §13.1 vocabulary; shared by column headers and stage badges).
   "board.stage.design": "Design",
   "board.stage.todo": "To do",
@@ -1083,6 +1082,9 @@ const enUS: Record<string, string> = {
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
   "board.feature.cardCount": "{count} cards",
+  // Accessible names for the fold toggles (#55 S-3): the button only shows ▸/▾.
+  "board.group.expand": "Expand {name}",
+  "board.group.collapse": "Collapse {name}",
   "board.relative.justNow": "just now",
   "board.relative.minutes": "{count} min ago",
   "board.relative.hours": "{count} h ago",
@@ -1141,7 +1143,6 @@ const enUS: Record<string, string> = {
   "board.dialog.jump": "Jump",
   "board.dialog.detailsTitle": "Details",
   "board.dialog.blockersTitle": "Blockers",
-  "board.dialog.lastRunTitle": "Last run",
   "board.dialog.originTitle": "Source",
   "board.dialog.evidenceTitle": "Evidence",
   "board.dialog.timestampsTitle": "Timestamps",
