@@ -235,10 +235,20 @@ export interface BoardListGroup {
 
 /* ---------------- 视图模式（闭集） ---------------- */
 
-/** 面板内四视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
-export type BoardViewMode = "tree" | "kanban" | "list" | "table";
+/** 面板内视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
+export type BoardViewMode = "guide" | "tree" | "kanban" | "list" | "table";
 
-export const BOARD_VIEW_MODES: readonly BoardViewMode[] = ["tree", "kanban", "list", "table"];
+/**
+ * 视图集（C3-1/#136 增「指引面」guide 于队首；C3-5/#140 才把缺省视图由 tree 切到 guide 并处理
+ * 旧偏好迁移——本卡只把指引面做成可选项，结构四视图一枚不删）。
+ */
+export const BOARD_VIEW_MODES: readonly BoardViewMode[] = [
+  "guide",
+  "tree",
+  "kanban",
+  "list",
+  "table",
+];
 
 /* ---------------- 视图节点类型（闭集） ---------------- */
 
@@ -260,6 +270,7 @@ export function isBoardViewNodeKind(value: unknown): value is BoardViewNodeKind 
 
 /** 视图名文案（`Record<…>` 穷尽：加视图 ⇒ 编译期在这里报缺失，而不是界面上多一个裸 key）。 */
 export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
+  guide: "board.view.guide",
   tree: "board.view.tree",
   kanban: "board.view.kanban",
   list: "board.view.list",

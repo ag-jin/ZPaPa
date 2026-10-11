@@ -22,6 +22,7 @@ import {
 } from "./boardPlaceholderParts.js";
 import { BoardCardDialog } from "./BoardCardDialog.js";
 import { BoardEpicDialog } from "./BoardEpicDialog.js";
+import { BoardGuideView } from "./BoardGuideView.js";
 import { BoardTreeView } from "./BoardTreeView.js";
 import { BoardKanbanView } from "./BoardKanbanView.js";
 import { BoardListView } from "./BoardListView.js";
@@ -236,7 +237,10 @@ function BoardReadyView({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
-        {viewMode === "kanban" ? (
+        {viewMode === "guide" ? (
+          // 指引面（C3-1/#136）：L1 默认面候选（缺省切换归 C3-5/#140）；卡行点击走同一弹窗宿主状态。
+          <BoardGuideView board={board} now={now} {...(onOpenCard ? { onOpenCard } : {})} />
+        ) : viewMode === "kanban" ? (
           <BoardKanbanView
             board={board}
             {...(onOpenCard ? { onOpenCard } : {})}

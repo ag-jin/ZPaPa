@@ -71,8 +71,9 @@ test("无 sessionStorage（纯 node / 隐私模式）时不抛，读回默认值
   assert.doesNotThrow(() => writeBoardViewMode("kanban"));
 });
 
-test("四视图闭集与词条 id：zh/en 两语都齐（不出现裸 key）", () => {
-  assert.deepEqual([...BOARD_VIEW_MODES], ["tree", "kanban", "list", "table"]);
+test("视图闭集与词条 id：zh/en 两语都齐（不出现裸 key）", () => {
+  // #136/C3-1 增「指引面」guide 于队首（可选项；缺省切换与旧偏好迁移归 #140/C3-5）。
+  assert.deepEqual([...BOARD_VIEW_MODES], ["guide", "tree", "kanban", "list", "table"]);
   for (const mode of BOARD_VIEW_MODES) {
     const messageId = BOARD_VIEW_MODE_MESSAGE_IDS[mode as BoardViewMode];
     assert.ok(messageId, `${mode} 应有词条 id`);

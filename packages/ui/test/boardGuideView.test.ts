@@ -1,0 +1,341 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
+import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
+import { parseBoardJson } from "../src/board/boardViewModel.js";
+import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import {
+  buildGuideLegacyBoard,
+  buildGuideNoPlansBoard,
+  buildGuideZeroBoard,
+  GUIDE_BOARD,
+  GUIDE_NOW,
+} from "./boardGuideFixture.js";
+
+/**
+ * 指引面骨架（卡 #136 / C3-1）的结构断言。
+ *
+ * 期望值的独立真源：卡文验收（「打开板看到正在执行的计划与功能完成进度（计数+微条）；
+ * 点计划内卡片弹详情；全零 attention 空槽有形态」）+ `board.schema.json` x-decisions 四段条
+ * （成员/顺序/计数直取派生投影，UI 禁自算）+ 消费契约 §13.6（L0/L1 同源消费四段）。
+ * 夹具 `boardGuideFixture.ts` 刻意让「派生投影计数 ≠ 按卡字段自算计数」——反例用例即以此为咬点。
+ */
+
+function render(state: BoardPaneLoadState, props: Partial<BoardPaneViewProps> = {}): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "zh-CN" as const,
+      children: createElement(BoardPaneView, {
+        state,
+        onRefresh: () => {},
+        viewMode: "guide",
+        now: GUIDE_NOW,
+        ...props,
+      }),
+    }),
+  );
+}
+
+function readyStateOf(raw: Record<string, unknown>): BoardPaneLoadState {
+  const outcome = parseBoardJson(JSON.stringify(raw));
+  if (outcome.kind !== "ready") throw new Error(`夹具必须是 v2 且 features 非空：${outcome.kind}`);
+  return { kind: "ready", board: outcome.board };
+}
+
+const readyState = () => readyStateOf(GUIDE_BOARD);
+
+function slotMarkup(markup: string, slot: string): string {
+  const match = new RegExp(
+    `data-board-guide-slot="${slot}"[\\s\\S]*?(?=data-board-guide-slot="|data-board-guide-plans)`,
+  ).exec(markup);
+  assert.ok(match, `槽 ${slot} 应存在`);
+  return match[0];
+}
+
+function slotValue(markup: string, slot: string): string | null {
+  const match = new RegExp(
+    `data-board-guide-slot="${slot}"[^>]*data-board-guide-slot-value="([^"]*)"`,
+  ).exec(markup);
+  return match ? (match[1] ?? null) : null;
+}
+
+function planMarkup(markup: string, planId: string): string {
+  const start = markup.indexOf(`data-board-guide-plan="${planId}"`);
+  assert.ok(start >= 0, `计划 ${planId} 应渲染`);
+  const next = markup.indexOf("data-board-guide-plan=", start + 1);
+  const end = markup.indexOf("data-board-guide-plans-empty", start + 1);
+  const candidates = [next, end, markup.length].filter((value) => value >= 0);
+  return markup.slice(start, Math.min(...candidates));
+}
+
+/* ---------------- 四段派生映射（消费面：parseBoardJson） ---------------- */
+
+test("四段派生映射：frontier/active/blocked/recent 按板序原值透出（消费不重排、不改判据）", () => {
+  const outcome = parseBoardJson(JSON.stringify(GUIDE_BOARD));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const index = outcome.board.derivedIndex;
+  assert.ok(index, "四段齐备的板必须映射出派生索引");
+  assert.deepEqual(
+    index.frontier.map((entry) => [entry.rank, entry.no]),
+    [
+      [1, 210],
+      [2, 220],
+      [3, 221],
+    ],
+    "frontier 顺序与 rank 直读板字段",
+  );
+  assert.deepEqual(
+    index.active.map((entry) => [entry.no, entry.stage]),
+    [
+      [213, "执行中"],
+      [215, "执行中"],
+      [216, "审核中"],
+    ],
+    "active 顺序直读板字段（不按 status 重排）",
+  );
+  assert.equal(index.blocked.length, 3, "blocked 一行一项（一卡两项出两行）");
+  assert.deepEqual(
+    index.blocked.map((entry) => [entry.blockerKind, entry.targetId]),
+    [
+      ["external", null],
+      ["dependency", 112],
+      ["dependency", 113],
+    ],
+  );
+  assert.deepEqual(
+    index.recent.map((entry) => entry.no),
+    [210, 211, 213, 215, 220],
+  );
+  assert.equal(index.recent[2]?.stoppedAt, 213, "recent 条目字段透出（stoppedAt/next 不丢）");
+  assert.equal(index.recent[2]?.next, "续跑探针");
+});
+
+test("四段缺失（旧版编译器产物）→ 派生索引为 null（视图侧不得自算兜底）", () => {
+  const outcome = parseBoardJson(JSON.stringify(buildGuideLegacyBoard()));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  assert.equal(outcome.board.derivedIndex, null, "四段缺省 = 索引缺失，不是空段");
+});
+
+/* ---------------- 置顶五槽条 ---------------- */
+
+test("五槽条：计数直取派生投影与板字段（需处理=attentionSummary 合计、阻塞=blocked 行数、运行/待收口=active 段位、最近活动=recent 条数）", () => {
+  const markup = render(readyState());
+  assert.ok(markup.includes('data-board-view="guide"'), "guide 视图根锚点");
+  assert.ok(markup.includes("data-board-guide-slots"), "五槽条容器");
+  assert.equal(slotValue(markup, "attention"), "4", "需处理 = 2+0+1+1");
+  assert.equal(slotValue(markup, "blocked"), "3", "阻塞 = blocked[] 行数（一卡两项出两行）");
+  assert.equal(slotValue(markup, "running"), "2", "运行 = active 段位=执行中");
+  assert.equal(slotValue(markup, "review"), "1", "待收口 = active 段位=审核中");
+  assert.equal(slotValue(markup, "recent"), "5", "最近活动 = recent[] 条数");
+  for (const label of ["需处理", "阻塞", "运行", "待收口", "最近活动"]) {
+    assert.ok(slotMarkup(markup, slotName(label)).includes(label), `槽标签逐字：${label}`);
+  }
+});
+
+const slotName = (label: string): string =>
+  ({ 需处理: "attention", 阻塞: "blocked", 运行: "running", 待收口: "review", 最近活动: "recent" })[
+    label
+  ] ?? label;
+
+test("反例（禁自算）：槽计数与自算口径不一致时，渲染必须跟派生投影走", () => {
+  const markup = render(readyState());
+  // 节点 attention 码合计 2、挂 blockers 的卡 2 张、status=active 的卡 1 张——
+  // 任何按卡字段自算的实现会得到 2/2/1，这里逐一断言与派生投影一致。
+  assert.equal(slotValue(markup, "attention"), "4");
+  assert.equal(slotValue(markup, "blocked"), "3");
+  assert.equal(slotValue(markup, "running"), "2");
+});
+
+test("零 attention：五槽仍显示，空槽有明确形态（0 + 空槽文案）", () => {
+  const markup = render(readyStateOf(buildGuideZeroBoard()));
+  assert.ok(markup.includes("data-board-guide-slots"), "零 signal 也不隐藏五槽条");
+  for (const slot of ["attention", "blocked", "running", "review", "recent"]) {
+    assert.equal(slotValue(markup, slot), "0", `${slot} 槽显式 0`);
+    assert.ok(
+      new RegExp(`data-board-guide-slot="${slot}"[^>]*data-board-guide-zero="true"`).test(markup),
+      `${slot} 空槽形态标记`,
+    );
+  }
+  assert.ok(markup.includes("无待处理"), "空槽给出可读文案，不留空壳");
+  assert.ok(markup.includes("无最近活动"));
+});
+
+test("旧板（缺四段）：不自行推算——槽值未知 + 指名重编译提示", () => {
+  const markup = render(readyStateOf(buildGuideLegacyBoard()));
+  assert.ok(markup.includes("data-board-guide-index-state"), "索引状态锚点");
+  assert.ok(markup.includes("data-board-guide-recompile"), "指名重编译提示");
+  for (const slot of ["attention", "blocked", "running", "review", "recent"]) {
+    assert.equal(slotValue(markup, slot), "—", `${slot} 槽不得显示自算计数`);
+  }
+});
+
+/* ---------------- 主体「正在执行的计划」区块 ---------------- */
+
+test("计划区块：活跃计划置顶、计划按板序；已取消计划与 spec 特性不入区块", () => {
+  const markup = render(readyState());
+  assert.ok(markup.includes("data-board-guide-plans"), "计划区块容器");
+  assert.ok(markup.includes("正在执行的计划"), "区块标题");
+  const planA = markup.indexOf('data-board-guide-plan="plan:plan-guide-a"');
+  const planB = markup.indexOf('data-board-guide-plan="plan:plan-guide-b"');
+  const planD = markup.indexOf('data-board-guide-plan="plan:plan-guide-d"');
+  assert.ok(planA >= 0 && planB >= 0 && planD >= 0, "三张在册计划都渲染");
+  assert.ok(planA < planB && planB < planD, "活跃计划置顶：A(active) → B → D 保板序");
+  assert.ok(!markup.includes("plan:plan-guide-c"), "已取消计划不入区块");
+  assert.ok(!markup.includes("spec:guide-spec"), "spec 特性不入计划区块");
+});
+
+test("活跃计划置顶：板序靠后的 active 计划提到 pending 计划之前（status 判据，非段位自算）", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const features = mutated.features as Array<Record<string, unknown>>;
+  const planD = features.find((feature) => feature.id === "plan:plan-guide-d");
+  assert.ok(planD, "夹具里应有计划 D");
+  planD.status = "active";
+  const markup = render(readyStateOf(mutated));
+  const planA = markup.indexOf('data-board-guide-plan="plan:plan-guide-a"');
+  const planDIndex = markup.indexOf('data-board-guide-plan="plan:plan-guide-d"');
+  const planB = markup.indexOf('data-board-guide-plan="plan:plan-guide-b"');
+  assert.ok(planA < planDIndex && planDIndex < planB, "A、D（active，板序）→ B（pending）");
+});
+
+test("计划进度：计数 = 该计划卡 completed/total（板字段），配进度微条", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(planA.includes('data-board-guide-plan-progress="2/4"'), `计划 A 计数 2/4：${planA}`);
+  assert.ok(planA.includes("data-board-guide-plan-bar"), "计划 A 有进度微条");
+  assert.ok(/data-board-guide-plan-bar-value="2\/4"/.test(planA), "微条数值钉住同一计数");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(planB.includes('data-board-guide-plan-progress="0/3"'), "计划 B 0/3");
+  const planD = planMarkup(markup, "plan:plan-guide-d");
+  assert.ok(planD.includes("data-board-guide-plan-progress"), "零卡计划也带进度锚点");
+  assert.ok(planD.includes("未拆解"), "零卡计划显示未拆解，不留空白");
+});
+
+test("计划摘要行：段位 + 期次合成名 + 前沿/在途计数（四段投影计数）", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(planA.includes("data-board-guide-plan-summary"), "摘要行锚点");
+  assert.ok(planA.includes("执行中"), "摘要行带段位文本");
+  assert.ok(planA.includes("KANB1"), "期次合成名走 A4 单点（KANB+1）");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(planB.includes("KANB2"), "计划 B 期次 2 合成名");
+});
+
+test("前沿行入口：计划内卡行 = 四段投影成员（frontier 序 → active 序），带卡片锚点可点击", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(planA.includes('data-board-card="task:210"'), "计划 A 的前沿卡行（#210）");
+  assert.ok(planA.includes('data-board-card="task:213"'), "计划 A 的在途卡行（#213）");
+  assert.ok(planA.includes("置顶五槽条") && planA.includes("溢出探针"), "行内带标题");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(planB.includes('data-board-card="task:220"'), "计划 B 前沿卡行");
+});
+
+test("卡片点击落点：计划内卡行带开弹窗 props（role=button + tabindex；真点击路由断言在浏览器脚本）", () => {
+  const opened: string[] = [];
+  const markup = render(readyState(), { onOpenCard: (id) => opened.push(id) });
+  const cardRow = /data-board-card="task:210"[^>]*/.exec(markup);
+  assert.ok(cardRow, "卡行锚点存在");
+  assert.ok(cardRow[0].includes('role="button"'), "落点声明 button 角色");
+  assert.ok(cardRow[0].includes('tabindex="0"'), "落点可键盘聚焦");
+});
+
+/* ---------------- 视图切换入口与词条 ---------------- */
+
+test("视图切换：新增「指引」入口（guide 为可选项，四结构视图保留）", () => {
+  const markup = render(readyState());
+  const switcher = /data-board-view-switcher[\s\S]*?<\/div>/.exec(markup);
+  assert.ok(switcher, "视图切换控件存在");
+  assert.ok(switcher[0].includes('data-board-view-option="guide"'), "指引入口在位");
+  for (const mode of ["tree", "kanban", "list", "table"]) {
+    assert.ok(switcher[0].includes(`data-board-view-option="${mode}"`), `${mode} 视图入口保留`);
+  }
+});
+
+test("英文界面：五槽与计划区块文案全走 en-US 词条（不漏中文）", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US" as const,
+      children: createElement(BoardPaneView, {
+        state: readyState(),
+        onRefresh: () => {},
+        viewMode: "guide",
+        now: GUIDE_NOW,
+      }),
+    }),
+  );
+  for (const label of ["Needs attention", "Blocked", "Running", "To close", "Recent activity"]) {
+    assert.ok(markup.includes(label), `英文槽标签：${label}`);
+  }
+  assert.ok(markup.includes("Plans in progress"), "英文区块标题");
+  assert.ok(!markup.includes("正在执行的计划"), "英文界面不得漏中文标题");
+});
+
+/* ---------------- 突变/空态咬点（计数跟随板字段，不跟标签） ---------------- */
+
+test("突变：计划进度计数跟随板字段——卡 status 变 completed，计数与微条数值同步变", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const feature = (mutated.features as Array<Record<string, unknown>>)[0];
+  const tasks = feature?.tasks as Array<Record<string, unknown>>;
+  const target = tasks.find((task) => task.no === 210);
+  assert.ok(target, "夹具里应有卡 #210");
+  target.status = "completed";
+  target.stage = "已完成";
+  const markup = render(readyStateOf(mutated));
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(planA.includes('data-board-guide-plan-progress="3/4"'), `突变后计数 3/4：${planA}`);
+  assert.ok(/data-board-guide-plan-bar-value="3\/4"/.test(planA), "微条数值同步突变");
+});
+
+test("突变：槽计数跟随派生投影——blocked 段少一行，阻塞槽随段变化（禁自算）", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  (mutated.blocked as unknown[]).pop();
+  const markup = render(readyStateOf(mutated));
+  assert.equal(slotValue(markup, "blocked"), "2", "阻塞槽 = blocked[] 行数（突变后 2）");
+});
+
+test("空态：无计划特性 → 计划区块给明确空态（spec-only 项目不落空白）", () => {
+  const markup = render(readyStateOf(buildGuideNoPlansBoard()));
+  assert.ok(markup.includes("正在执行的计划"), "区块标题仍在");
+  assert.ok(markup.includes("data-board-guide-plans-empty"), "空态锚点");
+  assert.ok(markup.includes("暂无执行中的计划"), "空态文案");
+  assert.ok(!markup.includes("data-board-guide-plan="), "空态时不得渲染计划块");
+});
+
+test("行数上限：计划内卡行超过上限时裁剪量显式（完整队列归 #138，不静默丢）", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const feature = (mutated.features as Array<Record<string, unknown>>)[0];
+  const tasks = feature?.tasks as Array<Record<string, unknown>>;
+  // 追加第 5、6 张卡并让它们进前沿（上限 3 → 应有 3 行 + 「还有 N 项」）。
+  tasks.push(
+    { no: 230, label: "1.5", title: "追加卡一", status: "pending", stage: "待办" },
+    { no: 231, label: "1.6", title: "追加卡二", status: "pending", stage: "待办" },
+  );
+  (mutated.frontier as Array<Record<string, unknown>>).push(
+    {
+      rank: 4,
+      no: 230,
+      title: "追加卡一",
+      stage: "待办",
+      nextAssignee: "implementer",
+      resolvedDeps: [],
+    },
+    {
+      rank: 5,
+      no: 231,
+      title: "追加卡二",
+      stage: "待办",
+      nextAssignee: "implementer",
+      resolvedDeps: [],
+    },
+  );
+  const markup = render(readyStateOf(mutated));
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  const rowIds = [...planA.matchAll(/data-board-card="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(rowIds, ["task:210", "task:230", "task:231"], "只展示前 3 行（frontier 序）");
+  assert.ok(planA.includes("data-board-guide-plan-more"), "裁剪量显式锚点");
+  assert.ok(planA.includes("还有 1 项"), "裁剪量文案（4 项入口 - 3 行展示，另加 1 张在途卡）");
+});
