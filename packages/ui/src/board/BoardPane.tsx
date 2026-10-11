@@ -74,6 +74,7 @@ import {
   BoardCardDetailCache,
   findBoardTaskByNo,
   loadBoardCardDetail,
+  resolveBoardCardDetailState,
 } from "./boardCardDetail.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
@@ -315,19 +316,19 @@ export function BoardPane({
     setDetailRevision((revision) => revision + 1);
   }, []);
 
-  // 打开卡的详情读取态（#220/D7；仅薄索引面）：`unavailable`（暂时读不到）/`missing`（没有这张卡）
-  // 与 #183「板上未携带」确定性空态分开呈现（major①）。`loaded` 或旧面路径 → null（弹窗按现形态渲染）。
-  const openCardDetailState: "missing" | "unavailable" | null =
-    openCardId !== null && state.kind === "ready" && state.board.screen !== null
-      ? (() => {
-          const node = resolveBoardDialogNode(state.board, openCardId);
-          if (!node || node.kind !== "task" || node.no === null) return null;
-          const cached = cardDetailCacheRef.current.get(node.no);
-          if (cached) return cached.kind !== "loaded" ? cached.kind : null;
-          // 同代重试读取中：保留「暂不可读」呈现（不闪回假空态）。
-          return pendingDetailNosRef.current.has(node.no) ? "unavailable" : null;
-        })()
-      : null;
+  // 打开卡的详情读取态（#220/D7 major①；2026-10-12 微修：**不限定板载入面**）：
+  // 判据单点在 `resolveBoardCardDetailState`（只看这张卡的读取结论——缓存 / 同代重试在途；
+  // 扁平卡（真实板当前形态）与分片卡同口径）；`loaded` 或详情已内联 → null（弹窗按现形态渲染）。
+  const openCardDetailState: "missing" | "unavailable" | null = (() => {
+    if (openCardId === null || state.kind !== "ready") return null;
+    const node = resolveBoardDialogNode(state.board, openCardId);
+    if (!node || node.kind !== "task" || node.no === null) return null;
+    return resolveBoardCardDetailState({
+      no: node.no,
+      cache: cardDetailCacheRef.current,
+      pendingDetailNos: pendingDetailNosRef.current,
+    });
+  })();
 
   // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走对应 handle（含焦点恢复）。
   // 两弹窗互斥（开一个关另一个）——Esc 只关当前那一个（卡片优先判存在性，实际不会同时开）。

@@ -4,17 +4,28 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { BoardGuideView } from "../src/board/BoardGuideView.js";
+import {
+  BoardCardDetailCache,
+  loadBoardCardDetail,
+  resolveBoardCardDetailState,
+} from "../src/board/boardCardDetail.js";
+import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
 import { collectBoardViewNodes } from "../src/board/boardViewsViewModel.js";
 import { parseBoardIndex } from "../src/board/boardIndexViewModel.js";
 import { parseBoardJson, type BoardViewModel } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
-import { GOLDEN_SHAPED_BOARD } from "./boardTestFixture.js";
+import { GOLDEN_SHAPED_BOARD, WORKSPACE } from "./boardTestFixture.js";
 
 /**
  * #220/D7 UI 批真渲染守卫（弹窗详情读取态 + 指引面在途未知形）。
  *
  * 期望值独立真源：契约 §15.5（字段面缺口登记——执行详情归分片承载）+ D6 第四绿 ui-review
  * （major①：详情 unavailable 复用「板上未携带」确定性空态；minor①：在途省略与「—」形态不一致）。
+ *
+ * #220 回炉微修（2026-10-12，三绿 review Spec-1）：补**宿主判据**覆盖——新增的 unavailable/
+ * missing 渲染用例此前直接构造 `detailState` 绕过宿主判据；这里的用例经
+ * `resolveBoardCardDetailState`（判据纯函数单点）+ 真实数据层结论（`loadBoardCardDetail`）
+ * 到达呈现，并覆盖真实板当前形态（薄索引面 + 扁平卡 `cardFile=null`）与旧面载入面。
  */
 
 function render(element: ReactElement): string {
@@ -123,4 +134,137 @@ test("BoardGuideView：薄索引面计划摘要 → 在途显式未知形「在�
   const markup = render(createElement(BoardGuideView, { board: outcome.board }));
   assert.ok(markup.includes("在途 —"), "在途未知形显式渲染（与五槽「—」同一语言；不拿未知当 0）");
   assert.ok(markup.includes("前沿 1"), "前沿计数照常给数（同面既有形态不受影响）");
+});
+
+/**
+ * 真实板当前形态夹具（2026-10-12 实测：157 卡全扁平、无 `cards/` 分片）：
+ * 薄索引面（`screen` 五槽在场）+ 卡无 `cardFile` 指针（扁平卡）→ 详情经旧面回落读。
+ * `screen` 计数取自真实板 INDEX.json（独立真源）。
+ */
+const FLAT_REAL_INDEX = {
+  version: 3,
+  generatedBy: "zcode-board/0.5.0",
+  updatedAt: "2026-10-12T05:50:16+08:00",
+  project: { root: "/workspace/ZCode", name: "ZCode" },
+  screen: { attention: 18, blocked: 28, running: 0, review: 1, recent: 10 },
+  frontier: [],
+  features: [
+    {
+      no: 900,
+      label: "900",
+      kind: "plan",
+      planCode: "D7",
+      title: "流水化计划稿",
+      status: "active",
+      stage: "执行中",
+      tasks: [
+        {
+          no: 902,
+          label: "1",
+          title: "扁平卡（详情回落旧面）",
+          status: "pending",
+          stage: "待办",
+          blockedBy: [],
+        },
+      ],
+    },
+  ],
+};
+
+/** 读取层假件：旧面回落读被硬上限截断（真实板 board.json 超 256 KiB 的同款结论 → unavailable）。 */
+const TRUNCATED_BOARD_READ = {
+  async checkFilesExist({ paths }: { paths: string[] }) {
+    return paths.map((path) => ({ path, exists: true }));
+  },
+  async readTextFile({ path, length = 128 * 1024 }: { path: string; length?: number }) {
+    // 扁平卡详情必须回落读旧面 board.json（不扫目录、不骗一个「不存在」）。
+    assert.ok(path.endsWith("/.zcode/board/board.json"), `扁平卡回落读旧面：${path}`);
+    // 与真实板同形：文件超服务读限，返回截断片（调用方据此判 unavailable，不解析前缀）。
+    return {
+      path,
+      content: '{"version":2,"features":[]}',
+      offset: 0,
+      bytesRead: length,
+      totalBytes: length + 1,
+      truncated: true,
+      isBinary: false,
+    };
+  },
+};
+
+test("宿主判据（扁平卡路径）：真实板形态（薄索引 + 扁平卡）经数据层到「暂不可读」呈现 + 重试", async () => {
+  const outcome = parseBoardIndex(JSON.stringify(FLAT_REAL_INDEX));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const board = outcome.board;
+  const node = resolveBoardDialogNode(board, "task:902");
+  assert.ok(node && node.kind === "task" && node.no === 902, "能定位扁平卡节点");
+  // 数据层真实结论：扁平卡回落旧面 → 截断 → unavailable（非手工构造态）。
+  const detail = await loadBoardCardDetail({
+    fileService: TRUNCATED_BOARD_READ,
+    workspacePath: WORKSPACE,
+    task: { no: 902, cardFile: null },
+  });
+  assert.equal(detail.kind, "unavailable", "截断读 → 暂不可读（不误报 missing）");
+  const cache = new BoardCardDetailCache();
+  cache.begin(`${WORKSPACE}\u0000${board.updatedAt ?? ""}`);
+  cache.set(902, detail);
+  // 宿主判据（#220 微修单点）：同一份缓存结论 → 呈现态。
+  const detailState = resolveBoardCardDetailState({
+    no: 902,
+    cache,
+    pendingDetailNos: new Set<number>(),
+  });
+  assert.equal(detailState, "unavailable", "判据取到读取态（不经 detailState 直填）");
+  const markup = render(
+    createElement(BoardCardDialog, {
+      board,
+      node,
+      detailState,
+      onRetryDetail: () => {},
+    }),
+  );
+  assert.ok(markup.includes("详情暂不可读"), "扁平卡不可读 → 显式「暂不可读」文案");
+  assert.ok(markup.includes("data-board-dialog-detail-retry"), "给刷新重试入口（同代重读）");
+  assert.ok(!markup.includes("板上未携带"), "不复用 #183「板上未携带」确定性空态");
+});
+
+test("宿主判据：板载入面不限定——旧面（screen null）扁平卡 + 已落 unavailable 仍取态", () => {
+  const board = goldenBoard();
+  assert.equal(board.screen, null, "夹具为旧面（board.json；screen 恒 null）");
+  const cache = new BoardCardDetailCache();
+  cache.begin("旧面代际");
+  cache.set(8, { kind: "unavailable" });
+  // 读取态只取「这张卡」的读取结论，不得再按板载入面（screen）限定——真实板扁平卡与分片卡同口径。
+  assert.equal(
+    resolveBoardCardDetailState({ no: 8, cache, pendingDetailNos: new Set<number>() }),
+    "unavailable",
+    "旧面载入不豁免读取态呈现",
+  );
+});
+
+test("宿主判据：missing 取态；loaded/无缓存无在途 → 现形态（null）；重试在途保留「暂不可读」", () => {
+  const cache = new BoardCardDetailCache();
+  cache.begin("判据代际");
+  cache.set(7, { kind: "missing" });
+  cache.set(8, { kind: "loaded", patch: { goal: "已读到" } });
+  assert.equal(
+    resolveBoardCardDetailState({ no: 7, cache, pendingDetailNos: new Set<number>() }),
+    "missing",
+  );
+  assert.equal(
+    resolveBoardCardDetailState({ no: 8, cache, pendingDetailNos: new Set<number>() }),
+    null,
+    "loaded → 弹窗按现形态渲染（不给读取态提示）",
+  );
+  assert.equal(
+    resolveBoardCardDetailState({ no: 9, cache, pendingDetailNos: new Set<number>() }),
+    null,
+    "无缓存、无在途 → 现形态（不拿「未读」当「不可读」）",
+  );
+  assert.equal(
+    resolveBoardCardDetailState({ no: 9, cache, pendingDetailNos: new Set<number>([9]) }),
+    "unavailable",
+    "同代重试在途 → 保留「暂不可读」（不闪回假空态）",
+  );
 });
