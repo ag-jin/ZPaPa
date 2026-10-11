@@ -9,8 +9,9 @@
  * - 板缺四段（旧版编译器产物）→ 槽值未知（`count=null`）并指名重编译，**不按卡字段自算兜底**；
  * - 计划进度计数（已完成卡/总卡）= 该特性 `tasks` 子树里编译器产出的 `status` 计数
  *   （卡字段直读；不重推状态：总数走四视图组头的既有单点 `countBoardFeatureTasks`，
- *   完成数只筛 `status === "completed"`）。每行/每槽的文件点都收敛在本模块与
- *   `boardGuideParts`，后续卡（#138 队列 / #139 胶囊）复用同一投影，禁二份口径。
+ *   完成数只筛 `status === "completed"`）；rollup 缺口计数（#139/AD-6）同源 A4 单点
+ *   `boardLayerGapCount`（成员卡 attention 码条数之和），不重造判据。每行/每槽的文件点都
+ *   收敛在本模块与 `boardGuideParts`，后续卡（#138 队列 / #139 胶囊）复用同一投影，禁二份口径。
  *
  * 展示口径（itw-20261011-9003 视觉准入 + E7 §3.1/§4.2 设计面）：
  * - 五槽条 = 主数 + 短解释；零值槽仍有明确文案（不消失、不留空壳）；
@@ -19,7 +20,7 @@
  * - 行数上限 `GUIDE_PLAN_ROW_LIMIT`：L1 只给入口，完整队列归 C3-3（#138），裁剪量由
  *   `hiddenRows` 显式表达（不静默丢）。
  */
-import { groupBoardFeaturesByEpic } from "./boardEpicContainers.js";
+import { boardLayerGapCount, groupBoardFeaturesByEpic } from "./boardEpicContainers.js";
 import {
   collectBoardViewNodes,
   countBoardFeatureTasks,
@@ -80,6 +81,8 @@ export interface BoardGuidePlan {
   completed: number;
   /** 总卡数（含嵌套子卡；0 = 未拆解）。 */
   total: number;
+  /** 该计划成员卡的 rollup 缺口计数（attention 码条数之和；A4 单点 `boardLayerGapCount`）。 */
+  gapCount: number;
   /** 本计划在 frontier[] 的成员数（四段投影计数）。 */
   frontierCount: number;
   /** 本计划在 active[] 的成员数（四段投影计数）。 */
@@ -123,17 +126,17 @@ function buildPhaseNameMap(board: BoardViewModel): Map<string, string> {
   return map;
 }
 
-/** 计划内卡号集合（只读板面卡字段；用于把四段成员归到计划）。 */
-function collectPlanCardNos(tasks: BoardTaskNode[]): Set<number> {
-  const nos = new Set<number>();
+/** 计划子树内的卡节点（前序遍历一份；卡号集合与缺口 rollup 都从这里派生，不各走一遍）。 */
+function collectPlanCardNodes(tasks: BoardTaskNode[]): BoardTaskNode[] {
+  const nodes: BoardTaskNode[] = [];
   const walk = (list: BoardTaskNode[]) => {
     for (const task of list) {
-      if (task.no !== null) nos.add(task.no);
+      nodes.push(task);
       walk(task.children);
     }
   };
   walk(tasks);
-  return nos;
+  return nodes;
 }
 
 /**
@@ -170,7 +173,9 @@ export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary
   const plans = board.features
     .filter((feature) => feature.kind === "plan" && feature.status !== "cancelled")
     .map((feature) => {
-      const cardNos = collectPlanCardNos(feature.tasks);
+      const cardNodes = collectPlanCardNodes(feature.tasks);
+      const cardNos = new Set<number>();
+      for (const node of cardNodes) if (node.no !== null) cardNos.add(node.no);
       const frontierRows = (index?.frontier ?? []).filter((entry) => cardNos.has(entry.no));
       const activeRows = (index?.active ?? []).filter((entry) => cardNos.has(entry.no));
       const rows: BoardGuideCardRow[] = [
@@ -211,6 +216,10 @@ export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary
         phaseName: phaseNames.get(feature.id) ?? null,
         completed: progress.completed,
         total: progress.total,
+        // rollup 缺口（#139/AD-6）= 成员卡 attention 码条数之和——A4 单点 `boardLayerGapCount`
+        // 同一判据（层 rollup = 成员 attention 求和）；只数成员卡，不数计划自身（自身信号
+        // 归角标簇），也不排除嵌套子卡。
+        gapCount: boardLayerGapCount(cardNodes),
         frontierCount: frontierRows.length,
         activeCount: activeRows.length,
         rows: rows.slice(0, GUIDE_PLAN_ROW_LIMIT),

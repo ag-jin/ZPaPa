@@ -1201,6 +1201,7 @@ const enUS: Record<string, string> = {
   "board.guide.plans.empty": "No plans in progress.",
   "board.guide.plan.progress": "{completed}/{total} cards",
   "board.guide.plan.progressLabel": "{completed} of {total} cards done",
+  "board.guide.plan.percent": "{percent}%",
   "board.guide.plan.undesigned": "Not broken down",
   "board.guide.plan.frontier": "{count} ready",
   "board.guide.plan.active": "{count} in flight",

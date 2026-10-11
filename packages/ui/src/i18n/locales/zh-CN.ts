@@ -1116,6 +1116,7 @@ const zhCN: Record<string, string> = {
   "board.guide.plans.empty": "暂无执行中的计划。",
   "board.guide.plan.progress": "{completed}/{total} 卡",
   "board.guide.plan.progressLabel": "已完成 {completed}/{total} 张卡",
+  "board.guide.plan.percent": "{percent}%",
   "board.guide.plan.undesigned": "未拆解",
   "board.guide.plan.frontier": "前沿 {count}",
   "board.guide.plan.active": "在途 {count}",

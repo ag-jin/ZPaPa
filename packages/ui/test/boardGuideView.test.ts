@@ -350,3 +350,116 @@ test("行数上限：计划内卡行超过上限时裁剪量显式（完整队�
   assert.ok(planA.includes("data-board-guide-plan-more"), "裁剪量显式锚点");
   assert.ok(planA.includes("还有 1 项"), "裁剪量文案（4 项入口 - 3 行展示，另加 1 张在途卡）");
 });
+
+/* ---------------- C3-4（#139）：计划级进度胶囊 + 期次/功能级摘要行胶囊 ---------------- */
+
+test("计划进度胶囊（#139）：已完成/总卡旁给百分比可读文本（与微条同口径；E7 §4.2 条旁必有数字）", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(/data-board-guide-plan-percent="50"/.test(planA), `计划 A 2/4 → 50%：${planA}`);
+  assert.ok(planA.includes("50%"), "百分比是可见文本，不只靠条长表达");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(/data-board-guide-plan-percent="0"/.test(planB), "计划 B 0/3 → 0%（显式，不留空壳）");
+  assert.ok(planB.includes("0%"));
+  const planD = planMarkup(markup, "plan:plan-guide-d");
+  assert.ok(
+    !/data-board-guide-plan-percent/.test(planD),
+    "未拆解（0/0）不给百分比——不制造未知（E7 §4.2 未拆解形态）",
+  );
+  assert.ok(planD.includes("未拆解"), "未拆解文案仍在");
+});
+
+test("期次/功能级摘要行胶囊（#139）：计划卡数胶囊与 A4 组头 [N 张卡] 同源同值（countBoardFeatureTasks 单点）", () => {
+  const guide = render(readyState());
+  const planA = planMarkup(guide, "plan:plan-guide-a");
+  assert.ok(
+    /data-board-guide-plan-card-count="4"/.test(planA),
+    `计划 A 规模胶囊 = 夹具全部成员卡 4 张：${planA}`,
+  );
+  assert.ok(planA.includes("4 张卡"), "规模文案走 A4 组头同一词条（{count} 张卡）");
+  // 「与组头计数一致」对账：同一板同一单点，指引面胶囊与结构视图组头必须同值（4 张卡）。
+  const kanban = render(readyState(), { viewMode: "kanban" });
+  assert.ok(kanban.includes('data-board-feature-card-count="4"'), "看板组头 [N 张卡] 锚点");
+  assert.ok(kanban.includes("4 张卡"), "组头计数同文案（两处同一词条）");
+  // 反例（禁自算）：计划 A 的四段成员只有 2 张（frontier #210 + active #213）——
+  // 规模胶囊必须是全部成员卡（4）；按四段成员数自算会得 2，必咬。
+  const planB = planMarkup(guide, "plan:plan-guide-b");
+  assert.ok(/data-board-guide-plan-card-count="3"/.test(planB), "计划 B 3 张卡（含在途/受阻卡）");
+});
+
+test("突变：卡数胶囊跟随板字段（含嵌套子卡）——与组头同步变，不跟标签/四段成员", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const feature = (mutated.features as Array<Record<string, unknown>>)[0];
+  const tasks = feature?.tasks as Array<Record<string, unknown>>;
+  const target = tasks.find((task) => task.no === 210);
+  assert.ok(target, "夹具里应有卡 #210");
+  target.tasks = [{ label: "1.1.1", title: "嵌套子卡", status: "pending", stage: "待办" }];
+  const guide = render(readyStateOf(mutated));
+  const planA = planMarkup(guide, "plan:plan-guide-a");
+  assert.ok(
+    /data-board-guide-plan-card-count="5"/.test(planA),
+    `嵌套子卡计入总卡数（4+1）：${planA}`,
+  );
+  const kanban = render(readyStateOf(mutated), { viewMode: "kanban" });
+  assert.ok(kanban.includes('data-board-feature-card-count="5"'), "组头计数同变（同一单点）");
+});
+
+test("rollup 缺口徽章（#139）：计数 = 计划成员卡 attention 码条数之和（A4 单点 boardLayerGapCount；零缺口不渲染）", () => {
+  const base = render(readyState());
+  const basePlanA = planMarkup(base, "plan:plan-guide-a");
+  assert.ok(
+    !basePlanA.includes("data-board-guide-plan-gap-count"),
+    "全无缺口 → 不落徽章（日常零噪声，与 A4 层头同判据）",
+  );
+  const mutated = structuredClone(GUIDE_BOARD);
+  const feature = (mutated.features as Array<Record<string, unknown>>)[0];
+  assert.ok(feature, "夹具里应有计划 A");
+  const tasks = feature.tasks as Array<Record<string, unknown>>;
+  const card211 = tasks.find((task) => task.no === 211);
+  const card210 = tasks.find((task) => task.no === 210);
+  assert.ok(card211 && card210, "夹具里应有卡 #211/#210");
+  card211.attention = ["interrupted-resume"];
+  // 嵌套子卡也计入 rollup（成员 = 计划全部卡，含子卡）。
+  card210.tasks = [
+    {
+      label: "1.1.1",
+      title: "子卡",
+      status: "pending",
+      stage: "待办",
+      attention: ["unmerged-worktree", "interrupted-resume"],
+    },
+  ];
+  const markup = render(readyStateOf(mutated));
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(/data-board-guide-plan-gap-count="3"/.test(planA), `缺口 = 1+2 = 3：${planA}`);
+  assert.ok(planA.includes("缺口 3"), "缺口文案走 A4 层头同一词条（缺口 {count}）");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(!planB.includes("data-board-guide-plan-gap-count"), "计划 B 无缺口，不串台");
+});
+
+test("反例（缺口口径必咬）：不数计划自身 attention 码、也不漏嵌套子卡——只有成员卡全量求和得真值", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const feature = (mutated.features as Array<Record<string, unknown>>)[0];
+  assert.ok(feature, "夹具里应有计划 A");
+  // 计划自身缺口码（feature.attention）是「自身信号」不是 rollup——若被计数会得 1。
+  feature.attention = ["interviewed-not-arranged"];
+  const tasks = feature.tasks as Array<Record<string, unknown>>;
+  const card213 = tasks.find((task) => task.no === 213);
+  const card210 = tasks.find((task) => task.no === 210);
+  assert.ok(card213 && card210, "夹具里应有卡 #213/#210");
+  card213.attention = ["unmerged-worktree"];
+  card210.tasks = [
+    {
+      label: "1.1.1",
+      title: "子卡",
+      status: "pending",
+      stage: "待办",
+      attention: ["interrupted-resume", "arranged-not-expanded"],
+    },
+  ];
+  const markup = render(readyStateOf(mutated));
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  // 真值 = 成员卡全量求和：顶层 #213 的 1 条 + 嵌套子卡 2 条 = 3
+  // （自算自身码会得 1；只数顶层会得 1；两者都被此断言咬住）。
+  assert.ok(/data-board-guide-plan-gap-count="3"/.test(planA), `缺口真值 = 3：${planA}`);
+});

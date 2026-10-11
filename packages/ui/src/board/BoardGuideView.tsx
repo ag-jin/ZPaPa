@@ -9,17 +9,26 @@
  * 视图边界（契约 §13.6）：不写板文件、不解析真相源、不自算 `stage`/`attention`；
  * 缺四段（旧编译器产物）→ 指名重编译，不自行派生兜底。
  *
- * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）、
- * 计数胶囊零件归 C3-4（#139）。本组件里的行入口即 #138 的生长点（同一投影、同一卡行零件）。
+ * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）。
+ * 本组件里的行入口即 #138 的生长点（同一投影、同一卡行零件）。
+ * #139（C3-4）已把计数胶囊/微条零件完整化（`boardGuideParts`）：计划级进度胶囊（已完成/总卡 ·
+ * 百分比 + 微条）与期次/功能级摘要行计数胶囊（`[N 张卡]` 与 rollup 缺口徽章，与 A4 组头同源）；
+ * 本组件的计划块只做摆放接线，计数全部直读投影（禁自算）。
  *
  * 视觉准入（itw-20261011-9003；四绿 ui-designer 复核口径）：主体文字（标题/卡名/摘要行，摘要行
  * 为门禁枚举的运营信息承载）`text-ui-base`(14px)；辅助/元数据行（接手位、标签、空态）`text-ui-sm`；
  * 每行信息点 ≤4 组、留白 `p-3`/`gap-2` 起——「一扫可读」优先于「信息全」。
+ * 计划头行 = 编号/名 + 计数胶囊 + 缺口徽章；进度胶囊「计数 · 百分比」收敛为一个信息组 + 微条同排。
  * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
  */
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
-import { BoardGuidePlanProgressBar, BoardGuideSlotTile } from "./boardGuideParts.js";
+import {
+  BoardGuidePlanCardCountCapsule,
+  BoardGuidePlanProgressCapsule,
+  BoardGuidePlanRollupGapBadge,
+  BoardGuideSlotTile,
+} from "./boardGuideParts.js";
 import {
   buildBoardGuideSummary,
   type BoardGuideCardRow,
@@ -66,7 +75,7 @@ function BoardGuideCardRowLine({
   );
 }
 
-/** 单个计划区块：名 + 完成进度（计数 + 微条）+ 期次/完成情况摘要行 + 前沿行入口。 */
+/** 单个计划区块：名 + 完成进度（进度胶囊/微条）+ 期次/完成情况摘要行 + 前沿行入口。 */
 function BoardGuidePlanBlock({
   plan,
   onOpenCard,
@@ -75,13 +84,6 @@ function BoardGuidePlanBlock({
   onOpenCard?: (id: string) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const progressText =
-    plan.total > 0
-      ? intl.formatMessage(
-          { id: "board.guide.plan.progress" },
-          { completed: plan.completed, total: plan.total },
-        )
-      : intl.formatMessage({ id: "board.guide.plan.undesigned" });
   const summaryParts = [
     plan.stage,
     plan.phaseName,
@@ -110,14 +112,12 @@ function BoardGuidePlanBlock({
         >
           {plan.title}
         </span>
-        <span
-          data-board-guide-plan-progress={`${plan.completed}/${plan.total}`}
-          className="shrink-0 text-ui-base font-medium tabular-nums text-foreground"
-        >
-          {progressText}
-        </span>
+        {/* 期次/功能级摘要行的计数胶囊（#139）：与 A4 组头 `[N 张卡]` 同源同值（AD-6 名+计数）。 */}
+        <BoardGuidePlanCardCountCapsule count={plan.total} />
+        {/* rollup 缺口徽章（#139/AD-6）：只在有缺口时落章——0 = 日常零噪声（与 A4 层头同判据）。 */}
+        {plan.gapCount > 0 ? <BoardGuidePlanRollupGapBadge gapCount={plan.gapCount} /> : null}
       </div>
-      <BoardGuidePlanProgressBar
+      <BoardGuidePlanProgressCapsule
         completed={plan.completed}
         total={plan.total}
         label={intl.formatMessage(
