@@ -115,6 +115,13 @@ export interface BoardCardDialogModel {
   nextAssignee: string | null;
   /** 细节全文；空串在映射层已归一为 null（区块隐藏）。 */
   details: string | null;
+  /**
+   * 卡片正文（#183）：目标 / 交付面 / 验收——原值透传（字段名与截断口径见 schema 提案，
+   * evidence/T183/schema-proposal.txt）；三者皆空 → 视图层渲染显式「未携带」空态，不造值。
+   */
+  goal: string | null;
+  deliverables: string[];
+  acceptance: string | null;
   /** 阻拦区块是否可见：**仅任务卡**且 blockers 非空（§6：特性节点弹窗的阻拦区块隐藏）。 */
   showBlockers: boolean;
   blockers: BoardDialogBlocker[];
@@ -332,6 +339,9 @@ export function resolveBoardAttentionJumpTarget(
     currentAssignee: node.currentAssignee,
     nextAssignee: node.nextAssignee,
     details: node.details,
+    goal: node.goal,
+    deliverables: node.deliverables,
+    acceptance: node.acceptance,
     showBlockers: blockerSource.length > 0,
     blockers: blockerSource.map((blocker, index) => {
       const target =

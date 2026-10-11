@@ -19,8 +19,10 @@ import { boardDialogTabIntent } from "./boardDialogViewModel.js";
 
 /** 弹窗内可聚焦元素（Tab 循环的读取面；判据在 `boardDialogTabIntent`，DOM 读写只在这里）。 */
 function boardDialogFocusables(root: HTMLElement): HTMLElement[] {
+  // `summary`（#183 卡片内容区块的原生折叠头）是可聚焦件但不是 button —— 不收进序列的话，
+  // 焦点落在它上面时 activeIndex=-1 会把 Tab 弹回弹窗首元素（键盘走不出这块）。
   const selector =
-    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
   return [...root.querySelectorAll<HTMLElement>(selector)];
 }
 

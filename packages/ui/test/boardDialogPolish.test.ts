@@ -12,6 +12,7 @@ import { readyGroupingBoard } from "./boardGroupingFixture.js";
  * 期望值的独立真源：用户 2026-10-10 实测反馈：
  *   - B5 面板内定位（overlay = 面板容器内 absolute，非 fixed inset-0 全局）；
  *   - B5 区块重排：标题 → 阻碍（突出） → 执行摘要 → 来源 → 时间戳（底部小字）；
+ *     #183 起在「细节」与「来源」之间插入常驻折叠的「卡片内容」区块（目标/交付面/验收）；
  *   - B5 信息精简：去草案徽章、状态色点去重（段位徽章已含状态）、路径截断（basename + title 全路径）、
  *     时间相对化（"3 小时前"）；
  *   - B7 诊断区：默认折叠一行「诊断 N 条」，展开才列明细。
@@ -66,14 +67,16 @@ test("弹窗：面板内定位（面板根 relative；overlay absolute，非 fix
   );
 });
 
-test("弹窗：区块顺序 = 标题 → 阻碍 → 执行摘要 → 细节 → 来源 → 证据路径 → 时间戳（底部）；阻碍突出", () => {
+test("弹窗：区块顺序 = 标题 → 阻碍 → 执行摘要 → 细节 → 卡片内容 → 来源 → 证据路径 → 时间戳（底部）；阻碍突出", () => {
   const markup = render({ openCardId: "task:47" });
   const dialog = dialogSlice(markup);
   const sections = [...dialog.matchAll(/data-board-dialog-section="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(
     sections,
-    ["header", "status", "blockers", "execution", "origin", "evidence", "timestamps"],
-    "区块顺序：标题 → 状态 → 阻碍 → 执行摘要 → 来源 → 证据 → 时间戳（末尾）",
+    // #183：卡片内容区块（目标/交付面/验收，常驻折叠态）插在细节与来源之间；
+    // 该卡 details 为空串 → 细节区块照旧隐藏（契约 §6），顺序断言不变其义。
+    ["header", "status", "blockers", "execution", "cardText", "origin", "evidence", "timestamps"],
+    "区块顺序：标题 → 状态 → 阻碍 → 执行摘要 → 细节 → 卡片内容 → 来源 → 证据 → 时间戳（末尾）",
   );
   const blockersStart = dialog.indexOf('data-board-dialog-section="blockers"');
   const blockersSlice = dialog.slice(

@@ -1135,6 +1135,13 @@ const zhCN: Record<string, string> = {
   "board.dialog.close": "关闭",
   "board.dialog.jump": "跳转",
   "board.dialog.detailsTitle": "细节",
+  // 卡片内容区块（#183）：目标/交付面/验收——数据就绪形态（字段缺省 → 显式「未携带」，
+  // 字段名与截断口径见 evidence/T183/schema-proposal.txt；空值不硬造）。
+  "board.dialog.cardTextTitle": "卡片内容",
+  "board.dialog.cardText.goal": "目标",
+  "board.dialog.cardText.deliverables": "交付面",
+  "board.dialog.cardText.acceptance": "验收",
+  "board.dialog.cardText.absent": "板上未携带",
   "board.dialog.blockersTitle": "阻拦",
   "board.dialog.originTitle": "来源",
   "board.dialog.evidenceTitle": "证据路径",

@@ -69,6 +69,10 @@ export interface BoardViewNode {
   nextAssignee: string | null;
   /** 计划稿章节（#46 B2）：仅计划任务可能非空。 */
   section: string | null;
+  /** 卡片正文（#183）：目标 / 交付面 / 验收——任务卡自身字段，特性节点恒 null/[]（不借子树）。 */
+  goal: string | null;
+  deliverables: string[];
+  acceptance: string | null;
   /** 结构深度（0 = 特性；1 = 其下第一层任务；呈现缩进用，不信 label 段数）。 */
   depth: number;
   origin: BoardOrigin | null;
@@ -104,6 +108,10 @@ function featureViewNode(feature: BoardFeatureNode): BoardViewNode {
     // nextAssignee 是卡级字段（契约 §2 字段表）：特性节点不借子树的值。
     nextAssignee: null,
     section: null,
+    // 卡片正文（#183）也是卡级字段：特性节点不借子树的值（有值才渲染，缺省显式空态）。
+    goal: null,
+    deliverables: [],
+    acceptance: null,
     depth: 0,
     origin: feature.origin,
     evidence: feature.evidence,
@@ -139,6 +147,9 @@ function taskViewNode(task: BoardTaskNode, owner: BoardFeatureNode): BoardViewNo
     currentAssignee: task.currentAssignee,
     nextAssignee: task.nextAssignee,
     section: task.section,
+    goal: task.goal,
+    deliverables: task.deliverables,
+    acceptance: task.acceptance,
     depth: task.depth,
     origin: task.origin,
     evidence: task.evidence,
