@@ -1,10 +1,11 @@
 /**
- * 指引面（guide 面）的**页面内驱动**（卡 #136 / C3-1；与 `boardEpicBadgesBrowserDrivers.ts`
- * 同形态：驱动只做真 DOM 上的量取与真事件派发，判据（断言）留在被测脚本
- * `boardGuideBrowser.ts`）。
+ * 指引面（guide 面）的**页面内驱动**（卡 #136 / C3-1；卡 #139 / C3-4 含量取进度胶囊百分比、
+ * 计数胶囊与 rollup 缺口徽章；与 `boardEpicBadgesBrowserDrivers.ts` 同形态：驱动只做真 DOM 上的
+ * 量取与真事件派发，判据（断言）留在被测脚本 `boardGuideBrowser.ts`）。
  *
- * 场景：切到指引面 → 量取五槽/计划区块的渲染值（真 DOM）→ 宽 1400 / 窄 360 两档溢出探针
- * → 真指针点击计划内卡行 → 卡片弹窗 DOM 出现（点击路由派发后断言 DOM）。
+ * 场景：切到指引面 → 量取五槽/计划区块/进度胶囊/计数胶囊/缺口徽章的渲染值（真 DOM）→
+ * 宽 1400 / 窄 360 两档溢出探针 → 真指针点击计划内卡行 → 卡片弹窗 DOM 出现（点击路由派发
+ * 后断言 DOM）。
  *
  * 页面内共用原语（sleep/waitFor/switchToView/dispatchPointerClick/probeOverflow）单点在
  * `boardBrowserProbeKit.ts`，本驱动引用同一份，不复制。
@@ -38,14 +39,26 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
       const progress = el(plan, "[data-board-guide-plan-progress]");
       const bar = el(plan, "[data-board-guide-plan-bar]");
       const barValue = attr(bar, "data-board-guide-plan-bar-value");
+      const percent = el(plan, "[data-board-guide-plan-percent]");
+      const chip = el(plan, "[data-board-guide-plan-card-count]");
+      const gap = el(plan, "[data-board-guide-plan-gap-count]");
       const rows = [...plan.querySelectorAll("[data-board-guide-plan-frontier] [data-board-card]")];
       return {
         id: attr(plan, "data-board-guide-plan"),
         progress: attr(progress, "data-board-guide-plan-progress"),
         barValue,
+        percent: attr(percent, "data-board-guide-plan-percent"),
+        percentText: percent ? percent.textContent.trim() : null,
+        cardCount: attr(chip, "data-board-guide-plan-card-count"),
+        cardCountText: chip ? chip.textContent.trim() : null,
+        gapCount: attr(gap, "data-board-guide-plan-gap-count"),
+        gapText: gap ? gap.textContent.trim() : null,
         summary: el(plan, "[data-board-guide-plan-summary]")?.textContent.trim() ?? null,
         cardIds: rows.map((row) => attr(row, "data-board-card")),
         probe: probe(plan),
+        capsuleProbe: probe(progress),
+        chipProbe: probe(chip),
+        gapProbe: probe(gap),
         rowProbes: rows.map((row) => probe(row)),
       };
     });

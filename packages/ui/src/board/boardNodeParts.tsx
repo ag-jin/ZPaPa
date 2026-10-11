@@ -69,9 +69,15 @@ export function BoardNodeNumber({
     </span>
   );
 }
-/** 计数片外观单点（稿层「张卡」与层头「稿/期」同一形态；lightweight 只调底色强调度）。 */
-const COUNT_CHIP_CLASS =
-  "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle";
+/**
+ * 计数片外观单点（稿层「张卡」与层头「稿/期」同一形态；lightweight 只调底色强调度）。
+ *
+ * 形状/色阶只此一份，字号随面档位给（卡 #139 / C3-4 收口）：结构视图组头 = 徽章档
+ * `text-ui-xs`（P3-3 跨视图语汇一致）；指引面摘要行计数胶囊 = `text-ui-sm`
+ * （itw-20261011-9003 视觉准入：胶囊标签 ≥12px）。
+ */
+export const BOARD_COUNT_CHIP_CLASS =
+  "shrink-0 rounded-md px-1.5 py-0.5 tabular-nums text-foreground-subtle";
 
 /**
  * 容器层头（卡 #87 / A4-1 tracer 接口；A4-1b 三视图复用同一份，禁二份实现）：
@@ -209,7 +215,7 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
           data-board-layer-phase-count={props.layer.phaseCount}
           // D5 消歧（A4-4 收口）：计数片只有词条短形态，全文语义进原生 title（悬停可查）。
           title={intl.formatMessage({ id: "board.layer.phaseCountTitle" })}
-          className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+          className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-xs", lightweight ? "" : "bg-surface")}
         >
           {formatBoardCountText(
             props.layer.phaseCount,
@@ -221,7 +227,7 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
       <span
         data-board-layer-plan-count={props.layer.planCount}
         title={intl.formatMessage({ id: "board.layer.planCountTitle" })}
-        className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+        className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-xs", lightweight ? "" : "bg-surface")}
       >
         {formatBoardCountText(
           props.layer.planCount,
@@ -233,7 +239,7 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
   ) : (
     <span
       data-board-feature-card-count={props.cardCount}
-      className={cn(COUNT_CHIP_CLASS, lightweight ? "" : "bg-surface")}
+      className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-xs", lightweight ? "" : "bg-surface")}
     >
       {formatBoardCountText(
         props.cardCount,
