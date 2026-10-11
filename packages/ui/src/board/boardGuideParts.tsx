@@ -100,6 +100,8 @@ export function boardGuidePlanPercent(completed: number, total: number): number 
  * 计划进度微条（E7 §4.2：进度条旁必须有数字，不能只用长度）：
  * 数字由调用方（`data-board-guide-plan-progress` 文本与百分比）给出，本零件只画长度；
  * `className` 供胶囊内联排（缺省 = 独立成行）。
+ * 轨道背景覆写为 `bg-border`（F1-139）：共享基件缺省 `bg-muted` 依赖的 `--color-muted`
+ * 全仓四主题均无定义（惰性类 → 轨道透明），`bg-border` 四主题已定义（10% 墨轨道）。
  */
 export function BoardGuidePlanProgressBar({
   completed,
@@ -119,7 +121,7 @@ export function BoardGuidePlanProgressBar({
       data-board-guide-plan-bar-value={`${completed}/${total}`}
       value={boardGuidePlanPercent(completed, total) ?? 0}
       aria-label={label}
-      className={className}
+      className={cn("bg-border", className)}
     />
   );
 }

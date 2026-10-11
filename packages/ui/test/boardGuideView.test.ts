@@ -369,6 +369,28 @@ test("计划进度胶囊（#139）：已完成/总卡旁给百分比可读文本
   assert.ok(planD.includes("未拆解"), "未拆解文案仍在");
 });
 
+test("微条轨道（F1-139 微回炉）：轨道背景类覆写为四主题已定义 token（bg-border 在场，惰性 bg-muted 不回退）", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  const anchor = planA.indexOf("data-board-guide-plan-bar");
+  assert.ok(anchor >= 0, "微条锚点存在");
+  const tag = planA.slice(planA.lastIndexOf("<", anchor), planA.indexOf(">", anchor) + 1);
+  const classAttr = /class="([^"]*)"/.exec(tag);
+  const classText = classAttr?.[1] ?? "";
+  assert.ok(classText, `微条带 class：${tag}`);
+  // F1-139：`--color-muted` 全仓四主题块/默认主题/基座均无定义（progress 基件 bg-muted 为惰性类）——
+  // 回退成 bg-muted 会让四主题轨道透明、比例通道丢失；bg-border 四主题已定义（10% 墨轨道）。
+  // SSR 面上类名是轨道 token 的唯一可观测通道，故按「已定义 token 类在场 + 惰性类被覆写」钉住。
+  assert.ok(
+    classText.includes("bg-border"),
+    `轨道背景类应为四主题已定义 token（bg-border）：${classText}`,
+  );
+  assert.ok(
+    !/(^|\s)bg-muted(\s|$)/.test(classText),
+    `惰性类 bg-muted 必须被 tailwind-merge 覆写移除：${classText}`,
+  );
+});
+
 test("期次/功能级摘要行胶囊（#139）：计划卡数胶囊与 A4 组头 [N 张卡] 同源同值（countBoardFeatureTasks 单点）", () => {
   const guide = render(readyState());
   const planA = planMarkup(guide, "plan:plan-guide-a");
