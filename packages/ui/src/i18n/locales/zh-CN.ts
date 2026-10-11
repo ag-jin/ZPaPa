@@ -1055,6 +1055,10 @@ const zhCN: Record<string, string> = {
   "board.filter.kind": "类型",
   "board.filter.sort": "排序",
   "board.filter.all": "全部",
+  // 排序记忆 vs 过滤临时态的持久性差异提示（#175 ②）：可见短文案 + 全文 title（D5 同款）。
+  "board.filter.sortHint": "排序在本会话保留 · 过滤为临时条件",
+  "board.filter.sortHintTitle":
+    "排序视角按会话记忆保留（切视图或重开面板仍在）；过滤条件为临时状态，关闭面板后回到默认",
   // 节点类型词条（过滤控件用：视图节点类型 = 特性节点 / 任务卡）。
   "board.kind.feature": "特性",
   "board.kind.task": "卡片",

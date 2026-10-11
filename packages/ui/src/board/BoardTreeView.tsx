@@ -21,7 +21,9 @@
  *
  * 完成沉底（#65，卡「完成沉底全视图落实」）：树形是**结构序**视图——特性大块、章节子分组与
  * 其余卡片的文档序都不重排；「已完成沉底」只作用于**同级组**（章节分组内、嵌套子卡列表内），
- * 由纯函数 `sinkCompletedTreeSiblings` 一处判定（稳定分区）。
+ * 由纯函数 `sinkCompletedTreeSiblings` 一处判定（稳定分区）。同级卡列表 → 行的装配整体在
+ * `boardTreeTaskRows`（#175 拆文件：本文件逼近 oxlint `max-lines` 上限；同处承载 #175 ① 的
+ * 完成块弱分隔）。
  */
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -42,24 +44,11 @@ import {
   type BoardFoldControls,
 } from "./boardFoldState.js";
 import { BoardFoldIndicator, boardFoldSummaryClickHandler } from "./boardFoldParts.js";
-import {
-  BoardFeatureGroupHeaderContent,
-  BoardNodeBadges,
-  BoardNodeNumber,
-  BoardStageBadge,
-} from "./boardNodeParts.js";
-import { formatBoardLastRunText, formatBoardRunTime } from "./boardPresentation.js";
+import { BoardFeatureGroupHeaderContent } from "./boardNodeParts.js";
+import { formatBoardRunTime } from "./boardPresentation.js";
+import { BoardSunkTaskRows } from "./boardTreeTaskRows.js";
 import { countBoardFeatureTasks } from "./boardViewsViewModel.js";
-import { sinkCompletedTreeSiblings } from "./boardViewSorting.js";
 import type { BoardFeatureNode, BoardTaskNode, BoardViewModel } from "./boardViewModel.js";
-
-/** 缩进层级 → 左侧内边距（层级 = 结构深度：1 = 特性下第一层；不信 label 段数）。 */
-const TASK_INDENT_CLASSES = ["pl-2", "pl-6", "pl-10", "pl-14"] as const;
-
-function taskIndentClass(depth: number): string {
-  const index = Math.min(Math.max(depth, 1), TASK_INDENT_CLASSES.length) - 1;
-  return TASK_INDENT_CLASSES[index] ?? "pl-2";
-}
 
 /**
  * 章节子分组（B2 数据面 = `task.section`）：按文档序**首次出现位置**成组；无章节任务的无头分组
@@ -82,86 +71,6 @@ export function groupBoardTasksBySection(
     group.tasks.push(task);
   }
   return groups;
-}
-
-function BoardTaskRow({
-  task,
-  planCode,
-  onOpenCard,
-  highlightCardId,
-  nested,
-}: {
-  task: BoardTaskNode;
-  /** 所属特性的计划码（短编号省略的是它的前缀；#46 B1）。 */
-  planCode: string | null;
-  onOpenCard?: (id: string) => void;
-  highlightCardId: string | null;
-  /**
-   * 所在稿块是否嵌在容器层（epic ⊃ 期次）里（#90/A4-4 D6）：嵌着时最近圆角容器 = 稿块
-   * （rounded-md），行降到 rounded-sm（DESIGN.md 半径阶梯逐级递减；不再 lg > md 倒挂）。
-   */
-  nested?: boolean;
-}) {
-  const { intl } = useZCodeIntl();
-  const lastRunText = formatBoardLastRunText(task.lastRun, intl.formatMessage);
-  const cancelReasonText = task.stage === "已取消" ? task.statusRule : null;
-  const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
-    task.id,
-    highlightCardId,
-  );
-  return (
-    <>
-      <div
-        data-board-task={task.id}
-        data-board-card={task.id}
-        data-board-indent={task.depth}
-        {...highlightProps}
-        {...boardCardOpenProps({ id: task.id, ...(onOpenCard ? { onOpenCard } : {}) })}
-        className={cn(
-          "flex flex-col gap-0.5 px-2 py-1.5 hover:bg-surface-hover",
-          nested ? "rounded-sm" : "rounded-lg",
-          taskIndentClass(task.depth),
-          highlightClassName,
-        )}
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <BoardNodeNumber no={task.no} label={task.label} planCode={planCode} short />
-          <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">{task.title}</span>
-          <BoardStageBadge stage={task.stage} />
-          <BoardNodeBadges
-            attention={task.attention}
-            blockers={task.blockers.length}
-            lastRun={task.lastRun}
-            draft={task.draft}
-            activeRunRole={task.activeRun?.role ?? null}
-            status={task.status}
-          />
-        </div>
-        {lastRunText ? (
-          <div className="truncate font-mono text-ui-xs text-foreground-subtle">{lastRunText}</div>
-        ) : null}
-        {cancelReasonText ? (
-          // §13.2 树形「已取消」格：节点行尾徽章 + 取消原因（与列表/看板同一字段 statusRule）。
-          <div data-board-status-rule="" className="truncate text-ui-xs text-foreground-subtle">
-            {cancelReasonText}
-          </div>
-        ) : null}
-      </div>
-      {task.children.length > 0
-        ? // 嵌套同级沉底（#65）同样逐层生效：已完成子卡沉到同级末尾，其余保持文档序。
-          sinkCompletedTreeSiblings(task.children).map((child) => (
-            <BoardTaskRow
-              key={child.id}
-              task={child}
-              planCode={planCode}
-              {...(onOpenCard ? { onOpenCard } : {})}
-              highlightCardId={highlightCardId}
-              {...(nested ? { nested } : {})}
-            />
-          ))
-        : null}
-    </>
-  );
 }
 
 function BoardFeatureSection({
@@ -281,16 +190,13 @@ function BoardFeatureSection({
                 {group.section}
               </div>
             ) : null}
-            {sinkCompletedTreeSiblings(group.tasks).map((task) => (
-              <BoardTaskRow
-                key={task.id}
-                task={task}
-                planCode={feature.planCode}
-                {...(onOpenCard ? { onOpenCard } : {})}
-                highlightCardId={highlightCardId}
-                {...(nested ? { nested } : {})}
-              />
-            ))}
+            <BoardSunkTaskRows
+              tasks={group.tasks}
+              planCode={feature.planCode}
+              {...(onOpenCard ? { onOpenCard } : {})}
+              highlightCardId={highlightCardId}
+              {...(nested ? { nested } : {})}
+            />
           </section>
         ))}
       </div>

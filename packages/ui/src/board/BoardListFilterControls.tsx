@@ -7,6 +7,9 @@
  * 单点必要性：列表视图与表格视图共用同一份控件状态（切视图不丢过滤/排序），
  * 控件若各写一份，两份取值口径早晚对不上。
  *
+ * 持久性差异提示（#175 ②）：排序进会话记忆、过滤只在本次打开期间生效（详见 `boardListSortMemory`
+ * 头注释）——两者在同一个控件组里没有外观差异，故在排序控件后就近给一条轻量辅助说明。
+ *
  * 类型筛（kind）的来源：契约 §13.2 表格「待设计」格「可按 attention 与 kind 过滤」。
  */
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -140,6 +143,17 @@ export function BoardListFilterControls({
           ))}
         </select>
       </label>
+      {/* 持久性差异提示（#175 ②；来源证据 T6465d design-review 第 4 条【归 #60】）：排序是用户显式
+          选择、进会话记忆；过滤是临时视角（关面板即清空）。两者同控件组同外观，重开面板时
+          「排序保留、过滤清空」会被误读——就近给一条轻量辅助说明（可见短文案 + 全文 title，
+          与 D5 计数片同款）；本卡不加持久化，只把差异说清楚。 */}
+      <span
+        data-board-sort-memory-hint=""
+        title={t("board.filter.sortHintTitle")}
+        className="text-ui-xs text-foreground-subtlest"
+      >
+        {t("board.filter.sortHint")}
+      </span>
     </div>
   );
 }
