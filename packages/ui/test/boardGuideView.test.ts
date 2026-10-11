@@ -87,6 +87,15 @@ function planMarkup(markup: string, planId: string): string {
   return markup.slice(start, Math.min(...candidates));
 }
 
+/** 计划摘要行可见文本（`data-board-guide-plan-summary`：段位·期次·前沿/在途计数同排）。 */
+function planSummaryText(markup: string, planId: string): string {
+  const match = /data-board-guide-plan-summary="[^"]*"[^>]*>([^<]*)</.exec(
+    planMarkup(markup, planId),
+  );
+  assert.ok(match, `计划 ${planId} 应渲染摘要行`);
+  return match[1] ?? "";
+}
+
 /* ---------------- 四段派生映射（消费面：parseBoardJson） ---------------- */
 
 test("四段派生映射：frontier/active/blocked/recent 按板序原值透出（消费不重排、不改判据）", () => {
@@ -821,6 +830,34 @@ test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队
     "task:221",
   );
   assert.ok(/>2 deps resolved</.test(pluralRow), `count≥2 走复数键（{count} 插值）：${pluralRow}`);
+});
+
+test("计数词条单/复数转正（#142 承 #136 · 契约 §13.5）：计划摘要「前沿/在途」en-US count=1 走单数键、0/≥2 走复数键；zh 两键同文不变", () => {
+  // 期望值的独立真源：派发卡文「#136 面裸插值转正——『前沿 {count}』『在途 {count}』补 .one/.other
+  // 两键形态（走 BOARD_COUNT_MESSAGE_IDS+formatBoardCountText 单点设施，与 #138 微回炉同款；
+  // en one=单数形态/zh 两键同文）」+ 契约 §13.5「count===1 走单数键，其余（含 0）走复数键」。
+  // 夹具真值（frontier/active 四段投影直读，不按卡字段自算）：计划 A 前沿 #210=1、在途 #213=1
+  // （单数侧）；计划 B 前沿 #220/#221=2、在途 0（复数侧，含 0 也必须走复数键）。
+  // zh 侧：两键同文（汉语无复数）——转正不得改变中文可见文案（独立期望值 = 既有词条文本）。
+  const zhSummaryA = planSummaryText(render(readyState()), "plan:plan-guide-a");
+  assert.ok(zhSummaryA.includes("前沿 1"), `zh 前沿文案（两键同文）不变：${zhSummaryA}`);
+  assert.ok(zhSummaryA.includes("在途 1"), `zh 在途文案（两键同文）不变：${zhSummaryA}`);
+
+  const enMarkup = renderEn(readyState());
+  const enSummaryA = planSummaryText(enMarkup, "plan:plan-guide-a");
+  assert.ok(
+    enSummaryA.includes("1 card ready"),
+    `count=1 走单数键（en 侧须有单数形态，不得裸插值「1 ready」）：${enSummaryA}`,
+  );
+  assert.ok(enSummaryA.includes("1 card in flight"), `count=1 在途同款走单数键：${enSummaryA}`);
+  assert.ok(!enSummaryA.includes("1 ready"), "「1 ready」= #142 要消灭的裸插值形态");
+  // other 侧：count=2 与 count=0 都走复数键（只有 count===1 走 one）——计划 B 即 2/0 组合。
+  const enSummaryB = planSummaryText(enMarkup, "plan:plan-guide-b");
+  assert.ok(enSummaryB.includes("2 cards ready"), `count≥2 走复数键：${enSummaryB}`);
+  assert.ok(
+    enSummaryB.includes("0 cards in flight"),
+    `count=0 走复数键（不是单数）：${enSummaryB}`,
+  );
 });
 
 test("窄面截断防线（#141 承 #138 P3-2 登记项）：超长角色名全文进原生 title，可见文本可收缩截断", () => {

@@ -4,6 +4,12 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { BOARD_STAGES, BOARD_STATUS_VALUES } from "../src/board/boardViewModel.js";
+import { BOARD_COUNT_MESSAGE_IDS } from "../src/board/boardPresentation.js";
+import {
+  BOARD_GUIDE_SLOT_HINT_MESSAGE_IDS,
+  BOARD_GUIDE_SLOT_MESSAGE_IDS,
+  BOARD_GUIDE_SLOT_ZERO_MESSAGE_IDS,
+} from "../src/board/boardGuideParts.js";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
@@ -79,4 +85,75 @@ test("面板界面不出现硬编码中文文案（契约字段值除外）", ()
     }
   }
   assert.deepEqual(offenders, [], "界面文案必须走词条（硬编码中文文案应改词条）");
+});
+
+/* ---------------- 指引面键清单（卡 #142 / C3-7 交付面④） ---------------- */
+
+/** 指引面持词条的源码模块（键字面量扫描面；落点/下钻判据在 viewModel，不持界面文案）。 */
+const GUIDE_FACE_FILES = ["BoardGuideView.tsx", "boardGuideParts.tsx"] as const;
+
+/** 指引面键清单 = 五槽三态单点表（槽闭集 Record 穷尽）+ 源码里的 `board.guide.*` 字面量。 */
+function guideFaceKeyInventory(): Set<string> {
+  const inventory = new Set<string>([
+    ...Object.values(BOARD_GUIDE_SLOT_MESSAGE_IDS),
+    ...Object.values(BOARD_GUIDE_SLOT_HINT_MESSAGE_IDS),
+    ...Object.values(BOARD_GUIDE_SLOT_ZERO_MESSAGE_IDS),
+  ]);
+  for (const file of GUIDE_FACE_FILES) {
+    const source = readFileSync(join(BOARD_SRC_DIR, file), "utf8");
+    for (const match of source.matchAll(/"board\.guide\.[A-Za-z0-9.]+"/g)) {
+      inventory.add(match[0].slice(1, -1));
+    }
+  }
+  return inventory;
+}
+
+test("指引面键清单（#142 卡文④）：五槽三态表 + 源码字面量在两语表内逐键齐全（无单边键/无缺键）", () => {
+  // 期望值的独立真源：`BOARD_GUIDE_SLOT_*` 三张单点表 + 指引面源码里出现的 `board.guide.*`
+  // 字面量——「双语无硬编码」验收的可核对键清单形态；缺键 = 静默回落裸 key（界面露 key 名）。
+  const inventory = [...guideFaceKeyInventory()].sort();
+  assert.ok(
+    inventory.length >= 25,
+    `指引面键清单应覆盖全量（三表 15 + 源码字面量 10；实测 ${inventory.length}）`,
+  );
+  const missing = inventory.filter((key) => !(key in zhCN) || !(key in enUS));
+  assert.deepEqual(missing, [], "指引面键清单在两语表内应逐键齐全");
+  for (const key of inventory) {
+    assert.ok((zhCN[key] ?? "").trim().length > 0, `${key} zh-CN 文案非空`);
+    assert.ok((enUS[key] ?? "").trim().length > 0, `${key} en-US 文案非空`);
+    assert.deepEqual(placeholders(enUS[key]), placeholders(zhCN[key]), `${key} 占位符两语不一致`);
+  }
+});
+
+test("计数键对形态与消费单点（#142 承 #90/A4-4 · 契约 §13.5）：每对 `.one/.other` 两语齐全、zh 两键同文、en 单数形态可辨；指引面 `{count}` 插值不得绕开单点", () => {
+  for (const [name, pair] of Object.entries(BOARD_COUNT_MESSAGE_IDS)) {
+    for (const key of [pair.one, pair.other]) {
+      assert.ok((zhCN[key] ?? "").trim().length > 0, `${name} 的 ${key} 应在 zh-CN 表内`);
+      assert.ok((enUS[key] ?? "").trim().length > 0, `${name} 的 ${key} 应在 en-US 表内`);
+      assert.deepEqual(placeholders(enUS[key]), placeholders(zhCN[key]), `${key} 占位符两语不一致`);
+    }
+    assert.equal(
+      zhCN[pair.one],
+      zhCN[pair.other],
+      `${name}：zh 两键同文（汉语无复数、不引入 locale 分支）`,
+    );
+    assert.notEqual(
+      enUS[pair.one],
+      enUS[pair.other],
+      `${name}：en 单数形态须可辨（消灭裸复数/裸插值）`,
+    );
+  }
+  // 消费单点：指引面源码不得对 `board.*` 键做裸 `{ count }` 插值——计数文案（单/复数两键）只能走
+  // `formatBoardCountText`（#138 S1 / #142 两次回炉的形态由本断言钉住：新增计数键须补键对入
+  // `BOARD_COUNT_MESSAGE_IDS` 再消费，防第三次复发）。
+  const offenders: string[] = [];
+  for (const file of GUIDE_FACE_FILES) {
+    const source = readFileSync(join(BOARD_SRC_DIR, file), "utf8");
+    for (const match of source.matchAll(
+      /formatMessage\(\s*\{\s*id:\s*"(board\.[A-Za-z0-9.]+)"\s*\}\s*,\s*\{\s*count:/g,
+    )) {
+      offenders.push(`${file}: ${match[1]}`);
+    }
+  }
+  assert.deepEqual(offenders, [], "计数文案必须走单点 formatBoardCountText（禁裸 {count} 插值）");
 });
