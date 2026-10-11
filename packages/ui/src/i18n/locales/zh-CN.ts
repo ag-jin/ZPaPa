@@ -972,7 +972,14 @@ const zhCN: Record<string, string> = {
   "board.lastRun.stoppedAt": "停在 #{no}",
   "board.empty.none": "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
   "board.empty.features": "尚无规格或计划。",
-  "board.empty.damaged": "板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。",
+  "board.empty.damaged": "板文件无法读取或已损坏，请在会话中运行编译器重建。",
+  // 板读取错误态分离（卡 #70；契约 §2+/§14）：版本过新 → 升级应用/技能；过旧 → 重编译。
+  "board.error.versionNewer":
+    "板版本过新（v{version}，本应用支持 v{supported}）：请升级应用或技能后重试。",
+  "board.error.versionOlder":
+    "板版本过旧（v{version}，本应用支持 v{supported}）：请在会话中运行编译器重建。",
+  "board.error.tooLarge":
+    "板文件过大（超过 {limitKiB} KiB 读取上限），本面板暂无法完整渲染：请升级应用以支持更大的板。",
   // 暂时不可读（连接未就绪）：与「损坏」分开——不在断连时指引重编译（评审 #32-P3）。
   "board.unavailable":
     "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",

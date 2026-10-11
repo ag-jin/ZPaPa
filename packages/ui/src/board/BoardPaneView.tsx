@@ -27,13 +27,15 @@ import {
 } from "./boardDialogViewModel.js";
 import {
   BOARD_ATTENTION_SUMMARY_ROWS,
+  BOARD_PLACEHOLDER_MESSAGE_IDS,
   formatAttentionSummarySegment,
   formatBoardPathTail,
   formatBoardRunTime,
   formatBoardStaleHint,
+  type BoardPlaceholderKind,
 } from "./boardPresentation.js";
-import type { BoardPaneLoadState } from "./loadBoardDocument.js";
-import { hasAttentionSignal, type BoardViewModel } from "./boardViewModel.js";
+import { BOARD_JSON_MAX_READ_BYTES, type BoardPaneLoadState } from "./loadBoardDocument.js";
+import { hasAttentionSignal, BOARD_KNOWN_VERSION, type BoardViewModel } from "./boardViewModel.js";
 import {
   BOARD_VIEW_MODES,
   BOARD_VIEW_MODE_MESSAGE_IDS,
@@ -356,11 +358,11 @@ function BoardReadyView({
   );
 }
 
-/** 占位态的种类（显式 prop ⇒ 锚点与文案的对应关系写死在类型里，评审 #32-S2）。 */
-export type BoardPlaceholderKind = "missing" | "empty" | "damaged" | "unavailable" | "loading";
+/** 占位态种类的再导出（定义在 boardPresentation：文案 id 表同处，锚点/文案对应单点维护）。 */
+export type { BoardPlaceholderKind } from "./boardPresentation.js";
 
 /**
- * 占位态：空态 A/B/C、暂时不可读与加载中共用同一骨架。
+ * 占位态：空态 A/B、错误态（损坏/版本过新/过旧/文件过大）、暂时不可读与加载中共用同一骨架。
  * 刷新按钮在**面板级**出现（空态 A/C 的文案正指导用户「回来再读」，评审 #32-P5）：
  * 任何占位态都能手动重读；没有刷新回调时不渲染死按钮。
  */
@@ -391,15 +393,6 @@ function BoardPlaceholder({
     </div>
   );
 }
-
-/** 占位态 → 文案（loading 之外的四处锚点值分别为 missing/empty/damaged/unavailable）。 */
-const BOARD_PLACEHOLDER_MESSAGE_IDS: Record<BoardPlaceholderKind, string> = {
-  missing: "board.empty.none",
-  empty: "board.empty.features",
-  damaged: "board.empty.damaged",
-  unavailable: "board.unavailable",
-  loading: "board.loading",
-};
 
 export function BoardPaneView({
   state,
@@ -447,14 +440,22 @@ export function BoardPaneView({
       />
     );
   }
-  // 占位态四类 + 加载中：空态 C 是错误态，绝不显示空白假装正常（契约 §2/§7.6）；
-  // 「暂时不可读」单独成态，不借空态 C 的词条（评审 #32-P3）。
+  // 占位态（空态 A/B、损坏态、版本过新/过旧、文件过大、暂时不可读）+ 加载中：错误态绝不显示
+  // 空白假装正常（契约 §2/§7.6/§14）；「暂时不可读」单独成态，不借损坏态的词条（评审 #32-P3）。
   const kind: BoardPlaceholderKind =
     state.kind === "loading" ? "loading" : (state.kind satisfies BoardPlaceholderKind);
+  // 版本态词条带两级版本号（板上版本 / 应用支持的主版本）：比较口径的唯一真源是 BOARD_KNOWN_VERSION；
+  // 文件过大态词条带读取上限（唯一真源 BOARD_JSON_MAX_READ_BYTES，避免文案与常量漂移）。
+  const messageValues: Record<string, number> | undefined =
+    state.kind === "version-newer" || state.kind === "version-older"
+      ? { version: state.version, supported: BOARD_KNOWN_VERSION }
+      : state.kind === "too-large"
+        ? { limitKiB: BOARD_JSON_MAX_READ_BYTES / 1024 }
+        : undefined;
   return (
     <BoardPlaceholder
       kind={kind}
-      message={intl.formatMessage({ id: BOARD_PLACEHOLDER_MESSAGE_IDS[kind] })}
+      message={intl.formatMessage({ id: BOARD_PLACEHOLDER_MESSAGE_IDS[kind] }, messageValues)}
       {...(onRefresh ? { onRefresh } : {})}
     />
   );

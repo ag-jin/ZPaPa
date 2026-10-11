@@ -1,9 +1,9 @@
 /**
- * 项目看板面板的读取注入点（卡 #32）。
+ * 项目看板面板的读取注入点（卡 #32；错误态四态分离见卡 #70）。
  *
- * 契约义务（`.zcode/board/board-consumption-contract.md` §0/§1/§7.3/§7.6）：
- * 按固定路径直读 `<工作目录>/.zcode/board/board.json`；读不到 / 解析失败 / 版本不认识
- * 分别按空态 A/C 呈现，不得静默或空白。读取经既有文件服务缝（renderer 不碰文件系统），
+ * 契约义务（`.zcode/board/board-consumption-contract.md` §0/§1/§2/§7.3/§7.6/§14）：
+ * 按固定路径直读 `<工作目录>/.zcode/board/board.json`；读不到 / 版本过新 / 版本过旧 /
+ * JSON 损坏 / 文件过大分别成态呈现，不得静默或空白。读取经既有文件服务缝（renderer 不碰文件系统），
  * 本模块只依赖一个最小端口，便于在测试中注入假件。
  */
 import type { FileTextSlice } from "@zcode/shared";
@@ -37,7 +37,11 @@ export interface BoardFileServicePort {
 }
 
 /**
- * 面板五态：missing=空态 A；empty=空态 B；damaged=空态 C；ready=可渲染。
+ * 面板占位态（卡 #70 四态分离后）：
+ * - missing=空态 A；empty=空态 B；damaged=损坏态（JSON 解析失败 / 结构非法 / 读取失败）；
+ * - version-newer=板版本过新（提示升级应用/技能）；version-older=板版本过旧（提示重编译）；
+ * - too-large=板文件超过读取上限被截断（不部分渲染；独立词条，不借损坏态）；
+ * - ready=可渲染。
  * `unavailable` = **暂时不可读**（RPC 未就绪 / 断连），与 damaged 分开（评审 #32-P3）：
  * 断连不是板的错，指引「重编译」在断连时是假动作。
  */
@@ -45,10 +49,13 @@ export type BoardLoadState =
   | { kind: "missing" }
   | { kind: "empty" }
   | { kind: "damaged" }
+  | { kind: "version-newer"; version: number }
+  | { kind: "version-older"; version: number }
+  | { kind: "too-large" }
   | { kind: "unavailable" }
   | { kind: "ready"; board: BoardViewModel };
 
-/** 面板对外状态：加载中 + 五态。 */
+/** 面板对外状态：ready 之外为占位态（8 态）——loading、missing/empty、damaged、version-newer/version-older、too-large、unavailable。 */
 export type BoardPaneLoadState = { kind: "loading" } | BoardLoadState;
 
 /**
@@ -86,7 +93,7 @@ export async function loadBoardDocument(params: {
     const [existence] = await params.fileService.checkFilesExist({ paths: [boardPath] });
     exists = existence?.exists === true;
   } catch {
-    // 存在性检查本身失败（如 host 断连）：读不到就按空态 C 呈现，不假装没有板。
+    // 存在性检查本身失败（如 host 断连）：读不到就按损坏态（C3）呈现，不假装没有板。
     return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
   if (!exists) {
@@ -102,22 +109,31 @@ export async function loadBoardDocument(params: {
     });
     if (file.truncated) {
       // 「读不全」与「解析失败」分开：读取成功但内容被 256 KiB 硬上限截断时，不解析这个
-      // 前缀（它可能恰好能解析，会把不完整的板静默当完整的板渲染），按空态 C 呈现。
-      // 残余限制（如实留痕，不发明词条）：>256 KiB 的板超出本期契约 §2 的三空态词条范围，
-      // 暂借空态 C 兜底；后续若为「板过大」立项，替换此分支的呈现即可。
-      return { kind: "damaged" };
+      // 前缀（它可能恰好能解析，会把不完整的板静默当完整的板渲染），按「文件过大」独立态
+      // 呈现（卡 #70（d）：E5 推演的增长面——词条独立、指引指向应用侧能力，不借损坏态）。
+      return { kind: "too-large" };
     }
     content = file.content;
   } catch (error) {
     // 检查通过后文件消失（竞态）仍属「无板」；读取途中断连按「暂时不可读」；
-    // 连接仍在的其余读取失败归空态 C（评审 #32-P3）。
+    // 连接仍在的其余读取失败归损坏态（C3）（评审 #32-P3）。
     if (isBoardFileMissingError(error)) return { kind: "missing" };
     return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
 
   const outcome = parseBoardJson(content);
-  if (outcome.kind === "ready") {
-    return { kind: "ready", board: outcome.board };
+  switch (outcome.kind) {
+    case "ready":
+      return { kind: "ready", board: outcome.board };
+    case "empty":
+      return { kind: "empty" };
+    case "version-newer":
+      return { kind: "version-newer", version: outcome.version };
+    case "version-older":
+      return { kind: "version-older", version: outcome.version };
+    // 显式列 damaged、不留 default：将来给 BoardParseOutcome 加新 kind 时这里会亮 tsc 错，
+    // 而不是被 default 静默吞成损坏态（评审 CR-S2）。
+    case "damaged":
+      return { kind: "damaged" };
   }
-  return { kind: outcome.kind === "empty" ? "empty" : "damaged" };
 }

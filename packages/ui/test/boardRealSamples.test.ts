@@ -318,54 +318,87 @@ test(
   },
 );
 
-test("本工作区真实板：全部可渲染，段位都在七段位词表内", { skip: !hasRealBoard }, async () => {
-  const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
-  assert.equal(state.kind, "ready", `真实板应可加载：${REAL_BOARD_PATH}`);
-  if (state.kind !== "ready") return;
-  const board = state.board;
-
-  const tasks = flattenTasks(board.features);
-  const stageNodes = [...board.features, ...tasks];
-  assert.ok(board.features.length > 0, "真实板应至少有特性节点");
-  assert.ok(tasks.length > 0, "真实板应至少有卡片");
-  for (const node of stageNodes) {
-    if (node.stage !== null) {
-      assert.ok(
-        STAGE_VALUES.includes(node.stage),
-        `段位 ${node.stage} 不在七段位词表内（节点 ${node.id}）`,
+test(
+  "本工作区真实板：≤读取上限照常渲染；超上限走「文件过大」正式态（#70（d））",
+  { skip: !hasRealBoard },
+  async () => {
+    // 文件字节数取自文件系统（独立真源），不是按实现回算：板是活动物，跨过读取上限时
+    // 期望随四态语义切换（#87 A4-1 承接线索：真实板 280072 B 超 256 KiB 的红转正式承载）。
+    const boardBytes = Buffer.byteLength(await readFile(REAL_BOARD_PATH));
+    const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
+    if (boardBytes > SERVICE_MAX_TEXT_READ_BYTES) {
+      assert.equal(
+        state.kind,
+        "too-large",
+        `真实板 ${boardBytes} B 超过 ${SERVICE_MAX_TEXT_READ_BYTES} B 读取上限：应呈现「文件过大」态`,
       );
+      assert.ok(
+        render(state).includes("板文件过大"),
+        "文件过大态必须给出独立词条与指引（不静默、不借损坏态、不部分渲染）",
+      );
+      console.log(
+        `[board] 真实板：${boardBytes} B > ${SERVICE_MAX_TEXT_READ_BYTES} B 读取上限 → too-large（#70 正式承载）`,
+      );
+      return;
     }
-  }
-  assert.ok(
-    stageNodes.some((node) => node.stage !== null),
-    "真实板应带段位（stage 字段）",
-  );
+    assert.equal(state.kind, "ready", `真实板应可加载：${REAL_BOARD_PATH}`);
+    if (state.kind !== "ready") return;
+    const board = state.board;
 
-  const markup = render(state);
-  assert.ok(markup.includes('data-board-pane=""'), "真实板应渲染出面板骨架");
-  assert.ok(markup.includes(board.projectName), "面板应显示项目名");
-  assert.ok(
-    stageNodes.some((node) => node.stage && markup.includes(node.stage)),
-    "应渲染段位徽章",
-  );
-  // 提示条（有缺口才出现）：从真实板自身的计数构造期望——板是活动物，**不写死计数**，
-  // 也不假设「一定有缺口」（健康板的四计数全零，此时期望按契约是不出现提示条）。
-  assertAttentionBanner({ markup, summary: { ...board.attentionSummary } });
-  // 数量进证据日志（板是活动物，测试只钉结构不钉计数）。
-  console.log(
-    `[board] 真实板：${board.features.length} 特性 / ${tasks.length} 卡 / 段位节点 ${stageNodes.filter((n) => n.stage).length} / 缺口计数 ${JSON.stringify(board.attentionSummary)}`,
-  );
-});
+    const tasks = flattenTasks(board.features);
+    const stageNodes = [...board.features, ...tasks];
+    assert.ok(board.features.length > 0, "真实板应至少有特性节点");
+    assert.ok(tasks.length > 0, "真实板应至少有卡片");
+    for (const node of stageNodes) {
+      if (node.stage !== null) {
+        assert.ok(
+          STAGE_VALUES.includes(node.stage),
+          `段位 ${node.stage} 不在七段位词表内（节点 ${node.id}）`,
+        );
+      }
+    }
+    assert.ok(
+      stageNodes.some((node) => node.stage !== null),
+      "真实板应带段位（stage 字段）",
+    );
+
+    const markup = render(state);
+    assert.ok(markup.includes('data-board-pane=""'), "真实板应渲染出面板骨架");
+    assert.ok(markup.includes(board.projectName), "面板应显示项目名");
+    assert.ok(
+      stageNodes.some((node) => node.stage && markup.includes(node.stage)),
+      "应渲染段位徽章",
+    );
+    // 提示条（有缺口才出现）：从真实板自身的计数构造期望——板是活动物，**不写死计数**，
+    // 也不假设「一定有缺口」（健康板的四计数全零，此时期望按契约是不出现提示条）。
+    assertAttentionBanner({ markup, summary: { ...board.attentionSummary } });
+    // 数量进证据日志（板是活动物，测试只钉结构不钉计数）。
+    console.log(
+      `[board] 真实板：${board.features.length} 特性 / ${tasks.length} 卡 / 段位节点 ${stageNodes.filter((n) => n.stage).length} / 缺口计数 ${JSON.stringify(board.attentionSummary)}`,
+    );
+  },
+);
 
 test(
   "本工作区真实板：#54 冒烟 —— 四视图渲染 + 接手位「下一个」+ 依赖行走计划码编号",
   { skip: !hasRealBoard },
   async () => {
     // 期望值全部取自板自身（板是活动物：不写死卡号/计数；#53 的 nextAssignee 是编译器输出）。
-    const raw = JSON.parse(await readFile(REAL_BOARD_PATH, "utf8")) as {
+    const boardContent = await readFile(REAL_BOARD_PATH, "utf8");
+    const raw = JSON.parse(boardContent) as {
       features: Array<RawRecord & { planCode?: string; tasks?: unknown[] }>;
     };
     const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
+    if (Buffer.byteLength(boardContent) > SERVICE_MAX_TEXT_READ_BYTES) {
+      // 超读取上限时四视图/接手位/依赖行的深度断言无从取值：不静默跳过，断言「文件过大」
+      // 正式态与其指引（#70（d）；#87 A4-1 承接线索：该 2 条既有失败转正式承载）。
+      assert.equal(state.kind, "too-large", "超上限真实板应呈现「文件过大」态");
+      assert.ok(render(state).includes("板文件过大"), "文件过大态必须给出独立词条与指引");
+      console.log(
+        `[board] #54 冒烟：真实板 ${Buffer.byteLength(boardContent)} B > ${SERVICE_MAX_TEXT_READ_BYTES} B 读取上限 → too-large（#70 正式承载）`,
+      );
+      return;
+    }
     assert.equal(state.kind, "ready", `真实板应可加载：${REAL_BOARD_PATH}`);
     if (state.kind !== "ready") return;
     const board = state.board;
@@ -522,20 +555,18 @@ test("空态 B（真实文件系统：features:[]）逐字不静默", async () =
   }
 });
 
-test("空态 C（真实文件系统：损坏 JSON）逐字且不白屏", async () => {
+test("损坏态（真实文件系统：损坏 JSON）逐字且不白屏（#70 四态之「JSON 损坏」）", async () => {
   const { workspace, cleanup } = await stageWorkspace("{ 这不是 JSON");
   try {
     const state = await loadFromRealFile(workspace);
     assert.equal(state.kind, "damaged");
-    assert.ok(
-      render(state).includes("板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。"),
-    );
+    assert.ok(render(state).includes("板文件无法读取或已损坏，请在会话中运行编译器重建。"));
   } finally {
     await cleanup();
   }
 });
 
-test("P1 回归（真实文件系统）：>128 KiB 的合法板正常渲染，不是空态 C", async () => {
+test("P1 回归（真实文件系统）：>128 KiB 的合法板正常渲染，不是损坏态", async () => {
   const board = buildLargeBoard({ minBytes: SERVICE_DEFAULT_TEXT_READ_BYTES });
   assert.ok(
     board.bytes > SERVICE_DEFAULT_TEXT_READ_BYTES,
@@ -553,8 +584,8 @@ test("P1 回归（真实文件系统）：>128 KiB 的合法板正常渲染，�
       "尾哨兵在 128 KiB 之后：渲染出现即证明走的是读全的板",
     );
     assert.ok(
-      !markup.includes("板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。"),
-      "合法板不得落空态 C，更不得指引无效的「重编译」",
+      !markup.includes("板文件无法读取或已损坏，请在会话中运行编译器重建。"),
+      "合法板不得落损坏态，更不得指引无效的「重编译」",
     );
   } finally {
     await cleanup();

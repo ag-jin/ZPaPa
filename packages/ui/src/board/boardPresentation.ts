@@ -322,3 +322,28 @@ export function formatBoardStaleHint(
   if (!updatedAt || !isBoardStale(updatedAt, now)) return null;
   return formatMessage({ id: "board.stale.hint" }, { time: formatBoardRunTime(updatedAt) });
 }
+
+/* ---------------- 占位态（空态 A/B 与错误态；卡 #70 四态分离） ---------------- */
+
+/** 占位态的种类（显式映射 ⇒ 锚点与文案的对应关系写死在类型里，评审 #32-S2）。 */
+export type BoardPlaceholderKind =
+  | "missing"
+  | "empty"
+  | "damaged"
+  | "version-newer"
+  | "version-older"
+  | "too-large"
+  | "unavailable"
+  | "loading";
+
+/** 占位态 → 文案 id（loading 之外的锚点值 = kind 本身）；四态分离见契约 §2/§14。 */
+export const BOARD_PLACEHOLDER_MESSAGE_IDS: Record<BoardPlaceholderKind, string> = {
+  missing: "board.empty.none",
+  empty: "board.empty.features",
+  damaged: "board.empty.damaged",
+  "version-newer": "board.error.versionNewer",
+  "version-older": "board.error.versionOlder",
+  "too-large": "board.error.tooLarge",
+  unavailable: "board.unavailable",
+  loading: "board.loading",
+};
