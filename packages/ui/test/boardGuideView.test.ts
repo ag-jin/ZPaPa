@@ -313,12 +313,18 @@ test("英文界面：五槽与计划区块文案全走 en-US 词条（不漏中�
   }
   assert.ok(markup.includes("Plans in progress"), "英文区块标题");
   assert.ok(!markup.includes("正在执行的计划"), "英文界面不得漏中文标题");
-  // 登记项②（#137 四绿转来，一行兜底）：en-US 槽标签在窄槽内会截断——原生 title 兜底完整文案。
+  // 登记项②（#137 四绿转来，一行兜底）：en-US 槽标签与短解释在窄槽内会截断——原生 title 兜底完整文案。
   assert.ok(
     /data-board-guide-slot="attention"[\s\S]*?<span title="Needs attention"[^>]*>Needs attention<\/span>/.test(
       markup,
     ),
     "en-US 槽标签带原生 title 兜底（截断不丢完整文案）",
+  );
+  assert.ok(
+    /data-board-guide-slot="attention"[\s\S]*?<span title="Items awaiting action"[^>]*>Items awaiting action<\/span>/.test(
+      markup,
+    ),
+    "en-US 槽短解释 span 带原生 title 兜底（登记项②完整落地：标签/短解释两半同防线）",
   );
 });
 
@@ -778,6 +784,43 @@ test("队列行处置指引（#138）：行含「下一步」接手位 + 已解�
   const nextSpan = /data-board-guide-queue-next="implementer"[^>]*class="([^"]*)"/.exec(row221);
   assert.ok(nextSpan, "处置指引元素带 class");
   assert.ok(nextSpan[1]?.includes("text-ui-base"), `处置指引字号 ≥14px：${nextSpan[1]}`);
+});
+
+/** en-US 渲染（S1 计数词条单/复数回修：裸复数只在英文侧可观测）。 */
+function renderEn(state: BoardPaneLoadState): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US" as const,
+      children: createElement(BoardPaneView, {
+        state,
+        onRefresh: () => {},
+        viewMode: "guide",
+        now: GUIDE_NOW,
+      }),
+    }),
+  );
+}
+
+test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队列依赖计数 count=1 走单数键，不再「1 deps resolved」", () => {
+  // 期望值的独立真源：契约 §13.5「计数词条按单/复数两键（count===1 走单数）」——en 侧
+  // 「1 deps resolved」正是 #90 成文要消灭的裸复数形态；可见文案应逐字为「1 dep resolved」。
+  const row221 = queueRowMarkup(
+    planMarkup(renderEn(readyState()), "plan:plan-guide-b"),
+    "task:221",
+  );
+  assert.ok(/>1 dep resolved</.test(row221), `count=1 渲染单数键可见文案（不得裸复数）：${row221}`);
+  assert.ok(!row221.includes("1 deps resolved"), "「1 deps resolved」= #90 要消灭的裸复数形态");
+  // other 侧：count=2 走复数键（两键都喂单点 formatBoardCountText；只有 count===1 走 one）。
+  const mutated = structuredClone(GUIDE_BOARD);
+  const entries = mutated.frontier as Array<Record<string, unknown>>;
+  const entry221 = entries.find((entry) => entry.no === 221);
+  assert.ok(entry221, "夹具里应有 frontier #221");
+  entry221.resolvedDeps = [210, 211];
+  const pluralRow = queueRowMarkup(
+    planMarkup(renderEn(readyStateOf(mutated)), "plan:plan-guide-b"),
+    "task:221",
+  );
+  assert.ok(/>2 deps resolved</.test(pluralRow), `count≥2 走复数键（{count} 插值）：${pluralRow}`);
 });
 
 test("队列空态（#138）：计划无可执行卡时给明确文案（不留空壳）；有前沿的计划不落空态", () => {

@@ -216,7 +216,8 @@ function collectPlanCardNodes(tasks: BoardTaskNode[]): BoardTaskNode[] {
 
 /**
  * 指引面投影（纯函数）：五槽 + 计划区块。计划 = `kind === "plan"` 且非 cancelled——
- * `status === "active"` 的活跃计划置顶（组内保持板序，不重排）。
+ * 计划块排序 = 活跃置顶（板字段 `status`）→ 期次序（A4 单点 `compareBoardPhaseOrder`）
+ * → 无期次殿后；同键由稳定排序保板序（三键口径见排序处注释）。
  */
 export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary {
   const index = board.derivedIndex;

@@ -1123,7 +1123,9 @@ const zhCN: Record<string, string> = {
   "board.guide.plan.active": "在途 {count}",
   // 可执行前沿队列（卡 #138 / C3-3）：处置指引（接手位/已解除依赖）与队列空态。
   "board.guide.queue.next": "下一步：{role}",
-  "board.guide.queue.deps": "依赖已解除 {count}",
+  // 计数词条单/复数两键（契约 §13.5：count===1 走单数；zh 两键同文）——卡 #138 S1 回修。
+  "board.guide.queue.deps.one": "依赖已解除 {count}",
+  "board.guide.queue.deps.other": "依赖已解除 {count}",
   "board.guide.queue.empty": "暂无可立即执行的卡",
   // 卡片弹窗（卡 #34，契约 §6）：区块标题、关闭、跳转与来源行标签。
   "board.dialog.close": "关闭",

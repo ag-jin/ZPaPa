@@ -20,9 +20,9 @@
  * 百分比 + 微条）与期次/功能级摘要行计数胶囊（`[N 张卡]` 与 rollup 缺口徽章，与 A4 组头同源）；
  * 本组件的计划块只做摆放接线，计数全部直读投影（禁自算）。
  *
- * 视觉准入（itw-20261011-9003；四绿 ui-designer 复核口径）：主体文字（标题/卡名/摘要行，摘要行
- * 为门禁枚举的运营信息承载）`text-ui-base`(14px)；辅助/元数据行（接手位、标签、空态）`text-ui-sm`；
- * 每行信息点 ≤4 组、留白 `p-3`/`gap-2` 起——「一扫可读」优先于「信息全」。
+ * 视觉准入（itw-20261011-9003；四绿 ui-designer 复核口径）：主体文字（标题/卡名/摘要行、队列行
+ * 处置指引，摘要行为门禁枚举的运营信息承载）`text-ui-base`(14px)；辅助/元数据行（标签、空态）
+ * `text-ui-sm`；每行信息点 ≤4 组、留白 `p-3`/`gap-2` 起——「一扫可读」优先于「信息全」。
  * 计划头行 = 编号/名 + 计数胶囊 + 缺口徽章；进度胶囊「计数 · 百分比」收敛为一个信息组 + 微条同排。
  * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
  */
@@ -45,7 +45,11 @@ import {
   type BoardGuideSlotKey,
 } from "./boardGuideViewModel.js";
 import { BOARD_COUNT_CHIP_CLASS, BoardNodeNumber, BoardStatusDot } from "./boardNodeParts.js";
-import { formatBoardRelativeTime } from "./boardPresentation.js";
+import {
+  BOARD_COUNT_MESSAGE_IDS,
+  formatBoardCountText,
+  formatBoardRelativeTime,
+} from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
 export interface BoardGuideViewProps {
@@ -85,14 +89,19 @@ function BoardGuideQueueRowLine({
       <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
         {row.title}
       </span>
-      {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片。 */}
+      {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片；
+          计数词条走单点 `formatBoardCountText`（单/复数两键，count===1 走单数——#138 S1 回修）。 */}
       {row.resolvedDeps.length > 0 ? (
         <span
           data-board-guide-queue-deps={row.resolvedDeps.length}
           title={row.resolvedDeps.map((no) => `#${no}`).join(", ")}
           className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-base")}
         >
-          {intl.formatMessage({ id: "board.guide.queue.deps" }, { count: row.resolvedDeps.length })}
+          {formatBoardCountText(
+            row.resolvedDeps.length,
+            BOARD_COUNT_MESSAGE_IDS.guideQueueDeps,
+            intl.formatMessage,
+          )}
         </span>
       ) : null}
       {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。 */}
@@ -108,7 +117,8 @@ function BoardGuideQueueRowLine({
   );
 }
 
-/** 单个计划区块：名 + 完成进度（进度胶囊/微条）+ 期次/完成情况摘要行 + 前沿行入口。 */
+/** 单个计划区块：名 + 完成进度（进度胶囊/微条）+ 期次/完成情况摘要行 + 可执行前沿队列
+ *（frontier 成员全量、frontier 序直读；零前沿给空态文案——队列契约见 #138/C3-3）。 */
 function BoardGuidePlanBlock({
   plan,
   onOpenCard,
