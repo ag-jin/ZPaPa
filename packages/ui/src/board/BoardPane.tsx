@@ -54,6 +54,7 @@ import {
 } from "./boardViewsViewModel.js";
 import { boardJumpRequiresListView } from "./boardDialogViewModel.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "./loadBoardDocument.js";
+import type { BoardViewModel } from "./boardViewModel.js";
 
 /** 跳转高亮时限（毫秒）：滚动落点看得到即可，不长期改写卡片配色。 */
 const HIGHLIGHT_DURATION_MS = 2400;
@@ -79,6 +80,8 @@ export function BoardPane({
   );
   const fileService = services.fileService;
   const [state, setState] = useState<BoardPaneLoadState>({ kind: "loading" });
+  // 上次成功读取的快照（#158；E7 §7.2）：断连时保留版面用；唯一写点见 refresh()。
+  const lastReadyBoardRef = useRef<BoardViewModel | null>(null);
   // 视图模式：初值取会话记忆（切走再回来仍是上次看的视图），切换即记。
   const [viewMode, setViewMode] = useState<BoardViewMode>(() => readBoardViewMode());
   // 列表过滤/排序：过滤条件本次打开期间的临时状态（列表与表格共用；切视图不丢；关面板即回到默认）；
@@ -157,6 +160,10 @@ export function BoardPane({
     requestSeqRef.current = seq;
     const next = await loadBoardDocument({ fileService, workspacePath, isRpcReady });
     if (requestSeqRef.current !== seq) return;
+    // 上次成功读取的快照（#158；E7 §7.2「未连接：保留上次快照但标陈旧」）：唯一写点在这里的
+    // 成功分支；面板按 workspace 重建（宿主 key），快照不跨工作区。断连时 BoardPaneView
+    // 用快照 + 状态行呈现，不清空版面；确定性判定（损坏/版本/空态）不吃快照。
+    if (next.kind === "ready") lastReadyBoardRef.current = next.board;
     setState(next);
   }, [fileService, workspacePath, isRpcReady]);
 
@@ -286,6 +293,7 @@ export function BoardPane({
       kanbanCompletedExpanded={kanbanCompletedExpanded}
       onKanbanCompletedExpandedChange={setKanbanCompletedExpanded}
       fold={{ state: foldState, onToggle: handleFoldToggle }}
+      unavailableSnapshot={state.kind === "unavailable" ? lastReadyBoardRef.current : null}
       onRefresh={() => void refresh()}
     />
   );

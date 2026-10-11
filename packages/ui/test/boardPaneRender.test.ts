@@ -210,11 +210,39 @@ test("板级诊断只读展示（diagnostics 非空属合法形态）", () => {
   assert.ok(markup.includes("按未领号上板，运行 --assign 补号"));
 });
 
-test("空态 A 逐字：本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。", () => {
-  const markup = render({ kind: "missing" });
+test("空态 A1（新生）逐字：本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。", () => {
+  const markup = render({ kind: "missing-new" });
   assert.equal(
-    textInside(markup, 'data-board-empty="missing"'),
+    textInside(markup, 'data-board-empty="missing-new"'),
     "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
+  );
+});
+
+/* ---------------- 空态 A 二分（卡 #158；契约 §2 A1/A2；E6-J6-1） ---------------- */
+
+test("空态 A2（板文件缺失/误删）逐字：板产物在场而本体缺失 → 指引重编译，不与新生同文案", () => {
+  const missingDamaged = render({ kind: "missing-damaged" });
+  assert.equal(
+    textInside(missingDamaged, 'data-board-empty="missing-damaged"'),
+    "板文件缺失（可能被删除或未同步），请在会话中运行编译器重建。",
+  );
+  // 验收「不再同一条文案」：两种情况的可见文案必须不同（同屏同文案正是 E6-J6-1 的缺口）。
+  const missingNew = render({ kind: "missing-new" });
+  assert.notEqual(
+    textInside(missingNew, 'data-board-empty="missing-new"'),
+    textInside(missingDamaged, 'data-board-empty="missing-damaged"'),
+    "「从未有板」与「板文件缺失」必须给出不同指引",
+  );
+});
+
+test("英文界面：空态 A1/A2 走英文词条，不出现中文（两态分文案）", () => {
+  assert.equal(
+    textInside(renderEnglish({ kind: "missing-new" }), 'data-board-empty="missing-new"'),
+    "This project has no board yet. It is generated automatically after the first interview registration or spec creation.",
+  );
+  assert.equal(
+    textInside(renderEnglish({ kind: "missing-damaged" }), 'data-board-empty="missing-damaged"'),
+    "The board file is missing (possibly deleted or not synced). Rebuild it by running the compiler in a session.",
   );
 });
 
@@ -317,9 +345,74 @@ test("暂时不可读（连接未就绪）：专门文案 + 刷新入口，不�
   assert.ok(markup.includes("data-board-refresh"), "暂时不可读态也要能手动刷新");
 });
 
+/* ---------------- 未连接保留上次快照 + 与加载态可区分（卡 #158；E7 §7.2） ---------------- */
+
+test("暂时不可读（有上次快照）：保留快照并标陈旧，不清空版面，刷新入口常驻（卡 #158）", () => {
+  const ready = readyState();
+  if (ready.kind !== "ready") throw new Error("准备失败");
+  const markup = render({ kind: "unavailable" }, { unavailableSnapshot: ready.board });
+  assert.ok(markup.includes("预览通道（Preview Channel）"), "断连不清空版面：保留上次快照内容");
+  assert.equal(
+    textInside(markup, "data-board-snapshot-notice"),
+    "连接未就绪：以下为上次读取的快照，可能已过期；连接恢复后会自动重读，也可以点右上角刷新重试。",
+  );
+  assert.ok(
+    !markup.includes('data-board-empty="unavailable"'),
+    "有快照时不落占位态（占位会把版面清空，与 E7 §7.2「保留上次快照」相悖）",
+  );
+  assert.ok(markup.includes("data-board-refresh"), "保留快照时刷新入口仍在");
+});
+
+test("快照只对「暂时不可读」生效：损坏/新生等错误态不吃快照（不得拿旧板冒充现状）", () => {
+  const ready = readyState();
+  if (ready.kind !== "ready") throw new Error("准备失败");
+  for (const state of [
+    { kind: "damaged" },
+    { kind: "missing-damaged" },
+    { kind: "missing-new" },
+    { kind: "too-large" },
+  ] satisfies BoardPaneLoadState[]) {
+    const markup = render(state, { unavailableSnapshot: ready.board });
+    assert.ok(
+      !markup.includes("预览通道（Preview Channel）"),
+      `${state.kind} 是就绪后的确定性判定，不得用上次快照兜底`,
+    );
+  }
+});
+
+test("暂时不可读（无快照）与加载态可区分：文案与锚点都不同（卡 #158 验收）", () => {
+  const unavailable = render({ kind: "unavailable" });
+  const loading = render({ kind: "loading" });
+  assert.equal(
+    textInside(unavailable, 'data-board-empty="unavailable"'),
+    "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  );
+  assert.equal(textInside(loading, "data-board-loading"), "正在读取看板…");
+  assert.ok(!unavailable.includes("data-board-loading"), "不可读态不得带加载锚点");
+  assert.ok(!loading.includes("data-board-empty"), "加载态不得带占位/错误锚点");
+});
+
+test("英文界面：未连接快照状态行走英文词条（卡 #158）", () => {
+  const ready = readyState();
+  if (ready.kind !== "ready") throw new Error("准备失败");
+  const markup = renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US" as const,
+      children: createElement(BoardPaneView, {
+        state: { kind: "unavailable" },
+        unavailableSnapshot: ready.board,
+      }),
+    }),
+  );
+  assert.equal(
+    textInside(markup, "data-board-snapshot-notice"),
+    "Not connected: showing the last snapshot, which may be out of date. It refreshes automatically when the connection returns, or use Refresh at the top right to retry.",
+  );
+});
+
 test("刷新按钮提到面板级：空态 A/B、错误态（#70 四态）与暂时不可读、加载态都能点（评审 #32-P5）", () => {
   const states: BoardPaneLoadState[] = [
-    { kind: "missing" },
+    { kind: "missing-new" },
     { kind: "empty" },
     { kind: "damaged" },
     { kind: "version-newer", version: 3 },
@@ -335,7 +428,7 @@ test("刷新按钮提到面板级：空态 A/B、错误态（#70 四态）与暂
   const readOnly = renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(BoardPaneView, { state: { kind: "missing" } }),
+      children: createElement(BoardPaneView, { state: { kind: "missing-new" } }),
     }),
   );
   assert.ok(!readOnly.includes("data-board-refresh"), "没有刷新回调时不渲染死按钮");

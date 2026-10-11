@@ -971,6 +971,8 @@ const zhCN: Record<string, string> = {
   "board.pipeline.next": "下一个",
   "board.lastRun.stoppedAt": "停在 #{no}",
   "board.empty.none": "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
+  // 空态 A 二分（卡 #158；契约 §2 A1/A2）：板产物在场而 board.json 缺失 = 板文件缺失（损毁/误删）。
+  "board.empty.missingDamaged": "板文件缺失（可能被删除或未同步），请在会话中运行编译器重建。",
   "board.empty.features": "尚无规格或计划。",
   "board.empty.damaged": "板文件无法读取或已损坏，请在会话中运行编译器重建。",
   // 板读取错误态分离（卡 #70；契约 §2+/§14）：版本过新 → 升级应用/技能；过旧 → 重编译。
@@ -983,6 +985,9 @@ const zhCN: Record<string, string> = {
   // 暂时不可读（连接未就绪）：与「损坏」分开——不在断连时指引重编译（评审 #32-P3）。
   "board.unavailable":
     "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  // 未连接但有上次快照（卡 #158；E7 §7.2「保留上次快照但标陈旧」）：不因断连清空版面。
+  "board.unavailable.snapshotNotice":
+    "连接未就绪：以下为上次读取的快照，可能已过期；连接恢复后会自动重读，也可以点右上角刷新重试。",
   // 陈旧提示（契约 §5 的应用侧轻量版：纯时间启发式，不做 fs mtime 比对——见契约 §5 勘误）。
   "board.stale.hint": "板可能已过期（更新于 {time}）：建议在会话内重新编译板。",
   "board.attention.interviewedNotArranged": "已访谈，尚未落卡",

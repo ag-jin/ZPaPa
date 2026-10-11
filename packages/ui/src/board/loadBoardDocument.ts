@@ -1,10 +1,10 @@
 /**
- * 项目看板面板的读取注入点（卡 #32；错误态四态分离见卡 #70）。
+ * 项目看板面板的读取注入点（卡 #32；错误态四态分离见卡 #70；空态 A1/A2 二分见卡 #158）。
  *
  * 契约义务（`.zcode/board/board-consumption-contract.md` §0/§1/§2/§7.3/§7.6/§14）：
- * 按固定路径直读 `<工作目录>/.zcode/board/board.json`；读不到 / 版本过新 / 版本过旧 /
- * JSON 损坏 / 文件过大分别成态呈现，不得静默或空白。读取经既有文件服务缝（renderer 不碰文件系统），
- * 本模块只依赖一个最小端口，便于在测试中注入假件。
+ * 按固定路径直读 `<工作目录>/.zcode/board/board.json`；读不到（A1 新生 / A2 板文件缺失二分）/
+ * 版本过新 / 版本过旧 / JSON 损坏 / 文件过大分别成态呈现，不得静默或空白。读取经既有文件服务缝
+ * （renderer 不碰文件系统），本模块只依赖一个最小端口（存在性检查 + 读文本），便于在测试中注入假件。
  */
 import type { FileTextSlice } from "@zcode/shared";
 import { joinFilePath } from "@/lib/path.js";
@@ -12,6 +12,19 @@ import { parseBoardJson, type BoardViewModel } from "./boardViewModel.js";
 
 /** 固定读取点（契约 §0/§7.3）：不做全局注册表、不看 `~/.zcode`。 */
 export const BOARD_JSON_RELATIVE_PATH = ".zcode/board/board.json";
+
+/**
+ * 板产物闭集（契约 §2 A2 行；卡 #158）：board.json 之外、板链路自己的写入物
+ * （编译器 `.zcode/board/board.md`、发号 `registry.json`、登记 `interviews.json`、落账 `runs.json`）。
+ * 空态 A 二分的判据只做「这些路径在不在」的存在性检查——不读内容、不扫描目录树、
+ * 不新增文件通道（§7.3）。`.zcode/board/evidence/` **不是**板产物（证据目录不证明板曾生成）。
+ */
+export const BOARD_ARTIFACT_RELATIVE_PATHS = [
+  ".zcode/board/board.md",
+  ".zcode/board/registry.json",
+  ".zcode/board/interviews.json",
+  ".zcode/board/runs.json",
+] as const;
 
 /**
  * 读取上限＝文件服务文本读的硬上限。
@@ -30,6 +43,13 @@ export function resolveBoardJsonPath(workspacePath: string): string {
   return joinFilePath(workspacePath, BOARD_JSON_RELATIVE_PATH);
 }
 
+/** 同目录板产物路径（空态 A2 判据用；与 `resolveBoardJsonPath` 同一拼法）。 */
+export function resolveBoardArtifactPaths(workspacePath: string): string[] {
+  return BOARD_ARTIFACT_RELATIVE_PATHS.map((relativePath) =>
+    joinFilePath(workspacePath, relativePath),
+  );
+}
+
 /** IFileService 的最小投影：本面板只用「存在性检查 + 读文本」。 */
 export interface BoardFileServicePort {
   checkFilesExist(params: { paths: string[] }): Promise<Array<{ path: string; exists: boolean }>>;
@@ -37,8 +57,10 @@ export interface BoardFileServicePort {
 }
 
 /**
- * 面板占位态（卡 #70 四态分离后）：
- * - missing=空态 A；empty=空态 B；damaged=损坏态（JSON 解析失败 / 结构非法 / 读取失败）；
+ * 面板占位态（卡 #70 四态分离后；卡 #158 空态 A 二分）：
+ * - missing-new=空态 A1（新生：board.json 与同目录板产物都不存在）；missing-damaged=空态 A2
+ *   （板产物在、board.json 缺失——被删/未同步/未生成）；empty=空态 B；
+ * - damaged=损坏态（JSON 解析失败 / 结构非法 / 读取失败）；
  * - version-newer=板版本过新（提示升级应用/技能）；version-older=板版本过旧（提示重编译）；
  * - too-large=板文件超过读取上限被截断（不部分渲染；独立词条，不借损坏态）；
  * - ready=可渲染。
@@ -46,7 +68,8 @@ export interface BoardFileServicePort {
  * 断连不是板的错，指引「重编译」在断连时是假动作。
  */
 export type BoardLoadState =
-  | { kind: "missing" }
+  | { kind: "missing-new" }
+  | { kind: "missing-damaged" }
   | { kind: "empty" }
   | { kind: "damaged" }
   | { kind: "version-newer"; version: number }
@@ -82,6 +105,7 @@ export async function loadBoardDocument(params: {
   isRpcReady?: BoardRpcReadyGate;
 }): Promise<BoardLoadState> {
   const boardPath = resolveBoardJsonPath(params.workspacePath);
+  const artifactPaths = resolveBoardArtifactPaths(params.workspacePath);
   const isRpcReady = params.isRpcReady ?? ALWAYS_RPC_READY;
   if (!isRpcReady()) {
     // 断连代理上的请求只会得到可恢复错误；直接给「暂时不可读」，不误判成损坏。
@@ -89,15 +113,23 @@ export async function loadBoardDocument(params: {
   }
 
   let exists = false;
+  let hasBoardArtifacts = false;
   try {
-    const [existence] = await params.fileService.checkFilesExist({ paths: [boardPath] });
-    exists = existence?.exists === true;
+    // 板本体与同目录板产物一次批量查（存在性检查自带并发上限；契约 §2 A2 判据只用存在性）。
+    const existence = await params.fileService.checkFilesExist({
+      paths: [boardPath, ...artifactPaths],
+    });
+    const existsByPath = new Map(existence.map((entry) => [entry.path, entry.exists === true]));
+    exists = existsByPath.get(boardPath) === true;
+    hasBoardArtifacts = artifactPaths.some((path) => existsByPath.get(path) === true);
   } catch {
     // 存在性检查本身失败（如 host 断连）：读不到就按损坏态（C3）呈现，不假装没有板。
     return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
   if (!exists) {
-    return { kind: "missing" };
+    // 空态 A 二分（契约 §2 A1/A2；卡 #158；E6-J6-1）：没有 board.json 时，同目录板产物在场
+    // 说明板曾在/已在用——本体被删、未同步或未生成，指引重编译（A2）；否则是无板痕迹的新生（A1）。
+    return hasBoardArtifacts ? { kind: "missing-damaged" } : { kind: "missing-new" };
   }
 
   let content: string;
@@ -115,9 +147,10 @@ export async function loadBoardDocument(params: {
     }
     content = file.content;
   } catch (error) {
-    // 检查通过后文件消失（竞态）仍属「无板」；读取途中断连按「暂时不可读」；
-    // 连接仍在的其余读取失败归损坏态（C3）（评审 #32-P3）。
-    if (isBoardFileMissingError(error)) return { kind: "missing" };
+    // 检查通过后文件消失（竞态）：刚才还在的板本体没了——按空态 A2（板文件缺失）呈现，
+    // 不回落「新生」（那是「从未有板」，与刚被删的语义不同）。读取途中断连按「暂时不可读」；
+    // 连接仍在的其余读取失败归损坏态（C3）（评审 #32-P3；卡 #158）。
+    if (isBoardFileMissingError(error)) return { kind: "missing-damaged" };
     return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
 

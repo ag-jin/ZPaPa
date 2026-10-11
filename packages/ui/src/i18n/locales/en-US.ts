@@ -1053,6 +1053,9 @@ const enUS: Record<string, string> = {
   "board.lastRun.stoppedAt": "stopped at #{no}",
   "board.empty.none":
     "This project has no board yet. It is generated automatically after the first interview registration or spec creation.",
+  // Empty-state A split (#158; contract §2 A1/A2): board artifacts present but board.json missing.
+  "board.empty.missingDamaged":
+    "The board file is missing (possibly deleted or not synced). Rebuild it by running the compiler in a session.",
   "board.empty.features": "No specs or plans yet.",
   "board.empty.damaged":
     "The board file cannot be read or is corrupted. Rebuild it by running the compiler in a session.",
@@ -1066,6 +1069,9 @@ const enUS: Record<string, string> = {
   // Temporarily unreadable (connection not ready): kept apart from "damaged" (review #32-P3).
   "board.unavailable":
     "The board is temporarily unreadable (connection not ready). It will be re-read once the connection recovers, or use Refresh at the top right to retry.",
+  // Not connected with a previous snapshot (#158; E7 §7.2): keep the last snapshot, marked stale.
+  "board.unavailable.snapshotNotice":
+    "Not connected: showing the last snapshot, which may be out of date. It refreshes automatically when the connection returns, or use Refresh at the top right to retry.",
   // Stale hint (contract §5 app-side lightweight reading: pure time heuristic, no fs mtime compare).
   "board.stale.hint": "The board may be out of date (updated {time}): recompile it in the session.",
   "board.attention.interviewedNotArranged": "Interviewed, not yet carded",

@@ -12,9 +12,14 @@
  * `boardDialogViewModel`），本文件与各视图组件只投影 + 回传意图。
  */
 import { Fragment } from "react";
-import { RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import {
+  BOARD_PANE_ROOT_CLASS,
+  BoardPaneRefreshButton,
+  BoardPlaceholder,
+  BoardSnapshotNotice,
+} from "./boardPlaceholderParts.js";
 import { BoardCardDialog } from "./BoardCardDialog.js";
 import { BoardTreeView } from "./BoardTreeView.js";
 import { BoardKanbanView } from "./BoardKanbanView.js";
@@ -74,33 +79,19 @@ export interface BoardPaneViewProps {
    * 共用这一份——`state` = 用户显式覆盖，`onToggle` = 用户动作回传。缺省 = 只读渲染，按默认态。
    */
   fold?: BoardFoldControls;
+  /**
+   * 上次成功读取的快照（#158；E7 §7.2）：仅 `state.kind === "unavailable"` 时消费——断连不清空
+   * 版面，保留快照并附状态行。其余态（损坏/版本/空态是就绪后的确定性判定）不吃快照。
+   */
+  unavailableSnapshot?: BoardViewModel | null;
   /** 陈旧判定的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
 
 /**
- * 看板面板根元素的类名（就绪态与占位态共用）：`relative` 是弹窗 overlay 的定位上下文（#46 B5）。
- * `data-board-pane` 与选区豁免 `data-no-selection-action`（卡 #64）同落在这个根元素上。
+ * 看板面板根元素的类名、面板级刷新按钮、未连接快照状态行与占位态零件（卡 #158 平移）：
+ * 定义与释义在 `boardPlaceholderParts`（本文件只留骨架与分派）。
  */
-const BOARD_PANE_ROOT_CLASS = "relative flex h-full min-h-0 flex-col";
-
-/** 面板级刷新按钮（`data-board-refresh`）：就绪头部与占位态同一实现（评审 #32-P5）。 */
-function BoardPaneRefreshButton({ onRefresh }: { onRefresh: () => void }) {
-  const { intl } = useZCodeIntl();
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      data-board-refresh=""
-      className="shrink-0"
-      aria-label={intl.formatMessage({ id: "board.refresh" })}
-      onClick={onRefresh}
-    >
-      <RefreshCwIcon className="size-4" />
-    </Button>
-  );
-}
 
 /** 面板内视图切换（树形/看板/列表/表格）：常驻头部，选中态走 `aria-pressed`（不靠颜色表达）。 */
 function BoardViewSwitcher({
@@ -204,6 +195,7 @@ function BoardReadyView({
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
   fold,
+  snapshotNotice,
   now,
 }: {
   board: BoardViewModel;
@@ -222,6 +214,8 @@ function BoardReadyView({
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
   fold?: BoardFoldControls;
+  /** 未连接保留快照时的状态行文案（#158；只在 unavailable+快照这条路径传入）。 */
+  snapshotNotice?: string | null;
   now: number;
 }) {
   const { intl } = useZCodeIntl();
@@ -265,6 +259,7 @@ function BoardReadyView({
           <BoardAttentionBanner board={board} {...(onJumpToCard ? { onJumpToCard } : {})} />
         </div>
       ) : null}
+      {snapshotNotice ? <BoardSnapshotNotice message={snapshotNotice} /> : null}
       {staleHint ? (
         // 陈旧提示（契约 §5 应用侧轻量版）：纯提示行，不改变既有内容渲染，也不是空态；
         // 排在提示条**之下**（提示条为第一优先级视觉元素，见上）。
@@ -364,39 +359,6 @@ function BoardReadyView({
 /** 占位态种类的再导出（定义在 boardPresentation：文案 id 表同处，锚点/文案对应单点维护）。 */
 export type { BoardPlaceholderKind } from "./boardPresentation.js";
 
-/**
- * 占位态：空态 A/B、错误态（损坏/版本过新/过旧/文件过大）、暂时不可读与加载中共用同一骨架。
- * 刷新按钮在**面板级**出现（空态 A/C 的文案正指导用户「回来再读」，评审 #32-P5）：
- * 任何占位态都能手动重读；没有刷新回调时不渲染死按钮。
- */
-function BoardPlaceholder({
-  kind,
-  message,
-  onRefresh,
-}: {
-  kind: BoardPlaceholderKind;
-  message: string;
-  onRefresh?: () => void;
-}) {
-  const anchor = kind === "loading" ? { "data-board-loading": "" } : { "data-board-empty": kind };
-  return (
-    // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
-    // 占位态同样是看板面板（只读）：与就绪态同一份选区豁免声明（卡 #64）。
-    <div data-board-pane="" data-no-selection-action="" className={BOARD_PANE_ROOT_CLASS}>
-      {onRefresh ? (
-        <div className="flex h-12 shrink-0 items-center justify-end border-b border-border/50 px-3">
-          <BoardPaneRefreshButton onRefresh={onRefresh} />
-        </div>
-      ) : null}
-      <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-6">
-        <div {...anchor} className="max-w-[20rem] text-center text-ui-sm text-foreground-subtle">
-          {message}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function BoardPaneView({
   state,
   onRefresh,
@@ -414,14 +376,21 @@ export function BoardPaneView({
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
   fold,
+  unavailableSnapshot,
   now,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
   const ageBase = now ?? Date.now();
-  if (state.kind === "ready") {
+  // 未连接（暂时不可读）且手里有上次成功读取的快照：保留快照 + 状态行，不落占位清空版面
+  // （#158；E7 §7.2「显示暂时不可读，保留上次快照但标陈旧」）。快照只对这一种态生效：
+  // 损坏/版本/空态是就绪后的确定性判定，不得拿旧板冒充现状（见测试反例）。
+  const retainedBoard = state.kind === "unavailable" ? (unavailableSnapshot ?? null) : null;
+  if (state.kind === "ready" || retainedBoard) {
+    const board = state.kind === "ready" ? state.board : retainedBoard;
+    if (!board) return null;
     return (
       <BoardReadyView
-        board={state.board}
+        board={board}
         viewMode={viewMode}
         openCardId={openCardId}
         highlightCardId={highlightCardId}
@@ -438,11 +407,16 @@ export function BoardPaneView({
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
         {...(fold ? { fold } : {})}
+        {...(retainedBoard
+          ? { snapshotNotice: intl.formatMessage({ id: "board.unavailable.snapshotNotice" }) }
+          : {})}
       />
     );
   }
-  // 占位态（空态 A/B、损坏态、版本过新/过旧、文件过大、暂时不可读）+ 加载中：错误态绝不显示
-  // 空白假装正常（契约 §2/§7.6/§14）；「暂时不可读」单独成态，不借损坏态的词条（评审 #32-P3）。
+  // 占位态（空态 A1/A2 二分、B、损坏态、版本过新/过旧、文件过大、暂时不可读）+ 加载中：错误态绝不显示
+  // 空白假装正常（契约 §2/§7.6/§14）；「暂时不可读」单独成态，不借损坏态的词条（评审 #32-P3）；
+  // 空态 A1/A2 各走各自指引（#158：新生给起步动作、板文件缺失给重建动作）。
+  // 有快照的不可读态已在上面走「保留快照」分支，不落这里（E7 §7.2）。
   const kind: BoardPlaceholderKind =
     state.kind === "loading" ? "loading" : (state.kind satisfies BoardPlaceholderKind);
   // 版本态词条带两级版本号（板上版本 / 应用支持的主版本）：比较口径的唯一真源是 BOARD_KNOWN_VERSION；

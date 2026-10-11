@@ -51,11 +51,94 @@ function createFakeFileService(files: Record<string, FakeFile>) {
   };
 }
 
-test("board.json 不存在 → 空态 A（missing），且不读取内容", async () => {
+test("空态 A1（新生）：board.json 与同目录板产物均不存在 → missing-new，且不读取内容", async () => {
+  // 期望值的独立真源：契约 §2 A1 行（判据 = 固定路径缺失 + 同目录无任何板产物）。
   const fileService = createFakeFileService({});
   const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
-  assert.equal(state.kind, "missing");
+  assert.equal(state.kind, "missing-new", "无板且无板产物 = 从未有板（新生），不是板损毁");
   assert.equal(fileService.readCount(), 0, "板文件缺失时不应再尝试读内容");
+});
+
+/* ---------------- 空态 A 二分（卡 #158；契约 §2 A1/A2；E6-J6-1） ---------------- */
+
+test("空态 A2（板文件缺失/误删）：board.json 不存在但同目录有板产物 → missing-damaged，指引重编译", async () => {
+  // 期望值的独立真源：契约 §2 A2 行（判据 = 固定路径缺失 + 同目录存在板产物任一；逐字指引重编译）。
+  // E6-J6-1：board.json 误删与「从未有板」同外观，必须分开成态。
+  const boardMdPath = `${WORKSPACE}/.zcode/board/board.md`;
+  const fileService = createFakeFileService({ [boardMdPath]: { content: "# 项目看板\n" } });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(
+    state.kind,
+    "missing-damaged",
+    "板产物在场而本体缺失（被删/未同步/未生成）= 板文件缺失态，不得与新生同文案",
+  );
+  assert.equal(fileService.readCount(), 0, "判据只要存在性（一次批量检查），不读产物内容");
+});
+
+test("空态 A2 判据边界：板产物闭集四件套「任一」在场即报板文件缺失（含四件套齐、本体缺失的竞态窗口）", async () => {
+  // 期望值的独立真源：契约 §2 A2 行（判据 = 同目录存在 board.md/registry.json/interviews.json/runs.json 任一）。
+  // 四件套齐而 board.json 缺失 = 写链正在落产物、本体尚未生成或刚被移走的竞态窗口，仍属 A2
+  // （板曾在/已在用），不得报成从未有板。逐件单测是为了钉住「任一」而不只是 board.md 这一件。
+  const artifactPaths = [
+    `${WORKSPACE}/.zcode/board/board.md`,
+    `${WORKSPACE}/.zcode/board/registry.json`,
+    `${WORKSPACE}/.zcode/board/interviews.json`,
+    `${WORKSPACE}/.zcode/board/runs.json`,
+  ];
+  for (const artifactPath of artifactPaths) {
+    const fileService = createFakeFileService({ [artifactPath]: { content: "" } });
+    const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+    assert.equal(
+      state.kind,
+      "missing-damaged",
+      `契约 §2 A2「任一」：只有 ${artifactPath} 也要报板文件缺失`,
+    );
+    assert.equal(fileService.readCount(), 0, "A2 判据只做存在性检查，不读产物内容");
+  }
+  const fileService = createFakeFileService(
+    Object.fromEntries(artifactPaths.map((path) => [path, { content: "" }])),
+  );
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(
+    state.kind,
+    "missing-damaged",
+    "四件套齐全而 board.json 缺失（写链竞态窗口）仍按 A2 呈现，不回落新生",
+  );
+});
+
+test("空态 A1 反例：同目录只有证据目录（evidence）等非板产物 → 仍按新生（A2 判据是板产物闭集）", async () => {
+  // ZPaPa 的 `.zcode/board/` 只有 evidence/：证据不是「板曾在」的判据（契约 §2 A2 行闭集）。
+  // 本假件按路径键判定存在（比真实服务更宽——目录也会报 exists），所以「evidence 被误当板产物」
+  // 的实现坏法在这里必咬：一旦把 evidence 加进探针，本用例期望的新生态就会变成 missing-damaged。
+  const evidencePath = `${WORKSPACE}/.zcode/board/evidence`;
+  const fileService = createFakeFileService({ [evidencePath]: { content: "" } });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(
+    state.kind,
+    "missing-new",
+    "证据目录不是板产物：只有它时仍是「从未有板」，不得报板文件缺失",
+  );
+});
+
+test("空态 A2（竞态）：存在性检查通过后本体消失（ENOENT）→ missing-damaged，不回落新生", async () => {
+  // 「刚才还在、读时已没」与「从未有板」语义不同（契约 §2 A2：本体被删/未同步）。
+  const fileService = {
+    checkFilesExist: async ({ paths }: { paths: string[] }) =>
+      paths.map((path) => ({ path, exists: path === BOARD_PATH })),
+    readTextFile: async ({ path }: { path: string }) => {
+      const error = new Error(`ENOENT: no such file or directory, stat '${path}'`) as Error & {
+        code: string;
+      };
+      error.code = "ENOENT";
+      throw error;
+    },
+  };
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(
+    state.kind,
+    "missing-damaged",
+    "检查通过后被删（竞态）= 板文件缺失态（可重建），不是从未有板",
+  );
 });
 
 test("board.json 存在但 JSON 解析失败 → 空态 C（damaged）", async () => {

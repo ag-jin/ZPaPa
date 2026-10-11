@@ -516,15 +516,46 @@ test(
   },
 );
 
-test("空态 A（真实文件系统：无板）逐字不静默", async () => {
+test("空态 A1（真实文件系统：无板且无板产物）逐字不静默", async () => {
   const { workspace, cleanup } = await stageWorkspace(null);
   try {
     const state = await loadFromRealFile(workspace);
-    assert.equal(state.kind, "missing");
+    assert.equal(state.kind, "missing-new");
     const markup = render(state);
     assert.ok(markup.includes("本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。"));
   } finally {
     await cleanup();
+  }
+});
+
+test("空态 A2（真实文件系统：板产物在场而板本体缺失）逐字不静默", async () => {
+  // 契约 §2 A2：board.json 缺失 + 同目录板产物（board.md）在场 → 板文件缺失（损毁/误删）。
+  const workspace = await mkdtemp(join(tmpdir(), "board-empty-"));
+  try {
+    await mkdir(join(workspace, ".zcode/board"), { recursive: true });
+    await writeFile(join(workspace, ".zcode/board/board.md"), "# 项目看板\n", "utf8");
+    const state = await loadFromRealFile(workspace);
+    assert.equal(state.kind, "missing-damaged");
+    assert.ok(
+      render(state).includes("板文件缺失（可能被删除或未同步），请在会话中运行编译器重建。"),
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("空态 A1 反例（真实文件系统）：只有 evidence/ 目录仍按新生（目录不是板产物）", async () => {
+  // ZPaPa 自身的形态：`.zcode/board/` 只有 evidence/。本用例钉「探针闭集不含 evidence」
+  //（本文件的 node:fs 假件按 existsSync 判定，比真服务宽——目录也报存在，所以误把 evidence
+  // 当板产物的实现坏法在这里必咬）。生产服务口径更严：checkFilesExist 只认文件
+  //（`packages/services/src/file/fileService.ts` 的 checkFileExists → stat().isFile()）。
+  const workspace = await mkdtemp(join(tmpdir(), "board-empty-"));
+  try {
+    await mkdir(join(workspace, ".zcode/board/evidence"), { recursive: true });
+    const state = await loadFromRealFile(workspace);
+    assert.equal(state.kind, "missing-new", "证据目录不是板产物：仍是从未有板的新生");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 
