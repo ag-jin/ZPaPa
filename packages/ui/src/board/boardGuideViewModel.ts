@@ -24,6 +24,9 @@ import { boardLayerGapCount, groupBoardFeaturesByEpic } from "./boardEpicContain
 import {
   collectBoardViewNodes,
   countBoardFeatureTasks,
+  EMPTY_BOARD_LIST_CONTROLS,
+  type BoardListControls,
+  type BoardViewMode,
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
 import type { BoardTaskNode, BoardViewModel } from "./boardViewModel.js";
@@ -100,6 +103,73 @@ export interface BoardGuideSummary {
   plans: BoardGuidePlan[];
   /** 最近活动最新一条的时刻（recent[] 首条；无 → null）。 */
   latestActivityAt: string | null;
+}
+
+/* ---------------- 槽下钻路由与激活判据（卡 #137 / C3-2） ---------------- */
+
+/**
+ * 槽下钻的落点（**既有视图 + 既有过滤/排序**，禁第二路由）：`mode` 走宿主的既有视图切换；
+ * `controls` 是既有 `BoardListControls` 的完整取值（仅列表/表格目标给——看板目标不消费列表控制，
+ * 给了反而把用户没选的排序写进会话记忆）。显式给全量控制 = 落点确定（不吃上一次留下的筛子）。
+ *
+ * 字段名用中性 `mode` 而非 `viewMode`：板域有源码守卫（`boardViewModeMemory.test.ts`）禁
+ * `viewMode: "<视图名>"` 字面量，防「默认视图」在第二处写死；本表是**显式落点**、不是缺省，
+ * 换中性名让守卫继续只盯缺省面（`DEFAULT_BOARD_VIEW_MODE` 仍是唯一缺省所有者）。
+ */
+export interface BoardGuideSlotDrilldown {
+  mode: BoardViewMode;
+  controls?: BoardListControls;
+}
+
+/**
+ * 五槽 → 落点的唯一映射（卡 #137；派发落点口径 + 板数据可达性「就近」；`Record` 穷尽：
+ * 槽闭集加值在编译期报缺）：
+ * - `attention`（需处理）→ 看板列：四码 attention 是逐卡角标信号、跨段位分布，且**没有**
+ *   单码筛能覆盖「四码合计」（板字段只给合计不给集合）——看板是能逐列扫这些卡的既有视图；
+ * - `blocked`（阻塞）→ 表格（受阻清单形态）：既有表格默认列含「受阻」列，受阻卡逐行可读；
+ *   列表/看板的筛子（段位/状态/缺口码/类型）都不能表达 `blocked[]` 归因段（一卡多行），
+ *   硬套段位筛会把「阻塞槽计数 ≠ 落点集合」的错配固化成假对应；
+ * - `running`/`review`（运行/待收口）→ 列表 + 段位筛（执行中/审核中）——段位是这两个槽的
+ *   同一判据（`active[]` 段位子集），既有筛子直接可达；
+ * - `recent`（最近活动）→ 列表 + 最近视角（`recent` 排序）——「最近视图」是既有排序视角。
+ * 落点两两不同（浏览器断言要能逐槽分辨）；本表不读板、不改任何判据（计数仍归 `buildBoardGuideSummary`）。
+ */
+const BOARD_GUIDE_SLOT_DRILLDOWN: Record<BoardGuideSlotKey, BoardGuideSlotDrilldown> = {
+  attention: { mode: "kanban" },
+  blocked: { mode: "table", controls: EMPTY_BOARD_LIST_CONTROLS },
+  running: {
+    mode: "list",
+    controls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: GUIDE_RUNNING_STAGE },
+  },
+  review: {
+    mode: "list",
+    controls: { ...EMPTY_BOARD_LIST_CONTROLS, stage: GUIDE_REVIEW_STAGE },
+  },
+  recent: { mode: "list", controls: EMPTY_BOARD_LIST_CONTROLS },
+};
+
+/** 落点查询（返回拷贝：共享表不被调用方改写；控制对象同为拷贝）。 */
+export function boardGuideSlotDrilldownTarget(slot: BoardGuideSlotKey): BoardGuideSlotDrilldown {
+  const target = BOARD_GUIDE_SLOT_DRILLDOWN[slot];
+  return {
+    mode: target.mode,
+    ...(target.controls ? { controls: { ...target.controls } } : {}),
+  };
+}
+
+/** 槽激活结果：`drill` = 下钻；`empty` = 空态指引（不跳）；`none` = 无落点（不跳，不缺省猜）。 */
+export type BoardGuideSlotActivation = "drill" | "empty" | "none";
+
+/**
+ * 槽激活判据（单点；卡文验收「零 attention 槽点击有明确空态指引（不落死跳转）」+ §13.6 缺四段）：
+ * - `count > 0` → `drill`；
+ * - `count === 0` → `empty`（显式零，给空态指引，**不**跳到空集合）；
+ * - `count === null` → `none`（旧板缺四段 = 未知；重编译提示已点名，不拿未知当空、也不猜集合）。
+ * 判据只吃投影出来的 `count`（板字段/四段派生），不碰节点字段（禁自算）。
+ */
+export function boardGuideSlotActivation(slot: BoardGuideSlot): BoardGuideSlotActivation {
+  if (slot.count === null) return "none";
+  return slot.count > 0 ? "drill" : "empty";
 }
 
 /** 已完成卡计数（`status === "completed"`，含嵌套子卡；只筛编译器产出字段，不重推状态）。 */

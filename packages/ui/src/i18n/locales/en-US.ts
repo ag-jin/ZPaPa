@@ -1195,6 +1195,7 @@ const enUS: Record<string, string> = {
   "board.guide.zero.running": "Nothing running",
   "board.guide.zero.review": "Nothing to close",
   "board.guide.zero.recent": "No recent activity",
+  "board.guide.slot.emptyHint": "{slot} is empty — nothing to drill into.",
   "board.guide.recompile":
     "This board is missing the four derived segments (older compiler output): the guide view does not recompute them — recompile the board in-session.",
   "board.guide.plans.title": "Plans in progress",

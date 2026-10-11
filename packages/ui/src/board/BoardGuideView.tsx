@@ -11,6 +11,9 @@
  *
  * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）。
  * 本组件里的行入口即 #138 的生长点（同一投影、同一卡行零件）。
+ * C3-2（#137）已落：五槽升级为可点落点（`BoardGuideSlotTile.onActivate` → 宿主的既有视图切换 +
+ * 列表控制；零槽点击给空态指引、不落死跳转；缺四段槽不上可点态）——落点判据在
+ * `boardGuideViewModel.boardGuideSlotDrilldownTarget` 一处，本组件只回传意图。
  * #139（C3-4）已把计数胶囊/微条零件完整化（`boardGuideParts`）：计划级进度胶囊（已完成/总卡 ·
  * 百分比 + 微条）与期次/功能级摘要行计数胶囊（`[N 张卡]` 与 rollup 缺口徽章，与 A4 组头同源）；
  * 本组件的计划块只做摆放接线，计数全部直读投影（禁自算）。
@@ -21,6 +24,7 @@
  * 计划头行 = 编号/名 + 计数胶囊 + 缺口徽章；进度胶囊「计数 · 百分比」收敛为一个信息组 + 微条同排。
  * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
  */
+import { useState } from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
 import {
@@ -28,11 +32,14 @@ import {
   BoardGuidePlanProgressCapsule,
   BoardGuidePlanRollupGapBadge,
   BoardGuideSlotTile,
+  BOARD_GUIDE_SLOT_MESSAGE_IDS,
 } from "./boardGuideParts.js";
 import {
+  boardGuideSlotActivation,
   buildBoardGuideSummary,
   type BoardGuideCardRow,
   type BoardGuidePlan,
+  type BoardGuideSlotKey,
 } from "./boardGuideViewModel.js";
 import { BoardNodeNumber, BoardStageBadge, BoardStatusDot } from "./boardNodeParts.js";
 import { formatBoardRelativeTime } from "./boardPresentation.js";
@@ -42,6 +49,12 @@ export interface BoardGuideViewProps {
   board: BoardViewModel;
   /** 卡片打开路由（既有弹窗宿主状态；缺省 = 只读渲染，行不可点）。 */
   onOpenCard?: (id: string) => void;
+  /**
+   * 槽下钻派发（卡 #137/C3-2；缺省 = 只读渲染，槽不可点）：宿主按
+   * `boardGuideSlotDrilldownTarget` 落到既有视图/过滤——指引面不自己切视图，只回传意图
+   * （与卡行 `onOpenCard` 同款单向派发；禁第二路由）。
+   */
+  onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   /** 相对时间的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -156,9 +169,23 @@ function BoardGuidePlanBlock({
   );
 }
 
-export function BoardGuideView({ board, onOpenCard, now }: BoardGuideViewProps) {
+export function BoardGuideView({ board, onOpenCard, onDrillToSlot, now }: BoardGuideViewProps) {
   const { intl } = useZCodeIntl();
   const summary = buildBoardGuideSummary(board);
+  // 零槽点击的空态指引（卡 #137/C3-2；本地呈现态）：点零槽**不跳转**（不落死跳转），
+  // 就近给一条可读指引；点非零槽下钻时清掉。
+  const [emptySlotHint, setEmptySlotHint] = useState<BoardGuideSlotKey | null>(null);
+  const handleSlotActivate = (key: string) => {
+    const slot = summary.slots.find((entry) => entry.key === key);
+    if (!slot) return;
+    if (boardGuideSlotActivation(slot) === "drill") {
+      setEmptySlotHint(null);
+      onDrillToSlot?.(slot.key);
+      return;
+    }
+    // 0 = 显式空槽：给明确空态指引。缺四段（null）的槽压根不上可点态（见下），到不了这里。
+    setEmptySlotHint(slot.key);
+  };
   const latestActivityHint =
     summary.latestActivityAt !== null
       ? formatBoardRelativeTime(summary.latestActivityAt, now ?? Date.now(), intl.formatMessage)
@@ -178,9 +205,27 @@ export function BoardGuideView({ board, onOpenCard, now }: BoardGuideViewProps) 
             {...(slot.key === "recent" && latestActivityHint !== null
               ? { hint: latestActivityHint }
               : {})}
+            // 可点判据 = 有宿主派发（只读渲染不上可点态）且有落点（缺四段 → 不猜）；0 槽仍可点
+            // ——点击给空态指引而不是跳转（卡文验收）。
+            {...(onDrillToSlot && boardGuideSlotActivation(slot) !== "none"
+              ? { onActivate: handleSlotActivate }
+              : {})}
           />
         ))}
       </div>
+      {emptySlotHint !== null ? (
+        // 零槽的空态指引（role=status：读屏可感知；锚点给浏览器断言）。
+        <div
+          data-board-guide-slot-empty={emptySlotHint}
+          role="status"
+          className="rounded-lg border border-border/50 bg-surface px-3 py-2 text-ui-sm text-foreground-subtle"
+        >
+          {intl.formatMessage(
+            { id: "board.guide.slot.emptyHint" },
+            { slot: intl.formatMessage({ id: BOARD_GUIDE_SLOT_MESSAGE_IDS[emptySlotHint] }) },
+          )}
+        </div>
+      ) : null}
       {!summary.indexAvailable ? (
         // 旧板（缺四段）：指名重编译——视图侧不自行派生兜底（契约 §13.6）。
         <div

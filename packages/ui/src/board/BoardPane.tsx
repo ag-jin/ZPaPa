@@ -57,6 +57,7 @@ import {
   type BoardViewMode,
 } from "./boardViewsViewModel.js";
 import { boardJumpRequiresListView } from "./boardDialogViewModel.js";
+import { boardGuideSlotDrilldownTarget, type BoardGuideSlotKey } from "./boardGuideViewModel.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "./loadBoardDocument.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
@@ -177,6 +178,21 @@ export function BoardPane({
     writeBoardListSort(controls.sort);
     setListControls(controls);
   }, []);
+
+  // 指引面五槽下钻（卡 #137/C3-2）：落点判据在纯函数 `boardGuideSlotDrilldownTarget` 一处
+  // （视图 + 既有列表控制），宿主只消费既有两条派发路径——`handleListControlsChange`
+  // （列表/表格的过滤/排序，含排序会话记忆）与 `handleViewModeChange`（视图模式，含会话记忆）。
+  // 不新造导航状态、不复制路由：指引面回传意图，切视图与落点的唯一所有者仍是宿主这一份状态。
+  const handleDrillToSlot = useCallback(
+    (slot: BoardGuideSlotKey) => {
+      const target = boardGuideSlotDrilldownTarget(slot);
+      // 落点确定：列表/表格目标写显式控制（不吃上一次留下的筛子）；看板目标不消费列表控制
+      // ——不把用户没选的排序写进会话记忆。
+      if (target.controls) handleListControlsChange(target.controls);
+      handleViewModeChange(target.mode);
+    },
+    [handleListControlsChange, handleViewModeChange],
+  );
 
   const refresh = useCallback(async () => {
     const seq = requestSeqRef.current + 1;
@@ -339,6 +355,7 @@ export function BoardPane({
       onOpenCard={handleOpenCard}
       onCloseCard={handleCloseCard}
       onJumpToCard={handleJumpToCard}
+      onDrillToSlot={handleDrillToSlot}
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}
       onKanbanCompletedExpandedChange={setKanbanCompletedExpanded}

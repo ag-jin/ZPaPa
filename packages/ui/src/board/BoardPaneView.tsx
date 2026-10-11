@@ -23,6 +23,7 @@ import {
 import { BoardCardDialog } from "./BoardCardDialog.js";
 import { BoardEpicDialog } from "./BoardEpicDialog.js";
 import { BoardGuideView } from "./BoardGuideView.js";
+import type { BoardGuideSlotKey } from "./boardGuideViewModel.js";
 import { BoardTreeView } from "./BoardTreeView.js";
 import { BoardKanbanView } from "./BoardKanbanView.js";
 import { BoardListView } from "./BoardListView.js";
@@ -66,6 +67,8 @@ export interface BoardPaneViewProps {
   onCloseCard?: () => void;
   /** 依赖跳转与提示条段落跳转（滚动 + 高亮由宿主执行）。 */
   onJumpToCard?: (target: BoardJumpTarget) => void;
+  /** 指引面五槽下钻派发（卡 #137/C3-2；宿主落到既有视图/过滤；缺省 = 槽只读不可点）。 */
+  onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
   highlightCardId?: string | null;
   /** 看板「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开）。 */
@@ -145,6 +148,7 @@ function BoardReadyView({
   onOpenCard,
   onCloseCard,
   onJumpToCard,
+  onDrillToSlot,
   highlightCardId,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
@@ -168,6 +172,7 @@ function BoardReadyView({
   onOpenCard?: (id: string) => void;
   onCloseCard?: () => void;
   onJumpToCard?: (target: BoardJumpTarget) => void;
+  onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   highlightCardId?: string | null;
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
@@ -239,8 +244,14 @@ function BoardReadyView({
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
         {viewMode === "guide" ? (
-          // 指引面（C3-1/#136）：L1 默认面候选（缺省切换归 C3-5/#140）；卡行点击走同一弹窗宿主状态。
-          <BoardGuideView board={board} now={now} {...(onOpenCard ? { onOpenCard } : {})} />
+          // 指引面（C3-1/#136）：L1 默认面候选（缺省切换归 C3-5/#140）；卡行点击走同一弹窗宿主状态；
+          // 五槽下钻（C3-2/#137）走宿主既有视图切换 + 列表控制（禁第二路由）。
+          <BoardGuideView
+            board={board}
+            now={now}
+            {...(onOpenCard ? { onOpenCard } : {})}
+            {...(onDrillToSlot ? { onDrillToSlot } : {})}
+          />
         ) : viewMode === "kanban" ? (
           <BoardKanbanView
             board={board}
@@ -353,6 +364,7 @@ export function BoardPaneView({
   onOpenCard,
   onCloseCard,
   onJumpToCard,
+  onDrillToSlot,
   highlightCardId = null,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
@@ -389,6 +401,7 @@ export function BoardPaneView({
         {...(onOpenCard ? { onOpenCard } : {})}
         {...(onCloseCard ? { onCloseCard } : {})}
         {...(onJumpToCard ? { onJumpToCard } : {})}
+        {...(onDrillToSlot ? { onDrillToSlot } : {})}
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
         {...(fold ? { fold } : {})}
