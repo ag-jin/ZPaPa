@@ -171,19 +171,24 @@ export async function compileBoardPaneCss(params: {
     const outcome = parseBoardJson(boardJson);
     if (outcome.kind !== "ready") continue;
     for (const viewMode of params.viewModes ?? ["kanban" as const]) {
-      for (const expanded of [true, false]) {
-        const markup = renderToStaticMarkup(
-          createElement(ZCodeIntlProvider, {
-            initialLocale: "zh-CN" as const,
-            children: createElement(BoardPaneView, {
-              state: { kind: "ready" as const, board: outcome.board },
-              viewMode,
-              kanbanCompletedExpanded: expanded,
+      // 打开态两档：epic 弹窗只在其打开时进渲染面（#90/A4-4）——把 openEpicCode 档也收进来，
+      // 否则弹窗的壳/区块类名不在候选集里，产物 CSS 缺类会让溢出探针量到「无样式的宽盒」。
+      for (const openEpicCode of [null, "KANB"] as const) {
+        for (const expanded of [true, false]) {
+          const markup = renderToStaticMarkup(
+            createElement(ZCodeIntlProvider, {
+              initialLocale: "zh-CN" as const,
+              children: createElement(BoardPaneView, {
+                state: { kind: "ready" as const, board: outcome.board },
+                viewMode,
+                kanbanCompletedExpanded: expanded,
+                ...(openEpicCode !== null ? { openEpicCode } : {}),
+              }),
             }),
-          }),
-        );
-        for (const match of markup.matchAll(/class="([^"]*)"/g)) {
-          for (const token of (match[1] ?? "").split(/\s+/)) if (token) candidates.add(token);
+          );
+          for (const match of markup.matchAll(/class="([^"]*)"/g)) {
+            for (const token of (match[1] ?? "").split(/\s+/)) if (token) candidates.add(token);
+          }
         }
       }
     }
