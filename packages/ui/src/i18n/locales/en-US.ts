@@ -1257,9 +1257,11 @@ const enUS: Record<string, string> = {
   "board.dialog.cardText.deliverables": "Deliverables",
   "board.dialog.cardText.acceptance": "Acceptance",
   "board.dialog.cardText.absent": "Not on the board",
-  // Detail load states (#220/D7 major①): "unavailable" (temporarily unreadable) / "missing" (absent)
-  // are distinct from the #183 "not carried on the board" empty state; unavailable offers retry.
+  // Detail load states (#220/D7 major①; #221/D8 adds "reading"): "reading" (first-open in flight,
+  // honest placeholder) / "unavailable" (temporarily unreadable) / "missing" (absent) are distinct
+  // from the #183 "not carried on the board" empty state; unavailable offers retry.
   "board.dialog.detailTitle": "Detail",
+  "board.dialog.detail.reading": "Loading detail…",
   "board.dialog.detail.unavailable":
     "Detail is temporarily unavailable (connection not ready, or the board file exceeds the read limit). Reconnect or recompile, then retry.",
   "board.dialog.detail.missing": "No detail for this card was found on the board or its shard.",
