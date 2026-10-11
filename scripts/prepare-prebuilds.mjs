@@ -498,7 +498,11 @@ function stageRemoteOfficialPlugins(glmDir) {
   }
 }
 
-async function stageRemoteBundledSkillPack(glmDir) {
+/**
+ * 远端 stage 的内置技能包动作：整目录拷贝 skills/（mattpocock 全库 + 内置 dynamic-workflows）。
+ * 导出给构建级断言（scripts/prepare-prebuilds.test.mjs）：远端形态要靠这份 stage 才能原地读到技能。
+ */
+export async function stageRemoteBundledSkillPack(glmDir) {
   const sourceRoot = join(rootDir, remoteBundledSkillPack.relativePath);
   const targetRoot = join(glmDir, ...remoteBundledSkillPack.stagedPath.split("/"));
   await mkdir(targetRoot, { recursive: true });

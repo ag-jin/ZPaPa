@@ -4,6 +4,23 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_DIR_NAME = "packages";
 
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES = ["browser-use-plugin"] as const;
 
+/**
+ * 内置技能包（apps/zcode-cli/packages/bundled-skills）**不是插件**，但它与官方插件共用远端
+ * `packages/` 目录、同一份必需资产合同：远端 agent 的 bootstrap 在 zcode.cjs 旁原地读
+ * packages/bundled-skills（候选目录见 bootstrap/src/app/bundled-skills.ts）。漏掉这份资产，
+ * 远端 `/workflow` 会展开成「先加载 dynamic-workflows 技能」而技能文件不存在。
+ *
+ * 必需三件与运行时必需路径（BUNDLED_SKILL_PACK_REQUIRED_PATHS）和 SEA 采集
+ * （sea-bundled-skill-assets.mjs 的 bundledSkillPackRequiredPaths）同集合，改一处须同时核对另两处。
+ */
+export const REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME = "bundled-skills";
+
+export const REMOTE_AGENT_BUNDLED_SKILL_PACK_REQUIRED_RELATIVE_PATHS = [
+  `${REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME}/skills/dynamic-workflows/SKILL.md`,
+  `${REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME}/skills/dynamic-workflows/patterns.md`,
+  `${REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME}/skills/dynamic-workflows/examples.md`,
+] as const;
+
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS = [
   ".mcp.json",
   ".zcode-plugin",
@@ -46,6 +63,10 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "browser-use-plugin/skills/control-browser/SKILL.md",
   "browser-use-plugin/skills/web-gui-tester/SKILL.md",
   // 仅校验 manifest 无法发现文档插件缺少技能正文或视觉评审 Agent。
+  //
+  // 内置技能包与插件共用远端 packages 目录：随 CLI 分发的动态工作流技能（以及 mattpocock 全库）
+  // 在远端同样必须可就地读到，否则远端 agent 只有工具没有技能正文。
+  ...REMOTE_AGENT_BUNDLED_SKILL_PACK_REQUIRED_RELATIVE_PATHS,
 ] as const;
 
 export function buildRemoteAgentOfficialPluginDir(remoteProviderDir: string): string {
