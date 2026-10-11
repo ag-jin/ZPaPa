@@ -32,6 +32,13 @@ import {
   nextBoardCardHighlight,
   type BoardCardHighlightState,
 } from "./boardCardInteraction.js";
+import {
+  boardFoldIdsOfCard,
+  withBoardFoldExpanded,
+  withBoardFoldOpen,
+  type BoardFoldState,
+} from "./boardFoldState.js";
+import { readBoardFoldState, writeBoardFoldState } from "./boardFoldMemory.js";
 import { readBoardListSort, writeBoardListSort } from "./boardListSortMemory.js";
 import {
   readBoardTableColumnVisibility,
@@ -107,19 +114,20 @@ export function BoardPane({
   const [highlight, setHighlight] = useState<BoardCardHighlightState | null>(null);
   // 看板「已完成」列展开态（评审 #35-S1 二轮）：列改条件渲染后，折叠列里的卡不在 DOM 里，
   // 跳转揭示必须**先把展开态置真再滚**——因此展开态归宿主持有（与高亮同一次提交落在同一帧，
-  // 滚动 effect 才找得到落点）。折叠态会话记忆是可选增强，本期不做（面板卸载即回到默认展开）。
+  // 滚动 effect 才找得到落点）。本列展开态仍随面板挂载（列级不落记忆）；分组/层折叠记忆见 foldState。
   const [kanbanCompletedExpanded, setKanbanCompletedExpanded] = useState(true);
-  // 表格视图折叠的分组（#46 B4）：折叠行是条件渲染，跳转揭示要先把落点那个分组展开
-  //（与「已完成」列同款理由）；面板卸载即回默认（全部展开）。
-  const [collapsedFeatureIds, setCollapsedFeatureIds] = useState<string[]>([]);
-  const handleToggleFeatureCollapsed = useCallback((featureId: string, collapsed: boolean) => {
-    setCollapsedFeatureIds((previous) => {
-      const set = new Set(previous);
-      if (collapsed) set.add(featureId);
-      else set.delete(featureId);
-      return [...set];
-    });
+  // 折叠默认态与记忆（#89/A4-3）：覆盖表（foldId → 用户显式展开态）初值取会话记忆；用户动作
+  // 与跳转揭示都只改这一份状态，持久化集中在下面一条 effect（唯一写路径）。默认态仍由 AD-5
+  // 单点规则按数据派生——没被动过的组不落键，数据变化时照新默认态走。
+  const [foldState, setFoldState] = useState<BoardFoldState>(() => readBoardFoldState());
+  useEffect(() => {
+    writeBoardFoldState(foldState);
+  }, [foldState]);
+  const handleFoldToggle = useCallback((foldId: string, open: boolean) => {
+    setFoldState((previous) => withBoardFoldOpen(previous, foldId, open));
   }, []);
+  // 跳转揭示要按板面归属算祖先折叠层（`boardFoldIdsOfCard`）；非就绪态没有板面可算。
+  const board = state.kind === "ready" ? state.board : null;
   // 读数防竞态：旧请求的结果不得覆盖新请求（切工作区/连续刷新都会触发并发读）。
   const requestSeqRef = useRef(0);
   // 连接门禁要在**读取时刻**取最新值（断连可能发生在读取途中）：渲染期同步 ref，读取回调再读它。
@@ -216,8 +224,14 @@ export function BoardPane({
       setOpenCardId(null);
       // 过滤是临时视角：目标被筛掉就跳不到，先清筛子（排序视角保留）。
       setListControls((controls) => clearBoardListFilter(controls));
-      // 折叠分组同理：落点在折叠的分组里就跳了个寂寞——跳转先把分组折叠态清掉。
-      setCollapsedFeatureIds([]);
+      // 折叠容器同理（#89/A4-3）：落点在折叠的层/组里就跳了个寂寞——先展开目标的祖先折叠层
+      // （稿 → 期次 → epic；判据在 `boardFoldIdsOfCard` 单点）。表格的折叠层是条件渲染，
+      // 展开必须走状态（DOM 侧 `details.open` 兜底只够树/列表/看板的原生折叠块）。
+      if (board !== null) {
+        setFoldState((previous) =>
+          withBoardFoldExpanded(previous, boardFoldIdsOfCard(board, target.id)),
+        );
+      }
       // 看板列视图不渲染段位缺省/不认识的节点（§13.2 未定位提示）：切列表视图兜底。
       if (boardJumpRequiresListView(viewMode, target)) {
         handleViewModeChange("list");
@@ -230,7 +244,7 @@ export function BoardPane({
       // nonce：同目标重跳也是新状态（滚动与高亮时限重新起算，评审 #34-P2）。
       setHighlight((previous) => nextBoardCardHighlight(previous, target.id));
     },
-    [handleViewModeChange, viewMode],
+    [board, handleViewModeChange, viewMode],
   );
 
   // 滚动到跳转落点；高亮到点自动清除（面板重渲染不改变时限语义）。
@@ -271,8 +285,7 @@ export function BoardPane({
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}
       onKanbanCompletedExpandedChange={setKanbanCompletedExpanded}
-      collapsedFeatureIds={collapsedFeatureIds}
-      onToggleFeatureCollapsed={handleToggleFeatureCollapsed}
+      fold={{ state: foldState, onToggle: handleFoldToggle }}
       onRefresh={() => void refresh()}
     />
   );

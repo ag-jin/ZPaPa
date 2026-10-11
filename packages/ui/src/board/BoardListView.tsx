@@ -19,8 +19,16 @@ import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteract
 import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
 import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
+  boardContainerFoldExpanded,
+  boardEpicFoldId,
+  boardFeatureFoldExpanded,
+  boardPhaseFoldId,
+  resolveBoardFoldOpen,
+  type BoardFoldControls,
+} from "./boardFoldState.js";
+import { BoardFoldIndicator, boardFoldSummaryClickHandler } from "./boardFoldParts.js";
+import {
   BoardFeatureGroupHeaderContent,
-  BoardFoldIndicator,
   BoardNodeBadges,
   BoardNodeNumber,
   BoardStageBadge,
@@ -110,6 +118,7 @@ function BoardListGroup({
   nested = false,
   onOpenCard,
   highlightCardId,
+  fold,
 }: {
   feature: BoardViewNode;
   nodes: BoardViewNode[];
@@ -119,15 +128,22 @@ function BoardListGroup({
   nested?: boolean;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 宿主持有的折叠控制（#89/A4-3：默认态 + 会话记忆）。 */
+  fold?: BoardFoldControls;
 }) {
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     feature.id,
     highlightCardId,
   );
+  // 稿层默认态（B2 单点）与用户覆盖（#89/A4-3）：稿 id 即折叠 id（与树形/表格同键）。
+  const defaultExpanded = boardFeatureFoldExpanded(feature);
+  const open = fold
+    ? resolveBoardFoldOpen(fold.state, feature.id, defaultExpanded)
+    : defaultExpanded;
   return (
     <details
       data-board-list-group={feature.id}
-      open
+      open={open || undefined}
       className={cn(
         "group border border-border/50 bg-surface/30",
         nested ? "rounded-md" : "rounded-xl",
@@ -135,6 +151,7 @@ function BoardListGroup({
     >
       <summary
         data-board-list-group-summary={feature.id}
+        {...(fold ? { onClick: boardFoldSummaryClickHandler(fold, feature.id, open) } : {})}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       >
         {/* 折叠指示符（#55 S-3）：与树形/看板容器共用同一份零件（A4-1b 收口，CR-S3）。 */}
@@ -179,10 +196,16 @@ function BoardListPhaseSection({
   phase,
   onOpenCard,
   highlightCardId,
+  epicCode,
+  fold,
 }: {
   phase: BoardEpicItemContainer<BoardListGroupItem>["phases"][number];
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 所属 epic 码（折叠 id = `phase:<码>#<期次序>`）。 */
+  epicCode: string;
+  /** 宿主持有的折叠控制（#89/A4-3）。 */
+  fold?: BoardFoldControls;
 }) {
   return (
     <BoardEpicLayerSection
@@ -192,6 +215,9 @@ function BoardListPhaseSection({
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1 px-1.5 pb-1.5"
+      foldId={boardPhaseFoldId(epicCode, phase.phase)}
+      defaultExpanded={boardContainerFoldExpanded(phase.items.map((group) => group.feature))}
+      {...(fold ? { fold } : {})}
     >
       {phase.items.map((group) => (
         <BoardListGroup
@@ -202,6 +228,7 @@ function BoardListPhaseSection({
           nested
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </BoardEpicLayerSection>
@@ -217,10 +244,13 @@ function BoardListEpicSection({
   container,
   onOpenCard,
   highlightCardId,
+  fold,
 }: {
   container: BoardEpicItemContainer<BoardListGroupItem>;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 宿主持有的折叠控制（#89/A4-3）。 */
+  fold?: BoardFoldControls;
 }) {
   return (
     <BoardEpicLayerSection
@@ -236,13 +266,18 @@ function BoardListEpicSection({
       className="group flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1.5 px-1.5 pb-1.5"
+      foldId={boardEpicFoldId(container.epic.code)}
+      defaultExpanded={boardContainerFoldExpanded(container.items.map((group) => group.feature))}
+      {...(fold ? { fold } : {})}
     >
       {container.phases.map((phase) => (
         <BoardListPhaseSection
           key={phase.name}
           phase={phase}
+          epicCode={container.epic.code}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </BoardEpicLayerSection>
@@ -257,6 +292,8 @@ export interface BoardListViewProps {
   onOpenCard?: (id: string) => void;
   /** 跳转落点（该行带高亮锚点）。 */
   highlightCardId?: string | null;
+  /** 折叠默认态的用户覆盖与回传（#89/A4-3；缺省 = 只读，按默认态）。 */
+  fold?: BoardFoldControls;
 }
 
 export function BoardListView({
@@ -265,6 +302,7 @@ export function BoardListView({
   onControlsChange,
   onOpenCard,
   highlightCardId = null,
+  fold,
 }: BoardListViewProps) {
   const { intl } = useZCodeIntl();
   const groups = buildBoardListGroups(board, boardListControlsToQuery(controls));
@@ -290,6 +328,7 @@ export function BoardListView({
                 totalCards={group.totalCards}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
+                {...(fold ? { fold } : {})}
               />
             ))}
             {containers.epics.map((container) => (
@@ -298,6 +337,7 @@ export function BoardListView({
                 container={container}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
+                {...(fold ? { fold } : {})}
               />
             ))}
           </>

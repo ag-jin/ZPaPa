@@ -243,8 +243,15 @@ test("列表排序端到端（#65）：控件状态 → 行序（完成沉底 / 
 });
 
 test("表格排序端到端（#65）：分组内行序 = 同一平铺管线（与列表同语义）", () => {
+  // #89/A4-3：表格折叠默认态落地后，全终态稿（spec:spec-done）默认收起——本用例考的是**行序
+  // 管线**（不是折叠默认态，后者由 boardFoldDefaults 守卫），统一注入「显式展开」覆盖，
+  // 让行序断言仍覆盖全部行。
   const table = (controls: Partial<BoardListControls>) =>
-    renderPane({ viewMode: "table", listControls: { ...EMPTY_BOARD_LIST_CONTROLS, ...controls } });
+    renderPane({
+      viewMode: "table",
+      listControls: { ...EMPTY_BOARD_LIST_CONTROLS, ...controls },
+      fold: { state: { "spec:spec-done": true }, onToggle: () => {} },
+    });
   assert.deepEqual(
     tableRowIds(table({ sort: "recent" })),
     [

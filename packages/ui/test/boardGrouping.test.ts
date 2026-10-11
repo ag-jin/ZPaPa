@@ -317,7 +317,11 @@ test("可及名称（#55 S-3）：表格折叠按钮 = 展开/收起 + 特性名
     ariaLabelOf(render({ viewMode: "table" }), "plan:plan-zcode-ui"),
     "收起 ZCode 看板 UI",
   );
-  const collapsed = render({ viewMode: "table", collapsedFeatureIds: ["plan:plan-zcode-ui"] });
+  // #89/A4-3：折叠可见状态改走宿主折叠控制（`fold`）——用户显式折叠 = 覆盖态 false。
+  const collapsed = render({
+    viewMode: "table",
+    fold: { state: { "plan:plan-zcode-ui": false }, onToggle: () => {} },
+  });
   assert.equal(ariaLabelOf(collapsed, "plan:plan-zcode-ui"), "展开 ZCode 看板 UI");
   assert.equal(
     /aria-expanded="false"/.test(toggleTag(collapsed, "plan:plan-zcode-ui")),
@@ -328,7 +332,10 @@ test("可及名称（#55 S-3）：表格折叠按钮 = 展开/收起 + 特性名
   assert.equal(ariaLabelOf(english, "plan:plan-zcode-ui"), "Collapse ZCode 看板 UI");
   const englishCollapsed = renderState(
     readyState(),
-    { viewMode: "table", collapsedFeatureIds: ["plan:plan-zcode-ui"] },
+    {
+      viewMode: "table",
+      fold: { state: { "plan:plan-zcode-ui": false }, onToggle: () => {} },
+    },
     "en-US",
   );
   assert.equal(ariaLabelOf(englishCollapsed, "plan:plan-zcode-ui"), "Expand ZCode 看板 UI");

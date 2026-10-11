@@ -243,24 +243,6 @@ const COUNT_CHIP_CLASS =
   "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle";
 
 /**
- * 折叠指示符（#55 S-3；#87 起树形容器头/稿块使用；#168/A4-1b 起看板/列表容器头共用同一份
- * ——BoardListView 的内联件已收口，CR-S3 结案）：原生 `<details>/<summary>`
- * 已向辅助技术暴露展开态，缺的是**视觉**指示符——装饰性 chevron（`aria-hidden`，`group-open:`
- * 旋转），不写伪 `aria-expanded`、不夺由内容构成的可及名称。宿主 `<details>` 必须带 `group` 类。
- */
-export function BoardFoldIndicator() {
-  return (
-    <span
-      aria-hidden="true"
-      data-board-fold-indicator=""
-      className="shrink-0 text-ui-xs text-foreground-subtle transition-transform group-open:rotate-90"
-    >
-      ▸
-    </span>
-  );
-}
-
-/**
  * epic 登记行终态标注词条（§10.5；A4-1）：只认登记行枚举值（cancelled/archived）——
  * 不认识的取值不标注（不猜语义、不把未知值当进行态）。cancelled 复用 `board.status.cancelled`
  * （同词同义）；archived 只在 epic 壳层出现，单列键。

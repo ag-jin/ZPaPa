@@ -26,12 +26,18 @@ import {
 import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
 import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
+  boardContainerFoldExpanded,
+  boardEpicFoldId,
+  boardPhaseFoldId,
+  type BoardFoldControls,
+} from "./boardFoldState.js";
+import {
   BoardFeatureGroupHeaderContent,
   BoardNodeBadges,
   BoardNodeNumber,
   BoardStageBadge,
 } from "./boardNodeParts.js";
-import { formatBoardStageText } from "./boardPresentation.js";
+import { BoardKanbanHeader, BoardKanbanToggleHeader } from "./boardKanbanColumnHeader.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 import {
   buildBoardKanban,
@@ -167,11 +173,17 @@ function BoardKanbanPhaseSection({
   showStatusRule,
   onOpenCard,
   highlightCardId,
+  epicCode,
+  fold,
 }: {
   phase: BoardEpicItemContainer<BoardKanbanGroup>["phases"][number];
   showStatusRule: boolean;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 所属 epic 码（折叠 id = `phase:<码>#<期次序>`）。 */
+  epicCode: string;
+  /** 宿主持有的折叠控制（#89/A4-3；默认态按本列实际承载成员算）。 */
+  fold?: BoardFoldControls;
 }) {
   return (
     <BoardEpicLayerSection
@@ -183,6 +195,11 @@ function BoardKanbanPhaseSection({
       bodyClassName="flex flex-col gap-1 p-0.5"
       // 溢出防线锚点（#59 S-4）：w-56 列里层头行允许折行，不绑 CSS 类名判据。
       summaryProps={{ "data-board-overflow-wrap": "" }}
+      // 看板折叠口径（#89 评审 SP-1 成文）：层默认态按「本列实际承载成员」求值；用户覆盖按层 id
+      // 单键共享——跨列、跨视图一致（一处用户意图、处处一致；列级独立记忆如需另行立卡）。
+      foldId={boardPhaseFoldId(epicCode, phase.phase)}
+      defaultExpanded={boardContainerFoldExpanded(phase.items.map((group) => group.feature))}
+      {...(fold ? { fold } : {})}
     >
       {phase.items.map((group) => (
         <BoardKanbanGroupBlock
@@ -206,11 +223,14 @@ function BoardKanbanEpicSection({
   showStatusRule,
   onOpenCard,
   highlightCardId,
+  fold,
 }: {
   container: BoardEpicItemContainer<BoardKanbanGroup>;
   showStatusRule: boolean;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 宿主持有的折叠控制（#89/A4-3）。 */
+  fold?: BoardFoldControls;
 }) {
   return (
     <BoardEpicLayerSection
@@ -228,14 +248,19 @@ function BoardKanbanEpicSection({
       bodyClassName="flex flex-col gap-1 p-0.5"
       // 溢出防线锚点（#59 S-4）：窄列层头行允许折行（与组头行同款）。
       summaryProps={{ "data-board-overflow-wrap": "" }}
+      foldId={boardEpicFoldId(container.epic.code)}
+      defaultExpanded={boardContainerFoldExpanded(container.items.map((group) => group.feature))}
+      {...(fold ? { fold } : {})}
     >
       {container.phases.map((phase) => (
         <BoardKanbanPhaseSection
           key={phase.name}
           phase={phase}
           showStatusRule={showStatusRule}
+          epicCode={container.epic.code}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </BoardEpicLayerSection>
@@ -247,11 +272,13 @@ function BoardKanbanColumnBody({
   column,
   onOpenCard,
   highlightCardId,
+  fold,
 }: {
   board: BoardViewModel;
   column: BoardKanbanColumn;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  fold?: BoardFoldControls;
 }) {
   const { intl } = useZCodeIntl();
   const cancelled = column.stage === "已取消";
@@ -275,6 +302,7 @@ function BoardKanbanColumnBody({
           showStatusRule={cancelled}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
       {column.nodes.length === 0 && column.interview === null ? (
@@ -312,71 +340,13 @@ function BoardKanbanColumnBody({
   );
 }
 
-/**
- * 列头内容（列名 = 段位词条 + 计数）：普通列与可折叠列（已完成）共用同一份。
- * 列名带 `data-board-column-title` 锚点（评审 #33-S2：测试与定位不绑 CSS 类）。
- */
-function BoardKanbanHeaderContent({ column }: { column: BoardKanbanColumn }) {
-  const { intl } = useZCodeIntl();
-  const count = column.nodes.length + (column.interview?.nodes.length ?? 0);
-  return (
-    <>
-      <span
-        data-board-column-title=""
-        className="min-w-0 flex-1 truncate text-ui-sm font-semibold text-foreground"
-      >
-        {formatBoardStageText(column.stage, intl.formatMessage)}
-      </span>
-      <span
-        data-board-column-count={count}
-        className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle"
-      >
-        {count}
-      </span>
-    </>
-  );
-}
-
-function BoardKanbanHeader({ column }: { column: BoardKanbanColumn }) {
-  return (
-    <div className="flex items-center gap-1.5 px-1.5 py-1">
-      <BoardKanbanHeaderContent column={column} />
-    </div>
-  );
-}
-
-/**
- * 可折叠列的列头（评审 #35-S1 二轮）：状态化按钮，`aria-expanded` 表达展开态；
- * 缺省 handler 时按钮不折叠（视图仍可只读展示，与卡片打开态的退化口径一致）。
- */
-function BoardKanbanToggleHeader({
-  column,
-  expanded,
-  onToggle,
-}: {
-  column: BoardKanbanColumn;
-  expanded: boolean;
-  onToggle?: (expanded: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-board-column-toggle={column.stage}
-      aria-expanded={expanded}
-      onClick={() => onToggle?.(!expanded)}
-      className="flex items-center gap-1.5 px-1.5 py-1 text-left"
-    >
-      <BoardKanbanHeaderContent column={column} />
-    </button>
-  );
-}
-
 export function BoardKanbanView({
   board,
   onOpenCard,
   highlightCardId = null,
   completedExpanded = true,
   onCompletedExpandedChange,
+  fold,
 }: {
   board: BoardViewModel;
   /** 卡片点击（打开弹窗）；缺省时看板退化为只读展示。 */
@@ -386,6 +356,8 @@ export function BoardKanbanView({
   /** 「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开 = 归档前默认可见）。 */
   completedExpanded?: boolean;
   onCompletedExpandedChange?: (expanded: boolean) => void;
+  /** 折叠默认态的用户覆盖与回传（#89/A4-3：列内容器层；缺省 = 只读，按默认态）。 */
+  fold?: BoardFoldControls;
 }) {
   const { intl } = useZCodeIntl();
   const { columns, unplacedCount } = buildBoardKanban(board);
@@ -425,6 +397,7 @@ export function BoardKanbanView({
                   column={column}
                   {...(onOpenCard ? { onOpenCard } : {})}
                   highlightCardId={highlightCardId}
+                  {...(fold ? { fold } : {})}
                 />
               ) : null}
             </section>
@@ -442,6 +415,7 @@ export function BoardKanbanView({
                 column={column}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
+                {...(fold ? { fold } : {})}
               />
             </section>
           ),

@@ -10,7 +10,7 @@
  *      （反例夹具：缺口在 phase 2、文档序乱序、两位数期次——缺口优先/文档序/字典序任一误用即红）；
  *   2. 四视图同序：同一输入的期次文档序逐字相同（tree 为基准）；
  *   3. 溢出探针：新夹具的视图根 / 期次盒 / 期次组头行 / 期次层名，宽 1400 与窄 360 两档
- *      `scrollWidth <= clientWidth`（长标题压力）；
+ *      `scrollWidth <= clientWidth`（长标题压力）；#89/A4-3 起窄 360 档含 **tree**（OB-1 补测）；
  *   4. 点击路由：列表 KANB2 期次组头派发完整指针序列 → 折叠真发生；折叠后组序不变、KANB10 期次
  *      容器仍在 DOM；层不是卡（不落弹窗）；切视图往返后组序稳定。
  *
@@ -70,7 +70,7 @@ interface GroupOrderLayers {
 interface GroupOrderResult {
   ua: string;
   wide: Record<"tree" | "list" | "kanban" | "table", GroupOrderLayers>;
-  narrow: Record<"list" | "table" | "kanban", GroupOrderLayers>;
+  narrow: Record<"tree" | "list" | "table" | "kanban", GroupOrderLayers>;
   listRecheck: GroupOrderLayers;
   click: {
     openBefore: boolean;
@@ -132,8 +132,13 @@ async function main(): Promise<void> {
       `${mode} 与 tree 同序（真引擎文档序）`,
     );
   }
-  for (const mode of ["list", "table", "kanban"] as const) {
+  for (const mode of ["tree", "list", "table", "kanban"] as const) {
     assertGroupOrderLayers(result.narrow[mode], `${mode} 视图（窄 360）`);
+    assert.deepEqual(
+      result.narrow[mode].order,
+      EXPECTED_ORDER,
+      `${mode} 视图（窄 360）期次组序不变（窄档不重排）`,
+    );
   }
 
   // 点击路由（真指针序列）：KANB2 组头折叠真发生；层不是卡（不落弹窗）；折叠后组序与子容器不变。

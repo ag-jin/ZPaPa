@@ -5,8 +5,12 @@
  * 卡 #168 / A4-1b：三层容器接线——epic/期次 = **两级 colSpan 组行**（表格无法嵌套
  * `<details>`/`<tbody>`；对齐 B §4.3 L-4a「两级 colSpan 组行，列配置不动」），组行头走
  * `BoardFeatureGroupHeaderContent` 的 `layer` 变体（与 tree/列表/看板同一单点零件）；容器归属走
- * `assembleBoardEpicContainers`（同一归组单点）。容器层默认展开且暂不折叠（折叠默认态与记忆归
- * A4-3；此处不落无动作的折叠指示符，不造假 affordance）。无归属分组行照旧平铺在前（AD-8）。
+ * `assembleBoardEpicContainers`（同一归组单点）。无归属分组行照旧平铺在前（AD-8）。
+ *
+ * 卡 #89 / A4-3：折叠默认态与记忆落三处——①epic/期次组行成为真折叠控件（`BoardFoldToggleButton`
+ * 共享零件 + `aria-expanded`；折叠 = 子行条件渲染，不造假 affordance、不用 CSS 藏）；②稿层分组行
+ * 默认态改用 B2 单点判据（已完成/已取消折叠）；③三处默认态都走 AD-5 递归单点
+ * （`boardFoldState`：缺口展开 · 含活跃期次展开 · 全完成/全取消折叠），用户覆盖由宿主注入。
  *
  * 单一真源：消费契约 §13.5（默认列 + 列可配置）、§13.2 表格列（段位 / `lastRun` / `blockers`
  * 各格要求）、§3.3（最近执行四要素）、派发指令（行点击=打开弹窗；排序复用列表视图语义）。
@@ -17,8 +21,17 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
-import { boardLayerFeatureStub } from "./boardEpicLayerSections.js";
+import { assembleBoardEpicContainers } from "./boardEpicContainers.js";
+import {
+  boardContainerFoldExpanded,
+  boardEpicFoldId,
+  boardFeatureFoldExpanded,
+  boardPhaseFoldId,
+  resolveBoardFoldOpen,
+  type BoardFoldControls,
+} from "./boardFoldState.js";
+import { BoardTableEpicRow, BoardTablePhaseRow } from "./boardTableLayerRows.js";
+import { BoardFoldToggleButton } from "./boardFoldParts.js";
 import {
   BoardActiveRunBadge,
   BoardAssigneePipeline,
@@ -186,76 +199,13 @@ function BoardTableRow({
   );
 }
 
-/**
- * epic 层组行（#168 三层容器第一层；表格形态 = colSpan 全列的单行 `<tbody>`）：层名（登记码）+
- * 登记行标题 + 终态标注 + 稿数/期数；**层不是卡**：无卡片锚点、无弹窗落点（退化形态同 tree）。
- */
-function BoardTableEpicRow({
-  container,
-  columnCount,
-}: {
-  container: BoardEpicItemContainer<BoardListGroup>;
-  columnCount: number;
-}) {
-  return (
-    <tbody data-board-epic={container.epic.code} data-board-epic-block={container.epic.code}>
-      <tr
-        data-board-epic-summary={container.epic.code}
-        className="border-b border-border/40 bg-surface/50"
-      >
-        <td colSpan={columnCount} className="px-2 py-1.5">
-          {/* 溢出防线锚点（#59 S-4）：组行内容允许折行，不撑破表格盒。 */}
-          <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
-            <BoardFeatureGroupHeaderContent
-              feature={boardLayerFeatureStub(container.epic.title)}
-              layer={{
-                kind: "epic",
-                name: container.epic.code,
-                planCount: container.items.length,
-                phaseCount: container.phases.length,
-                status: container.epic.status,
-              }}
-              titleClassName="text-ui-sm font-medium text-foreground"
-            />
-          </div>
-        </td>
-      </tr>
-    </tbody>
-  );
-}
-
-/** 期次层组行（第二层；缩进一档，层名 = AD-3 合成名 + 该期实际承载稿数；层不是卡）。 */
-function BoardTablePhaseRow({
-  phase,
-  columnCount,
-}: {
-  phase: BoardEpicItemContainer<BoardListGroup>["phases"][number];
-  columnCount: number;
-}) {
-  return (
-    <tbody data-board-phase={phase.name} data-board-phase-block={phase.name}>
-      <tr data-board-phase-summary={phase.name} className="border-b border-border/40">
-        <td colSpan={columnCount} className="px-2 py-1.5 pl-5">
-          <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
-            <BoardFeatureGroupHeaderContent
-              feature={boardLayerFeatureStub("")}
-              layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
-              titleClassName="text-ui-xs font-medium text-foreground-subtle"
-            />
-          </div>
-        </td>
-      </tr>
-    </tbody>
-  );
-}
-
 function BoardTableGroup({
   group,
   columns,
   indentKey,
   now,
-  collapsed,
-  onToggleCollapsed,
+  expanded,
+  onToggle,
   onOpenCard,
   highlightCardId,
 }: {
@@ -263,12 +213,12 @@ function BoardTableGroup({
   columns: BoardTableColumnKey[];
   indentKey: BoardTableColumnKey | null;
   now: number;
-  collapsed: boolean;
-  onToggleCollapsed?: (featureId: string, collapsed: boolean) => void;
+  /** 展开态（默认态 + 用户覆盖已由调用方解析；#89/A4-3）。 */
+  expanded: boolean;
+  onToggle?: ((foldId: string, open: boolean) => void) | undefined;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
-  const { intl } = useZCodeIntl();
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     group.feature.id,
     highlightCardId,
@@ -278,20 +228,12 @@ function BoardTableGroup({
       <tr className="border-b border-border/40 bg-surface/50">
         <td colSpan={columns.length} className="px-2 py-1">
           <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              data-board-group-toggle={group.feature.id}
-              aria-expanded={!collapsed}
-              // 可及名称（#55 S-3）：符号 ▸/▾ 不是名称——动作 + 特性名走词条，状态由 aria-expanded 表达。
-              aria-label={intl.formatMessage(
-                { id: collapsed ? "board.group.expand" : "board.group.collapse" },
-                { name: group.feature.title },
-              )}
-              onClick={() => onToggleCollapsed?.(group.feature.id, !collapsed)}
-              className="shrink-0 cursor-pointer rounded-sm px-1 text-ui-xs text-foreground-subtle"
-            >
-              {collapsed ? "▸" : "▾"}
-            </button>
+            <BoardFoldToggleButton
+              foldId={group.feature.id}
+              name={group.feature.title}
+              expanded={expanded}
+              {...(onToggle ? { onToggle } : {})}
+            />
             <div
               data-board-card={group.feature.id}
               {...highlightProps}
@@ -310,9 +252,8 @@ function BoardTableGroup({
           </div>
         </td>
       </tr>
-      {collapsed
-        ? null
-        : group.nodes.map((node) => (
+      {expanded
+        ? group.nodes.map((node) => (
             <BoardTableRow
               key={node.id}
               node={node}
@@ -322,7 +263,8 @@ function BoardTableGroup({
               {...(onOpenCard ? { onOpenCard } : {})}
               highlightCardId={highlightCardId}
             />
-          ))}
+          ))
+        : null}
     </tbody>
   );
 }
@@ -337,9 +279,11 @@ export interface BoardTableViewProps {
   onColumnsChange?: (columns: BoardTableColumnVisibility) => void;
   /** 卡龄基准（毫秒）；缺省取渲染时刻。同一屏内所有行用同一个基准。 */
   now?: number;
-  /** 折叠的分组（宿主持有：跳转揭示要先展开；缺省全部展开）。 */
-  collapsedFeatureIds?: readonly string[];
-  onToggleFeatureCollapsed?: (featureId: string, collapsed: boolean) => void;
+  /**
+   * 折叠默认态的用户覆盖与回传（#89/A4-3；宿主持有并做会话记忆）：稿层分组行 + epic/期次层组行
+   * 共用一份。缺省 = 只读渲染，按默认态（AD-5 单点规则）。
+   */
+  fold?: BoardFoldControls;
   /** 行点击（打开弹窗）；缺省时表格退化为只读展示。 */
   onOpenCard?: (id: string) => void;
   /** 跳转落点（该行带高亮锚点）。 */
@@ -353,8 +297,7 @@ export function BoardTableView({
   columns = DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY,
   onColumnsChange,
   now,
-  collapsedFeatureIds = [],
-  onToggleFeatureCollapsed,
+  fold,
   onOpenCard,
   highlightCardId = null,
 }: BoardTableViewProps) {
@@ -365,7 +308,24 @@ export function BoardTableView({
   const visibleColumns = visibleBoardTableColumns(columns);
   const indentKey = visibleColumns[0] ?? null;
   const ageBase = now ?? Date.now();
-  const collapsed = new Set(collapsedFeatureIds);
+  // 折叠态解析单点（#89/A4-3）：默认态 = AD-5 规则（缺口/活跃展开、全终态折叠），用户覆盖优先。
+  const resolveOpen = (foldId: string, defaultExpanded: boolean): boolean =>
+    fold ? resolveBoardFoldOpen(fold.state, foldId, defaultExpanded) : defaultExpanded;
+  const toggle = fold?.onToggle;
+  /** 稿层分组行（既有机制）：默认态走 B2 判据单点。 */
+  const renderGroup = (group: BoardListGroup) => (
+    <BoardTableGroup
+      key={group.feature.id}
+      group={group}
+      columns={visibleColumns}
+      indentKey={indentKey}
+      now={ageBase}
+      expanded={resolveOpen(group.feature.id, boardFeatureFoldExpanded(group.feature))}
+      {...(toggle ? { onToggle: toggle } : {})}
+      {...(onOpenCard ? { onOpenCard } : {})}
+      highlightCardId={highlightCardId}
+    />
+  );
   return (
     <div data-board-view="table" className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border/50 px-3 py-2">
@@ -388,46 +348,45 @@ export function BoardTableView({
                 ))}
               </tr>
             </thead>
-            {containers.ungrouped.map((group) => (
-              <BoardTableGroup
-                key={group.feature.id}
-                group={group}
-                columns={visibleColumns}
-                indentKey={indentKey}
-                now={ageBase}
-                collapsed={collapsed.has(group.feature.id)}
-                {...(onToggleFeatureCollapsed
-                  ? { onToggleCollapsed: onToggleFeatureCollapsed }
-                  : {})}
-                {...(onOpenCard ? { onOpenCard } : {})}
-                highlightCardId={highlightCardId}
-              />
-            ))}
-            {containers.epics.map((container) => (
-              <Fragment key={container.epic.code}>
-                <BoardTableEpicRow container={container} columnCount={visibleColumns.length} />
-                {container.phases.map((phase) => (
-                  <Fragment key={phase.name}>
-                    <BoardTablePhaseRow phase={phase} columnCount={visibleColumns.length} />
-                    {phase.items.map((group) => (
-                      <BoardTableGroup
-                        key={group.feature.id}
-                        group={group}
-                        columns={visibleColumns}
-                        indentKey={indentKey}
-                        now={ageBase}
-                        collapsed={collapsed.has(group.feature.id)}
-                        {...(onToggleFeatureCollapsed
-                          ? { onToggleCollapsed: onToggleFeatureCollapsed }
-                          : {})}
-                        {...(onOpenCard ? { onOpenCard } : {})}
-                        highlightCardId={highlightCardId}
-                      />
-                    ))}
-                  </Fragment>
-                ))}
-              </Fragment>
-            ))}
+            {containers.ungrouped.map((group) => renderGroup(group))}
+            {containers.epics.map((container) => {
+              // 层折叠 = 子行条件渲染（表格无法嵌套 `<details>`）：折叠的 epic 不渲染期次行，
+              // 折叠的期次不渲染成员分组行。默认态按本层实际承载成员算（AD-5 单点规则）。
+              const epicOpen = resolveOpen(
+                boardEpicFoldId(container.epic.code),
+                boardContainerFoldExpanded(container.items.map((group) => group.feature)),
+              );
+              return (
+                <Fragment key={container.epic.code}>
+                  <BoardTableEpicRow
+                    container={container}
+                    columnCount={visibleColumns.length}
+                    expanded={epicOpen}
+                    {...(toggle ? { onToggle: toggle } : {})}
+                  />
+                  {epicOpen
+                    ? container.phases.map((phase) => {
+                        const phaseOpen = resolveOpen(
+                          boardPhaseFoldId(container.epic.code, phase.phase),
+                          boardContainerFoldExpanded(phase.items.map((group) => group.feature)),
+                        );
+                        return (
+                          <Fragment key={phase.name}>
+                            <BoardTablePhaseRow
+                              phase={phase}
+                              epicCode={container.epic.code}
+                              columnCount={visibleColumns.length}
+                              expanded={phaseOpen}
+                              {...(toggle ? { onToggle: toggle } : {})}
+                            />
+                            {phaseOpen ? phase.items.map((group) => renderGroup(group)) : null}
+                          </Fragment>
+                        );
+                      })
+                    : null}
+                </Fragment>
+              );
+            })}
           </table>
         )}
       </div>
