@@ -27,6 +27,8 @@ import {
   isWslBackend,
 } from "@zcode/server/remote/zcodeAgentWrapperDeploy.js";
 import {
+  REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME,
+  REMOTE_AGENT_BUNDLED_SKILL_PACK_REQUIRED_RELATIVE_PATHS,
   REMOTE_AGENT_OFFICIAL_PLUGIN_DIR_NAME,
   REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS,
   REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES,
@@ -40,6 +42,11 @@ const DEV_AGENT_BUNDLE_RELATIVE_PATH = "apps/zcode-cli/packages/cli/dist/zcode.c
 const DEV_AGENT_BUNDLE_ENV = "ZCODE_REMOTE_DEV_AGENT_BUNDLE";
 const REMOTE_DEV_AGENT_BUNDLE_NAME = REMOTE_AGENT_BUNDLE_NAME;
 const REMOTE_DEV_AGENT_VERSION_FILE_NAME = ".dev-version";
+// 内置技能包（不是插件）：远端 agent 在 zcode.cjs 旁原地读 packages/bundled-skills。
+// 与桌面 prepare-agent-node-bundle、scripts/prepare-prebuilds 的 stagedPath/topLevelPaths 同形；
+// 整目录拷贝 skills/，mattpocock 全库与内置 dynamic-workflows 一起走。
+const DEV_BUNDLED_SKILL_PACK_DIR_NAME = "bundled-skills";
+const DEV_BUNDLED_SKILL_PACK_TOP_LEVEL_PATHS = ["skills"] as const;
 
 interface DeployDevelopmentZCodeAgentRuntimeParams {
   runtimeVersion: string;
@@ -93,7 +100,8 @@ function resolveDevelopmentAgentBundle(): {
   return found ? { repoRoot: found.rootDir, localBundlePath: found.path } : null;
 }
 
-async function computeDevelopmentAgentAssetsSha256(params: {
+/** 导出给构建级断言：开发态部署指纹必须覆盖内置技能包内容（技能改动 → 远端重部署）。 */
+export async function computeDevelopmentAgentAssetsSha256(params: {
   localBundlePath: string;
   repoRoot: string;
 }): Promise<string> {
@@ -105,7 +113,35 @@ async function computeDevelopmentAgentAssetsSha256(params: {
     hash.update(`plugin:${packageName}\n`);
     await hashDevelopmentOfficialPluginPackage(hash, packageRoot, packageName);
   }
+  await hashDevelopmentBundledSkillPack(hash, params.repoRoot);
   return hash.digest("hex");
+}
+
+async function hashDevelopmentBundledSkillPack(
+  hash: ReturnType<typeof createHash>,
+  repoRoot: string,
+): Promise<void> {
+  const packRoot = join(repoRoot, "apps", "zcode-cli", "packages", DEV_BUNDLED_SKILL_PACK_DIR_NAME);
+  assertDevelopmentBundledSkillPackRequiredAssets(packRoot);
+  for (const topLevelPath of DEV_BUNDLED_SKILL_PACK_TOP_LEVEL_PATHS) {
+    const sourcePath = join(packRoot, topLevelPath);
+    if (existsSync(sourcePath)) {
+      await hashLocalPath(hash, sourcePath, `${DEV_BUNDLED_SKILL_PACK_DIR_NAME}/${topLevelPath}`);
+    }
+  }
+}
+
+function assertDevelopmentBundledSkillPackRequiredAssets(packRoot: string): void {
+  const packPrefix = `${REMOTE_AGENT_BUNDLED_SKILL_PACK_DIR_NAME}/`;
+  for (const requiredRelativePath of REMOTE_AGENT_BUNDLED_SKILL_PACK_REQUIRED_RELATIVE_PATHS) {
+    const localRelativePath = requiredRelativePath.slice(packPrefix.length);
+    const requiredPath = join(packRoot, ...localRelativePath.split("/"));
+    if (!existsSync(requiredPath)) {
+      throw new Error(
+        `[zcode-agent-deploy] missing bundled skill pack required asset: ${requiredPath}`,
+      );
+    }
+  }
 }
 
 async function hashDevelopmentOfficialPluginPackage(
@@ -244,7 +280,11 @@ async function shouldSkipDevelopmentZCodeAgentDeploy(params: {
   return true;
 }
 
-async function stageDevelopmentOfficialPluginPackages(params: {
+/**
+ * 把远端 packages/ 目录要用到的本地资产复制到 staging 目录：官方插件 + 内置技能包。
+ * 导出给构建级断言（运行真实 stage 代码，而不是另写一份拷贝逻辑）。
+ */
+export async function stageDevelopmentAgentPackages(params: {
   repoRoot: string;
   packagesDir: string;
 }): Promise<void> {
@@ -268,6 +308,27 @@ async function stageDevelopmentOfficialPluginPackages(params: {
       }
     }
   }
+
+  // 内置技能包与插件同域：远端 bootstrap 沿 packages/bundled-skills 找技能根。
+  // 与桌面/远端预构建的 stage 语义一致——整目录拷贝 skills/（含 mattpocock 全库快照记录）。
+  const packSourceRoot = join(
+    params.repoRoot,
+    "apps",
+    "zcode-cli",
+    "packages",
+    DEV_BUNDLED_SKILL_PACK_DIR_NAME,
+  );
+  assertDevelopmentBundledSkillPackRequiredAssets(packSourceRoot);
+  const packTargetRoot = join(params.packagesDir, DEV_BUNDLED_SKILL_PACK_DIR_NAME);
+  await mkdir(packTargetRoot, { recursive: true });
+  for (const topLevelPath of DEV_BUNDLED_SKILL_PACK_TOP_LEVEL_PATHS) {
+    const sourcePath = join(packSourceRoot, topLevelPath);
+    if (existsSync(sourcePath)) {
+      await cp(sourcePath, join(packTargetRoot, topLevelPath), {
+        recursive: true,
+      });
+    }
+  }
 }
 
 async function uploadDevelopmentOfficialPluginPackages(params: {
@@ -280,7 +341,7 @@ async function uploadDevelopmentOfficialPluginPackages(params: {
   const packagesDir = join(tempDir, REMOTE_AGENT_OFFICIAL_PLUGIN_DIR_NAME);
   const archivePath = join(tempDir, `${REMOTE_AGENT_OFFICIAL_PLUGIN_DIR_NAME}.tar.gz`);
   try {
-    await stageDevelopmentOfficialPluginPackages({
+    await stageDevelopmentAgentPackages({
       repoRoot: params.repoRoot,
       packagesDir,
     });
