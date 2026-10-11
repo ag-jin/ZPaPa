@@ -1220,6 +1220,14 @@ const enUS: Record<string, string> = {
   "board.dialog.close": "Close",
   "board.dialog.jump": "Jump",
   "board.dialog.detailsTitle": "Details",
+  // Card content section (#183): goal / deliverables / acceptance — data-ready form (missing
+  // fields render an explicit "not on the board" state; field names and truncation rules see
+  // evidence/T183/schema-proposal.txt; values are never fabricated).
+  "board.dialog.cardTextTitle": "Card content",
+  "board.dialog.cardText.goal": "Goal",
+  "board.dialog.cardText.deliverables": "Deliverables",
+  "board.dialog.cardText.acceptance": "Acceptance",
+  "board.dialog.cardText.absent": "Not on the board",
   "board.dialog.blockersTitle": "Blockers",
   "board.dialog.originTitle": "Source",
   "board.dialog.evidenceTitle": "Evidence",

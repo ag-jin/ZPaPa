@@ -175,6 +175,16 @@ export interface BoardTaskNode {
   nextAssignee: string | null;
   /** 计划稿章节（v2.2 / #46 B2 数据面）：仅计划任务可能非空（树形章节子分组用）。 */
   section: string | null;
+  /**
+   * 卡片正文（#183 前置核实分支 b 的**数据就绪读取**）：目标（这卡要干什么）。
+   * 字段名/截断口径见 evidence/T183/schema-proposal.txt（待契约 + schema 顺延落地）；
+   * 编译器尚未产出时恒 null → 弹窗按「未携带」显式空态渲染，不猜、不自算。
+   */
+  goal: string | null;
+  /** 卡片正文：交付面全量枚举（逐项）；字段缺省/坏形态 → 空数组（不猜）。 */
+  deliverables: string[];
+  /** 卡片正文：验收句（怎么算完成）。 */
+  acceptance: string | null;
   /** 结构深度（1 = 特性下第一层；呈现缩进用，不信 label 段数——计划任务 label 是计划内层级）。 */
   depth: number;
   worktree: string | null;
@@ -392,6 +402,10 @@ function mapTask(raw: unknown, parentId: string, index: number, depth: number): 
     currentAssignee: readText(node.currentAssignee),
     nextAssignee: readText(node.nextAssignee),
     section: readText(node.section),
+    // 卡片正文（#183 数据就绪读取；schema 提案字段，缺省即未携带——与 details 同款宽容读）。
+    goal: readText(node.goal),
+    deliverables: readTextList(node.deliverables),
+    acceptance: readText(node.acceptance),
     depth,
     worktree: readText(node.worktree),
     pr: readPr(node.pr),
