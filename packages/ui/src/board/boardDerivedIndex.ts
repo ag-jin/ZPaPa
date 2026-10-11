@@ -69,6 +69,30 @@ function readPositiveIntegers(value: unknown): number[] {
 }
 
 /**
+ * 前沿段映射（#219/D6 从 `readDerivedIndex` 抽出，单点复用）：`frontier[]` 条目只做最小形态收敛
+ * （缺 `no` 身份即整条丢弃）。旧面四段派生与 v3 薄索引面 `INDEX.json.frontier`（同形投影）共用本映射，
+ * 不各写一份。
+ */
+export function readDerivedFrontier(rawFrontier: unknown): BoardDerivedFrontierEntry[] {
+  if (!Array.isArray(rawFrontier)) return [];
+  return rawFrontier.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const no = readPositiveInteger(entry.no);
+    if (no === null) return [];
+    return [
+      {
+        rank: readPositiveInteger(entry.rank) ?? 0,
+        no,
+        title: readText(entry.title) ?? "",
+        stage: readText(entry.stage),
+        nextAssignee: readText(entry.nextAssignee),
+        resolvedDeps: readPositiveIntegers(entry.resolvedDeps),
+      },
+    ];
+  });
+}
+
+/**
  * 四段派生映射：**四段键全为数组**才视为齐备（编译器四段恒写出；缺任一 = 旧版产物/残缺板 →
  * `null`，消费面指名重编译，不部分渲染制造假象）。条目按板序原样透出，只做最小形态收敛。
  */
@@ -85,21 +109,7 @@ export function readDerivedIndex(parsed: Record<string, unknown>): BoardDerivedI
   ) {
     return null;
   }
-  const frontier = rawFrontier.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    const no = readPositiveInteger(entry.no);
-    if (no === null) return [];
-    return [
-      {
-        rank: readPositiveInteger(entry.rank) ?? 0,
-        no,
-        title: readText(entry.title) ?? "",
-        stage: readText(entry.stage),
-        nextAssignee: readText(entry.nextAssignee),
-        resolvedDeps: readPositiveIntegers(entry.resolvedDeps),
-      },
-    ];
-  });
+  const frontier = readDerivedFrontier(rawFrontier);
   const active = rawActive.flatMap((entry) => {
     if (!isRecord(entry)) return [];
     const no = readPositiveInteger(entry.no);

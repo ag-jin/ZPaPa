@@ -8,22 +8,32 @@
  */
 import type { FileTextSlice } from "@zcode/shared";
 import { joinFilePath } from "@/lib/path.js";
+import { BOARD_INDEX_KNOWN_VERSION, parseBoardIndex } from "./boardIndexViewModel.js";
 import { parseBoardJson, type BoardViewModel } from "./boardViewModel.js";
 
 /** 固定读取点（契约 §0/§7.3）：不做全局注册表、不看 `~/.zcode`。 */
 export const BOARD_JSON_RELATIVE_PATH = ".zcode/board/board.json";
 
 /**
+ * v3 薄索引读取点（#219/D6；契约 §15）：与 board.json 同域。首屏读取面从 board.json 切换到它
+ * ——恒小（百卡级 <50KB）绕开 256 KiB 读限；卡文/执行详情按 `cardFile` 指针读 `cards/<no>.md`。
+ */
+export const BOARD_INDEX_RELATIVE_PATH = ".zcode/board/INDEX.json";
+
+/**
  * 板产物闭集（契约 §2 A2 行；卡 #158）：board.json 之外、板链路自己的写入物
  * （编译器 `.zcode/board/board.md`、发号 `registry.json`、登记 `interviews.json`、落账 `runs.json`）。
  * 空态 A 二分的判据只做「这些路径在不在」的存在性检查——不读内容、不扫描目录树、
  * 不新增文件通道（§7.3）。`.zcode/board/evidence/` **不是**板产物（证据目录不证明板曾生成）。
+ *
+ * #219/D6（契约 §15.3）：薄索引 `INDEX.json` 随 v3 定稿加入闭集（它也是编译器产物）。
  */
 export const BOARD_ARTIFACT_RELATIVE_PATHS = [
   ".zcode/board/board.md",
   ".zcode/board/registry.json",
   ".zcode/board/interviews.json",
   ".zcode/board/runs.json",
+  ".zcode/board/INDEX.json",
 ] as const;
 
 /**
@@ -39,8 +49,19 @@ export const BOARD_ARTIFACT_RELATIVE_PATHS = [
  */
 export const BOARD_JSON_MAX_READ_BYTES = 256 * 1024;
 
+/**
+ * 薄索引读取上限（#219/D6）：INDEX 恒小（契约 §15.2 不变量：百卡级 <50KB），沿用文件服务同一硬上限
+ * ——不另开读取通道，也不给索引一个「更大的上限」例外（它本就不该逼近上限）。
+ */
+export const BOARD_INDEX_MAX_READ_BYTES = BOARD_JSON_MAX_READ_BYTES;
+
 export function resolveBoardJsonPath(workspacePath: string): string {
   return joinFilePath(workspacePath, BOARD_JSON_RELATIVE_PATH);
+}
+
+/** v3 薄索引路径（#219/D6；与 `resolveBoardJsonPath` 同一拼法）。 */
+export function resolveBoardIndexPath(workspacePath: string): string {
+  return joinFilePath(workspacePath, BOARD_INDEX_RELATIVE_PATH);
 }
 
 /** 同目录板产物路径（空态 A2 判据用；与 `resolveBoardJsonPath` 同一拼法）。 */
@@ -72,8 +93,8 @@ export type BoardLoadState =
   | { kind: "missing-damaged" }
   | { kind: "empty" }
   | { kind: "damaged" }
-  | { kind: "version-newer"; version: number }
-  | { kind: "version-older"; version: number }
+  | { kind: "version-newer"; version: number; supportedVersion?: number }
+  | { kind: "version-older"; version: number; supportedVersion?: number }
   | { kind: "too-large" }
   | { kind: "unavailable" }
   | { kind: "ready"; board: BoardViewModel };
@@ -105,6 +126,7 @@ export async function loadBoardDocument(params: {
   /** 连接门禁（缺省视为就绪）：未就绪 → 不发 RPC，呈现「暂时不可读」。 */
   isRpcReady?: BoardRpcReadyGate;
 }): Promise<BoardLoadState> {
+  const indexPath = resolveBoardIndexPath(params.workspacePath);
   const boardPath = resolveBoardJsonPath(params.workspacePath);
   const artifactPaths = resolveBoardArtifactPaths(params.workspacePath);
   const isRpcReady = params.isRpcReady ?? ALWAYS_RPC_READY;
@@ -113,20 +135,74 @@ export async function loadBoardDocument(params: {
     return { kind: "unavailable" };
   }
 
+  let indexExists = false;
   let exists = false;
   let hasBoardArtifacts = false;
   try {
-    // 板本体与同目录板产物一次批量查（存在性检查自带并发上限；契约 §2 A2 判据只用存在性）。
+    // 薄索引、板本体与同目录板产物一次批量查（存在性检查自带并发上限；契约 §2 A2 判据只用存在性）。
     const existence = await params.fileService.checkFilesExist({
-      paths: [boardPath, ...artifactPaths],
+      paths: [indexPath, boardPath, ...artifactPaths],
     });
     const existsByPath = new Map(existence.map((entry) => [entry.path, entry.exists === true]));
+    indexExists = existsByPath.get(indexPath) === true;
     exists = existsByPath.get(boardPath) === true;
     hasBoardArtifacts = artifactPaths.some((path) => existsByPath.get(path) === true);
   } catch {
     // 存在性检查本身失败（如 host 断连）：读不到就按损坏态（C3）呈现，不假装没有板。
     return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
   }
+
+  // 读取面优先级（#219/D6；契约 §15.3）：v3 薄索引在场即读 INDEX（恒小、绕开读限），
+  // 卡文/执行详情按 `cardFile` 分片按需读；INDEX 缺席才回落旧面 board.json（双写期兼容）。
+  if (indexExists) {
+    let content: string;
+    try {
+      const file = await params.fileService.readTextFile({
+        path: indexPath,
+        offset: 0,
+        length: BOARD_INDEX_MAX_READ_BYTES,
+      });
+      if (file.truncated) {
+        // 索引本应恒小；被截断说明它不是合法索引（异常形态）——按「文件过大」独立态呈现，不部分渲染。
+        return { kind: "too-large" };
+      }
+      content = file.content;
+    } catch (error) {
+      // 检查通过后索引消失（竞态）：本体可能仍在——回落到旧面 board.json；旧面也读不到再按缺态。
+      if (isBoardFileMissingError(error) && !exists) return { kind: "missing-damaged" };
+      if (isBoardFileMissingError(error)) {
+        // 回落旧面：复用下面 board.json 分支（indexExists 已无意义，置 false 走旧面）。
+        indexExists = false;
+      } else {
+        return isRpcReady() ? { kind: "damaged" } : { kind: "unavailable" };
+      }
+      content = "";
+    }
+    if (indexExists) {
+      const outcome = parseBoardIndex(content);
+      switch (outcome.kind) {
+        case "ready":
+          return { kind: "ready", board: outcome.board };
+        case "empty":
+          return { kind: "empty" };
+        case "version-newer":
+          return {
+            kind: "version-newer",
+            version: outcome.version,
+            supportedVersion: BOARD_INDEX_KNOWN_VERSION,
+          };
+        case "version-older":
+          return {
+            kind: "version-older",
+            version: outcome.version,
+            supportedVersion: BOARD_INDEX_KNOWN_VERSION,
+          };
+        case "damaged":
+          return { kind: "damaged" };
+      }
+    }
+  }
+
   if (!exists) {
     // 空态 A 二分（契约 §2 A1/A2；卡 #158；E6-J6-1）：没有 board.json 时，同目录板产物在场
     // 说明板曾在/已在用——本体被删、未同步或未生成，指引重编译（A2）；否则是无板痕迹的新生（A1）。

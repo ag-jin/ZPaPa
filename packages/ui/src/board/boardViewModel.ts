@@ -17,7 +17,7 @@
  * 段缺失/形态坏 → `dispatchIndex: null`，消费面指名重编译，不自行派生兜底）。
  */
 import { readDerivedIndex } from "./boardDerivedIndex.js";
-import type { BoardDerivedIndex } from "./boardDerivedIndex.js";
+import type { BoardDerivedFrontierEntry, BoardDerivedIndex } from "./boardDerivedIndex.js";
 import { readDispatchIndex } from "./boardDispatchIndex.js";
 import type { BoardDispatchIndex } from "./boardDispatchIndex.js";
 import {
@@ -118,6 +118,20 @@ export interface BoardProgress {
 }
 
 /**
+ * 首屏五槽计数（#219/D6；v3 薄索引面 `INDEX.json.screen` 的只读投影）：
+ * 需处理 / 阻塞 / 运行 / 待收口 / 最近活动——与 `boardGuideViewModel` 的五槽键一一对应。
+ * 只有 INDEX 路径产出；旧面（board.json）为 `null`（五槽计数在旧面走四段派生 `derivedIndex`）。
+ * 单点口径见消费契约 §15.2（`screen.attention` = attentionSummary 合计等），应用侧只读，不自算。
+ */
+export interface BoardScreenCounts {
+  attention: number;
+  blocked: number;
+  running: number;
+  review: number;
+  recent: number;
+}
+
+/**
  * 阻拦项（契约 §6「阻拦」区块；形态真源 `board.golden.json`）：
  * `external` → summary + 证据；`dependency` → 对方稳定号 `blockedBy`（可跳转）。
  * 两者都可能缺字段（golden 真实形态：dependency 可以没有 `blockedBy`）——缺就留 null，不编造。
@@ -190,6 +204,12 @@ export interface BoardTaskNode {
   deliverables: string[];
   /** 卡片正文：验收句（怎么算完成）。 */
   acceptance: string | null;
+  /**
+   * 卡详情分片指针（#219/D6；v3 薄索引面）：`<任务目录相对路径>/cards/<no>.md`（项目根相对、posix），
+   * `null` = 过渡期内联形态（卡文仍在旧面 board.json 内联）。判据与编译器 `isShardedCard` 同构。
+   * 旧面（board.json）读取时恒 `null`——分片指针只由 INDEX.json 携带。
+   */
+  cardFile: string | null;
   /** 结构深度（1 = 特性下第一层；呈现缩进用，不信 label 段数——计划任务 label 是计划内层级）。 */
   depth: number;
   worktree: string | null;
@@ -306,6 +326,16 @@ export interface BoardViewModel {
    * 编排视图据 `null` 走「未就绪 + 重编译」形态，不自行派生兜底（与 `derivedIndex` 同纪律）。
    */
   dispatchIndex: BoardDispatchIndex | null;
+  /**
+   * 首屏五槽计数（#219/D6；v3 薄索引面）：只有 INDEX 路径非 `null`（旧面 board.json 为 `null`）。
+   * 指引面在 `derivedIndex` 缺失时以它兜五槽计数（契约 §15.2 单点口径），不按卡字段自算。
+   */
+  screen: BoardScreenCounts | null;
+  /**
+   * 可执行前沿段（#219/D6；v3 薄索引面 `INDEX.json.frontier`）：只有 INDEX 路径非 `null`。
+   * 与 `derivedIndex.frontier` 同形（`BoardDerivedFrontierEntry`）；旧面走 `derivedIndex`。
+   */
+  frontier: BoardDerivedFrontierEntry[] | null;
   attentionSummary: BoardAttentionSummary;
   diagnostics: BoardDiagnostic[];
 }
@@ -433,6 +463,8 @@ function mapTask(raw: unknown, parentId: string, index: number, depth: number): 
     goal: readText(node.goal),
     deliverables: readTextList(node.deliverables),
     acceptance: readText(node.acceptance),
+    // 卡详情分片指针（#219/D6）：旧面 board.json 不携带 → 恒 null；INDEX 路径由 boardIndexViewModel 回填。
+    cardFile: readText(node.cardFile),
     depth,
     worktree: readText(node.worktree),
     pr: readPr(node.pr),
@@ -539,6 +571,9 @@ export function parseBoardJson(raw: string): BoardParseOutcome {
       features: parsed.features.map((feature, index) => mapFeature(feature, index)),
       derivedIndex: readDerivedIndex(parsed),
       dispatchIndex: readDispatchIndex(parsed),
+      // 旧面（board.json）不携带薄索引面：screen/frontier 恒 null（分片指针见 mapTask 的 cardFile）。
+      screen: null,
+      frontier: null,
       attentionSummary: readAttentionSummary(parsed.attentionSummary),
       diagnostics: readDiagnostics(parsed.diagnostics),
     },

@@ -183,6 +183,16 @@ function BoardGuidePlanBlock({
   onDispatchCard?: (card: BoardCardDispatchCard) => void;
 }) {
   const { intl } = useZCodeIntl();
+  // 「在途」计数（#219/D6）：薄索引面（`activeCount === null`，四段派生 active[] 不在索引字段面）
+  // 不渲染该计数——不拿未知当 0（旧面路径照常给数）。
+  const activeCountPart =
+    plan.activeCount !== null
+      ? formatBoardCountText(
+          plan.activeCount,
+          BOARD_COUNT_MESSAGE_IDS.guidePlanActive,
+          intl.formatMessage,
+        )
+      : null;
   const summaryParts = [
     plan.stage,
     plan.phaseName,
@@ -193,11 +203,7 @@ function BoardGuidePlanBlock({
       BOARD_COUNT_MESSAGE_IDS.guidePlanFrontier,
       intl.formatMessage,
     ),
-    formatBoardCountText(
-      plan.activeCount,
-      BOARD_COUNT_MESSAGE_IDS.guidePlanActive,
-      intl.formatMessage,
-    ),
+    activeCountPart,
   ].filter((part): part is string => part !== null && part !== "");
   return (
     <article

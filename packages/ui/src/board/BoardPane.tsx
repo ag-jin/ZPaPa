@@ -30,7 +30,11 @@ import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js"
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { BoardPaneView } from "./BoardPaneView.js";
 import { dispatchBoardCardReference, type BoardCardDispatchCard } from "./boardCardDispatch.js";
-import { boardCardDialogKeyIntent, type BoardJumpTarget } from "./boardDialogViewModel.js";
+import {
+  boardCardDialogKeyIntent,
+  resolveBoardDialogNode,
+  type BoardJumpTarget,
+} from "./boardDialogViewModel.js";
 import {
   boardCardSelector,
   boardEpicOpenSelector,
@@ -65,6 +69,12 @@ import {
 import { boardJumpRequiresListView } from "./boardDialogViewModel.js";
 import { boardGuideSlotDrilldownTarget, type BoardGuideSlotKey } from "./boardGuideViewModel.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "./loadBoardDocument.js";
+import {
+  applyBoardCardDetails,
+  BoardCardDetailCache,
+  findBoardTaskByNo,
+  loadBoardCardDetail,
+} from "./boardCardDetail.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
 /** 跳转高亮时限（毫秒）：滚动落点看得到即可，不长期改写卡片配色。 */
@@ -93,6 +103,11 @@ export function BoardPane({
   const [state, setState] = useState<BoardPaneLoadState>({ kind: "loading" });
   // 上次成功读取的快照（#158；E7 §7.2）：断连时保留版面用；唯一写点见 refresh()。
   const lastReadyBoardRef = useRef<BoardViewModel | null>(null);
+  // 卡详情按需读缓存（#219/D6）：每面板一份，代际 = 工作目录 + INDEX.updatedAt；
+  // 板重编译（updatedAt 变）→ 换代整表失效；同会话内同卡不重复读。
+  const cardDetailCacheRef = useRef(new BoardCardDetailCache());
+  // 缓存内容变化（换代清空 / 新卡读到）时触发重渲染的修订号——缓存是 ref（渲染期读它），需显式驱动。
+  const [detailRevision, setDetailRevision] = useState(0);
   // 视图模式：初值取会话记忆（切走再回来仍是上次看的视图），切换即记。
   const [viewMode, setViewMode] = useState<BoardViewMode>(() => readBoardViewMode());
   // 列表过滤/排序：过滤条件本次打开期间的临时状态（列表与表格共用；切视图不丢；关面板即回到默认）；
@@ -209,6 +224,13 @@ export function BoardPane({
     // 成功分支；面板按 workspace 重建（宿主 key），快照不跨工作区。断连时 BoardPaneView
     // 用快照 + 状态行呈现，不清空版面；确定性判定（损坏/版本/空态）不吃快照。
     if (next.kind === "ready") lastReadyBoardRef.current = next.board;
+    // 详情缓存换代（#219/D6）：代际 = 工作目录 + 板上 updatedAt；换代即清空（板重编译后旧详情失效）。
+    if (next.kind === "ready") {
+      const generation = `${workspacePath}\u0000${next.board.updatedAt ?? ""}`;
+      if (cardDetailCacheRef.current.begin(generation)) {
+        setDetailRevision((revision) => revision + 1);
+      }
+    }
     setState(next);
   }, [fileService, workspacePath, isRpcReady]);
 
@@ -250,6 +272,36 @@ export function BoardPane({
       void refresh();
     }
   }, [rpcReady, refresh]);
+
+  // 卡详情按需读（#219/D6；契约 §15.3）：打开弹窗（或展开队列行）时，按索引携带的 `cardFile`
+  // 指针读分片，扁平卡（cardFile=null）回落旧面 board.json 内联。仅薄索引面（screen 非 null）需要——
+  // 旧面 board.json 的详情本就内联，不重复读。缓存命中即不读（同会话同卡一次）。
+  useEffect(() => {
+    if (openCardId === null || state.kind !== "ready") return;
+    const board = state.board;
+    if (board.screen === null) return; // 旧面（board.json）：详情已内联
+    const node = resolveBoardDialogNode(board, openCardId);
+    if (!node || node.kind !== "task" || node.no === null) return;
+    const no = node.no;
+    if (cardDetailCacheRef.current.get(no)) return; // 缓存命中（同代）
+    const task = findBoardTaskByNo(board, no);
+    if (!task) return;
+    let cancelled = false;
+    void (async () => {
+      const result = await loadBoardCardDetail({
+        fileService,
+        workspacePath,
+        task: { no, cardFile: task.cardFile },
+        isRpcReady,
+      });
+      if (cancelled) return;
+      cardDetailCacheRef.current.set(no, result);
+      setDetailRevision((revision) => revision + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openCardId, state, detailRevision, fileService, workspacePath, isRpcReady]);
 
   // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走对应 handle（含焦点恢复）。
   // 两弹窗互斥（开一个关另一个）——Esc 只关当前那一个（卡片优先判存在性，实际不会同时开）。
@@ -365,9 +417,19 @@ export function BoardPane({
     [workspaceIdentity, workspacePath],
   );
 
+  // 详情补丁合并（#219/D6）：把已按需读到的卡详情合回视图模型，下游（弹窗/列表/表格）无感知。
+  // 仅薄索引面（screen 非 null）需要；旧面详情已内联。`detailRevision` 驱动合并后的重渲染。
+  const enrichedState: BoardPaneLoadState =
+    state.kind === "ready" && state.board.screen !== null
+      ? {
+          kind: "ready",
+          board: applyBoardCardDetails(state.board, cardDetailCacheRef.current.patches()),
+        }
+      : state;
+
   return (
     <BoardPaneView
-      state={state}
+      state={enrichedState}
       viewMode={viewMode}
       onViewModeChange={handleViewModeChange}
       listControls={listControls}

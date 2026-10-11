@@ -442,7 +442,7 @@ export function BoardPaneView({
   // 文件过大态词条带读取上限（唯一真源 BOARD_JSON_MAX_READ_BYTES，避免文案与常量漂移）。
   const messageValues: Record<string, number> | undefined =
     state.kind === "version-newer" || state.kind === "version-older"
-      ? { version: state.version, supported: BOARD_KNOWN_VERSION }
+      ? { version: state.version, supported: state.supportedVersion ?? BOARD_KNOWN_VERSION }
       : state.kind === "too-large"
         ? { limitKiB: BOARD_JSON_MAX_READ_BYTES / 1024 }
         : undefined;
