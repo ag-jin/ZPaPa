@@ -53,12 +53,14 @@ export type BoardStatusValue = (typeof BOARD_STATUS_VALUES)[number];
 
 /** 状态取值守卫（契约 §3.2 四态 + v2.1 `cancelled`）：UI 取值只在闭集内，不认识即不筛。 */
 export function isBoardStatusValue(value: unknown): value is BoardStatusValue {
-  return typeof value === "string" && (BOARD_STATUS_VALUES as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`（原 `(… as readonly string[]).includes`）——闭集数组逐项比较，
+  // 类型收窄由 `value is` 谓词显式承担。
+  return typeof value === "string" && BOARD_STATUS_VALUES.some((candidate) => candidate === value);
 }
 
 /** 缺口码取值守卫（契约 §4 四个固定词汇）：不认识即不筛，不猜语义。 */
 export function isBoardAttentionCode(value: unknown): value is BoardAttentionCode {
-  return typeof value === "string" && (BOARD_ATTENTION_CODES as readonly string[]).includes(value);
+  return typeof value === "string" && BOARD_ATTENTION_CODES.some((code) => code === value);
 }
 
 /** 应用侧认识的 board.json 主版本（schema v2，T1 冻结）。 */
