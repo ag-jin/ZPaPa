@@ -139,7 +139,9 @@ export function withBoardFoldExpanded(
  * 跳转揭示判据（消费契约 §13.7 B2「跳转落点在折叠块内时宿主先展开再滚动」）：给一个卡片 id，
  * 回其**祖先折叠 id 集**（稿 → epic → 期次，按收集序）。表格视图的分组行是条件渲染，折叠组
  * 的落点根本不在 DOM 里——揭示必须先展开三层（DOM 侧 `details.open` 兜底只够树/列表/看板）。
- * 无归属稿只回稿层（不造不存在的容器）；板上没有的 id 回空集（不猜）。
+ * 无归属稿只回稿层（不造不存在的容器）；板上没有的 id 回空集（不猜）。揭示只置这些祖先为展开、
+ * **不重置**用户其他手动折叠记忆（`withBoardFoldExpanded` 只动传入的键）；下钻（#90/A4-4）与
+ * 跳转共用同一写路径，祖先展开照落记忆表、重挂读回仍展开——粘性语义与 #89 B2 会话记忆同族。
  */
 export function boardFoldIdsOfCard(board: BoardViewModel, cardId: string): string[] {
   const feature = board.features.find((candidate) => featureContainsCard(candidate, cardId));
