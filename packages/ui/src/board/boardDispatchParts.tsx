@@ -16,12 +16,6 @@ import { BOARD_COUNT_CHIP_CLASS } from "./boardNodeParts.js";
 /** 三区键（**闭集**：顺序即呈现顺序——可派清单 → 阻塞归因 → 并发组）。 */
 export type BoardDispatchZoneKey = "dispatchable" | "blocked" | "group";
 
-export const BOARD_DISPATCH_ZONE_KEYS: readonly BoardDispatchZoneKey[] = [
-  "dispatchable",
-  "blocked",
-  "group",
-];
-
 /** 三区标题词条（Record 穷尽：闭集加值在编译期报缺）。 */
 export const BOARD_DISPATCH_ZONE_MESSAGE_IDS: Record<BoardDispatchZoneKey, string> = {
   dispatchable: "board.dispatch.zone.dispatchable",

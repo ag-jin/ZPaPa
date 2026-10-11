@@ -54,8 +54,10 @@ test("视图切换：写什么读回什么（会话内保持），无记忆回�
     assert.equal(readBoardViewMode(), "list");
     writeBoardViewMode("table");
     assert.equal(readBoardViewMode(), "table", "表格视图也记（卡 #34）");
+    writeBoardViewMode("dispatch");
+    assert.equal(readBoardViewMode(), "dispatch", "编排面也记（#185）");
     writeBoardViewMode("guide");
-    assert.equal(readBoardViewMode(), "guide", "切回指引面也记（五态闭集都进记忆）");
+    assert.equal(readBoardViewMode(), "guide", "切回指引面也记（六态闭集都进记忆）");
   } finally {
     restore();
   }
@@ -104,7 +106,7 @@ test("默认视图单点（源码守卫；C3-5/#140）：常量只定义一处�
     const source = readFileSync(new URL(file, srcDir), "utf8");
     assert.doesNotMatch(
       source,
-      /\bviewMode\s*[:=]\s*"(guide|tree|kanban|list|table)"/,
+      /\bviewMode\s*[:=]\s*"(guide|dispatch|tree|kanban|list|table)"/,
       `${file}: 视图缺省不得写视图名字面量（引用 DEFAULT_BOARD_VIEW_MODE）`,
     );
     for (const match of source.matchAll(/export const DEFAULT_BOARD_VIEW_MODE/g)) {
