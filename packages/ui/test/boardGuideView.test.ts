@@ -823,6 +823,34 @@ test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队
   assert.ok(/>2 deps resolved</.test(pluralRow), `count≥2 走复数键（{count} 插值）：${pluralRow}`);
 });
 
+test("窄面截断防线（#141 承 #138 P3-2 登记项）：超长角色名全文进原生 title，可见文本可收缩截断", () => {
+  // 期望值的独立真源：派发卡文「超长角色名（nextAssignee）处置指引 span 在 <360px 溢出风险——
+  // 本卡截断防线一并落（truncate+title）」；全文 = 词条插值后的同一字符串（不另拼第二份）。
+  const longRole = "exhaustive-reverse-auditor";
+  const mutated = structuredClone(GUIDE_BOARD);
+  const entries = mutated.frontier as Array<Record<string, unknown>>;
+  const entry221 = entries.find((entry) => entry.no === 221);
+  assert.ok(entry221, "夹具里应有 frontier #221");
+  entry221.nextAssignee = longRole;
+  const row221 = queueRowMarkup(
+    planMarkup(render(readyStateOf(mutated)), "plan:plan-guide-b"),
+    "task:221",
+  );
+  assert.ok(
+    row221.includes(`title="下一步：${longRole}"`),
+    `超长角色名全文进原生 title（信息不丢）：${row221}`,
+  );
+  const nextSpan =
+    /data-board-guide-queue-next="exhaustive-reverse-auditor"[^>]*class="([^"]*)"/.exec(row221);
+  assert.ok(nextSpan, "处置指引元素带 class");
+  assert.ok(nextSpan[1]?.includes("truncate"), `可见文本走省略号截断（truncate）：${nextSpan[1]}`);
+  assert.ok(
+    nextSpan[1]?.includes("min-w-0"),
+    `可收缩到零基准（min-w-0：收不出空间时截断，而不是把行撑溢出）：${nextSpan[1]}`,
+  );
+  assert.ok(nextSpan[1]?.includes("text-ui-base"), `字号底线不破（≥14px 档）：${nextSpan[1]}`);
+});
+
 test("队列空态（#138）：计划无可执行卡时给明确文案（不留空壳）；有前沿的计划不落空态", () => {
   const markup = render(readyState());
   const planD = planMarkup(markup, "plan:plan-guide-d");

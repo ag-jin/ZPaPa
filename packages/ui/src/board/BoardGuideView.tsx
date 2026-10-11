@@ -25,6 +25,18 @@
  * `text-ui-sm`；每行信息点 ≤4 组、留白 `p-3`/`gap-2` 起——「一扫可读」优先于「信息全」。
  * 计划头行 = 编号/名 + 计数胶囊 + 缺口徽章；进度胶囊「计数 · 百分比」收敛为一个信息组 + 微条同排。
  * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
+ *
+ * 手机窄面降级形态（#141 / C3-6；E7 §8.2 响应式与触摸约束）——**降级不降可读**：
+ * - 查询容器 = 本面根（`@container`，inline-size）：降级按**面板可用宽**判定（手机 Web 视口 =
+ *   面板宽；桌面窄侧栏同款语义），不按 viewport（侧栏宽度与视口无关，媒体查询会判错）。
+ * - 窄档 breaker = 容器 < 24rem（Tailwind `@max-sm`）；320/375 两档下行内形态：
+ *   ① 计划头计数簇（`data-board-guide-plan-meta`）与队列行二次信息组（`data-board-guide-queue-meta`）
+ *      整组 `basis-full` 折到次行——首行留给「名字/卡号 + 标题」一扫可读，二次信息不消失只换行；
+ *   ② 队列行窄面限高 ≥44px（`min-h-11`）——行即 L2 下钻落点，触摸命中区不足易误触；
+ *   ③ 槽条基准收窄（`boardGuideParts` 的 `@max-sm:basis-20`）保持两行内。
+ * - 字号底线不破：降级只动基准/边距/折行，不动 `text-ui-*` 档（标签 ≥12px、主文字 ≥14px）。
+ * - 信息不丢：超长接手位角色名（`nextAssignee`）走 `truncate + 原生 title` 防线（#138 P3-2 收口），
+ *   宽面（≥24rem）保持单行同排与既有紧凑密度（降级形态不落到宽面）。
  */
 import { useState } from "react";
 import { cn } from "@/components/lib/utils.js";
@@ -77,42 +89,62 @@ function BoardGuideQueueRowLine({
   onOpenCard?: (id: string) => void;
 }) {
   const { intl } = useZCodeIntl();
+  // 处置指引文案（同一字符串喂可见文本与原生 title：截断后全文仍可得，不另拼第二份）。
+  const nextAssigneeText =
+    row.nextAssignee === null
+      ? null
+      : intl.formatMessage({ id: "board.guide.queue.next" }, { role: row.nextAssignee });
   return (
     <div
       data-board-card={row.id}
       data-board-guide-queue-row=""
       {...boardCardOpenProps({ id: row.id, ...(onOpenCard ? { onOpenCard } : {}) })}
-      className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-surface-hover"
+      // 触摸命中区（卡 #141/C3-6；E7 §8.2「触摸目标至少 44px」）：窄容器（`@max-sm` <24rem）
+      // 下限高 44px（`min-h-11`）——行点击后即 L2 下钻（既有弹窗路由），命中区不足时容易误触。
+      // `flex-wrap` 常驻：宽面全部单行（无换行机会），窄面由二次信息组的 `basis-full` 触发折行。
+      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-1.5 py-1 @max-sm:min-h-11 hover:bg-surface-hover"
     >
       <BoardNodeNumber no={row.no} label={row.label} planCode={planCode} short />
       {/* 标题截断防线：完整标题进原生 title（信息不丢）。 */}
       <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
         {row.title}
       </span>
-      {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片；
-          计数词条走单点 `formatBoardCountText`（单/复数两键，count===1 走单数——#138 S1 回修）。 */}
-      {row.resolvedDeps.length > 0 ? (
-        <span
-          data-board-guide-queue-deps={row.resolvedDeps.length}
-          title={row.resolvedDeps.map((no) => `#${no}`).join(", ")}
-          className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-base")}
-        >
-          {formatBoardCountText(
-            row.resolvedDeps.length,
-            BOARD_COUNT_MESSAGE_IDS.guideQueueDeps,
-            intl.formatMessage,
-          )}
-        </span>
-      ) : null}
-      {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。 */}
-      {row.nextAssignee !== null ? (
-        <span
-          data-board-guide-queue-next={row.nextAssignee}
-          className="shrink-0 text-ui-base text-foreground-subtle"
-        >
-          {intl.formatMessage({ id: "board.guide.queue.next" }, { role: row.nextAssignee })}
-        </span>
-      ) : null}
+      {/* 二次信息组（依赖计数片 + 处置指引；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
+          `basis-full` 让位折到次行——窄面首行留给「卡号 + 标题」做一扫可读，二次信息不消失
+          只是换行（对比：宽面同排，零信息取舍）。组内 `min-w-0` 让处置指引能收缩截断。 */}
+      <span
+        data-board-guide-queue-meta=""
+        className="flex min-w-0 items-center gap-2 @max-sm:basis-full"
+      >
+        {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片；
+            计数词条走单点 `formatBoardCountText`（单/复数两键，count===1 走单数——#138 S1 回修）。 */}
+        {row.resolvedDeps.length > 0 ? (
+          <span
+            data-board-guide-queue-deps={row.resolvedDeps.length}
+            title={row.resolvedDeps.map((no) => `#${no}`).join(", ")}
+            className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-base")}
+          >
+            {formatBoardCountText(
+              row.resolvedDeps.length,
+              BOARD_COUNT_MESSAGE_IDS.guideQueueDeps,
+              intl.formatMessage,
+            )}
+          </span>
+        ) : null}
+        {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。
+            截断防线（#141 收口 #138 P3-2/随行登记项）：超长角色名（如 exhaustive-reverse-auditor）
+            在 <360px 档会超宽——`min-w-0 flex-1 truncate` 收缩出省略号，全文进原生 title（不溢出、
+            不丢信息）；字号不降档（≥text-ui-base），`flex-1` 供窄面折行后独占次行余宽。 */}
+        {row.nextAssignee !== null ? (
+          <span
+            data-board-guide-queue-next={row.nextAssignee}
+            title={nextAssigneeText ?? undefined}
+            className="min-w-0 flex-1 truncate text-ui-base text-foreground-subtle"
+          >
+            {nextAssigneeText}
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -138,7 +170,7 @@ function BoardGuidePlanBlock({
       data-board-guide-plan={plan.featureId}
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-border/50 bg-surface p-3"
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         {/* 活跃计划置顶的视觉辨识（四绿 P2 回炉）：复用共享四态色点（`BoardStatusDot`，契约 §3.2）
             ——仅 `status=active` 的计划带头行点，非活跃不带（不给每块加装饰，也不新造色点样式）；
             点仅作视觉引导（`aria-hidden`），「执行中」文字仍在摘要行段位里可读。 */}
@@ -155,10 +187,18 @@ function BoardGuidePlanBlock({
         >
           {plan.title}
         </span>
-        {/* 期次/功能级摘要行的计数胶囊（#139）：与 A4 组头 `[N 张卡]` 同源同值（AD-6 名+计数）。 */}
-        <BoardGuidePlanCardCountCapsule count={plan.total} />
-        {/* rollup 缺口徽章（#139/AD-6）：只在有缺口时落章——0 = 日常零噪声（与 A4 层头同判据）。 */}
-        {plan.gapCount > 0 ? <BoardGuidePlanRollupGapBadge gapCount={plan.gapCount} /> : null}
+        {/* 计数簇（卡数胶囊 + rollup 缺口徽章；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
+            `basis-full` 让位折到次行——计划名独占首行（宽度不够时真换行，不是算术推演；
+            宽面同排不变）。计数信息不消失，只是换行。 */}
+        <span
+          data-board-guide-plan-meta=""
+          className="flex min-w-0 items-center gap-2 @max-sm:basis-full"
+        >
+          {/* 期次/功能级摘要行的计数胶囊（#139）：与 A4 组头 `[N 张卡]` 同源同值（AD-6 名+计数）。 */}
+          <BoardGuidePlanCardCountCapsule count={plan.total} />
+          {/* rollup 缺口徽章（#139/AD-6）：只在有缺口时落章——0 = 日常零噪声（与 A4 层头同判据）。 */}
+          {plan.gapCount > 0 ? <BoardGuidePlanRollupGapBadge gapCount={plan.gapCount} /> : null}
+        </span>
       </div>
       <BoardGuidePlanProgressCapsule
         completed={plan.completed}
@@ -224,7 +264,10 @@ export function BoardGuideView({ board, onOpenCard, onDrillToSlot, now }: BoardG
       data-board-view="guide"
       data-board-guide=""
       data-board-guide-index-state={summary.indexAvailable ? "ready" : "missing"}
-      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pt-3 pb-4"
+      // 窄面容条件上下文（卡 #141/C3-6）：本面即查询容器（`@container`，inline-size）——
+      // 降级形态按**面板可用宽**判定（手机 Web 视口 = 面板宽；桌面窄侧栏同款语义），
+      // 不用 viewport 媒体查询（侧栏宽度与视口无关，媒体查询会判错）。
+      className="@container flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pt-3 pb-4"
     >
       <div data-board-guide-slots="" className="flex min-w-0 flex-wrap gap-2">
         {summary.slots.map((slot) => (

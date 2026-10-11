@@ -12,6 +12,8 @@
  * - 槽标签与辅助行 `text-ui-sm`（12px，不小于既有正文文档的辅助字号档下限），主数 `text-ui-base`；
  * - 槽卡自带 `p-3` 内边距与 `gap-2` 间距，进度胶囊「计数 · 百分比」收敛为一个信息组（#139）；
  * - 计划卡数胶囊/缺口徽章走 12px 档（胶囊标签下限），主计数 14px。
+ * - 手机窄面降级（#141/C3-6）：槽卡在窄容器（`@max-sm` <24rem）下收基准/内边距（`basis-20`/`px-2`）
+ *   保持两行内，**不缩字号**（降级不降可读；查询容器由 `BoardGuideView` 根提供）。
  */
 import { cn } from "@/components/lib/utils.js";
 import { Progress } from "@/components/ui/progress.js";
@@ -94,7 +96,11 @@ export function BoardGuideSlotTile({
         // 换行基准 `basis-24`（F1-137，P3-4 收口）：窄面 360px 可用宽 ~321px——96×3+8×2=304 ≤ 321
         // → 3+2 两行（`basis-36` 时 144×2+8=296 只能两列 → 2+2+1 三行，把窄首屏主体区下推）。
         // 宽面 5 槽基准和远小于可用宽，仍单行、`flex-1` 均分增长，排版与既有基线一致。
+        // 极窄档降级（卡 #141/C3-6，`@max-sm` 容器 <24rem）：基准收窄到 `basis-20`、内边距收到
+        // `px-2`——320px 面板下 80×3+8×2=256 ≤ 可用宽 → 仍是 3+2 两行（不塌成三行把主体区下推）；
+        // 主信息（标签/计数）仍完整放得下（实测无截断），只收边距不缩字号（降级不降可读）。
         "flex min-w-0 flex-1 basis-24 flex-col gap-0.5 rounded-lg border border-border/50 bg-surface px-3 py-2",
+        "@max-sm:basis-20 @max-sm:px-2",
         onActivate && "cursor-pointer hover:bg-surface-hover",
       )}
     >
