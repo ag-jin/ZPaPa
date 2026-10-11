@@ -1140,6 +1140,10 @@ const enUS: Record<string, string> = {
   "board.filter.kind": "Type",
   "board.filter.sort": "Sort",
   "board.filter.all": "All",
+  // Sort memory vs transient filters (card #175 ②): short visible copy + full semantics in title.
+  "board.filter.sortHint": "Sort kept for this session · filters are temporary",
+  "board.filter.sortHintTitle":
+    "Sort order is remembered for this session (kept across view switches and pane reopen); filters are temporary and reset when the pane closes",
   // Node type vocabulary (filter control; view node kind = feature node / task card).
   "board.kind.feature": "Feature",
   "board.kind.task": "Card",
