@@ -259,10 +259,12 @@ test("board.json 读取抛非 ENOENT 错误 → 空态 C（damaged，读不到�
   assert.equal(state.kind, "damaged");
 });
 
-test("读取失败只带 code=ENOENT（文案不含 ENOENT）→ missing：code 分支独立成断言", async () => {
+test("读取失败只带 code=ENOENT（文案不含 ENOENT）→ missing-damaged：code 分支独立成断言", async () => {
   // #60/T-3 回归守卫：`isBoardFileMissingError` 的 **code 分支**（`in` 收窄读取，替换原裸 `as`）
   // 单独咬一次——既有 ENOENT 夹具的消息里也含 ENOENT 文案，只走文案兜底分支即可通过，
   // code 分支写错（如把 `error.code` 读成别的路径）不会红。
+  // 期望值口径对齐 #158（空态 A2；卡 #171 合后回归暴露）：读取 ENOENT = 板文件缺失 → missing-damaged，
+  // 单一 `missing` kind 已随空态 A 二分废除。code 分支失效时错误落入 damaged，本用例仍红（M3 咬合力保持）。
   const fileService = {
     checkFilesExist: async () => [{ path: BOARD_PATH, exists: true }],
     readTextFile: async () => {
@@ -272,7 +274,11 @@ test("读取失败只带 code=ENOENT（文案不含 ENOENT）→ missing：code 
     },
   };
   const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
-  assert.equal(state.kind, "missing", "code=ENOENT 即缺失（与 PreviewPane 判定同一约定）");
+  assert.equal(
+    state.kind,
+    "missing-damaged",
+    "code=ENOENT 即板文件缺失（#158 空态 A2 口径；与 PreviewPane 判定同一约定）",
+  );
 });
 
 test("golden 形态 board.json → ready，映射特性树与卡片字段", async () => {
