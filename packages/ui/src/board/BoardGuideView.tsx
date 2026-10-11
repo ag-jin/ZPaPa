@@ -43,8 +43,10 @@
  *   宽面（≥24rem）保持单行同排与既有紧凑密度（降级形态不落到宽面）。
  */
 import { useState } from "react";
+import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
+import type { BoardCardDispatchCard } from "./boardCardDispatch.js";
 import {
   BoardGuidePlanCardCountCapsule,
   BoardGuidePlanProgressCapsule,
@@ -72,6 +74,11 @@ export interface BoardGuideViewProps {
   /** 卡片打开路由（既有弹窗宿主状态；缺省 = 只读渲染，行不可点）。 */
   onOpenCard?: (id: string) => void;
   /**
+   * 派发此卡（卡 #186，次入口）：队列行尾的行内快捷——只回传卡片身份意图，注入写路径在宿主
+   * （`boardCardDispatch`）。缺省 = 只读渲染，不渲染按钮。
+   */
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
+  /**
    * 槽下钻派发（卡 #137/C3-2；缺省 = 只读渲染，槽不可点）：宿主按
    * `boardGuideSlotDrilldownTarget` 落到既有视图/过滤——指引面不自己切视图，只回传意图
    * （与卡行 `onOpenCard` 同款单向派发；禁第二路由）。
@@ -86,10 +93,12 @@ function BoardGuideQueueRowLine({
   row,
   planCode,
   onOpenCard,
+  onDispatchCard,
 }: {
   row: BoardGuideQueueRow;
   planCode: string | null;
   onOpenCard?: (id: string) => void;
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
 }) {
   const { intl } = useZCodeIntl();
   // 处置指引文案（同一字符串喂可见文本与原生 title：截断后全文仍可得，不另拼第二份）。
@@ -98,44 +107,66 @@ function BoardGuideQueueRowLine({
       ? null
       : intl.formatMessage({ id: "board.guide.queue.next" }, { role: row.nextAssignee });
   return (
+    // 行容器只做排版；**可点区**（`data-board-card` + role=button）与**行内快捷**（派发按钮）
+    // 是并列兄弟：交互控件不嵌套进 role=button（嵌套会被 AT 当成 presentational，按钮失声），
+    // 点按钮也不冒泡触发行打开（不需要 stopPropagation 兜底）。
     <div
-      data-board-card={row.id}
       data-board-guide-queue-row=""
-      {...boardCardOpenProps({ id: row.id, ...(onOpenCard ? { onOpenCard } : {}) })}
-      // 触摸命中区（卡 #141/C3-6；E7 §8.2「触摸目标至少 44px」）：窄容器（`@max-sm` <24rem）
-      // 下限高 44px（`min-h-11`）——行点击后即 L2 下钻（既有弹窗路由），命中区不足时容易误触。
-      // `flex-wrap` 常驻：宽面全部单行（无换行机会），窄面由二次信息组的 `basis-full` 触发折行。
-      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-1.5 py-1 @max-sm:min-h-11 hover:bg-surface-hover"
+      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-1.5 py-1 hover:bg-surface-hover"
     >
-      <BoardNodeNumber no={row.no} label={row.label} planCode={planCode} short />
-      {/* 标题截断防线：完整标题进原生 title（信息不丢）。 */}
-      <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
-        {row.title}
-      </span>
-      {/* 二次信息组（处置指引；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
-          `basis-full` 让位折到次行——窄面首行留给「卡号 + 标题」做一扫可读，二次信息不消失
-          只是换行（对比：宽面同排，零信息取舍）。组内 `min-w-0` 让处置指引能收缩截断。 */}
-      <span
-        data-board-guide-queue-meta=""
-        className="flex min-w-0 items-center gap-2 @max-sm:basis-full"
+      <div
+        data-board-card={row.id}
+        {...boardCardOpenProps({ id: row.id, ...(onOpenCard ? { onOpenCard } : {}) })}
+        // 触摸命中区（卡 #141/C3-6；E7 §8.2「触摸目标至少 44px」）：窄容器（`@max-sm` <24rem）
+        // 下限高 44px（`min-h-11`）——行点击后即 L2 下钻（既有弹窗路由），命中区不足时容易误触。
+        // `flex-wrap` 常驻：宽面全部单行（无换行机会），窄面由二次信息组的 `basis-full` 触发折行。
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 @max-sm:min-h-11"
       >
-        {/* #181：原「依赖已解除 N」计数片整处移除——frontier 内卡的依赖必然已全部解除
-            （未解除的被 blocked 段收走、不在队列），徽章恒为冗余（itw-20261011-04e0
-            「已经没有依赖的就不要显示了」）；`row.resolvedDeps` 投影字段保留，只是不再渲染。 */}
-        {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。
+        <BoardNodeNumber no={row.no} label={row.label} planCode={planCode} short />
+        {/* 标题截断防线：完整标题进原生 title（信息不丢）。 */}
+        <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
+          {row.title}
+        </span>
+        {/* 二次信息组（处置指引；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
+            `basis-full` 让位折到次行——窄面首行留给「卡号 + 标题」做一扫可读，二次信息不消失
+            只是换行（对比：宽面同排，零信息取舍）。组内 `min-w-0` 让处置指引能收缩截断。 */}
+        <span
+          data-board-guide-queue-meta=""
+          className="flex min-w-0 items-center gap-2 @max-sm:basis-full"
+        >
+          {/* #181：原「依赖已解除 N」计数片整处移除——frontier 内卡的依赖必然已全部解除
+              （未解除的被 blocked 段收走、不在队列），徽章恒为冗余（itw-20261011-04e0
+              「已经没有依赖的就不要显示了」）；`row.resolvedDeps` 投影字段保留，只是不再渲染。 */}
+          {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。
             截断防线（#141 收口 #138 P3-2/随行登记项）：超长角色名（如 exhaustive-reverse-auditor）
             在 <360px 档会超宽——`min-w-0 flex-1 truncate` 收缩出省略号，全文进原生 title（不溢出、
             不丢信息）；字号不降档（≥text-ui-base），`flex-1` 供窄面折行后独占次行余宽。 */}
-        {row.nextAssignee !== null ? (
-          <span
-            data-board-guide-queue-next={row.nextAssignee}
-            title={nextAssigneeText ?? undefined}
-            className="min-w-0 flex-1 truncate text-ui-base text-foreground-subtle"
-          >
-            {nextAssigneeText}
-          </span>
-        ) : null}
-      </span>
+          {row.nextAssignee !== null ? (
+            <span
+              data-board-guide-queue-next={row.nextAssignee}
+              title={nextAssigneeText ?? undefined}
+              className="min-w-0 flex-1 truncate text-ui-base text-foreground-subtle"
+            >
+              {nextAssigneeText}
+            </span>
+          ) : null}
+        </span>
+      </div>
+      {/* 行内快捷（卡 #186 次入口）：队列 = 可执行前沿，点这里即把该卡引用注入会话草稿
+          （用户可编辑后发送）。`items-center` 与可点区同高；窄面按钮不缩到 24px——
+          `@max-sm:min-h-11` 给足触摸命中区（与可点区同口径）。 */}
+      {onDispatchCard ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          className="shrink-0 @max-sm:min-h-11"
+          data-board-guide-queue-dispatch="button"
+          onClick={() => onDispatchCard({ no: row.no, title: row.title })}
+        >
+          {intl.formatMessage({ id: "board.dispatch.card" })}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -145,9 +176,11 @@ function BoardGuideQueueRowLine({
 function BoardGuidePlanBlock({
   plan,
   onOpenCard,
+  onDispatchCard,
 }: {
   plan: BoardGuidePlan;
   onOpenCard?: (id: string) => void;
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
 }) {
   const { intl } = useZCodeIntl();
   const summaryParts = [
@@ -226,6 +259,7 @@ function BoardGuidePlanBlock({
               row={row}
               planCode={plan.planCode}
               {...(onOpenCard ? { onOpenCard } : {})}
+              {...(onDispatchCard ? { onDispatchCard } : {})}
             />
           ))}
         </div>
@@ -239,7 +273,13 @@ function BoardGuidePlanBlock({
   );
 }
 
-export function BoardGuideView({ board, onOpenCard, onDrillToSlot, now }: BoardGuideViewProps) {
+export function BoardGuideView({
+  board,
+  onOpenCard,
+  onDispatchCard,
+  onDrillToSlot,
+  now,
+}: BoardGuideViewProps) {
   const { intl } = useZCodeIntl();
   const summary = buildBoardGuideSummary(board);
   // 零槽点击的空态指引（卡 #137/C3-2；本地呈现态）：点零槽**不跳转**（不落死跳转），
@@ -326,6 +366,7 @@ export function BoardGuideView({ board, onOpenCard, onDrillToSlot, now }: BoardG
             key={plan.featureId}
             plan={plan}
             {...(onOpenCard ? { onOpenCard } : {})}
+            {...(onDispatchCard ? { onDispatchCard } : {})}
           />
         ))}
       </section>

@@ -1154,6 +1154,9 @@ const zhCN: Record<string, string> = {
   // 卡片弹窗（卡 #34，契约 §6）：区块标题、关闭、跳转与来源行标签。
   "board.dialog.close": "关闭",
   "board.dialog.jump": "跳转",
+  // 派发此卡（卡 #186，用户裁定：纯卡引用直发）——弹窗状态行行尾主入口 + 指引面队列行尾次入口共用。
+  "board.dispatch.card": "派发此卡",
+  "board.dispatch.unavailable": "该卡未领稳定号，无法在会话中引用",
   "board.dialog.detailsTitle": "细节",
   // 卡片内容区块（#183）：目标/交付面/验收——数据就绪形态（字段缺省 → 显式「未携带」，
   // 字段名与截断口径见 evidence/T183/schema-proposal.txt；空值不硬造）。

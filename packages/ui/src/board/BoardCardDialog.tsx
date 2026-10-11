@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardDialogShell, DialogSection } from "./BoardDialogShell.js";
+import { buildBoardCardReferenceText, type BoardCardDispatchCard } from "./boardCardDispatch.js";
 import {
   buildBoardCardDialog,
   BOARD_ORIGIN_MESSAGE_IDS,
@@ -45,6 +46,11 @@ export interface BoardCardDialogProps {
   onClose?: () => void;
   /** 依赖跳转（滚动到目标卡并高亮，由宿主执行）。 */
   onJumpToCard?: (target: BoardDialogJumpTarget) => void;
+  /**
+   * 派发此卡（卡 #186）：只回传卡片身份意图，注入会话草稿的写路径在宿主（`boardCardDispatch`）。
+   * 缺省 = 不渲染入口（只读渲染不上可点态）。
+   */
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
   /** 相对时间的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -235,7 +241,14 @@ function BoardCardTextSection({ dialog }: { dialog: BoardCardDialogModel }) {
   );
 }
 
-export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: BoardCardDialogProps) {
+export function BoardCardDialog({
+  board,
+  node,
+  onClose,
+  onJumpToCard,
+  onDispatchCard,
+  now,
+}: BoardCardDialogProps) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
   const ageBase = now ?? Date.now();
@@ -247,6 +260,9 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
     formatTime: relativeTime,
   });
   const close = onClose ?? (() => {});
+  // 派发入口（卡 #186）：载荷可行性只看稳定号（`null` = 未领号 → 禁发，不猜号）。
+  const dispatchCard: BoardCardDispatchCard = { no: dialog.no, title: dialog.title };
+  const dispatchReference = buildBoardCardReferenceText(dispatchCard);
   return (
     <BoardDialogShell
       ariaLabel={dialog.title}
@@ -303,6 +319,25 @@ export function BoardCardDialog({ board, node, onClose, onJumpToCard, now }: Boa
           showStatusDot={false}
           mergeUnmergedBlocked
         />
+        {/* 派发此卡（卡 #186）：落在状态行**行尾**——不是标题行的关闭位（不与 × 竞争点击），
+            也不是阻碍区的跳转位；入口在首屏内常量可见（弹窗长内容会在 max-h 处裁切，
+            底部动作行会变得不可达）。语言：用户裁定「纯卡引用直发」——落进输入框的是可直接
+            发送的卡引用（`#<稳定号> <标题>`），不带建议指令模板。 */}
+        {onDispatchCard ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="secondary"
+            className="ml-auto"
+            data-board-dialog-dispatch="button"
+            disabled={dispatchReference === null}
+            aria-disabled={dispatchReference === null}
+            title={dispatchReference ?? t("board.dispatch.unavailable")}
+            onClick={() => onDispatchCard(dispatchCard)}
+          >
+            {t("board.dispatch.card")}
+          </Button>
+        ) : null}
       </div>
       {dialog.showBlockers ? (
         // 阻碍（B5 突出）：warning 描边 + 浅底，排在最前（标题之后第一个内容区块）。

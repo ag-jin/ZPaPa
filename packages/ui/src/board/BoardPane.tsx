@@ -20,10 +20,16 @@
  *   高亮状态带 nonce（同目标重跳也重新起算）；高亮有时限，到点自动清除。
  * - 连接门禁（评审 #32-P3）：RPC 未就绪（`connectionKind === "remote-waiting"`）不发读取，
  *   呈现「暂时不可读」而不是「损坏」；连接恢复时自动重读。
+ * - 派发此卡（卡 #186；用户原话「直接引用卡片让会话去安排」）：弹窗内主入口与指引面队列行尾
+ *   次入口都只把**卡引用**写进会话输入框草稿（`boardCardDispatch` + 既有文本注入通道的 store
+ *   动作），本面板照旧**不写任何文件**、不自动执行、不绕编排者裁决；目标会话由消费侧
+ *   `selectComposerTextInsertRequest` 单点判定（当前焦点会话，无会话时落草稿输入框）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { BoardPaneView } from "./BoardPaneView.js";
+import { dispatchBoardCardReference, type BoardCardDispatchCard } from "./boardCardDispatch.js";
 import { boardCardDialogKeyIntent, type BoardJumpTarget } from "./boardDialogViewModel.js";
 import {
   boardCardSelector,
@@ -342,6 +348,23 @@ export function BoardPane({
     };
   }, [highlight]);
 
+  // 派发此卡（卡 #186）：卡片弹窗内主入口 + 指引面队列行尾次入口共用这一条写路径。
+  // 只把**卡引用**写进会话输入框草稿（唯一写路径 = 既有文本注入通道的 store 动作，
+  // append 追加保留用户已输入内容），不写任何板文件、不自动执行、不绕编排者裁决；
+  // 目标会话由消费侧 `selectComposerTextInsertRequest` 的 focused 单点判定（当前焦点会话，
+  // 无会话时落草稿输入框），宿主不猜 session id。
+  const handleDispatchCard = useCallback(
+    (card: BoardCardDispatchCard) => {
+      dispatchBoardCardReference({
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        card,
+        insert: useZCodeSessionStore.getState().requestComposerTextInsert,
+      });
+    },
+    [workspaceIdentity, workspacePath],
+  );
+
   return (
     <BoardPaneView
       state={state}
@@ -355,6 +378,7 @@ export function BoardPane({
       onOpenCard={handleOpenCard}
       onCloseCard={handleCloseCard}
       onJumpToCard={handleJumpToCard}
+      onDispatchCard={handleDispatchCard}
       onDrillToSlot={handleDrillToSlot}
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}

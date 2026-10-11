@@ -19,6 +19,8 @@ import type {
   ZCodeSessionStoreState,
   ConfigOptionsStatus,
   ComposerMentionPrefill,
+  ComposerTextInsertRequestMode,
+  ComposerTextInsertScope,
   GroupedDraftTaskState,
   GroupedDraftTaskPlacement,
   ModelSwitchStage,
@@ -423,7 +425,8 @@ export function createWorkspaceSlice(set: SetFn) {
       text: string,
       workspaceIdentity?: string,
       mention?: ComposerMentionPrefill,
-      mode?: "replace" | "prepend-if-missing",
+      mode?: ComposerTextInsertRequestMode,
+      scope?: ComposerTextInsertScope,
     ) => {
       let nextRequestId = 0;
       set((state) =>
@@ -441,6 +444,7 @@ export function createWorkspaceSlice(set: SetFn) {
                 text,
                 ...(mention ? { mention } : {}),
                 ...(mode ? { mode } : {}),
+                ...(scope ? { scope } : {}),
               },
             };
           },

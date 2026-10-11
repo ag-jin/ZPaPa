@@ -21,6 +21,7 @@ import {
   BoardSnapshotNotice,
 } from "./boardPlaceholderParts.js";
 import { BoardCardDialog } from "./BoardCardDialog.js";
+import type { BoardCardDispatchCard } from "./boardCardDispatch.js";
 import { BoardDispatchView } from "./BoardDispatchView.js";
 import { BoardEpicDialog } from "./BoardEpicDialog.js";
 import { BoardGuideView } from "./BoardGuideView.js";
@@ -68,6 +69,11 @@ export interface BoardPaneViewProps {
   onCloseCard?: () => void;
   /** 依赖跳转与提示条段落跳转（滚动 + 高亮由宿主执行）。 */
   onJumpToCard?: (target: BoardJumpTarget) => void;
+  /**
+   * 派发此卡（卡 #186）：卡片弹窗内主入口 + 指引面队列行尾次入口共用同一条派发意图
+   * （宿主 `boardCardDispatch` 写会话草稿；缺省 = 只读渲染，不渲染入口）。
+   */
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
   /** 指引面五槽下钻派发（卡 #137/C3-2；宿主落到既有视图/过滤；缺省 = 槽只读不可点）。 */
   onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
@@ -149,6 +155,7 @@ function BoardReadyView({
   onOpenCard,
   onCloseCard,
   onJumpToCard,
+  onDispatchCard,
   onDrillToSlot,
   highlightCardId,
   kanbanCompletedExpanded,
@@ -173,6 +180,7 @@ function BoardReadyView({
   onOpenCard?: (id: string) => void;
   onCloseCard?: () => void;
   onJumpToCard?: (target: BoardJumpTarget) => void;
+  onDispatchCard?: (card: BoardCardDispatchCard) => void;
   onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   highlightCardId?: string | null;
   kanbanCompletedExpanded?: boolean;
@@ -251,6 +259,7 @@ function BoardReadyView({
             board={board}
             now={now}
             {...(onOpenCard ? { onOpenCard } : {})}
+            {...(onDispatchCard ? { onDispatchCard } : {})}
             {...(onDrillToSlot ? { onDrillToSlot } : {})}
           />
         ) : viewMode === "dispatch" ? (
@@ -347,6 +356,7 @@ function BoardReadyView({
           now={now}
           {...(onCloseCard ? { onClose: onCloseCard } : {})}
           {...(onJumpToCard ? { onJumpToCard } : {})}
+          {...(onDispatchCard ? { onDispatchCard } : {})}
         />
       ) : null}
     </div>
@@ -369,6 +379,7 @@ export function BoardPaneView({
   onOpenCard,
   onCloseCard,
   onJumpToCard,
+  onDispatchCard,
   onDrillToSlot,
   highlightCardId = null,
   kanbanCompletedExpanded,
@@ -406,6 +417,7 @@ export function BoardPaneView({
         {...(onOpenCard ? { onOpenCard } : {})}
         {...(onCloseCard ? { onCloseCard } : {})}
         {...(onJumpToCard ? { onJumpToCard } : {})}
+        {...(onDispatchCard ? { onDispatchCard } : {})}
         {...(onDrillToSlot ? { onDrillToSlot } : {})}
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
