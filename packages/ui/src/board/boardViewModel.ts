@@ -9,7 +9,21 @@
  * 版本门禁（卡 #70 兼容判定）：不认识的主版本不猜测渲染——板版本高于已知 → version-newer
  * （提示升级应用/技能）；低于已知 → version-older（提示重编译）；同主版本宽容读
  * （minor 差异向前读、未知字段忽略——映射只认契约字段；契约 §14）。
+ *
+ * #136/C3-1 拆文件不拆语义：低层读取原语归 `boardJsonRead`、四段派生映射归 `boardDerivedIndex`
+ * （文件逼近仓库 `max-lines` 上限）；本模块的公开面（含再导出的四段类型）与拆前一致。
  */
+import { readDerivedIndex } from "./boardDerivedIndex.js";
+import type { BoardDerivedIndex } from "./boardDerivedIndex.js";
+import {
+  isRecord,
+  readActiveRun,
+  readLastRun,
+  readPositiveCount,
+  readPositiveInteger,
+  readText,
+  readTextList,
+} from "./boardJsonRead.js";
 
 /** 四缺口码（契约 §4，逐字；其文案在 boardPresentation/词条表内）。 */
 export const BOARD_ATTENTION_CODES = [
@@ -225,6 +239,20 @@ export interface BoardDiagnostic {
   message: string;
 }
 
+/* ---------------- 四段派生索引（C2-1/#133 编译器产物；C3-1/#136 UI 消费面） ---------------- */
+
+/**
+ * 四段派生索引的映射与类型单点在 `boardDerivedIndex`（口径成文见该模块头注释）；
+ * 这里原样再导出类型，既有调用方（`boardGuideViewModel` / 测试）导入面零变化。
+ */
+export type {
+  BoardDerivedActiveEntry,
+  BoardDerivedBlockedEntry,
+  BoardDerivedFrontierEntry,
+  BoardDerivedIndex,
+  BoardDerivedRecentEntry,
+} from "./boardDerivedIndex.js";
+
 export interface BoardViewModel {
   version: number;
   projectName: string;
@@ -236,6 +264,11 @@ export interface BoardViewModel {
    */
   epics: BoardEpicNode[];
   features: BoardFeatureNode[];
+  /**
+   * 四段派生索引（C3-1/#136）。`null` = 板上四段缺失（旧版编译器产物/未重编译）——
+   * 消费面**不得自算兜底**（契约 §13.6），只许指名重编译。
+   */
+  derivedIndex: BoardDerivedIndex | null;
   attentionSummary: BoardAttentionSummary;
   diagnostics: BoardDiagnostic[];
 }
@@ -247,55 +280,10 @@ export type BoardParseOutcome =
   | { kind: "version-newer"; version: number }
   | { kind: "version-older"; version: number };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readText(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function readPositiveInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
-}
-
-/**
- * 计数读取（`attentionSummary` 四项与 `progress` 两项共用）：只认**正整数**，其余一律 0。
- * 名字与行为对齐（评审 S1）：不是「非负」——`0` 与缺省同为 0；小数/非数不 trunc
- * （2.5 若被截成 2，界面上会多出一个「看起来像真的」的计数）。
- */
-function readPositiveCount(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
-}
-
 /** 未知缺口码不进徽章（契约只给四个固定词汇的文案；未知码不猜）。 */
 function readAttentionCodes(value: unknown): BoardAttentionCode[] {
   if (!Array.isArray(value)) return [];
   return BOARD_ATTENTION_CODES.filter((code) => value.includes(code));
-}
-
-function readLastRun(value: unknown): BoardLastRun | null {
-  if (!isRecord(value)) return null;
-  const at = readText(value.at);
-  const role = readText(value.role);
-  const result = readText(value.result);
-  if (!at && !role && !result) return null;
-  return {
-    at: at ?? "",
-    role: role ?? "",
-    result: result ?? "",
-    stoppedAt: readPositiveInteger(value.stoppedAt),
-    next: readText(value.next),
-  };
-}
-
-function readActiveRun(value: unknown): BoardActiveRun | null {
-  if (!isRecord(value)) return null;
-  const role = readText(value.role);
-  if (!role) return null;
-  return { role, at: readText(value.at) };
 }
 
 function readProgress(value: unknown): BoardProgress | null {
@@ -304,15 +292,6 @@ function readProgress(value: unknown): BoardProgress | null {
   const completedTasks = readPositiveCount(value.completedTasks);
   if (totalTasks <= 0 && completedTasks <= 0) return null;
   return { totalTasks, completedTasks };
-}
-
-/** 字符串数组（evidence / assignees）：非字符串项丢弃，空串丢弃（不渲染空路径）。 */
-function readTextList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const text = readText(entry);
-    return text === null ? [] : [text];
-  });
 }
 
 function readBlockers(value: unknown): BoardBlocker[] {
@@ -517,6 +496,7 @@ export function parseBoardJson(raw: string): BoardParseOutcome {
       updatedAt: readText(parsed.updatedAt),
       epics: readEpics(parsed.epics),
       features: parsed.features.map((feature, index) => mapFeature(feature, index)),
+      derivedIndex: readDerivedIndex(parsed),
       attentionSummary: readAttentionSummary(parsed.attentionSummary),
       diagnostics: readDiagnostics(parsed.diagnostics),
     },
