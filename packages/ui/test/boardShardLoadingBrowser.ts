@@ -24,6 +24,7 @@ import { BoardPaneView } from "../src/board/BoardPaneView.js";
 import { parseBoardIndex } from "../src/board/boardIndexViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { BOARD_BROWSER_DRIVER_PRELUDE } from "./boardBrowserProbeKit.js";
+import { firstOpenDriverSource, type FirstOpenResult } from "./boardShardFirstOpenDriver.js";
 import {
   compileBoardPaneCss,
   runBoardPaneInElectron,
@@ -146,7 +147,12 @@ function pickTarget(
 
 /* ---------------- 页面：真组件 bundle（宿主 + 假文件服务 + 读取计数） ---------------- */
 
-function buildClientEntry(params: { files: Record<string, string>; workspace: string }): string {
+function buildClientEntry(params: {
+  files: Record<string, string>;
+  workspace: string;
+  /** 分片读（`/cards/` 路径）人为延迟毫秒（#221/D8 首开在途窗口断言用；缺省 0 = 即时）。 */
+  slowShardReadMs?: number;
+}): string {
   return `
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -156,12 +162,15 @@ import { ZCodeIntlProvider } from "./src/i18n/IntlProvider.js";
 import { TabStoreProvider } from "./src/store/TabStoreProvider.js";
 
 const WORKSPACE_PATH = ${JSON.stringify(params.workspace)};
+const SLOW_SHARD_READ_MS = ${JSON.stringify(params.slowShardReadMs ?? 0)};
 const FILES = globalThis.__FILES__;
 globalThis.__READS__ = [];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fileService = {
   checkFilesExist: async (params) => params.paths.map((path) => ({ path, exists: path in FILES })),
   readTextFile: async ({ path }) => {
     globalThis.__READS__.push(path);
+    if (SLOW_SHARD_READ_MS > 0 && path.includes("/cards/")) await sleep(SLOW_SHARD_READ_MS);
     if (!(path in FILES)) {
       const error = new Error("ENOENT: no such file or directory, stat '" + path + "'");
       error.code = "ENOENT";
@@ -328,23 +337,23 @@ async function main(): Promise<void> {
     extraClassNames,
   });
 
-  const bundle = await esbuild({
-    stdin: {
-      contents: buildClientEntry({ files, workspace: DOMAIN }),
-      resolveDir: UI_DIR,
-      loader: "tsx",
-    },
-    bundle: true,
-    write: false,
-    format: "iife",
-    platform: "browser",
-    jsx: "automatic",
-    tsconfig: join(UI_DIR, "tsconfig.json"),
-    define: { "process.env.NODE_ENV": '"production"' },
-    logLevel: "silent",
-  });
-  const bundleText = bundle.outputFiles?.[0]?.text;
-  if (!bundleText) throw new Error("esbuild 应产出 bundle");
+  const buildBundle = async (entry: string): Promise<string> => {
+    const bundle = await esbuild({
+      stdin: { contents: entry, resolveDir: UI_DIR, loader: "tsx" },
+      bundle: true,
+      write: false,
+      format: "iife",
+      platform: "browser",
+      jsx: "automatic",
+      tsconfig: join(UI_DIR, "tsconfig.json"),
+      define: { "process.env.NODE_ENV": '"production"' },
+      logLevel: "silent",
+    });
+    const text = bundle.outputFiles?.[0]?.text;
+    if (!text) throw new Error("esbuild 应产出 bundle");
+    return text;
+  };
+  const bundleText = await buildBundle(buildClientEntry({ files, workspace: DOMAIN }));
 
   const result = (await runBoardPaneInElectron({
     pageHtml: buildPage({ css, bundle: bundleText, files }),
@@ -391,8 +400,41 @@ async function main(): Promise<void> {
   assert.deepEqual(result.deliverables, target.expected.deliverables, "弹窗交付面应来自分片卡文");
   assert.equal(result.acceptanceText, target.expected.acceptance, "弹窗验收应来自分片卡文");
 
+  /* ---- ③ 首开在途窗口（#221/D8）：慢分片读下先「读取中」，不落 #183 假空态，落地后卡文点亮 ---- */
+  const slowBundleText = await buildBundle(
+    buildClientEntry({ files, workspace: DOMAIN, slowShardReadMs: 1200 }),
+  );
+  const firstOpen = (await runBoardPaneInElectron({
+    pageHtml: buildPage({ css, bundle: slowBundleText, files }),
+    driver: firstOpenDriverSource({ targetNo: target.no }),
+    label: "shard-first-open",
+  })) as FirstOpenResult;
+  assert.equal(
+    firstOpen.firstFrame.detailState,
+    "reading",
+    `首开在途 → 独立 reading 形态（实际 ${JSON.stringify(firstOpen.firstFrame)}）`,
+  );
+  assert.ok(
+    firstOpen.firstFrame.text.includes("详情读取中"),
+    `首开在途文案为「读取中」（实际 ${JSON.stringify(firstOpen.firstFrame.text)}）`,
+  );
+  assert.ok(!firstOpen.firstFrame.absentNotice, "首开在途不落 #183「板上未携带」假空态");
+  assert.ok(
+    !firstOpen.firstFrame.hasCardTextBlock,
+    "首开在途不出 #183 卡片内容区块（读取态提示独占槽位）",
+  );
+  assert.equal(
+    firstOpen.afterSettle.detailStateExists,
+    false,
+    "读结论落地 → 读取态提示消失（现形态）",
+  );
+  assert.equal(firstOpen.afterSettle.goal, target.expected.goal, "读结论落地 → 卡文目标点亮");
+
   console.log(
     `[219] 索引+分片浏览器断言通过（UA ${result.ua}）：INDEX ${Buffer.byteLength(indexText)} B / board.json ${boardBytes} B（超限）/ 分片 ${shards.size} 件 / 点卡 #${target.no} 分片按需读`,
+  );
+  console.log(
+    `[221] 首开在途窗口浏览器断言通过（UA ${firstOpen.ua}）：首帧 detail=reading「${firstOpen.firstFrame.text}」→ 落地后卡文点亮（#${target.no}）`,
   );
 }
 

@@ -1168,9 +1168,11 @@ const zhCN: Record<string, string> = {
   "board.dialog.cardText.deliverables": "交付面",
   "board.dialog.cardText.acceptance": "验收",
   "board.dialog.cardText.absent": "板上未携带",
-  // 详情读取态（#220/D7 major①）：`unavailable`（暂时读不到）/`missing`（没有）与「板上未携带」分开——
-  // 不可读不得被表述为「板上没有」；unavailable 给刷新重试入口（同代重试）。
+  // 详情读取态（#220/D7 major①；#221/D8 增 reading）：`reading`（首开在途，诚实占位）/
+  // `unavailable`（暂时读不到）/`missing`（没有）与「板上未携带」分开——不可读不得被表述为
+  // 「板上没有」；unavailable 给刷新重试入口（同代重试），reading/missing 无重试。
   "board.dialog.detailTitle": "详情",
+  "board.dialog.detail.reading": "详情读取中…",
   "board.dialog.detail.unavailable":
     "详情暂不可读（连接未就绪，或板文件超出读取上限）。恢复连接或重新编译后刷新重试。",
   "board.dialog.detail.missing": "未在板上或分片中找到这张卡的详情。",

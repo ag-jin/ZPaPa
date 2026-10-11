@@ -3,21 +3,22 @@
  *
  * 两类零件：
  *   - 卡片内容区块（#183 卡文交付面②）：目标/交付面/验收——常驻折叠态，缺省显式「未携带」；
- *   - 详情读取态提示（#220/D7）：`missing`（板上/分片里没有这张卡）/ `unavailable`（暂时读不到：
- *     断连 / 板文件超限截断）——**与「板上未携带」确定性空态分开呈现**（不可读不得被表述为
- *     「板上没有」）；`unavailable` 给「刷新重试」入口（同代重试：清缓存重读），`missing` 无重试。
+ *   - 详情读取态提示（#220/D7 + #221/D8 归并）：`reading`（读取中，首开在途诚实占位）/
+ *     `missing`（板上/分片里没有这张卡）/ `unavailable`（暂时读不到：断连 / 板文件超限截断）——
+ *     **与「板上未携带」确定性空态分开呈现**（不可读不得被表述为「板上没有」）；`unavailable`
+ *     给「刷新重试」入口（同代重试：清缓存重读），`reading`/`missing` 无重试。
  */
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardFoldIndicator } from "./boardFoldParts.js";
 import type { BoardCardDialogModel } from "./boardDialogViewModel.js";
 
-/** 详情读取态提示（#220/D7 major①）：不可读/缺失与「板上未携带」分开成形态。 */
+/** 详情读取态提示（#220/D7 major① + #221/D8）：不可读/缺失/读取中与「板上未携带」分开成形态。 */
 function CardDetailStateNotice({
   state,
   onRetry,
 }: {
-  state: "missing" | "unavailable";
+  state: "reading" | "missing" | "unavailable";
   onRetry?: () => void;
 }) {
   const { intl } = useZCodeIntl();
@@ -35,7 +36,9 @@ function CardDetailStateNotice({
         {t(
           state === "unavailable"
             ? "board.dialog.detail.unavailable"
-            : "board.dialog.detail.missing",
+            : state === "reading"
+              ? "board.dialog.detail.reading"
+              : "board.dialog.detail.missing",
         )}
       </p>
       {state === "unavailable" && onRetry ? (
@@ -94,13 +97,13 @@ export function BoardCardTextSection({
   onRetryDetail,
 }: {
   dialog: BoardCardDialogModel;
-  detailState?: "missing" | "unavailable" | null;
+  detailState?: "reading" | "missing" | "unavailable" | null;
   onRetryDetail?: (no: number) => void;
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id });
   const no = dialog.no;
-  if (detailState === "missing" || detailState === "unavailable") {
+  if (detailState === "reading" || detailState === "missing" || detailState === "unavailable") {
     return (
       <CardDetailStateNotice
         state={detailState}

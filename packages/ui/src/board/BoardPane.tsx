@@ -316,10 +316,12 @@ export function BoardPane({
     setDetailRevision((revision) => revision + 1);
   }, []);
 
-  // 打开卡的详情读取态（#220/D7 major①；2026-10-12 微修：**不限定板载入面**）：
-  // 判据单点在 `resolveBoardCardDetailState`（只看这张卡的读取结论——缓存 / 同代重试在途；
+  // 打开卡的详情读取态（#220/D7 major①；2026-10-12 微修：**不限定板载入面**；
+  // #221/D8 归并：首开在途窗口独立 `reading`——本卡详情需按需读（薄索引面：上面 effect 会发起读取）
+  // 且缓存未命中 → 「读取中」，不落 #183「板上未携带」假空态）。
+  // 判据单点在 `resolveBoardCardDetailState`（只看这张卡的读取结论——缓存 / 同代重试在途 / 首开在途；
   // 扁平卡（真实板当前形态）与分片卡同口径）；`loaded` 或详情已内联 → null（弹窗按现形态渲染）。
-  const openCardDetailState: "missing" | "unavailable" | null = (() => {
+  const openCardDetailState: "reading" | "missing" | "unavailable" | null = (() => {
     if (openCardId === null || state.kind !== "ready") return null;
     const node = resolveBoardDialogNode(state.board, openCardId);
     if (!node || node.kind !== "task" || node.no === null) return null;
@@ -327,6 +329,8 @@ export function BoardPane({
       no: node.no,
       cache: cardDetailCacheRef.current,
       pendingDetailNos: pendingDetailNosRef.current,
+      // 与按需读 effect 同判据：薄索引面（screen 非 null）才有按需读链；旧面详情已内联。
+      expectsRead: state.board.screen !== null,
     });
   })();
 

@@ -411,7 +411,8 @@ export class BoardCardDetailCache {
 }
 
 /**
- * 打开卡的详情读取态判据（#220/D7 major①；2026-10-12 微修——**不限定板载入面**）。
+ * 打开卡的详情读取态判据（#220/D7 major①；2026-10-12 微修——**不限定板载入面**；
+ * #221/D8 归并——首开在途窗口独立 `reading` 态）。
  *
  * 判据只取**这张卡**的读取结论（缓存 / 同代重试在途），不看板从哪个面载入（薄索引 `INDEX.json`
  * 或旧面 `board.json`）：扁平卡（`cardFile=null`，真实板当前全扁平形态）与分片卡共用同一条按需读
@@ -421,14 +422,19 @@ export class BoardCardDetailCache {
  * 判据（单点；宿主只消费）：
  * - 缓存有该项：`missing` / `unavailable` 原样取态（`loaded` → null，弹窗按现形态渲染）；
  * - 缓存无、同代重试在途：`unavailable`（重读期间保留「暂不可读」，不闪回假空态）；
+ * - 缓存无、本卡详情需按需读（`expectsRead`：薄索引面；宿主 effect 将发起读取）→ `reading`
+ *   （#221/D8：首开在途窗口的**诚实**占位——首开未必失败，不映射 `unavailable`，也不落
+ *   #183「板上未携带」确定性空态；读结论落地后按缓存态翻面）；
  * - 其余 → null：旧面详情已内联（effect 不读、无缓存项），弹窗按内联详情渲染。
  */
 export function resolveBoardCardDetailState(params: {
   no: number;
   cache: BoardCardDetailCache;
   pendingDetailNos: ReadonlySet<number>;
-}): "missing" | "unavailable" | null {
+  expectsRead?: boolean;
+}): "reading" | "missing" | "unavailable" | null {
   const cached = params.cache.get(params.no);
   if (cached) return cached.kind !== "loaded" ? cached.kind : null;
-  return params.pendingDetailNos.has(params.no) ? "unavailable" : null;
+  if (params.pendingDetailNos.has(params.no)) return "unavailable";
+  return params.expectsRead === true ? "reading" : null;
 }

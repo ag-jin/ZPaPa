@@ -268,3 +268,97 @@ test("宿主判据：missing 取态；loaded/无缓存无在途 → 现形态（
     "同代重试在途 → 保留「暂不可读」（不闪回假空态）",
   );
 });
+
+/**
+ * #221/D8 归并（#220 四绿 ui-review minor-1）：首开读取在途窗口。
+ * 期望值独立真源：#220 第四绿报告 §1.3（首开按需读 effect 发起期间缓存无项 → 现判据 null →
+ * 弹窗落 #183「板上未携带」假空态，读结论落地后才翻面；需独立「读取中」诚实形态，
+ * 不映射 unavailable——首开在途未必失败，映射不可读会高估失败）。
+ */
+test("宿主判据：首开在途（缓存无 + 本卡需按需读→expectsRead）→ 独立 reading（不映射 unavailable、不落假空态）", () => {
+  const cache = new BoardCardDetailCache();
+  cache.begin("首开代际");
+  assert.equal(
+    resolveBoardCardDetailState({
+      no: 9,
+      cache,
+      pendingDetailNos: new Set<number>(),
+      expectsRead: true,
+    }),
+    "reading",
+    "首开在途 → 读取中（诚实占位，不给确定性断言）",
+  );
+  assert.equal(
+    resolveBoardCardDetailState({
+      no: 9,
+      cache,
+      pendingDetailNos: new Set<number>([9]),
+      expectsRead: true,
+    }),
+    "unavailable",
+    "同代重试在途优先保留「暂不可读」（既有语义不回归）",
+  );
+  assert.equal(
+    resolveBoardCardDetailState({
+      no: 9,
+      cache,
+      pendingDetailNos: new Set<number>(),
+      expectsRead: false,
+    }),
+    null,
+    "旧面内联（详情已载入、不发起按需读）→ 现形态（不给读取态）",
+  );
+});
+
+test("BoardCardDialog：reading 详情 → 独立「读取中」呈现（无重试入口、非「板上未携带」）", () => {
+  const board = goldenBoard();
+  const node = taskNode(board, 8);
+  const markup = render(
+    createElement(BoardCardDialog, {
+      board,
+      node,
+      detailState: "reading",
+      onRetryDetail: () => {},
+    }),
+  );
+  assert.ok(markup.includes('data-board-dialog-detail="reading"'), "有 reading 锚点");
+  assert.ok(markup.includes("详情读取中"), "有「读取中」文案（诚实占位）");
+  assert.ok(!markup.includes("data-board-dialog-detail-retry"), "读取中无重试入口（尚无失败结论）");
+  assert.ok(!markup.includes("板上未携带"), "不落 #183「板上未携带」假空态");
+  assert.ok(!markup.includes("详情暂不可读"), "不映射 unavailable（首开在途未必失败）");
+});
+
+test("宿主判据（首开路径，真实板形态）：薄索引 + 扁平卡首开窗口 → reading → 读结论落地 → 现形态", () => {
+  const outcome = parseBoardIndex(JSON.stringify(FLAT_REAL_INDEX));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const board = outcome.board;
+  // 宿主判据输入（与 BoardPane 同口径）：薄索引面（screen 非 null）+ 缓存未命中 → 本卡需按需读。
+  const expectsRead = board.screen !== null;
+  assert.equal(expectsRead, true, "薄索引面（真实板形态）");
+  const cache = new BoardCardDetailCache();
+  cache.begin(`${WORKSPACE}\u0000${board.updatedAt ?? ""}`);
+  const node = resolveBoardDialogNode(board, "task:902");
+  assert.ok(node && node.kind === "task" && node.no === 902, "能定位扁平卡节点");
+  const reading = resolveBoardCardDetailState({
+    no: 902,
+    cache,
+    pendingDetailNos: new Set<number>(),
+    expectsRead,
+  });
+  assert.equal(reading, "reading", "首开窗口 → 读取中（不落假空态）");
+  const readingMarkup = render(
+    createElement(BoardCardDialog, { board, node, detailState: reading }),
+  );
+  assert.ok(readingMarkup.includes("详情读取中"), "首开窗口渲染「读取中」");
+  assert.ok(!readingMarkup.includes("板上未携带"), "不渲染 #183「板上未携带」");
+  // 读结论落地（loaded）→ 现形态（卡片内容区在位；不给读取态提示）。
+  cache.set(902, { kind: "loaded", patch: { goal: "分片读到的目标" } });
+  const settled = resolveBoardCardDetailState({
+    no: 902,
+    cache,
+    pendingDetailNos: new Set<number>(),
+    expectsRead,
+  });
+  assert.equal(settled, null, "loaded → 现形态");
+});

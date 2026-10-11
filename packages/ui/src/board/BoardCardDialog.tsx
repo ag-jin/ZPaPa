@@ -53,11 +53,12 @@ export interface BoardCardDialogProps {
   /** 相对时间的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
   /**
-   * 打开卡的详情读取态（#220/D7；仅薄索引面）：`unavailable`（暂时读不到：断连 / 板文件超限截断）
-   * / `missing`（板上或分片里没有这张卡）——与 #183「板上未携带」确定性空态分开呈现（major①：
-   * 不可读不得被表述为「板上没有」）。null/缺省 = 详情已内联或尚未读（按现形态渲染）。
+   * 打开卡的详情读取态（#220/D7；仅薄索引面；#221/D8 增 `reading`）：`reading`（读取中——首开在途
+   * 诚实占位）/ `unavailable`（暂时读不到：断连 / 板文件超限截断）/ `missing`（板上或分片里没有
+   * 这张卡）——与 #183「板上未携带」确定性空态分开呈现（major①：不可读不得被表述为「板上没有」）。
+   * null/缺省 = 详情已内联或读结论落地（按现形态渲染）。
    */
-  detailState?: "missing" | "unavailable" | null;
+  detailState?: "reading" | "missing" | "unavailable" | null;
   /** 详情同代重试（#220/D7）：只对 `unavailable` 呈现入口（回传卡片稳定号）。 */
   onRetryDetail?: (no: number) => void;
 }

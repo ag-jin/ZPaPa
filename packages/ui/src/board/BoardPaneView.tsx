@@ -77,7 +77,7 @@ export interface BoardPaneViewProps {
   /** 指引面五槽下钻派发（卡 #137/C3-2；宿主落到既有视图/过滤；缺省 = 槽只读不可点）。 */
   onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
   /** 打开卡的详情读取态（#220/D7；见下方内容组件的同名项）。 */
-  openCardDetailState?: "missing" | "unavailable" | null;
+  openCardDetailState?: "reading" | "missing" | "unavailable" | null;
   /** 卡详情同代重试（#220/D7；见下方内容组件的同名项）。 */
   onRetryCardDetail?: (no: number) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
@@ -195,7 +195,7 @@ function BoardReadyView({
   /** 未连接保留快照时的状态行文案（#158；只在 unavailable+快照这条路径传入）。 */
   snapshotNotice?: string | null;
   /** 打开卡的详情读取态（#220/D7；见 BoardPaneViewProps 同名项）。 */
-  openCardDetailState?: "missing" | "unavailable" | null;
+  openCardDetailState?: "reading" | "missing" | "unavailable" | null;
   /** 卡详情同代重试（#220/D7；见 BoardPaneViewProps 同名项）。 */
   onRetryCardDetail?: (no: number) => void;
   openEpicCode?: string | null;
