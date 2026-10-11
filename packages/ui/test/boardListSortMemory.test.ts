@@ -61,7 +61,15 @@ test("排序会话记忆不猜视角：存了不认识的值 → 回落契约序
 });
 
 test("无 sessionStorage（纯 node / 隐私模式）时不抛，读回默认值", () => {
-  assert.equal(typeof (globalThis as { sessionStorage?: unknown }).sessionStorage, "undefined");
-  assert.equal(readBoardListSort(), "recent");
-  assert.doesNotThrow(() => writeBoardListSort("stage"));
+  // S4：不断言「环境前提」（typeof sessionStorage === undefined），改为**布置前提 + 断言行为**——
+  // 显式移除 sessionStorage 后，读回落默认值、写不抛（前序用例若装过假 storage 也不受影响）。
+  const holder = globalThis as { sessionStorage?: unknown };
+  const before = holder.sessionStorage;
+  delete holder.sessionStorage;
+  try {
+    assert.equal(readBoardListSort(), "recent");
+    assert.doesNotThrow(() => writeBoardListSort("stage"));
+  } finally {
+    if (before !== undefined) holder.sessionStorage = before;
+  }
 });

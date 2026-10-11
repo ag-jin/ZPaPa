@@ -30,6 +30,7 @@ import {
   BOARD_TABLE_COLUMNS,
   BOARD_TABLE_COLUMN_MESSAGE_IDS,
 } from "../src/board/boardTableViewModel.js";
+import { BOARD_VIEW_SORTS, BOARD_VIEW_SORT_MESSAGE_IDS } from "../src/board/boardViewSorting.js";
 
 /**
  * 看板呈现层的纯函数缝（卡 #32）。
@@ -248,8 +249,8 @@ test("视图/过滤/排序词条两语齐（引用了的键不得只在一边存
     "board.kind.task",
     "board.filter.sort",
     "board.filter.all",
-    "board.sort.recent",
-    "board.sort.oldest",
+    // 三视角闭集全部词条（S3）：从 `BOARD_VIEW_SORTS` 派生，新增视角自动进清单，不漏 `board.sort.stage`。
+    ...BOARD_VIEW_SORTS.map((sort) => BOARD_VIEW_SORT_MESSAGE_IDS[sort]),
     // 卡 #34：表格列头与卡龄、卡片弹窗区块。
     "board.view.table",
     "board.table.columns",
