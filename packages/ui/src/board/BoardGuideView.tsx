@@ -162,8 +162,18 @@ function BoardGuidePlanBlock({
   const summaryParts = [
     plan.stage,
     plan.phaseName,
-    intl.formatMessage({ id: "board.guide.plan.frontier" }, { count: plan.frontierCount }),
-    intl.formatMessage({ id: "board.guide.plan.active" }, { count: plan.activeCount }),
+    // 计数词条走单点 `formatBoardCountText`（单/复数两键，count===1 走单数——#142 收口 #136 面
+    // 裸插值：en 侧不再是「1 ready」；zh 两键同文）。
+    formatBoardCountText(
+      plan.frontierCount,
+      BOARD_COUNT_MESSAGE_IDS.guidePlanFrontier,
+      intl.formatMessage,
+    ),
+    formatBoardCountText(
+      plan.activeCount,
+      BOARD_COUNT_MESSAGE_IDS.guidePlanActive,
+      intl.formatMessage,
+    ),
   ].filter((part): part is string => part !== null && part !== "");
   return (
     <article

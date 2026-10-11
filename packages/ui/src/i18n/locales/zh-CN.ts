@@ -1119,8 +1119,12 @@ const zhCN: Record<string, string> = {
   "board.guide.plan.progressLabel": "已完成 {completed}/{total} 张卡",
   "board.guide.plan.percent": "{percent}%",
   "board.guide.plan.undesigned": "未拆解",
-  "board.guide.plan.frontier": "前沿 {count}",
-  "board.guide.plan.active": "在途 {count}",
+  // 计划摘要「前沿/在途」计数词条单/复数两键（契约 §13.5：count===1 走单数；zh 两键同文）
+  // ——卡 #142 收口 #136 面裸插值（与 #138 S1 同款，消费走单点 formatBoardCountText）。
+  "board.guide.plan.frontier.one": "前沿 {count}",
+  "board.guide.plan.frontier.other": "前沿 {count}",
+  "board.guide.plan.active.one": "在途 {count}",
+  "board.guide.plan.active.other": "在途 {count}",
   // 可执行前沿队列（卡 #138 / C3-3）：处置指引（接手位/已解除依赖）与队列空态。
   "board.guide.queue.next": "下一步：{role}",
   // 计数词条单/复数两键（契约 §13.5：count===1 走单数；zh 两键同文）——卡 #138 S1 回修。

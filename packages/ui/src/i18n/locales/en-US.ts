@@ -1204,8 +1204,12 @@ const enUS: Record<string, string> = {
   "board.guide.plan.progressLabel": "{completed} of {total} cards done",
   "board.guide.plan.percent": "{percent}%",
   "board.guide.plan.undesigned": "Not broken down",
-  "board.guide.plan.frontier": "{count} ready",
-  "board.guide.plan.active": "{count} in flight",
+  // Plan summary frontier/in-flight count pairs (contract §13.5: count===1 takes .one) — card #142
+  // closes the #136 bare interpolation (same single-point pattern as the #138 S1 fix).
+  "board.guide.plan.frontier.one": "{count} card ready",
+  "board.guide.plan.frontier.other": "{count} cards ready",
+  "board.guide.plan.active.one": "{count} card in flight",
+  "board.guide.plan.active.other": "{count} cards in flight",
   // Executable frontier queue (card #138 / C3-3): disposal guidance and empty state.
   "board.guide.queue.next": "Next: {role}",
   // Count pair per contract §13.5 (one/other; count===1 takes .one) — card #138 S1 fix.
