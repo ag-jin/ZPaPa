@@ -95,8 +95,11 @@ export interface BoardGuidePlan {
   gapCount: number;
   /** 本计划在 frontier[] 的成员数（四段投影计数；= 队列行数）。 */
   frontierCount: number;
-  /** 本计划在 active[] 的成员数（四段投影计数）。 */
-  activeCount: number;
+  /**
+   * 本计划在 active[] 的成员数（四段投影计数）；`null` = 薄索引面（四段派生 active[] 不在
+   * INDEX 字段面，#219/D6）——视图不渲染「在途」，不拿未知当 0。
+   */
+  activeCount: number | null;
   /** 可执行前沿队列（frontier 成员全量，frontier 序直读；在途卡不入队列）。 */
   queue: BoardGuideQueueRow[];
 }
@@ -221,18 +224,32 @@ function collectPlanCardNodes(tasks: BoardTaskNode[]): BoardTaskNode[] {
  */
 export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary {
   const index = board.derivedIndex;
-  const indexAvailable = index !== null;
-  const counts: Record<BoardGuideSlotKey, number> = {
-    attention:
-      board.attentionSummary.interviewedNotArranged +
-      board.attentionSummary.arrangedNotExpanded +
-      board.attentionSummary.interruptedResume +
-      board.attentionSummary.unmergedWorktree,
-    blocked: index?.blocked.length ?? 0,
-    running: index?.active.filter((entry) => entry.stage === GUIDE_RUNNING_STAGE).length ?? 0,
-    review: index?.active.filter((entry) => entry.stage === GUIDE_REVIEW_STAGE).length ?? 0,
-    recent: index?.recent.length ?? 0,
-  };
+  // 五槽数据源（#219/D6）：旧面走四段派生 `derivedIndex`；v3 薄索引面 `derivedIndex` 为 null 时
+  // 以 `screen` 五槽计数兜（契约 §15.2 单点口径）——两源都不在才判「未知」（指名重编译）。
+  const screen = board.screen;
+  const indexAvailable = index !== null || screen !== null;
+  const counts: Record<BoardGuideSlotKey, number> =
+    index !== null
+      ? {
+          attention:
+            board.attentionSummary.interviewedNotArranged +
+            board.attentionSummary.arrangedNotExpanded +
+            board.attentionSummary.interruptedResume +
+            board.attentionSummary.unmergedWorktree,
+          blocked: index.blocked.length,
+          running: index.active.filter((entry) => entry.stage === GUIDE_RUNNING_STAGE).length,
+          review: index.active.filter((entry) => entry.stage === GUIDE_REVIEW_STAGE).length,
+          recent: index.recent.length,
+        }
+      : screen !== null
+        ? {
+            attention: screen.attention,
+            blocked: screen.blocked,
+            running: screen.running,
+            review: screen.review,
+            recent: screen.recent,
+          }
+        : { attention: 0, blocked: 0, running: 0, review: 0, recent: 0 };
   const slots = BOARD_GUIDE_SLOT_KEYS.map((key) => ({
     key,
     count: indexAvailable ? counts[key] : null,
@@ -245,6 +262,9 @@ export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary
     }
   }
   const phaseNames = buildPhaseNameMap(board);
+  // 前沿段数据源（#219/D6）：旧面取 `derivedIndex.frontier`；薄索引面取 `board.frontier`（同形投影）。
+  const frontierIndex = index?.frontier ?? board.frontier ?? [];
+  const activeIndex = index?.active ?? [];
 
   const plans = board.features
     .filter((feature) => feature.kind === "plan" && feature.status !== "cancelled")
@@ -252,8 +272,8 @@ export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary
       const cardNodes = collectPlanCardNodes(feature.tasks);
       const cardNos = new Set<number>();
       for (const node of cardNodes) if (node.no !== null) cardNos.add(node.no);
-      const frontierRows = (index?.frontier ?? []).filter((entry) => cardNos.has(entry.no));
-      const activeRows = (index?.active ?? []).filter((entry) => cardNos.has(entry.no));
+      const frontierRows = frontierIndex.filter((entry) => cardNos.has(entry.no));
+      const activeRows = activeIndex.filter((entry) => cardNos.has(entry.no));
       // 可执行前沿队列（卡 #138/C3-3）：frontier 成员全量、frontier 序直读（不重排、不裁剪、不含
       // active 行——队列 = 该计划的可执行卡）；处置指引（接手位/已解除依赖）直取条目字段。
       const queue: BoardGuideQueueRow[] = frontierRows.map((entry) => ({
@@ -290,7 +310,9 @@ export function buildBoardGuideSummary(board: BoardViewModel): BoardGuideSummary
         // 归角标簇），也不排除嵌套子卡。
         gapCount: boardLayerGapCount(cardNodes),
         frontierCount: frontierRows.length,
-        activeCount: activeRows.length,
+        // 在途计数（#219/D6）：薄索引面（derivedIndex=null）四段派生 active[] 不在索引字段面 → null
+        // （视图不渲染「在途」，不拿未知当 0）；旧面路径照常给数。
+        activeCount: index !== null ? activeRows.length : null,
         queue,
       };
     })

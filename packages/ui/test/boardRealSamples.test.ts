@@ -11,6 +11,7 @@ import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
 import { boardFoldIdsOfCard } from "../src/board/boardFoldState.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
+import { parseBoardJson } from "../src/board/boardViewModel.js";
 import type { BoardViewMode } from "../src/board/boardViewsViewModel.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
@@ -32,6 +33,8 @@ const GOLDEN_PATH = join(homedir(), ".zcode/skills/zcode-board/assets/samples/bo
 const REAL_BOARD_WORKSPACE =
   process.env.ZCODE_BOARD_WORKSPACE ?? "/Users/linguojin/Workspace/ZCode";
 const REAL_BOARD_PATH = join(REAL_BOARD_WORKSPACE, ".zcode/board/board.json");
+/** v3 薄索引路径（#219/D6）：在场时首屏读它（读取面优先）。 */
+const REAL_BOARD_INDEX_PATH = join(REAL_BOARD_WORKSPACE, ".zcode/board/INDEX.json");
 
 /** 七段位词表：真源是编译器的 STAGE 枚举（`assets/lib/derive.mjs`）。 */
 const STAGE_VALUES = ["待设计", "待办", "执行中", "审核中", "阻塞", "已完成", "已取消"];
@@ -360,6 +363,25 @@ test(
     // 期望随四态语义切换（#87 A4-1 承接线索：真实板 280072 B 超 256 KiB 的红转正式承载）。
     const boardBytes = Buffer.byteLength(await readFile(REAL_BOARD_PATH));
     const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
+    // #219/D6：读取面优先薄索引 INDEX（恒小）。INDEX 在场时超限 board.json 不再阻断首屏——
+    // 「文件过大」态只在旧面（无 INDEX）路径上按 §2/§14 承载。
+    if (existsSync(REAL_BOARD_INDEX_PATH)) {
+      assert.equal(
+        state.kind,
+        "ready",
+        `薄索引在场：真实板（board.json ${boardBytes} B）应经 INDEX 首屏渲染（#219/D6 读限根除）`,
+      );
+      if (state.kind !== "ready") return;
+      assert.ok(state.board.screen !== null, "INDEX 路径应带 screen 五槽计数");
+      const markup = render(state);
+      assert.ok(markup.includes('data-board-pane=""'), "真实板应渲染出面板骨架");
+      assert.ok(markup.includes(state.board.projectName), "面板应显示项目名");
+      assert.ok(state.board.features.length > 0, "真实板应至少有特性节点");
+      console.log(
+        `[board] 真实板（INDEX 路径）：board.json ${boardBytes} B > ${SERVICE_MAX_TEXT_READ_BYTES} B 读取上限，薄索引首屏仍可渲染（#219/D6 读限根除）`,
+      );
+      return;
+    }
     if (boardBytes > SERVICE_MAX_TEXT_READ_BYTES) {
       assert.equal(
         state.kind,
@@ -422,20 +444,18 @@ test(
     // #60/T-3（评审点名点位）：JSON.parse 后按记录收窄——不裸 `as` 标注真实板的形状。
     const rawBoard = parseRawRecord(boardContent, "真实板");
     const rawFeatures = rawRecordsOf(rawBoard, "features");
-    const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
-    if (Buffer.byteLength(boardContent) > SERVICE_MAX_TEXT_READ_BYTES) {
-      // 超读取上限时四视图/接手位/依赖行的深度断言无从取值：不静默跳过，断言「文件过大」
-      // 正式态与其指引（#70（d）；#87 A4-1 承接线索：该 2 条既有失败转正式承载）。
-      assert.equal(state.kind, "too-large", "超上限真实板应呈现「文件过大」态");
-      assert.ok(render(state).includes("板文件过大"), "文件过大态必须给出独立词条与指引");
-      console.log(
-        `[board] #54 冒烟：真实板 ${Buffer.byteLength(boardContent)} B > ${SERVICE_MAX_TEXT_READ_BYTES} B 读取上限 → too-large（#70 正式承载）`,
-      );
-      return;
+    // #219/D6：读取面优先薄索引 INDEX（由前一条用例覆盖）；本冒烟的深度字段断言（接手位/依赖行）
+    // 需要**完整模型**——真实板 board.json 超服务读限时经 INDEX 只能拿薄模型，故这里用测试侧整读的
+    // board.json 直接解析完整模型，读取路径本身不重复在此断言。
+    const loaderState = await loadFromRealFile(REAL_BOARD_WORKSPACE);
+    if (existsSync(REAL_BOARD_INDEX_PATH)) {
+      assert.equal(loaderState.kind, "ready", "薄索引在场：加载器应经 INDEX 返回 ready");
     }
-    assert.equal(state.kind, "ready", `真实板应可加载：${REAL_BOARD_PATH}`);
-    if (state.kind !== "ready") return;
-    const board = state.board;
+    const parsed = parseBoardJson(boardContent);
+    assert.equal(parsed.kind, "ready", `真实板 board.json 应解析为完整模型：${REAL_BOARD_PATH}`);
+    if (parsed.kind !== "ready") return;
+    const state: BoardPaneLoadState = { kind: "ready", board: parsed.board };
+    const board = parsed.board;
 
     // 1) 四视图渲染冒烟：四个根锚点都在（视图矩阵 §13.2 的四态载体）。
     const views: Array<[BoardViewMode, string]> = [
