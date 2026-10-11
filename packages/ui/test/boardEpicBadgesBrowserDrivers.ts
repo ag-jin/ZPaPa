@@ -249,3 +249,78 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   };
 })()`;
 }
+
+/**
+ * 未定位期次下钻（SP2 反例固化）的页面内驱动：看板视图里，弹窗指针全量归组给出 KANB3
+ * （成员段位未定位、看板列装配按 §13.2 跳过）——点击它 = 预期 no-op：不展开任何可见层、
+ * 不滚动、不提示。驱动先让用户收起一个真实期次块（KANB2），下钻后比对可见层开合状态。
+ */
+export function epicDrillNoopDriverSource(): string {
+  return `(async () => {
+${BOARD_BROWSER_DRIVER_PRELUDE}
+  const viewOf = (mode) => document.querySelector('[data-board-view="' + mode + '"]');
+  const el = (scope, selector) => scope.querySelector(selector);
+  const layerStates = (scope) =>
+    [...scope.querySelectorAll("[data-board-epic-block],[data-board-phase-block]")].map((block) => ({
+      name: block.getAttribute("data-board-epic-block") || block.getAttribute("data-board-phase-block"),
+      open: block.open === true,
+    }));
+  const scrollCalls = [];
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function (...args) {
+    scrollCalls.push({
+      card: this.getAttribute ? this.getAttribute("data-board-card") : null,
+      phase: this.getAttribute ? this.getAttribute("data-board-phase-block") : null,
+      epic: this.getAttribute ? this.getAttribute("data-board-epic-block") : null,
+    });
+    return originalScrollIntoView.apply(this, args);
+  };
+
+  await waitFor(() => document.querySelector("[data-board-pane]"), "面板渲染");
+  await switchToView("kanban");
+  await sleep(200);
+  /* 先由用户收起一个真实期次块（KANB2，待办列）：无落点下钻不得复位它（折叠态不变的反例锚）。 */
+  const phase2 = await waitFor(
+    () => el(viewOf("kanban"), '[data-board-phase-block="KANB2"]'),
+    "看板 KANB2 期次块",
+  );
+  dispatchPointerClick(el(phase2, '[data-board-phase-summary="KANB2"]'));
+  await waitFor(
+    () => el(viewOf("kanban"), '[data-board-phase-block="KANB2"]').open === false,
+    "用户收起 KANB2",
+  );
+  await sleep(80);
+  const statesBefore = layerStates(viewOf("kanban"));
+  const scrollCallsBefore = scrollCalls.length;
+
+  const titleRegion = await waitFor(
+    () => el(viewOf("kanban"), '[data-board-epic-open="KANB"]'),
+    "看板 KANB 标题区",
+  );
+  dispatchPointerClick(titleRegion);
+  const dialog = await waitFor(
+    () => document.querySelector("[data-board-epic-dialog]"),
+    "epic 弹窗",
+  );
+  const pointerK3 = await waitFor(
+    () => el(dialog, '[data-board-epic-drill="KANB3"]'),
+    "KANB3 指针（未定位期次）",
+  );
+  const pointerName = pointerK3.getAttribute("data-board-epic-drill");
+  const pointerLabel = pointerK3.getAttribute("aria-label");
+  dispatchPointerClick(pointerK3);
+  await waitFor(() => document.querySelector("[data-board-epic-dialog]") === null, "下钻关弹窗");
+  await sleep(200);
+  const after = viewOf("kanban");
+  return {
+    pointerName,
+    pointerLabel,
+    dialogClosed: document.querySelector("[data-board-epic-dialog]") === null,
+    k3BlockPresent: after.querySelector('[data-board-phase-block="KANB3"]') !== null,
+    statesEqual: JSON.stringify(statesBefore) === JSON.stringify(layerStates(after)),
+    scrollCallsAfterDrill: scrollCalls.slice(scrollCallsBefore),
+    highlightCount: after.querySelectorAll("[data-board-layer-highlight]").length,
+    viewStillKanban: document.querySelector('[data-board-view="kanban"]') !== null,
+  };
+})()`;
+}

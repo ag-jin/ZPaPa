@@ -14,7 +14,9 @@
  *   3. 指针下钻：点 KANB1 指针 → 关弹窗 + 展开被用户收起的祖先层 + 期次块高亮落点 + 真滚动
  *      （scrollIntoView 落点/参数/可见性）；折叠记忆交互（收起 false → 下钻 true → 重挂读回仍展开）；
  *   4. 关闭路径：× 关窗且焦点归还打开者；
- *   5. 溢出探针：宽 1400 / 窄 360 四视图层头行（层名/计数片/缺口徽章）+ 窄档弹窗盒与区块。
+ *   5. 溢出探针：宽 1400 / 窄 360 四视图层头行（层名/计数片/缺口徽章）+ 窄档弹窗盒与区块；
+ *   6. 未定位期次下钻 no-op（SP2 反例固化）：弹窗指针全量给 KANB3、看板装配跳过该期次 →
+ *      不展开可见层、不滚动、不提示（折叠态/滚动位置不变的预期 no-op）。
  *
  * 运行条件（缺一即报错退出，不静默跳过）：Electron 二进制 / `@tailwindcss/node` / esbuild
  * （解析同 `boardKanbanBrowserLayoutHarness`；worktree 未装产物时沿上溯找主仓那份）。
@@ -27,7 +29,10 @@ import {
   assertNoHorizontalOverflow,
   type BoardBrowserOverflowProbe,
 } from "./boardBrowserProbeKit.js";
-import { epicBadgesDriverSource } from "./boardEpicBadgesBrowserDrivers.js";
+import {
+  epicBadgesDriverSource,
+  epicDrillNoopDriverSource,
+} from "./boardEpicBadgesBrowserDrivers.js";
 import {
   buildPageHtml,
   bundleBoardPaneClient,
@@ -48,6 +53,25 @@ function buildBoardJson(): string {
   };
   for (const epic of raw.epics) epic.title = LONG_TITLE;
   for (const feature of raw.features) feature.title = `${feature.title}——${LONG_TITLE}`;
+  return JSON.stringify(raw);
+}
+
+/**
+ * 未定位期次夹具（SP2 反例）：给 KANB 加一员「期次 3、段位未定位」——弹窗指针全量归组仍给
+ * KANB3，而看板列装配按 §13.2 跳过它（该期次在看板没有任何块）。成员形态克隆自 KANB2 稿。
+ */
+function buildDrillNoopBoardJson(): string {
+  const raw = structuredClone(EPIC_BOARD) as { features: Array<Record<string, unknown>> };
+  raw.features.push({
+    ...structuredClone(raw.features[4]!),
+    id: "plan:plan-unlocated-phase",
+    no: 36,
+    label: "36",
+    planCode: "ULOC",
+    phase: 3,
+    title: "未定位期次稿",
+    stage: null,
+  });
   return JSON.stringify(raw);
 }
 
@@ -118,6 +142,22 @@ interface BadgesResult {
   };
 }
 
+/** 未定位期次下钻 no-op 场景的量取结果（SP2）。 */
+interface DrillNoopResult {
+  pointerName: string | null;
+  pointerLabel: string | null;
+  dialogClosed: boolean;
+  k3BlockPresent: boolean;
+  statesEqual: boolean;
+  scrollCallsAfterDrill: Array<{
+    card: string | null;
+    phase: string | null;
+    epic: string | null;
+  }>;
+  highlightCount: number;
+  viewStillKanban: boolean;
+}
+
 /** 组头行溢出探针：行本体 + 层名 + 计数片 + 缺口徽章（缺省不探的项跳过）。 */
 function assertNoHeaderOverflow(rows: HeaderRow[], label: string): void {
   for (const row of rows) {
@@ -142,9 +182,10 @@ function findRow(rows: HeaderRow[], code: string): HeaderRow {
 
 async function main(): Promise<void> {
   const boardJson = buildBoardJson();
+  const drillNoopBoardJson = buildDrillNoopBoardJson();
   const bundle = await bundleBoardPaneClient();
   const css = await compileBoardPaneCss({
-    boards: [boardJson],
+    boards: [boardJson, drillNoopBoardJson],
     viewModes: ["tree", "kanban", "list", "table"],
   });
   console.log(
@@ -275,6 +316,29 @@ async function main(): Promise<void> {
       `弹窗=${JSON.stringify(result.dialogBox.pointers)} 下钻=${JSON.stringify(result.drill)} ` +
       `窄档 tree 层头数=${result.narrow.tree.length}`,
   );
+
+  /* 7. 未定位期次下钻 no-op（SP2 成文 + 反例固化）：指针面全量、视图装配面可以更窄。 */
+  const noopResult = (await runBoardPaneInElectron({
+    pageHtml: buildPageHtml({ css, boardJson: drillNoopBoardJson, bundle }),
+    driver: epicDrillNoopDriverSource(),
+    label: "epic-drill-noop",
+  })) as DrillNoopResult | null;
+  console.log(`EPIC_DRILL_NOOP_MEASUREMENTS=${JSON.stringify(noopResult)}`);
+  assert.ok(noopResult, "未定位期次下钻场景应回传量取结果");
+  assert.equal(noopResult.pointerName, "KANB3", "弹窗指针全量归组：未定位期次 KANB3 在指针面");
+  assert.equal(noopResult.pointerLabel, "下钻到 KANB3", "指针可及名称照常");
+  assert.equal(noopResult.dialogClosed, true, "点指针照常关弹窗（下钻动作本身）");
+  assert.equal(noopResult.k3BlockPresent, false, "看板装配跳过未定位期次：无 KANB3 块（无落点）");
+  assert.equal(
+    noopResult.statesEqual,
+    true,
+    "折叠态不变：可见层开合逐一相同（用户收起的 KANB2 不被复位）",
+  );
+  assert.deepEqual(noopResult.scrollCallsAfterDrill, [], "不滚动：无任何 scrollIntoView 调用");
+  assert.equal(noopResult.highlightCount, 0, "不提示：没有任何高亮可见");
+  assert.equal(noopResult.viewStillKanban, true, "不做视图切换兜底（no-op 系预期）");
+  console.log("BOARD_EPIC_DRILL_NOOP_ASSERTIONS_OK");
+
   console.log("BOARD_EPIC_BADGES_BROWSER_ASSERTIONS_OK");
 }
 

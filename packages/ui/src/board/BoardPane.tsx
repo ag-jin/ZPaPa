@@ -275,6 +275,10 @@ export function BoardPane({
   // epic 弹窗期次指针下钻（#90/A4-4；C4-2）：关 epic 弹窗 → 清筛子（期次被筛掉就跳了个寂寞）
   // → 展开该期次的两层祖先折叠（`boardFoldIdsOfPhase` 单点）→ 看板「已完成」列先置展开
   // （条件渲染的容器要先回 DOM）→ 期次块高亮 + 滚动（落点选择器与卡片同一条渲染链路）。
+  // 目标期次**未定位**（如成员段位缺省/不认识的期次——看板列装配按 §13.2 跳过，期次块不在 DOM；
+  // 指针面来自全量归组，比视图装配面宽）＝**预期 no-op**：不展开任何可见层、不滚动、不提示——
+  // 滚动 effect 查不到落点自然什么都不做（折叠 id 照记、高亮时限照常自清；不做视图切换兜底，
+  // 与卡片跳转的切列表口径不同）。
   const handleDrillToPhase = useCallback(
     (epicCode: string, phase: number) => {
       setOpenEpicCode(null);
