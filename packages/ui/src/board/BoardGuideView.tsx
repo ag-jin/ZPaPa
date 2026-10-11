@@ -11,7 +11,11 @@
  *
  * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）。
  * C3-3（#138）已落：计划块内的行入口升级为**完整前沿队列**（frontier 成员全量、frontier 序直读；
- * 行含处置指引——「下一步」接手位 + 已解除依赖计数片，均直读 frontier 条目字段；零前沿给空态文案）；
+ * 行含处置指引——「下一步」接手位直读 frontier 条目字段；零前沿给空态文案）；
+ * #181（UI 指引面·队列冗余徽章隐藏）已落：「依赖已解除 N」徽章整处移除——frontier 内卡的依赖
+ * 必然已全部解除（未解除的被 blocked 段收走、不在队列），徽章恒为冗余（itw-20261011-04e0；
+ * 「已经没有依赖的就不要显示了」）；`resolvedDeps` 投影字段保留（弹窗/其他视图可消费），
+ * 队列行不再渲染该徽章。
  * 计划块（队列分组）排序 = 活跃置顶 → 纯期次序（A4 单点比较器）→ 无期次殿后（判据在 viewModel）。
  * C3-2（#137）已落：五槽升级为可点落点（`BoardGuideSlotTile.onActivate` → 宿主的既有视图切换 +
  * 列表控制；零槽点击给空态指引、不落死跳转；缺四段槽不上可点态）——落点判据在
@@ -39,7 +43,6 @@
  *   宽面（≥24rem）保持单行同排与既有紧凑密度（降级形态不落到宽面）。
  */
 import { useState } from "react";
-import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
 import {
@@ -56,7 +59,7 @@ import {
   type BoardGuideQueueRow,
   type BoardGuideSlotKey,
 } from "./boardGuideViewModel.js";
-import { BOARD_COUNT_CHIP_CLASS, BoardNodeNumber, BoardStatusDot } from "./boardNodeParts.js";
+import { BoardNodeNumber, BoardStatusDot } from "./boardNodeParts.js";
 import {
   BOARD_COUNT_MESSAGE_IDS,
   formatBoardCountText,
@@ -109,28 +112,16 @@ function BoardGuideQueueRowLine({
       <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
         {row.title}
       </span>
-      {/* 二次信息组（依赖计数片 + 处置指引；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
+      {/* 二次信息组（处置指引；卡 #141/C3-6）：窄容器（`@max-sm` <24rem）下整组
           `basis-full` 让位折到次行——窄面首行留给「卡号 + 标题」做一扫可读，二次信息不消失
           只是换行（对比：宽面同排，零信息取舍）。组内 `min-w-0` 让处置指引能收缩截断。 */}
       <span
         data-board-guide-queue-meta=""
         className="flex min-w-0 items-center gap-2 @max-sm:basis-full"
       >
-        {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片；
-            计数词条走单点 `formatBoardCountText`（单/复数两键，count===1 走单数——#138 S1 回修）。 */}
-        {row.resolvedDeps.length > 0 ? (
-          <span
-            data-board-guide-queue-deps={row.resolvedDeps.length}
-            title={row.resolvedDeps.map((no) => `#${no}`).join(", ")}
-            className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-base")}
-          >
-            {formatBoardCountText(
-              row.resolvedDeps.length,
-              BOARD_COUNT_MESSAGE_IDS.guideQueueDeps,
-              intl.formatMessage,
-            )}
-          </span>
-        ) : null}
+        {/* #181：原「依赖已解除 N」计数片整处移除——frontier 内卡的依赖必然已全部解除
+            （未解除的被 blocked 段收走、不在队列），徽章恒为冗余（itw-20261011-04e0
+            「已经没有依赖的就不要显示了」）；`row.resolvedDeps` 投影字段保留，只是不再渲染。 */}
         {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。
             截断防线（#141 收口 #138 P3-2/随行登记项）：超长角色名（如 exhaustive-reverse-auditor）
             在 <360px 档会超宽——`min-w-0 flex-1 truncate` 收缩出省略号，全文进原生 title（不溢出、

@@ -104,7 +104,6 @@ export function guideContrastDriverSource(): string {
     { label: "progress-count", selector: "[data-board-guide-plan-progress] span > span:nth-of-type(1)", role: "main" },
     { label: "progress-percent", selector: "[data-board-guide-plan-percent]", role: "secondary" },
     { label: "queue-title", selector: "[data-board-guide-plan-queue] [data-board-card] span[title]", role: "main" },
-    { label: "queue-deps-chip", selector: "[data-board-guide-queue-deps]", role: "chip" },
     { label: "queue-next", selector: "[data-board-guide-queue-next]", role: "secondary" },
   ];
   const measure = (target) => {

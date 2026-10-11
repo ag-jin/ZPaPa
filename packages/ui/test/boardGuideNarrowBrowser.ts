@@ -14,7 +14,8 @@
  *      字号底线不破（标签 ≥12px、主数 ≥14px）——降级不降可读（itw-20261011-9003）；
  *   4. 两档折行形态：计划头计数簇、队列行二次信息组让位折到次行（标题独占首行）；
  *   5. 触摸命中区 ≥44px（槽卡内容高度；队列行折行 + 窄面 `min-h-11` 兜底，含无二次信息行）；
- *   6. 超长角色名截断防线（#138 P3-2 转来）：可见文案真被截断 + 全文进原生 title；
+ *   6. 超长角色名防线（#138 P3-2 转来；#181 随动）：徽章隐藏释放行宽后注册长名完整可读 +
+ *      全文进原生 title + 超长文本探针实测截断防线仍咬住；
  *   7. 触摸点击路由派发（320 档）：触摸类型指针链点队列行 → 既有卡片弹窗（点哪张弹哪张、关闭
  *      归还焦点）；点「阻塞」槽 → 既有表格落点（含该槽对应卡在场）。
  *
@@ -52,19 +53,23 @@ interface NarrowSlotMeasure {
   probe: BoardBrowserOverflowProbe | null;
 }
 
-/** 窄面队列行量取（卡 #141/C3-6）：二次信息折行形态 + 超长角色名截断防线 + 命中区高度。 */
+/** 窄面队列行量取（卡 #141/C3-6）：二次信息折行形态 + 超长角色名截断防线 + 命中区高度；
+ *  #181：`depsBadge` = 依赖已解除徽章锚点在场性（应为 false，恢复即咬）。 */
 interface NarrowQueueRowMeasure {
   id: string | null;
   titleText: string | null;
   titleAttr: string | null;
   boxH: number;
   metaOnOwnLine: boolean;
-  depsCount: string | null;
+  depsBadge: boolean;
   nextText: string | null;
   nextAttr: string | null;
   nextValue: string | null;
   nextTruncated: boolean | null;
   nextFontSize: number | null;
+  /** #181 布局后果随动：徽章隐藏释放行宽后，注册长名不再超宽——用页面内超长文本探针实测
+   *  截断防线仍咬住（超长必截断 + 行不溢出；测完即还原）。 */
+  truncationProbe: { truncated: boolean | null; probe: BoardBrowserOverflowProbe | null } | null;
   probe: BoardBrowserOverflowProbe | null;
 }
 
@@ -175,7 +180,7 @@ async function main(): Promise<void> {
     "宽档计划头计数簇与标题同排",
   );
   const wideRow221 = rowOf(planOf(result.wide, "plan:plan-guide-b"), "task:221");
-  assert.equal(wideRow221.metaOnOwnLine, false, "宽档队列行处置指引/计数片同排");
+  assert.equal(wideRow221.metaOnOwnLine, false, "宽档队列行处置指引同排");
   assert.ok(
     wideRow221.boxH < 44,
     `宽档队列行保持既有紧凑密度（实测 ${wideRow221.boxH}px；44px 命中区只在窄面生效）`,
@@ -230,17 +235,25 @@ async function main(): Promise<void> {
           row.boxH >= 44,
           `窄档 ${label} 队列行 ${row.id} 触摸命中区 ≥44px（实测 ${row.boxH}px）`,
         );
+        // #181：依赖已解除徽章整处移除——含 #221（resolvedDeps 非空）在内的所有队列行都不落锚点。
+        assert.equal(
+          row.depsBadge,
+          false,
+          `窄档 ${label} 队列行 ${row.id} 不落依赖已解除徽章（#181）`,
+        );
         // 折行只对「有二次信息」的行可判（空二次信息组没有可折行的内容，命中区走 min-h 兜底）。
-        if (row.depsCount !== null || row.nextValue !== null) {
+        if (row.nextValue !== null) {
           assert.equal(
             row.metaOnOwnLine,
             true,
-            `窄档 ${label} 队列行 ${row.id} 处置指引/计数片折行（标题独占首行）`,
+            `窄档 ${label} 队列行 ${row.id} 处置指引折行（标题独占首行）`,
           );
         }
       }
     }
-    /* 超长角色名防线（#138 P3-2 转来）：可见文案被截断接住且全文进原生 title（不溢出、不丢信息）。 */
+    /* 超长角色名防线（#138 P3-2 转来；#181 布局后果随动）：依赖徽章隐藏释放行宽后，注册的
+       26 字符长名在 320/375 档已完整可读（不再截断）——全文仍在原生 title；防线本身用超长
+       文本探针实测仍咬住（超长必截断 + 行不溢出，不是「根本没触发」）。 */
     const longRow = rowOf(planOf(tier, "plan:plan-guide-b"), "task:221");
     assert.equal(longRow.nextValue, NARROW_LONG_ROLE, `窄档 ${label} 接手位原值直读 frontier 条目`);
     assert.equal(
@@ -250,9 +263,18 @@ async function main(): Promise<void> {
     );
     assert.equal(
       longRow.nextTruncated,
-      true,
-      `窄档 ${label} 超长角色名确实被截断（防线咬住，而不是根本没触发）`,
+      false,
+      `窄档 ${label}：#181 后注册长名（26 字符）完整可读（徽章隐藏释放行宽；行内不再截断）`,
     );
+    const truncProbe = longRow.truncationProbe;
+    assert.ok(truncProbe, `窄档 ${label} 超长文本探针应有量取值`);
+    assert.equal(
+      truncProbe.truncated,
+      true,
+      `窄档 ${label} 超长文本仍被截断（truncate + min-w-0 防线咬住）`,
+    );
+    assert.ok(truncProbe.probe, `窄档 ${label} 超长文本探针应有溢出量取值`);
+    assertNoHorizontalOverflow(truncProbe.probe, `窄档 ${label} 超长文本下行不溢出`);
     assert.ok(
       (longRow.nextFontSize ?? 0) >= 12,
       `窄档 ${label} 处置指引字号底线不破（≥12px）：${longRow.nextFontSize}`,
@@ -261,7 +283,7 @@ async function main(): Promise<void> {
        兜底（折行组为空 → 行只剩单行）；顺手覆盖 #138 审点的 unassigned 分支。 */
     const bareRow = rowOf(planOf(tier, "plan:plan-guide-b"), "task:220");
     assert.equal(bareRow.nextValue, null, `窄档 ${label} 未指派不猜：不落处置指引（#138 口径）`);
-    assert.equal(bareRow.depsCount, null, `窄档 ${label} 零依赖不落计数片`);
+    assert.equal(bareRow.depsBadge, false, `窄档 ${label} 零依赖不落依赖徽章（#181）`);
     assert.ok(
       bareRow.boxH >= 44,
       `窄档 ${label} 无二次信息行命中区仍 ≥44px（min-h 兜底；实测 ${bareRow.boxH}px）`,
@@ -286,8 +308,8 @@ async function main(): Promise<void> {
   console.log(
     "GUIDE_NARROW_BROWSER_ASSERTIONS_OK 宽档对照（单行/同排/紧凑）；320/375 两档无溢出、" +
       "槽条两行内、主信息不截断（字号底线不破）、计划头与队列行二次信息折行、" +
-      "触摸命中区 ≥44px（含无二次信息行 min-h 兜底）；超长角色名截断+title；" +
-      "触摸点击路由（行→弹窗开闭+焦点归还、槽→表格落点）",
+      "触摸命中区 ≥44px（含无二次信息行 min-h 兜底）；超长角色名完整可读+title（#181 行宽释放）、" +
+      "超长文本探针下防线仍咬住；触摸点击路由（行→弹窗开闭+焦点归还、槽→表格落点）",
   );
 }
 

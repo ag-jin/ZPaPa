@@ -86,6 +86,17 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
         const deps = el(row, "[data-board-guide-queue-deps]");
         const titleTop = topOf(rowTitle);
         const metaTop = topOf(rowMeta);
+        /* #181 布局后果：依赖徽章隐藏后注册长名在本档不再超宽——防线仍否咬住用超长文本探针
+           实测（真排版：超长必截断 + 行不溢出；测完即还原，不触发 React 重渲）。 */
+        const truncationProbe = (() => {
+          if (!next) return null;
+          const original = next.textContent;
+          next.textContent = "truncation-probe-" + "x".repeat(120);
+          const truncatedNow = truncated(next);
+          const rowProbe = probe(row);
+          next.textContent = original;
+          return { truncated: truncatedNow, probe: rowProbe };
+        })();
         return {
           id: attr(row, "data-board-card"),
           titleText: rowTitle ? rowTitle.textContent.trim() : null,
@@ -93,12 +104,14 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
           boxH: Math.round(row.getBoundingClientRect().height),
           /* 相对标题量折行（见函数头注）：同排顶差 ≤2px，换行 ≥25px。 */
           metaOnOwnLine: metaTop !== null && titleTop !== null ? metaTop - titleTop > 10 : false,
-          depsCount: attr(deps, "data-board-guide-queue-deps"),
+          /* #181：依赖徽章整处移除——depsBadge = 锚点在场性（应为 false，恢复即咬）。 */
+          depsBadge: deps !== null,
           nextText: next ? next.textContent.trim() : null,
           nextAttr: attr(next, "title"),
           nextValue: attr(next, "data-board-guide-queue-next"),
           nextTruncated: truncated(next),
           nextFontSize: fontSize(next),
+          truncationProbe: truncationProbe,
           probe: probe(row),
         };
       });

@@ -103,7 +103,8 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
         gapText: gap ? gap.textContent.trim() : null,
         summary: el(plan, "[data-board-guide-plan-summary]")?.textContent.trim() ?? null,
         cardIds: rows.map((row) => attr(row, "data-board-card")),
-        /* 队列行量取（#138）：处置指引（接手位/依赖计数）真 DOM 值 + 行可点态。 */
+        /* 队列行量取（#138）：处置指引（接手位）真 DOM 值 + 行可点态；#181 依赖徽章整处移除
+           —— depsBadge = 徽章锚点在场性（应为 false，恢复即咬）。 */
         rows: rows.map((row) => {
           const next = el(row, "[data-board-guide-queue-next]");
           const deps = el(row, "[data-board-guide-queue-deps]");
@@ -112,9 +113,7 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
             title: attr(el(row, "span[title]"), "title"),
             next: next ? next.textContent.trim() : null,
             nextValue: attr(next, "data-board-guide-queue-next"),
-            deps: deps ? deps.textContent.trim() : null,
-            depsCount: attr(deps, "data-board-guide-queue-deps"),
-            depsTitle: deps ? attr(deps, "title") : null,
+            depsBadge: deps !== null,
             role: attr(row, "role"),
             tabIndex: attr(row, "tabindex"),
             probe: probe(row),

@@ -15,7 +15,8 @@
  *   1. 五槽与计划区块真 DOM 渲染值（与 SSR 判据同源对账：4/3/2/1/5 与 2/4、0/3）+ 槽可点态；
  *   2. 计划级进度胶囊（#139）：百分比文本与微条同排、`[N 张卡]` 计数胶囊与 A4 组头同值；
  *   3. rollup 缺口徽章（#139）：缺口场景板（卡挂 attention 码）落章「缺口 3」，零缺口板不落章；
- *   4. 可执行前沿队列（#138）：行序 = frontier 序、行含处置指引（接手位/依赖计数片）与原生 title、
+ *   4. 可执行前沿队列（#138）：行序 = frontier 序、行含处置指引（接手位）与原生 title、
+ *      依赖已解除徽章不渲染（#181）
  *      空态计划给可读文案、行可点态（role=button + tabindex）；
  *   5. 溢出探针：宽 1400 / 窄 360 两档（根面 / 五槽条 / 计划块 / 进度胶囊 / 计数胶囊 /
  *      缺口徽章 / 队列行）+ 窄档槽条行数（P3-4 登记项真量）；
@@ -68,15 +69,14 @@ interface SlotDrillMeasure {
   cards: Array<string | null>;
 }
 
-/** 可执行前沿队列行量取（#138/C3-3）：处置指引（接手位/依赖计数）与行可点态（L2 下钻锚点）。 */
+/** 可执行前沿队列行量取（#138/C3-3）：处置指引（接手位）与行可点态（L2 下钻锚点）；
+ *  #181：依赖已解除徽章整处移除，`depsBadge` = 徽章锚点在场性（应为 false）。 */
 interface PlanQueueRowMeasure {
   id: string | null;
   title: string | null;
   next: string | null;
   nextValue: string | null;
-  deps: string | null;
-  depsCount: string | null;
-  depsTitle: string | null;
+  depsBadge: boolean;
   role: string | null;
   tabIndex: string | null;
   probe: BoardBrowserOverflowProbe | null;
@@ -233,7 +233,8 @@ async function main(): Promise<void> {
   assert.ok(planD.summary !== null, "未拆解计划仍有摘要行");
   assert.equal(planD.queueEmpty, "暂无可立即执行的卡", "零前沿计划给队列空态文案（不留空壳）");
 
-  /* 1b. 可执行前沿队列（#138/C3-3）：真 DOM 行序 = frontier 序；行含处置指引 + 计数片 + 可点态。 */
+  /* 1b. 可执行前沿队列（#138/C3-3）：真 DOM 行序 = frontier 序；行含处置指引 + 可点态；
+         #181：依赖已解除徽章不渲染（#221 的 resolvedDeps 非空，恢复徽章必咬）。 */
   const planB = planOf(result.wide.plans, "plan:plan-guide-b");
   assert.deepEqual(
     planB.cardIds,
@@ -245,10 +246,12 @@ async function main(): Promise<void> {
   const row221 = planB.rows[1];
   assert.equal(row220?.nextValue, "implementer", "处置指引锚点 = 接手位原值（直读 frontier 条目）");
   assert.equal(row220?.next, "下一步：implementer", "处置指引可读文案（真 DOM）");
-  assert.equal(row220?.depsCount, null, "无已解除依赖 → 不落计数片");
-  assert.equal(row221?.depsCount, "1", "依赖计数片 = resolvedDeps 条数（1）");
-  assert.equal(row221?.deps, "依赖已解除 1", "依赖计数可读文案（真 DOM）");
-  assert.equal(row221?.depsTitle, "#210", "计数片 title 带依赖号明细");
+  assert.equal(row220?.depsBadge, false, "无已解除依赖 → 不落依赖徽章");
+  assert.equal(
+    row221?.depsBadge,
+    false,
+    "#181：resolvedDeps 非空（#221 = 1 条）也不落依赖徽章（冗余信息隐藏）",
+  );
   assert.equal(row221?.title, "微条用法", "行标题进原生 title（截断防线）");
   for (const row of [...planA.rows, ...planB.rows]) {
     assert.equal(row.role, "button", `队列行 ${row.id} 声明 button 角色（L2 下钻落点）`);
@@ -395,7 +398,7 @@ async function main(): Promise<void> {
   console.log(
     "GUIDE_BROWSER_ASSERTIONS_OK 五槽 4/3/2/1/5；计划 2/4 · 50% 微条 2/4 · [4 张卡]；" +
       "缺口场景 [缺口 3] 落章；宽窄两档胶囊/徽章/队列行无溢出；" +
-      "队列 A[210] B[220,221]（处置指引+依赖计数片）；点 task:210/task:221 弹窗开闭+焦点归还；" +
+      "队列 A[210] B[220,221]（处置指引；依赖徽章已隐藏 #181）；点 task:210/task:221 弹窗开闭+焦点归还；" +
       "五槽下钻→看板/表格/列表(执行中/审核中/最近)；零槽空态指引不下跳",
   );
 }
