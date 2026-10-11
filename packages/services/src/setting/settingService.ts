@@ -187,6 +187,25 @@ async function readSettings(): Promise<AppSettings> {
   return (await readSettingsWithMeta()).settings;
 }
 
+/**
+ * 写方 schema 不认识的既有顶层键（#177）。
+ *
+ * setting.json 被多进程共享（桌面端 host / web dev server / 其它 checkout 的构建），
+ * 写盘是「以写方 schema 重读合并后整文件覆盖」。写方 schema 不认识的键属于别的 schema
+ * 进程写入的事实：若不保留，旧进程每次保存都会把新键永久删除（实战：看板实验开关被
+ * 71 次写擦掉，终态文件缺键）。先例是 legacyAccountConnectionSettings.rollbackFields
+ * 的清单式保留；这里推广为「schema 形状之外」的全部顶层键，保证跨版本不互相擦写。
+ */
+function retainUnknownSettingsFields(rawValue: unknown): Record<string, unknown> {
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return {};
+  const knownKeys = appSettingsSchema.out.shape;
+  return Object.fromEntries(
+    Object.entries(rawValue as Record<string, unknown>).filter(
+      ([key]) => !Object.hasOwn(knownKeys, key),
+    ),
+  );
+}
+
 async function writeSettings(
   settings: AppSettings,
   shouldCommit: () => boolean = () => true,
@@ -205,7 +224,9 @@ async function writeSettings(
   maybeThrowInjectedFsFault({ operation: "writeFile", path: settingsFile });
   const raw = await readLegacyAccountConnectionSettingsFile(settingsFile);
   const rollbackFields = retainLegacyAccountConnectionFields(raw);
-  const persisted = { ...rollbackFields, ...settings };
+  // #177：整文件覆盖前带上写方 schema 不认识的既有键，避免旧 schema 进程擦掉新进程写入的新键。
+  const unknownFields = retainUnknownSettingsFields(raw);
+  const persisted = { ...unknownFields, ...rollbackFields, ...settings };
   // 旧 Team 尚待 OAuth 补组织时，schema 的默认 {} 不是用户的新选择。
   // 普通偏好保存必须保留新字段缺席；只有迁移提交或用户显式选连接才结束旧导入。
   if (!commitAccountSelection && readIncompleteLegacyTeamConnections(raw).length > 0) {
