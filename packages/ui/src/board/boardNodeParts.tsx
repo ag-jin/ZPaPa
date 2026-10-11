@@ -227,8 +227,9 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
       )}
       <span
         {...(feature.planCode !== null ? { "data-board-feature-code": feature.planCode } : {})}
-        // 截断恢复路径（F2，A4-1 第四绿移交）：层不是卡、无弹窗可查全文——截断全文进原生 title
-        //（#59 姿态「信息不丢」）；空标题（期次层无标题字段）不落空 title 属性。
+        // 截断恢复路径（F2，A4-1 第四绿移交）：标题没有「展开全文」落点（epic 弹窗头复用本零件，
+        // 同为截断形态）——截断全文进原生 title（#59 姿态「信息不丢」）；空标题（期次层无标题
+        // 字段）不落空 title 属性。
         {...(feature.title ? { title: feature.title } : {})}
         className={cn(
           "min-w-0 flex-1 truncate",

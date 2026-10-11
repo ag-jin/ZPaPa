@@ -40,7 +40,8 @@ export function boardLayerFeatureStub(title: string): BoardGroupHeaderFeature {
 
 /**
  * 容器层块（epic/期次）：差异全在类名与摘要行附加属性，装配与锚点由本组件单点产出。
- * 层不是卡：章头/组头整行是折叠落点（点击路由只走折叠，不落空跳转）。
+ * 层不是卡：无卡片弹窗；epic 章头名/标题区接 `onOpenEpic`（#90/A4-4 退化形态，开 epic 概览、
+ * 不折叠），其余（含期次组头）仍是整行折叠落点，不落空跳转。
  *
  * 折叠默认态与记忆（#89 / A4-3）：默认态由调用方按 AD-5 单点规则算好传入（`defaultExpanded`；
  * 层头零件没有成员信息，本组件不自算缺口/段位），用户覆盖从宿主 `fold` 读（`resolveBoardFoldOpen`

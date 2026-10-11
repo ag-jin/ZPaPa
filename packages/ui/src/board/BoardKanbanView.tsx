@@ -235,7 +235,8 @@ function BoardKanbanPhaseSection({
 
 /**
  * epic 章（列内三层容器第一层；#168）：章头 = 登记行层名 + 标题 + 终态标注（§10.5）+ 本列稿数/期数；
- * 体 = 期次组（升序）。**epic 不是卡**：章头整行是折叠落点（退化形态与 tree 同口径）。
+ * 体 = 期次组（升序）。**epic 不是卡**：无卡片弹窗——名/标题区开 epic 概览（#90/A4-4 退化形态，
+ * 与 tree 同口径），其余仍是折叠落点。
  */
 function BoardKanbanEpicSection({
   container,
