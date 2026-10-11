@@ -7,6 +7,7 @@
  * （判据在 `boardFoldState` 单点，本模块不重算缺口/段位）。拆文件理由同 `boardFoldParts`
  * （行数上限；组件语义不变）。
  */
+import { cn } from "@/components/lib/utils.js";
 import { boardLayerFeatureStub } from "./boardEpicLayerSections.js";
 import { boardEpicOpenProps } from "./boardCardInteraction.js";
 import { boardLayerGapCount, type BoardEpicItemContainer } from "./boardEpicContainers.js";
@@ -47,7 +48,11 @@ export function BoardTableEpicRow({
     >
       <tr
         data-board-epic-summary={container.epic.code}
-        className="border-b border-border/40 bg-surface/50"
+        // 高亮底色落在行上（F1-90：与 tree/list/kanban 的 `bg-warning/15` 同款；cn 后写覆盖恒定底）。
+        className={cn(
+          "border-b border-border/40 bg-surface/50",
+          highlighted ? "bg-warning/15" : "",
+        )}
       >
         <td colSpan={columnCount} className="px-2 py-1.5">
           {/* 溢出防线锚点（#59 S-4）：组行内容允许折行，不撑破表格盒。 */}
@@ -110,7 +115,11 @@ export function BoardTablePhaseRow({
       data-board-phase-block={phase.name}
       {...(highlighted ? { "data-board-layer-highlight": "true" } : {})}
     >
-      <tr data-board-phase-summary={phase.name} className="border-b border-border/40">
+      <tr
+        data-board-phase-summary={phase.name}
+        // 高亮底色落在行上（F1-90：与 tree/list/kanban 的 `bg-warning/15` 同款）。
+        className={cn("border-b border-border/40", highlighted ? "bg-warning/15" : "")}
+      >
         <td colSpan={columnCount} className="px-2 py-1.5 pl-5">
           <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
             <BoardFoldToggleButton

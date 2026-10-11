@@ -279,3 +279,23 @@ test("下钻定位落点：layer 高亮锚点随 highlightCardId 命中期次块
     );
   }
 });
+
+test("下钻高亮底色（F1-90）：层高亮落点带 bg-warning/15（表格行与三视图同源）", () => {
+  for (const viewMode of ["tree", "list", "kanban", "table"] as const) {
+    const highlighted = renderPane(viewMode, { highlightCardId: "KANB1" });
+    const anchor = highlighted.indexOf('data-board-phase-block="KANB1"');
+    assert.ok(anchor >= 0, `${viewMode}：命中期次块`);
+    assert.ok(
+      highlighted.slice(anchor, anchor + 400).includes("bg-warning/15"),
+      `${viewMode}：高亮期次落点带底色类（落点看得见）`,
+    );
+    assert.ok(!renderPane(viewMode).includes("bg-warning/15"), `${viewMode}：无高亮时不落底色类`);
+  }
+  const epicRow = renderPane("table", { highlightCardId: "KANB" });
+  const epicAnchor = epicRow.indexOf('data-board-epic-block="KANB"');
+  assert.ok(epicAnchor >= 0, "表格 epic 行可定位");
+  assert.ok(
+    epicRow.slice(epicAnchor, epicAnchor + 400).includes("bg-warning/15"),
+    "表格 epic 行同补底色类（F1-90 两级层行同源）",
+  );
+});
