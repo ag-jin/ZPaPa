@@ -213,6 +213,7 @@ export const BOARD_ATTENTION_LABEL_MESSAGE_IDS: Record<BoardAttentionCode, strin
  * 计数词条的单/复数键对（卡 #90 / A4-4；第四绿 F4/D7 收口）：en 侧「1 drafts / 1 phases /
  * 1 cards / 1 gaps」是裸复数缺单数形态——本模块把「哪个计数走哪对键」单点化，
  * 组件不再各自拼 key。zh 两侧同文（汉语无复数，两键内容一致即可，不引入 locale 分支）。
+ * 指引面队列「已解除依赖」计数（卡 #138/S1 回修）同表接入，消费走 `formatBoardCountText`。
  */
 export const BOARD_COUNT_MESSAGE_IDS = {
   featureCardCount: {
@@ -230,6 +231,10 @@ export const BOARD_COUNT_MESSAGE_IDS = {
   layerGapCount: {
     one: "board.layer.gapCount.one",
     other: "board.layer.gapCount.other",
+  },
+  guideQueueDeps: {
+    one: "board.guide.queue.deps.one",
+    other: "board.guide.queue.deps.other",
   },
 } as const satisfies Record<string, { one: string; other: string }>;
 

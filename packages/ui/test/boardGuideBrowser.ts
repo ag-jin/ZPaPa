@@ -10,17 +10,20 @@
  * 进度胶囊的「计数·百分比+微条」同排、缺口徽章落章的窄面形态也只有真引擎能量。
  *
  * 覆盖（对应卡文验收「打开板第一眼看到正在执行的计划与进度（计数胶囊/微条）；点计划内任一
- * 卡片弹出详情；窄面不溢出」+ C3-2「点某槽跳到对应列表；零 attention 槽点击有明确空态指引」）：
+ * 卡片弹出详情；窄面不溢出」+ C3-2「点某槽跳到对应列表；零 attention 槽点击有明确空态指引」
+ * + C3-3/#138「看到可执行前沿清单（哪些卡能立刻做），点行下钻细卡」）：
  *   1. 五槽与计划区块真 DOM 渲染值（与 SSR 判据同源对账：4/3/2/1/5 与 2/4、0/3）+ 槽可点态；
  *   2. 计划级进度胶囊（#139）：百分比文本与微条同排、`[N 张卡]` 计数胶囊与 A4 组头同值；
  *   3. rollup 缺口徽章（#139）：缺口场景板（卡挂 attention 码）落章「缺口 3」，零缺口板不落章；
- *   4. 溢出探针：宽 1400 / 窄 360 两档（根面 / 五槽条 / 计划块 / 进度胶囊 / 计数胶囊 /
- *      缺口徽章 / 计划内卡行）+ 窄档槽条行数（P3-4 登记项真量）；
- *   5. 点击路由派发：真指针点计划内卡行 → `data-board-dialog="task:210"` 弹窗出现且内容是点的那张；
- *      × 关闭后弹窗消失、焦点归还打开者；
- *   6. 槽下钻派发（#137）：五槽逐个真指针点击（末槽键盘 Enter）→ 落到对应既有视图/过滤，
+ *   4. 可执行前沿队列（#138）：行序 = frontier 序、行含处置指引（接手位/依赖计数片）与原生 title、
+ *      空态计划给可读文案、行可点态（role=button + tabindex）；
+ *   5. 溢出探针：宽 1400 / 窄 360 两档（根面 / 五槽条 / 计划块 / 进度胶囊 / 计数胶囊 /
+ *      缺口徽章 / 队列行）+ 窄档槽条行数（P3-4 登记项真量）；
+ *   6. 点击路由派发（#138）：真指针点队列行（A 任务 210 / B 任务 221）→ 对应卡片弹窗出现且内容
+ *      是点的那张；× 关闭后弹窗消失、焦点归还打开者；
+ *   7. 槽下钻派发（#137）：五槽逐个真指针点击（末槽键盘 Enter）→ 落到对应既有视图/过滤，
  *      落点视图根在场；
- *   7. 零槽场景（#137）：全零派生板上点需处理槽 → 空态指引锚点 + 视图不跳；反例=派生为零、
+ *   8. 零槽场景（#137）：全零派生板上点需处理槽 → 空态指引锚点 + 视图不跳；反例=派生为零、
  *      节点仍带 attention 码/blockers（自算会得非零 → 必咬）。
  *
  * 运行条件（缺一即报错退出，不静默跳过）：Electron 二进制 / `@tailwindcss/node` / esbuild
@@ -65,6 +68,20 @@ interface SlotDrillMeasure {
   cards: Array<string | null>;
 }
 
+/** 可执行前沿队列行量取（#138/C3-3）：处置指引（接手位/依赖计数）与行可点态（L2 下钻锚点）。 */
+interface PlanQueueRowMeasure {
+  id: string | null;
+  title: string | null;
+  next: string | null;
+  nextValue: string | null;
+  deps: string | null;
+  depsCount: string | null;
+  depsTitle: string | null;
+  role: string | null;
+  tabIndex: string | null;
+  probe: BoardBrowserOverflowProbe | null;
+}
+
 interface PlanMeasure {
   id: string | null;
   progress: string | null;
@@ -77,6 +94,8 @@ interface PlanMeasure {
   gapText: string | null;
   summary: string | null;
   cardIds: Array<string | null>;
+  rows: PlanQueueRowMeasure[];
+  queueEmpty: string | null;
   probe: BoardBrowserOverflowProbe | null;
   capsuleProbe: BoardBrowserOverflowProbe | null;
   chipProbe: BoardBrowserOverflowProbe | null;
@@ -107,6 +126,14 @@ interface GuideResult {
     ariaModal: string | null;
     title: boolean;
     closes: boolean | null;
+    focusReturned: boolean;
+  };
+  /** 第二个计划队列行的下钻弹窗（#138：点行=弹细卡，两计划各点一张）。 */
+  dialogB: {
+    id: string | null;
+    title: boolean;
+    closes: boolean | null;
+    focusReturned: boolean;
   };
   focusReturned: boolean;
   drills: SlotDrillMeasure[];
@@ -196,10 +223,37 @@ async function main(): Promise<void> {
   const planA = planOf(result.wide.plans, "plan:plan-guide-a");
   assert.equal(planA.progress, "2/4", "计划 A 进度计数 2/4");
   assert.equal(planA.barValue, "2/4", "微条与计数同源");
-  assert.deepEqual(planA.cardIds, ["task:210", "task:213"], "卡行 = frontier 序 → active 序");
+  assert.deepEqual(
+    planA.cardIds,
+    ["task:210"],
+    "队列行 = 该计划 frontier 成员（#138 完整队列；在途卡 #213 不入队列）",
+  );
   const planD = planOf(result.wide.plans, "plan:plan-guide-d");
   assert.equal(planD.progress, "0/0", "未拆解计划计数锚点 0/0");
   assert.ok(planD.summary !== null, "未拆解计划仍有摘要行");
+  assert.equal(planD.queueEmpty, "暂无可立即执行的卡", "零前沿计划给队列空态文案（不留空壳）");
+
+  /* 1b. 可执行前沿队列（#138/C3-3）：真 DOM 行序 = frontier 序；行含处置指引 + 计数片 + 可点态。 */
+  const planB = planOf(result.wide.plans, "plan:plan-guide-b");
+  assert.deepEqual(
+    planB.cardIds,
+    ["task:220", "task:221"],
+    "计划 B 队列 = frontier 序 220→221（全量）",
+  );
+  assert.equal(planB.queueEmpty, null, "有队列行的计划不落空态");
+  const row220 = planB.rows[0];
+  const row221 = planB.rows[1];
+  assert.equal(row220?.nextValue, "implementer", "处置指引锚点 = 接手位原值（直读 frontier 条目）");
+  assert.equal(row220?.next, "下一步：implementer", "处置指引可读文案（真 DOM）");
+  assert.equal(row220?.depsCount, null, "无已解除依赖 → 不落计数片");
+  assert.equal(row221?.depsCount, "1", "依赖计数片 = resolvedDeps 条数（1）");
+  assert.equal(row221?.deps, "依赖已解除 1", "依赖计数可读文案（真 DOM）");
+  assert.equal(row221?.depsTitle, "#210", "计数片 title 带依赖号明细");
+  assert.equal(row221?.title, "微条用法", "行标题进原生 title（截断防线）");
+  for (const row of [...planA.rows, ...planB.rows]) {
+    assert.equal(row.role, "button", `队列行 ${row.id} 声明 button 角色（L2 下钻落点）`);
+    assert.equal(row.tabIndex, "0", `队列行 ${row.id} 可键盘聚焦`);
+  }
 
   /* 2. 进度胶囊 / 计数胶囊（#139）：真 DOM 值 = SSR 判据，窄面同排不溢出。 */
   assert.equal(planA.percent, "50", "计划 A 百分比 50（锚点）");
@@ -257,13 +311,22 @@ async function main(): Promise<void> {
     }
   }
 
-  /* 5. 点击路由派发 → 弹窗 DOM（点的是哪张，弹的就是哪张；关闭与焦点闭环走同一宿主链路）。 */
-  assert.equal(result.dialog.id, "task:210", "弹窗身份 = 被点的计划内卡行");
+  /* 5. 点击路由派发 → 弹窗 DOM（点的是哪张，弹的就是哪张；关闭与焦点闭环走同一宿主链路）。
+        #138：两个计划的队列行各点一张（task:210 / task:221）——队列行 = L2 下钻落点。 */
+  assert.equal(result.dialog.id, "task:210", "弹窗身份 = 被点的计划 A 队列行");
   assert.equal(result.dialog.role, "dialog", "弹窗 role");
   assert.equal(result.dialog.ariaModal, "true", "弹窗 aria-modal");
   assert.equal(result.dialog.title, true, "弹窗承载被点卡片内容");
   assert.equal(result.dialog.closes, true, "× 关闭后弹窗消失");
-  assert.equal(result.focusReturned, true, "关闭后焦点归还打开者（计划内卡行）");
+  assert.equal(result.focusReturned, true, "关闭后焦点归还打开者（队列行）");
+  assert.equal(
+    result.dialogB.id,
+    "task:221",
+    "弹窗身份 = 被点的计划 B 队列行（第二个计划同款下钻）",
+  );
+  assert.equal(result.dialogB.title, true, "计划 B 弹窗承载被点卡片内容");
+  assert.equal(result.dialogB.closes, true, "计划 B 弹窗关闭后消失");
+  assert.equal(result.dialogB.focusReturned, true, "计划 B 关闭后焦点归还打开者（队列行）");
 
   /* 6. 槽下钻派发（卡 #137/C3-2）：五槽真指针点击 + 一次键盘 Enter → 落到对应既有视图/过滤。
         期望值 = 派发落点口径（需处理→看板列 / 阻塞→受阻清单形态 / 运行·待收口→对应列表态 /
@@ -331,7 +394,8 @@ async function main(): Promise<void> {
 
   console.log(
     "GUIDE_BROWSER_ASSERTIONS_OK 五槽 4/3/2/1/5；计划 2/4 · 50% 微条 2/4 · [4 张卡]；" +
-      "缺口场景 [缺口 3] 落章；宽窄两档胶囊/徽章无溢出；点 task:210 弹窗开闭+焦点归还；" +
+      "缺口场景 [缺口 3] 落章；宽窄两档胶囊/徽章/队列行无溢出；" +
+      "队列 A[210] B[220,221]（处置指引+依赖计数片）；点 task:210/task:221 弹窗开闭+焦点归还；" +
       "五槽下钻→看板/表格/列表(执行中/审核中/最近)；零槽空态指引不下跳",
   );
 }

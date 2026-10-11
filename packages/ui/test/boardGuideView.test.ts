@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
+import { groupBoardFeaturesByEpic } from "../src/board/boardEpicContainers.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
@@ -248,14 +252,27 @@ test("计划摘要行：段位 + 期次合成名 + 前沿/在途计数（四段�
   assert.ok(planB.includes("KANB2"), "计划 B 期次 2 合成名");
 });
 
-test("前沿行入口：计划内卡行 = 四段投影成员（frontier 序 → active 序），带卡片锚点可点击", () => {
+test("可执行前沿队列（#138）：计划区块的队列行 = 该计划 frontier 成员（frontier 序直读），在途/受阻行不入队列", () => {
   const markup = render(readyState());
   const planA = planMarkup(markup, "plan:plan-guide-a");
-  assert.ok(planA.includes('data-board-card="task:210"'), "计划 A 的前沿卡行（#210）");
-  assert.ok(planA.includes('data-board-card="task:213"'), "计划 A 的在途卡行（#213）");
-  assert.ok(planA.includes("置顶五槽条") && planA.includes("溢出探针"), "行内带标题");
+  assert.ok(planA.includes("data-board-guide-plan-queue"), "队列容器锚点（完整前沿队列）");
+  assert.ok(planA.includes('data-board-card="task:210"'), "计划 A 的可执行卡行（#210）");
+  assert.ok(
+    !planA.includes('data-board-card="task:213"'),
+    "在途卡（#213）不占队列行（队列=可执行卡）",
+  );
+  assert.ok(planA.includes("置顶五槽条"), "行内带标题");
   const planB = planMarkup(markup, "plan:plan-guide-b");
-  assert.ok(planB.includes('data-board-card="task:220"'), "计划 B 前沿卡行");
+  const rowIds = [...planB.matchAll(/data-board-card="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(
+    rowIds,
+    ["task:220", "task:221"],
+    "计划 B 队列 = frontier 序 220→221（全量直读）",
+  );
+  assert.ok(
+    !planB.includes('data-board-card="task:217"'),
+    "受阻卡（#217 未解除阻塞）不入可执行队列",
+  );
 });
 
 test("卡片点击落点：计划内卡行带开弹窗 props（role=button + tabindex；真点击路由断言在浏览器脚本）", () => {
@@ -296,6 +313,19 @@ test("英文界面：五槽与计划区块文案全走 en-US 词条（不漏中�
   }
   assert.ok(markup.includes("Plans in progress"), "英文区块标题");
   assert.ok(!markup.includes("正在执行的计划"), "英文界面不得漏中文标题");
+  // 登记项②（#137 四绿转来，一行兜底）：en-US 槽标签与短解释在窄槽内会截断——原生 title 兜底完整文案。
+  assert.ok(
+    /data-board-guide-slot="attention"[\s\S]*?<span title="Needs attention"[^>]*>Needs attention<\/span>/.test(
+      markup,
+    ),
+    "en-US 槽标签带原生 title 兜底（截断不丢完整文案）",
+  );
+  assert.ok(
+    /data-board-guide-slot="attention"[\s\S]*?<span title="Items awaiting action"[^>]*>Items awaiting action<\/span>/.test(
+      markup,
+    ),
+    "en-US 槽短解释 span 带原生 title 兜底（登记项②完整落地：标签/短解释两半同防线）",
+  );
 });
 
 /* ---------------- 突变/空态咬点（计数跟随板字段，不跟标签） ---------------- */
@@ -329,14 +359,15 @@ test("空态：无计划特性 → 计划区块给明确空态（spec-only 项�
   assert.ok(!markup.includes("data-board-guide-plan="), "空态时不得渲染计划块");
 });
 
-test("行数上限：计划内卡行超过上限时裁剪量显式（完整队列归 #138，不静默丢）", () => {
+test("完整队列不再上限裁剪（#138）：计划内前沿行超过旧上限 3 时全量展示，无「还有 N 项」占位", () => {
   const mutated = structuredClone(GUIDE_BOARD);
   const feature = (mutated.features as Array<Record<string, unknown>>)[0];
   const tasks = feature?.tasks as Array<Record<string, unknown>>;
-  // 追加第 5、6 张卡并让它们进前沿（上限 3 → 应有 3 行 + 「还有 N 项」）。
+  // 追加第 5、6、7 张卡并让它们进前沿（旧上限 3 → 旧行为裁掉第 4 行 + 「还有 N 项」占位）。
   tasks.push(
     { no: 230, label: "1.5", title: "追加卡一", status: "pending", stage: "待办" },
     { no: 231, label: "1.6", title: "追加卡二", status: "pending", stage: "待办" },
+    { no: 232, label: "1.7", title: "追加卡三", status: "pending", stage: "待办" },
   );
   (mutated.frontier as Array<Record<string, unknown>>).push(
     {
@@ -355,13 +386,27 @@ test("行数上限：计划内卡行超过上限时裁剪量显式（完整队�
       nextAssignee: "implementer",
       resolvedDeps: [],
     },
+    {
+      rank: 6,
+      no: 232,
+      title: "追加卡三",
+      stage: "待办",
+      nextAssignee: "implementer",
+      resolvedDeps: [],
+    },
   );
   const markup = render(readyStateOf(mutated));
   const planA = planMarkup(markup, "plan:plan-guide-a");
   const rowIds = [...planA.matchAll(/data-board-card="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(rowIds, ["task:210", "task:230", "task:231"], "只展示前 3 行（frontier 序）");
-  assert.ok(planA.includes("data-board-guide-plan-more"), "裁剪量显式锚点");
-  assert.ok(planA.includes("还有 1 项"), "裁剪量文案（4 项入口 - 3 行展示，另加 1 张在途卡）");
+  assert.deepEqual(
+    rowIds,
+    ["task:210", "task:230", "task:231", "task:232"],
+    "4 行全量展示（frontier 序；旧实现只给前 3 行）",
+  );
+  assert.ok(
+    !planA.includes("data-board-guide-plan-more"),
+    "「还有 N 项」占位随完整队列退场（不再有被裁剪的行）",
+  );
 });
 
 /* ---------------- C3-4（#139）：计划级进度胶囊 + 期次/功能级摘要行胶囊 ---------------- */
@@ -610,4 +655,242 @@ test("反例（缺口口径必咬）：不数计划自身 attention 码、也不
   // 真值 = 成员卡全量求和：顶层 #213 的 1 条 + 嵌套子卡 2 条 = 3
   // （自算自身码会得 1；只数顶层会得 1；两者都被此断言咬住）。
   assert.ok(/data-board-guide-plan-gap-count="3"/.test(planA), `缺口真值 = 3：${planA}`);
+});
+
+/* ---------------- C3-3（#138）：可执行前沿队列（按计划分组） ---------------- */
+
+/** 版上取计划投影（独立真源 = 夹具板字段；不经渲染面）。 */
+function planProjection(board: Record<string, unknown>, planId: string) {
+  const outcome = parseBoardJson(JSON.stringify(board));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") throw new Error("夹具必须 ready");
+  const plan = buildBoardGuideSummary(outcome.board).plans.find(
+    (entry) => entry.featureId === planId,
+  );
+  assert.ok(plan, `计划 ${planId} 应存在`);
+  return plan;
+}
+
+test("完整前沿队列（#138）：计划区块的队列 = 该计划 frontier 成员全量——frontier 序直读、不含在途/受阻行、不再上限裁剪", () => {
+  // 期望值的独立真源：夹具 frontier[]（rank 1..3 = 210/220/221）+ 各计划卡号集。
+  const planA = planProjection(GUIDE_BOARD, "plan:plan-guide-a");
+  assert.deepEqual(
+    planA.queue.map((row) => [row.no, row.title, row.stage, row.nextAssignee, row.resolvedDeps]),
+    [[210, "置顶五槽条", "待办", "implementer", []]],
+    "计划 A 队列 = frontier 成员 #210（含处置指引接手位与已解除依赖）",
+  );
+  const planB = planProjection(GUIDE_BOARD, "plan:plan-guide-b");
+  assert.deepEqual(
+    planB.queue.map((row) => [row.no, row.resolvedDeps]),
+    [
+      [220, []],
+      [221, [210]],
+    ],
+    "计划 B 队列 = frontier 序 220→221（221 的已解除依赖 210 直读）",
+  );
+  assert.ok(
+    !planA.queue.some((row) => row.no === 213),
+    "在途卡（active 段 #213）不占可执行队列行（队列 = 该计划可执行卡）",
+  );
+  assert.ok(
+    !planB.queue.some((row) => row.no === 217),
+    "受阻卡（#217 有未解除 external 阻塞）不入可执行队列",
+  );
+  const seen = new Set([...planA.queue, ...planB.queue].map((row) => row.no));
+  assert.equal(seen.size, 3, "三条 frontier 各归其计划，不串台");
+});
+
+test("队列分组序（#138）：计划区块排序复用 A4 单点比较器（纯期次序）——期次升序、无期次殿后、不再保板序", () => {
+  // 反例咬点：板序 A→B→D 与期次序相反（A 改性期 3、B 改性期 1，且 A 未活跃）——
+  // 「只保板序」的旧实现会得 A→B→D；纯期次序必须得 B→A→D。
+  const mutated = structuredClone(GUIDE_BOARD);
+  const features = mutated.features as Array<Record<string, unknown>>;
+  const planA = features.find((feature) => feature.id === "plan:plan-guide-a");
+  const planB = features.find((feature) => feature.id === "plan:plan-guide-b");
+  assert.ok(planA && planB, "夹具里应有计划 A/B");
+  planA.status = "pending";
+  planA.stage = "待办";
+  planA.phase = 3;
+  planB.phase = 1;
+  const markup = render(readyStateOf(mutated));
+  const indexOfPlan = (id: string) => markup.indexOf(`data-board-guide-plan="${id}"`);
+  assert.ok(
+    indexOfPlan("plan:plan-guide-b") < indexOfPlan("plan:plan-guide-a") &&
+      indexOfPlan("plan:plan-guide-a") < indexOfPlan("plan:plan-guide-d"),
+    "期次 1（B）→ 期次 3（A）→ 无期次（D）：纯期次序、无期次殿后（板序被改判）",
+  );
+  // 同源对账（禁二份实现）：指引面计划序 = A4 归组单点的期次序列（同一比较器判据）。
+  const outcome = parseBoardJson(JSON.stringify(mutated));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const a4PhasedPlanIds = groupBoardFeaturesByEpic(outcome.board).epics.flatMap((group) =>
+    group.phases.flatMap((phase) => phase.features.map((feature) => feature.id)),
+  );
+  assert.deepEqual(
+    a4PhasedPlanIds,
+    ["plan:plan-guide-b", "plan:plan-guide-a"],
+    "A4 单点期次序列（期 1 → 期 3）",
+  );
+  const guidePhasedPlanIds = buildBoardGuideSummary(outcome.board)
+    .plans.filter((plan) => plan.phase !== null)
+    .map((plan) => plan.featureId);
+  assert.deepEqual(guidePhasedPlanIds, a4PhasedPlanIds, "指引面计划序 = A4 单点期次序列");
+});
+
+test("禁二份实现（#138 源码守卫）：指引面期次序比较只走 A4 单点导入，无内联期次算术", () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(
+    join(testDir, "..", "src", "board", "boardGuideViewModel.ts"),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /import\s*\{[^}]*\bcompareBoardPhaseOrder\b[^}]*\}\s*from\s*"\.\/boardEpicContainers\.js"/,
+    "期次序比较必须从 A4 归属模块导入单点比较器（而非注释里提一句）",
+  );
+  assert.ok(!/\.phase\s*[-+<>]/.test(source), "不得内联期次数值比较（第二份期次判据）");
+});
+
+/** 队列单行片段（`data-board-card` 锚点到下一个同行/结尾；行内断言用）。 */
+function queueRowMarkup(planMarkupText: string, cardId: string): string {
+  const start = planMarkupText.indexOf(`data-board-card="${cardId}"`);
+  assert.ok(start >= 0, `队列行 ${cardId} 应渲染`);
+  const tagStart = planMarkupText.lastIndexOf("<", start);
+  const next = planMarkupText.indexOf("data-board-card=", start + 1);
+  return planMarkupText.slice(tagStart, next >= 0 ? next : planMarkupText.length);
+}
+
+test("队列行处置指引（#138）：行含「下一步」接手位 + 已解除依赖计数（直读 frontier 条目字段）", () => {
+  const markup = render(readyState());
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  const row220 = queueRowMarkup(planB, "task:220");
+  assert.ok(row220.includes("data-board-guide-queue-row"), "队列行锚点");
+  assert.ok(
+    row220.includes('data-board-guide-queue-next="implementer"'),
+    "处置指引锚点 = 接手位原值",
+  );
+  assert.ok(row220.includes("下一步：implementer"), "处置指引可读文案（接手位）");
+  assert.ok(
+    !row220.includes("data-board-guide-queue-deps"),
+    "无已解除依赖 → 不落依赖计数片（零噪声）",
+  );
+  const row221 = queueRowMarkup(planB, "task:221");
+  assert.ok(/data-board-guide-queue-deps="1"/.test(row221), "依赖计数片 = resolvedDeps 条数（1）");
+  assert.ok(row221.includes("依赖已解除 1"), "依赖计数可读文案");
+  assert.ok(row221.includes('title="#210"'), "计数片 title 带依赖号明细（信息不丢）");
+  // 密度准入（itw-20261011-9003）：frontier 卡段位恒「待办」——段位徽章不再占行内信息组。
+  assert.ok(!row220.includes("data-board-stage"), "队列行不落段位徽章（段位/处置 一档，处置优先）");
+  // 行文字 ≥ text-sm（14px 档）：处置指引是行内主文字之一。
+  const nextSpan = /data-board-guide-queue-next="implementer"[^>]*class="([^"]*)"/.exec(row221);
+  assert.ok(nextSpan, "处置指引元素带 class");
+  assert.ok(nextSpan[1]?.includes("text-ui-base"), `处置指引字号 ≥14px：${nextSpan[1]}`);
+});
+
+/** en-US 渲染（S1 计数词条单/复数回修：裸复数只在英文侧可观测）。 */
+function renderEn(state: BoardPaneLoadState): string {
+  return renderToStaticMarkup(
+    createElement(ZCodeIntlProvider, {
+      initialLocale: "en-US" as const,
+      children: createElement(BoardPaneView, {
+        state,
+        onRefresh: () => {},
+        viewMode: "guide",
+        now: GUIDE_NOW,
+      }),
+    }),
+  );
+}
+
+test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队列依赖计数 count=1 走单数键，不再「1 deps resolved」", () => {
+  // 期望值的独立真源：契约 §13.5「计数词条按单/复数两键（count===1 走单数）」——en 侧
+  // 「1 deps resolved」正是 #90 成文要消灭的裸复数形态；可见文案应逐字为「1 dep resolved」。
+  const row221 = queueRowMarkup(
+    planMarkup(renderEn(readyState()), "plan:plan-guide-b"),
+    "task:221",
+  );
+  assert.ok(/>1 dep resolved</.test(row221), `count=1 渲染单数键可见文案（不得裸复数）：${row221}`);
+  assert.ok(!row221.includes("1 deps resolved"), "「1 deps resolved」= #90 要消灭的裸复数形态");
+  // other 侧：count=2 走复数键（两键都喂单点 formatBoardCountText；只有 count===1 走 one）。
+  const mutated = structuredClone(GUIDE_BOARD);
+  const entries = mutated.frontier as Array<Record<string, unknown>>;
+  const entry221 = entries.find((entry) => entry.no === 221);
+  assert.ok(entry221, "夹具里应有 frontier #221");
+  entry221.resolvedDeps = [210, 211];
+  const pluralRow = queueRowMarkup(
+    planMarkup(renderEn(readyStateOf(mutated)), "plan:plan-guide-b"),
+    "task:221",
+  );
+  assert.ok(/>2 deps resolved</.test(pluralRow), `count≥2 走复数键（{count} 插值）：${pluralRow}`);
+});
+
+test("队列空态（#138）：计划无可执行卡时给明确文案（不留空壳）；有前沿的计划不落空态", () => {
+  const markup = render(readyState());
+  const planD = planMarkup(markup, "plan:plan-guide-d");
+  assert.ok(planD.includes("data-board-guide-queue-empty"), "未拆解计划（零卡）有空态锚点");
+  assert.ok(planD.includes("暂无可立即执行的卡"), "空态可读文案");
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  assert.ok(!planA.includes("data-board-guide-queue-empty"), "有可执行卡的计划不落空态");
+  // 有卡但全部在途/受阻/完成 → 队列仍为空态（队列 = 可执行卡，可用性由 frontier 派生说话）。
+  const mutated = structuredClone(GUIDE_BOARD);
+  mutated.frontier = (mutated.frontier as Array<Record<string, unknown>>).filter(
+    (entry) => entry.no === 210,
+  );
+  const mutatedMarkup = render(readyStateOf(mutated));
+  const planB = planMarkup(mutatedMarkup, "plan:plan-guide-b");
+  assert.ok(planB.includes("data-board-guide-queue-empty"), "计划 B 撤出前沿成员后落空态");
+  assert.ok(
+    planB.includes("data-board-guide-plan-card-count"),
+    "计划 B 仍有卡数胶囊（有卡但无可执行）",
+  );
+});
+
+test("反例（#138 派生改判必咬）：队列行成员/标题/接手位/依赖计数全跟 frontier 派生走，不按卡字段自算", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const entries = mutated.frontier as Array<Record<string, unknown>>;
+  const entry220 = entries.find((entry) => entry.no === 220);
+  assert.ok(entry220, "夹具里应有 frontier #220");
+  // 派生改判：条目标题/接手位/依赖与卡节点字段解耦（卡节点仍是「胶囊形态」/implementer/无依赖）。
+  entry220.title = "胶囊形态（前沿改判）";
+  entry220.nextAssignee = "test-verifier";
+  entry220.resolvedDeps = [211, 212];
+  const markup = render(readyStateOf(mutated));
+  const row220 = queueRowMarkup(planMarkup(markup, "plan:plan-guide-b"), "task:220");
+  assert.ok(row220.includes("胶囊形态（前沿改判）"), "行标题 = frontier 条目标题（条目改判必随）");
+  assert.ok(
+    row220.includes('data-board-guide-queue-next="test-verifier"'),
+    "接手位 = frontier 条目值",
+  );
+  assert.ok(/data-board-guide-queue-deps="2"/.test(row220), "依赖计数 = 条目 resolvedDeps 条数");
+  assert.ok(row220.includes('title="#211, #212"'), "依赖明细 = 条目号原值");
+
+  // 成员改判：撤掉 #221 条目（卡节点仍 待办）——队列不得把「卡字段看起来可执行」的卡自算回来。
+  const without = structuredClone(GUIDE_BOARD);
+  without.frontier = (without.frontier as Array<Record<string, unknown>>).filter(
+    (entry) => entry.no !== 221,
+  );
+  const withoutMarkup = render(readyStateOf(without));
+  const planB = planMarkup(withoutMarkup, "plan:plan-guide-b");
+  assert.ok(
+    !planB.includes('data-board-card="task:221"'),
+    "派生撤出的成员不得由卡字段自算回队列（节点仍 待办 → 自算实现必咬）",
+  );
+  assert.ok(planB.includes('data-board-card="task:220"'), "其余成员不受影响");
+});
+
+test("反例（#138 顺序照读必咬）：队列行序 = frontier 数组序（派生顺序改判即随，不按板序/rank 重排）", () => {
+  const mutated = structuredClone(GUIDE_BOARD);
+  const entries = mutated.frontier as Array<Record<string, unknown>>;
+  // 交换 220/221 两条目顺序（rank 字段不改）——队列必须照数组序（221 → 220）；
+  // 按板序或按 rank 重排的实现会得 220 → 221（必咬）。
+  const idx220 = entries.findIndex((entry) => entry.no === 220);
+  const idx221 = entries.findIndex((entry) => entry.no === 221);
+  assert.ok(idx220 >= 0 && idx221 >= 0, "夹具里应有 frontier #220/#221");
+  [entries[idx220], entries[idx221]] = [
+    entries[idx221] as Record<string, unknown>,
+    entries[idx220] as Record<string, unknown>,
+  ];
+  const markup = render(readyStateOf(mutated));
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  const rowIds = [...planB.matchAll(/data-board-card="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(rowIds, ["task:221", "task:220"], "顺序照读（派生数组序改判即随）");
 });

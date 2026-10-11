@@ -76,6 +76,7 @@ export function BoardGuideSlotTile({
 }) {
   const { intl } = useZCodeIntl();
   const zero = slot.count === 0;
+  const label = intl.formatMessage({ id: BOARD_GUIDE_SLOT_MESSAGE_IDS[slot.key] });
   const secondary =
     hint ??
     intl.formatMessage({
@@ -97,14 +98,18 @@ export function BoardGuideSlotTile({
         onActivate && "cursor-pointer hover:bg-surface-hover",
       )}
     >
-      <span className="truncate text-ui-sm text-foreground-subtle">
-        {intl.formatMessage({ id: BOARD_GUIDE_SLOT_MESSAGE_IDS[slot.key] })}
+      {/* 截断防线（#137 四绿登记项②，标签/短解释两半完整落地）：窄槽（basis-24）内 en-US 标签与
+          短解释（hint/零值/相对时间三态）都会截断——原生 title 给完整文案（同一字符串，不另拼）。 */}
+      <span title={label} className="truncate text-ui-sm text-foreground-subtle">
+        {label}
       </span>
       <span className="text-ui-base font-medium tabular-nums text-foreground">
         {boardGuideSlotValueText(slot)}
       </span>
       {secondary ? (
-        <span className="truncate text-ui-sm text-foreground-subtle">{secondary}</span>
+        <span title={secondary} className="truncate text-ui-sm text-foreground-subtle">
+          {secondary}
+        </span>
       ) : null}
     </div>
   );

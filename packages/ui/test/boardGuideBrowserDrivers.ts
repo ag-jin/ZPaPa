@@ -4,9 +4,10 @@
  * `boardEpicBadgesBrowserDrivers.ts` 同形态：驱动只做真 DOM 上的量取与真事件派发，判据
  * （断言）留在被测脚本 `boardGuideBrowser.ts`）。
  *
- * 场景：切到指引面 → 量取五槽（含交互态）/计划区块/进度胶囊/计数胶囊/缺口徽章的渲染值（真 DOM）→
- * 宽 1400 / 窄 360 两档溢出探针（窄档另量槽条行数）→ 真指针点击计划内卡行 → 卡片弹窗 DOM
- * 出现（点击路由派发后断言 DOM）→ 逐槽真指针点击 → 断落到哪个既有视图/过滤（指针与键盘两路）。
+ * 场景：切到指引面 → 量取五槽（含交互态）/计划区块/进度胶囊/计数胶囊/缺口徽章/可执行前沿队列
+ * 行的渲染值（真 DOM）→ 宽 1400 / 窄 360 两档溢出探针（窄档另量槽条行数）→ 真指针点击队列行
+ * （#138：两个计划各一张）→ 卡片弹窗 DOM 出现（点击路由派发后断言 DOM）→ 逐槽真指针点击 →
+ * 断落到哪个既有视图/过滤（指针与键盘两路）。
  *
  * 页面内共用原语（sleep/waitFor/switchToView/dispatchPointerClick/probeOverflow）单点在
  * `boardBrowserProbeKit.ts`，本驱动引用同一份，不复制。
@@ -88,7 +89,8 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
       const percent = el(plan, "[data-board-guide-plan-percent]");
       const chip = el(plan, "[data-board-guide-plan-card-count]");
       const gap = el(plan, "[data-board-guide-plan-gap-count]");
-      const rows = [...plan.querySelectorAll("[data-board-guide-plan-frontier] [data-board-card]")];
+      const rows = [...plan.querySelectorAll("[data-board-guide-plan-queue] [data-board-card]")];
+      const empty = el(plan, "[data-board-guide-queue-empty]");
       return {
         id: attr(plan, "data-board-guide-plan"),
         progress: attr(progress, "data-board-guide-plan-progress"),
@@ -101,6 +103,24 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
         gapText: gap ? gap.textContent.trim() : null,
         summary: el(plan, "[data-board-guide-plan-summary]")?.textContent.trim() ?? null,
         cardIds: rows.map((row) => attr(row, "data-board-card")),
+        /* 队列行量取（#138）：处置指引（接手位/依赖计数）真 DOM 值 + 行可点态。 */
+        rows: rows.map((row) => {
+          const next = el(row, "[data-board-guide-queue-next]");
+          const deps = el(row, "[data-board-guide-queue-deps]");
+          return {
+            id: attr(row, "data-board-card"),
+            title: attr(el(row, "span[title]"), "title"),
+            next: next ? next.textContent.trim() : null,
+            nextValue: attr(next, "data-board-guide-queue-next"),
+            deps: deps ? deps.textContent.trim() : null,
+            depsCount: attr(deps, "data-board-guide-queue-deps"),
+            depsTitle: deps ? attr(deps, "title") : null,
+            role: attr(row, "role"),
+            tabIndex: attr(row, "tabindex"),
+            probe: probe(row),
+          };
+        }),
+        queueEmpty: empty ? empty.textContent.trim() : null,
         probe: probe(plan),
         capsuleProbe: probe(progress),
         chipProbe: probe(chip),
@@ -134,31 +154,36 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   await setHostWidth(1400);
   await sleep(220);
 
-  /* 点击路由：真指针序列点计划内卡行 → 卡片弹窗 DOM 必须出现（点的是哪张，弹的就是哪张）。 */
-  const targetId = "task:210";
-  const cardRow = await waitFor(
-    () => root.querySelector('[data-board-card="' + targetId + '"]'),
-    "计划内卡行",
-  );
-  dispatchPointerClick(cardRow);
-  const dialog = await waitFor(
-    () => document.querySelector('[data-board-dialog="' + targetId + '"]'),
-    "卡片弹窗出现",
-  );
-  await sleep(80);
-  const dialogState = {
-    id: attr(dialog, "data-board-dialog"),
-    role: attr(dialog, "role"),
-    ariaModal: attr(dialog, "aria-modal"),
-    title: dialog.textContent.includes("置顶五槽条"),
-    closes: null,
+  /* 点击路由（#138 队列行 = L2 下钻）：真指针序列点队列行 → 卡片弹窗 DOM 必须出现
+     （点的是哪张，弹的就是哪张）；两个计划的队列行各点一张。 */
+  const clickQueueRow = async (targetId) => {
+    const row = await waitFor(
+      () => root.querySelector('[data-board-guide-plan-queue] [data-board-card="' + targetId + '"]'),
+      "队列行 " + targetId,
+    );
+    dispatchPointerClick(row);
+    const dialog = await waitFor(
+      () => document.querySelector('[data-board-dialog="' + targetId + '"]'),
+      "卡片弹窗出现 " + targetId,
+    );
+    await sleep(80);
+    const state = {
+      id: attr(dialog, "data-board-dialog"),
+      role: attr(dialog, "role"),
+      ariaModal: attr(dialog, "aria-modal"),
+      title: dialog.textContent.includes(targetId === "task:210" ? "置顶五槽条" : "微条用法"),
+      closes: null,
+      focusReturned: false,
+    };
+    /* 关闭路径（×）：弹窗消失、焦点归还打开者（既有纪律，指引面走同一宿主链路）。 */
+    dispatchPointerClick(el(dialog, "[data-board-dialog-close]"));
+    await sleep(120);
+    state.closes = document.querySelector('[data-board-dialog="' + targetId + '"]') === null;
+    state.focusReturned = document.activeElement === row;
+    return state;
   };
-  /* 关闭路径（×）：弹窗消失、焦点归还打开者（既有纪律，指引面走同一宿主链路）。 */
-  const closeButton = el(dialog, "[data-board-dialog-close]");
-  dispatchPointerClick(closeButton);
-  await sleep(120);
-  dialogState.closes = document.querySelector('[data-board-dialog="' + targetId + '"]') === null;
-  const focusReturned = document.activeElement === cardRow;
+  const dialogA = await clickQueueRow("task:210");
+  const dialogB = await clickQueueRow("task:221");
 
   /* 槽下钻派发（卡 #137）：逐槽真指针点击 → 落到对应既有视图/过滤；末槽再走键盘（Enter）。 */
   const drills = [];
@@ -171,8 +196,9 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     ua: navigator.userAgent,
     wide,
     narrow,
-    dialog: dialogState,
-    focusReturned,
+    dialog: dialogA,
+    dialogB,
+    focusReturned: dialogA.focusReturned,
     drills,
   };
 })();

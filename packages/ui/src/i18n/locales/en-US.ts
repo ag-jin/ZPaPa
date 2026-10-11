@@ -1206,7 +1206,12 @@ const enUS: Record<string, string> = {
   "board.guide.plan.undesigned": "Not broken down",
   "board.guide.plan.frontier": "{count} ready",
   "board.guide.plan.active": "{count} in flight",
-  "board.guide.plan.more": "{count} more",
+  // Executable frontier queue (card #138 / C3-3): disposal guidance and empty state.
+  "board.guide.queue.next": "Next: {role}",
+  // Count pair per contract §13.5 (one/other; count===1 takes .one) — card #138 S1 fix.
+  "board.guide.queue.deps.one": "{count} dep resolved",
+  "board.guide.queue.deps.other": "{count} deps resolved",
+  "board.guide.queue.empty": "No cards ready to start",
   // Card dialog (card #34, contract §6): section titles, close, jump, origin row labels.
   "board.dialog.close": "Close",
   "board.dialog.jump": "Jump",
