@@ -51,7 +51,10 @@ export function BoardDialogShell({
     const root = shellRef.current;
     if (!root) return;
     const focusables = boardDialogFocusables(root);
-    const activeIndex = focusables.indexOf(document.activeElement as HTMLElement);
+    // #60/T-3：不裸 `as`——`instanceof` 收窄；非 HTMLElement（null/SVG）本就不在可聚焦序列里，
+    // 回落到 `-1` 与旧断言的 `indexOf` 结果同义（判据在 `boardDialogTabIntent`）。
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? focusables.indexOf(active) : -1;
     const intent = boardDialogTabIntent({
       shiftKey: event.shiftKey,
       activeIndex,

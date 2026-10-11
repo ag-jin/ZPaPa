@@ -3,7 +3,10 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView } from "../src/board/BoardPaneView.js";
-import { BoardFeatureGroupHeaderContent } from "../src/board/boardNodeParts.js";
+import {
+  BoardFeatureGroupHeaderContent,
+  type BoardFeatureGroupHeaderContentProps,
+} from "../src/board/boardNodeParts.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { EPIC_BOARD, EPIC_BOARD_FLAT } from "./boardEpicFixture.js";
@@ -64,7 +67,7 @@ test("组头零件扩展：epic 层头 = 层名 + 稿数/期数计数片（不�
     createElement(BoardFeatureGroupHeaderContent, {
       feature: EPIC_LAYER_FEATURE,
       layer: { kind: "epic", name: "KANB", planCount: 3, phaseCount: 2 },
-      titleClassName: "text-ui-base font-medium text-foreground",
+      titleSize: "base",
     }),
   );
   assert.match(markup, /data-board-layer-kind="epic"/, "层类型锚点（epic）");
@@ -113,6 +116,109 @@ test("组头零件扩展：稿层计数片照旧（[N 张卡] 与锚点不变—
   assert.match(markup, /data-board-feature-card-count="4"/);
   assert.ok(markup.includes(">4 张卡<"), `稿层计数片文案照旧：${markup}`);
   assert.ok(!markup.includes("data-board-layer-name"), "稿层不带层名锚点");
+});
+
+/** 组头零件参数面用例共用的稿层字段面（非层头：有号、有计划码、有段位）。 */
+const PART_FEATURE = {
+  no: 31,
+  label: "31",
+  planCode: "UI01",
+  title: "看板 v2 一期甲稿",
+  stage: "执行中",
+  attention: [],
+  blockers: [],
+  status: "active",
+};
+
+test("组头零件参数面（#60/S-2 收闭集）：标题字号只认档位（sm/base/xs/xsSubtle），缺省 sm", () => {
+  // 档位 → 类串是**收闭集映射本身的交付物**：此前宿主透传任意类片段（一半默认串各视图复制），
+  // 收闭集后档位是唯一入口，故这里逐档钉住映射输出（四档互不为前缀）。
+  const titleMarkup = (titleSize?: "sm" | "base" | "xs" | "xsSubtle") =>
+    renderPart(
+      createElement(BoardFeatureGroupHeaderContent, {
+        feature: PART_FEATURE,
+        cardCount: 4,
+        ...(titleSize === undefined ? {} : { titleSize }),
+      }),
+    );
+  assert.match(
+    titleMarkup(),
+    /class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground"/,
+    "缺省档 = 看板/列表 sm",
+  );
+  assert.match(
+    titleMarkup("base"),
+    /class="min-w-0 flex-1 truncate text-ui-base font-medium text-foreground"/,
+    "base 档 = 树形稿块/epic 章大块",
+  );
+  assert.match(
+    titleMarkup("xs"),
+    /class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground"/,
+    "xs 档 = 窄列 epic 章头",
+  );
+  assert.match(
+    titleMarkup("xsSubtle"),
+    /class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground-subtle"/,
+    "xsSubtle 档 = 期次层弱化小字",
+  );
+});
+
+test("组头零件参数面（#60/S-2 收闭集）：variant 二档 —— full 段位在场；lightweight 去段位、名弱化、角标压强调度", () => {
+  const variantMarkup = (variant: "full" | "lightweight") =>
+    renderPart(
+      createElement(BoardFeatureGroupHeaderContent, {
+        feature: PART_FEATURE,
+        cardCount: 4,
+        variant,
+      }),
+    );
+  const full = variantMarkup("full");
+  assert.match(full, /data-board-stage="执行中"/, "full：段位徽章在场（特性自己的列）");
+  assert.ok(full.includes('data-board-feature-card-count="4"'), `full：计数片照常：${full}`);
+  assert.ok(!full.includes("opacity-70"), "full：角标不压强调度");
+  const lightweight = variantMarkup("lightweight");
+  assert.ok(
+    !lightweight.includes("data-board-stage"),
+    "lightweight（跨列随行，§13.7 B3）：不带段位徽章",
+  );
+  assert.match(
+    lightweight,
+    /class="min-w-0 flex-1 truncate text-ui-xs text-foreground-subtle"/,
+    "lightweight：名称弱化为小字",
+  );
+  assert.match(lightweight, /opacity-70/, "lightweight：角标保留、压低强调度（缺口不许被埋）");
+  assert.match(lightweight, /data-board-feature-card-count="4"/, "lightweight：计数片保留");
+});
+
+test("组头零件参数面（#60/S-2 收闭集）：开放入参在类型面不可达（任意类串 / 布尔档 / 无类型 props 袋）", () => {
+  // 判据在**编译期**（`pnpm typecheck` 咬住；运行期 tsx 只转译，不做类型检查）：
+  // 收闭集前这些入参合法（三条 @ts-expect-error 指令未使用 → tsc 报错），收闭集后必须逐条报错。
+  // 三条分开写：tsc 对单个对象字面量只报第一条多余属性，合写则后两条咬不住。
+  const legacyTitleClassName: BoardFeatureGroupHeaderContentProps = {
+    feature: PART_FEATURE,
+    cardCount: 1,
+    // @ts-expect-error titleClassName 任意类串入口已删除（收闭集为 titleSize 档位）
+    titleClassName: "text-ui-sm",
+  };
+  const legacyLightweight: BoardFeatureGroupHeaderContentProps = {
+    feature: PART_FEATURE,
+    cardCount: 1,
+    // @ts-expect-error lightweight 布尔档已收闭集为 variant（"full" | "lightweight"）
+    lightweight: true,
+  };
+  const legacyTitleRegionProps: BoardFeatureGroupHeaderContentProps = {
+    feature: PART_FEATURE,
+    cardCount: 1,
+    // @ts-expect-error titleRegionProps 无类型 DOM 袋已收闭集为具名键（键名写错在编译期报错）
+    titleRegionProps: { roel: "button" },
+  };
+  assert.equal(
+    [legacyTitleClassName, legacyLightweight, legacyTitleRegionProps].every(
+      (props) => props.cardCount === 1,
+    ),
+    true,
+    "运行期只确认对象已构造；类型面判据在 tsc",
+  );
 });
 
 test("树形三层容器：epic 章（登记序）⊃ 期次组（升序）⊃ 稿块；层头层名/计数走单点零件", () => {

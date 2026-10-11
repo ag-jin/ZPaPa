@@ -259,6 +259,22 @@ test("board.json 读取抛非 ENOENT 错误 → 空态 C（damaged，读不到�
   assert.equal(state.kind, "damaged");
 });
 
+test("读取失败只带 code=ENOENT（文案不含 ENOENT）→ missing：code 分支独立成断言", async () => {
+  // #60/T-3 回归守卫：`isBoardFileMissingError` 的 **code 分支**（`in` 收窄读取，替换原裸 `as`）
+  // 单独咬一次——既有 ENOENT 夹具的消息里也含 ENOENT 文案，只走文案兜底分支即可通过，
+  // code 分支写错（如把 `error.code` 读成别的路径）不会红。
+  const fileService = {
+    checkFilesExist: async () => [{ path: BOARD_PATH, exists: true }],
+    readTextFile: async () => {
+      const error: Error & { code?: unknown } = new Error("读取失败");
+      error.code = "ENOENT";
+      throw error;
+    },
+  };
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "missing", "code=ENOENT 即缺失（与 PreviewPane 判定同一约定）");
+});
+
 test("golden 形态 board.json → ready，映射特性树与卡片字段", async () => {
   const fileService = createFakeFileService({
     [BOARD_PATH]: { content: JSON.stringify(GOLDEN_SHAPED_BOARD) },

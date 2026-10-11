@@ -149,32 +149,35 @@ function epicCodeOf(feature: BoardFeatureNode, codes: ReadonlySet<string>): stri
 
 export function groupBoardFeaturesByEpic(board: BoardViewModel): BoardEpicGrouping {
   const codes = new Set(board.epics.map((epic) => epic.code));
-  const membersByCode = new Map<string, BoardFeatureNode[]>();
+  // 成员期次在归桶时随行携带（#60/T-3：消费处不再 `member.phase as number` 断言——
+  // 上面的守卫已判非空，把收窄后的 `number` 直接存下来，后面只读）。
+  const membersByCode = new Map<string, Array<{ feature: BoardFeatureNode; phase: number }>>();
   const ungrouped: BoardFeatureNode[] = [];
   for (const feature of board.features) {
     const code = epicCodeOf(feature, codes);
-    if (code === null || feature.phase === null) {
+    const phase = feature.phase;
+    if (code === null || phase === null) {
       ungrouped.push(feature);
       continue;
     }
+    const member = { feature, phase };
     const members = membersByCode.get(code);
-    if (members) members.push(feature);
-    else membersByCode.set(code, [feature]);
+    if (members) members.push(member);
+    else membersByCode.set(code, [member]);
   }
   return {
     epics: board.epics.map((epic) => {
       const members = membersByCode.get(epic.code) ?? [];
       const byPhase = new Map<number, BoardFeatureNode[]>();
-      for (const member of members) {
-        // phase 在本函数内已判非空（上面的守卫）；此处只做归期次。
-        const phase = member.phase as number;
+      for (const { feature, phase } of members) {
+        // 归期次：phase 已在上面的守卫处收窄，这里只分组。
         const features = byPhase.get(phase);
-        if (features) features.push(member);
-        else byPhase.set(phase, [member]);
+        if (features) features.push(feature);
+        else byPhase.set(phase, [feature]);
       }
       return {
         epic,
-        members,
+        members: members.map((member) => member.feature),
         // 唯一排序点：期次序升序（纯期次序比较器）；合成名同守单点（AD-3）。
         phases: orderedPhaseEntries(byPhase).map(([phase, features]) => ({
           phase,

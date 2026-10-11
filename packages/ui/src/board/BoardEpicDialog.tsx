@@ -57,7 +57,7 @@ export function BoardEpicDialog({ board, code, onClose, onDrillToPhase }: BoardE
             gapCount: model.gapCount,
             status: model.status,
           }}
-          titleClassName="text-ui-sm font-medium text-foreground"
+          titleSize="sm"
         />
         <Button
           autoFocus

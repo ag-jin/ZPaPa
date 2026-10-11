@@ -11,6 +11,7 @@ import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
 import { boardFoldIdsOfCard } from "../src/board/boardFoldState.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
+import type { BoardViewMode } from "../src/board/boardViewsViewModel.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { LARGE_BOARD_TAIL_TITLE, buildLargeBoard } from "./boardTestFixture.js";
@@ -59,9 +60,10 @@ function createNodeFileService() {
     }) => {
       const bytes = await readFile(path);
       const start = Math.max(0, Math.trunc(offset));
-      const requested = Number.isFinite(length)
-        ? Math.trunc(length as number)
-        : SERVICE_DEFAULT_TEXT_READ_BYTES;
+      const requested =
+        typeof length === "number" && Number.isFinite(length)
+          ? Math.trunc(length)
+          : SERVICE_DEFAULT_TEXT_READ_BYTES;
       const target = Math.min(Math.max(requested, 1), SERVICE_MAX_TEXT_READ_BYTES);
       const readLength = Math.min(target, Math.max(0, bytes.length - start));
       const chunk = bytes.subarray(start, start + readLength);
@@ -195,6 +197,27 @@ function collectRawTasks(features: RawRecord[]): RawRecord[] {
   return out;
 }
 
+/**
+ * JSON.parse 的收窄读取面（#60/T-3 评审点名点位；不裸 `as` 标注形状）：
+ * 解析结果先落 `unknown`，形状不对就以可点名的断言/空值收场，而不是断言一个不存在的形状。
+ */
+function parseRawRecord(text: string, label: string): RawRecord {
+  const parsed: unknown = JSON.parse(text);
+  assert.ok(isRawRecord(parsed), `${label} 应是 JSON 对象`);
+  return parsed;
+}
+
+/** 记录里的数组字段（缺省/非数组 → 空数组）：形状由 `Array.isArray` 收窄。 */
+function rawArrayField(record: RawRecord, key: string): unknown[] {
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+/** 记录里的对象数组字段（逐项收窄为记录；非记录项丢弃不读数）。 */
+function rawRecordsOf(record: RawRecord, key: string): RawRecord[] {
+  return rawArrayField(record, key).filter(isRawRecord);
+}
+
 test(
   "真实 golden 样例：全字段形态可加载且完整渲染（含四种缺口码逐字文案）",
   {
@@ -203,12 +226,12 @@ test(
   async () => {
     // 读取真实 golden 文件后按固定布局（<workspace>/.zcode/board/board.json）落牌再走真实 loader。
     const goldenContent = await readFile(GOLDEN_PATH, "utf8");
-    const raw = JSON.parse(goldenContent) as {
-      project?: { name?: string };
-      features: RawRecord[];
-      attentionSummary: Record<string, number>;
-      diagnostics?: unknown[];
-    };
+    // #60/T-3：JSON.parse 后逐字段收窄（不裸 `as` 标注形状）——样例形状不对时断言点名。
+    const golden = parseRawRecord(goldenContent, "golden 样例");
+    const goldenProject = isRawRecord(golden.project) ? golden.project : null;
+    const goldenFeatures = rawRecordsOf(golden, "features");
+    const goldenSummary = isRawRecord(golden.attentionSummary) ? golden.attentionSummary : {};
+    const goldenDiagnosticCount = rawArrayField(golden, "diagnostics").length;
     const { workspace, cleanup } = await stageWorkspace(goldenContent);
     try {
       const state = await loadFromRealFile(workspace);
@@ -217,14 +240,17 @@ test(
       const board = state.board;
 
       // 结构一致性：加载器的节点数与 golden 自身一致（golden 是活动交付物，测试不写死计数）。
-      const rawTasks = collectRawTasks(raw.features);
+      const rawTasks = collectRawTasks(goldenFeatures);
       const tasks = flattenTasks(board.features);
-      assert.equal(board.projectName, raw.project?.name);
-      assert.equal(board.features.length, raw.features.length);
+      assert.equal(
+        board.projectName,
+        typeof goldenProject?.name === "string" ? goldenProject.name : undefined,
+      );
+      assert.equal(board.features.length, rawArrayField(golden, "features").length);
       assert.equal(tasks.length, rawTasks.length);
 
       // 四种缺口码：样本自身覆盖（前提），映射后一个不少。
-      const rawCodes = [...new Set(rawAttentionCodes([...raw.features, ...rawTasks]))].sort();
+      const rawCodes = [...new Set(rawAttentionCodes([...goldenFeatures, ...rawTasks]))].sort();
       assert.deepEqual(
         rawCodes,
         [
@@ -244,7 +270,7 @@ test(
       assert.deepEqual(mappedCodes, rawCodes, "缺口码在映射中不得丢失");
 
       // 段位：样本里的 stage 值都在七段位词表内，映射保留（含「已取消」「审核中」等）。
-      const rawStageValues = [...raw.features, ...rawTasks]
+      const rawStageValues = [...goldenFeatures, ...rawTasks]
         .map((node) => node.stage)
         .filter((stage): stage is string => typeof stage === "string");
       assert.ok(rawStageValues.length > 0, "golden 应带 stage 字段");
@@ -263,13 +289,13 @@ test(
       }
 
       // 提示条：按契约 §3.1 模板从样本自身的计数构造期望，逐字比对（可见文本，剥标签）。
-      assertAttentionBanner({ markup, summary: raw.attentionSummary });
+      assertAttentionBanner({ markup, summary: goldenSummary });
 
       // 四缺口码徽章文案：样本里每种码取自己的数据构造期望。
       assert.ok(markup.includes("已访谈，尚未落卡"));
       assert.ok(markup.includes("已安排，尚未拆解任务"));
       assert.ok(markup.includes("待合并（执行现场未回流）"));
-      const interruptedNode = [...raw.features, ...rawTasks].find((node) =>
+      const interruptedNode = [...goldenFeatures, ...rawTasks].find((node) =>
         rawAttentionCodes([node]).includes("interrupted-resume"),
       );
       assert.ok(interruptedNode, "golden 应有 interrupted-resume 节点");
@@ -285,14 +311,15 @@ test(
         (task) => isRawRecord(task.lastRun) && typeof task.lastRun.next === "string",
       );
       assert.ok(nodeWithNext, "golden 应有带 next 的 lastRun");
-      const run = nodeWithNext.lastRun as RawRecord;
+      const run = nodeWithNext.lastRun;
+      assert.ok(isRawRecord(run), "带 next 的 lastRun 应是对象");
       assert.ok(markup.includes(String(run.result)));
       assert.ok(markup.includes(`停在 #${run.stoppedAt}`));
       assert.ok(markup.includes(String(run.next)));
 
       // 未领号 / 草案 / 受阻 N：样本前提 → 渲染覆盖。
       assert.ok(
-        [...raw.features, ...rawTasks].some(
+        [...goldenFeatures, ...rawTasks].some(
           (node) => node.no === undefined && node.label === undefined,
         ),
         "golden 应有未领号节点（样本前提）",
@@ -307,10 +334,14 @@ test(
         (task) => Array.isArray(task.blockers) && task.blockers.length > 0,
       );
       assert.ok(blockedNode);
-      assert.ok(markup.includes(`受阻 ${(blockedNode.blockers as unknown[]).length}`));
+      const blockedCount = Array.isArray(blockedNode.blockers) ? blockedNode.blockers.length : null;
+      assert.ok(
+        blockedCount !== null && markup.includes(`受阻 ${blockedCount}`),
+        "受阻 N 应渲染为该节点自身 blockers 数",
+      );
 
       // 诊断只读展示（diagnostics 非空属合法形态）。
-      const diagnosticCount = Array.isArray(raw.diagnostics) ? raw.diagnostics.length : 0;
+      const diagnosticCount = goldenDiagnosticCount;
       // #46 B7：诊断区默认折叠为一行「诊断 N 条」。
       assert.ok(markup.includes(`诊断 ${diagnosticCount} 条`));
     } finally {
@@ -386,9 +417,9 @@ test(
   async () => {
     // 期望值全部取自板自身（板是活动物：不写死卡号/计数；#53 的 nextAssignee 是编译器输出）。
     const boardContent = await readFile(REAL_BOARD_PATH, "utf8");
-    const raw = JSON.parse(boardContent) as {
-      features: Array<RawRecord & { planCode?: string; tasks?: unknown[] }>;
-    };
+    // #60/T-3（评审点名点位）：JSON.parse 后按记录收窄——不裸 `as` 标注真实板的形状。
+    const rawBoard = parseRawRecord(boardContent, "真实板");
+    const rawFeatures = rawRecordsOf(rawBoard, "features");
     const state = await loadFromRealFile(REAL_BOARD_WORKSPACE);
     if (Buffer.byteLength(boardContent) > SERVICE_MAX_TEXT_READ_BYTES) {
       // 超读取上限时四视图/接手位/依赖行的深度断言无从取值：不静默跳过，断言「文件过大」
@@ -405,7 +436,7 @@ test(
     const board = state.board;
 
     // 1) 四视图渲染冒烟：四个根锚点都在（视图矩阵 §13.2 的四态载体）。
-    const views: Array<[string, string]> = [
+    const views: Array<[BoardViewMode, string]> = [
       ["tree", 'data-board-view="tree"'],
       ["kanban", 'data-board-view="kanban"'],
       ["list", 'data-board-view="list"'],
@@ -418,7 +449,7 @@ test(
           initialLocale: "zh-CN" as const,
           children: createElement(BoardPaneView, {
             state,
-            viewMode: mode as "tree" | "kanban" | "list" | "table",
+            viewMode: mode,
           }),
         }),
       );
@@ -427,7 +458,7 @@ test(
     }
 
     // 2) 接手位（#54-1）：每张带 nextAssignee 的卡在表格责任管线列都显示对应接手位 + 词条标记。
-    const rawTasks = collectRawTasks(raw.features);
+    const rawTasks = collectRawTasks(rawFeatures);
     const cardsWithNext = rawTasks.filter(
       (task) => typeof task.nextAssignee === "string" && task.nextAssignee.length > 0,
     );
@@ -524,7 +555,7 @@ test(
         walk(entry.tasks, planCode, feature);
       }
     };
-    for (const feature of raw.features) {
+    for (const feature of rawFeatures) {
       const planCode = typeof feature.planCode === "string" ? feature.planCode : null;
       walk(feature.tasks, planCode, feature);
     }
@@ -545,7 +576,7 @@ test(
       }),
     );
     assert.ok(dependency, "真实板应有「依赖目标带计划码」的卡（#54-6 的当场形态）");
-    const blocker = (dependency.task.blockers as RawRecord[]).find((entry) => {
+    const blocker = rawRecordsOf(dependency.task, "blockers").find((entry) => {
       const target = typeof entry.blockedBy === "number" ? byNo.get(entry.blockedBy) : undefined;
       return (
         entry.kind === "dependency" &&
@@ -554,10 +585,13 @@ test(
         typeof target.task.label === "string"
       );
     });
-    assert.ok(blocker && typeof blocker.blockedBy === "number");
-    const target = byNo.get(blocker.blockedBy as number);
+    if (!blocker || typeof blocker.blockedBy !== "number") {
+      assert.fail("依赖样例应带可解析的 dependency 目标编号（number）");
+    }
+    const blockedBy = blocker.blockedBy;
+    const target = byNo.get(blockedBy);
     assert.ok(target && target.planCode !== null);
-    const expectedTargetText = `${target.planCode}-${String(target.task.label)} · #${String(blocker.blockedBy)}`;
+    const expectedTargetText = `${target.planCode}-${String(target.task.label)} · #${String(blockedBy)}`;
     const dialogNode = resolveBoardDialogNode(board, `task:${String(dependency.task.no)}`);
     assert.ok(dialogNode, "依赖卡应能在弹窗里解析到");
     const dialogMarkup = renderToStaticMarkup(

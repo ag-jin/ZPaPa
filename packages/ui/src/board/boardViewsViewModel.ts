@@ -8,6 +8,10 @@
  * - §13.2 视图矩阵：四视图共用同一 board.json、同一节点集合与同一段位派生；视图差异只在呈现层。
  * - §13.3 待设计列 = interview-only 聚合子区。
  * - §3.5 排序与完成沉底：判定单点在 `boardViewSorting`（行序/列内序/组序共用一份比较器）。
+ *
+ * 访谈聚合的**呈现不对称成文**（#60/S-9；评审 T5455r S-9）：「访谈码节点按节点粒度排除主列」是
+ * 全列行为，而「聚合子区」只在「待设计」列——两处不对称由编译器形状兜住（interview-only 条目
+ * 恒落待设计段位），本层不为此加分支。完整措辞与不可达性依据见 `buildBoardKanban` 的排除点。
  */
 import {
   BOARD_STAGES,
@@ -249,7 +253,8 @@ export const BOARD_VIEW_NODE_KIND_MESSAGE_IDS: Record<BoardViewNodeKind, string>
 };
 
 export function isBoardViewNodeKind(value: unknown): value is BoardViewNodeKind {
-  return typeof value === "string" && (BOARD_VIEW_NODE_KINDS as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`——闭集数组逐项比较，收窄由谓词承担。
+  return typeof value === "string" && BOARD_VIEW_NODE_KINDS.some((kind) => kind === value);
 }
 
 /** 视图名文案（`Record<…>` 穷尽：加视图 ⇒ 编译期在这里报缺失，而不是界面上多一个裸 key）。 */
@@ -261,7 +266,8 @@ export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
 };
 
 export function isBoardViewMode(value: unknown): value is BoardViewMode {
-  return typeof value === "string" && (BOARD_VIEW_MODES as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`——闭集数组逐项比较，收窄由谓词承担。
+  return typeof value === "string" && BOARD_VIEW_MODES.some((mode) => mode === value);
 }
 
 export interface BoardKanban {
@@ -464,6 +470,14 @@ export function buildBoardKanban(
     }
     // 待设计列：interview-only 节点单独聚合为「访谈汇总」子区（§13.3）；
     // 子区计数取 `attentionSummary.interviewedNotArranged`（契约点名的来源，不由节点条数回算）。
+    //
+    // 不对称成文（#60/S-9；评审 T5455r S-9）：上面的「访谈码节点按节点粒度排除主列」是**全列**
+    // 行为，而聚合子区只在这一列——两者不对称，编译器产出下不可达（interview-only 条目恒落
+    // 待设计段位，评审 T5455r S-9 判为编译器不可达），属**防御性缺口**：若出现「访谈码 + 非待设计
+    // 段位」的板，该节点在看板既不落主列也不进汇总区（树形/列表/表格仍全量可见）——渲染层**不为
+    // 不可达形状加分支**：该形态无编译器产出路径，只可能来自手改/陈旧的 board 产物，由 `--check`
+    // 板/源互检的「board 不一致」失败项（磁盘板 ↔ 重编译期望逐字段比对）点名，重编译即可修复；
+    // 改排除侧或聚合侧时两处必须一起看。
     return {
       stage,
       nodes: flat,

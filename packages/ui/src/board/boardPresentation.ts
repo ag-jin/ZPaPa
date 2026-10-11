@@ -4,13 +4,15 @@
  * 契约逐字文案的落点：`.zcode/board/board-consumption-contract.md` §3.1/§3.3/§4。
  * 词条 id 在 zh-CN / en-US 词条表；本模块只做「字段 → 文案/样式」的映射，不做状态推导。
  */
-import type {
-  BoardAttentionCode,
-  BoardAttentionSummary,
-  BoardLastRun,
-  BoardStage,
-  BoardStatusValue,
+import {
+  isBoardStatusValue,
+  type BoardAttentionCode,
+  type BoardAttentionSummary,
+  type BoardLastRun,
+  type BoardStage,
+  type BoardStatusValue,
 } from "./boardViewModel.js";
+import { isBoardStage } from "./boardViewSorting.js";
 
 export type BoardMessageFormatter = (
   descriptor: { id: string },
@@ -278,9 +280,9 @@ export function formatBoardStageText(
   formatMessage: BoardMessageFormatter,
 ): string | null {
   if (stage === null) return null;
-  const messageId = BOARD_STAGE_MESSAGE_IDS[stage as BoardStage];
-  if (!messageId) return stage;
-  return formatMessage({ id: messageId });
+  // #60/T-3：不裸 `as`——`isBoardStage` 收窄后按闭集索引词条表；不认识的新段位原样透出。
+  if (!isBoardStage(stage)) return stage;
+  return formatMessage({ id: BOARD_STAGE_MESSAGE_IDS[stage] });
 }
 
 /* ---------------- 编号形态（#46 B1：计划码-层级） ---------------- */
@@ -347,9 +349,9 @@ export function formatBoardStatusText(
   formatMessage: BoardMessageFormatter,
 ): string | null {
   if (status === null) return null;
-  const messageId = BOARD_STATUS_MESSAGE_IDS[status as BoardStatusValue];
-  if (!messageId) return status;
-  return formatMessage({ id: messageId });
+  // #60/T-3：不裸 `as`——`isBoardStatusValue` 收窄后按闭集索引词条表；不认识的新状态原样透出。
+  if (!isBoardStatusValue(status)) return status;
+  return formatMessage({ id: BOARD_STATUS_MESSAGE_IDS[status] });
 }
 
 /* ---------------- 陈旧检测（契约 §5 的应用侧轻量版） ---------------- */

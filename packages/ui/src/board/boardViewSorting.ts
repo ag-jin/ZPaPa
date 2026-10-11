@@ -27,7 +27,8 @@ export interface BoardSortableNode {
 
 /** 段位是否在七段位词表内（不自算段位，只做「认识/不认识」判定；段位序与段位筛共用一处）。 */
 export function isBoardStage(value: string | null): value is BoardStage {
-  return value !== null && (BOARD_STAGES as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`——闭集数组逐项比较，收窄由谓词承担。
+  return value !== null && BOARD_STAGES.some((stage) => stage === value);
 }
 
 /**
@@ -55,7 +56,8 @@ export const BOARD_VIEW_SORT_MESSAGE_IDS: Record<BoardViewSort, string> = {
 };
 
 export function isBoardViewSort(value: unknown): value is BoardViewSort {
-  return typeof value === "string" && (BOARD_VIEW_SORTS as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`——闭集数组逐项比较，收窄由谓词承担。
+  return typeof value === "string" && BOARD_VIEW_SORTS.some((sort) => sort === value);
 }
 
 /** 控件取值归一：闭集成员原样透传，空串/坏值回落默认视角（UI 不写裸 `as` 断言）。 */

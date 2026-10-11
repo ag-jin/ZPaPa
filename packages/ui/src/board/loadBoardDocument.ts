@@ -91,8 +91,9 @@ const ALWAYS_RPC_READY: BoardRpcReadyGate = () => true;
 
 /** 与 PreviewPane 的缺失文件判定同一约定：RPC 错误带 code 或文案 ENOENT。 */
 export function isBoardFileMissingError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    if ((error as { code?: unknown }).code === "ENOENT") return true;
+  // #60/T-3：不裸 `as`——`in` 收窄把 `code` 读成 unknown 后逐值比较（同判定，无断言）。
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+    return true;
   }
   const message = error instanceof Error ? error.message : String(error);
   return /\bENOENT\b/i.test(message) || /no such file or directory/i.test(message);

@@ -96,7 +96,7 @@ test("组头零件扩展：layer.gapCount > 0 渲染 rollup 缺口徽章（锚�
     createElement(BoardFeatureGroupHeaderContent, {
       feature: EPIC_LAYER_FEATURE,
       layer: { kind: "epic", name: "KANB", planCount: 3, phaseCount: 2, gapCount: 1 },
-      titleClassName: "text-ui-base font-medium text-foreground",
+      titleSize: "base",
     }),
   );
   assert.match(markup, /data-board-layer-gap-count="1"/, "缺口徽章锚点带原值");

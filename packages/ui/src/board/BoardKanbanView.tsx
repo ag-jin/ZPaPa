@@ -158,7 +158,7 @@ function BoardKanbanGroupBlock({
         <BoardFeatureGroupHeaderContent
           feature={group.feature}
           cardCount={group.totalCards}
-          lightweight={!group.featureInColumn}
+          variant={group.featureInColumn ? "full" : "lightweight"}
         />
       </div>
       {group.nodes.map((node) => (
@@ -206,7 +206,7 @@ function BoardKanbanPhaseSection({
         gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
       }}
       title=""
-      titleClassName="text-ui-xs font-medium text-foreground-subtle"
+      titleSize="xsSubtle"
       className="group flex flex-col overflow-hidden rounded-md border border-border/50"
       summaryClassName="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-1.5 px-1 py-0.5 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1 p-0.5"
@@ -268,7 +268,7 @@ function BoardKanbanEpicSection({
       title={container.epic.title}
       // D1 收口（A4-4）：原为 text-ui-xs——与列内稿组头（零件缺省 sm）倒挂；提到 sm 后
       // 视图内梯度 = epic(sm) > phase(xs)（跨视图密度梯度 base/sm/xs 沿用既有）。
-      titleClassName="text-ui-sm font-medium text-foreground"
+      titleSize="sm"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/60 bg-surface/40"
       summaryClassName="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-1.5 px-1 py-1 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1 p-0.5"

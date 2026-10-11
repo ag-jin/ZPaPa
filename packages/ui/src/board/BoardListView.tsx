@@ -225,7 +225,7 @@ function BoardListPhaseSection({
         gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
       }}
       title=""
-      titleClassName="text-ui-xs font-medium text-foreground-subtle"
+      titleSize="xsSubtle"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1 px-1.5 pb-1.5"
@@ -281,7 +281,7 @@ function BoardListEpicSection({
         status: container.epic.status,
       }}
       title={container.epic.title}
-      titleClassName="text-ui-base font-medium text-foreground"
+      titleSize="base"
       className="group flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1.5 px-1.5 pb-1.5"

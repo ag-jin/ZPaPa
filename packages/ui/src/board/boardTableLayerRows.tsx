@@ -74,7 +74,6 @@ export function BoardTableEpicRow({
                 gapCount: boardLayerGapCount(container.items.map((group) => group.feature)),
                 status: container.epic.status,
               }}
-              titleClassName="text-ui-sm font-medium text-foreground"
               {...(onOpenEpic
                 ? {
                     titleRegionProps: {
@@ -137,7 +136,7 @@ export function BoardTablePhaseRow({
                 planCount: phase.items.length,
                 gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
               }}
-              titleClassName="text-ui-xs font-medium text-foreground-subtle"
+              titleSize="xsSubtle"
             />
           </div>
         </td>

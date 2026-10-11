@@ -64,13 +64,36 @@ export const BOARD_TABLE_COLUMN_MESSAGE_IDS: Record<BoardTableColumnKey, string>
 /** 列可见性（闭集上的布尔表）；`Record<…>` 穷尽，缺列在编译期报错。 */
 export type BoardTableColumnVisibility = Record<BoardTableColumnKey, boolean>;
 
-/** 默认全可见：契约默认列与派发指令的卡龄列都看得见（隐藏是用户的显式选择）。 */
-export const DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY: BoardTableColumnVisibility = Object.freeze(
-  Object.fromEntries(BOARD_TABLE_COLUMNS.map((key) => [key, true])) as BoardTableColumnVisibility,
-);
+/**
+ * 默认全可见（显式全键字面量；#60/T-3：不再 `Object.fromEntries(…) as …`）：契约默认列与派发
+ * 指令的卡龄列都看得见（隐藏是用户的显式选择）。字面量与闭集**双向**受编译期约束——闭集加列
+ * 这里缺键即报错，这里多键/键名不符也报错；同时充当可见性构造的种子。
+ */
+export const DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY: BoardTableColumnVisibility = Object.freeze({
+  no: true,
+  title: true,
+  stage: true,
+  status: true,
+  assignees: true,
+  lastRun: true,
+  updatedAt: true,
+  age: true,
+  blockers: true,
+  attention: true,
+});
+
+/** 可见性构造单点（从完整默认表起、逐闭集成员覆写）：不给 `Object.fromEntries + as` 的断言路径。 */
+function boardTableColumnVisibilityOf(
+  isVisible: (key: BoardTableColumnKey) => boolean,
+): BoardTableColumnVisibility {
+  const visibility: BoardTableColumnVisibility = { ...DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY };
+  for (const key of BOARD_TABLE_COLUMNS) visibility[key] = isVisible(key);
+  return visibility;
+}
 
 export function isBoardTableColumnKey(value: unknown): value is BoardTableColumnKey {
-  return typeof value === "string" && (BOARD_TABLE_COLUMNS as readonly string[]).includes(value);
+  // #60/T-3：不裸 `as`——闭集数组逐项比较，收窄由谓词承担。
+  return typeof value === "string" && BOARD_TABLE_COLUMNS.some((key) => key === value);
 }
 
 /** 可见列（恒按闭集序；配置不改列序）。 */
@@ -103,9 +126,7 @@ export function serializeBoardTableColumnVisibility(
 export function parseBoardTableColumnVisibility(value: unknown): BoardTableColumnVisibility {
   if (!Array.isArray(value)) return { ...DEFAULT_BOARD_TABLE_COLUMN_VISIBILITY };
   const visible = new Set(value.filter(isBoardTableColumnKey));
-  return Object.fromEntries(
-    BOARD_TABLE_COLUMNS.map((key) => [key, visible.has(key)]),
-  ) as BoardTableColumnVisibility;
+  return boardTableColumnVisibilityOf((key) => visible.has(key));
 }
 
 /* ---------------- 单元格值（列 → 文本） ---------------- */
