@@ -12,6 +12,11 @@
  *     （board.json 不带 registry 面）、孤儿引用无登记行 → 都顶层平铺、不造章（AD-8）。
  *   - 期次显示名 = `epic 码 + 期次序` 双字段合成（AD-3：`KANB`+1 → `KANB1`）；5 字符名只活在
  *     显示层，不进卡编号命名空间（AD-2：卡编号维持 `计划码-层级`）。
+ *   - **组序统一比较器（#88/A4-2；AD-4 改判 = 纯期次序）：epic 内期次按 `compareBoardPhaseOrder`
+ *     数字升序、epic 间按登记序——两种层级都只此一处排序（tree 的归组段），list/kanban/table 的
+ *     视图侧装配复用该序列、不各自重排（禁二份）。显示名合成同守单点 `phaseDisplayName`。#168 评审
+ *     S1 收口：此前的合成名 + 期次升序排序在归组与视图侧装配两处重复，现收敛为「唯一排序点 +
+ *     合成名单点」，两处共用。
  *   - 层计数 = **该层实际承载的成员稿数**（`members.length` / `phases[].features.length`）——
  *     与渲染出来的子块逐一对齐（先例 `countBoardFeatureTasks`）；不另读登记行 rollup 回算，
  *     也不自算段位/缺口（§10.5 的壳层终态由登记行 `status` 唯一承载，本模块原样透出）。
@@ -23,12 +28,41 @@ import type { BoardEpicNode, BoardFeatureNode, BoardViewModel } from "./boardVie
 const EPIC_ID_PREFIX = "epic:";
 
 export interface BoardPhaseGroup {
-  /** 期次序（正整数，单值）。 */
+  /** 期次序（正整数，单值）；组序判据 = `compareBoardPhaseOrder`（AD-4 纯期次序）。 */
   phase: number;
   /** 期次显示名（AD-3 双字段合成）：epic 码 + 期次序（`KANB1`）；只作容器层名/组头。 */
   name: string;
   /** 该期成员稿（文档序）。 */
   features: BoardFeatureNode[];
+}
+
+/**
+ * 期次显示名单点（AD-3 双字段合成）：`epic 码 + phase 序号` 直接拼接——`KANB` + 1 → `KANB1`。
+ * 合成名只活在显示层（容器层名/组头），不进任何码位字段（AD-2：卡编号维持 计划码-层级）。
+ */
+export function phaseDisplayName(epicCode: string, phase: number): string {
+  return `${epicCode}${phase}`;
+}
+
+/**
+ * 组序统一比较器单点（卡 #88 / A4-2；AD-4 改判 = **纯期次序**）：只比期次序数字升序
+ * （1 → 2 → 3 → 10 按数值，不按显示名 `KANB10` 的字典序——两者在两位数期次上分叉）。
+ *
+ * 明确**不采用**的依据（曾被推荐、已拍板否掉）：「缺口优先 + 期次序混合」——比较器只读期次序，
+ * 不读成员 `attention`/`blockers`/`stage`/`status`，也不看成员文档序/视图输入序；缺口信号
+ * （展开默认态、徽章）归呈现层与 A4-3/A4-4，不改组序。epic 间顺序 = `board.epics[]` 登记序
+ * （调用方按登记序遍历，不经本比较器）。
+ *
+ * 四视图共用：tree 走 `groupBoardFeaturesByEpic`（唯一排序点）；list/kanban/table 的
+ * `assembleBoardEpicContainers` 直接复用该 grouping 段的期次序列与合成名（禁各自重排/重拼）。
+ */
+export function compareBoardPhaseOrder(left: number, right: number): number {
+  return left - right;
+}
+
+/** 期次分桶 → 有序条目（**唯一排序点**：比较器只用在这里；合成名走 `phaseDisplayName`）。 */
+function orderedPhaseEntries<M>(byPhase: ReadonlyMap<number, M[]>): Array<[number, M[]]> {
+  return [...byPhase.entries()].sort(([left], [right]) => compareBoardPhaseOrder(left, right));
 }
 
 export interface BoardEpicGroup {
@@ -87,9 +121,12 @@ export function groupBoardFeaturesByEpic(board: BoardViewModel): BoardEpicGroupi
       return {
         epic,
         members,
-        phases: [...byPhase.entries()]
-          .sort(([left], [right]) => left - right)
-          .map(([phase, features]) => ({ phase, name: `${epic.code}${phase}`, features })),
+        // 唯一排序点：期次序升序（纯期次序比较器）；合成名同守单点（AD-3）。
+        phases: orderedPhaseEntries(byPhase).map(([phase, features]) => ({
+          phase,
+          name: phaseDisplayName(epic.code, phase),
+          features,
+        })),
       };
     }),
     ungrouped,
@@ -116,6 +153,10 @@ export interface BoardEpicItemContainer<T> {
  * **只保留实际承载 ≥1 分组的层**：过滤/列投影后没有成员就不造空壳（层计数 = 实际承载成员数，
  * 与渲染出来的子块逐一对齐）——空壳承诺只在结构视图（tree 直接消费 `groupBoardFeaturesByEpic`，
  * 登记 epic 照旧成章；列表/表格/看板按本函数投影）。
+ *
+ * 组序/合成名（#88/A4-2）：epic 间按登记序、期次按期次序升序（`compareBoardPhaseOrder`），
+ * 序列与名字直接取自 grouping 段——本函数**不重排、不重拼**（#168 评审 S1 收口：此处原有的
+ * 第二份排序 + `epic 码 + 期次` 拼接已删除）。
  */
 export function assembleBoardEpicContainers<T>(
   board: BoardViewModel,
@@ -152,13 +193,13 @@ export function assembleBoardEpicContainers<T>(
   for (const group of grouping.epics) {
     const byPhase = itemsByCode.get(group.epic.code);
     if (!byPhase) continue;
-    const phases = [...byPhase.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([phase, phaseItems]) => ({
-        phase,
-        name: `${group.epic.code}${phase}`,
-        items: phaseItems,
-      }));
+    const phases: BoardEpicItemContainer<T>["phases"] = [];
+    // 期次序列与合成名直接复用 grouping 段（#88/A4-2 单点：视图侧不重排、不重拼）。
+    for (const phaseGroup of group.phases) {
+      const phaseItems = byPhase.get(phaseGroup.phase);
+      if (!phaseItems) continue;
+      phases.push({ phase: phaseGroup.phase, name: phaseGroup.name, items: phaseItems });
+    }
     epics.push({ epic: group.epic, phases, items: phases.flatMap((phase) => phase.items) });
   }
   return { epics, ungrouped };
