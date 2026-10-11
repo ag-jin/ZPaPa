@@ -211,6 +211,14 @@ export interface AgentRuntimeConfig {
    * false 会关闭十个工作流工具，不改变其他工具的注册策略。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 「ask-matt 开发流程」实验开关（卡 #204/A3）：App 设置经
+   * ZCode Protocol 同步到进程，runtime 只消费。**缺席即关闭**（fail-closed，与
+   * askMattFlowEntryVisible 同判据）：关闭时内置包 mattpocock/skills 全库不注册，
+   * 打开时全库注册、重叠件 implement/tdd/code-review 恒不注册。
+   * 影响面 = 内置包技能注册（create-app 的 skillPort disabledPaths）与 `/` 目录三个流程命令。
+   */
+  askMattFlowEnabled?: boolean;
 
   // Context Builder config
   systemPrompt?: string;

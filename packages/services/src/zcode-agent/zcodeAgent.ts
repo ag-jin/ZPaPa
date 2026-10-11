@@ -550,6 +550,8 @@ export type ZCodeAgentServiceEvent =
 
 export interface ZCodeAgentAppRuntimePreferences {
   askUserQuestionAutoResolutionEnabled: boolean;
+  /** 「ask-matt 开发流程」实验开关（#204/A3）；缺省/非 true = 关（fail-closed）。 */
+  askMattFlowEnabled?: boolean;
   modelIoFullRetentionEnabled?: boolean;
 }
 

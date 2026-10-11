@@ -1,0 +1,131 @@
+import { expandCustomCommandPrompt, type CustomCommandContent } from "@zcode/contracts";
+import type { ZCodeSlashCommand } from "@zcode/shared";
+
+/**
+ * 「ask-matt 开发流程」的三个内置命令（卡 #204/A3）：`/grill`、`/to-spec`、`/to-tickets`。
+ *
+ * 与内置 `/workflow` 同款：命令正文随 CLI 编译，不依赖可卸载插件；正文复用 contracts 的
+ * custom command 展开规则（替换 `$ARGUMENTS` 并补充 `skills:` 前言）。前言把目标技能设为
+ * **必须先行装载**的技能，所以「调起命令」落到技能装载上（调起进技能），而技能是否可装载由
+ * 注册面门决定（app/ask-matt-flow-gate.ts）；两边同一个开关，关掉时目录与展开一起为零。
+ *
+ * 名字策略（用户原话「保留 ask-matt 原名」）：命令名取卡文点名的入口名（grill/to-spec/to-tickets），
+ * 目标技能名一律用上游原名（grilling/to-spec/to-tickets）——命令只是入口，不改写技能身份，
+ * 于是 Skill 清单里看到的仍是 mattpocock 原始技能名。
+ *
+ * 命令名不进共享保留字表：实验默认关，关闭时同名用户自定义命令必须照常可用
+ * （目录侧只在开态压过自定义同名命令，见 zcode-protocol/slash-commands.ts）。
+ */
+
+export interface AskMattFlowCommandDefinition {
+  /** `/` 目录里的命令名（不含斜杠）。 */
+  name: string;
+  /** 命令正文要求先装载的内置包技能名（ask-matt 原名，必须是注册面成员）。 */
+  skill: string;
+  /** `/` 目录与加号菜单展示用的一句话说明。 */
+  description: string;
+  /** 使用提示（`/name [args]`）。 */
+  argumentHint: string;
+  /** 展开正文（`$ARGUMENTS` 必须在场，否则参数会被追加成不受控的尾块）。 */
+  body: string;
+}
+
+export const ASK_MATT_FLOW_COMMANDS: readonly AskMattFlowCommandDefinition[] = [
+  {
+    argumentHint: "/grill [what to grill]",
+    body: [
+      "Use the `grilling` skill to interview me relentlessly about this plan, decision, or idea",
+      "until we reach a shared understanding. Work the design tree in rounds: ask the whole",
+      "frontier now, facts are your job, decisions are mine.",
+      "",
+      "$ARGUMENTS",
+      "",
+    ].join("\n"),
+    description: "Grill me about a plan or idea until we share one understanding (ask-matt flow).",
+    name: "grill",
+    skill: "grilling",
+  },
+  {
+    argumentHint: "/to-spec [reference]",
+    body: [
+      "Use the `to-spec` skill to turn the current conversation into a spec and publish it to the",
+      "project issue tracker. Do NOT interview me; synthesize what you already know.",
+      "",
+      "$ARGUMENTS",
+      "",
+    ].join("\n"),
+    description: "Turn this conversation into a spec (ask-matt flow).",
+    name: "to-spec",
+    skill: "to-spec",
+  },
+  {
+    argumentHint: "/to-tickets [reference]",
+    body: [
+      "Use the `to-tickets` skill to break the plan, spec, or current conversation into",
+      "tracer-bullet tickets, each declaring its blocking edges, published to the configured",
+      "tracker.",
+      "",
+      "$ARGUMENTS",
+      "",
+    ].join("\n"),
+    description: "Split a plan or spec into blocking-aware tickets (ask-matt flow).",
+    name: "to-tickets",
+    skill: "to-tickets",
+  },
+];
+
+function normalizeCommandName(name: string): string {
+  return name.trim().replace(/^\/+/, "").toLowerCase();
+}
+
+/** 命令名判据（归一化斜杠与大小写）：目录侧用它让开态的内置命令压过同名自定义命令。 */
+export function isAskMattFlowCommandName(name: string): boolean {
+  const normalized = normalizeCommandName(name);
+  return ASK_MATT_FLOW_COMMANDS.some((command) => command.name === normalized);
+}
+
+/** `/` 面板与加号菜单的目录项；开关未显式 true 时零目录（实验默认关，不留半件入口）。 */
+export function listAskMattFlowSlashCommands(enabled: boolean | undefined): ZCodeSlashCommand[] {
+  if (enabled !== true) return [];
+  return ASK_MATT_FLOW_COMMANDS.map((command) => ({
+    description: command.description,
+    inputHint: command.argumentHint,
+    name: command.name,
+    source: "builtin" as const,
+  }));
+}
+
+/** 命令正文的 custom command 视图：metadata.skills 即「先装载该技能」的强制前言。 */
+function toCustomCommandContent(command: AskMattFlowCommandDefinition): CustomCommandContent {
+  const bytes = Buffer.byteLength(command.body);
+  return {
+    bytesRead: bytes,
+    content: command.body,
+    metadata: {
+      allowedTools: [],
+      argumentHint: command.argumentHint,
+      description: command.description,
+      disableNonInteractive: false,
+      frontmatterKeys: ["description", "argument-hint", "skills"],
+      name: command.name,
+      path: `builtin:${command.name}`,
+      rootPath: "builtin:",
+      scope: "system",
+      skills: [command.skill],
+      source: "zcode",
+    },
+    sizeBytes: bytes,
+    truncated: false,
+  };
+}
+
+/**
+ * 输入 `/grill ...` 等命令时的展开。调用方必须先判定开关；本函数只解析命令名，
+ * 不认识的名字返回 undefined（交回既有自定义命令解析，行为不变）。
+ */
+export function resolveAskMattFlowPromptCommand(name: string, args: string): string | undefined {
+  const normalized = normalizeCommandName(name);
+  const command = ASK_MATT_FLOW_COMMANDS.find((candidate) => candidate.name === normalized);
+  if (!command) return undefined;
+  return expandCustomCommandPrompt({ args, command: toCustomCommandContent(command) }).prompt;
+}

@@ -2282,6 +2282,29 @@ export type ZCodeWorkspaceUpdateDynamicWorkflowPolicyResult = z.infer<
   typeof zcodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema
 >;
 
+// 「ask-matt 开发流程」实验开关（#204/A3）：App 设置 → workspace 级同步给 CLI。
+// 与 modelIo 同款独立方法（旧 CLI method-not-found → host 降级忽略），
+// 不复用 interactionPreferences 的 strict schema，避免旧 CLI 因未知字段整体拒收。
+export const zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+    enabled: z.boolean(),
+  })
+  .strict();
+export type ZCodeWorkspaceUpdateAskMattFlowPreferencesParams = z.infer<
+  typeof zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema
+>;
+
+export const zcodeWorkspaceUpdateAskMattFlowPreferencesResultSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+    enabled: z.boolean(),
+  })
+  .strict();
+export type ZCodeWorkspaceUpdateAskMattFlowPreferencesResult = z.infer<
+  typeof zcodeWorkspaceUpdateAskMattFlowPreferencesResultSchema
+>;
+
 export const zcodePermissionRequestParamsSchema = z
   .object({
     requestId: nonEmptyString,
@@ -3614,6 +3637,8 @@ export const zcodeProtocolMethods = {
   workspaceUpdateOffPeakToolPolicy: "workspace/updateOffPeakToolPolicy",
   // 动态工作流灰度门禁：同 Off-Peak 的同步模式。
   workspaceUpdateDynamicWorkflowPolicy: "workspace/updateDynamicWorkflowPolicy",
+  // 「ask-matt 开发流程」实验开关（App 设置）同步；旧 CLI method-not-found → host 降级忽略。
+  workspaceUpdateAskMattFlowPreferences: "workspace/updateAskMattFlowPreferences",
   // LLM 执行面在 CLI，直连不可行；消费仅 services 内部
   // （commit message），待 v4 workspace 查询/命令面覆盖后移除。
   workspaceGenerateText: "workspace/generateText",
