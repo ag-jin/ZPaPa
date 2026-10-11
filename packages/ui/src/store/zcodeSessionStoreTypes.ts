@@ -133,12 +133,41 @@ export interface ComposerMentionPrefill {
   data?: MentionItemData;
 }
 
+/**
+ * 外部文本插入的合并方式（卡 #186 追加 `append-if-missing`）：
+ * - `replace`（缺省）：整段替换当前输入；
+ * - `prepend-if-missing`：mention 节点级前置（已存在则不动），保留用户已有内容；
+ * - `append-if-missing`：纯文本追加到末尾（输入里已有同一引用则不重复，请求照样消费）——
+ *   板卡引用派发用（用户可继续在引用后接着打，或直接发送）。
+ */
+export type ComposerTextInsertRequestMode = "replace" | "prepend-if-missing" | "append-if-missing";
+
+/**
+ * 外部文本插入的消费面（卡 #186）：
+ * - `draft`（缺省）：workspace 新任务草稿输入框专用（既有调用面行为不变）；
+ * - `focused`：当前聚焦输入框——聚焦面是会话则落该会话（当前焦点会话），聚焦面是
+ *   草稿（无会话）则落草稿输入框（workspace 会话列表置顶的新任务入口）。
+ * 消费判定单点在 `v4/composer/composerTextInsert.ts#selectComposerTextInsertRequest`。
+ */
+export type ComposerTextInsertScope = "draft" | "focused";
+
 export interface ComposerTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: ComposerTextInsertRequestMode;
+  scope?: ComposerTextInsertScope;
 }
+
+/** 会话草稿文本写路径的动作签名（唯一文本进输入框通道；store 与派发方共用同一份类型）。 */
+export type RequestComposerTextInsert = (
+  workspacePath: string,
+  text: string,
+  workspaceIdentity?: string,
+  mention?: ComposerMentionPrefill,
+  mode?: ComposerTextInsertRequestMode,
+  scope?: ComposerTextInsertScope,
+) => number;
 
 export interface TimelineBottomRequest {
   requestId: number;
@@ -238,13 +267,7 @@ export interface ZCodeSessionStoreState {
     workspaceIdentity?: string,
   ) => void;
   invalidateDraftRuntime: (workspacePath: string, workspaceIdentity?: string) => void;
-  requestComposerTextInsert: (
-    workspacePath: string,
-    text: string,
-    workspaceIdentity?: string,
-    mention?: ComposerMentionPrefill,
-    mode?: "replace" | "prepend-if-missing",
-  ) => number;
+  requestComposerTextInsert: RequestComposerTextInsert;
   clearComposerTextInsertRequest: (
     workspacePath: string,
     requestId: number,

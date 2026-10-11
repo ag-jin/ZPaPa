@@ -204,15 +204,30 @@ export async function compileBoardPaneCss(params: {
   return cssCompiler.build([...candidates]);
 }
 
-export async function bundleBoardPaneClient(): Promise<string> {
+/**
+ * 把真组件打成浏览器 bundle（默认入口 = 看板面板宿主页）。
+ * `clientEntry` 可覆盖页面入口（卡 #186 派发断言页要同时挂会话输入框与看板面板，
+ * 沿用同一条真 bundle/Tailwind/Electron 管道，不复制第二套载体）。
+ */
+export async function bundleBoardPaneClient(clientEntry: string = CLIENT_ENTRY): Promise<string> {
   const build = await esbuild({
-    stdin: { contents: CLIENT_ENTRY, resolveDir: UI_DIR, loader: "tsx" },
+    stdin: { contents: clientEntry, resolveDir: UI_DIR, loader: "tsx" },
     bundle: true,
     write: false,
     format: "iife",
     platform: "browser",
     jsx: "automatic",
     tsconfig: path.join(UI_DIR, "tsconfig.json"),
+    // 图片资源内联（卡 #186 页面入口挂会话输入框组件链，链上有插件图标 png；既有看板入口
+    // 不引图片，本项对它们是空操作）。
+    loader: {
+      ".png": "dataurl",
+      ".svg": "dataurl",
+      ".jpg": "dataurl",
+      ".jpeg": "dataurl",
+      ".gif": "dataurl",
+      ".webp": "dataurl",
+    },
     define: { "process.env.NODE_ENV": '"production"' },
     logLevel: "silent",
   });

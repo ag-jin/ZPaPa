@@ -1219,6 +1219,9 @@ const enUS: Record<string, string> = {
   // Card dialog (card #34, contract §6): section titles, close, jump, origin row labels.
   "board.dialog.close": "Close",
   "board.dialog.jump": "Jump",
+  // Dispatch card (card #186, plain card reference only): dialog status row + guide queue row.
+  "board.dispatch.card": "Dispatch card",
+  "board.dispatch.unavailable": "This card has no stable number to reference in chat",
   "board.dialog.detailsTitle": "Details",
   "board.dialog.blockersTitle": "Blockers",
   "board.dialog.originTitle": "Source",

@@ -95,7 +95,8 @@ import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import { runUserAction, startUserAction } from "@/lib/userActionTelemetry.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
+import type { ComposerTextInsertRequest } from "@/store/zcodeSessionStoreTypes.js";
+import { applyExternalTextInsertRequestToComposer } from "@/v4/composer/composerTextInsert.js";
 import { FileDisplayIcon, resolveFileDisplayDescriptor } from "@/lib/fileDisplay.js";
 import {
   isImageChatComposerAttachment,
@@ -199,13 +200,6 @@ function getComposerAttachmentTypeLabel(filename: string, mimeType: string): str
   return (mimeType.split("/").at(-1) ?? mimeType).toUpperCase();
 }
 
-interface ExternalTextInsertRequest {
-  requestId: number;
-  text: string;
-  mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
-}
-
 function restorePersistedComposerDraftIntoInput({
   draft,
   inputApi,
@@ -234,61 +228,6 @@ function restorePersistedComposerDraftIntoInput({
   }
   inputApi.setText(draft.text);
   return draft.text;
-}
-
-function applyExternalTextInsertRequestToComposer({
-  appliedRequestId,
-  inputApi,
-  request,
-  requestFocus,
-  scheduleDraftPersist,
-  updateText,
-}: {
-  appliedRequestId: number | null;
-  inputApi: Pick<
-    LexicalChatInputHandle,
-    | "getMarkdown"
-    | "prependMentionIfMissing"
-    | "setMention"
-    | "setText"
-    | "setTextWithPluginMentions"
-  > | null;
-  request: ExternalTextInsertRequest | null | undefined;
-  requestFocus: () => void;
-  scheduleDraftPersist: () => void;
-  updateText: (text: string) => void;
-}): number | null {
-  if (!request || request.requestId === appliedRequestId) {
-    return appliedRequestId;
-  }
-  if (!inputApi) {
-    return appliedRequestId;
-  }
-  if (request.mode === "prepend-if-missing" && request.mention) {
-    if (!inputApi.prependMentionIfMissing(request.mention)) {
-      return request.requestId;
-    }
-    // Bug 原因：安装完成后若回放点击时保存的旧 prompt，会覆盖用户安装期间的编辑。
-    // 节点级前置保留编辑器当前的 mention 与段落结构，再从编辑器读取 canonical 草稿。
-    updateText(inputApi.getMarkdown());
-    scheduleDraftPersist();
-    requestFocus();
-    return request.requestId;
-  }
-  if (request.mention && request.text.startsWith(request.mention.markdown)) {
-    // 根因：商店试用以前只传 canonical 文本，Lexical 无法知道开头链接是结构化 Plugin mention。
-    // request 同时携带 display-only 节点数据；发送与草稿事实源仍使用 request.text 原文。
-    inputApi.setMention(request.mention, request.text.slice(request.mention.markdown.length));
-  } else if (request.text.includes("](plugin://")) {
-    // 推荐任务可在正文中组合多个插件；按原位置构造成真实提及节点。
-    inputApi.setTextWithPluginMentions(request.text);
-  } else {
-    inputApi.setText(request.text);
-  }
-  updateText(request.text);
-  scheduleDraftPersist();
-  requestFocus();
-  return request.requestId;
 }
 
 export interface ComposerRestoreRequest {
@@ -457,10 +396,11 @@ interface ConversationComposerProps {
    */
   listenAddToChatEvents?: boolean;
   /**
-   * 外部一次性文本预填请求（Example Prompt 等）。
-   * requestId 保证同一文本可连续取回两次时仍能触发回填。
+   * 外部一次性文本预填请求（Example Prompt / 板卡引用派发等）。
+   * requestId 保证同一文本可连续取回两次时仍能触发回填；消费面（草稿/聚焦）判定在
+   * `composerTextInsert.selectComposerTextInsertRequest` 一处。
    */
-  externalTextInsertRequest?: ExternalTextInsertRequest | null;
+  externalTextInsertRequest?: ComposerTextInsertRequest | null;
   onExternalTextInsertApplied?: (requestId: number) => void;
   /**
    * 队列“编辑”在 delete ACK 后把完整未来意图取回输入框。
