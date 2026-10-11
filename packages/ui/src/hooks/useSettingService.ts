@@ -15,7 +15,11 @@ type SettingsSnapshot = {
 
 interface SettingsStore {
   snapshot: SettingsSnapshot;
-  inflightRefresh: Promise<void> | null;
+  inflightRefresh: Promise<SettingsSnapshot> | null;
+  /** 当前在途读起飞时的已完成写次数；用于判断在途读是否早于最近一次写。 */
+  inflightStartWrites: number;
+  /** 本 Service 实例上已完成的写次数（经 refreshSettingsAfterWrite 打点）。 */
+  completedWrites: number;
   listeners: Set<(snapshot: SettingsSnapshot) => void>;
 }
 
@@ -30,6 +34,8 @@ const unavailableSettingsStore: SettingsStore = {
     error: null,
   },
   inflightRefresh: null,
+  inflightStartWrites: 0,
+  completedWrites: 0,
   listeners: new Set(),
 };
 
@@ -51,6 +57,8 @@ function getSettingsStore(settingService: ISettingService | undefined): Settings
       error: null,
     },
     inflightRefresh: null,
+    inflightStartWrites: 0,
+    completedWrites: 0,
     listeners: new Set(),
   };
   stores.set(settingService, created);
@@ -63,10 +71,17 @@ function emitSettingsSnapshot(store: SettingsStore) {
   }
 }
 
-async function refreshSettingsStore(settingService: ISettingService | undefined) {
+export async function refreshSettingsStore(
+  settingService: ISettingService | undefined,
+): Promise<SettingsSnapshot> {
   const store = getSettingsStore(settingService);
   if (!settingService) {
-    return;
+    return store.snapshot;
+  }
+  while (store.inflightRefresh && store.inflightStartWrites !== store.completedWrites) {
+    // #177 次级竞态：在途读起飞于最近一次写之前时，它的快照可能停在写前值。
+    // 写后刷新必须等它收口再重读；收口后再判一次，避免等待期间又完成了新写。
+    await store.inflightRefresh;
   }
   if (store.inflightRefresh) {
     return store.inflightRefresh;
@@ -79,7 +94,8 @@ async function refreshSettingsStore(settingService: ISettingService | undefined)
   };
   emitSettingsSnapshot(store);
 
-  store.inflightRefresh = (async () => {
+  const startWrites = store.completedWrites;
+  const request = (async (): Promise<SettingsSnapshot> => {
     try {
       const result = await settingService.get();
       store.snapshot = {
@@ -87,7 +103,6 @@ async function refreshSettingsStore(settingService: ISettingService | undefined)
         loading: false,
         error: null,
       };
-      emitSettingsSnapshot(store);
     } catch (error) {
       store.snapshot = {
         // 设置读取失败时保留旧快照，避免一次刷新错误把已可用的设置页降级为空状态。
@@ -95,13 +110,34 @@ async function refreshSettingsStore(settingService: ISettingService | undefined)
         loading: false,
         error,
       };
-      emitSettingsSnapshot(store);
     }
-  })().finally(() => {
-    store.inflightRefresh = null;
+    emitSettingsSnapshot(store);
+    return store.snapshot;
+  })();
+  const tracked = request.finally(() => {
+    if (store.inflightRefresh === tracked) {
+      store.inflightRefresh = null;
+    }
   });
+  store.inflightRefresh = tracked;
+  store.inflightStartWrites = startWrites;
 
-  return store.inflightRefresh;
+  return tracked;
+}
+
+/**
+ * 写成功后的刷新入口（#177）。
+ *
+ * 先给该 Service 的 store 记一次「已完成写」，再走常规刷新：常规刷新只在
+ * 「在途读不早于最近一次写」时复用 in-flight；写前起飞的读会被等收口后重读。
+ * 否则写成功后复用了写前的读快照，界面表现为设置弹回。
+ */
+export async function refreshSettingsAfterWrite(
+  settingService: ISettingService,
+): Promise<SettingsSnapshot> {
+  const store = getSettingsStore(settingService);
+  store.completedWrites += 1;
+  return refreshSettingsStore(settingService);
 }
 
 /** 获取和更新应用设置 */
@@ -141,7 +177,9 @@ export function useSettings() {
     async (patch: Partial<AppSettings>) => {
       await settingService.update(patch);
       platform.syncAppSettings?.(patch);
-      await refresh();
+      // #177：写成功必须走写后刷新入口。普通 refresh 会被写前起飞的 in-flight 去重吞掉，
+      // 返回写前快照——设置页据此渲染会导致开关弹回。
+      await refreshSettingsAfterWrite(settingService);
       if (
         typeof patch.askUserQuestionAutoResolutionEnabled === "boolean" ||
         typeof patch.modelIoFullRetentionEnabled === "boolean"
@@ -170,15 +208,7 @@ export function useSettings() {
         }
       }
     },
-    [
-      botsService,
-      broadcastService,
-      settingService,
-      settingsStore,
-      zcodeAgentService,
-      platform,
-      refresh,
-    ],
+    [botsService, broadcastService, settingService, settingsStore, zcodeAgentService, platform],
   );
 
   return {
