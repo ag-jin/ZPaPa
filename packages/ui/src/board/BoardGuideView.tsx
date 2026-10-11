@@ -2,15 +2,17 @@
  * 指引面（guide 面，卡 #136 / C3-1）：板级执行摘要置顶条（五槽） + 主体「正在执行的计划」区块。
  *
  * 动线（itw-20261011-5c30 拍板 · 计划优先轴；E7 §3.1/§3.3 L1）：
- *   打开看板第一眼 = 现在在执行什么 → 每个计划的完成进度（计数 + 微条）→ 计划内卡行入口
- *   （点卡 → 既有卡片弹窗，L3 详情）。四段派生是唯一事实来源（契约 §13.6）：
- *   槽位计数、计划内卡行成员与顺序全部来自 `boardGuideViewModel` 的投影，本组件只装配。
+ *   打开看板第一眼 = 现在在执行什么 → 每个计划的完成进度（计数 + 微条）→ 计划内
+ *   可执行前沿队列（点行 → 既有卡片弹窗，L2 下钻）。四段派生是唯一事实来源（契约 §13.6）：
+ *   槽位计数、队列成员与顺序全部来自 `boardGuideViewModel` 的投影，本组件只装配。
  *
  * 视图边界（契约 §13.6）：不写板文件、不解析真相源、不自算 `stage`/`attention`；
  * 缺四段（旧编译器产物）→ 指名重编译，不自行派生兜底。
  *
  * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）。
- * 本组件里的行入口即 #138 的生长点（同一投影、同一卡行零件）。
+ * C3-3（#138）已落：计划块内的行入口升级为**完整前沿队列**（frontier 成员全量、frontier 序直读；
+ * 行含处置指引——「下一步」接手位 + 已解除依赖计数片，均直读 frontier 条目字段；零前沿给空态文案）；
+ * 计划块（队列分组）排序 = 活跃置顶 → 纯期次序（A4 单点比较器）→ 无期次殿后（判据在 viewModel）。
  * C3-2（#137）已落：五槽升级为可点落点（`BoardGuideSlotTile.onActivate` → 宿主的既有视图切换 +
  * 列表控制；零槽点击给空态指引、不落死跳转；缺四段槽不上可点态）——落点判据在
  * `boardGuideViewModel.boardGuideSlotDrilldownTarget` 一处，本组件只回传意图。
@@ -25,6 +27,7 @@
  * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
  */
 import { useState } from "react";
+import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
 import {
@@ -37,11 +40,11 @@ import {
 import {
   boardGuideSlotActivation,
   buildBoardGuideSummary,
-  type BoardGuideCardRow,
   type BoardGuidePlan,
+  type BoardGuideQueueRow,
   type BoardGuideSlotKey,
 } from "./boardGuideViewModel.js";
-import { BoardNodeNumber, BoardStageBadge, BoardStatusDot } from "./boardNodeParts.js";
+import { BOARD_COUNT_CHIP_CLASS, BoardNodeNumber, BoardStatusDot } from "./boardNodeParts.js";
 import { formatBoardRelativeTime } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
@@ -59,30 +62,47 @@ export interface BoardGuideViewProps {
   now?: number;
 }
 
-/** 计划内卡行（L1 scan 档：短 ID + 标题前缀 + 主状态 + 接手位；点即开卡弹窗）。 */
-function BoardGuideCardRowLine({
+/** 可执行前沿队列行（#138/C3-3：处置指引 + L2 下钻 = 点行开既有卡片弹窗）。 */
+function BoardGuideQueueRowLine({
   row,
   planCode,
   onOpenCard,
 }: {
-  row: BoardGuideCardRow;
+  row: BoardGuideQueueRow;
   planCode: string | null;
   onOpenCard?: (id: string) => void;
 }) {
+  const { intl } = useZCodeIntl();
   return (
     <div
       data-board-card={row.id}
+      data-board-guide-queue-row=""
       {...boardCardOpenProps({ id: row.id, ...(onOpenCard ? { onOpenCard } : {}) })}
       className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-surface-hover"
     >
       <BoardNodeNumber no={row.no} label={row.label} planCode={planCode} short />
-      {/* 标题截断防线：完整标题进原生 title（信息不丢；展开面归 #138 队列）。 */}
+      {/* 标题截断防线：完整标题进原生 title（信息不丢）。 */}
       <span title={row.title} className="min-w-0 flex-1 truncate text-ui-base text-foreground">
         {row.title}
       </span>
-      <BoardStageBadge stage={row.stage} />
+      {/* 计数片（已解除依赖条数；`title` 带依赖号明细）：frontier 条目字段直读，零条不落片。 */}
+      {row.resolvedDeps.length > 0 ? (
+        <span
+          data-board-guide-queue-deps={row.resolvedDeps.length}
+          title={row.resolvedDeps.map((no) => `#${no}`).join(", ")}
+          className={cn(BOARD_COUNT_CHIP_CLASS, "text-ui-base")}
+        >
+          {intl.formatMessage({ id: "board.guide.queue.deps" }, { count: row.resolvedDeps.length })}
+        </span>
+      ) : null}
+      {/* 处置指引（行内主文字之一，≥14px 档）：接手位直读 frontier.nextAssignee；未指派不猜。 */}
       {row.nextAssignee !== null ? (
-        <span className="shrink-0 text-ui-sm text-foreground-subtle">{row.nextAssignee}</span>
+        <span
+          data-board-guide-queue-next={row.nextAssignee}
+          className="shrink-0 text-ui-base text-foreground-subtle"
+        >
+          {intl.formatMessage({ id: "board.guide.queue.next" }, { role: row.nextAssignee })}
+        </span>
       ) : null}
     </div>
   );
@@ -147,10 +167,10 @@ function BoardGuidePlanBlock({
       >
         {summaryParts.join(" · ")}
       </div>
-      {plan.rows.length > 0 ? (
-        <div data-board-guide-plan-frontier="" className="flex flex-col gap-0.5">
-          {plan.rows.map((row) => (
-            <BoardGuideCardRowLine
+      {plan.queue.length > 0 ? (
+        <div data-board-guide-plan-queue="" className="flex flex-col gap-0.5">
+          {plan.queue.map((row) => (
+            <BoardGuideQueueRowLine
               key={row.id}
               row={row}
               planCode={plan.planCode}
@@ -158,13 +178,12 @@ function BoardGuidePlanBlock({
             />
           ))}
         </div>
-      ) : null}
-      {plan.hiddenRows > 0 ? (
-        // 裁剪量显式（完整队列归 C3-3/#138）：不静默丢行。
-        <div data-board-guide-plan-more="" className="px-1.5 text-ui-sm text-foreground-subtle">
-          {intl.formatMessage({ id: "board.guide.plan.more" }, { count: plan.hiddenRows })}
+      ) : (
+        // 队列空态（#138）：无可执行卡也给明确文案，不留空壳（与五槽零值同款姿态）。
+        <div data-board-guide-queue-empty="" className="px-1.5 text-ui-sm text-foreground-subtle">
+          {intl.formatMessage({ id: "board.guide.queue.empty" })}
         </div>
-      ) : null}
+      )}
     </article>
   );
 }
