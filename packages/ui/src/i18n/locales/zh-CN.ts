@@ -4302,6 +4302,9 @@ const zhCN: Record<string, string> = {
   "settings.workspaceFileSearch.noWorkspace": "当前没有打开的工作区，无法配置搜索忽略规则。",
   "settings.experiments.title": "实验功能",
   "settings.experiments.projectBoardToggle.label": "项目看板",
+  "settings.experiments.askMattFlowToggle.label": "ask-matt 开发流程",
+  "settings.experiments.askMattFlowBoardClosedNotice":
+    "项目看板未开启：ask-matt 流程照常可用，产物落任务目录文件，暂不在看板上呈现。",
   "settings.experiments.saveFailed": "保存失败，请重试",
   "settings.hooks.description": "管理任务生命周期钩子，在特定事件发生时自动执行命令。",
   "settings.hooks.enabled": "已启用",

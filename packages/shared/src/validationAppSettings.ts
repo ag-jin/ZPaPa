@@ -517,6 +517,10 @@ const appSettingsObjectSchema = z.object({
   // 但作为设置-实验功能下的可选项）。default 只在键缺失时生效——存量设置升级后取 false，
   // 与呈现侧「严格 === true 才可见」的判据同向。
   experimentalProjectBoardEnabled: z.boolean().default(false),
+  // ask-matt 开发流程实验开关（#202，设置-实验功能第二行）。**默认关**：命令/技能/提示三处
+  // 的启用面由后续卡按本 flag gate；本卡只登记开关与门禁判据。与看板开关同款：
+  // default 只在键缺失时生效，呈现侧严格 === true 才可见。
+  experimentalAskMattFlowEnabled: z.boolean().default(false),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).default([]),
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
@@ -626,6 +630,8 @@ export const appSettingsPatchSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   /* #58：项目看板实验开关的 patch 位（两处 schema 同步是既有纪律）。省略 = 不改这一格。 */
   experimentalProjectBoardEnabled: z.boolean().optional(),
+  /* #202：ask-matt 开发流程实验开关的 patch 位（对象面/patch 面两处同步同款纪律）。 */
+  experimentalAskMattFlowEnabled: z.boolean().optional(),
   lastWorkspaceSession: z.array(appWorkspaceSessionEntrySchema).optional(),
   lastActiveTabIndex: z.number().int().nonnegative().optional(),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),

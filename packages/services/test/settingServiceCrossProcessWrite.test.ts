@@ -103,3 +103,40 @@ test("跨进程并发写竞态：未知键在并发写后仍保留，文件保�
     assert.equal(persisted[FOREIGN_KEY], true);
   });
 });
+
+/**
+ * 卡 #202（A1）：「ask-matt 开发流程」实验开关的跨进程读写保真。
+ * 验收真源 = 卡文「开关可开可关读写保真（跨进程测试族）」：另一进程的整文件覆盖
+ * 既不能把「开」抹掉，也不能把「关」当成缺省丢回默认——两向都要活着穿过覆盖。
+ * 反例（本用例的反面）：若新键只在对象面登记、patch 面漏登，拨开关会被 zod 静默剥掉，
+ * 子进程写后文件里就没有这个键 ⇒ 本用例必红。
+ */
+test("跨进程读写保真（#202 开关）：开态经子进程写入后父进程读回，关态再经另一进程写仍保持", async () => {
+  await withSharedSettingsHome({}, async ({ home, settingsFile }) => {
+    // 开：子进程（真实 settingService）写 true ⇒ 父进程读回必须为 true。
+    await runChildWriter(home, { experimentalAskMattFlowEnabled: true });
+    const afterEnable = await createSettingService().get();
+    assert.equal(
+      afterEnable.experimentalAskMattFlowEnabled,
+      true,
+      "子进程写入的开态必须被父进程读到",
+    );
+    assert.equal(
+      (await readSettingsFile(settingsFile)).experimentalAskMattFlowEnabled,
+      true,
+      "开态必须真的落到共享 setting.json（不是只在进程内快照）",
+    );
+
+    // 关：父进程写 false ⇒ 另一进程再写别的键后，false 必须仍在（不得回默认/丢键）。
+    await createSettingService().update({ experimentalAskMattFlowEnabled: false });
+    await runChildWriter(home, { locale: "en-US" });
+    const persisted = await readSettingsFile(settingsFile);
+    assert.equal(
+      persisted.experimentalAskMattFlowEnabled,
+      false,
+      "关态必须活着穿过另一进程的整文件覆盖",
+    );
+    assert.equal(persisted.locale, "en-US");
+    assert.equal((await createSettingService().get()).experimentalAskMattFlowEnabled, false);
+  });
+});
