@@ -38,9 +38,11 @@ import { BoardPaneView } from "../src/board/BoardPaneView.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { SidePaneOpenTabLauncher } from "../src/app-shell/SidePaneOpenTabLauncher.js";
 import { ExperimentsSection } from "../src/settings/ExperimentsSection.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import { PlatformProvider } from "../src/hooks/usePlatform.js";
 import { ServiceProvider } from "../src/hooks/useServices.js";
+import { assertNoHorizontalOverflow } from "./boardBrowserProbeKit.js";
 import {
   HOST_HEIGHT,
   resolveElectronBinary,
@@ -203,6 +205,9 @@ async function buildPage(boardJson: string): Promise<string> {
 <div id="${SETTINGS_HOST_ID}" style="height:${HOST_HEIGHT}px;display:flex;flex-direction:column;width:1200px;overflow:hidden"></div>
 <div id="${PANEL_HOST_ID}" style="height:${HOST_HEIGHT}px;display:flex;flex-direction:column;width:1200px;overflow:hidden"></div>
 <script>globalThis.__BOARD_JSON__=${boardJsonLiteral};</script>
+<script>globalThis.__ASK_MATT_NOTICE__=${JSON.stringify(
+    zhCN["settings.experiments.askMattFlowBoardClosedNotice"],
+  )};</script>
 <script>${bundleText.replaceAll("</script", "<\\/script")}</script>
 </body></html>`;
 }
@@ -225,13 +230,25 @@ async function main(): Promise<void> {
   assert.equal(result.initial.boardPane, false, "默认关：不得挂载看板面板");
   assert.equal(result.initial.settingsValue, false, "默认关：设置值是 false");
 
-  // ② 点开分区：开关行渲染，默认关（aria-checked=false）。
+  // ② 点开分区：两行开关渲染（#62 看板 + #202 ask-matt 流程），默认全关（aria-checked=false）。
   assert.equal(result.afterNav.switchPresent, true, "点开实验功能分区后应看到开关行");
-  assert.equal(result.afterNav.switchAriaChecked, "false", "开关默认关");
+  assert.equal(result.afterNav.switchCount, 2, "#202 后分区应有第二行开关（两行）");
+  assert.equal(result.afterNav.switchAriaChecked, "false", "看板开关默认关");
+  assert.equal(result.afterNav.boardSwitchAriaLabel, "项目看板", "第一行开关应是「项目看板」");
+  assert.equal(
+    result.afterNav.flowSwitchAriaLabel,
+    "ask-matt 开发流程",
+    "第二行开关应是「ask-matt 开发流程」（本次拨的就是这一个）",
+  );
   assert.ok(
     result.afterNav.rowText.includes("项目看板"),
     `开关行文案应是「项目看板」：${result.afterNav.rowText}`,
   );
+  assert.ok(
+    result.afterNav.rowText.includes("ask-matt 开发流程"),
+    `第二行文案应是「ask-matt 开发流程」：${result.afterNav.rowText}`,
+  );
+  assert.equal(result.afterNav.noticePresent, false, "默认全关（关关）不得显示乘积态说明行");
   assert.equal(result.afterNav.boardEntry, false, "仅打开分区不得打开看板入口");
 
   // ③ 拨开：真写 settings（update 收到 patch=true）+ 入口出现；开关态即时同步。
@@ -267,9 +284,63 @@ async function main(): Promise<void> {
   assert.equal(result.afterDisable.boardEntry, false, "拨关后看板入口必须消失");
   assert.equal(result.afterDisable.boardPane, false, "拨关后看板面板必须卸载");
   assert.equal(result.afterDisable.boardTrigger, false, "拨关后不得留下看板 tab");
+  assert.equal(result.afterDisable.noticePresent, false, "关关态（板关+流关）不得显示说明行");
+
+  // ⑥ 板关+流开（「来料厂」）：拨第二个开关 ⇒ 真写 settings + 说明行出现（文案含「看板」），
+  //    看板开关保持关、入口/面板保持零。说明行是独立一行（不承载开关，不冒充第三行）。
+  assert.equal(
+    result.afterFlowEnable.settingsValue,
+    true,
+    "拨开流程开关后设置值应为 true（写→重读一致）",
+  );
+  assert.deepEqual(
+    result.afterFlowEnable.updateCalls.slice(-1),
+    [{ experimentalAskMattFlowEnabled: true }],
+    "拨开第二行开关必须经既有 settings 通路写 appSettings.experimentalAskMattFlowEnabled",
+  );
+  assert.equal(result.afterFlowEnable.flowSwitchAriaChecked, "true", "流程开关态应为开");
+  assert.equal(
+    result.afterFlowEnable.flowSwitchAriaLabel,
+    "ask-matt 开发流程",
+    "被拨的是第二行开关",
+  );
+  assert.equal(
+    result.afterFlowEnable.boardSwitchAriaChecked,
+    "false",
+    "看板开关必须保持关（板关+流开）",
+  );
+  assert.equal(result.afterFlowEnable.noticePresent, true, "板关+流开时状态说明行必须出现");
+  assert.ok(
+    result.afterFlowEnable.noticeText.includes("看板"),
+    `说明行文案必须含「看板」相关提示：${result.afterFlowEnable.noticeText}`,
+  );
+  assert.equal(
+    result.afterFlowEnable.noticeText,
+    zhCN["settings.experiments.askMattFlowBoardClosedNotice"],
+    "说明行文案必须是词条原文（未被硬编码/截断）",
+  );
+  assert.equal(result.afterFlowEnable.noticeHasSwitch, false, "说明行不得承载开关（独立一行）");
+  assert.equal(result.afterFlowEnable.switchCount, 2, "说明行不得冒充第三行开关");
+  assert.equal(result.afterFlowEnable.boardEntry, false, "板保持关：看板入口不得出现");
+  assert.equal(result.afterFlowEnable.boardPane, false, "板保持关：看板面板不得挂载");
+  assertNoHorizontalOverflow(result.afterFlowEnable.sectionOverflow, "实验功能分区（含说明行）");
+  assertNoHorizontalOverflow(result.afterFlowEnable.hostOverflow, "设置宿主（含说明行）");
+
+  // ⑦ 拨回关（板保持关，回到关关态）：说明行必须消失；分区仍在。
+  assert.equal(result.afterFlowDisable.settingsValue, false, "流程设置写回 false（写→重读一致）");
+  assert.deepEqual(
+    result.afterFlowDisable.updateCalls.slice(-1),
+    [{ experimentalAskMattFlowEnabled: false }],
+    "同一通路两个方向的写入（开→关各一条）",
+  );
+  assert.equal(result.afterFlowDisable.flowSwitchAriaChecked, "false", "流程开关态应为关");
+  assert.equal(result.afterFlowDisable.boardSwitchAriaChecked, "false", "看板开关全程保持关");
+  assert.equal(result.afterFlowDisable.noticePresent, false, "关流后说明行必须消失");
+  assert.equal(result.afterFlowDisable.boardEntry, false, "板关全程：入口不得出现");
+  assert.equal(result.afterFlowDisable.sectionVisible, true, "关流不影响设置分区本身");
 
   console.log(
-    `BOARD_EXPERIMENTS_SETTINGS_ASSERTIONS_OK 初始=${JSON.stringify(result.initial)} 分区=${JSON.stringify(result.afterNav)} 拨开=${JSON.stringify(result.afterEnable)} 视图=${JSON.stringify(result.views)} 拨关=${JSON.stringify(result.afterDisable)}`,
+    `BOARD_EXPERIMENTS_SETTINGS_ASSERTIONS_OK 初始=${JSON.stringify(result.initial)} 分区=${JSON.stringify(result.afterNav)} 拨开=${JSON.stringify(result.afterEnable)} 视图=${JSON.stringify(result.views)} 拨关=${JSON.stringify(result.afterDisable)} 板关流开=${JSON.stringify(result.afterFlowEnable)} 流关=${JSON.stringify(result.afterFlowDisable)}`,
   );
 }
 

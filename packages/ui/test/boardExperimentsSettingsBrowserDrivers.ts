@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- 真引擎驱动脚本 = 客户端入口 + 完整用户路径点击/量取的分步驱动，共享同一份页面内 __settingsSnapshot/__updateCalls 状态，拆分会割裂场景（#202 采纳归档 E2E 补丁后超限；同 src 中同类文件处理）。 */
 /**
  * 卡 #62 浏览器断言脚本的**驱动层**（与 `boardV21BrowserScenariosDrivers.ts` 同款分层）：
  * 页面内客户端入口（真组件挂载 + 真设置通路）与页面内驱动脚本（点击序列、量取）在这里单点导出，
@@ -201,8 +202,12 @@ export interface ExperimentsSettingsChainResult {
   };
   afterNav: {
     switchPresent: boolean;
+    switchCount: number;
     switchAriaChecked: string | null;
+    boardSwitchAriaLabel: string | null;
+    flowSwitchAriaLabel: string | null;
     rowText: string;
+    noticePresent: boolean;
     boardEntry: boolean;
   };
   afterEnable: {
@@ -219,9 +224,46 @@ export interface ExperimentsSettingsChainResult {
     updateCalls: Array<Record<string, unknown>>;
     switchAriaChecked: string | null;
     sectionVisible: boolean;
+    noticePresent: boolean;
     boardEntry: boolean;
     boardPane: boolean;
     boardTrigger: boolean;
+  };
+  /** 板关+流开（「来料厂」）：说明行必须出现，且板入口保持零。 */
+  afterFlowEnable: {
+    settingsValue: boolean;
+    updateCalls: Array<Record<string, unknown>>;
+    flowSwitchAriaChecked: string | null;
+    boardSwitchAriaChecked: string | null;
+    flowSwitchAriaLabel: string | null;
+    switchCount: number;
+    noticePresent: boolean;
+    noticeText: string;
+    noticeHasSwitch: boolean;
+    boardEntry: boolean;
+    boardPane: boolean;
+    sectionOverflow: {
+      clientW: number;
+      scrollW: number;
+      overflows: boolean;
+      box: { left: number; right: number };
+    };
+    hostOverflow: {
+      clientW: number;
+      scrollW: number;
+      overflows: boolean;
+      box: { left: number; right: number };
+    };
+  };
+  /** 回到板关+流关：说明行必须消失（乘积态第三格）。 */
+  afterFlowDisable: {
+    settingsValue: boolean;
+    updateCalls: Array<Record<string, unknown>>;
+    flowSwitchAriaChecked: string | null;
+    boardSwitchAriaChecked: string | null;
+    noticePresent: boolean;
+    boardEntry: boolean;
+    sectionVisible: boolean;
   };
 }
 
@@ -238,6 +280,29 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   const navItem = () => settingsHost.querySelector('[data-testid="settings-section-nav-experiments"]');
   const section = () => settingsHost.querySelector('[data-settings-section="experiments"]');
   const switchEl = () => (section() ? section().querySelector('[role="switch"]') : null);
+  const switches = () => (section() ? Array.from(section().querySelectorAll('[role="switch"]')) : []);
+  const flowSwitch = () => switches()[1] || null;
+  // 乘积态说明行（#202）：按词条原文找承载文本自身的元素；找不到或为零尺寸盒 ⇒ 未显示。
+  const noticeEl = () => {
+    const s = section();
+    const expected = String(globalThis.__ASK_MATT_NOTICE__ || "").trim();
+    if (!s || !expected) return null;
+    const hit = Array.from(s.querySelectorAll("div")).filter(
+      (el) => (el.textContent || "").trim() === expected,
+    );
+    return (
+      hit.find(
+        (el) =>
+          !Array.from(el.children).some((c) => (c.textContent || "").trim() === expected),
+      ) || null
+    );
+  };
+  const noticeVisible = () => {
+    const el = noticeEl();
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return rect.height > 0 && rect.width > 0 ? el : null;
+  };
   const boardEntry = () => panelHost.querySelector('[data-side-pane-open-tab-item="board"]');
   const boardPane = () => panelHost.querySelector("[data-board-pane]");
   const boardTrigger = () => panelHost.querySelector('[data-side-pane-tab-id="board"]');
@@ -274,8 +339,12 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   const row = section();
   const afterNav = {
     switchPresent: !!switchEl(),
+    switchCount: switches().length,
     switchAriaChecked: switchEl().getAttribute("aria-checked"),
+    boardSwitchAriaLabel: switches()[0] ? switches()[0].getAttribute("aria-label") : null,
+    flowSwitchAriaLabel: switches()[1] ? switches()[1].getAttribute("aria-label") : null,
     rowText: (row.textContent || "").trim(),
+    noticePresent: !!noticeEl(),
     boardEntry: !!boardEntry(),
   };
 
@@ -328,11 +397,68 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     updateCalls: globalThis.__updateCalls(),
     switchAriaChecked: switchEl().getAttribute("aria-checked"),
     sectionVisible: !!section(),
+    noticePresent: !!noticeEl(),
     boardEntry: !!boardEntry(),
     boardPane: !!boardPane(),
     boardTrigger: !!boardTrigger(),
   };
 
-  return { ua: navigator.userAgent, initial, afterNav, afterEnable, views, overflow, afterDisable };
+  // ⑥ 板关+流开（「来料厂」）：拨**第二个**开关（ask-matt 流程），板保持关 ⇒
+  //    设置真写入 + 分区出现独立说明行；板入口/面板保持零。
+  await waitFor(() => flowSwitch() && !flowSwitch().disabled, "流程开关可交互");
+  dispatchPointerClick(flowSwitch());
+  await waitFor(
+    () => globalThis.__settingsSnapshot().experimentalAskMattFlowEnabled === true,
+    "流程设置写入 true",
+  );
+  await waitFor(() => noticeVisible(), "板关+流开说明行出现");
+  await waitFor(() => flowSwitch() && !flowSwitch().disabled, "流程开关可交互（写入后）");
+  const afterFlowEnable = {
+    settingsValue: globalThis.__settingsSnapshot().experimentalAskMattFlowEnabled === true,
+    updateCalls: globalThis.__updateCalls(),
+    flowSwitchAriaChecked: flowSwitch().getAttribute("aria-checked"),
+    boardSwitchAriaChecked: switches()[0].getAttribute("aria-checked"),
+    flowSwitchAriaLabel: flowSwitch().getAttribute("aria-label"),
+    switchCount: switches().length,
+    noticePresent: !!noticeEl(),
+    noticeText: (noticeEl().textContent || "").trim(),
+    noticeHasSwitch: !!noticeEl().querySelector('[role="switch"]'),
+    boardEntry: !!boardEntry(),
+    boardPane: !!boardPane(),
+    sectionOverflow: probeOverflow(section()),
+    hostOverflow: probeOverflow(settingsHost),
+  };
+
+  // ⑦ 拨回关（板保持关）：说明行必须消失，分区仍在。
+  await waitFor(() => switches()[1] && !switches()[1].disabled, "流程开关可交互（第 ⑦ 步）");
+  dispatchPointerClick(switches()[1]);
+  await waitFor(
+    () => globalThis.__settingsSnapshot().experimentalAskMattFlowEnabled === false,
+    "流程设置写回 false",
+  );
+  await waitForGone(() => noticeEl(), "关流后说明行消失");
+  await waitFor(() => switches()[1] && !switches()[1].disabled, "流程开关可交互（关）");
+  await sleep(120);
+  const afterFlowDisable = {
+    settingsValue: globalThis.__settingsSnapshot().experimentalAskMattFlowEnabled === true,
+    updateCalls: globalThis.__updateCalls(),
+    flowSwitchAriaChecked: switches()[1].getAttribute("aria-checked"),
+    boardSwitchAriaChecked: switches()[0].getAttribute("aria-checked"),
+    noticePresent: !!noticeEl(),
+    boardEntry: !!boardEntry(),
+    sectionVisible: !!section(),
+  };
+
+  return {
+    ua: navigator.userAgent,
+    initial,
+    afterNav,
+    afterEnable,
+    views,
+    overflow,
+    afterDisable,
+    afterFlowEnable,
+    afterFlowDisable,
+  };
 })()`;
 }
