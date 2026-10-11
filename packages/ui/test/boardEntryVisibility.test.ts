@@ -4,7 +4,7 @@ import { appSettingsSchema } from "@zcode/shared";
 import { projectBoardEntryVisible } from "../src/board/boardEntryVisibility.js";
 
 /**
- * 「项目看板」入口的**呈现判据**（卡 #58，范式真源 = squad/squadEntryVisibility.ts）。
+ * 「项目看板」入口的**呈现判据**（卡 #58；范式真源 = `../src/board/boardEntryVisibility.ts` 的显隐判据）。
  *
  * 需求真源：卡文 (3)(4)——关闭时入口零渲染；默认关（全新配置与存量升级后入口不可见）。
  * 判据是纯函数、只吃一个可能为 null 的设置快照：设置是异步加载的（useSettings() 加载期给 null），

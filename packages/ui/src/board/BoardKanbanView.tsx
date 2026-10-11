@@ -13,8 +13,8 @@
  * §13.4（待合并角标）+ §3.5（列内排序 attention 置顶 + updatedAt 倒序）。分组/排序全在
  * 纯函数层（`boardViewsViewModel`），本组件只做渲染。
  *
- * 空列策略（按 §13 成文）：**七列恒在，空列显示 0**——与仓库既有看板
- * （`squad/WorkItemsBoard.tsx` 的 statusCategory 空泳道保留）同款：骨架不随数据跳动。
+ * 空列策略（按 §13 成文）：**七列恒在，空列显示 0**——沿用仓库既有看板的
+ * 空泳道保留（statusCategory 空列不塌缩）同款：骨架不随数据跳动。
  */
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -407,7 +407,7 @@ export function BoardKanbanView({
           {intl.formatMessage({ id: "board.kanban.unplaced" }, { count: unplacedCount })}
         </div>
       ) : null}
-      {/* 列：固定宽 + 容器横滚（仓库既有看板形态，squad/WorkItemsBoard 同款）。 */}
+      {/* 列：固定宽 + 容器横滚（仓库既有看板形态同款）。 */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-3 py-3">
         {columns.map((column) =>
           column.stage === BOARD_KANBAN_COLLAPSIBLE_STAGE ? (

@@ -12,7 +12,7 @@ import { subagentDirectoryRowSummary } from "../src/lib/subagentDirectoryRow.js"
    标记，目录行据此补一句成因文案。本组用例锁定 ① 判据（哪一行、显示什么、与真实 summary 的优先
    关系）② 目录行接线（整段交给纯函数、只渲染结果）③ 文案键在场。
 
-   ui 包没有渲染测试设施（本项目既定做法，见 squadRunsDirectorySection.test.ts），
+   ui 包没有渲染测试设施（本项目既定做法），
    所以用「纯函数 + 结构守卫」两条腿。 */
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../src");

@@ -1,6 +1,6 @@
 import type { AppSettings } from "@zcode/shared";
 
-/* 「项目看板」入口/面板的**显隐判据**（卡 #58，范式与 squad/squadEntryVisibility.ts 同款）。
+/* 「项目看板」入口/面板的**显隐判据**（卡 #58，范式为显隐判据纯函数单点）。
 
    为什么是**纯函数**且只吃一个「可能为 null」的快照：设置是**异步**加载的（`useSettings()`
    在加载期给出 `null`）。若把「加载中」判成「可见」，开关关闭时入口会先闪一下再消失（闪现未授权的
