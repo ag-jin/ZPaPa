@@ -769,7 +769,7 @@ function queueRowMarkup(planMarkupText: string, cardId: string): string {
   return planMarkupText.slice(tagStart, next >= 0 ? next : planMarkupText.length);
 }
 
-test("队列行处置指引（#138）：行含「下一步」接手位 + 已解除依赖计数（直读 frontier 条目字段）", () => {
+test("队列行处置指引（#138 + #181）：行含「下一步」接手位；依赖已解除徽章整处不渲染（数据字段保留）", () => {
   const markup = render(readyState());
   const planB = planMarkup(markup, "plan:plan-guide-b");
   const row220 = queueRowMarkup(planB, "task:220");
@@ -781,12 +781,24 @@ test("队列行处置指引（#138）：行含「下一步」接手位 + 已解�
   assert.ok(row220.includes("下一步：implementer"), "处置指引可读文案（接手位）");
   assert.ok(
     !row220.includes("data-board-guide-queue-deps"),
-    "无已解除依赖 → 不落依赖计数片（零噪声）",
+    "零依赖行不落依赖徽章（#181 前口径的零噪声侧）",
   );
   const row221 = queueRowMarkup(planB, "task:221");
-  assert.ok(/data-board-guide-queue-deps="1"/.test(row221), "依赖计数片 = resolvedDeps 条数（1）");
-  assert.ok(row221.includes("依赖已解除 1"), "依赖计数可读文案");
-  assert.ok(row221.includes('title="#210"'), "计数片 title 带依赖号明细（信息不丢）");
+  // 关键句（itw-20261011-04e0 元素 1「已经没有依赖的就不要显示了」）：#221 的 resolvedDeps 非空
+  // （[210]，见夹具）——#181 起不是「零条才不落片」，而是「任何条数都不落片」（徽章恒冗余）。
+  assert.ok(
+    !row221.includes("data-board-guide-queue-deps"),
+    "resolvedDeps 非空（#221 = 1 条）也不落依赖徽章锚点（#181）",
+  );
+  assert.ok(!row221.includes("依赖已解除"), "依赖计数可读文案不再出现");
+  // 数据字段保留（#181 边界）：投影仍透出 resolvedDeps（弹窗/其他视图可能消费），只移除 DOM 徽章。
+  const outcome = parseBoardJson(JSON.stringify(GUIDE_BOARD));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const queueRow = buildBoardGuideSummary(outcome.board)
+    .plans.flatMap((plan) => plan.queue)
+    .find((row) => row.no === 221);
+  assert.deepEqual(queueRow?.resolvedDeps, [210], "resolvedDeps 投影字段保留（只移除 DOM 徽章）");
   // 密度准入（itw-20261011-9003）：frontier 卡段位恒「待办」——段位徽章不再占行内信息组。
   assert.ok(!row220.includes("data-board-stage"), "队列行不落段位徽章（段位/处置 一档，处置优先）");
   // 行文字 ≥ text-sm（14px 档）：处置指引是行内主文字之一。
@@ -810,16 +822,17 @@ function renderEn(state: BoardPaneLoadState): string {
   );
 }
 
-test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队列依赖计数 count=1 走单数键，不再「1 deps resolved」", () => {
-  // 期望值的独立真源：契约 §13.5「计数词条按单/复数两键（count===1 走单数）」——en 侧
-  // 「1 deps resolved」正是 #90 成文要消灭的裸复数形态；可见文案应逐字为「1 dep resolved」。
+test("队列冗余徽章隐藏（#181 en-US 同款）：en 侧队列行也不渲染依赖已解除徽章（无 dep(s) resolved 文案）", () => {
+  // 期望值的独立真源：卡文 ①「队列行不再渲染 deps 徽章（DOM 锚点移除）」——zh 主断言在
+  // 「队列行处置指引」用例；本用例封 en 侧路径（该徽章曾走 formatBoardCountText 单/复数两键，
+  // 移除后 en 文案「N dep resolved」/「N deps resolved」都不得再出现）。
   const row221 = queueRowMarkup(
     planMarkup(renderEn(readyState()), "plan:plan-guide-b"),
     "task:221",
   );
-  assert.ok(/>1 dep resolved</.test(row221), `count=1 渲染单数键可见文案（不得裸复数）：${row221}`);
-  assert.ok(!row221.includes("1 deps resolved"), "「1 deps resolved」= #90 要消灭的裸复数形态");
-  // other 侧：count=2 走复数键（两键都喂单点 formatBoardCountText；只有 count===1 走 one）。
+  assert.ok(!row221.includes("data-board-guide-queue-deps"), "en-US 队列行同样不落依赖徽章锚点");
+  assert.ok(!/deps? resolved/.test(row221), `en 文案不得再出现（实测行：${row221}）`);
+  // 反例（必咬）：resolvedDeps 改判成 2 条也不落片（frontier 内卡的依赖恒已解除，条数多寡无意义）。
   const mutated = structuredClone(GUIDE_BOARD);
   const entries = mutated.frontier as Array<Record<string, unknown>>;
   const entry221 = entries.find((entry) => entry.no === 221);
@@ -829,7 +842,10 @@ test("计数词条单/复数（#138 S1 微回炉 · 契约 §13.5）：en-US 队
     planMarkup(renderEn(readyStateOf(mutated)), "plan:plan-guide-b"),
     "task:221",
   );
-  assert.ok(/>2 deps resolved</.test(pluralRow), `count≥2 走复数键（{count} 插值）：${pluralRow}`);
+  assert.ok(
+    !pluralRow.includes("data-board-guide-queue-deps"),
+    "resolvedDeps=2 也不落片（反例必咬）",
+  );
 });
 
 test("计数词条单/复数转正（#142 承 #136 · 契约 §13.5）：计划摘要「前沿/在途」en-US count=1 走单数键、0/≥2 走复数键；zh 两键同文不变", () => {
@@ -909,7 +925,7 @@ test("队列空态（#138）：计划无可执行卡时给明确文案（不留�
   );
 });
 
-test("反例（#138 派生改判必咬）：队列行成员/标题/接手位/依赖计数全跟 frontier 派生走，不按卡字段自算", () => {
+test("反例（#138 派生改判必咬）：队列行成员/标题/接手位全跟 frontier 派生走；依赖徽章不渲染（数据保留）", () => {
   const mutated = structuredClone(GUIDE_BOARD);
   const entries = mutated.frontier as Array<Record<string, unknown>>;
   const entry220 = entries.find((entry) => entry.no === 220);
@@ -925,8 +941,24 @@ test("反例（#138 派生改判必咬）：队列行成员/标题/接手位/依
     row220.includes('data-board-guide-queue-next="test-verifier"'),
     "接手位 = frontier 条目值",
   );
-  assert.ok(/data-board-guide-queue-deps="2"/.test(row220), "依赖计数 = 条目 resolvedDeps 条数");
-  assert.ok(row220.includes('title="#211, #212"'), "依赖明细 = 条目号原值");
+  // #181：依赖条数改判也不落 DOM 徽章（含原 title 明细）；反例咬点在「把条数重新渲染回行内」。
+  assert.ok(
+    !row220.includes("data-board-guide-queue-deps"),
+    "resolvedDeps 改判 2 条也不落依赖徽章（#181）",
+  );
+  assert.ok(!row220.includes('title="#211, #212"'), "依赖明细 title 不再进队列行 DOM");
+  // 数据字段保留：投影仍透出改判后的条目值（DOM 不再消费，字段不丢）。
+  const outcome = parseBoardJson(JSON.stringify(mutated));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const guideRow220 = buildBoardGuideSummary(outcome.board)
+    .plans.flatMap((plan) => plan.queue)
+    .find((row) => row.no === 220);
+  assert.deepEqual(
+    guideRow220?.resolvedDeps,
+    [211, 212],
+    "resolvedDeps 投影仍跟 frontier 条目改判走",
+  );
 
   // 成员改判：撤掉 #221 条目（卡节点仍 待办）——队列不得把「卡字段看起来可执行」的卡自算回来。
   const without = structuredClone(GUIDE_BOARD);
