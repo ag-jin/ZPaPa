@@ -1180,6 +1180,28 @@ const enUS: Record<string, string> = {
   "board.age.days": "{days} d",
   // Guide view (card #136 / C3-1: board-level summary bar + plans block; derived index projection).
   "board.view.guide": "Guide",
+  // Dispatch view (card #185: dispatchable list / blocked attribution / parallel groups; `dispatch` segment).
+  "board.view.dispatch": "Dispatch",
+  "board.dispatch.zone.dispatchable": "Dispatchable",
+  "board.dispatch.zone.blocked": "Blocked",
+  "board.dispatch.zone.group": "Parallel groups",
+  "board.dispatch.recompile":
+    "This board has no dispatch section yet (older compiler output): the dispatch view does not recompute it — recompile the board with a newer compiler.",
+  "board.dispatch.capacity": "Capacity {capacity} · in flight {inFlight} · slots free {slotsFree}",
+  "board.dispatch.domain": "Files: {files} ({source})",
+  "board.dispatch.domainUnknown": "Files unknown — manual check",
+  "board.dispatch.domainOccupied": "File {file} held by in-flight #{occupant}",
+  "board.dispatch.domainOccupiedNoFile": "Files held by in-flight #{cards}",
+  "board.dispatch.blockedByInFlight": "blocked-by in-flight #{target}",
+  "board.dispatch.blockedByPending": "blocked-by #{target} (not done, not in flight)",
+  "board.dispatch.blockedByMissing": "blocked-by (target not on board — reconcile)",
+  "board.dispatch.blockedByUnknown": "Blocked ({kind})",
+  "board.dispatch.empty.frontier": "Frontier is empty — no cards to execute",
+  "board.dispatch.empty.dispatchable":
+    "0 dispatchable (frontier cards held by in-flight files or waiting on prerequisites — see blocked attribution)",
+  "board.dispatch.empty.blocked": "No blocked cards",
+  "board.dispatch.empty.group":
+    "No parallel group formed (nothing to pair, files unknown, or no free slots)",
   "board.guide.slot.attention": "Needs attention",
   "board.guide.slot.blocked": "Blocked",
   "board.guide.slot.running": "Running",

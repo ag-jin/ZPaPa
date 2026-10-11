@@ -247,14 +247,17 @@ export interface BoardListGroup {
 /* ---------------- 视图模式（闭集） ---------------- */
 
 /** 面板内视图（**闭集**：加视图 ⇒ 类型报错拖出宿主分支、控件选项与词条映射）。 */
-export type BoardViewMode = "guide" | "tree" | "kanban" | "list" | "table";
+export type BoardViewMode = "guide" | "dispatch" | "tree" | "kanban" | "list" | "table";
 
 /**
  * 视图集（C3-1/#136 增「指引面」guide 于队首；C3-5/#140 起 guide 为缺省视图——默认值单点在
- * `boardViewModeMemory.DEFAULT_BOARD_VIEW_MODE`；结构四视图一枚不删，入口常驻）。
+ * `boardViewModeMemory.DEFAULT_BOARD_VIEW_MODE`；#185 增「编排」dispatch 于 guide 之后
+ * （同属执行语义轴：先看在做/该接，再看怎么打——可派/阻塞归因/并发组）；结构四视图一枚不删，
+ * 入口常驻）。
  */
 export const BOARD_VIEW_MODES: readonly BoardViewMode[] = [
   "guide",
+  "dispatch",
   "tree",
   "kanban",
   "list",
@@ -282,6 +285,7 @@ export function isBoardViewNodeKind(value: unknown): value is BoardViewNodeKind 
 /** 视图名文案（`Record<…>` 穷尽：加视图 ⇒ 编译期在这里报缺失，而不是界面上多一个裸 key）。 */
 export const BOARD_VIEW_MODE_MESSAGE_IDS: Record<BoardViewMode, string> = {
   guide: "board.view.guide",
+  dispatch: "board.view.dispatch",
   tree: "board.view.tree",
   kanban: "board.view.kanban",
   list: "board.view.list",

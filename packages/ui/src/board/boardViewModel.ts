@@ -12,9 +12,14 @@
  *
  * #136/C3-1 拆文件不拆语义：低层读取原语归 `boardJsonRead`、四段派生映射归 `boardDerivedIndex`
  * （文件逼近仓库 `max-lines` 上限）；本模块的公开面（含再导出的四段类型）与拆前一致。
+ *
+ * #185 增：编排派生段 `dispatch` 的映射归 `boardDispatchIndex`（提案形状 `dispatch/1`；
+ * 段缺失/形态坏 → `dispatchIndex: null`，消费面指名重编译，不自行派生兜底）。
  */
 import { readDerivedIndex } from "./boardDerivedIndex.js";
 import type { BoardDerivedIndex } from "./boardDerivedIndex.js";
+import { readDispatchIndex } from "./boardDispatchIndex.js";
+import type { BoardDispatchIndex } from "./boardDispatchIndex.js";
 import {
   isRecord,
   readActiveRun,
@@ -263,6 +268,23 @@ export type {
   BoardDerivedRecentEntry,
 } from "./boardDerivedIndex.js";
 
+/* ---------------- 编排派生段（dispatch/1 提案形状；#185 UI 消费面） ---------------- */
+
+/**
+ * 编排派生段的映射与类型单点在 `boardDispatchIndex`（口径成文见该模块头注释；
+ * 编译器字段提案 = `evidence/T185/schema-proposal.txt`）。这里原样再导出类型，消费方导入面单点。
+ */
+export type {
+  BoardDispatchBlockedEntry,
+  BoardDispatchCard,
+  BoardDispatchDomain,
+  BoardDispatchDomainHit,
+  BoardDispatchInFlight,
+  BoardDispatchInFlightCard,
+  BoardDispatchIndex,
+  BoardDispatchSummary,
+} from "./boardDispatchIndex.js";
+
 export interface BoardViewModel {
   version: number;
   projectName: string;
@@ -279,6 +301,11 @@ export interface BoardViewModel {
    * 消费面**不得自算兜底**（契约 §13.6），只许指名重编译。
    */
   derivedIndex: BoardDerivedIndex | null;
+  /**
+   * 编排派生段（`dispatch/1` 提案形状，#185）。`null` = 板上无该段或形态坏（未就绪）——
+   * 编排视图据 `null` 走「未就绪 + 重编译」形态，不自行派生兜底（与 `derivedIndex` 同纪律）。
+   */
+  dispatchIndex: BoardDispatchIndex | null;
   attentionSummary: BoardAttentionSummary;
   diagnostics: BoardDiagnostic[];
 }
@@ -511,6 +538,7 @@ export function parseBoardJson(raw: string): BoardParseOutcome {
       epics: readEpics(parsed.epics),
       features: parsed.features.map((feature, index) => mapFeature(feature, index)),
       derivedIndex: readDerivedIndex(parsed),
+      dispatchIndex: readDispatchIndex(parsed),
       attentionSummary: readAttentionSummary(parsed.attentionSummary),
       diagnostics: readDiagnostics(parsed.diagnostics),
     },

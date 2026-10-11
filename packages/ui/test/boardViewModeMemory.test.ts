@@ -54,8 +54,10 @@ test("视图切换：写什么读回什么（会话内保持），无记忆回�
     assert.equal(readBoardViewMode(), "list");
     writeBoardViewMode("table");
     assert.equal(readBoardViewMode(), "table", "表格视图也记（卡 #34）");
+    writeBoardViewMode("dispatch");
+    assert.equal(readBoardViewMode(), "dispatch", "编排面也记（#185）");
     writeBoardViewMode("guide");
-    assert.equal(readBoardViewMode(), "guide", "切回指引面也记（五态闭集都进记忆）");
+    assert.equal(readBoardViewMode(), "guide", "切回指引面也记（六态闭集都进记忆）");
   } finally {
     restore();
   }
@@ -104,7 +106,7 @@ test("默认视图单点（源码守卫；C3-5/#140）：常量只定义一处�
     const source = readFileSync(new URL(file, srcDir), "utf8");
     assert.doesNotMatch(
       source,
-      /\bviewMode\s*[:=]\s*"(guide|tree|kanban|list|table)"/,
+      /\bviewMode\s*[:=]\s*"(guide|dispatch|tree|kanban|list|table)"/,
       `${file}: 视图缺省不得写视图名字面量（引用 DEFAULT_BOARD_VIEW_MODE）`,
     );
     for (const match of source.matchAll(/export const DEFAULT_BOARD_VIEW_MODE/g)) {
@@ -115,8 +117,9 @@ test("默认视图单点（源码守卫；C3-5/#140）：常量只定义一处�
 });
 
 test("视图闭集与词条 id：zh/en 两语都齐（不出现裸 key）", () => {
-  // #136/C3-1 增「指引面」guide 于队首（可选项；缺省切换与旧偏好迁移归 #140/C3-5）。
-  assert.deepEqual([...BOARD_VIEW_MODES], ["guide", "tree", "kanban", "list", "table"]);
+  // #136/C3-1 增「指引面」guide 于队首（可选项；缺省切换与旧偏好迁移归 #140/C3-5）；
+  // #185 增「编排」dispatch 于 guide 之后（三区：可派清单/阻塞归因/并发组；结构四视图不删）。
+  assert.deepEqual([...BOARD_VIEW_MODES], ["guide", "dispatch", "tree", "kanban", "list", "table"]);
   for (const mode of BOARD_VIEW_MODES) {
     const messageId = BOARD_VIEW_MODE_MESSAGE_IDS[mode as BoardViewMode];
     assert.ok(messageId, `${mode} 应有词条 id`);

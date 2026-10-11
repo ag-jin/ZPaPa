@@ -615,22 +615,22 @@ test("树形：已取消节点的行尾显示取消原因（§13.2 树形格「�
   assert.ok(!runningTask.includes("data-board-status-rule"), "非终态卡不铺溯源噪声");
 });
 
-test("视图切换：五态控件常驻，当前视图 aria-pressed（不靠颜色表达选中）", () => {
+test("视图切换：六态控件常驻，当前视图 aria-pressed（不靠颜色表达选中）", () => {
   const switcherOf = (viewMode?: BoardViewMode) => {
     const markup = render(matrixBoard(), viewMode ? { viewMode } : {});
     const match = /data-board-view-switcher[\s\S]*?<\/div>/.exec(markup);
     assert.ok(match, "面板头部应有视图切换控件");
     return match[0];
   };
-  for (const mode of ["guide", "tree", "kanban", "list", "table"] as const) {
+  for (const mode of ["guide", "dispatch", "tree", "kanban", "list", "table"] as const) {
     const switcher = switcherOf(mode);
     const options = [...switcher.matchAll(/<button[^>]*>/g)]
       .map((match) => match[0])
       .filter((tag) => tag.includes("data-board-view-option"));
     assert.deepEqual(
       options.map((tag) => attributeValue(tag, "data-board-view-option")),
-      ["guide", "tree", "kanban", "list", "table"],
-      "五个选项固定序（指引/树形/看板/列表/表格；指引面 #136/C3-1 增，结构四视图不删）",
+      ["guide", "dispatch", "tree", "kanban", "list", "table"],
+      "六个选项固定序（指引/编排/树形/看板/列表/表格；指引面 #136/C3-1 增、编排面 #185 增，结构四视图不删）",
     );
     assert.deepEqual(
       options
