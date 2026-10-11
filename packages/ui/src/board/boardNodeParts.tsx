@@ -8,6 +8,7 @@ import { Fragment, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { BoardCardOpenProps } from "./boardCardInteraction.js";
 import {
   boardStatusDotClassName,
   formatAttentionBadgeText,
@@ -292,31 +293,63 @@ export interface BoardGroupHeaderFeature {
 }
 
 /**
+ * 组头标题字号档（**闭集**，卡 #60/S-2 参数面收闭集）：宿主只传档位名，档位 → 类串的映射
+ * 在本文件单点——此前是 `titleClassName: string` 透传（默认串的一半在各视图复制，写错的类串
+ * 也能进来）；收闭集后加/改档位在编译期穷尽，任意类片段不再是对外参数面。
+ */
+const TITLE_SIZE_CLASSNAMES = {
+  /** 看板/列表/表格组头默认档。 */
+  sm: "text-ui-sm font-medium text-foreground",
+  /** 树形稿块与 epic 章大块。 */
+  base: "text-ui-base font-medium text-foreground",
+  /** 窄列 epic 章头（看板）。 */
+  xs: "text-ui-xs font-medium text-foreground",
+  /** 期次层头（弱化小字，四视图同款）。 */
+  xsSubtle: "text-ui-xs font-medium text-foreground-subtle",
+} as const;
+
+export type BoardGroupHeaderTitleSize = keyof typeof TITLE_SIZE_CLASSNAMES;
+
+/** 组头形态（**闭集**，卡 #60/S-2）：`full` = 全量；`lightweight` = 跨列随行轻量标签。 */
+export type BoardGroupHeaderVariant = "full" | "lightweight";
+
+/**
+ * 标题落点 props（卡 #60/S-2 收闭集）：宿主用 `boardCardOpenProps` + 高亮 props 生成后透传，
+ * 键收闭集为具名键——此前是 `Record<string, unknown>` 袋（键名写错静默落 DOM，只有运行期才现形）。
+ */
+export interface BoardGroupHeaderTitleRegionProps extends BoardCardOpenProps {
+  className?: string;
+  "data-board-card"?: string;
+  "data-board-card-highlight"?: "true";
+}
+
+/**
  * 特性分组头内容（#46 B3/B4 共用；#55 S-2 收敛树形手工装配）：编号（计划码 / ID-<label>）+
  * 名称 + 段位徽章 + 角标 + `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要
  * （`<summary>`、分组 `<div>`、表头 `<tr>`），卡片锚点与视觉外壳由宿主决定。
  *
- * `lightweight`（#54-9/P-2，契约 §13.7 B3）：跨列随行的分组头降级轻量标签——段位徽章属于
- * 特性自己的列，跨列时不带；名称弱化为小字，角标与计数保留但压低强调度（缺口不许被埋）。
+ * `variant: "lightweight"`（#54-9/P-2，契约 §13.7 B3）：跨列随行的分组头降级轻量标签——段位
+ * 徽章属于特性自己的列，跨列时不带；名称弱化为小字，角标与计数保留但压低强调度（缺口不许被埋）。
  *
- * 视图间差异作 props（#55 S-2，评审 #46 S-2）：`titleClassName`（树形大块用 base 字号）、
- * `titleAccessory`（树形特性头尾部的当前执行者徽记）；计数片 markup 单点化，不再各装配一份。
+ * 视图间差异作 props（#55 S-2，评审 #46 S-2）：`titleSize`（字号档闭集）、`titleAccessory`
+ * （树形特性头尾部的当前执行者徽记）；计数片 markup 单点化，不再各装配一份。
  *
  * 计数片二选一（#87：`layer` 与 `cardCount` 互斥的判别联合）——层头传 `layer`（层名 + 层计数），
  * 稿层传 `cardCount`（`[N 张卡]`，四视图现状）；不给两条计数路径并存的机会。
  */
 export type BoardFeatureGroupHeaderContentProps = {
   feature: BoardGroupHeaderFeature;
-  lightweight?: boolean;
+  /** 组头形态（缺省 full；lightweight 见上）。 */
+  variant?: BoardGroupHeaderVariant;
   /**
    * 开弹窗落点（#54-4 列表组头点击分区）：给了就把「编号 + 名称」包进这个落点 div 并展开
    * 这些 props（宿主用 `boardCardOpenProps` 生成，含 `data-board-card` 锚点与高亮），
    * 段位/角标/计数留在落点外——点它们走宿主容器（`<summary>`）的默认动作（折叠/展开）。
    * 不传 = 整行由宿主统一处理（看板分组头现状）。
    */
-  titleRegionProps?: (Record<string, unknown> & { className?: string }) | null;
-  /** 全量形态的标题字号（缺省 = 看板/列表的 sm；树形大块传 base）。 */
-  titleClassName?: string;
+  titleRegionProps?: BoardGroupHeaderTitleRegionProps | null;
+  /** 标题字号档（缺省 = 看板/列表的 sm；树形大块传 base）。 */
+  titleSize?: BoardGroupHeaderTitleSize;
   /** 标题后的附加片（树形当前执行者徽记；看板/列表不传）。 */
   titleAccessory?: ReactNode;
 } & (
@@ -328,12 +361,13 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
   const {
     feature,
     layer = null,
-    lightweight = false,
+    variant = "full",
     titleRegionProps = null,
-    titleClassName,
+    titleSize = "sm",
     titleAccessory = null,
   } = props;
   const { intl } = useZCodeIntl();
+  const lightweight = variant === "lightweight";
   // 层终态标注（只认登记行枚举值；未知取值不标注）。
   const layerStatusMessageId =
     layer?.status != null ? (LAYER_STATUS_MESSAGE_IDS[layer.status] ?? null) : null;
@@ -392,9 +426,7 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
         {...(feature.title ? { title: feature.title } : {})}
         className={cn(
           "min-w-0 flex-1 truncate",
-          lightweight
-            ? "text-ui-xs text-foreground-subtle"
-            : (titleClassName ?? "text-ui-sm font-medium text-foreground"),
+          lightweight ? "text-ui-xs text-foreground-subtle" : TITLE_SIZE_CLASSNAMES[titleSize],
         )}
       >
         {feature.title}

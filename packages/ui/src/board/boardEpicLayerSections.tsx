@@ -17,6 +17,7 @@ import {
   BoardFeatureGroupHeaderContent,
   type BoardGroupHeaderFeature,
   type BoardGroupHeaderLayer,
+  type BoardGroupHeaderTitleSize,
 } from "./boardNodeParts.js";
 
 /**
@@ -48,7 +49,7 @@ export function boardLayerFeatureStub(title: string): BoardGroupHeaderFeature {
 export function BoardEpicLayerSection({
   layer,
   title,
-  titleClassName,
+  titleSize,
   className,
   summaryClassName,
   bodyClassName,
@@ -61,8 +62,8 @@ export function BoardEpicLayerSection({
   layer: BoardGroupHeaderLayer;
   /** epic 层 = 登记行标题；期次层无标题字段传空串。 */
   title: string;
-  /** 层头标题字号（视图与层级间的密度差）。 */
-  titleClassName?: string;
+  /** 层头标题字号档（闭集 #60/S-2：不再透传任意类串；缺省 = 组头零件的 sm）。 */
+  titleSize?: BoardGroupHeaderTitleSize;
   /** 容器外壳类（半径/边框/间距按视图与层级降档）。 */
   className: string;
   summaryClassName: string;
@@ -99,7 +100,7 @@ export function BoardEpicLayerSection({
         <BoardFeatureGroupHeaderContent
           feature={boardLayerFeatureStub(title)}
           layer={layer}
-          {...(titleClassName ? { titleClassName } : {})}
+          {...(titleSize ? { titleSize } : {})}
         />
       </summary>
       <div className={bodyClassName}>{children}</div>

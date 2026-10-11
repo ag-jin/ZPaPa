@@ -56,7 +56,6 @@ export function BoardTableEpicRow({
                 phaseCount: container.phases.length,
                 status: container.epic.status,
               }}
-              titleClassName="text-ui-sm font-medium text-foreground"
             />
           </div>
         </td>
@@ -95,7 +94,7 @@ export function BoardTablePhaseRow({
             <BoardFeatureGroupHeaderContent
               feature={boardLayerFeatureStub("")}
               layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
-              titleClassName="text-ui-xs font-medium text-foreground-subtle"
+              titleSize="xsSubtle"
             />
           </div>
         </td>
