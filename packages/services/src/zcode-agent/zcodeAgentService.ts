@@ -96,8 +96,6 @@ import {
   zcodeWorkspaceCancelGenerateTextResultSchema,
   zcodeWorkspaceGenerateTextResultSchema,
   zcodeWorkspaceHookTrustGrantResultSchema,
-  zcodeWorkspaceUpdateInteractionPreferencesResultSchema,
-  zcodeWorkspaceUpdateModelIoPreferencesResultSchema,
   zcodeProviderUpdateAccountConfigResultSchema,
   type ZCodeSessionStateSnapshot,
   type ZCodeAutomation,
@@ -123,6 +121,11 @@ import {
   mergeAutomationMutationToolDenylist,
   mergeOffPeakMutationToolDenylist,
 } from "#src/zcode-agent/automationToolPolicy.js";
+import {
+  isProtocolMethodNotFoundError,
+  normalizeAppRuntimePreferences,
+  syncWorkspaceAppRuntimePreferences,
+} from "#src/zcode-agent/appRuntimePreferencesSync.js";
 import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "./zcodeAgent.js";
 import type {
   ZCodeProtocolRequestId,
@@ -428,15 +431,6 @@ interface SessionEventSequenceState {
   liveEventIds: Set<string>;
   liveEventIdOrder: string[];
   lastAssignedSeq: number;
-}
-
-function isProtocolMethodNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === -32601
-  );
 }
 
 function buildWorkspaceRef(params: ZCodeAgentWorkspaceTarget): ZCodeWorkspaceRef {
@@ -1464,32 +1458,13 @@ export function createZCodeAgentService(
         // 前一次失败不能打乱之后开关提交的顺序；当前快照仍需继续尝试。
       })
       .then(async () => {
-        await params.client.request(
-          zcodeProtocolMethods.workspaceUpdateInteractionPreferences,
-          {
-            workspace: buildWorkspaceRef(params.workspace),
-            preferences: {
-              askUserQuestionAutoResolutionEnabled:
-                params.preferences.askUserQuestionAutoResolutionEnabled,
-            },
-          },
-          zcodeWorkspaceUpdateInteractionPreferencesResultSchema,
-        );
-        try {
-          await params.client.request(
-            zcodeProtocolMethods.workspaceUpdateModelIoPreferences,
-            {
-              workspace: buildWorkspaceRef(params.workspace),
-              preferences: {
-                fullRetentionEnabled: params.preferences.modelIoFullRetentionEnabled === true,
-              },
-            },
-            zcodeWorkspaceUpdateModelIoPreferencesResultSchema,
-          );
-        } catch (error) {
-          // 新 Host 兼容尚未升级的 CLI：只有 method-not-found 可降级，其他同步失败仍需上抛。
-          if (!isProtocolMethodNotFoundError(error)) throw error;
-        }
+        // 字段↔方法映射与 method-not-found 兼容策略单点在 appRuntimePreferencesSync.ts，
+        // 这里只保留 workspace 键的串行队列（提交顺序不得被上一次失败打乱）。
+        await syncWorkspaceAppRuntimePreferences({
+          client: params.client,
+          preferences: params.preferences,
+          workspace: buildWorkspaceRef(params.workspace),
+        });
       });
     interactionPreferenceSyncByWorkspaceKey.set(workspaceKey, current);
     void current.then(
@@ -3397,10 +3372,7 @@ export function createZCodeAgentService(
     },
 
     async syncAppRuntimePreferences(preferences: ZCodeAgentAppRuntimePreferences): Promise<void> {
-      const normalizedPreferences: ZCodeAgentAppRuntimePreferences = {
-        ...preferences,
-        modelIoFullRetentionEnabled: preferences.modelIoFullRetentionEnabled === true,
-      };
+      const normalizedPreferences = normalizeAppRuntimePreferences(preferences);
       latestAppRuntimePreferences = normalizedPreferences;
       const activeClients = [...activeClientsByWorkspaceKey.values()];
       await Promise.all(

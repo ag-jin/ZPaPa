@@ -87,6 +87,7 @@ import { updateAccountProviderConfig } from "./account-provider-config.js";
 import { updateModelIoPreferences } from "./model-io-preferences.js";
 import { updateOffPeakToolPolicy } from "./off-peak-tool-policy.js";
 import { updateDynamicWorkflowPolicy } from "./dynamic-workflow-policy.js";
+import { updateAskMattFlowPreferences } from "./ask-matt-flow-policy.js";
 import { grantWorkspaceHookTrustForProtocol } from "./workspace-hook-trust.js";
 import {
   V4InteractionRegistry,
@@ -253,6 +254,9 @@ export class ZCodeProtocolAgentServer {
         // 动态工作流灰度门 fail-closed：Host 必须显式 workspace/updateDynamicWorkflowPolicy
         // 才开启。
         dynamicWorkflowEnabled: false,
+        // ask-matt 实验开关同为 fail-closed：Host 必须显式
+        // workspace/updateAskMattFlowPreferences 才注册内置包技能与三个流程命令。
+        askMattFlowEnabled: false,
       },
       notify: (notification) => this.messageSink?.(notification),
       requestClient: (method, params, resultSchema, options) =>
@@ -633,6 +637,8 @@ export class ZCodeProtocolAgentServer {
         return await updateOffPeakToolPolicy(this.context, request.params);
       case zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy:
         return await updateDynamicWorkflowPolicy(this.context, request.params);
+      case zcodeProtocolMethods.workspaceUpdateAskMattFlowPreferences:
+        return await updateAskMattFlowPreferences(this.context, request.params);
       case zcodeProtocolMethods.workspaceGenerateText:
         return await this.withWorkspaceGenerateTextSignal(request, (signal) =>
           generateWorkspaceText(this.context, request.params, signal),

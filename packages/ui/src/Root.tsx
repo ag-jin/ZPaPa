@@ -19,6 +19,7 @@ import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SSHDialog } from "@/SSHDialog.js";
 import { SettingsPage } from "@/SettingsPage.js";
+import { buildAppRuntimePreferences } from "@/settings/appRuntimePreferences.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
@@ -315,26 +316,18 @@ function RootInner({
     if (!appSettings) {
       return;
     }
-    void services.zcodeAgentService
-      .syncAppRuntimePreferences({
-        askUserQuestionAutoResolutionEnabled:
-          appSettings.askUserQuestionAutoResolutionEnabled !== false,
-        modelIoFullRetentionEnabled: appSettings.modelIoFullRetentionEnabled === true,
-      })
-      .catch((error) => {
-        logger.warn("[settings] 初始化运行时偏好失败", error);
-      });
-    void services.botsService
-      .syncAppRuntimePreferences({
-        askUserQuestionAutoResolutionEnabled:
-          appSettings.askUserQuestionAutoResolutionEnabled !== false,
-        modelIoFullRetentionEnabled: appSettings.modelIoFullRetentionEnabled === true,
-      })
-      .catch((error) => {
-        logger.warn("[settings] 初始化 Bot 运行时偏好失败", error);
-      });
+    // 载荷单点在 settings/appRuntimePreferences.ts：Agent 与 Bot 两条同步必须同字段同判据
+    // （ask-matt 实验开关只在显式 true 时下发，见该文件注释）。
+    const preferences = buildAppRuntimePreferences(appSettings);
+    void services.zcodeAgentService.syncAppRuntimePreferences(preferences).catch((error) => {
+      logger.warn("[settings] 初始化运行时偏好失败", error);
+    });
+    void services.botsService.syncAppRuntimePreferences(preferences).catch((error) => {
+      logger.warn("[settings] 初始化 Bot 运行时偏好失败", error);
+    });
   }, [
     appSettings?.askUserQuestionAutoResolutionEnabled,
+    appSettings?.experimentalAskMattFlowEnabled,
     appSettings?.modelIoFullRetentionEnabled,
     services.botsService,
     services.zcodeAgentService,
@@ -938,7 +931,9 @@ function RootInner({
       });
       // 登记为可重连的设备入口（只存连接记录，不存会话索引，见 ADR 0001）。
       const deviceConfigService = (
-        services as { remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService }
+        services as {
+          remoteDeviceConfigService?: import("@zcode/services").IRemoteDeviceConfigService;
+        }
       ).remoteDeviceConfigService;
       if (deviceConfigService) {
         // 合并写：整体覆盖会把既有 visibleProjects（项目显示偏好）抹掉，

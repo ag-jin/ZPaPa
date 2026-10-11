@@ -140,6 +140,12 @@ export interface ZCodeProtocolAgentServerContext {
      * 工作流工具面、`/workflow` 与 dynamic-workflows 技能一律不露出。
      */
     dynamicWorkflowEnabled: boolean;
+    /**
+     * host 同步的「ask-matt 开发流程」实验开关（#204/A3）。
+     * 缺省 false（fail-closed）：未同步 / 旧 Host 的窗口里，内置包 mattpocock/skills
+     * 全库不注册、`/grill` 等三命令零装配；开态由 Host 显式 workspace 级同步。
+     */
+    askMattFlowEnabled: boolean;
   };
   // 竖切：v4 conversation 通道（订阅/帧/命令），与旧 session/* 方法并存。
   // 构造顺序问题（gateway 闭包持有 context）用可选字段收口，server 构造完立即赋值。

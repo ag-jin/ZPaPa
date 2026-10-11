@@ -1,4 +1,8 @@
 import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES, type ZCodeSlashCommand } from "@zcode/shared";
+import {
+  isAskMattFlowCommandName,
+  listAskMattFlowSlashCommands,
+} from "../ask-matt-flow-commands.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import {
   listZCodeCustomCommands,
@@ -16,6 +20,11 @@ export interface ListProtocolSlashCommandsOptions extends ListZCodeCustomCommand
    * 未传入该字段的调用方保留默认目录；协议服务端从 appRuntimePreferences 传入显式布尔。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 「ask-matt 开发流程」开关（#204/A3）。只有显式 true 才把 `/grill`、`/to-spec`、`/to-tickets`
+   * 追加进目录；未传入 / false = 零装配（实验默认关）。协议服务端从 appRuntimePreferences 传入。
+   */
+  askMattFlowEnabled?: boolean;
 }
 
 export async function listProtocolSlashCommands(
@@ -28,6 +37,10 @@ export async function listProtocolSlashCommands(
     (command) =>
       options.dynamicWorkflowEnabled !== false || command.name !== BUILTIN_WORKFLOW_COMMAND_NAME,
   );
+  // ask-matt 三个流程命令追加在内置段末尾（实验入口，不重排已交付目录）；
+  // 命令名不进共享保留字表，所以只在开态压过同名自定义命令（关态用户命令照常可见）。
+  const askMattFlowCommands = listAskMattFlowSlashCommands(options.askMattFlowEnabled);
+  const askMattFlowEnabled = options.askMattFlowEnabled === true;
   let customCommands: Awaited<ReturnType<typeof listZCodeCustomCommands>>["commands"] = [];
   try {
     const outcome = await listZCodeCustomCommands(options);
@@ -39,9 +52,11 @@ export async function listProtocolSlashCommands(
 
   return [
     ...builtins,
+    ...askMattFlowCommands,
     ...customCommands
       .filter((command) => !command.disableNonInteractive)
       .filter((command) => !isReservedZCodeSlashCommandName(command.name))
+      .filter((command) => !(askMattFlowEnabled && isAskMattFlowCommandName(command.name)))
       .map((command) => ({
         description: command.description,
         inputHint: `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""}`,

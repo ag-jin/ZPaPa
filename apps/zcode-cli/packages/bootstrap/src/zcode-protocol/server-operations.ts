@@ -3452,6 +3452,10 @@ async function createRecord(
       dynamicWorkflowEnabled:
         ("dynamicWorkflowEnabled" in params && params.dynamicWorkflowEnabled === true) ||
         context.appRuntimePreferences.dynamicWorkflowEnabled === true,
+      // ask-matt 实验开关（#204/A3）：来源只有 Host 同步的 App 设置（无 session 参数通道）；
+      // 必须写出显式布尔——core 的 runtimeConfig 缺席即 undefined，而注册面判据只认 true
+      // （fail-closed）。Host 尚未同步 / 旧 Host 不认识的窗口里，内置包保持零注册。
+      askMattFlowEnabled: context.appRuntimePreferences.askMattFlowEnabled === true,
       // 协议侧的工具允许/拒绝列表是 session 级安全边界，必须进入 runtimeConfig，
       // 不能只依赖 prompt 文本约束，否则内置工具和动态 MCP 工具仍可能越过调用面。
       toolAllowlist: "toolAllowlist" in params ? params.toolAllowlist : undefined,
@@ -3697,6 +3701,8 @@ async function snapshotWithDiagnostics(
       // session snapshot 的 `/` 目录与 workspace presentation 必须给出同一份灰度结论，
       // 否则关闭态下侧栏面板还能看到 `workflow`。
       dynamicWorkflowEnabled: context.appRuntimePreferences.dynamicWorkflowEnabled,
+      // ask-matt 实验开关同源：目录、workspace presentation 与展开三处一起为零或一起出现。
+      askMattFlowEnabled: context.appRuntimePreferences.askMattFlowEnabled,
       env: context.deps.env,
       logger: context.logger,
     },

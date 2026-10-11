@@ -320,6 +320,8 @@ export function createBotRemoteWorkspaceService(params: {
         : await params.settingService.get().then((settings) => ({
             askUserQuestionAutoResolutionEnabled:
               settings.askUserQuestionAutoResolutionEnabled !== false,
+            // ask-matt 实验开关（#204/A3）：只认显式 true，与 Root 的同步字段同判据。
+            askMattFlowEnabled: settings.experimentalAskMattFlowEnabled === true,
             modelIoFullRetentionEnabled: settings.modelIoFullRetentionEnabled === true,
           }));
       await services.zcodeAgentService.syncAppRuntimePreferences(preferences);

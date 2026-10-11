@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { resolveAskMattFlowPromptCommand } from "./ask-matt-flow-commands.js";
 import {
   BUILTIN_WORKFLOW_COMMAND_NAME,
   expandBuiltinWorkflowCommandPrompt,
@@ -15,6 +16,12 @@ interface ResolveZCodeBuiltinPromptCommandOptions {
    * 交给模型。这与命令目录隐藏该入口的规则一致。
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * 「ask-matt 开发流程」开关（#204/A3）：只有显式 true 才展开 `/grill`、`/to-spec`、
+   * `/to-tickets`。与 A1 判据同源（未设置/未加载 = 关）：关闭时原文作为普通 prompt 交给模型，
+   * 与命令目录零装配的结论一致（同开关两处一起为零）。
+   */
+  askMattFlowEnabled?: boolean;
   workingDirectory?: string;
 }
 
@@ -41,6 +48,14 @@ export function resolveZCodeBuiltinPromptCommand(
       return undefined;
     }
     return expandBuiltinWorkflowCommandPrompt(invocation.args);
+  }
+
+  // ask-matt 三命令只在实验开关显式打开时展开；关态不占用命令名（自定义命令照常解析）。
+  if (options.askMattFlowEnabled === true) {
+    const askMattPrompt = resolveAskMattFlowPromptCommand(invocation.name, invocation.args);
+    if (askMattPrompt !== undefined) {
+      return askMattPrompt;
+    }
   }
 
   return undefined;

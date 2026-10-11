@@ -163,6 +163,7 @@ export type {
   ZCodeAgentV4ConnectionContext,
 } from "./zcode-agent/zcodeAgentConnectionScope.js";
 export type {
+  ZCodeAgentAppRuntimePreferences,
   ZCodeAgentAttachmentBeginParams,
   ZCodeAgentAttachmentChunkParams,
   ZCodeAgentAttachmentTerminalParams,
