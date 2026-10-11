@@ -3,6 +3,11 @@
  * 卡 #34 补卡片点击 → 弹窗与跳转落点高亮（`boardCardInteraction` 一处生成的 props）；
  * 卡 #46 / 规则书 v2（B3）：列内按特性分组——**特性名做卡片分组头（非独立卡，不占一列位置）**，
  * 任务卡随分组行排布；跨列的任务用轻量分组标签带出特性名。
+ * 卡 #168 / A4-1b：列内三层容器接线——epic 章 ⊃ 期次组 ⊃ 列内分组（裁决包 AD-1）；容器装配走
+ * `boardEpicContainers.assembleBoardEpicContainers`（与 tree 同一归组单点，跨列轻量组同样按特性
+ * 归属），层头走 `BoardFeatureGroupHeaderContent` 的 `layer` 变体、折叠指示符走共享零件。层计数 =
+ * **本列实际承载**的成员稿数/期数（与渲染出来的子块逐一对齐——列内投影下同一 epic 头在不同列
+ * 计数不同，诚实反映该列承载面）。无归属组照旧平铺在前（AD-8；零 epic 板零变化）。
  *
  * 单一真源：消费契约 §13.2「看板（列视图）」列 + §13.3（待设计列 = 访谈汇总子区）+
  * §13.4（待合并角标）+ §3.5（列内排序 attention 置顶 + updatedAt 倒序）。分组/排序全在
@@ -18,6 +23,8 @@ import {
   boardCardHighlightProps,
   boardCardOpenProps,
 } from "./boardCardInteraction.js";
+import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
+import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
   BoardFeatureGroupHeaderContent,
   BoardNodeBadges,
@@ -150,23 +157,121 @@ function BoardKanbanGroupBlock({
   );
 }
 
+/**
+ * 期次组（列内三层容器第二层；#168）：组头 = 合成层名（`KANB1`，AD-3）+ 本列承载稿数；
+ * 体 = 本列的期内分组。整行是折叠落点（期次不是卡：无弹窗落点；组头行允许折行见 #54-3）。
+ * 容器装配走 `BoardEpicLayerSection` 单点（与 tree/列表同一份）。
+ */
+function BoardKanbanPhaseSection({
+  phase,
+  showStatusRule,
+  onOpenCard,
+  highlightCardId,
+}: {
+  phase: BoardEpicItemContainer<BoardKanbanGroup>["phases"][number];
+  showStatusRule: boolean;
+  onOpenCard?: (id: string) => void;
+  highlightCardId: string | null;
+}) {
+  return (
+    <BoardEpicLayerSection
+      layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
+      title=""
+      titleClassName="text-ui-xs font-medium text-foreground-subtle"
+      className="group flex flex-col overflow-hidden rounded-md border border-border/50"
+      summaryClassName="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-1.5 px-1 py-0.5 hover:bg-surface-hover"
+      bodyClassName="flex flex-col gap-1 p-0.5"
+      // 溢出防线锚点（#59 S-4）：w-56 列里层头行允许折行，不绑 CSS 类名判据。
+      summaryProps={{ "data-board-overflow-wrap": "" }}
+    >
+      {phase.items.map((group) => (
+        <BoardKanbanGroupBlock
+          key={group.feature.id}
+          group={group}
+          showStatusRule={showStatusRule}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
+        />
+      ))}
+    </BoardEpicLayerSection>
+  );
+}
+
+/**
+ * epic 章（列内三层容器第一层；#168）：章头 = 登记行层名 + 标题 + 终态标注（§10.5）+ 本列稿数/期数；
+ * 体 = 期次组（升序）。**epic 不是卡**：章头整行是折叠落点（退化形态与 tree 同口径）。
+ */
+function BoardKanbanEpicSection({
+  container,
+  showStatusRule,
+  onOpenCard,
+  highlightCardId,
+}: {
+  container: BoardEpicItemContainer<BoardKanbanGroup>;
+  showStatusRule: boolean;
+  onOpenCard?: (id: string) => void;
+  highlightCardId: string | null;
+}) {
+  return (
+    <BoardEpicLayerSection
+      layer={{
+        kind: "epic",
+        name: container.epic.code,
+        planCount: container.items.length,
+        phaseCount: container.phases.length,
+        status: container.epic.status,
+      }}
+      title={container.epic.title}
+      titleClassName="text-ui-xs font-medium text-foreground"
+      className="group flex flex-col overflow-hidden rounded-lg border border-border/60 bg-surface/40"
+      summaryClassName="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-1.5 px-1 py-1 hover:bg-surface-hover"
+      bodyClassName="flex flex-col gap-1 p-0.5"
+      // 溢出防线锚点（#59 S-4）：窄列层头行允许折行（与组头行同款）。
+      summaryProps={{ "data-board-overflow-wrap": "" }}
+    >
+      {container.phases.map((phase) => (
+        <BoardKanbanPhaseSection
+          key={phase.name}
+          phase={phase}
+          showStatusRule={showStatusRule}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
+        />
+      ))}
+    </BoardEpicLayerSection>
+  );
+}
+
 function BoardKanbanColumnBody({
+  board,
   column,
   onOpenCard,
   highlightCardId,
 }: {
+  board: BoardViewModel;
   column: BoardKanbanColumn;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
 }) {
   const { intl } = useZCodeIntl();
   const cancelled = column.stage === "已取消";
+  // 三层容器装配（#168 单点）：按列内实际承载的分组切容器（跨列轻量组同样按特性归属）。
+  const containers = assembleBoardEpicContainers(board, column.groups, (group) => group.feature.id);
   return (
     <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto p-1.5">
-      {column.groups.map((group) => (
+      {containers.ungrouped.map((group) => (
         <BoardKanbanGroupBlock
           key={group.feature.id}
           group={group}
+          showStatusRule={cancelled}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
+        />
+      ))}
+      {containers.epics.map((container) => (
+        <BoardKanbanEpicSection
+          key={container.epic.code}
+          container={container}
           showStatusRule={cancelled}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
@@ -316,6 +421,7 @@ export function BoardKanbanView({
               />
               {completedExpanded ? (
                 <BoardKanbanColumnBody
+                  board={board}
                   column={column}
                   {...(onOpenCard ? { onOpenCard } : {})}
                   highlightCardId={highlightCardId}
@@ -332,6 +438,7 @@ export function BoardKanbanView({
             >
               <BoardKanbanHeader column={column} />
               <BoardKanbanColumnBody
+                board={board}
                 column={column}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}

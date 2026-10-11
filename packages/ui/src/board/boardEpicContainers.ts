@@ -95,3 +95,71 @@ export function groupBoardFeaturesByEpic(board: BoardViewModel): BoardEpicGroupi
     ungrouped,
   };
 }
+
+/** 视图侧某一层实际承载的成员分组（`items` = 该视图管线产出的分组，保持输入序）。 */
+export interface BoardEpicItemContainer<T> {
+  /** 登记行（登记序）。 */
+  epic: BoardEpicNode;
+  /** 期次组（期次序升序）——只含本视图实际承载的成员分组。 */
+  phases: Array<{ phase: number; name: string; items: T[] }>;
+  /** 本视图实际承载的成员（= 各期次之并集；容器层计数来源）。 */
+  items: T[];
+}
+
+/**
+ * 视图侧三层容器装配（卡 #168 / A4-1b 三视图共用单点；禁二份实现）：
+ * 把一份**视图侧已过滤/排序的分组**（列表/表格的特性分组、看板列内的分组块）按同一 epic/phase
+ * 归属切成容器——归组判据只认登记 id 反查（`groupBoardFeaturesByEpic` 单点），半对稿/孤儿引用/
+ * 稳定号引用一律 `ungrouped` 顶层平铺，三视图不各写一套判据。
+ *
+ * `items` 是**视图侧的分组**（`memberIdOf` 取组头特性 id，看板跨列轻量组同样按特性归属）；
+ * **只保留实际承载 ≥1 分组的层**：过滤/列投影后没有成员就不造空壳（层计数 = 实际承载成员数，
+ * 与渲染出来的子块逐一对齐）——空壳承诺只在结构视图（tree 直接消费 `groupBoardFeaturesByEpic`，
+ * 登记 epic 照旧成章；列表/表格/看板按本函数投影）。
+ */
+export function assembleBoardEpicContainers<T>(
+  board: BoardViewModel,
+  items: readonly T[],
+  memberIdOf: (item: T) => string,
+): { epics: Array<BoardEpicItemContainer<T>>; ungrouped: T[] } {
+  const grouping = groupBoardFeaturesByEpic(board);
+  const attribution = new Map<string, { code: string; phase: number }>();
+  for (const group of grouping.epics) {
+    for (const phaseGroup of group.phases) {
+      for (const member of phaseGroup.features) {
+        attribution.set(member.id, { code: group.epic.code, phase: phaseGroup.phase });
+      }
+    }
+  }
+  const itemsByCode = new Map<string, Map<number, T[]>>();
+  const ungrouped: T[] = [];
+  for (const item of items) {
+    const entry = attribution.get(memberIdOf(item));
+    if (!entry) {
+      ungrouped.push(item);
+      continue;
+    }
+    let byPhase = itemsByCode.get(entry.code);
+    if (!byPhase) {
+      byPhase = new Map();
+      itemsByCode.set(entry.code, byPhase);
+    }
+    const bucket = byPhase.get(entry.phase);
+    if (bucket) bucket.push(item);
+    else byPhase.set(entry.phase, [item]);
+  }
+  const epics: Array<BoardEpicItemContainer<T>> = [];
+  for (const group of grouping.epics) {
+    const byPhase = itemsByCode.get(group.epic.code);
+    if (!byPhase) continue;
+    const phases = [...byPhase.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([phase, phaseItems]) => ({
+        phase,
+        name: `${group.epic.code}${phase}`,
+        items: phaseItems,
+      }));
+    epics.push({ epic: group.epic, phases, items: phases.flatMap((phase) => phase.items) });
+  }
+  return { epics, ungrouped };
+}
