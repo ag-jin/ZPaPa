@@ -16,11 +16,21 @@ import { GOLDEN_SHAPED_BOARD } from "./boardTestFixture.js";
  * 逐字文案以字面量钉在这里 —— 只查词条 key 或只查原文表会漏掉「渲染了错误文案」这一类坏法。
  */
 
+/**
+ * 本地缺省 = 树形：本文件主体是树形视图的逐字/结构守卫（卡 #32），断言面全是树形卡片行锚点。
+ * 视图缺省自 C3-5/#140 起为指引面（AD-11①）——缺省面的断言在 `boardViewsRender.test.ts`，
+ * 这里显式传 viewMode: "tree"，不让本文件的树形断言跟随缺省值漂移。
+ */
 function render(state: BoardPaneLoadState, props: Partial<BoardPaneViewProps> = {}): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(BoardPaneView, { state, onRefresh: () => {}, ...props }),
+      children: createElement(BoardPaneView, {
+        state,
+        viewMode: "tree",
+        onRefresh: () => {},
+        ...props,
+      }),
     }),
   );
 }
@@ -29,7 +39,7 @@ function renderEnglish(state: BoardPaneLoadState): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "en-US" as const,
-      children: createElement(BoardPaneView, { state, onRefresh: () => {} }),
+      children: createElement(BoardPaneView, { state, viewMode: "tree", onRefresh: () => {} }),
     }),
   );
 }

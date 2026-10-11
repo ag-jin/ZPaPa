@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BoardPaneView } from "../src/board/BoardPaneView.js";
+import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
 import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
 import { boardFoldIdsOfCard } from "../src/board/boardFoldState.js";
@@ -87,11 +87,11 @@ async function loadFromRealFile(workspace: string): Promise<BoardPaneLoadState> 
   });
 }
 
-function render(state: BoardPaneLoadState): string {
+function render(state: BoardPaneLoadState, props: Partial<BoardPaneViewProps> = {}): string {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, {
       initialLocale: "zh-CN" as const,
-      children: createElement(BoardPaneView, { state }),
+      children: createElement(BoardPaneView, { state, ...props }),
     }),
   );
 }
@@ -281,7 +281,9 @@ test(
         if (feature.stage !== null) assert.ok(STAGE_VALUES.includes(feature.stage));
       }
 
-      const markup = render(state);
+      // 树形面逐字守卫（golden 全字段形态的树面投影）：视图缺省自 C3-5/#140 起为指引面，
+      // 本测试的断言面全是树形卡片行锚点，显式钉树形。
+      const markup = render(state, { viewMode: "tree" });
 
       // 七段位徽章：golden 里出现的每个 stage 值都必须渲染出徽章文本（卡级 stage 也要渲染）。
       for (const stage of new Set(rawStageValues)) {

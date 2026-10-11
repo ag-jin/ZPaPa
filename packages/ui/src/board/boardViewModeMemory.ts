@@ -12,8 +12,14 @@ import { isBoardViewMode, type BoardViewMode } from "./boardViewsViewModel.js";
 
 const STORAGE_KEY = "zcode-board-view-mode";
 
-/** 默认视图 = 树形（tracer 的既有视图，切面板不会突然换形态）。 */
-export const DEFAULT_BOARD_VIEW_MODE: BoardViewMode = "tree";
+/**
+ * 默认视图 = 指引面（C3-5/#140 拍板：AD-11①「默认视图切指引面，树形保留结构视图」，
+ * 用户第一眼=正在执行的计划；树形降级为结构视图入口，四视图一枚不删）。
+ * **单点常量**：闭集回落、组件缺省参数都取这里，不另写视图名字面量。
+ * 旧偏好迁移（同卡成文）：记忆只存显式选择——键/取值格式不变，存量显式值（含旧默认 tree）
+ * 原样读回；只有无记忆/坏值才落本默认，不做一次性覆盖。
+ */
+export const DEFAULT_BOARD_VIEW_MODE: BoardViewMode = "guide";
 
 export function readBoardViewMode(): BoardViewMode {
   const value = readBoardSessionValue(STORAGE_KEY);

@@ -239,8 +239,8 @@ export interface BoardListGroup {
 export type BoardViewMode = "guide" | "tree" | "kanban" | "list" | "table";
 
 /**
- * 视图集（C3-1/#136 增「指引面」guide 于队首；C3-5/#140 才把缺省视图由 tree 切到 guide 并处理
- * 旧偏好迁移——本卡只把指引面做成可选项，结构四视图一枚不删）。
+ * 视图集（C3-1/#136 增「指引面」guide 于队首；C3-5/#140 起 guide 为缺省视图——默认值单点在
+ * `boardViewModeMemory.DEFAULT_BOARD_VIEW_MODE`；结构四视图一枚不删，入口常驻）。
  */
 export const BOARD_VIEW_MODES: readonly BoardViewMode[] = [
   "guide",
