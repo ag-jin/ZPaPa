@@ -466,7 +466,9 @@ test("三视图层头文案两语齐平（en-US）：计数片/终态标注不�
     'data-board-layer-kind="phase"',
   );
   assert.match(kanbanEpic, /data-board-layer-plan-count="1"/, "看板列内层计数 = 本列承载（1 稿）");
-  assert.ok(kanbanEpic.includes(">1 drafts<"), "英文稿数片（列内形态）");
+  // A4-4/F4 收口（#90）：原断言编码的是裸复数「1 drafts」——第四绿 F4/D7 点名的缺陷形态；
+  // 计数词条随 A4-4 改单/复数两键，count=1 走单数键，断言随行为变更改口径。
+  assert.ok(kanbanEpic.includes(">1 draft<"), "英文稿数片（列内形态，单数形态）");
   const kanbanCncl = sliceBetween(
     kanban,
     'data-board-layer-name="CNCL"',

@@ -1010,10 +1010,25 @@ const zhCN: Record<string, string> = {
   "board.stage.done": "已完成",
   "board.stage.cancelled": "已取消",
   // 视图切换（契约 §13.2 四视图；本期面板内三态：树形/看板/列表）。
-  "board.feature.cardCount": "{count} 张卡",
+  // 计数词条单/复数两键（A4-4/F4）：zh 两键同文（汉语无复数）；en 侧 `.one` 收口「1 cards」类裸复数。
+  "board.feature.cardCount.one": "{count} 张卡",
+  "board.feature.cardCount.other": "{count} 张卡",
   // 三层容器层头计数片（A4-1）：epic/期次组头的稿数片与 epic 层的期数片（比「张卡」高一层）。
-  "board.layer.planCount": "{count} 稿",
-  "board.layer.phaseCount": "{count} 期",
+  "board.layer.planCount.one": "{count} 稿",
+  "board.layer.planCount.other": "{count} 稿",
+  "board.layer.phaseCount.one": "{count} 期",
+  "board.layer.phaseCount.other": "{count} 期",
+  // 计数片 title 消歧（A4-4/D5）：短词条只给量级，全文语义悬停可查。
+  "board.layer.planCountTitle": "本层成员稿数（每稿含若干卡）",
+  "board.layer.phaseCountTitle": "本层期次数",
+  // 层 rollup 缺口徽章（A4-4/AD-6）：层承载成员的缺口码条数之和（0 不渲染）。
+  "board.layer.gapCount.one": "缺口 {count}",
+  "board.layer.gapCount.other": "缺口 {count}",
+  // epic 弹窗（A4-4/AD-6 退化形态）：L2 rollup 段位构成 + 期次指针下钻。
+  "board.epic.dialog.rollup": "段位构成",
+  "board.epic.dialog.phases": "期次",
+  "board.epic.dialog.drill": "下钻到 {name}",
+  "board.epic.dialog.noStage": "无段位",
   // 折叠控件的可及名称（#55 S-3）：按钮只有 ▸/▾ 符号，动作 + 对象走词条（{name} = 特性名）。
   "board.group.expand": "展开 {name}",
   "board.group.collapse": "收起 {name}",

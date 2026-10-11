@@ -11,9 +11,9 @@
  * 分组/排序/过滤判据全在纯函数层（`boardViewsViewModel` / `boardTableViewModel` /
  * `boardDialogViewModel`），本文件与各视图组件只投影 + 回传意图。
  */
-import { Fragment } from "react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { BoardAttentionBanner } from "./boardAttentionBanner.js";
 import {
   BOARD_PANE_ROOT_CLASS,
   BoardPaneRefreshButton,
@@ -21,19 +21,14 @@ import {
   BoardSnapshotNotice,
 } from "./boardPlaceholderParts.js";
 import { BoardCardDialog } from "./BoardCardDialog.js";
+import { BoardEpicDialog } from "./BoardEpicDialog.js";
 import { BoardTreeView } from "./BoardTreeView.js";
 import { BoardKanbanView } from "./BoardKanbanView.js";
 import { BoardListView } from "./BoardListView.js";
 import { BoardTableView } from "./BoardTableView.js";
+import { resolveBoardDialogNode, type BoardJumpTarget } from "./boardDialogViewModel.js";
 import {
-  resolveBoardAttentionJumpTarget,
-  resolveBoardDialogNode,
-  type BoardJumpTarget,
-} from "./boardDialogViewModel.js";
-import {
-  BOARD_ATTENTION_SUMMARY_ROWS,
   BOARD_PLACEHOLDER_MESSAGE_IDS,
-  formatAttentionSummarySegment,
   formatBoardPathTail,
   formatBoardRunTime,
   formatBoardStaleHint,
@@ -84,6 +79,12 @@ export interface BoardPaneViewProps {
    * 版面，保留快照并附状态行。其余态（损坏/版本/空态是就绪后的确定性判定）不吃快照。
    */
   unavailableSnapshot?: BoardViewModel | null;
+  /** epic 弹窗打开态（#90/A4-4：宿主只持 epic 码；同一时刻与卡片弹窗互斥）。 */
+  openEpicCode?: string | null;
+  onOpenEpic?: (code: string) => void;
+  onCloseEpic?: () => void;
+  /** epic 弹窗期次指针下钻（展开祖先层 + 滚动/高亮，由宿主执行）。 */
+  onDrillToPhase?: (epicCode: string, phase: number) => void;
   /** 陈旧判定的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -129,55 +130,6 @@ function BoardViewSwitcher({
     </div>
   );
 }
-
-/**
- * 置顶提示条（契约 §3.1 逐字）：四段各自成段（每段按缺口码找落点），分隔符 ` · ` 是文本节点
- * ——全文与单段共用同一张词条表（`BOARD_ATTENTION_SUMMARY_ROWS`），文案一字不改。
- * 有落点的段落是按钮（点即滚动到对应卡 + 高亮）；没有落点（陈旧摘要）是纯文本，不给死按钮。
- */
-function BoardAttentionBanner({
-  board,
-  onJumpToCard,
-}: {
-  board: BoardViewModel;
-  onJumpToCard?: (target: BoardJumpTarget) => void;
-}) {
-  const { intl } = useZCodeIntl();
-  return (
-    <div
-      data-board-attention-banner=""
-      role="status"
-      className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-ui-sm text-foreground"
-    >
-      {BOARD_ATTENTION_SUMMARY_ROWS.map(([summaryKey, code], index) => {
-        const text = formatAttentionSummarySegment(
-          code,
-          board.attentionSummary[summaryKey],
-          intl.formatMessage,
-        );
-        const target = resolveBoardAttentionJumpTarget(board, code);
-        return (
-          <Fragment key={code}>
-            {index > 0 ? <span aria-hidden="true"> · </span> : null}
-            {target && onJumpToCard ? (
-              <button
-                type="button"
-                data-board-attention-jump={code}
-                className="cursor-pointer rounded-sm underline-offset-2 hover:underline focus-visible:underline"
-                onClick={() => onJumpToCard(target)}
-              >
-                {text}
-              </button>
-            ) : (
-              <span data-board-attention-jump-none={code}>{text}</span>
-            )}
-          </Fragment>
-        );
-      })}
-    </div>
-  );
-}
-
 function BoardReadyView({
   board,
   onRefresh,
@@ -196,6 +148,10 @@ function BoardReadyView({
   onKanbanCompletedExpandedChange,
   fold,
   snapshotNotice,
+  openEpicCode,
+  onOpenEpic,
+  onCloseEpic,
+  onDrillToPhase,
   now,
 }: {
   board: BoardViewModel;
@@ -216,6 +172,10 @@ function BoardReadyView({
   fold?: BoardFoldControls;
   /** 未连接保留快照时的状态行文案（#158；只在 unavailable+快照这条路径传入）。 */
   snapshotNotice?: string | null;
+  openEpicCode?: string | null;
+  onOpenEpic?: (code: string) => void;
+  onCloseEpic?: () => void;
+  onDrillToPhase?: (epicCode: string, phase: number) => void;
   now: number;
 }) {
   const { intl } = useZCodeIntl();
@@ -223,6 +183,8 @@ function BoardReadyView({
   const staleHint = formatBoardStaleHint(board.updatedAt, now, intl.formatMessage);
   // 同一时刻最多一个弹窗：宿主只持一个 id，这里按 id 解析（悬空 id → null，不留幽灵弹窗）。
   const dialogNode = resolveBoardDialogNode(board, openCardId ?? null);
+  // epic 弹窗（#90/A4-4）：同为「打开态 → 至多一个」——悬空码同样不留幽灵弹窗（模型层判）。
+  const openEpic = openEpicCode ?? null;
   return (
     // relative：弹窗 overlay 是**面板容器内 absolute**（#46 B5），不是 fixed 全局遮罩。
     // `data-no-selection-action`（卡 #64）：看板是只读投影，面板内不得出现
@@ -286,6 +248,7 @@ function BoardReadyView({
               ? { onCompletedExpandedChange: onKanbanCompletedExpandedChange }
               : {})}
             {...(fold ? { fold } : {})}
+            {...(onOpenEpic ? { onOpenEpic } : {})}
           />
         ) : viewMode === "list" ? (
           <BoardListView
@@ -295,6 +258,7 @@ function BoardReadyView({
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
             {...(fold ? { fold } : {})}
+            {...(onOpenEpic ? { onOpenEpic } : {})}
           />
         ) : viewMode === "table" ? (
           <BoardTableView
@@ -306,6 +270,7 @@ function BoardReadyView({
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
             {...(fold ? { fold } : {})}
+            {...(onOpenEpic ? { onOpenEpic } : {})}
           />
         ) : (
           <BoardTreeView
@@ -313,6 +278,7 @@ function BoardReadyView({
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
             {...(fold ? { fold } : {})}
+            {...(onOpenEpic ? { onOpenEpic } : {})}
           />
         )}
       </div>
@@ -342,6 +308,16 @@ function BoardReadyView({
             </ul>
           </div>
         </details>
+      ) : null}
+      {openEpic !== null ? (
+        // epic 弹窗（#90/A4-4 退化形态）：与卡片弹窗同一外壳/同一「至多一个」纪律；
+        // 悬空码在模型层判空（组件收到 null 直接不渲染，不留幽灵弹窗）。
+        <BoardEpicDialog
+          board={board}
+          code={openEpic}
+          {...(onCloseEpic ? { onClose: onCloseEpic } : {})}
+          {...(onDrillToPhase ? { onDrillToPhase } : {})}
+        />
       ) : null}
       {dialogNode ? (
         <BoardCardDialog
@@ -377,6 +353,10 @@ export function BoardPaneView({
   onKanbanCompletedExpandedChange,
   fold,
   unavailableSnapshot,
+  openEpicCode = null,
+  onOpenEpic,
+  onCloseEpic,
+  onDrillToPhase,
   now,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
@@ -410,6 +390,10 @@ export function BoardPaneView({
         {...(retainedBoard
           ? { snapshotNotice: intl.formatMessage({ id: "board.unavailable.snapshotNotice" }) }
           : {})}
+        {...(openEpicCode !== null ? { openEpicCode } : {})}
+        {...(onOpenEpic ? { onOpenEpic } : {})}
+        {...(onCloseEpic ? { onCloseEpic } : {})}
+        {...(onDrillToPhase ? { onDrillToPhase } : {})}
       />
     );
   }

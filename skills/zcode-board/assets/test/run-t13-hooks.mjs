@@ -40,7 +40,11 @@
  *     合规放行；无 -m 放行 + 指向 verify-cleanup 对 HEAD merge commit 的事后核对（G13）；
  *   - verify-cleanup.mjs（B5-6/#118，E4-17 审计面）：HEAD merge 格式事后核对——卡合并迹象
  *     （subject 含 task-<no> / [#<no>]）但非冻结格式 → 格式残留点名（exit 1）；合规给结论行；
- *     非 merge / 非卡合并形态不适用零噪声（Q3）。
+ *     非 merge / 非卡合并形态不适用零噪声（Q3）；
+ *     声明卡号绑定（B4-5/#109；E4-09/E1-V31）：runs 声明的 worktree 末段 task-XX ≠ 卡号 / 形态不在
+ *     接受集且声明目标目录存在 → 「声明」残留点名（exit 1；不按本卡现场清理）；合规两形态通过、
+ *     错配历史与 branch 辅助位不进判定（Q4）；判据与 compile-board --check (f)（#152）同源
+ *     lib/derive.mjs parseWorktreePath（禁二份，S10 同源守卫）。
  *   - guard-board.mjs（B5-1/#113）：PreToolUse 板文件禁写（Write|Edit|Bash 三通道；七类板数据文件
  *     任意 `.zcode/board/` 层级，含 ZPaPa 子项目与工作树；evidence/ 与板内非数据文件不在禁写面）
  *     + 报告 evidence 引用逐条存在性（仅 .md 目标；line/YAML/JSON run_event 三形态；缺失即拦并点名）；
@@ -59,6 +63,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { readJsonFile } from "../lib/board-io.mjs";
 import { manifestFileList } from "../compile-board.mjs"; // S9 同源守卫：manifest 键集唯一事实源（#67）
+import { parseWorktreePath } from "../lib/derive.mjs"; // S10 同源守卫：worktree 卡号绑定唯一接受集（#109；与 --check (f) 共用，禁二份）
 import {
   ASSETS_DIR,
   COMPILER,
@@ -662,16 +667,19 @@ test("B1", "SessionStart：缺口摘要 + 断点 top-N（停在 #N + 下一步�
   c.ok(Buffer.byteLength(String(r.stdout), "utf8") <= OUTPUT_BYTE_BUDGET, `输出 ≤ ${OUTPUT_BYTE_BUDGET} 字节（A6 预算）`);
 });
 
-test("B2", "SessionStart 空态：board.json 不存在 → 单 JSON 空态提示，不阻塞", (c) => {
+test("B2", "SessionStart 空态：board.json 不存在 → 单 JSON 空态提示，不阻塞；先跑 --preflight 检查点（绿了才下一步，黄/红先整改）", (c) => {
   const root = newRoot("t13-b2");
   const r = runHook(BOARD_CONTEXT, sessionStartPayload(root));
   c.exit(r, 0, "退出码 0");
   const ctx = assertSingleJsonContext(c, r, "无板空态");
   c.ok(/board\.json/.test(ctx) && /(不存在|未生成|没有看板)/.test(ctx), "空态文案点名无板（A 空态）", show(ctx));
-  // #72：生成板之前先引导核对扫描面（人工核对 + --check 只读；--preflight 本体归 #73）
-  c.ok(/扫描面/.test(ctx) && /scan\.json/.test(ctx), "空态文案先引导核对扫描面（默认 .zcode/plans；docs 计划目录需 scan.json opt-in）", show(ctx));
-  c.ok(/--check/.test(ctx), "空态文案给只读核对命令（--check，不先写板）", show(ctx));
-  c.ok(!/preflight/.test(ctx) || /#73/.test(ctx), "未落地的 --preflight 若被提及须注明归 #73（不冒充可用命令）", show(ctx));
+  // #73：生成板之前先跑检查点命令（--preflight 只读预检；命令绿了才下一步——黄/红先整改）
+  c.ok(/扫描面/.test(ctx) && /scan\.json/.test(ctx), "空态文案带扫描面语境（默认 .zcode/plans；docs 计划目录需 scan.json opt-in）", show(ctx));
+  c.ok(/--preflight/.test(ctx), "空态文案给 --preflight 检查点命令（#73 已落地，非占位）", show(ctx));
+  c.ok(!/#73/.test(ctx), "文案不再标注「归 #73」占位（已落地）", show(ctx));
+  c.ok(/绿/.test(ctx) && /黄/.test(ctx) && /红/.test(ctx), "文案写明退出码语义（绿 0 / 黄 1 / 红 2）", show(ctx));
+  c.ok(/(禁止|勿出板|先整改|不要直接编译)/.test(ctx), "文案写明异常时先跑 preflight 而非直接编译出板", show(ctx));
+  c.ok(/绿了再|绿才|然后|再运行编译器/.test(ctx), "文案写明「命令绿了才下一步」顺序（先预检后编译）", show(ctx));
 });
 
 test("B3", "SessionStart 损坏态：坏 JSON / 结构非法 → 单 JSON 提示重建，不阻塞", (c) => {
@@ -2748,6 +2756,86 @@ test("Q3", "HEAD merge 格式事后核对（B5-6/#118，E4-17 审计面）：默
   const feat = runVerifyCleanup(root4, ["--cards", "118"]);
   c.exit(feat, 0, "非卡合并形态 → 退出码 0（格式面不适用，零误报）");
   c.ok(!/格式残留/.test(String(feat.stdout ?? "")), "stdout 零格式残留噪声", show(String(feat.stdout ?? "")));
+});
+
+// ---- B4-5（#109）：收尾核对卡号绑定（worktree 名＝卡号强绑定；E4-09/E1-V31）——声明错配强绑定
+// 落点（按卡文：worktree 名与卡号绑定断言；与 D2-2 的 --check 卡号绑定口径同面收敛、不重复实现）：
+//   --check (f)（#152：板面 worktree 字段、对账点名级、板正常时零噪声）之外，收尾机械核对
+//   （verify-cleanup）消费的 runs **声明**（worktree 字段）按**同一判据**强绑定——声明错配
+//   （末段 task-<no> ≠ 卡号 / 形态不在接受集）且声明目标目录存在 → 逐条点名（exit 1），且
+//   **不按本卡现场清理**（防误指导删除他人/错名现场——E4-09 实测形态：#46 声明挂 task-36）。
+// 判据单源：lib/derive.mjs `parseWorktreePath`（与 (f) 同一接受集；run-event.md §2.1 同源）；判定域与
+//   (f) 收敛：仅声明目标目录存在（有清理风险）时进判定——错配历史/目录已清不进判定（与 #152
+//   「错配历史不进判定」同口径，不在本面重复点名）；`branch` 为辅助位、不参与该断言。
+
+test("Q4", "B4-5（#109）收尾核对卡号绑定（E4-09/E1-V31）：声明 worktree 末段 task-XX ≠ 卡号 → 声明残留点名（exit 1，不按本卡现场清理）；合规两形态通过；错配历史与 branch 辅助位不进判定", (c) => {
+  const root = newRoot("t13-q4");
+  initGitRepo(root);
+  // 现场：#36 的真实工作树在册（错配声明指向的目录真实存在——E4-09 实测形态：卡 #46 的声明挂在 task-36 上）
+  c.exit(git(root, ["worktree", "add", "-q", ".zcode/worktrees/task-36", "-b", "task-36"]), 0, "前置：task-36 现场在册（错配声明指向的真实目录）");
+  mkdirSync(join(root, "ZPaPa", ".zcode", "worktrees", "task-48"), { recursive: true }); // 嵌套形态（接受集内；登记不在 = 悬空/手工现场）
+  mkdirSync(join(root, "deep", "nest", ".zcode", "worktrees", "task-49"), { recursive: true }); // 多级形态（不在接受集）
+  mkdirSync(join(root, ".zcode", "worktrees", "task-50-x"), { recursive: true }); // 尾缀垃圾形态（task-50-x 非精确 task-<no>）
+  writeRuns(root, [
+    runRecord({ runId: "run-20261011-q4a1", cards: [46], worktree: ".zcode/worktrees/task-36", branch: "task-36" }),
+    runRecord({ runId: "run-20261011-q4a2", cards: [47], worktree: ".zcode/worktrees/task-47", branch: "task-47" }),
+    runRecord({ runId: "run-20261011-q4a3", cards: [48], worktree: "ZPaPa/.zcode/worktrees/task-48", branch: "task-48" }),
+    runRecord({ runId: "run-20261011-q4a4", cards: [49], worktree: "deep/nest/.zcode/worktrees/task-49", branch: "task-49" }),
+    runRecord({ runId: "run-20261011-q4a5", cards: [50], worktree: ".zcode/worktrees/task-50-x", branch: "task-50" }),
+    runRecord({ runId: "run-20261011-q4a6", cards: [51], worktree: ".zcode/worktrees/task-41", branch: "task-41" }),
+    runRecord({ runId: "run-20261011-q4a7", cards: [52], worktree: ".zcode/worktrees/task-52", branch: "task-41" }),
+  ]);
+
+  // ① 错配（末段号 ≠ 卡号）：强绑定必咬 + 不得按本卡现场清理（防误删/误指引他人·错名现场）
+  const mis = runVerifyCleanup(root, ["--cards", "46"]);
+  c.exit(mis, 1, "声明错配（task-36 ≠ 卡号 #46）→ 退出码 1（强绑定必咬）");
+  const misOut = String(mis.stdout ?? "");
+  c.ok(/残留 1 项（分支 0 \/ 现场 0 \/ 登记 0 \/ 目录 0 \/ 声明 1）/.test(misOut), "摘要行：声明类恰 1 项（同一缺陷不叠加计数）", show(misOut.slice(0, 900)));
+  c.ok(/- 声明残留：\.zcode\/worktrees\/task-36（声明错配：末段 task-36 ≠ 卡号 #46/.test(misOut), "点名声明错配（末段号 vs 卡号两值对照）", show(misOut.slice(0, 1200)));
+  c.ok(/E4-09/.test(misOut) && /E1-V31/.test(misOut), "点明依据（E4-09/E1-V31；命名即反查 §6.1）", show(misOut.slice(0, 1400)));
+  c.ok(!/- 目录残留：\.zcode\/worktrees\/task-36/.test(misOut), "错配声明不按本卡「目录残留」归类（同一缺陷只点名一次）", show(misOut.slice(0, 1200)));
+  c.ok(!/git worktree remove \.zcode\/worktrees\/task-36/.test(misOut), "不给本卡清理该现场的处置（防误指导删除他人/错名现场）", show(misOut.slice(0, 1400)));
+
+  // ② 合规短形态（声明 = 卡号；目录不存在）→ 绿
+  c.exit(runVerifyCleanup(root, ["--cards", "47"]), 0, "合规命名（task-47 = 卡号 #47）→ 清理齐备（绿）");
+
+  // ③ 合规嵌套形态（接受集内）：同口径 → 按本卡声明目录残留（「目录」类，不是「声明」错配，不误判）
+  const nested = runVerifyCleanup(root, ["--cards", "48"]);
+  c.exit(nested, 1, "接受集内嵌套声明 + 目录悬空 → 退出码 1（既有目录差集语义）");
+  const nestedOut = String(nested.stdout ?? "");
+  c.ok(/残留 1 项（分支 0 \/ 现场 0 \/ 登记 0 \/ 目录 1）/.test(nestedOut), "嵌套接受形态进「目录」类（非「声明」类；接受集与 (f) 同源）", show(nestedOut.slice(0, 900)));
+  c.ok(/- 目录残留：ZPaPa\/\.zcode\/worktrees\/task-48/.test(nestedOut), "嵌套形态点名原样坐标", show(nestedOut.slice(0, 900)));
+
+  // ④ 形态不在接受集（多级 / 尾缀垃圾）：与 parseWorktreePath 唯一接受集同源——不猜路径，声明必咬
+  const badForm = runVerifyCleanup(root, ["--cards", "49,50"]);
+  c.exit(badForm, 1, "形态不在接受集（多级/尾缀）→ 退出码 1");
+  const bfOut = String(badForm.stdout ?? "");
+  c.ok(/残留 2 项（分支 0 \/ 现场 0 \/ 登记 0 \/ 目录 0 \/ 声明 2）/.test(bfOut), "摘要行：声明恰 2 项（多级 + 尾缀各一）", show(bfOut.slice(0, 900)));
+  c.ok(/- 声明残留：deep\/nest\/\.zcode\/worktrees\/task-49（形态不在接受集/.test(bfOut), "多级形态点名（拒收不猜路径）", show(bfOut.slice(0, 1400)));
+  c.ok(/- 声明残留：\.zcode\/worktrees\/task-50-x（形态不在接受集/.test(bfOut), "尾缀垃圾形态点名（task-50-x ≠ task-50，防宽松后缀误放行）", show(bfOut.slice(0, 1400)));
+
+  // ⑤ 零噪声边界：错配历史（目录已清）与 branch 辅助位不进判定（判定域 = worktree 字段 × 目录存在）
+  c.exit(runVerifyCleanup(root, ["--cards", "51"]), 0, "错号声明但目标目录已清 → 绿（历史不进判定，与 #152 同口径）");
+  c.exit(runVerifyCleanup(root, ["--cards", "52"]), 0, "worktree 绑定合规、branch 异常（辅助位）→ 绿（判定域 = worktree 字段，不扩面）");
+});
+
+// ---- B4-5（#109）：卡号绑定判据单源守卫（verify-cleanup ↔ lib/derive.mjs parseWorktreePath；与 --check (f) 同源）
+
+test("S10", "B4-5（#109）卡号绑定判据单源守卫：verify-cleanup 的声明绑定判据 import 自 lib/derive.mjs parseWorktreePath（与 --check (f) 同一接受集，禁二份）——判据就地抄写必咬", (c) => {
+  c.ok(isFile(VERIFY_CLEANUP), `verify-cleanup.mjs 存在（${toPosix(VERIFY_CLEANUP)}）`);
+  if (!isFile(VERIFY_CLEANUP)) return;
+  const src = readFileSync(VERIFY_CLEANUP, "utf8");
+  c.ok(
+    /^\s*import\s+\{[^}]*\bparseWorktreePath\b[^}]*\}\s+from\s+"\.\.\/lib\/derive\.mjs";/m.test(src),
+    "声明绑定判据 import 自 lib/derive.mjs（唯一接受集单源——与 compile-board --check (f) 同一判据，禁二份）",
+    show(src.split("\n").filter((l) => l.includes("derive.mjs")).join("\n")),
+  );
+  // 判据本身（冷启动可复算；两形态接受、其余拒收——run-event.md §2.1 冻结接受集）
+  c.eq(parseWorktreePath(".zcode/worktrees/task-46")?.no, 46, "接受短形态（末段稳定号解析）");
+  c.eq(parseWorktreePath("ZPaPa/.zcode/worktrees/task-64")?.no, 64, "接受一层子目录形态");
+  c.eq(parseWorktreePath(".zcode/worktrees/task-50-x"), null, "拒收尾缀形态（非精确 task-<no>）");
+  c.eq(parseWorktreePath("deep/nest/.zcode/worktrees/task-49"), null, "拒收多级嵌套形态");
+  c.eq(parseWorktreePath("/abs/.zcode/worktrees/task-9"), null, "拒收绝对路径形态");
 });
 
 // ---- B6-9（#127）：manifest 比对门禁（技能包键集变更未重生成 → 合并拦截；V25/AD-13）

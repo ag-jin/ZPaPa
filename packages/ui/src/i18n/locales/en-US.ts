@@ -1094,10 +1094,26 @@ const enUS: Record<string, string> = {
   "board.stage.done": "Done",
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
-  "board.feature.cardCount": "{count} cards",
+  // Count messages ship singular/plural key pairs (A4-4/F4): count === 1 picks the `.one` form
+  // ("1 draft", not "1 drafts").
+  "board.feature.cardCount.one": "{count} card",
+  "board.feature.cardCount.other": "{count} cards",
   // Container-layer count chips (A4-1): draft counts on epic/phase headers plus the epic layer's phase count.
-  "board.layer.planCount": "{count} drafts",
-  "board.layer.phaseCount": "{count} phases",
+  "board.layer.planCount.one": "{count} draft",
+  "board.layer.planCount.other": "{count} drafts",
+  "board.layer.phaseCount.one": "{count} phase",
+  "board.layer.phaseCount.other": "{count} phases",
+  // Count-chip titles (A4-4/D5): the chip word is a magnitude only; full meaning on hover.
+  "board.layer.planCountTitle": "Member drafts in this layer (each draft holds cards)",
+  "board.layer.phaseCountTitle": "Phases in this layer",
+  // Layer rollup gap badge (A4-4/AD-6): sum of member attention codes (0 renders nothing).
+  "board.layer.gapCount.one": "{count} gap",
+  "board.layer.gapCount.other": "{count} gaps",
+  // Epic dialog (A4-4/AD-6 degraded form): L2 rollup stage composition plus phase drill pointers.
+  "board.epic.dialog.rollup": "Stage composition",
+  "board.epic.dialog.phases": "Phases",
+  "board.epic.dialog.drill": "Drill down to {name}",
+  "board.epic.dialog.noStage": "No stage",
   // Accessible names for the fold toggles (#55 S-3): the button only shows ▸/▾.
   "board.group.expand": "Expand {name}",
   "board.group.collapse": "Collapse {name}",

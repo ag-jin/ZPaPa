@@ -22,10 +22,64 @@
  *     也不自算段位/缺口（§10.5 的壳层终态由登记行 `status` 唯一承载，本模块原样透出）。
  *   - 期次组只由**成员稿的期次**成组：不为落空期次造假容器（不吞稿、不造空章）。
  */
-import type { BoardEpicNode, BoardFeatureNode, BoardViewModel } from "./boardViewModel.js";
+import {
+  BOARD_STAGES,
+  type BoardEpicNode,
+  type BoardFeatureNode,
+  type BoardViewModel,
+} from "./boardViewModel.js";
 
 /** 登记 id 前缀（§10.3）：`epic:<4位码>`——码不进引用位，裸码不认。 */
 const EPIC_ID_PREFIX = "epic:";
+
+/**
+ * 层 rollup 缺口计数（卡 #90 / A4-4；AD-6「rollup 缺口计数徽章」单点）：
+ * = 成员稿 `attention` 码**条数之和**（逐码计数——与 `attentionSummary` 的逐码口径同源，
+ * 一个成员多码计多条）。`0` = 全无缺口：呈现层据此不落徽章（日常零噪声）。
+ *
+ * 边界（只读投影，禁自算）：只数成员已有的缺口码，**不派生**缺口语义、不把「epic 粒度
+ * 答不了三问」算成缺口（C4-2 已把「epic 头不可答」排除出缺口口径）。
+ */
+export function boardLayerGapCount(members: readonly { attention: readonly unknown[] }[]): number {
+  return members.reduce((sum, member) => sum + member.attention.length, 0);
+}
+
+/** 层 rollup 段位构成行（L2 层用；`stage: null` = 无段位成员，独立成行殿后）。 */
+export interface BoardLayerStageRow {
+  stage: string | null;
+  count: number;
+}
+
+/**
+ * 层 rollup 段位构成（卡 #90 / A4-4；AD-6「rollup 段位入 L2 层」单点）。
+ *
+ * 只按成员**已有的段位词**计数：词表序（`BOARD_STAGES`）在前保证跨组稳定，不认识的段位
+ * 原样透出（不吞字段、不自造词），`null`（无段位）单独成行殿后。**不自算段位**：本函数不
+ * 合成「epic 段位」这类词表外概念——epic 头不落七段位枚举（AD-1），构成只作 L2 的分布事实。
+ */
+export function boardLayerStageComposition(
+  members: readonly { stage: string | null }[],
+): BoardLayerStageRow[] {
+  const counts = new Map<string, number>();
+  let noStage = 0;
+  for (const member of members) {
+    if (member.stage === null) {
+      noStage += 1;
+      continue;
+    }
+    counts.set(member.stage, (counts.get(member.stage) ?? 0) + 1);
+  }
+  const rows: BoardLayerStageRow[] = [];
+  for (const stage of BOARD_STAGES) {
+    const count = counts.get(stage);
+    if (count === undefined) continue;
+    counts.delete(stage);
+    rows.push({ stage, count });
+  }
+  for (const [stage, count] of counts) rows.push({ stage, count });
+  if (noStage > 0) rows.push({ stage: null, count: noStage });
+  return rows;
+}
 
 export interface BoardPhaseGroup {
   /** 期次序（正整数，单值）；组序判据 = `compareBoardPhaseOrder`（AD-4 纯期次序）。 */

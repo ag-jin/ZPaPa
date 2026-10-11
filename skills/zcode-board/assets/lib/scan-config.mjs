@@ -81,8 +81,11 @@ export function matchesAnyGlob(rel, globs) {
 
 /**
  * 解析项目扫描面：返回有效扫描目录（确定性顺序：默认苗圃 → 池内冻结序）与排除模式。
- * 返回 { rel, present, includeDirs, excludeGlobs, planDirs, errors }：
+ * 返回 { rel, present, rejected, includeDirs, excludeGlobs, planDirs, errors }：
  *   - errors: 失败级诊断（{path, message}）——编译器落 diagnostics；`--check` 另作失败项；
+ *     条目级错误（形态非法 / 池外引用 / 未知字段）该条拒绝、其余照常生效；
+ *   - rejected: 整份配置是否被拒收（坏 JSON / 顶层非对象）——true 时 planDirs 回落默认面
+ *     （不猜、不部分生效）；preflight 按"实际生效面 ≠ 预期面"判红（#73），编译器/--check 语义不变；
  *   - 解析失败/结构非法（坏 JSON）→ 整份配置拒收，planDirs 回落默认。
  *   - 条目级非法（形态非法 / 池外引用 / 未知字段）→ 该条拒绝并点名；其余合法条目照常生效。
  */
@@ -92,13 +95,22 @@ export function loadScanConfig(root) {
   const fallback = (errors) => ({
     rel,
     present: true,
+    rejected: true,
     includeDirs: [],
     excludeGlobs: [],
     planDirs: [...DEFAULT_PLAN_DIRS],
     errors,
   });
   if (loaded.missing) {
-    return { rel, present: false, includeDirs: [], excludeGlobs: [], planDirs: [...DEFAULT_PLAN_DIRS], errors: [] };
+    return {
+      rel,
+      present: false,
+      rejected: false,
+      includeDirs: [],
+      excludeGlobs: [],
+      planDirs: [...DEFAULT_PLAN_DIRS],
+      errors: [],
+    };
   }
   if (!loaded.ok) {
     return fallback([
@@ -169,5 +181,5 @@ export function loadScanConfig(root) {
 
   // 生效扫描序 = 默认苗圃 → 池内冻结序（与书写顺序无关：保住 T9 发号确定性，一经启用不得更改）。
   const planDirs = [...DEFAULT_PLAN_DIRS, ...OPT_IN_PLAN_DIRS.filter((d) => includeDirs.includes(d))];
-  return { rel, present: true, includeDirs, excludeGlobs, planDirs, errors };
+  return { rel, present: true, rejected: false, includeDirs, excludeGlobs, planDirs, errors };
 }

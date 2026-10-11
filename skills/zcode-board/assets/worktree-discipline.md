@@ -138,6 +138,7 @@ git branch -d task-<no>          # 已合并分支；-d 而非 -D，未合并会
 | 手工删目录后未 prune 又建同卡树 | `add` 报路径已存在或分支已存在 | 先 `prune` 清登记，再按第 3 节重建 |
 | 嵌套 `.zcode/worktrees/` | 工作树内再次 `add` | 禁止；diagnostics 点名，只留一层，多余树走第 5 节清理 |
 | 已 prune 却再 `remove` | `fatal: '.zcode/worktrees/task-<no>' is not a working tree`（exit 128） | 无需 remove；直接 `prune` + `git branch -d` |
+| runs 声明 `worktree` 末段 `task-XX` ≠ 卡号（错配声明，E4-09 实测形态：#46 声明挂 task-36） | 收尾核对 `verify-cleanup.mjs` 对**存在**的声明目标出「声明」残留点名（B4-5/#109；E4-09/E1-V31；判据与 `--check` (f) 卡号绑定 #152 同源——`lib/derive.mjs` `parseWorktreePath` 唯一接受集，禁二份）；板侧另由 `--check` (f) 对账点名 | **不按本卡现场清理**（防误删他人/错名现场）：核对现场归属——修正该 run 的 `worktree` 声明为 `task-<卡号>`，或按现场实际卡号重报；现场确属本卡而名不符 → 按第 5 节正规清理后按第 3 节以正确名重建 |
 
 沙盒实测（git 2.39.2）残留与清理：
 
@@ -174,3 +175,4 @@ Deleted branch task-2 (was 6be76ef)          exit 0
 - [ ] `git branch -d task-<no>` 成功（未合并会被拒绝 → 退回，不 `-D`）
 - [ ] merge commit = `Merge task-<no> [#<no>]`；`merge_report.v1` 已报回
 - [ ] 目录已消失；若有残留走第 6 节正规路径，不手工 `rm`
+- [ ] 收尾核对 `verify-cleanup.mjs --cards <号,…> --root <项目根>` 绿（B4-5/#109：声明末段 `task-XX` ≠ 卡号会被出「声明」残留点名——按第 6 节核对归属，不按本卡现场清理）

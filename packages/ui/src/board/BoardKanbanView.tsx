@@ -13,8 +13,8 @@
  * §13.4（待合并角标）+ §3.5（列内排序 attention 置顶 + updatedAt 倒序）。分组/排序全在
  * 纯函数层（`boardViewsViewModel`），本组件只做渲染。
  *
- * 空列策略（按 §13 成文）：**七列恒在，空列显示 0**——与仓库既有看板
- * （`squad/WorkItemsBoard.tsx` 的 statusCategory 空泳道保留）同款：骨架不随数据跳动。
+ * 空列策略（按 §13 成文）：**七列恒在，空列显示 0**——沿用仓库既有看板的
+ * 空泳道保留（statusCategory 空列不塌缩）同款：骨架不随数据跳动。
  */
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -23,7 +23,11 @@ import {
   boardCardHighlightProps,
   boardCardOpenProps,
 } from "./boardCardInteraction.js";
-import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
+import {
+  assembleBoardEpicContainers,
+  boardLayerGapCount,
+  type BoardEpicItemContainer,
+} from "./boardEpicContainers.js";
 import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
   boardContainerFoldExpanded,
@@ -60,12 +64,15 @@ function BoardKanbanCard({
   showStatusRule,
   onOpenCard,
   highlightCardId,
+  nested,
 }: {
   node: BoardViewNode;
   /** 仅「已取消」列展示取消原因（§13.2）。 */
   showStatusRule: boolean;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 所在分组是否嵌在期次容器里（#90/A4-4 D6）：嵌着时卡降到 rounded-sm（半径阶梯逐级递减）。 */
+  nested?: boolean;
 }) {
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     node.id,
@@ -79,7 +86,8 @@ function BoardKanbanCard({
       {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
       className={cn(
-        "flex flex-col gap-1 rounded-lg border border-border/50 bg-surface px-2 py-1.5",
+        "flex flex-col gap-1 border border-border/50 bg-surface px-2 py-1.5",
+        nested ? "rounded-sm" : "rounded-lg",
         highlightClassName,
       )}
     >
@@ -119,11 +127,14 @@ function BoardKanbanGroupBlock({
   showStatusRule,
   onOpenCard,
   highlightCardId,
+  nested,
 }: {
   group: BoardKanbanGroup;
   showStatusRule: boolean;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 所在容器（期次组）是否嵌在 epic 章里（#90/A4-4 D6）：嵌着时卡降到 rounded-sm。 */
+  nested?: boolean;
 }) {
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     group.feature.id,
@@ -157,6 +168,7 @@ function BoardKanbanGroupBlock({
           showStatusRule={showStatusRule}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(nested ? { nested } : {})}
         />
       ))}
     </div>
@@ -187,7 +199,12 @@ function BoardKanbanPhaseSection({
 }) {
   return (
     <BoardEpicLayerSection
-      layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
+      layer={{
+        kind: "phase",
+        name: phase.name,
+        planCount: phase.items.length,
+        gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
+      }}
       title=""
       titleClassName="text-ui-xs font-medium text-foreground-subtle"
       className="group flex flex-col overflow-hidden rounded-md border border-border/50"
@@ -200,6 +217,7 @@ function BoardKanbanPhaseSection({
       foldId={boardPhaseFoldId(epicCode, phase.phase)}
       defaultExpanded={boardContainerFoldExpanded(phase.items.map((group) => group.feature))}
       {...(fold ? { fold } : {})}
+      highlightId={highlightCardId}
     >
       {phase.items.map((group) => (
         <BoardKanbanGroupBlock
@@ -208,6 +226,7 @@ function BoardKanbanPhaseSection({
           showStatusRule={showStatusRule}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          nested
         />
       ))}
     </BoardEpicLayerSection>
@@ -216,7 +235,8 @@ function BoardKanbanPhaseSection({
 
 /**
  * epic 章（列内三层容器第一层；#168）：章头 = 登记行层名 + 标题 + 终态标注（§10.5）+ 本列稿数/期数；
- * 体 = 期次组（升序）。**epic 不是卡**：章头整行是折叠落点（退化形态与 tree 同口径）。
+ * 体 = 期次组（升序）。**epic 不是卡**：无卡片弹窗——名/标题区开 epic 概览（#90/A4-4 退化形态，
+ * 与 tree 同口径），其余仍是折叠落点。
  */
 function BoardKanbanEpicSection({
   container,
@@ -224,6 +244,7 @@ function BoardKanbanEpicSection({
   onOpenCard,
   highlightCardId,
   fold,
+  onOpenEpic,
 }: {
   container: BoardEpicItemContainer<BoardKanbanGroup>;
   showStatusRule: boolean;
@@ -231,6 +252,8 @@ function BoardKanbanEpicSection({
   highlightCardId: string | null;
   /** 宿主持有的折叠控制（#89/A4-3）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 层）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   return (
     <BoardEpicLayerSection
@@ -239,10 +262,13 @@ function BoardKanbanEpicSection({
         name: container.epic.code,
         planCount: container.items.length,
         phaseCount: container.phases.length,
+        gapCount: boardLayerGapCount(container.items.map((group) => group.feature)),
         status: container.epic.status,
       }}
       title={container.epic.title}
-      titleClassName="text-ui-xs font-medium text-foreground"
+      // D1 收口（A4-4）：原为 text-ui-xs——与列内稿组头（零件缺省 sm）倒挂；提到 sm 后
+      // 视图内梯度 = epic(sm) > phase(xs)（跨视图密度梯度 base/sm/xs 沿用既有）。
+      titleClassName="text-ui-sm font-medium text-foreground"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/60 bg-surface/40"
       summaryClassName="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-1.5 px-1 py-1 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1 p-0.5"
@@ -251,6 +277,8 @@ function BoardKanbanEpicSection({
       foldId={boardEpicFoldId(container.epic.code)}
       defaultExpanded={boardContainerFoldExpanded(container.items.map((group) => group.feature))}
       {...(fold ? { fold } : {})}
+      {...(onOpenEpic ? { onOpenEpic } : {})}
+      highlightId={highlightCardId}
     >
       {container.phases.map((phase) => (
         <BoardKanbanPhaseSection
@@ -273,12 +301,15 @@ function BoardKanbanColumnBody({
   onOpenCard,
   highlightCardId,
   fold,
+  onOpenEpic,
 }: {
   board: BoardViewModel;
   column: BoardKanbanColumn;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 层）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const cancelled = column.stage === "已取消";
@@ -303,6 +334,7 @@ function BoardKanbanColumnBody({
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
           {...(fold ? { fold } : {})}
+          {...(onOpenEpic ? { onOpenEpic } : {})}
         />
       ))}
       {column.nodes.length === 0 && column.interview === null ? (
@@ -347,6 +379,7 @@ export function BoardKanbanView({
   completedExpanded = true,
   onCompletedExpandedChange,
   fold,
+  onOpenEpic,
 }: {
   board: BoardViewModel;
   /** 卡片点击（打开弹窗）；缺省时看板退化为只读展示。 */
@@ -358,6 +391,8 @@ export function BoardKanbanView({
   onCompletedExpandedChange?: (expanded: boolean) => void;
   /** 折叠默认态的用户覆盖与回传（#89/A4-3：列内容器层；缺省 = 只读，按默认态）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；缺省 = 只读，层头退化为纯折叠落点）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const { columns, unplacedCount } = buildBoardKanban(board);
@@ -372,7 +407,7 @@ export function BoardKanbanView({
           {intl.formatMessage({ id: "board.kanban.unplaced" }, { count: unplacedCount })}
         </div>
       ) : null}
-      {/* 列：固定宽 + 容器横滚（仓库既有看板形态，squad/WorkItemsBoard 同款）。 */}
+      {/* 列：固定宽 + 容器横滚（仓库既有看板形态同款）。 */}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-3 py-3">
         {columns.map((column) =>
           column.stage === BOARD_KANBAN_COLLAPSIBLE_STAGE ? (
@@ -398,6 +433,7 @@ export function BoardKanbanView({
                   {...(onOpenCard ? { onOpenCard } : {})}
                   highlightCardId={highlightCardId}
                   {...(fold ? { fold } : {})}
+                  {...(onOpenEpic ? { onOpenEpic } : {})}
                 />
               ) : null}
             </section>
@@ -416,6 +452,7 @@ export function BoardKanbanView({
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
                 {...(fold ? { fold } : {})}
+                {...(onOpenEpic ? { onOpenEpic } : {})}
               />
             </section>
           ),
