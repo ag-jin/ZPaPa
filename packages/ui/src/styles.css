@@ -140,15 +140,13 @@ body {
  *  勿用）；summary 与 role=button 都是「整行落点」，背景足够表达焦点且不动布局。
  *  forced-colors 下背景不可依赖，改走系统色 outline（作用域更高特异性 + !important 压过 reset）。
  */
-[data-board-pane] summary:focus-visible,
-[data-board-pane] [role="button"]:focus-visible {
+[data-board-pane] :is(summary, button, [role="button"]):focus-visible {
   background-color: var(--color-surface-hover);
   border-color: var(--color-border-hover);
 }
 
 @media (forced-colors: active) {
-  [data-board-pane] summary:focus-visible,
-  [data-board-pane] [role="button"]:focus-visible {
+  [data-board-pane] :is(summary, button, [role="button"]):focus-visible {
     outline: 2px solid ButtonText !important;
     outline-offset: 1px;
   }

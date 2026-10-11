@@ -65,10 +65,10 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   await waitFor(() => listK2.open === openBefore, "再点应恢复展开");
   const orderAfterExpand = phaseNames(document.querySelector('[data-board-view="list"]'));
   const dialogAfterLayerClick = document.querySelector("[data-board-dialog]") !== null;
-  /* ---- 窄视口 360px：容器头不得横向溢出 ---- */
+  /* ---- 窄视口 360px：容器头不得横向溢出（#89/A4-3 补 tree——OB-1：此前只量 list/table/kanban） ---- */
   const narrow = {};
   await measureHostWidth(360);
-  for (const mode of ["list", "table", "kanban"]) {
+  for (const mode of ["tree", "list", "table", "kanban"]) {
     await switchToView(mode);
     await sleep(180);
     narrow[mode] = collect(document.querySelector('[data-board-view="' + mode + '"]'));

@@ -143,7 +143,9 @@ test("表格：折叠态子行不渲染（D3：交付套件内钉住，不靠独
   const expanded = render();
   assert.ok(rowOf(expanded, "task:8").includes("ID-1.2"), "对照组：展开态 #8 行在 DOM 里");
 
-  const collapsed = render({ collapsedFeatureIds: ["spec:preview-channel"] });
+  const collapsed = render({
+    fold: { state: { "spec:preview-channel": false }, onToggle: () => {} },
+  });
   const groupStart = collapsed.indexOf('data-board-table-group="spec:preview-channel"');
   assert.ok(groupStart >= 0, "折叠组仍渲染（分组行是折叠开关本身）");
   const group = collapsed.slice(groupStart, collapsed.indexOf("</tbody>", groupStart));

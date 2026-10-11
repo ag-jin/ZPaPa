@@ -43,6 +43,7 @@ import {
   type BoardListControls,
 } from "./boardViewsViewModel.js";
 import type { BoardTableColumnVisibility } from "./boardTableViewModel.js";
+import type { BoardFoldControls } from "./boardFoldState.js";
 
 export interface BoardPaneViewProps {
   state: BoardPaneLoadState;
@@ -68,9 +69,11 @@ export interface BoardPaneViewProps {
   /** 看板「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开）。 */
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
-  /** 表格视图折叠的分组（宿主持有：跳转揭示要先展开；缺省全部展开）。 */
-  collapsedFeatureIds?: readonly string[];
-  onToggleFeatureCollapsed?: (featureId: string, collapsed: boolean) => void;
+  /**
+   * 折叠控制（#89/A4-3；宿主持有并做会话记忆）：四视图的每一层折叠点（epic 章/期次组/稿层分组）
+   * 共用这一份——`state` = 用户显式覆盖，`onToggle` = 用户动作回传。缺省 = 只读渲染，按默认态。
+   */
+  fold?: BoardFoldControls;
   /** 陈旧判定的「现在」（毫秒）；缺省取渲染时刻（测试注入固定值）。 */
   now?: number;
 }
@@ -200,8 +203,7 @@ function BoardReadyView({
   highlightCardId,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
-  collapsedFeatureIds,
-  onToggleFeatureCollapsed,
+  fold,
   now,
 }: {
   board: BoardViewModel;
@@ -219,8 +221,7 @@ function BoardReadyView({
   highlightCardId?: string | null;
   kanbanCompletedExpanded?: boolean;
   onKanbanCompletedExpandedChange?: (expanded: boolean) => void;
-  collapsedFeatureIds?: readonly string[];
-  onToggleFeatureCollapsed?: (featureId: string, collapsed: boolean) => void;
+  fold?: BoardFoldControls;
   now: number;
 }) {
   const { intl } = useZCodeIntl();
@@ -289,6 +290,7 @@ function BoardReadyView({
             {...(onKanbanCompletedExpandedChange
               ? { onCompletedExpandedChange: onKanbanCompletedExpandedChange }
               : {})}
+            {...(fold ? { fold } : {})}
           />
         ) : viewMode === "list" ? (
           <BoardListView
@@ -297,6 +299,7 @@ function BoardReadyView({
             {...(onListControlsChange ? { onControlsChange: onListControlsChange } : {})}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
+            {...(fold ? { fold } : {})}
           />
         ) : viewMode === "table" ? (
           <BoardTableView
@@ -305,16 +308,16 @@ function BoardReadyView({
             {...(onListControlsChange ? { onControlsChange: onListControlsChange } : {})}
             {...(tableColumns ? { columns: tableColumns } : {})}
             {...(onTableColumnsChange ? { onColumnsChange: onTableColumnsChange } : {})}
-            {...(collapsedFeatureIds ? { collapsedFeatureIds } : {})}
-            {...(onToggleFeatureCollapsed ? { onToggleFeatureCollapsed } : {})}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
+            {...(fold ? { fold } : {})}
           />
         ) : (
           <BoardTreeView
             board={board}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId ?? null}
+            {...(fold ? { fold } : {})}
           />
         )}
       </div>
@@ -410,8 +413,7 @@ export function BoardPaneView({
   highlightCardId = null,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
-  collapsedFeatureIds,
-  onToggleFeatureCollapsed,
+  fold,
   now,
 }: BoardPaneViewProps) {
   const { intl } = useZCodeIntl();
@@ -435,8 +437,7 @@ export function BoardPaneView({
         {...(onJumpToCard ? { onJumpToCard } : {})}
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
-        {...(collapsedFeatureIds ? { collapsedFeatureIds } : {})}
-        {...(onToggleFeatureCollapsed ? { onToggleFeatureCollapsed } : {})}
+        {...(fold ? { fold } : {})}
       />
     );
   }

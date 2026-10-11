@@ -10,11 +10,13 @@
  * 文案、缺口徽章）全在纯函数层与共用零件（`boardNodeParts`），本组件只做投影 + 回传意图。
  *
  * 折叠形态：三层容器（epic 章 / 期次组）与特性节点都是 `<details>` 大块（边框/背景把层级分开）。
- * 特性默认展开规则 —— 有 attention 缺口的特性展开、completed 特性折叠（attention 优先）；容器层
- * 默认展开（缺口不许被埋：成员缺口在展开的容器里可见；容器折叠是用户动作，不自算滚段位 rollup）。
- * 摘要在稿层显示 `[N 张卡]`（含嵌套）；容器层头显示层名（epic 码 / `KANB1` 合成名，AD-3）与
- * 层计数（稿数/期数）。epic 层**不是卡**：无稳定号、无弹窗落点——整行是折叠落点（点击路由退化
- * 为折叠切换）。跳转落在折叠块内时由宿主先置开（`boardRevealDetailsIntent`）。
+ * 默认展开规则（#89 / A4-3 收敛到单点 `boardFoldState`：AD-5「缺口展开 · 含活跃期次展开 ·
+ * 全完成/全取消折叠」——B2 的稿层判据递归扩展到容器层）：稿层 = 缺口展开、终态（已完成/已取消）
+ * 折叠、其余展开；容器层 = 任一成员展开即展开（缺口跨层传播，缺口不许被埋）。用户动作与记忆态
+ * 由宿主注入（`fold`），本组件不持状态。摘要在稿层显示 `[N 张卡]`（含嵌套）；容器层头显示层名
+ * （epic 码 / `KANB1` 合成名，AD-3）与层计数（稿数/期数）。epic 层**不是卡**：无稳定号、无弹窗
+ * 落点——整行是折叠落点（点击路由退化为折叠切换）。跳转落在折叠块内时由宿主先把祖先层展开
+ * （`boardFoldIdsOfCard`；DOM 侧 `boardRevealDetailsIntent` 兜底）。
  *
  * 完成沉底（#65，卡「完成沉底全视图落实」）：树形是**结构序**视图——特性大块、章节子分组与
  * 其余卡片的文档序都不重排；「已完成沉底」只作用于**同级组**（章节分组内、嵌套子卡列表内），
@@ -30,8 +32,16 @@ import {
 } from "./boardEpicContainers.js";
 import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
+  boardContainerFoldExpanded,
+  boardEpicFoldId,
+  boardFeatureFoldExpanded,
+  boardPhaseFoldId,
+  resolveBoardFoldOpen,
+  type BoardFoldControls,
+} from "./boardFoldState.js";
+import { BoardFoldIndicator, boardFoldSummaryClickHandler } from "./boardFoldParts.js";
+import {
   BoardFeatureGroupHeaderContent,
-  BoardFoldIndicator,
   BoardNodeBadges,
   BoardNodeNumber,
   BoardStageBadge,
@@ -47,17 +57,6 @@ const TASK_INDENT_CLASSES = ["pl-2", "pl-6", "pl-10", "pl-14"] as const;
 function taskIndentClass(depth: number): string {
   const index = Math.min(Math.max(depth, 1), TASK_INDENT_CLASSES.length) - 1;
   return TASK_INDENT_CLASSES[index] ?? "pl-2";
-}
-
-/**
- * 特性折叠默认态（B2，纯函数单点）：有 attention 缺口 → 展开（缺口不许被埋）；
- * completed → 折叠；其余展开（默认可见）。attention 优先于 completed。
- */
-export function boardFeatureDefaultExpanded(feature: {
-  attention: readonly unknown[];
-  stage: string | null;
-}): boolean {
-  return feature.attention.length > 0 || feature.stage !== "已完成";
 }
 
 /**
@@ -160,6 +159,7 @@ function BoardFeatureSection({
   onOpenCard,
   highlightCardId,
   nested = false,
+  fold,
 }: {
   feature: BoardFeatureNode;
   onOpenCard?: (id: string) => void;
@@ -169,6 +169,8 @@ function BoardFeatureSection({
    * 纵向间距交给容器（gap）而不是块自身的下边距——顶层形态（无 epic 板）逐字不变。
    */
   nested?: boolean;
+  /** 宿主持有的折叠控制（#89/A4-3：稿层折叠块的默认态 + 会话记忆）。 */
+  fold?: BoardFoldControls;
 }) {
   const { intl } = useZCodeIntl();
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
@@ -191,11 +193,17 @@ function BoardFeatureSection({
   // 特性卡总数（#59 S-1）：单点来自视图模型（与看板/列表/表格组头同一口径）。
   const cardCount = countBoardFeatureTasks(feature);
   const groups = groupBoardTasksBySection(feature.tasks);
+  // 稿层默认态（B2 单点）与用户覆盖（#89/A4-3）：稿 id 即折叠 id（三视图同键——同一稿的折叠
+  // 记忆跨视图一致）。
+  const defaultExpanded = boardFeatureFoldExpanded(feature);
+  const open = fold
+    ? resolveBoardFoldOpen(fold.state, feature.id, defaultExpanded)
+    : defaultExpanded;
   return (
     <details
       data-board-feature={feature.id}
       data-board-feature-block={feature.id}
-      open={boardFeatureDefaultExpanded(feature) || undefined}
+      open={open || undefined}
       // 折叠大块（B2）：边框 + 背景把特性与子卡分开，视觉上独立于子卡。
       // 高亮底色只落在标题落点上（#59 S-5：与列表同款，不在块与落点叠两遍）。
       className={cn(
@@ -205,6 +213,7 @@ function BoardFeatureSection({
     >
       <summary
         data-board-feature-block-summary={feature.id}
+        {...(fold ? { onClick: boardFoldSummaryClickHandler(fold, feature.id, open) } : {})}
         className="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       >
         {/* 折叠指示符（#55 S-3）：与容器层头共用一份零件（BoardFoldIndicator）。 */}
@@ -287,10 +296,16 @@ function BoardPhaseSection({
   phase,
   onOpenCard,
   highlightCardId,
+  fold,
+  epicCode,
 }: {
   phase: BoardPhaseGroup;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 宿主持有的折叠控制（#89/A4-3）。 */
+  fold?: BoardFoldControls;
+  /** 所属 epic 码（折叠 id = `phase:<码>#<期次序>`）。 */
+  epicCode: string;
 }) {
   return (
     <BoardEpicLayerSection
@@ -300,6 +315,9 @@ function BoardPhaseSection({
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-1.5 px-1.5 pb-1.5"
+      foldId={boardPhaseFoldId(epicCode, phase.phase)}
+      defaultExpanded={boardContainerFoldExpanded(phase.features)}
+      {...(fold ? { fold } : {})}
     >
       {phase.features.map((feature) => (
         <BoardFeatureSection
@@ -308,6 +326,7 @@ function BoardPhaseSection({
           nested
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </BoardEpicLayerSection>
@@ -323,10 +342,12 @@ function BoardEpicSection({
   group,
   onOpenCard,
   highlightCardId,
+  fold,
 }: {
   group: BoardEpicGroup;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  fold?: BoardFoldControls;
 }) {
   return (
     <BoardEpicLayerSection
@@ -342,13 +363,18 @@ function BoardEpicSection({
       className="group mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40"
       summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
       bodyClassName="flex flex-col gap-2 px-2 pb-2"
+      foldId={boardEpicFoldId(group.epic.code)}
+      defaultExpanded={boardContainerFoldExpanded(group.members)}
+      {...(fold ? { fold } : {})}
     >
       {group.phases.map((phase) => (
         <BoardPhaseSection
           key={phase.phase}
           phase={phase}
+          epicCode={group.epic.code}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </BoardEpicLayerSection>
@@ -361,6 +387,8 @@ export interface BoardTreeViewProps {
   onOpenCard?: (id: string) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
   highlightCardId?: string | null;
+  /** 折叠默认态的用户覆盖与回传（#89/A4-3；缺省 = 只读，按默认态）。 */
+  fold?: BoardFoldControls;
 }
 
 /**
@@ -368,7 +396,12 @@ export interface BoardTreeViewProps {
  * （按结构深度缩进）。无归属稿（含孤儿引用/稳定号引用）顶层平铺在前、文档序——与 board.md 同序
  * （A3-2/#85）；零 epic 项目零变化（AD-8）。
  */
-export function BoardTreeView({ board, onOpenCard, highlightCardId = null }: BoardTreeViewProps) {
+export function BoardTreeView({
+  board,
+  onOpenCard,
+  highlightCardId = null,
+  fold,
+}: BoardTreeViewProps) {
   const grouping = groupBoardFeaturesByEpic(board);
   return (
     <div data-board-view="tree" className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -378,6 +411,7 @@ export function BoardTreeView({ board, onOpenCard, highlightCardId = null }: Boa
           feature={feature}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
       {grouping.epics.map((group) => (
@@ -386,6 +420,7 @@ export function BoardTreeView({ board, onOpenCard, highlightCardId = null }: Boa
           group={group}
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
+          {...(fold ? { fold } : {})}
         />
       ))}
     </div>
