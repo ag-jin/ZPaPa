@@ -437,6 +437,11 @@ export interface AppSettings {
    */
   experimentalProjectBoardEnabled?: boolean;
   /**
+   * ask-matt 开发流程实验开关（#202）：**默认关闭**——关闭时后续卡的命令面/技能注册/提示注入
+   * 三处全减；本卡只落开关本身与呈现门禁判据（askMattFlowEntryVisible）。
+   */
+  experimentalAskMattFlowEnabled?: boolean;
+  /**
    * 项目知识库（wiki）配置：生成选项与定时自动更新。
    * 产物落 `<workspace>/wiki/`。
    */
