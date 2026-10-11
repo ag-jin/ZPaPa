@@ -288,6 +288,8 @@ export interface BoardTableViewProps {
   onOpenCard?: (id: string) => void;
   /** 跳转落点（该行带高亮锚点）。 */
   highlightCardId?: string | null;
+  /** epic 层头开弹窗回传（#90/A4-4；缺省 = 只读，层行退化为纯折叠控件）。 */
+  onOpenEpic?: (code: string) => void;
 }
 
 export function BoardTableView({
@@ -300,6 +302,7 @@ export function BoardTableView({
   fold,
   onOpenCard,
   highlightCardId = null,
+  onOpenEpic,
 }: BoardTableViewProps) {
   const { intl } = useZCodeIntl();
   const groups = buildBoardTableGroups(board, boardListControlsToQuery(controls));
@@ -363,6 +366,8 @@ export function BoardTableView({
                     columnCount={visibleColumns.length}
                     expanded={epicOpen}
                     {...(toggle ? { onToggle: toggle } : {})}
+                    {...(onOpenEpic ? { onOpenEpic } : {})}
+                    highlighted={highlightCardId === container.epic.code}
                   />
                   {epicOpen
                     ? container.phases.map((phase) => {
@@ -378,6 +383,7 @@ export function BoardTableView({
                               columnCount={visibleColumns.length}
                               expanded={phaseOpen}
                               {...(toggle ? { onToggle: toggle } : {})}
+                              highlighted={highlightCardId === phase.name}
                             />
                             {phaseOpen ? phase.items.map((group) => renderGroup(group)) : null}
                           </Fragment>

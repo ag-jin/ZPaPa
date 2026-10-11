@@ -158,6 +158,15 @@ export function boardFoldIdsOfCard(board: BoardViewModel, cardId: string): strin
   return ids;
 }
 
+/**
+ * 期次层的祖先折叠 id 集（#90/A4-4 指针下钻：从 epic 弹窗下钻到期次容器）：
+ * 先 epic 后 phase（与 `boardFoldIdsOfCard` 的收集序一致）。期次名不进记忆键——
+ * 键用 `phase:<码>#<期次序>` 原值，不依赖显示层合成名。
+ */
+export function boardFoldIdsOfPhase(epicCode: string, phase: number): string[] {
+  return [boardEpicFoldId(epicCode), boardPhaseFoldId(epicCode, phase)];
+}
+
 function featureContainsCard(feature: BoardFeatureNode, cardId: string): boolean {
   if (feature.id === cardId) return true;
   const taskContains = (task: BoardTaskNode): boolean =>

@@ -16,7 +16,13 @@ import {
   type BoardViewNode,
 } from "./boardViewsViewModel.js";
 import { isBoardStage } from "./boardViewSorting.js";
-import { formatBoardNodeId } from "./boardPresentation.js";
+import { boardEpicStatusMessageId, formatBoardNodeId } from "./boardPresentation.js";
+import {
+  boardLayerGapCount,
+  boardLayerStageComposition,
+  groupBoardFeaturesByEpic,
+  type BoardLayerStageRow,
+} from "./boardEpicContainers.js";
 import type {
   BoardActiveRun,
   BoardAttentionCode,
@@ -176,6 +182,66 @@ export function resolveBoardDialogNode(
 ): BoardViewNode | null {
   if (openCardId === null) return null;
   return collectBoardViewNodes(board).find((node) => node.id === openCardId) ?? null;
+}
+
+/* ---------------- epic 弹窗退化形态（卡 #90 / A4-4；AD-6 + C4-2） ---------------- */
+
+/** 期次指针（下钻落点）：名 + 本期稿数 + 本期缺口。 */
+export interface BoardEpicDialogPhasePointer {
+  phase: number;
+  name: string;
+  planCount: number;
+  gapCount: number;
+}
+
+/**
+ * epic 弹窗模型（退化形态：epic 不是卡——无稳定号/无 run/lastRun/无段位，弹窗只承载
+ * **卷起事实 + 指针**）。字段全部从同一归组单点（`groupBoardFeaturesByEpic`）与同一 rollup
+ * 单点（`boardLayerGapCount` / `boardLayerStageComposition`）派生：
+ *   - 名 + 计数（N 期次 · M 卡）+ rollup 缺口（AD-6 的 L1 事实）；
+ *   - `composition` = 段位构成（AD-6「rollup 段位入 L2 层」——构成只在这里给，组头不给）；
+ *   - `phases` = 期次指针（C4-2「指针下钻」：点即到该期次容器）；
+ *   - `statusMessageId` 仅非活跃登记行非空（终态徽章仅非活跃时出现）。
+ * **不自算段位**：不合成「epic 段位」这类词表外概念——构成只按成员已有段位词分布。
+ */
+export interface BoardEpicDialogModel {
+  code: string;
+  title: string;
+  status: string | null;
+  statusMessageId: string | null;
+  planCount: number;
+  phaseCount: number;
+  gapCount: number;
+  composition: BoardLayerStageRow[];
+  phases: BoardEpicDialogPhasePointer[];
+}
+
+/**
+ * epic 码 → 弹窗模型；无该登记行 → null（不留幽灵弹窗，与卡片弹窗同姿态）。
+ * 只读投影：不读板外任何东西、不写任何字段。
+ */
+export function buildBoardEpicDialog(
+  board: BoardViewModel,
+  code: string,
+): BoardEpicDialogModel | null {
+  const group = groupBoardFeaturesByEpic(board).epics.find((entry) => entry.epic.code === code);
+  if (!group) return null;
+  return {
+    code: group.epic.code,
+    title: group.epic.title,
+    status: group.epic.status,
+    statusMessageId: boardEpicStatusMessageId(group.epic.status),
+    planCount: group.members.length,
+    phaseCount: group.phases.length,
+    gapCount: boardLayerGapCount(group.members),
+    composition: boardLayerStageComposition(group.members),
+    phases: group.phases.map((phase) => ({
+      phase: phase.phase,
+      name: phase.name,
+      planCount: phase.features.length,
+      gapCount: boardLayerGapCount(phase.features),
+    })),
+  };
 }
 
 /**

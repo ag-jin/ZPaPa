@@ -26,6 +26,7 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
 import {
+  boardLayerGapCount,
   groupBoardFeaturesByEpic,
   type BoardEpicGroup,
   type BoardPhaseGroup,
@@ -87,12 +88,18 @@ function BoardTaskRow({
   planCode,
   onOpenCard,
   highlightCardId,
+  nested,
 }: {
   task: BoardTaskNode;
   /** 所属特性的计划码（短编号省略的是它的前缀；#46 B1）。 */
   planCode: string | null;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /**
+   * 所在稿块是否嵌在容器层（epic ⊃ 期次）里（#90/A4-4 D6）：嵌着时最近圆角容器 = 稿块
+   * （rounded-md），行降到 rounded-sm（DESIGN.md 半径阶梯逐级递减；不再 lg > md 倒挂）。
+   */
+  nested?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const lastRunText = formatBoardLastRunText(task.lastRun, intl.formatMessage);
@@ -110,7 +117,8 @@ function BoardTaskRow({
         {...highlightProps}
         {...boardCardOpenProps({ id: task.id, ...(onOpenCard ? { onOpenCard } : {}) })}
         className={cn(
-          "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
+          "flex flex-col gap-0.5 px-2 py-1.5 hover:bg-surface-hover",
+          nested ? "rounded-sm" : "rounded-lg",
           taskIndentClass(task.depth),
           highlightClassName,
         )}
@@ -147,6 +155,7 @@ function BoardTaskRow({
               planCode={planCode}
               {...(onOpenCard ? { onOpenCard } : {})}
               highlightCardId={highlightCardId}
+              {...(nested ? { nested } : {})}
             />
           ))
         : null}
@@ -278,6 +287,7 @@ function BoardFeatureSection({
                 planCode={feature.planCode}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
+                {...(nested ? { nested } : {})}
               />
             ))}
           </section>
@@ -309,7 +319,12 @@ function BoardPhaseSection({
 }) {
   return (
     <BoardEpicLayerSection
-      layer={{ kind: "phase", name: phase.name, planCount: phase.features.length }}
+      layer={{
+        kind: "phase",
+        name: phase.name,
+        planCount: phase.features.length,
+        gapCount: boardLayerGapCount(phase.features),
+      }}
       title=""
       titleClassName="text-ui-xs font-medium text-foreground-subtle"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
@@ -318,6 +333,7 @@ function BoardPhaseSection({
       foldId={boardPhaseFoldId(epicCode, phase.phase)}
       defaultExpanded={boardContainerFoldExpanded(phase.features)}
       {...(fold ? { fold } : {})}
+      highlightId={highlightCardId}
     >
       {phase.features.map((feature) => (
         <BoardFeatureSection
@@ -343,11 +359,14 @@ function BoardEpicSection({
   onOpenCard,
   highlightCardId,
   fold,
+  onOpenEpic,
 }: {
   group: BoardEpicGroup;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 层）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   return (
     <BoardEpicLayerSection
@@ -356,6 +375,7 @@ function BoardEpicSection({
         name: group.epic.code,
         planCount: group.members.length,
         phaseCount: group.phases.length,
+        gapCount: boardLayerGapCount(group.members),
         status: group.epic.status,
       }}
       title={group.epic.title}
@@ -366,6 +386,8 @@ function BoardEpicSection({
       foldId={boardEpicFoldId(group.epic.code)}
       defaultExpanded={boardContainerFoldExpanded(group.members)}
       {...(fold ? { fold } : {})}
+      {...(onOpenEpic ? { onOpenEpic } : {})}
+      highlightId={highlightCardId}
     >
       {group.phases.map((phase) => (
         <BoardPhaseSection
@@ -389,6 +411,8 @@ export interface BoardTreeViewProps {
   highlightCardId?: string | null;
   /** 折叠默认态的用户覆盖与回传（#89/A4-3；缺省 = 只读，按默认态）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；缺省 = 只读，层头退化为纯折叠落点）。 */
+  onOpenEpic?: (code: string) => void;
 }
 
 /**
@@ -401,6 +425,7 @@ export function BoardTreeView({
   onOpenCard,
   highlightCardId = null,
   fold,
+  onOpenEpic,
 }: BoardTreeViewProps) {
   const grouping = groupBoardFeaturesByEpic(board);
   return (
@@ -421,6 +446,7 @@ export function BoardTreeView({
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
           {...(fold ? { fold } : {})}
+          {...(onOpenEpic ? { onOpenEpic } : {})}
         />
       ))}
     </div>

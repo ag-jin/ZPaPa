@@ -16,7 +16,11 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
-import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
+import {
+  assembleBoardEpicContainers,
+  boardLayerGapCount,
+  type BoardEpicItemContainer,
+} from "./boardEpicContainers.js";
 import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
   boardContainerFoldExpanded,
@@ -58,10 +62,13 @@ function BoardListRow({
   node,
   onOpenCard,
   highlightCardId,
+  nested,
 }: {
   node: BoardViewNode;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /** 所在分组是否嵌在容器层里（#90/A4-4 D6）：嵌着时行降到 rounded-sm（半径阶梯逐级递减）。 */
+  nested?: boolean;
 }) {
   const { className: highlightClassName, ...highlightProps } = boardCardHighlightProps(
     node.id,
@@ -74,7 +81,8 @@ function BoardListRow({
       {...highlightProps}
       {...boardCardOpenProps({ id: node.id, ...(onOpenCard ? { onOpenCard } : {}) })}
       className={cn(
-        "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
+        "flex flex-col gap-0.5 px-2 py-1.5 hover:bg-surface-hover",
+        nested ? "rounded-sm" : "rounded-lg",
         rowIndentClass(node.depth),
         highlightClassName,
       )}
@@ -180,6 +188,7 @@ function BoardListGroup({
             node={node}
             {...(onOpenCard ? { onOpenCard } : {})}
             highlightCardId={highlightCardId}
+            {...(nested ? { nested } : {})}
           />
         ))}
       </div>
@@ -209,7 +218,12 @@ function BoardListPhaseSection({
 }) {
   return (
     <BoardEpicLayerSection
-      layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
+      layer={{
+        kind: "phase",
+        name: phase.name,
+        planCount: phase.items.length,
+        gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
+      }}
       title=""
       titleClassName="text-ui-xs font-medium text-foreground-subtle"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
@@ -218,6 +232,7 @@ function BoardListPhaseSection({
       foldId={boardPhaseFoldId(epicCode, phase.phase)}
       defaultExpanded={boardContainerFoldExpanded(phase.items.map((group) => group.feature))}
       {...(fold ? { fold } : {})}
+      highlightId={highlightCardId}
     >
       {phase.items.map((group) => (
         <BoardListGroup
@@ -245,12 +260,15 @@ function BoardListEpicSection({
   onOpenCard,
   highlightCardId,
   fold,
+  onOpenEpic,
 }: {
   container: BoardEpicItemContainer<BoardListGroupItem>;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
   /** 宿主持有的折叠控制（#89/A4-3）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 层）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   return (
     <BoardEpicLayerSection
@@ -259,6 +277,7 @@ function BoardListEpicSection({
         name: container.epic.code,
         planCount: container.items.length,
         phaseCount: container.phases.length,
+        gapCount: boardLayerGapCount(container.items.map((group) => group.feature)),
         status: container.epic.status,
       }}
       title={container.epic.title}
@@ -269,6 +288,8 @@ function BoardListEpicSection({
       foldId={boardEpicFoldId(container.epic.code)}
       defaultExpanded={boardContainerFoldExpanded(container.items.map((group) => group.feature))}
       {...(fold ? { fold } : {})}
+      {...(onOpenEpic ? { onOpenEpic } : {})}
+      highlightId={highlightCardId}
     >
       {container.phases.map((phase) => (
         <BoardListPhaseSection
@@ -294,6 +315,8 @@ export interface BoardListViewProps {
   highlightCardId?: string | null;
   /** 折叠默认态的用户覆盖与回传（#89/A4-3；缺省 = 只读，按默认态）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；缺省 = 只读，层头退化为纯折叠落点）。 */
+  onOpenEpic?: (code: string) => void;
 }
 
 export function BoardListView({
@@ -303,6 +326,7 @@ export function BoardListView({
   onOpenCard,
   highlightCardId = null,
   fold,
+  onOpenEpic,
 }: BoardListViewProps) {
   const { intl } = useZCodeIntl();
   const groups = buildBoardListGroups(board, boardListControlsToQuery(controls));
@@ -338,6 +362,7 @@ export function BoardListView({
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
                 {...(fold ? { fold } : {})}
+                {...(onOpenEpic ? { onOpenEpic } : {})}
               />
             ))}
           </>

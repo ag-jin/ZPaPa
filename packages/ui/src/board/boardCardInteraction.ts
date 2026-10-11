@@ -16,12 +16,35 @@ export function boardCardKeyIntent(key: string): BoardCardKeyIntent {
 }
 
 /**
+ * 选择器锚点值的转义（单点）：id/码来自板上字段，仍显式转义反斜杠与引号
+ * ——选择器拼装不该由数据决定成败（含层名/期次名这类合成文本）。
+ */
+function escapeBoardAnchor(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
  * 跳转落点的选择器：按 `data-board-card` 锚点精确匹配。
- * id 来自板上字段（label/no），仍显式转义反斜杠与引号——选择器拼装不该由数据决定成败。
+ * id 来自板上字段（label/no），转义走同一份 `escapeBoardAnchor`。
  */
 export function boardCardSelector(id: string): string {
-  const escaped = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  return `[data-board-card="${escaped}"]`;
+  return `[data-board-card="${escapeBoardAnchor(id)}"]`;
+}
+
+/**
+ * 期次块选择器（#90/A4-4 指针下钻的滚动落点）：按 `data-board-phase-block` 锚点匹配
+ * （值 = AD-3 合成层名，如 `KANB1`）。与卡片选择器同款转义。
+ */
+export function boardPhaseSelector(name: string): string {
+  return `[data-board-phase-block="${escapeBoardAnchor(name)}"]`;
+}
+
+/**
+ * epic 层头落点选择器（#90/A4-4；焦点归还用）：按 `data-board-epic-open` 锚点匹配
+ * （值 = epic 码）。epic 不开卡片弹窗，打开者记录因此需要自己的选择器。
+ */
+export function boardEpicOpenSelector(code: string): string {
+  return `[data-board-epic-open="${escapeBoardAnchor(code)}"]`;
 }
 
 export interface BoardCardOpenProps {
@@ -55,6 +78,33 @@ export function boardCardOpenProps(params: {
       if (boardCardKeyIntent(event.key) !== "open") return;
       event.preventDefault();
       onOpenCard(id);
+    },
+  };
+}
+
+/**
+ * epic 层头的弹窗落点 props（卡 #90 / A4-4；单点）：epic **不是卡**——不走卡片路由
+ * （无稳定号，宿主状态是 epic 码，`boardCardOpenProps` 的 id 语义是卡片 id），但键位判据
+ * 与卡片同源（`boardCardKeyIntent`：Enter/Space 激活）。落点在 `<summary>` 里，
+ * **固定 preventDefault**：点「开 epic 概览」不得再触发折叠切换（与稿层标题区同款分区纪律）。
+ */
+export function boardEpicOpenProps(params: {
+  code: string;
+  onOpenEpic?: (code: string) => void;
+}): BoardCardOpenProps {
+  const { code, onOpenEpic } = params;
+  if (!onOpenEpic) return {};
+  return {
+    role: "button",
+    tabIndex: 0,
+    onClick: (event: MouseEvent) => {
+      event.preventDefault();
+      onOpenEpic(code);
+    },
+    onKeyDown: (event: KeyboardEvent) => {
+      if (boardCardKeyIntent(event.key) !== "open") return;
+      event.preventDefault();
+      onOpenEpic(code);
     },
   };
 }

@@ -27,13 +27,17 @@ import { BoardPaneView } from "./BoardPaneView.js";
 import { boardCardDialogKeyIntent, type BoardJumpTarget } from "./boardDialogViewModel.js";
 import {
   boardCardSelector,
+  boardEpicOpenSelector,
+  boardPhaseSelector,
   boardRevealDetailsIntent,
   boardRevealKanbanColumnIntent,
   nextBoardCardHighlight,
   type BoardCardHighlightState,
 } from "./boardCardInteraction.js";
+import { phaseDisplayName } from "./boardEpicContainers.js";
 import {
   boardFoldIdsOfCard,
+  boardFoldIdsOfPhase,
   withBoardFoldExpanded,
   withBoardFoldOpen,
   type BoardFoldState,
@@ -93,6 +97,8 @@ export function BoardPane({
   );
   // 弹窗打开态（同一时刻至多一个）与跳转高亮落点（带 nonce：同目标重跳也重新起算）。
   const [openCardId, setOpenCardId] = useState<string | null>(null);
+  // epic 弹窗打开态（#90/A4-4：宿主只持 epic 码；与卡片弹窗互斥——开一个关另一个）。
+  const [openEpicCode, setOpenEpicCode] = useState<string | null>(null);
   // 弹窗打开者记录（#59 M4 焦点闭环）：关闭（× / 遮罩 / Esc）后焦点回到打开它的卡片元素。
   // 打开链路 = 卡片 onClick/onKeyDown → onOpenCard(id) → 这里；触发元素按同一 `data-board-card`
   // 锚点定位（与跳转定位共用选择器）。跳转是「换目标」不是「关闭回退」——不抢目标滚动的焦点
@@ -103,12 +109,29 @@ export function BoardPane({
       typeof document === "undefined"
         ? null
         : document.querySelector<HTMLElement>(boardCardSelector(id));
+    setOpenEpicCode(null);
     setOpenCardId(id);
   }, []);
   const handleCloseCard = useCallback(() => {
     setOpenCardId(null);
     const opener = dialogOpenerRef.current;
     dialogOpenerRef.current = null;
+    if (opener && opener.isConnected) opener.focus();
+  }, []);
+  // epic 弹窗的打开者记录同款（锚点 = `data-board-epic-open`，值 = epic 码）。
+  const epicDialogOpenerRef = useRef<HTMLElement | null>(null);
+  const handleOpenEpic = useCallback((code: string) => {
+    epicDialogOpenerRef.current =
+      typeof document === "undefined"
+        ? null
+        : document.querySelector<HTMLElement>(boardEpicOpenSelector(code));
+    setOpenCardId(null);
+    setOpenEpicCode(code);
+  }, []);
+  const handleCloseEpic = useCallback(() => {
+    setOpenEpicCode(null);
+    const opener = epicDialogOpenerRef.current;
+    epicDialogOpenerRef.current = null;
     if (opener && opener.isConnected) opener.focus();
   }, []);
   const [highlight, setHighlight] = useState<BoardCardHighlightState | null>(null);
@@ -199,9 +222,10 @@ export function BoardPane({
     }
   }, [rpcReady, refresh]);
 
-  // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走 handleCloseCard（含焦点恢复）。
+  // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走对应 handle（含焦点恢复）。
+  // 两弹窗互斥（开一个关另一个）——Esc 只关当前那一个（卡片优先判存在性，实际不会同时开）。
   useEffect(() => {
-    if (openCardId === null) return;
+    if (openCardId === null && openEpicCode === null) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         boardCardDialogKeyIntent({ key: event.key, defaultPrevented: event.defaultPrevented }) !==
@@ -210,13 +234,14 @@ export function BoardPane({
         return;
       }
       event.preventDefault();
-      handleCloseCard();
+      if (openEpicCode !== null) handleCloseEpic();
+      else handleCloseCard();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [openCardId, handleCloseCard]);
+  }, [openCardId, openEpicCode, handleCloseCard, handleCloseEpic]);
 
   // 跳转（弹窗 dependency 与提示条段落共用）：先关弹窗，再让目标卡在当前视图里「看得见」。
   const handleJumpToCard = useCallback(
@@ -247,13 +272,34 @@ export function BoardPane({
     [board, handleViewModeChange, viewMode],
   );
 
+  // epic 弹窗期次指针下钻（#90/A4-4；C4-2）：关 epic 弹窗 → 清筛子（期次被筛掉就跳了个寂寞）
+  // → 展开该期次的两层祖先折叠（`boardFoldIdsOfPhase` 单点）→ 看板「已完成」列先置展开
+  // （条件渲染的容器要先回 DOM）→ 期次块高亮 + 滚动（落点选择器与卡片同一条渲染链路）。
+  const handleDrillToPhase = useCallback(
+    (epicCode: string, phase: number) => {
+      setOpenEpicCode(null);
+      setListControls((controls) => clearBoardListFilter(controls));
+      setFoldState((previous) =>
+        withBoardFoldExpanded(previous, boardFoldIdsOfPhase(epicCode, phase)),
+      );
+      if (viewMode === "kanban") setKanbanCompletedExpanded(true);
+      setHighlight((previous) =>
+        nextBoardCardHighlight(previous, phaseDisplayName(epicCode, phase)),
+      );
+    },
+    [viewMode],
+  );
+
   // 滚动到跳转落点；高亮到点自动清除（面板重渲染不改变时限语义）。
+  // 落点两类（#90/A4-4 起）：卡片（`data-board-card`）与层块（期次 `data-board-phase-block`，
+  // 指针下钻的落点）——同一 highlight 状态、同一滚动/时限，选择器按锚点族各查一次。
   useEffect(() => {
     if (highlight === null) return;
     const element =
       typeof document === "undefined"
         ? null
-        : document.querySelector(boardCardSelector(highlight.id));
+        : (document.querySelector(boardCardSelector(highlight.id)) ??
+          document.querySelector(boardPhaseSelector(highlight.id)));
     if (element) {
       // 折叠容器（访谈汇总子区，<details>）里的落点：先展开再滚，否则滚到了也看不见。
       // 看板「已完成」列不在此列：它按展开态条件渲染，宿主在 handleJumpToCard 里已先置展开。
@@ -286,6 +332,10 @@ export function BoardPane({
       kanbanCompletedExpanded={kanbanCompletedExpanded}
       onKanbanCompletedExpandedChange={setKanbanCompletedExpanded}
       fold={{ state: foldState, onToggle: handleFoldToggle }}
+      openEpicCode={openEpicCode}
+      onOpenEpic={handleOpenEpic}
+      onCloseEpic={handleCloseEpic}
+      onDrillToPhase={handleDrillToPhase}
       onRefresh={() => void refresh()}
     />
   );

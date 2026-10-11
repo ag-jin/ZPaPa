@@ -8,7 +8,8 @@
  * （行数上限；组件语义不变）。
  */
 import { boardLayerFeatureStub } from "./boardEpicLayerSections.js";
-import type { BoardEpicItemContainer } from "./boardEpicContainers.js";
+import { boardEpicOpenProps } from "./boardCardInteraction.js";
+import { boardLayerGapCount, type BoardEpicItemContainer } from "./boardEpicContainers.js";
 import { boardEpicFoldId, boardPhaseFoldId } from "./boardFoldState.js";
 import { BoardFoldToggleButton } from "./boardFoldParts.js";
 import { BoardFeatureGroupHeaderContent } from "./boardNodeParts.js";
@@ -25,14 +26,24 @@ export function BoardTableEpicRow({
   columnCount,
   expanded,
   onToggle,
+  onOpenEpic,
+  highlighted = false,
 }: {
   container: BoardEpicItemContainer<BoardListGroup>;
   columnCount: number;
   expanded: boolean;
   onToggle?: ((foldId: string, open: boolean) => void) | undefined;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 行——名/标题区成落点，折叠按钮仍只管折叠）。 */
+  onOpenEpic?: (code: string) => void;
+  /** 跳转/下钻高亮落点（#90/A4-4：层名命中 = 本行）。 */
+  highlighted?: boolean;
 }) {
   return (
-    <tbody data-board-epic={container.epic.code} data-board-epic-block={container.epic.code}>
+    <tbody
+      data-board-epic={container.epic.code}
+      data-board-epic-block={container.epic.code}
+      {...(highlighted ? { "data-board-layer-highlight": "true" } : {})}
+    >
       <tr
         data-board-epic-summary={container.epic.code}
         className="border-b border-border/40 bg-surface/50"
@@ -54,9 +65,18 @@ export function BoardTableEpicRow({
                 name: container.epic.code,
                 planCount: container.items.length,
                 phaseCount: container.phases.length,
+                gapCount: boardLayerGapCount(container.items.map((group) => group.feature)),
                 status: container.epic.status,
               }}
               titleClassName="text-ui-sm font-medium text-foreground"
+              {...(onOpenEpic
+                ? {
+                    titleRegionProps: {
+                      "data-board-epic-open": container.epic.code,
+                      ...boardEpicOpenProps({ code: container.epic.code, onOpenEpic }),
+                    },
+                  }
+                : {})}
             />
           </div>
         </td>
@@ -72,6 +92,7 @@ export function BoardTablePhaseRow({
   columnCount,
   expanded,
   onToggle,
+  highlighted = false,
 }: {
   phase: BoardEpicItemContainer<BoardListGroup>["phases"][number];
   /** 所属 epic 码（折叠 id = `phase:<码>#<期次序>`）。 */
@@ -79,9 +100,15 @@ export function BoardTablePhaseRow({
   columnCount: number;
   expanded: boolean;
   onToggle?: ((foldId: string, open: boolean) => void) | undefined;
+  /** 跳转/下钻高亮落点（#90/A4-4：期次名命中 = 本行）。 */
+  highlighted?: boolean;
 }) {
   return (
-    <tbody data-board-phase={phase.name} data-board-phase-block={phase.name}>
+    <tbody
+      data-board-phase={phase.name}
+      data-board-phase-block={phase.name}
+      {...(highlighted ? { "data-board-layer-highlight": "true" } : {})}
+    >
       <tr data-board-phase-summary={phase.name} className="border-b border-border/40">
         <td colSpan={columnCount} className="px-2 py-1.5 pl-5">
           <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
@@ -94,7 +121,12 @@ export function BoardTablePhaseRow({
             />
             <BoardFeatureGroupHeaderContent
               feature={boardLayerFeatureStub("")}
-              layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
+              layer={{
+                kind: "phase",
+                name: phase.name,
+                planCount: phase.items.length,
+                gapCount: boardLayerGapCount(phase.items.map((group) => group.feature)),
+              }}
               titleClassName="text-ui-xs font-medium text-foreground-subtle"
             />
           </div>
