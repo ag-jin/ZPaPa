@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView } from "../src/board/BoardPaneView.js";
 import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
+import { boardFoldIdsOfCard } from "../src/board/boardFoldState.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
@@ -440,19 +441,78 @@ test(
       (task) => task.currentAssignee !== task.nextAssignee,
     );
     const table = markups.get("table") ?? "";
-    for (const task of assertableNext) {
-      const no = task.no;
-      if (typeof no !== "number") continue;
-      const start = table.indexOf(`data-board-card="task:${no}"`);
-      assert.ok(start >= 0, `表格视图应渲染卡 #${no}`);
-      const rowEnd = table.indexOf("<tr", start + 1);
-      const row = table.slice(start, rowEnd === -1 ? table.length : rowEnd);
+    // #89/A4-3 折叠默认态：表格分组行按默认态**条件渲染**（全完成/全取消组默认折叠，缺口/活跃组展开），
+    // 断言面因此分两侧钉：①默认态渲染在 markup 的非折叠卡 —— 钉管线接手位；②默认态不在 markup 的卡 ——
+    // 必须落入「祖先折叠组头在场且折叠」的形态（不许是渲染遗漏），再用展开对照渲染复证卡确实能出现。
+    const pipelineTasks = assertableNext
+      .filter((task) => typeof task.no === "number")
+      .map((task) => ({ no: task.no as number, nextAssignee: task.nextAssignee }));
+    const inlineTasks = pipelineTasks.filter(({ no }) =>
+      table.includes(`data-board-card="task:${no}"`),
+    );
+    const foldedTasks = pipelineTasks.filter(
+      ({ no }) => !table.includes(`data-board-card="task:${no}"`),
+    );
+    const assertPipelineMarker = (
+      markup: string,
+      label: string,
+      task: { no: number; nextAssignee: unknown },
+    ): void => {
+      const start = markup.indexOf(`data-board-card="task:${task.no}"`);
+      assert.ok(start >= 0, `${label}应渲染卡 #${task.no}`);
+      const rowEnd = markup.indexOf("<tr", start + 1);
+      const row = markup.slice(start, rowEnd === -1 ? markup.length : rowEnd);
       assert.ok(
         row.includes(`data-board-pipeline-next="${String(task.nextAssignee)}"`),
-        `卡 #${no} 的管线应标出接手位 ${String(task.nextAssignee)}`,
+        `卡 #${task.no} 的管线应标出接手位 ${String(task.nextAssignee)}`,
       );
-      assert.ok(row.includes("下一个"), `卡 #${no} 的接手位应带词条标记「下一个」`);
+      assert.ok(row.includes("下一个"), `卡 #${task.no} 的接手位应带词条标记「下一个」`);
+    };
+    for (const task of inlineTasks) assertPipelineMarker(table, "默认态表格视图", task);
+
+    // 折叠侧：祖先折叠 id 走 boardFoldState 单点（稿层 → epic → 期次）；默认 markup 里必须至少有一个
+    // 在场且折叠（aria-expanded="false"）的组头，证明「不在 markup」是折叠设计而非卡被丢。
+    const foldIdsOf = (no: number): string[] => boardFoldIdsOfCard(board, `task:${no}`);
+    const collapsedHeaderOf = (foldId: string): boolean => {
+      for (const anchor of [
+        `data-board-group-toggle="${foldId}"`,
+        `data-board-layer-toggle="${foldId}"`,
+      ]) {
+        const at = table.indexOf(anchor);
+        if (at < 0) continue;
+        const tagEnd = table.indexOf(">", at);
+        if (table.slice(at, tagEnd).includes('aria-expanded="false"')) return true;
+      }
+      return false;
+    };
+    for (const task of foldedTasks) {
+      const foldIds = foldIdsOf(task.no);
+      assert.ok(
+        foldIds.length > 0,
+        `卡 #${task.no} 不在默认 markup 且无祖先折叠 id：疑似渲染遗漏（boardFoldIdsOfCard 空集）`,
+      );
+      assert.ok(
+        foldIds.some(collapsedHeaderOf),
+        `卡 #${task.no} 不在默认 markup，但祖先折叠组头在场且折叠的形态不存在：疑似渲染遗漏而非折叠（检查 ${foldIds.join(" / ")}）`,
+      );
     }
+    // 展开对照：把断言面全部卡的祖先折叠 id 置为展开再渲染一次——折叠组内卡必须出现且管线标记齐全。
+    const foldIdsToExpand = [...new Set(pipelineTasks.flatMap(({ no }) => foldIdsOf(no)))];
+    const tableExpanded = renderToStaticMarkup(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "zh-CN" as const,
+        children: createElement(BoardPaneView, {
+          state,
+          viewMode: "table",
+          fold: {
+            state: Object.fromEntries(foldIdsToExpand.map((foldId) => [foldId, true])),
+            onToggle: () => {},
+          },
+        }),
+      }),
+    );
+    for (const task of foldedTasks)
+      assertPipelineMarker(tableExpanded, "展开折叠后的表格视图", task);
 
     // 3) 依赖行（#54-6）：取板上第一个「依赖目标有计划码」的卡，弹窗里编号应是计划码-层级 + 稳定号。
     const allTasks: Array<{ task: RawRecord; planCode: string | null; feature: RawRecord }> = [];
