@@ -2,15 +2,23 @@
  * 看板表格视图（卡 #34）：列可配置的表格，行点击 → 弹窗；
  * 卡 #46 / 规则书 v2（B4/B6）：**分组行（特性头 + 缩进子行，可折叠）** + 责任管线列
  * 当前执行者加粗变色（`currentAssignee`，A3 交叉推导）。
+ * 卡 #168 / A4-1b：三层容器接线——epic/期次 = **两级 colSpan 组行**（表格无法嵌套
+ * `<details>`/`<tbody>`；对齐 B §4.3 L-4a「两级 colSpan 组行，列配置不动」），组行头走
+ * `BoardFeatureGroupHeaderContent` 的 `layer` 变体（与 tree/列表/看板同一单点零件）；容器归属走
+ * `assembleBoardEpicContainers`（同一归组单点）。容器层默认展开且暂不折叠（折叠默认态与记忆归
+ * A4-3；此处不落无动作的折叠指示符，不造假 affordance）。无归属分组行照旧平铺在前（AD-8）。
  *
  * 单一真源：消费契约 §13.5（默认列 + 列可配置）、§13.2 表格列（段位 / `lastRun` / `blockers`
  * 各格要求）、§3.3（最近执行四要素）、派发指令（行点击=打开弹窗；排序复用列表视图语义）。
  * 判据与单元格值全在纯函数层（`boardTableViewModel` / `boardViewsViewModel`），本组件只投影 + 回传意图。
  */
+import { Fragment } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BoardListFilterControls } from "./BoardListFilterControls.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
+import { assembleBoardEpicContainers, type BoardEpicItemContainer } from "./boardEpicContainers.js";
+import { boardLayerFeatureStub } from "./boardEpicLayerSections.js";
 import {
   BoardActiveRunBadge,
   BoardAssigneePipeline,
@@ -178,6 +186,69 @@ function BoardTableRow({
   );
 }
 
+/**
+ * epic 层组行（#168 三层容器第一层；表格形态 = colSpan 全列的单行 `<tbody>`）：层名（登记码）+
+ * 登记行标题 + 终态标注 + 稿数/期数；**层不是卡**：无卡片锚点、无弹窗落点（退化形态同 tree）。
+ */
+function BoardTableEpicRow({
+  container,
+  columnCount,
+}: {
+  container: BoardEpicItemContainer<BoardListGroup>;
+  columnCount: number;
+}) {
+  return (
+    <tbody data-board-epic={container.epic.code} data-board-epic-block={container.epic.code}>
+      <tr
+        data-board-epic-summary={container.epic.code}
+        className="border-b border-border/40 bg-surface/50"
+      >
+        <td colSpan={columnCount} className="px-2 py-1.5">
+          {/* 溢出防线锚点（#59 S-4）：组行内容允许折行，不撑破表格盒。 */}
+          <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
+            <BoardFeatureGroupHeaderContent
+              feature={boardLayerFeatureStub(container.epic.title)}
+              layer={{
+                kind: "epic",
+                name: container.epic.code,
+                planCount: container.items.length,
+                phaseCount: container.phases.length,
+                status: container.epic.status,
+              }}
+              titleClassName="text-ui-sm font-medium text-foreground"
+            />
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  );
+}
+
+/** 期次层组行（第二层；缩进一档，层名 = AD-3 合成名 + 该期实际承载稿数；层不是卡）。 */
+function BoardTablePhaseRow({
+  phase,
+  columnCount,
+}: {
+  phase: BoardEpicItemContainer<BoardListGroup>["phases"][number];
+  columnCount: number;
+}) {
+  return (
+    <tbody data-board-phase={phase.name} data-board-phase-block={phase.name}>
+      <tr data-board-phase-summary={phase.name} className="border-b border-border/40">
+        <td colSpan={columnCount} className="px-2 py-1.5 pl-5">
+          <div data-board-overflow-wrap="" className="flex min-w-0 items-center gap-2">
+            <BoardFeatureGroupHeaderContent
+              feature={boardLayerFeatureStub("")}
+              layer={{ kind: "phase", name: phase.name, planCount: phase.items.length }}
+              titleClassName="text-ui-xs font-medium text-foreground-subtle"
+            />
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  );
+}
+
 function BoardTableGroup({
   group,
   columns,
@@ -289,6 +360,8 @@ export function BoardTableView({
 }: BoardTableViewProps) {
   const { intl } = useZCodeIntl();
   const groups = buildBoardTableGroups(board, boardListControlsToQuery(controls));
+  // 三层容器装配（#168 单点）：无归属分组行平铺在前（AD-8），epic/期次 = 两级 colSpan 组行。
+  const containers = assembleBoardEpicContainers(board, groups, (group) => group.feature.id);
   const visibleColumns = visibleBoardTableColumns(columns);
   const indentKey = visibleColumns[0] ?? null;
   const ageBase = now ?? Date.now();
@@ -315,7 +388,7 @@ export function BoardTableView({
                 ))}
               </tr>
             </thead>
-            {groups.map((group) => (
+            {containers.ungrouped.map((group) => (
               <BoardTableGroup
                 key={group.feature.id}
                 group={group}
@@ -329,6 +402,31 @@ export function BoardTableView({
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
               />
+            ))}
+            {containers.epics.map((container) => (
+              <Fragment key={container.epic.code}>
+                <BoardTableEpicRow container={container} columnCount={visibleColumns.length} />
+                {container.phases.map((phase) => (
+                  <Fragment key={phase.name}>
+                    <BoardTablePhaseRow phase={phase} columnCount={visibleColumns.length} />
+                    {phase.items.map((group) => (
+                      <BoardTableGroup
+                        key={group.feature.id}
+                        group={group}
+                        columns={visibleColumns}
+                        indentKey={indentKey}
+                        now={ageBase}
+                        collapsed={collapsed.has(group.feature.id)}
+                        {...(onToggleFeatureCollapsed
+                          ? { onToggleCollapsed: onToggleFeatureCollapsed }
+                          : {})}
+                        {...(onOpenCard ? { onOpenCard } : {})}
+                        highlightCardId={highlightCardId}
+                      />
+                    ))}
+                  </Fragment>
+                ))}
+              </Fragment>
             ))}
           </table>
         )}

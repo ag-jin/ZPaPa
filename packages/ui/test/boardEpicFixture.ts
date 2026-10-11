@@ -258,3 +258,69 @@ export const EPIC_BOARD_FLAT: Record<string, unknown> = (() => {
   }
   return raw;
 })();
+
+/**
+ * 边界形态夹具（A4-1b 承 CR-S1）：三条回退分支各给一个样本，期望值独立给出——
+ *   - 半对稿（归属对不成全，markers.md §10.3 的违规板形态）：只有 `epic` 无 `phase`、
+ *     只有 `phase` 无 `epic` 各一稿 → **顶层平铺**（boardEpicContainers 显式回退：不吞稿、
+ *     不造半截容器；编译期点名归 A2-2）；
+ *   - 登记 epic 零成员（`EMPT` 登记行无任何成员稿）→ **空 `phases`/空 `members`**
+ *     （不造假成员；board.md 口径下空章由结构视图诚实呈现，过滤视图不造空壳）；
+ *   - `active` 登记行（KANB）→ **不落终态标注**（§10.5 终态只认 cancelled/archived 枚举）。
+ * 其余成员/期次与 EPIC_BOARD 一致（同一文档的派生态）。
+ */
+export const EPIC_BOARD_EDGE: Record<string, unknown> = (() => {
+  const raw = structuredClone(EPIC_BOARD) as {
+    epics: Array<{ code: string; title: string; status: string }>;
+    features: Array<Record<string, unknown>>;
+  };
+  // 零成员登记行：无稿归属 → 空 phases（「0 期 0 稿」的诚实空壳来源）。
+  raw.epics.push({ code: "EMPT", title: "空登记史诗", status: "active" });
+  // 半对稿 1：有 epic 登记 id、phase 缺省（归属对不成全）。
+  raw.features.push({
+    id: "plan:plan-half-pair-epic",
+    no: 36,
+    label: "36",
+    planCode: "HAL1",
+    kind: "plan",
+    epic: "epic:KANB",
+    title: "半对稿（只有 epic 无 phase）",
+    details: "归属对不成全：渲染层按无归属平铺，不吞稿、不造半截容器。",
+    status: "pending",
+    statusRule: "plan 无勾选记录",
+    stage: "待办",
+    stageRule: "status=pending",
+    origin: { type: "plan-session", planRef: ".zcode/plans/plan-half-pair-epic.md" },
+    progress: null,
+    evidence: [".zcode/plans/plan-half-pair-epic.md"],
+    createdAt: "2026-10-09T16:00:00+08:00",
+    updatedAt: "2026-10-09T16:00:00+08:00",
+    currentAssignee: null,
+    attention: [],
+    tasks: [],
+  });
+  // 半对稿 2：有 phase、epic 缺省（归属对不成全的另一半）。
+  raw.features.push({
+    id: "plan:plan-half-pair-phase",
+    no: 37,
+    label: "37",
+    planCode: "HAL2",
+    kind: "plan",
+    phase: 2,
+    title: "半对稿（只有 phase 无 epic）",
+    details: "归属对不成全：渲染层按无归属平铺，不吞稿、不造半截容器。",
+    status: "pending",
+    statusRule: "plan 无勾选记录",
+    stage: "待办",
+    stageRule: "status=pending",
+    origin: { type: "plan-session", planRef: ".zcode/plans/plan-half-pair-phase.md" },
+    progress: null,
+    evidence: [".zcode/plans/plan-half-pair-phase.md"],
+    createdAt: "2026-10-09T16:10:00+08:00",
+    updatedAt: "2026-10-09T16:10:00+08:00",
+    currentAssignee: null,
+    attention: [],
+    tasks: [],
+  });
+  return raw;
+})();

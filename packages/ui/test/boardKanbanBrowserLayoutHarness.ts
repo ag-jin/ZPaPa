@@ -248,12 +248,18 @@ export async function runBoardPaneInElectron(params: {
   pageHtml: string;
   driver: string;
   label: string;
+  /**
+   * 键盘焦点可见性量取（`:focus-visible`）需要文档真有焦点：显式 app/window/webContents 置前。
+   * 缺省 false（既有调用方零变化）；窗口未聚焦时 `focus({ focusVisible: true })` 不会触发
+   * `:focus-visible` 计算样式（实测 Electron 41/Chromium：`document.hasFocus()=false`）。
+   */
+  focusWindow?: boolean;
 }): Promise<unknown> {
   const workDir = mkdtempSync(path.join(tmpdir(), "zcode-board-layout-"));
   const electronBinary = resolveElectronBinary();
   const mainScript = path.join(workDir, "electron-main.cjs");
   const driverPath = path.join(workDir, "driver.js");
-  writeFileSync(mainScript, electronMainSource());
+  writeFileSync(mainScript, electronMainSource(params.focusWindow === true));
   writeFileSync(driverPath, params.driver);
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -323,7 +329,7 @@ export async function runBoardPaneInElectron(params: {
   }
 }
 
-function electronMainSource(): string {
+function electronMainSource(focusWindow = false): string {
   return (
     `const { app, BrowserWindow } = require("electron");\n` +
     `const fs = require("node:fs");\n` +
@@ -343,6 +349,14 @@ function electronMainSource(): string {
     `    log("PAGE_CONSOLE " + text);\n` +
     `  });\n` +
     `  await win.loadURL(url);\n` +
+    // 焦点量取场景（focusWindow）：app/window/webContents 逐层置前，document 才有焦点
+    // （否则 :focus-visible 永不匹配，见 runBoardPaneInElectron 注释）。
+    (focusWindow
+      ? `  app.focus({ steal: true });\n` +
+        `  win.focus();\n` +
+        `  win.webContents.focus();\n` +
+        `  await new Promise((resolve) => setTimeout(resolve, 300));\n`
+      : ``) +
     `  const source = fs.readFileSync(driverPath, "utf8");\n` +
     `  const result = await win.webContents.executeJavaScript(source, true);\n` +
     `  const ua = await win.webContents.executeJavaScript("navigator.userAgent");\n` +

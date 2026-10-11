@@ -28,6 +28,7 @@ import {
   type BoardEpicGroup,
   type BoardPhaseGroup,
 } from "./boardEpicContainers.js";
+import { BoardEpicLayerSection } from "./boardEpicLayerSections.js";
 import {
   BoardFeatureGroupHeaderContent,
   BoardFoldIndicator,
@@ -280,6 +281,7 @@ function BoardFeatureSection({
 /**
  * 期次组（三层容器第二层；#87）：组头 = 合成层名（`KANB1`，AD-3）+ 该期稿数；体 = 期内稿块。
  * 整行是折叠落点（期次不是卡）；稿块嵌入形态（半径降一档，间距交给容器 gap）。
+ * #168 起容器装配走 `BoardEpicLayerSection` 单点（树形/列表/看板共用；差异全在类名与字号）。
  */
 function BoardPhaseSection({
   phase,
@@ -291,45 +293,24 @@ function BoardPhaseSection({
   highlightCardId: string | null;
 }) {
   return (
-    <details
-      data-board-phase={phase.name}
-      data-board-phase-block={phase.name}
-      open
+    <BoardEpicLayerSection
+      layer={{ kind: "phase", name: phase.name, planCount: phase.features.length }}
+      title=""
+      titleClassName="text-ui-xs font-medium text-foreground-subtle"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
+      summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
+      bodyClassName="flex flex-col gap-1.5 px-1.5 pb-1.5"
     >
-      <summary
-        data-board-phase-summary={phase.name}
-        className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 hover:bg-surface-hover"
-      >
-        <BoardFoldIndicator />
-        {/* 期次层头：层名 + 稿数；与 epic 层/稿层共用同一份组头零件（#87 tracer 接口）。 */}
-        <BoardFeatureGroupHeaderContent
-          feature={{
-            no: null,
-            label: null,
-            planCode: null,
-            title: "",
-            stage: null,
-            attention: [],
-            blockers: [],
-            status: null,
-          }}
-          layer={{ kind: "phase", name: phase.name, planCount: phase.features.length }}
-          titleClassName="text-ui-xs font-medium text-foreground-subtle"
+      {phase.features.map((feature) => (
+        <BoardFeatureSection
+          key={feature.id}
+          feature={feature}
+          nested
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
         />
-      </summary>
-      <div className="flex flex-col gap-1.5 px-1.5 pb-1.5">
-        {phase.features.map((feature) => (
-          <BoardFeatureSection
-            key={feature.id}
-            feature={feature}
-            nested
-            {...(onOpenCard ? { onOpenCard } : {})}
-            highlightCardId={highlightCardId}
-          />
-        ))}
-      </div>
-    </details>
+      ))}
+    </BoardEpicLayerSection>
   );
 }
 
@@ -348,50 +329,29 @@ function BoardEpicSection({
   highlightCardId: string | null;
 }) {
   return (
-    <details
-      data-board-epic={group.epic.code}
-      data-board-epic-block={group.epic.code}
-      open
+    <BoardEpicLayerSection
+      layer={{
+        kind: "epic",
+        name: group.epic.code,
+        planCount: group.members.length,
+        phaseCount: group.phases.length,
+        status: group.epic.status,
+      }}
+      title={group.epic.title}
+      titleClassName="text-ui-base font-medium text-foreground"
       className="group mb-3 flex flex-col overflow-hidden rounded-xl border border-border/60 bg-surface/40"
+      summaryClassName="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
+      bodyClassName="flex flex-col gap-2 px-2 pb-2"
     >
-      <summary
-        data-board-epic-summary={group.epic.code}
-        className="flex cursor-pointer list-none items-center gap-2 px-2 py-2 hover:bg-surface-hover"
-      >
-        <BoardFoldIndicator />
-        {/* epic 层头：层名（登记码）+ 登记行标题 + 终态标注 + 稿数/期数——与稿层共用同一份零件。 */}
-        <BoardFeatureGroupHeaderContent
-          feature={{
-            no: null,
-            label: null,
-            planCode: null,
-            title: group.epic.title,
-            stage: null,
-            attention: [],
-            blockers: [],
-            status: null,
-          }}
-          layer={{
-            kind: "epic",
-            name: group.epic.code,
-            planCount: group.members.length,
-            phaseCount: group.phases.length,
-            status: group.epic.status,
-          }}
-          titleClassName="text-ui-base font-medium text-foreground"
+      {group.phases.map((phase) => (
+        <BoardPhaseSection
+          key={phase.phase}
+          phase={phase}
+          {...(onOpenCard ? { onOpenCard } : {})}
+          highlightCardId={highlightCardId}
         />
-      </summary>
-      <div className="flex flex-col gap-2 px-2 pb-2">
-        {group.phases.map((phase) => (
-          <BoardPhaseSection
-            key={phase.phase}
-            phase={phase}
-            {...(onOpenCard ? { onOpenCard } : {})}
-            highlightCardId={highlightCardId}
-          />
-        ))}
-      </div>
-    </details>
+      ))}
+    </BoardEpicLayerSection>
   );
 }
 

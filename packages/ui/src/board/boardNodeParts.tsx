@@ -243,7 +243,8 @@ const COUNT_CHIP_CLASS =
   "shrink-0 rounded-md px-1.5 py-0.5 text-ui-xs tabular-nums text-foreground-subtle";
 
 /**
- * 折叠指示符（#55 S-3；#87 起树形容器头/稿块使用；A4-1b 起与列表分组头共用一份——届时替换 BoardListView 内联件）：原生 `<details>/<summary>`
+ * 折叠指示符（#55 S-3；#87 起树形容器头/稿块使用；#168/A4-1b 起看板/列表容器头共用同一份
+ * ——BoardListView 的内联件已收口，CR-S3 结案）：原生 `<details>/<summary>`
  * 已向辅助技术暴露展开态，缺的是**视觉**指示符——装饰性 chevron（`aria-hidden`，`group-open:`
  * 旋转），不写伪 `aria-expanded`、不夺由内容构成的可及名称。宿主 `<details>` 必须带 `group` 类。
  */
@@ -294,6 +295,21 @@ export interface BoardGroupHeaderLayer {
 }
 
 /**
+ * 分组头所需的最小字段面：树形传原始特性节点、看板/列表传视图节点——同一零件不挑来源。
+ * 层头占位面（`boardLayerFeatureStub`）在容器层模块 `boardEpicLayerSections`（#168 单点）。
+ */
+export interface BoardGroupHeaderFeature {
+  no: number | null;
+  label: string | null;
+  planCode: string | null;
+  title: string;
+  stage: string | null;
+  attention: BoardAttentionCode[];
+  blockers: readonly unknown[];
+  status: string | null;
+}
+
+/**
  * 特性分组头内容（#46 B3/B4 共用；#55 S-2 收敛树形手工装配）：编号（计划码 / ID-<label>）+
  * 名称 + 段位徽章 + 角标 + `[N 张卡]` 摘要。**不是独立卡**：各视图把它装进自己的分组行/摘要
  * （`<summary>`、分组 `<div>`、表头 `<tr>`），卡片锚点与视觉外壳由宿主决定。
@@ -308,17 +324,7 @@ export interface BoardGroupHeaderLayer {
  * 稿层传 `cardCount`（`[N 张卡]`，四视图现状）；不给两条计数路径并存的机会。
  */
 export type BoardFeatureGroupHeaderContentProps = {
-  /** 分组头所需的最小字段面：树形传原始特性节点、看板/列表传视图节点——同一零件不挑来源。 */
-  feature: {
-    no: number | null;
-    label: string | null;
-    planCode: string | null;
-    title: string;
-    stage: string | null;
-    attention: BoardAttentionCode[];
-    blockers: readonly unknown[];
-    status: string | null;
-  };
+  feature: BoardGroupHeaderFeature;
   lightweight?: boolean;
   /**
    * 开弹窗落点（#54-4 列表组头点击分区）：给了就把「编号 + 名称」包进这个落点 div 并展开
@@ -399,6 +405,9 @@ export function BoardFeatureGroupHeaderContent(props: BoardFeatureGroupHeaderCon
       )}
       <span
         {...(feature.planCode !== null ? { "data-board-feature-code": feature.planCode } : {})}
+        // 截断恢复路径（F2，A4-1 第四绿移交）：层不是卡、无弹窗可查全文——截断全文进原生 title
+        //（#59 姿态「信息不丢」）；空标题（期次层无标题字段）不落空 title 属性。
+        {...(feature.title ? { title: feature.title } : {})}
         className={cn(
           "min-w-0 flex-1 truncate",
           lightweight
