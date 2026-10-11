@@ -12,8 +12,10 @@
  * 骨架范围（C3-1）：五槽条 + 计划区块骨架；五槽下钻归 C3-2（#137）、完整前沿队列归 C3-3（#138）、
  * 计数胶囊零件归 C3-4（#139）。本组件里的行入口即 #138 的生长点（同一投影、同一卡行零件）。
  *
- * 视觉准入（itw-20261011-9003）：标题/卡名 `text-ui-base`（≥ 既有正文档），辅助行 `text-ui-sm`；
+ * 视觉准入（itw-20261011-9003；四绿 ui-designer 复核口径）：主体文字（标题/卡名/摘要行，摘要行
+ * 为门禁枚举的运营信息承载）`text-ui-base`(14px)；辅助/元数据行（接手位、标签、空态）`text-ui-sm`；
  * 每行信息点 ≤4 组、留白 `p-3`/`gap-2` 起——「一扫可读」优先于「信息全」。
+ * 活跃计划置顶带共享状态点（`BoardStatusDot`）辨识：复用既有零件，不新造色点/大面积色块。
  */
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardOpenProps } from "./boardCardInteraction.js";
@@ -23,7 +25,7 @@ import {
   type BoardGuideCardRow,
   type BoardGuidePlan,
 } from "./boardGuideViewModel.js";
-import { BoardNodeNumber, BoardStageBadge } from "./boardNodeParts.js";
+import { BoardNodeNumber, BoardStageBadge, BoardStatusDot } from "./boardNodeParts.js";
 import { formatBoardRelativeTime } from "./boardPresentation.js";
 import type { BoardViewModel } from "./boardViewModel.js";
 
@@ -92,6 +94,10 @@ function BoardGuidePlanBlock({
       className="flex min-w-0 flex-col gap-2 rounded-lg border border-border/50 bg-surface p-3"
     >
       <div className="flex min-w-0 items-center gap-2">
+        {/* 活跃计划置顶的视觉辨识（四绿 P2 回炉）：复用共享四态色点（`BoardStatusDot`，契约 §3.2）
+            ——仅 `status=active` 的计划带头行点，非活跃不带（不给每块加装饰，也不新造色点样式）；
+            点仅作视觉引导（`aria-hidden`），「执行中」文字仍在摘要行段位里可读。 */}
+        {plan.statusActive ? <BoardStatusDot status="active" /> : null}
         <BoardNodeNumber
           no={plan.no}
           label={plan.label}
@@ -119,7 +125,13 @@ function BoardGuidePlanBlock({
           { completed: plan.completed, total: plan.total },
         )}
       />
-      <div data-board-guide-plan-summary="" className="truncate text-ui-sm text-foreground-subtle">
+      {/* 摘要行 = 主体文字（四绿 P1 回炉）：段位·期次·前沿·在途 4 个运营信息点，门禁枚举
+          「摘要行」与计划名/计数同为 ≥ text-ui-base(14px)；层级靠色阶（foreground-subtle）
+          与字重（不加重）区分，不靠缩字号。 */}
+      <div
+        data-board-guide-plan-summary=""
+        className="truncate text-ui-base text-foreground-subtle"
+      >
         {summaryParts.join(" · ")}
       </div>
       {plan.rows.length > 0 ? (

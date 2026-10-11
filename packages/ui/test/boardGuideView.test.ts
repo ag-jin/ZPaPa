@@ -201,6 +201,17 @@ test("活跃计划置顶：板序靠后的 active 计划提到 pending 计划之
   assert.ok(planA < planDIndex && planDIndex < planB, "A、D（active，板序）→ B（pending）");
 });
 
+test("活跃计划辨识：头行带共享状态点（板字段 status=active），非活跃计划不带", () => {
+  const markup = render(readyState());
+  const planA = planMarkup(markup, "plan:plan-guide-a");
+  const dotIndex = planA.indexOf('data-board-status="active"');
+  assert.ok(dotIndex >= 0, "active 计划头行带共享状态点（BoardStatusDot 锚点）");
+  const barIndex = planA.indexOf("data-board-guide-plan-bar");
+  assert.ok(barIndex > 0 && dotIndex < barIndex, "状态点落在头行（进度微条之前）");
+  const planB = planMarkup(markup, "plan:plan-guide-b");
+  assert.ok(!planB.includes("data-board-status"), "非活跃计划头行不带状态点（不新造装饰）");
+});
+
 test("计划进度：计数 = 该计划卡 completed/total（板字段），配进度微条", () => {
   const markup = render(readyState());
   const planA = planMarkup(markup, "plan:plan-guide-a");
