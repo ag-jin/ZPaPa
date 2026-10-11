@@ -60,8 +60,8 @@ interface ViewModeResult {
   narrowProbe: ViewModeProbe;
 }
 
-/** 视图闭集序（BOARD_VIEW_MODES 的独立真源：指引 + 结构四视图）。 */
-const EXPECTED_OPTIONS = ["guide", "tree", "kanban", "list", "table"];
+/** 视图闭集序（BOARD_VIEW_MODES 的独立真源：指引 + 编排 + 结构四视图；#185 增编排）。 */
+const EXPECTED_OPTIONS = ["guide", "dispatch", "tree", "kanban", "list", "table"];
 
 async function main(): Promise<void> {
   const bundle = await bundleBoardPaneClient();
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   console.log(`VIEW_MODE_MEASUREMENTS=${JSON.stringify(result, null, 1)}`);
   assert.ok(result, "默认视图切换场景应回传量取结果");
 
-  /* 1. 首开（无记忆）：默认落指引面；五入口常驻且序固定；首开不写记忆。 */
+  /* 1. 首开（无记忆）：默认落指引面；六入口常驻且序固定；首开不写记忆。 */
   assert.equal(result.initial.view, "guide", "首开默认视图 = 指引面（C3-5/#140）");
   assert.deepEqual(result.initial.roots, ["guide"], "同一时刻恰一个视图根（缺省 = 指引面）");
   assert.deepEqual(

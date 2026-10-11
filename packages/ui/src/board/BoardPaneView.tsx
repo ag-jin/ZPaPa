@@ -21,6 +21,7 @@ import {
   BoardSnapshotNotice,
 } from "./boardPlaceholderParts.js";
 import { BoardCardDialog } from "./BoardCardDialog.js";
+import { BoardDispatchView } from "./BoardDispatchView.js";
 import { BoardEpicDialog } from "./BoardEpicDialog.js";
 import { BoardGuideView } from "./BoardGuideView.js";
 import type { BoardGuideSlotKey } from "./boardGuideViewModel.js";
@@ -252,6 +253,10 @@ function BoardReadyView({
             {...(onOpenCard ? { onOpenCard } : {})}
             {...(onDrillToSlot ? { onDrillToSlot } : {})}
           />
+        ) : viewMode === "dispatch" ? (
+          // 编排视图（#185）：三区（可派清单/阻塞归因/并发组）直取 dispatch 派生段投影；
+          // 行点击走同一卡片弹窗宿主状态（不新造路由/状态）。
+          <BoardDispatchView board={board} {...(onOpenCard ? { onOpenCard } : {})} />
         ) : viewMode === "kanban" ? (
           <BoardKanbanView
             board={board}
