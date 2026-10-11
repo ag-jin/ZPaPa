@@ -1,12 +1,19 @@
 // App 运行时偏好同步的单元断言（卡 #204/A3）：
 // 1) normalizeAppRuntimePreferences 对新实验字段 fail-closed（只认显式 true）；
 // 2) syncWorkspaceAppRuntimePreferences 的字段↔方法映射、调用顺序与 method-not-found 兼容
-//    （interaction 必备；modelIo / askMattFlow 旧 CLI 缺方法时降级，其他失败上抛）。
+//    （interaction 必备；modelIo / askMattFlow 旧 CLI 缺方法时降级，其他失败上抛）；
+// 3) 跨包合同：ask-matt 载荷必须能过服务端实际使用的共享 strict params schema。
+//    这里刻意不 deepEqual 实现的载荷形状——那与实现同义反复，两侧各自自洽时不会红
+//    （F1 逃逸根因）。判据真源 = @zcode/shared 的 strict schema（server handler 用它 parseParams）。
 // 假 client 只实现 request 一个边界，记录 method/params 供断言。
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { zcodeProtocolMethods, type ZCodeWorkspaceRef } from "@zcode/shared";
+import {
+  zcodeProtocolMethods,
+  zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema,
+  type ZCodeWorkspaceRef,
+} from "@zcode/shared";
 import type { z } from "zod";
 import {
   isProtocolMethodNotFoundError,
@@ -87,10 +94,53 @@ test("同步成功：依次发 interaction → modelIo → askMattFlow，ask-mat
       zcodeProtocolMethods.workspaceUpdateAskMattFlowPreferences,
     ],
   );
-  assert.deepEqual(requests[2]?.params, {
+  // 合同判据走共享 strict schema（服务端 parseParams 的同一条），不 deepEqual 实现形状：
+  // 两侧分歧时必须在这里红，而不是两侧各自绿。
+  const askMattParams = zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema.parse(
+    requests[2]?.params,
+  );
+  assert.equal(askMattParams.enabled, true, "偏好开 → enabled=true（只认显式 true 的归一化）");
+  assert.deepEqual(askMattParams.workspace, workspace);
+});
+
+test("跨包合同：ask-matt 载荷过共享 strict params schema；旧 preferences 形状被同一 schema 拒绝", async () => {
+  const requests: RecordedRequest[] = [];
+  await syncWorkspaceAppRuntimePreferences({
+    client: recordingClient(requests),
+    preferences: { askUserQuestionAutoResolutionEnabled: true, askMattFlowEnabled: true },
     workspace,
-    preferences: { askMattFlowEnabled: true },
   });
+  const askMattParams = requests.find(
+    (request) => request.method === zcodeProtocolMethods.workspaceUpdateAskMattFlowPreferences,
+  )?.params;
+
+  const parsed = zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema.safeParse(askMattParams);
+  assert.equal(
+    parsed.success,
+    true,
+    `客户端真实载荷必须被服务端共享 schema 接受（F1：-32602 使开态不可达），实收 ${JSON.stringify(askMattParams)}`,
+  );
+
+  // 反向腿：schema 是 strict 的（F1 复现锚点）。旧形状 {preferences:{...}} 必须被拒收，
+  // 否则本用例会被「schema 放行一切」的实现蒙混过关。
+  const legacyShape = { workspace, preferences: { askMattFlowEnabled: true } };
+  const legacy = zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema.safeParse(legacyShape);
+  assert.equal(legacy.success, false, "旧 preferences 形状必须被 strict schema 拒绝（-32602）");
+
+  // fail-closed 腿：偏好未显式给 askMattFlowEnabled 时，载荷仍须是 schema 合法的 enabled=false，
+  // 不能是缺字段/undefined（strict schema 下同样 -32602）。
+  const disabledRequests: RecordedRequest[] = [];
+  await syncWorkspaceAppRuntimePreferences({
+    client: recordingClient(disabledRequests),
+    preferences: { askUserQuestionAutoResolutionEnabled: true },
+    workspace,
+  });
+  const disabledParams = zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema.parse(
+    disabledRequests.find(
+      (request) => request.method === zcodeProtocolMethods.workspaceUpdateAskMattFlowPreferences,
+    )?.params,
+  );
+  assert.equal(disabledParams.enabled, false, "未设置 → enabled=false（fail-closed）");
 });
 
 test("兼容：旧 CLI 对 ask-matt 方法 method-not-found 时降级，其他失败上抛", async () => {

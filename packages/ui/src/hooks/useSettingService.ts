@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL, type AppSettings } from "@zcode/shared";
 import type { ISettingService } from "@zcode/services";
+import { buildAppRuntimePreferencesFromPatch } from "@/settings/appRuntimePreferences.js";
 import { useServices } from "./useServices.js";
 import { usePlatform } from "./usePlatform.js";
 
@@ -182,16 +183,16 @@ export function useSettings() {
       await refreshSettingsAfterWrite(settingService);
       if (
         typeof patch.askUserQuestionAutoResolutionEnabled === "boolean" ||
+        typeof patch.experimentalAskMattFlowEnabled === "boolean" ||
         typeof patch.modelIoFullRetentionEnabled === "boolean"
       ) {
-        const preferences = {
-          askUserQuestionAutoResolutionEnabled:
-            patch.askUserQuestionAutoResolutionEnabled ??
-            settingsStore.snapshot.settings?.askUserQuestionAutoResolutionEnabled !== false,
-          modelIoFullRetentionEnabled:
-            patch.modelIoFullRetentionEnabled ??
-            settingsStore.snapshot.settings?.modelIoFullRetentionEnabled === true,
-        };
+        // 载荷单点在 settings/appRuntimePreferences.ts：这里只给 patch + 当前快照。
+        // 曾就地拼 askUser/modelIo 两字段，改任一偏好都会把未携带的 ask-matt 归一化成
+        // false 下发（UI 开关看着开、Host 命令面被误关）；广播载荷同源复用，其他窗口不丢字段。
+        const preferences = buildAppRuntimePreferencesFromPatch(
+          patch,
+          settingsStore.snapshot.settings,
+        );
         const syncResults = await Promise.allSettled([
           zcodeAgentService.syncAppRuntimePreferences(preferences),
           botsService.syncAppRuntimePreferences(preferences),

@@ -78,11 +78,14 @@ export async function syncWorkspaceAppRuntimePreferences(
   try {
     await client.request(
       zcodeProtocolMethods.workspaceUpdateAskMattFlowPreferences,
+      // 载荷必须与 shared 的 zcodeWorkspaceUpdateAskMattFlowPreferencesParamsSchema（strict）同形：
+      // {workspace, enabled}——服务端 ask-matt-flow-policy.ts 用它 parseParams，形状不符即 -32602。
+      // 这正是 F1（卡 #204 二绿）：曾误发 {workspace, preferences:{...}}，开关永不同步；
+      // off-peak / dynamic-workflow 先例同为 {workspace, enabled}。回归判据见
+      // packages/services/test/appRuntimePreferencesSync.test.ts 的跨包合同用例。
       {
         workspace,
-        preferences: {
-          askMattFlowEnabled: preferences.askMattFlowEnabled === true,
-        },
+        enabled: preferences.askMattFlowEnabled === true,
       },
       zcodeWorkspaceUpdateAskMattFlowPreferencesResultSchema,
     );

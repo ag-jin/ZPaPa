@@ -7,6 +7,9 @@ export const appRuntimePreferencesChangedBroadcastPayloadSchema = z
   .object({
     askUserQuestionAutoResolutionEnabled: z.boolean(),
     modelIoFullRetentionEnabled: z.boolean().default(false),
+    // ask-matt 实验开关（#204/A3）：广播即「运行时偏好已变」的同步载荷，
+    // 必须携带本字段，否则其他窗口按缺省 false 归一化，把开关误关（F1 整链回炉）。
+    askMattFlowEnabled: z.boolean().default(false),
   })
   .strict();
 
