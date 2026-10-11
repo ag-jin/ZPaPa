@@ -170,7 +170,6 @@ test("排序控件（#65）：列表/表格头部三视角闭集（最近更新 
     ["Recently updated", "Oldest untouched", "Stage order"],
     "英文界面走英文词条（不漏中文）",
   );
-  assert.deepEqual([...BOARD_VIEW_SORTS], ["recent", "oldest", "stage"], "闭集顺序即控件选项序");
   for (const sort of BOARD_VIEW_SORTS) {
     assert.ok(zhCN[BOARD_VIEW_SORT_MESSAGE_IDS[sort]], `${sort} 缺 zh-CN 词条`);
     assert.ok(enUS[BOARD_VIEW_SORT_MESSAGE_IDS[sort]], `${sort} 缺 en-US 词条`);

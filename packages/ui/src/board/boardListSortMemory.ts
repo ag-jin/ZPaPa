@@ -10,12 +10,16 @@
  * 选择，跨「切视图 / 关面板再打开」保持——两者共用 `BoardListControls`，但记忆面只有排序。
  */
 import { readBoardSessionValue, writeBoardSessionValue } from "./boardSessionStorage.js";
-import { isBoardViewSort, type BoardViewSort } from "./boardViewSorting.js";
+import {
+  DEFAULT_BOARD_VIEW_SORT,
+  isBoardViewSort,
+  type BoardViewSort,
+} from "./boardViewSorting.js";
 
 const STORAGE_KEY = "zcode-board-list-sort";
 
-/** 默认排序视角 = 契约序（§3.5：attention 置顶 + `updatedAt` 倒序 + 已完成沉底）。 */
-export const DEFAULT_BOARD_LIST_SORT: BoardViewSort = "recent";
+/** 默认排序视角 = 契约序（§3.5：attention 置顶 + `updatedAt` 倒序 + 已完成沉底）；单点常量见 `boardViewSorting`。 */
+export const DEFAULT_BOARD_LIST_SORT: BoardViewSort = DEFAULT_BOARD_VIEW_SORT;
 
 export function readBoardListSort(): BoardViewSort {
   const value = readBoardSessionValue(STORAGE_KEY);

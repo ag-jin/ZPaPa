@@ -1,16 +1,21 @@
 /**
- * 看板视图的**排序与「已完成沉底」口径**（单点；卡 #65 从 `boardViewsViewModel` 抽出）。
+ * 看板视图**排序与「已完成沉底」的符号集合**（单点；卡 #65）。
+ *
+ * 模块双职责（本模块就这两件事，别再拆散或各写一份）：
+ * 1. **排序视角**——三视角闭集（`recent` / `oldest` / `stage`）、默认视角常量（`DEFAULT_BOARD_VIEW_SORT`）、
+ *    取值归一（`boardSortFilterValue`）与单点比较器（`compareBoardViewNodes`）。
+ * 2. **「已完成沉底」**——默认序把「已完成」沉到所在组/列末尾（列表/表格/看板列内），树形同级组内
+ *    （`sinkCompletedTreeSiblings`）；沉底段位由 `boardSortSinkStage` 单点给出。
+ *
+ * 宿主变化：本模块由 `boardViewsViewModel` 抽出（卡 #65）——原宿主继续堆叠会越过仓库 oxlint
+ * `max-lines`（400）上限。抽出只挪宿主、不动符号集合：对外仍是同一批导出（仅导入路径变化），
+ * 新宿主（`boardViewsViewModel` 与四视图）只消费这套判定，不另起第二份。
  *
  * 边界（消费契约 §13.6）：只做排序/沉底的纯函数判定——不读板文件、不解析真相源、
  * 不自算 `stage`/`attention`；四视图的行序、看板列内序与分组序都走这里同一份比较器。
  *
- * 单一真源：
- * - §3.5：attention 项置顶；其余按 `updatedAt` 倒序；「最老未动」是用户主动切换的第二视角。
- * - 卡 #65：三视角闭集（最近更新 / 最老未动 / 段位序）+ 完成沉底（列表/表格/看板列内：默认序；
- *   树形：同级组内，见 `sinkCompletedTreeSiblings`）。
- *
- * 抽出原因：排序是与分组/过滤并列的独立口径，`boardViewsViewModel` 继续堆叠会越过仓库
- * oxlint `max-lines`（400）上限；对外仍是同一批导出，仅导入路径变化。
+ * 单一真源：§3.5（attention 项置顶；其余按 `updatedAt` 倒序；「最老未动」是用户主动切换的第二视角）
+ * + 卡 #65 三视角定义（最近更新 / 最老未动 / 段位序）。
  */
 import { BOARD_STAGES, type BoardAttentionCode, type BoardStage } from "./boardViewModel.js";
 
@@ -48,6 +53,12 @@ export type BoardViewSort = "recent" | "oldest" | "stage";
 /** 排序视角闭集（顺序即控件选项序；`Record<…>` 穷尽：加视角在编译期报缺，不落裸 key）。 */
 export const BOARD_VIEW_SORTS: readonly BoardViewSort[] = ["recent", "oldest", "stage"];
 
+/**
+ * 默认排序视角 = 契约序（§3.5）：attention 置顶 + `updatedAt` 倒序 + 已完成沉底。
+ * **单点常量**：闭集回落的默认值、函数默认参数、控件初值都取这里，不各写 `"recent"` 字面量。
+ */
+export const DEFAULT_BOARD_VIEW_SORT: BoardViewSort = "recent";
+
 /** 排序视角文案词条（zh-CN 逐字见词条表）。 */
 export const BOARD_VIEW_SORT_MESSAGE_IDS: Record<BoardViewSort, string> = {
   recent: "board.sort.recent",
@@ -62,7 +73,15 @@ export function isBoardViewSort(value: unknown): value is BoardViewSort {
 
 /** 控件取值归一：闭集成员原样透传，空串/坏值回落默认视角（UI 不写裸 `as` 断言）。 */
 export function boardSortFilterValue(value: string): BoardViewSort {
-  return isBoardViewSort(value) ? value : "recent";
+  return isBoardViewSort(value) ? value : DEFAULT_BOARD_VIEW_SORT;
+}
+
+/**
+ * 视角的「完成沉底」段位（单点）：仅默认序（`DEFAULT_BOARD_VIEW_SORT`）沉底「已完成」；
+ * `oldest`（最老在前）与 `stage`（段位流水序）不沉底（§3.5）。返回 `null` = 该视角不沉底。
+ */
+export function boardSortSinkStage(sort: BoardViewSort): BoardStage | null {
+  return sort === DEFAULT_BOARD_VIEW_SORT ? BOARD_COMPLETED_STAGE : null;
 }
 
 function updatedAtEpoch(node: BoardSortableNode): number | null {
@@ -96,7 +115,7 @@ export interface BoardSortOptions {
  */
 export function sortBoardViewNodes<T extends BoardSortableNode>(
   nodes: T[],
-  sort: BoardViewSort = "recent",
+  sort: BoardViewSort = DEFAULT_BOARD_VIEW_SORT,
   options: BoardSortOptions = {},
 ): T[] {
   return [...nodes].sort((left, right) => compareBoardViewNodes(left, right, sort, options));
@@ -111,7 +130,7 @@ export function sortBoardViewNodes<T extends BoardSortableNode>(
 export function compareBoardViewNodes(
   left: BoardSortableNode,
   right: BoardSortableNode,
-  sort: BoardViewSort = "recent",
+  sort: BoardViewSort = DEFAULT_BOARD_VIEW_SORT,
   options: BoardSortOptions = {},
 ): number {
   const sinkStage = options.sinkStage ?? null;
