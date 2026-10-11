@@ -183,8 +183,9 @@ function BoardGuidePlanBlock({
   onDispatchCard?: (card: BoardCardDispatchCard) => void;
 }) {
   const { intl } = useZCodeIntl();
-  // 「在途」计数（#219/D6）：薄索引面（`activeCount === null`，四段派生 active[] 不在索引字段面）
-  // 不渲染该计数——不拿未知当 0（旧面路径照常给数）。
+  // 「在途」计数（#219/D6；#220/D7 minor① 形态统一）：薄索引面（`activeCount === null`，四段派生 active[]
+  // 不在索引字段面）**不静默省略**——改显式未知形「在途 —」，与同面五槽未知形态（`—`）同一语言
+  // （不拿未知当 0；旧面路径照常给数）。改形态已同步契约 §15.5 措辞。
   const activeCountPart =
     plan.activeCount !== null
       ? formatBoardCountText(
@@ -192,7 +193,7 @@ function BoardGuidePlanBlock({
           BOARD_COUNT_MESSAGE_IDS.guidePlanActive,
           intl.formatMessage,
         )
-      : null;
+      : intl.formatMessage({ id: "board.guide.plan.active.unknown" });
   const summaryParts = [
     plan.stage,
     plan.phaseName,

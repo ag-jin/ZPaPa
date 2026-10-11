@@ -106,6 +106,8 @@ export function BoardPane({
   // 卡详情按需读缓存（#219/D6）：每面板一份，代际 = 工作目录 + INDEX.updatedAt；
   // 板重编译（updatedAt 变）→ 换代整表失效；同会话内同卡不重复读。
   const cardDetailCacheRef = useRef(new BoardCardDetailCache());
+  // 同代重试中的卡（#220/D7）：重读期间保留上次「暂不可读」呈现，不闪回 #183「板上未携带」假空态。
+  const pendingDetailNosRef = useRef(new Set<number>());
   // 缓存内容变化（换代清空 / 新卡读到）时触发重渲染的修订号——缓存是 ref（渲染期读它），需显式驱动。
   const [detailRevision, setDetailRevision] = useState(0);
   // 视图模式：初值取会话记忆（切走再回来仍是上次看的视图），切换即记。
@@ -296,12 +298,36 @@ export function BoardPane({
       });
       if (cancelled) return;
       cardDetailCacheRef.current.set(no, result);
+      pendingDetailNosRef.current.delete(no);
       setDetailRevision((revision) => revision + 1);
     })();
     return () => {
       cancelled = true;
     };
   }, [openCardId, state, detailRevision, fileService, workspacePath, isRpcReady]);
+
+  // 卡详情同代重试（#220/D7）：清该卡缓存条目 → 上面的按需读 effect 因缓存未命中重新读取。
+  // 只对 `unavailable`（暂时读不到：断连 / 板文件超限截断）提供——`missing`（确定没有）重试无意义。
+  // 重读期间保留上次「暂不可读」呈现（pending 集），不闪回 #183「板上未携带」假空态。
+  const handleRetryCardDetail = useCallback((no: number) => {
+    pendingDetailNosRef.current.add(no);
+    cardDetailCacheRef.current.delete(no);
+    setDetailRevision((revision) => revision + 1);
+  }, []);
+
+  // 打开卡的详情读取态（#220/D7；仅薄索引面）：`unavailable`（暂时读不到）/`missing`（没有这张卡）
+  // 与 #183「板上未携带」确定性空态分开呈现（major①）。`loaded` 或旧面路径 → null（弹窗按现形态渲染）。
+  const openCardDetailState: "missing" | "unavailable" | null =
+    openCardId !== null && state.kind === "ready" && state.board.screen !== null
+      ? (() => {
+          const node = resolveBoardDialogNode(state.board, openCardId);
+          if (!node || node.kind !== "task" || node.no === null) return null;
+          const cached = cardDetailCacheRef.current.get(node.no);
+          if (cached) return cached.kind !== "loaded" ? cached.kind : null;
+          // 同代重试读取中：保留「暂不可读」呈现（不闪回假空态）。
+          return pendingDetailNosRef.current.has(node.no) ? "unavailable" : null;
+        })()
+      : null;
 
   // Esc 关窗（仅打开态监听）：键位判据在纯函数，宿主只消费；关闭走对应 handle（含焦点恢复）。
   // 两弹窗互斥（开一个关另一个）——Esc 只关当前那一个（卡片优先判存在性，实际不会同时开）。
@@ -441,6 +467,8 @@ export function BoardPane({
       onCloseCard={handleCloseCard}
       onJumpToCard={handleJumpToCard}
       onDispatchCard={handleDispatchCard}
+      openCardDetailState={openCardDetailState}
+      onRetryCardDetail={handleRetryCardDetail}
       onDrillToSlot={handleDrillToSlot}
       highlightCardId={highlight?.id ?? null}
       kanbanCompletedExpanded={kanbanCompletedExpanded}

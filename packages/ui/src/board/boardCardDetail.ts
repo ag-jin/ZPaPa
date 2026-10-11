@@ -10,9 +10,9 @@
  * - 换代即整表失效（旧代条目永不命中，也不留在表里），同会话内同卡不重复读（缓存命中）；
  * - 缓存实例由宿主持有（每面板一份），不跨工作区串味；`generation` 变化是唯一失效判据。
  *
- * 分片形态真源：编译器 `renderCardShard`（`~/.zcode/skills/zcode-board/assets/compile-board.mjs`）——
- * 头部注记 + `## 卡文`（目标 / 交付面全量枚举 / 验收）+ `## 执行摘要`（保留段）。本模块只读卡文三字段
- * （执行摘要段归 D7/#220 收口回写面，当前不作为弹窗字段消费）。
+ * 分片形态真源：编译器 `renderCardShard` / `renderRunSummary`（`~/.zcode/skills/zcode-board/assets/compile-board.mjs`）——
+ * 头部注记 + `## 卡文`（目标 / 交付面全量枚举 / 验收）+ `## 执行摘要`（执行详情，编译器按 runs 回写）。
+ * 本模块读卡文三字段（`parseCardShard`）与执行摘要段（`parseCardShardExecution`，#220/D7 执行详情面）。
  */
 import { joinFilePath } from "@/lib/path.js";
 import {
@@ -22,7 +22,13 @@ import {
   type BoardFileServicePort,
   type BoardRpcReadyGate,
 } from "./loadBoardDocument.js";
-import { parseBoardJson, type BoardTaskNode, type BoardViewModel } from "./boardViewModel.js";
+import {
+  parseBoardJson,
+  type BoardActiveRun,
+  type BoardLastRun,
+  type BoardTaskNode,
+  type BoardViewModel,
+} from "./boardViewModel.js";
 
 /**
  * 按稳定号在前序遍历中定位任务卡（#219/D6；分片详情/旧面回退共用）：
@@ -138,6 +144,111 @@ export function parseCardShard(text: string): {
   return { goal, deliverables, acceptance };
 }
 
+/**
+ * 分片「## 执行摘要」段解析（#220/D7；形态真源 = 编译器 `renderRunSummary`）：
+ * 执行详情（最近执行四要素 + 执行中 + 责任管线/当前/下一接手）由编译器按 runs 回写分片，
+ * 本函数按行首锚定的中文标签还原为弹窗执行详情面字段。行形态（逐行，缺省省略）：
+ *   `- 最近执行: <at> · <role> · <result>` / `- 停在: #<no>` / `- 下一步: <text>` /
+ *   `- 执行中: <role> · <at>` / `- 责任管线: <r1> → <r2> …` / `- 当前执行者: <role>` / `- 下一接手人: <role>`
+ * 无该段 / 只有骨架占位（HTML 注释）/ 无可识别行 → null（不猜、不造）。
+ * 纯函数：不读盘、不改入参。
+ */
+export interface BoardCardShardExecution {
+  lastRun: BoardLastRun | null;
+  activeRun: BoardActiveRun | null;
+  assignees: string[];
+  currentAssignee: string | null;
+  nextAssignee: string | null;
+}
+
+export function parseCardShardExecution(text: string): BoardCardShardExecution | null {
+  const lines = text.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => /^##\s*执行摘要\s*$/.test(line));
+  if (headingIndex < 0) return null;
+  let endIndex = lines.length;
+  for (let i = headingIndex + 1; i < lines.length; i += 1) {
+    if (/^##\s/.test(lines[i] ?? "")) {
+      endIndex = i;
+      break;
+    }
+  }
+  const block = lines.slice(headingIndex + 1, endIndex);
+
+  let at: string | null = null;
+  let role: string | null = null;
+  let result: string | null = null;
+  let stoppedAt: number | null = null;
+  let next: string | null = null;
+  let activeRole: string | null = null;
+  let activeAt: string | null = null;
+  let assignees: string[] = [];
+  let currentAssignee: string | null = null;
+  let nextAssignee: string | null = null;
+
+  const text2 = (v: string | undefined) => {
+    const t = (v ?? "").trim();
+    return t.length > 0 ? t : null;
+  };
+  for (const line of block) {
+    const lastMatch = /^-\s*最近执行:\s*(.*)$/.exec(line);
+    if (lastMatch) {
+      const parts = (lastMatch[1] ?? "").split(" · ");
+      at = text2(parts[0]);
+      role = text2(parts[1]);
+      result = text2(parts[2]);
+      continue;
+    }
+    const stopMatch = /^-\s*停在:\s*#(\d+)\s*$/.exec(line);
+    if (stopMatch) {
+      stoppedAt = Number(stopMatch[1]);
+      continue;
+    }
+    const nextMatch = /^-\s*下一步:\s*(.*)$/.exec(line);
+    if (nextMatch) {
+      next = text2(nextMatch[1]);
+      continue;
+    }
+    const activeMatch = /^-\s*执行中:\s*(.*)$/.exec(line);
+    if (activeMatch) {
+      const parts = (activeMatch[1] ?? "").split(" · ");
+      activeRole = text2(parts[0]);
+      activeAt = text2(parts[1]);
+      continue;
+    }
+    const pipelineMatch = /^-\s*责任管线:\s*(.*)$/.exec(line);
+    if (pipelineMatch) {
+      assignees = (pipelineMatch[1] ?? "")
+        .split("→")
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+      continue;
+    }
+    const currentMatch = /^-\s*当前执行者:\s*(.*)$/.exec(line);
+    if (currentMatch) {
+      currentAssignee = text2(currentMatch[1]);
+      continue;
+    }
+    const nextAssigneeMatch = /^-\s*下一接手人:\s*(.*)$/.exec(line);
+    if (nextAssigneeMatch) {
+      nextAssignee = text2(nextAssigneeMatch[1]);
+      continue;
+    }
+  }
+
+  const hasData =
+    at !== null ||
+    activeRole !== null ||
+    assignees.length > 0 ||
+    currentAssignee !== null ||
+    nextAssignee !== null;
+  if (!hasData) return null; // 骨架占位 / 无 run：无执行详情可回填
+  const lastRun: BoardLastRun | null =
+    at !== null && role !== null && result !== null ? { at, role, result, stoppedAt, next } : null;
+  const activeRun: BoardActiveRun | null =
+    activeRole !== null ? { role: activeRole, at: activeAt } : null;
+  return { lastRun, activeRun, assignees, currentAssignee, nextAssignee };
+}
+
 /** 旧面（board.json）内联卡 → 详情补丁（整包执行详情；与分片路径共用同一 `BoardCardDetailPatch`）。 */
 function taskNodeToPatch(task: BoardTaskNode): BoardCardDetailPatch {
   return {
@@ -164,9 +275,13 @@ function taskNodeToPatch(task: BoardTaskNode): BoardCardDetailPatch {
 
 /**
  * 按需读取一张卡的详情：
- * - `cardFile` 非空 → 读 `<工作目录>/<cardFile>` 分片，解析卡文三字段；
+ * - `cardFile` 非空 → 读 `<工作目录>/<cardFile>` 分片，解析卡文三字段 + 执行摘要段（#220/D7）；
  * - `cardFile` 为空 → 回落旧面 `board.json`（按稳定号定位，整包详情）；无号/未命中 → missing。
  * 只读一个文件，不扫描目录（§7.3）。
+ *
+ * 错误标签（T4/D7 收口）：只有「ENOENT/文件不存在」才是 `missing`（确定没有）；其余读取失败
+ * （断连 / 权限 / 非 ENOENT 的 RPC 错）一律 `unavailable`（暂时读不到）——不得把可恢复的读取失败
+ * 误报成「板上没有」（确定性断言），否则弹窗会拿假空态误导用户。
  */
 export async function loadBoardCardDetail(params: {
   fileService: BoardFileServicePort;
@@ -187,10 +302,20 @@ export async function loadBoardCardDetail(params: {
       });
       if (file.truncated) return { kind: "unavailable" };
       const parsed = parseCardShard(file.content);
-      return { kind: "loaded", patch: parsed };
+      const execution = parseCardShardExecution(file.content);
+      const patch: BoardCardDetailPatch = { ...parsed };
+      if (execution) {
+        patch.lastRun = execution.lastRun;
+        patch.activeRun = execution.activeRun;
+        patch.assignees = execution.assignees;
+        patch.currentAssignee = execution.currentAssignee;
+        patch.nextAssignee = execution.nextAssignee;
+      }
+      return { kind: "loaded", patch };
     } catch (error) {
+      // 只有 ENOENT 才是「没有这张卡」；其余（断连/权限/RPC 错）是「暂时读不到」——不误报 missing（T4/D7）。
       if (isBoardFileMissingError(error)) return { kind: "missing" };
-      return isRpcReady() ? { kind: "missing" } : { kind: "unavailable" };
+      return { kind: "unavailable" };
     }
   }
 
@@ -208,7 +333,7 @@ export async function loadBoardCardDetail(params: {
     content = file.content;
   } catch (error) {
     if (isBoardFileMissingError(error)) return { kind: "missing" };
-    return isRpcReady() ? { kind: "missing" } : { kind: "unavailable" };
+    return { kind: "unavailable" };
   }
   const outcome = parseBoardJson(content);
   if (outcome.kind !== "ready") return { kind: "missing" };
@@ -264,6 +389,11 @@ export class BoardCardDetailCache {
 
   set(no: number, state: BoardCardDetailState): void {
     this.entries.set(no, state);
+  }
+
+  /** 删除单卡条目（#220/D7 同代重试：清 `unavailable` 条目 → 宿主 effect 重新读取）。 */
+  delete(no: number): void {
+    this.entries.delete(no);
   }
 
   /** 已读到的详情补丁（按号；只含 `loaded` 项）——渲染期合并回视图模型用。 */

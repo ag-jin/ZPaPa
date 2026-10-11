@@ -7,6 +7,7 @@ import {
   findBoardTaskByNo,
   loadBoardCardDetail,
   parseCardShard,
+  parseCardShardExecution,
 } from "../src/board/boardCardDetail.js";
 import {
   loadBoardDocument,
@@ -386,4 +387,127 @@ test("指引面（薄索引面）：五槽取 screen；在途计数不渲染（n
   );
   assert.equal(plan?.frontierCount, 2, "前沿计数取 INDEX frontier（同形投影）");
   assert.equal(plan?.queue.length, 2, "前沿队列取 INDEX frontier 成员");
+});
+
+/* ---------------- #220/D7：分片执行摘要消费（S4）+ 详情读取态（T4/major①） ---------------- */
+
+/** 分片执行摘要段（编译器 renderRunSummary 形态；独立构造，不借实现）。 */
+const SHARD_EXEC_TEXT = [
+  "# 702 · 分片卡",
+  "",
+  "<!-- 机械产出（zcode-board 编译器，#217/D4）：卡文段随计划稿重编译覆盖；执行摘要段随 runs 重编译回写（#220/D7）。 -->",
+  "",
+  "## 卡文",
+  "",
+  "- 目标: 让分片卡文按需读",
+  "",
+  "## 执行摘要",
+  "",
+  "- 最近执行: 2026-10-12T04:08:45+08:00 · integrator · done",
+  "- 停在: #219",
+  "- 下一步: 已合入 main 554d1bb",
+  "- 责任管线: implementer → test-verifier → code-reviewer → integrator",
+  "- 当前执行者: integrator",
+  "- 下一接手人: integrator",
+  "",
+].join("\n");
+
+test("parseCardShardExecution：执行摘要段 → 执行详情（最近执行/停在/下一步/管线/当前/下一接手）", () => {
+  const exec = parseCardShardExecution(SHARD_EXEC_TEXT);
+  assert.ok(exec, "有 run 回写的分片 → 非空执行详情");
+  assert.deepEqual(exec.lastRun, {
+    at: "2026-10-12T04:08:45+08:00",
+    role: "integrator",
+    result: "done",
+    stoppedAt: 219,
+    next: "已合入 main 554d1bb",
+  });
+  assert.equal(exec.activeRun, null, "done 无断点 → 无执行中");
+  assert.deepEqual(exec.assignees, ["implementer", "test-verifier", "code-reviewer", "integrator"]);
+  assert.equal(exec.currentAssignee, "integrator");
+  assert.equal(exec.nextAssignee, "integrator");
+});
+
+test("parseCardShardExecution：执行中行 → activeRun（partial 断点）", () => {
+  const text = [
+    "## 执行摘要",
+    "",
+    "- 最近执行: 2026-10-11T09:00:00+08:00 · implementer · partial",
+    "- 执行中: implementer · 2026-10-11T09:00:00+08:00",
+    "",
+  ].join("\n");
+  const exec = parseCardShardExecution(text);
+  assert.ok(exec);
+  assert.deepEqual(exec.activeRun, { role: "implementer", at: "2026-10-11T09:00:00+08:00" });
+  assert.equal(exec.lastRun?.result, "partial");
+});
+
+test("parseCardShardExecution：骨架占位/缺段 → null（不猜、不造）", () => {
+  assert.equal(
+    parseCardShardExecution(
+      "# 702 · 卡\n\n<!-- note -->\n\n## 执行摘要\n\n<!-- 无 run 记录（执行摘要随 runs 落账后由编译器回写）。 -->\n",
+    ),
+    null,
+    "骨架占位（HTML 注释）→ 无执行详情",
+  );
+  assert.equal(
+    parseCardShardExecution("# 702 · 卡\n\n## 卡文\n\n- 目标: x\n"),
+    null,
+    "缺「## 执行摘要」段 → null",
+  );
+});
+
+test("loadBoardCardDetail：分片卡回填执行详情（S4——执行详情从分片读，不只在旧面）", async () => {
+  const fileService = createFakeFileService({ [SHARD_PATH]: { content: SHARD_EXEC_TEXT } });
+  const state = await loadBoardCardDetail({
+    fileService,
+    workspacePath: WORKSPACE,
+    task: { no: 702, cardFile: ".zcode/etask/cards/702.md" },
+  });
+  assert.equal(state.kind, "loaded");
+  if (state.kind !== "loaded") return;
+  assert.equal(state.patch.goal, "让分片卡文按需读", "卡文三字段照常回填");
+  assert.equal(state.patch.lastRun?.result, "done", "执行详情从分片执行摘要段回填");
+  assert.equal(state.patch.currentAssignee, "integrator");
+  assert.deepEqual(state.patch.assignees, [
+    "implementer",
+    "test-verifier",
+    "code-reviewer",
+    "integrator",
+  ]);
+});
+
+test("loadBoardCardDetail：非 ENOENT 读取失败 → unavailable（不误报 missing；T4/D7）", async () => {
+  const fileService = {
+    checkFilesExist: async () => [],
+    readTextFile: async () => {
+      throw new Error("RPC connection lost");
+    },
+  };
+  const shardState = await loadBoardCardDetail({
+    fileService,
+    workspacePath: WORKSPACE,
+    task: { no: 702, cardFile: ".zcode/etask/cards/702.md" },
+  });
+  assert.equal(
+    shardState.kind,
+    "unavailable",
+    "分片读取失败（非 ENOENT）→ 暂时不可读，不是 missing",
+  );
+  const flatState = await loadBoardCardDetail({
+    fileService,
+    workspacePath: WORKSPACE,
+    task: { no: 8, cardFile: null },
+  });
+  assert.equal(flatState.kind, "unavailable", "旧面回落读取失败（非 ENOENT）→ unavailable");
+});
+
+test("BoardCardDetailCache：delete 单卡条目（同代重试——unavailable 可重读）", () => {
+  const cache = new BoardCardDetailCache();
+  cache.begin("g1");
+  cache.set(702, { kind: "unavailable" });
+  assert.equal(cache.get(702)?.kind, "unavailable");
+  cache.delete(702);
+  assert.equal(cache.get(702), undefined, "删除条目 → 宿主 effect 缓存未命中即重读（同代重试）");
+  assert.equal(cache.size, 0);
 });
