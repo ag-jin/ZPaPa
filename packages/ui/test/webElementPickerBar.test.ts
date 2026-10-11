@@ -4,8 +4,8 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-/* 拾取浮条（用户实测反馈后的形态）的**结构守卫**：ui 包没有渲染设施（既有做法，
-   见 squadTimelineRender.test.ts 说明），所以浮条这个交互面拆成三半验证：
+/* 拾取浮条（用户实测反馈后的形态）的**结构守卫**：ui 包没有渲染设施（既有做法），
+   所以浮条这个交互面拆成三半验证：
    ① 会话状态机与派发语义在 useWebElementPicker.test.ts（fake executeJs 驱动）；
    ② 层级/评语/按钮的**在场与接线**在源码守卫（本文件）；
    ③ 文案在 browserElementReviewI18n.test.ts（两语键集相等 + 逐条文案）。

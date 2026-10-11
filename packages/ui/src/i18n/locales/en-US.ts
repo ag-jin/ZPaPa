@@ -1053,6 +1053,9 @@ const enUS: Record<string, string> = {
   "board.lastRun.stoppedAt": "stopped at #{no}",
   "board.empty.none":
     "This project has no board yet. It is generated automatically after the first interview registration or spec creation.",
+  // Empty-state A split (#158; contract §2 A1/A2): board artifacts present but board.json missing.
+  "board.empty.missingDamaged":
+    "The board file is missing (possibly deleted or not synced). Rebuild it by running the compiler in a session.",
   "board.empty.features": "No specs or plans yet.",
   "board.empty.damaged":
     "The board file cannot be read or is corrupted. Rebuild it by running the compiler in a session.",
@@ -1066,6 +1069,9 @@ const enUS: Record<string, string> = {
   // Temporarily unreadable (connection not ready): kept apart from "damaged" (review #32-P3).
   "board.unavailable":
     "The board is temporarily unreadable (connection not ready). It will be re-read once the connection recovers, or use Refresh at the top right to retry.",
+  // Not connected with a previous snapshot (#158; E7 §7.2): keep the last snapshot, marked stale.
+  "board.unavailable.snapshotNotice":
+    "Not connected: showing the last snapshot, which may be out of date. It refreshes automatically when the connection returns, or use Refresh at the top right to retry.",
   // Stale hint (contract §5 app-side lightweight reading: pure time heuristic, no fs mtime compare).
   "board.stale.hint": "The board may be out of date (updated {time}): recompile it in the session.",
   "board.attention.interviewedNotArranged": "Interviewed, not yet carded",
@@ -1088,10 +1094,26 @@ const enUS: Record<string, string> = {
   "board.stage.done": "Done",
   "board.stage.cancelled": "Cancelled",
   // View switcher (contract §13.2 four views; this panel ships tree/board/list).
-  "board.feature.cardCount": "{count} cards",
+  // Count messages ship singular/plural key pairs (A4-4/F4): count === 1 picks the `.one` form
+  // ("1 draft", not "1 drafts").
+  "board.feature.cardCount.one": "{count} card",
+  "board.feature.cardCount.other": "{count} cards",
   // Container-layer count chips (A4-1): draft counts on epic/phase headers plus the epic layer's phase count.
-  "board.layer.planCount": "{count} drafts",
-  "board.layer.phaseCount": "{count} phases",
+  "board.layer.planCount.one": "{count} draft",
+  "board.layer.planCount.other": "{count} drafts",
+  "board.layer.phaseCount.one": "{count} phase",
+  "board.layer.phaseCount.other": "{count} phases",
+  // Count-chip titles (A4-4/D5): the chip word is a magnitude only; full meaning on hover.
+  "board.layer.planCountTitle": "Member drafts in this layer (each draft holds cards)",
+  "board.layer.phaseCountTitle": "Phases in this layer",
+  // Layer rollup gap badge (A4-4/AD-6): sum of member attention codes (0 renders nothing).
+  "board.layer.gapCount.one": "{count} gap",
+  "board.layer.gapCount.other": "{count} gaps",
+  // Epic dialog (A4-4/AD-6 degraded form): L2 rollup stage composition plus phase drill pointers.
+  "board.epic.dialog.rollup": "Stage composition",
+  "board.epic.dialog.phases": "Phases",
+  "board.epic.dialog.drill": "Drill down to {name}",
+  "board.epic.dialog.noStage": "No stage",
   // Accessible names for the fold toggles (#55 S-3): the button only shows ▸/▾.
   "board.group.expand": "Expand {name}",
   "board.group.collapse": "Collapse {name}",

@@ -256,6 +256,54 @@
  *              （计划语料/归档目标语义自定，不二份判定）；无 doc(s) 零噪声。
  *   突变 m54a/m54b：AGENTS.md 锚扫描关停 → 场景 107 红侧必咬；docs 看板资产扫描关停 → 场景 107 必咬。
  *
+ * B4-4（#108）覆盖（runs 引用非活卡号升对账点名；E1 V10 / 裁决⑥ / AD-10①；判据单点 = classifyDeadNumber）：
+ *   场景 108 升对账点名级：副本域插一条引用死号的 run（幽灵号 → 文案 A「registry 有条目而板上无」；
+ *           完全未知号 → 文案 B「完全未知号」）→ `--check` 独立「对账点名」节逐条点名（run + 号 +
+ *           条目指向两值；与编译侧 diagnostics 两通道分流逐号一致——禁二份判据）；清理该 run 记录后
+ *           点名自清（零残留）；活卡引用零噪声；非失败级（退出码 0、不阻断）。
+ *   纯函数契约块：checkRunsDeadCardRefs（两文案分流/活号零噪声/非稳定号不解析/同 run 同号去重/
+ *           runId 缺省兜底/入参零改动/非对象零叠加）。
+ *   突变 m108a/m108b：对账点名接线关停 → 场景 108 点名出现断言必咬；分流判据塌缩（幽灵与未知同文案）
+ *           → 场景 108 的独立文案断言必咬。
+ *
+ * #73 覆盖（检查点命令 --preflight / --doctor；用户 2026-10-10「多检查点」；远端 296 档事故复现）：
+ *   场景 73a --preflight 绿基线：扫描面预览（目录与文件数/未领号计数/opt-in 生效）、预计上板（特性/卡/
+ *           诊断）、结论绿；全程只读（字节+mtime+新增+删除零变化，不出板）
+ *   场景 73b 红禁止（远端新赛马复现）：docs/design-notes 296 档 opt-in 进生效面 → 未领号 296 >10 →
+ *           退出码 2、红项点名（excludeGlobs 去路）、不出板、296 档字节零改写
+ *   场景 73c 黄警告：296 档存在但非 opt-in → PLAN_DIRS 硬编码碰撞醒目警告（旧版整批吸板语境）、
+ *           退出码 1、零吸入（未误判红）
+ *   场景 73d 增量预览（有现有板）：+新增/-移除/~变化/attentionSummary/diagnostics/板面总差异（掩码根
+ *           updatedAt 逐字段）；预检不重写板（字节+mtime）；坏现有板 → 黄「增量预览不可得」零重写
+ *   场景 73e 红：坏 scan.json 整份拒收 → 退出码 2（默认面兜底、预期≠生效）；73g 黄：条目级拒绝
+ *           （池外引用）该条拒绝其余生效、退出码 1
+ *   场景 73f 红：幻影板根（子目录）→ 退出码 2、点名两路径 + cd 指引、子目录零写入
+ *   场景 73h --doctor 绿基线（副本域）：manifest 关键文件 sha256 全对账 + 三版本一致 + 非 git 仓信息项
+ *           + 未声明 hook 信息项不阻断
+ *   场景 73i doctor 红/黄：旧版本声明（0.3.1 ≠ 0.5.0）红、同名分叉副本黄、坏 node 路径红、PATH 空红、
+ *           五核心未声明黄、合规声明绿（1 项）
+ *   场景 73k doctor git 漂移：干净仓绿 / 改动未提交黄（点名计数与样例）；manifest 对账不受污染
+ *   场景 73l doctor 红六相位：摘要不符（改了未重生成）/未登记/有记录而缺失/manifest 版本位/schema
+ *           契约位/SKILL.md 头部手写行——逐项点名 + 复原自清回绿
+ *   场景 73m doctor 项目结构风险黄：幻影板根 / scan.json 整份拒收 → 指向 --preflight 红项处置
+ *   场景 73n 检查点 CLI 卫生：与既有模式互斥、--force 限定、未知选项 2、--help 记录两命令与退出码语义
+ *   场景 73p doctor config.json 结构：坏 JSON 红、缺 hooks 包装层红（静默跳过防线）、enabled 非 true 黄、
+ *           空事件黄
+ *   突变 m73a–m73e（见 run-mutations.mjs）：>10 红判据/碰撞警告/manifest 摘要对账/git 漂移判定/旧版本
+ *           判定逐项关停 → 对应场景必咬（敏感性机械防线）
+ *
+ * #179/B8-1 覆盖（doctor 并存板工具检测——用户 2026-10-11「这个应该在使用的时候建议，因为用户自己
+ *   不知道可能会有这种情况」；新赛马项目双编译器并存实战——项目侧发号 + 全局跑 hooks）：
+ *   场景 179a 不一致 → 黄：项目侧 .zcode/board-tools/compile.mjs --version 读数（0.4.0）≠ 全局技能 →
+ *           黄项点名两值 + 「统一到全局技能 / 锁版本」两路径建议；体检零写入（含探测子进程）
+ *   场景 179b 仅项目侧存在 → 信息：入口版本不可读（无 --version 口径；非编译形态不执行探测——零写入
+ *           承诺优先）→ 信息项双源形态提示、不阻断判级（仍绿）；hooks 声明指向非全局自建脚本 → 点名
+ *           该入口（③ 既有「分叉/自建脚本」黄判级不变）
+ *   场景 179c 一致 → 绿：读数 = 全局技能 → 绿项 + 双源形态提示（升级全局时同步项目侧入口）
+ *   场景 179d 真实板零噪声：hooks 全指全局技能（无并存）→ 无分节/无条目；同夹具加项目侧入口（对照）
+ *           必现点名（零噪声 ≠ 漏检；判别灵敏度对照）
+ *   突变 m179a/m179b（见 run-mutations.mjs）：不一致判据关停 / hooks 声明入口检测关停 → 对应场景必咬
+ *
  * 用法：
  *   node assets/test/run-scenarios.mjs                 # 全部场景
  *   node assets/test/run-scenarios.mjs --scenario 1,4  # 只跑指定场景
@@ -264,7 +312,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -4846,6 +4894,848 @@ scenario("72e", "#72：includeDirs 引用池外目录 → 诊断拒绝（防任�
   },
 });
 
+// ---------------------------------------------------------------- #73：检查点命令（--preflight / --doctor）
+
+/**
+ * 零写入断言（#73 预检/体检只读口径）：fn() 前后夹具快照逐文件字节 + mtime 全等，且无新增/删除。
+ * （--preflight 承诺"不写任何文件"：比默认编译的"只允许 board.json/board.md"更严——零新增。）
+ */
+function assertZeroWrite(c, root, fn, label) {
+  const before = treeSnapshot(root);
+  const res = fn();
+  const diff = diffSnapshot(before, treeSnapshot(root), []);
+  c.eq(
+    { changed: diff.changed.map((x) => x.rel), removed: diff.removed, added: diff.added },
+    { changed: [], removed: [], added: [] },
+    `${label}：零写入（既有文件字节/mtime 不变、无新增、无删除）`,
+    show(diff.changed.map((x) => x.rel || x)),
+  );
+  return res;
+}
+
+/** 播种一个 spec 源（progress.json + tasks.md 单任务），供"预计上板"双来源断言。 */
+function seedSpecFeature(root, dir, title, taskTitle) {
+  w(root, `specs/${dir}/progress.json`, `${JSON.stringify({ version: 3, feature: dir, title, status: "active", tasks: [] }, null, 2)}\n`);
+  w(root, `specs/${dir}/tasks.md`, `# ${title}\n\n- [ ] 1. ${taskTitle}\n  - Scope: 夹具。\n`);
+}
+
+// ---- 73a：--preflight 扫描面预览（绿基线）
+scenario("73a", "#73：--preflight 扫描面预览（绿基线）——列将扫描目录与文件数、预计特性/卡、未领号计数；只读零写入；退出码 0 绿", {
+  skipCommon: true,
+  build(root) {
+    w(root, ".zcode/plans/plan-nursery.md", ["# 苗圃稿", "<!-- zcode-board: no=7 -->", "", "- [ ] 1. 苗圃条目 A", "- [x] 2. 苗圃条目 B", ""].join("\n"));
+    w(root, ".zcode/plans/plan-fresh.md", ["# 新稿", "", "- **T1 新条目（草案）**：正文。", ""].join("\n"));
+    w(root, "docs/plans/plan-old.md", ["# 旧票计划", "", "- [ ] 1. 旧计划条目", ""].join("\n"));
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/plans"] }, null, 2)}\n`);
+    seedSpecFeature(root, "feat-x", "spec 特性", "spec 条目");
+  },
+  steps: [{ args: ["--preflight"] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 0, "绿：退出码 0（可编译）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, `--preflight：${root}`, "头行点名项目根");
+    c.inc(run.stdout, ".zcode/board/scan.json", "声明 scan.json 已解析（配置面可见）");
+    c.inc(run.stdout, "将扫描目录：", "扫描面预览节存在");
+    // 夹具几何独立事实：.zcode/plans 2 个文件；docs/plans opt-in 后 1 个；3 个计划文件（未领号 2 = plan-fresh + plan-old 无头标记）
+    c.inc(run.stdout, ".zcode/plans/（默认，存在）：2 个计划文件", "苗圃目录与文件数（默认面）");
+    c.inc(run.stdout, "docs/plans/（opt-in，已启用，存在）：1 个计划文件", "opt-in 目录与文件数（已启用）");
+    c.inc(run.stdout, "将扫描：3 个计划文件（未领号 2 个）＋ 1 个 spec 目录", "计划文件总数 + 未领号计数 + spec 目录数");
+    c.inc(run.stdout, "预计上板：特性 4 个", "预计特性数（3 plan + 1 spec）");
+    c.inc(run.stdout, "卡 5 张", "预计卡数（plan 2+1+1 + spec 1）");
+    c.inc(run.stdout, "结论：绿", "结论行：绿");
+    c.inc(run.stdout, "--preflight 本身零写入", "声明零写入口径");
+
+    // 只读：零写入 + 不出板
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：board.json 未生成");
+    c.ok(!isFile(join(root, ".zcode/board/board.md")), "不出板：board.md 未生成");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "--preflight 复跑");
+  },
+});
+
+// ---- 73b：--preflight 红禁止——296 档整批历史档在生效扫描面内（远端新赛马场景复现：opt-in 后洪水）
+scenario("73b", "#73：--preflight 红禁止——296 档项目（opt-in 后整批未领号在扫描面内）>10 风险 → 退出码 2、不出板、零写入", {
+  skipCommon: true,
+  build(root) {
+    // 远端新赛马场景复现：docs/design-notes 296 份活历史档；scan.json 显式 opt-in → 生效扫描面 296 个未领号文件
+    for (let i = 0; i < 296; i += 1) {
+      w(root, `docs/design-notes/note-${String(i).padStart(3, "0")}.md`, `# 历史档 ${i}\n\n- [ ] 1. 历史条目 ${i}\n`);
+    }
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/design-notes"] }, null, 2)}\n`);
+  },
+  steps: [{ args: ["--preflight"] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 2, "红：退出码 2（禁止——先整改，勿出板）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "将扫描：296 个计划文件（未领号 296 个）", "预览照实报出整批 296 档（未领号 296）");
+    c.inc(run.stdout, "红（禁止", "红项清单存在（判级：红=禁止）");
+    c.inc(run.stdout, "防 mass 改写闸", "红项点名 mass 改写判据（#72 同源阈值）");
+    c.inc(run.stdout, ">10", "红项写明阈值口径（>10）");
+    c.inc(run.stdout, "excludeGlobs", "红项给整改去路（扫描面核对：excludeGlobs/拆分登记）");
+    c.inc(run.stdout, "结论：红", "结论行：红");
+    c.inc(run.stdout, "勿出板", "结论明确「勿出板」");
+
+    // 红 = 不出板 + 零写入（296 档文件一个都不许被改写/盖号）
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：board.json 未生成");
+    c.ok(!isFile(join(root, ".zcode/board/board.md")), "不出板：board.md 未生成");
+    c.eq(
+      readFileSync(join(root, "docs/design-notes/note-000.md"), "utf8"),
+      "# 历史档 0\n\n- [ ] 1. 历史条目 0\n",
+      "历史档字节零改写（预检只读）",
+    );
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "296 档红侧复跑");
+  },
+});
+
+// ---- 73c：--preflight 黄警告——296 档历史档存在但未 opt-in（PLAN_DIRS 硬编码碰撞检测；不扫不吸入）
+scenario("73c", "#73：--preflight 黄警告——docs/design-notes 296 档存在且非 opt-in（PLAN_DIRS 硬编码碰撞检测）→ 退出码 1、醒目警告、零吸入", {
+  skipCommon: true,
+  build(root) {
+    for (let i = 0; i < 296; i += 1) {
+      w(root, `docs/design-notes/note-${String(i).padStart(3, "0")}.md`, `# 历史档 ${i}\n\n- [ ] 1. 历史条目 ${i}\n`);
+    }
+  },
+  steps: [{ args: ["--preflight"] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 1, "黄：退出码 1（警告——确认后继续）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "docs/design-notes/（opt-in，未启用，存在）：296 个 .md（不扫）", "预览点名未启用池目录与文件数（不扫）");
+    c.inc(run.stdout, "将扫描：0 个计划文件（未领号 0 个）", "未 opt-in 零吸入（生效扫描面为空）");
+    c.inc(run.stdout, "黄（警告", "黄项清单存在（判级：黄=警告）");
+    c.inc(run.stdout, "PLAN_DIRS 硬编码碰撞", "黄项点名硬编码碰撞检测（醒目警告）");
+    c.inc(run.stdout, "296", "黄项报出整批规模（296 档）");
+    c.inc(run.stdout, "旧版编译器", "黄项说明旧版硬编码三目录会整批吸上板（版本碰撞语境）");
+    c.inc(run.stdout, "结论：黄", "结论行：黄");
+    c.inc(run.stdout, "退出码 1", "结论行写明退出码语义");
+
+    // 黄 ≠ 红：本次编译安全（不扫不吸入），不判禁止
+    c.ok(!/结论：红/.test(run.stdout), "未误判红（非 opt-in 目录不扫＝无洪水风险）");
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：board.json 未生成");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "296 档黄侧复跑");
+  },
+});
+
+// ---- 73d：--preflight 增量预览（有现有板：本次编译会改什么 → diff 摘要；预检零重写）
+scenario("73d", "#73：--preflight 增量预览——现有板时给出「本次编译会改什么」diff 摘要（新增/状态变化/attentionSummary/诊断）；预检不重写板", {
+  skipCommon: true,
+  build(root) {
+    w(root, ".zcode/plans/plan-a.md", ["# 甲稿", "<!-- zcode-board: no=7 -->", "", "- [ ] 1. 甲条目", "- [ ] 2. 乙条目", ""].join("\n"));
+  },
+  steps: [{ args: [] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const comp = ctx.steps[0];
+    c.eq(comp.code, 0, "前置：默认编译产出基准板（退出码 0）", `stderr=${truncate(comp.stderr)}`);
+    const boardBefore = readFileSync(join(root, ".zcode/board/board.json"), "utf8");
+    const mtimeBefore = statSync(join(root, ".zcode/board/board.json")).mtimeMs;
+
+    // 变更源：勾选甲条目（状态推进）+ 新增丙条目（卡 +1）→ 预检应报出增量
+    w(root, ".zcode/plans/plan-a.md", ["# 甲稿", "<!-- zcode-board: no=7 -->", "", "- [x] 1. 甲条目", "- [ ] 2. 乙条目", "- [ ] 3. 丙条目", ""].join("\n"));
+
+    const run = assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "--preflight（有现有板，增量预览）");
+    c.eq(run.code, 0, "增量场景仍为绿（退出码 0）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "现有板：.zcode/board/board.json（updatedAt ", "现有板行点名 board.json 与编译时刻");
+    c.inc(run.stdout, "增量预览（相对现有板）：", "增量预览节存在");
+    c.inc(run.stdout, "+ 新增：特性 0 个、卡 1 张", "新增计数（丙条目 = 卡 +1）");
+    c.inc(run.stdout, "丙条目", "新增样例点名卡片标题");
+    c.inc(run.stdout, "- 移除：特性 0 个、卡 0 张", "移除计数（零移除）");
+    c.inc(run.stdout, "~ 变化（status/段位/attention）：2 张", "变化计数（特性 待办→执行中 + 甲条目 待办→已完成）");
+    c.inc(run.stdout, "attentionSummary：无变化", "attentionSummary 逐键对照（本夹具无缺口变化）");
+    c.inc(run.stdout, "diagnostics：", "诊断数前后对照行存在");
+    c.inc(run.stdout, "板面总差异：", "板面总差异行（掩码根 updatedAt 的逐字段对照）");
+    c.inc(run.stdout, "结论：绿", "结论行：绿");
+
+    // 预检对现有板零重写（增量预览只是"看"，不是"编译"）
+    c.eq(readFileSync(join(root, ".zcode/board/board.json"), "utf8"), boardBefore, "board.json 字节零重写（含 updatedAt 不变）");
+    c.eq(statSync(join(root, ".zcode/board/board.json")).mtimeMs, mtimeBefore, "board.json mtime 不变（未触发重编译）");
+
+    // 对照：真正编译后板面落地（预检所述差异即编译产物）
+    const real = runCompiler(root, []);
+    c.eq(real.code, 0, "对照：真编译退出码 0");
+    const after = JSON.parse(readFileSync(join(root, ".zcode/board/board.json"), "utf8"));
+    const flat = [];
+    const walk = (ts) => { for (const t of ts ?? []) { flat.push(t); walk(t.tasks); } };
+    walk(after.features[0]?.tasks ?? []);
+    c.eq(flat.length, 3, "对照：编译后 3 张卡（预检『卡 +1』一致）");
+
+    // 附相位：现有板不可解析 → 预检判黄（增量预览不可得）+ 零重写（不趁乱覆盖）
+    writeFileSync(join(root, ".zcode/board/board.json"), '{\n  "version": 2,\n  "features": [\n');
+    const corrupt = readFileSync(join(root, ".zcode/board/board.json"), "utf8");
+    const d2 = assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "--preflight（坏现有板）");
+    c.eq(d2.code, 1, "坏现有板 → 黄（退出码 1；编译是修复路径但先确认）", `stderr=${truncate(d2.stderr)}`);
+    c.inc(d2.stdout, "增量预览不可得", "点名增量预览不可得（不猜）");
+    c.inc(d2.stdout, "结论：黄", "结论行：黄");
+    c.eq(readFileSync(join(root, ".zcode/board/board.json"), "utf8"), corrupt, "坏板字节零重写（预检只读）");
+  },
+});
+
+// ---- 73e：--preflight 红——scan.json 整份拒收（会静默回落默认扫面，预期与生效不一致）
+scenario("73e", "#73：--preflight 红——坏 scan.json（整份拒收→默认扫面兜底）→ 退出码 2，点名解析失败与回落语义，零写入", {
+  skipCommon: true,
+  build(root) {
+    w(root, ".zcode/plans/plan-keep.md", ["# 苗圃稿", "", "- [ ] 1. 苗圃条目", ""].join("\n"));
+    w(root, "docs/plans/plan-want.md", ["# 想扫的稿", "", "- [ ] 1. 想扫条目", ""].join("\n"));
+    w(root, ".zcode/board/scan.json", "{ 坏 JSON —— includeDirs 也不存在\n");
+  },
+  steps: [{ args: ["--preflight"] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 2, "红：退出码 2（禁止——配置整份拒收，先修配置）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "红（禁止", "红项清单存在");
+    c.inc(run.stdout, "scan.json", "红项点名 scan.json");
+    c.inc(run.stdout, "整份拒收", "红项写明整份拒收语义（不部分生效）");
+    c.inc(run.stdout, ".zcode/plans", "红项说明回落默认扫面 .zcode/plans（本次生效面）");
+    c.inc(run.stdout, "结论：红", "结论行：红");
+    // 预览照实：坏配置下生效面 = 默认苗圃（docs/plans 不扫）
+    c.inc(run.stdout, "将扫描：1 个计划文件（未领号 1 个）", "预览按兜底生效面计数（苗圃 1 个）");
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：board.json 未生成");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "坏 scan.json 红侧复跑");
+  },
+});
+
+// ---- 73g：--preflight 黄——scan.json 条目级错误（部分拒收：该条拒绝、其余照常生效）
+scenario("73g", "#73：--preflight 黄——scan.json 池外引用（条目级拒绝）→ 退出码 1、点名该条拒绝、池内条目照常生效", {
+  skipCommon: true,
+  build(root) {
+    w(root, ".zcode/plans/plan-keep.md", ["# 苗圃稿", "", "- [ ] 1. 苗圃条目", ""].join("\n"));
+    w(root, "docs/plans/plan-old.md", ["# 旧票计划", "", "- [ ] 1. 旧计划条目", ""].join("\n"));
+    w(root, "docs/history/bait.md", ["# 池外诱饵", "", "- [ ] 1. 任意目录条目", ""].join("\n"));
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/plans", "docs/history"] }, null, 2)}\n`);
+  },
+  steps: [{ args: ["--preflight"] }],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 1, "黄：退出码 1（警告——确认后继续）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "黄（警告", "黄项清单存在");
+    c.inc(run.stdout, "scan.json 条目级错误（该条拒绝、其余照常生效）", "条目级错误语义成文（部分拒收，非整份）");
+    c.inc(run.stdout, "池外目录", "点名拒绝判据（池外目录引用）");
+    c.inc(run.stdout, "docs/history", "点名被拒目录");
+    c.inc(run.stdout, "docs/plans/（opt-in，已启用，存在）：1 个计划文件", "池内合法条目照常生效（扫描面预览）");
+    c.inc(run.stdout, "将扫描：2 个计划文件（未领号 2 个）", "生效面计数（苗圃 1 + docs/plans 1；池外诱饵不扫）");
+    c.inc(run.stdout, "结论：黄", "结论行：黄");
+    c.ok(!/结论：红/.test(run.stdout), "非整份拒收不判红（条目级错误 ≠ 配置不可用）");
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：board.json 未生成");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "条目级黄侧复跑");
+  },
+});
+
+// ---- 73f：--preflight 红——幻影板防线（resolved root 是子目录：在子目录挂板＝幻影板 + 证据错位）
+scenario("73f", "#73：--preflight 红——幻影板防线（子目录非板根、祖先有板）→ 退出码 2、点名正确板根与 cd 指引，零写入", {
+  skipCommon: true,
+  build(root) {
+    // 上层板项目（板根）：既有 board.json
+    w(root, ".zcode/board/board.json", `${JSON.stringify({ version: 2, generatedBy: "zcode-board/0.5.0", features: [] }, null, 2)}\n`);
+    w(root, ".zcode/board/board.md", "# 板\n");
+    // 子目录（幻觉根）：有源码、无自身板 —— cwd 漂移的典型落点
+    w(root, "ZPaPa/.zcode/plans/plan-sub.md", ["# 子项目稿", "", "- [ ] 1. 子条目", ""].join("\n"));
+  },
+  steps: [{ root: (r) => join(r, "ZPaPa"), args: ["--preflight"] }],
+  assert(c, ctx) {
+    const root = join(ctx.root, "ZPaPa");
+    const run = ctx.steps[0];
+
+    c.eq(run.code, 2, "红：退出码 2（禁止——输出路径 ≠ 板根，出板即幻影板）", `stderr=${truncate(run.stderr)}`);
+    c.inc(run.stdout, "红（禁止", "红项清单存在");
+    c.inc(run.stdout, "幻影板防线", "红项点名幻影板防线（#114/E1 V20 同源判据）");
+    c.inc(run.stdout, join(root, ".zcode", "board"), "点名错误的输出路径（当前根）");
+    c.inc(run.stdout, join(ctx.root, ".zcode", "board"), "点名正确板根（祖先）");
+    c.inc(run.stdout, "cd ", "给出 cd 指引");
+    c.inc(run.stdout, "结论：红", "结论行：红");
+    c.ok(!isFile(join(root, ".zcode/board/board.json")), "不出板：子目录幻影板未生成");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "幻影根红侧复跑");
+  },
+});
+
+/** 技能包副本（SKILL.md + assets/**；排除 test/.git/samples）——doctor 体检一律副本域（真实技能目录零触碰）。 */
+function copySkillTree(dest) {
+  cpSync(join(ASSETS_DIR, ".."), dest, {
+    recursive: true,
+    filter: (src) => !/([\\/])(test|\.git|samples)([\\/]|$)/.test(src),
+  });
+  // 突变副本域（run-mutations 快照面）只携 assets/——补一个最小 SKILL.md，使 --manifest 键集完整
+  // （否则突变域里前置重生成失败，突变"被捕获"归因到夹具构造而非目标断言——信号失真）。
+  if (!isFile(join(dest, "SKILL.md"))) {
+    const ver =
+      /export const SKILL_VERSION\s*=\s*"([0-9.]+)"/.exec(readFileSync(join(dest, "assets", "lib", "version.mjs"), "utf8"))?.[1] ?? "0.0.0";
+    w(dest, "SKILL.md", `---\nname: zcode-board\n---\n\n# 体检夹具占位 SKILL.md（突变副本域 assets 快照补件）\n\n- 技能版本：\`zcode-board/${ver}\`（占位——真实技能根含 SKILL.md，此件只服务 --manifest 键集完整）\n`);
+  }
+  return dest;
+}
+
+/** 副本域内重生成 manifest（真编译器；realpathSync 归一保证入口守卫命中——场景 67c 同因）。 */
+function regenerateManifest(skillRoot) {
+  return spawnSync(process.execPath, [join(realpathSync(skillRoot), "assets", "compile-board.mjs"), "--manifest"], {
+    encoding: "utf8",
+    cwd: realpathSync(skillRoot),
+  });
+}
+
+/** 跑体检（doctor）：从指定技能副本域调用（--doctor [<项目根>]；env 可注入 PATH 空环境）。 */
+function runDoctor(skillRoot, args = [], { env = null, cwd = null } = {}) {
+  const res = spawnSync(process.execPath, [join(realpathSync(skillRoot), "assets", "compile-board.mjs"), "--doctor", ...args], {
+    encoding: "utf8",
+    cwd: cwd ?? realpathSync(skillRoot),
+    env: env ?? process.env,
+  });
+  return { code: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "", spawnError: res.error ? res.error.message : null };
+}
+
+// ---- 73h：--doctor 绿基线（副本域）
+scenario("73h", "#73：--doctor 绿基线——manifest 完整性（sha256 对账）+ 三版本一致 + 技能目录非 git 仓信息项；未声明 hook 的项目根仍绿（信息不阻断）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    w(root, ".zcode/plans/plan-a.md", ["# 甲稿", "", "- [ ] 1. 甲条目", ""].join("\n"));
+  },
+  steps: [{ args: [] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    const regen = regenerateManifest(copy);
+    c.eq(regen.status, 0, "前置：副本域重生成 manifest（退出码 0）", truncate(regen.stderr ?? ""));
+
+    const d = runDoctor(copy);
+    c.eq(d.code, 0, "绿：退出码 0（无非绿项）", `stderr=${truncate(d.stderr)}`);
+    c.inc(d.stdout, "--doctor：", "头行（体检模式）");
+    c.inc(d.stdout, "manifest 完整性", "体检项：manifest 完整性");
+    c.inc(d.stdout, "sha256", "体检口径：关键文件 sha256 对账");
+    c.inc(d.stdout, "版本一致", "体检项：契约/schema 版本一致");
+    c.inc(d.stdout, `包 ${SKILL_VERSION}`, "报出包版本（= lib/version.mjs 常量，唯一事实源）");
+    c.inc(d.stdout, "不是 git 仓", "技能副本非 git 仓 → 信息项（跳过漂移体检，不阻断）");
+    c.inc(d.stdout, "结论：绿", "结论行：绿");
+
+    // 项目侧：未声明 hook（无 .zcode/config.json）→ 信息项，仍绿
+    const d2 = runDoctor(copy, [ctx.root]);
+    c.eq(d2.code, 0, "带项目根（未声明 hook）仍绿（信息项不阻断）", `stderr=${truncate(d2.stderr)}`);
+    c.inc(d2.stdout, "未声明 hook", "项目侧：未声明 hook → 信息项（跳过体检）");
+    c.inc(d2.stdout, "结论：绿", "结论行：绿（带项目根）");
+  },
+});
+
+// ---- 73l：--doctor 红——manifest 完整性（改了未重生成/未登记/缺失）与版本漂移逐项点名
+scenario("73l", "#73：--doctor 红——manifest 摘要不符/未登记/缺失 + manifest 版本位、schema 契约位、SKILL.md 头部行漂移逐项点名（副本域）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+  },
+  steps: [{ args: [] }],
+  assert(c, ctx) {
+    const copy = join(realpathSync(ctx.root), "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：副本域 manifest 重生成（绿基线）");
+    c.eq(runDoctor(copy).code, 0, "前置：绿基线退出码 0");
+
+    // ① 改了未重生成（键集文件 compile-board.mjs）→ 红 + 点名文件 + 去路 --manifest
+    const compilerPath = join(copy, "assets", "compile-board.mjs");
+    const compilerOrig = readFileSync(compilerPath, "utf8");
+    writeFileSync(compilerPath, `${compilerOrig}\n// T73 体检突变：改了未重生成\n`);
+    const d1 = runDoctor(copy);
+    c.eq(d1.code, 2, "① 改了未重生成 → 红（退出码 2）", `stderr=${truncate(d1.stderr)}`);
+    c.inc(d1.stdout, "manifest 摘要不符", "① 点名「改了未重生成」判据");
+    c.inc(d1.stdout, "assets/compile-board.mjs", "① 点名涉事文件");
+    c.inc(d1.stdout, "--manifest", "① 给去路（重生成 manifest）");
+    writeFileSync(compilerPath, compilerOrig);
+
+    // ② 未登记：新增键集文件（assets/lib/*.mjs 属 manifest 键集）
+    const extraPath = join(copy, "assets", "lib", "zz-t73-extra.mjs");
+    writeFileSync(extraPath, "export const T73_EXTRA = 1;\n");
+    const d2 = runDoctor(copy);
+    c.eq(d2.code, 2, "② 新增键集文件未登记 → 红（退出码 2）");
+    c.inc(d2.stdout, "键集文件未登记", "② 点名「未登记」判据");
+    c.inc(d2.stdout, "assets/lib/zz-t73-extra.mjs", "② 点名新增文件");
+    rmSync(extraPath);
+
+    // ③ 有记录而缺失（manifest 有记录、来源文件缺失）
+    const runsPath = join(copy, "assets", "lib", "runs.mjs");
+    const runsOrig = readFileSync(runsPath, "utf8");
+    rmSync(runsPath);
+    const d3 = runDoctor(copy);
+    c.eq(d3.code, 2, "③ manifest 有记录而文件缺失 → 红（退出码 2）");
+    c.inc(d3.stdout, "有记录而文件缺失", "③ 点名「缺失」判据");
+    c.inc(d3.stdout, "assets/lib/runs.mjs", "③ 点名缺失文件");
+    writeFileSync(runsPath, runsOrig);
+
+    // ④ manifest 版本位 ↔ 事实源漂移（manifest.packageVersion 被手改）
+    const manifestPath = join(copy, "assets", "manifest.json");
+    const manifestOrig = readFileSync(manifestPath, "utf8");
+    const manifestMut = JSON.parse(manifestOrig);
+    manifestMut.packageVersion = "0.0.1";
+    writeFileSync(manifestPath, `${JSON.stringify(manifestMut, null, 2)}\n`);
+    const d4 = runDoctor(copy);
+    c.eq(d4.code, 2, "④ manifest 版本位漂移 → 红（退出码 2）");
+    c.inc(d4.stdout, "manifest 版本位与事实源不一致", "④ 点名版本位判据");
+    c.inc(d4.stdout, "packageVersion", "④ 点名漂移字段");
+    c.inc(d4.stdout, "0.0.1", "④ 点名漂移值");
+
+    // ⑤ schema 契约版本位漂移（x-contractVersion；重生成 manifest 以隔离判据）
+    writeFileSync(manifestPath, manifestOrig);
+    const schemaPath = join(copy, "assets", "board.schema.json");
+    const schemaOrig = readFileSync(schemaPath, "utf8");
+    writeFileSync(schemaPath, schemaOrig.replace(/"x-contractVersion":\s*"[0-9.]+"/, '"x-contractVersion": "9.9"'));
+    c.eq(regenerateManifest(copy).status, 0, "⑤ 前置：manifest 重生成（隔离版本位判据）");
+    const d5 = runDoctor(copy);
+    c.eq(d5.code, 2, "⑤ schema 契约版本位漂移 → 红（退出码 2）");
+    c.inc(d5.stdout, "x-contractVersion", "⑤ 点名 schema 契约版本位");
+    c.inc(d5.stdout, "9.9", "⑤ 点名漂移值");
+    writeFileSync(schemaPath, schemaOrig);
+
+    // ⑥ SKILL.md 头部手写版本行漂移
+    const mdPath = join(copy, "SKILL.md");
+    const mdOrig = readFileSync(mdPath, "utf8");
+    writeFileSync(mdPath, mdOrig.replace(/技能版本：`zcode-board\/[0-9.]+`/, "技能版本：`zcode-board/0.0.0`"));
+    c.eq(regenerateManifest(copy).status, 0, "⑥ 前置：manifest 重生成（隔离手写位判据）");
+    const d6 = runDoctor(copy);
+    c.eq(d6.code, 2, "⑥ SKILL.md 头部行漂移 → 红（退出码 2）");
+    c.inc(d6.stdout, "手写位漂移", "⑥ 点名手写位漂移判据");
+    c.inc(d6.stdout, "0.0.0", "⑥ 点名漂移值");
+    writeFileSync(mdPath, mdOrig);
+
+    // 复原 → 回绿（自清）
+    c.eq(regenerateManifest(copy).status, 0, "复原：manifest 重生成");
+    const dFinal = runDoctor(copy);
+    c.eq(dFinal.code, 0, "复原后回绿（自清；退出码 0）", `stdout=${truncate(dFinal.stdout.slice(-600))}`);
+  },
+});
+
+/** 五项正式 hook 声明（给定技能根的 assets/hooks/*.mjs 绝对路径；与 SKILL.md §3.6 声明模板同形）。 */
+function hookConfigFor(skillRoot, { command = "node", omit = [], extraArgs = {} } = {}) {
+  const decl = (script, event, matcher = null) => {
+    if (omit.includes(script)) return null;
+    const args = [join(skillRoot, "assets", "hooks", script), ...(extraArgs[script] ?? [])];
+    return { event, matcher, hook: { type: "command", command, args, timeoutMs: 10000, statusMessage: "夹具声明" } };
+  };
+  const raw = [
+    decl("board-context.mjs", "SessionStart"),
+    decl("record-run.mjs", "PostToolUse", "Agent|Task"),
+    decl("watch-sources.mjs", "PostToolUse", "Write|Edit"),
+    decl("reconcile-stop.mjs", "Stop"),
+    decl("gate-merge.mjs", "PreToolUse", "Bash"),
+  ].filter((x) => x !== null);
+  const events = {};
+  for (const d of raw) {
+    events[d.event] = events[d.event] ?? [];
+    const block = events[d.event].find((b) => (b.matcher ?? null) === d.matcher);
+    if (block) block.hooks.push(d.hook);
+    else events[d.event].push({ ...(d.matcher ? { matcher: d.matcher } : {}), hooks: [d.hook] });
+  }
+  return { hooks: { enabled: true, events } };
+}
+
+// ---- 73i：--doctor 红/黄——hook 声明体检（旧版本/分叉副本/脚本缺失/node 不可执行/五核心覆盖）
+scenario("73i", "#73：--doctor 红/黄——hook 声明体检：旧版本（版本值不等）红、分叉副本黄、脚本缺失红、node 不可执行红、五核心未声明黄", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-new"));
+    copySkillTree(join(root, "skill-old"));
+    copySkillTree(join(root, "skill-fork"));
+    // skill-new / skill-fork：manifest 重生成（绿基线）；skill-old：版本常量改旧（0.3.1）
+    const oldVer = join(root, "skill-old", "assets", "lib", "version.mjs");
+    writeFileSync(oldVer, readFileSync(oldVer, "utf8").replace('export const SKILL_VERSION = "0.5.0"', 'export const SKILL_VERSION = "0.3.1"'));
+    // 项目根各配一份声明
+    w(root, "proj-old/.zcode/config.json", `${JSON.stringify(hookConfigFor(join(realpathSync(root), "skill-old")), null, 2)}\n`);
+    w(root, "proj-fork/.zcode/config.json", `${JSON.stringify(hookConfigFor(join(realpathSync(root), "skill-fork")), null, 2)}\n`);
+    w(root, "proj-ok/.zcode/config.json", `${JSON.stringify(hookConfigFor(join(realpathSync(root), "skill-new")), null, 2)}\n`);
+    // 编译落点另置子目录（board-home）：夹具根不是板项目——proj-* 的祖先里没有板，
+    // 「项目结构风险（幻影板）」不误报（否则公共步骤的编译会在夹具根建板）。
+    w(root, "board-home/.zcode/plans/plan-home.md", ["# 落点稿", "", "- [ ] 1. 落点条目", ""].join("\n"));
+  },
+  steps: [{ root: (r) => join(r, "board-home"), args: [] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const newRoot = join(real, "skill-new");
+    c.eq(regenerateManifest(newRoot).status, 0, "前置：skill-new manifest 重生成");
+    c.eq(regenerateManifest(join(real, "skill-fork")).status, 0, "前置：skill-fork manifest 重生成");
+
+    // ① 旧版本：声明指向 skill-old（版本 0.3.1 ≠ 当前 0.5.0）→ 红 + 点名两值与路径
+    const d1 = runDoctor(newRoot, [join(real, "proj-old")]);
+    c.eq(d1.code, 2, "① 旧版本声明 → 红（退出码 2）", `stderr=${truncate(d1.stderr)}`);
+    c.inc(d1.stdout, "旧版本", "① 点名旧版本判据");
+    c.inc(d1.stdout, "0.3.1", "① 点名声明侧版本值");
+    c.inc(d1.stdout, `0.5.0`, "① 点名当前版本值");
+    c.inc(d1.stdout, join(real, "skill-old"), "① 点名声明脚本所在技能目录");
+
+    // ② 分叉副本（同名版本、不同目录）→ 黄（退出码 1）
+    const d2 = runDoctor(newRoot, [join(real, "proj-fork")]);
+    c.eq(d2.code, 1, "② 同名分叉副本 → 黄（退出码 1）", `stderr=${truncate(d2.stderr)}`);
+    c.inc(d2.stdout, "分叉副本", "② 点名分叉副本判据");
+    c.inc(d2.stdout, join(real, "skill-fork"), "② 点名分叉目录");
+
+    // ③ node 路径不可执行 + 声明脚本缺失 → 红
+    w(ctx.root, "proj-bad/.zcode/config.json", `${JSON.stringify(hookConfigFor(join(real, "skill-new"), { command: "/nonexistent-t73/node", omit: ["gate-merge.mjs"] }), null, 2)}\n`);
+    const d3 = runDoctor(newRoot, [join(real, "proj-bad")]);
+    c.eq(d3.code, 2, "③ node 路径错 + 缺声明 → 红（退出码 2）");
+    c.inc(d3.stdout, "不可执行", "③ 点名 command 不可执行判据");
+    c.inc(d3.stdout, "/nonexistent-t73/node", "③ 点名坏 node 路径");
+    c.inc(d3.stdout, "五核心 hook 未声明", "③ 缺声明（gate-merge）→ 黄项点名");
+    c.inc(d3.stdout, "gate-merge.mjs", "③ 点名缺失的 hook 脚本名");
+
+    // ④ PATH 为空：command=node 解析不到（本机 node 存在也不可执行）→ 红
+    const d4 = runDoctor(newRoot, [join(real, "proj-ok")], { env: { ...process.env, PATH: "" } });
+    c.eq(d4.code, 2, "④ PATH 空 → node 不在 PATH → 红（退出码 2）");
+    c.inc(d4.stdout, "不在 PATH", "④ 点名 PATH 解析判据");
+
+    // ⑤ 合规声明（五核心、指向当前技能目录、node 可执行）→ 绿
+    const d5 = runDoctor(newRoot, [join(real, "proj-ok")]);
+    c.eq(d5.code, 0, "⑤ 合规声明 → 绿（退出码 0）", `stdout=${truncate(d5.stdout.slice(-700))}`);
+    c.inc(d5.stdout, "hook 声明体检通过", "⑤ 绿行点名体检结论（可执行/存在/覆盖/指向当前目录）");
+    c.inc(d5.stdout, "结论：绿", "⑤ 结论行：绿");
+  },
+});
+
+/** git 可用性探针（73k 漂移体检；不可用则跳过该场景的分支）。 */
+function gitAvailable() {
+  const r = spawnSync("git", ["--version"], { encoding: "utf8" });
+  return !r.error && r.status === 0;
+}
+
+/** 在夹具技能副本内建 git 仓并提交（committer 身份用 -c 注入，不依赖全局配置）。 */
+function gitInitCommit(dir) {
+  const run = (args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  const steps = [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["-c", "user.email=t73@example.com", "-c", "user.name=T73", "commit", "-q", "-m", "T73 体检夹具初始提交"],
+  ];
+  for (const args of steps) {
+    const r = run(args);
+    if (r.status !== 0) return { ok: false, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  }
+  return { ok: true, stdout: "", stderr: "" };
+}
+
+// ---- 73k：--doctor 黄——技能目录 git 仓未提交漂移（干净→绿；漂移→黄点名）
+scenario("73k", "#73：--doctor 技能目录 git 漂移——仓内干净 → 绿；改动未提交 → 黄（点名漂移计数与样例），manifest 仍对账（仅漂移项）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-repo"));
+  },
+  steps: [{ args: [] }],
+  assert(c, ctx) {
+    if (!gitAvailable()) {
+      c.skip("git 漂移体检", "环境无 git");
+      return;
+    }
+    const repo = join(realpathSync(ctx.root), "skill-repo");
+    c.eq(regenerateManifest(repo).status, 0, "前置：manifest 重生成");
+    const init = gitInitCommit(repo);
+    c.ok(init.ok, "前置：技能副本 git 仓初始化 + 初始提交", show(init.stderr));
+
+    const d1 = runDoctor(repo);
+    c.eq(d1.code, 0, "干净仓 → 绿（退出码 0）", `stdout=${truncate(d1.stdout.slice(-500))}`);
+    c.inc(d1.stdout, "无未提交漂移", "绿行点名 git 干净");
+
+    // 改动 SKILL.md 并重生成 manifest（manifest 对账保持绿）→ 仅漂移项变黄
+    const mdPath = join(repo, "SKILL.md");
+    writeFileSync(mdPath, `${readFileSync(mdPath, "utf8")}\n<!-- T73 漂移探针 -->\n`);
+    c.eq(regenerateManifest(repo).status, 0, "漂移相位：manifest 重生成（隔离漂移判据）");
+    const d2 = runDoctor(repo);
+    c.eq(d2.code, 1, "有未提交漂移 → 黄（退出码 1）", `stdout=${truncate(d2.stdout.slice(-600))}`);
+    c.inc(d2.stdout, "未提交漂移", "黄项点名漂移判据");
+    c.inc(d2.stdout, "2 个文件", "点名漂移计数（SKILL.md + assets/manifest.json）");
+    c.inc(d2.stdout, "SKILL.md", "点名漂移样例文件");
+    c.inc(d2.stdout, "提交", "给去路（提交或显式声明在途改动）");
+    c.ok(!/manifest 摘要不符/.test(d2.stdout), "manifest 对账不受漂移判据污染（重生成后仍绿）");
+  },
+});
+
+// ---- 73m：--doctor 黄——项目结构风险（幻影板根 / scan.json 整份拒收）指向 --preflight 红项处置
+scenario("73m", "#73：--doctor 项目结构风险——子目录幻影板根、坏 scan.json → 黄项点名并指向 --preflight（同一判据单源）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    // ① 幻影板：上层有板，子目录被当项目根
+    w(root, "proj-phantom/.zcode/board/board.json", `${JSON.stringify({ version: 2, generatedBy: "zcode-board/0.5.0", features: [] }, null, 2)}\n`);
+    w(root, "proj-phantom/.zcode/board/board.md", "# 板\n");
+    w(root, "proj-phantom/sub/.zcode/plans/plan-x.md", ["# 子稿", "", "- [ ] 1. 子条目", ""].join("\n"));
+    // ② 扫描面：坏 scan.json
+    w(root, "proj-scan/.zcode/board/scan.json", "{ 坏 JSON\n");
+    // 编译落点另置子目录（board-home）：夹具根不是板项目——proj-scan 的祖先里没有板，
+    // 「项目结构风险（幻影板）」不误报（否则公共步骤的编译会在夹具根建板）。
+    w(root, "board-home/.zcode/plans/plan-home.md", ["# 落点稿", "", "- [ ] 1. 落点条目", ""].join("\n"));
+  },
+  steps: [{ root: (r) => join(r, "board-home"), args: [] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：manifest 重生成");
+
+    const subRoot = join(real, "proj-phantom", "sub");
+    const d1 = runDoctor(copy, [subRoot]);
+    c.eq(d1.code, 1, "① 幻影板根 → 黄（退出码 1）", `stderr=${truncate(d1.stderr)}`);
+    c.inc(d1.stdout, "项目结构风险", "① 分节点名项目结构风险");
+    c.inc(d1.stdout, "幻影板", "① 点名幻影板判据");
+    c.inc(d1.stdout, join(real, "proj-phantom"), "① 点名正确板根（祖先）");
+    c.inc(d1.stdout, "--preflight", "① 指向 --preflight 红项处置（同判据单源）");
+
+    const d2 = runDoctor(copy, [join(real, "proj-scan")]);
+    c.eq(d2.code, 1, "② 坏 scan.json → 黄（退出码 1）");
+    c.inc(d2.stdout, "scan.json 整份拒收", "② 点名扫描面整份拒收");
+    c.inc(d2.stdout, "--preflight", "② 指向 --preflight 红项处置");
+  },
+});
+
+// ---- 73n：检查点命令 CLI 卫生（互斥/未知选项/--force 限定/--help 记录；用法错误零写入）
+scenario("73n", "#73：--preflight / --doctor CLI 卫生——与既有模式互斥、未知选项退出码 2、--force 仅 --assign、--help 记录两命令；用法错误零写入", {
+  skipCommon: true,
+  build(root) {
+    w(root, ".zcode/plans/plan-a.md", ["# 甲稿", "", "- [ ] 1. 甲条目", ""].join("\n"));
+  },
+  steps: [
+    { args: ["--preflight", "--check"] },
+    { args: ["--doctor", "--assign"] },
+    { args: ["--preflight", "--force"] },
+    { args: ["--doctor", "--nope"] },
+    { args: ["--preflight"] },
+    { args: ["--help"] },
+  ],
+  assert(c, ctx) {
+    const { root } = ctx;
+    const [both1, both2, force, unknown, ok, help] = ctx.steps;
+
+    c.eq(both1.code, 2, "--preflight 与 --check 互斥 → 退出码 2", `stderr=${truncate(both1.stderr)}`);
+    c.inc(both1.stderr, "互斥", "互斥说明点名");
+    c.eq(both2.code, 2, "--doctor 与 --assign 互斥 → 退出码 2");
+    c.inc(both2.stderr, "互斥", "互斥说明点名（doctor）");
+    c.eq(force.code, 2, "--force 仅 --assign → 与 --preflight 搭配退出码 2");
+    c.inc(force.stderr, "--force", "点名 --force 限定");
+    c.eq(unknown.code, 2, "未知选项仍退出码 2（既有行为不回退）");
+    c.inc(unknown.stderr, "未知选项", "未知选项点名");
+    c.eq(ok.code, 0, "--preflight 单独运行 → 绿（退出码 0）", `stderr=${truncate(ok.stderr)}`);
+    c.eq(help.code, 0, "--help 退出码 0");
+    c.inc(help.stdout, "--preflight", "--help 记录 --preflight");
+    c.inc(help.stdout, "--doctor", "--help 记录 --doctor");
+    c.inc(help.stdout, "绿 0", "--help 记录退出码语义（绿 0/黄 1/红 2）");
+    assertZeroWrite(c, root, () => runCompiler(root, ["--preflight"]), "CLI 卫生场景复跑");
+  },
+});
+
+// ---- 73p：--doctor 红/黄——config.json 结构与开关体检（坏 JSON / 缺 hooks 包装层 / 未开启 / 空声明）
+scenario("73p", "#73：--doctor config.json 体检——坏 JSON 红、缺 hooks 包装层红（静默跳过防线）、enabled 非 true 黄、空事件黄", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    w(root, "proj-badjson/.zcode/config.json", "{ 坏 JSON —— 声明整体失效\n");
+    w(root, "proj-nowrapper/.zcode/config.json", `${JSON.stringify({ enabled: true, events: {} }, null, 2)}\n`);
+    w(root, "proj-off/.zcode/config.json", `${JSON.stringify({ hooks: { enabled: false, events: {} } }, null, 2)}\n`);
+    w(root, "proj-empty/.zcode/config.json", `${JSON.stringify({ hooks: { enabled: true, events: {} } }, null, 2)}\n`);
+    w(root, "board-home/.zcode/plans/plan-home.md", ["# 落点稿", "", "- [ ] 1. 落点条目", ""].join("\n"));
+  },
+  steps: [{ root: (r) => join(r, "board-home"), args: [] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：manifest 重生成");
+
+    const d1 = runDoctor(copy, [join(real, "proj-badjson")]);
+    c.eq(d1.code, 2, "① 坏 config.json → 红（退出码 2）");
+    c.inc(d1.stdout, "config.json 解析失败", "① 点名解析失败（声明整体失效）");
+    c.inc(d1.stdout, "信任评审", "① 给出后续动作（修复后需重做信任评审）");
+
+    const d2 = runDoctor(copy, [join(real, "proj-nowrapper")]);
+    c.eq(d2.code, 2, "② 缺 hooks 包装层 → 红（退出码 2）");
+    c.inc(d2.stdout, "缺 hooks 包装层", "② 点名包装层缺失（A5 静默跳过实测防线）");
+    c.inc(d2.stdout, "静默跳过", "② 说明静默跳过后果");
+
+    const d3 = runDoctor(copy, [join(real, "proj-off")]);
+    c.eq(d3.code, 1, "③ hooks.enabled=false → 黄（退出码 1）");
+    c.inc(d3.stdout, "非 true", "③ 点名 enabled 开关非 true");
+
+    const d4 = runDoctor(copy, [join(real, "proj-empty")]);
+    c.eq(d4.code, 1, "④ 空事件声明 → 黄（退出码 1）");
+    c.inc(d4.stdout, "无声明条目", "④ 点名 hook 未启用（空 events）");
+  },
+});
+
+// ---------------------------------------------------------------- #179/B8-1：doctor 并存板工具检测
+
+/** 项目侧板工具夹具（`.zcode/board-tools/compile.mjs`）：--version 读数可注入（版本对账输入）。 */
+function seedProjectBoardTool(root, rel, { version = null, assignText = "proj-side compile（发号模式夹具）" } = {}) {
+  const lines = [
+    "#!/usr/bin/env node",
+    "// B8-1 夹具：项目侧板编译器（实测来源：新赛马项目 .zcode/board-tools/compile.mjs）",
+    'if (process.argv.slice(2).includes("--version")) {',
+  ];
+  if (version !== null) {
+    lines.push(`  console.log("zcode-board ${version} · 契约 v2.4 · schema v2.3");`);
+    lines.push("  process.exit(0);");
+  } else {
+    lines.push('  console.log("project compile: 用法 node compile.mjs [--assign]（无 --version 口径）");');
+    lines.push("  process.exit(2);");
+  }
+  lines.push("}", `console.log(${JSON.stringify(assignText)});`, "");
+  w(root, rel, lines.join("\n"));
+}
+
+// ---- 179a：doctor 并存板工具检测（不一致 → 黄 + 统一/锁版本两路径建议）
+scenario("179a", "#179：--doctor 并存板工具检测——项目侧 .zcode/board-tools/compile.mjs --version 读数 0.4.0 ≠ 全局技能 → 黄项点名两值 + 「统一到全局/锁版本」两条去路；体检零写入", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    seedProjectBoardTool(root, "proj-a/.zcode/board-tools/compile.mjs", { version: "0.4.0" });
+  },
+  steps: [{ args: ["--version"] }], // 只读单步（不出板；本场景体外调 doctor，无需公共板断言）
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：副本域 manifest 重生成（技能侧绿基线）");
+    const proj = join(real, "proj-a");
+
+    const d = runDoctor(copy, [proj]);
+    c.eq(d.code, 1, "版本不一致 → 黄（退出码 1）", `stderr=${truncate(d.stderr)}`);
+    c.inc(d.stdout, "[项目板工具] 并存检测", "分节点名并存板工具检测（#179）");
+    c.inc(d.stdout, "并存板工具版本不一致", "黄项点名「版本不一致」判据");
+    c.inc(d.stdout, "0.4.0", "点名项目侧入口 --version 读数");
+    c.inc(d.stdout, `与全局技能 ${SKILL_VERSION}`, "点名全局技能版本（对账基准）");
+    c.inc(d.stdout, "compile.mjs", "点名涉事入口路径");
+    c.inc(d.stdout, "统一到全局技能", "黄项给去路①：统一到全局技能");
+    c.inc(d.stdout, "锁版本", "黄项给去路②：锁版本（双源保留时同步升级）");
+    c.inc(d.stdout, "结论：黄", "结论行：黄");
+
+    // 体检零写入（含入口 --version 探测——只读子进程，不改项目/技能副本任何文件）
+    assertZeroWrite(c, ctx.root, () => runDoctor(copy, [proj]), "并存检测体检复跑");
+  },
+});
+
+// ---- 179b：doctor 并存板工具检测（仅项目侧存在 → 信息级提示；含 hooks 声明入口形态）
+scenario("179b", "#179：--doctor 并存板工具检测——① 项目侧入口版本不可读 → 信息项「仅项目侧存在·双源形态」（不阻断，仍绿）；② hooks 声明指向非全局自建脚本 → 点名该入口（信息级，不改变 ③ 既有黄判级）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    // ① 项目侧编译器入口存在但无 --version 口径（不可读降级）
+    seedProjectBoardTool(root, "proj-b/.zcode/board-tools/compile.mjs", { version: null });
+    // ② hooks 五核心指全局副本 + 一条项目侧自建脚本（PostToolUse；非技能包形态、非编译形态）
+    const copyPath = join(realpathSync(root), "skill-copy");
+    const cfg = hookConfigFor(copyPath);
+    cfg.hooks.events.PostToolUse = cfg.hooks.events.PostToolUse ?? [];
+    cfg.hooks.events.PostToolUse.push({
+      matcher: "Write|Edit",
+      hooks: [
+        {
+          type: "command",
+          command: "node",
+          args: [".zcode/hooks/board-sync.mjs"],
+          timeoutMs: 10000,
+          statusMessage: "项目侧板同步（夹具）",
+        },
+      ],
+    });
+    w(root, "proj-b2/.zcode/config.json", `${JSON.stringify(cfg, null, 2)}\n`);
+    w(root, "proj-b2/.zcode/hooks/board-sync.mjs", "// B8-1 夹具：项目侧自建 hook 脚本（非编译形态，不执行探测）\nprocess.exit(0);\n");
+    // ③ 同一入口经两形态命中（board-tools 编译器 + hooks 声明指向它）→ 去重一条、来源合并（实战双源形态）
+    seedProjectBoardTool(root, "proj-b3/.zcode/board-tools/compile.mjs", { version: SKILL_VERSION });
+    const cfg3 = hookConfigFor(copyPath);
+    cfg3.hooks.events.PreToolUse.push({
+      matcher: "Bash",
+      hooks: [
+        {
+          type: "command",
+          command: "node",
+          args: [".zcode/board-tools/compile.mjs"],
+          timeoutMs: 10000,
+          statusMessage: "项目侧编译器（夹具：hooks 指向项目侧入口）",
+        },
+      ],
+    });
+    w(root, "proj-b3/.zcode/config.json", `${JSON.stringify(cfg3, null, 2)}\n`);
+  },
+  steps: [{ args: ["--version"] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：副本域 manifest 重生成");
+    c.eq(runDoctor(copy).code, 0, "前置：技能侧绿基线（退出码 0）");
+
+    // ① 仅项目侧存在（版本不可读）→ 信息项（不影响结论：仍绿、退出码 0）
+    const d1 = runDoctor(copy, [join(real, "proj-b")]);
+    c.eq(d1.code, 0, "① 信息项不阻断 → 仍绿（退出码 0）", `stdout=${truncate(d1.stdout.slice(-600))}`);
+    c.inc(d1.stdout, "[项目板工具] 并存检测", "① 分节点名并存检测");
+    c.inc(d1.stdout, "仅项目侧存在", "① 点名状态「仅项目侧存在」");
+    c.inc(d1.stdout, "版本不可读", "① 点名版本不可读（降级口径）");
+    c.inc(d1.stdout, "--version 退出码 2", "① 降级原因（有界探测如实回报）");
+    c.inc(d1.stdout, "双源形态", "① 双源形态提示文案");
+    c.inc(d1.stdout, "结论：绿", "① 结论行：绿（信息项不计入判级）");
+    c.ok(!/结论：黄/.test(d1.stdout), "① 未误判黄（不可读 ≠ 不一致）");
+
+    // ② hooks 声明指向非全局自建脚本 → 点名该入口（信息级；退出码由 ③ 既有自建脚本黄决定）
+    const d2 = runDoctor(copy, [join(real, "proj-b2")]);
+    c.eq(d2.code, 1, "② 退出码 1（③ 自建脚本黄——既有判级不变）", `stdout=${truncate(d2.stdout.slice(-800))}`);
+    c.inc(d2.stdout, "自建脚本", "② ③ 侧自建脚本黄项仍在（既有口径不变）");
+    c.inc(d2.stdout, ".zcode/hooks/board-sync.mjs", "② 并存检测点名 hooks 声明入口");
+    c.inc(d2.stdout, "PostToolUse 声明", "② 点名入口来源（哪条事件声明）");
+    c.inc(d2.stdout, "不执行探测", "② 非编译形态不执行探测（doctor 零写入优先）");
+
+    // ③ 同一入口两形态命中 → 去重一条（入口数 1）+ 来源合并 + 读数照常对账（实战双源形态）
+    const d3 = runDoctor(copy, [join(real, "proj-b3")]);
+    c.eq(d3.code, 1, "③ 退出码 1（③ 自建脚本黄）+ 并存检测绿项不升判级", `stdout=${truncate(d3.stdout.slice(-800))}`);
+    c.inc(d3.stdout, "并存检测（项目侧入口 1 个", "③ 去重：两形态命中同一入口只报一条（入口数 1）");
+    c.inc(d3.stdout, "（.zcode/board-tools/ 编译器入口；PreToolUse 声明）", "③ 来源标签合并（两形态来源同列）");
+    c.inc(d3.stdout, "并存板工具版本一致", "③ 合并后仍按 --version 读数对账（一致 → 绿）");
+  },
+});
+
+// ---- 179c：doctor 并存板工具检测（版本一致 → 绿 + 双源形态提示）
+scenario("179c", "#179：--doctor 并存板工具检测——项目侧入口 --version 读数 = 全局技能版本 → 绿项（版本一致）+ 双源形态提示（升级全局时同步项目侧）；不误判黄", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    seedProjectBoardTool(root, "proj-c/.zcode/board-tools/compile.mjs", { version: SKILL_VERSION });
+  },
+  steps: [{ args: ["--version"] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：副本域 manifest 重生成");
+
+    const d = runDoctor(copy, [join(real, "proj-c")]);
+    c.eq(d.code, 0, "版本一致 → 绿（退出码 0）", `stdout=${truncate(d.stdout.slice(-600))}`);
+    c.inc(d.stdout, "[项目板工具] 并存检测", "分节点名并存检测");
+    c.inc(d.stdout, "并存板工具版本一致", "绿项点名「版本一致」判据");
+    c.inc(d.stdout, `读数 = 全局技能 ${SKILL_VERSION}`, "点名读数 = 全局技能版本（对账通过）");
+    c.inc(d.stdout, "双源形态", "双源形态提示（一致仍点名，防无感知漂移）");
+    c.inc(d.stdout, "升级全局技能时请同步项目侧入口", "给维护动作：升级全局时同步项目侧");
+    c.ok(!/结论：黄/.test(d.stdout), "不误判黄（一致 ≠ 漂移）");
+    c.inc(d.stdout, "结论：绿", "结论行：绿");
+  },
+});
+
+// ---- 179d：真实板零噪声（无并存 → 零输出；同夹具加项目侧入口即有点名——判别灵敏度对照）
+scenario("179d", "#179：--doctor 真实板零噪声——hooks 全指全局技能、无项目侧入口 → 不出现并存检测分节/条目；同夹具加一个项目侧入口（对照）→ 必现点名（零噪声≠漏检）", {
+  skipCommon: true,
+  build(root) {
+    copySkillTree(join(root, "skill-copy"));
+    const copyPath = join(realpathSync(root), "skill-copy");
+    // 真实板形态：五核心 hook 全指全局技能（真项目 .zcode/config.json 同形态），无 board-tools
+    w(root, "proj-d/.zcode/config.json", `${JSON.stringify(hookConfigFor(copyPath), null, 2)}\n`);
+    // 对照相位：同形态 + 项目侧入口 → 检测必现
+    w(root, "proj-d2/.zcode/config.json", `${JSON.stringify(hookConfigFor(copyPath), null, 2)}\n`);
+    seedProjectBoardTool(root, "proj-d2/.zcode/board-tools/compile.mjs", { version: SKILL_VERSION });
+  },
+  steps: [{ args: ["--version"] }],
+  assert(c, ctx) {
+    const real = realpathSync(ctx.root);
+    const copy = join(real, "skill-copy");
+    c.eq(regenerateManifest(copy).status, 0, "前置：副本域 manifest 重生成");
+
+    const d1 = runDoctor(copy, [join(real, "proj-d")]);
+    c.eq(d1.code, 0, "① 真实板形态 → 绿（退出码 0）");
+    c.ok(!d1.stdout.includes("并存板工具"), "① 零噪声：无并存时不出现并存检测条目", truncate(d1.stdout.slice(-700)));
+    c.ok(!d1.stdout.includes("并存检测"), "① 零噪声：不建并存检测分节");
+    c.inc(d1.stdout, "hook 声明体检通过", "① 既有 hook 声明体检照常（检测不干扰 ③）");
+
+    const d2 = runDoctor(copy, [join(real, "proj-d2")]);
+    c.eq(d2.code, 0, "② 对照相位仍绿（一致不升级判级）");
+    c.inc(d2.stdout, "并存板工具版本一致", "② 对照：加项目侧入口即有点名（判别灵敏度——零噪声 ≠ 漏检）");
+  },
+});
+
 // ---------------------------------------------------------------- 静态断言：无第三方依赖
 
 function staticChecks(c) {
@@ -8608,6 +9498,94 @@ function registryGhostLibChecks(c, mod) {
   c.eq(JSON.stringify({ pure, pureEntries }), before, "纯函数：入参零改动（无隐藏状态）");
 }
 
+// ---------------------------------------------------------------- runs 引用非活卡号对账点名契约（B4-4/#108；E1 V10）
+
+/**
+ * `checkRunsDeadCardRefs`（lib/fact-invariants.mjs）公开契约（B4-4/#108；E1 V10）：
+ * 判据独立来源 = 手写 board/runs/registry 对象（非实现复算）——runs 引用非活卡号**升对账点名级**：
+ * 两文案分流（registry 有条目而板上无 vs 完全未知号；判据单点 = classifyDeadNumber，与 #105 同口径）、
+ * 活号引用零噪声、非整数 cards 值不解析（形态归归一层点名，不叠加）、同 run 同号去重、
+ * board 非对象/runs 非数组零叠加、纯函数入参零改动。
+ */
+function runsDeadRefLibChecks(c, mod) {
+  const { checkRunsDeadCardRefs } = mod;
+  c.eq(
+    typeof checkRunsDeadCardRefs,
+    "function",
+    "lib/fact-invariants.mjs 导出 checkRunsDeadCardRefs（runs 引用非活卡号对账点名纯函数）",
+  );
+  const node = (no, over = {}) => ({
+    kind: "task",
+    title: `卡 ${no}`,
+    status: "pending",
+    statusRule: "r",
+    stage: "待办",
+    stageRule: "r",
+    attention: [],
+    no,
+    label: String(no),
+    tasks: [],
+    ...over,
+  });
+  const board = {
+    features: [
+      {
+        kind: "plan",
+        title: "特性",
+        status: "active",
+        statusRule: "r",
+        stage: "执行中",
+        stageRule: "r",
+        attention: [],
+        no: 10,
+        label: "10",
+        tasks: [node(11)],
+      },
+    ],
+  };
+  const registryEntries = [{ no: 99, kind: "task", file: ".zcode/plans/plan-x.md", title: "幽灵条目" }];
+  const mkRun = (runId, cards) => ({ runId, role: "implementer", at: "2026-10-10T02:00:00+08:00", result: "failed", cards });
+  const runs = [
+    mkRun("r-ghost", [99]),
+    mkRun("r-unknown", [8888]),
+    mkRun("r-live", [10, 11]),
+    mkRun("r-form", ["12", 0, -3, null]),
+    mkRun("r-dup", [99, 99]),
+    { role: "implementer", at: "2026-10-10T02:05:00+08:00", result: "failed", cards: [77] },
+  ];
+  const out = checkRunsDeadCardRefs({ board, runs, registryEntries });
+  const of = (id) => out.filter((m) => m.includes(id));
+
+  c.eq(out.length, 4, "恰 4 项点名（r-ghost 99 + r-unknown 8888 + r-dup 99 去重 1 项 + runs[5] 77；活号/形态非法零噪声）", show(out));
+  const ghostMsg = of("r-ghost")[0] ?? "";
+  c.inc(ghostMsg, "registry 有条目而板上无", "文案 A：号在 registry 有条目、板上无（独立文案）");
+  c.inc(ghostMsg, "99", "文案 A 给出实际号值");
+  c.inc(ghostMsg, ".zcode/plans/plan-x.md", "文案 A 附条目指向路径（两值之一：号 + 指向）");
+  c.ok(!ghostMsg.includes("完全未知号"), "文案 A 不混用文案 B（两独立文案分流）", ghostMsg);
+  const unknownMsg = of("r-unknown")[0] ?? "";
+  c.inc(unknownMsg, "完全未知号", "文案 B：号不在板上且 registry 无此号（独立文案）");
+  c.inc(unknownMsg, "8888", "文案 B 给出实际号值");
+  c.ok(!unknownMsg.includes("registry 有条目而板上无"), "文案 B 不混用文案 A（两独立文案分流）", unknownMsg);
+  c.eq(of("r-live").length, 0, "活号引用不点名（号可达零噪声）", show(of("r-live")));
+  c.eq(of("r-form").length, 0, "非稳定号 cards 值（字符串/0/负数/null）不解析、不猜号（形态归归一层点名）", show(of("r-form")));
+  c.eq(of("r-dup").length, 1, "同 run 内同号去重（去重后恰 1 项）", show(of("r-dup")));
+  const fallback = of("runs[5]")[0] ?? "";
+  c.inc(fallback, "77", "runId 缺省 → runs[<索引>] 兜底标识（可追溯）");
+  c.inc(fallback, "完全未知号", "兜底条目照常走两文案分流");
+
+  const pureBoard = JSON.parse(JSON.stringify(board));
+  const pureRuns = JSON.parse(JSON.stringify(runs));
+  const pureEntries = JSON.parse(JSON.stringify(registryEntries));
+  const before = JSON.stringify({ pureBoard, pureRuns, pureEntries });
+  checkRunsDeadCardRefs({ board: pureBoard, runs: pureRuns, registryEntries: pureEntries });
+  c.eq(JSON.stringify({ pureBoard, pureRuns, pureEntries }), before, "纯函数：入参零改动（无隐藏状态）");
+  c.eq(checkRunsDeadCardRefs({ board: null, runs, registryEntries }), [], "board 非对象 → 零点名（失败级另一路点名，不叠加）");
+  c.eq(checkRunsDeadCardRefs({ board, runs: null, registryEntries }), [], "runs 非数组 → 零点名（不猜）");
+  const noRegistry = checkRunsDeadCardRefs({ board, runs, registryEntries: [] });
+  c.eq(noRegistry.length, 4, "registry 条目缺省 → 四个死号引用照常点名（不猜可达）", show(noRegistry));
+  c.eq(noRegistry.filter((m) => m.includes("完全未知号")).length, 4, "registry 条目缺省 → 全走未知号文案（不猜可达）");
+}
+
 // ---------------------------------------------------------------- 计划码唯一断言契约（B4-2/#106；E4-11）
 
 /**
@@ -9234,23 +10212,30 @@ function scanConfigLibChecks(c, mod) {
   const root = newRoot("scan-config-lib");
   try {
     let s = mod.loadScanConfig(root);
-    c.eq([s.planDirs, s.errors.length, s.present], [[".zcode/plans"], 0, false], "无 scan.json → 默认面、零诊断");
+    c.eq(
+      [s.planDirs, s.errors.length, s.present, s.rejected],
+      [[".zcode/plans"], 0, false, false],
+      "无 scan.json → 默认面、零诊断、非整份拒收（rejected=false）",
+    );
 
     w(root, ".zcode/board/scan.json", "{ 坏 JSON\n");
     s = mod.loadScanConfig(root);
     c.eq(s.planDirs, [".zcode/plans"], "坏 JSON → 扫描面回落默认（兜底）");
     c.eq(s.errors.length, 1, "坏 JSON → 恰 1 条失败级诊断");
+    c.eq(s.rejected, true, "坏 JSON → rejected=true（整份拒收标记；#73 preflight 红判据）");
 
     w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/design-notes", "docs/plans"], excludeGlobs: ["**/x-*.md"] })}\n`);
     s = mod.loadScanConfig(root);
     c.eq(s.planDirs, [".zcode/plans", "docs/plans", "docs/design-notes"], "合法 opt-in → 默认 + 池内冻结序（与书写顺序无关）");
     c.eq(s.excludeGlobs, ["**/x-*.md"], "excludeGlobs 原样生效");
     c.eq(s.errors, [], "合法配置零诊断");
+    c.eq(s.rejected, false, "合法配置 rejected=false");
 
     w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/plans", "../escape", "/abs", "src"] })}\n`);
     s = mod.loadScanConfig(root);
     c.eq(s.planDirs, [".zcode/plans", "docs/plans"], "非法与池外条目拒绝、池内条目照常生效");
     c.eq(s.errors.length, 3, "三条非法 includeDirs 各一条诊断（.. 穿越 / 绝对路径 / 池外引用）");
+    c.eq(s.rejected, false, "条目级拒绝不标整份拒收（rejected=false；部分拒收语义）");
   } finally {
     removeRoot(root);
   }
@@ -11118,6 +12103,139 @@ scenario("107", "#107：根 AGENTS.md 零看板残留（V1/V4）+ doc/docs 看�
   },
 });
 
+// ---- 场景 108（B4-4/#108；E1 V10 / 裁决⑥ / AD-10①）：runs 引用非活卡号**升对账点名级**——
+//      副本域插一条引用死号的 run → `--check` 对账点名出现（两文案分流：registry 有条目而板上无
+//      vs 完全未知号，与编译侧 diagnostics 同判据单点）；清理该 run 记录后点名自清（零残留）；
+//      活卡引用零噪声；非失败级（不阻断退出码）。
+scenario("108", "#108：runs 引用非活卡号升对账点名——死号 run 插入 → --check 点名出现（两分流文案）；清理后消失；活卡零噪声、非失败级", {
+  build(root) {
+    const planRel = ".zcode/plans/plan-ref-108.md";
+    w(root, planRel, "# 对账点名夹具\n<!-- zcode-board: no=10 -->\n\n- **T1 活卡（板上可达）**：正文。 <!-- zcode-board: no=11 -->\n");
+    w(
+      root,
+      ".zcode/board/registry.json",
+      JSON.stringify(
+        {
+          version: 1,
+          seq: 99,
+          entries: [
+            { no: 10, kind: "plan", file: planRel, title: "对账点名夹具", assignedAt: "2026-10-09T10:00:00+08:00" },
+            { no: 11, kind: "task", file: planRel, title: "T1 活卡（板上可达）", assignedAt: "2026-10-09T10:00:00+08:00" },
+            {
+              no: 99,
+              kind: "task",
+              file: planRel,
+              title: "幽灵条目（板上无该号）",
+              assignedAt: "2026-10-09T10:02:00+08:00",
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    seedRuns(root, [
+      {
+        runId: "run-108-live",
+        sessionId: "sess_108",
+        role: "implementer",
+        at: "2026-10-10T02:00:00+08:00",
+        result: "failed",
+        cards: [10, 11],
+        worktree: null,
+        branch: null,
+        evidence: ["活卡引用（零噪声）"],
+        breakpoint: null,
+      },
+    ]);
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const rollOf = (res) => (res?.rollcall ?? []).filter((m) => m.includes("runs 引用非活卡号"));
+    const failList = (res) => show((res?.failures ?? []).map((f) => `[${f.category}] ${f.message}`));
+
+    // 前置：仅活卡引用 → runs 对账点名零点名（零噪声）
+    const base = checkProject(root);
+    c.eq(rollOf(base), [], "前置：仅活卡引用 → runs 对账点名零点名（零噪声）", show(base.rollcall));
+
+    // 副本域插两条引用死号的 run（模拟 E1 V10 事故形态：run 记录指向已删稿烧号/未知号；
+    // 测试作为夹具作者写 runs.json = 与 record-run 唯一写者产物同形态）
+    seedRuns(root, [
+      ...readRuns(root),
+      {
+        runId: "run-108-dead-ghost",
+        sessionId: "sess_108",
+        role: "implementer",
+        at: "2026-10-10T02:01:00+08:00",
+        result: "partial",
+        cards: [99],
+        worktree: null,
+        branch: null,
+        evidence: [],
+        breakpoint: null,
+      },
+      {
+        runId: "run-108-dead-unknown",
+        sessionId: "sess_108",
+        role: "implementer",
+        at: "2026-10-10T02:02:00+08:00",
+        result: "failed",
+        cards: [8888],
+        worktree: null,
+        branch: null,
+        evidence: [],
+        breakpoint: null,
+      },
+    ]);
+    // 插后重编译 = record-run 落账触发的标准路径（板面 lastRun/诊断刷新；随后 --check 板/源一致）
+    c.eq(runCompiler(root, []).code, 0, "插入死号 run 后重编译成功（record-run 落账触发的标准路径）");
+    const res = checkProject(root);
+    c.ok(res.ok, "非失败级：死号引用不使 --check 失败（对账点名不阻断退出码）", failList(res));
+    const roll = rollOf(res);
+    c.eq(roll.length, 2, "对账点名恰 2 项（幽灵号 99 + 完全未知号 8888；活卡 11 零噪声）", show(roll));
+    const ghost = roll.find((m) => m.includes("99")) ?? "";
+    const unknown = roll.find((m) => m.includes("8888")) ?? "";
+    c.inc(ghost, "registry 有条目而板上无", "文案 A：幽灵号走「registry 有条目而板上无」（独立分流）");
+    c.inc(ghost, "run-108-dead-ghost", "文案 A 点名来源 run（可追溯）");
+    c.inc(ghost, ".zcode/plans/plan-ref-108.md", "文案 A 附条目指向路径（两值之一：号 + 指向）");
+    c.ok(!ghost.includes("完全未知号"), "文案 A 不混用文案 B（两独立文案分流）", ghost);
+    c.inc(unknown, "完全未知号", "文案 B：两处皆无走「完全未知号」（独立分流）");
+    c.inc(unknown, "run-108-dead-unknown", "文案 B 点名来源 run（可追溯）");
+    c.inc(unknown, "8888", "文案 B 给出实际号值");
+    c.ok(!unknown.includes("registry 有条目而板上无"), "文案 B 不混用文案 A（两独立文案分流）", unknown);
+    c.ok(!roll.join("\n").includes("run-108-live"), "活卡引用 run 不进点名（号可达零噪声）", show(roll));
+
+    // 与编译侧 diagnostics 同判据同分流（禁二份判据）：同一夹具两通道分流一致
+    const diagRows = diagFor(res.board, ".zcode/board/runs.json");
+    const diagGhost = diagRows.find((d) => d.message.includes("99"))?.message ?? "";
+    const diagUnknown = diagRows.find((d) => d.message.includes("8888"))?.message ?? "";
+    c.inc(diagGhost, "registry 有条目而板上无", "编译侧 diagnostics 同分流（文案 A）");
+    c.inc(diagUnknown, "完全未知号", "编译侧 diagnostics 同分流（文案 B）");
+    c.eq(
+      [ghost.includes("registry 有条目而板上无"), unknown.includes("完全未知号")],
+      [diagGhost.includes("registry 有条目而板上无"), diagUnknown.includes("完全未知号")],
+      "两通道分流逐号一致（判据单点 = classifyDeadNumber，禁二份）",
+    );
+
+    // CLI：--check 输出对账点名节（退出码 0）——断言点用点名节专有文案（notes 区同含 run 号，
+    // 不以 run 号单独断言，防被诊断区文本误绿）
+    const cli = runCompiler(root, ["--check"]);
+    c.eq(cli.code, 0, "CLI --check 退出码 0（非失败级、不阻断）");
+    c.inc(cli.stdout, "对账点名 2 项", "stdout 独立「对账点名」节载计数 2（恰两条死号 run）");
+    c.inc(cli.stdout, "runs 引用非活卡号（对账点名级", "stdout 载点名节专有文案（对账点名级框架）");
+    c.inc(cli.stdout, "run-108-dead-ghost", "stdout 逐条点名幽灵号 run");
+    c.inc(cli.stdout, "run-108-dead-unknown", "stdout 逐条点名未知号 run");
+
+    // 清理：删除两条死号 run → 点名自清（零残留）
+    seedRuns(root, readRuns(root).filter((r) => !String(r.runId).startsWith("run-108-dead")));
+    c.eq(runCompiler(root, []).code, 0, "清理后重编译成功（板面随记录同步）");
+    const cleared = checkProject(root);
+    c.ok(cleared.ok, "清理后 --check 无失败项（板/源回一致）", failList(cleared));
+    c.eq(rollOf(cleared), [], "清理死号 run 记录后点名自清（零残留）", show(cleared.rollcall));
+    c.eq(runCompiler(root, ["--check"]).code, 0, "清理后 CLI --check 退出码 0");
+  },
+});
+
 // ---------------------------------------------------------------- 主流程
 
 async function main(argv) {
@@ -11167,6 +12285,18 @@ async function main(argv) {
       registryGhostLibChecks(c, mod);
     } catch (e) {
       c.ok(false, "死号对账库可执行（fact-invariants 可导入）", e.message);
+    }
+  }
+
+  say("");
+  say("== runs 引用非活卡号对账点名契约（B4-4/#108；E1 V10：升对账点名级 + 两文案分流单点判据） ==");
+  {
+    const c = new Checks("runs-dead-ref-lib");
+    try {
+      const mod = await import("../lib/fact-invariants.mjs");
+      runsDeadRefLibChecks(c, mod);
+    } catch (e) {
+      c.ok(false, "runs 引用非活卡号对账点名校验可执行（fact-invariants 可导入）", e.message);
     }
   }
 
@@ -11256,11 +12386,13 @@ async function main(argv) {
       let snap = before;
       for (const step of stepPlan) {
         const args = step.args ?? [];
-        const res = runCompiler(root, args);
+        // #73：步骤可指定执行根（幻影板场景在子目录跑 --preflight；缺省 = 夹具根）
+        const stepRoot = typeof step.root === "function" ? step.root(root) : (step.root ?? root);
+        const res = runCompiler(stepRoot, args);
         const afterStep = treeSnapshot(root);
-        steps.push({ ...res, args, before: snap, after: afterStep });
+        steps.push({ ...res, args, stepRoot, before: snap, after: afterStep });
         snap = afterStep;
-        say(`  命令：node ${toPosix(COMPILER)} ${root}${args.length > 0 ? ` ${args.join(" ")}` : ""}（退出码 ${res.code}）`);
+        say(`  命令：node ${toPosix(COMPILER)} ${stepRoot}${args.length > 0 ? ` ${args.join(" ")}` : ""}（退出码 ${res.code}）`);
       }
       const after = snap;
       const compiles = steps.filter((st) => !st.args.includes("--assign"));
@@ -11278,15 +12410,25 @@ async function main(argv) {
         lastStep: steps[steps.length - 1],
       };
       const c = new Checks(s.id);
-      const usable = commonChecks(c, ctx);
-      if (usable) {
+      if (s.skipCommon) {
+        // #73：末步非默认编译的检查点场景（--preflight / --doctor 单步夹具、无板）——跳过公共板断言，
+        // 由场景自带断言（退出码语义 / 零写入 / 分级清单），公共面不适用（无 board 产物）。
         try {
           s.assert(c, ctx);
         } catch (e) {
           c.ok(false, "场景断言执行异常", e.stack ?? e.message);
         }
       } else {
-        c.skip("场景断言", "board.json 不可用");
+        const usable = commonChecks(c, ctx);
+        if (usable) {
+          try {
+            s.assert(c, ctx);
+          } catch (e) {
+            c.ok(false, "场景断言执行异常", e.stack ?? e.message);
+          }
+        } else {
+          c.skip("场景断言", "board.json 不可用");
+        }
       }
       if (clean) removeRoot(root);
     }

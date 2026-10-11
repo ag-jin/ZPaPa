@@ -887,6 +887,154 @@ const MUTATIONS = [
         "m54b",
       ),
   },
+  {
+    name: "m73a-preflight-mass-red-off",
+    scenario: "73b",
+    expect:
+      "--preflight 的 >10 红判据关停（296 档整批未领号不再判红禁止）必须被场景 73b 的退出码 2/「结论：红」/不出板断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "if (unnumbered.length > MASS_PLAN_FILE_THRESHOLD) {",
+        "if (false) { /* 突变：>10 红判据关停 */",
+        "m73a",
+      ),
+  },
+  {
+    name: "m73b-preflight-collision-warn-off",
+    scenario: "73c",
+    expect:
+      "PLAN_DIRS 硬编码碰撞警告关停（非 opt-in docs 目录存在不再醒目警告）必须被场景 73c 的退出码 1/黄项点名断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "for (const { dir, count } of optedOutPool) {",
+        "for (const { dir, count } of []) { /* 突变：碰撞警告关停 */",
+        "m73b",
+      ),
+  },
+  {
+    name: "m73c-doctor-manifest-digest-off",
+    scenario: "73l",
+    expect:
+      "doctor 的 manifest 摘要对账关停（改了未重生成不再判红点名）必须被场景 73l 的①断言（退出码 2 + 点名文件）咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "else if (fileSha256(abs) !== digest) mismatched.push(rel);",
+        "else if (false) mismatched.push(rel); /* 突变：摘要对账关停 */",
+        "m73c",
+      ),
+  },
+  {
+    name: "m73d-doctor-git-drift-off",
+    scenario: "73k",
+    expect:
+      "doctor 的 git 漂移判定关停（有未提交改动仍报干净）必须被场景 73k 的漂移相位断言（退出码 1 + 点名计数）咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "if (dirty.length === 0) {",
+        "if (true) { /* 突变：漂移判定关停 */",
+        "m73d",
+      ),
+  },
+  {
+    name: "m73e-doctor-old-version-off",
+    scenario: "73i",
+    expect:
+      "doctor 的旧版本/分叉副本版本值判定关停（声明技能版 ≠ 当前版不再判红）必须被场景 73i 的①断言（退出码 2 + 两值点名）咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "} else if (e.version !== SKILL_VERSION) {",
+        "} else if (false) { /* 突变：旧版本判定关停 */",
+        "m73e",
+      ),
+  },
+  {
+    name: "m179a-coexist-version-mismatch-off",
+    scenario: "179a",
+    expect:
+      "doctor 的并存板工具版本不一致判据关停（项目侧入口读数 ≠ 全局技能不再判黄）必须被场景 179a 的退出码 1/两值点名/两路径建议断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "readings.filter((r) => r.probe.ok && r.probe.version !== SKILL_VERSION)",
+        "readings.filter((r) => false) /* 突变：并存版本不一致判据关停 */",
+        "m179a",
+      ),
+  },
+  {
+    name: "m179b-coexist-hooks-entry-off",
+    scenario: "179b",
+    expect:
+      "doctor 的 hooks 声明入口检测关停（声明指向非全局自建脚本不再点名）必须被场景 179b 的②断言（点名 .zcode/hooks/board-sync.mjs + 不执行探测）咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "for (const d of collectHookDeclarations(cfgLoaded.value)) {",
+        "for (const d of []) { /* 突变：hooks 声明入口检测关停 */",
+        "m179b",
+      ),
+  },
+  {
+    name: "m108a-runs-dead-ref-rollcall-off",
+    scenario: "108",
+    expect:
+      "runs 引用非活卡号升对账点名的接线关停（死号 run 不再进 rollcall——E1 V10 沉默回归）必须被场景 108 的「对账点名恰 2 项」与 CLI 计数断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "    if (runsDeadRaw !== null) {",
+        "    if (false) { /* 突变：对账点名接线关停 */",
+        "m108a",
+      ),
+  },
+  {
+    name: "m108b-runs-dead-ref-split-collapse",
+    file: FIXTURE_INVARIANTS,
+    scenario: "108",
+    expect:
+      "两文案分流塌缩（registry 有条目而板上无 也落「完全未知号」文案——勘误 9d 分流回归）必须被场景 108 的文案 A 独立断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        '      if (kind === "registry-not-on-board") {',
+        "      if (false) { /* 突变：分流判据塌缩 */",
+        "m108b",
+      ),
+  },
+  {
+    name: "m109a-worktree-binding-cleanup-off",
+    file: "tools/verify-cleanup.mjs",
+    script: "run-t13-hooks.mjs",
+    scenario: "Q4",
+    expect:
+      "收尾核对的声明卡号绑定关停（runs 声明 worktree 末段号不再与卡号对照——E4-09 错配照常当本卡现场）必须被 Q4 的「声明残留恰 1 项/2 项」与错配点名断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "      const unbound = parsed === null || parsed.no !== no;",
+        "      const unbound = false; /* 突变：声明卡号绑定关停 */",
+        "m109a",
+      ),
+  },
+  {
+    name: "m109b-binding-criterion-copied",
+    file: "tools/verify-cleanup.mjs",
+    script: "run-t13-hooks.mjs",
+    scenario: "S10",
+    expect:
+      "卡号绑定判据不再复用 lib/derive.mjs parseWorktreePath（就地抄一份判据——与 --check (f) 双份口径）必须被 S10 的同源守卫咬住（禁二份）",
+    apply: (src) =>
+      mutate(
+        src,
+        'import { parseWorktreePath } from "../lib/derive.mjs";',
+        `const parseWorktreePath = (raw) => { const m = /^(?:([^/.][^/]*)\\/)?\\.zcode\\/worktrees\\/task-([1-9][0-9]*)$/.exec(typeof raw === "string" ? raw : ""); return m ? { path: raw, no: Number(m[2]), subdir: m[1] ?? null } : null; }; /* 突变：判据就地抄写（禁二份守卫靶） */`,
+        "m109b",
+      ),
+  },
 ];
 
 function main(argv) {

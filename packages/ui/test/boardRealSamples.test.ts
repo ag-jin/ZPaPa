@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView } from "../src/board/BoardPaneView.js";
 import { BoardCardDialog } from "../src/board/BoardCardDialog.js";
 import { resolveBoardDialogNode } from "../src/board/boardDialogViewModel.js";
+import { boardFoldIdsOfCard } from "../src/board/boardFoldState.js";
 import { loadBoardDocument, type BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import type { BoardViewMode } from "../src/board/boardViewsViewModel.js";
 import type { BoardFeatureNode, BoardTaskNode } from "../src/board/boardViewModel.js";
@@ -471,19 +472,78 @@ test(
       (task) => task.currentAssignee !== task.nextAssignee,
     );
     const table = markups.get("table") ?? "";
-    for (const task of assertableNext) {
-      const no = task.no;
-      if (typeof no !== "number") continue;
-      const start = table.indexOf(`data-board-card="task:${no}"`);
-      assert.ok(start >= 0, `表格视图应渲染卡 #${no}`);
-      const rowEnd = table.indexOf("<tr", start + 1);
-      const row = table.slice(start, rowEnd === -1 ? table.length : rowEnd);
+    // #89/A4-3 折叠默认态：表格分组行按默认态**条件渲染**（全完成/全取消组默认折叠，缺口/活跃组展开），
+    // 断言面因此分两侧钉：①默认态渲染在 markup 的非折叠卡 —— 钉管线接手位；②默认态不在 markup 的卡 ——
+    // 必须落入「祖先折叠组头在场且折叠」的形态（不许是渲染遗漏），再用展开对照渲染复证卡确实能出现。
+    const pipelineTasks = assertableNext
+      .filter((task) => typeof task.no === "number")
+      .map((task) => ({ no: task.no as number, nextAssignee: task.nextAssignee }));
+    const inlineTasks = pipelineTasks.filter(({ no }) =>
+      table.includes(`data-board-card="task:${no}"`),
+    );
+    const foldedTasks = pipelineTasks.filter(
+      ({ no }) => !table.includes(`data-board-card="task:${no}"`),
+    );
+    const assertPipelineMarker = (
+      markup: string,
+      label: string,
+      task: { no: number; nextAssignee: unknown },
+    ): void => {
+      const start = markup.indexOf(`data-board-card="task:${task.no}"`);
+      assert.ok(start >= 0, `${label}应渲染卡 #${task.no}`);
+      const rowEnd = markup.indexOf("<tr", start + 1);
+      const row = markup.slice(start, rowEnd === -1 ? markup.length : rowEnd);
       assert.ok(
         row.includes(`data-board-pipeline-next="${String(task.nextAssignee)}"`),
-        `卡 #${no} 的管线应标出接手位 ${String(task.nextAssignee)}`,
+        `卡 #${task.no} 的管线应标出接手位 ${String(task.nextAssignee)}`,
       );
-      assert.ok(row.includes("下一个"), `卡 #${no} 的接手位应带词条标记「下一个」`);
+      assert.ok(row.includes("下一个"), `卡 #${task.no} 的接手位应带词条标记「下一个」`);
+    };
+    for (const task of inlineTasks) assertPipelineMarker(table, "默认态表格视图", task);
+
+    // 折叠侧：祖先折叠 id 走 boardFoldState 单点（稿层 → epic → 期次）；默认 markup 里必须至少有一个
+    // 在场且折叠（aria-expanded="false"）的组头，证明「不在 markup」是折叠设计而非卡被丢。
+    const foldIdsOf = (no: number): string[] => boardFoldIdsOfCard(board, `task:${no}`);
+    const collapsedHeaderOf = (foldId: string): boolean => {
+      for (const anchor of [
+        `data-board-group-toggle="${foldId}"`,
+        `data-board-layer-toggle="${foldId}"`,
+      ]) {
+        const at = table.indexOf(anchor);
+        if (at < 0) continue;
+        const tagEnd = table.indexOf(">", at);
+        if (table.slice(at, tagEnd).includes('aria-expanded="false"')) return true;
+      }
+      return false;
+    };
+    for (const task of foldedTasks) {
+      const foldIds = foldIdsOf(task.no);
+      assert.ok(
+        foldIds.length > 0,
+        `卡 #${task.no} 不在默认 markup 且无祖先折叠 id：疑似渲染遗漏（boardFoldIdsOfCard 空集）`,
+      );
+      assert.ok(
+        foldIds.some(collapsedHeaderOf),
+        `卡 #${task.no} 不在默认 markup，但祖先折叠组头在场且折叠的形态不存在：疑似渲染遗漏而非折叠（检查 ${foldIds.join(" / ")}）`,
+      );
     }
+    // 展开对照：把断言面全部卡的祖先折叠 id 置为展开再渲染一次——折叠组内卡必须出现且管线标记齐全。
+    const foldIdsToExpand = [...new Set(pipelineTasks.flatMap(({ no }) => foldIdsOf(no)))];
+    const tableExpanded = renderToStaticMarkup(
+      createElement(ZCodeIntlProvider, {
+        initialLocale: "zh-CN" as const,
+        children: createElement(BoardPaneView, {
+          state,
+          viewMode: "table",
+          fold: {
+            state: Object.fromEntries(foldIdsToExpand.map((foldId) => [foldId, true])),
+            onToggle: () => {},
+          },
+        }),
+      }),
+    );
+    for (const task of foldedTasks)
+      assertPipelineMarker(tableExpanded, "展开折叠后的表格视图", task);
 
     // 3) 依赖行（#54-6）：取板上第一个「依赖目标有计划码」的卡，弹窗里编号应是计划码-层级 + 稳定号。
     const allTasks: Array<{ task: RawRecord; planCode: string | null; feature: RawRecord }> = [];
@@ -544,21 +604,63 @@ test(
       dialogMarkup.includes(expectedTargetText),
       `依赖行应显示 ${expectedTargetText}（不落回 ID-<label> 形态）：\n${dialogMarkup.slice(0, 600)}`,
     );
-    console.log(
-      `[board] #54 冒烟：接手位卡 ${cardsWithNext.length} 张；依赖样例 #${String(dependency.task.no)} → ${expectedTargetText}`,
+    // T6162v B-2：降级打印必须带计数——只用总数时，「全部活跃降级（断言面 0）」与「断言全绿」
+    // 在证据日志里不可区分。打印前按原始板的独立计数核对日志行计数段（格式/取值回退即红）。
+    const activeExcluded = cardsWithNext.length - assertableNext.length;
+    const smokeLine =
+      `[board] #54 冒烟：接手位卡 ${cardsWithNext.length} 张（断言面 ${assertableNext.length} 张，` +
+      `活跃排除 ${activeExcluded} 张）；依赖样例 #${String(dependency.task.no)} → ${expectedTargetText}`;
+    const smokeCounts = smokeLine.match(/接手位卡 (\d+) 张（断言面 (\d+) 张，活跃排除 (\d+) 张）/);
+    assert.ok(smokeCounts, "降级打印必须带「断言面/活跃排除」计数（T6162v B-2）");
+    assert.deepEqual(
+      smokeCounts.slice(1).map((value) => Number(value)),
+      [cardsWithNext.length, assertableNext.length, activeExcluded],
+      "打印的降级计数必须与原始板独立推算的计数一致",
     );
+    console.log(smokeLine);
   },
 );
 
-test("空态 A（真实文件系统：无板）逐字不静默", async () => {
+test("空态 A1（真实文件系统：无板且无板产物）逐字不静默", async () => {
   const { workspace, cleanup } = await stageWorkspace(null);
   try {
     const state = await loadFromRealFile(workspace);
-    assert.equal(state.kind, "missing");
+    assert.equal(state.kind, "missing-new");
     const markup = render(state);
     assert.ok(markup.includes("本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。"));
   } finally {
     await cleanup();
+  }
+});
+
+test("空态 A2（真实文件系统：板产物在场而板本体缺失）逐字不静默", async () => {
+  // 契约 §2 A2：board.json 缺失 + 同目录板产物（board.md）在场 → 板文件缺失（损毁/误删）。
+  const workspace = await mkdtemp(join(tmpdir(), "board-empty-"));
+  try {
+    await mkdir(join(workspace, ".zcode/board"), { recursive: true });
+    await writeFile(join(workspace, ".zcode/board/board.md"), "# 项目看板\n", "utf8");
+    const state = await loadFromRealFile(workspace);
+    assert.equal(state.kind, "missing-damaged");
+    assert.ok(
+      render(state).includes("板文件缺失（可能被删除或未同步），请在会话中运行编译器重建。"),
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("空态 A1 反例（真实文件系统）：只有 evidence/ 目录仍按新生（目录不是板产物）", async () => {
+  // ZPaPa 自身的形态：`.zcode/board/` 只有 evidence/。本用例钉「探针闭集不含 evidence」
+  //（本文件的 node:fs 假件按 existsSync 判定，比真服务宽——目录也报存在，所以误把 evidence
+  // 当板产物的实现坏法在这里必咬）。生产服务口径更严：checkFilesExist 只认文件
+  //（`packages/services/src/file/fileService.ts` 的 checkFileExists → stat().isFile()）。
+  const workspace = await mkdtemp(join(tmpdir(), "board-empty-"));
+  try {
+    await mkdir(join(workspace, ".zcode/board/evidence"), { recursive: true });
+    const state = await loadFromRealFile(workspace);
+    assert.equal(state.kind, "missing-new", "证据目录不是板产物：仍是从未有板的新生");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
   }
 });
 

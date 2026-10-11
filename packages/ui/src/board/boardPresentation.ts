@@ -210,6 +210,68 @@ export const BOARD_ATTENTION_LABEL_MESSAGE_IDS: Record<BoardAttentionCode, strin
 };
 
 /**
+ * 计数词条的单/复数键对（卡 #90 / A4-4；第四绿 F4/D7 收口）：en 侧「1 drafts / 1 phases /
+ * 1 cards / 1 gaps」是裸复数缺单数形态——本模块把「哪个计数走哪对键」单点化，
+ * 组件不再各自拼 key。zh 两侧同文（汉语无复数，两键内容一致即可，不引入 locale 分支）。
+ */
+export const BOARD_COUNT_MESSAGE_IDS = {
+  featureCardCount: {
+    one: "board.feature.cardCount.one",
+    other: "board.feature.cardCount.other",
+  },
+  layerPlanCount: {
+    one: "board.layer.planCount.one",
+    other: "board.layer.planCount.other",
+  },
+  layerPhaseCount: {
+    one: "board.layer.phaseCount.one",
+    other: "board.layer.phaseCount.other",
+  },
+  layerGapCount: {
+    one: "board.layer.gapCount.one",
+    other: "board.layer.gapCount.other",
+  },
+} as const satisfies Record<string, { one: string; other: string }>;
+
+/** 计数词条对（单点键表的结构；`one` = count === 1 的单数键）。 */
+type BoardCountMessageIds = { one: string; other: string };
+
+/**
+ * 计数词条选取（单点判据）：`count === 1` 走单数键，其余（含 0）走复数键。
+ * 纯函数：只做键选择，不做文案拼装（拼装交给 `formatBoardCountText`）。
+ */
+function boardCountMessageId(count: number, pair: BoardCountMessageIds): string {
+  return count === 1 ? pair.one : pair.other;
+}
+
+/** 计数文案（键选择 + `{count}` 占位）：计数片/徽章共用，避免调用方各写一遍三元。 */
+export function formatBoardCountText(
+  count: number,
+  pair: BoardCountMessageIds,
+  formatMessage: BoardMessageFormatter,
+): string {
+  return formatMessage({ id: boardCountMessageId(count, pair) }, { count });
+}
+
+/**
+ * epic 登记行终态标注词条（§10.5；A4-1）：只认登记行枚举值（`cancelled`/`archived`）——
+ * 不认识的取值不标注（不猜语义、不把未知值当进行态）。cancelled 复用 `board.status.cancelled`
+ * （同词同义）；archived 只在 epic 壳层出现，单列键。
+ *
+ * 单点必要性（#90）：组头徽章与 epic 弹窗两处都要判「终态徽章仅非活跃时出现」——判据只此一份。
+ */
+const BOARD_EPIC_STATUS_MESSAGE_IDS: Record<string, string> = {
+  cancelled: "board.status.cancelled",
+  archived: "board.epic.archived",
+};
+
+/** 终态标注词条 id（单点判据）：非活跃登记行才非空——active/缺省/未知取值一律 null（不落章）。 */
+export function boardEpicStatusMessageId(status: string | null): string | null {
+  if (status === null) return null;
+  return BOARD_EPIC_STATUS_MESSAGE_IDS[status] ?? null;
+}
+
+/**
  * 段位徽章/列头文案。零映射（缺段位）不渲染；不认识的新段位原样透出
  * —— 与 `formatBoardRunTime` 同款「不吞字段、不自造词」姿态（契约 §13.6：应用侧不得自算段位）。
  */
@@ -329,7 +391,8 @@ export function formatBoardStaleHint(
 
 /** 占位态的种类（显式映射 ⇒ 锚点与文案的对应关系写死在类型里，评审 #32-S2）。 */
 export type BoardPlaceholderKind =
-  | "missing"
+  | "missing-new"
+  | "missing-damaged"
   | "empty"
   | "damaged"
   | "version-newer"
@@ -338,9 +401,10 @@ export type BoardPlaceholderKind =
   | "unavailable"
   | "loading";
 
-/** 占位态 → 文案 id（loading 之外的锚点值 = kind 本身）；四态分离见契约 §2/§14。 */
+/** 占位态 → 文案 id（loading 之外的锚点值 = kind 本身）；四态分离见契约 §2/§14；A1/A2 二分见契约 §2。 */
 export const BOARD_PLACEHOLDER_MESSAGE_IDS: Record<BoardPlaceholderKind, string> = {
-  missing: "board.empty.none",
+  "missing-new": "board.empty.none",
+  "missing-damaged": "board.empty.missingDamaged",
   empty: "board.empty.features",
   damaged: "board.empty.damaged",
   "version-newer": "board.error.versionNewer",

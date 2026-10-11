@@ -55,7 +55,7 @@ test("就绪态：面板根声明选择浮条豁免（与 data-board-pane 同一
 
 test("占位态（空/损坏/不可读/加载中）：同一份豁免声明", () => {
   const kinds: BoardPaneLoadState[] = [
-    { kind: "missing" },
+    { kind: "missing-new" },
     { kind: "empty" },
     { kind: "damaged" },
     { kind: "unavailable" },

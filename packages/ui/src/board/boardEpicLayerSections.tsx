@@ -11,6 +11,8 @@
  * 不消费本组件。折叠默认态与记忆（#89 / A4-3）就落在这一个单点上。
  */
 import type { ReactNode } from "react";
+import { cn } from "@/components/lib/utils.js";
+import { boardEpicOpenProps } from "./boardCardInteraction.js";
 import { resolveBoardFoldOpen, type BoardFoldControls } from "./boardFoldState.js";
 import { BoardFoldIndicator, boardFoldSummaryClickHandler } from "./boardFoldParts.js";
 import {
@@ -39,7 +41,8 @@ export function boardLayerFeatureStub(title: string): BoardGroupHeaderFeature {
 
 /**
  * 容器层块（epic/期次）：差异全在类名与摘要行附加属性，装配与锚点由本组件单点产出。
- * 层不是卡：章头/组头整行是折叠落点（点击路由只走折叠，不落空跳转）。
+ * 层不是卡：无卡片弹窗；epic 章头名/标题区接 `onOpenEpic`（#90/A4-4 退化形态，开 epic 概览、
+ * 不折叠），其余（含期次组头）仍是整行折叠落点，不落空跳转。
  *
  * 折叠默认态与记忆（#89 / A4-3）：默认态由调用方按 AD-5 单点规则算好传入（`defaultExpanded`；
  * 层头零件没有成员信息，本组件不自算缺口/段位），用户覆盖从宿主 `fold` 读（`resolveBoardFoldOpen`
@@ -57,6 +60,8 @@ export function BoardEpicLayerSection({
   foldId,
   defaultExpanded,
   fold,
+  onOpenEpic,
+  highlightId,
   children,
 }: {
   layer: BoardGroupHeaderLayer;
@@ -76,17 +81,31 @@ export function BoardEpicLayerSection({
   defaultExpanded: boolean;
   /** 宿主持有的折叠控制（会话记忆）；缺省 = 只读渲染，按默认态。 */
   fold?: BoardFoldControls;
+  /**
+   * epic 层头的开弹窗回传（卡 #90 / A4-4；**仅 epic 层**）：传到组头零件的 `titleRegionProps`
+   * ——名/标题区成落点（点它开 epic 概览、不折叠），计数/徽章/空白仍走 summary 折叠。
+   * 期次层不接（期次不是卡也没有弹窗面）。
+   */
+  onOpenEpic?: (code: string) => void;
+  /**
+   * 跳转/下钻高亮落点（#90/A4-4）：等于本层名（epic 码 / 期次合成名）时落高亮锚点与底色
+   * ——与卡片的 `boardCardHighlightProps` 同款「落点看得见」纪律；层名与卡片 id 命名空间不撞。
+   */
+  highlightId?: string | null;
   children: ReactNode;
 }) {
   const isEpic = layer.kind === "epic";
   const open = fold ? resolveBoardFoldOpen(fold.state, foldId, defaultExpanded) : defaultExpanded;
+  const highlighted =
+    highlightId !== null && highlightId !== undefined && highlightId === layer.name;
   return (
     <details
       {...(isEpic
         ? { "data-board-epic": layer.name, "data-board-epic-block": layer.name }
         : { "data-board-phase": layer.name, "data-board-phase-block": layer.name })}
+      {...(highlighted ? { "data-board-layer-highlight": "true" } : {})}
       open={open || undefined}
-      className={className}
+      className={cn(className, highlighted ? "bg-warning/15" : "")}
     >
       <summary
         {...(isEpic
@@ -100,6 +119,14 @@ export function BoardEpicLayerSection({
         <BoardFeatureGroupHeaderContent
           feature={boardLayerFeatureStub(title)}
           layer={layer}
+          {...(isEpic && onOpenEpic
+            ? {
+                titleRegionProps: {
+                  "data-board-epic-open": layer.name,
+                  ...boardEpicOpenProps({ code: layer.name, onOpenEpic }),
+                },
+              }
+            : {})}
           {...(titleSize ? { titleSize } : {})}
         />
       </summary>

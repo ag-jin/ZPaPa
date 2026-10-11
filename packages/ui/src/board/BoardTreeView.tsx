@@ -14,8 +14,9 @@
  * 全完成/全取消折叠」——B2 的稿层判据递归扩展到容器层）：稿层 = 缺口展开、终态（已完成/已取消）
  * 折叠、其余展开；容器层 = 任一成员展开即展开（缺口跨层传播，缺口不许被埋）。用户动作与记忆态
  * 由宿主注入（`fold`），本组件不持状态。摘要在稿层显示 `[N 张卡]`（含嵌套）；容器层头显示层名
- * （epic 码 / `KANB1` 合成名，AD-3）与层计数（稿数/期数）。epic 层**不是卡**：无稳定号、无弹窗
- * 落点——整行是折叠落点（点击路由退化为折叠切换）。跳转落在折叠块内时由宿主先把祖先层展开
+ * （epic 码 / `KANB1` 合成名，AD-3）与层计数（稿数/期数）。epic 层**不是卡**：无稳定号、无卡片
+ * 弹窗——按 AD-6 走 epic 弹窗退化形态（#90/A4-4：层头名/标题区开 epic 概览、其余仍是折叠落点）；
+ * 期次层整行是折叠落点。跳转落在折叠块内时由宿主先把祖先层展开
  * （`boardFoldIdsOfCard`；DOM 侧 `boardRevealDetailsIntent` 兜底）。
  *
  * 完成沉底（#65，卡「完成沉底全视图落实」）：树形是**结构序**视图——特性大块、章节子分组与
@@ -26,6 +27,7 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { boardCardHighlightProps, boardCardOpenProps } from "./boardCardInteraction.js";
 import {
+  boardLayerGapCount,
   groupBoardFeaturesByEpic,
   type BoardEpicGroup,
   type BoardPhaseGroup,
@@ -87,12 +89,18 @@ function BoardTaskRow({
   planCode,
   onOpenCard,
   highlightCardId,
+  nested,
 }: {
   task: BoardTaskNode;
   /** 所属特性的计划码（短编号省略的是它的前缀；#46 B1）。 */
   planCode: string | null;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
+  /**
+   * 所在稿块是否嵌在容器层（epic ⊃ 期次）里（#90/A4-4 D6）：嵌着时最近圆角容器 = 稿块
+   * （rounded-md），行降到 rounded-sm（DESIGN.md 半径阶梯逐级递减；不再 lg > md 倒挂）。
+   */
+  nested?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const lastRunText = formatBoardLastRunText(task.lastRun, intl.formatMessage);
@@ -110,7 +118,8 @@ function BoardTaskRow({
         {...highlightProps}
         {...boardCardOpenProps({ id: task.id, ...(onOpenCard ? { onOpenCard } : {}) })}
         className={cn(
-          "flex flex-col gap-0.5 rounded-lg px-2 py-1.5 hover:bg-surface-hover",
+          "flex flex-col gap-0.5 px-2 py-1.5 hover:bg-surface-hover",
+          nested ? "rounded-sm" : "rounded-lg",
           taskIndentClass(task.depth),
           highlightClassName,
         )}
@@ -147,6 +156,7 @@ function BoardTaskRow({
               planCode={planCode}
               {...(onOpenCard ? { onOpenCard } : {})}
               highlightCardId={highlightCardId}
+              {...(nested ? { nested } : {})}
             />
           ))
         : null}
@@ -278,6 +288,7 @@ function BoardFeatureSection({
                 planCode={feature.planCode}
                 {...(onOpenCard ? { onOpenCard } : {})}
                 highlightCardId={highlightCardId}
+                {...(nested ? { nested } : {})}
               />
             ))}
           </section>
@@ -309,7 +320,12 @@ function BoardPhaseSection({
 }) {
   return (
     <BoardEpicLayerSection
-      layer={{ kind: "phase", name: phase.name, planCount: phase.features.length }}
+      layer={{
+        kind: "phase",
+        name: phase.name,
+        planCount: phase.features.length,
+        gapCount: boardLayerGapCount(phase.features),
+      }}
       title=""
       titleSize="xsSubtle"
       className="group flex flex-col overflow-hidden rounded-lg border border-border/50"
@@ -318,6 +334,7 @@ function BoardPhaseSection({
       foldId={boardPhaseFoldId(epicCode, phase.phase)}
       defaultExpanded={boardContainerFoldExpanded(phase.features)}
       {...(fold ? { fold } : {})}
+      highlightId={highlightCardId}
     >
       {phase.features.map((feature) => (
         <BoardFeatureSection
@@ -335,19 +352,22 @@ function BoardPhaseSection({
 
 /**
  * epic 章（三层容器第一层；#87）：章头 = 登记行层名（4 位码）+ 标题 + 终态标注（§10.5）+ 稿数/期数；
- * 体 = 期次组（升序）。**epic 不是卡**：无稳定号、无弹窗落点——章头整行是折叠落点（epic 弹窗退化
- * 形态的容器侧承接：点击路由只走折叠，不落空跳转）。
+ * 体 = 期次组（升序）。**epic 不是卡**：无稳定号、无卡片弹窗——名/标题区是 epic 弹窗退化形态的落点
+ * （#90/A4-4 起，`onOpenEpic`：点它开概览、不折叠），其余仍是折叠落点、不落空跳转。
  */
 function BoardEpicSection({
   group,
   onOpenCard,
   highlightCardId,
   fold,
+  onOpenEpic,
 }: {
   group: BoardEpicGroup;
   onOpenCard?: (id: string) => void;
   highlightCardId: string | null;
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；仅 epic 层）。 */
+  onOpenEpic?: (code: string) => void;
 }) {
   return (
     <BoardEpicLayerSection
@@ -356,6 +376,7 @@ function BoardEpicSection({
         name: group.epic.code,
         planCount: group.members.length,
         phaseCount: group.phases.length,
+        gapCount: boardLayerGapCount(group.members),
         status: group.epic.status,
       }}
       title={group.epic.title}
@@ -366,6 +387,8 @@ function BoardEpicSection({
       foldId={boardEpicFoldId(group.epic.code)}
       defaultExpanded={boardContainerFoldExpanded(group.members)}
       {...(fold ? { fold } : {})}
+      {...(onOpenEpic ? { onOpenEpic } : {})}
+      highlightId={highlightCardId}
     >
       {group.phases.map((phase) => (
         <BoardPhaseSection
@@ -389,6 +412,8 @@ export interface BoardTreeViewProps {
   highlightCardId?: string | null;
   /** 折叠默认态的用户覆盖与回传（#89/A4-3；缺省 = 只读，按默认态）。 */
   fold?: BoardFoldControls;
+  /** epic 层头开弹窗回传（#90/A4-4；缺省 = 只读，层头退化为纯折叠落点）。 */
+  onOpenEpic?: (code: string) => void;
 }
 
 /**
@@ -401,6 +426,7 @@ export function BoardTreeView({
   onOpenCard,
   highlightCardId = null,
   fold,
+  onOpenEpic,
 }: BoardTreeViewProps) {
   const grouping = groupBoardFeaturesByEpic(board);
   return (
@@ -421,6 +447,7 @@ export function BoardTreeView({
           {...(onOpenCard ? { onOpenCard } : {})}
           highlightCardId={highlightCardId}
           {...(fold ? { fold } : {})}
+          {...(onOpenEpic ? { onOpenEpic } : {})}
         />
       ))}
     </div>

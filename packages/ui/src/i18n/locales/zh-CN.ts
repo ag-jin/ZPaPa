@@ -971,6 +971,8 @@ const zhCN: Record<string, string> = {
   "board.pipeline.next": "下一个",
   "board.lastRun.stoppedAt": "停在 #{no}",
   "board.empty.none": "本项目还没有看板。完成一次访谈登记或创建第一个 spec 后自动生成。",
+  // 空态 A 二分（卡 #158；契约 §2 A1/A2）：板产物在场而 board.json 缺失 = 板文件缺失（损毁/误删）。
+  "board.empty.missingDamaged": "板文件缺失（可能被删除或未同步），请在会话中运行编译器重建。",
   "board.empty.features": "尚无规格或计划。",
   "board.empty.damaged": "板文件无法读取或已损坏，请在会话中运行编译器重建。",
   // 板读取错误态分离（卡 #70；契约 §2+/§14）：版本过新 → 升级应用/技能；过旧 → 重编译。
@@ -983,6 +985,9 @@ const zhCN: Record<string, string> = {
   // 暂时不可读（连接未就绪）：与「损坏」分开——不在断连时指引重编译（评审 #32-P3）。
   "board.unavailable":
     "看板暂时不可读（连接未就绪）。连接恢复后会自动重读，也可以点右上角刷新重试。",
+  // 未连接但有上次快照（卡 #158；E7 §7.2「保留上次快照但标陈旧」）：不因断连清空版面。
+  "board.unavailable.snapshotNotice":
+    "连接未就绪：以下为上次读取的快照，可能已过期；连接恢复后会自动重读，也可以点右上角刷新重试。",
   // 陈旧提示（契约 §5 的应用侧轻量版：纯时间启发式，不做 fs mtime 比对——见契约 §5 勘误）。
   "board.stale.hint": "板可能已过期（更新于 {time}）：建议在会话内重新编译板。",
   "board.attention.interviewedNotArranged": "已访谈，尚未落卡",
@@ -1005,10 +1010,25 @@ const zhCN: Record<string, string> = {
   "board.stage.done": "已完成",
   "board.stage.cancelled": "已取消",
   // 视图切换（契约 §13.2 四视图；本期面板内三态：树形/看板/列表）。
-  "board.feature.cardCount": "{count} 张卡",
+  // 计数词条单/复数两键（A4-4/F4）：zh 两键同文（汉语无复数）；en 侧 `.one` 收口「1 cards」类裸复数。
+  "board.feature.cardCount.one": "{count} 张卡",
+  "board.feature.cardCount.other": "{count} 张卡",
   // 三层容器层头计数片（A4-1）：epic/期次组头的稿数片与 epic 层的期数片（比「张卡」高一层）。
-  "board.layer.planCount": "{count} 稿",
-  "board.layer.phaseCount": "{count} 期",
+  "board.layer.planCount.one": "{count} 稿",
+  "board.layer.planCount.other": "{count} 稿",
+  "board.layer.phaseCount.one": "{count} 期",
+  "board.layer.phaseCount.other": "{count} 期",
+  // 计数片 title 消歧（A4-4/D5）：短词条只给量级，全文语义悬停可查。
+  "board.layer.planCountTitle": "本层成员稿数（每稿含若干卡）",
+  "board.layer.phaseCountTitle": "本层期次数",
+  // 层 rollup 缺口徽章（A4-4/AD-6）：层承载成员的缺口码条数之和（0 不渲染）。
+  "board.layer.gapCount.one": "缺口 {count}",
+  "board.layer.gapCount.other": "缺口 {count}",
+  // epic 弹窗（A4-4/AD-6 退化形态）：L2 rollup 段位构成 + 期次指针下钻。
+  "board.epic.dialog.rollup": "段位构成",
+  "board.epic.dialog.phases": "期次",
+  "board.epic.dialog.drill": "下钻到 {name}",
+  "board.epic.dialog.noStage": "无段位",
   // 折叠控件的可及名称（#55 S-3）：按钮只有 ▸/▾ 符号，动作 + 对象走词条（{name} = 特性名）。
   "board.group.expand": "展开 {name}",
   "board.group.collapse": "收起 {name}",

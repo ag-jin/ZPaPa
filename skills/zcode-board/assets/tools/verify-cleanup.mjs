@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * zcode-board / verify-cleanup —— 收尾机械核对：合并后 worktree/branch 差集（#116 / B5-4）
+ *   + 声明卡号绑定强绑定（#109 / B4-5；E4-09/E1-V31）
  *   + HEAD merge 提交信息格式事后核对（#118 / B5-6；E4-17 审计面）
  *
  * 存在原因（E4-18 ②；E1 V33「收口断尾」；SKILL.md §3.4 / assets/worktree-discipline.md §5/§8）：
@@ -26,9 +27,17 @@
  *   ③ 分支存在性（refs/heads/task-<no>）——已合并应已 -d。
  *   （登记/声明/分支三者互补：现场在册 vs 声明在 vs 分支在；任一残留即点名。）
  *
+ * 卡号绑定（worktree 名＝卡号；B4-5/#109；E4-09/E1-V31；#152 (f) 同面收敛）：
+ *   声明差分前先判绑定——声明（worktree 字段）末段 `task-<no>` 须 = 该卡稳定号，判据单源 =
+ *   `lib/derive.mjs` `parseWorktreePath`（与 `compile-board --check` (f) 同一接受集，禁二份）。
+ *   错配（末段号 ≠ 卡号）/ 形态不在接受集（多级嵌套、尾缀垃圾、绝对路径等）且**声明目标目录存在**
+ *   → 「声明」残留（强绑定必咬，exit 1），且不按本卡现场出清理处置（防误指导删除他人/错名现场——
+ *   E4-09 实测形态：#46 的声明挂在 task-36 上）。判定域与 (f) 收敛：错配历史 / 目录已清不进判定
+ *   （无清理风险；由板侧 (f)/diagnostics 承载，不在本面重复点名）；`branch` 为辅助位、不参与该断言。
+ *
  * 输出（stdout，机读 + 人读同一形态）：
- *   残留：`清理核对：卡 #<号…> → 残留 N 项（分支 a / 现场 b / 登记 c / 目录 d[ / 格式 e]）` + 逐条
- *        `- <类>残留：<名>（<处置>）` + `结果=有残留`（格式类只在有格式残留时进计数，防零噪声）
+ *   残留：`清理核对：卡 #<号…> → 残留 N 项（分支 a / 现场 b / 登记 c / 目录 d[ / 声明 s][ / 格式 e]）` + 逐条
+ *        `- <类>残留：<名>（<处置>）` + `结果=有残留`（声明类/格式类只在有该类残留时进计数，防零噪声）
  *   齐备：`清理核对：卡 #<号…> → 清理齐备（无残留现场/分支/目录）`
  *        [+ `HEAD merge 格式：卡 #<no> \`Merge task-<no> [#<no>]\`（合规；E4-17）`]
  *        + `结果=清理齐备`
@@ -37,7 +46,7 @@
  * 用法：
  *   node assets/tools/verify-cleanup.mjs --cards <卡号[,卡号…]> [--root <项目根>]
  *
- * 退出码：0 = 清理齐备（含 HEAD merge 格式合规或不适用）；1 = 有残留（差集或格式点名清单）；
+ * 退出码：0 = 清理齐备（含 HEAD merge 格式合规或不适用）；1 = 有残留（差集/声明绑定或格式点名清单）；
  *         2 = 用法/输入错误；3 = 前置环境拒绝（root 非 git 仓库）。
  *
  * 边界：只核对 --cards 声明的卡号集合（刚合并集）；集合外的在途卡现场不误报；
@@ -49,6 +58,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
+// B4-5/#109：声明卡号绑定判据单源——唯一接受集复用（与 compile-board --check (f) #152 同一判据，禁二份）。
+import { parseWorktreePath } from "../lib/derive.mjs";
+
 const PROG = "verify-cleanup";
 
 const USAGE = `用法：
@@ -56,9 +68,11 @@ const USAGE = `用法：
 
   --cards   刚合并的卡号集合（逗号分隔或重复给值；核对"已合并应清理"的现场/分支残留）
   --root    项目根（缺省 = 当前目录）；须位于 git 仓库内（取仓库顶层为核对根）
-核对面：①合并后差集（分支/现场/登记/目录残留）；②HEAD merge 格式事后核对（E4-17——
-  merge commit 精确写 \`Merge task-<no> [#<no>]\`；呈卡合并迹象而不符即格式残留点名）。
-退出码：0 = 清理齐备（含 HEAD merge 格式合规或不适用）；1 = 有残留（差集或格式点名清单）；
+核对面：①合并后差集（分支/现场/登记/目录残留）；②声明卡号绑定（worktree 名＝卡号；错配/形态不在
+  接受集且目标目录存在 → 「声明」残留点名，B4-5/#109——判据与 --check (f) 同源，不按本卡现场清理）；
+  ③HEAD merge 格式事后核对（E4-17——merge commit 精确写 \`Merge task-<no> [#<no>]\`；呈卡合并迹象
+  而不符即格式残留点名）。
+退出码：0 = 清理齐备（含 HEAD merge 格式合规或不适用）；1 = 有残留（差集/声明绑定或格式点名清单）；
         2 = 用法/输入错误；3 = 前置环境拒绝（root 非 git 仓库）。`;
 
 function die(msg, code = 2) {
@@ -235,15 +249,36 @@ function main() {
       }
     }
     // ③ 声明差集：声明在、目录在、登记不在 → 目录残留（悬空/手工现场形态）
+    //    B4-5/#109（E4-09/E1-V31）：先做**卡号绑定**判定——声明（worktree 字段）末段 task-<no> 须 = 卡号
+    //    （工作树命名即反查，设计 §6.1）；判据单源 = lib/derive.mjs `parseWorktreePath`（与
+    //    compile-board `--check` (f) 卡号绑定 #152 同一接受集，禁二份；run-event.md §2.1）。错配 / 形态不在
+    //    接受集 → 「声明」残留（强绑定必咬，exit 1），且**不按本卡现场清理**（防误指导删除他人/错名现场——
+    //    E4-09 实测形态：#46 的声明挂在 task-36 上）。判定域与 (f) 收敛：仅声明目标目录存在（有清理风险）
+    //    时进判定——错配历史 / 目录已清不进判定（与 #152「错配历史不进判定」同口径，不在本面重复点名）。
     for (const w of declared.get(no) ?? []) {
       const abs = resolve(top, w);
       if (!existsSync(abs)) continue;
       if (covered.has(abs)) continue;
       covered.add(abs);
+      const name = isAbsolute(w) ? relTo(top, w) : w.replace(/^\.\//, "");
+      const parsed = parseWorktreePath(w);
+      const unbound = parsed === null || parsed.no !== no;
+      if (unbound) {
+        residues.push({
+          kind: "声明",
+          card: no,
+          name,
+          action:
+            parsed === null
+              ? "形态不在接受集：仅 .zcode/worktrees/task-<no> 或 <子目录>/.zcode/worktrees/task-<no>（run-event.md §2.1；判据同源 lib/derive.mjs parseWorktreePath）——E4-09/E1-V31；处置：核对现场归属后修正声明（勿按本卡现场清理）"
+              : `声明错配：末段 task-${parsed.no} ≠ 卡号 #${no}——工作树命名即反查（设计 §6.1；E4-09/E1-V31）；处置：核对现场归属，修正该声明为 task-${no} 或按现场实际卡号重报（勿按本卡现场清理）`,
+        });
+        continue;
+      }
       residues.push({
         kind: "目录",
         card: no,
-        name: isAbsolute(w) ? relTo(top, w) : w.replace(/^\.\//, ""),
+        name,
         action: "登记不在；处置：核对后按 worktree-discipline §6 正规清理",
       });
     }
@@ -263,7 +298,14 @@ function main() {
     });
   }
 
-  const kinds = ["分支", "现场", "登记", "目录", ...(residues.some((r) => r.kind === "格式") ? ["格式"] : [])];
+  const kinds = [
+    "分支",
+    "现场",
+    "登记",
+    "目录",
+    ...(residues.some((r) => r.kind === "声明") ? ["声明"] : []),
+    ...(residues.some((r) => r.kind === "格式") ? ["格式"] : []),
+  ];
   const countOf = (k) => residues.filter((r) => r.kind === k).length;
   const cardList = cards.map((n) => `#${n}`).join(" ");
   const lines = [];
