@@ -1055,7 +1055,14 @@ const enUS: Record<string, string> = {
     "This project has no board yet. It is generated automatically after the first interview registration or spec creation.",
   "board.empty.features": "No specs or plans yet.",
   "board.empty.damaged":
-    "The board format cannot be read (too new or corrupted). Rebuild it by running the compiler in a session.",
+    "The board file cannot be read or is corrupted. Rebuild it by running the compiler in a session.",
+  // Read-error split (#70; contract §2+/§14): version too new → upgrade the app/skill; too old → recompile.
+  "board.error.versionNewer":
+    "The board version is too new (v{version}, this app supports v{supported}). Upgrade the app or skill and retry.",
+  "board.error.versionOlder":
+    "The board version is too old (v{version}, this app supports v{supported}). Rebuild it by running the compiler in a session.",
+  "board.error.tooLarge":
+    "The board file is too large (over the {limitKiB} KiB read limit), so this pane cannot render it fully. Upgrade the app to support larger boards.",
   // Temporarily unreadable (connection not ready): kept apart from "damaged" (review #32-P3).
   "board.unavailable":
     "The board is temporarily unreadable (connection not ready). It will be re-read once the connection recovers, or use Refresh at the top right to retry.",

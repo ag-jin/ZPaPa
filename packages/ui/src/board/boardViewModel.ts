@@ -6,7 +6,9 @@
  * 字段与判据的单一真源：`.zcode/board/board-consumption-contract.md` §0/§2/§3/§4
  * 与 `~/.zcode/skills/zcode-board/assets/samples/board.golden.json`。
  *
- * 版本门禁：不认识的主版本一律空态 C（damaged），不猜测渲染（契约 §2/§12）。
+ * 版本门禁（卡 #70 兼容判定）：不认识的主版本不猜测渲染——板版本高于已知 → version-newer
+ * （提示升级应用/技能）；低于已知 → version-older（提示重编译）；同主版本宽容读
+ * （minor 差异向前读、未知字段忽略——映射只认契约字段；契约 §14）。
  */
 
 /** 四缺口码（契约 §4，逐字；其文案在 boardPresentation/词条表内）。 */
@@ -239,7 +241,9 @@ export interface BoardViewModel {
 export type BoardParseOutcome =
   | { kind: "ready"; board: BoardViewModel }
   | { kind: "empty" }
-  | { kind: "damaged" };
+  | { kind: "damaged" }
+  | { kind: "version-newer"; version: number }
+  | { kind: "version-older"; version: number };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -477,7 +481,10 @@ function readDiagnostics(value: unknown): BoardDiagnostic[] {
 
 /**
  * 解析 board.json 文本。
- * - JSON 解析失败 / 顶层非对象 / 主版本不认识 / features 非数组 → damaged（空态 C）；
+ * - JSON 解析失败 / 顶层非对象 / `version` 缺失或非数 / features 非数组 → damaged（损坏态）；
+ * - `version` 与已知主版本比较（兼容判定，卡 #70）：过新 → version-newer；过旧 → version-older；
+ *   同主版本 → 宽容读（minor 差异向前读、未知字段忽略——映射只认契约字段），不因板由更新的
+ *   minor 编译器产出而拒绝渲染（契约 §14）；
  * - `features: []` → empty（空态 B）；
  * - 其余 → ready（按契约映射为可渲染结构）。
  */
@@ -490,7 +497,11 @@ export function parseBoardJson(raw: string): BoardParseOutcome {
   }
 
   if (!isRecord(parsed)) return { kind: "damaged" };
-  if (parsed.version !== BOARD_KNOWN_VERSION) return { kind: "damaged" };
+  const boardVersion =
+    typeof parsed.version === "number" && Number.isFinite(parsed.version) ? parsed.version : null;
+  if (boardVersion === null) return { kind: "damaged" };
+  if (boardVersion > BOARD_KNOWN_VERSION) return { kind: "version-newer", version: boardVersion };
+  if (boardVersion < BOARD_KNOWN_VERSION) return { kind: "version-older", version: boardVersion };
   if (!Array.isArray(parsed.features)) return { kind: "damaged" };
   if (parsed.features.length === 0) return { kind: "empty" };
 

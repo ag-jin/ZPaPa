@@ -64,12 +64,88 @@ test("board.json 存在但 JSON 解析失败 → 空态 C（damaged）", async (
   assert.equal(state.kind, "damaged");
 });
 
-test("version 主版本不认识 → 空态 C（damaged），不猜测渲染", async () => {
+test("版本过新（version > 已知）→ version-newer 独立态（携带板上版本号），不猜测渲染", async () => {
   const fileService = createFakeFileService({
     [BOARD_PATH]: { content: JSON.stringify({ version: 3, project: {}, features: [] }) },
   });
   const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
-  assert.equal(state.kind, "damaged");
+  assert.equal(
+    state.kind,
+    "version-newer",
+    "过新的板不是「损坏」：指引是升级应用/技能（卡 #70 四态）",
+  );
+  if (state.kind !== "version-newer") return;
+  assert.equal(state.version, 3, "板上版本号应透出（词条要显示它）");
+});
+
+test("版本过旧（version < 已知）→ version-older 独立态（指引重编译），不丢成「损坏」", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify({ version: 1, project: {}, features: [] }) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(
+    state.kind,
+    "version-older",
+    "过旧的板不是「损坏」：指引是在会话中重编译（卡 #70 四态）",
+  );
+  if (state.kind !== "version-older") return;
+  assert.equal(state.version, 1, "板上版本号应透出（词条要显示它）");
+});
+
+/* ------------- 版本兼容策略（卡 #70：同主版本宽容读；精确匹配 → 兼容判定） ------------- */
+
+test("同主版本宽容读（卡 #70）：v2 板带未知未来字段照常 ready，未知字段忽略不搬运", async () => {
+  // 形态取自「板由更新的 minor 编译器产出」（契约 §14 的 frontier[] 等未来字段）：
+  // 同主版本必须向前读——不得因未知字段把板判成损坏或过新（契约 §14）。
+  // 探针用契约路线图之外的字段名：epics[] 已随 A4-1/#87 消费，不能再当「未来字段」探针
+  // （评审 CR-P1：拿已消费字段做负向断言，与合并后的主线语义冲突）。
+  const raw = structuredClone(GOLDEN_SHAPED_BOARD) as unknown as Record<string, unknown>;
+  raw.futureUnknownField = [{ no: 1 }];
+  raw.frontier = [{ no: 1 }];
+  const fileService = createFakeFileService({ [BOARD_PATH]: { content: JSON.stringify(raw) } });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "ready", "同主版本的 minor 差异必须向前读（未知字段不得触发拒绝）");
+  if (state.kind !== "ready") return;
+  assert.equal(state.board.features.length, 4, "已知字段照常映射");
+  assert.ok(!("futureUnknownField" in state.board), "视图模型只映射契约字段，未知字段忽略不搬运");
+});
+
+test("兼容判定是数值比较：version 2.5（> 已知）→ version-newer，不要求整数", async () => {
+  const fileService = createFakeFileService({
+    [BOARD_PATH]: { content: JSON.stringify({ version: 2.5, project: {}, features: [] }) },
+  });
+  const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+  assert.equal(state.kind, "version-newer");
+  if (state.kind !== "version-newer") return;
+  assert.equal(state.version, 2.5);
+});
+
+test("version 缺失或非数 → damaged（结构非法，非版本态；契约 §0 version 必填）", async () => {
+  for (const version of [undefined, "2", null]) {
+    const board: Record<string, unknown> = { project: {}, features: [] };
+    if (version !== undefined) board.version = version;
+    const fileService = createFakeFileService({ [BOARD_PATH]: { content: JSON.stringify(board) } });
+    const state = await loadBoardDocument({ fileService, workspacePath: WORKSPACE });
+    assert.equal(
+      state.kind,
+      "damaged",
+      `version=${String(version)} 缺省/非数时无比较基准：按损坏态处理，不猜版本`,
+    );
+  }
+  // 「数是 Infinity」档必须用原始文本探：JSON.stringify(NaN/Infinity) 都会变成 null，
+  // 落在上一档里，探不到「数值但非有限」——1e999 经 JSON.parse 得 Infinity（评审 CR-P5）。
+  const overflowFileService = createFakeFileService({
+    [BOARD_PATH]: { content: '{"version": 1e999, "project": {}, "features": []}' },
+  });
+  const overflowState = await loadBoardDocument({
+    fileService: overflowFileService,
+    workspacePath: WORKSPACE,
+  });
+  assert.equal(
+    overflowState.kind,
+    "damaged",
+    "version 数值但非有限（Infinity）无有效比较基准：按损坏态处理，不得误判过新",
+  );
 });
 
 test("features 为空数组 → 空态 B（empty）", async () => {
@@ -550,7 +626,7 @@ test("P1 回归：≥128 KiB 的合法板必须读全，不因服务默认读取
   assert.equal(
     state.kind,
     "ready",
-    "合法且可读全的板必须是 ready（空态 C 只留给读不到/读不全/版本不认识）",
+    "合法且可读全的板必须是 ready（读不到/损坏→C3、读不全→too-large、版本不认识→C1/C2）",
   );
   if (state.kind !== "ready") return;
   assert.equal(state.board.features.length, board.featureCount);
@@ -561,7 +637,7 @@ test("P1 回归：≥128 KiB 的合法板必须读全，不因服务默认读取
   );
 });
 
-test("P1 残余限制：读取被 256 KiB 硬上限截断 → 空态 C，不部分渲染", async () => {
+test("文件过大态（#70 四态之四）：读取被 256 KiB 硬上限截断 → too-large，不部分渲染、不借损坏态", async () => {
   // 情形 1：板本身超过硬上限（截断点落在 JSON 正文中间）——前缀不可解析。
   const oversized = buildLargeBoard({ minBytes: SERVICE_MAX_TEXT_READ_BYTES + 16 * 1024 });
   assert.ok(
@@ -581,7 +657,11 @@ test("P1 残余限制：读取被 256 KiB 硬上限截断 → 空态 C，不部�
     fileService: createClampingFakeFileService({ [BOARD_PATH]: { content: oversized.content } }),
     workspacePath: WORKSPACE,
   });
-  assert.equal(oversizedState.kind, "damaged", "超硬上限的板读不全，按空态 C 呈现");
+  assert.equal(
+    oversizedState.kind,
+    "too-large",
+    "超硬上限的板不部分渲染：文件过大独立成态（卡 #70（d）的正式承载）",
+  );
 
   // 情形 2：硬上限处的前缀恰好是一份完整合法 JSON（余下是空白填充）——不显式看 truncated
   // 就会把这个前缀当成 ready 渲染，等于把「没读全的板」静默当完整板展示（漏节点不报警）。
@@ -599,12 +679,9 @@ test("P1 残余限制：读取被 256 KiB 硬上限截断 → 空态 C，不部�
     fileService: createClampingFakeFileService({ [BOARD_PATH]: { content: paddedContent } }),
     workspacePath: WORKSPACE,
   });
-
-  // 残余限制（如实留痕，不发明词条）：>256 KiB 的板不在本期契约 §2 的三空态词条内，
-  // 这里借空态 C 兜底；测试把结果钉住，供后续「板过大」词条立项时替换。
   assert.equal(
     paddedState.kind,
-    "damaged",
-    "读取被截断就不允许按部分内容渲染（哪怕前缀恰好能解析）",
+    "too-large",
+    "读取被截断就不允许按部分内容渲染（哪怕前缀恰好能解析）：文件过大独立成态",
   );
 });

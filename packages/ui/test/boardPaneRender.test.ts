@@ -223,11 +223,58 @@ test("空态 B 逐字：尚无规格或计划。", () => {
   assert.equal(textInside(markup, 'data-board-empty="empty"'), "尚无规格或计划。");
 });
 
-test("空态 C 逐字且不得白屏：板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。", () => {
+test("损坏态（JSON 解析失败/读取失败）逐字且不得白屏：板文件无法读取或已损坏，请在会话中运行编译器重建。", () => {
   const markup = render({ kind: "damaged" });
   assert.equal(
     textInside(markup, 'data-board-empty="damaged"'),
-    "板格式无法读取（版本过新/损坏），请在会话中运行编译器重建。",
+    "板文件无法读取或已损坏，请在会话中运行编译器重建。",
+  );
+});
+
+/* ---------------- 板读取错误态分离（卡 #70 四态） ---------------- */
+
+test("版本过新态（#70）：逐字指引升级应用/技能，携带板版本与支持版本", () => {
+  const markup = render({ kind: "version-newer", version: 3 });
+  assert.equal(
+    textInside(markup, 'data-board-empty="version-newer"'),
+    "板版本过新（v3，本应用支持 v2）：请升级应用或技能后重试。",
+  );
+});
+
+test("版本过旧态（#70）：逐字指引重编译，携带板版本与支持版本", () => {
+  const markup = render({ kind: "version-older", version: 1 });
+  assert.equal(
+    textInside(markup, 'data-board-empty="version-older"'),
+    "板版本过旧（v1，本应用支持 v2）：请在会话中运行编译器重建。",
+  );
+});
+
+test("文件过大态（#70）：逐字说明超限与指引，不借损坏态词条", () => {
+  const markup = render({ kind: "too-large" });
+  assert.equal(
+    textInside(markup, 'data-board-empty="too-large"'),
+    "板文件过大（超过 256 KiB 读取上限），本面板暂无法完整渲染：请升级应用以支持更大的板。",
+  );
+});
+
+test("英文界面：新三态（版本过新/过旧、文件过大）走英文词条，不出现中文（评审 CR-P4）", () => {
+  assert.equal(
+    textInside(
+      renderEnglish({ kind: "version-newer", version: 3 }),
+      'data-board-empty="version-newer"',
+    ),
+    "The board version is too new (v3, this app supports v2). Upgrade the app or skill and retry.",
+  );
+  assert.equal(
+    textInside(
+      renderEnglish({ kind: "version-older", version: 1 }),
+      'data-board-empty="version-older"',
+    ),
+    "The board version is too old (v1, this app supports v2). Rebuild it by running the compiler in a session.",
+  );
+  assert.equal(
+    textInside(renderEnglish({ kind: "too-large" }), 'data-board-empty="too-large"'),
+    "The board file is too large (over the 256 KiB read limit), so this pane cannot render it fully. Upgrade the app to support larger boards.",
   );
 });
 
@@ -270,11 +317,14 @@ test("暂时不可读（连接未就绪）：专门文案 + 刷新入口，不�
   assert.ok(markup.includes("data-board-refresh"), "暂时不可读态也要能手动刷新");
 });
 
-test("刷新按钮提到面板级：空态 A/B/C、暂时不可读与加载态都能点（评审 #32-P5）", () => {
+test("刷新按钮提到面板级：空态 A/B、错误态（#70 四态）与暂时不可读、加载态都能点（评审 #32-P5）", () => {
   const states: BoardPaneLoadState[] = [
     { kind: "missing" },
     { kind: "empty" },
     { kind: "damaged" },
+    { kind: "version-newer", version: 3 },
+    { kind: "version-older", version: 1 },
+    { kind: "too-large" },
     { kind: "unavailable" },
     { kind: "loading" },
   ];
