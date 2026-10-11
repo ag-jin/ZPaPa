@@ -510,9 +510,20 @@ test(
       dialogMarkup.includes(expectedTargetText),
       `依赖行应显示 ${expectedTargetText}（不落回 ID-<label> 形态）：\n${dialogMarkup.slice(0, 600)}`,
     );
-    console.log(
-      `[board] #54 冒烟：接手位卡 ${cardsWithNext.length} 张；依赖样例 #${String(dependency.task.no)} → ${expectedTargetText}`,
+    // T6162v B-2：降级打印必须带计数——只用总数时，「全部活跃降级（断言面 0）」与「断言全绿」
+    // 在证据日志里不可区分。打印前按原始板的独立计数核对日志行计数段（格式/取值回退即红）。
+    const activeExcluded = cardsWithNext.length - assertableNext.length;
+    const smokeLine =
+      `[board] #54 冒烟：接手位卡 ${cardsWithNext.length} 张（断言面 ${assertableNext.length} 张，` +
+      `活跃排除 ${activeExcluded} 张）；依赖样例 #${String(dependency.task.no)} → ${expectedTargetText}`;
+    const smokeCounts = smokeLine.match(/接手位卡 (\d+) 张（断言面 (\d+) 张，活跃排除 (\d+) 张）/);
+    assert.ok(smokeCounts, "降级打印必须带「断言面/活跃排除」计数（T6162v B-2）");
+    assert.deepEqual(
+      smokeCounts.slice(1).map((value) => Number(value)),
+      [cardsWithNext.length, assertableNext.length, activeExcluded],
+      "打印的降级计数必须与原始板独立推算的计数一致",
     );
+    console.log(smokeLine);
   },
 );
 
