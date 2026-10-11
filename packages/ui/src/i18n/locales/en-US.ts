@@ -1232,6 +1232,10 @@ const enUS: Record<string, string> = {
   "board.guide.plan.frontier.other": "{count} cards ready",
   "board.guide.plan.active.one": "{count} card in flight",
   "board.guide.plan.active.other": "{count} cards in flight",
+  // Unknown in-flight form (#220/D7 minor①): thin-index surface has no active[] → explicit
+  // "In flight —" (same unknown language as the five slots' "—"; never silently omit, never treat
+  // unknown as 0). Contract §15.5 wording synced.
+  "board.guide.plan.active.unknown": "In flight —",
   // Executable frontier queue (card #138 / C3-3): disposal guidance and empty state.
   "board.guide.queue.next": "Next: {role}",
   // Count pair per contract §13.5 (one/other; count===1 takes .one) — card #138 S1 fix.
@@ -1253,6 +1257,13 @@ const enUS: Record<string, string> = {
   "board.dialog.cardText.deliverables": "Deliverables",
   "board.dialog.cardText.acceptance": "Acceptance",
   "board.dialog.cardText.absent": "Not on the board",
+  // Detail load states (#220/D7 major①): "unavailable" (temporarily unreadable) / "missing" (absent)
+  // are distinct from the #183 "not carried on the board" empty state; unavailable offers retry.
+  "board.dialog.detailTitle": "Detail",
+  "board.dialog.detail.unavailable":
+    "Detail is temporarily unavailable (connection not ready, or the board file exceeds the read limit). Reconnect or recompile, then retry.",
+  "board.dialog.detail.missing": "No detail for this card was found on the board or its shard.",
+  "board.dialog.detail.retry": "Retry",
   "board.dialog.blockersTitle": "Blockers",
   "board.dialog.originTitle": "Source",
   "board.dialog.evidenceTitle": "Evidence",

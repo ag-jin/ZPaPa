@@ -1145,6 +1145,9 @@ const zhCN: Record<string, string> = {
   "board.guide.plan.frontier.other": "前沿 {count}",
   "board.guide.plan.active.one": "在途 {count}",
   "board.guide.plan.active.other": "在途 {count}",
+  // 在途未知形（#220/D7 minor①）：薄索引面无 active[] → 显式「在途 —」（与五槽「—」同一未知语言，
+  // 不静默省略、不拿未知当 0）。契约 §15.5 措辞已同步。
+  "board.guide.plan.active.unknown": "在途 —",
   // 可执行前沿队列（卡 #138 / C3-3）：处置指引（接手位/已解除依赖）与队列空态。
   "board.guide.queue.next": "下一步：{role}",
   // 计数词条单/复数两键（契约 §13.5：count===1 走单数；zh 两键同文）——卡 #138 S1 回修。
@@ -1165,6 +1168,13 @@ const zhCN: Record<string, string> = {
   "board.dialog.cardText.deliverables": "交付面",
   "board.dialog.cardText.acceptance": "验收",
   "board.dialog.cardText.absent": "板上未携带",
+  // 详情读取态（#220/D7 major①）：`unavailable`（暂时读不到）/`missing`（没有）与「板上未携带」分开——
+  // 不可读不得被表述为「板上没有」；unavailable 给刷新重试入口（同代重试）。
+  "board.dialog.detailTitle": "详情",
+  "board.dialog.detail.unavailable":
+    "详情暂不可读（连接未就绪，或板文件超出读取上限）。恢复连接或重新编译后刷新重试。",
+  "board.dialog.detail.missing": "未在板上或分片中找到这张卡的详情。",
+  "board.dialog.detail.retry": "刷新重试",
   "board.dialog.blockersTitle": "阻拦",
   "board.dialog.originTitle": "来源",
   "board.dialog.evidenceTitle": "证据路径",

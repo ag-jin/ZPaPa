@@ -76,6 +76,10 @@ export interface BoardPaneViewProps {
   onDispatchCard?: (card: BoardCardDispatchCard) => void;
   /** 指引面五槽下钻派发（卡 #137/C3-2；宿主落到既有视图/过滤；缺省 = 槽只读不可点）。 */
   onDrillToSlot?: (slot: BoardGuideSlotKey) => void;
+  /** 打开卡的详情读取态（#220/D7；见下方内容组件的同名项）。 */
+  openCardDetailState?: "missing" | "unavailable" | null;
+  /** 卡详情同代重试（#220/D7；见下方内容组件的同名项）。 */
+  onRetryCardDetail?: (no: number) => void;
   /** 跳转落点（该卡片元素带高亮锚点）。 */
   highlightCardId?: string | null;
   /** 看板「已完成」列展开态（宿主持有：跳转揭示要能先置展开；缺省展开）。 */
@@ -157,6 +161,8 @@ function BoardReadyView({
   onJumpToCard,
   onDispatchCard,
   onDrillToSlot,
+  openCardDetailState,
+  onRetryCardDetail,
   highlightCardId,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
@@ -188,6 +194,10 @@ function BoardReadyView({
   fold?: BoardFoldControls;
   /** 未连接保留快照时的状态行文案（#158；只在 unavailable+快照这条路径传入）。 */
   snapshotNotice?: string | null;
+  /** 打开卡的详情读取态（#220/D7；见 BoardPaneViewProps 同名项）。 */
+  openCardDetailState?: "missing" | "unavailable" | null;
+  /** 卡详情同代重试（#220/D7；见 BoardPaneViewProps 同名项）。 */
+  onRetryCardDetail?: (no: number) => void;
   openEpicCode?: string | null;
   onOpenEpic?: (code: string) => void;
   onCloseEpic?: () => void;
@@ -354,6 +364,8 @@ function BoardReadyView({
           board={board}
           node={dialogNode}
           now={now}
+          detailState={openCardDetailState ?? null}
+          {...(onRetryCardDetail ? { onRetryDetail: onRetryCardDetail } : {})}
           {...(onCloseCard ? { onClose: onCloseCard } : {})}
           {...(onJumpToCard ? { onJumpToCard } : {})}
           {...(onDispatchCard ? { onDispatchCard } : {})}
@@ -381,6 +393,8 @@ export function BoardPaneView({
   onJumpToCard,
   onDispatchCard,
   onDrillToSlot,
+  openCardDetailState = null,
+  onRetryCardDetail,
   highlightCardId = null,
   kanbanCompletedExpanded,
   onKanbanCompletedExpandedChange,
@@ -419,6 +433,8 @@ export function BoardPaneView({
         {...(onJumpToCard ? { onJumpToCard } : {})}
         {...(onDispatchCard ? { onDispatchCard } : {})}
         {...(onDrillToSlot ? { onDrillToSlot } : {})}
+        openCardDetailState={openCardDetailState}
+        {...(onRetryCardDetail ? { onRetryCardDetail } : {})}
         {...(kanbanCompletedExpanded !== undefined ? { kanbanCompletedExpanded } : {})}
         {...(onKanbanCompletedExpandedChange ? { onKanbanCompletedExpandedChange } : {})}
         {...(fold ? { fold } : {})}
