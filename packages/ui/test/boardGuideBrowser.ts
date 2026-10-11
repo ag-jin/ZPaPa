@@ -1,22 +1,27 @@
 /**
  * 指引面（guide 面）的**浏览器行为断言**（卡 #136 / C3-1；卡 #139 / C3-4 扩展：进度胶囊百分比、
- * 计数胶囊、rollup 缺口徽章——真引擎 + 真 Tailwind 产物 CSS + 真 DOM + 真事件）——独立脚本，
- * 文件名不含 `.test.`（`node --test` 常规套件不收它）。
+ * 计数胶囊、rollup 缺口徽章；卡 #137 / C3-2 扩展：五槽下钻派发与零槽空态指引——真引擎 +
+ * 真 Tailwind 产物 CSS + 真 DOM + 真事件）——独立脚本，文件名不含 `.test.`
+ * （`node --test` 常规套件不收它）。
  *
  * 为什么 SSR 不算数（UI 卡门禁）：横向不溢出是排版行为（真 CSS 产物 + 真宽度才量得准）；
- * 「点计划内卡行 → 既有卡片弹窗 DOM」是点击路由与宿主状态的真事件链结果；关闭后焦点归还
- * 打开者只有真 DOM 能看见；进度胶囊的「计数·百分比+微条」同排、缺口徽章落章的窄面形态
- * 也只有真引擎能量。
+ * 「点计划内卡行 → 既有卡片弹窗 DOM」「点槽 → 落到对应视图/过滤」是点击路由与宿主状态的真事件链
+ * 结果；关闭后焦点归还打开者、零槽点击不出视图跳转而给空态指引，只有真 DOM 能看见；
+ * 进度胶囊的「计数·百分比+微条」同排、缺口徽章落章的窄面形态也只有真引擎能量。
  *
  * 覆盖（对应卡文验收「打开板第一眼看到正在执行的计划与进度（计数胶囊/微条）；点计划内任一
- * 卡片弹出详情；窄面不溢出」）：
- *   1. 五槽与计划区块真 DOM 渲染值（与 SSR 判据同源对账：4/3/2/1/5 与 2/4、0/3）；
+ * 卡片弹出详情；窄面不溢出」+ C3-2「点某槽跳到对应列表；零 attention 槽点击有明确空态指引」）：
+ *   1. 五槽与计划区块真 DOM 渲染值（与 SSR 判据同源对账：4/3/2/1/5 与 2/4、0/3）+ 槽可点态；
  *   2. 计划级进度胶囊（#139）：百分比文本与微条同排、`[N 张卡]` 计数胶囊与 A4 组头同值；
  *   3. rollup 缺口徽章（#139）：缺口场景板（卡挂 attention 码）落章「缺口 3」，零缺口板不落章；
  *   4. 溢出探针：宽 1400 / 窄 360 两档（根面 / 五槽条 / 计划块 / 进度胶囊 / 计数胶囊 /
- *      缺口徽章 / 计划内卡行）；
+ *      缺口徽章 / 计划内卡行）+ 窄档槽条行数（P3-4 登记项真量）；
  *   5. 点击路由派发：真指针点计划内卡行 → `data-board-dialog="task:210"` 弹窗出现且内容是点的那张；
- *      × 关闭后弹窗消失、焦点归还打开者。
+ *      × 关闭后弹窗消失、焦点归还打开者；
+ *   6. 槽下钻派发（#137）：五槽逐个真指针点击（末槽键盘 Enter）→ 落到对应既有视图/过滤，
+ *      落点视图根在场；
+ *   7. 零槽场景（#137）：全零派生板上点需处理槽 → 空态指引锚点 + 视图不跳；反例=派生为零、
+ *      节点仍带 attention 码/blockers（自算会得非零 → 必咬）。
  *
  * 运行条件（缺一即报错退出，不静默跳过）：Electron 二进制 / `@tailwindcss/node` / esbuild
  * （解析同 `boardKanbanBrowserLayoutHarness`）。
@@ -29,7 +34,7 @@ import {
   assertNoHorizontalOverflow,
   type BoardBrowserOverflowProbe,
 } from "./boardBrowserProbeKit.js";
-import { guideDriverSource } from "./boardGuideBrowserDrivers.js";
+import { guideDriverSource, guideZeroDriverSource } from "./boardGuideBrowserDrivers.js";
 import {
   buildPageHtml,
   bundleBoardPaneClient,
@@ -37,14 +42,27 @@ import {
   resolveElectronBinary,
   runBoardPaneInElectron,
 } from "./boardKanbanBrowserLayoutHarness.js";
-import { GUIDE_BOARD, GUIDE_BOARD_JSON } from "./boardGuideFixture.js";
+import { buildGuideZeroBoard, GUIDE_BOARD, GUIDE_BOARD_JSON } from "./boardGuideFixture.js";
 
 interface SlotMeasure {
   key: string | null;
   value: string | null;
   zero: string | null;
+  role: string | null;
+  tabIndex: string | null;
   text: string;
   probe: BoardBrowserOverflowProbe | null;
+}
+
+/** 槽下钻量取（卡 #137/C3-2）：点一个槽后「落到了哪个视图/过滤」+ 落点里真渲染的卡锚点。 */
+interface SlotDrillMeasure {
+  key: string | null;
+  mode: string;
+  view: string | null;
+  viewRootPresent: boolean;
+  stage: string | null;
+  sort: string | null;
+  cards: Array<string | null>;
 }
 
 interface PlanMeasure {
@@ -71,12 +89,16 @@ interface GuideResult {
   wide: {
     rootProbe: BoardBrowserOverflowProbe;
     slotsProbe: BoardBrowserOverflowProbe;
+    /** 宽档槽条行数（应保持单行——F1-137 换行基准收窄不得改宽面排版）。 */
+    slotRows: number;
     slots: SlotMeasure[];
     plans: PlanMeasure[];
   };
   narrow: {
     rootProbe: BoardBrowserOverflowProbe;
     slotsProbe: BoardBrowserOverflowProbe;
+    /** 窄档槽条行数（顶坐标去重；P3-4 登记项：交互改造后应为两行内）。 */
+    slotRows: number;
     plans: PlanMeasure[];
   };
   dialog: {
@@ -87,6 +109,21 @@ interface GuideResult {
     closes: boolean | null;
   };
   focusReturned: boolean;
+  drills: SlotDrillMeasure[];
+}
+
+/** 零槽场景量取（卡 #137/C3-2：空态指引 + 反例「派生为零、自算非零」）。 */
+interface GuideZeroResult {
+  ua: string;
+  viewBefore: string | null;
+  slotValues: Array<{ key: string | null; value: string | null; zero: string | null }>;
+  pointer: {
+    view: string | null;
+    hintKey: string | null;
+    hintRole: string | null;
+    hintText: string | null;
+  };
+  keyboard: { view: string | null };
 }
 
 function planOf(plans: PlanMeasure[], id: string): PlanMeasure {
@@ -124,8 +161,9 @@ function buildGapScenarioBoardJson(): string {
 async function main(): Promise<void> {
   const bundle = await bundleBoardPaneClient();
   const gapBoardJson = buildGapScenarioBoardJson();
+  const zeroBoardJson = JSON.stringify(buildGuideZeroBoard());
   const css = await compileBoardPaneCss({
-    boards: [GUIDE_BOARD_JSON, gapBoardJson],
+    boards: [GUIDE_BOARD_JSON, gapBoardJson, zeroBoardJson],
     viewModes: ["guide", "tree"],
   });
   console.log(
@@ -149,6 +187,10 @@ async function main(): Promise<void> {
   for (const slot of result.wide.slots) {
     assert.equal(slot.zero, null, `${slot.key} 非零槽不落空槽标记`);
     assert.ok(slot.text.length > 0, `${slot.key} 槽有可读文本`);
+    // 槽可点态（卡 #137/C3-2）：与看板卡行同款 `role=button` + `tabindex`（键盘可达；
+    // `[data-board-pane] :is(summary, button, [role=button]):focus-visible` 规则同款覆盖）。
+    assert.equal(slot.role, "button", `${slot.key} 槽声明 button 角色`);
+    assert.equal(slot.tabIndex, "0", `${slot.key} 槽可键盘 Tab 聚焦`);
     assertNoHorizontalOverflow(slot.probe!, `五槽条 ${slot.key} 槽`);
   }
   const planA = planOf(result.wide.plans, "plan:plan-guide-a");
@@ -192,6 +234,7 @@ async function main(): Promise<void> {
   /* 4. 宽窄两档溢出探针（scrollWidth ≤ clientWidth）。 */
   assertNoHorizontalOverflow(result.wide.rootProbe, "宽档指引面根");
   assertNoHorizontalOverflow(result.wide.slotsProbe, "宽档五槽条");
+  assert.equal(result.wide.slotRows, 1, "宽档五槽单行（换行基准收窄只影响窄面换行形态）");
   for (const plan of result.wide.plans) {
     assertNoHorizontalOverflow(plan.probe!, `宽档计划块 ${plan.id}`);
     for (const [index, rowProbe] of plan.rowProbes.entries()) {
@@ -201,6 +244,12 @@ async function main(): Promise<void> {
   assert.ok((result.narrow.rootProbe.clientW ?? 0) <= 400, "窄档真落 360px 宽度");
   assertNoHorizontalOverflow(result.narrow.rootProbe, "窄档指引面根");
   assertNoHorizontalOverflow(result.narrow.slotsProbe, "窄档五槽条");
+  // P3-4（#136 登记、#137 收口）：槽条在 360px 档不得超过两行——槽位交互态不改变排版契约，
+  // 且三行会把窄首屏主体区下推（登记原文）。行数按真排版顶坐标去重，不是算术推演。
+  assert.ok(
+    result.narrow.slotRows <= 2,
+    `窄档 360px 五槽条应为两行内（实测 ${result.narrow.slotRows} 行）`,
+  );
   for (const plan of result.narrow.plans) {
     assertNoHorizontalOverflow(plan.probe!, `窄档计划块 ${plan.id}`);
     for (const [index, rowProbe] of plan.rowProbes.entries()) {
@@ -216,9 +265,74 @@ async function main(): Promise<void> {
   assert.equal(result.dialog.closes, true, "× 关闭后弹窗消失");
   assert.equal(result.focusReturned, true, "关闭后焦点归还打开者（计划内卡行）");
 
+  /* 6. 槽下钻派发（卡 #137/C3-2）：五槽真指针点击 + 一次键盘 Enter → 落到对应既有视图/过滤。
+        期望值 = 派发落点口径（需处理→看板列 / 阻塞→受阻清单形态 / 运行·待收口→对应列表态 /
+        最近活动→最近视图），独立于实现抄写；落点视图根必须在场（不是只改了激活态）。 */
+  const expectedDrills: Record<
+    string,
+    { view: string; stage: string | null; sort: string | null; card: string }
+  > = {
+    attention: { view: "kanban", stage: null, sort: null, card: "task:218" },
+    blocked: { view: "table", stage: "", sort: "recent", card: "task:217" },
+    running: { view: "list", stage: "执行中", sort: "recent", card: "task:213" },
+    review: { view: "list", stage: "审核中", sort: "recent", card: "task:216" },
+    recent: { view: "list", stage: "", sort: "recent", card: "task:210" },
+  };
+  assert.equal(result.drills.length, 6, "五槽各点一次 + 一次键盘激活");
+  for (const drill of result.drills) {
+    const want = expectedDrills[drill.key ?? ""];
+    assert.ok(want, `槽 ${drill.key} 的落点期望值必须存在（闭集穷尽）`);
+    const label = `槽 ${drill.key}（${drill.mode}）`;
+    assert.equal(drill.view, want.view, `${label}：落到对应视图`);
+    assert.equal(drill.viewRootPresent, true, `${label}：落点视图根真在场（非仅切换按钮激活态）`);
+    assert.equal(drill.stage, want.stage, `${label}：段位筛 = 槽对应集合的既有筛子`);
+    assert.equal(drill.sort, want.sort, `${label}：排序视角 = 槽对应视角`);
+    // 内容对账（独立真源 = 夹具四段/卡数据）：落点里必须真渲染出该槽对应的卡——
+    // 只断言控件取值会漏掉「视图换了但内容不对应」。
+    assert.ok(
+      drill.cards.includes(want.card),
+      `${label}：落点渲染该槽对应的卡 ${want.card}（实测 ${drill.cards.join(",")}）`,
+    );
+  }
+
+  /* 7. 溢出探针：槽卡进入可点态后仍不得横向溢出（交互态不改变排版契约）。 */
+  for (const slot of result.wide.slots) {
+    assertNoHorizontalOverflow(slot.probe!, `五槽条 ${slot.key} 槽（可点态）`);
+  }
+
+  /* 8. 零槽场景（卡 #137/C3-2 空态指引 + 反例必咬）：全零派生板上点需处理槽——派生 0、
+        节点自带 attention 码/blockers（自算会得非零）；点击必须给空态指引且不落任何视图跳转。 */
+  const zeroResult = (await runBoardPaneInElectron({
+    pageHtml: buildPageHtml({ css, boardJson: zeroBoardJson, bundle }),
+    driver: guideZeroDriverSource(),
+    label: "guide-view-zero",
+  })) as GuideZeroResult | null;
+  assert.ok(zeroResult, "零槽场景应回传量取结果");
+  console.log(`GUIDE_ZERO_MEASUREMENTS=${JSON.stringify(zeroResult, null, 1)}`);
+  assert.deepEqual(
+    zeroResult.slotValues.map((slot) => [slot.key, slot.value, slot.zero]),
+    [
+      ["attention", "0", "true"],
+      ["blocked", "0", "true"],
+      ["running", "0", "true"],
+      ["review", "0", "true"],
+      ["recent", "0", "true"],
+    ],
+    "零槽板五槽显式 0 + 空槽标记（禁自算：节点仍带 attention 码/blockers）",
+  );
+  assert.equal(zeroResult.pointer.view, "guide", "零槽点击不落视图跳转（不落死跳转）");
+  assert.equal(zeroResult.pointer.hintKey, "attention", "空态指引锚定被点的槽");
+  assert.equal(zeroResult.pointer.hintRole, "status", "空态指引是可感知状态（role=status）");
+  assert.ok(
+    (zeroResult.pointer.hintText ?? "").includes("需处理"),
+    `空态指引指名槽位（可读）：${zeroResult.pointer.hintText}`,
+  );
+  assert.equal(zeroResult.keyboard.view, "guide", "键盘激活零槽同款：不落视图跳转");
+
   console.log(
     "GUIDE_BROWSER_ASSERTIONS_OK 五槽 4/3/2/1/5；计划 2/4 · 50% 微条 2/4 · [4 张卡]；" +
-      "缺口场景 [缺口 3] 落章；宽窄两档胶囊/徽章无溢出；点 task:210 弹窗开闭+焦点归还",
+      "缺口场景 [缺口 3] 落章；宽窄两档胶囊/徽章无溢出；点 task:210 弹窗开闭+焦点归还；" +
+      "五槽下钻→看板/表格/列表(执行中/审核中/最近)；零槽空态指引不下跳",
   );
 }
 

@@ -7,6 +7,12 @@ import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import { parseBoardJson } from "../src/board/boardViewModel.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
 import {
+  boardGuideSlotActivation,
+  boardGuideSlotDrilldownTarget,
+  BOARD_GUIDE_SLOT_KEYS,
+  buildBoardGuideSummary,
+} from "../src/board/boardGuideViewModel.js";
+import {
   buildGuideLegacyBoard,
   buildGuideNoPlansBoard,
   buildGuideZeroBoard,
@@ -59,6 +65,13 @@ function slotValue(markup: string, slot: string): string | null {
     `data-board-guide-slot="${slot}"[^>]*data-board-guide-slot-value="([^"]*)"`,
   ).exec(markup);
   return match ? (match[1] ?? null) : null;
+}
+
+/** 槽卡的开标签（属性同款断言用：交互态/样式类都在同一标签上）。 */
+function slotTag(markup: string, slot: string): string {
+  const match = new RegExp(`<div[^>]*data-board-guide-slot="${slot}"[^>]*>`).exec(markup);
+  assert.ok(match, `槽 ${slot} 开标签应存在`);
+  return match[0];
 }
 
 function planMarkup(markup: string, planId: string): string {
@@ -457,6 +470,119 @@ test("rollup 缺口徽章（#139）：计数 = 计划成员卡 attention 码条�
   assert.ok(planA.includes("缺口 3"), "缺口文案走 A4 层头同一词条（缺口 {count}）");
   const planB = planMarkup(markup, "plan:plan-guide-b");
   assert.ok(!planB.includes("data-board-guide-plan-gap-count"), "计划 B 无缺口，不串台");
+});
+
+/* ---------------- C3-2（#137）：槽下钻路由 + 槽激活判据 ---------------- */
+
+test("五槽可点（#137）：槽卡是看板既有交互形态（role=button + tabindex，hover/focus 复用既有 token），初始无空态指引", () => {
+  const markup = render(readyState(), { onDrillToSlot: () => {} });
+  for (const key of BOARD_GUIDE_SLOT_KEYS) {
+    const tag = slotTag(markup, key);
+    assert.ok(
+      tag.includes('role="button"'),
+      `${key} 槽声明 button 角色（:focus-visible 规则同款覆盖）`,
+    );
+    assert.ok(tag.includes('tabindex="0"'), `${key} 槽可键盘聚焦`);
+    assert.ok(tag.includes("cursor-pointer"), `${key} 槽有可点光标`);
+    assert.ok(
+      tag.includes("hover:bg-surface-hover"),
+      `${key} 槽 hover 复用看板既有交互 token（不新造配色/大面积色块）：${tag}`,
+    );
+  }
+  assert.ok(
+    !markup.includes("data-board-guide-slot-empty"),
+    "初始不渲染空态指引（点零槽才出——不占版面）",
+  );
+});
+
+test("槽不可点边界（#137）：缺下钻派发（只读渲染）时槽不落 button 角色；旧板（缺四段）槽不落死跳转", () => {
+  const readOnly = render(readyState());
+  for (const key of BOARD_GUIDE_SLOT_KEYS) {
+    assert.ok(
+      !slotTag(readOnly, key).includes('role="button"'),
+      `${key} 槽缺宿主派发时应为只读（与卡行「缺 onOpenCard 不可点」同款）`,
+    );
+  }
+  // 旧板：槽值未知（null，§13.6 缺四段）——重编译提示已点名，槽不上可点态（不拿未知当集合）。
+  const legacy = render(readyStateOf(buildGuideLegacyBoard()), { onDrillToSlot: () => {} });
+  for (const key of BOARD_GUIDE_SLOT_KEYS) {
+    assert.ok(
+      !slotTag(legacy, key).includes('role="button"'),
+      `${key} 槽在缺四段板上不上可点态（不猜落点）`,
+    );
+  }
+});
+
+test("槽下钻路由（#137）：五槽落到既有视图/过滤——派发目标唯一、互不相同（禁第二路由）", () => {
+  // 期望值 = 派发落点口径（需处理→看板列 / 阻塞→受阻清单形态 / 运行·待收口→对应列表态 /
+  // 最近活动→最近视图），独立于实现逐槽抄写；controls 是既有 BoardListControls 的显式取值。
+  const expected: Record<
+    string,
+    { viewMode: string; controls?: { stage: string | null; sort: string } }
+  > = {
+    attention: { viewMode: "kanban" },
+    blocked: { viewMode: "table", controls: { stage: null, sort: "recent" } },
+    running: { viewMode: "list", controls: { stage: "执行中", sort: "recent" } },
+    review: { viewMode: "list", controls: { stage: "审核中", sort: "recent" } },
+    recent: { viewMode: "list", controls: { stage: null, sort: "recent" } },
+  };
+  for (const key of BOARD_GUIDE_SLOT_KEYS) {
+    const target = boardGuideSlotDrilldownTarget(key);
+    const want = expected[key];
+    assert.ok(want, `槽 ${key} 必须给落点（闭集穷尽）`);
+    assert.equal(target.mode, want.viewMode, `槽 ${key} 的落点视图`);
+    if (want.controls) {
+      assert.ok(
+        target.controls,
+        `槽 ${key} 应给列表/表格目标的显式控制（确定性落点，不吃上一次筛子）`,
+      );
+      assert.equal(target.controls.stage, want.controls.stage, `槽 ${key} 的段位筛`);
+      assert.equal(target.controls.sort, want.controls.sort, `槽 ${key} 的排序视角`);
+      assert.equal(target.controls.status, null, "下钻不给状态筛（只看槽对应集合）");
+      assert.equal(target.controls.attention, null, "下钻不给缺口码筛（只看槽对应集合）");
+      assert.equal(target.controls.kind, null, "下钻不给类型筛（只看槽对应集合）");
+    }
+  }
+  // 每槽落点互不相同：浏览器断言要能逐槽分辨「跳到了哪个对应视图/过滤」。
+  const seen = new Set(
+    BOARD_GUIDE_SLOT_KEYS.map((key) => JSON.stringify(boardGuideSlotDrilldownTarget(key))),
+  );
+  assert.equal(seen.size, BOARD_GUIDE_SLOT_KEYS.length, "五槽落点必须两两不同（否则点击不可分辨）");
+  // 拷贝语义：落点表是共享常量，调用方改写返回值不得污染下一处消费（宿主会把 controls 交给 setState）。
+  const first = boardGuideSlotDrilldownTarget("running");
+  if (first.controls) first.controls.stage = "已完成";
+  assert.equal(
+    boardGuideSlotDrilldownTarget("running").controls?.stage,
+    "执行中",
+    "落点对象为拷贝（共享表不被调用方改写）",
+  );
+});
+
+test("槽激活判据（#137）：计数 >0 才下钻；0 = 空态指引；缺四段（null）= 不跳（重编译提示已点名）", () => {
+  // 期望值 = 卡文验收「零 attention 槽点击有明确空态指引（不落死跳转）」+ §13.6 缺四段不猜口径。
+  assert.equal(boardGuideSlotActivation({ key: "attention", count: 4 }), "drill");
+  assert.equal(boardGuideSlotActivation({ key: "blocked", count: 0 }), "empty");
+  assert.equal(boardGuideSlotActivation({ key: "recent", count: 0 }), "empty");
+  assert.equal(boardGuideSlotActivation({ key: "running", count: 1 }), "drill");
+  assert.equal(boardGuideSlotActivation({ key: "review", count: null }), "none");
+  assert.equal(boardGuideSlotActivation({ key: "attention", count: null }), "none");
+});
+
+test("反例（槽计数与板一致必咬）：派生段为零、节点自带 attention 码/blockers 时，激活仍按派生走", () => {
+  // 夹具节点仍带 attention 码与 blockers，但 buildGuideZeroBoard 把四段与 attentionSummary 清零——
+  // 任何「按节点字段自算」的实现会把需处理算成 2/阻塞算成 2 并下钻；判据必须跟板字段（派生）。
+  const outcome = parseBoardJson(JSON.stringify(buildGuideZeroBoard()));
+  assert.equal(outcome.kind, "ready");
+  if (outcome.kind !== "ready") return;
+  const summary = buildBoardGuideSummary(outcome.board);
+  for (const slot of summary.slots) {
+    assert.equal(slot.count, 0, `${slot.key} 槽计数必须跟派生（0）`);
+    assert.equal(
+      boardGuideSlotActivation(slot),
+      "empty",
+      `${slot.key} 自算口径会得非零 → 必咬（应走空态指引，不下钻）`,
+    );
+  }
 });
 
 test("反例（缺口口径必咬）：不数计划自身 attention 码、也不漏嵌套子卡——只有成员卡全量求和得真值", () => {

@@ -1110,6 +1110,7 @@ const zhCN: Record<string, string> = {
   "board.guide.zero.running": "无运行",
   "board.guide.zero.review": "无待收口",
   "board.guide.zero.recent": "无最近活动",
+  "board.guide.slot.emptyHint": "「{slot}」当前为空，没有可下钻的卡。",
   "board.guide.recompile":
     "本板缺少四段派生（旧版编译器产物）：指引面不自行推算，请在会话中重新编译板。",
   "board.guide.plans.title": "正在执行的计划",

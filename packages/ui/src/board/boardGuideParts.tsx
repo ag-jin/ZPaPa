@@ -18,6 +18,7 @@ import { Progress } from "@/components/ui/progress.js";
 import { Badge } from "@/components/ui/badge.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { BOARD_WARNING_BADGE_CLASS } from "./boardBadgeParts.js";
+import { boardCardOpenProps } from "./boardCardInteraction.js";
 import { BOARD_COUNT_MESSAGE_IDS, formatBoardCountText } from "./boardPresentation.js";
 import { BOARD_COUNT_CHIP_CLASS } from "./boardNodeParts.js";
 import type { BoardGuideSlot, BoardGuideSlotKey } from "./boardGuideViewModel.js";
@@ -57,8 +58,22 @@ export function boardGuideSlotValueText(slot: BoardGuideSlot): string {
 /**
  * 置顶五槽条的单槽卡（主数 + 短解释；`data-board-guide-slot-value` 是断言/浏览器探针锚点）。
  * `hint` 传值时替换短解释（最近活动槽显示最新一条的相对时间）。
+ * `onActivate` 传值时槽是可点落点（卡 #137/C3-2）：交互 props 走既有单点
+ * `boardCardOpenProps`（role=button + tabIndex + Enter/Space 键位判据一处，禁二份实现），
+ * hover/focus 复用看板既有交互 token（`hover:bg-surface-hover`；
+ * `[data-board-pane] :is(summary, button, [role="button"]):focus-visible` 规则同款覆盖），
+ * 不新造色点/大面积色块。缺省 = 只读渲染（与卡行「缺 handler 不可点」同款）。
  */
-export function BoardGuideSlotTile({ slot, hint }: { slot: BoardGuideSlot; hint?: string }) {
+export function BoardGuideSlotTile({
+  slot,
+  hint,
+  onActivate,
+}: {
+  slot: BoardGuideSlot;
+  hint?: string;
+  /** 激活回传（槽 key）；计数与落点判据都在 `boardGuideViewModel`，零件只派发意图。 */
+  onActivate?: (key: string) => void;
+}) {
   const { intl } = useZCodeIntl();
   const zero = slot.count === 0;
   const secondary =
@@ -73,7 +88,14 @@ export function BoardGuideSlotTile({ slot, hint }: { slot: BoardGuideSlot; hint?
       data-board-guide-slot={slot.key}
       data-board-guide-slot-value={boardGuideSlotValueText(slot)}
       {...(zero ? { "data-board-guide-zero": "true" } : {})}
-      className="flex min-w-0 flex-1 basis-36 flex-col gap-0.5 rounded-lg border border-border/50 bg-surface px-3 py-2"
+      {...(onActivate ? boardCardOpenProps({ id: slot.key, onOpenCard: onActivate }) : {})}
+      className={cn(
+        // 换行基准 `basis-24`（F1-137，P3-4 收口）：窄面 360px 可用宽 ~321px——96×3+8×2=304 ≤ 321
+        // → 3+2 两行（`basis-36` 时 144×2+8=296 只能两列 → 2+2+1 三行，把窄首屏主体区下推）。
+        // 宽面 5 槽基准和远小于可用宽，仍单行、`flex-1` 均分增长，排版与既有基线一致。
+        "flex min-w-0 flex-1 basis-24 flex-col gap-0.5 rounded-lg border border-border/50 bg-surface px-3 py-2",
+        onActivate && "cursor-pointer hover:bg-surface-hover",
+      )}
     >
       <span className="truncate text-ui-sm text-foreground-subtle">
         {intl.formatMessage({ id: BOARD_GUIDE_SLOT_MESSAGE_IDS[slot.key] })}
