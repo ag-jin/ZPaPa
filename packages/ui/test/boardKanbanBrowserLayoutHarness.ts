@@ -160,6 +160,11 @@ export async function compileBoardPaneCss(params: {
   boards: string[];
   /** 需要收集类名的视图（缺省看板；#54 的列表点击路由场景要列表视图的类）。 */
   viewModes?: Array<"tree" | "kanban" | "list" | "table">;
+  /**
+   * 额外候选类（#158）：占位态/状态行不在 ready 渲染里，调用方从对应态的 SSR 渲染收集后传入；
+   * 缺省不传（既有调用方零变化）。
+   */
+  extraClassNames?: Iterable<string>;
 }): Promise<string> {
   const cssSource = readFileSync(path.join(UI_DIR, "src", "styles.css"), "utf8");
   cssCompiler = await compile(cssSource, {
@@ -167,6 +172,9 @@ export async function compileBoardPaneCss(params: {
     onDependency: () => {},
   });
   const candidates = new Set<string>();
+  for (const className of params.extraClassNames ?? []) {
+    if (className) candidates.add(className);
+  }
   for (const boardJson of params.boards) {
     const outcome = parseBoardJson(boardJson);
     if (outcome.kind !== "ready") continue;

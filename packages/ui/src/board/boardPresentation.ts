@@ -389,7 +389,8 @@ export function formatBoardStaleHint(
 
 /** 占位态的种类（显式映射 ⇒ 锚点与文案的对应关系写死在类型里，评审 #32-S2）。 */
 export type BoardPlaceholderKind =
-  | "missing"
+  | "missing-new"
+  | "missing-damaged"
   | "empty"
   | "damaged"
   | "version-newer"
@@ -398,9 +399,10 @@ export type BoardPlaceholderKind =
   | "unavailable"
   | "loading";
 
-/** 占位态 → 文案 id（loading 之外的锚点值 = kind 本身）；四态分离见契约 §2/§14。 */
+/** 占位态 → 文案 id（loading 之外的锚点值 = kind 本身）；四态分离见契约 §2/§14；A1/A2 二分见契约 §2。 */
 export const BOARD_PLACEHOLDER_MESSAGE_IDS: Record<BoardPlaceholderKind, string> = {
-  missing: "board.empty.none",
+  "missing-new": "board.empty.none",
+  "missing-damaged": "board.empty.missingDamaged",
   empty: "board.empty.features",
   damaged: "board.empty.damaged",
   "version-newer": "board.error.versionNewer",
