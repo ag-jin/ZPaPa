@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * zcode-board 编译器（T6 骨架 + T7 派生层 + T9 发号模式 + T10 审计模式）
+ * zcode-board 编译器（T6 骨架 + T7 派生层 + T9 发号模式 + T10 审计模式 + #73 检查点模式）
  *
  * 用法：
  *   node compile-board.mjs [<project-root>]            默认只读编译（<project-root> 默认当前工作目录）
  *   node compile-board.mjs [<project-root>] --assign   发号：无号条目领全局稳定号，写源头标记 + registry + 自动重编译
  *   node compile-board.mjs [<project-root>] --check    审计（只读）：源/registry/board.json 三方一致 + 结构校验，不一致非零退出
+ *   node compile-board.mjs [<project-root>] --preflight  预检（只读零写入，#73）：扫描面预览 + 预计上板 + 增量预览；退出码 绿 0/黄 1/红 2
+ *   node compile-board.mjs [<project-root>] --doctor     环境体检（只读零写入，#73）：manifest 完整性/版本一致/hook 声明/技能目录漂移/并存板工具检测（#179）；退出码 绿 0/黄 1/红 2
  *   node compile-board.mjs [<project-root>] --assign --session-id <id>  发号者留痕（B5-3/#115：registry 条目 assignedBy）
  *   node compile-board.mjs --version                    版本：一行 包版本 / 契约版本 / schema 版本（#67；读 lib/version.mjs）
  *   node compile-board.mjs --manifest                   重新生成 assets/manifest.json（#67：三版本 + 关键文件 sha256）
@@ -99,16 +101,24 @@
  *     运行当场点名（诊断），--check 另按条目 assignedBy 现场段逐条对账点名（非失败级、不阻断退出码；
  *     既有条目零改动、不补造）。
  *
+ * 检查点模式（#73；用户 2026-10-10「多检查点，刚才才开始测试就一堆错误」——远端连珠炮死在用户测试而非检查点）：
+ *   --preflight：只读零写入预检（扫描面预览 + 预计上板 + 现有板增量预览；>10 未领号/坏 scan.json/幻影板
+ *   判红禁止出板；非 opt-in docs 目录存在判黄醒目警告）；--doctor：环境体检分级清单（manifest sha256
+ *   对账/三版本一致/hook 声明路径与可执行/分叉副本与旧版本/技能目录 git 漂移/项目结构风险/并存板工具检测
+ *   （#179：项目侧入口发现 + --version 对账，不一致黄·仅项目侧信息·一致绿））。
+ *
  * 硬约束：默认模式对源文件**零写入**；--check 全程**只读**；--assign 对源头的写入仅限号标记 +
- * registry（§12 副作用边界，roadmap 子旗标由作者手写、--assign 不写入不改写）；不解析不触碰
- * .zcode/workflows/；不执行任何 git 命令；无第三方依赖。
+ * registry（§12 副作用边界，roadmap 子旗标由作者手写、--assign 不写入不改写）；--preflight/--doctor
+ * 零写入（不写板/号标记/registry/源文件）；不解析不触碰 .zcode/workflows/；不执行任何 git 命令
+ * （唯一例外：--doctor 的技能目录漂移体检执行只读 git status，其余模式一律不执行 git）；无第三方依赖。
  * 归属边界：契约 v2.3（#53）——roadmap 子旗标与 nextAssignee 已正式化（schema v2.3 与 markers.md v2.3 同源）；
  * v2.1（T21）的 cancelled/assignees/stage 与 v2.2（#46）的 planCode/currentAssignee/section 不变。
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -176,12 +186,13 @@ import {
   checkEpicRefs,
   checkFactInvariants,
   checkRegistryGhosts,
+  checkRunsDeadCardRefs,
   classifyDeadNumber,
 } from "./lib/fact-invariants.mjs";
 
 import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, OPT_IN_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
 
-import { GENERATED_BY, SKILL_ROOT_DIR, SKILL_VERSION, formatVersionLine, readVersionInfo } from "./lib/version.mjs";
+import { GENERATED_BY, SKILL_MD_PATH, SKILL_ROOT_DIR, SKILL_VERSION, formatVersionLine, readVersionInfo } from "./lib/version.mjs";
 
 // 版本单一事实源（#67）：包版本常量在 lib/version.mjs；此处重导出，board.json.generatedBy、
 // SKILL.md 头部版本行与 assets/manifest.json 均由它派生/经断言守卫同值。
@@ -3294,7 +3305,9 @@ export function assignProject(rootInput, { planCodeRequests = [], force = false,
   const board = compileProject(root);
   const boardDir = join(root, ".zcode", "board");
   writeFileAtomic(join(boardDir, "board.md"), renderBoardMd(board));
-  writeJsonAtomic(join(boardDir, "board.json"), board);
+  // board.json 紧凑写出（indent 0）：产品 UI 读取上限 256KiB，pretty（indent 2）在 ~150 卡规模即穿越
+  // 上限被截断、误报「版本过新/损坏」（2026-10-11 实测 295.7KB 超限 40KB）。registry/runs 等非 UI 读取面保持 pretty 不动。
+  writeJsonAtomic(join(boardDir, "board.json"), board, { indent: 0 });
 
   return { board, registry: registryDoc, diagnostics, assignedCount, changedMarkerFiles, registryWritten, epic: epicInfo };
 }
@@ -4207,6 +4220,37 @@ function checkBoardArtifact(root, freshBoard, fail, note, rollcall) {
   // （判级/判定域见 checkWorktreeCardBinding 注释；磁盘板偏差由下方「board 不一致」失败项咬住）。
   for (const m of checkWorktreeCardBinding(freshBoard)) rollcall.push(m);
 
+  // runs 引用非活卡号升对账点名（B4-4/#108；E1 V10 / 裁决⑥ / AD-10①）——**对账点名级（非失败级、
+  // 不阻断退出码）**：runs 记录 cards[] 引用的号不在板上活条目 → 逐条点名（两文案分流：registry
+  // 有条目而板上无 vs 完全未知号；判据单点 = classifyDeadNumber，与编译侧 diagnostics 同口径，
+  // 禁二份判据——见 lib/fact-invariants.mjs checkRunsDeadCardRefs 注释）。判定域 = 重编译基线：
+  // 磁盘板的偏差已由「board 不一致」失败项逐字段咬住（同一缺陷只点名一次——与 (f) 同口径）；
+  // runs.json 缺失 ≡ 空记录（零点名）；结构损坏由「损坏源」拦下（零断言不叠加）。
+  {
+    const runsDeadLoaded = readJsonFile(join(root, FIRST_PARTY_SOURCES[2].path));
+    const runsDeadRaw = runsDeadLoaded.missing
+      ? []
+      : runsDeadLoaded.ok &&
+          runsDeadLoaded.value &&
+          typeof runsDeadLoaded.value === "object" &&
+          Array.isArray(runsDeadLoaded.value.runs)
+        ? runsDeadLoaded.value.runs
+        : null;
+    if (runsDeadRaw !== null) {
+      const regForRunsLoaded = readJsonFile(join(root, FIRST_PARTY_SOURCES[1].path));
+      const regForRunsEntries =
+        regForRunsLoaded.ok && Array.isArray(regForRunsLoaded.value?.entries) ? regForRunsLoaded.value.entries : [];
+      for (const m of checkRunsDeadCardRefs({
+        board: freshBoard,
+        runs: runsDeadRaw,
+        registryEntries: regForRunsEntries,
+        describeEntry: describeRegistryEntry,
+      })) {
+        rollcall.push(m);
+      }
+    }
+  }
+
   const loaded = readJsonFile(join(root, rel));
   if (loaded.missing) {
     note(rel, "board.json 不存在：跳过板/源互检（先运行默认编译生成板；--check 只读，不写板）。");
@@ -4395,6 +4439,10 @@ function phantomBoardMessage({ root, ancestor, boardRoot }) {
  *      第八项 (h) 非编排者发号【对账点名级，非失败，B5-3/#115】registry 条目 `assignedBy` 现场段为
  *      `worktree:<仓根名>`（链接工作树内运行 --assign = 非主检出；SKILL.md 单写者纪律）逐条点名
  *      （checkAssignedBy）——历史事实不可由重编译修复，与 (e)/(f)/(g) 同域；`@main`/缺省/未知形态不判；
+ *      第九项 (i) runs 引用非活卡号【对账点名级，非失败，B4-4/#108；E1 V10】runs 记录 `cards[]`
+ *      引用的号不在板上活条目 → 逐条点名（两文案分流：registry 有条目而板上无 vs 完全未知号；
+ *      判据单点 = classifyDeadNumber，与编译侧 diagnostics 同口径；checkRunsDeadCardRefs，重编译
+ *      基线上判定）——记录级事实清理/改正后自清，不阻塞退出码；
  *      6. 归属与引用断言包（A2-2/#82）【失败级】：源侧条目归属对形态/原子性（码不进引用位）、一稿一 epic
  *      （双归属必咬）、登记行形态（checkEpicOwnership）；板面 `features[].epic` 登记 id 反查 `epics[]`
  *      登记行——悬空/孤儿引用必咬（checkEpicRefs，磁盘板与重编译基线各判一遍）；无 epic/phase 缺省
@@ -4528,17 +4576,834 @@ export function buildManifest() {
   };
 }
 
+// ---------------------------------------------------------------- 检查点命令（#73：--preflight / --doctor）
+
+/**
+ * --preflight（#73）：只读预检——**零写入**（不写 board.json/board.md/registry/号标记，不改任何源文件），
+ * 输出扫描面预览 + 预计上板 + 增量预览，退出码语义（绿 0 / 黄 1 / 红 2；用法错误仍 2，同全工具口径）。
+ *
+ * 由来（用户 2026-10-10「多检查点，刚才才开始测试就一堆错误」）：远端上线连珠炮（旧版本/分叉副本/
+ * 扫描面洪水/hook 间接洪水）全部死在用户测试而非检查点。本命令把"会不会出事"提前到出板之前：
+ *   - 扫描面预览：逐目录列将扫描目录与文件数（与 listPlanFiles 同源，不二份判定）、未领号文件数、
+ *     >10 风险、PLAN_DIRS 硬编码碰撞检测（docs/plans|docs/design-notes 存在且非 opt-in → 醒目警告——
+ *     旧版编译器三目录硬编码会整批吸上板，远端 296 档事故形态）；
+ *   - 预计上板：内存编译（同一编译管线）得到的特性/卡/诊断数——"这次编译会出什么"先看得见；
+ *   - 增量预览：现有板时给出相对 board.json 的 diff 摘要（新增/移除/状态变化/attentionSummary/诊断）。
+ *
+ * 判级（红 = 禁止出板，先整改；黄 = 警告，人工确认后继续）：
+ *   红：幻影板防线命中（输出路径 ≠ 板根）/ scan.json 整份拒收（会静默回落默认扫面）/ 生效扫描面
+ *       未领号 > MASS_PLAN_FILE_THRESHOLD（mass 改写洪水风险）；
+ *   黄：PLAN_DIRS 硬编码碰撞（非 opt-in docs 目录存在）/ scan.json 条目级错误（部分拒收）/
+ *       现有 board.json 不可解析（增量预览不可得，编译将重写）。
+ */
+function preflightProject(rootInput) {
+  const root = resolve(rootInput);
+  const red = [];
+  const yellow = [];
+  const out = [];
+  out.push(`--preflight：${root}`);
+
+  // ---- 幻影板防线（红；判据与写盘守卫同源 detectPhantomBoardRoot）：输出路径 ≠ 板根——出板即幻影板
+  // 且证据错位（B5-2/#114；E1 V20），预检在出板之前拦下（默认编译的写盘拒绝是同一判据的第二道）。
+  const phantom = detectPhantomBoardRoot(root);
+  if (phantom !== null) {
+    red.push(`幻影板防线：${phantomBoardMessage(phantom)}——预检禁止在错位根出板。`);
+  }
+
+  // ---- 扫描面预览（#72 配置面；与 listPlanFiles 同源）
+  const surface = loadScanConfig(root);
+  if (surface.rejected) {
+    // 整份拒收（坏 JSON / 顶层非对象）：实际生效面 = 默认苗圃，与预期 opt-in 面可能不一致 → 红（先修配置）
+    red.push(
+      `scan.json 整份拒收（${surface.errors[0]?.message ?? "解析失败/结构非法"}）——本次编译按默认 .zcode/plans/ 兜底` +
+        `（不猜、不部分生效）：预期扫描面与生效扫描面不一致，先修 ${SCAN_CONFIG_REL} 再重跑 --preflight。`,
+    );
+  } else {
+    for (const e of surface.errors) {
+      yellow.push(`scan.json 条目级错误（该条拒绝、其余照常生效）：${e.message}`);
+    }
+  }
+  out.push(
+    surface.present
+      ? `扫描面：${SCAN_CONFIG_REL}（已解析：includeDirs=[${surface.includeDirs.join("、")}]）`
+      : `扫描面：无 ${SCAN_CONFIG_REL}（默认面：只扫 .zcode/plans/）`,
+  );
+  const planFiles = listPlanFiles(root, surface);
+  const specDirs = listSpecDirs(root);
+  out.push("将扫描目录：");
+  for (const dir of surface.planDirs) {
+    const isDefault = dir === DEFAULT_PLAN_DIRS[0];
+    const state = isDir(join(root, dir)) ? "存在" : "缺失";
+    const n = listPlanFiles(root, { planDirs: [dir], excludeGlobs: surface.excludeGlobs }).length;
+    out.push(`  - ${dir}/（${isDefault ? "默认" : "opt-in，已启用"}，${state}）：${n} 个计划文件`);
+  }
+  // 未启用池目录（存在即列；PLAN_DIRS 硬编码碰撞检测的输入——一次计算两处消费）
+  const optedOutPool = [];
+  for (const dir of OPT_IN_PLAN_DIRS) {
+    if (surface.includeDirs.includes(dir)) continue;
+    if (!isDir(join(root, dir))) continue;
+    const n = listPlanFiles(root, { planDirs: [dir], excludeGlobs: [] }).length;
+    optedOutPool.push({ dir, count: n });
+    out.push(`  - ${dir}/（opt-in，未启用，存在）：${n} 个 .md（不扫）`);
+  }
+  out.push(
+    `排除模式（excludeGlobs）：${surface.excludeGlobs.length === 0 ? "无" : `${surface.excludeGlobs.length} 条（${surface.excludeGlobs.join("、")}）`}`,
+  );
+
+  // ---- 未领号计划文件（与 --assign 防 mass 改写闸同源判定：文件头无号标记）
+  const unnumbered = [];
+  for (const plan of planFiles) {
+    const facts = readPlanAssignFacts(plan);
+    if (!facts.ok) continue;
+    if (!Number.isInteger(facts.headMarkerNo)) unnumbered.push(plan.rel);
+  }
+  out.push(`将扫描：${planFiles.length} 个计划文件（未领号 ${unnumbered.length} 个）＋ ${specDirs.length} 个 spec 目录`);
+
+  // ---- >10 风险（红）：与 --assign 防 mass 改写闸同一阈值（MASS_PLAN_FILE_THRESHOLD 单源）
+  if (unnumbered.length > MASS_PLAN_FILE_THRESHOLD) {
+    const sample = unnumbered.slice(0, 3).join("、") + (unnumbered.length > 3 ? " 等" : "");
+    red.push(
+      `防 mass 改写闸（#72；远端 296 档事故形态）：本次编译将吸入 ${unnumbered.length} 个未领号计划文件` +
+        `（阈值：单次 >${MASS_PLAN_FILE_THRESHOLD}；例：${sample}）——整批吸上板、后续 --assign 逐份盖号改写的洪水风险；` +
+        `先核对扫描面（${SCAN_CONFIG_REL} 的 includeDirs/excludeGlobs：不应扫的排除、应扫的拆分登记）；` +
+        `确认无误后如仍需整批处理，--assign 侧须 --force 显式放行（会留诊断痕迹）。`,
+    );
+  }
+
+  // ---- PLAN_DIRS 硬编码碰撞检测（黄——醒目警告）：docs 池目录存在（有 .md）且非 opt-in——旧版编译器
+  //（≤0.3.x：PLAN_DIRS 硬编码 .zcode/plans + docs/plans + docs/design-notes）会把整批吸上板（远端
+  // 296 档事故形态，#72/#73）；当前配置不扫（零吸入）＝本次编译安全，属「版本/预期碰撞」警告而非配置错误。
+  for (const { dir, count } of optedOutPool) {
+    if (count === 0) continue;
+    yellow.push(
+      `PLAN_DIRS 硬编码碰撞（醒目警告）：${dir}/ 存在（${count} 个 .md，未 opt-in）——旧版编译器` +
+        `（PLAN_DIRS 硬编码 .zcode/plans + docs/plans + docs/design-notes）会把整批吸上板（远端 296 档事故形态，卡 #72/#73）；` +
+        `本次编译不扫、零吸入。若预期其为计划源：在 ${SCAN_CONFIG_REL} 的 includeDirs 显式 opt-in` +
+        `（未领号将 >${MASS_PLAN_FILE_THRESHOLD} → 本预检判红，先拆分登记或用 excludeGlobs 排除历史档）；` +
+        `若不预期扫描：本行仅提示、无需动作。`,
+    );
+  }
+
+  // ---- 预计上板（内存编译：与默认模式同一编译管线，只读）
+  const board = compileProject(root);
+  const tasks = board.features.reduce((n, f) => n + countTasks(f.tasks ?? []), 0);
+  const kindText = (byKind) => {
+    const parts = ["plan", "spec", "interview-only"]
+      .map((k) => [k, byKind(k)])
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${k === "interview-only" ? "访谈" : k} ${n}`);
+    return parts.length === 0 ? "无" : parts.join(" / ");
+  };
+  const featuresByKind = (k) => board.features.filter((f) => f.kind === k).length;
+  const tasksByKind = (k) => board.features.filter((f) => f.kind === k).reduce((n, f) => n + countTasks(f.tasks ?? []), 0);
+  out.push(
+    `预计上板：特性 ${board.features.length} 个（${kindText(featuresByKind)}）、` +
+      `卡 ${tasks} 张（${kindText(tasksByKind)}）；诊断 ${board.diagnostics.length} 条`,
+  );
+
+  // ---- 现有板 / 增量预览（#73：本次编译会改什么——diff 摘要；无板 = 首建）
+  const boardLoaded = readJsonFile(join(root, BOARD_JSON_REL));
+  if (boardLoaded.missing) {
+    out.push(`现有板：无（首建：${BOARD_JSON_REL} + ${BOARD_MD_REL} 将新建）`);
+  } else if (!boardLoaded.ok) {
+    out.push(`现有板：${BOARD_JSON_REL} 解析失败（${boardLoaded.error}）——增量预览不可得；编译将整体重写该文件`);
+    yellow.push(
+      `现有板不可解析（${BOARD_JSON_REL}：${boardLoaded.error}）：增量预览不可得——编译将整体重写该文件` +
+        "（这是修复路径；先确认无可抢救内容）。",
+    );
+  } else {
+    const prev = boardLoaded.value;
+    const prevTaskCount = Array.isArray(prev?.features)
+      ? prev.features.reduce((n, f) => n + countTasks(f?.tasks ?? []), 0)
+      : "?";
+    out.push(
+      `现有板：${BOARD_JSON_REL}（updatedAt ${prev?.updatedAt ?? "?"}；features ${prev?.features?.length ?? "?"}、tasks ${prevTaskCount}）`,
+    );
+    out.push("增量预览（相对现有板）：");
+    out.push(...incrementalPreviewLines(prev, board));
+  }
+  out.push(`写出面：${BOARD_JSON_REL} + ${BOARD_MD_REL}（默认编译将重写；--preflight 本身零写入）`);
+
+  // ---- 判级清单与结论
+  if (red.length > 0) {
+    out.push(`红（禁止，${red.length} 项——先整改，勿出板）：`);
+    for (const m of red) out.push(`  - ${m}`);
+  }
+  if (yellow.length > 0) {
+    out.push(`黄（警告，${yellow.length} 项——人工确认后继续）：`);
+    for (const m of yellow) out.push(`  - ${m}`);
+  }
+  const verdict = red.length > 0 ? "红" : yellow.length > 0 ? "黄" : "绿";
+  const tail =
+    verdict === "绿"
+      ? "绿（可编译；退出码 0）"
+      : verdict === "黄"
+        ? `黄（警告 ${yellow.length} 项——确认后编译；退出码 1）`
+        : `红（禁止 ${red.length} 项——先整改，勿出板；退出码 2）`;
+  out.push(`结论：${tail}`);
+  return { root, red, yellow, verdict, exitCode: verdict === "绿" ? 0 : verdict === "黄" ? 1 : 2, lines: out };
+}
+
+/**
+ * 板面节点摊平（增量预览用；显示摘要，非身份真相源）：特征键 = 稳定 id / #no / 标题；
+ * 任务键 = 父键 + 稳定号 / label / 标题。只服务"本次编译会改什么"的人读摘要。
+ */
+function flattenBoardForDiff(board) {
+  const out = [];
+  const walk = (tasks, parentKey) => {
+    for (const t of tasks ?? []) {
+      const key = `${parentKey}/T:${Number.isInteger(t?.no) ? `#${t.no}` : (t?.label ?? t?.title ?? "?")}`;
+      out.push({
+        key,
+        kind: "task",
+        no: t?.no ?? null,
+        label: t?.label ?? null,
+        title: t?.title ?? "",
+        status: t?.status,
+        stage: t?.stage,
+        attention: t?.attention ?? [],
+      });
+      walk(t?.tasks, key);
+    }
+  };
+  for (const f of board?.features ?? []) {
+    const key = `F:${f?.id ?? (Number.isInteger(f?.no) ? `#${f.no}` : (f?.title ?? "?"))}`;
+    out.push({
+      key,
+      kind: "feature",
+      no: f?.no ?? null,
+      label: f?.label ?? null,
+      title: f?.title ?? "",
+      status: f?.status,
+      stage: f?.stage,
+      attention: f?.attention ?? [],
+    });
+    walk(f?.tasks, key);
+  }
+  return out;
+}
+
+/** 节点引用短文（增量预览样例）：稳定号 > label > 标题。 */
+function nodeRefText(node) {
+  if (Number.isInteger(node.no)) return `#${node.no}`;
+  if (typeof node.label === "string" && node.label !== "") return `ID-${node.label}`;
+  return `「${node.title}」`;
+}
+
+/** 增量预览行（相对现有 board.json 的 diff 摘要：#73「本次编译会改什么」）。 */
+function incrementalPreviewLines(prev, next) {
+  const lines = [];
+  const prevNodes = flattenBoardForDiff(prev);
+  const nextNodes = flattenBoardForDiff(next);
+  const prevMap = new Map(prevNodes.map((n) => [n.key, n]));
+  const nextMap = new Map(nextNodes.map((n) => [n.key, n]));
+  const added = nextNodes.filter((n) => !prevMap.has(n.key));
+  const removed = prevNodes.filter((n) => !nextMap.has(n.key));
+  const changed = nextNodes.filter((n) => {
+    const p = prevMap.get(n.key);
+    return p && (p.status !== n.status || p.stage !== n.stage || JSON.stringify(p.attention) !== JSON.stringify(n.attention));
+  });
+  const countByKind = (list) => {
+    const f = list.filter((n) => n.kind === "feature").length;
+    return { f, t: list.length - f };
+  };
+  const sampleText = (list) =>
+    list
+      .slice(0, 2)
+      .map((n) => `${n.kind === "feature" ? "特性" : "卡"} ${nodeRefText(n)}「${n.title}」`)
+      .join("；");
+  const addC = countByKind(added);
+  const remC = countByKind(removed);
+  lines.push(`  + 新增：特性 ${addC.f} 个、卡 ${addC.t} 张${added.length > 0 ? `（例：${sampleText(added)}）` : ""}`);
+  lines.push(`  - 移除：特性 ${remC.f} 个、卡 ${remC.t} 张${removed.length > 0 ? `（例：${sampleText(removed)}）` : ""}`);
+  const changedSample = changed.slice(0, 3).map((n) => `${nodeRefText(n)} ${prevMap.get(n.key).stage}→${n.stage}`).join("；");
+  lines.push(
+    `  ~ 变化（status/段位/attention）：${changed.length} 张${changed.length > 0 ? `（例：${changedSample}）` : ""}`,
+  );
+  const sumPrev = prev?.attentionSummary ?? summarizeAttention(prev?.features ?? []);
+  const sumNext = next?.attentionSummary ?? summarizeAttention(next?.features ?? []);
+  const sumDiffs = Object.keys(sumNext)
+    .filter((k) => (sumPrev[k] ?? 0) !== (sumNext[k] ?? 0))
+    .map((k) => `${k} ${sumPrev[k] ?? 0}→${sumNext[k] ?? 0}`);
+  lines.push(`  attentionSummary：${sumDiffs.length === 0 ? "无变化" : sumDiffs.join("；")}`);
+  const dPrev = Array.isArray(prev?.diagnostics) ? prev.diagnostics.length : null;
+  const dNext = Array.isArray(next?.diagnostics) ? next.diagnostics.length : null;
+  lines.push(`  diagnostics：${dPrev ?? "?"}→${dNext ?? "?"}`);
+  const masked = (b) => ({ ...(b ?? {}), updatedAt: "<编译时刻>" });
+  const diff = diffJsonValues(masked(prev), masked(next));
+  lines.push(
+    diff.count === 0
+      ? "  零变化（除编译时刻 updatedAt 外与现有板逐字段一致）"
+      : `  板面总差异：${diff.count} 处（根 updatedAt 已掩码；默认编译将按上述重写 ${BOARD_JSON_REL} + ${BOARD_MD_REL}）`,
+  );
+  return lines;
+}
+
+// ---------------------------------------------------------------- 检查点命令：--doctor（#73）
+
+/** 体检项等级（分级清单）：红=错误先修（退出码 2）/ 黄=警告人工确认（1）/ 绿=通过 / 信息=仅提示（不影响结论）。 */
+const DOCTOR_LEVEL = Object.freeze({ RED: "红", YELLOW: "黄", GREEN: "绿", INFO: "信息" });
+/**
+ * 官方 hook 脚本清单（技能包 assets/hooks/ 目录）：前五项 = `.zcode/config.json` 五项声明的对应脚本
+ * （板摘要注入/落账/重编译/对账/合并门禁），后两项为辅助面（源变更检测纯函数、板数据守卫——部分部署
+ * 以 user 级声明启用）。缺失核心项 → 红（hook 无法启用）；缺失辅助项 → 黄（不阻断部署）。
+ */
+const CORE_HOOK_SCRIPTS = Object.freeze([
+  "board-context.mjs",
+  "record-run.mjs",
+  "watch-sources.mjs",
+  "reconcile-stop.mjs",
+  "gate-merge.mjs",
+]);
+const AUX_HOOK_SCRIPTS = Object.freeze(["source-change-detect.mjs", "guard-board.mjs"]);
+
+/** 文件 sha256（manifest 对账用；与 buildManifest 同口径）。 */
+function fileSha256(abs) {
+  return createHash("sha256").update(readFileSync(abs)).digest("hex");
+}
+
+/** command 可执行体检：含路径分隔符 → 路径按 X_OK 检查；否则按 PATH 逐目录查找（node 等命令形态）。 */
+function checkExecutableCommand(cmd) {
+  if (typeof cmd !== "string" || cmd.trim() === "") return { ok: false, reason: "command 缺失或非字符串" };
+  const isPath = cmd.includes("/") || cmd.includes("\\");
+  const candidates = isPath
+    ? [resolve(cmd)]
+    : (process.env.PATH ?? "")
+        .split(delimiter)
+        .filter((d) => d !== "")
+        .map((d) => join(d, cmd));
+  for (const cand of candidates) {
+    try {
+      accessSync(cand, constants.X_OK);
+      return { ok: true, path: cand };
+    } catch {
+      /* 尝试下一个候选 */
+    }
+  }
+  return { ok: false, reason: isPath ? "路径不存在或不可执行（X_OK 检查失败）" : "不在 PATH（未找到可执行文件）" };
+}
+
+/** 指定技能目录的包版本常量（分叉副本/旧版本体检；不可读 → null）。 */
+function readSkillVersion(skillDir) {
+  const loaded = readTextFile(join(skillDir, "assets", "lib", "version.mjs"));
+  if (!loaded.ok) return null;
+  const m = /export const SKILL_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"/.exec(loaded.text);
+  return m ? m[1] : null;
+}
+
+// ---------------------------------------------------------------- 并存板工具检测（#179/B8-1）
+
+/** 项目侧板工具入口形态：目录（项目根相对）+ 脚本后缀 + 编译器入口文件名前缀（实战形态 compile.mjs）。 */
+const BOARD_TOOLS_REL = ".zcode/board-tools";
+const BOARD_TOOL_SCRIPT_RE = /\.(mjs|cjs|js)$/i;
+const BOARD_TOOL_COMPILE_RE = /^compile/i;
+/** 入口 --version 探测超时（有界子进程；超时按不可读降级——体检不因项目侧工具卡住）。 */
+const BOARD_TOOL_PROBE_TIMEOUT_MS = 5000;
+
+/** 项目根相对显示路径（并存检测点名用；根内 → 相对 posix 形态，根外/异常 → 原样绝对路径）。 */
+function toPosixRelFor(rootDir, abs) {
+  const norm = (s) => s.split("\\").join("/");
+  const r = norm(normalizeAbsoluteForCompare(rootDir));
+  const a = norm(abs);
+  return a.startsWith(`${r}/`) ? a.slice(r.length + 1) : a;
+}
+
+/** 路径归一（realpath 优先，失败退 resolve）——「同一文件/同一技能目录」比对口径（同 #69 入口守卫因由）。 */
+function normalizeAbsoluteForCompare(p) {
+  const abs = resolve(p);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+/**
+ * 并存板工具入口发现（#179）：项目内其它板编译器/工具入口（非全局技能路径）。
+ * 已知形态（实战来源：新赛马项目双编译器并存——项目侧 .zcode/board-tools/compile.mjs 发号
+ * + 全局技能编译器跑 hooks，版本漂移用户无感知）：
+ *   ① `<项目根>/.zcode/board-tools/` 下 compile 入口；
+ *   ② `.zcode/config.json` hooks 声明 command/args 指向的非全局路径脚本——技能包形态
+ *      `<技能根>/assets/hooks/*.mjs` 的声明脚本已由 ③ 做版本对账（旧版本红/同名副本黄），
+ *      此处不重复点名，只覆盖 ③ 以「分叉/自建脚本（版本不校验）」放行的入口。
+ * 发现即版本对账（probeBoardToolVersion），形与建议在 doctor 清单输出（三态见 doctorReport ⑥ 节）。
+ */
+function findCoexistingBoardTools(root, cfgLoaded) {
+  const entries = new Map(); // 绝对路径（realpath 归一）→ {path, sources:Set}
+  const addEntry = (abs, source) => {
+    const key = normalizeAbsoluteForCompare(abs); // 归一后去重：同一入口经 ①② 两形态命中只报一条
+    const e = entries.get(key) ?? { path: key, sources: new Set() };
+    e.sources.add(source);
+    entries.set(key, e);
+  };
+  const toolsDir = join(root, BOARD_TOOLS_REL);
+  if (isDir(toolsDir)) {
+    for (const name of readdirSync(toolsDir).sort()) {
+      if (!BOARD_TOOL_SCRIPT_RE.test(name) || !BOARD_TOOL_COMPILE_RE.test(name)) continue;
+      const abs = join(toolsDir, name);
+      if (!isFile(abs)) continue;
+      addEntry(abs, `${BOARD_TOOLS_REL}/ 编译器入口`);
+    }
+  }
+  if (cfgLoaded !== null && cfgLoaded.ok && cfgLoaded.value?.hooks?.enabled === true) {
+    const skillRootNorm = normalizeAbsoluteForCompare(SKILL_ROOT_DIR);
+    for (const d of collectHookDeclarations(cfgLoaded.value)) {
+      const h = d?.hook;
+      if (h === null || typeof h !== "object" || Array.isArray(h)) continue;
+      const cands = [h.command, ...(Array.isArray(h.args) ? h.args : [])];
+      for (const cand of cands) {
+        if (typeof cand !== "string") continue;
+        if (!(cand.includes("/") || cand.includes("\\"))) continue; // 裸命令名（node 等）≠ 路径脚本
+        if (!BOARD_TOOL_SCRIPT_RE.test(cand)) continue;
+        const abs = normalizeAbsoluteForCompare(resolve(root, cand));
+        if (!isFile(abs)) continue;
+        if (abs === skillRootNorm || abs.startsWith(`${skillRootNorm}/`) || abs.startsWith(`${skillRootNorm}\\`)) {
+          continue; // 全局技能目录内：非并存
+        }
+        if (/^(.*)[\\/]assets[\\/]hooks[\\/][^\\/]+\.mjs$/.test(abs)) continue; // 技能包形态（③ 已对账）
+        addEntry(abs, `${d.event} 声明`);
+      }
+    }
+  }
+  return [...entries.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * 入口 --version 读数（#179 版本对账）：有界子进程（全捕获 stdio + 超时 + stdin 关闭），只读探测；
+ * 失败/超时/无读数一律 { ok:false } 降级（不抛错、不阻断体检）。非编译形态入口不执行探测——
+ * 不能对副作用未知的脚本跑任意命令（doctor 零写入承诺优先），直接按不可读降级。
+ */
+function probeBoardToolVersion(entry, probeCwd) {
+  if (!BOARD_TOOL_COMPILE_RE.test(basename(entry.path))) {
+    return { ok: false, version: null, reason: "非编译形态入口不执行探测（版本不可读）" };
+  }
+  const res = spawnSync(process.execPath, [entry.path, "--version"], {
+    encoding: "utf8",
+    cwd: probeCwd,
+    timeout: BOARD_TOOL_PROBE_TIMEOUT_MS,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  if (res.error) return { ok: false, version: null, reason: `启动失败（${res.error.message}）` };
+  if (res.status !== 0) return { ok: false, version: null, reason: `--version 退出码 ${res.status}` };
+  const text = `${res.stdout ?? ""}`;
+  const m = /zcode-board\s+([0-9]+\.[0-9]+\.[0-9]+)/.exec(text) ?? /([0-9]+\.[0-9]+\.[0-9]+)/.exec(text);
+  if (m === null) return { ok: false, version: null, reason: "--version 无版本读数" };
+  return { ok: true, version: m[1], reason: null };
+}
+
+
+/**
+ * --doctor（#73）：环境体检——技能包/项目环境的分级清单（红/黄/绿/信息），只读（不写任何文件）。
+ *   ① 包版本 / manifest 完整性：assets/manifest.json 关键文件 sha256 逐项对账（改了未重生成/未登记/
+ *      缺失必咬）+ manifest 三版本位 ↔ lib/version.mjs 事实源；
+ *   ② 契约/schema 版本一致：常量 ↔ markers.md 变更段头 ↔ board.schema.json 版本位 ↔ SKILL.md 头部
+ *      手写版本行（#67 同源互锁的手工体检面）；
+ *   ③ hook 配置体检（给项目根时）：`.zcode/config.json` 五声明路径存在、node 可执行、五核心 hook 覆盖、
+ *      分叉副本/旧版本检测（声明脚本指向的技能根 ≠ 当前技能目录）；
+ *   ④ 技能目录 git 仓与未提交漂移（doctor 例外：只读 `git status`；默认/--assign/--check 不执行 git）；
+ *   ⑤ 项目结构风险：幻影板根 / scan.json 整份拒收（指向 --preflight 红项处置）；
+ *   ⑥ 并存板工具检测（#179/B8-1；给项目根时）：项目侧其它板入口（`.zcode/board-tools/` compile 入口、
+ *      hooks 声明指向的非全局脚本）发现 + 各入口 --version 读数 ↔ 全局技能版本对账——不一致黄（统一/
+ *      锁版本两路径建议）、仅项目侧存在·不可读信息、一致绿（双源形态提示）；零入口零噪声。
+ * 退出码：任何红 → 2；否则有黄 → 1；否则 0（信息项不阻断）。用法错误 2（同全工具口径）。
+ */
+function doctorReport(rootInput) {
+  const root = rootInput === null ? null : resolve(rootInput);
+  const skillRoot = SKILL_ROOT_DIR;
+  const sections = [];
+  let cur = null;
+  const section = (title) => {
+    cur = { title, items: [] };
+    sections.push(cur);
+  };
+  const add = (level, text) => {
+    if (cur === null) section("（未分节）");
+    cur.items.push({ level, text });
+  };
+
+  const out = [];
+  out.push(`--doctor：zcode-board 环境体检（技能目录 ${skillRoot}；项目根 ${root ?? "未指定"}）`);
+
+  // ---- ① 版本事实源 + manifest 完整性
+  section("[技能包] manifest 完整性（关键文件 sha256 对账）");
+  let info = null;
+  try {
+    info = readVersionInfo();
+  } catch (e) {
+    add(DOCTOR_LEVEL.RED, `版本事实源不可读：${e.message}——技能包文件缺失或结构损坏。`);
+  }
+  const manifestLoaded = readJsonFile(join(skillRoot, MANIFEST_REL));
+  if (manifestLoaded.missing) {
+    add(DOCTOR_LEVEL.RED, `manifest 缺失：${MANIFEST_REL} 不存在——安装不完整（重装或运行 --manifest 生成）。`);
+  } else if (!manifestLoaded.ok) {
+    add(DOCTOR_LEVEL.RED, `manifest 解析失败（${manifestLoaded.error}）：${MANIFEST_REL}——运行 --manifest 重新生成。`);
+  } else {
+    const manifest = manifestLoaded.value;
+    const files =
+      manifest && typeof manifest.files === "object" && manifest.files !== null && !Array.isArray(manifest.files)
+        ? manifest.files
+        : null;
+    if (files === null) {
+      add(DOCTOR_LEVEL.RED, `manifest 结构非法（缺 files 登记表）：${MANIFEST_REL}——运行 --manifest 重新生成。`);
+    } else {
+      const missing = [];
+      const mismatched = [];
+      for (const [rel, digest] of Object.entries(files)) {
+        const abs = join(skillRoot, rel);
+        if (!isFile(abs)) missing.push(rel);
+        else if (fileSha256(abs) !== digest) mismatched.push(rel);
+      }
+      const unregistered = manifestFileList().filter((rel) => !(rel in files));
+      if (mismatched.length === 0 && missing.length === 0 && unregistered.length === 0) {
+        add(DOCTOR_LEVEL.GREEN, `manifest 完整性：${Object.keys(files).length} 个关键文件 sha256 全部对账通过（${MANIFEST_REL}）。`);
+      } else {
+        if (mismatched.length > 0) {
+          add(DOCTOR_LEVEL.RED, `manifest 摘要不符（改了未重生成）：${mismatched.join("、")}——运行 --manifest 重新生成。`);
+        }
+        if (missing.length > 0) {
+          add(DOCTOR_LEVEL.RED, `manifest 有记录而文件缺失：${missing.join("、")}——安装不完整/改名未重生成（重装或 --manifest）。`);
+        }
+        if (unregistered.length > 0) {
+          add(DOCTOR_LEVEL.RED, `键集文件未登记（新增未重生成）：${unregistered.join("、")}——运行 --manifest 重新生成。`);
+        }
+      }
+      if (info !== null) {
+        const drift = [
+          ["packageVersion", manifest?.packageVersion, info.packageVersion],
+          ["contractVersion", manifest?.contractVersion, info.contractVersion],
+          ["schemaVersion", manifest?.schemaVersion, info.schemaVersion],
+        ].filter(([, actual, expected]) => actual !== expected);
+        if (drift.length === 0) {
+          add(
+            DOCTOR_LEVEL.GREEN,
+            `manifest 版本位一致：包 ${info.packageVersion} / 契约 v${info.contractVersion} / schema v${info.schemaVersion}。`,
+          );
+        } else {
+          add(
+            DOCTOR_LEVEL.RED,
+            `manifest 版本位与事实源不一致：${drift.map(([k, a, b]) => `${k} ${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`).join("；")}——运行 --manifest 重新生成。`,
+          );
+        }
+      }
+    }
+  }
+
+  // ---- ② 契约/schema 版本一致（常量 ↔ markers 段头 ↔ schema 版本位 ↔ SKILL.md 头部手写位）
+  section("[技能包] 契约/schema 版本一致");
+  if (info !== null) {
+    const schemaLoaded = readJsonFile(SCHEMA_PATH);
+    const xContract = schemaLoaded.ok ? schemaLoaded.value?.["x-contractVersion"] : undefined;
+    if (!schemaLoaded.ok) {
+      add(DOCTOR_LEVEL.RED, `board.schema.json 不可读（${schemaLoaded.missing ? "不存在" : schemaLoaded.error}）：无法做版本一致体检。`);
+    } else if (typeof xContract === "string" && xContract !== info.contractVersion) {
+      add(
+        DOCTOR_LEVEL.RED,
+        `schema 的 x-contractVersion=${JSON.stringify(xContract)} ≠ 契约版本 v${info.contractVersion}（markers.md 变更段头）——版本位漂移。`,
+      );
+    } else {
+      const mdLoaded = readTextFile(SKILL_MD_PATH);
+      const headerMatch = mdLoaded.ok ? /技能版本：`zcode-board\/([0-9]+\.[0-9]+\.[0-9]+)`/.exec(mdLoaded.text) : null;
+      if (!mdLoaded.ok) {
+        add(DOCTOR_LEVEL.YELLOW, `SKILL.md 不可读（${mdLoaded.missing ? "不存在" : mdLoaded.error}）：跳过头部版本行对账。`);
+      } else if (headerMatch === null) {
+        add(DOCTOR_LEVEL.RED, "SKILL.md 缺失头部版本行（期望 `技能版本：`zcode-board/<包版本>``）——手写位丢失。");
+      } else if (headerMatch[1] !== info.packageVersion) {
+        add(
+          DOCTOR_LEVEL.RED,
+          `SKILL.md 头部版本行 ${headerMatch[1]} ≠ 包版本常量 ${info.packageVersion}（手写位漂移）——同源互锁失效，先对齐。`,
+        );
+      } else {
+        add(
+          DOCTOR_LEVEL.GREEN,
+          `版本一致：包 ${info.packageVersion} / 契约 v${info.contractVersion} / schema v${info.schemaVersion}` +
+            "（常量 ↔ markers 段头 ↔ schema 版本位 ↔ SKILL.md 头部行）。",
+        );
+      }
+    }
+  }
+  // hooks 目录完整性（五核心 + 两辅助）
+  const missingCore = CORE_HOOK_SCRIPTS.filter((n) => !isFile(join(skillRoot, "assets", "hooks", n)));
+  const missingAux = AUX_HOOK_SCRIPTS.filter((n) => !isFile(join(skillRoot, "assets", "hooks", n)));
+  if (missingCore.length > 0) {
+    add(DOCTOR_LEVEL.RED, `核心 hook 脚本缺失：${missingCore.join("、")}（assets/hooks/）——安装不完整，hook 无法启用。`);
+  }
+  if (missingAux.length > 0) {
+    add(DOCTOR_LEVEL.YELLOW, `辅助 hook 脚本缺失：${missingAux.join("、")}（可选面：源变更检测/板数据守卫）。`);
+  }
+  if (missingCore.length === 0 && missingAux.length === 0) {
+    add(DOCTOR_LEVEL.GREEN, `hooks 脚本在位：${CORE_HOOK_SCRIPTS.length + AUX_HOOK_SCRIPTS.length} 个（五核心 + 两辅助）。`);
+  }
+
+  // ---- ④ 技能目录 git 仓/未提交漂移（doctor 特有：只读 git status；其余模式不执行 git）
+  section("[技能目录] git 仓与未提交漂移");
+  if (!existsSync(join(skillRoot, ".git"))) {
+    add(DOCTOR_LEVEL.INFO, "技能目录不是 git 仓：跳过未提交漂移体检（分发安装形态，信息项）。");
+  } else {
+    const r = spawnSync("git", ["-C", skillRoot, "status", "--porcelain", "-uall"], { encoding: "utf8", timeout: 10000 });
+    if (r.error || r.status !== 0) {
+      add(DOCTOR_LEVEL.INFO, `git 不可用或执行失败（${r.error?.message ?? `退出码 ${r.status}`}）：跳过漂移体检（信息项）。`);
+    } else {
+      const dirty = (r.stdout ?? "").split("\n").filter((l) => l.trim() !== "");
+      if (dirty.length === 0) {
+        add(DOCTOR_LEVEL.GREEN, "技能目录无未提交漂移（git status 干净）。");
+      } else {
+        add(
+          DOCTOR_LEVEL.YELLOW,
+          `技能目录有未提交漂移：${dirty.length} 个文件（例：${dirty.slice(0, 3).map((l) => l.slice(3)).join("、")}）` +
+            "——分发/部署前请提交或显式声明在途改动。",
+        );
+      }
+    }
+  }
+
+  // ---- ③ 项目 hook 配置体检（给项目根时）
+  if (root !== null) {
+    section(`[项目 hook 配置] ${join(root, ".zcode", "config.json")}`);
+    const cfgLoaded = readJsonFile(join(root, ".zcode", "config.json"));
+    if (cfgLoaded.missing) {
+      add(
+        DOCTOR_LEVEL.INFO,
+        "未声明 hook（.zcode/config.json 不存在）：跳过 hook 体检——启用步骤见 SKILL.md §3.6（五项声明 + 一次性信任评审）。",
+      );
+    } else if (!cfgLoaded.ok) {
+      add(DOCTOR_LEVEL.RED, `config.json 解析失败（${cfgLoaded.error}）——坏 JSON 使声明整体失效（修好后需重做信任评审）。`);
+    } else {
+      const cfg = cfgLoaded.value;
+      const hooks = cfg?.hooks;
+      if (hooks === undefined || hooks === null || typeof hooks !== "object" || Array.isArray(hooks)) {
+        add(
+          DOCTOR_LEVEL.RED,
+          "config.json 缺 hooks 包装层（A5 实测：缺包装层被静默跳过、不提示评审）——声明不生效，先补包装层再评审。",
+        );
+      } else if (hooks.enabled !== true) {
+        add(DOCTOR_LEVEL.YELLOW, `hooks.enabled=${JSON.stringify(hooks.enabled)}（非 true）：声明未开启。`);
+      } else {
+        const decls = collectHookDeclarations(cfg);
+        if (decls.length === 0) {
+          add(DOCTOR_LEVEL.YELLOW, "hooks.events 无声明条目：hook 未启用（五项声明模板见 SKILL.md §3.6）。");
+        } else {
+          const badCommands = []; // {label, cmd, reason}
+          const noScript = [];
+          const missingScripts = []; // {label, script}
+          const foreign = new Map(); // 技能根 → { root, count, version }
+          const structureRed = [];
+          const structureYellow = [];
+          for (const d of decls) {
+            const label = `${d.event}${d.matcher ? `(${d.matcher})` : ""}`;
+            const h = d.hook;
+            if (h === null || typeof h !== "object" || Array.isArray(h)) {
+              structureRed.push(`${label} 声明项形态非法（非对象）`);
+              continue;
+            }
+            const cmdCheck = checkExecutableCommand(h.command);
+            if (!cmdCheck.ok) badCommands.push({ label, cmd: h.command, reason: cmdCheck.reason });
+            const args = Array.isArray(h.args) ? h.args : null;
+            if (args === null) {
+              structureRed.push(`${label} args 非数组`);
+              continue;
+            }
+            const script = args.find((a) => typeof a === "string" && a.endsWith(".mjs"));
+            if (script === undefined) {
+              noScript.push(label);
+              continue;
+            }
+            const abs = resolve(root, script);
+            if (!isFile(abs)) {
+              missingScripts.push({ label, script });
+              continue;
+            }
+            const m = /^(.*)[\\/]assets[\\/]hooks[\\/][^\\/]+\.mjs$/.exec(abs);
+            if (m === null) {
+              structureYellow.push(`${label} 声明脚本不在技能包形态路径（<技能根>/assets/hooks/*.mjs）：分叉/自建脚本（版本不校验）`);
+              continue;
+            }
+            const declaredRoot = resolve(m[1]);
+            if (declaredRoot !== resolve(skillRoot)) {
+              const entry = foreign.get(declaredRoot) ?? { root: declaredRoot, count: 0, version: undefined };
+              entry.count += 1;
+              if (entry.version === undefined) entry.version = readSkillVersion(declaredRoot);
+              foreign.set(declaredRoot, entry);
+            }
+          }
+          for (const s of structureRed) add(DOCTOR_LEVEL.RED, `hook 声明结构错误：${s}`);
+          for (const { label, cmd, reason } of badCommands) {
+            add(DOCTOR_LEVEL.RED, `${label} command=${JSON.stringify(cmd)} 不可执行：${reason}——hook 无法启动。`);
+          }
+          for (const label of noScript) add(DOCTOR_LEVEL.RED, `${label} args 无脚本路径（.mjs）——声明无效。`);
+          if (missingScripts.length > 0) {
+            add(
+              DOCTOR_LEVEL.RED,
+              `声明脚本不存在：${missingScripts.map((x) => `${x.script}（${x.label}）`).join("；")}——路径拼错/技能被移动，修好后需重做信任评审。`,
+            );
+          }
+          for (const s of structureYellow) add(DOCTOR_LEVEL.YELLOW, s);
+          for (const e of foreign.values()) {
+            if (e.version === null) {
+              add(DOCTOR_LEVEL.YELLOW, `分叉副本：声明脚本来自其他技能目录 ${e.root}（${e.count} 项；版本不可读）。`);
+            } else if (e.version !== SKILL_VERSION) {
+              add(
+                DOCTOR_LEVEL.RED,
+                `旧版本/分叉副本：声明脚本所在技能包版本 ${e.version} ≠ 当前 ${SKILL_VERSION}（${e.root}；${e.count} 项）` +
+                  "——旧版行为与当前文档不一致，升级或将声明改指当前技能目录后重做信任评审。",
+              );
+            } else {
+              add(
+                DOCTOR_LEVEL.YELLOW,
+                `分叉副本：声明脚本来自其他技能目录 ${e.root}（同名版本 ${e.version}；${e.count} 项）` +
+                  "——同名副本会随版本漂移失配，建议指向当前技能目录。",
+              );
+            }
+          }
+          // 五核心 hook 覆盖（缺声明 → 黄：对应功能不生效；模板见 SKILL.md §3.6）
+          const declaredArgs = decls.flatMap((d) => (Array.isArray(d.hook?.args) ? d.hook.args.filter((a) => typeof a === "string") : []));
+          const missingCore = CORE_HOOK_SCRIPTS.filter(
+            (n) => !declaredArgs.some((a) => a.endsWith(`assets/hooks/${n}`) || a.endsWith(`assets\\hooks\\${n}`)),
+          );
+          for (const n of missingCore) {
+            add(DOCTOR_LEVEL.YELLOW, `五核心 hook 未声明：assets/hooks/${n}（对应功能不生效；声明模板见 SKILL.md §3.6）。`);
+          }
+          const clean =
+            structureRed.length === 0 &&
+            badCommands.length === 0 &&
+            noScript.length === 0 &&
+            missingScripts.length === 0 &&
+            structureYellow.length === 0 &&
+            foreign.size === 0 &&
+            missingCore.length === 0;
+          if (clean) {
+            add(
+              DOCTOR_LEVEL.GREEN,
+              `hook 声明体检通过：${decls.length} 项（command 可执行、脚本路径存在、五核心 hook 覆盖、脚本指向当前技能目录）。`,
+            );
+          }
+        }
+      }
+    }
+
+    // 项目结构风险（黄）：幻影板根 / scan.json 整份拒收——同一判据单源（detectPhantomBoardRoot /
+    // loadScanConfig），处置指向 --preflight 的红项（预检在出板前拦下；体检只提示）。
+    const phantom = detectPhantomBoardRoot(root);
+    if (phantom !== null) {
+      add(
+        DOCTOR_LEVEL.YELLOW,
+        `项目结构风险（幻影板）：当前项目根 ${root} 非板根（祖先 ${phantom.ancestor} 有板）——直接编译会被拒写` +
+          `（E1 V20 幻影板防线）；确认板根后 cd ${phantom.ancestor}；--preflight 对此判红。`,
+      );
+    }
+    const surface = loadScanConfig(root);
+    if (surface.rejected) {
+      add(
+        DOCTOR_LEVEL.YELLOW,
+        `项目结构风险（扫描面）：${SCAN_CONFIG_REL} 整份拒收——编译将按默认 .zcode/plans/ 兜底；先跑 --preflight 看红项处置。`,
+      );
+    }
+
+    // ---- ⑥ 并存板工具检测（#179/B8-1）：项目侧其它板入口发现 + --version 版本对账（三态：
+    // 不一致 → 黄〔统一/锁版本两路径建议〕；仅项目侧存在·版本不可读 → 信息；一致 → 绿〔仍提示双源形态〕；
+    // 零入口 → 不建分节，真实板零噪声）。由来（用户 2026-10-11 原话「这个应该在使用的时候建议，因为
+    // 用户自己不知道可能会有这种情况」；新赛马项目实战——项目侧发号 + 全局跑 hooks 的双编译器并存）。
+    const coexisting = findCoexistingBoardTools(root, cfgLoaded);
+    if (coexisting.length > 0) {
+      section(`[项目板工具] 并存检测（项目侧入口 ${coexisting.length} 个——非全局技能路径）`);
+      const readings = coexisting.map((e) => ({
+        ...e,
+        probe: probeBoardToolVersion(e, root),
+        display: `${toPosixRelFor(root, e.path)}（${[...e.sources].join("；")}）`,
+      }));
+      const mismatched = readings.filter((r) => r.probe.ok && r.probe.version !== SKILL_VERSION);
+      const matched = readings.filter((r) => r.probe.ok && r.probe.version === SKILL_VERSION);
+      const unreadable = readings.filter((r) => !r.probe.ok);
+      if (mismatched.length > 0) {
+        add(
+          DOCTOR_LEVEL.YELLOW,
+          `并存板工具版本不一致：${mismatched.map((r) => `${r.display} 读数 ${r.probe.version}`).join("；")}` +
+            `——与全局技能 ${SKILL_VERSION}（${skillRoot}）版本漂移：同一板可能被双版本编译器读写。建议二选一：` +
+            `①统一到全局技能——项目侧入口与 hooks 声明改指全局技能目录，项目侧工具归档或删除；` +
+            `②锁版本——保留双源则把项目侧入口锁定 ${SKILL_VERSION}，升级任一侧时同步另一侧（本项持续对账；重跑 --doctor）。`,
+        );
+      }
+      if (matched.length > 0) {
+        add(
+          DOCTOR_LEVEL.GREEN,
+          `并存板工具版本一致：${matched.map((r) => r.display).join("；")}（--version 读数 = 全局技能 ${SKILL_VERSION}）` +
+            "——双源形态提示：升级全局技能时请同步项目侧入口（本项持续对账，重跑 --doctor 可复核）。",
+        );
+      }
+      if (unreadable.length > 0) {
+        add(
+          DOCTOR_LEVEL.INFO,
+          `并存板工具（仅项目侧存在·版本不可读）：${unreadable.map((r) => `${r.display}：${r.probe.reason}`).join("；")}` +
+            `——双源形态提示：项目侧入口与全局技能 ${SKILL_VERSION} 并存但无法对账；先统一到全局技能目录（改指 ${skillRoot}），` +
+            `或给入口补 --version 读数后重跑 --doctor（本项目内无用的入口直接归档/删除）。`,
+        );
+      }
+    }
+  }
+
+  // ---- 分级清单渲染与结论
+  for (const s of sections) {
+    out.push(s.title);
+    for (const it of s.items) out.push(`  - ${it.level}：${it.text}`);
+  }
+  const all = sections.flatMap((s) => s.items);
+  const redCount = all.filter((i) => i.level === DOCTOR_LEVEL.RED).length;
+  const yellowCount = all.filter((i) => i.level === DOCTOR_LEVEL.YELLOW).length;
+  const verdict = redCount > 0 ? "红" : yellowCount > 0 ? "黄" : "绿";
+  const tail =
+    verdict === "绿"
+      ? "绿（全部检查通过；退出码 0）"
+      : verdict === "黄"
+        ? `黄（警告 ${yellowCount} 项——人工确认后继续；退出码 1）`
+        : `红（错误 ${redCount} 项——先修再部署；退出码 2）`;
+  out.push(`结论：${tail}`);
+  return { lines: out, exitCode: verdict === "绿" ? 0 : verdict === "黄" ? 1 : 2 };
+}
+
+/** hook 声明摊平：{event, matcher, hook}（与 run-t13 S6 同形态——events → [{matcher, hooks[]}]）。 */
+function collectHookDeclarations(config) {
+  const out = [];
+  const events = config?.hooks?.events ?? {};
+  for (const [event, decls] of Object.entries(events)) {
+    for (const d of Array.isArray(decls) ? decls : []) {
+      for (const h of Array.isArray(d?.hooks) ? d.hooks : []) out.push({ event, matcher: d?.matcher ?? null, hook: h });
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- CLI
 
-const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 审计；--version / --manifest 辅助）
+const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 审计；--preflight 预检；--doctor 体检；--version / --manifest 辅助）
 
 用法：
   node compile-board.mjs [<project-root>] [--assign] [--force] [--check] [--session-id <id>]
+  node compile-board.mjs [<project-root>] --preflight   预检（只读，不写任何文件）：扫描面预览 + 预计上板 + 增量预览
+  node compile-board.mjs [<project-root>] --doctor      环境体检：包/manifest 完整性 + 版本一致 + hook 声明 + 技能目录漂移 + 并存板工具检测
   node compile-board.mjs --version
   node compile-board.mjs --manifest
 
 参数：
-  <project-root>   项目根目录（默认：当前工作目录）
+  <project-root>   项目根目录（默认：当前工作目录；--doctor 的项目根可选——缺省只做技能侧体检）
+  --preflight      只读预检（#73）：扫描面预览（将扫描目录与文件数/未领号文件数/>10 风险/PLAN_DIRS
+                   硬编码碰撞检测——docs/plans、docs/design-notes 存在且非 opt-in 时醒目警告）+ 预计上板
+                   （特性/卡/诊断）+ 现有板增量预览（本次编译会改什么的 diff 摘要）；退出码语义：
+                   绿 0（可编译）/ 黄 1（警告——确认后继续）/ 红 2（禁止——先整改，勿出板；用法错误同为 2）。
+                   全程零写入：不写 board.json/board.md/registry/号标记，不改任何源文件。
+  --doctor         环境体检（#73；只读，不写任何文件）：分级清单（红/黄/绿/信息）——
+                   ① 包版本/manifest 完整性：assets/manifest.json 关键文件 sha256 逐项对账
+                      （改了未重生成/未登记/缺失必咬）+ manifest 三版本位 ↔ lib/version.mjs 事实源；
+                   ② 契约/schema 版本一致：常量 ↔ markers.md 变更段头 ↔ schema 版本位 ↔ SKILL.md 头部版本行；
+                   ③ hook 配置体检（给 <project-root> 时）：.zcode/config.json 五声明脚本路径存在、command
+                      可执行（node 按 PATH 解析）、五核心 hook 覆盖、分叉副本/旧版本检测（声明脚本所在技能
+                      目录 ≠ 当前技能目录时按版本值点名：旧版本红、同名分叉黄）；
+                   ④ 技能目录 git 仓与未提交漂移（只读 git status；doctor 特有——其余模式不执行 git）；
+                   ⑤ 项目结构风险：幻影板根 / scan.json 整份拒收（指向 --preflight 红项处置，同判据单源）；
+                   ⑥ 并存板工具检测（#179，给 <project-root> 时）：项目侧 .zcode/board-tools/ compile 入口与
+                      hooks 声明指向的非全局脚本——各入口 --version 读数对账全局技能版本（不一致黄：给
+                      「统一到全局技能 / 锁版本」两条去路；仅项目侧存在·不可读信息；一致绿仍提示双源形态；
+                      无入口零噪声）。
+                   退出码：任何红 2 / 否则有黄 1 / 全绿（含信息项）0；用法错误 2（同全工具口径）。
   幻影板防线（B5-2/#114；E1 V20）  编译输出路径必须等于板根（<project-root>/.zcode/board/）：当前根
                    自身无既有板（.zcode/board/board.json 不存在）而祖先目录是板项目时（cwd 漂移/
                    相对路径误解析的幻影板落点），默认与 --assign 拒绝写出（退出码 1、零写入）并点名
@@ -4626,6 +5491,12 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
           （链接工作树内运行 --assign = 非主检出——.git 为 gitdir 指针文件；SKILL.md「发号只在主检出、
           由编排者单写者执行」）逐条点名（含条目号 + assignedBy 原值）；\`@main\`/缺省/未知形态不判
           （存量条目零误报）；历史事实不可由重编译修复（号不复算、不回收，与 (e)/(f)/(g) 同域）。
+      (i) runs 引用非活卡号【对账点名级，非失败、不阻断退出码】（B4-4/#108；E1 V10 / 裁决⑥ /
+          AD-10①）：runs 记录 \`cards[]\` 引用的号不在板上活条目（重编译基线判定）→ 逐条点名
+          （run + 号；两文案分流：registry 有条目而板上无（附条目号 + 指向）vs 完全未知号——判据单点
+          = classifyDeadNumber，与编译侧 diagnostics 同口径，禁二份判据；checkRunsDeadCardRefs）；
+          非稳定号 cards 值不解析（形态归归一层 diagnostics）；记录清理/改正后本项自清——
+          记录级事实不可由重编译修复，与 (e)/(f) 同域。
       (k) 根 AGENTS.md 零看板残留【失败级】（B4-3/#107；E1 V1/V4）：AGENTS.md 只放团队表——看板/
           实验功能内容零残留（SKILL.md §1.1；E2-10 勘误：看板纪律住 SKILL.md + hook，AGENTS.md 不再
           承载看板条款——关闭实验功能时项目无痕）——逐行命中看板资产锚（zcode-board/.zcode/board/
@@ -4661,8 +5532,9 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
   （内容寻址，P2 分发比对直接用）。不读取 <项目根>、不写板。
 
 硬约束：
-  默认模式对源文件零写入；--check 全程只读；不解析 .zcode/workflows/；不执行 git 命令；
-  无第三方依赖（仅 node 内置）。
+  默认模式对源文件零写入；--check 全程只读；--preflight 全程零写入（不写板/号标记/registry/源文件）；
+  --doctor 零写入；不解析 .zcode/workflows/；不执行 git 命令（唯一例外：--doctor 的技能目录漂移体检执行
+  只读 git status，其余模式一律不执行 git）；无第三方依赖（仅 node 内置）。
 `;
 
 function main(argv) {
@@ -4771,19 +5643,24 @@ function main(argv) {
     }
   }
   const flags = args.filter((a) => a.startsWith("-"));
-  const unknown = flags.filter((f) => f !== "--assign" && f !== "--check" && f !== "--manifest" && f !== "--force");
+  const unknown = flags.filter(
+    (f) =>
+      f !== "--assign" && f !== "--check" && f !== "--manifest" && f !== "--force" && f !== "--preflight" && f !== "--doctor",
+  );
   if (unknown.length > 0) {
     process.stderr.write(
-      `compile-board: 未知选项 ${unknown.join(" ")}（可用：--assign / --check / --manifest / --force / --version / --plan-code / --epic / --epic-file / --epic-title / --session-id）\n`,
+      `compile-board: 未知选项 ${unknown.join(" ")}（可用：--assign / --check / --preflight / --doctor / --manifest / --force / --version / --plan-code / --epic / --epic-file / --epic-title / --session-id）\n`,
     );
     return 2;
   }
   const assign = flags.includes("--assign");
   const check = flags.includes("--check");
   const manifest = flags.includes("--manifest");
+  const preflight = flags.includes("--preflight");
+  const doctor = flags.includes("--doctor");
   const force = flags.includes("--force");
-  if ([assign, check, manifest].filter(Boolean).length > 1) {
-    process.stderr.write("compile-board: --assign / --check / --manifest 互斥\n");
+  if ([assign, check, manifest, preflight, doctor].filter(Boolean).length > 1) {
+    process.stderr.write("compile-board: --assign / --check / --preflight / --doctor / --manifest 互斥\n");
     return 2;
   }
   if (force && !assign) {
@@ -4829,10 +5706,33 @@ function main(argv) {
     );
     return 0;
   }
+  // --doctor（#73）：环境体检——技能侧检查恒跑；给 <project-root> 时另查该项目的 hook 配置。
+  // 不读取板、不写任何文件（git 只读 status，doctor 例外——见 USAGE 硬约束节）。
+  if (doctor) {
+    let doctorRoot = null;
+    if (positional.length > 0) {
+      doctorRoot = resolve(positional[0]);
+      if (!existsSync(doctorRoot) || !statSync(doctorRoot).isDirectory()) {
+        process.stderr.write(`compile-board: --doctor 的项目根不存在或不是目录：${doctorRoot}\n`);
+        return 2;
+      }
+    }
+    const res = doctorReport(doctorRoot);
+    process.stdout.write(`${res.lines.join("\n")}\n`);
+    return res.exitCode;
+  }
   const root = resolve(positional[0] ?? process.cwd());
   if (!existsSync(root) || !statSync(root).isDirectory()) {
     process.stderr.write(`compile-board: 项目根不存在或不是目录：${root}\n`);
     return 2;
+  }
+
+  // --preflight（#73）：只读预检——先于幻影板写盘防线（幻影板命中是预检的红项，由本模式点名，
+  // 不按"拒绝写出"处理：预检本就不写）；退出码语义 绿 0 / 黄 1 / 红 2。
+  if (preflight) {
+    const res = preflightProject(root);
+    process.stdout.write(`${res.lines.join("\n")}\n`);
+    return res.exitCode;
   }
 
   // 幻影板防线（B5-2/#114；E1 V20）：写盘前自检——编译输出路径必须等于板根；违例零写入拒执行
@@ -4859,7 +5759,7 @@ function main(argv) {
     }
     if (res.rollcall.length > 0) {
       out.push(
-        `对账点名 ${res.rollcall.length} 项（对账级，非失败、不阻断；逐条为对账域交叉核对——runs 域缺合并证据可补录或登记豁免 .zcode/board/exemptions.json，工作树名与卡号不符按 §6.1 命名纪律收口，苗圃位置违例（裁决稿/设计稿/纲领稿）移至 .zcode/design/ 收口，期号复用候选（同 epic 同期次跨 ≥2 批次）请人工确认——合法补录/跨秒边界同形，确认复用后修正 registry 并留痕，非主检出发号留痕（worktree 内 --assign，E1 V12）请复核登记——号不复算不回收）：`,
+        `对账点名 ${res.rollcall.length} 项（对账级，非失败、不阻断；逐条为对账域交叉核对——runs 域缺合并证据可补录或登记豁免 .zcode/board/exemptions.json，工作树名与卡号不符按 §6.1 命名纪律收口，苗圃位置违例（裁决稿/设计稿/纲领稿）移至 .zcode/design/ 收口，期号复用候选（同 epic 同期次跨 ≥2 批次）请人工确认——合法补录/跨秒边界同形，确认复用后修正 registry 并留痕，非主检出发号留痕（worktree 内 --assign，E1 V12）请复核登记——号不复算不回收，runs 引用非活卡号（幽灵/悬空/完全未知，E1 V10）清理/改正该 run 记录后自清）：`,
       );
       for (const m of res.rollcall) out.push(`  - ${m}`);
     }
@@ -4959,9 +5859,9 @@ function main(argv) {
 
   const board = compileProject(root);
   const boardDir = join(root, ".zcode", "board");
-  // board.json 是 UI 唯一读取点：最后写（两文件各自原子，§12 不落半成品）
+  // board.json 是 UI 唯一读取点：最后写（两文件各自原子，§12 不落半成品）；紧凑写出同上方发号路径（256KiB 读限）
   writeFileAtomic(join(boardDir, "board.md"), renderBoardMd(board));
-  writeJsonAtomic(join(boardDir, "board.json"), board);
+  writeJsonAtomic(join(boardDir, "board.json"), board, { indent: 0 });
 
   const taskCount = board.features.reduce((n, f) => n + countTasks(f.tasks ?? []), 0);
   process.stdout.write(

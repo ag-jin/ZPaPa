@@ -46,7 +46,11 @@
  *   - `checkRegistryGhosts({board, registryEntries, archivedNos})`（失败级）：板面 + registry **独立复算**
  *     「两值可见性」——凡不在板上活条目、又非已验证归档件的 registry 条目，板面 diagnostics 必须点名
  *     （registry 源路径 + 条目号 + 指向路径）；缺则两视图分叉必咬（E4-05 缺陷本体的机械防线）。
- *     编译侧点名本身为提示级（降级可见性）；本断言只保证点名**不被吞掉**。
+ *     编译侧点名本身为提示级（降级可见性）；本断言只保证点名**不被吞掉**；
+ *   - `checkRunsDeadCardRefs({board, runs, registryEntries, describeEntry})`（**对账点名级**，非失败——
+ *     B4-4/#108；E1 V10）：runs 记录 `cards[]` 引用的号不在板上活条目 → 逐条点名进 --check
+ *     `rollcall[]`（两文案分流同 classifyDeadNumber 单点：registry 有条目而板上无 vs 完全未知号）；
+ *     记录清理/改正后自清（复查与 (e)/(f) 同节输出、不阻断退出码）。
  *
  * 判定边界（与 lib/schema-check.mjs 同分层）：本模块只做纯数据判定，不读盘、不比对源——
  *   board 对象与 board.md 文本由调用方传入（磁盘板与重编译基线分别配对调用）；无第三方依赖，
@@ -221,18 +225,7 @@ export function checkRegistryGhosts({ board, registryEntries, archivedNos = [] }
   const rows = Array.isArray(board.diagnostics) ? board.diagnostics : [];
   const registryRel =
     (Array.isArray(board.sources) ? board.sources : []).find((s) => isPlainObject(s) && s.kind === "registry")?.path ?? null;
-  const live = new Set();
-  const walk = (tasks) => {
-    for (const t of tasks ?? []) {
-      if (isPlainObject(t) && Number.isInteger(t.no) && t.no >= 1) live.add(t.no);
-      walk(t?.tasks);
-    }
-  };
-  for (const f of board.features ?? []) {
-    if (!isPlainObject(f)) continue;
-    if (Number.isInteger(f.no) && f.no >= 1) live.add(f.no);
-    walk(f.tasks);
-  }
+  const live = collectBoardLiveNos(board);
   const archived = new Set((Array.isArray(archivedNos) ? archivedNos : []).filter((n) => Number.isInteger(n) && n >= 1));
   /** 数字边界匹配（防 105 匹配到 1050/105a；不绑定实现文案句式——本断言只判"可见"，不判措辞）。 */
   const mentionsNumber = (message, no) => new RegExp(`(?:^|[^0-9])${no}(?:[^0-9]|$)`).test(message);
@@ -260,7 +253,107 @@ export function checkRegistryGhosts({ board, registryEntries, archivedNos = [] }
   return out;
 }
 
+/**
+ * runs 引用非活卡号**对账点名**（B4-4/#108；E1 V10「把 runs 引用非活卡号从提示升为对账点名项」）
+ * ——**对账点名级（非失败级、不阻断退出码）**，独立导出，由 compile-board `checkProject` 收集进
+ * `rollcall[]`（与第五不变量 (e)/卡号绑定 (f) 同节输出）。
+ *
+ * 存在原因（E1 V10 事故）：split-test 计划（#47–#51）在真实板发号后删稿烧号，`run-20261010-7918`
+ * 引用卡号 48 的记录残留至今——编译侧只有提示级 diagnostics（notes 面），收尾对账通道看不见它，
+ * 沉默持续。本函数把「runs 引用的卡号不在板上活条目」升为对账点名项：逐条点名（run + 号 + 分流文案），
+ * 归口该卡号所属号段，清理后自清（删除/修正该 run 记录，或号重新上板即消失）。
+ *
+ * 判据（纯数据，无 IO；判据单点 = 本模块 `classifyDeadNumber`，与 #105 编译侧两文案分流同口径，
+ * 禁二份判据）：
+ *   - 遍历 runs 记录（原始数组，追加序）；`cards[]` 取正整数稳定号；非整数（字符串/0/负数/null 等）
+ *     不解析、不猜号——形态违规归 `derive.normalizeRuns` 归一层 diagnostics 点名，本面不叠加噪音；
+ *   - 号在本次板的活条目集合（features 层 + 任务树递归）→ 不点名（可达，零噪声）；
+ *   - 号不在板上且 registry 有条目（幽灵/悬空/已验证归档等聚合形态）→ 文案 A「registry 有条目而板上无」
+ *     （附条目描述——号 + 指向，两值可见）；
+ *   - 号两处皆无 → 文案 B「完全未知号」（提示核对报告卡号写法，勘误 9d）。
+ *   两文案互不混用（独立分支、独立文案）；同一记录内同号去重（一行一义，不刷屏）。
+ *
+ * 判定域与判级依据：
+ *   - 判定域 = runs 记录 × `cards[]` 正整数（runId 缺省以 `runs[<索引>]` 兜底标识，可追溯）；
+ *   - board 非对象 / runs 非数组 → 零点名（源损坏由「损坏源」失败项/编译 diagnostics 承载，不叠加）；
+ *   - 对账点名级：记录级事实不可由"重编译"修复（追加式 runs 不可改写），归收尾对账通道——
+ *     与 (e)/(f) 同域，不阻塞退出码；清理通道 = 删除/修正该 run 记录后重编译（自清），或按 §3.2/§12
+ *     核对号段归属。判据面 = 重编译基线（磁盘板偏差已由「board 不一致」失败项逐字段咬住，
+ *     同一缺陷只点名一次——与 (f) 同口径）。
+ *   - `describeEntry`：registry 条目描述渲染器（单源注入——compile-board 传 `describeRegistryEntry`，
+ *     与编译侧点名文案同格式；缺省渲染号 + 指向，供纯契约测试）。
+ * 纯函数：不读盘、不改入参、无隐藏状态；点名序 = runs 追加序 × cards 原序（确定性，幂等）。
+ * @param {object} input
+ * @param {object} input.board board.json 形态对象（活号来源）
+ * @param {unknown} input.runs runs.json 的 runs 原始数组
+ * @param {unknown} [input.registryEntries] registry.entries 原始数组（两文案分流判据）
+ * @param {(entry: object) => string} [input.describeEntry] registry 条目描述渲染器
+ * @returns {string[]} 点名文案（空数组 = 无点名）
+ */
+export function checkRunsDeadCardRefs({ board, runs, registryEntries = [], describeEntry = defaultDescribeEntry } = {}) {
+  const out = [];
+  if (!isPlainObject(board)) return out; // 板非对象：失败级已点名，此处不叠加
+  const liveNos = collectBoardLiveNos(board);
+  const registryNos = new Set();
+  const entryByNo = new Map();
+  for (const e of Array.isArray(registryEntries) ? registryEntries : []) {
+    if (!isPlainObject(e) || !Number.isInteger(e.no) || e.no < 1) continue;
+    if (entryByNo.has(e.no)) continue; // 同号条目归 --check「registry 不一致」失败面，本面不叠加
+    registryNos.add(e.no);
+    entryByNo.set(e.no, e);
+  }
+  const list = Array.isArray(runs) ? runs : [];
+  list.forEach((rec, index) => {
+    if (!isPlainObject(rec)) return;
+    const runId = typeof rec.runId === "string" && rec.runId !== "" ? rec.runId : `runs[${index}]`;
+    const seen = new Set();
+    for (const no of Array.isArray(rec.cards) ? rec.cards : []) {
+      if (!Number.isInteger(no) || no < 1 || seen.has(no)) continue;
+      seen.add(no);
+      const kind = classifyDeadNumber(no, { liveNos, registryNos }); // 判据单点：三分类返回值驱动分流
+      if (kind === "live") continue;
+      if (kind === "registry-not-on-board") {
+        out.push(
+          `runs 引用非活卡号（对账点名级，B4-4/#108；E1 V10）：run ${runId} 引用卡号 ${no} 不在板上活条目中（不挂任何卡，§12）——registry 有条目而板上无（幽灵/悬空条目：${describeEntry(entryByNo.get(no))}）：号可能已归档或未上板，请核对目标是否仍在扫描目录，或按清理通道处置条目（改动指向/取消留痕，不物理删除条目）；对应 run 记录清理/改正后本项自清。非失败级、不阻断退出码。`,
+        );
+        continue;
+      }
+      out.push(
+        `runs 引用非活卡号（对账点名级，B4-4/#108；E1 V10）：run ${runId} 引用卡号 ${no} 不在板上活条目中（不挂任何卡，§12）——${no} 是完全未知号（不在板上且 registry 无此号）：请核对报告卡号写法（稳定号整数；层级标签/内部 id 不解析，勘误 9d）；对应 run 记录清理/改正后本项自清。非失败级、不阻断退出码。`,
+      );
+    }
+  });
+  return out;
+}
+
+/** registry 条目描述缺省渲染（纯契约测试用；compile-board 侧注入 `describeRegistryEntry` 保持同格式单源）。 */
+function defaultDescribeEntry(entry) {
+  const ref = entry?.kind === "spec" ? entry?.specRoot : entry?.file;
+  const refOk = typeof ref === "string" && ref !== "";
+  return `条目 ${Number.isInteger(entry?.no) ? entry.no : "（无号）"}（kind=${JSON.stringify(entry?.kind ?? null)}，指向 ${JSON.stringify(refOk ? ref : null)}）`;
+}
+
 // ---------------------------------------------------------------- 公用件
+
+/**
+ * 板面活号集合（正整数稳定号；features 层 + 任务树递归——本模块内单点提取，
+ * checkRegistryGhosts 与 checkRunsDeadCardRefs 共用；与 derive.collectNumberedCards 同域口径）。
+ */
+function collectBoardLiveNos(board) {
+  const live = new Set();
+  const walk = (tasks) => {
+    for (const t of tasks ?? []) {
+      if (isPlainObject(t) && Number.isInteger(t.no) && t.no >= 1) live.add(t.no);
+      walk(t?.tasks);
+    }
+  };
+  for (const f of board?.features ?? []) {
+    if (!isPlainObject(f)) continue;
+    if (Number.isInteger(f.no) && f.no >= 1) live.add(f.no);
+    walk(f.tasks);
+  }
+  return live;
+}
 
 /** 节点标识（失败项点名用）：稳定号 + 计划码（显示层）。 */
 function nodeRef(node) {

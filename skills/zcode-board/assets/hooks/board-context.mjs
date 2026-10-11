@@ -324,8 +324,8 @@ function buildRows(root, board) {
     return [
       { tier: ROW_KEEP, text: `[zcode-board] 本项目还没有看板：${BOARD_REL} 不存在（会话启动读板空态）。` },
       { tier: ROW_KEEP, text: `- 生成时机：第一次访谈登记或第一个 spec/plan 被编译器发现时自动生成（编译命令见 zcode-board 技能 SKILL.md）。` },
-      { tier: ROW_KEEP, text: `- 处置（#72：生成板之前先核对扫描面，别直接重编译）：默认只扫 .zcode/plans/；docs/plans/、docs/design-notes/ 需项目级 .zcode/board/scan.json 显式 opt-in（includeDirs），单次 >10 个未领号计划文件会被拒绝（防批量改写）。` },
-      { tier: ROW_KEEP, text: `- 核对方式：先跑 node <zcode-board-skill>/assets/compile-board.mjs <项目根> --check 只读核对（扫描面预览 --preflight 随 #73 落地后以它为准）；确认扫描面无误再运行编译器生成板。` },
+      { tier: ROW_KEEP, text: `- 处置（检查点：生成板之前先跑预检，命令绿了才下一步）：先跑 node <zcode-board-skill>/assets/compile-board.mjs <项目根> --preflight（只读：扫描面预览 + 预计上板 + 增量预览；退出码 绿=0 可编译 / 黄=1 警告先确认 / 红=2 禁止——先整改再重跑）。` },
+      { tier: ROW_KEEP, text: `- preflight 黄/红时不要直接编译出板：按红/黄项整改（扫描面：默认只扫 .zcode/plans/；docs/plans/、docs/design-notes/ 需项目级 .zcode/board/scan.json 显式 opt-in includeDirs；整批未领号 >10 会被拒绝——防批量改写）后重跑 preflight；绿了再运行编译器生成板。` },
     ];
   }
   if (!board.valid) {
