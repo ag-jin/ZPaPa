@@ -14,8 +14,8 @@ description: 项目看板（.zcode/board）操作手册与纪律全量。触发�
 
 ### 1.1 位置与分层（最高频违例区）
 
-- **AGENTS.md 只放团队表**：看板/实验功能内容零残留（关闭实验功能时项目无痕）。
-- **本期工作区不维护 `doc/`、`docs/`**：一切开发流程资产在 `.zcode/`（计划稿/板/证据/hook 配置），技能资产在 `~/.zcode/skills/zcode-board/`。
+- **AGENTS.md 只放团队表**：看板/实验功能内容零残留（关闭实验功能时项目无痕）。机械防线（#107/E1 V1）：`--check` 对板根自身 `AGENTS.md` 逐行扫看板资产锚词表（`zcode-board`/`.zcode/board`/`board.json`/`看板` 等，模块私有单源）→ **失败级点名**（锚+行号+原文；判定域=板根自身，缺失/嵌套零噪声）；只读不修改，移除残留后自清；词表不含合规团队表可出现的通用词（「计划稿」等先例）。
+- **本期工作区不维护 `doc/`、`docs/`**：一切开发流程资产在 `.zcode/`（计划稿/板/证据/hook 配置），技能资产在 `~/.zcode/skills/zcode-board/`。机械防线（#107/E1 V2）：`--check` 扫 `doc/`、`docs/` 两目录树——板数据/产物文件名族或文本内容命中看板资产锚 → **失败级**逐文件点名；`docs/plans`/`docs/design-notes`（#72 opt-in 池）与 `docs/archive/**` 豁免内容锚（池/归档语义自定）；只读不移动文件。
 - **提示词四层**：发现 = 技能清单一行描述；启动读板 = SessionStart hook；操作手册 = SKILL.md；产品化 = P2。任何新约束先问"该住在哪一层"再落笔。
 - **位置分层（E1 V5；契约 §11）**：**裁决稿/设计稿/纲领稿禁入 `plans/`**——`.zcode/plans/`（计划稿苗圃）只放计划稿（命名约定 `plan-*.md`，会话稿 `plan-sess_<uuid>.md`）；裁决稿（裁决包/一次拍板清单）、设计稿、纲领稿（整体纲要）落 **`.zcode/design/`**（设计区，约定层：不在计划扫描面、不上板、不发号；`scan.json` 引用该目录按池外引用拒绝）。机械防线：`--check` 对苗圃内命中族词者（文件名首段/首个标题行任意层级首字段，判据冻结表见 `assets/contracts/markers.md` §11）逐条**对账点名**（非失败级；移位不改名、移位后自清）。
 
@@ -140,6 +140,8 @@ node <skill>/assets/compile-board.mjs --help              # 用法与参数
      - 判据：板面 + registry **独立复算**「两值可见性」——凡号不在板上活条目、又非已验证归档件（勘误 10 直查通过）的 registry 条目，板面 `diagnostics[]` 必须有一条点名（`path` = 板 `sources[].kind === "registry"` 的路径；值 = 条目号 + 条目指向路径）；缺则**两视图分叉必咬**（E4-05 实锤 #41：冷读者打开板"板面全绿"漏掉幽灵/悬空号）。
      - 判级依据：视图分叉属结构矛盾类、重编译即可恢复（与 (a)–(d)/(h) 同层，归「registry 对账」失败项）；**编译侧点名本身为提示级**（降级可见性，见 §3.5）——两级分工：编译侧点名、本断言只保证点名不被吞掉（编译器 diagnostic 出口回归/手改板删点名同样咬住）。
      - 判定域：条目标号为正整数者判；形态非法条目归「registry 不一致」失败面；registry 不可解析/条目段非数组 →「损坏源」拦下（零断言不叠加）。
+   - **(k) 根 AGENTS.md 零看板残留【失败级】**（B4-3/#107；E1 V1/V4）：判定域=板根自身 `AGENTS.md`（缺失/嵌套零噪声）；逐行命中锚词表（`zcode-board`、`.zcode/board`、`.zcode/plans`、`.zcode/design`、`board.json`、`board.md`、`看板`、`苗圃`、`发号`、`对账点名`、`--assign`；单源 `BOARD_RESIDUE_ANCHORS` 与 (l) 共用）→ 恰 1 项失败（同因合并，detail 逐行载行号+锚+原文）。修复=移除看板内容；只读自清。口径与 E2-10 勘误一致（纪律住 SKILL+hook，AGENTS.md 不承载看板条款）。
+   - **(l) doc/docs 位置断言【失败级】**（B4-3/#107；E1 V2）：判定域=`doc/`、`docs/` 两目录树（隐藏项/符号链接/node_modules 不跟进）。判据两条（逐文件恰 1 项）：①文件名族=`board.json`/`board.md`/`registry.json`/`interviews.json`/`runs.json`/`exemptions.json`/`scan.json`/`progress.json`（唯一合法位置 `.zcode/board/` 与 `specs/`）；②内容锚=文本文件（≤512KB，超限只判①）逐行命中 (k) 同款词表。豁免：`docs/plans`/`docs/design-notes`（#72 opt-in 池）与 `docs/archive/**` 仅豁免②（①文件名族仍判）。修复=移入 `.zcode/` 或删除副本；只读自清。
    校验失败项逐条点名（失败级；归口 `--check`，非板内 diagnostics）：路径（`features[i].tasks[j]…`）+ 节点编号（`#N`/计划码）+ 两值对照。
 
 5. **planCode 全局唯一（B4-2/#106；E4-11）【失败级】**：registry 条目（含归档/离板，与新码发放 `takenCodes` 同域）中形态合法（4 位冻结形态 `^[A-Z][A-Z0-9]{3}$`）的 `planCode` 全局唯一；同码 ≥2 条 = 码位冲突（复制分叉/手工改写 → 显示层两稿同码），逐码点名（码 + 各持有者条目号与指向路径；`checkPlanCodeUniqueness`——与 `--assign` 拒发同源单点）。边界：形态非法码不参与；registry 不可解析 → 「损坏源」拦下（零断言不叠加）。修复 = 人工定夺保留者，其余改新码或删除条目后重跑（`--check` 只读不自动修；真实板无重码 → 零噪声）。

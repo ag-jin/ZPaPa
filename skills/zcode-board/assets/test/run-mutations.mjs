@@ -861,6 +861,32 @@ const MUTATIONS = [
         "m53e",
       ),
   },
+  {
+    name: "m54a-agents-residue-scan-off",
+    scenario: "107",
+    expect:
+      "根 AGENTS.md 看板残留扫描关停（塞入看板内容不再失败级点名）必须被场景 107 的红侧退出码/锚点行号/自清断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        'export function checkRootAgentsResidue(root) {\n  const loaded = readTextFile(join(root, "AGENTS.md"));',
+        'export function checkRootAgentsResidue(root) {\n  return []; /* 突变：AGENTS.md 锚扫描关停 */\n  const loaded = readTextFile(join(root, "AGENTS.md"));',
+        "m54a",
+      ),
+  },
+  {
+    name: "m54b-docs-position-scan-off",
+    scenario: "107",
+    expect:
+      "doc/docs 看板资产位置判定关停（docs/ 内板数据文件名族/内容锚不再失败级点名）必须被场景 107 的 docs 红侧断言咬住",
+    apply: (src) =>
+      mutate(
+        src,
+        "export function checkDocsBoardAssets(root) {\n  const out = [];",
+        "export function checkDocsBoardAssets(root) {\n  const out = [];\n  return out; /* 突变：docs 位置判定关停 */",
+        "m54b",
+      ),
+  },
 ];
 
 function main(argv) {

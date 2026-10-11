@@ -243,6 +243,19 @@
  *   纯函数契约块：checkPlanCodeUniqueness（唯一/缺席/任务条目/形态非法/空源零噪声、两值点名）。
  *   突变 m53a/m53b：身份校验关停 → 106a 必咬；重码判定关停 → 106b 必咬（见 run-mutations.mjs）。
  *
+ * B4-3（#107）覆盖（根 AGENTS.md 零看板残留 + doc/docs 位置断言；E1 V1/V2/V4；口径 = E2-10 勘误）：
+ *   场景 107 判级 = **失败级**（E1 V1 防线原文；卡文验收「塞入看板内容后 --check 点名（红）」）：
+ *           ① 根 AGENTS.md 逐行命中看板资产锚词表（zcode-board/.zcode/board/board.json/看板 等）→
+ *              「AGENTS.md 残留」恰 1 项失败（锚 + 行号 + 原文逐行 detail；同因合并不按行噪音）；
+ *              口径与 E2-10 勘误一致（AGENTS.md 只放团队表：看板/实验功能内容零残留；纪律住
+ *              SKILL.md + hook）——合规基线（真实工作区词形先例：团队表含「计划稿」/他技能路径）零误报；
+ *              删残留即自清；无 AGENTS.md/嵌套 AGENTS.md 判定域外零噪声；--check 全程只读（字节+mtime）。
+ *           ② doc/、docs/ 内看板资产（板数据/产物文件名族 board.json/board.md/registry.json 等，或
+ *              文本内容命中看板锚）→「docs 位置」逐文件失败级点名（路径 + 依据），移入 .zcode/ 或删除
+ *              后自清；opt-in 池（docs/plans、docs/design-notes——#72 冻结池）与 docs/archive 豁免
+ *              （计划语料/归档目标语义自定，不二份判定）；无 doc(s) 零噪声。
+ *   突变 m54a/m54b：AGENTS.md 锚扫描关停 → 场景 107 红侧必咬；docs 看板资产扫描关停 → 场景 107 必咬。
+ *
  * 用法：
  *   node assets/test/run-scenarios.mjs                 # 全部场景
  *   node assets/test/run-scenarios.mjs --scenario 1,4  # 只跑指定场景
@@ -10916,6 +10929,192 @@ scenario("106b", "#106：planCode 唯一断言（E4-11）——重码 registry �
     const green = runCompiler(root, ["--check"]);
     c.eq(green.code, 0, "改正后 --check 回绿（退出码 0）");
     c.inc(green.stdout, "结论：--check 通过（0 项失败）", "回归零失败结论");
+  },
+});
+
+// ---------------------------------------------------------------- B4-3（#107）AGENTS.md 零看板残留 + docs 位置断言
+
+/**
+ * 合规团队表 AGENTS.md 夹具（零误报判据）：词形取自真实工作区 AGENTS.md 先例——
+ * plan-reviewer 行含「计划稿」（通用计划词，不得作残留锚）、他技能路径 `.agents/skills/...` 引用。
+ */
+const COMPLIANT_AGENTS_MD = [
+  "## 核心原则",
+  "",
+  "- 新增或修改行为前，先更新对应 spec。",
+  "",
+  "## 实现与验证",
+  "",
+  "- 代码改动使用 `.agents/skills/architecture-governance/SKILL.md`，先运行架构检查。",
+  "",
+  "<!-- agent-team-guide:v2 -->",
+  "",
+  "## Agent 团队",
+  "",
+  "| Agent | 触发场景 |",
+  "| --- | --- |",
+  "| plan-reviewer | 方案审查：对计划稿与任务图做粒度、验收、依赖、指派与设计一致性审查并分级报告 |",
+  "| integrator | 门禁合并：核对审查与测试证据后串行执行本地合并或远程 PR，并清理工作树 |",
+  "",
+].join("\n");
+
+// ---- 场景 107（#107/B4-3；E1 V1/V2/V4；口径 = E2-10 勘误）：根 AGENTS.md 零看板残留（失败级）+
+//      doc/docs 位置断言（失败级）；合规团队表零误报、删残留/移位后自清、判定域外零噪声、全程只读。
+scenario("107", "#107：根 AGENTS.md 零看板残留（V1/V4）+ doc/docs 看板资产位置断言（V2）——塞入/违规必咬（失败级点名）；合规团队表与 opt-in 池零误报；删残留/移位自清", {
+  build(root) {
+    w(root, ".zcode/plans/plan-keep.md", ["# 苗圃稿", "", "- **T1 条目（草案）**：正文。", ""].join("\n"));
+    w(root, "AGENTS.md", COMPLIANT_AGENTS_MD);
+  },
+  assert(c, ctx) {
+    const { root } = ctx;
+    const agentsRel = "AGENTS.md";
+    const agentsPath = join(root, agentsRel);
+    const failList = (res) => show((res.failures ?? []).map((x) => `[${x.category}] ${x.message}`));
+
+    // ---- 绿侧基线：合规团队表（含真实工作区先例词形）→ 零失败、零残留点名
+    const green0 = checkProject(root);
+    c.ok(green0.ok, "合规基线：团队表 AGENTS.md 不判失败（零看板残留策略的合规面）", failList(green0));
+    c.eq(
+      (green0.failures ?? []).filter((f) => f.category === "AGENTS.md 残留").length,
+      0,
+      "合规基线：「AGENTS.md 残留」零失败项（「计划稿」通用词不误报）",
+    );
+    const cli0 = runCompiler(root, ["--check"]);
+    c.eq(cli0.code, 0, "合规基线：CLI --check 退出码 0");
+    c.ok(!cli0.stdout.includes("[AGENTS.md 残留]"), "合规基线：报告不出现「AGENTS.md 残留」节", cli0.stdout.slice(0, 600));
+
+    // ---- 红侧：用户在 AGENTS.md 塞入看板内容（验收场景）→ 失败级点名（锚 + 行号 + 原文）
+    const compliant = readFileSync(agentsPath, "utf8");
+    const residue = [
+      "",
+      "## 项目看板纪律",
+      "",
+      "- 计划稿放 `.zcode/plans/`，发号只由编排者用 `zcode-board` 编译器 `--assign` 执行。",
+      "- 看板资产（`board.json`/证据）都在 `.zcode/board/` 下。",
+      "",
+    ].join("\n");
+    w(root, agentsRel, compliant + residue);
+    const scaffolded = readFileSync(agentsPath, "utf8");
+    const mtimeBefore = statSync(agentsPath).mtimeMs;
+    const redCli = runCompiler(root, ["--check"]);
+    c.eq(redCli.code, 1, "红侧：AGENTS.md 塞入看板内容 → --check 非零退出（失败级）");
+    c.inc(redCli.stdout, "校验失败", "红侧：报告出现「校验失败」节（失败级，非对账点名级）");
+    c.inc(redCli.stdout, "[AGENTS.md 残留]", "红侧：报告成文新失败类别「AGENTS.md 残留」");
+    c.eq(readFileSync(agentsPath, "utf8"), scaffolded, "红侧：--check 只读（AGENTS.md 字节零触碰——检测不是修改）");
+    c.eq(statSync(agentsPath).mtimeMs, mtimeBefore, "红侧：--check 只读（AGENTS.md mtime 不变）");
+
+    const red = checkProject(root);
+    const items = (red.failures ?? []).filter((f) => f.category === "AGENTS.md 残留");
+    c.eq(items.length, 1, "红侧：「AGENTS.md 残留」恰 1 项失败（同因合并，逐行进 detail）", failList(red));
+    const msg = items[0]?.message ?? "";
+    c.inc(msg, agentsRel, "失败项点名根 AGENTS.md");
+    c.inc(msg, "看板", "失败项写明「看板内容零残留」口径");
+    c.inc(msg, "团队表", "失败项写明「AGENTS.md 只放团队表」口径");
+    c.inc(msg, "E2-10", "失败项标注 E2-10 勘误依据（口径一致）");
+    c.inc(msg, "SKILL.md", "失败项写明纪律住 SKILL.md + hook（E2-10 勘误口径）");
+    c.inc(msg, "失败级", "失败项写明判级（失败级）");
+    c.inc(msg, "只读", "失败项写明 --check 只读（不修改任何 AGENTS.md）");
+    // 逐行 detail：锚 + 行号（行号独立推导自夹具几何，非按实现取法复算）+ 原文
+    const lines = scaffolded.split("\n");
+    const lineOf = (needle) => lines.findIndex((l) => l.includes(needle)) + 1;
+    const detail = (items[0]?.detail ?? []).join("\n");
+    const hits = [
+      { needle: "zcode-board", anchor: "zcode-board" },
+      { needle: ".zcode/plans/", anchor: ".zcode/plans" },
+      { needle: "--assign", anchor: "--assign" },
+      { needle: "board.json", anchor: "board.json" },
+      { needle: ".zcode/board/", anchor: ".zcode/board" },
+      { needle: "看板资产", anchor: "看板" },
+    ];
+    for (const h of hits) {
+      c.inc(detail, `第 ${lineOf(h.needle)} 行`, `detail 点名命中行号（${h.needle}）`);
+      c.inc(detail, h.anchor, `detail 点名命中锚（${h.anchor}）`);
+    }
+    c.inc(detail, "发号只由编排者", "detail 载命中行原文（可定位）");
+
+    // ---- 自清：移除残留（恢复团队表形态）→ --check 回绿
+    w(root, agentsRel, compliant);
+    const cleared = checkProject(root);
+    c.ok(cleared.ok, "删残留（恢复团队表）→ --check 回绿（自清）", failList(cleared));
+    c.eq(runCompiler(root, ["--check"]).code, 0, "删残留后 CLI --check 退出码 0");
+
+    // ---- 判定域边界：嵌套 AGENTS.md 不判（判定域 = 板根自身）；无 AGENTS.md 零噪声
+    w(root, "sub/AGENTS.md", compliant + residue);
+    const nested = checkProject(root);
+    c.ok(nested.ok, "嵌套 AGENTS.md（sub/AGENTS.md）不判（判定域 = 板根自身根 AGENTS.md）", failList(nested));
+    rmSync(agentsPath);
+    const absent = checkProject(root);
+    c.ok(absent.ok, "无根 AGENTS.md → 判定域外零噪声（不凭空判失败）", failList(absent));
+    c.eq(runCompiler(root, ["--check"]).code, 0, "无根 AGENTS.md → CLI --check 退出码 0");
+
+    // ---- ② docs 位置断言（V2）：doc/、docs/ 内看板资产 → 失败级逐文件点名（路径 + 依据 + 修复方向）
+    const docsBoardJson = `${JSON.stringify({ version: 2, generatedBy: "zcode-board/0.5.0", features: [] }, null, 2)}\n`;
+    const docsBoardMd = "# 板渲染副本（board.md 形态）\n\n- 计划稿：见 .zcode/board/board.md 对照。\n";
+    const docsRoadmap = [
+      "# board-v2 跨期路线",
+      "",
+      "- 一期：zcode-board 断言包 + 位置分层；计划稿入 `.zcode/plans/`。",
+      "- 二期：F/G/H 线（见 `.zcode/board/board.md`）。",
+      "",
+    ].join("\n");
+    w(root, "docs/board.json", docsBoardJson);
+    w(root, "doc/board.md", docsBoardMd);
+    w(root, "docs/ROADMAP.md", docsRoadmap);
+    const mtimeDocs = statSync(join(root, "docs/ROADMAP.md")).mtimeMs;
+    const docsRedCli = runCompiler(root, ["--check"]);
+    c.eq(docsRedCli.code, 1, "docs 位置违例 → --check 非零退出（失败级）");
+    c.inc(docsRedCli.stdout, "[docs 位置]", "红侧：报告成文新失败类别「docs 位置」");
+    c.eq(readFileSync(join(root, "docs/board.json"), "utf8"), docsBoardJson, "docs 违例面 --check 只读（board.json 副本字节零触碰）");
+    c.eq(statSync(join(root, "docs/ROADMAP.md")).mtimeMs, mtimeDocs, "docs 违例面 --check 只读（ROADMAP.md mtime 不变）");
+
+    const docsRed = checkProject(root);
+    const docsItems = (docsRed.failures ?? []).filter((f) => f.category === "docs 位置");
+    c.eq(docsItems.length, 3, "「docs 位置」逐文件恰 3 项（docs/board.json、doc/board.md、docs/ROADMAP.md）", failList(docsRed));
+    const docsMsg = (rel) => docsItems.find((f) => String(f.message).includes(rel))?.message ?? "";
+    const docsFull = (rel) => {
+      const it = docsItems.find((f) => String(f.message).includes(rel));
+      return it ? [it.message, ...(it.detail ?? [])].join("\n") : "";
+    };
+    for (const rel of ["docs/board.json", "doc/board.md", "docs/ROADMAP.md"]) {
+      c.ok(docsMsg(rel) !== "", `失败项逐文件点名 ${rel}`, failList(docsRed));
+    }
+    c.inc(docsMsg("docs/board.json"), "文件名族", "板数据/产物按文件名族咬（board.json）");
+    c.inc(docsMsg("docs/board.json"), ".zcode/board/", "修复方向：板数据唯一合法位置 .zcode/board/");
+    c.inc(docsMsg("doc/board.md"), "doc/、docs/", "doc/ 同判（本期工作区不维护 doc/、docs/）");
+    c.inc(docsFull("docs/ROADMAP.md"), "第 3 行", "内容锚命中行号（独立推导自夹具几何：zcode-board 行）");
+    c.inc(docsFull("docs/ROADMAP.md"), "zcode-board", "内容锚点名（实际命中锚）");
+    c.inc(docsFull("docs/ROADMAP.md"), ".zcode/plans", "内容锚点名（计划稿路径）");
+    c.inc(docsMsg("docs/ROADMAP.md"), "看板资产在 .zcode/", "席位口径成文：看板资产在 .zcode/");
+    c.inc(docsMsg("docs/ROADMAP.md"), "失败级", "判级成文（失败级）");
+    c.inc(docsMsg("docs/ROADMAP.md"), "只读", "--check 只读口径成文（不移动任何文件）");
+
+    // ---- 自清：ROADMAP 移入 .zcode/（design 区），板数据副本删除 → --check 回绿
+    w(root, ".zcode/design/roadmap-board-v2.md", docsRoadmap);
+    rmSync(join(root, "docs/ROADMAP.md"));
+    rmSync(join(root, "docs/board.json"));
+    rmSync(join(root, "doc/board.md"));
+    rmSync(join(root, "doc"), { recursive: true, force: true });
+    const clearedDocs = checkProject(root);
+    c.ok(clearedDocs.ok, "移位（看板资产入 .zcode/）/删除后 --check 回绿（自清）", failList(clearedDocs));
+    c.eq(runCompiler(root, ["--check"]).code, 0, "自清后 CLI --check 退出码 0");
+
+    // ---- 豁免边界（#72 不二份判定）：opt-in 池（docs/plans）内看板语料——含 --assign 盖号后的
+    //      zcode-board 标记（真实形态）——不判「docs 位置」；docs/archive/**（opt-in 归档目标）同豁免
+    w(root, "docs/plans/plan-old.md", ["# 旧票计划", "", "- **T1 旧计划条目（草案）**：正文。", ""].join("\n"));
+    w(root, ".zcode/board/scan.json", `${JSON.stringify({ includeDirs: ["docs/plans"] }, null, 2)}\n`);
+    const poolAssign = runCompiler(root, ["--assign"]);
+    c.eq(poolAssign.code, 0, "opt-in 池夹具：--assign 放行（前置）");
+    c.inc(
+      readFileSync(join(root, "docs/plans/plan-old.md"), "utf8"),
+      "<!-- zcode-board:",
+      "池内稿已领号（含 zcode-board 锚——豁免判据的真实形态）",
+    );
+    const pool = checkProject(root);
+    c.ok(pool.ok, "opt-in 池内看板语料（含号标记）不判「docs 位置」（#72 池语义自定，不二份判定）", failList(pool));
+    w(root, "docs/archive/plans/plan-sess_t107.md", ["# 已归档稿", "<!-- zcode-board: no=99 -->", "", "- [ ] 1. 条目", ""].join("\n"));
+    const archived = checkProject(root);
+    c.ok(archived.ok, "docs/archive/**（opt-in 归档映射目标）不判（移动目标豁免，零误报）", failList(archived));
+    c.eq(runCompiler(root, ["--check"]).code, 0, "豁免边界：CLI --check 退出码 0");
   },
 });
 

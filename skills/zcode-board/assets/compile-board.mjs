@@ -75,6 +75,16 @@
  *     diagnostics 并入板面（降级可见性：registry 有条目而板上无，含号 + 指向路径 + 直查态；runs 声明
  *     死号按同一判据**两文案分流**：registry 有条目而板上无 vs 完全未知号，勘误 9d）；--check 侧
  *     checkRegistryGhosts（失败级）独立复算「两值可见性」——板面吞掉点名即两视图分叉必咬；
+ *     B4-3/#107 位置断言（失败级；A 域位置分层）：
+ *     ① 根 AGENTS.md 零看板残留（E1 V1/V4）——AGENTS.md 只放团队表：看板/实验功能内容零残留
+ *     （SKILL.md §1.1；E2-10 勘误：看板纪律住 SKILL.md + hook，AGENTS.md 不再承载看板条款）——逐行命中
+ *     看板资产锚（zcode-board/.zcode/board/board.json/看板 等）即失败级点名（锚 + 行号 + 原文）；
+ *     判定域 = 板根自身 AGENTS.md（缺失零噪声、嵌套不判；checkRootAgentsResidue）；
+ *     ② doc/docs 位置（E1 V2）——本期工作区不维护 doc/、docs/，看板资产在 .zcode/（计划稿/板/证据/
+ *     hook 配置）：doc(s)/ 内板数据/产物文件名族或文本内容命中看板锚 → 逐文件失败级点名；#72 opt-in 池
+ *     （docs/plans、docs/design-notes）与 docs/archive/** 豁免内容锚（池/归档语义自定，不二份判定；
+ *     checkDocsBoardAssets）；两断言均 --check 只读（检测不是修改）、修复（移除残留/移位）后自清；
+ *     USAGE 校验项字母 = (k)/(l)（SKILL.md (i)/(j) 已被派生四段/幽灵可见性占用）；
  *   - 写出：<root>/.zcode/board/board.json + board.md（原子写：临时文件 + 改名）；写盘前幻影板防线
  *     （B5-2/#114；E1 V20）：编译输出路径必须等于板根——<root> 自身有既有板（.zcode/board/board.json）
  *     才可写（= 该根即板根）；resolved root 是板项目子目录且自身无既有板（cwd 漂移/相对路径误解析的
@@ -169,7 +179,7 @@ import {
   classifyDeadNumber,
 } from "./lib/fact-invariants.mjs";
 
-import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
+import { SCAN_CONFIG_REL, DEFAULT_PLAN_DIRS, OPT_IN_PLAN_DIRS, loadScanConfig, matchesAnyGlob } from "./lib/scan-config.mjs";
 
 import { GENERATED_BY, SKILL_ROOT_DIR, SKILL_VERSION, formatVersionLine, readVersionInfo } from "./lib/version.mjs";
 
@@ -3923,6 +3933,187 @@ function nonPlanDocFamilyOf(plan, text) {
 }
 
 /**
+ * doc/docs 位置判定的辅助面（B4-3/#107；E1 V2）：
+ *   - DOCS_TEXT_EXTS：内容锚扫描的文本扩展名白名单（其余二进制/未知扩展只判文件名族）；
+ *   - DOCS_TEXT_MAX_BYTES：内容扫描单文件大小上限（512KB——超限只判文件名族，防大文件整读）；
+ *   - BOARD_DATA_BASENAMES：板数据/产物文件名族（唯一合法位置 `.zcode/board/` 与 `specs/`）；
+ *   - DOCS_POSITION_EXEMPT_DIRS：#72 冻结 opt-in 池（单源 OPT_IN_PLAN_DIRS）与 opt-in 归档映射
+ *     目标 `docs/archive`——仅豁免内容锚判定（池/归档语义自定），文件名族仍判。
+ */
+const DOCS_TEXT_EXTS = Object.freeze([".md", ".markdown", ".txt", ".json", ".yaml", ".yml"]);
+const DOCS_TEXT_MAX_BYTES = 512 * 1024;
+const BOARD_DATA_BASENAMES = Object.freeze([
+  "board.json",
+  "board.md",
+  "registry.json",
+  "interviews.json",
+  "runs.json",
+  "exemptions.json",
+  "scan.json",
+  "progress.json",
+]);
+const DOCS_POSITION_EXEMPT_DIRS = Object.freeze([...OPT_IN_PLAN_DIRS, "docs/archive"]);
+
+/** doc/docs 目录树枚举（确定性序；隐藏项/符号链接/node_modules 不跟进——防环、防噪声）。 */
+function walkDocsTree(absDir, relDir, out) {
+  let entries;
+  try {
+    entries = readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return; // 读取竞态 → 不判（不猜）
+  }
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    if (e.isSymbolicLink()) continue;
+    const rel = `${relDir}/${e.name}`;
+    if (e.isDirectory()) {
+      if (e.name === "node_modules") continue;
+      walkDocsTree(join(absDir, e.name), rel, out);
+      continue;
+    }
+    if (e.isFile()) out.push(rel);
+  }
+}
+
+/**
+ * 看板资产锚词表（B4-3/#107；E1 V1/V2 共用判据）——看板系统专属标识：
+ *   - 技能名/标记前缀：`zcode-board`；
+ *   - 看板资产路径：`.zcode/board`、`.zcode/plans`、`.zcode/design`；
+ *   - 编译产物名：`board.json`、`board.md`；
+ *   - 系统中文名与板指令族：`看板`、`苗圃`、`发号`、`对账点名`、`--assign`。
+ * 词表纪律：**不收入可在合规团队表中合法出现的通用词**（真实工作区 AGENTS.md 团队表 plan-reviewer 行
+ * 含「计划稿」仍合规——零误报基线 = 本工作区 AGENTS.md，只读判据）；扩面须随本卡判据成文更新。
+ * 模块私有（同 NON_PLAN_DOC_FAMILIES 先例）：两断言共用、单源，禁二份。
+ */
+const BOARD_RESIDUE_ANCHORS = Object.freeze([
+  "zcode-board",
+  ".zcode/board",
+  ".zcode/plans",
+  ".zcode/design",
+  "board.json",
+  "board.md",
+  "看板",
+  "苗圃",
+  "发号",
+  "对账点名",
+  "--assign",
+]);
+
+/**
+ * 根 AGENTS.md 零看板残留断言（B4-3/#107；E1 V1/V4）——**失败级**（E1 V1 防线原文「--check：新增
+ * 断言'根 AGENTS.md 不含看板资产引用'（失败级）」；卡文验收：用户在 AGENTS.md 塞入看板内容后
+ * --check 点名（红））：
+ *   口径（与 E2-10 勘误一致）：AGENTS.md 只放团队表——看板/实验功能内容零残留（SKILL.md §1.1）；
+ *   E2-10 勘误后看板纪律住 SKILL.md（操作手册）+ hook（机械层），AGENTS.md 不再承载看板条款
+ *   （关闭实验功能时项目无痕）。本断言即「零残留」策略的反向防护：V1（两次违例、一次清理不净）与
+ *   V4（根 AGENTS.md 位置错置）同以本断言反向防护看板残留面。
+ *   判定域 = 板根自身 `<root>/AGENTS.md`（缺失/读取失败 = 判定域外零噪声；嵌套 AGENTS.md 不判——
+ *   V4 的「他仓手册副本/团队表缺位」面机械不可判，不在本断言）。
+ *   判据 = 逐行命中看板资产锚词表 BOARD_RESIDUE_ANCHORS（任意位置出现即残留，含行内代码/注释）；
+ *   恰 1 项失败（同因合并）：message 载口径 + 修复方向 + 判级，detail 逐行载「行号 + 锚 + 原文」。
+ *   修复 = 从 AGENTS.md 移除看板内容（纪律住 SKILL.md + hook，E2-10）；--check 只读，不修改任何 AGENTS.md。
+ * @returns {{message: string, detail: string[]}[]} 失败项（空数组 = 通过）
+ */
+export function checkRootAgentsResidue(root) {
+  const loaded = readTextFile(join(root, "AGENTS.md"));
+  if (!loaded.ok) return []; // 缺失 = 判定域外；EISDIR 等读取失败不凭空判（不猜、零噪声）
+  const lines = loaded.text.split(/\r?\n/);
+  const detail = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const anchors = BOARD_RESIDUE_ANCHORS.filter((a) => lines[i].includes(a));
+    if (anchors.length === 0) continue;
+    detail.push(`第 ${i + 1} 行：命中 ${anchors.map((a) => `"${a}"`).join("、")} —— ${lines[i].trim()}`);
+  }
+  if (detail.length === 0) return [];
+  return [
+    {
+      message:
+        `根 AGENTS.md 零看板残留（B4-3/#107；E1 V1/V4）：AGENTS.md 命中看板资产锚 ${detail.length} 行（逐行见下）——` +
+        "AGENTS.md 只放团队表：看板/实验功能内容零残留（SKILL.md §1.1；E2-10 勘误：看板纪律住 SKILL.md + hook，" +
+        "AGENTS.md 不再承载看板条款——关闭实验功能时项目无痕）。修复 = 从 AGENTS.md 移除看板内容（不迁往别处；" +
+        "纪律载体为 SKILL.md + hook）。失败级：--check 只读、不修改任何 AGENTS.md，修复后自清。",
+      detail,
+    },
+  ];
+}
+
+/**
+ * doc/docs 位置断言（B4-3/#107；E1 V2）——**失败级**（E1 V2 防线形态「`--check`/工作区脚本：断言
+ * 根工作区无 docs/ 目录（或 docs/ 下无看板资产）」；卡文：docs 位置违例必咬）：
+ *   口径：本期工作区不维护 `doc/`、`docs/`——一切开发流程资产在 `.zcode/`（计划稿/板/证据/hook 配置，
+ *   SKILL.md §1.1）；历史违例 = docs/ROADMAP.md（跨期路线）、docs/board-design.md（design.md 副本）。
+ *   判定域 = 板根 `<root>/doc/`、`<root>/docs/` 两目录树（存在则判；缺失/空 = 零噪声；隐藏目录、
+ *   符号链接、node_modules 不跟进）。
+ *   咬定判据（两条，逐文件恰 1 项失败）：
+ *     ① 文件名族：basename 命中板数据/产物名（BOARD_DATA_BASENAMES——board.json/board.md/registry/
+ *        interviews/runs/exemptions/scan.json/progress.json；唯一合法位置 `.zcode/board/` 与 `specs/`）；
+ *     ② 内容锚：文本文件（DOCS_TEXT_EXTS、≤ DOCS_TEXT_MAX_BYTES）逐行命中看板资产锚词表
+ *        BOARD_RESIDUE_ANCHORS（口径同 checkRootAgentsResidue——单源词表，禁二份）。
+ *   豁免（#72 语义不二份）：opt-in 冻结池 `docs/plans`、`docs/design-notes`（OPT_IN_PLAN_DIRS——池内
+ *   计划语料语义自定，由扫描面配置管辖；--assign 盖号后含 zcode-board 标记属真实形态）与
+ *   `docs/archive/**`（opt-in 归档映射目标）——仅豁免②内容锚，①文件名族仍判（板数据副本无自定语义）。
+ *   修复 = 将看板资产移入 `.zcode/` 对应位置（或删除副本）；失败级：--check 只读、不移动任何文件，
+ *   修复后自清。
+ * @returns {{message: string, detail: string[]}[]} 失败项（空数组 = 通过）
+ */
+export function checkDocsBoardAssets(root) {
+  const out = [];
+  const files = [];
+  for (const top of ["doc", "docs"]) {
+    if (isDir(join(root, top))) walkDocsTree(join(root, top), top, files);
+  }
+  for (const rel of files) {
+    const base = basename(rel).toLowerCase();
+    if (BOARD_DATA_BASENAMES.includes(base)) {
+      out.push({
+        message:
+          `docs 位置规则（B4-3/#107；E1 V2）：doc/、docs/ 不维护看板资产——${rel} 属板数据/产物文件名族（${base}，` +
+          "唯一合法位置 .zcode/board/）：本期工作区不维护 doc/、docs/，看板资产在 .zcode/（计划稿/板/证据/" +
+          "hook 配置；SKILL.md §1.1）。修复 = 移入 .zcode/ 对应位置或删除该副本。失败级：--check 只读、" +
+          "不移动任何文件，修复后自清。",
+        detail: [],
+      });
+      continue;
+    }
+    const exempt = DOCS_POSITION_EXEMPT_DIRS.some((d) => rel === d || rel.startsWith(`${d}/`));
+    if (exempt) continue; // #72 池/归档目标：内容锚不判（池语义自定）
+    const ext = rel.slice(rel.lastIndexOf(".")).toLowerCase();
+    if (!DOCS_TEXT_EXTS.includes(ext)) continue;
+    const abs = join(root, rel);
+    let size = 0;
+    try {
+      size = statSync(abs).size;
+    } catch {
+      continue; // 读取竞态 → 不判（不猜）
+    }
+    if (size > DOCS_TEXT_MAX_BYTES) continue; // 超限只判文件名族（防大文件整读；不静默改判级）
+    const loaded = readTextFile(abs);
+    if (!loaded.ok) continue;
+    const lines = loaded.text.split(/\r?\n/);
+    const detail = [];
+    const anchorsHit = new Set();
+    for (let i = 0; i < lines.length; i += 1) {
+      const anchors = BOARD_RESIDUE_ANCHORS.filter((a) => lines[i].includes(a));
+      if (anchors.length === 0) continue;
+      for (const a of anchors) anchorsHit.add(a);
+      detail.push(`第 ${i + 1} 行：命中 ${anchors.map((a) => `"${a}"`).join("、")} —— ${lines[i].trim()}`);
+    }
+    if (detail.length === 0) continue;
+    out.push({
+      message:
+        `docs 位置规则（B4-3/#107；E1 V2）：doc/、docs/ 不维护看板资产——${rel} 内容命中看板资产锚 ` +
+        `${detail.length} 行（锚：${[...anchorsHit].map((a) => `"${a}"`).join("、")}；逐行见下）：本期工作区不维护 ` +
+        "doc/、docs/，看板资产在 .zcode/（计划稿/板/证据/hook 配置；SKILL.md §1.1）。修复 = 移入 .zcode/ " +
+        "对应位置或删除（opt-in 池 docs/plans、docs/design-notes 与 docs/archive/** 豁免——计划语料/" +
+        "归档目标语义自定）。失败级：--check 只读、不移动任何文件，修复后自清。",
+      detail,
+    });
+  }
+  return out;
+}
+
+/**
  * 苗圃位置规则点名（#159/E1b-1；E1 V5 / #72 收口）——**对账点名级（非失败级、不阻断退出码）**：
  * 苗圃 `.zcode/plans/` 内裁决稿/设计稿/纲领稿逐条点名（判据见 nonPlanDocFamilyOf），给新位置
  * `.zcode/design/` 与处置归属。**判级依据**：真实板现存三稿（adjudication/design-p2/program，A5-4/#95
@@ -4218,6 +4409,17 @@ function phantomBoardMessage({ root, ancestor, boardRoot }) {
  *      点名（含 registry 源路径 + 条目号 + 指向路径两值）；缺则两视图分叉必咬（checkRegistryGhosts，
  *      磁盘板与重编译基线各判一遍）。该断言不依赖与基线的逐字段比对——编译器 diagnostic 出口回归、
  *      手改板删点名同样咬住；registry 不可解析/条目段非数组 →「损坏源」拦下（零断言不叠加）。
+ *      9. 位置断言（B4-3/#107；A 域位置分层）【失败级】（USAGE 校验项字母 (k)/(l)——SKILL.md (i)/(j) 已被
+ *      派生四段不变量/幽灵可见性占用）：
+ *      (k) 根 AGENTS.md 零看板残留（E1 V1/V4）：AGENTS.md 只放团队表——看板/实验功能内容零残留
+ *      （SKILL.md §1.1；E2-10 勘误：看板纪律住 SKILL.md + hook，AGENTS.md 不再承载看板条款）——
+ *      逐行命中看板资产锚（zcode-board/.zcode/board/board.json/看板 等）即失败级点名（锚 + 行号 + 原文；
+ *      恰 1 项同因合并）；判定域 = 板根自身 AGENTS.md（缺失/读取失败零噪声、嵌套不判）；
+ *      (l) doc/docs 位置（E1 V2）：本期工作区不维护 doc/、docs/——看板资产在 .zcode/（计划稿/板/证据/
+ *      hook 配置）；doc(s)/ 内板数据/产物文件名族（board.json/board.md/registry.json 等，唯一合法位置
+ *      .zcode/board/）或文本内容命中看板锚 → 逐文件失败级点名；#72 opt-in 池（docs/plans、
+ *      docs/design-notes）与 docs/archive/** 豁免内容锚（池/归档语义自定，不二份判定）。
+ *      两断言均 --check 只读（检测不是修改；不修改任何 AGENTS.md/doc(s)），修复（移除残留/移位）后自清。
  * 返回 { root, board, failures, notes, rollcall, ok, compared }；退出码归 CLI（0 通过 / 非零有失败项）。
  */
 export function checkProject(rootInput) {
@@ -4280,6 +4482,12 @@ export function checkProject(rootInput) {
   // 苗圃位置规则（#159/E1b-1；对账点名级）：裁决稿/设计稿/纲领稿禁入 .zcode/plans/——逐条点名，
   // 不阻塞退出码（判级依据与判定域见 checkPlanNurseryPlacement 注释）。
   for (const m of checkPlanNurseryPlacement(facts.plans, facts.planFacts)) rollcall.push(m);
+  // 根 AGENTS.md 零看板残留（B4-3/#107；E1 V1/V4）——**失败级**（E1 V1 防线原文）：AGENTS.md 只放
+  // 团队表，看板内容零残留（口径与 E2-10 勘误一致；判定域与判级依据见 checkRootAgentsResidue 注释）。
+  for (const item of checkRootAgentsResidue(root)) fail("AGENTS.md 残留", item.message, item.detail);
+  // docs 位置断言（B4-3/#107；E1 V2）——**失败级**：doc/、docs/ 不维护看板资产（本期工作区不维护
+  // doc/、docs/；看板资产在 .zcode/）——文件名族/内容锚逐文件点名（判定域与豁免见 checkDocsBoardAssets 注释）。
+  for (const item of checkDocsBoardAssets(root)) fail("docs 位置", item.message, item.detail);
   const artifact = checkBoardArtifact(root, board, fail, note, rollcall);
 
   return { root, board, failures, notes, rollcall, ok: failures.length === 0, compared: artifact.compared };
@@ -4418,6 +4626,18 @@ const USAGE = `zcode-board 编译器（默认只读；--assign 发号；--check 
           （链接工作树内运行 --assign = 非主检出——.git 为 gitdir 指针文件；SKILL.md「发号只在主检出、
           由编排者单写者执行」）逐条点名（含条目号 + assignedBy 原值）；\`@main\`/缺省/未知形态不判
           （存量条目零误报）；历史事实不可由重编译修复（号不复算、不回收，与 (e)/(f)/(g) 同域）。
+      (k) 根 AGENTS.md 零看板残留【失败级】（B4-3/#107；E1 V1/V4）：AGENTS.md 只放团队表——看板/
+          实验功能内容零残留（SKILL.md §1.1；E2-10 勘误：看板纪律住 SKILL.md + hook，AGENTS.md 不再
+          承载看板条款——关闭实验功能时项目无痕）——逐行命中看板资产锚（zcode-board/.zcode/board/
+          board.json/看板 等）即失败级点名（锚 + 行号 + 原文）；判定域 = 板根自身 AGENTS.md（缺失
+          零噪声、嵌套不判）；--check 只读、不修改任何 AGENTS.md；修复（移除看板内容）后自清。
+          （字母 (k)/(l)：SKILL.md 校验项 (i)/(j) 已被派生四段不变量/幽灵可见性占用。）
+      (l) doc/docs 位置断言【失败级】（B4-3/#107；E1 V2）：本期工作区不维护 \`doc/\`、\`docs/\`——
+          看板资产在 \`.zcode/\`（计划稿/板/证据/hook 配置）；\`doc/\`、\`docs/\` 内板数据/产物文件名族
+          （board.json/board.md/registry.json 等，唯一合法位置 .zcode/board/）或文本内容命中看板资产锚
+          → 逐文件失败级点名（类目「docs 位置」）；#72 opt-in 池（docs/plans、docs/design-notes）与
+          docs/archive/** 豁免内容锚（池/归档语义自定，不二份判定）；--check 只读、不移动任何文件；
+          修复（移入 .zcode/ 或删除副本）后自清。
   (5) 归属与引用断言包（A2-2/#82；§10.1/§10.2/§10.3）【失败级，逐条点名路径 + 两值对照】：
       源侧（compile-board checkEpicOwnership）：条目归属对形态/原子性（\`epic\` 只认正整数稳定号或
       登记 id \`epic:<4位码>\`——码不进引用位；\`phase\` 单值正整数）、一稿一 epic（同稿 ≥2 个不同归属对
