@@ -28,6 +28,7 @@ import { BoardKanbanView } from "./BoardKanbanView.js";
 import { BoardListView } from "./BoardListView.js";
 import { BoardTableView } from "./BoardTableView.js";
 import { resolveBoardDialogNode, type BoardJumpTarget } from "./boardDialogViewModel.js";
+import { DEFAULT_BOARD_VIEW_MODE } from "./boardViewModeMemory.js";
 import {
   BOARD_PLACEHOLDER_MESSAGE_IDS,
   formatBoardPathTail,
@@ -49,7 +50,7 @@ import type { BoardFoldControls } from "./boardFoldState.js";
 export interface BoardPaneViewProps {
   state: BoardPaneLoadState;
   onRefresh?: () => void;
-  /** 面板内视图（会话内保持，由宿主 BoardPane 持有；缺省树形 = tracer 的既有视图）。 */
+  /** 面板内视图（会话内保持，由宿主 BoardPane 持有；缺省 = 单点常量 `DEFAULT_BOARD_VIEW_MODE`，C3-5/#140 起为指引面）。 */
   viewMode?: BoardViewMode;
   /** 列表/表格视图的过滤与排序状态（宿主持有；缺省 = 不筛 + 默认排序）。 */
   listControls?: BoardListControls;
@@ -342,7 +343,7 @@ export type { BoardPlaceholderKind } from "./boardPresentation.js";
 export function BoardPaneView({
   state,
   onRefresh,
-  viewMode = "tree",
+  viewMode = DEFAULT_BOARD_VIEW_MODE,
   listControls,
   onListControlsChange,
   tableColumns,

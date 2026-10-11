@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardPaneView, type BoardPaneViewProps } from "../src/board/BoardPaneView.js";
 import { boardCardHighlightProps } from "../src/board/boardCardInteraction.js";
+import { DEFAULT_BOARD_VIEW_MODE } from "../src/board/boardViewModeMemory.js";
 import type { BoardPaneLoadState } from "../src/board/loadBoardDocument.js";
 import {
   EMPTY_BOARD_LIST_CONTROLS,
@@ -641,10 +642,25 @@ test("视图切换：五态控件常驻，当前视图 aria-pressed（不靠颜�
   }
 });
 
-test("视图切换：缺省树形（tracer 既有视图零变化），四态各渲染自己的根锚点", () => {
-  const tree = render(matrixBoard());
-  assert.ok(tree.includes('data-board-feature="spec:preview-channel"'), "缺省渲染树形");
-  assert.ok(!tree.includes('data-board-view="kanban"'));
+test("视图切换：缺省指引面（C3-5/#140；AD-11①「默认视图切指引面，树形保留结构视图」）", () => {
+  const fallback = render(matrixBoard());
+  assert.ok(fallback.includes('data-board-view="guide"'), "缺省（不传 viewMode）渲染指引面");
+  assert.ok(
+    !fallback.includes('data-board-view="tree"'),
+    "缺省不再落树形（树形降级为结构视图入口）",
+  );
+  assert.equal(
+    fallback,
+    render(matrixBoard(), { viewMode: DEFAULT_BOARD_VIEW_MODE }),
+    "组件缺省参数取自单点常量 DEFAULT_BOARD_VIEW_MODE（不写字面量）",
+  );
+  // 结构四视图（tree/kanban/list/table）显式传参照常各自渲染：入口保留，一枚不删。
+  assert.ok(
+    render(matrixBoard(), { viewMode: "tree" }).includes(
+      'data-board-feature="spec:preview-channel"',
+    ),
+    "树形视图显式渲染（结构视图入口在）",
+  );
   assert.ok(render(matrixBoard(), { viewMode: "kanban" }).includes('data-board-view="kanban"'));
   assert.ok(render(matrixBoard(), { viewMode: "list" }).includes('data-board-view="list"'));
   assert.ok(render(matrixBoard(), { viewMode: "table" }).includes('data-board-view="table"'));
@@ -721,7 +737,8 @@ test("面板：跳转落点高亮锚点跟着 highlightCardId 走（表格行与
     /data-board-card="task:8"[^>]*data-board-card-highlight="true"/.test(table),
     "表格行带高亮锚点",
   );
-  const tree = render(matrixBoard(), { highlightCardId: "task:7" });
+  // 缺省自 C3-5/#140 起是指引面：树形落点断言显式传 viewMode（本测试主体=树形卡片行）。
+  const tree = render(matrixBoard(), { viewMode: "tree", highlightCardId: "task:7" });
   assert.ok(
     /data-board-task="task:7"[^>]*data-board-card-highlight="true"/.test(tree),
     "树形卡片行带高亮锚点（跳转目标可能是各视图里的卡）",
@@ -731,7 +748,10 @@ test("面板：跳转落点高亮锚点跟着 highlightCardId 走（表格行与
     "其余卡片不带高亮锚点",
   );
   // #59 S-5：特性块的高亮只落在标题落点一处，不在块外壳与落点上叠两遍（与列表同款）。
-  const featureTree = render(matrixBoard(), { highlightCardId: "spec:preview-channel" });
+  const featureTree = render(matrixBoard(), {
+    viewMode: "tree",
+    highlightCardId: "spec:preview-channel",
+  });
   const blockStart = featureTree.indexOf('data-board-feature-block="spec:preview-channel"');
   assert.ok(blockStart >= 0, "树形特性块应渲染");
   const blockSlice = featureTree.slice(blockStart, featureTree.indexOf("</details>", blockStart));
