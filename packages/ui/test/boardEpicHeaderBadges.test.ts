@@ -348,3 +348,19 @@ test("四视图组头接 rollup 缺口计数（计数正确性）：tree/list/ta
   assert.match(review, /data-board-layer-plan-count="1"/, "审核中列 KANB 承载 1 稿（UI01）");
   assert.ok(!review.includes("data-board-layer-gap-count"), "审核中列无缺口 → 不落徽章");
 });
+
+test("看板期次层缺口接线（M4 覆盖缺口固化）：列内投影期次层带缺口徽章（KANB1 落 / KANB2 不落）", () => {
+  // 二绿突变 M4（删看板期次层 gapCount 接线）在交付套件逃逸——本用例把该接线钉死：
+  // 看板期次层与 epic 层同守「本列实际承载」口径（KANB1 列内 1 稿带 1 条缺口；KANB2 无缺口）。
+  const kanban = renderView(EPIC_BOARD, "kanban");
+  const doing = sliceBetween(kanban, 'data-board-column="执行中"', 'data-board-column="审核中"');
+  assert.match(doing, /data-board-layer-name="KANB1"/, "执行中列有 KANB1 期次层头");
+  const phase1 = sliceBetween(doing, 'data-board-layer-name="KANB1"', null);
+  assert.match(phase1, /data-board-layer-gap-count="1"/, "KANB1 期次层缺口=1（本列承载 PLW0）");
+  assert.ok(phase1.includes("缺口 1"), "KANB1 期次层缺口徽章文案");
+  assert.match(phase1, /data-board-layer-plan-count="1"/, "KANB1 期次层稿数=1（列内投影）");
+  const todo = sliceBetween(kanban, 'data-board-column="待办"', 'data-board-column="执行中"');
+  assert.match(todo, /data-board-layer-name="KANB2"/, "待办列有 KANB2 期次层头");
+  const phase2 = sliceBetween(todo, 'data-board-layer-name="KANB2"', null);
+  assert.ok(!phase2.includes("data-board-layer-gap-count"), "KANB2 期次层无缺口不落徽章");
+});

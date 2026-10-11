@@ -11,7 +11,8 @@
  *   1. 四视图组头徽章：计数/缺口值逐视图（看板列内投影）；CNCL 落终态、KANB 不落（反例）；
  *   2. 层头点击分区：标题区 → epic 弹窗（名 + 计数 + 缺口 + L2 段位构成 + 期次指针；不自算段位）；
  *      summary → 仍是折叠、不落弹窗（不落卡弹窗）；
- *   3. 指针下钻：点 KANB1 指针 → 关弹窗 + 展开被用户收起的祖先层 + 期次块高亮落点；
+ *   3. 指针下钻：点 KANB1 指针 → 关弹窗 + 展开被用户收起的祖先层 + 期次块高亮落点 + 真滚动
+ *      （scrollIntoView 落点/参数/可见性）；折叠记忆交互（收起 false → 下钻 true → 重挂读回仍展开）；
  *   4. 关闭路径：× 关窗且焦点归还打开者；
  *   5. 溢出探针：宽 1400 / 窄 360 四视图层头行（层名/计数片/缺口徽章）+ 窄档弹窗盒与区块。
  *
@@ -90,7 +91,17 @@ interface BadgesResult {
     epicOpen: boolean | null;
     highlightedPhase: string | null;
     otherHighlighted: number;
+    scrollCalls: Array<{
+      card: string | null;
+      phase: string | null;
+      epic: string | null;
+      block: string | null;
+    }>;
+    phaseVisible: boolean;
+    memoryAfterCollapse: string | null;
+    memoryAfterDrill: string | null;
   };
+  afterRemount: { phaseOpen: boolean; epicOpen: boolean };
   partition: {
     folded: boolean | null;
     dialogAfterSummaryClick: boolean;
@@ -221,6 +232,25 @@ async function main(): Promise<void> {
   assert.equal(result.drill.epicOpen, true, "祖先 epic 层展开");
   assert.equal(result.drill.highlightedPhase, "true", "期次块带高亮锚点（落点看得见）");
   assert.equal(result.drill.otherHighlighted, 1, "高亮只命中期次块一处");
+  /* 4b. 下钻滚动落点（M3 覆盖缺口固化）：宿主 scrollIntoView 真调用观测（探针思路照搬）。 */
+  const phaseCall = result.drill.scrollCalls.find((call) => call.phase === "KANB1");
+  assert.ok(
+    phaseCall,
+    `下钻后应有滚动到 KANB1 期次块的 scrollIntoView 调用（实测=${JSON.stringify(result.drill.scrollCalls)}）`,
+  );
+  assert.equal(phaseCall.block, "center", "滚动落点用 block=center");
+  assert.ok(result.drill.phaseVisible, "滚动后 KANB1 期次块在面板视口内");
+  /* 4c. 下钻与 #89 折叠记忆交互（探针断言固化）：收起 false → 下钻 true → 重挂读回仍展开。 */
+  const collapseState = JSON.parse(result.drill.memoryAfterCollapse ?? "{}") as Record<
+    string,
+    boolean
+  >;
+  assert.equal(collapseState["phase:KANB#1"], false, "用户收起的期次在记忆里是 false");
+  const drillState = JSON.parse(result.drill.memoryAfterDrill ?? "{}") as Record<string, boolean>;
+  assert.equal(drillState["phase:KANB#1"], true, "下钻把被用户收起的期次在记忆里改回 true");
+  assert.equal(drillState["epic:KANB"], true, "下钻同时展开 epic 祖先（写同一记忆）");
+  assert.equal(result.afterRemount.phaseOpen, true, "重挂后 KANB1 仍展开（记忆读回）");
+  assert.equal(result.afterRemount.epicOpen, true, "重挂后 KANB 仍展开（记忆读回）");
 
   /* 5. 分区纪律：点 summary 仍是折叠（真指针序列）；不落任何弹窗。 */
   assert.equal(result.partition.folded, false, "点 summary → 收起（原生 toggle 生效）");

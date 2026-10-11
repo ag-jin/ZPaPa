@@ -111,7 +111,7 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     document.activeElement === el(viewOf("tree"), '[data-board-epic-open="KANB"]');
   const closedAfterX = document.querySelector("[data-board-epic-dialog]") === null;
 
-  /* ---- 3. 指针下钻：KANB1 指针 → 关弹窗 + 展开祖先 + 期次块高亮落点 ---- */
+  /* ---- 3. 指针下钻：KANB1 指针 → 关弹窗 + 展开祖先 + 高亮/滚动落点（M3 覆盖缺口固化） ---- */
   /* 先由用户把 KANB1 收起（真点击 summary），下钻必须把两层祖先再展开。 */
   const phase1 = await waitFor(
     () => el(viewOf("tree"), '[data-board-phase-block="KANB1"]'),
@@ -119,6 +119,21 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   );
   dispatchPointerClick(el(phase1, '[data-board-phase-summary="KANB1"]'));
   await waitFor(() => el(viewOf("tree"), '[data-board-phase-block="KANB1"]').open === false, "用户收起 KANB1");
+  await sleep(80);
+  const memoryAfterCollapse = sessionStorage.getItem("zcode-board-fold-state");
+  /* 滚动落点观测（二绿临时探针思路照搬）：捕获宿主 scrollIntoView 的目标锚点与参数——
+     交付原来的下钻断言只看高亮锚点，M3 突变（去掉期次选择器分支）因此逃逸。 */
+  const scrollCalls = [];
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function (...args) {
+    scrollCalls.push({
+      card: this.getAttribute ? this.getAttribute("data-board-card") : null,
+      phase: this.getAttribute ? this.getAttribute("data-board-phase-block") : null,
+      epic: this.getAttribute ? this.getAttribute("data-board-epic-block") : null,
+      block: args[0] && args[0].block ? args[0].block : (args[0] || null),
+    });
+    return originalScrollIntoView.apply(this, args);
+  };
   dispatchPointerClick(
     await waitFor(() => el(viewOf("tree"), '[data-board-epic-open="KANB"]'), "KANB 标题区（二次）"),
   );
@@ -139,12 +154,36 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     },
     "下钻展开 KANB1",
   );
+  await sleep(200);
+  const memoryAfterDrill = sessionStorage.getItem("zcode-board-fold-state");
+  const pane = document.querySelector("[data-board-pane]");
+  const paneRect = pane.getBoundingClientRect();
+  const phaseRect = phase1AfterDrill.getBoundingClientRect();
   const drill = {
     dialogClosed: document.querySelector("[data-board-epic-dialog]") === null,
     phaseOpen: phase1AfterDrill.open,
     epicOpen: el(viewOf("tree"), '[data-board-epic-block="KANB"]').open,
     highlightedPhase: attr(phase1AfterDrill, "data-board-layer-highlight"),
     otherHighlighted: [...viewOf("tree").querySelectorAll("[data-board-layer-highlight]")].length,
+    scrollCalls,
+    phaseVisible: phaseRect.bottom > paneRect.top && phaseRect.top < paneRect.bottom,
+    memoryAfterCollapse,
+    memoryAfterDrill,
+  };
+  /* 记忆读回（#89 读回路径）：重挂钩子（卸载+重挂，等价切标签回来）后 KANB1 / KANB 仍展开。 */
+  globalThis.__BOARD_REMOUNT__();
+  await waitFor(
+    () => {
+      const view = viewOf("tree");
+      return view ? view.querySelector('[data-board-phase-block="KANB1"]') : null;
+    },
+    "重挂后 KANB1",
+  );
+  await sleep(120);
+  const viewAfterRemount = viewOf("tree");
+  const afterRemount = {
+    phaseOpen: viewAfterRemount.querySelector('[data-board-phase-block="KANB1"]').open,
+    epicOpen: viewAfterRemount.querySelector('[data-board-epic-block="KANB"]').open,
   };
 
   /* ---- 4. 分区纪律：点 summary（非标题区）仍是折叠；不落弹窗 ---- */
@@ -202,6 +241,7 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
     closedAfterX,
     focusAfterClose,
     drill,
+    afterRemount,
     partition,
     wide,
     narrow,
