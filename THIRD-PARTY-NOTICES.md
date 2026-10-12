@@ -2472,6 +2472,8 @@ The original import revisions of copied components are not recorded in the curre
 
 - React Best Practices skill (MIT): .agents/skills/react-best-practices. License reference: https://github.com/vercel-labs/agent-skills/tree/063bee94c3f4df8453406c830b0a7df0f2860278. Original import revision: not recorded. Review required: Pinned upstream README and skill declare MIT, but a complete original copyright/license notice has not been obtained.
 
+- mattpocock/skills bundled skill pack (MIT): apps/zcode-cli/packages/bundled-skills/skills/ask-matt, apps/zcode-cli/packages/bundled-skills/skills/claude-handoff, apps/zcode-cli/packages/bundled-skills/skills/code-review, apps/zcode-cli/packages/bundled-skills/skills/codebase-design, apps/zcode-cli/packages/bundled-skills/skills/diagnosing-bugs, apps/zcode-cli/packages/bundled-skills/skills/domain-modeling, apps/zcode-cli/packages/bundled-skills/skills/git-guardrails-claude-code, apps/zcode-cli/packages/bundled-skills/skills/grill-me, apps/zcode-cli/packages/bundled-skills/skills/grill-with-docs, apps/zcode-cli/packages/bundled-skills/skills/grilling, apps/zcode-cli/packages/bundled-skills/skills/handoff, apps/zcode-cli/packages/bundled-skills/skills/implement, apps/zcode-cli/packages/bundled-skills/skills/implement-spec, apps/zcode-cli/packages/bundled-skills/skills/improve-codebase-architecture, apps/zcode-cli/packages/bundled-skills/skills/loop-me, apps/zcode-cli/packages/bundled-skills/skills/migrate-to-shoehorn, apps/zcode-cli/packages/bundled-skills/skills/prototype, apps/zcode-cli/packages/bundled-skills/skills/research, apps/zcode-cli/packages/bundled-skills/skills/resolving-merge-conflicts, apps/zcode-cli/packages/bundled-skills/skills/retro, apps/zcode-cli/packages/bundled-skills/skills/scaffold-exercises, apps/zcode-cli/packages/bundled-skills/skills/setup-matt-pocock-skills, apps/zcode-cli/packages/bundled-skills/skills/setup-pre-commit, apps/zcode-cli/packages/bundled-skills/skills/setup-ts-deep-modules, apps/zcode-cli/packages/bundled-skills/skills/tdd, apps/zcode-cli/packages/bundled-skills/skills/teach, apps/zcode-cli/packages/bundled-skills/skills/to-questionnaire, apps/zcode-cli/packages/bundled-skills/skills/to-spec, apps/zcode-cli/packages/bundled-skills/skills/to-tickets, apps/zcode-cli/packages/bundled-skills/skills/triage, apps/zcode-cli/packages/bundled-skills/skills/wait-what, apps/zcode-cli/packages/bundled-skills/skills/wayfinder, apps/zcode-cli/packages/bundled-skills/skills/wizard, apps/zcode-cli/packages/bundled-skills/skills/writing-beats, apps/zcode-cli/packages/bundled-skills/skills/writing-for-agents, apps/zcode-cli/packages/bundled-skills/skills/writing-fragments, apps/zcode-cli/packages/bundled-skills/skills/writing-shape. License reference: https://github.com/mattpocock/skills/blob/2ab958093e83e0ec752e6c1c5932da465bf23e0c/LICENSE. Original import revision: not recorded.
+
 Fig autocomplete source carries the repository's MIT license; the generated registry records npm @withfig/autocomplete@2.692.3 metadata as ISC. The original source MIT notice is retained below.
 
 ## Embedded native and WASM components
@@ -39384,6 +39386,37 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2025 Jesse Vincent
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+### Notice 0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5
+
+- mattpocock/skills bundled skill pack: https://github.com/mattpocock/skills/blob/2ab958093e83e0ec752e6c1c5932da465bf23e0c/LICENSE
+
+
+
+````text
+MIT License
+
+Copyright (c) 2026 Matt Pocock
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
