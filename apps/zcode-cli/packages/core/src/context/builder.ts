@@ -21,6 +21,7 @@ import { buildRequestUserContextSection } from "./sections/request-user-context.
 import { buildCurrentDateSection } from "./sections/current-date.js";
 import { buildMemorySection } from "./sections/memory.js";
 import { buildDesktopContextSection } from "./sections/desktop.js";
+import { buildProductInstructionsSection } from "./sections/product-instructions.js";
 import {
   buildContextManagementSection,
   buildDynamicBehaviorSection,
@@ -119,6 +120,13 @@ export class ContextBuilder {
       sections.push(buildWorkflowActorIdentitySection(workflowActor));
     } else {
       sections.push(buildIdentitySection(activeOutputStyle));
+    }
+
+    // 2b. 产品行为纪律（卡 #212/A11）：资产全文由上游按实验开关解析，缺席/空白 = 零注入。
+    // 它是产品级常量（同 cli_prefix 的性质），custom prompt / 工作流子代理路径同样在场。
+    const productInstructions = this.config.productInstructions?.trim();
+    if (productInstructions) {
+      sections.push(buildProductInstructionsSection(productInstructions));
     }
 
     // 3. Dynamic system context

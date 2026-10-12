@@ -144,6 +144,7 @@ export interface ZCodeProtocolAgentServerContext {
      * host 同步的「ask-matt 开发流程」实验开关（#204/A3）。
      * 缺省 false（fail-closed）：未同步 / 旧 Host 的窗口里，内置包 mattpocock/skills
      * 全库不注册、`/grill` 等三命令零装配；开态由 Host 显式 workspace 级同步。
+     * 开态另含产品 agent 提示面（#212/A11）：Karpathy 四条随同一布尔注入会话系统提示。
      * 生效时机（#205/A4）：面板与注册面均在下次发布/新会话生效（与动态工作流灰度同口径）。
      */
     askMattFlowEnabled: boolean;
