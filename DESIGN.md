@@ -460,7 +460,7 @@ Overlay rules:
 
 ### Settings rows and the ask-matt flow face
 
-The Experiments settings card is admitted under the visual-admission constraint (interview `itw-20261011-9003`): primary copy stays at or above `text-ui-base`, and each row carries one information point.
+The Experiments settings card is admitted under the visual-admission constraint (interview `itw-20261011-9003`): primary copy stays at or above `text-ui-base`, and each row carries one information point (the ask-matt row additionally carries the D11 yield notice).
 
 - The Experiments group renders two switch rows as `SettingsRow`s: the project board row is label-only (`text-ui-base font-medium text-foreground`, `Switch` on the right whose accessible name is the same label), while the ask-matt row carries one helper sentence since #235 — the D11 yield notice (`settings.experiments.askMattFlowToggle.description`, "开启时同名自定义命令让位" / its English counterpart) in the standard description slot at `text-ui-base leading-6 text-foreground-subtle`. Both rows keep the standard `px-4 py-3` row rhythm, and each `Switch` keeps the same accessible name as its row label.
 - When the project board is off and the ask-matt flow is on, the state notice is a separate low-emphasis row below the switches (`border-t border-border px-4 py-3 text-ui-base text-foreground-subtle`, one sentence); it is never helper copy inside the switch row.

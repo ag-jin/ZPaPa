@@ -21,7 +21,7 @@ import zhCN from "../src/i18n/locales/zh-CN.js";
  * 命令面词条边界（本卡评估结论，对齐记录见仓库根 DESIGN.md 的 Settings 段）：三命令的可见
  * 描述来自协议目录数据（CLI `ASK_MATT_FLOW_COMMANDS.description`，与全部内置命令
  * `BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES` 同一约定；CLI/TUI 无词条表），App 不把它
- * 复制成第二真源，因此不设命令描述键；App 侧流程面文案只有下列五键。新增任何流程面键
+ * 复制成第二真源，因此不设命令描述键；App 侧流程面文案只有下列六键。新增任何流程面键
  * （含给开关加副文案）都必须显式进清单——设置面命名空间集合相等会拦住，见用例 2。
  *
  * 期望值的独立真源：两语词条表 + 流程面源码本身（不重算实现里的任何算式）。

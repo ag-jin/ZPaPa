@@ -15,7 +15,6 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ASK_MATT_FLOW_LANDING_OVERRIDES } from "../src/ask-matt-flow-command-whitelist.js";
 import { resolveZCodeBuiltinPromptCommand } from "../src/builtin-prompt-command.js";
 
 /** 展开一个命令（真实 resolver，开态）；缺展开立即断言失败。 */
