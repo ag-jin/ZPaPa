@@ -14,15 +14,15 @@ import {
 import { ASK_MATT_FLOW_PACK_SKILL_NAMES } from "./app/ask-matt-flow-gate.js";
 
 /**
- * 「ask-matt 开发流程」34 命令入口（卡 #226/F1；设计稿 §2.3 + §6 D1/D5/D8）。
+ * 「ask-matt 开发流程」34 命令入口（卡 #226/F1 + #228/F3；设计稿 §2.3 + §6 D1/D5/D8/D9）。
  *
  * 单源派生：命令表由包内快照（bundled-skills/skills/.zcode-skills-snapshot.json，代码副本 =
  * ASK_MATT_FLOW_PACK_SKILL_NAMES）生成——快照技能清单 - 无命令件（D1）= 34 条入口；命令名默认取
- * 技能名，特例（换名三件 D5 / 既有落点注入三件）由 ask-matt-flow-command-whitelist.ts 覆盖；
+ * 技能名，特例（换名三件 D5 / 落点注入 10 件 D8）由 ask-matt-flow-command-whitelist.ts 覆盖；
  * `description` 与 `disableModelInvocation` 取包内 SKILL.md 的上游 frontmatter 原文
  * （ask-matt-flow-skill-metadata.ts，D8 + §1.3 知情项一，v1 只登记不过滤）。
  * 白名单外的不一致由同源守卫四件套断言红（askMattFlowCommandParity.test.ts：快照 ↔ 注册面名单 ↔
- * 命令表 ↔ 白名单三类划分），快照增删技能而命令表未同步必红。
+ * 命令表 ↔ 白名单三类划分，含第④面落点注入件集合与裁决清单严格相等），快照增删技能而命令表未同步必红。
  *
  * 与内置 `/workflow` 同款：命令正文随 CLI 编译，不依赖可卸载插件；正文复用 contracts 的
  * custom command 展开规则（替换 `$ARGUMENTS` 并补充 `skills:` 前言）。前言把目标技能设为
@@ -35,8 +35,10 @@ import { ASK_MATT_FLOW_PACK_SKILL_NAMES } from "./app/ask-matt-flow-gate.js";
  * 命令名不进共享保留字表：实验默认关，关闭时同名用户自定义命令照常可用（开态由目录侧压过，
  * 见 zcode-protocol/slash-commands.ts）。
  *
- * 通用边界段（D8）：34 件正文一律追加同一段看板边界（项目根解析/扫描面纪律/禁 `.scratch/`/
- * 产品零板写者/实现收尾走看板管线），与 grill/to-spec/to-tickets 既有边界同款英文句式。
+ * 正文两段追加（D8/D9）：34 件一律追加同一段看板边界（项目根解析/扫描面纪律/禁 `.scratch/`/
+ * 产品零板写者/实现收尾走看板管线，与 grill/to-spec/to-tickets 既有边界同款英文句式）；落点注入
+ * 件另带本件定制的落点约定（D8 十件），两条实现入口（`/matt-implement` 与 `/implement-spec`）
+ * 另带 D9 交接边界段（实现完成 ≠ 合并完成 / 产物交看板卡收口 / 绿数以看板为准）。
  */
 
 export interface AskMattFlowCommandDefinition {
@@ -82,7 +84,7 @@ export interface BuildAskMattFlowCommandsInput {
   disableModelInvocation: Readonly<Record<string, boolean>>;
   /** 换名件（命令名 ≠ 技能名，D5）。 */
   renamedCommands?: readonly AskMattFlowRenamedCommand[];
-  /** 落点注入件（既有命令正文逐件保留）。 */
+  /** 落点注入件（D8 十件：既有三件原样保留 + #228/F3 新增七件逐件定制落点约定）。 */
   landingOverrides?: readonly AskMattFlowLandingOverride[];
   /** 无命令件（D1；仍随包与注册，只是不带斜杠入口）。 */
   noCommandSkillNames?: readonly string[];
@@ -96,7 +98,9 @@ export function buildAskMattFlowCommands(
   input: BuildAskMattFlowCommandsInput,
 ): AskMattFlowCommandDefinition[] {
   const noCommand = new Set(input.noCommandSkillNames ?? []);
-  const renamed = new Map((input.renamedCommands ?? []).map((entry) => [entry.skill, entry.name]));
+  const renamed = new Map(
+    (input.renamedCommands ?? []).map((entry) => [entry.skill, entry] as const),
+  );
   const overrides = new Map((input.landingOverrides ?? []).map((entry) => [entry.skill, entry]));
   const known = new Set(input.skillNames);
 
@@ -117,9 +121,11 @@ export function buildAskMattFlowCommands(
       throw new Error(`ask-matt 命令表缺少面向登记：${skill}（快照新增技能必须同步补录标志）`);
     }
     const override = overrides.get(skill);
-    const name = override?.name ?? renamed.get(skill) ?? skill;
+    const renamedEntry = renamed.get(skill);
+    const name = override?.name ?? renamedEntry?.name ?? skill;
     const baseBody =
       override?.body ??
+      renamedEntry?.body ??
       [
         `Use the \`${skill}\` skill to carry out this request (ask-matt flow).`,
         "",
@@ -139,7 +145,7 @@ export function buildAskMattFlowCommands(
   });
 }
 
-/** 34 条命令：包内快照（37 件）- 无命令三件（D1），换名三件（D5）+ 既有注入三件。 */
+/** 34 条命令：包内快照（37 件）- 无命令三件（D1），换名三件（D5）+ 落点注入 10 件（D8）。 */
 export const ASK_MATT_FLOW_COMMANDS: readonly AskMattFlowCommandDefinition[] =
   buildAskMattFlowCommands({
     descriptions: ASK_MATT_FLOW_SKILL_DESCRIPTIONS,

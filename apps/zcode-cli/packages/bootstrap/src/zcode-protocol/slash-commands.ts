@@ -21,8 +21,9 @@ export interface ListProtocolSlashCommandsOptions extends ListZCodeCustomCommand
    */
   dynamicWorkflowEnabled?: boolean;
   /**
-   * 「ask-matt 开发流程」开关（#204/A3）。只有显式 true 才把 `/grill`、`/to-spec`、`/to-tickets`
-   * 追加进目录；未传入 / false = 零装配（实验默认关）。协议服务端从 appRuntimePreferences 传入。
+   * 「ask-matt 开发流程」开关（#204/A3；#226/F1 起 34 条流程命令）。只有显式 true 才把 34 条
+   * 命令（legacy 三件 `/grill`、`/to-spec`、`/to-tickets` 在最前）追加进目录；未传入 / false =
+   * 零装配（实验默认关）。协议服务端从 appRuntimePreferences 传入。
    */
   askMattFlowEnabled?: boolean;
 }
@@ -37,7 +38,7 @@ export async function listProtocolSlashCommands(
     (command) =>
       options.dynamicWorkflowEnabled !== false || command.name !== BUILTIN_WORKFLOW_COMMAND_NAME,
   );
-  // ask-matt 三个流程命令追加在内置段末尾（实验入口，不重排已交付目录）；
+  // ask-matt 34 条流程命令追加在内置段末尾（实验入口，不重排已交付目录）；
   // 命令名不进共享保留字表，所以只在开态压过同名自定义命令（关态用户命令照常可见）。
   const askMattFlowCommands = listAskMattFlowSlashCommands(options.askMattFlowEnabled);
   const askMattFlowEnabled = options.askMattFlowEnabled === true;

@@ -58,12 +58,33 @@ function whitelistNameOverrides(): Record<string, string> {
 function parityInput(snapshotSkillNames: readonly string[], table = ASK_MATT_FLOW_COMMANDS) {
   return {
     commandTable: table.map(({ name, skill }) => ({ name, skill })),
+    expectedLandingOverrideSkillNames: [...VERDICT_LANDING_OVERRIDE_SKILLS],
+    landingOverrideSkillNames: ASK_MATT_FLOW_LANDING_OVERRIDES.map((entry) => entry.skill),
     nameOverrides: whitelistNameOverrides(),
     noCommandSkillNames: [...ASK_MATT_FLOW_NO_COMMAND_SKILL_NAMES],
     packSkillNames: [...ASK_MATT_FLOW_PACK_SKILL_NAMES],
     snapshotSkillNames: [...snapshotSkillNames],
   };
 }
+
+/**
+ * 落点注入件裁决清单（独立真源；#228/F3 与 F1 三绿 P1 承接）。
+ * 卡文「既有 grill/to-spec/to-tickets + 新增 7 件」= 10 件：既有三件由 A5/A7/A8 落地断言各自钉死，
+ * 新增 7 件按设计稿 §2.3 强覆盖名单（grilling/to-spec/to-tickets 为既有；grill-with-docs 因与
+ * 卡文算术（3+7=10）冲突停在卡外，见本文件所在卡的撞洞登记）。
+ */
+const VERDICT_LANDING_OVERRIDE_SKILLS: readonly string[] = [
+  "grilling",
+  "to-spec",
+  "to-tickets",
+  "triage",
+  "wayfinder",
+  "prototype",
+  "research",
+  "implement-spec",
+  "diagnosing-bugs",
+  "improve-codebase-architecture",
+];
 
 /** 独立解析器：读 SKILL.md frontmatter 的 description 单行标量（支持引号与 \" 反转义）。 */
 function readSkillFrontmatterDescription(skillName: string): string {
@@ -275,5 +296,59 @@ test("突变验证：命令表/无命令名单/换名映射与快照不一致时
     findAskMattFlowCommandTableDrift({ ...input, nameOverrides: overrides }).length > 0,
     true,
     "换名映射漏配必须红",
+  );
+});
+
+// F1 三绿 P1 承接（#226 review:69）：第④面「落点注入件」集合成员资格必须进检查器输入——
+// 原先只咬「删/改」（摘掉同名件的 override 会红），不咬「增」（新增非预期同名件不红）。
+// #228/F3 把白名单扩到 10 件，这里把「期望落点注入技能集合」并入 parity 输入：实际集合
+// （白名单常量）与裁决清单（本文件独立声明的 VERDICT_LANDING_OVERRIDE_SKILLS）严格相等，
+// 任一方向漂移必红。
+test("落点注入件枚举（P1）：白名单全集 == 裁决清单 10 件，非预期同名 override 必红", () => {
+  const baseline = readSnapshotSkillNames();
+  const input = parityInput(baseline);
+  assert.deepEqual(
+    findAskMattFlowCommandTableDrift(input),
+    [],
+    "对照组：未变异输入必须零漂移（否则突变实验无意义）",
+  );
+
+  // 突变①（P1 点名缺口）：非预期同名 override 被塞进白名单——如给 retro 补一段落点正文。
+  // 命令表面对它无感（名字 = 技能名），只有集合严格相等能咬住。
+  assert.ok(
+    findAskMattFlowCommandTableDrift({
+      ...input,
+      landingOverrideSkillNames: [...input.landingOverrideSkillNames, "retro"],
+    }).length > 0,
+    "新增非预期同名落点注入件必须红（P1 缺口：命令表面对同名 override 不可见）",
+  );
+
+  // 突变②：白名单漏一件（裁决清单成员丢了正文）——作者忘了补，题面静默退化。
+  assert.ok(
+    findAskMattFlowCommandTableDrift({
+      ...input,
+      landingOverrideSkillNames: input.landingOverrideSkillNames.filter(
+        (skill) => skill !== "triage",
+      ),
+    }).length > 0,
+    "白名单漏配裁决清单成员必须红",
+  );
+
+  // 突变③：裁决清单自身多一件（期望面漂移）——清单即契约，两向都要咬。
+  assert.ok(
+    findAskMattFlowCommandTableDrift({
+      ...input,
+      expectedLandingOverrideSkillNames: [...VERDICT_LANDING_OVERRIDE_SKILLS, "retro"],
+    }).length > 0,
+    "裁决清单多出白名单外成员必须红（两向严格相等）",
+  );
+
+  // 突变④：落点注入件引用快照外技能（拼错技能名）。
+  assert.ok(
+    findAskMattFlowCommandTableDrift({
+      ...input,
+      landingOverrideSkillNames: [...input.landingOverrideSkillNames, "brand-new-skill"],
+    }).length > 0,
+    "落点注入白名单引用快照外技能必须红",
   );
 });

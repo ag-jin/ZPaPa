@@ -50,7 +50,7 @@ export function resolveZCodeBuiltinPromptCommand(
     return expandBuiltinWorkflowCommandPrompt(invocation.args);
   }
 
-  // ask-matt 三命令只在实验开关显式打开时展开；关态不占用命令名（自定义命令照常解析）。
+  // ask-matt 34 条流程命令只在实验开关显式打开时展开；关态不占用命令名（自定义命令照常解析）。
   if (options.askMattFlowEnabled === true) {
     const askMattPrompt = resolveAskMattFlowPromptCommand(invocation.name, invocation.args);
     if (askMattPrompt !== undefined) {

@@ -1,14 +1,16 @@
 import { isReservedZCodeSlashCommandName } from "./slash-command-surface.js";
 
 /**
- * 「ask-matt 34 命令装配」四件套**同源漂移检查器**（卡 #226/F1；设计稿 §2.3）。
+ * 「ask-matt 34 命令装配」四件套**同源漂移检查器**（卡 #226/F1 + #228/F3；设计稿 §2.3）。
  *
  * 单一技能清单真源 = 包内快照（skills/.zcode-skills-snapshot.json）。四个消费端：
  *   ① 快照清单；② 注册面名单（ask-matt-flow-gate.ts 的 ASK_MATT_FLOW_PACK_SKILL_NAMES，开态全注册）；
  *   ③ 命令表（快照派生：34 条 = 37 件 - 无命令件）；④ 三类白名单划分（换名/落点注入/无命令）。
  * 任一端的漂移（上游升级漏改、手改命令表、白名单漏配/多配、命令名进保留字表）都在这里点名；
+ * #228/F3 起第④面补齐落点注入件集合枚举（F1 三绿 P1 承接）：同名 override 在命令表投影里不可见，
+ * 成员资格由「实际集合 ↔ 裁决清单」严格相等咬住，新增非预期同名 override 必红。
  * 返回空数组 = 四件套一致。构建级用例（askMattFlowCommandParity.test.ts）以真实快照 + 突变输入
- * 双向实证（未变异零漂移、快照增删改名必红）。
+ * 双向实证（未变异零漂移、快照增删改名必红、非预期落点注入件必红）。
  *
  * 纯函数：不接受文件系统与运行期状态，快照内容由调用方读出——便于突变验证在内存里构造
  * 「快照已变、其余未变」的场景。
@@ -31,6 +33,14 @@ export interface AskMattFlowCommandParityInput {
   noCommandSkillNames: readonly string[];
   /** 白名单换名/入口名映射（技能 → 命令名；命令名 ≠ 技能名的全部特例）。 */
   nameOverrides: Readonly<Record<string, string>>;
+  /**
+   * 落点注入件技能集合（实际；#228/F3 起第④面全集枚举）——携带定制正文的白名单条目。
+   * 同名 override（命令名 = 技能名）在命令表投影里不可见，只能靠本输入钉死成员资格
+   * （F1 三绿 P1 点名的缺口：只咬「删/改」不咬「增」）。
+   */
+  landingOverrideSkillNames: readonly string[];
+  /** 落点注入件期望集合（裁决清单；与实际上报集合严格相等，漏配/多配两向必红）。 */
+  expectedLandingOverrideSkillNames: readonly string[];
 }
 
 export function findAskMattFlowCommandTableDrift(input: AskMattFlowCommandParityInput): string[] {
@@ -99,6 +109,35 @@ export function findAskMattFlowCommandTableDrift(input: AskMattFlowCommandParity
   for (const command of input.commandTable) {
     if (isReservedZCodeSlashCommandName(command.name)) {
       problems.push(`命令名进了共享保留字表：/${command.name}`);
+    }
+  }
+
+  // 落点注入件集合（#228/F3 第④面全集枚举；F1 三绿 P1 承接）：实际白名单成员与裁决清单
+  // 严格相等——漏配（裁决成员丢了正文）与多配（非预期同名 override）两向都点名。
+  const actualLanding = input.landingOverrideSkillNames;
+  const expectedLanding = input.expectedLandingOverrideSkillNames;
+  for (const [label, skills] of [
+    ["落点注入白名单", actualLanding],
+    ["落点注入裁决清单", expectedLanding],
+  ] as const) {
+    const seen = new Set<string>();
+    for (const skill of skills) {
+      if (seen.has(skill)) problems.push(`${label}重复技能：${skill}`);
+      seen.add(skill);
+      if (!snapshot.has(skill)) problems.push(`${label}引用了快照外技能：${skill}`);
+      if (!commandSkills.has(skill)) problems.push(`${label}技能不在命令表：${skill}`);
+    }
+  }
+  const actualLandingSet = new Set(actualLanding);
+  const expectedLandingSet = new Set(expectedLanding);
+  for (const skill of actualLandingSet) {
+    if (!expectedLandingSet.has(skill)) {
+      problems.push(`落点注入白名单多配技能（不在裁决清单）：${skill}`);
+    }
+  }
+  for (const skill of expectedLandingSet) {
+    if (!actualLandingSet.has(skill)) {
+      problems.push(`落点注入白名单漏配技能（裁决清单成员缺正文）：${skill}`);
     }
   }
 

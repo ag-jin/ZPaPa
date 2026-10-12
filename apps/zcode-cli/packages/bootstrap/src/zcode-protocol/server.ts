@@ -255,7 +255,7 @@ export class ZCodeProtocolAgentServer {
         // 才开启。
         dynamicWorkflowEnabled: false,
         // ask-matt 实验开关同为 fail-closed：Host 必须显式
-        // workspace/updateAskMattFlowPreferences 才注册内置包技能与三个流程命令。
+        // workspace/updateAskMattFlowPreferences 才注册内置包技能（37 件）与 34 条流程命令。
         askMattFlowEnabled: false,
       },
       notify: (notification) => this.messageSink?.(notification),
