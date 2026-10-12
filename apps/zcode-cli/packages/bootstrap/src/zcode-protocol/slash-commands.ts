@@ -40,6 +40,8 @@ export async function listProtocolSlashCommands(
   );
   // ask-matt 34 条流程命令追加在内置段末尾（实验入口，不重排已交付目录）；
   // 命令名不进共享保留字表，所以只在开态压过同名自定义命令（关态用户命令照常可见）。
+  // #235/F10 D11：压过不再是静默行为——开态下被压的自定义命令名单进既有诊断通道（logger，
+  // 单一装配点的 warn；面板灰行随 U1 二期，本处零新 UI 机制）。
   const askMattFlowCommands = listAskMattFlowSlashCommands(options.askMattFlowEnabled);
   const askMattFlowEnabled = options.askMattFlowEnabled === true;
   let customCommands: Awaited<ReturnType<typeof listZCodeCustomCommands>>["commands"] = [];
@@ -50,13 +52,28 @@ export async function listProtocolSlashCommands(
     // 自定义命令发现失败不应阻断 session snapshot；保留可执行的内置协议命令。
     customCommands = [];
   }
+  // 静态过滤（非交互专用/保留字）之后的自定义候选：压过判定的作用面。
+  const customCandidates = customCommands
+    .filter((command) => !command.disableNonInteractive)
+    .filter((command) => !isReservedZCodeSlashCommandName(command.name));
+  // D11 诊断点名（#235）：名单 = 本次装配真正被压过的件（静态过滤后仍与 34 命令同名）；
+  // message 内联名单（console 流只打 message），context.commands 供日志文件结构化检索。
+  if (askMattFlowEnabled) {
+    const shadowedCommandNames = customCandidates
+      .filter((command) => isAskMattFlowCommandName(command.name))
+      .map((command) => command.name);
+    if (shadowedCommandNames.length > 0) {
+      options.logger?.warn(
+        `Ask-matt flow overrides same-name custom commands: ${shadowedCommandNames.join(", ")}`,
+        { commands: shadowedCommandNames },
+      );
+    }
+  }
 
   return [
     ...builtins,
     ...askMattFlowCommands,
-    ...customCommands
-      .filter((command) => !command.disableNonInteractive)
-      .filter((command) => !isReservedZCodeSlashCommandName(command.name))
+    ...customCandidates
       .filter((command) => !(askMattFlowEnabled && isAskMattFlowCommandName(command.name)))
       .map((command) => ({
         description: command.description,

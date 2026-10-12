@@ -39,11 +39,13 @@ const SLASH_PANEL_FACE_SOURCE = readFileSync(resolve(SRC_DIR, SLASH_PANEL_FACE_F
 
 /**
  * 流程面键清单 —— 卡文「开关/命令/状态说明词条 zh/en 完备」的键名真源。
- * 前两键为 ask-matt 专属（#202/A1 落地，用户裁定 label-only 无副文案）；
+ * 前两键为 ask-matt 专属（#202/A1 落地，label-only 无副文案；#235/F10 D11 裁决在开关行补一句
+ * 「开启时同名自定义命令让位」，description 槽位自本卡起启用）；
  * 后三键为三命令呈现所依赖的 `/` 面板命令段 chrome（段标题 + 两种空态）。
  */
 const ASK_MATT_FLOW_FACE_MESSAGE_IDS = [
   "settings.experiments.askMattFlowToggle.label",
+  "settings.experiments.askMattFlowToggle.description",
   "settings.experiments.askMattFlowBoardClosedNotice",
   "chat.slash.commands.title",
   "chat.slash.emptyUnavailable",
@@ -70,7 +72,7 @@ const LOCALES = [
   [enUS, "en-US"],
 ] as const;
 
-test("键清单：流程面五键两语逐键齐全、非空非裸 key、占位符一致、en 无中文残留", () => {
+test("键清单：流程面六键两语逐键齐全、非空非裸 key、占位符一致、en 无中文残留", () => {
   for (const key of ASK_MATT_FLOW_FACE_MESSAGE_IDS) {
     for (const [locale, name] of LOCALES) {
       const message = locale[key];
@@ -88,11 +90,17 @@ test("键清单：流程面五键两语逐键齐全、非空非裸 key、占位�
   assert.equal(zhCN["settings.experiments.askMattFlowToggle.label"], "ask-matt 开发流程");
   // en 开关名必须保留产品名 ask-matt（大小写不限）。
   assert.match(enUS["settings.experiments.askMattFlowToggle.label"] ?? "", /ask-matt/i);
+  // D11（#235）开关行让位说明是设计稿裁决原文：改文案必须显式改本守卫。
+  assert.equal(
+    zhCN["settings.experiments.askMattFlowToggle.description"],
+    "开启时同名自定义命令让位",
+  );
 });
 
 test("键清单与面源码对账：设置面命名空间集合相等（多键=死键/副文案回归，少键=清单漂移）", () => {
   const expectedSettingsKeys = [
     "settings.experiments.askMattFlowBoardClosedNotice",
+    "settings.experiments.askMattFlowToggle.description",
     "settings.experiments.askMattFlowToggle.label",
   ];
   assert.deepEqual(

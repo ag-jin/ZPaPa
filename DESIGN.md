@@ -462,11 +462,11 @@ Overlay rules:
 
 The Experiments settings card is admitted under the visual-admission constraint (interview `itw-20261011-9003`): primary copy stays at or above `text-ui-base`, and each row carries one information point.
 
-- The Experiments group renders the ask-matt switch as a label-only `SettingsRow`: label at `text-ui-base font-medium text-foreground`, `Switch` on the right whose accessible name is the same label, standard `px-4 py-3` row rhythm, and no description slot.
+- The Experiments group renders two switch rows as `SettingsRow`s: the project board row is label-only (`text-ui-base font-medium text-foreground`, `Switch` on the right whose accessible name is the same label), while the ask-matt row carries one helper sentence since #235 — the D11 yield notice (`settings.experiments.askMattFlowToggle.description`, "开启时同名自定义命令让位" / its English counterpart) in the standard description slot at `text-ui-base leading-6 text-foreground-subtle`. Both rows keep the standard `px-4 py-3` row rhythm, and each `Switch` keeps the same accessible name as its row label.
 - When the project board is off and the ask-matt flow is on, the state notice is a separate low-emphasis row below the switches (`border-t border-border px-4 py-3 text-ui-base text-foreground-subtle`, one sentence); it is never helper copy inside the switch row.
 - The `/grill`, `/to-spec`, and `/to-tickets` rows reuse the shared `/` suggestion-row treatment unchanged: command name `text-ui-base font-medium text-foreground`, description `text-ui-base text-foreground-subtlest`, truncating. The face adds no new type tier and no new density variant; command descriptions are protocol catalog data shared with every built-in command, not localized panel chrome.
 
-Fourth-green review of this face checks these points in both locales: the type floor (no row copy below `text-ui-base`), one information point per row (label-only switches, no helper copy), and command rows that stay on the shared suggestion-row treatment.
+Fourth-green review of this face checks these points in both locales: the type floor (no row copy below `text-ui-base`), one information point per row (the project board switch stays label-only with no helper copy; the ask-matt row shows its D11 yield notice in the description slot with the accessible name unchanged), and command rows that stay on the shared suggestion-row treatment.
 
 ## Elevation and Depth
 

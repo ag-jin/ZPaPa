@@ -206,6 +206,10 @@ export interface ExperimentsSettingsChainResult {
     switchAriaChecked: string | null;
     boardSwitchAriaLabel: string | null;
     flowSwitchAriaLabel: string | null;
+    /** 看板开关所在 SettingsRow 的文本（label/description 槽位）：保持 label-only 的判据面。 */
+    boardRowText: string;
+    /** ask-matt 开关所在 SettingsRow 的文本：#235/F10 D11 让位说明必须挂在本行。 */
+    flowRowText: string;
     rowText: string;
     noticePresent: boolean;
     boardEntry: boolean;
@@ -337,12 +341,20 @@ ${BOARD_BROWSER_DRIVER_PRELUDE}
   await waitFor(() => section() && switchEl(), "实验功能分区渲染");
   await waitFor(() => switchEl() && !switchEl().disabled, "开关可交互（设置快照已加载）");
   const row = section();
+  // 单行文本（#235/F10 D11）：开关 → SettingsRow 内层 grid（label+description 的槽位）
+  // 的最近祖先，用于分辨「说明挂在哪一行」——整段 rowText 会把两行串在一起。
+  const rowGridText = (sw) => {
+    const host = sw && sw.closest("div.grid");
+    return host ? (host.textContent || "").trim() : "";
+  };
   const afterNav = {
     switchPresent: !!switchEl(),
     switchCount: switches().length,
     switchAriaChecked: switchEl().getAttribute("aria-checked"),
     boardSwitchAriaLabel: switches()[0] ? switches()[0].getAttribute("aria-label") : null,
     flowSwitchAriaLabel: switches()[1] ? switches()[1].getAttribute("aria-label") : null,
+    boardRowText: rowGridText(switches()[0]),
+    flowRowText: rowGridText(switches()[1]),
     rowText: (row.textContent || "").trim(),
     noticePresent: !!noticeEl(),
     boardEntry: !!boardEntry(),

@@ -248,6 +248,17 @@ async function main(): Promise<void> {
     result.afterNav.rowText.includes("ask-matt 开发流程"),
     `第二行文案应是「ask-matt 开发流程」：${result.afterNav.rowText}`,
   );
+  // #235/F10 D11：让位说明（词条原文）必须显示在 ask-matt 开关行上，看板行保持 label-only。
+  const askMattYieldNotice = zhCN["settings.experiments.askMattFlowToggle.description"] ?? "";
+  assert.ok(askMattYieldNotice.length > 0, "D11 让位说明 zh 词条必须存在（守卫失败则本断言先红）");
+  assert.ok(
+    result.afterNav.flowRowText.includes(askMattYieldNotice),
+    `ask-matt 开关行必须显示 D11 让位说明（词条原文）：${result.afterNav.flowRowText}`,
+  );
+  assert.ok(
+    !result.afterNav.boardRowText.includes(askMattYieldNotice),
+    `让位说明只挂 ask-matt 行（看板行维持 label-only）：${result.afterNav.boardRowText}`,
+  );
   assert.equal(result.afterNav.noticePresent, false, "默认全关（关关）不得显示乘积态说明行");
   assert.equal(result.afterNav.boardEntry, false, "仅打开分区不得打开看板入口");
 
