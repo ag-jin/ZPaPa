@@ -11,8 +11,10 @@ import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-type
  *   - 内置命令展开（resolveZCodeBuiltinPromptCommand 的 askMattFlowEnabled）。
  *
  * 与 dynamic-workflow-policy.ts / model-io-preferences.ts 同构：只影响之后创建/恢复的
- * record（技能注册在 runtime 构造期固定，已活跃会话不回收注册面），目录与展开读进程缓存，
- * 下一次 snapshot/workspace 发布即生效。旧 CLI 不认识该方法 → method-not-found，Host 降级忽略。
+ * record（技能注册在 runtime 构造期固定，已活跃会话不回收注册面）。生效时机（#205/A4 按
+ * review-204 F3 加宽，与 dynamic-workflow-policy 既有灰度注释同口径）：**面板与注册面
+ * 均在下次发布/新会话生效**——已打开草稿的 `/` 目录与 workspace presentation 依赖下一次
+ * snapshot/workspace 发布，展开读进程缓存。旧 CLI 不认识该方法 → method-not-found，Host 降级忽略。
  */
 export async function updateAskMattFlowPreferences(
   context: ZCodeProtocolAgentServerContext,

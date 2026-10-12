@@ -128,3 +128,19 @@ test("装配守卫：useSettingService.update 的即时同步路径必须经单�
     "ask-matt 开关翻转必须触发即时同步（否则只能等 Root 效应，且会被后续两字段同步覆盖）",
   );
 });
+
+const ROOT_SOURCE = fileURLToPath(new URL("../src/Root.tsx", import.meta.url));
+
+test("hook 级即时同步（#205/A4）：Root 同步效应把 ask-matt 列为触发条件并双通道下发", () => {
+  const source = readFileSync(ROOT_SOURCE, "utf8");
+  // 触发条件：字段必须在同步效应的依赖数组里（否则翻转后 Root 不重跑，只能等下一次快照/重启）。
+  assert.match(
+    source,
+    /appSettings\?\.experimentalAskMattFlowEnabled,\s*\n\s*appSettings\?\.modelIoFullRetentionEnabled,/,
+    "Root 同步效应的依赖数组必须含 appSettings?.experimentalAskMattFlowEnabled",
+  );
+  // 出口：载荷单点 + Agent/Bot 两条同步（一条都不漏）。
+  assert.match(source, /buildAppRuntimePreferences\(appSettings\)/);
+  assert.match(source, /services\.zcodeAgentService\.syncAppRuntimePreferences\(preferences\)/);
+  assert.match(source, /services\.botsService\.syncAppRuntimePreferences\(preferences\)/);
+});

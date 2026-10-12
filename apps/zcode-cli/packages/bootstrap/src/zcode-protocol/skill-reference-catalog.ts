@@ -27,7 +27,9 @@ export async function getSkillReferenceCatalog(
   // 旧 UI cache 只在 workspace 首次挂载时扫描，用户从文件系统手动新增
   // Skill 后，新建对话仍停在旧快照。草稿请求在 Agent 侧复用 CLI 正式发现配置，
   // 每次新打开引用面板都读取当前 workspace catalog。
+  // ask-matt 门（#205/A4）：本面与 create-app 会话注册面同判据单点——进程缓存未同步 = 关（fail-closed）。
   const outcome = await listZCodeSkills({
+    askMattFlowEnabled: context.appRuntimePreferences.askMattFlowEnabled,
     env: context.deps.env,
     logger: context.logger,
     workingDirectory: params.workspace.workspacePath,
