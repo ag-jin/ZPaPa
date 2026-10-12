@@ -799,6 +799,46 @@ export interface SharedContextImportTransition {
   sourceId?: string;
 }
 
+/**
+ * 孤儿收敛 entry 的 session_entry 类型（child 的「不在运行但无 outcome」补洞事实）。
+ * 唯一写方是 bootstrap 的 `subagent-orphan-reconcile`（接管会话时）；解析函数放在这里是为了让
+ * 读面（bootstrap）与 TaskOutput 回退（core）用**同一个解释器**——各写一份就是第二把尺
+ * （spec 2026-10-08-subagent-orphan-reconcile §1.5/§1.8）。
+ */
+export const SESSION_ENTRY_SUBAGENT_OUTCOME = "subagent_outcome" as const;
+
+export interface SubagentOutcomeEntryFact {
+  status: "lost";
+  /** `entry.data.reconciledAt` 的毫秒；读不到时省略（排序退回既有时间链）。 */
+  reconciledAtMs?: number;
+}
+
+/**
+ * 收敛 entry 的事实解析（唯一解释器）。
+ *
+ * 只认 `status: "lost"`——本机制唯一写出的终态；其它形状（旧版、手改、未来扩展）一律当作
+ * 不可用的补洞事实（返回 undefined），读面不因未知 entry 变形。
+ */
+export function subagentOutcomeEntryFact(
+  entries: readonly SessionEntryInfo[] | undefined,
+): SubagentOutcomeEntryFact | undefined {
+  for (const entry of entries ?? []) {
+    const data = entry.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) continue;
+    const record = data as Record<string, unknown>;
+    const status = typeof record.status === "string" ? record.status.trim() : "";
+    if (status !== "lost") continue;
+    const reconciledAt =
+      typeof record.reconciledAt === "string" ? record.reconciledAt.trim() : "";
+    const reconciledAtMs = reconciledAt ? Date.parse(reconciledAt) : Number.NaN;
+    return {
+      status: "lost",
+      ...(Number.isFinite(reconciledAtMs) ? { reconciledAtMs } : {}),
+    };
+  }
+  return undefined;
+}
+
 export const SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION =
   "target_completion_verification" as const;
 export const SESSION_ENTRY_BASH_SHELL_SELECTION = "runtime/bash_shell_selection" as const;

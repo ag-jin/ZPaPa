@@ -288,8 +288,13 @@ export type WorkflowNotificationMeta =
 
 /** 独立后台结果轮的展示元信息；批量轮可复用代表任务身份并合成 title，不从通知文本反向解析。 */
 export interface BackgroundResultOriginMeta {
-  /** `workflow` 是 dynamic-workflow run（workId ≡ runId），复用整条后台通知管线。 */
-  backgroundSource: "bash" | "subagent" | "workflow";
+  /**
+   * `workflow` 是 dynamic-workflow run（workId ≡ runId），复用整条后台通知管线。
+   * `subagent_lost` 是重启收敛的「后台 agent 已丢失」唤醒（spec 2026-10-08-subagent-orphan-reconcile
+   * §1.4b）：与 `subagent`（结果到达）必须分叉——UI 轮标题白名单与遥测
+   * `backgroundSubagentResultConsumed` 都按 `"subagent"` 判「结果已交付」，蹭用会把丢失渲染成结果到达。
+   */
+  backgroundSource: "bash" | "subagent" | "workflow" | "subagent_lost";
   workId: string;
   title: string;
   /** 只在 backgroundSource === "workflow" 的单条通知轮上在场；manifest 渲染的唯一数据源。 */

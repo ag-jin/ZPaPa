@@ -65,6 +65,11 @@ import {
   type SessionSubagentInventory,
   type SessionSubagentInventoryReadContext,
 } from "./server-operations.js";
+import {
+  deliverLostWakes,
+  type SubagentLostWakeSession,
+  type SubagentOrphanRuntimeEvidence,
+} from "./subagent-lost-wake.js";
 import { SESSION_ENTRY_SUBAGENT_OUTCOME } from "./subagent-session-query.js";
 
 /**
@@ -114,6 +119,11 @@ export interface SubagentOrphanCandidateFacts {
   liveInProcess: boolean;
   /** J5：child 最后持久活动时刻；读面没给出时不给值（放弃判定，不误杀）。 */
   lastActivityAt?: number;
+  /** 展示/唤醒用（同一份权威清单带出）：agentId、标题、子代理类型、父 tool call id。 */
+  agentId?: string;
+  title?: string;
+  subagentType?: string;
+  toolCallId?: string;
 }
 
 export interface SubagentOrphanSelection {
@@ -204,16 +214,31 @@ export interface SubagentOrphanReconcileInput {
   now?: number;
   /** 测试注入宽容期；缺省 {@link SUBAGENT_ORPHAN_GRACE_MS}。 */
   graceMs?: number;
+  /**
+   * 旧 runtime 进程证据（W2）。生产由激活路径按 agents 根目录构造；缺席 ⇒ 不合成模型可见事实
+   * （只保留显示层收敛）。
+   */
+  evidence?: SubagentOrphanRuntimeEvidence;
 }
 
 export interface SubagentOrphanReconcileResult {
   reconciled: number;
   skipped: SubagentOrphanSkipEntry[];
+  /** 本次新投递（账本 admission 已落、命令已入队）的 childSessionId。 */
+  woke: string[];
+  /** 已交付（账本 promoted）而跳过的 childSessionId。 */
+  wakeAlreadyDelivered: string[];
+  /** 未唤醒的候选与原因（W2 证据缺失 / 宿主存活 / runtime 不在场，全部只降级）。 */
+  wakeSkipped: SubagentLostWakeSession[];
 }
 
 /**
  * 接管会话时收敛孤儿（本机制的对外接口）。见文件头：判据 J1-J5、三条边界、幂等来源。
  * 读/写失败都只记 warn 并跳过（N9），返回结果供调用方与单测断言。
+ *
+ * 2026-10-12 裁决 1：写完 child entry 之后，对候选集（本次新收敛 ∪ 读面已由 entry 决定终态的行）
+ * 走 §1.4b 的唤醒判据（W1 终态取自 entry / W2 pid 硬证据 / W3 由 runtime 侧查账本标记），
+ * 命中的交给父 runtime 的窄方法投递；本函数只负责证据与候选，投递与幂等由 core 侧收口。
  */
 export async function reconcileSubagentOrphansOnActivation(
   input: SubagentOrphanReconcileInput,
@@ -222,12 +247,19 @@ export async function reconcileSubagentOrphansOnActivation(
   const logger = context.logger;
   const now = input.now ?? Date.now();
   const skipped: SubagentOrphanSkipEntry[] = [];
+  const emptyResult = {
+    reconciled: 0,
+    skipped,
+    woke: [],
+    wakeAlreadyDelivered: [],
+    wakeSkipped: [],
+  } satisfies SubagentOrphanReconcileResult;
   const store: SessionStorePort | undefined = context.deps.sessionStore;
   // 绑到 store 上再调（adapter 的实现依赖 this）；取不到写入口就直接退场——没有持久落点
   // （旧宿主 / 只读回放）就没有幂等闭环，不收敛也不算失败。
   const persistOutcomeEntry = store?.saveSessionEntry?.bind(store);
   if (!persistOutcomeEntry) {
-    return { reconciled: 0, skipped };
+    return emptyResult;
   }
 
   let inventory: SessionSubagentInventory;
@@ -246,7 +278,7 @@ export async function reconcileSubagentOrphansOnActivation(
       reason: "inventory_read_failed",
       sessionId,
     });
-    return { reconciled: 0, skipped };
+    return emptyResult;
   }
 
   const backgroundChildSessionIds = new Set(inventory.backgroundChildSessionIds);
@@ -257,6 +289,10 @@ export async function reconcileSubagentOrphansOnActivation(
     // 所以这一项恒 false；判据的防御力来自挂点位置 + 常驻钉住 + 宽容期，不来自这个信号本身。
     liveInProcess: context.sessions.has(running.childSessionId),
     lastActivityAt: inventory.childLastActivityAtMs.get(running.childSessionId),
+    ...(running.agentId ? { agentId: running.agentId } : {}),
+    title: running.title,
+    subagentType: running.subagentType,
+    ...(running.toolCallId ? { toolCallId: running.toolCallId } : {}),
   }));
   const selection = selectSubagentOrphans({
     candidates,
@@ -275,6 +311,7 @@ export async function reconcileSubagentOrphansOnActivation(
   }
 
   let reconciled = 0;
+  const newlyReconciled: SubagentOrphanCandidateFacts[] = [];
   for (const orphan of selection.orphans) {
     const entry = buildSubagentOutcomeEntry({
       childSessionId: orphan.childSessionId,
@@ -284,6 +321,7 @@ export async function reconcileSubagentOrphansOnActivation(
     try {
       await persistOutcomeEntry(entry);
       reconciled += 1;
+      newlyReconciled.push(orphan);
       logger?.warn("Subagent orphan reconciled as lost", {
         childSessionId: orphan.childSessionId,
         event: EVENT_ORPHAN_RECONCILED,
@@ -302,7 +340,15 @@ export async function reconcileSubagentOrphansOnActivation(
       });
     }
   }
-  return { reconciled, skipped };
+  const wake = await deliverLostWakes({
+    context,
+    sessionId,
+    inventory,
+    newlyReconciled,
+    reason: SUBAGENT_ORPHAN_RECONCILE_REASON,
+    evidence: input.evidence,
+  });
+  return { reconciled, skipped, ...wake };
 }
 
 function errorMessageOf(error: unknown): string {

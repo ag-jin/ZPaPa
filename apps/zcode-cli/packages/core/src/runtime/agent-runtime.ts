@@ -69,6 +69,10 @@ import type {
 import { installAgentRuntimeMethods } from "./methods/index.js";
 import type { StartSavedWorkflowRunResult } from "./methods/dynamic-workflow-run-start.js";
 import type {
+  SubagentLostWakeChild,
+  SubagentLostWakeResult,
+} from "./methods/subagent-lost-wake.js";
+import type {
   AmendWorkflowRunSettingsInput,
   AmendWorkflowRunSettingsResult,
 } from "./methods/dynamic-workflow-run-settings.js";
@@ -408,6 +412,18 @@ export interface AgentRuntime {
    * 新增 sidecar 一律登记到这里，而不是在 bootstrap 侧另加一条猜测。
    */
   trackResidencyBlockingWork<T>(work: Promise<T>): Promise<T>;
+  /**
+   * 重启缺口的父会话唤醒（spec 2026-10-08-subagent-orphan-reconcile §1.4b，2026-10-12 裁决 1）。
+   *
+   * 收敛者（bootstrap 协议层）判出「哪些 child 的终态由 `subagent_outcome` entry 决定、且需要
+   * 投递」之后，经这里把唤醒交给 runtime：账本 admission（确定性 id，兼作命令 id——既有通知
+   * 管道按 `String(command.id)` 补 promotion 标记）→ 命令入队 → 一次 drain（同批合并成一条
+   * model-only 消息 + 一个模型轮）。恢复面摘要（child transcript 尾部）在这里读。
+   */
+  enqueueSubagentLostWakes(input: {
+    children: readonly SubagentLostWakeChild[];
+    traceContext?: TraceContext;
+  }): Promise<SubagentLostWakeResult>;
   /**
    * 会话是否已落进持久化 store。协议层 record 的 draft（deferred）判定以此为事实源：任何经 runtime
    * 首次持久化的路径（首条输入、外部活动、中枢直接启动的启动轮）都会让会话离开 draft。

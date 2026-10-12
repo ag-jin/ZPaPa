@@ -6,6 +6,7 @@
 export * from "./core.js";
 export * from "../background-bash-output.js";
 export * from "./rows.js";
+export * from "./background-result-sources.js";
 export * from "./toolDisplay.js";
 export * from "./create-workflow-display.js";
 export * from "./workflow-observation-display.js";

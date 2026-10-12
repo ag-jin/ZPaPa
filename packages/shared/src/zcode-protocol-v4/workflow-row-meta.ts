@@ -6,6 +6,7 @@
 // 对外名字不变：rows.ts 原样再导出，@zcode/shared 桶与相对导入两条路都照旧。
 
 import { z } from "zod";
+import { BACKGROUND_RESULT_SOURCES } from "./background-result-sources.js";
 import { toolCallCreateWorkflowDisplaySchema } from "./create-workflow-display.js";
 import { WORKFLOW_RUNS_LIMITS } from "./workflow-runs.js";
 
@@ -73,11 +74,13 @@ export const workflowNotificationMetaSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type WorkflowNotificationMeta = z.infer<typeof workflowNotificationMetaSchema>;
+// 后台结果来源闭集（唯一定义；本 schema、rows、telemetry、producer、解析器共用）。
 
 export const backgroundResultOriginMetaSchema = z.object({
-  // 三个取值与 contracts 的 BackgroundResultOriginMeta 保持同步。
+  // 取值集合单一定义在 ./background-result-sources.ts（schema / producer / 解析器共用）。
   // "workflow" 是 dynamic-workflow run（workId ≡ runId），复用整条后台通知管线。
-  backgroundSource: z.enum(["bash", "subagent", "workflow"]),
+  // "subagent_lost" 是重启收敛的丢失唤醒（spec §1.4b）：UI 白名单不含它 ⇒ 该轮不画后台结果标题行。
+  backgroundSource: z.enum(BACKGROUND_RESULT_SOURCES),
   workId: z.string().min(1),
   title: z.string().min(1),
   // 只在 backgroundSource === "workflow" 的单条通知轮上在场；zod 剥离未知键，

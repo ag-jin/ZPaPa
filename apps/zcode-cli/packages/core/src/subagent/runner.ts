@@ -2008,6 +2008,9 @@ async function writeAgentMetadataFile(
         profileId: request.agentType,
         profileSnapshot: lifecycle.profile,
         prompt: request.prompt,
+        // 宿主进程的 pid：重启收敛要用它做「旧 runtime 确实死了」的进程级硬证据
+        // （spec 2026-10-08-subagent-orphan-reconcile §1.4b W2）。写入方就是持有 child 的进程。
+        runtimeInstance: { pid: process.pid },
         status,
         taskOutputFile: lifecycle.taskOutputFile,
         updatedAt: new Date().toISOString(),

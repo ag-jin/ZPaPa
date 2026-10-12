@@ -130,6 +130,12 @@ export type { PermissionConfig } from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";
+// 重启缺口唤醒的窄面类型（bootstrap 侧收敛者按这些类型投递；spec 2026-10-08-subagent-orphan-reconcile §1.4b）
+export type {
+  SubagentLostWakeChild,
+  SubagentLostWakeResult,
+  SubagentLostWakeSkipReason,
+} from "./runtime/methods/subagent-lost-wake.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
 // 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume

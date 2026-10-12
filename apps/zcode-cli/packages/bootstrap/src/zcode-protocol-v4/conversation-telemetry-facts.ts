@@ -22,7 +22,9 @@ import { getModelUsageTotalTokens, SessionEventType } from "@zcode/contracts";
 import { parseAutomationRunId } from "@zcode/shared";
 import { workflowLifecycleFactFromProgress } from "./conversation-telemetry-workflow-facts.js";
 import {
+  BACKGROUND_RESULT_SOURCES,
   conversationTelemetryFactSchema,
+  type BackgroundResultSource,
   type ConversationTelemetryFact,
 } from "@zcode/shared/zcode-protocol-v4";
 
@@ -147,6 +149,14 @@ function mirroredSubagentToolFields(
     ...(childSessionId ? { childSessionId } : {}),
     ...(payload.background === true ? { background: true } : {}),
   };
+}
+
+/** 后台结果来源闭集判定（与 schema 共用 BACKGROUND_RESULT_SOURCES，避免 producer/schema 失配）。 */
+function isBackgroundResultSource(value: unknown): value is BackgroundResultSource {
+  return (
+    typeof value === "string" &&
+    (BACKGROUND_RESULT_SOURCES as readonly string[]).includes(value)
+  );
 }
 
 function eventTimestamp(event: SessionEvent): number {
@@ -319,12 +329,11 @@ export class ConversationTelemetryFactNormalizer {
     switch (event.type) {
       case SessionEventType.TurnStarted: {
         const payload = event.payload as TurnStartedPayload;
-        const backgroundSource =
-          payload.backgroundSource === "bash" ||
-          payload.backgroundSource === "subagent" ||
-          payload.backgroundSource === "workflow"
-            ? payload.backgroundSource
-            : undefined;
+        // 白名单与 schema / 冷恢复解析器共用同一定义（S-2：只加 schema 加值会产出「永远到不了的
+        // 取值」——2026-10-12 的 subagent_lost 加值就踩过这个坑）。
+        const backgroundSource = isBackgroundResultSource(payload.backgroundSource)
+          ? payload.backgroundSource
+          : undefined;
         // 用户轮与 background wake 均由 admission 提供 inputId，不混用持久化 messageId。
         const inputId = optionalString(payload.inputId);
         if (turnKey && inputId) this.sourceCommandByTurn.set(turnKey, inputId);

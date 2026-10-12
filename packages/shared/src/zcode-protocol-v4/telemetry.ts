@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BACKGROUND_RESULT_SOURCES } from "./background-result-sources.js";
 import { zcodeSyntheticUserMessageSourceSchema } from "../zcode-protocol-legacy-types.js";
 import { timestampSchema } from "./core.js";
 
@@ -66,7 +67,9 @@ const turnStartedFactSchema = z
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
     inputSource: zcodeSyntheticUserMessageSourceSchema.optional(),
     // `workflow`：dynamic-workflow run 的完成 / 提问通知唤起的独立轮。
-    backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
+    // `subagent_lost`：重启收敛的丢失唤醒轮（spec §1.4b）。取值集合与 producer 白名单共用
+    // ./background-result-sources.ts——只改 schema 不改 producer 会让新值到不了 fact（S-2 教训）。
+    backgroundSource: z.enum(BACKGROUND_RESULT_SOURCES).optional(),
     automationId: z.string().min(1).optional(),
     offPeakTaskId: z.string().min(1).optional(),
     offPeakRunType: z.enum(["init", "resume"]).optional(),

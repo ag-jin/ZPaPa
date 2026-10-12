@@ -1,4 +1,4 @@
-import { createConfig } from "@zcode/adapters/config";
+import { createConfig, resolvePath } from "@zcode/adapters/config";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
 import {
@@ -27,6 +27,7 @@ import {
   prepareProtocolStartupStorage,
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
+import { getCliStorageRoot, getSubagentOutputRootDir } from "./app/paths.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
@@ -287,6 +288,12 @@ export async function runZCodeProtocolAgent(
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,
+      // 重启收敛的 pid 证据面（spec §1.4b W2）：与 create-app 的 agents 装配同源。
+      // 这里重新解析 storage.dir 只为定位产物目录；它只影响「是否读得到宿主 pid」，
+      // 读不到的唯一后果是不合成唤醒（保守方向），不改变任何写路径。
+      subagentOutputRootDir: getSubagentOutputRootDir(
+        getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+      ),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);

@@ -44,6 +44,11 @@ export async function saveSessionInput(
   const now = Date.now();
   // admitted_sequence 按 session 内账本单调分配；同 id 重入会用 runtime 的实际
   // kind/delivery/payload 修正执行前预 admission，同时保留原序与状态（幂等）。
+  //
+  // 2026-10-12（重启缺口的父侧唤醒，spec §1.4b/§3.3）：`discarded` 行必须可被同 id 重投递**重开**
+  // 为 `admitted`——`discarded/session_resumed` 的语义是「重启收口了一条未消费输入」，不是输入的
+  // 终局；孤儿唤醒的交付标记就是这行账本，收口后重投递是唯一能补齐「崩溃在投递前」的路径。
+  // `promoted` / `cancelled` / `failed` 是真实结论，一律不重开（保留原状态与 status_reason）。
   db.prepare(
     `
       insert into session_input (
@@ -63,6 +68,14 @@ export async function saveSessionInput(
         kind = excluded.kind,
         delivery = excluded.delivery,
         payload = excluded.payload,
+        status = case
+          when session_input.status = 'discarded' then 'admitted'
+          else session_input.status
+        end,
+        status_reason = case
+          when session_input.status = 'discarded' then null
+          else session_input.status_reason
+        end,
         time_updated = excluded.time_updated
       `,
   ).run(

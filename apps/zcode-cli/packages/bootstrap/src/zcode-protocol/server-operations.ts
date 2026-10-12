@@ -125,6 +125,7 @@ import {
   subagentOutcomeEntryFact,
 } from "./subagent-session-query.js";
 import { reconcileSubagentOrphansOnActivation } from "./subagent-orphan-reconcile.js";
+import { createAgentMetadataRuntimeEvidence } from "./subagent-lost-wake.js";
 import { reconcileBackgroundTaskOrphansOnActivation } from "./background-task-orphan-reconcile.js";
 import { runSessionModelConfigMutation } from "../zcode-protocol-v4/model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
@@ -1522,10 +1523,16 @@ export async function activateSessionForResume(
   // agent（registry 是进程私有内存态、冷恢复新建即为空），此刻仍在 running 的后台 child 只可能
   // 是死进程的遗物。放在 hydration 之前，保证首次打开就读到统一终态（不出现「第一次 running、
   // 第二次才收敛」的闪烁）；失败只降级 warn，绝不拖垮激活（见模块三条边界）。
+  // 唤醒的进程级硬证据（spec §1.4b W2）：agents 根目录来自进程启动装配（entrypoint 注入）。
+  // 证据面缺席（旧宿主 / 未注入）时收敛照样跑，只是不合成模型可见事实——宁可不投递不误报。
+  const subagentOutputRootDir = context.deps.subagentOutputRootDir;
   await reconcileSubagentOrphansOnActivation({
     context,
     sessionId: params.sessionId,
     persistedMessages,
+    ...(subagentOutputRootDir
+      ? { evidence: createAgentMetadataRuntimeEvidence({ rootDir: subagentOutputRootDir }) }
+      : {}),
   });
   // 同一次接管的第二个收敛面：后台 Bash work。它没有 child 会话，持久事实是父 transcript 里的
   // launch ACK（启动即 completed，分不出运行中/早已结束）+ 结果唤醒轮；同样是「此刻零在飞 ⇒

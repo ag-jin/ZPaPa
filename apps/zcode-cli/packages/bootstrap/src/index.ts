@@ -72,6 +72,10 @@ export { mapSessionEvent } from "./zcode-protocol/session-mapper.js";
 export { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
 export type { SessionTranscriptMessage, SessionTranscriptPart } from "./session-transcript.js";
 export { listZCodeSessions, resolveLatestSession } from "./sessions.js";
+export {
+  readRestartGapReconcileReport,
+  type RestartGapReconcileReport,
+} from "./sessions.js";
 export { inspectZCodeSkill, listZCodeSkills } from "./skills.js";
 export type {
   InspectZCodeSkillOptions,

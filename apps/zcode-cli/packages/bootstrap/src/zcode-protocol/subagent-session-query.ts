@@ -3,9 +3,11 @@ import {
   createSessionId,
   SessionEventType,
   selectActiveConversationBranch,
+  SESSION_ENTRY_SUBAGENT_OUTCOME,
+  subagentOutcomeEntryFact,
   type BackgroundTaskInfo,
   type MessageWithParts,
-  type SessionEntryInfo,
+  type SubagentOutcomeEntryFact,
   type SessionEvent,
   type SessionInfo,
   type SessionProjection,
@@ -18,11 +20,11 @@ const SUBAGENT_TOOL_NAMES = new Set(["Agent", "Task", "subagent"]);
 const CANCELLATION_PATTERN = /abort|cancel|interrupt|stop/i;
 
 /**
- * 孤儿收敛 entry 的 session_entry 类型：child 的「不在运行但无 outcome」补洞事实。
- * 唯一写方是 `subagent-orphan-reconcile.ts`（接管会话时），读面在这里——
- * 本模块是 child session 终态事实的唯一解释者（`endedStatus` / hydration 同源）。
+ * 孤儿收敛 entry 的 session_entry 类型与事实解析：单一定义已上移到 `@zcode/contracts`
+ * （读面与 TaskOutput 回退必须同一解释器，spec §1.8），这里只做本模块的历史导出面。
  */
-export const SESSION_ENTRY_SUBAGENT_OUTCOME = "subagent_outcome" as const;
+export { SESSION_ENTRY_SUBAGENT_OUTCOME, subagentOutcomeEntryFact };
+export type { SubagentOutcomeEntryFact };
 
 interface SubagentCandidate {
   agentId?: string;
@@ -55,16 +57,6 @@ interface SessionSubagentProjection {
   ended: ZCodeSessionEndedSubagent[];
 }
 
-/**
- * 收敛 entry 的读面事实（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）：
- * 终态词 + 收敛时刻。两者一起读——终态决定「这条 ended 行是不是收敛来的」，收敛时刻决定它的
- * 排序时间（见 {@link projectSessionSubagents} 的 endedAt）。
- */
-export interface SubagentOutcomeEntryFact {
-  status: ZCodeSessionEndedSubagent["status"];
-  /** `entry.data.reconciledAt` 的毫秒；读不到时省略（endedAt 退回既有时间链）。 */
-  reconciledAtMs?: number;
-}
 
 interface ProjectSessionSubagentsInput {
   revision: number;
@@ -307,29 +299,6 @@ export function lastChildActivityAt(
   return Math.max(childSession.time.updated, lastMessageAt);
 }
 
-/**
- * 收敛 entry 的事实（`subagent_outcome`，唯一写方 `subagent-orphan-reconcile.ts`）。
- *
- * 只认 `status: "lost"`——本机制唯一写出的终态；其它形状（旧版、手改、未来扩展）一律当作
- * 不可用的补洞事实（返回 undefined），退回既有的 `"lost"` 兜底，读面不因未知 entry 变形。
- * 收敛时刻取 `data.reconciledAt`（写盘时与 `time.created` 同值，这里是**事实字段**；
- * 解析不出来就不给值，endedAt 退回既有时间链而不是记 0）。
- */
-export function subagentOutcomeEntryFact(
-  entries: readonly SessionEntryInfo[] | undefined,
-): SubagentOutcomeEntryFact | undefined {
-  for (const entry of entries ?? []) {
-    const data = asRecord(entry.data);
-    if (nonEmptyString(data.status) !== "lost") continue;
-    const reconciledAt = nonEmptyString(data.reconciledAt);
-    const reconciledAtMs = reconciledAt ? Date.parse(reconciledAt) : Number.NaN;
-    return {
-      status: "lost",
-      ...(Number.isFinite(reconciledAtMs) ? { reconciledAtMs } : {}),
-    };
-  }
-  return undefined;
-}
 
 function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
   endedAt?: number;

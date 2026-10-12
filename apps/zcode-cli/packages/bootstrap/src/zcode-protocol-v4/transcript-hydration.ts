@@ -36,7 +36,9 @@ import {
   isConversationRealUserTurnStarter,
 } from "@zcode/shared";
 import {
+  BACKGROUND_RESULT_SOURCES,
   conversationInputIntentSchema,
+  type BackgroundResultSource,
   errorAttributionSchema,
   workflowLaunchMetaSchema,
   workflowNotificationMetaSchema,
@@ -1497,16 +1499,13 @@ export function backgroundResultOriginMetaOfMessage(
   const backgroundSource = record.backgroundSource;
   const workId = typeof record.workId === "string" ? record.workId.trim() : "";
   const title = typeof record.title === "string" ? record.title.trim() : "";
-  // 三个取值与 BackgroundResultOriginMeta 保持同步（contracts/src/events/session.events.ts）。
+  // 取值集合单一定义在 @zcode/shared/zcode-protocol-v4 的 BACKGROUND_RESULT_SOURCES
+  // （schema / producer / 本解析器共用；S-2 的教训：各处手抄会漏）。
   // "workflow" 是 workflow run（workId ≡ runId）：漏掉它，workflow 的后台结果轮在冷恢复后会
   // 静默退化成一条无标题 model-only 消息，工具卡→详情页的关联键随之丢失。
-  if (
-    (backgroundSource !== "bash" &&
-      backgroundSource !== "subagent" &&
-      backgroundSource !== "workflow") ||
-    !workId ||
-    !title
-  ) {
+  // "subagent_lost" 是重启收敛的丢失唤醒轮：它不是后台结果，解析器认它只为让冷恢复保留
+  // originMeta（UI 白名单不含它 ⇒ 不画结果标题行），漏掉它这一轮会退化得更彻底。
+  if (!isBackgroundResultSource(backgroundSource) || !workId || !title) {
     return undefined;
   }
   // manifest 载荷（workflowNotification）也要过冷恢复：这里若只回读三基字段，冷恢复后
@@ -1522,6 +1521,14 @@ export function backgroundResultOriginMetaOfMessage(
 }
 
 /** 防御性解析 manifest 载荷：畸形 / 缺席都回 undefined（调用方据此让字段缺席），绝不抛。 */
+/** 后台结果来源闭集判定（与 schema / telemetry producer 共用 BACKGROUND_RESULT_SOURCES）。 */
+function isBackgroundResultSource(value: unknown): value is BackgroundResultSource {
+  return (
+    typeof value === "string" &&
+    (BACKGROUND_RESULT_SOURCES as readonly string[]).includes(value)
+  );
+}
+
 function parseWorkflowNotificationMeta(
   value: unknown,
 ): BackgroundResultOriginMeta["workflowNotification"] {

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { timestampSchema } from "./core.js";
 import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
+import { BACKGROUND_RESULT_SOURCES } from "./background-result-sources.js";
 
 // RowBase。rowId：session 内单调、永不复用、事件日志的确定性纯函数。
 const rowBaseFields = {
@@ -117,8 +118,8 @@ export const userInputRowSchema = z.object({
   ]),
   originMeta: z
     .object({
-      // 与 backgroundResultOriginMetaSchema 同一组取值（含 workflow run 的 "workflow"）。
-      backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
+      // 与 backgroundResultOriginMetaSchema 同一组取值（唯一定义：./background-result-sources.ts）。
+      backgroundSource: z.enum(BACKGROUND_RESULT_SOURCES).optional(),
       workId: z.string().optional(),
       senderSessionId: z.string().optional(),
       senderLabel: z.string().optional(),

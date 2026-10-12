@@ -55,7 +55,12 @@ import {
   resolveEffectiveLocale,
   resolveEffectiveConfigResult,
 } from "./app-config-options.js";
-import { getCliStorageRoot, getModelIoDir, projectIdFromDirectory } from "./paths.js";
+import {
+  getCliStorageRoot,
+  getModelIoDir,
+  getSubagentOutputRootDir,
+  projectIdFromDirectory,
+} from "./paths.js";
 import {
   asInputHistoryStore,
   asLocalSettingStore,
@@ -254,7 +259,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         pluginRuntimeFeatures,
         builtInSubagentModelSelectionOverrides:
           zcodeSubagentProfileOutcome.builtInModelSelectionOverrides,
-        subagentOutputRootDir: join(cliStorageRoot, "agents"),
+        subagentOutputRootDir: getSubagentOutputRootDir(cliStorageRoot),
         subagentProfiles,
         storageRoot,
         workingDirectory,

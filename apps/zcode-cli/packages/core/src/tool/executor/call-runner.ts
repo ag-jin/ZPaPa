@@ -186,6 +186,8 @@ async function executeToolCallImpl(
 
   const toolInputValidation = entry.validateInput?.(executionInput, {
     runtimeTaskRegistry: deps.runtimeTaskRegistry,
+    // 回退读面的在场事实（spec §1.8）：没有 store 的旧宿主维持「registry miss 即失败」。
+    sessionStore: deps.sessionStore,
   });
   if (toolInputValidation && isToolHandlerFailure(toolInputValidation)) {
     // tool-specific 语义校验原先只能放在 handler，导致无效调用仍先执行

@@ -1181,7 +1181,11 @@ export const zcodeTurnStartedEventPayloadSchema = z
     intent: jsonObjectSchema.optional(),
     originMeta: jsonObjectSchema.optional(),
     // runtime 会透传后台唤醒来源，strict schema 必须同步声明以免丢弃整条事件。
-    backgroundSource: z.enum(["bash", "subagent"]).optional(),
+    // "subagent_lost" 是重启收敛的丢失唤醒（spec 2026-10-08-subagent-orphan-reconcile §1.4b）：
+    // 闭集加值的偏斜是「旧客户端 + 新 CLI」时该事件整条被丢——与**本文件 :1548
+    // `backgroundWorkSummary.kind`** 的闭集加值同一档（那张闭集连 state.updated 整帧一起丢，
+    // 代价在案），CLI 与客户端同批发布下接受。
+    backgroundSource: z.enum(["bash", "subagent", "subagent_lost"]).optional(),
     attachments: z.array(jsonObjectSchema).optional(),
   })
   .strict();

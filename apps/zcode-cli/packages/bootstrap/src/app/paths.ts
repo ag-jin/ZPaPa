@@ -6,6 +6,14 @@ export function getCliStorageRoot(storageRoot: string): string {
   return basename(storageRoot) === "cli" ? storageRoot : join(storageRoot, "cli");
 }
 
+/**
+ * agent 产物根目录（`<cliStorageRoot>/agents`）。唯一装配点：create-app 与协议 entrypoint 共用，
+ * 避免「runner 往 A 写、重启收敛从 B 读 pid 证据」的路径漂移（spec §1.4b W2）。
+ */
+export function getSubagentOutputRootDir(cliStorageRoot: string): string {
+  return join(cliStorageRoot, "agents");
+}
+
 export function getPluginStorageRoot(cliStorageRoot: string): string {
   return join(cliStorageRoot, "plugins");
 }

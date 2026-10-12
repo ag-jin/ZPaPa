@@ -44,6 +44,7 @@ import {
   enqueueBackgroundTaskNotification,
   sealBackgroundTaskNotifications,
 } from "./background-notifications.js";
+import { enqueueSubagentLostWakes } from "./subagent-lost-wake.js";
 import { drainPendingRuntimeCommandsForActiveLoop } from "./runtime-command-active-loop.js";
 import { enqueueSubagentMessage } from "./subagent-messages.js";
 import {
@@ -256,6 +257,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.releaseForegroundPromotionLease = releaseForegroundPromotionLease;
   proto.stopActiveForegroundExecution = stopActiveForegroundExecution;
   proto.enqueueBackgroundTaskNotification = enqueueBackgroundTaskNotification;
+  proto.enqueueSubagentLostWakes = enqueueSubagentLostWakes;
   proto.enqueueSubagentMessage = enqueueSubagentMessage;
   proto.drainPendingRuntimeCommandsForActiveLoop = drainPendingRuntimeCommandsForActiveLoop;
   proto.sealBackgroundTaskNotifications = sealBackgroundTaskNotifications;

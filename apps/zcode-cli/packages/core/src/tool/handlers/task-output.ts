@@ -25,6 +25,7 @@ import type {
   ToolPersistedModelContentInput,
 } from "../types.js";
 import { formatCompactFileSize, projectTask, throwIfAborted } from "./task-output-projection.js";
+import { resolveLostSubagentTask } from "./task-output-lost-subagent.js";
 
 const TASK_OUTPUT_DEFAULT_LENGTH = 32_000;
 const TASK_OUTPUT_MAX_LENGTH = 160_000;
@@ -39,13 +40,20 @@ const TASK_OUTPUT_ERROR_CODE = {
 
 const taskOutputHandler: ToolHandler = async (input, context) => {
   const parsed = TaskOutputInputSchema.parse(input) as TaskOutputInput;
-  const inputFailure = getTaskOutputInputFailure(parsed, context.runtimeTaskRegistry);
+  const inputFailure = getTaskOutputInputFailure(parsed, context.runtimeTaskRegistry, context);
   if (inputFailure) return inputFailure;
 
   const registry = requireRuntimeTaskRegistry(context);
 
   const initialTask = registry.get(parsed.task_id);
   if (!initialTask) {
+    // registry miss = 进程重启后 / 非本进程任务（spec §1.8，裁决 3 = 3D）：
+    // 只读回退到 store（child 会话 + 收敛 entry），解析得出就按 lost 终态交付恢复面尾部。
+    // 回退读不算 notified claim（registry 无该任务，认领无处落）。
+    const fallback = await resolveLostSubagentTask({ agentId: parsed.task_id, context });
+    if (fallback) {
+      return taskOutputResult("success", fallback.task);
+    }
     return taskOutputFailure(
       TASK_OUTPUT_ERROR_CODE.TASK_NOT_FOUND,
       `No task found with ID: ${parsed.task_id}`,
@@ -151,17 +159,23 @@ function validateTaskOutputInput(
   context: ToolInputValidationContext,
 ): ToolInputValidationResult {
   const parsed = TaskOutputInputSchema.parse(input) as TaskOutputInput;
-  return getTaskOutputInputFailure(parsed, context.runtimeTaskRegistry) ?? { result: true };
+  return (
+    getTaskOutputInputFailure(parsed, context.runtimeTaskRegistry, context) ?? { result: true }
+  );
 }
 
 function getTaskOutputInputFailure(
   input: TaskOutputInput,
   registry: ToolInputValidationContext["runtimeTaskRegistry"],
+  context: ToolInputValidationContext | ToolExecutionContext,
 ): ToolHandlerFailure | undefined {
   if (!input.task_id) {
     return taskOutputFailure(TASK_OUTPUT_ERROR_CODE.TASK_ID_REQUIRED, "Task ID is required");
   }
-  if (registry && !registry.get(input.task_id)) {
+  // registry miss 只在**没有回退读面**时才算早退失败：有 store 回退面（spec §1.8 的 3D）时
+  // 判定必须交给 handler（异步读 store），否则重启用 TaskOutput 在读面之前就被拦死。
+  const hasFallback = Boolean(context.sessionStore?.getSession);
+  if (registry && !registry.get(input.task_id) && !hasFallback) {
     return taskOutputFailure(
       TASK_OUTPUT_ERROR_CODE.TASK_NOT_FOUND,
       `No task found with ID: ${input.task_id}`,

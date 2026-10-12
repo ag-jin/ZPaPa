@@ -24,6 +24,7 @@ import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js
 import { runPrompt } from "./prompt-command.js";
 import { runPluginsCommand, type PluginsCommandFlags } from "./plugins-command.js";
 import { runSkillsCommand } from "./skills-command.js";
+import { runReconcileReportCommand } from "./reconcile-report-command.js";
 import { runTuiCommand } from "./tui-command.js";
 import type {
   CliPermissionMode,
@@ -568,6 +569,10 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       );
     case "skills":
       return await runSkillsCommand(ctx, options, commandDeps, parsed.positionals.slice(1));
+    case "reconcile-report":
+      // 只读对账（重启缺口，spec 2026-10-08-subagent-orphan-reconcile 裁决 4 = 4C）：
+      // board / 人只消费输出，不直读 db schema。
+      return await runReconcileReportCommand(ctx, options, commandDeps);
     case "tui":
       return await runTuiCommand(
         ctx,

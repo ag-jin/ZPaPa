@@ -10,6 +10,7 @@ import {
   type TaskStopOutput,
 } from "@zcode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
+import { resolveLostSubagentTask } from "./task-output-lost-subagent.js";
 
 const MAX_TASK_STOP_MODEL_BYTES = 100_000;
 
@@ -74,6 +75,25 @@ const taskStopHandler: ToolHandler = async (input, context) => {
         taskType: result.type,
         toolCallId: context.toolCallId,
       });
+    }
+    // TaskStop 与 TaskOutput 同病（spec §1.8，裁决 3 = 3D）：registry/任务面 miss 时若是重启收敛
+    // 过的死 agent，报「不在运行（已丢失）」而不是 `No task found`——模型据此知道这是终态事实，
+    // 不是拼错 id。回退是纯只读，不产生任何写。
+    const lost = await resolveLostSubagentTask({ agentId: taskId, context });
+    if (lost) {
+      throw taskStopError(
+        `Task ${taskId} is not running (status: lost): its host process exited before completion (reason: ${
+          lost.reason ?? "runtime_exit"
+        }). Use TaskOutput to read the recovered partial output.`,
+        3,
+        {
+          reason: result.reason,
+          status: "lost",
+          taskId,
+          taskType: result.type,
+          toolCallId: context.toolCallId,
+        },
+      );
     }
     throw taskStopError(`No task found with ID: ${taskId}`, 1, {
       reason: result.reason,

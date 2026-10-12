@@ -21,6 +21,7 @@ Commands:
   login [zai|bigmodel]  Sign in through browser authorization
   logout     Remove the shared Z.AI login credentials
   plugins    Manage plugins and marketplaces (\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`; alias: plugin)
+  reconcile-report  Read-only restart-gap reconcile report (notification ledger states / lost children without wake; \`--json\` for machines)
   skills     List local skills (\`skills list\`)
   tui        Open the terminal UI
   version    Print the CLI version

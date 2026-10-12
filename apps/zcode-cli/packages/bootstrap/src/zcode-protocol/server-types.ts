@@ -57,6 +57,12 @@ export interface ZCodeProtocolAgentDependencies {
   /** 兼容旧测试/嵌入调用；新代码应通过 sessionResidentPoolOptions 设置 low-water。 */
   sessionResidentTargetCount?: number;
   sessionStore?: SessionStorePort;
+  /**
+   * agent 产物根目录（`<cliStorageRoot>/agents`）。
+   * 重启收敛的 pid 硬证据（`metadata.json.runtimeInstance.pid`，spec §1.4b W2）从这里读；
+   * 缺席 = 不合成模型可见的丢失事实（只保留显示层收敛）。装配点：协议 entrypoint。
+   */
+  subagentOutputRootDir?: string;
   version?: string;
   /** 受信 Host 管理的 Hook policy；workspace/project 配置不得覆盖。 */
   workspaceHookPolicyProvider?: WorkspaceHookPolicyProvider;

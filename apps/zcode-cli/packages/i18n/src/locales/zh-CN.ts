@@ -21,6 +21,7 @@ export const zhCN: ZCodeCopy = {
   login [zai|bigmodel]  通过浏览器授权登录
   logout     删除共享的 Z.AI 登录凭据
   plugins    管理插件与市场（\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`；别名 plugin）
+  reconcile-report  只读对账重启缺口（后台通知账本状态分布 / 有终态无通知的 child；\`--json\` 机器可读）
   skills     列出本地 skills（\`skills list\`）
   tui        打开终端 UI
   version    打印 CLI 版本

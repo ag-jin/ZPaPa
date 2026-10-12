@@ -231,6 +231,11 @@ export interface ToolHandlerFailure {
 
 export interface ToolInputValidationContext {
   runtimeTaskRegistry?: RuntimeTaskRegistry;
+  /**
+   * 只读 store 窄面：TaskOutput 的 registry miss 回退（spec §1.8）需要「有没有回退读面」这一事实
+   * 来决定是否在**校验阶段**早退。校验是同步的，真正的解析仍在 handler（异步读 store）。
+   */
+  sessionStore?: SessionStorePort;
 }
 
 export type ToolInputValidationResult = { result: true } | ToolHandlerFailure;
