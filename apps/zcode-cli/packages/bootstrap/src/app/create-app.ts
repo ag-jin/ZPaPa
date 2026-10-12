@@ -71,6 +71,7 @@ import { createSessionFacade } from "./session-facade.js";
 import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
 import { resolveBundledSkillDisabledPaths } from "./ask-matt-flow-gate.js";
+import { resolveAskMattProductInstructions } from "./ask-matt-product-instructions.js";
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
 import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
 import {
@@ -427,6 +428,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       logger,
       runtimeConfig,
     });
+    // 产品 agent 提示面（卡 #212/A11）：与 skillPort disabledPaths、内置命令展开读**同一**
+    // 开关单点 runtimeConfig.askMattFlowEnabled（server-operations 从进程缓存
+    // context.appRuntimePreferences 写出的显式布尔）。关/未设置时 resolve 返回 undefined
+    // = 零注入（fail-closed，与 A1/A3/A4 判据同源）；文本资产与同源对齐义务见
+    // ask-matt-product-instructions.ts。会话创建时冻结，开关变更只对新会话生效。
+    runtimeConfig.productInstructions = resolveAskMattProductInstructions(
+      runtimeConfig.askMattFlowEnabled,
+    );
     const getRuntime = (): AgentRuntime => {
       if (!runtime) throw new Error("ZCode runtime is not initialized yet.");
       return runtime;

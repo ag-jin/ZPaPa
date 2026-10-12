@@ -47,6 +47,7 @@ export type ContextSource =
   | "session_guidance" // 当前可用内置能力指导
   | "output_style" // 输出风格
   | "context_management" // 长上下文管理提示
+  | "product_instructions" // 产品行为纪律资产（实验开关，随会话冻结）
   | "desktop_context"; // ZCode Desktop 渲染与交互协议
 
 export type ContextInjectionTarget = "system" | "meta_user";
@@ -115,6 +116,12 @@ export interface ContextBuilderConfig {
   embeddedSearchEnabled?: boolean;
   skillMetadataBudget?: number;
   customSystemPrompt?: string;
+  /**
+   * 产品行为纪律资产全文（卡 #212/A11）：bootstrap 按实验开关解析后写入
+   * `AgentRuntimeConfig.productInstructions`，本层只负责渲染成 system 段。
+   * 缺席 = 开关关/未设置 = 零注入（fail-closed），不产出空段。
+   */
+  productInstructions?: string;
   /**
    * 动态工作流子代理（workflow child）的身份输入。在场即走 builder 的第三条路径：
    * 基座段（CLI prefix、安全行、Harness、memory）+ 工作流子代理契约 + persona 叠加，

@@ -217,10 +217,19 @@ export interface AgentRuntimeConfig {
    * askMattFlowEntryVisible 同判据）：关闭时内置包 mattpocock/skills 全库不注册，
    * 打开时全库注册、重叠件 implement/tdd/code-review 恒不注册。
    * 影响面 = 会话内置包技能注册（create-app 的 skillPort disabledPaths）、二次发现面
-   * （skills.ts：`zcode skills list`/TUI/引用目录草稿，#205/A4 接入）与 `/` 目录三个流程命令；
+   * （skills.ts：`zcode skills list`/TUI/引用目录草稿，#205/A4 接入）、`/` 目录三个流程命令
+   * 与产品 agent 提示面（#212/A11：同一布尔经 productInstructions 注入 Karpathy 四条）；
    * 生效时机（#205/A4）：面板与注册面均在下次发布/新会话生效（已活跃会话不回收注册面）。
    */
   askMattFlowEnabled?: boolean;
+  /**
+   * 产品行为纪律资产全文（卡 #212/A11）：bootstrap 的 create-app 从同一个
+   * `askMattFlowEnabled` 单点解析（app/ask-matt-product-instructions.ts）后写入本字段，
+   * context builder 据此产出 system 段（source=product_instructions）；缺席 = 开关关/
+   * 未设置 = 零注入（fail-closed，与注册面/命令面判据同源）。会话创建时冻结，变更只对
+   * 新会话生效（已活跃会话不回收提示）。
+   */
+  productInstructions?: string;
 
   // Context Builder config
   systemPrompt?: string;

@@ -134,6 +134,8 @@ export function createContextBuilderFromSnapshot(
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,
     customSystemPrompt: this.config.systemPrompt,
+    // 产品行为纪律（#212/A11）：开关在 bootstrap 已解析成全文/undefined，本层只透传。
+    productInstructions: this.config.productInstructions,
     workflowActor: this.config.workflowActor,
     language: this.config.language,
     outputStyle: this.config.outputStyle,
