@@ -174,7 +174,7 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
   },
   // 实验功能：所有实验开关的统一去处（通用容器，不绑死单个功能）。
   // 开关走运行期 appSettings 字段、不做编译期隐藏——用户必须能自行打开，
-  // 否则实验功能等于没有通路。当前只挂「项目看板」一行。
+  // 否则实验功能等于没有通路。当前挂「项目看板」与「ask-matt 开发流程」两行（#62/#202）。
   {
     id: "experiments",
     icon: FlaskConical,
