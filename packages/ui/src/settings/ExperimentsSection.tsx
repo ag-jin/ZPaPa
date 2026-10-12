@@ -12,8 +12,10 @@ import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js"
  *
  * 开关直接读写运行期 appSettings 字段（默认关闭），不做编译期隐藏 —— 用户必须能在
  * 运行期自行打开，否则实验功能等于没有 UI 通路。
- * 两行开关均 label-only（用户明确不要副文案）：第一行「项目看板」（#62），
- * 第二行「ask-matt 开发流程」（#202）；后续实验开关按同一形态追加。
+ * 两行开关默认 label-only（用户明确不要副文案）：第一行「项目看板」（#62），
+ * 第二行「ask-matt 开发流程」（#202）；#235/F10 D11 裁决给第二行补一句让位说明
+ * （「开启时同名自定义命令让位」——开态下 34 条流程命令压过同名自定义命令，命令名不进
+ * 保留字表，所以这里必须把后果写给用户看；看板行维持 label-only）。
  * 板关+流开（来料厂）时在分区底部加**独立一行**状态说明（非副文案，判据走纯函数单点）。
  */
 export function ExperimentsSection() {
@@ -71,6 +73,9 @@ export function ExperimentsSection() {
       />
       <SettingsRow
         label={intl.formatMessage({ id: "settings.experiments.askMattFlowToggle.label" })}
+        description={intl.formatMessage({
+          id: "settings.experiments.askMattFlowToggle.description",
+        })}
         control={
           <Switch
             checked={settings?.experimentalAskMattFlowEnabled === true}

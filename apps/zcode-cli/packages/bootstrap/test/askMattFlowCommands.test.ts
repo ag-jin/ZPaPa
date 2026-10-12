@@ -254,6 +254,87 @@ test("自定义命令遮蔽：开关开时同名自定义命令被内置命令�
   });
 });
 
+/**
+ * D11 诊断点名探针（#235）：记录 warn 级诊断的 message 与结构化名单。
+ * 只做 Logger 形状的最小投影（被测函数只消费 logger?.warn），自定义命令发现层照跑真临时目录。
+ */
+function createShadowDiagnosticProbe() {
+  const warnings: Array<{ message: string; commands: unknown }> = [];
+  const logger = {
+    child: () => logger,
+    debug: () => {},
+    error: () => {},
+    info: () => {},
+    warn: (message: string, context?: { commands?: unknown }) => {
+      warnings.push({ commands: context?.commands, message });
+    },
+  };
+  return { logger, warnings };
+}
+
+// D11（设计稿 §6 裁决 (b) 诊断点名 v1）：开态下 34 条流程命令压过同名自定义命令时，
+// 被压名单必须进既有诊断通道（logger）——「静默消失 → 关态复活」的目录语义断裂靠点名消解。
+// 判据三面：①开态有冲突 ⇒ 恰一条诊断且名单=被压件（不含未被压件）；
+// ②关态 ⇒ 零点名（自定义命令原样可见，不产生噪声）；③开态零冲突 ⇒ 零点名。
+test("自定义命令遮蔽·诊断点名（D11）：开态被压名单进既有诊断日志，关态/无冲突零点名", async () => {
+  await withIsolatedCommandEnv(async (env) => {
+    await env.writeCustomCommand("grill", "User custom grill command body.");
+    await env.writeCustomCommand("matt-tdd", "User custom matt-tdd command body.");
+    await env.writeCustomCommand("research", "User custom research command body.");
+    await env.writeCustomCommand("zebra", "User custom zebra command body.");
+
+    const probe = createShadowDiagnosticProbe();
+    const enabled = await listProtocolSlashCommands({
+      ...catalogOptions(env),
+      askMattFlowEnabled: true,
+      logger: probe.logger,
+    });
+    assert.equal(probe.warnings.length, 1, "开态有同名冲突必须恰好产生一条诊断点名");
+    const [diagnostic] = probe.warnings;
+    // 被压名单 = 与 34 命令同名的自定义件（含换名件 matt-tdd）；未被压的 /zebra 不得点名。
+    assert.deepEqual(
+      [...((diagnostic!.commands as string[]) ?? [])].sort(),
+      ["grill", "matt-tdd", "research"],
+      "诊断名单必须逐件点名被压自定义命令（不重不漏）",
+    );
+    for (const name of ["grill", "matt-tdd", "research"]) {
+      assert.ok(
+        diagnostic!.message.includes(name),
+        `诊断 message 必须含被压命令名 /${name}（console 流只打 message）：${diagnostic!.message}`,
+      );
+    }
+    assert.ok(!diagnostic!.message.includes("zebra"), "未被压的自定义命令不得进点名");
+    // 目录面同时保持既有减法：被压件消失、未被压件保留（点名不改装配结果）。
+    assert.equal(enabled.some((command) => command.name === "zebra"), true, "未被压件照常可见");
+    assert.equal(
+      enabled.filter((command) => command.name === "grill").length,
+      1,
+      "同名只留内置一条（点名后目录面不变）",
+    );
+  });
+
+  // 反例①：关态不点名（自定义命令原样可用，诊断不得无故出现）。
+  await withIsolatedCommandEnv(async (env) => {
+    await env.writeCustomCommand("grill", "User custom grill command body.");
+    const probe = createShadowDiagnosticProbe();
+    const disabled = await listProtocolSlashCommands({ ...catalogOptions(env), logger: probe.logger });
+    assert.equal(probe.warnings.length, 0, "关态不得产生压过诊断（用户命令照常可见）");
+    assert.equal(disabled.find((command) => command.name === "grill")?.source, "custom");
+  });
+
+  // 反例②：开态但无任何同名自定义命令 ⇒ 不点名（诊断只随真实冲突出现）。
+  await withIsolatedCommandEnv(async (env) => {
+    await env.writeCustomCommand("zebra", "User custom zebra command body.");
+    const probe = createShadowDiagnosticProbe();
+    await listProtocolSlashCommands({
+      ...catalogOptions(env),
+      askMattFlowEnabled: true,
+      logger: probe.logger,
+    });
+    assert.equal(probe.warnings.length, 0, "开态无冲突不得点名");
+  });
+});
+
 test("展开：开关打开时 34 命令装载对应内置包技能并保留参数；关闭/未设置不展开", () => {
   for (const command of ASK_MATT_FLOW_COMMANDS) {
     const expanded = resolveZCodeBuiltinPromptCommand(`/${command.name} 打磨这个想法`, {

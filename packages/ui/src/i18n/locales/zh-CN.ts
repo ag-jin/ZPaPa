@@ -4338,6 +4338,7 @@ const zhCN: Record<string, string> = {
   "settings.experiments.title": "实验功能",
   "settings.experiments.projectBoardToggle.label": "项目看板",
   "settings.experiments.askMattFlowToggle.label": "ask-matt 开发流程",
+  "settings.experiments.askMattFlowToggle.description": "开启时同名自定义命令让位",
   "settings.experiments.askMattFlowBoardClosedNotice":
     "项目看板未开启：ask-matt 流程照常可用，产物落任务目录文件，暂不在看板上呈现。",
   "settings.experiments.saveFailed": "保存失败，请重试",

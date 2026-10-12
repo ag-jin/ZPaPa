@@ -4625,6 +4625,8 @@ const enUS: Record<string, string> = {
   "settings.experiments.title": "Experiments",
   "settings.experiments.projectBoardToggle.label": "Project board",
   "settings.experiments.askMattFlowToggle.label": "ask-matt dev flow",
+  "settings.experiments.askMattFlowToggle.description":
+    "When enabled, custom commands with the same name give way.",
   "settings.experiments.askMattFlowBoardClosedNotice":
     "Project board is off: the ask-matt flow still works, outputs land as task directory files and are not shown on the board for now.",
   "settings.experiments.saveFailed": "Save failed, please try again",
