@@ -19,8 +19,8 @@ export interface ListZCodeSkillsOptions {
    * 「ask-matt 开发流程」实验开关（#205/A4）：二次发现面（`zcode skills list` / TUI /
    * 工作区引用目录草稿）与 create-app 会话注册面**同一判据单点**（app/ask-matt-flow-gate.ts）。
    *
-   * 只有显式 true 才把 34 件非重叠技能交给发现面（重叠三件恒不注册）；未提供 = 关
-   * （fail-closed，与 A1 呈现判据同源）——独立 CLI/TUI 没有实验设置通道，维持零 ask-matt；
+   * 只有显式 true 才把 37 件技能交给发现面（#226/F1 起全库注册；重叠三件恒不注册已按 D5 退役）；
+   * 未提供 = 关（fail-closed，与 A1 呈现判据同源）——独立 CLI/TUI 没有实验设置通道，维持零 ask-matt；
    * 进程内有 Host 同步缓存的调用方（协议侧引用目录）显式传入。
    *
    * 已知缺口（登记，不修，归收口批裁量）：动态工作流门未接本面——dynamic-workflows
