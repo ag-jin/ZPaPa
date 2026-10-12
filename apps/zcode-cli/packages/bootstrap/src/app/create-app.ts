@@ -758,7 +758,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               extraRoots: configResult.config.skills.roots,
               extraResolvedRoots: [...pluginOutcome.skillRoots, ...bundledSkillRoots],
               // 内置包注册面单点组装（用户配置禁用 + 动态工作流门 + ask-matt 门）：
-              // 判据与理由见 ask-matt-flow-gate.ts（含「重叠件恒不注册」）与 dynamic-workflow-gate.ts。
+              // 判据与理由见 ask-matt-flow-gate.ts（含「开态 37 件全注册」）与动态工作流门。
               disabledPaths: resolveBundledSkillDisabledPaths({
                 askMattFlowEnabled: runtimeConfig.askMattFlowEnabled,
                 bundledSkillRoots,
@@ -805,7 +805,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           // 剔除，但用户仍可手打命令名，两条路径必须给出同一个结论。TUI 缺席时不设门禁；
           // headless 按 --enable-workflow 显式取值，见 runtimeConfig 字段注释。
           dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
-          // ask-matt 三命令同款：目录侧零装配时手打命令名也不得展开（同开关一处判据）。
+          // ask-matt 34 条流程命令同款：目录侧零装配时手打命令名也不得展开（同开关一处判据）。
           askMattFlowEnabled: runtimeConfig.askMattFlowEnabled,
           workingDirectory,
         });

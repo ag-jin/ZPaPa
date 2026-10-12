@@ -215,9 +215,10 @@ export interface AgentRuntimeConfig {
    * 「ask-matt 开发流程」实验开关（卡 #204/A3）：App 设置经
    * ZCode Protocol 同步到进程，runtime 只消费。**缺席即关闭**（fail-closed，与
    * askMattFlowEntryVisible 同判据）：关闭时内置包 mattpocock/skills 全库不注册，
-   * 打开时全库注册、重叠件 implement/tdd/code-review 恒不注册。
+   * 打开时全库 37 件全注册（重叠三件 implement/tdd/code-review 按 #226/F1 D5 改走命令层换名，
+   * `/matt-*` 命令装入原名技能；「重叠件恒不注册」已退役）。
    * 影响面 = 会话内置包技能注册（create-app 的 skillPort disabledPaths）、二次发现面
-   * （skills.ts：`zcode skills list`/TUI/引用目录草稿，#205/A4 接入）、`/` 目录三个流程命令
+   * （skills.ts：`zcode skills list`/TUI/引用目录草稿，#205/A4 接入）、`/` 目录 34 条流程命令
    * 与产品 agent 提示面（#212/A11：同一布尔经 productInstructions 注入 Karpathy 四条）；
    * 生效时机（#205/A4）：面板与注册面均在下次发布/新会话生效（已活跃会话不回收注册面）。
    */

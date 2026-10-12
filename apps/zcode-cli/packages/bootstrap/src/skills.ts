@@ -133,7 +133,8 @@ async function createSkillDiscovery(options: ListZCodeSkillsOptions): Promise<
       extraRoots: configResult.config.skills.roots,
       extraResolvedRoots: [...pluginOutcome.skillRoots, ...bundledSkillRoots],
       // 内置包注册面单点组装（用户配置禁用 + ask-matt 门），与会话注册面（create-app skillPort）
-      // 同一函数：关态（含未提供）全库 37 件零注册、开态只剔重叠三件。这里刻意不传
+      // 同一函数：关态（含未提供）全库 37 件零注册、开态 37 件全注册（#226/F1 起；重叠三件
+      // 按 D5 改走命令层换名，不再从注册面剔除）。这里刻意不传
       // dynamicWorkflowEnabled——动态工作流门接本面是已登记的缺口（见 ListZCodeSkillsOptions 注释），
       // 不在本卡修复范围内，避免两处灰度口径在本轮分叉。
       disabledPaths: resolveBundledSkillDisabledPaths({
