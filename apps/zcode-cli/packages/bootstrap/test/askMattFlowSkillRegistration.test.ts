@@ -1,29 +1,33 @@
-// 「ask-matt 开发流程」注册面断言（卡 #204/A3：命令注册 + 重叠件剔除）。
+// 「ask-matt 开发流程」注册面断言（卡 #226/F1 起：开态 37 件全注册；原 #204/A3 卡）。
 //
 // 为什么这组用例承重：mattpocock/skills 全库随 CLI 分发（#203/A2 入包），但**注册面**（哪些技能
-// 可被发现、可被 Skill 工具加载）由本卡按「ask-matt 开发流程」实验开关决定：
+// 可被发现、可被 Skill 工具加载）由「ask-matt 开发流程」实验开关决定：
 //   - 开关关闭（含未设置 / 未加载）：内置包全库零注册 —— 关掉的实验不得在 Skill 清单里留半件；
-//   - 开关打开：全库注册，**重叠件 implement/tdd/code-review 恒不注册**（用户原话「带但不注册重叠件」，
-//     A2 已核定清单：这三件与 ZCode 自身开发流程重叠，重复提供会给出两条互相竞争的流程）；
+//   - 开关打开：**全库 37 件全注册**（卡 #226 起）。#204 的「重叠三件恒不注册」已由 §6 D5 裁决
+//     退役：重叠三件改走命令层换名（/matt-implement、/matt-tdd、/matt-code-review），目标技能仍用
+//     上游原名注册——命令要能装载目标技能，且用户 agent 军团按技能名引用（`skills: [tdd]`）需要
+//     纯产品环境下按名装载；
 //   - dynamic-workflows（产品内置技能，非上游快照库）由动态工作流门独立控制，2×2 乘积态互不牵连。
 //
-// 断言走真实资产（apps/zcode-cli/packages/bundled-skills）+ 真实 NodeSkillAdapter：发现面与加载面
-// 必须给出同一结论（禁用件在 loadSkill 也必须取不到）。名单以包内快照为身份真源，代码常量与快照
-// 的漂移由本文件第一条用例守卫。
+// 断言走真实资产（apps/zcode-cli/packages/bundled-skills）+ 真实 NodeSkillAdapter / 二次发现面：
+// 发现面与加载面必须给出同一结论。名单以包内快照为身份真源，代码常量与快照的漂移由本文件第一条
+// 用例守卫。U3（纯产品环境 agent 引用面）在隔离 HOME 下实证：无 ~/.zcode/skills 用户件时，
+// tdd/code-review/implement 仍可按名装载到内置包正文。
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NodeSkillAdapter } from "@zcode/adapters/skills";
 import type { SkillRoot } from "@zcode/contracts";
 import {
-  ASK_MATT_FLOW_OVERLAP_SKILL_NAMES,
   ASK_MATT_FLOW_PACK_SKILL_NAMES,
   collectAskMattFlowDisabledSkillPaths,
   resolveBundledSkillDisabledPaths,
 } from "../src/app/ask-matt-flow-gate.js";
+import { inspectZCodeSkill } from "../src/skills.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDir, "../../../../..");
@@ -60,6 +64,28 @@ async function readSnapshotSkillNames(): Promise<string[]> {
   return [...record.skills].sort();
 }
 
+/** 隔离用户技能根（~/.zcode/skills 本机装有同名件）：纯产品环境实验的前提。 */
+async function withIsolatedHome<T>(
+  task: (env: { homeDirectory: string; workingDirectory: string }) => Promise<T>,
+): Promise<T> {
+  const homeDirectory = await mkdtemp(join(tmpdir(), "zcode-ask-matt-reg-home-"));
+  const workingDirectory = await mkdtemp(join(tmpdir(), "zcode-ask-matt-reg-ws-"));
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  process.env.HOME = homeDirectory;
+  process.env.USERPROFILE = homeDirectory;
+  try {
+    return await task({ homeDirectory, workingDirectory });
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
+    await rm(homeDirectory, { force: true, recursive: true });
+    await rm(workingDirectory, { force: true, recursive: true });
+  }
+}
+
 test("漂移守卫：登记名单常量与包内快照一一对应（升级快照必须同步两处）", async () => {
   assert.deepEqual(
     [...ASK_MATT_FLOW_PACK_SKILL_NAMES].sort(),
@@ -67,12 +93,12 @@ test("漂移守卫：登记名单常量与包内快照一一对应（升级快�
     "ASK_MATT_FLOW_PACK_SKILL_NAMES 必须与 skills/.zcode-skills-snapshot.json 逐项一致",
   );
 
-  // 重叠件必须真实存在于包内（否则「带文件」前提不成立），且与包名单互不重复。
+  // 快照 37 件必须逐一真实存在于包内（开态全注册的前提），且名单无重复。
   const onDisk = (await readdir(skillsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => entry.name);
-  for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-    assert.ok(onDisk.includes(overlap), `重叠件 ${overlap} 必须随包携带（带文件、不注册）`);
+  for (const skill of ASK_MATT_FLOW_PACK_SKILL_NAMES) {
+    assert.ok(onDisk.includes(skill), `快照件 ${skill} 必须随包携带`);
   }
   assert.equal(new Set(ASK_MATT_FLOW_PACK_SKILL_NAMES).size, ASK_MATT_FLOW_PACK_SKILL_NAMES.length);
 
@@ -88,46 +114,65 @@ test("开关关闭：内置包全库零注册，dynamic-workflows 不受牵连",
 });
 
 test("开关未设置 / 未加载（undefined）按关闭处理：同样零注册", () => {
-  // 判据与 A1 的 askMattFlowEntryVisible 同源：只有显式 true 才注册。
+  // 判据与 A1 的 askMattEntryVisible 同源：只有显式 true 才注册。
   assert.deepEqual(collectAskMattFlowDisabledSkillPaths([bundledRoot], undefined), [
     ...collectAskMattFlowDisabledSkillPaths([bundledRoot], false),
   ]);
 });
 
-test("开关打开：全库注册、重叠三件剔除，流程三技能可解析到 bundled 正文", async () => {
+test("开关打开：37 件全注册（含重叠三件），全部可解析到 bundled 正文", async () => {
   const adapter = adapterWithDisabledPaths(
     collectAskMattFlowDisabledSkillPaths([bundledRoot], true),
   );
   const names = await discoverNames(adapter);
 
-  const expected = [
-    ...ASK_MATT_FLOW_PACK_SKILL_NAMES.filter(
-      (name) => !ASK_MATT_FLOW_OVERLAP_SKILL_NAMES.includes(name),
-    ),
-    "dynamic-workflows",
-  ].sort();
-  assert.deepEqual(names, expected, "开关打开 = 全库注册（重叠件除外）+ 内置 dynamic-workflows");
+  const expected = [...ASK_MATT_FLOW_PACK_SKILL_NAMES, "dynamic-workflows"].sort();
+  assert.deepEqual(names, expected, "开关打开 = 全库 37 件全部注册 + 内置 dynamic-workflows");
 
-  for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-    assert.ok(!names.includes(overlap), `重叠件 ${overlap} 在开态也不得注册（恒不注册）`);
-    await assert.rejects(
-      adapter.loadSkill({ name: overlap, roots: [bundledRoot], workingDirectory: repoRoot }),
-      /Skill not found/,
-      `重叠件 ${overlap} 的加载面必须与发现面一致：不可加载`,
-    );
-  }
-
-  // 流程三命令的目标技能必须可解析到包内正文（面板「调起进技能」的注册前提）。
-  for (const registered of ["grilling", "to-spec", "to-tickets"]) {
+  // 发现面与加载面同结论：全库每一件都能按名装载到包内正文（含重叠三件——命令/agent 的装载前提）。
+  for (const skill of ASK_MATT_FLOW_PACK_SKILL_NAMES) {
     const loaded = await adapter.loadSkill({
-      name: registered,
+      name: skill,
       roots: [bundledRoot],
       workingDirectory: repoRoot,
     });
-    assert.equal(loaded.metadata.name, registered);
-    assert.ok(loaded.content.length > 0, `技能 ${registered} 的 bundled 正文不得为空`);
-    assert.ok(loaded.metadata.path.startsWith(skillsRoot), `${registered} 必须解析到内置包路径`);
+    assert.equal(loaded.metadata.name, skill);
+    assert.ok(loaded.content.length > 0, `技能 ${skill} 的 bundled 正文不得为空`);
+    assert.ok(loaded.metadata.path.startsWith(skillsRoot), `${skill} 必须解析到内置包路径`);
   }
+});
+
+test("U3 实证 · 纯产品环境（无用户技能根）：agent 按名引用的 tdd/code-review/implement 可装载", async () => {
+  await withIsolatedHome(async (env) => {
+    // 纯产品环境：隔离 HOME 后 ~/.zcode/skills 不存在，用户根同名件不参与（用户目录顶替面）。
+    // agent 军团（~/.zcode/agents/*.md 的 skills: [tdd] 等，用户域，不在本仓）按技能名引用；
+    // 本用例实证产品侧注册面在开态能按原名装载，L1 命令层换名不影响该引用面。
+    for (const name of ["tdd", "code-review", "implement"]) {
+      const inspection = await inspectZCodeSkill({
+        askMattFlowEnabled: true,
+        name,
+        skipUserConfig: true,
+        workingDirectory: env.workingDirectory,
+      });
+      assert.equal(inspection.skill.metadata.name, name);
+      assert.ok(
+        inspection.skill.metadata.path.startsWith(skillsRoot),
+        `${name} 必须解析到内置包路径（纯产品环境无用户件）：${inspection.skill.metadata.path}`,
+      );
+      assert.ok(inspection.skill.content.length > 0, `${name} 正文不得为空`);
+    }
+
+    // 反例（同一发现面、同一环境）：关态按名取不到——注册面确实受开关门控制，不是恒可见。
+    await assert.rejects(
+      inspectZCodeSkill({
+        name: "tdd",
+        skipUserConfig: true,
+        workingDirectory: env.workingDirectory,
+      }),
+      /Skill not found/,
+      "关态纯产品环境不得按名装载 tdd（杜绝半件）",
+    );
+  });
 });
 
 test("2×2 乘积态：ask-matt 注册面 × 动态工作流门互不影响", async () => {
@@ -146,13 +191,12 @@ test("2×2 乘积态：ask-matt 注册面 × 动态工作流门互不影响", as
         dynamicWorkflow,
         `dynamic-workflows 只随动态工作流门（askMatt=${askMatt}, dwf=${dynamicWorkflow}）`,
       );
-      assert.equal(
-        names.includes("grilling"),
-        askMatt,
-        `流程技能只随 ask-matt 门（askMatt=${askMatt}, dwf=${dynamicWorkflow}）`,
-      );
-      for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-        assert.ok(!names.includes(overlap), `重叠件在所有乘积格都不得注册：${overlap}`);
+      for (const probe of ["grilling", "implement", "tdd", "code-review"]) {
+        assert.equal(
+          names.includes(probe),
+          askMatt,
+          `${probe} 只随 ask-matt 门（askMatt=${askMatt}, dwf=${dynamicWorkflow}）`,
+        );
       }
     }
   }
@@ -170,14 +214,15 @@ test("组合门单点：resolveBundledSkillDisabledPaths 汇总 config/动态工
     combined.includes(join(skillsRoot, "dynamic-workflows", "SKILL.md")),
     "动态工作流关闭时 dynamic-workflows 被剔除",
   );
-  for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
+  assert.equal(
+    collectAskMattFlowDisabledSkillPaths([bundledRoot], true).length,
+    0,
+    "开态 ask-matt 门零禁用（37 件全注册）",
+  );
+  for (const skill of ASK_MATT_FLOW_PACK_SKILL_NAMES) {
     assert.ok(
-      combined.includes(join(skillsRoot, overlap, "SKILL.md")),
-      `重叠件 ${overlap} 必须恒在禁用集`,
+      !combined.includes(join(skillsRoot, skill, "SKILL.md")),
+      `开态下 ${skill} 不得被 ask-matt 门误伤`,
     );
   }
-  assert.ok(
-    !combined.includes(join(skillsRoot, "grilling", "SKILL.md")),
-    "开态下流程技能不得被误伤",
-  );
 });

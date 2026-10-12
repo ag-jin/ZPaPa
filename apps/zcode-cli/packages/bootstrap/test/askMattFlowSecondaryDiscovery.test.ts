@@ -1,4 +1,4 @@
-// 「ask-matt 开发流程」二次发现面断言（卡 #205/A4，收口 #204 的 F2）。
+// 「ask-matt 开发流程」二次发现面断言（卡 #205/A4，收口 #204 的 F2；#226/F1 升级为 37 全注册口径）。
 //
 // 为什么这组用例承重：会话运行注册面（create-app 的 skillPort）由 ask-matt 门决定（#204/A3），
 // 但 `zcode skills list` / TUI 与工作区引用目录草稿走 bootstrap/src/skills.ts 的**独立发现面**
@@ -6,7 +6,7 @@
 // 的半态：关掉的实验在全库清单里留 37 件半成品，开态却仍把重叠三件摆出来。
 // 本文件把二次发现面钉在与注册面**同一判据单点**（resolveBundledSkillDisabledPaths）上：
 //   - 关态（含未提供 = fail-closed）：零 ask-matt 技能（含重叠件与流程三技能）；
-//   - 开态：包内 34/37 可见（快照 37 件减重叠 3 件）、重叠件恒缺、流程三技能正文可达。
+//   - 开态：包内 37/37 全可见（#226 起重叠三件解除恒禁，随命令层换名 D5），全部可按名装载。
 // 独立真源 = 包内快照文件（.zcode-skills-snapshot.json），不复算实现里的名单常量。
 //
 // 已知缺口（登记，不修，收口批裁量）：动态工作流门未接本面——dynamic-workflows 在二次发现面
@@ -19,10 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import {
-  ASK_MATT_FLOW_OVERLAP_SKILL_NAMES,
-  ASK_MATT_FLOW_PACK_SKILL_NAMES,
-} from "../src/app/ask-matt-flow-gate.js";
+import { ASK_MATT_FLOW_PACK_SKILL_NAMES } from "../src/app/ask-matt-flow-gate.js";
 import { inspectZCodeSkill, listZCodeSkills } from "../src/skills.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -107,7 +104,7 @@ test("二次发现面 · 关态：零 ask-matt 技能（未提供 fail-closed �
 
 test("二次发现面 · 关态：inspect 面与发现面同结论（流程技能与重叠件都取不到）", async () => {
   await withIsolatedHome(async (env) => {
-    for (const name of ["grilling", "to-spec", "to-tickets", ...ASK_MATT_FLOW_OVERLAP_SKILL_NAMES]) {
+    for (const name of ["grilling", "to-spec", "to-tickets", "implement", "tdd", "code-review"]) {
       await assert.rejects(
         inspectZCodeSkill({ name, skipUserConfig: true, workingDirectory: env.workingDirectory }),
         /Skill not found/,
@@ -117,15 +114,11 @@ test("二次发现面 · 关态：inspect 面与发现面同结论（流程技�
   });
 });
 
-test("二次发现面 · 开态：包内 34/37 可见、重叠三件恒缺、流程三技能正文可达", async () => {
+test("二次发现面 · 开态：包内 37/37 全可见、注册物（含重叠件三件）均可按名装载", async () => {
   await withIsolatedHome(async (env) => {
-    // 独立真源：包内快照（37 件）减重叠件（3 件）= 开态应可见的 34 件。
+    // 独立真源：包内快照（37 件）= 开态应可见的全集（#226 起重叠三件解除恒禁）。
     const snapshotNames = await readSnapshotSkillNames();
     assert.equal(snapshotNames.length, 37, "包内快照应是 37 件（A2 全库入包口径）");
-    const expectedVisible = snapshotNames
-      .filter((name) => !ASK_MATT_FLOW_OVERLAP_SKILL_NAMES.includes(name))
-      .sort();
-    assert.equal(expectedVisible.length, 34, "开态可见面应为 34/37（重叠件剔除后）");
 
     const names = await listBundledSkillNames({
       askMattFlowEnabled: true,
@@ -133,15 +126,20 @@ test("二次发现面 · 开态：包内 34/37 可见、重叠三件恒缺、流
     });
     assert.deepEqual(
       names,
-      [...expectedVisible, DYNAMIC_WORKFLOW_SKILL_NAME].sort(),
-      "开态二次发现面 = 34 件非重叠 ask-matt 技能 + 既有 dynamic-workflows",
+      [...snapshotNames, DYNAMIC_WORKFLOW_SKILL_NAME].sort(),
+      "开态二次发现面 = 37 件 ask-matt 技能 + 既有 dynamic-workflows",
     );
-    for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-      assert.ok(!names.includes(overlap), `重叠件 ${overlap} 在所有发现面恒不可见`);
-    }
 
-    // 流程三命令的目标技能必须能经二次发现面读到 bundled 正文（与注册面同一份资产）。
-    for (const flowSkill of ["grilling", "to-spec", "to-tickets"]) {
+    // 命令入口的目标技能与 agent 军团的按名引用（含重叠三件原名）必须能经二次发现面
+    // 读到 bundled 正文（与注册面同一份资产）。
+    for (const flowSkill of [
+      "grilling",
+      "to-spec",
+      "to-tickets",
+      "implement",
+      "tdd",
+      "code-review",
+    ]) {
       const inspection = await inspectZCodeSkill({
         askMattFlowEnabled: true,
         name: flowSkill,
@@ -152,18 +150,6 @@ test("二次发现面 · 开态：包内 34/37 可见、重叠三件恒缺、流
       assert.ok(
         inspection.skill.metadata.path.startsWith(skillsRoot),
         `${flowSkill} 必须解析到内置包路径：${inspection.skill.metadata.path}`,
-      );
-    }
-    for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-      await assert.rejects(
-        inspectZCodeSkill({
-          askMattFlowEnabled: true,
-          name: overlap,
-          skipUserConfig: true,
-          workingDirectory: env.workingDirectory,
-        }),
-        /Skill not found/,
-        `重叠件 ${overlap} 在开态也不得取到（带文件、不注册）`,
       );
     }
   });

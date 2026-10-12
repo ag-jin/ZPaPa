@@ -16,10 +16,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { NodeSkillAdapter } from "@zcode/adapters/skills";
 import type { SkillRoot } from "@zcode/contracts";
-import {
-  ASK_MATT_FLOW_OVERLAP_SKILL_NAMES,
-  resolveBundledSkillDisabledPaths,
-} from "../src/app/ask-matt-flow-gate.js";
+import { resolveBundledSkillDisabledPaths } from "../src/app/ask-matt-flow-gate.js";
 import { resolveZCodeBuiltinPromptCommand } from "../src/builtin-prompt-command.js";
 import { listZCodeSkills } from "../src/skills.js";
 import { listProtocolSlashCommands } from "../src/zcode-protocol/slash-commands.js";
@@ -30,6 +27,8 @@ const skillsRoot = join(repoRoot, "apps", "zcode-cli", "packages", "bundled-skil
 
 const CARD_COMMAND_NAMES = ["grill", "to-spec", "to-tickets"] as const;
 const DYNAMIC_WORKFLOW_SKILL_NAME = "dynamic-workflows";
+/** 独立真源：D5 换名三件的目标技能（#226 起随 ask-matt 门注册，恒不注册已退役）。 */
+const OVERLAP_RENAMED_SKILLS = ["implement", "tdd", "code-review"] as const;
 
 const bundledRoot: SkillRoot = {
   path: skillsRoot,
@@ -110,15 +109,20 @@ test("2×2 四面矩阵：ask-matt 面只随 ask-matt 门，dwf 面只随动态�
           dynamicWorkflow,
           `${cell}：dynamic-workflows 只随 dwf 门（注册面）`,
         );
-        for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-          assert.ok(!registeredNames.includes(overlap), `${cell}：重叠件 ${overlap} 恒不注册`);
+        for (const overlap of OVERLAP_RENAMED_SKILLS) {
+          assert.equal(
+            registeredNames.includes(overlap),
+            askMatt,
+            `${cell}：重叠件 ${overlap} 随 ask-matt 门注册（#226 起全库 37 件，恒不注册已退役）`,
+          );
         }
 
         // ③ 注入面（手打命令的展开）。
         for (const command of CARD_COMMAND_NAMES) {
           assert.equal(
-            resolveZCodeBuiltinPromptCommand(`/${command} 参数`, { askMattFlowEnabled: askMatt }) !==
-              undefined,
+            resolveZCodeBuiltinPromptCommand(`/${command} 参数`, {
+              askMattFlowEnabled: askMatt,
+            }) !== undefined,
             askMatt,
             `${cell}：/${command} 展开只随 ask-matt 门（注入面）`,
           );
@@ -146,10 +150,11 @@ test("2×2 四面矩阵：ask-matt 面只随 ask-matt 门，dwf 面只随动态�
           askMatt,
           `${cell}：grilling 只随 ask-matt 门（二次发现面）`,
         );
-        for (const overlap of ASK_MATT_FLOW_OVERLAP_SKILL_NAMES) {
-          assert.ok(
-            !secondaryBundledNames.includes(overlap),
-            `${cell}：重叠件 ${overlap} 在二次发现面恒不可见`,
+        for (const overlap of OVERLAP_RENAMED_SKILLS) {
+          assert.equal(
+            secondaryBundledNames.includes(overlap),
+            askMatt,
+            `${cell}：重叠件 ${overlap} 在二次发现面随 ask-matt 门（#226 起全库注册）`,
           );
         }
         // 已登记缺口：dwf 门未接二次发现面——两个 dwf 格都按现状要求 dynamic-workflows 在场。

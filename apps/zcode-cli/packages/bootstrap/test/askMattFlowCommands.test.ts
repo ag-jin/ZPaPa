@@ -20,7 +20,6 @@ import {
   isAskMattFlowCommandName,
   listAskMattFlowSlashCommands,
 } from "../src/ask-matt-flow-commands.js";
-import { ASK_MATT_FLOW_COMMAND_SKILL_NAMES } from "../src/app/ask-matt-flow-gate.js";
 import { resolveZCodeBuiltinPromptCommand } from "../src/builtin-prompt-command.js";
 import { updateAskMattFlowPreferences } from "../src/zcode-protocol/ask-matt-flow-policy.js";
 import { listProtocolSlashCommands } from "../src/zcode-protocol/slash-commands.js";
@@ -28,10 +27,49 @@ import type { ZCodeProtocolAgentServerContext } from "../src/zcode-protocol/serv
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDir, "../../../../..");
+const snapshotPath = join(
+  repoRoot,
+  "apps",
+  "zcode-cli",
+  "packages",
+  "bundled-skills",
+  "skills",
+  ".zcode-skills-snapshot.json",
+);
 const ASK_MATT_COMMAND_NAMES = ["grill", "to-spec", "to-tickets"] as const;
 
 /** 独立真源：卡文点名的三个命令名（不 import 被测常量自身，避免同义反复）。 */
 const CARD_COMMAND_NAMES: readonly string[] = ASK_MATT_COMMAND_NAMES;
+
+/**
+ * 独立真源：设计稿 §6 裁决点名的特例（测试不复算实现白名单常量）。
+ * - D1 三件无命令：平台不适用（tracker=看板 / 无 Claude CLI 载体 / Claude Code 专用 hooks）；
+ * - D5 三件换名：/matt-* 前缀，技能名与正文不动；
+ * - grill 是 #204/A3 已交付入口名（技能 grilling，命令名保持不变）。
+ */
+const VERDICT_NO_COMMAND_SKILLS: readonly string[] = [
+  "setup-matt-pocock-skills",
+  "claude-handoff",
+  "git-guardrails-claude-code",
+];
+const VERDICT_COMMAND_NAMES: Readonly<Record<string, string>> = {
+  "code-review": "matt-code-review",
+  grilling: "grill",
+  implement: "matt-implement",
+  tdd: "matt-tdd",
+};
+
+function readSnapshotSkillNames(): string[] {
+  const record = JSON.parse(readFileSync(snapshotPath, "utf8")) as { skills: string[] };
+  return [...record.skills];
+}
+
+/** 独立重算：快照 37 件按裁决剔除无命令三件、按裁决映射命令名（不与实现比较同一份常量）。 */
+function expectedDerivedCommands(): Array<{ name: string; skill: string }> {
+  return readSnapshotSkillNames()
+    .filter((skill) => !VERDICT_NO_COMMAND_SKILLS.includes(skill))
+    .map((skill) => ({ name: VERDICT_COMMAND_NAMES[skill] ?? skill, skill }));
+}
 
 async function withIsolatedCommandEnv<T>(
   task: (env: {
@@ -67,16 +105,41 @@ function catalogOptions(env: { homeDirectory: string; workingDirectory: string }
   };
 }
 
-test("命令表身份：三命令名与卡文一致、目标技能即注册面三技能（ask-matt 原名）", () => {
+test("命令表派生（单源）：快照 37 件 - 无命令 3 件 = 34 条目，逐件点名（D1/D5 裁决）", () => {
+  const snapshotSkills = readSnapshotSkillNames();
+  assert.equal(snapshotSkills.length, 37, "包内快照应是 37 件（A2 全库入包口径）");
+
+  // 单源派生：命令条目 = 快照清单（快照顺序）减去裁决无命令件，命令名按裁决映射。
   assert.deepEqual(
-    ASK_MATT_FLOW_COMMANDS.map((command) => command.name),
-    [...CARD_COMMAND_NAMES],
+    ASK_MATT_FLOW_COMMANDS.map(({ name, skill }) => ({ name, skill })),
+    expectedDerivedCommands(),
+    "命令表必须由包内快照单源派生：37 件减无命令三件 = 34 条目，换名三件与 grill 入口名按裁决",
   );
-  assert.deepEqual(
-    [...ASK_MATT_FLOW_COMMANDS.map((command) => command.skill)].sort(),
-    [...ASK_MATT_FLOW_COMMAND_SKILL_NAMES].sort(),
-    "命令表的目标技能必须与注册面三技能同一集合（否则命令调起不到技能）",
-  );
+  assert.equal(ASK_MATT_FLOW_COMMANDS.length, 34, "34 条入口零削减");
+
+  // 技能目标逐一点名：每个派生技能恰好一条命令；无命令三件一个入口都不带。
+  for (const noCommand of VERDICT_NO_COMMAND_SKILLS) {
+    assert.ok(
+      !ASK_MATT_FLOW_COMMANDS.some((command) => command.skill === noCommand),
+      `无命令件 ${noCommand} 不得带斜杠入口（D1 裁决）`,
+    );
+  }
+
+  // 换名三件与 grill 入口名：命令名必须与裁决映射一致（其余件命令名 = 技能名已在派生比对中覆盖）。
+  for (const [skill, commandName] of Object.entries(VERDICT_COMMAND_NAMES)) {
+    const command = ASK_MATT_FLOW_COMMANDS.find((candidate) => candidate.skill === skill);
+    assert.equal(command?.name, commandName, `${skill} 的命令名必须是 /${commandName}`);
+  }
+  for (const renamed of ["implement", "tdd", "code-review"]) {
+    assert.ok(
+      !ASK_MATT_FLOW_COMMANDS.some((command) => command.name === renamed),
+      `换名后 /${renamed} 不再是入口名（技能名不动，D5）`,
+    );
+  }
+
+  // 每条命令的目录面与展开面基本形：描述非空、$ARGUMENTS 在场、提示以 /名字 开头。
+  const names = ASK_MATT_FLOW_COMMANDS.map((command) => command.name);
+  assert.equal(new Set(names).size, names.length, "命令名不得重复");
   for (const command of ASK_MATT_FLOW_COMMANDS) {
     assert.ok(command.description.trim().length > 0, `${command.name} 缺少目录描述`);
     assert.ok(command.argumentHint.startsWith(`/${command.name}`), `${command.name} 的使用提示`);
@@ -84,21 +147,39 @@ test("命令表身份：三命令名与卡文一致、目标技能即注册面�
   }
 });
 
-test("开关打开：/ 目录装配三命令（内置段，按 grill → to-spec → to-tickets 顺序）", async () => {
+test("通用边界行（D8）：34 件正文全含看板边界段（项目根/唯一写者/禁 .scratch）", () => {
+  for (const command of ASK_MATT_FLOW_COMMANDS) {
+    assert.ok(
+      command.body.includes("Board boundary (this project):"),
+      `/${command.name} 正文必须含通用边界段（全件追加，D8）`,
+    );
+    assert.match(command.body, /owns `\.zcode\/board\/`/, `/${command.name} 边界段须钉项目根判据`);
+    assert.match(command.body, /worktree copy/, `/${command.name} 边界段须排除工作树落盘`);
+    assert.match(command.body, /`\.scratch\//, `/${command.name} 边界段须禁 .scratch/ 落点`);
+    assert.match(
+      command.body,
+      /board compiler is the\s+only board writer/,
+      `/${command.name} 边界段须钉「产品零板写者」`,
+    );
+  }
+});
+
+test("开关打开：/ 目录装配 34 命令（内置段，legacy 三件保持 grill → to-spec → to-tickets 顺序）", async () => {
   await withIsolatedCommandEnv(async (env) => {
     const commands = await listProtocolSlashCommands({
       ...catalogOptions(env),
       askMattFlowEnabled: true,
     });
     const names = commands.map((command) => command.name);
-    const positions = CARD_COMMAND_NAMES.map((name) => names.indexOf(name));
-    for (const [index, name] of CARD_COMMAND_NAMES.entries()) {
-      assert.ok(positions[index] !== -1, `开关打开时 / 面板必须含 /${name}：${names.join(",")}`);
-      assert.equal(commands[positions[index]!]!.source, "builtin", `/${name} 必须是内置目录项`);
+    for (const command of ASK_MATT_FLOW_COMMANDS) {
+      const position = names.indexOf(command.name);
+      assert.ok(position !== -1, `开关打开时 / 面板必须含 /${command.name}：${names.join(",")}`);
+      assert.equal(commands[position]!.source, "builtin", `/${command.name} 必须是内置目录项`);
     }
+    const positions = CARD_COMMAND_NAMES.map((name) => names.indexOf(name));
     assert.ok(
       positions[0]! < positions[1]! && positions[1]! < positions[2]!,
-      "流程命令要按 grill → to-spec → to-tickets 顺序展示",
+      "legacy 三命令要按 grill → to-spec → to-tickets 顺序展示",
     );
     // 既有内置目录不变（实验命令只做追加，不重排已交付入口）。
     for (const existing of ["goal", "workflow", "compact", "init", "plan"]) {
@@ -107,7 +188,7 @@ test("开关打开：/ 目录装配三命令（内置段，按 grill → to-spec
   });
 });
 
-test("开关关闭 / 未设置：三命令零装配（既有目录不受影响）", async () => {
+test("开关关闭 / 未设置：34 命令零装配（既有目录不受影响）", async () => {
   await withIsolatedCommandEnv(async (env) => {
     for (const askMattFlowEnabled of [undefined, false]) {
       const commands = await listProtocolSlashCommands({
@@ -115,8 +196,8 @@ test("开关关闭 / 未设置：三命令零装配（既有目录不受影响�
         ...(askMattFlowEnabled === undefined ? {} : { askMattFlowEnabled }),
       });
       const names = commands.map((command) => command.name);
-      for (const name of CARD_COMMAND_NAMES) {
-        assert.ok(!names.includes(name), `开关关闭时不得装配 /${name}`);
+      for (const command of ASK_MATT_FLOW_COMMANDS) {
+        assert.ok(!names.includes(command.name), `开关关闭时不得装配 /${command.name}`);
       }
       for (const existing of ["goal", "workflow", "compact", "init"]) {
         assert.ok(names.includes(existing), `既有内置命令 /${existing} 不得被动到`);
@@ -125,7 +206,7 @@ test("开关关闭 / 未设置：三命令零装配（既有目录不受影响�
     // 无开关参数的调用方（TUI/旧路径）同样零装配：实验默认关，不得 fail-open。
     assert.deepEqual(listAskMattFlowSlashCommands(undefined), []);
     assert.deepEqual(listAskMattFlowSlashCommands(false), []);
-    assert.equal(listAskMattFlowSlashCommands(true).length, 3);
+    assert.equal(listAskMattFlowSlashCommands(true).length, 34);
   });
 });
 
@@ -133,6 +214,8 @@ test("自定义命令遮蔽：开关开时同名自定义命令被内置命令�
   await withIsolatedCommandEnv(async (env) => {
     await env.writeCustomCommand("grill", "User custom grill command body.");
     await env.writeCustomCommand("to-tickets", "User custom to-tickets body.");
+    // 新派生入口同样压过同名自定义命令（34 名一律进遮蔽判据，不只 legacy 三件）。
+    await env.writeCustomCommand("research", "User custom research command body.");
 
     const enabled = await listProtocolSlashCommands({
       ...catalogOptions(env),
@@ -148,6 +231,11 @@ test("自定义命令遮蔽：开关开时同名自定义命令被内置命令�
       ASK_MATT_FLOW_COMMANDS.find((command) => command.name === "grill")?.description,
       "开关开时 /grill 归内置流程命令（用户自定义不遮蔽实验入口）",
     );
+    assert.equal(
+      enabled.find((command) => command.name === "research")?.source,
+      "builtin",
+      "开态 /research 必须是派生内置命令（压过同名自定义）",
+    );
 
     const disabled = await listProtocolSlashCommands(catalogOptions(env));
     assert.equal(
@@ -155,12 +243,18 @@ test("自定义命令遮蔽：开关开时同名自定义命令被内置命令�
       "custom",
       "开关关时自定义 /grill 必须原样可用（实验不得占用用户命令名）",
     );
+    assert.equal(
+      disabled.find((command) => command.name === "research")?.source,
+      "custom",
+      "开关关时自定义 /research 必须原样可用",
+    );
     assert.ok(isAskMattFlowCommandName("/GRill "), "命令名判据要归一化斜杠与大小写");
+    assert.ok(isAskMattFlowCommandName("/Matt-TDD "), "换名件命令名也要进判据");
     assert.ok(!isAskMattFlowCommandName("grilling"));
   });
 });
 
-test("展开：开关打开时三命令装载对应内置包技能并保留参数；关闭/未设置不展开", () => {
+test("展开：开关打开时 34 命令装载对应内置包技能并保留参数；关闭/未设置不展开", () => {
   for (const command of ASK_MATT_FLOW_COMMANDS) {
     const expanded = resolveZCodeBuiltinPromptCommand(`/${command.name} 打磨这个想法`, {
       askMattFlowEnabled: true,

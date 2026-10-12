@@ -1,20 +1,42 @@
 import { expandCustomCommandPrompt, type CustomCommandContent } from "@zcode/contracts";
 import type { ZCodeSlashCommand } from "@zcode/shared";
+import {
+  ASK_MATT_FLOW_LANDING_OVERRIDES,
+  ASK_MATT_FLOW_NO_COMMAND_SKILL_NAMES,
+  ASK_MATT_FLOW_RENAMED_COMMANDS,
+  type AskMattFlowLandingOverride,
+  type AskMattFlowRenamedCommand,
+} from "./ask-matt-flow-command-whitelist.js";
+import {
+  ASK_MATT_FLOW_SKILL_DESCRIPTIONS,
+  ASK_MATT_FLOW_SKILL_DISABLE_MODEL_INVOCATION,
+} from "./ask-matt-flow-skill-metadata.js";
+import { ASK_MATT_FLOW_PACK_SKILL_NAMES } from "./app/ask-matt-flow-gate.js";
 
 /**
- * 「ask-matt 开发流程」的三个内置命令（卡 #204/A3）：`/grill`、`/to-spec`、`/to-tickets`。
+ * 「ask-matt 开发流程」34 命令入口（卡 #226/F1；设计稿 §2.3 + §6 D1/D5/D8）。
+ *
+ * 单源派生：命令表由包内快照（bundled-skills/skills/.zcode-skills-snapshot.json，代码副本 =
+ * ASK_MATT_FLOW_PACK_SKILL_NAMES）生成——快照技能清单 - 无命令件（D1）= 34 条入口；命令名默认取
+ * 技能名，特例（换名三件 D5 / 既有落点注入三件）由 ask-matt-flow-command-whitelist.ts 覆盖；
+ * `description` 与 `disableModelInvocation` 取包内 SKILL.md 的上游 frontmatter 原文
+ * （ask-matt-flow-skill-metadata.ts，D8 + §1.3 知情项一，v1 只登记不过滤）。
+ * 白名单外的不一致由同源守卫四件套断言红（askMattFlowCommandParity.test.ts：快照 ↔ 注册面名单 ↔
+ * 命令表 ↔ 白名单三类划分），快照增删技能而命令表未同步必红。
  *
  * 与内置 `/workflow` 同款：命令正文随 CLI 编译，不依赖可卸载插件；正文复用 contracts 的
  * custom command 展开规则（替换 `$ARGUMENTS` 并补充 `skills:` 前言）。前言把目标技能设为
  * **必须先行装载**的技能，所以「调起命令」落到技能装载上（调起进技能），而技能是否可装载由
- * 注册面门决定（app/ask-matt-flow-gate.ts）；两边同一个开关，关掉时目录与展开一起为零。
+ * 注册面门决定（app/ask-matt-flow-gate.ts，开态 37 件全注册）；两边同一个开关，关掉时目录与
+ * 展开一起为零。
  *
- * 名字策略（用户原话「保留 ask-matt 原名」）：命令名取卡文点名的入口名（grill/to-spec/to-tickets），
- * 目标技能名一律用上游原名（grilling/to-spec/to-tickets）——命令只是入口，不改写技能身份，
- * 于是 Skill 清单里看到的仍是 mattpocock 原始技能名。
+ * 名字策略（D5 裁决 L1 命令层换名）：命令只是入口，不改写技能身份——重叠三件命令名 `/matt-*`、
+ * 技能名与上游正文一字不动，`~/.zcode/agents/*.md` 的按名引用（如 `skills: [tdd]`）继续成立。
+ * 命令名不进共享保留字表：实验默认关，关闭时同名用户自定义命令照常可用（开态由目录侧压过，
+ * 见 zcode-protocol/slash-commands.ts）。
  *
- * 命令名不进共享保留字表：实验默认关，关闭时同名用户自定义命令必须照常可用
- * （目录侧只在开态压过自定义同名命令，见 zcode-protocol/slash-commands.ts）。
+ * 通用边界段（D8）：34 件正文一律追加同一段看板边界（项目根解析/扫描面纪律/禁 `.scratch/`/
+ * 产品零板写者/实现收尾走看板管线），与 grill/to-spec/to-tickets 既有边界同款英文句式。
  */
 
 export interface AskMattFlowCommandDefinition {
@@ -22,143 +44,111 @@ export interface AskMattFlowCommandDefinition {
   name: string;
   /** 命令正文要求先装载的内置包技能名（ask-matt 原名，必须是注册面成员）。 */
   skill: string;
-  /** `/` 目录与加号菜单展示用的一句话说明。 */
+  /** `/` 目录与加号菜单展示用的一句话说明（包内 SKILL.md 上游英文原文）。 */
   description: string;
   /** 使用提示（`/name [args]`）。 */
   argumentHint: string;
   /** 展开正文（`$ARGUMENTS` 必须在场，否则参数会被追加成不受控的尾块）。 */
   body: string;
+  /**
+   * 上游 `disable-model-invocation` 标志（知情登记，§1.3 知情项一）：true = 上游只给用户的文本面命令。
+   * 本产品的 34 入口统一合并该分界——v1 只登记不过滤（目录与展开都不用它做判据）。
+   */
+  disableModelInvocation: boolean;
 }
 
-export const ASK_MATT_FLOW_COMMANDS: readonly AskMattFlowCommandDefinition[] = [
-  {
-    argumentHint: "/grill [what to grill]",
-    body: [
-      "Use the `grilling` skill to interview me relentlessly about this plan, decision, or idea",
-      "until we reach a shared understanding. Work the design tree in rounds: ask the whole",
-      "frontier now, facts are your job, decisions are mine.",
-      "",
-      "Landing convention (this project):",
-      "- Before the first round, derive one kebab-case task slug from the topic of this conversation",
-      "  and show it to me for confirmation; I can rename it, and nothing is created before I confirm.",
-      "  A slug is lowercase words joined by single dashes, like this project's task directories.",
-      "- On my confirmation, the slug becomes the task directory id that /to-spec and /to-tickets",
-      "  take later. Create `.zcode/<task-id>/design/` in the board project root immediately —",
-      "  before the first round — and start `design/grill-notes.md` as a placeholder with this",
-      "  skeleton:",
-      "",
-      "  ## 已定决策",
-      "  ## 待定问题",
-      "  ## 下一步",
-      "",
-      "- Keep `design/grill-notes.md` current while the interview runs: append each round's outcome",
-      "  as soon as it settles, never batch the notes to the end — real-time notes survive a",
-      "  compact or clear. The three sections mean:",
-      "  - `## 已定决策` — one line per decision I have settled, in the order settled.",
-      "  - `## 待定问题` — the frontier questions still open (asked and unanswered, or not yet asked).",
-      "  - `## 下一步` — one line naming the immediate next action (next round, /to-spec, ...).",
-      "- `.zcode/` resolves against the board project root — the checkout that owns `.zcode/board/` —",
-      "  never against the current working directory or a worktree copy: a task directory created",
-      "  inside a worktree is not the project's and is lost with it.",
-      "- The board's plan scan surface only reads `plans/` directories; hidden subdirectories,",
-      "  `archive/`, `design/` and STALLED task directories are frozen exclusions. Keep the notes",
-      "  in `design/` and never write them under `plans/`: a non-plan file there can be published",
-      "  on the board as a draft — a ghost card with no accepted card text.",
-      "",
-      "$ARGUMENTS",
-      "",
-    ].join("\n"),
-    description: "Grill me about a plan or idea until we share one understanding (ask-matt flow).",
-    name: "grill",
-    skill: "grilling",
-  },
-  {
-    argumentHint: "/to-spec [task-id | reference]",
-    body: [
-      "Use the `to-spec` skill to turn the current conversation into a spec and land it as a plan",
-      "draft in this project's board task directory. The issue tracker here is the board's plan",
-      "scan surface: do NOT publish to GitHub or any external tracker, and do NOT interview me;",
-      "synthesize what you already know.",
-      "",
-      "Landing convention (overrides the skill's tracker and filename defaults):",
-      "- Write exactly one file: `.zcode/<task-id>/plans/plan-<slug>.md`.",
-      "- `<task-id>` is the board task directory id: take it from the arguments below when they name",
-      "  one, otherwise use the task directory already agreed in this conversation (for example the",
-      "  `/grill` slug). If neither is settled, ask me for the id before writing.",
-      "- `<slug>` is a short lowercase dash-case topic slug.",
-      "- The file must pass the board compiler's assignment identity gate: the stem matches",
-      "  `plan-*.md` and the first heading line is the H1 title (`# ...`); the body keeps the spec",
-      "  sections from the skill's template.",
-      "- Ticket-shaped items must use the board card line template: `- [ ] <title>` with the label",
-      "  lines `目标:` / `交付面全量枚举:` (items split by ① ② ③ …) / `验收:` — at minimum these",
-      "  lines; the full template also carries `责任:` and `用户原话引用:` (both are required sections,",
-      "  and the dispatch prompt builder refuses a card that misses one). For a dependency",
-      "  write `> blocked-by: <稳定号>` (assigned dependencies only; the reference slot takes stable",
-      "  numbers and nothing else). Before the card has a number, hold the slot with the draft",
-      "  placeholder `> blocked: 等待 <目标> 拆卡后补号` and replace it with `> blocked-by: <稳定号>`",
-      "  once the number is assigned.",
-      "- Never hand-write `<!-- zcode-board: no=... -->` markers; number assignment is the board",
-      "  compiler's `--assign` job (this product writes no board file directly).",
-      "",
-      "$ARGUMENTS",
-      "",
-    ].join("\n"),
-    description: "Turn this conversation into a spec (ask-matt flow).",
-    name: "to-spec",
-    skill: "to-spec",
-  },
-  {
-    argumentHint: "/to-tickets [task-id | reference]",
-    body: [
-      "Use the `to-tickets` skill to break the plan, spec, or current conversation into",
-      "tracer-bullet tickets, each declaring its blocking edges. The configured tracker here is the",
-      "board's plan scan surface: the tickets are card lines in a plan draft under",
-      "`.zcode/<task-id>/plans/`, not one file per ticket — do NOT publish to GitHub or any",
-      "external tracker, and do NOT write `.scratch/<feature>/issues/` files.",
-      "",
-      "Landing convention (overrides the skill's tracker and filename defaults):",
-      "- Write the approved ticket entries as board card lines inside the task's plan draft",
-      "  `.zcode/<task-id>/plans/plan-*.md` — by default extend the plan draft just produced by",
-      "  /to-spec; when no draft exists yet, create `plan-<slug>.md` with an H1 title first. Keep",
-      "  the skill's breakdown and quiz process, and write the cards in dependency order (blockers",
-      "  first) so assignment follows the frontier order top to bottom.",
-      "- `<task-id>` is the board task directory id: take it from the arguments below when they name",
-      "  one, otherwise use the task directory already agreed in this conversation. If neither is",
-      "  settled, ask me for the id before writing.",
-      "- `.zcode/` resolves against the board project root — the checkout that owns `.zcode/board/`",
-      "  — never against the current working directory or a worktree copy: a draft written inside",
-      "  a worktree is not on the scan surface. Hidden subdirectories, `archive/`, `design/` and",
-      "  STALLED task directories are outside the scan surface.",
-      "- The file must pass the board compiler's assignment identity gate: the stem matches",
-      "  `plan-*.md` and the first heading line is the H1 title (`# ...`).",
-      "- Each card uses the board card line template: `- [ ] <title>` with the label lines `目标:` /",
-      "  `交付面全量枚举:` (items split by ① ② ③ …) / `验收:` — at minimum these lines; the full",
-      "  template also carries `责任:` (recommended — the dispatch prompt reads this role line;",
-      "  a card without it is still accepted, only the role is left unspecified) and `用户原话引用:`.",
-      "  The two required sections are `交付面全量枚举:` and `用户原话引用:`; the dispatch prompt",
-      "  builder refuses a card that misses either one (exit 3).",
-      "- Dependencies: write `> blocked-by: <稳定号>` only when the blocking card already has a",
-      "  stable number. For a card blocked by another card in the same draft (no number yet), hold",
-      "  the slot with the draft placeholder `> blocked: 等待 <目标> 拆卡后补号`; number assignment",
-      "  does NOT rewrite that placeholder, so after the user approves the breakdown run the board",
-      "  compiler's `--assign` against the board project root, read the assigned numbers back from",
-      "  the `<!-- zcode-board: no=N -->` markers written into the same file, replace every",
-      "  placeholder with `> blocked-by: <稳定号>`, and recompile. An unreplaced placeholder leaves",
-      "  the card out of the frontier too: it stays blocked with a readable reason until replaced.",
-      "  Never leave a title in the reference slot: it is rejected (no dependency edge), keeps the",
-      "  card out of the frontier permanently, and `--check` stays green — the frontier silently",
-      "  loses the card.",
-      "- Never hand-write `<!-- zcode-board: no=... -->` markers; number assignment is the board",
-      "  compiler's `--assign` job (this product writes no board file directly).",
-      "",
-      "$ARGUMENTS",
-      "",
-    ].join("\n"),
-    description: "Split a plan or spec into blocking-aware tickets (ask-matt flow).",
-    name: "to-tickets",
-    skill: "to-tickets",
-  },
-];
+/**
+ * 通用边界段：34 件命令正文统一追加（D8「通用边界行全件」）。
+ * 句式对齐 grill/to-spec/to-tickets 的既有 Landing convention（英文）。
+ */
+export const ASK_MATT_FLOW_GENERIC_BOUNDARY_BLOCK = [
+  "Board boundary (this project):",
+  "- `.zcode/` resolves against the board project root — the checkout that owns `.zcode/board/` —",
+  "  never against the current working directory or a worktree copy.",
+  "- The board's plan scan surface only reads `plans/` directories; hidden subdirectories,",
+  "  `archive/`, `design/` and STALLED task directories are frozen exclusions. Never write",
+  "  `.scratch/<feature>/` files, and never hand-write board files: the board compiler is the",
+  "  only board writer.",
+  "- Implementation and wrap-up stay with the board pipeline: the board card and its runs are the",
+  "  execution record, and the board's own checks decide when work is done.",
+].join("\n");
+
+export interface BuildAskMattFlowCommandsInput {
+  /** 快照技能清单（顺序即命令表顺序）；无命令件在此剔除。 */
+  skillNames: readonly string[];
+  /** 技能 → 上游英文描述（快照全覆盖；缺一件即抛错，由同源守卫先红）。 */
+  descriptions: Readonly<Record<string, string>>;
+  /** 技能 → 上游 `disable-model-invocation` 标志（快照全覆盖；知情登记，v1 不过滤）。 */
+  disableModelInvocation: Readonly<Record<string, boolean>>;
+  /** 换名件（命令名 ≠ 技能名，D5）。 */
+  renamedCommands?: readonly AskMattFlowRenamedCommand[];
+  /** 落点注入件（既有命令正文逐件保留）。 */
+  landingOverrides?: readonly AskMattFlowLandingOverride[];
+  /** 无命令件（D1；仍随包与注册，只是不带斜杠入口）。 */
+  noCommandSkillNames?: readonly string[];
+}
+
+/**
+ * 单源派生器：快照技能清单 → 34 条命令条目。
+ * 顺序即快照顺序；换名/注入覆盖按技能名索引；无命令件直接跳过。
+ */
+export function buildAskMattFlowCommands(
+  input: BuildAskMattFlowCommandsInput,
+): AskMattFlowCommandDefinition[] {
+  const noCommand = new Set(input.noCommandSkillNames ?? []);
+  const renamed = new Map((input.renamedCommands ?? []).map((entry) => [entry.skill, entry.name]));
+  const overrides = new Map((input.landingOverrides ?? []).map((entry) => [entry.skill, entry]));
+  const known = new Set(input.skillNames);
+
+  for (const skill of [...renamed.keys(), ...overrides.keys()]) {
+    if (!known.has(skill)) {
+      throw new Error(`ask-matt 命令白名单引用了快照之外的技能：${skill}`);
+    }
+  }
+
+  return input.skillNames.flatMap((skill) => {
+    if (noCommand.has(skill)) return [];
+    const description = input.descriptions[skill];
+    if (description === undefined || description.trim().length === 0) {
+      throw new Error(`ask-matt 命令表缺少技能描述：${skill}（快照新增技能必须同步补描述）`);
+    }
+    const disableModelInvocation = input.disableModelInvocation[skill];
+    if (disableModelInvocation === undefined) {
+      throw new Error(`ask-matt 命令表缺少面向登记：${skill}（快照新增技能必须同步补录标志）`);
+    }
+    const override = overrides.get(skill);
+    const name = override?.name ?? renamed.get(skill) ?? skill;
+    const baseBody =
+      override?.body ??
+      [
+        `Use the \`${skill}\` skill to carry out this request (ask-matt flow).`,
+        "",
+        "$ARGUMENTS",
+        "",
+      ].join("\n");
+    return [
+      {
+        argumentHint: override?.argumentHint ?? `/${name}`,
+        body: `${baseBody}\n${ASK_MATT_FLOW_GENERIC_BOUNDARY_BLOCK}\n`,
+        description,
+        disableModelInvocation,
+        name,
+        skill,
+      },
+    ];
+  });
+}
+
+/** 34 条命令：包内快照（37 件）- 无命令三件（D1），换名三件（D5）+ 既有注入三件。 */
+export const ASK_MATT_FLOW_COMMANDS: readonly AskMattFlowCommandDefinition[] =
+  buildAskMattFlowCommands({
+    descriptions: ASK_MATT_FLOW_SKILL_DESCRIPTIONS,
+    disableModelInvocation: ASK_MATT_FLOW_SKILL_DISABLE_MODEL_INVOCATION,
+    landingOverrides: ASK_MATT_FLOW_LANDING_OVERRIDES,
+    noCommandSkillNames: ASK_MATT_FLOW_NO_COMMAND_SKILL_NAMES,
+    renamedCommands: ASK_MATT_FLOW_RENAMED_COMMANDS,
+    skillNames: ASK_MATT_FLOW_PACK_SKILL_NAMES,
+  });
 
 function normalizeCommandName(name: string): string {
   return name.trim().replace(/^\/+/, "").toLowerCase();
